@@ -1,0 +1,71 @@
+# macOS
+.DS_Store
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+package-lock.json
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+.env
+.env.*
+pip-wheel-metadata/
+*.egg-info/
+dist/
+build/
+.eggs/
+.coverage
+.coverage.*
+htmlcov/
+.pytest_cache/
+.mypy_cache/
+.tox/
+
+# Rust
+/target/
+
+# Go
+bin/
+go.sum
+
+# Editors and IDEs
+.vscode/
+.idea/
+*.iml
+
+# Logs and databases
+logs/
+*.log
+*.sqlite3
+
+# Misc
+Thumbs.db
+.bundle
+
+# Temporary files
+*.swp
+*~
+
+# Secrets
+.env.local
+.env.*.local
+credentials.json
+
+# Coverage
+coverage/
+
+# Build artifacts
+build/
+out/
+
+# System files
+npm-debug.log
+yarn-debug.log
+pnpm-debug.log
