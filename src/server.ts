@@ -3,6 +3,7 @@ import express from "express";
 import helmet from "helmet";
 import cors from "cors";
 import { getHealth } from "./health.js";
+import { logger } from "./logging/logger.js";
 
 const app = express();
 
@@ -17,7 +18,7 @@ app.get("/health", (_req, res) => {
 const port = Number(process.env.PORT ?? 3000);
 
 app.listen(port, () => {
-  console.log(`OpenZigs server listening on port ${port}`);
+  logger.info(`OpenZigs server listening on port ${port}`);
 });
 
 export { app };
