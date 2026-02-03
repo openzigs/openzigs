@@ -1,0 +1,8 @@
+{
+  "enabledTools": [
+    "read-file",
+    "list-directory",
+    "web-search"
+  ],
+  "customRiskOverrides": {}
+}
