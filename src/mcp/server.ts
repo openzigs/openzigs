@@ -13,11 +13,22 @@ export type McpServerOptions = {
   chromeDebugPort?: number;
 };
 
-type ReadFileInput = { path: string };
-type WriteFileInput = { path: string; content: string };
-type WebSearchInput = { query: string; count?: number };
-type BrowserReadInput = { selector?: string };
-type ShellExecuteInput = { command: string; args?: string[]; cwd?: string; timeout?: number };
+const readFileSchema = z.object({ path: z.string() });
+const writeFileSchema = z.object({ path: z.string(), content: z.string() });
+const webSearchSchema = z.object({ query: z.string(), count: z.number().optional() });
+const browserReadSchema = z.object({ selector: z.string().optional() });
+const shellExecuteSchema = z.object({
+  command: z.string(),
+  args: z.array(z.string()).optional(),
+  cwd: z.string().optional(),
+  timeout: z.number().optional()
+});
+
+type ReadFileInput = z.infer<typeof readFileSchema>;
+type WriteFileInput = z.infer<typeof writeFileSchema>;
+type WebSearchInput = z.infer<typeof webSearchSchema>;
+type BrowserReadInput = z.infer<typeof browserReadSchema>;
+type ShellExecuteInput = z.infer<typeof shellExecuteSchema>;
 
 type ToolDefinition = {
   name: string;
@@ -76,7 +87,7 @@ export const createMcpServer = (options: McpServerOptions) => {
       properties: { path: { type: "string" } },
       required: ["path"]
     },
-    zodSchema: z.object({ path: z.string() }),
+    zodSchema: readFileSchema,
     handler: async (args) => {
       const { path } = args as ReadFileInput;
       const output = await filesystemHandlers.readFile({ path });
@@ -92,7 +103,7 @@ export const createMcpServer = (options: McpServerOptions) => {
       properties: { path: { type: "string" }, content: { type: "string" } },
       required: ["path", "content"]
     },
-    zodSchema: z.object({ path: z.string(), content: z.string() }),
+    zodSchema: writeFileSchema,
     handler: async (args) => {
       const { path, content } = args as WriteFileInput;
       const output = await filesystemHandlers.writeFile({ path, content });
@@ -108,7 +119,7 @@ export const createMcpServer = (options: McpServerOptions) => {
       properties: { query: { type: "string" }, count: { type: "number" } },
       required: ["query"]
     },
-    zodSchema: z.object({ query: z.string(), count: z.number().optional() }),
+    zodSchema: webSearchSchema,
     handler: async (args) => {
       const { query, count } = args as WebSearchInput;
       const output = await braveSearchHandler({ query, count });
@@ -123,7 +134,7 @@ export const createMcpServer = (options: McpServerOptions) => {
       type: "object",
       properties: { selector: { type: "string" } }
     },
-    zodSchema: z.object({ selector: z.string().optional() }),
+    zodSchema: browserReadSchema,
     handler: async (args) => {
       const output = await chromeDevtoolsHandler(args as BrowserReadInput);
       return { text: JSON.stringify(output) };
@@ -143,12 +154,7 @@ export const createMcpServer = (options: McpServerOptions) => {
       },
       required: ["command"]
     },
-    zodSchema: z.object({
-      command: z.string(),
-      args: z.array(z.string()).optional(),
-      cwd: z.string().optional(),
-      timeout: z.number().optional()
-    }),
+    zodSchema: shellExecuteSchema,
     handler: async (args) => {
       const { command, args: commandArgs, cwd, timeout } = args as ShellExecuteInput;
       const output = await shellExecuteHandler({ command, args: commandArgs, cwd, timeout });
@@ -185,7 +191,12 @@ export const createMcpServer = (options: McpServerOptions) => {
         isError: true
       };
     }
-    const result = await tool.handler(validated.data as Record<string, unknown>);
+    const result = await tool
+      .handler(validated.data as Record<string, unknown>)
+      .catch((error) => {
+        const message = error instanceof Error ? error.message : String(error);
+        return { text: `Tool execution failed: ${message}`, isError: true };
+      });
 
     return {
       content: [{ type: "text", text: result.text }],
