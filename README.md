@@ -93,12 +93,35 @@
 
 - **Language**: TypeScript (strict mode, ESM)
 - **Runtime**: Node.js 22+ in Docker
-- **AI Backend**: GitHub Copilot SDK (`@github/copilot-sdk`)
+- **AI Backend**: GitHub Copilot SDK (individual auth via device flow)
 - **Tools**: Model Context Protocol (MCP) servers
 - **Web UI**: Next.js 14+ / React / Tailwind / shadcn/ui
-- **Messaging**: Discord.js, grammy (Telegram)
+- **Messaging**: grammY (Telegram) - primary channel
 - **Tunnel**: Cloudflare Tunnel (cloudflared)
 - **Testing**: Vitest
+
+## 🛠️ MCP Tools Stack
+
+| Tool | Package | Role | Risk |
+|------|---------|------|------|
+| **Filesystem** | `@modelcontextprotocol/server-filesystem` | Read/write code files | 🟢/🔴 |
+| **Web Search** | `@modelcontextprotocol/server-brave-search` | Find docs & libraries | 🟢 |
+| **Browser** | `mcp-server-chrome-devtools` | Read pages, debug localhost | 🟡 |
+| **Shell** | Custom executor | Run terminal commands | 🔴 |
+
+### ⚠️ Chrome DevTools Setup (Required)
+
+Chrome must be launched with remote debugging enabled for the browser tool to work:
+
+```bash
+# macOS
+/Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome --remote-debugging-port=9222
+
+# Windows
+start chrome --remote-debugging-port=9222
+```
+
+Without this, the agent will get "Connection refused" when trying to browse.
 
 ## 🔐 Security Model
 
@@ -109,6 +132,14 @@
 | 🟢 Low | Read-only, no side effects | web search, read file, memory | Auto-approve |
 | 🟡 Medium | External network, rate limits | HTTP fetch, API calls | Log and execute |
 | 🔴 High | Destructive, file writes, shell | write file, delete, shell | **Require approval** |
+
+### Dual-Channel Approval
+
+High-risk tool calls trigger approval requests to **both**:
+- **Web UI**: Real-time notification with Approve/Reject buttons
+- **Telegram**: InlineKeyboard in the originating chat
+
+First response wins - the other channel is notified of the decision.
 
 ## 📁 Project Structure
 
