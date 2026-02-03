@@ -1,5 +1,6 @@
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
+import * as z from "zod";
 import { createFilesystemHandlers } from "./tools/filesystem.js";
 import { createBraveSearchHandler } from "./tools/brave-search.js";
 import { createChromeDevtoolsHandler } from "./tools/chrome-devtools.js";
@@ -26,7 +27,19 @@ type ToolDefinition = {
     properties?: Record<string, unknown>;
     required?: string[];
   };
+  zodSchema: z.ZodSchema;
   handler: (args: Record<string, unknown>) => Promise<{ text: string; isError?: boolean }>;
+};
+
+const parseArgs = (schema: z.ZodSchema, args: Record<string, unknown>) => {
+  const parsed = schema.safeParse(args);
+  if (!parsed.success) {
+    return {
+      ok: false as const,
+      error: parsed.error.message
+    };
+  }
+  return { ok: true as const, data: parsed.data };
 };
 
 export const createMcpServer = (options: McpServerOptions) => {
@@ -61,8 +74,13 @@ export const createMcpServer = (options: McpServerOptions) => {
       properties: { path: { type: "string" } },
       required: ["path"]
     },
+    zodSchema: z.object({ path: z.string() }),
     handler: async (args) => {
-      const { path } = args as ReadFileInput;
+      const parsed = parseArgs(z.object({ path: z.string() }), args);
+      if (!parsed.ok) {
+        return { text: parsed.error, isError: true };
+      }
+      const { path } = parsed.data as ReadFileInput;
       const output = await filesystemHandlers.readFile({ path });
       return { text: output.content };
     }
@@ -76,8 +94,13 @@ export const createMcpServer = (options: McpServerOptions) => {
       properties: { path: { type: "string" }, content: { type: "string" } },
       required: ["path", "content"]
     },
+    zodSchema: z.object({ path: z.string(), content: z.string() }),
     handler: async (args) => {
-      const { path, content } = args as WriteFileInput;
+      const parsed = parseArgs(z.object({ path: z.string(), content: z.string() }), args);
+      if (!parsed.ok) {
+        return { text: parsed.error, isError: true };
+      }
+      const { path, content } = parsed.data as WriteFileInput;
       const output = await filesystemHandlers.writeFile({ path, content });
       return { text: JSON.stringify(output) };
     }
@@ -91,8 +114,13 @@ export const createMcpServer = (options: McpServerOptions) => {
       properties: { query: { type: "string" }, count: { type: "number" } },
       required: ["query"]
     },
+    zodSchema: z.object({ query: z.string(), count: z.number().optional() }),
     handler: async (args) => {
-      const { query, count } = args as WebSearchInput;
+      const parsed = parseArgs(z.object({ query: z.string(), count: z.number().optional() }), args);
+      if (!parsed.ok) {
+        return { text: parsed.error, isError: true };
+      }
+      const { query, count } = parsed.data as WebSearchInput;
       const output = await braveSearchHandler({ query, count });
       return { text: JSON.stringify(output) };
     }
@@ -105,8 +133,13 @@ export const createMcpServer = (options: McpServerOptions) => {
       type: "object",
       properties: { selector: { type: "string" } }
     },
+    zodSchema: z.object({ selector: z.string().optional() }),
     handler: async (_args) => {
-      const output = await chromeDevtoolsHandler({} as BrowserReadInput);
+      const parsed = parseArgs(z.object({ selector: z.string().optional() }), _args);
+      if (!parsed.ok) {
+        return { text: parsed.error, isError: true };
+      }
+      const output = await chromeDevtoolsHandler(parsed.data as BrowserReadInput);
       return { text: JSON.stringify(output) };
     }
   });
@@ -118,14 +151,35 @@ export const createMcpServer = (options: McpServerOptions) => {
       type: "object",
       properties: {
         command: { type: "string" },
+        args: { type: "array", items: { type: "string" } },
         cwd: { type: "string" },
         timeout: { type: "number" }
       },
       required: ["command"]
     },
+    zodSchema: z.object({
+      command: z.string(),
+      args: z.array(z.string()).optional(),
+      cwd: z.string().optional(),
+      timeout: z.number().optional()
+    }),
     handler: async (args) => {
-      const { command, cwd, timeout } = args as ShellExecuteInput;
-      const output = await shellExecuteHandler({ command, cwd, timeout });
+      const parsed = parseArgs(
+        z.object({
+          command: z.string(),
+          args: z.array(z.string()).optional(),
+          cwd: z.string().optional(),
+          timeout: z.number().optional()
+        }),
+        args
+      );
+      if (!parsed.ok) {
+        return { text: parsed.error, isError: true };
+      }
+      const { command, args: commandArgs, cwd, timeout } = parsed.data as ShellExecuteInput & {
+        args?: string[];
+      };
+      const output = await shellExecuteHandler({ command, args: commandArgs, cwd, timeout });
       return { text: JSON.stringify(output) };
     }
   });
@@ -152,7 +206,14 @@ export const createMcpServer = (options: McpServerOptions) => {
     }
 
     const args = request.params.arguments ?? {};
-    const result = await tool.handler(args);
+    const validated = parseArgs(tool.zodSchema, args);
+    if (!validated.ok) {
+      return {
+        content: [{ type: "text", text: validated.error }],
+        isError: true
+      };
+    }
+    const result = await tool.handler(validated.data as Record<string, unknown>);
 
     return {
       content: [{ type: "text", text: result.text }],

@@ -23,8 +23,12 @@ const buildBaseUrl = (host: string, port: number) => {
 };
 
 export const createChromeDevtoolsHandler = ({ host, port }: ChromeDevtoolsOptions) => {
-  return async (_input: ChromeDevtoolsInput): Promise<ChromeDevtoolsOutput> => {
+  return async (input: ChromeDevtoolsInput): Promise<ChromeDevtoolsOutput> => {
     const baseUrl = buildBaseUrl(host, port);
+
+    if (input.selector) {
+      throw new Error("selector filtering is not supported yet");
+    }
     const response = await fetch(`${baseUrl}/json/list`);
 
     if (!response.ok) {

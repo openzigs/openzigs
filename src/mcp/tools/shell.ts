@@ -1,10 +1,11 @@
-import { exec } from "node:child_process";
+import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
-const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 
 type ShellExecuteInput = {
   command: string;
+  args?: string[];
   cwd?: string;
   timeout?: number;
 };
@@ -15,10 +16,30 @@ type ShellExecuteOutput = {
   exitCode: number;
 };
 
-export const createShellExecuteHandler = () => {
-  return async ({ command, cwd, timeout = 30000 }: ShellExecuteInput): Promise<ShellExecuteOutput> => {
+type ShellExecuteOptions = {
+  allowlist?: string[];
+};
+
+export const createShellExecuteHandler = ({ allowlist = [] }: ShellExecuteOptions = {}) => {
+  return async ({ command, args = [], cwd, timeout = 30000 }: ShellExecuteInput): Promise<ShellExecuteOutput> => {
+    if (allowlist.length === 0) {
+      return {
+        stdout: "",
+        stderr: "Shell tool disabled by default. Configure an allowlist to enable.",
+        exitCode: 1
+      };
+    }
+
+    if (!allowlist.includes(command)) {
+      return {
+        stdout: "",
+        stderr: `Shell command not allowed: ${command}`,
+        exitCode: 1
+      };
+    }
+
     try {
-      const result = await execAsync(command, { cwd, timeout, maxBuffer: 10 * 1024 * 1024 });
+      const result = await execFileAsync(command, args, { cwd, timeout, maxBuffer: 10 * 1024 * 1024 });
       return {
         stdout: result.stdout ?? "",
         stderr: result.stderr ?? "",

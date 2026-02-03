@@ -1,3 +1,5 @@
+import * as z from "zod";
+
 export type BraveSearchResult = {
   title: string;
   url: string;
@@ -17,6 +19,22 @@ type BraveSearchOptions = {
   apiKey: string;
   endpoint?: string;
 };
+
+const BraveSearchResponseSchema = z.object({
+  web: z
+    .object({
+      results: z
+        .array(
+          z.object({
+            title: z.string().optional(),
+            url: z.string().optional(),
+            description: z.string().optional()
+          })
+        )
+        .optional()
+    })
+    .optional()
+});
 
 export const createBraveSearchHandler = ({
   apiKey,
@@ -42,11 +60,14 @@ export const createBraveSearchHandler = ({
       throw new Error(`Brave Search API error: ${response.status}`);
     }
 
-    const data = (await response.json()) as {
-      web?: { results?: Array<{ title?: string; url?: string; description?: string }> };
-    };
+    const json = await response.json();
+    const parsed = BraveSearchResponseSchema.safeParse(json);
 
-    const results = (data.web?.results ?? []).map((result) => ({
+    if (!parsed.success) {
+      throw new Error("Brave Search API response validation failed");
+    }
+
+    const results = (parsed.data.web?.results ?? []).map((result) => ({
       title: result.title ?? "",
       url: result.url ?? "",
       snippet: result.description ?? ""
