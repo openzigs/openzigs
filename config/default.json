@@ -1,0 +1,20 @@
+{
+  "server": {
+    "port": 3000
+  },
+  "logging": {
+    "level": "info"
+  },
+  "channels": {
+    "telegram": {
+      "enabled": false,
+      "token": "${TELEGRAM_BOT_TOKEN}",
+      "allowedUsers": []
+    },
+    "discord": {
+      "enabled": false,
+      "token": "${DISCORD_BOT_TOKEN}",
+      "allowedGuilds": []
+    }
+  }
+}

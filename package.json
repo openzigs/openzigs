@@ -1,0 +1,41 @@
+{
+  "name": "openzigs",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "test": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "lint": "eslint src --ext .ts",
+    "format": "prettier --write \"src/**/*.ts\"",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@github/copilot-sdk": "^0.1.20",
+    "@modelcontextprotocol/sdk": "^0.4.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "grammy": "^1.26.2",
+    "helmet": "^7.1.0",
+    "nanoid": "^5.0.7",
+    "socket.io": "^4.7.5",
+    "winston": "^3.13.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^22.13.0",
+    "@typescript-eslint/eslint-plugin": "^7.18.0",
+    "@typescript-eslint/parser": "^7.18.0",
+    "eslint": "^8.57.1",
+    "prettier": "^3.3.3",
+    "tsx": "^4.19.0",
+    "typescript": "5.5.4",
+    "vitest": "^2.1.9",
+    "@vitest/coverage-v8": "^2.1.9"
+  }
+}
