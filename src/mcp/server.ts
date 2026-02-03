@@ -17,7 +17,7 @@ type ReadFileInput = { path: string };
 type WriteFileInput = { path: string; content: string };
 type WebSearchInput = { query: string; count?: number };
 type BrowserReadInput = { selector?: string };
-type ShellExecuteInput = { command: string; cwd?: string; timeout?: number };
+type ShellExecuteInput = { command: string; args?: string[]; cwd?: string; timeout?: number };
 
 type ToolDefinition = {
   name: string;
@@ -58,7 +58,9 @@ export const createMcpServer = (options: McpServerOptions) => {
     port: options.chromeDebugPort ?? 9222
   });
 
-  const shellExecuteHandler = createShellExecuteHandler();
+  const shellExecuteHandler = createShellExecuteHandler({
+    allowedDirs: options.allowedDirs
+  });
 
   const tools = new Map<string, ToolDefinition>();
 
@@ -76,11 +78,7 @@ export const createMcpServer = (options: McpServerOptions) => {
     },
     zodSchema: z.object({ path: z.string() }),
     handler: async (args) => {
-      const parsed = parseArgs(z.object({ path: z.string() }), args);
-      if (!parsed.ok) {
-        return { text: parsed.error, isError: true };
-      }
-      const { path } = parsed.data as ReadFileInput;
+      const { path } = args as ReadFileInput;
       const output = await filesystemHandlers.readFile({ path });
       return { text: output.content };
     }
@@ -96,11 +94,7 @@ export const createMcpServer = (options: McpServerOptions) => {
     },
     zodSchema: z.object({ path: z.string(), content: z.string() }),
     handler: async (args) => {
-      const parsed = parseArgs(z.object({ path: z.string(), content: z.string() }), args);
-      if (!parsed.ok) {
-        return { text: parsed.error, isError: true };
-      }
-      const { path, content } = parsed.data as WriteFileInput;
+      const { path, content } = args as WriteFileInput;
       const output = await filesystemHandlers.writeFile({ path, content });
       return { text: JSON.stringify(output) };
     }
@@ -116,11 +110,7 @@ export const createMcpServer = (options: McpServerOptions) => {
     },
     zodSchema: z.object({ query: z.string(), count: z.number().optional() }),
     handler: async (args) => {
-      const parsed = parseArgs(z.object({ query: z.string(), count: z.number().optional() }), args);
-      if (!parsed.ok) {
-        return { text: parsed.error, isError: true };
-      }
-      const { query, count } = parsed.data as WebSearchInput;
+      const { query, count } = args as WebSearchInput;
       const output = await braveSearchHandler({ query, count });
       return { text: JSON.stringify(output) };
     }
@@ -134,12 +124,8 @@ export const createMcpServer = (options: McpServerOptions) => {
       properties: { selector: { type: "string" } }
     },
     zodSchema: z.object({ selector: z.string().optional() }),
-    handler: async (_args) => {
-      const parsed = parseArgs(z.object({ selector: z.string().optional() }), _args);
-      if (!parsed.ok) {
-        return { text: parsed.error, isError: true };
-      }
-      const output = await chromeDevtoolsHandler(parsed.data as BrowserReadInput);
+    handler: async (args) => {
+      const output = await chromeDevtoolsHandler(args as BrowserReadInput);
       return { text: JSON.stringify(output) };
     }
   });
@@ -164,21 +150,7 @@ export const createMcpServer = (options: McpServerOptions) => {
       timeout: z.number().optional()
     }),
     handler: async (args) => {
-      const parsed = parseArgs(
-        z.object({
-          command: z.string(),
-          args: z.array(z.string()).optional(),
-          cwd: z.string().optional(),
-          timeout: z.number().optional()
-        }),
-        args
-      );
-      if (!parsed.ok) {
-        return { text: parsed.error, isError: true };
-      }
-      const { command, args: commandArgs, cwd, timeout } = parsed.data as ShellExecuteInput & {
-        args?: string[];
-      };
+      const { command, args: commandArgs, cwd, timeout } = args as ShellExecuteInput;
       const output = await shellExecuteHandler({ command, args: commandArgs, cwd, timeout });
       return { text: JSON.stringify(output) };
     }

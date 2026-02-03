@@ -67,11 +67,18 @@ export const createBraveSearchHandler = ({
       throw new Error("Brave Search API response validation failed");
     }
 
-    const results = (parsed.data.web?.results ?? []).map((result) => ({
-      title: result.title ?? "",
-      url: result.url ?? "",
-      snippet: result.description ?? ""
-    }));
+    const results = (parsed.data.web?.results ?? []).flatMap((result) => {
+      if (!result.url) {
+        return [];
+      }
+      return [
+        {
+          title: result.title ?? "",
+          url: result.url,
+          snippet: result.description ?? ""
+        }
+      ];
+    });
 
     return { results };
   };

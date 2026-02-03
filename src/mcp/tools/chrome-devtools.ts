@@ -1,3 +1,5 @@
+import * as z from "zod";
+
 export type ChromeDevtoolsOutput = {
   title: string;
   url: string;
@@ -11,6 +13,13 @@ type ChromeDevtoolsOptions = {
   host: string;
   port: number;
 };
+
+const ChromeTargetSchema = z.object({
+  title: z.string().optional(),
+  url: z.string().optional()
+});
+
+const ChromeTargetsSchema = z.array(ChromeTargetSchema);
 
 const buildBaseUrl = (host: string, port: number) => {
   if (!host) {
@@ -35,8 +44,14 @@ export const createChromeDevtoolsHandler = ({ host, port }: ChromeDevtoolsOption
       throw new Error(`Chrome DevTools error: ${response.status}`);
     }
 
-    const targets = (await response.json()) as Array<{ title?: string; url?: string }>;
-    const first = targets.find((target) => target.url && target.title);
+    const json = await response.json();
+    const parsed = ChromeTargetsSchema.safeParse(json);
+
+    if (!parsed.success) {
+      throw new Error(`Chrome DevTools response validation failed: ${parsed.error.message}`);
+    }
+
+    const first = parsed.data.find((target) => target.url && target.title);
 
     if (!first) {
       throw new Error("No Chrome targets available");

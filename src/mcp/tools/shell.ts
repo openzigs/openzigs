@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import path from "node:path";
 
 const execFileAsync = promisify(execFile);
 
@@ -18,9 +19,22 @@ type ShellExecuteOutput = {
 
 type ShellExecuteOptions = {
   allowlist?: string[];
+  allowedDirs?: string[];
 };
 
-export const createShellExecuteHandler = ({ allowlist = [] }: ShellExecuteOptions = {}) => {
+const normalizeDir = (dirPath: string) => path.resolve(dirPath);
+
+const isPathAllowed = (filePath: string, allowedDirs: string[]) => {
+  const resolvedPath = path.resolve(filePath);
+  return allowedDirs.some((dir) => {
+    const resolvedDir = normalizeDir(dir);
+    return resolvedPath === resolvedDir || resolvedPath.startsWith(`${resolvedDir}${path.sep}`);
+  });
+};
+
+export const createShellExecuteHandler = (
+  { allowlist = [], allowedDirs = [] }: ShellExecuteOptions = {}
+) => {
   return async ({ command, args = [], cwd, timeout = 30000 }: ShellExecuteInput): Promise<ShellExecuteOutput> => {
     if (allowlist.length === 0) {
       return {
@@ -34,6 +48,14 @@ export const createShellExecuteHandler = ({ allowlist = [] }: ShellExecuteOption
       return {
         stdout: "",
         stderr: `Shell command not allowed: ${command}`,
+        exitCode: 1
+      };
+    }
+
+    if (cwd && allowedDirs.length > 0 && !isPathAllowed(cwd, allowedDirs)) {
+      return {
+        stdout: "",
+        stderr: `Shell cwd not allowed: ${cwd}`,
         exitCode: 1
       };
     }
