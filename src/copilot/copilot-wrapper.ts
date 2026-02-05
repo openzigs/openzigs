@@ -336,11 +336,12 @@ export class CopilotWrapperService implements CopilotWrapper {
   }
 
   private async ensureStarted() {
-    if (this.started || !this.client.start) {
-      this.started = true;
+    if (this.started) {
       return;
     }
-    await this.client.start();
+    if (this.client.start) {
+      await this.client.start();
+    }
     this.started = true;
   }
 
@@ -391,26 +392,16 @@ export class CopilotWrapperService implements CopilotWrapper {
   }
 
   private async *streamQueue(queue: AsyncQueue<string>, onEnd: () => void): AsyncGenerator<string> {
-    let ended = false;
-    const finalize = () => {
-      if (ended) {
-        return;
-      }
-      ended = true;
-      onEnd();
-    };
-
     try {
       while (true) {
         const next = await queue.next();
         if (next.done) {
-          finalize();
           break;
         }
         yield next.value;
       }
     } finally {
-      finalize();
+      onEnd();
     }
   }
 }

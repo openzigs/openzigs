@@ -96,8 +96,9 @@ describe("copilot wrapper", () => {
   });
 
   it("streams chat output and passes tools to the SDK", async () => {
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "openzigs-test-"));
     const registry = new ToolRegistry({
-      statePath: path.join(os.tmpdir(), "openzigs-tool-registry.json"),
+      statePath: path.join(tmpDir, "tool-registry.json"),
       defaultEnabledTools: ["read-file"]
     });
     registry.registerTool(buildTool("read-file"));
