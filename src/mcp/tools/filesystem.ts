@@ -4,6 +4,7 @@ import { isPathAllowed } from "./path-utils.js";
 
 export type FilesystemHandlers = {
   readFile: (input: { path: string }) => Promise<{ content: string }>;
+  listDirectory: (input: { path: string }) => Promise<{ entries: { name: string; type: "file" | "directory" }[] }>;
   writeFile: (input: { path: string; content: string }) => Promise<{ success: true }>;
 };
 
@@ -23,6 +24,16 @@ export const createFilesystemHandlers = ({ allowedDirs }: FilesystemOptions): Fi
       ensureAllowed(filePath, allowedDirs);
       const content = await fs.readFile(filePath, "utf-8");
       return { content };
+    },
+    listDirectory: async ({ path: dirPath }) => {
+      ensureAllowed(dirPath, allowedDirs);
+      const entries = await fs.readdir(dirPath, { withFileTypes: true });
+      return {
+        entries: entries.map((entry) => ({
+          name: entry.name,
+          type: entry.isDirectory() ? "directory" : "file"
+        }))
+      };
     },
     writeFile: async ({ path: filePath, content }) => {
       ensureAllowed(filePath, allowedDirs);
