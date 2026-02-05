@@ -84,7 +84,7 @@ describe("tool registry", () => {
     const registry = new ToolRegistry({ statePath });
     registerDefaultTools(registry);
 
-    registry.setEnabled("write-file", false);
+    await registry.setEnabled("write-file", false);
     expect(registry.isEnabled("write-file")).toBe(false);
 
     const reloaded = new ToolRegistry({ statePath });

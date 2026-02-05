@@ -1,5 +1,6 @@
 import { EventEmitter } from "node:events";
 import fs from "node:fs";
+import fsPromises from "node:fs/promises";
 import path from "node:path";
 import type * as z from "zod";
 
@@ -67,14 +68,15 @@ const loadState = (statePath: string): ToolRegistryState | null => {
       enabledTools,
       customRiskOverrides
     };
-  } catch {
+  } catch (error) {
+    console.error(`[ToolRegistry] Failed to load state from ${statePath}:`, error);
     return null;
   }
 };
 
-const saveState = (statePath: string, state: ToolRegistryState) => {
-  fs.mkdirSync(path.dirname(statePath), { recursive: true });
-  fs.writeFileSync(statePath, JSON.stringify(state, null, 2), "utf-8");
+const saveState = async (statePath: string, state: ToolRegistryState) => {
+  await fsPromises.mkdir(path.dirname(statePath), { recursive: true });
+  await fsPromises.writeFile(statePath, JSON.stringify(state, null, 2), "utf-8");
 };
 
 const toolCategories: ToolCategory[] = ["filesystem", "search", "browser", "shell"];
@@ -115,12 +117,9 @@ export class ToolRegistry extends EventEmitter {
   }
 
   getAllTools(): Record<ToolCategory, ToolInfo[]> {
-    const grouped: Record<ToolCategory, ToolInfo[]> = {
-      filesystem: [],
-      search: [],
-      browser: [],
-      shell: []
-    };
+    const grouped = Object.fromEntries(
+      toolCategories.map((category) => [category, []])
+    ) as Record<ToolCategory, ToolInfo[]>;
 
     for (const tool of this.tools.values()) {
       const riskLevel = this.getRiskLevel(tool.name) ?? tool.riskLevel;
@@ -168,7 +167,7 @@ export class ToolRegistry extends EventEmitter {
     return this.enabledTools.has(name);
   }
 
-  setEnabled(name: string, enabled: boolean) {
+  async setEnabled(name: string, enabled: boolean) {
     if (!this.tools.has(name)) {
       throw new Error(`Unknown tool: ${name}`);
     }
@@ -183,7 +182,7 @@ export class ToolRegistry extends EventEmitter {
       this.enabledTools.delete(name);
     }
 
-    saveState(this.statePath, {
+    await saveState(this.statePath, {
       enabledTools: Array.from(this.enabledTools).sort(),
       customRiskOverrides: this.customRiskOverrides
     });
