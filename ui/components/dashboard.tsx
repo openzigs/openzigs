@@ -44,16 +44,18 @@ const buildUrl = (path: string) => {
   return `${API_BASE}${path}`;
 };
 
-const authHeaders = AUTH_TOKEN ? { Authorization: `Bearer ${AUTH_TOKEN}` } : {};
-
 const fetchJson = async <T,>(path: string, options?: RequestInit): Promise<T> => {
+  const headers = new Headers(options?.headers);
+  if (!headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
+  }
+  if (AUTH_TOKEN) {
+    headers.set("Authorization", `Bearer ${AUTH_TOKEN}`);
+  }
+
   const response = await fetch(buildUrl(path), {
     ...options,
-    headers: {
-      "Content-Type": "application/json",
-      ...(options?.headers ?? {}),
-      ...authHeaders
-    }
+    headers
   });
   if (!response.ok) {
     const text = await response.text();

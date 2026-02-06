@@ -357,6 +357,7 @@ export class CopilotWrapperService implements CopilotWrapper {
     const maxRetries = 3;
     let attempt = 0;
 
+    // eslint-disable-next-line no-constant-condition
     while (true) {
       try {
         await session.sendAndWait({ prompt });
@@ -401,6 +402,7 @@ export class CopilotWrapperService implements CopilotWrapper {
 
   private async *streamQueue(queue: AsyncQueue<string>, onEnd: () => void): AsyncGenerator<string> {
     try {
+      // eslint-disable-next-line no-constant-condition
       while (true) {
         const next = await queue.next();
         if (next.done) {
