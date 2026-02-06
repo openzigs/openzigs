@@ -18,6 +18,18 @@ export type AuthConfig = {
   rateLimit: RateLimitConfig;
 };
 
+export type AccessControlMode = "allowlist" | "blocklist" | "open";
+
+export type AccessControlConfig = {
+  mode: AccessControlMode;
+  allowedUsers: string[];
+  blockedUsers: string[];
+};
+
+export type MessagingConfig = {
+  accessControl: AccessControlConfig;
+};
+
 export type AppConfig = {
   server: {
     port: number;
@@ -26,6 +38,7 @@ export type AppConfig = {
     level: string;
   };
   auth: AuthConfig;
+  messaging?: MessagingConfig;
 };
 
 const rateLimitSchema = z.object({
@@ -40,6 +53,16 @@ const authSchema = z.object({
   rateLimit: rateLimitSchema
 });
 
+const accessControlSchema = z.object({
+  mode: z.enum(["allowlist", "blocklist", "open"]),
+  allowedUsers: z.array(z.string()),
+  blockedUsers: z.array(z.string())
+});
+
+const messagingSchema = z.object({
+  accessControl: accessControlSchema
+}).optional();
+
 const appConfigSchema = z.object({
   server: z.object({
     port: z.number()
@@ -47,7 +70,8 @@ const appConfigSchema = z.object({
   logging: z.object({
     level: z.string()
   }),
-  auth: authSchema
+  auth: authSchema,
+  messaging: messagingSchema
 });
 
 export type LoadConfigOptions = {
