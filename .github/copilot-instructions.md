@@ -16,6 +16,7 @@
 - Build: `pnpm build` (tsc).
 - Tests: `pnpm test` (Vitest, includes `src/**/*.test.ts`).
 - Lint/format: `pnpm lint`, `pnpm format`.
+- **Quality Gate**: Before running `git commit` or creating a Pull Request, you **MUST** run `pnpm lint`, `pnpm typecheck`, and `pnpm build` (if touching UI) to ensure no regressions. Code quality is paramount; do not rely on CI to catch basic errors.
 
 ## Config & Integration Points
 - Default config is JSON in [config/default.json](config/default.json); env vars are interpolated in config values.

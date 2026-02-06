@@ -1,5 +1,6 @@
 import express from "express";
 import helmet from "helmet";
+// @ts-expect-error -- cors has no bundled types
 import cors from "cors";
 import * as z from "zod";
 import { getHealth } from "./health.js";
@@ -110,7 +111,7 @@ export const createApp = (config: AppConfig, options: CreateAppOptions = {}) => 
       return res.status(400).json({ error: "Invalid status" });
     }
 
-    const approvals = approvalQueue.list({ status: statusRaw === "all" ? "all" : statusRaw });
+    const approvals = approvalQueue.list({ status: (statusRaw === "all" ? "all" : statusRaw) as ApprovalStatus | "all" | undefined });
     return res.status(200).json({ approvals });
   });
 
@@ -168,8 +169,8 @@ export const createApp = (config: AppConfig, options: CreateAppOptions = {}) => 
     const boundedLimit = Number.isFinite(limit) ? Math.min(Math.max(limit, 1), 1000) : 100;
 
     const entries = await auditLogger.query({
-      category: categoryRaw,
-      level: levelRaw,
+      category: categoryRaw as AuditCategory | undefined,
+      level: levelRaw as AuditLevel | undefined,
       since: since ?? undefined,
       until: until ?? undefined,
       limit: boundedLimit

@@ -102,14 +102,14 @@ export const createAuthMiddleware = (config: AuthConfig) => {
     }
 
     limiter.reset(key);
-    req.userRole = resolveRole(config);
+    (req as unknown as Record<string, unknown>).userRole = resolveRole(config);
     return next();
   };
 };
 
 export const checkRole = (requiredRole: Role) => {
   return (req: Request, res: Response, next: NextFunction) => {
-    const role = req.userRole ?? "viewer";
+    const role = ((req as unknown as Record<string, unknown>).userRole as Role | undefined) ?? "viewer";
     if (!hasPermission(role, requiredRole)) {
       return res.status(403).json({ error: "Forbidden" });
     }

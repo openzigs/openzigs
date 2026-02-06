@@ -90,13 +90,11 @@ export class ToolRegistry extends EventEmitter {
   private tools = new Map<string, ToolDefinition>();
   private enabledTools: Set<string> | null;
   private customRiskOverrides: Record<string, RiskLevel>;
-  private defaultEnabledTools: string[];
   private statePath: string;
 
   constructor({ statePath, defaultEnabledTools = [] }: ToolRegistryOptions) {
     super();
     this.statePath = statePath;
-    this.defaultEnabledTools = defaultEnabledTools;
     const state = loadState(statePath);
 
     if (state) {
@@ -119,7 +117,7 @@ export class ToolRegistry extends EventEmitter {
   getAllTools(): Record<ToolCategory, ToolInfo[]> {
     const grouped = Object.fromEntries(
       toolCategories.map((category) => [category, []])
-    ) as Record<ToolCategory, ToolInfo[]>;
+    ) as unknown as Record<ToolCategory, ToolInfo[]>;
 
     for (const tool of this.tools.values()) {
       const riskLevel = this.getRiskLevel(tool.name) ?? tool.riskLevel;
