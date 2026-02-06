@@ -4,8 +4,10 @@ import path from "node:path";
 import { Server as SocketIOServer } from "socket.io";
 import { createApp } from "./app.js";
 import { ChannelManager, DiscordChannel, TelegramChannel } from "./channels/index.js";
+import type { MessageChannel } from "./channels/index.js";
 import { loadConfig } from "./config/index.js";
 import { logger } from "./logging/logger.js";
+import type { Logger } from "winston";
 import { AuditLogger } from "./logging/audit-logger.js";
 import { ApprovalQueue } from "./approvals/index.js";
 import { CopilotWrapperService } from "./copilot/index.js";
@@ -67,6 +69,58 @@ const defaultAccessControl = {
   blockedUsers: []
 };
 
+function setupChannelRouting(
+  channel: MessageChannel,
+  router: MessageRouter,
+  approvalQueue: ApprovalQueue,
+  sessionManager: SessionManager,
+  logger: Logger
+) {
+  const channelType = channel.type;
+
+  channel.onMessage((message) => {
+    void router.route(message).catch((error) => {
+      const details = error instanceof Error ? error.message : String(error);
+      logger.error(`${channelType} message routing failed: ${details}`);
+    });
+  });
+
+  channel.onApprovalResponse((response) => {
+    approvalQueue.handleDecision(response.approvalId, {
+      approved: response.approved,
+      decidedBy: response.decidedBy,
+      decidedVia: channelType
+    });
+  });
+
+  approvalQueue.on("approval:created", async (approval) => {
+    if (approval.channelType !== channelType || !approval.sessionId) {
+      return;
+    }
+    try {
+      const session = await sessionManager.getSession(approval.sessionId);
+      const chatId = typeof session.metadata.chatId === "string"
+        ? session.metadata.chatId
+        : undefined;
+      if (!chatId) {
+        logger.warn(`Missing chatId for ${channelType} approval ${approval.id}`);
+        return;
+      }
+      await channel.sendApprovalRequest(chatId, {
+        id: approval.id,
+        tool: approval.tool,
+        args: approval.args,
+        riskLevel: approval.riskLevel,
+        explanation: approval.explanation,
+        preview: approval.preview
+      });
+    } catch (error) {
+      const details = error instanceof Error ? error.message : String(error);
+      logger.error(`Failed to send ${channelType} approval: ${details}`);
+    }
+  });
+}
+
 const telegramConfig = config.channels?.telegram;
 if (telegramConfig?.enabled && telegramConfig.token) {
   const telegramChannel = new TelegramChannel({
@@ -98,47 +152,7 @@ if (telegramConfig?.enabled && telegramConfig.token) {
   channelManager.register(telegramChannel);
   app.use("/telegram/webhook", telegramChannel.getWebhookCallback());
 
-  telegramChannel.onMessage((message) => {
-    void router.route(message).catch((error) => {
-      const details = error instanceof Error ? error.message : String(error);
-      logger.error(`Telegram message routing failed: ${details}`);
-    });
-  });
-
-  telegramChannel.onApprovalResponse((response) => {
-    approvalQueue.handleDecision(response.approvalId, {
-      approved: response.approved,
-      decidedBy: response.decidedBy,
-      decidedVia: "telegram"
-    });
-  });
-
-  approvalQueue.on("approval:created", async (approval) => {
-    if (approval.channelType !== "telegram" || !approval.sessionId) {
-      return;
-    }
-    try {
-      const session = await sessionManager.getSession(approval.sessionId);
-      const chatId = typeof session.metadata.chatId === "string"
-        ? session.metadata.chatId
-        : undefined;
-      if (!chatId) {
-        logger.warn(`Missing chatId for Telegram approval ${approval.id}`);
-        return;
-      }
-      await telegramChannel.sendApprovalRequest(chatId, {
-        id: approval.id,
-        tool: approval.tool,
-        args: approval.args,
-        riskLevel: approval.riskLevel,
-        explanation: approval.explanation,
-        preview: approval.preview
-      });
-    } catch (error) {
-      const details = error instanceof Error ? error.message : String(error);
-      logger.error(`Failed to send Telegram approval: ${details}`);
-    }
-  });
+  setupChannelRouting(telegramChannel, router, approvalQueue, sessionManager, logger);
 }
 
 const discordConfig = config.channels?.discord;
@@ -146,8 +160,7 @@ if (discordConfig?.enabled && discordConfig.token) {
   const discordChannel = new DiscordChannel({
     config: {
       botToken: discordConfig.token,
-      allowedGuilds: discordConfig.allowedGuilds,
-      adminUsers: discordConfig.adminUsers
+      allowedGuilds: discordConfig.allowedGuilds
     },
     logger
   });
@@ -164,47 +177,9 @@ if (discordConfig?.enabled && discordConfig.token) {
   await discordChannel.connect();
   channelManager.register(discordChannel);
 
-  discordChannel.onMessage((message) => {
-    void router.route(message).catch((error) => {
-      const details = error instanceof Error ? error.message : String(error);
-      logger.error(`Discord message routing failed: ${details}`);
-    });
-  });
 
-  discordChannel.onApprovalResponse((response) => {
-    approvalQueue.handleDecision(response.approvalId, {
-      approved: response.approved,
-      decidedBy: response.decidedBy,
-      decidedVia: "discord"
-    });
-  });
 
-  approvalQueue.on("approval:created", async (approval) => {
-    if (approval.channelType !== "discord" || !approval.sessionId) {
-      return;
-    }
-    try {
-      const session = await sessionManager.getSession(approval.sessionId);
-      const chatId = typeof session.metadata.chatId === "string"
-        ? session.metadata.chatId
-        : undefined;
-      if (!chatId) {
-        logger.warn(`Missing chatId for Discord approval ${approval.id}`);
-        return;
-      }
-      await discordChannel.sendApprovalRequest(chatId, {
-        id: approval.id,
-        tool: approval.tool,
-        args: approval.args,
-        riskLevel: approval.riskLevel,
-        explanation: approval.explanation,
-        preview: approval.preview
-      });
-    } catch (error) {
-      const details = error instanceof Error ? error.message : String(error);
-      logger.error(`Failed to send Discord approval: ${details}`);
-    }
-  });
+  setupChannelRouting(discordChannel, router, approvalQueue, sessionManager, logger);
 }
 
 httpServer.listen(port, () => {

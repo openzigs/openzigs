@@ -53,7 +53,6 @@ describe("DiscordChannel", () => {
       config: {
         botToken: "token",
         allowedGuilds: [],
-        adminUsers: []
       },
       client
     });
@@ -79,7 +78,6 @@ describe("DiscordChannel", () => {
       config: {
         botToken: "token",
         allowedGuilds: [],
-        adminUsers: []
       },
       client
     });
@@ -109,8 +107,7 @@ describe("DiscordChannel", () => {
     const channel = new DiscordChannel({
       config: {
         botToken: "token",
-        allowedGuilds: ["guild-1"],
-        adminUsers: []
+        allowedGuilds: ["guild-1"]
       },
       client
     });

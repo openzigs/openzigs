@@ -22,7 +22,6 @@ const DISCORD_MAX_MESSAGE_LENGTH = 2000;
 export type DiscordConfig = {
   botToken: string;
   allowedGuilds: string[];
-  adminUsers: string[];
 };
 
 type DiscordTextChannelLike = {
@@ -66,7 +65,6 @@ export class DiscordChannel implements MessageChannel {
   private messageHandlers: Array<(msg: IncomingMessage) => void> = [];
   private approvalHandlers: Array<(response: ApprovalResponse) => void> = [];
   private client: DiscordClientLike;
-  private approvals = new Map<string, ApprovalRequest>();
   private logger?: Logger;
   private allowedGuilds: string[];
   private botToken: string;
@@ -126,8 +124,6 @@ export class DiscordChannel implements MessageChannel {
         decidedAt: new Date()
       };
       this.emitApprovalResponse(response);
-      this.approvals.delete(approvalId);
-
       const originalText = interaction.message?.content ?? "";
       await interaction.update({
         content: `${originalText}\n\nStatus: ${approved ? "APPROVED" : "REJECTED"}`,
@@ -190,7 +186,6 @@ export class DiscordChannel implements MessageChannel {
     if (!this.connected) {
       throw new Error("Channel is not connected");
     }
-    this.approvals.set(request.id, request);
 
     const channel = await this.client.channels.fetch(chatId);
     if (!channel || !channel.isTextBased()) {
