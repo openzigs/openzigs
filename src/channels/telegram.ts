@@ -41,16 +41,16 @@ export type TelegramChannelOptions = {
   bot?: TelegramBotLike;
 };
 
-const splitTelegramMessage = (text: string, maxLength = TELEGRAM_MAX_MESSAGE_LENGTH) => {
-  if (text.length <= maxLength) {
+const splitTelegramMessage = (text: string) => {
+  if (text.length <= TELEGRAM_MAX_MESSAGE_LENGTH) {
     return [text];
   }
 
   const chunks: string[] = [];
   let offset = 0;
   while (offset < text.length) {
-    chunks.push(text.slice(offset, offset + maxLength));
-    offset += maxLength;
+    chunks.push(text.slice(offset, offset + TELEGRAM_MAX_MESSAGE_LENGTH));
+    offset += TELEGRAM_MAX_MESSAGE_LENGTH;
   }
   return chunks;
 };
@@ -130,7 +130,7 @@ export class TelegramChannel implements MessageChannel {
         await ctx.reply("Usage: /toggle <tool> <on|off>");
         return;
       }
-      const enabled = state === "on" || state === "enable" || state === "enabled";
+      const enabled = state === "on";
       try {
         await this.toolRegistry.setEnabled(toolName, enabled);
         await ctx.reply(`${toolName} is now ${enabled ? "enabled" : "disabled"}.`);

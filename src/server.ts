@@ -58,7 +58,7 @@ toolRegistry.on("tool:toggled", (payload) => {
 });
 
 const normalizeTelegramAllowlist = (ids: string[]) => {
-  return ids.map((id) => (id.includes(":")) ? id : `telegram:${id}`);
+  return ids.map((id) => (id.startsWith("telegram:")) ? id : `telegram:${id}`);
 };
 
 const telegramConfig = config.channels?.telegram;
@@ -66,8 +66,8 @@ if (telegramConfig?.enabled && telegramConfig.token) {
   const telegramChannel = new TelegramChannel({
     config: {
       botToken: telegramConfig.token,
-      webhookUrl: telegramConfig.webhookUrl || undefined,
-      adminUserId: telegramConfig.adminUserId || undefined
+      webhookUrl: telegramConfig.webhookUrl,
+      adminUserId: telegramConfig.adminUserId
     },
     toolRegistry,
     logger
