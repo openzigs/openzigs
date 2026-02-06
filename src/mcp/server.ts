@@ -253,11 +253,10 @@ export const createMcpServer = (options: McpServerOptions) => {
         };
       }
 
-      const toolInfo = toolRegistry.getToolInfo(toolName);
       const approval = await options.approvalQueue.requestApproval({
         tool: toolName,
         args: validated.data as Record<string, unknown>,
-        riskLevel: (toolInfo?.riskLevel ?? tool.riskLevel) === "high" ? "high" : "medium",
+        riskLevel: "high",
         explanation: "High-risk tool execution requires approval.",
         preview: buildApprovalPreview(toolName, validated.data as Record<string, unknown>),
         channelType: "web"

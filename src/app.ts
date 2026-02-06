@@ -86,18 +86,15 @@ export const createApp = (config: AppConfig, options: CreateAppOptions = {}) => 
 
   app.post("/api/approvals/:id/decision", authMiddleware, checkRole("operator"), (req, res) => {
     const { id } = req.params;
-    const approved = (req.body as { approved?: unknown }).approved;
-    const decidedBy = typeof (req.body as { decidedBy?: unknown }).decidedBy === "string"
-      ? (req.body as { decidedBy?: string }).decidedBy
-      : undefined;
-    const decidedViaRaw = typeof (req.body as { decidedVia?: unknown }).decidedVia === "string"
-      ? (req.body as { decidedVia?: string }).decidedVia
-      : "web";
+    const body = req.body as Record<string, unknown>;
+    const approved = body.approved;
+    const decidedBy = typeof body.decidedBy === "string" ? body.decidedBy : undefined;
+    const decidedViaRaw = typeof body.decidedVia === "string" ? body.decidedVia : "web";
 
     if (typeof approved !== "boolean") {
       return res.status(400).json({ error: "Invalid approved flag" });
     }
-    if (decidedViaRaw && !isApprovalChannel(decidedViaRaw)) {
+    if (!isApprovalChannel(decidedViaRaw)) {
       return res.status(400).json({ error: "Invalid decidedVia" });
     }
 

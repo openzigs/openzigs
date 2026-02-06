@@ -79,4 +79,31 @@ describe("ApprovalQueue", () => {
     expect(result.approved).toBe(false);
     expect(result.status).toBe("expired");
   });
+
+  it("cleans up decided approvals after retention", async () => {
+    vi.useFakeTimers();
+    let now = new Date("2026-02-06T00:00:00Z");
+
+    const queue = new ApprovalQueue({
+      clock: () => now,
+      timeoutMs: 1000,
+      retentionMs: 200
+    });
+
+    const resultPromise = queue.requestApproval({
+      tool: "write-file",
+      args: { path: "/tmp/test.txt" },
+      riskLevel: "high",
+      explanation: "Need to write"
+    });
+
+    const [pending] = queue.list({ status: "pending" });
+    queue.handleDecision(pending.id, { approved: true, decidedVia: "web" });
+    await resultPromise;
+
+    now = new Date(now.getTime() + 201);
+    await vi.advanceTimersByTimeAsync(201);
+
+    expect(queue.get(pending.id)).toBeUndefined();
+  });
 });

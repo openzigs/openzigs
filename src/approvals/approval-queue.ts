@@ -49,6 +49,7 @@ export type ApprovalResult = {
 export type ApprovalQueueOptions = {
   clock?: () => Date;
   timeoutMs?: number;
+  retentionMs?: number;
   auditLogger?: AuditLogger;
 };
 
@@ -56,14 +57,17 @@ export class ApprovalQueue extends EventEmitter {
   private approvals = new Map<string, PendingApproval>();
   private waiters = new Map<string, (result: ApprovalResult) => void>();
   private timers = new Map<string, ReturnType<typeof setTimeout>>();
+  private cleanupTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private clock: () => Date;
   private timeoutMs: number;
+  private retentionMs: number;
   private auditLogger?: AuditLogger;
 
   constructor(options: ApprovalQueueOptions = {}) {
     super();
     this.clock = options.clock ?? (() => new Date());
     this.timeoutMs = options.timeoutMs ?? 5 * 60 * 1000;
+    this.retentionMs = options.retentionMs ?? 10 * 60 * 1000;
     this.auditLogger = options.auditLogger;
   }
 
@@ -159,6 +163,7 @@ export class ApprovalQueue extends EventEmitter {
       clearTimeout(timer);
     }
     this.timers.delete(id);
+    this.scheduleCleanup(id);
 
     const result: ApprovalResult = {
       approved: status === "approved",
@@ -190,5 +195,32 @@ export class ApprovalQueue extends EventEmitter {
     }
 
     return true;
+  }
+
+  private scheduleCleanup(id: string) {
+    if (this.retentionMs <= 0) {
+      return;
+    }
+    const existing = this.cleanupTimers.get(id);
+    if (existing) {
+      clearTimeout(existing);
+    }
+    const timer = setTimeout(() => {
+      this.cleanupApproval(id);
+    }, this.retentionMs);
+    this.cleanupTimers.set(id, timer);
+  }
+
+  private cleanupApproval(id: string) {
+    const approval = this.approvals.get(id);
+    if (!approval || approval.status === "pending") {
+      return;
+    }
+    this.approvals.delete(id);
+    const cleanupTimer = this.cleanupTimers.get(id);
+    if (cleanupTimer) {
+      clearTimeout(cleanupTimer);
+    }
+    this.cleanupTimers.delete(id);
   }
 }
