@@ -74,12 +74,6 @@ abstract class BaseChannel implements MessageChannel {
   }
 }
 
-export class SlackChannel extends BaseChannel {
-  constructor(id = "slack") {
-    super(id, "slack");
-  }
-}
-
 export class WebChannel extends BaseChannel {
   constructor(id = "web") {
     super(id, "web");

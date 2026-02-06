@@ -9,8 +9,4 @@ describe("convertMarkdown", () => {
   it("keeps discord formatting", () => {
     expect(convertMarkdown("**bold**", "discord")).toBe("**bold**");
   });
-
-  it("converts bold for slack", () => {
-    expect(convertMarkdown("**bold**", "slack")).toBe("*bold*");
-  });
 });

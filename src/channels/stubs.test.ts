@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { SlackChannel } from "./stubs.js";
+import { WebChannel } from "./stubs.js";
 
 describe("Channel stubs", () => {
   it("tracks connection state", async () => {
-    const channel = new SlackChannel();
+    const channel = new WebChannel();
     expect(channel.isConnected()).toBe(false);
     await channel.connect();
     expect(channel.isConnected()).toBe(true);
