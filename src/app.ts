@@ -11,9 +11,15 @@ import {
   type AuditCategory,
   type AuditLevel
 } from "./logging/audit-logger.js";
+import {
+  ApprovalQueue,
+  type ApprovalChannel,
+  type ApprovalStatus
+} from "./approvals/index.js";
 
 type CreateAppOptions = {
   auditLogger?: AuditLogger;
+  approvalQueue?: ApprovalQueue;
 };
 
 const isAuditCategory = (value: string): value is AuditCategory => {
@@ -22,6 +28,14 @@ const isAuditCategory = (value: string): value is AuditCategory => {
 
 const isAuditLevel = (value: string): value is AuditLevel => {
   return AUDIT_LEVELS.includes(value as AuditLevel);
+};
+
+const isApprovalStatus = (value: string): value is ApprovalStatus => {
+  return value === "pending" || value === "approved" || value === "rejected" || value === "expired";
+};
+
+const isApprovalChannel = (value: string): value is ApprovalChannel => {
+  return value === "web" || value === "telegram" || value === "discord";
 };
 
 const parseDate = (value: string | undefined) => {
@@ -38,6 +52,7 @@ const parseDate = (value: string | undefined) => {
 export const createApp = (config: AppConfig, options: CreateAppOptions = {}) => {
   const app = express();
   const auditLogger = options.auditLogger ?? new AuditLogger();
+  const approvalQueue = options.approvalQueue ?? new ApprovalQueue({ auditLogger });
 
   app.set("trust proxy", true);
 
@@ -57,6 +72,43 @@ export const createApp = (config: AppConfig, options: CreateAppOptions = {}) => 
 
   app.post("/api/tools/:name/toggle", authMiddleware, checkRole("admin"), (req, res) => {
     res.status(200).json({ ok: true, tool: req.params.name });
+  });
+
+  app.get("/api/approvals", authMiddleware, checkRole("operator"), (req, res) => {
+    const statusRaw = typeof req.query.status === "string" ? req.query.status : undefined;
+    if (statusRaw && statusRaw !== "all" && !isApprovalStatus(statusRaw)) {
+      return res.status(400).json({ error: "Invalid status" });
+    }
+
+    const approvals = approvalQueue.list({ status: statusRaw === "all" ? "all" : statusRaw });
+    return res.status(200).json({ approvals });
+  });
+
+  app.post("/api/approvals/:id/decision", authMiddleware, checkRole("operator"), (req, res) => {
+    const { id } = req.params;
+    const body = req.body as Record<string, unknown>;
+    const approved = body.approved;
+    const decidedBy = typeof body.decidedBy === "string" ? body.decidedBy : undefined;
+    const decidedViaRaw = typeof body.decidedVia === "string" ? body.decidedVia : "web";
+
+    if (typeof approved !== "boolean") {
+      return res.status(400).json({ error: "Invalid approved flag" });
+    }
+    if (!isApprovalChannel(decidedViaRaw)) {
+      return res.status(400).json({ error: "Invalid decidedVia" });
+    }
+
+    const existing = approvalQueue.get(id);
+    if (!existing) {
+      return res.status(404).json({ error: "Approval not found" });
+    }
+    if (existing.status !== "pending") {
+      return res.status(409).json({ error: "Approval already decided" });
+    }
+
+    approvalQueue.handleDecision(id, { approved, decidedBy, decidedVia: decidedViaRaw });
+    const updated = approvalQueue.get(id);
+    return res.status(200).json({ approval: updated });
   });
 
   app.get("/api/logs", authMiddleware, async (req, res) => {

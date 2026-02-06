@@ -8,6 +8,7 @@ import { createChromeDevtoolsHandler } from "./tools/chrome-devtools.js";
 import { createShellExecuteHandler } from "./tools/shell.js";
 import { ToolRegistry, type ToolDefinition } from "./tool-registry.js";
 import { AuditLogger } from "../logging/audit-logger.js";
+import { ApprovalQueue } from "../approvals/index.js";
 
 export type McpServerOptions = {
   allowedDirs: string[];
@@ -18,6 +19,7 @@ export type McpServerOptions = {
   toolStatePath?: string;
   defaultEnabledTools?: string[];
   auditLogger?: AuditLogger;
+  approvalQueue?: ApprovalQueue;
 };
 
 const readFileSchema = z.object({ path: z.string() });
@@ -48,6 +50,20 @@ const parseArgs = (schema: z.ZodSchema, args: Record<string, unknown>) => {
     };
   }
   return { ok: true as const, data: parsed.data };
+};
+
+const buildApprovalPreview = (toolName: string, args: Record<string, unknown>) => {
+  if (toolName === "write-file") {
+    const path = typeof args.path === "string" ? args.path : "";
+    const content = typeof args.content === "string" ? args.content : "";
+    return `Would write ${content.length} bytes to ${path}`;
+  }
+  if (toolName === "shell-execute") {
+    const command = typeof args.command === "string" ? args.command : "";
+    const argList = Array.isArray(args.args) ? args.args.join(" ") : "";
+    return `Would run: ${command}${argList ? ` ${argList}` : ""}`;
+  }
+  return undefined;
 };
 
 export const createMcpServer = (options: McpServerOptions) => {
@@ -228,6 +244,33 @@ export const createMcpServer = (options: McpServerOptions) => {
         isError: true
       };
     }
+
+    if (toolRegistry.requiresApproval(toolName)) {
+      if (!options.approvalQueue) {
+        return {
+          content: [{ type: "text", text: `Approval required for tool: ${toolName}` }],
+          isError: true
+        };
+      }
+
+      const approval = await options.approvalQueue.requestApproval({
+        tool: toolName,
+        args: validated.data as Record<string, unknown>,
+        riskLevel: "high",
+        explanation: "High-risk tool execution requires approval.",
+        preview: buildApprovalPreview(toolName, validated.data as Record<string, unknown>),
+        channelType: "web"
+      });
+
+      if (!approval.approved) {
+        const reason = approval.status === "expired" ? "Approval timed out" : "Approval rejected";
+        return {
+          content: [{ type: "text", text: reason }],
+          isError: true
+        };
+      }
+    }
+
     const result = await tool
       .handler(validated.data as Record<string, unknown>)
       .catch((error) => {

@@ -5,6 +5,16 @@ export { CopilotWrapperService } from "./copilot/index.js";
 export type { CopilotWrapper, CopilotWrapperOptions, DeviceAuthInfo } from "./copilot/index.js";
 export { AuditLogger } from "./logging/audit-logger.js";
 export type { AuditCategory, AuditLevel, AuditLogEntry, AuditLoggerOptions } from "./logging/audit-logger.js";
+export { ApprovalQueue } from "./approvals/index.js";
+export type {
+	ApprovalChannel,
+	ApprovalDecision,
+	ApprovalQueueOptions,
+	ApprovalRequest,
+	ApprovalResult,
+	ApprovalStatus,
+	PendingApproval
+} from "./approvals/index.js";
 export { SessionManager } from "./sessions/index.js";
 export type {
 	Session,
