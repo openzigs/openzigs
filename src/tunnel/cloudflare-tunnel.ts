@@ -1,0 +1,196 @@
+import { EventEmitter } from "node:events";
+import { spawn as nodeSpawn } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
+import type { Logger } from "winston";
+
+export type TunnelMode = "quick" | "named";
+
+export type NamedTunnelConfig = {
+  credentialsFile: string;
+  hostname: string;
+};
+
+export type CloudflareTunnelOptions = {
+  mode: TunnelMode;
+  namedTunnel?: NamedTunnelConfig;
+  spawn?: typeof nodeSpawn;
+  logger?: Logger;
+  connectTimeoutMs?: number;
+  reconnectDelayMs?: number;
+};
+
+export class CloudflareTunnel extends EventEmitter {
+  private process: ChildProcess | null = null;
+  private publicUrl: string | null = null;
+  private readonly spawn: typeof nodeSpawn;
+  private readonly logger?: Logger;
+  private readonly connectTimeoutMs: number;
+  private readonly reconnectDelayMs: number;
+  private readonly mode: TunnelMode;
+  private readonly namedTunnel?: NamedTunnelConfig;
+  private stopping = false;
+  private connectPromise: Promise<string> | null = null;
+  private resolveConnect: ((url: string) => void) | null = null;
+  private rejectConnect: ((error: Error) => void) | null = null;
+  private connectTimeoutId?: NodeJS.Timeout;
+  private reconnectTimeoutId?: NodeJS.Timeout;
+  private localUrl?: string;
+
+  constructor(options: CloudflareTunnelOptions) {
+    super();
+    this.spawn = options.spawn ?? nodeSpawn;
+    this.logger = options.logger;
+    this.connectTimeoutMs = options.connectTimeoutMs ?? 30_000;
+    this.reconnectDelayMs = options.reconnectDelayMs ?? 1_000;
+    this.mode = options.mode;
+    this.namedTunnel = options.namedTunnel;
+  }
+
+  getPublicUrl(): string | null {
+    return this.publicUrl;
+  }
+
+  async start(localPort: number): Promise<string> {
+    if (this.publicUrl) {
+      return this.publicUrl;
+    }
+    if (this.connectPromise) {
+      return this.connectPromise;
+    }
+
+    this.stopping = false;
+    this.localUrl = `http://localhost:${localPort}`;
+    this.connectPromise = new Promise((resolve, reject) => {
+      this.resolveConnect = resolve;
+      this.rejectConnect = reject;
+    });
+
+    this.startProcess(true);
+    return this.connectPromise;
+  }
+
+  async stop(): Promise<void> {
+    this.stopping = true;
+    this.clearTimeouts();
+
+    if (this.process) {
+      this.process.kill();
+      this.process.removeAllListeners();
+      this.process = null;
+    }
+
+    this.publicUrl = null;
+    if (this.rejectConnect) {
+      this.rejectConnect(new Error("Tunnel stopped"));
+      this.resetConnectPromise();
+    }
+  }
+
+  private startProcess(initial: boolean): void {
+    if (!this.localUrl) {
+      throw new Error("Local URL not set");
+    }
+
+    const args = this.buildArgs(this.localUrl);
+    this.process = this.spawn("cloudflared", args, {
+      stdio: ["ignore", "pipe", "pipe"]
+    });
+
+    const stderr = this.process.stderr;
+    if (stderr) {
+      stderr.on("data", (data) => {
+        const match = data.toString().match(/https:\/\/[^\s]+\.trycloudflare\.com/);
+        if (match && !this.publicUrl) {
+          this.publicUrl = match[0];
+          this.emit("connected", this.publicUrl);
+          if (this.resolveConnect) {
+            this.resolveConnect(this.publicUrl);
+            this.resetConnectPromise();
+          }
+        }
+      });
+    }
+
+    this.process.on("error", (error) => {
+      if (this.stopping) {
+        return;
+      }
+      if (this.rejectConnect) {
+        this.rejectConnect(error instanceof Error ? error : new Error(String(error)));
+        this.resetConnectPromise();
+      }
+      this.scheduleReconnect();
+    });
+
+    this.process.on("exit", () => {
+      if (this.stopping) {
+        return;
+      }
+      this.publicUrl = null;
+      this.emit("disconnected");
+      if (this.rejectConnect) {
+        this.rejectConnect(new Error("Tunnel exited before connection was established"));
+        this.resetConnectPromise();
+      }
+      this.scheduleReconnect();
+    });
+
+    if (initial) {
+      this.connectTimeoutId = setTimeout(() => {
+        if (this.rejectConnect) {
+          this.rejectConnect(new Error("Tunnel timeout"));
+          this.resetConnectPromise();
+        }
+      }, this.connectTimeoutMs);
+    }
+  }
+
+  private buildArgs(localUrl: string): string[] {
+    const args = ["tunnel", "--url", localUrl];
+    if (this.mode === "named") {
+      if (!this.namedTunnel) {
+        throw new Error("Named tunnel configuration is required");
+      }
+      args.push("--credentials-file", this.namedTunnel.credentialsFile);
+      args.push("--hostname", this.namedTunnel.hostname);
+    }
+    return args;
+  }
+
+  private scheduleReconnect(): void {
+    if (this.stopping) {
+      return;
+    }
+    if (this.reconnectTimeoutId) {
+      clearTimeout(this.reconnectTimeoutId);
+    }
+    this.reconnectTimeoutId = setTimeout(() => {
+      if (this.stopping) {
+        return;
+      }
+      this.logger?.warn("Cloudflare tunnel disconnected, attempting reconnect...");
+      this.startProcess(false);
+    }, this.reconnectDelayMs);
+  }
+
+  private clearTimeouts(): void {
+    if (this.connectTimeoutId) {
+      clearTimeout(this.connectTimeoutId);
+    }
+    if (this.reconnectTimeoutId) {
+      clearTimeout(this.reconnectTimeoutId);
+    }
+    this.connectTimeoutId = undefined;
+    this.reconnectTimeoutId = undefined;
+  }
+
+  private resetConnectPromise(): void {
+    this.resolveConnect = null;
+    this.rejectConnect = null;
+    this.connectPromise = null;
+    if (this.connectTimeoutId) {
+      clearTimeout(this.connectTimeoutId);
+      this.connectTimeoutId = undefined;
+    }
+  }
+}
