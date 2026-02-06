@@ -147,6 +147,7 @@ export class SessionManager {
   }
 
   async resumeSession(id: string, limit = 10): Promise<SessionResume> {
+    await this.cleanup();
     const session = await this.getSession(id);
     const history = await this.getHistory(id, limit);
     const now = this.clock();
@@ -155,6 +156,7 @@ export class SessionManager {
   }
 
   async listSessions(filter: SessionFilter = {}): Promise<Session[]> {
+    await this.cleanup();
     const sessions = await this.loadAllSessions();
 
     const filtered = sessions.filter((session) => {
@@ -195,6 +197,7 @@ export class SessionManager {
     const now = this.clock();
     await this.updateSession({ ...session, lastActiveAt: now });
     await this.truncateIfNeeded(sessionId);
+    await this.cleanup();
   }
 
   async getHistory(sessionId: string, limit?: number): Promise<ConversationEvent[]> {

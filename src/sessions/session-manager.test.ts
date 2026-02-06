@@ -99,6 +99,27 @@ describe("SessionManager", () => {
     expect(resumed.session.lastActiveAt.toISOString()).toBe(now.toISOString());
   });
 
+  it("cleans up expired sessions before listing or resuming", async () => {
+    const baseDir = await createTempDir();
+    cleanupDirs.push(baseDir);
+
+    let now = new Date("2026-02-03T00:00:00Z");
+    const manager = new SessionManager({
+      baseDir,
+      clock: () => now,
+      cleanupPolicy: { maxAgeMs: 1000, maxCount: 100, maxSizeBytes: 10 * 1024 * 1024 }
+    });
+
+    const session = await manager.createSession({ channel: "web", userId: "user-1" });
+
+    now = new Date("2026-02-03T00:00:02Z");
+
+    await expect(manager.resumeSession(session.id)).rejects.toThrow("Session not found");
+
+    const sessions = await manager.listSessions();
+    expect(sessions).toHaveLength(0);
+  });
+
   it("lists sessions sorted by last active time", async () => {
     const baseDir = await createTempDir();
     cleanupDirs.push(baseDir);
