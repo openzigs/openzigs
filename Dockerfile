@@ -14,6 +14,21 @@ COPY . .
 RUN pnpm build
 RUN pnpm prune --prod
 
+FROM node:22-slim AS development
+
+WORKDIR /app
+
+RUN npm install -g pnpm@10.28.2
+
+COPY package.json pnpm-lock.yaml ./
+RUN pnpm install
+
+COPY . .
+
+ENV NODE_ENV=development
+
+CMD ["pnpm", "dev"]
+
 FROM node:22-slim
 
 WORKDIR /app

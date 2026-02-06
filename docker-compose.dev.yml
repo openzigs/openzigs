@@ -1,0 +1,12 @@
+services:
+  agent:
+    build:
+      context: .
+      target: development
+    volumes:
+      - .:/app
+      - openzigs-data:/data
+    environment:
+      - LOG_LEVEL=debug
+      - NODE_ENV=development
+    command: pnpm dev
