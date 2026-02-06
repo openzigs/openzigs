@@ -2,13 +2,21 @@ import "dotenv/config";
 import { createApp } from "./app.js";
 import { loadConfig } from "./config/index.js";
 import { logger } from "./logging/logger.js";
+import { AuditLogger } from "./logging/audit-logger.js";
 
 const config = await loadConfig();
-const app = createApp(config);
+const auditLogger = new AuditLogger();
+const app = createApp(config, { auditLogger });
 const port = Number(process.env.PORT ?? 3000);
 
 app.listen(port, () => {
   logger.info(`OpenZigs server listening on port ${port}`);
+  void auditLogger.log({
+    level: "info",
+    category: "system",
+    event: "server_started",
+    details: { port }
+  });
 });
 
 export { app };
