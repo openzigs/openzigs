@@ -15,7 +15,7 @@ export type {
 	ApprovalStatus,
 	PendingApproval
 } from "./approvals/index.js";
-export { ChannelManager, convertMarkdown, DiscordChannel, SlackChannel, TelegramChannel, WebChannel } from "./channels/index.js";
+export { ChannelManager, convertMarkdown, DiscordChannel, TelegramChannel, WebChannel } from "./channels/index.js";
 export type {
 	ApprovalRequest as ChannelApprovalRequest,
 	ApprovalResponse,

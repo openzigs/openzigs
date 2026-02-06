@@ -6,6 +6,7 @@ import { createApp } from "./app.js";
 import { ChannelManager, DiscordChannel, TelegramChannel } from "./channels/index.js";
 import type { MessageChannel } from "./channels/index.js";
 import { loadConfig } from "./config/index.js";
+import type { AccessControlConfig } from "./config/index.js";
 import { logger } from "./logging/logger.js";
 import type { Logger } from "winston";
 import { AuditLogger } from "./logging/audit-logger.js";
@@ -121,7 +122,7 @@ function setupChannelRouting(
   });
 }
 
-const createRouter = (accessControlOverride?: typeof defaultAccessControl) => {
+const createRouter = (accessControlOverride?: AccessControlConfig) => {
   return new MessageRouter({
     channelManager,
     sessionManager,

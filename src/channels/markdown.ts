@@ -7,7 +7,6 @@ const convertBoldToSingleAsterisk = (text: string) => {
 export const convertMarkdown = (text: string, target: ChannelType): string => {
   switch (target) {
     case "telegram":
-    case "slack":
       return convertBoldToSingleAsterisk(text);
     case "discord":
     case "web":
