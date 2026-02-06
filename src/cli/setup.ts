@@ -3,6 +3,7 @@ import path from "node:path";
 import os from "node:os";
 import readline from "node:readline/promises";
 import { spawn } from "node:child_process";
+import dotenv from "dotenv";
 
 export type SetupIO = {
   prompt: (message: string) => Promise<string>;
@@ -83,22 +84,7 @@ const formatEnvValue = (value: string): string => {
 const readEnvFile = async (envPath: string): Promise<Record<string, string>> => {
   try {
     const raw = await fs.readFile(envPath, "utf-8");
-    const lines = raw.split("\n");
-    const result: Record<string, string> = {};
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith("#")) {
-        continue;
-      }
-      const index = trimmed.indexOf("=");
-      if (index === -1) {
-        continue;
-      }
-      const key = trimmed.slice(0, index).trim();
-      const value = trimmed.slice(index + 1).trim();
-      result[key] = value;
-    }
-    return result;
+    return dotenv.parse(raw);
   } catch (error) {
     if (error instanceof Error && "code" in error && (error as { code?: string }).code === "ENOENT") {
       return {};
@@ -258,18 +244,23 @@ export const runSetup = async (options: SetupOptions = {}) => {
     await writeConfig(configPath, config);
 
     const toolsConfig = await readToolsConfig(toolsPath);
-    const enabledTools = new Set<string>(["read-file", "list-directory", "web-search"]);
-    if (inputs.enableBrowserRead) {
-      enabledTools.add("browser-read");
-    }
-    if (inputs.enableWriteFile) {
-      enabledTools.add("write-file");
-    }
-    if (inputs.enableShellExecute) {
-      enabledTools.add("shell-execute");
-    }
+    const enabledTools = new Set<string>(toolsConfig.enabledTools);
 
-    toolsConfig.enabledTools = Array.from(enabledTools);
+    ["read-file", "list-directory", "web-search"].forEach((tool) => enabledTools.add(tool));
+
+    const toggleTool = (name: string, enable: boolean) => {
+      if (enable) {
+        enabledTools.add(name);
+      } else {
+        enabledTools.delete(name);
+      }
+    };
+
+    toggleTool("browser-read", inputs.enableBrowserRead);
+    toggleTool("write-file", inputs.enableWriteFile);
+    toggleTool("shell-execute", inputs.enableShellExecute);
+
+    toolsConfig.enabledTools = Array.from(enabledTools).sort();
     await writeToolsConfig(toolsPath, toolsConfig);
 
     if (!inputs.requireApprovalForHighRisk) {
