@@ -1,4 +1,4 @@
-export type ChannelType = "discord" | "telegram" | "slack" | "web";
+export type ChannelType = "discord" | "telegram" | "web";
 
 export type Attachment = {
   id?: string;

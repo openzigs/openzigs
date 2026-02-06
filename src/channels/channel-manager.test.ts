@@ -1,24 +1,24 @@
 import { describe, expect, it, vi } from "vitest";
 import { ChannelManager } from "./channel-manager.js";
-import { SlackChannel } from "./stubs.js";
+import { WebChannel } from "./stubs.js";
 
 const createChatMap = () => {
-  return new Map([["slack", ["chat-1", "chat-2"]]]) as Map<"slack", string[]>;
+  return new Map([["web", ["chat-1", "chat-2"]]]) as Map<"web", string[]>;
 };
 
 describe("ChannelManager", () => {
   it("registers and retrieves channels", () => {
     const manager = new ChannelManager();
-    const channel = new SlackChannel();
+    const channel = new WebChannel();
     manager.register(channel);
 
-    expect(manager.getChannel("slack")).toBe(channel);
+    expect(manager.getChannel("web")).toBe(channel);
     expect(manager.listChannels()).toHaveLength(1);
   });
 
   it("broadcasts to registered channels", async () => {
     const manager = new ChannelManager();
-    const channel = new SlackChannel();
+    const channel = new WebChannel();
     const sendMessageSpy = vi.spyOn(channel, "sendMessage");
     await channel.connect();
     manager.register(channel);

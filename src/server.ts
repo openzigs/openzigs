@@ -121,6 +121,15 @@ function setupChannelRouting(
   });
 }
 
+const createRouter = (accessControlOverride?: typeof defaultAccessControl) => {
+  return new MessageRouter({
+    channelManager,
+    sessionManager,
+    copilot,
+    accessControl: accessControlOverride ?? (config.messaging?.accessControl ?? defaultAccessControl)
+  });
+};
+
 const telegramConfig = config.channels?.telegram;
 if (telegramConfig?.enabled && telegramConfig.token) {
   const telegramChannel = new TelegramChannel({
@@ -139,14 +148,9 @@ if (telegramConfig?.enabled && telegramConfig.token) {
         allowedUsers: normalizeTelegramAllowlist(telegramConfig.allowedUsers),
         blockedUsers: []
       }
-    : (config.messaging?.accessControl ?? defaultAccessControl);
+    : undefined;
 
-  const router = new MessageRouter({
-    channelManager,
-    sessionManager,
-    copilot,
-    accessControl
-  });
+  const router = createRouter(accessControl);
 
   await telegramChannel.connect();
   channelManager.register(telegramChannel);
@@ -165,19 +169,10 @@ if (discordConfig?.enabled && discordConfig.token) {
     logger
   });
 
-  const accessControl = config.messaging?.accessControl ?? defaultAccessControl;
-
-  const router = new MessageRouter({
-    channelManager,
-    sessionManager,
-    copilot,
-    accessControl
-  });
+  const router = createRouter();
 
   await discordChannel.connect();
   channelManager.register(discordChannel);
-
-
 
   setupChannelRouting(discordChannel, router, approvalQueue, sessionManager, logger);
 }
