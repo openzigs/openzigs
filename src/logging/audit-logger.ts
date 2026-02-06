@@ -1,10 +1,15 @@
 import fs from "node:fs/promises";
+import * as fsSync from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { randomUUID } from "node:crypto";
+import readline from "node:readline";
 
-export type AuditLevel = "info" | "warn" | "error" | "security";
-export type AuditCategory = "session" | "message" | "tool" | "security" | "system";
+export const AUDIT_LEVELS = ["info", "warn", "error", "security"] as const;
+export const AUDIT_CATEGORIES = ["session", "message", "tool", "security", "system"] as const;
+
+export type AuditLevel = (typeof AUDIT_LEVELS)[number];
+export type AuditCategory = (typeof AUDIT_CATEGORIES)[number];
 
 export type AuditLogEntry = {
   id: string;
@@ -194,9 +199,10 @@ export class AuditLogger {
       const records: AuditLogEntry[] = [];
 
       for (const file of auditFiles) {
-        const raw = await fs.readFile(path.join(this.baseDir, file), "utf-8");
-        const lines = raw.split("\n");
-        for (const line of lines) {
+        const filePath = path.join(this.baseDir, file);
+        const stream = fsSync.createReadStream(filePath, { encoding: "utf-8" });
+        const rl = readline.createInterface({ input: stream, crlfDelay: Infinity });
+        for await (const line of rl) {
           const entry = parseAuditEntry(line);
           if (entry) {
             records.push(entry);
