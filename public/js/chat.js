@@ -84,21 +84,16 @@
   });
 
   // ── Approval handlers ──
-  approvalApproveBtn.addEventListener("click", () => {
+  function handleApprovalResponse(approved) {
     if (pendingApprovalId) {
-      socket.emit("approval:response", { approvalId: pendingApprovalId, approved: true });
+      socket.emit("approval:response", { approvalId: pendingApprovalId, approved });
       pendingApprovalId = null;
       approvalOverlay.classList.add("hidden");
     }
-  });
+  }
 
-  approvalDenyBtn.addEventListener("click", () => {
-    if (pendingApprovalId) {
-      socket.emit("approval:response", { approvalId: pendingApprovalId, approved: false });
-      pendingApprovalId = null;
-      approvalOverlay.classList.add("hidden");
-    }
-  });
+  approvalApproveBtn.addEventListener("click", () => handleApprovalResponse(true));
+  approvalDenyBtn.addEventListener("click", () => handleApprovalResponse(false));
 
   // ── Send message ──
   form.addEventListener("submit", (e) => {
@@ -205,8 +200,9 @@
         opt.textContent = "No models available";
         modelSelect.appendChild(opt);
       }
-    } catch {
+    } catch (err) {
       // Models endpoint not available, leave disabled
+      console.error("Failed to load models:", err);
     }
   }
 
@@ -219,8 +215,9 @@
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ modelId })
       });
-    } catch {
+    } catch (err) {
       // Silently fail on save — selection still used per-message
+      console.warn("Failed to persist model selection:", err);
     }
   });
 

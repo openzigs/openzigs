@@ -216,7 +216,7 @@ if (webConfig?.enabled !== false) {
         onChunk: (chunk) => {
           void webChatChannel.sendStreamChunk(message.chatId, chunk, messageId);
         },
-        model: undefined // Model is picked per-request via the UI; already read from user config by the model selector
+        model: message.model // Model is picked per-request via the UI; already read from user config by the model selector
       })
       .then(() => {
         void webChatChannel.sendStreamEnd(message.chatId, messageId);

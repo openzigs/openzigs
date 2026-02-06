@@ -159,7 +159,7 @@ describe("copilot wrapper", () => {
   it("returns fallback model when client has no listModels", async () => {
     const client = {
       async start() { return undefined; },
-      async createSession(config: { tools?: unknown[]; model?: string }) {
+      async createSession(_config: { tools?: unknown[]; model?: string }) {
         return new FakeSession();
       },
       async stop() { return [] as Error[]; }

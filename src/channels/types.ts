@@ -29,6 +29,7 @@ export type IncomingMessage = {
   userId: string;
   username?: string;
   content: string;
+  model?: string;
   attachments?: Attachment[];
   timestamp: Date;
 };

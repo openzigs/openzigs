@@ -117,6 +117,7 @@ export class WebChatChannel implements MessageChannel {
         userId: `web:${chatId}`,
         username: "web-user",
         content,
+        model: data.model,
         timestamp: new Date()
       };
       for (const handler of this.messageHandlers) {
