@@ -3,7 +3,7 @@ FROM node:22-slim AS builder
 WORKDIR /app
 
 # Install pnpm
-RUN npm install -g pnpm@9
+RUN npm install -g pnpm@10.28.2
 
 # Install dependencies
 COPY package.json pnpm-lock.yaml ./
@@ -24,11 +24,11 @@ COPY --from=builder /app/package.json ./package.json
 
 # Copy built application
 COPY --from=builder /app/dist ./dist
-COPY config/ ./config/
+COPY --from=builder /app/config ./config/
 
 # Environment
 ENV NODE_ENV=production
-ENV OPENZIGS_CONFIG_DIR=/config
+ENV OPENZIGS_CONFIG_DIR=/app/config
 ENV OPENZIGS_DATA_DIR=/data
 ENV OPENZIGS_WORKSPACE=/workspace
 
@@ -41,8 +41,8 @@ HEALTHCHECK --interval=30s --timeout=3s \
 
 # Non-root user for security
 RUN useradd -m openzigs && \
-    mkdir -p /data /workspace && \
-    chown -R openzigs:openzigs /data /workspace
+  mkdir -p /data /workspace && \
+  chown -R openzigs:openzigs /app /data /workspace
 
 USER openzigs
 
