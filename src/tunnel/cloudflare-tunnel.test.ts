@@ -58,6 +58,40 @@ describe("CloudflareTunnel", () => {
     await rejection;
   });
 
+  it("detects named tunnel connection and uses hostname", async () => {
+    const proc = new FakeProcess();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const spawn = vi.fn(() => proc as unknown as any);
+    const tunnel = new CloudflareTunnel({
+      mode: "named",
+      namedTunnel: {
+        credentialsFile: "/tmp/creds.json",
+        hostname: "app.example.com"
+      },
+      spawn,
+      connectTimeoutMs: 5000
+    });
+
+    const startPromise = tunnel.start(3000);
+    proc.stderr.emit("data", Buffer.from("Registered tunnel connection"));
+
+    await expect(startPromise).resolves.toBe("https://app.example.com");
+    expect(tunnel.getPublicUrl()).toBe("https://app.example.com");
+    expect(spawn).toHaveBeenCalledWith(
+      "cloudflared",
+      [
+        "tunnel",
+        "--url",
+        "http://localhost:3000",
+        "--credentials-file",
+        "/tmp/creds.json",
+        "--hostname",
+        "app.example.com"
+      ],
+      { stdio: ["ignore", "pipe", "pipe"] }
+    );
+  });
+
   it("restarts after an unexpected exit", async () => {
     const procOne = new FakeProcess();
     const procTwo = new FakeProcess();

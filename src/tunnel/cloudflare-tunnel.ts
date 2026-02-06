@@ -104,13 +104,26 @@ export class CloudflareTunnel extends EventEmitter {
     const stderr = this.process.stderr;
     if (stderr) {
       stderr.on("data", (data) => {
-        const match = data.toString().match(/https:\/\/[^\s]+\.trycloudflare\.com/);
-        if (match && !this.publicUrl) {
-          this.publicUrl = match[0];
+        const output = data.toString();
+        let newPublicUrl: string | null = null;
+
+        if (this.mode === "quick") {
+          const match = output.match(/https:\/\/[^\s]+\.trycloudflare\.com/);
+          if (match) {
+            newPublicUrl = match[0];
+          }
+        } else if (this.mode === "named" && this.namedTunnel?.hostname) {
+          if (/Registered tunnel connection/i.test(output) || /Connected/i.test(output)) {
+            newPublicUrl = `https://${this.namedTunnel.hostname}`;
+          }
+        }
+
+        if (newPublicUrl && !this.publicUrl) {
+          this.publicUrl = newPublicUrl;
           this.emit("connected", this.publicUrl);
-          
+
           if (this.resolveConnect) {
-            this.resolveConnect(this.publicUrl!);
+            this.resolveConnect(this.publicUrl);
             this.resetConnectPromise();
           } else if (this.connectTimeoutId) {
             clearTimeout(this.connectTimeoutId);
