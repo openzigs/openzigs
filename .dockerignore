@@ -4,6 +4,3 @@ node_modules
 .vscode
 coverage
 test
-src
-tsconfig.json
-vitest.config.ts
