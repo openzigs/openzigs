@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { ChannelManager } from "./channel-manager.js";
 import { TelegramChannel } from "./stubs.js";
 
@@ -19,9 +19,14 @@ describe("ChannelManager", () => {
   it("broadcasts to registered channels", async () => {
     const manager = new ChannelManager();
     const channel = new TelegramChannel();
+    const sendMessageSpy = vi.spyOn(channel, "sendMessage");
     await channel.connect();
     manager.register(channel);
 
     await manager.broadcast({ text: "hello" }, createChatMap());
+
+    expect(sendMessageSpy).toHaveBeenCalledTimes(2);
+    expect(sendMessageSpy).toHaveBeenCalledWith("chat-1", { text: "hello" });
+    expect(sendMessageSpy).toHaveBeenCalledWith("chat-2", { text: "hello" });
   });
 });
