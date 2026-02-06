@@ -32,13 +32,13 @@ class FakeSession {
 }
 
 class FakeCopilotClient {
-  public lastSessionConfig: { tools?: unknown[] } | null = null;
+  public lastSessionConfig: { tools?: unknown[]; model?: string } | null = null;
 
   async start() {
     return undefined;
   }
 
-  async createSession(config: { tools?: unknown[] }) {
+  async createSession(config: { tools?: unknown[]; model?: string }) {
     this.lastSessionConfig = config;
     return new FakeSession();
   }
@@ -53,6 +53,10 @@ class FakeCopilotClient {
 
   async waitForAuth() {
     return { token: "token-123", expiresAt: Date.now() + 60_000 };
+  }
+
+  async listModels() {
+    return [{ id: "gpt-4.1" }, { id: "claude-sonnet-4" }];
   }
 }
 
@@ -116,5 +120,53 @@ describe("copilot wrapper", () => {
 
     expect(chunks.join("")).toContain("hello");
     expect(client.lastSessionConfig?.tools?.length).toBe(1);
+  });
+
+  it("passes model override to createSession", async () => {
+    const client = new FakeCopilotClient();
+    const wrapper = new CopilotWrapperService({ client });
+
+    const chunks: string[] = [];
+    for await (const chunk of wrapper.chat("Hello", undefined, "claude-sonnet-4")) {
+      chunks.push(chunk);
+    }
+
+    expect(client.lastSessionConfig?.model).toBe("claude-sonnet-4");
+  });
+
+  it("uses default model when no override is provided", async () => {
+    const client = new FakeCopilotClient();
+    const wrapper = new CopilotWrapperService({ client, model: "gpt-4.1" });
+
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    for await (const _chunk of wrapper.chat("Hello")) {
+      // drain
+    }
+
+    expect(client.lastSessionConfig?.model).toBe("gpt-4.1");
+  });
+
+  it("lists available models from the client", async () => {
+    const client = new FakeCopilotClient();
+    const wrapper = new CopilotWrapperService({ client });
+
+    const models = await wrapper.listModels();
+    expect(models).toHaveLength(2);
+    expect(models[0].id).toBe("gpt-4.1");
+    expect(models[1].id).toBe("claude-sonnet-4");
+  });
+
+  it("returns fallback model when client has no listModels", async () => {
+    const client = {
+      async start() { return undefined; },
+      async createSession(config: { tools?: unknown[]; model?: string }) {
+        return new FakeSession();
+      },
+      async stop() { return [] as Error[]; }
+    };
+    const wrapper = new CopilotWrapperService({ client, model: "gpt-4.1" });
+
+    const models = await wrapper.listModels();
+    expect(models).toEqual([{ id: "gpt-4.1" }]);
   });
 });

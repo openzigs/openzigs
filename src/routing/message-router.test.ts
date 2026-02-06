@@ -12,6 +12,7 @@ import type {
   ApprovalResponse
 } from "../channels/types.js";
 import type { CopilotWrapper } from "../copilot/copilot-wrapper.js";
+import type { CopilotModel } from "../copilot/copilot-wrapper.js";
 import { SessionManager } from "../sessions/session-manager.js";
 import { MessageRouter } from "./message-router.js";
 
@@ -74,10 +75,13 @@ class RecordingChannel implements MessageChannel {
 
 class FakeCopilot implements CopilotWrapper {
   lastPrompt = "";
+  lastModel?: string;
   response: string;
+  chunks: string[];
 
-  constructor(response = "pong") {
+  constructor(response = "pong", chunks?: string[]) {
     this.response = response;
+    this.chunks = chunks ?? [response];
   }
 
   async authenticate() {
@@ -92,9 +96,16 @@ class FakeCopilot implements CopilotWrapper {
     return true;
   }
 
-  async *chat(message: string): AsyncGenerator<string> {
+  async *chat(message: string, _tools?: unknown[], model?: string): AsyncGenerator<string> {
     this.lastPrompt = message;
-    yield this.response;
+    this.lastModel = model;
+    for (const chunk of this.chunks) {
+      yield chunk;
+    }
+  }
+
+  async listModels(): Promise<CopilotModel[]> {
+    return [{ id: "gpt-4.1" }];
   }
 
   async onToolCall(): Promise<void> {
@@ -254,5 +265,46 @@ describe("MessageRouter", () => {
 
     expect(telegram.messages).toHaveLength(1);
     expect(discord.messages).toHaveLength(0);
+  });
+
+  it("invokes onChunk callback for each streaming chunk", async () => {
+    const baseDir = await createTempDir();
+    cleanupDirs.push(baseDir);
+
+    const channelManager = new ChannelManager();
+    const telegram = new RecordingChannel("telegram");
+    await telegram.connect();
+    channelManager.register(telegram);
+
+    const sessionManager = new SessionManager({ baseDir });
+    const copilot = new FakeCopilot("", ["Hello", " ", "world"]);
+    const router = new MessageRouter({ channelManager, sessionManager, copilot });
+
+    const received: string[] = [];
+    await router.route(baseMessage({ content: "stream test" }), {
+      onChunk: (chunk) => received.push(chunk)
+    });
+
+    expect(received).toEqual(["Hello", " ", "world"]);
+    expect(telegram.messages).toHaveLength(1);
+    expect(telegram.messages[0].content.text).toBe("Hello world");
+  });
+
+  it("passes model override to copilot.chat", async () => {
+    const baseDir = await createTempDir();
+    cleanupDirs.push(baseDir);
+
+    const channelManager = new ChannelManager();
+    const telegram = new RecordingChannel("telegram");
+    await telegram.connect();
+    channelManager.register(telegram);
+
+    const sessionManager = new SessionManager({ baseDir });
+    const copilot = new FakeCopilot("ok");
+    const router = new MessageRouter({ channelManager, sessionManager, copilot });
+
+    await router.route(baseMessage({ content: "model test" }), { model: "claude-sonnet-4" });
+
+    expect(copilot.lastModel).toBe("claude-sonnet-4");
   });
 });

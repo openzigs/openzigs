@@ -27,6 +27,11 @@ type CopilotSessionLike = {
   sendAndWait: (input: { prompt: string }) => Promise<unknown>;
 };
 
+export type CopilotModel = {
+  id: string;
+  [key: string]: unknown;
+};
+
 type CopilotClientLike = {
   start?: () => Promise<void>;
   createSession: (config: {
@@ -40,13 +45,15 @@ type CopilotClientLike = {
   stop?: () => Promise<Error[]>;
   startDeviceAuth?: (input: { clientId: string; scopes: string[] }) => Promise<DeviceAuthInfo>;
   waitForAuth?: (input: { timeoutMs: number }) => Promise<unknown>;
+  listModels?: () => Promise<CopilotModel[]>;
 };
 
 export interface CopilotWrapper {
   authenticate(): Promise<DeviceAuthInfo>;
   waitForAuth(): Promise<void>;
   isAuthenticated(): Promise<boolean>;
-  chat(message: string, tools?: ToolDefinition[]): AsyncGenerator<string>;
+  chat(message: string, tools?: ToolDefinition[], model?: string): AsyncGenerator<string>;
+  listModels(): Promise<CopilotModel[]>;
   onToolCall(tool: string, args: unknown): Promise<void>;
 }
 
@@ -281,9 +288,10 @@ export class CopilotWrapperService implements CopilotWrapper {
     return !isExpired(state.expiresAt);
   }
 
-  async *chat(message: string, tools?: ToolDefinition[]): AsyncGenerator<string> {
+  async *chat(message: string, tools?: ToolDefinition[], model?: string): AsyncGenerator<string> {
     await this.ensureStarted();
 
+    const effectiveModel = model ?? this.model;
     const toolList = tools ?? this.toolRegistry?.listEnabledTools() ?? [];
     const wrappedTools = toolList.map((tool) =>
       defineTool(tool.name, {
@@ -301,7 +309,7 @@ export class CopilotWrapperService implements CopilotWrapper {
     );
 
     const session = await this.client.createSession({
-      model: this.model,
+      model: effectiveModel,
       streaming: true,
       tools: wrappedTools,
       onPermissionRequest: async (request) => {
@@ -342,6 +350,14 @@ export class CopilotWrapperService implements CopilotWrapper {
     if (this.toolCallHandler) {
       await this.toolCallHandler(tool, args);
     }
+  }
+
+  async listModels(): Promise<CopilotModel[]> {
+    await this.ensureStarted();
+    if (!this.client.listModels) {
+      return [{ id: this.model }];
+    }
+    return this.client.listModels();
   }
 
   private async ensureStarted() {

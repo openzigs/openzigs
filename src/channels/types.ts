@@ -61,6 +61,13 @@ export interface MessageChannel {
   sendMessage(chatId: string, content: MessageContent): Promise<void>;
   sendApprovalRequest(chatId: string, request: ApprovalRequest): Promise<void>;
 
+  /** Send a streaming chunk to the client. Optional — non-streaming channels omit this. */
+  sendStreamChunk?(chatId: string, chunk: string, messageId: string): Promise<void>;
+  /** Signal that streaming is complete. Optional — non-streaming channels omit this. */
+  sendStreamEnd?(chatId: string, messageId: string): Promise<void>;
+  /** Send an error message to the client. Optional. */
+  sendError?(chatId: string, error: string): Promise<void>;
+
   onMessage(handler: (msg: IncomingMessage) => void): void;
   onApprovalResponse(handler: (response: ApprovalResponse) => void): void;
 }

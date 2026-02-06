@@ -58,6 +58,9 @@ Thumbs.db
 .env.*.local
 credentials.json
 
+# User preferences
+config/user.json
+
 # Coverage
 coverage/
 
