@@ -66,7 +66,7 @@ export class MessageRouter {
 
     const now = this.clock();
     await this.sessionManager.appendEvent(sessionId, {
-      timestamp: now,
+      timestamp: message.timestamp,
       type: "user",
       content: message.content
     });
@@ -122,13 +122,21 @@ export class MessageRouter {
     if (history.length > 0) {
       lines.push("Conversation so far:");
       for (const event of history) {
-        const label = event.type === "assistant"
-          ? "Assistant"
-          : event.type === "user"
-            ? "User"
-            : event.type === "tool_call"
-              ? "Tool call"
-              : "Tool result";
+        let label = "User";
+        switch (event.type) {
+          case "assistant":
+            label = "Assistant";
+            break;
+          case "tool_call":
+            label = "Tool call";
+            break;
+          case "tool_result":
+            label = "Tool result";
+            break;
+          case "user":
+            label = "User";
+            break;
+        }
         lines.push(`${label}: ${event.content}`);
       }
       lines.push("");
@@ -140,16 +148,16 @@ export class MessageRouter {
 
   private isAllowed(message: IncomingMessage): boolean {
     const key = this.keyFor(message.channelType, message.userId);
-    if (this.accessControl.mode === "open") {
-      return true;
+    switch (this.accessControl.mode) {
+      case "open":
+        return true;
+      case "allowlist":
+        return this.accessControl.allowedUsers.includes(key);
+      case "blocklist":
+        return !this.accessControl.blockedUsers.includes(key);
+      default:
+        return false;
     }
-    if (this.accessControl.mode === "allowlist") {
-      return this.accessControl.allowedUsers.includes(key);
-    }
-    if (this.accessControl.mode === "blocklist") {
-      return !this.accessControl.blockedUsers.includes(key);
-    }
-    return true;
   }
 
   private keyFor(channelType: string, userId: string): string {

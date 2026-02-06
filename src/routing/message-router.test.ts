@@ -200,6 +200,40 @@ describe("MessageRouter", () => {
     expect(telegram.messages[0].content.text).toBe("Unauthorized");
   });
 
+  it("rejects users inside the blocklist", async () => {
+    const baseDir = await createTempDir();
+    cleanupDirs.push(baseDir);
+
+    const channelManager = new ChannelManager();
+    const telegram = new RecordingChannel("telegram");
+    await telegram.connect();
+    channelManager.register(telegram);
+
+    const sessionManager = new SessionManager({ baseDir });
+    const copilot = new FakeCopilot("pong");
+    const router = new MessageRouter({
+      channelManager,
+      sessionManager,
+      copilot,
+      accessControl: {
+        mode: "blocklist",
+        allowedUsers: [],
+        blockedUsers: ["telegram:user-blocked"]
+      }
+    });
+
+    await router.route(baseMessage({ userId: "user-blocked" }));
+
+    const sessions = await sessionManager.listSessions();
+    expect(sessions).toHaveLength(0);
+    expect(telegram.messages).toHaveLength(1);
+    expect(telegram.messages[0].content.text).toBe("Unauthorized");
+
+    await router.route(baseMessage({ userId: "user-ok" }));
+    const sessionsOk = await sessionManager.listSessions();
+    expect(sessionsOk).toHaveLength(1);
+  });
+
   it("routes responses back to the origin channel", async () => {
     const baseDir = await createTempDir();
     cleanupDirs.push(baseDir);
