@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import { randomBytes } from "node:crypto";
+import * as z from "zod";
 import { logger } from "../logging/logger.js";
 import type { Role } from "../auth/auth.js";
 
@@ -26,6 +27,28 @@ export type AppConfig = {
   };
   auth: AuthConfig;
 };
+
+const rateLimitSchema = z.object({
+  windowMs: z.number(),
+  max: z.number()
+});
+
+const authSchema = z.object({
+  mode: z.enum(["local", "github"]),
+  token: z.string().optional(),
+  role: z.enum(["viewer", "operator", "admin"]).optional(),
+  rateLimit: rateLimitSchema
+});
+
+const appConfigSchema = z.object({
+  server: z.object({
+    port: z.number()
+  }),
+  logging: z.object({
+    level: z.string()
+  }),
+  auth: authSchema
+});
 
 export type LoadConfigOptions = {
   configPath?: string;
@@ -56,10 +79,10 @@ const applyEnv = (value: unknown): unknown => {
   return value;
 };
 
-const readJsonFile = async <T>(filePath: string): Promise<T | null> => {
+const readJsonFile = async (filePath: string): Promise<Record<string, unknown> | null> => {
   try {
     const raw = await fs.readFile(filePath, "utf-8");
-    return JSON.parse(raw) as T;
+    return JSON.parse(raw) as Record<string, unknown>;
   } catch (error) {
     if (error instanceof Error && "code" in error && (error as { code?: string }).code === "ENOENT") {
       return null;
@@ -91,7 +114,17 @@ const writeJsonFile = async (filePath: string, data: unknown) => {
   await fs.chmod(filePath, 0o600);
 };
 
-const ensureToken = async (config: AppConfig, configPath: string) => {
+const toObject = (value: unknown): Record<string, unknown> => {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+};
+
+const ensureToken = async (
+  config: AppConfig,
+  configPath: string,
+  userConfig: Record<string, unknown> | null
+) => {
   if (config.auth.mode !== "local") {
     return config;
   }
@@ -108,7 +141,17 @@ const ensureToken = async (config: AppConfig, configPath: string) => {
     }
   };
 
-  await writeJsonFile(configPath, updated);
+  const userConfigObject = toObject(userConfig);
+  const userAuth = toObject(userConfigObject.auth);
+  const updatedUserConfig = {
+    ...userConfigObject,
+    auth: {
+      ...userAuth,
+      token
+    }
+  };
+
+  await writeJsonFile(configPath, updatedUserConfig);
   logger.info(`Generated local auth token in ${configPath}`);
   return updated;
 };
@@ -118,11 +161,15 @@ export const loadConfig = async (options: LoadConfigOptions = {}): Promise<AppCo
     ?? process.env.OPENZIGS_CONFIG_PATH
     ?? defaultConfigPath();
 
-  const defaultConfigRaw = await readJsonFile<Record<string, unknown>>(defaultConfigFile());
+  const defaultConfigRaw = await readJsonFile(defaultConfigFile());
   const defaultConfig = applyEnv(defaultConfigRaw ?? {}) as Record<string, unknown>;
-  const userConfig = await readJsonFile<Record<string, unknown>>(configPath);
+  const userConfig = await readJsonFile(configPath);
 
   const merged = deepMerge(defaultConfig, userConfig ?? {}) as AppConfig;
+  const parsed = appConfigSchema.safeParse(merged);
+  if (!parsed.success) {
+    throw new Error(`Invalid config: ${parsed.error.message}`);
+  }
 
-  return ensureToken(merged, configPath);
+  return ensureToken(parsed.data, configPath, userConfig);
 };

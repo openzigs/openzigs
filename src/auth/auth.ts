@@ -1,3 +1,4 @@
+import { timingSafeEqual } from "node:crypto";
 import type { Request, Response, NextFunction } from "express";
 import type { AuthConfig } from "../config/index.js";
 
@@ -71,7 +72,10 @@ export const createAuthMiddleware = (config: AuthConfig) => {
 
   return (req: Request, res: Response, next: NextFunction) => {
     const now = Date.now();
-    const key = req.ip ?? req.socket.remoteAddress ?? "unknown";
+    const key = req.ip ?? req.socket.remoteAddress;
+    if (!key) {
+      return res.status(400).json({ error: "Could not determine client IP" });
+    }
 
     if (limiter.isBlocked(key, now)) {
       return res.status(429).json({ error: "Too Many Requests" });
@@ -82,7 +86,17 @@ export const createAuthMiddleware = (config: AuthConfig) => {
     }
 
     const token = extractToken(req);
-    if (!token || token !== config.token) {
+    const expectedToken = config.token ?? "";
+    if (!token || !expectedToken) {
+      limiter.registerFailure(key, now);
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    const tokenBuffer = Buffer.from(token);
+    const expectedBuffer = Buffer.from(expectedToken);
+    const isMatch = tokenBuffer.length === expectedBuffer.length
+      && timingSafeEqual(tokenBuffer, expectedBuffer);
+    if (!isMatch) {
       limiter.registerFailure(key, now);
       return res.status(401).json({ error: "Unauthorized" });
     }

@@ -1,16 +1,14 @@
-import "dotenv/config";
 import express from "express";
 import helmet from "helmet";
 import cors from "cors";
 import { getHealth } from "./health.js";
 import { createAuthMiddleware, checkRole } from "./auth/auth.js";
-import { loadConfig, type LoadConfigOptions } from "./config/index.js";
+import type { AppConfig } from "./config/index.js";
 
-export type CreateAppOptions = LoadConfigOptions;
-
-export const createApp = async (options: CreateAppOptions = {}) => {
-  const config = await loadConfig(options);
+export const createApp = (config: AppConfig) => {
   const app = express();
+
+  app.set("trust proxy", true);
 
   app.use(helmet());
   app.use(cors());

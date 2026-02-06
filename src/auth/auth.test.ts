@@ -3,15 +3,28 @@ import os from "node:os";
 import path from "node:path";
 import fs from "node:fs/promises";
 import { createApp } from "../app.js";
-import { loadConfig } from "../config/index.js";
+import { loadConfig, type AppConfig } from "../config/index.js";
 import type { AddressInfo } from "node:net";
+import type { Server } from "node:http";
 
 const createTempDir = async () => {
   return fs.mkdtemp(path.join(os.tmpdir(), "openzigs-auth-"));
 };
 
-const startServer = async (configPath: string) => {
-  const app = await createApp({ configPath });
+const closeServer = (server: Server) => {
+  return new Promise<void>((resolve, reject) => {
+    server.close((error) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve();
+    });
+  });
+};
+
+const startServer = (config: AppConfig) => {
+  const app = createApp(config);
   const server = app.listen(0);
   const address = server.address() as AddressInfo;
   const baseUrl = `http://127.0.0.1:${address.port}`;
@@ -42,58 +55,69 @@ describe("auth middleware", () => {
   });
 
   it("rejects requests without auth header", async () => {
-    const { server, baseUrl } = await startServer(configPath);
+    const config = await loadConfig({ configPath });
+    const { server, baseUrl } = startServer(config);
 
-    const response = await fetch(`${baseUrl}/api/health`);
-    expect(response.status).toBe(401);
-
-    server.close();
+    try {
+      const response = await fetch(`${baseUrl}/api/health`);
+      expect(response.status).toBe(401);
+    } finally {
+      await closeServer(server);
+    }
   });
 
   it("accepts valid bearer token", async () => {
     const config = await loadConfig({ configPath });
-    const { server, baseUrl } = await startServer(configPath);
+    const { server, baseUrl } = startServer(config);
 
-    const response = await fetch(`${baseUrl}/api/health`, {
-      headers: { Authorization: `Bearer ${config.auth.token}` }
-    });
-    expect(response.status).toBe(200);
-
-    server.close();
+    try {
+      const response = await fetch(`${baseUrl}/api/health`, {
+        headers: { Authorization: `Bearer ${config.auth.token}` }
+      });
+      expect(response.status).toBe(200);
+    } finally {
+      await closeServer(server);
+    }
   });
 
   it("blocks viewer role from admin endpoints", async () => {
-    await loadConfig({ configPath });
-    const raw = await fs.readFile(configPath, "utf-8");
-    const parsed = JSON.parse(raw) as Record<string, unknown>;
-    parsed.auth = {
-      ...(parsed.auth as Record<string, unknown>),
-      role: "viewer"
+    const initialConfig = await loadConfig({ configPath });
+    const viewerConfig: AppConfig = {
+      ...initialConfig,
+      auth: {
+        ...initialConfig.auth,
+        role: "viewer"
+      }
     };
-    await fs.writeFile(configPath, JSON.stringify(parsed, null, 2), "utf-8");
 
-    const config = await loadConfig({ configPath });
-    const { server, baseUrl } = await startServer(configPath);
+    const { server, baseUrl } = startServer(viewerConfig);
 
-    const response = await fetch(`${baseUrl}/api/tools/test/toggle`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${config.auth.token}` }
-    });
+    try {
+      const response = await fetch(`${baseUrl}/api/tools/test/toggle`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${initialConfig.auth.token}` }
+      });
 
-    expect(response.status).toBe(403);
-    server.close();
+      expect(response.status).toBe(403);
+    } finally {
+      await closeServer(server);
+    }
   });
 
   it("rate limits repeated failed auth attempts", async () => {
-    const { server, baseUrl } = await startServer(configPath);
+    const config = await loadConfig({ configPath });
+    const { server, baseUrl } = startServer(config);
 
-    let status = 0;
-    for (let attempt = 0; attempt < 11; attempt += 1) {
-      const response = await fetch(`${baseUrl}/api/health`);
-      status = response.status;
+    try {
+      let status = 0;
+      for (let attempt = 0; attempt < 11; attempt += 1) {
+        const response = await fetch(`${baseUrl}/api/health`);
+        status = response.status;
+      }
+
+      expect(status).toBe(429);
+    } finally {
+      await closeServer(server);
     }
-
-    expect(status).toBe(429);
-    server.close();
   });
 });
