@@ -5,6 +5,15 @@
   "logging": {
     "level": "info"
   },
+  "auth": {
+    "mode": "local",
+    "token": "",
+    "role": "admin",
+    "rateLimit": {
+      "windowMs": 60000,
+      "max": 10
+    }
+  },
   "channels": {
     "telegram": {
       "enabled": false,
