@@ -1,0 +1,49 @@
+version: "3.9"
+
+services:
+  agent:
+    build: .
+    container_name: openzigs-agent
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      - openzigs-data:/data
+      - ./config:/app/config:ro
+      # Optional: mount project directory
+      # - ~/projects:/workspace
+    environment:
+      - NODE_ENV=production
+      - LOG_LEVEL=info
+      - CHROME_DEBUG_HOST=host.docker.internal
+      - CHROME_DEBUG_PORT=9222
+      - OPENZIGS_CONFIG_DIR=/app/config
+      - OPENZIGS_DATA_DIR=/data
+      - OPENZIGS_WORKSPACE=/workspace
+    env_file:
+      - .env
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3000/health').then(r => r.ok ? process.exit(0) : process.exit(1)).catch(() => process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - openzigs-network
+
+  tunnel:
+    image: cloudflare/cloudflared:2024.6.1
+    container_name: openzigs-tunnel
+    restart: unless-stopped
+    command: tunnel --no-autoupdate --url http://agent:3000
+    depends_on:
+      agent:
+        condition: service_healthy
+    networks:
+      - openzigs-network
+
+volumes:
+  openzigs-data:
+
+networks:
+  openzigs-network:
+    driver: bridge
