@@ -5,6 +5,7 @@ services:
       target: development
     volumes:
       - .:/app
+      - /app/node_modules
       - openzigs-data:/data
     environment:
       - LOG_LEVEL=debug

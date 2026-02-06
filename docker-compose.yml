@@ -31,7 +31,7 @@ services:
       - openzigs-network
 
   tunnel:
-    image: cloudflare/cloudflared:latest
+    image: cloudflare/cloudflared:2024.6.1
     container_name: openzigs-tunnel
     restart: unless-stopped
     command: tunnel --no-autoupdate --url http://agent:3000
