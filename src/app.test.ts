@@ -8,6 +8,8 @@ import { createApp } from "./app.js";
 import { loadConfig } from "./config/index.js";
 import { AuditLogger } from "./logging/audit-logger.js";
 import { ApprovalQueue } from "./approvals/index.js";
+import { ToolRegistry } from "./mcp/tool-registry.js";
+import { registerToolCatalog } from "./mcp/tool-catalog.js";
 
 const createTempDir = async () => {
   return fs.mkdtemp(path.join(os.tmpdir(), "openzigs-app-"));
@@ -30,6 +32,14 @@ const startServer = (app: ReturnType<typeof createApp>) => {
   const address = server.address() as AddressInfo;
   const baseUrl = `http://127.0.0.1:${address.port}`;
   return { server, baseUrl };
+};
+
+const createToolRegistry = async () => {
+  const registryDir = await createTempDir();
+  const statePath = path.join(registryDir, "tools.json");
+  const registry = new ToolRegistry({ statePath });
+  registerToolCatalog(registry);
+  return { registry, registryDir };
 };
 
 describe("/api/logs", () => {
@@ -122,6 +132,52 @@ describe("/api/approvals", () => {
 
       const result = await approvalPromise;
       expect(result.status).toBe("approved");
+    } finally {
+      await closeServer(server);
+    }
+  });
+});
+
+describe("/api/tools", () => {
+  const cleanupDirs: string[] = [];
+
+  afterEach(async () => {
+    await Promise.all(cleanupDirs.splice(0).map((dir) => fs.rm(dir, { recursive: true, force: true })));
+  });
+
+  it("lists tools and toggles enablement", async () => {
+    const configDir = await createTempDir();
+    cleanupDirs.push(configDir);
+    const logDir = await createTempDir();
+    cleanupDirs.push(logDir);
+    const { registry, registryDir } = await createToolRegistry();
+    cleanupDirs.push(registryDir);
+
+    const configPath = path.join(configDir, "config.json");
+    const config = await loadConfig({ configPath });
+    const auditLogger = new AuditLogger({ baseDir: logDir, clock: () => new Date("2026-02-03T10:00:00Z") });
+
+    const app = createApp(config, { auditLogger, toolRegistry: registry });
+    const { server, baseUrl } = startServer(app);
+
+    try {
+      const listResponse = await fetch(`${baseUrl}/api/tools`, {
+        headers: { Authorization: `Bearer ${config.auth.token}` }
+      });
+      expect(listResponse.status).toBe(200);
+      const listBody = (await listResponse.json()) as { tools: Record<string, Array<{ name: string }>> };
+      expect(listBody.tools.filesystem.map((tool) => tool.name)).toContain("read-file");
+
+      const toggleResponse = await fetch(`${baseUrl}/api/tools/write-file/toggle`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${config.auth.token}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ enabled: true })
+      });
+      expect(toggleResponse.status).toBe(200);
+      expect(registry.isEnabled("write-file")).toBe(true);
     } finally {
       await closeServer(server);
     }

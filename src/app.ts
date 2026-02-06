@@ -1,6 +1,7 @@
 import express from "express";
 import helmet from "helmet";
 import cors from "cors";
+import * as z from "zod";
 import { getHealth } from "./health.js";
 import { createAuthMiddleware, checkRole } from "./auth/auth.js";
 import type { AppConfig } from "./config/index.js";
@@ -16,10 +17,12 @@ import {
   type ApprovalChannel,
   type ApprovalStatus
 } from "./approvals/index.js";
+import type { ToolRegistry } from "./mcp/tool-registry.js";
 
 type CreateAppOptions = {
   auditLogger?: AuditLogger;
   approvalQueue?: ApprovalQueue;
+  toolRegistry?: ToolRegistry;
 };
 
 const isAuditCategory = (value: string): value is AuditCategory => {
@@ -38,6 +41,10 @@ const isApprovalChannel = (value: string): value is ApprovalChannel => {
   return value === "web" || value === "telegram" || value === "discord";
 };
 
+const toggleToolSchema = z.object({
+  enabled: z.boolean()
+});
+
 const parseDate = (value: string | undefined) => {
   if (!value) {
     return undefined;
@@ -53,6 +60,7 @@ export const createApp = (config: AppConfig, options: CreateAppOptions = {}) => 
   const app = express();
   const auditLogger = options.auditLogger ?? new AuditLogger();
   const approvalQueue = options.approvalQueue ?? new ApprovalQueue({ auditLogger });
+  const toolRegistry = options.toolRegistry;
 
   app.set("trust proxy", true);
 
@@ -70,8 +78,30 @@ export const createApp = (config: AppConfig, options: CreateAppOptions = {}) => 
     res.status(200).json(getHealth());
   });
 
-  app.post("/api/tools/:name/toggle", authMiddleware, checkRole("admin"), (req, res) => {
-    res.status(200).json({ ok: true, tool: req.params.name });
+  app.post("/api/tools/:name/toggle", authMiddleware, checkRole("admin"), async (req, res) => {
+    if (!toolRegistry) {
+      return res.status(503).json({ error: "Tool registry not configured" });
+    }
+    const { name } = req.params;
+    const parsed = toggleToolSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: "Invalid enabled flag" });
+    }
+
+    try {
+      await toolRegistry.setEnabled(name, parsed.data.enabled);
+      return res.status(200).json({ ok: true, tool: name, enabled: parsed.data.enabled });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return res.status(400).json({ error: message });
+    }
+  });
+
+  app.get("/api/tools", authMiddleware, checkRole("operator"), (_req, res) => {
+    if (!toolRegistry) {
+      return res.status(503).json({ error: "Tool registry not configured" });
+    }
+    return res.status(200).json({ tools: toolRegistry.getAllTools() });
   });
 
   app.get("/api/approvals", authMiddleware, checkRole("operator"), (req, res) => {
