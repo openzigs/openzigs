@@ -109,7 +109,7 @@ const ensureToken = async (config: AppConfig, configPath: string) => {
   };
 
   await writeJsonFile(configPath, updated);
-  logger.info("Generated local auth token in ~/.openzigs/config.json");
+  logger.info(`Generated local auth token in ${configPath}`);
   return updated;
 };
 
