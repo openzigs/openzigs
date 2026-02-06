@@ -30,6 +30,25 @@ export type MessagingConfig = {
   accessControl: AccessControlConfig;
 };
 
+export type TelegramConfig = {
+  enabled: boolean;
+  token: string;
+  webhookUrl?: string;
+  allowedUsers: string[];
+  adminUserId?: string;
+};
+
+export type DiscordConfig = {
+  enabled: boolean;
+  token: string;
+  allowedGuilds: string[];
+};
+
+export type ChannelsConfig = {
+  telegram?: TelegramConfig;
+  discord?: DiscordConfig;
+};
+
 export type AppConfig = {
   server: {
     port: number;
@@ -39,6 +58,7 @@ export type AppConfig = {
   };
   auth: AuthConfig;
   messaging?: MessagingConfig;
+  channels?: ChannelsConfig;
 };
 
 const rateLimitSchema = z.object({
@@ -63,6 +83,25 @@ const messagingSchema = z.object({
   accessControl: accessControlSchema
 }).optional();
 
+const telegramSchema = z.object({
+  enabled: z.boolean(),
+  token: z.string(),
+  webhookUrl: z.string().optional(),
+  allowedUsers: z.array(z.string()),
+  adminUserId: z.string().optional()
+});
+
+const discordSchema = z.object({
+  enabled: z.boolean(),
+  token: z.string(),
+  allowedGuilds: z.array(z.string())
+});
+
+const channelsSchema = z.object({
+  telegram: telegramSchema.optional(),
+  discord: discordSchema.optional()
+}).optional();
+
 const appConfigSchema = z.object({
   server: z.object({
     port: z.number()
@@ -71,7 +110,8 @@ const appConfigSchema = z.object({
     level: z.string()
   }),
   auth: authSchema,
-  messaging: messagingSchema
+  messaging: messagingSchema,
+  channels: channelsSchema
 });
 
 export type LoadConfigOptions = {

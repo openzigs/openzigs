@@ -1,11 +1,7 @@
 export { ChannelManager } from "./channel-manager.js";
 export { convertMarkdown } from "./markdown.js";
-export {
-  DiscordChannel,
-  SlackChannel,
-  TelegramChannel,
-  WebChannel
-} from "./stubs.js";
+export { TelegramChannel } from "./telegram.js";
+export { DiscordChannel, SlackChannel, WebChannel } from "./stubs.js";
 export type {
   ApprovalRequest,
   ApprovalResponse,

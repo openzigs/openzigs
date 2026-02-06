@@ -25,7 +25,9 @@
     "telegram": {
       "enabled": false,
       "token": "${TELEGRAM_BOT_TOKEN}",
-      "allowedUsers": []
+      "webhookUrl": "",
+      "allowedUsers": [],
+      "adminUserId": ""
     },
     "discord": {
       "enabled": false,
