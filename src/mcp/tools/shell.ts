@@ -29,6 +29,17 @@ export const createShellExecuteHandler = (
 ) => {
   return async ({ command, args = [], cwd, timeout = 30000 }: ShellExecuteInput): Promise<ShellExecuteOutput> => {
     const startedAt = Date.now();
+    const logDenial = (reason: string) => {
+      if (!auditLogger) {
+        return;
+      }
+      void auditLogger.log({
+        level: "security",
+        category: "tool",
+        event: "shell_execute_denied",
+        details: { command, args, cwd, timeout, reason }
+      });
+    };
     if (auditLogger) {
       void auditLogger.log({
         level: "security",
@@ -39,14 +50,7 @@ export const createShellExecuteHandler = (
     }
 
     if (allowlist.length === 0) {
-      if (auditLogger) {
-        void auditLogger.log({
-          level: "security",
-          category: "tool",
-          event: "shell_execute_denied",
-          details: { command, args, cwd, timeout, reason: "allowlist_empty" }
-        });
-      }
+      logDenial("allowlist_empty");
       return {
         stdout: "",
         stderr: "Shell tool disabled by default. Configure an allowlist to enable.",
@@ -55,14 +59,7 @@ export const createShellExecuteHandler = (
     }
 
     if (!allowlist.includes(command)) {
-      if (auditLogger) {
-        void auditLogger.log({
-          level: "security",
-          category: "tool",
-          event: "shell_execute_denied",
-          details: { command, args, cwd, timeout, reason: "command_not_allowed" }
-        });
-      }
+      logDenial("command_not_allowed");
       return {
         stdout: "",
         stderr: `Shell command not allowed: ${command}`,
@@ -71,14 +68,7 @@ export const createShellExecuteHandler = (
     }
 
     if (cwd && allowedDirs.length > 0 && !isPathAllowed(cwd, allowedDirs)) {
-      if (auditLogger) {
-        void auditLogger.log({
-          level: "security",
-          category: "tool",
-          event: "shell_execute_denied",
-          details: { command, args, cwd, timeout, reason: "cwd_not_allowed" }
-        });
-      }
+      logDenial("cwd_not_allowed");
       return {
         stdout: "",
         stderr: `Shell cwd not allowed: ${cwd}`,

@@ -4,18 +4,24 @@ import cors from "cors";
 import { getHealth } from "./health.js";
 import { createAuthMiddleware, checkRole } from "./auth/auth.js";
 import type { AppConfig } from "./config/index.js";
-import { AuditLogger, type AuditCategory, type AuditLevel } from "./logging/audit-logger.js";
+import {
+  AuditLogger,
+  AUDIT_CATEGORIES,
+  AUDIT_LEVELS,
+  type AuditCategory,
+  type AuditLevel
+} from "./logging/audit-logger.js";
 
 type CreateAppOptions = {
   auditLogger?: AuditLogger;
 };
 
 const isAuditCategory = (value: string): value is AuditCategory => {
-  return value === "session" || value === "message" || value === "tool" || value === "security" || value === "system";
+  return AUDIT_CATEGORIES.includes(value as AuditCategory);
 };
 
 const isAuditLevel = (value: string): value is AuditLevel => {
-  return value === "info" || value === "warn" || value === "error" || value === "security";
+  return AUDIT_LEVELS.includes(value as AuditLevel);
 };
 
 const parseDate = (value: string | undefined) => {
