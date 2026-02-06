@@ -1,6 +1,7 @@
 import express from "express";
 import helmet from "helmet";
 import cors from "cors";
+import * as z from "zod";
 import { getHealth } from "./health.js";
 import { createAuthMiddleware, checkRole } from "./auth/auth.js";
 import type { AppConfig } from "./config/index.js";
@@ -40,6 +41,10 @@ const isApprovalChannel = (value: string): value is ApprovalChannel => {
   return value === "web" || value === "telegram" || value === "discord";
 };
 
+const toggleToolSchema = z.object({
+  enabled: z.boolean()
+});
+
 const parseDate = (value: string | undefined) => {
   if (!value) {
     return undefined;
@@ -78,14 +83,14 @@ export const createApp = (config: AppConfig, options: CreateAppOptions = {}) => 
       return res.status(503).json({ error: "Tool registry not configured" });
     }
     const { name } = req.params;
-    const enabled = (req.body as Record<string, unknown>).enabled;
-    if (typeof enabled !== "boolean") {
+    const parsed = toggleToolSchema.safeParse(req.body);
+    if (!parsed.success) {
       return res.status(400).json({ error: "Invalid enabled flag" });
     }
 
     try {
-      await toolRegistry.setEnabled(name, enabled);
-      return res.status(200).json({ ok: true, tool: name, enabled });
+      await toolRegistry.setEnabled(name, parsed.data.enabled);
+      return res.status(200).json({ ok: true, tool: name, enabled: parsed.data.enabled });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return res.status(400).json({ error: message });
