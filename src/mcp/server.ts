@@ -7,6 +7,7 @@ import { createBraveSearchHandler } from "./tools/brave-search.js";
 import { createChromeDevtoolsHandler } from "./tools/chrome-devtools.js";
 import { createShellExecuteHandler } from "./tools/shell.js";
 import { ToolRegistry, type ToolDefinition } from "./tool-registry.js";
+import { AuditLogger } from "../logging/audit-logger.js";
 
 export type McpServerOptions = {
   allowedDirs: string[];
@@ -16,6 +17,7 @@ export type McpServerOptions = {
   toolRegistry?: ToolRegistry;
   toolStatePath?: string;
   defaultEnabledTools?: string[];
+  auditLogger?: AuditLogger;
 };
 
 const readFileSchema = z.object({ path: z.string() });
@@ -71,7 +73,8 @@ export const createMcpServer = (options: McpServerOptions) => {
   });
 
   const shellExecuteHandler = createShellExecuteHandler({
-    allowedDirs: options.allowedDirs
+    allowedDirs: options.allowedDirs,
+    auditLogger: options.auditLogger
   });
 
   const registerTool = (tool: ToolDefinition) => {
