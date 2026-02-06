@@ -74,12 +74,6 @@ abstract class BaseChannel implements MessageChannel {
   }
 }
 
-export class DiscordChannel extends BaseChannel {
-  constructor(id = "discord") {
-    super(id, "discord");
-  }
-}
-
 export class SlackChannel extends BaseChannel {
   constructor(id = "slack") {
     super(id, "slack");

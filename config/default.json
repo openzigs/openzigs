@@ -32,7 +32,8 @@
     "discord": {
       "enabled": false,
       "token": "${DISCORD_BOT_TOKEN}",
-      "allowedGuilds": []
+      "allowedGuilds": [],
+      "adminUsers": []
     }
   }
 }

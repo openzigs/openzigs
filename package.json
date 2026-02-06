@@ -19,6 +19,7 @@
     "@modelcontextprotocol/sdk": "^0.4.0",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
+    "discord.js": "^14.25.1",
     "express": "^4.19.2",
     "grammy": "^1.26.2",
     "helmet": "^7.1.0",

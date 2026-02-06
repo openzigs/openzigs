@@ -3,7 +3,7 @@ import { createServer } from "node:http";
 import path from "node:path";
 import { Server as SocketIOServer } from "socket.io";
 import { createApp } from "./app.js";
-import { ChannelManager, TelegramChannel } from "./channels/index.js";
+import { ChannelManager, DiscordChannel, TelegramChannel } from "./channels/index.js";
 import { loadConfig } from "./config/index.js";
 import { logger } from "./logging/logger.js";
 import { AuditLogger } from "./logging/audit-logger.js";
@@ -61,6 +61,12 @@ const normalizeTelegramAllowlist = (ids: string[]) => {
   return ids.map((id) => (id.startsWith("telegram:")) ? id : `telegram:${id}`);
 };
 
+const defaultAccessControl = {
+  mode: "open" as const,
+  allowedUsers: [],
+  blockedUsers: []
+};
+
 const telegramConfig = config.channels?.telegram;
 if (telegramConfig?.enabled && telegramConfig.token) {
   const telegramChannel = new TelegramChannel({
@@ -79,11 +85,7 @@ if (telegramConfig?.enabled && telegramConfig.token) {
         allowedUsers: normalizeTelegramAllowlist(telegramConfig.allowedUsers),
         blockedUsers: []
       }
-    : (config.messaging?.accessControl ?? {
-        mode: "open" as const,
-        allowedUsers: [],
-        blockedUsers: []
-      });
+    : (config.messaging?.accessControl ?? defaultAccessControl);
 
   const router = new MessageRouter({
     channelManager,
@@ -135,6 +137,72 @@ if (telegramConfig?.enabled && telegramConfig.token) {
     } catch (error) {
       const details = error instanceof Error ? error.message : String(error);
       logger.error(`Failed to send Telegram approval: ${details}`);
+    }
+  });
+}
+
+const discordConfig = config.channels?.discord;
+if (discordConfig?.enabled && discordConfig.token) {
+  const discordChannel = new DiscordChannel({
+    config: {
+      botToken: discordConfig.token,
+      allowedGuilds: discordConfig.allowedGuilds,
+      adminUsers: discordConfig.adminUsers
+    },
+    logger
+  });
+
+  const accessControl = config.messaging?.accessControl ?? defaultAccessControl;
+
+  const router = new MessageRouter({
+    channelManager,
+    sessionManager,
+    copilot,
+    accessControl
+  });
+
+  await discordChannel.connect();
+  channelManager.register(discordChannel);
+
+  discordChannel.onMessage((message) => {
+    void router.route(message).catch((error) => {
+      const details = error instanceof Error ? error.message : String(error);
+      logger.error(`Discord message routing failed: ${details}`);
+    });
+  });
+
+  discordChannel.onApprovalResponse((response) => {
+    approvalQueue.handleDecision(response.approvalId, {
+      approved: response.approved,
+      decidedBy: response.decidedBy,
+      decidedVia: "discord"
+    });
+  });
+
+  approvalQueue.on("approval:created", async (approval) => {
+    if (approval.channelType !== "discord" || !approval.sessionId) {
+      return;
+    }
+    try {
+      const session = await sessionManager.getSession(approval.sessionId);
+      const chatId = typeof session.metadata.chatId === "string"
+        ? session.metadata.chatId
+        : undefined;
+      if (!chatId) {
+        logger.warn(`Missing chatId for Discord approval ${approval.id}`);
+        return;
+      }
+      await discordChannel.sendApprovalRequest(chatId, {
+        id: approval.id,
+        tool: approval.tool,
+        args: approval.args,
+        riskLevel: approval.riskLevel,
+        explanation: approval.explanation,
+        preview: approval.preview
+      });
+    } catch (error) {
+      const details = error instanceof Error ? error.message : String(error);
+      logger.error(`Failed to send Discord approval: ${details}`);
     }
   });
 }

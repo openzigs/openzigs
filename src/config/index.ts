@@ -42,6 +42,7 @@ export type DiscordConfig = {
   enabled: boolean;
   token: string;
   allowedGuilds: string[];
+  adminUsers: string[];
 };
 
 export type ChannelsConfig = {
@@ -94,7 +95,8 @@ const telegramSchema = z.object({
 const discordSchema = z.object({
   enabled: z.boolean(),
   token: z.string(),
-  allowedGuilds: z.array(z.string())
+  allowedGuilds: z.array(z.string()),
+  adminUsers: z.array(z.string())
 });
 
 const channelsSchema = z.object({
