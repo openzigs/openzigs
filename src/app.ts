@@ -1,5 +1,6 @@
 import express from "express";
 import helmet from "helmet";
+// @ts-expect-error -- cors has no bundled types
 import cors from "cors";
 import * as z from "zod";
 import { getHealth } from "./health.js";
