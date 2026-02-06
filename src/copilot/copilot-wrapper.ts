@@ -226,7 +226,8 @@ export class CopilotWrapperService implements CopilotWrapper {
     onToolCall,
     onPermissionRequest
   }: CopilotWrapperOptions = {}) {
-    this.client = client ?? new CopilotClient();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    this.client = client ?? (new CopilotClient() as any);
     this.toolRegistry = toolRegistry;
     this.authPath = authPath;
     this.clientId = clientId;
