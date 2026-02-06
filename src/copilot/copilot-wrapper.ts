@@ -94,7 +94,7 @@ const readAuthState = async (authPath: string): Promise<AuthState | null> => {
 };
 
 const writeAuthState = async (authPath: string, state: AuthState) => {
-  await fs.mkdir(path.dirname(authPath), { recursive: true });
+  await fs.mkdir(path.dirname(authPath), { recursive: true, mode: 0o700 });
   await fs.writeFile(authPath, JSON.stringify(state, null, 2), { mode: 0o600 });
   await fs.chmod(authPath, 0o600);
 };
@@ -307,9 +307,6 @@ export class CopilotWrapperService implements CopilotWrapper {
         if (this.permissionHandler) {
           return this.permissionHandler(request);
         }
-        if (request.toolName) {
-          await this.onToolCall(request.toolName, request.toolArgs);
-        }
         return { kind: "approved" };
       }
     });
@@ -376,7 +373,7 @@ export class CopilotWrapperService implements CopilotWrapper {
         }
 
         if (isRateLimitError(error)) {
-          const delay = Math.min(1000 * Math.pow(2, attempt), 60_000);
+          const delay = Math.min(1000 * Math.pow(2, attempt) + Math.random() * 1000, 60_000);
           await sleep(delay);
           continue;
         }
