@@ -17,6 +17,7 @@
   "dependencies": {
     "@github/copilot-sdk": "^0.1.20",
     "@modelcontextprotocol/sdk": "^0.4.0",
+    "@types/cors": "^2.8.19",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
@@ -28,7 +29,6 @@
     "zod": "^3.23.8"
   },
   "devDependencies": {
-    "@types/cors": "^2.8.19",
     "@types/express": "^4.17.21",
     "@types/node": "^22.13.0",
     "@typescript-eslint/eslint-plugin": "^7.18.0",

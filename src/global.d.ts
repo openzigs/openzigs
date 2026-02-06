@@ -1,11 +1,7 @@
-import { Role } from "./auth/auth.js";
+import type { Role } from "./auth/auth.js";
 
-declare global {
-  namespace Express {
-    interface Request {
-      userRole?: Role;
-    }
+declare module "express-serve-static-core" {
+  interface Request {
+    userRole?: Role;
   }
 }
-
-export {};
