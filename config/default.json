@@ -14,6 +14,13 @@
       "max": 10
     }
   },
+  "messaging": {
+    "accessControl": {
+      "mode": "open",
+      "allowedUsers": [],
+      "blockedUsers": []
+    }
+  },
   "channels": {
     "telegram": {
       "enabled": false,

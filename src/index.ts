@@ -37,3 +37,6 @@ export type {
 	SessionResume,
 	ConversationEvent
 } from "./sessions/index.js";
+export { MessageRouter } from "./routing/index.js";
+export type { MessageRouterOptions } from "./routing/index.js";
+export type { AccessControlConfig, AccessControlMode, MessagingConfig } from "./config/index.js";
