@@ -74,12 +74,6 @@ abstract class BaseChannel implements MessageChannel {
   }
 }
 
-export class TelegramChannel extends BaseChannel {
-  constructor(id = "telegram") {
-    super(id, "telegram");
-  }
-}
-
 export class DiscordChannel extends BaseChannel {
   constructor(id = "discord") {
     super(id, "discord");

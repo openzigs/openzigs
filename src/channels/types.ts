@@ -34,6 +34,7 @@ export type IncomingMessage = {
 };
 
 export type ApprovalRequest = {
+  id: string;
   tool: string;
   args: Record<string, unknown>;
   riskLevel: "medium" | "high";
