@@ -16,6 +16,7 @@ import { ToolRegistry } from "./mcp/tool-registry.js";
 import { registerToolCatalog } from "./mcp/tool-catalog.js";
 import { MessageRouter } from "./routing/index.js";
 import { SessionManager } from "./sessions/index.js";
+import { CloudflareTunnel } from "./tunnel/index.js";
 
 const config = await loadConfig();
 const auditLogger = new AuditLogger();
@@ -30,6 +31,14 @@ const uiOrigin = process.env.OPENZIGS_UI_ORIGIN ?? "http://localhost:3000";
 const channelManager = new ChannelManager();
 const sessionManager = new SessionManager();
 const copilot = new CopilotWrapperService({ toolRegistry });
+const tunnelConfig = config.tunnel;
+const tunnel = tunnelConfig?.enabled
+  ? new CloudflareTunnel({
+      mode: tunnelConfig.mode,
+      namedTunnel: tunnelConfig.namedTunnel,
+      logger
+    })
+  : null;
 
 const httpServer = createServer(app);
 const io = new SocketIOServer(httpServer, {
@@ -186,6 +195,19 @@ httpServer.listen(port, () => {
     event: "server_started",
     details: { port }
   });
+
+  if (tunnel) {
+    tunnel.on("connected", (publicUrl) => {
+      logger.info(`Public URL: ${publicUrl}`);
+    });
+    tunnel.on("disconnected", () => {
+      logger.warn("Cloudflare tunnel disconnected");
+    });
+    void tunnel.start(port).catch((error) => {
+      const details = error instanceof Error ? error.message : String(error);
+      logger.error(`Cloudflare tunnel failed: ${details}`);
+    });
+  }
 });
 
 export { app, httpServer };

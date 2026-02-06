@@ -35,5 +35,13 @@
       "allowedGuilds": [],
       "adminUsers": []
     }
+  },
+  "tunnel": {
+    "enabled": false,
+    "mode": "quick",
+    "namedTunnel": {
+      "credentialsFile": "~/.cloudflared/credentials.json",
+      "hostname": "agent.example.com"
+    }
   }
 }

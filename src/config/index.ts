@@ -49,6 +49,19 @@ export type ChannelsConfig = {
   discord?: DiscordConfig;
 };
 
+export type TunnelMode = "quick" | "named";
+
+export type NamedTunnelConfig = {
+  credentialsFile: string;
+  hostname: string;
+};
+
+export type TunnelConfig = {
+  enabled: boolean;
+  mode: TunnelMode;
+  namedTunnel?: NamedTunnelConfig;
+};
+
 export type AppConfig = {
   server: {
     port: number;
@@ -59,6 +72,7 @@ export type AppConfig = {
   auth: AuthConfig;
   messaging?: MessagingConfig;
   channels?: ChannelsConfig;
+  tunnel?: TunnelConfig;
 };
 
 const rateLimitSchema = z.object({
@@ -102,6 +116,24 @@ const channelsSchema = z.object({
   discord: discordSchema.optional()
 }).optional();
 
+const namedTunnelSchema = z.object({
+  credentialsFile: z.string(),
+  hostname: z.string()
+});
+
+const tunnelSchema = z.object({
+  enabled: z.boolean(),
+  mode: z.enum(["quick", "named"]),
+  namedTunnel: namedTunnelSchema.optional()
+}).superRefine((value, ctx) => {
+  if (value.enabled && value.mode === "named" && !value.namedTunnel) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "namedTunnel is required when tunnel mode is named"
+    });
+  }
+});
+
 const appConfigSchema = z.object({
   server: z.object({
     port: z.number()
@@ -111,7 +143,8 @@ const appConfigSchema = z.object({
   }),
   auth: authSchema,
   messaging: messagingSchema,
-  channels: channelsSchema
+  channels: channelsSchema,
+  tunnel: tunnelSchema.optional()
 });
 
 export type LoadConfigOptions = {

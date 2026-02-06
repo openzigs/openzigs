@@ -37,6 +37,15 @@ export type {
 	SessionResume,
 	ConversationEvent
 } from "./sessions/index.js";
+export { CloudflareTunnel } from "./tunnel/index.js";
+export type { CloudflareTunnelOptions } from "./tunnel/index.js";
 export { MessageRouter } from "./routing/index.js";
 export type { MessageRouterOptions } from "./routing/index.js";
-export type { AccessControlConfig, AccessControlMode, MessagingConfig } from "./config/index.js";
+export type {
+	AccessControlConfig,
+	AccessControlMode,
+	MessagingConfig,
+	TunnelConfig,
+	TunnelMode,
+	NamedTunnelConfig
+} from "./config/index.js";
