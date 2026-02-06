@@ -86,52 +86,38 @@ export const createShellExecuteHandler = (
       };
     }
 
+    let output: ShellExecuteOutput;
     try {
       const result = await execFileAsync(command, args, { cwd, timeout, maxBuffer: 10 * 1024 * 1024 });
-      const output = {
+      output = {
         stdout: result.stdout ?? "",
         stderr: result.stderr ?? "",
         exitCode: 0
       };
-      if (auditLogger) {
-        void auditLogger.log({
-          level: "security",
-          category: "tool",
-          event: "shell_execute_result",
-          details: {
-            command,
-            args,
-            cwd,
-            timeout,
-            exitCode: output.exitCode,
-            durationMs: Date.now() - startedAt
-          }
-        });
-      }
-      return output;
     } catch (error) {
       const execError = error as { stdout?: string; stderr?: string; code?: number };
-      const output = {
+      output = {
         stdout: execError.stdout ?? "",
         stderr: execError.stderr ?? String(error),
         exitCode: execError.code ?? 1
       };
-      if (auditLogger) {
-        void auditLogger.log({
-          level: "security",
-          category: "tool",
-          event: "shell_execute_result",
-          details: {
-            command,
-            args,
-            cwd,
-            timeout,
-            exitCode: output.exitCode,
-            durationMs: Date.now() - startedAt
-          }
-        });
-      }
-      return output;
     }
+
+    if (auditLogger) {
+      void auditLogger.log({
+        level: "security",
+        category: "tool",
+        event: "shell_execute_result",
+        details: {
+          command,
+          args,
+          cwd,
+          timeout,
+          exitCode: output.exitCode,
+          durationMs: Date.now() - startedAt
+        }
+      });
+    }
+    return output;
   };
 };

@@ -93,11 +93,24 @@ const parseAuditEntry = (line: string): AuditLogEntry | null => {
   if (!line.trim()) {
     return null;
   }
-  const parsed = JSON.parse(line) as StoredAuditEntry;
-  return {
-    ...parsed,
-    timestamp: new Date(parsed.timestamp)
-  };
+  try {
+    const parsed = JSON.parse(line) as StoredAuditEntry;
+    return {
+      ...parsed,
+      timestamp: new Date(parsed.timestamp)
+    };
+  } catch {
+    return null;
+  }
+};
+
+const parseDateFromFilename = (name: string): Date | null => {
+  const match = /^audit-(\d{4}-\d{2}-\d{2})\.jsonl$/.exec(name);
+  if (!match) {
+    return null;
+  }
+  const parsed = new Date(`${match[1]}T00:00:00Z`);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
 };
 
 export class AuditLogger {
@@ -135,7 +148,7 @@ export class AuditLogger {
   }
 
   async query({ category, level, since, until, limit = 100 }: AuditQuery = {}): Promise<AuditLogEntry[]> {
-    const entries = await this.readAllEntries();
+    const entries = await this.readAllEntries({ since, until });
     const filtered = entries.filter((entry) => {
       if (category && entry.category !== category) {
         return false;
@@ -156,10 +169,28 @@ export class AuditLogger {
     return filtered.slice(0, Math.max(0, limit));
   }
 
-  private async readAllEntries(): Promise<AuditLogEntry[]> {
+  private async readAllEntries({ since, until }: { since?: Date; until?: Date } = {}): Promise<AuditLogEntry[]> {
     try {
       const entries = await fs.readdir(this.baseDir);
-      const auditFiles = entries.filter(isAuditFile).sort();
+      const auditFiles = entries
+        .filter(isAuditFile)
+        .filter((name) => {
+          if (!since && !until) {
+            return true;
+          }
+          const date = parseDateFromFilename(name);
+          if (!date) {
+            return false;
+          }
+          if (since && date < new Date(Date.UTC(since.getUTCFullYear(), since.getUTCMonth(), since.getUTCDate()))) {
+            return false;
+          }
+          if (until && date > new Date(Date.UTC(until.getUTCFullYear(), until.getUTCMonth(), until.getUTCDate()))) {
+            return false;
+          }
+          return true;
+        })
+        .sort();
       const records: AuditLogEntry[] = [];
 
       for (const file of auditFiles) {
