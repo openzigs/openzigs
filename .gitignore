@@ -64,6 +64,7 @@ coverage/
 # Build artifacts
 build/
 out/
+.next/
 
 # System files
 npm-debug.log
