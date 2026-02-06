@@ -4,6 +4,13 @@ import type { CopilotWrapper } from "../copilot/copilot-wrapper.js";
 import type { AccessControlConfig } from "../config/index.js";
 import type { ConversationEvent, SessionManager } from "../sessions/session-manager.js";
 
+export type RouteOptions = {
+  /** Callback invoked for each streaming chunk. */
+  onChunk?: (chunk: string) => void;
+  /** Override the model for this request. */
+  model?: string;
+};
+
 export type MessageRouterOptions = {
   channelManager: ChannelManager;
   sessionManager: SessionManager;
@@ -44,7 +51,7 @@ export class MessageRouter {
     this.clock = clock ?? (() => new Date());
   }
 
-  async route(message: IncomingMessage): Promise<void> {
+  async route(message: IncomingMessage, options?: RouteOptions): Promise<void> {
     const channel = this.channelManager.getChannel(message.channelType);
     if (!channel) {
       throw new Error(`Channel not registered: ${message.channelType}`);
@@ -60,8 +67,11 @@ export class MessageRouter {
     const prompt = this.buildPrompt(resume.history, message.content);
 
     let response = "";
-    for await (const chunk of this.copilot.chat(prompt)) {
+    for await (const chunk of this.copilot.chat(prompt, undefined, options?.model)) {
       response += chunk;
+      if (options?.onChunk) {
+        options.onChunk(chunk);
+      }
     }
 
     const now = this.clock();

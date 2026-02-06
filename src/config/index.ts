@@ -44,9 +44,14 @@ export type DiscordConfig = {
   allowedGuilds: string[];
 };
 
+export type WebChannelConfig = {
+  enabled: boolean;
+};
+
 export type ChannelsConfig = {
   telegram?: TelegramConfig;
   discord?: DiscordConfig;
+  web?: WebChannelConfig;
 };
 
 export type TunnelMode = "quick" | "named";
@@ -111,9 +116,14 @@ const discordSchema = z.object({
   allowedGuilds: z.array(z.string())
 });
 
+const webChannelSchema = z.object({
+  enabled: z.boolean()
+});
+
 const channelsSchema = z.object({
   telegram: telegramSchema.optional(),
-  discord: discordSchema.optional()
+  discord: discordSchema.optional(),
+  web: webChannelSchema.optional()
 }).optional();
 
 const namedTunnelSchema = z.object({

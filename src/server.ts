@@ -1,9 +1,11 @@
 import "dotenv/config";
 import { createServer } from "node:http";
 import path from "node:path";
+import express from "express";
 import { Server as SocketIOServer } from "socket.io";
+import { nanoid } from "nanoid";
 import { createApp } from "./app.js";
-import { ChannelManager, DiscordChannel, TelegramChannel } from "./channels/index.js";
+import { ChannelManager, DiscordChannel, TelegramChannel, WebChatChannel } from "./channels/index.js";
 import type { MessageChannel } from "./channels/index.js";
 import { loadConfig } from "./config/index.js";
 import type { AccessControlConfig } from "./config/index.js";
@@ -17,6 +19,7 @@ import { registerToolCatalog } from "./mcp/tool-catalog.js";
 import { MessageRouter } from "./routing/index.js";
 import { SessionManager } from "./sessions/index.js";
 import { CloudflareTunnel } from "./tunnel/index.js";
+import { createModelsRouter } from "./api/models.js";
 
 const config = await loadConfig();
 const auditLogger = new AuditLogger();
@@ -31,6 +34,14 @@ const uiOrigin = process.env.OPENZIGS_UI_ORIGIN ?? "http://localhost:3000";
 const channelManager = new ChannelManager();
 const sessionManager = new SessionManager();
 const copilot = new CopilotWrapperService({ toolRegistry });
+
+// Serve static chat UI
+app.use(express.static(path.resolve(process.cwd(), "public")));
+
+// Model API routes
+const modelsRouter = createModelsRouter({ copilot });
+app.use("/api/models", modelsRouter);
+
 const tunnelConfig = config.tunnel;
 const tunnel = tunnelConfig?.enabled
   ? new CloudflareTunnel({
@@ -185,6 +196,70 @@ if (discordConfig?.enabled && discordConfig.token) {
   channelManager.register(discordChannel);
 
   setupChannelRouting(discordChannel, router, approvalQueue, sessionManager, logger);
+}
+
+// ── Web Chat Channel ──
+const webConfig = config.channels?.web;
+if (webConfig?.enabled !== false) {
+  const webChatChannel = new WebChatChannel({ io });
+  const router = createRouter();
+
+  await webChatChannel.connect();
+  channelManager.register(webChatChannel);
+
+  // Streaming-aware routing for web chat
+  webChatChannel.onMessage((message) => {
+    const messageId = nanoid();
+
+    void router
+      .route(message, {
+        onChunk: (chunk) => {
+          void webChatChannel.sendStreamChunk(message.chatId, chunk, messageId);
+        },
+        model: message.model // Model is picked per-request via the UI; already read from user config by the model selector
+      })
+      .then(() => {
+        void webChatChannel.sendStreamEnd(message.chatId, messageId);
+      })
+      .catch((error) => {
+        const details = error instanceof Error ? error.message : String(error);
+        logger.error(`web chat message routing failed: ${details}`);
+        void webChatChannel.sendError(message.chatId, "Something went wrong");
+      });
+  });
+
+  webChatChannel.onApprovalResponse((response) => {
+    approvalQueue.handleDecision(response.approvalId, {
+      approved: response.approved,
+      decidedBy: response.decidedBy,
+      decidedVia: "web"
+    });
+  });
+
+  approvalQueue.on("approval:created", async (approval) => {
+    if (approval.channelType !== "web" || !approval.sessionId) {
+      return;
+    }
+    try {
+      const session = await sessionManager.getSession(approval.sessionId);
+      const chatId = typeof session.metadata.chatId === "string" ? session.metadata.chatId : undefined;
+      if (!chatId) {
+        logger.warn(`Missing chatId for web approval ${approval.id}`);
+        return;
+      }
+      await webChatChannel.sendApprovalRequest(chatId, {
+        id: approval.id,
+        tool: approval.tool,
+        args: approval.args,
+        riskLevel: approval.riskLevel,
+        explanation: approval.explanation,
+        preview: approval.preview
+      });
+    } catch (error) {
+      const details = error instanceof Error ? error.message : String(error);
+      logger.error(`Failed to send web approval: ${details}`);
+    }
+  });
 }
 
 httpServer.listen(port, () => {

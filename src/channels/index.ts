@@ -3,6 +3,7 @@ export { convertMarkdown } from "./markdown.js";
 export { DiscordChannel } from "./discord.js";
 export { TelegramChannel } from "./telegram.js";
 export { WebChannel } from "./stubs.js";
+export { WebChatChannel } from "./web-chat.js";
 export type {
   ApprovalRequest,
   ApprovalResponse,
