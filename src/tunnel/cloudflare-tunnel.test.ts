@@ -1,6 +1,5 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { EventEmitter } from "node:events";
-import type { ChildProcess } from "node:child_process";
 import { CloudflareTunnel } from "./cloudflare-tunnel.js";
 
 class FakeProcess extends EventEmitter {
@@ -22,7 +21,8 @@ describe("CloudflareTunnel", () => {
 
   it("parses the public URL from stderr", async () => {
     const proc = new FakeProcess();
-    const spawn = vi.fn(() => proc as unknown as ChildProcess);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const spawn = vi.fn(() => proc as unknown as any);
     const tunnel = new CloudflareTunnel({
       mode: "quick",
       spawn,
@@ -43,7 +43,8 @@ describe("CloudflareTunnel", () => {
 
   it("rejects if the tunnel does not connect in time", async () => {
     const proc = new FakeProcess();
-    const spawn = vi.fn(() => proc as unknown as ChildProcess);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const spawn = vi.fn(() => proc as unknown as any);
     const tunnel = new CloudflareTunnel({
       mode: "quick",
       spawn,
@@ -62,8 +63,10 @@ describe("CloudflareTunnel", () => {
     const procTwo = new FakeProcess();
     const spawn = vi
       .fn()
-      .mockReturnValueOnce(procOne as unknown as ChildProcess)
-      .mockReturnValueOnce(procTwo as unknown as ChildProcess);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      .mockReturnValueOnce(procOne as unknown as any)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      .mockReturnValueOnce(procTwo as unknown as any);
 
     const tunnel = new CloudflareTunnel({
       mode: "quick",
@@ -72,13 +75,17 @@ describe("CloudflareTunnel", () => {
       reconnectDelayMs: 1000
     });
 
+    // 1. Initial success
     const startPromise = tunnel.start(3000);
-    const rejection = expect(startPromise).rejects.toThrow("Tunnel exited before connection");
+    procOne.stderr.emit("data", Buffer.from("https://reconnect-test.trycloudflare.com"));
+    await expect(startPromise).resolves.toBe("https://reconnect-test.trycloudflare.com");
+
+    // 2. Unexpected die
     procOne.emit("exit", 1, null);
 
+    // 3. Wait for reconnect delay
     await vi.advanceTimersByTimeAsync(1000);
 
-    await rejection;
     expect(spawn).toHaveBeenCalledTimes(2);
   });
 });
