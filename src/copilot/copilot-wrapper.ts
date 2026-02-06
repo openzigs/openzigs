@@ -22,11 +22,6 @@ type AuthState = {
   obtainedAt: number;
 };
 
-type DeviceFlowClient = {
-  startDeviceAuth: (input: { clientId: string; scopes: string[] }) => Promise<DeviceAuthInfo>;
-  waitForAuth: (input: { timeoutMs: number }) => Promise<unknown>;
-};
-
 type CopilotSessionLike = {
   on: (event: string, handler: (event: { data?: { deltaContent?: string } }) => void) => void;
   sendAndWait: (input: { prompt: string }) => Promise<unknown>;
@@ -43,6 +38,8 @@ type CopilotClientLike = {
     }>;
   }) => Promise<CopilotSessionLike>;
   stop?: () => Promise<Error[]>;
+  startDeviceAuth?: (input: { clientId: string; scopes: string[] }) => Promise<DeviceAuthInfo>;
+  waitForAuth?: (input: { timeoutMs: number }) => Promise<unknown>;
 };
 
 export interface CopilotWrapper {
@@ -61,6 +58,9 @@ export type CopilotWrapperOptions = {
   model?: string;
   authTimeoutMs?: number;
   onToolCall?: (tool: string, args: unknown) => Promise<void>;
+  onPermissionRequest?: (request: { kind: string; toolName?: string; toolArgs?: unknown }) => Promise<{
+    kind: "approved" | "denied-by-rules" | "denied-by-user";
+  }>;
 };
 
 const defaultAuthPath = () => path.join(os.homedir(), ".openzigs", "auth.json");
@@ -212,15 +212,19 @@ export class CopilotWrapperService implements CopilotWrapper {
   private started = false;
   private pendingAuth?: Promise<AuthState>;
   private toolCallHandler?: (tool: string, args: unknown) => Promise<void>;
+  private permissionHandler?: (request: { kind: string; toolName?: string; toolArgs?: unknown }) => Promise<{
+    kind: "approved" | "denied-by-rules" | "denied-by-user";
+  }>;
 
   constructor({
     client,
     toolRegistry,
     authPath = defaultAuthPath(),
     clientId = process.env.GITHUB_CLIENT_ID ?? "",
-    model = "gpt-5",
+    model = "gpt-4.1",
     authTimeoutMs = 5 * 60 * 1000,
-    onToolCall
+    onToolCall,
+    onPermissionRequest
   }: CopilotWrapperOptions = {}) {
     this.client = client ?? new CopilotClient();
     this.toolRegistry = toolRegistry;
@@ -229,6 +233,7 @@ export class CopilotWrapperService implements CopilotWrapper {
     this.model = model;
     this.authTimeoutMs = authTimeoutMs;
     this.toolCallHandler = onToolCall;
+    this.permissionHandler = onPermissionRequest;
   }
 
   async authenticate(): Promise<DeviceAuthInfo> {
@@ -236,13 +241,16 @@ export class CopilotWrapperService implements CopilotWrapper {
       throw new Error("GITHUB_CLIENT_ID is required for device flow auth");
     }
 
-    const authClient = this.client as unknown as DeviceFlowClient;
-    const authInfo = await authClient.startDeviceAuth({
+    if (!this.client.startDeviceAuth || !this.client.waitForAuth) {
+      throw new Error("The provided client does not support device flow authentication");
+    }
+
+    const authInfo = await this.client.startDeviceAuth({
       clientId: this.clientId,
       scopes: ["copilot", "read:user"]
     });
 
-    this.pendingAuth = authClient.waitForAuth({ timeoutMs: this.authTimeoutMs })
+    this.pendingAuth = this.client.waitForAuth({ timeoutMs: this.authTimeoutMs })
       .then((result) => {
         const normalized = normalizeAuthResult(result);
         const state: AuthState = {
@@ -296,6 +304,9 @@ export class CopilotWrapperService implements CopilotWrapper {
       streaming: true,
       tools: wrappedTools,
       onPermissionRequest: async (request) => {
+        if (this.permissionHandler) {
+          return this.permissionHandler(request);
+        }
         if (request.toolName) {
           await this.onToolCall(request.toolName, request.toolArgs);
         }
