@@ -32,6 +32,7 @@ export type McpServerOptions = {
   linkedinSidecarUrl?: string;
   twitterSidecarUrl?: string;
   facebookSidecarUrl?: string;
+  pinterestSidecarUrl?: string;
   wordSidecarUrl?: string;
   calendarSidecarUrl?: string;
 };
@@ -49,6 +50,7 @@ export type RegisterMcpToolsOptions = Pick<
   | "linkedinSidecarUrl"
   | "twitterSidecarUrl"
   | "facebookSidecarUrl"
+  | "pinterestSidecarUrl"
   | "wordSidecarUrl"
   | "calendarSidecarUrl"
 >;
@@ -378,6 +380,7 @@ export const registerMcpTools = (toolRegistry: ToolRegistry, options: RegisterMc
     linkedinSidecarUrl: options.linkedinSidecarUrl,
     twitterSidecarUrl: options.twitterSidecarUrl,
     facebookSidecarUrl: options.facebookSidecarUrl,
+    pinterestSidecarUrl: options.pinterestSidecarUrl,
   });
   for (const tool of socialTools) {
     registerTool(tool);

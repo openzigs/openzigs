@@ -77,6 +77,20 @@ services:
     networks:
       - openzigs-network
 
+  mcp-pinterest:
+    image: ghcr.io/collactivelabs/pinterest-mcp-server:latest
+    container_name: openzigs-mcp-pinterest
+    restart: unless-stopped
+    ports:
+      - "5104:3052"
+    environment:
+      - PINTEREST_APP_ID=${PINTEREST_APP_ID:-}
+      - PINTEREST_APP_SECRET=${PINTEREST_APP_SECRET:-}
+    volumes:
+      - pinterest-tokens:/app/tokens
+    networks:
+      - openzigs-network
+
   # ── Document Intelligence MCP Sidecars ──
   mcp-word:
     image: ghcr.io/community/office-word-mcp-server:latest
@@ -89,6 +103,7 @@ services:
 
 volumes:
   openzigs-data:
+  pinterest-tokens:
 
 networks:
   openzigs-network:

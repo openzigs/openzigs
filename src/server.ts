@@ -76,6 +76,7 @@ registerMcpTools(toolRegistry, {
   linkedinSidecarUrl: process.env.MCP_LINKEDIN_URL ?? "http://localhost:5101",
   twitterSidecarUrl: process.env.MCP_TWITTER_URL ?? "http://localhost:5102",
   facebookSidecarUrl: process.env.MCP_FACEBOOK_URL ?? "http://localhost:5103",
+  pinterestSidecarUrl: process.env.MCP_PINTEREST_URL ?? "http://localhost:5104",
   wordSidecarUrl: process.env.MCP_WORD_URL ?? "http://localhost:5201",
   calendarSidecarUrl: process.env.MCP_CALENDAR_URL,
 });
