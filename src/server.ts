@@ -22,6 +22,9 @@ import { CloudflareTunnel } from "./tunnel/index.js";
 import { createModelsRouter } from "./api/models.js";
 import { createAdminRouter } from "./api/admin.js";
 import { launchChrome, killChrome } from "./browser/chrome-launcher.js";
+import { getDatabase, closeDatabase } from "./productivity/database.js";
+import { PromptManager } from "./productivity/prompt-manager.js";
+import { Scheduler } from "./productivity/scheduler.js";
 
 const config = await loadConfig();
 const auditLogger = new AuditLogger();
@@ -48,15 +51,35 @@ if (chromeAutoLaunch && process.env.CHROME_DEBUG_HOST) {
   });
 }
 
+// ── Productivity: SQLite + Prompts + Scheduler ──
+const db = getDatabase();
+const promptManager = new PromptManager({ db });
+const scheduler = new Scheduler({
+  db,
+  onExecute: async (job) => {
+    // Default handler: log execution. Hook up to copilot for actual prompt execution.
+    logger.info(`Scheduler executed job "${job.name}" (${job.id})`);
+    return `Job "${job.name}" executed`;
+  },
+});
+scheduler.startAll();
+
 registerMcpTools(toolRegistry, {
   allowedDirs: allowedDirs.length > 0 ? allowedDirs : [process.cwd()],
   braveApiKey: process.env.BRAVE_API_KEY,
   chromeDebugHost: process.env.CHROME_DEBUG_HOST,
   chromeDebugPort,
   auditLogger,
-  approvalQueue
+  approvalQueue,
+  promptManager,
+  scheduler,
+  linkedinSidecarUrl: process.env.MCP_LINKEDIN_URL ?? "http://localhost:5101",
+  twitterSidecarUrl: process.env.MCP_TWITTER_URL ?? "http://localhost:5102",
+  facebookSidecarUrl: process.env.MCP_FACEBOOK_URL ?? "http://localhost:5103",
+  wordSidecarUrl: process.env.MCP_WORD_URL ?? "http://localhost:5201",
+  calendarSidecarUrl: process.env.MCP_CALENDAR_URL,
 });
-const app = createApp(config, { auditLogger, approvalQueue, toolRegistry });
+const app = createApp(config, { auditLogger, approvalQueue, toolRegistry, promptManager, scheduler });
 const port = Number(process.env.PORT ?? 3000);
 const uiOrigin = process.env.OPENZIGS_UI_ORIGIN ?? "http://localhost:3000";
 const channelManager = new ChannelManager();
@@ -115,6 +138,10 @@ approvalQueue.on("approval:decided", (approval) => {
 
 toolRegistry.on("tool:toggled", (payload) => {
   io.emit("tool:toggled", payload);
+});
+
+scheduler.on("job:executed", (result) => {
+  io.emit("job:executed", result);
 });
 
 const normalizeTelegramAllowlist = (ids: string[]) => {
@@ -347,12 +374,16 @@ httpServer.listen(port, () => {
   }
 });
 
-// Clean up Chrome on process exit
+// Clean up Chrome + Scheduler + Database on process exit
 process.on("SIGINT", () => {
+  scheduler.stopAll();
+  closeDatabase();
   killChrome();
   process.exit(0);
 });
 process.on("SIGTERM", () => {
+  scheduler.stopAll();
+  closeDatabase();
   killChrome();
   process.exit(0);
 });

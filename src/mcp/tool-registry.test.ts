@@ -57,7 +57,7 @@ describe("tool registry", () => {
 
     const tools = registry.getAllTools();
 
-    expect(Object.keys(tools)).toEqual(["filesystem", "search", "browser", "shell"]);
+    expect(Object.keys(tools)).toEqual(["filesystem", "search", "browser", "shell", "productivity", "social", "documents"]);
     expect(tools.filesystem.map((tool) => tool.name)).toEqual([
       "list-directory",
       "read-file",

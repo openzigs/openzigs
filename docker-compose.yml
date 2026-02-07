@@ -41,6 +41,52 @@ services:
     networks:
       - openzigs-network
 
+  # ── Social Media MCP Sidecars ──
+  mcp-linkedin:
+    image: ghcr.io/community/mcp-linkedin:latest
+    container_name: openzigs-mcp-linkedin
+    restart: unless-stopped
+    ports:
+      - "5101:5000"
+    environment:
+      - LINKEDIN_ACCESS_TOKEN=${LINKEDIN_ACCESS_TOKEN:-}
+    networks:
+      - openzigs-network
+
+  mcp-twitter:
+    image: ghcr.io/community/mcp-twitter:latest
+    container_name: openzigs-mcp-twitter
+    restart: unless-stopped
+    ports:
+      - "5102:5000"
+    environment:
+      - TWITTER_BEARER_TOKEN=${TWITTER_BEARER_TOKEN:-}
+      - TWITTER_API_KEY=${TWITTER_API_KEY:-}
+      - TWITTER_API_SECRET=${TWITTER_API_SECRET:-}
+    networks:
+      - openzigs-network
+
+  mcp-facebook:
+    image: ghcr.io/community/facebook-mcp-server:latest
+    container_name: openzigs-mcp-facebook
+    restart: unless-stopped
+    ports:
+      - "5103:5000"
+    environment:
+      - FACEBOOK_PAGE_TOKEN=${FACEBOOK_PAGE_TOKEN:-}
+    networks:
+      - openzigs-network
+
+  # ── Document Intelligence MCP Sidecars ──
+  mcp-word:
+    image: ghcr.io/community/office-word-mcp-server:latest
+    container_name: openzigs-mcp-word
+    restart: unless-stopped
+    ports:
+      - "5201:5000"
+    networks:
+      - openzigs-network
+
 volumes:
   openzigs-data:
 
