@@ -4,6 +4,9 @@ import { useEffect, useMemo, useState } from "react";
 import { io, type Socket } from "socket.io-client";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { SectionCard } from "./section-card";
+import { PromptLibraryDrawer } from "./prompt-library-drawer";
+import { ScheduleManagerPanel } from "./schedule-manager-panel";
+import { ToastContainer, showToast } from "./toast";
 
 type ToolInfo = {
   name: string;
@@ -68,6 +71,7 @@ export const Dashboard = () => {
   const queryClient = useQueryClient();
   const [logCategory, setLogCategory] = useState("all");
   const [logLevel, setLogLevel] = useState("all");
+  const [promptDrawerOpen, setPromptDrawerOpen] = useState(false);
 
   const toolsQuery = useQuery({
     queryKey: ["tools"],
@@ -137,6 +141,16 @@ export const Dashboard = () => {
       queryClient.invalidateQueries({ queryKey: ["tools"] });
     });
 
+    socket.on("job:executed", (data: { jobName?: string; success?: boolean }) => {
+      const name = data.jobName ?? "Job";
+      if (data.success) {
+        showToast(`${name} completed`, "success");
+      } else {
+        showToast(`${name} failed`, "error");
+      }
+      queryClient.invalidateQueries({ queryKey: ["jobs"] });
+    });
+
     return () => {
       socket.disconnect();
     };
@@ -175,6 +189,12 @@ export const Dashboard = () => {
             </p>
           </div>
           <div className="flex items-center gap-4 rounded-2xl bg-stone/10 px-5 py-3">
+            <button
+              onClick={() => setPromptDrawerOpen(true)}
+              className="rounded-full bg-tide px-4 py-2 text-xs font-semibold text-white"
+            >
+              Prompt Library
+            </button>
             <span className="text-sm text-haze">Agent status</span>
             <span className="rounded-full bg-ember px-3 py-1 text-xs font-semibold text-ink">
               {statusText}
@@ -332,8 +352,15 @@ export const Dashboard = () => {
               )}
             </div>
           </SectionCard>
+
+          <SectionCard title="Scheduler">
+            <ScheduleManagerPanel />
+          </SectionCard>
         </div>
       </div>
+
+      <PromptLibraryDrawer open={promptDrawerOpen} onClose={() => setPromptDrawerOpen(false)} />
+      <ToastContainer />
     </div>
   );
 };

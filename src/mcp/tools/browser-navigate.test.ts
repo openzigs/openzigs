@@ -82,13 +82,13 @@ describe("browser-navigate handler", () => {
     let receivedMessage: string | undefined;
     
     const WebSocketMock = class FakeWebSocket {
-      callbacks = new Map<string, Function[]>();
+      callbacks = new Map<string, ((...args: unknown[]) => void)[]>();
       
       constructor(public url: string) {
         setTimeout(() => this.emit("open"), 0);
       }
 
-      addEventListener(event: string, cb: Function) {
+      addEventListener(event: string, cb: (...args: unknown[]) => void) {
         if (!this.callbacks.has(event)) this.callbacks.set(event, []);
         this.callbacks.get(event)?.push(cb);
       }

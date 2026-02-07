@@ -7,9 +7,15 @@ import { createBraveSearchHandler } from "./tools/brave-search.js";
 import { createChromeDevtoolsHandler } from "./tools/chrome-devtools.js";
 import { createBrowserNavigateHandler } from "./tools/browser-navigate.js";
 import { createShellExecuteHandler } from "./tools/shell.js";
+import { createPromptTools } from "./tools/prompt-tools.js";
+import { createSchedulerTools } from "./tools/scheduler-tools.js";
+import { createSocialMediaTools } from "./tools/social-media-tools.js";
+import { createDocumentIntelligenceTools } from "./tools/document-intelligence-tools.js";
 import { ToolRegistry, type ToolDefinition } from "./tool-registry.js";
 import { AuditLogger } from "../logging/audit-logger.js";
 import { ApprovalQueue } from "../approvals/index.js";
+import type { PromptManager } from "../productivity/prompt-manager.js";
+import type { Scheduler } from "../productivity/scheduler.js";
 
 export type McpServerOptions = {
   allowedDirs: string[];
@@ -21,11 +27,32 @@ export type McpServerOptions = {
   defaultEnabledTools?: string[];
   auditLogger?: AuditLogger;
   approvalQueue?: ApprovalQueue;
+  promptManager?: PromptManager;
+  scheduler?: Scheduler;
+  linkedinSidecarUrl?: string;
+  twitterSidecarUrl?: string;
+  facebookSidecarUrl?: string;
+  pinterestSidecarUrl?: string;
+  wordSidecarUrl?: string;
+  calendarSidecarUrl?: string;
 };
 
 export type RegisterMcpToolsOptions = Pick<
   McpServerOptions,
-  "allowedDirs" | "braveApiKey" | "chromeDebugHost" | "chromeDebugPort" | "auditLogger" | "approvalQueue"
+  | "allowedDirs"
+  | "braveApiKey"
+  | "chromeDebugHost"
+  | "chromeDebugPort"
+  | "auditLogger"
+  | "approvalQueue"
+  | "promptManager"
+  | "scheduler"
+  | "linkedinSidecarUrl"
+  | "twitterSidecarUrl"
+  | "facebookSidecarUrl"
+  | "pinterestSidecarUrl"
+  | "wordSidecarUrl"
+  | "calendarSidecarUrl"
 >;
 
 const readFileSchema = z.object({ path: z.string() });
@@ -332,4 +359,39 @@ export const registerMcpTools = (toolRegistry: ToolRegistry, options: RegisterMc
       return { text: JSON.stringify(output) };
     }
   });
+
+  // ── Productivity Tools (Saved Prompts + Scheduler) ──
+  if (options.promptManager) {
+    const promptTools = createPromptTools({ promptManager: options.promptManager });
+    for (const tool of promptTools) {
+      registerTool(tool);
+    }
+  }
+
+  if (options.scheduler) {
+    const schedulerTools = createSchedulerTools({ scheduler: options.scheduler });
+    for (const tool of schedulerTools) {
+      registerTool(tool);
+    }
+  }
+
+  // ── Social Media Tools ──
+  const socialTools = createSocialMediaTools({
+    linkedinSidecarUrl: options.linkedinSidecarUrl,
+    twitterSidecarUrl: options.twitterSidecarUrl,
+    facebookSidecarUrl: options.facebookSidecarUrl,
+    pinterestSidecarUrl: options.pinterestSidecarUrl,
+  });
+  for (const tool of socialTools) {
+    registerTool(tool);
+  }
+
+  // ── Document Intelligence Tools ──
+  const docTools = createDocumentIntelligenceTools({
+    wordSidecarUrl: options.wordSidecarUrl,
+    calendarSidecarUrl: options.calendarSidecarUrl,
+  });
+  for (const tool of docTools) {
+    registerTool(tool);
+  }
 };

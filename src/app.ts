@@ -19,11 +19,15 @@ import {
   type ApprovalStatus
 } from "./approvals/index.js";
 import type { ToolRegistry } from "./mcp/tool-registry.js";
+import type { PromptManager } from "./productivity/prompt-manager.js";
+import type { Scheduler } from "./productivity/scheduler.js";
 
 type CreateAppOptions = {
   auditLogger?: AuditLogger;
   approvalQueue?: ApprovalQueue;
   toolRegistry?: ToolRegistry;
+  promptManager?: PromptManager;
+  scheduler?: Scheduler;
 };
 
 const isAuditCategory = (value: string): value is AuditCategory => {
@@ -193,6 +197,93 @@ export const createApp = (config: AppConfig, options: CreateAppOptions = {}) => 
 
     return res.status(200).json({ entries });
   });
+
+  // ── Saved Prompts API ──
+  const promptManager = options.promptManager;
+  if (promptManager) {
+    app.get("/api/prompts", authMiddleware, (req, res) => {
+      const query = typeof req.query.query === "string" ? req.query.query : undefined;
+      const prompts = query ? promptManager.search(query) : promptManager.list();
+      return res.status(200).json({ prompts });
+    });
+
+    app.post("/api/prompts", authMiddleware, (req, res) => {
+      const body = req.body as Record<string, unknown>;
+      const name = typeof body.name === "string" ? body.name : "";
+      const template = typeof body.template === "string" ? body.template : "";
+      if (!name || !template) {
+        return res.status(400).json({ error: "name and template are required" });
+      }
+      try {
+        const prompt = promptManager.create({
+          name,
+          template,
+          description: typeof body.description === "string" ? body.description : undefined,
+          tags: Array.isArray(body.tags) ? (body.tags as string[]) : undefined,
+        });
+        return res.status(201).json(prompt);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return res.status(400).json({ error: message });
+      }
+    });
+
+    app.delete("/api/prompts/:id", authMiddleware, (req, res) => {
+      const deleted = promptManager.delete(req.params.id);
+      return deleted
+        ? res.status(200).json({ ok: true })
+        : res.status(404).json({ error: "Prompt not found" });
+    });
+  }
+
+  // ── Scheduled Jobs API ──
+  const scheduler = options.scheduler;
+  if (scheduler) {
+    app.get("/api/jobs", authMiddleware, (_req, res) => {
+      return res.status(200).json({ jobs: scheduler.list() });
+    });
+
+    app.post("/api/jobs", authMiddleware, (req, res) => {
+      const body = req.body as Record<string, unknown>;
+      try {
+        const job = scheduler.create({
+          name: body.name as string,
+          cronExpression: body.cronExpression as string,
+          timezone: typeof body.timezone === "string" ? body.timezone : undefined,
+          actionPayload: (body.actionPayload ?? {}) as Record<string, unknown>,
+          enabled: typeof body.enabled === "boolean" ? body.enabled : undefined,
+        });
+        return res.status(201).json(job);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return res.status(400).json({ error: message });
+      }
+    });
+
+    app.patch("/api/jobs/:id", authMiddleware, (req, res) => {
+      const body = req.body as Record<string, unknown>;
+      try {
+        const updated = scheduler.update(req.params.id, {
+          name: typeof body.name === "string" ? body.name : undefined,
+          cronExpression: typeof body.cronExpression === "string" ? body.cronExpression : undefined,
+          timezone: typeof body.timezone === "string" ? body.timezone : undefined,
+          actionPayload: body.actionPayload as Record<string, unknown> | undefined,
+          enabled: typeof body.enabled === "boolean" ? body.enabled : undefined,
+        });
+        return res.status(200).json(updated);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return res.status(400).json({ error: message });
+      }
+    });
+
+    app.delete("/api/jobs/:id", authMiddleware, (req, res) => {
+      const deleted = scheduler.delete(req.params.id);
+      return deleted
+        ? res.status(200).json({ ok: true })
+        : res.status(404).json({ error: "Job not found" });
+    });
+  }
 
   return app;
 };

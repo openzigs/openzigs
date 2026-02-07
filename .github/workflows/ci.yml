@@ -56,7 +56,7 @@ jobs:
           clean: true
 
       - name: Clean stale artifacts
-        run: rm -rf ui/node_modules ui/.next
+        run: rm -rf node_modules ui/node_modules ui/.next
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -66,8 +66,7 @@ jobs:
       - name: Enable Corepack
         run: corepack enable
 
-      - name: Install UI dependencies
-        working-directory: ui
+      - name: Install dependencies
         run: pnpm install --frozen-lockfile --prod=false
 
       - name: Lint UI

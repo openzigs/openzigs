@@ -44,3 +44,18 @@ main {
     grid-template-columns: 1.2fr 0.8fr;
   }
 }
+
+@keyframes slide-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-slide-in {
+  animation: slide-in 0.2s ease-out;
+}
