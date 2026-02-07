@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Prompt Library — OpenZigs</title>
+  <link rel="stylesheet" href="/css/admin.css">
+</head>
+<body>
+  <div id="app">
+    <header class="admin-header">
+      <a href="/admin" class="back-link">&larr; Admin</a>
+      <h1 class="admin-title">Prompt Library</h1>
+    </header>
+
+    <main class="admin-main">
+      <section class="admin-section">
+        <p class="section-desc">Save reusable prompt templates with <code>{{variable}}</code> placeholders. Link them to scheduled jobs or invoke via MCP tools.</p>
+
+        <div id="library-toolbar" class="library-toolbar">
+          <input id="library-search" class="text-input library-search" type="text" placeholder="Search prompts…">
+          <button id="add-prompt-btn" class="primary-button">+ New Prompt</button>
+        </div>
+
+        <div id="prompt-form-container" class="prompt-form-container hidden"></div>
+
+        <div id="prompt-list" class="library-list">
+          <div class="loading">Loading…</div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/js/library.js"></script>
+</body>
+</html>

@@ -7,6 +7,8 @@ import { logger } from "../logging/logger.js";
 import type { ToolRegistry } from "../mcp/tool-registry.js";
 import type { DockerSidecarManager } from "../mcp/docker-sidecar-manager.js";
 import type { LocalMcpServerManager } from "../mcp/local-mcp-server-manager.js";
+import type { PromptManager } from "../productivity/prompt-manager.js";
+import type { Scheduler } from "../productivity/scheduler.js";
 
 type EnvEntry = {
   name: string;
@@ -142,9 +144,11 @@ export type AdminRouterOptions = {
   toolRegistry: ToolRegistry;
   sidecarManager?: DockerSidecarManager;
   localServerManager?: LocalMcpServerManager;
+  promptManager?: PromptManager;
+  scheduler?: Scheduler;
 };
 
-export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerManager }: AdminRouterOptions) => {
+export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerManager, promptManager, scheduler }: AdminRouterOptions) => {
   const router = Router();
 
   router.get("/tools", (_req, res) => {
@@ -450,6 +454,142 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
       return res.status(500).json({ error: message });
     }
   });
+
+  // ── Saved Prompts (Library) ──
+  if (promptManager) {
+    router.get("/prompts", (req, res) => {
+      const query = typeof req.query.q === "string" ? req.query.q : undefined;
+      const prompts = query ? promptManager.search(query) : promptManager.list();
+      return res.json({ prompts });
+    });
+
+    router.get("/prompts/:id", (req, res) => {
+      const prompt = promptManager.getById(req.params.id);
+      return prompt
+        ? res.json(prompt)
+        : res.status(404).json({ error: "Prompt not found" });
+    });
+
+    router.post("/prompts", (req, res) => {
+      const body = req.body as Record<string, unknown>;
+      const name = typeof body.name === "string" ? body.name.trim() : "";
+      const template = typeof body.template === "string" ? body.template : "";
+      if (!name || !template) {
+        return res.status(400).json({ error: "name and template are required" });
+      }
+      try {
+        const prompt = promptManager.create({
+          name,
+          template,
+          description: typeof body.description === "string" ? body.description : undefined,
+          tags: Array.isArray(body.tags) ? (body.tags as string[]) : undefined,
+        });
+        return res.status(201).json(prompt);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return res.status(400).json({ error: message });
+      }
+    });
+
+    router.put("/prompts/:id", (req, res) => {
+      const body = req.body as Record<string, unknown>;
+      try {
+        const updated = promptManager.update(req.params.id, {
+          name: typeof body.name === "string" ? body.name.trim() : undefined,
+          template: typeof body.template === "string" ? body.template : undefined,
+          description: typeof body.description === "string" ? body.description : undefined,
+          tags: Array.isArray(body.tags) ? (body.tags as string[]) : undefined,
+        });
+        return res.json(updated);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return res.status(400).json({ error: message });
+      }
+    });
+
+    router.delete("/prompts/:id", (req, res) => {
+      const deleted = promptManager.delete(req.params.id);
+      return deleted
+        ? res.json({ ok: true })
+        : res.status(404).json({ error: "Prompt not found" });
+    });
+  }
+
+  // ── Scheduled Jobs (Scheduler) ──
+  if (scheduler) {
+    router.get("/jobs", (_req, res) => {
+      return res.json({ jobs: scheduler.list() });
+    });
+
+    router.get("/jobs/:id", (req, res) => {
+      const job = scheduler.getById(req.params.id);
+      return job
+        ? res.json(job)
+        : res.status(404).json({ error: "Job not found" });
+    });
+
+    router.post("/jobs", (req, res) => {
+      const body = req.body as Record<string, unknown>;
+      const name = typeof body.name === "string" ? body.name.trim() : "";
+      const cronExpression = typeof body.cronExpression === "string" ? body.cronExpression.trim() : "";
+      if (!name || !cronExpression) {
+        return res.status(400).json({ error: "name and cronExpression are required" });
+      }
+      try {
+        const job = scheduler.create({
+          name,
+          cronExpression,
+          timezone: typeof body.timezone === "string" ? body.timezone : undefined,
+          actionType: typeof body.actionType === "string" ? (body.actionType as "prompt" | "shell" | "custom") : undefined,
+          actionPayload: (body.actionPayload ?? {}) as Record<string, unknown>,
+          enabled: typeof body.enabled === "boolean" ? body.enabled : undefined,
+        });
+        return res.status(201).json(job);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return res.status(400).json({ error: message });
+      }
+    });
+
+    router.put("/jobs/:id", (req, res) => {
+      const body = req.body as Record<string, unknown>;
+      try {
+        const updated = scheduler.update(req.params.id, {
+          name: typeof body.name === "string" ? body.name.trim() : undefined,
+          cronExpression: typeof body.cronExpression === "string" ? body.cronExpression.trim() : undefined,
+          timezone: typeof body.timezone === "string" ? body.timezone : undefined,
+          actionPayload: body.actionPayload as Record<string, unknown> | undefined,
+          enabled: typeof body.enabled === "boolean" ? body.enabled : undefined,
+        });
+        return res.json(updated);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return res.status(400).json({ error: message });
+      }
+    });
+
+    router.post("/jobs/:id/toggle", (req, res) => {
+      const body = req.body as Record<string, unknown>;
+      const enabled = typeof body.enabled === "boolean" ? body.enabled : undefined;
+      if (enabled === undefined) {
+        return res.status(400).json({ error: "enabled must be a boolean" });
+      }
+      try {
+        const updated = scheduler.setEnabled(req.params.id, enabled);
+        return res.json(updated);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return res.status(400).json({ error: message });
+      }
+    });
+
+    router.delete("/jobs/:id", (req, res) => {
+      const deleted = scheduler.delete(req.params.id);
+      return deleted
+        ? res.json({ ok: true })
+        : res.status(404).json({ error: "Job not found" });
+    });
+  }
 
   return router;
 };

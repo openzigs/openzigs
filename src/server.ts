@@ -176,12 +176,20 @@ app.get("/admin", (_req, res) => {
   res.sendFile(path.resolve(process.cwd(), "public", "admin.html"));
 });
 
+app.get("/library", (_req, res) => {
+  res.sendFile(path.resolve(process.cwd(), "public", "library.html"));
+});
+
+app.get("/scheduler", (_req, res) => {
+  res.sendFile(path.resolve(process.cwd(), "public", "scheduler.html"));
+});
+
 // Model API routes
 const modelsRouter = createModelsRouter({ copilot });
 app.use("/api/models", modelsRouter);
 
 // Admin API routes (no auth for local dev; gate behind auth in prod)
-const adminRouter = createAdminRouter({ toolRegistry, sidecarManager, localServerManager });
+const adminRouter = createAdminRouter({ toolRegistry, sidecarManager, localServerManager, promptManager, scheduler });
 app.use("/api/admin", adminRouter);
 
 const tunnelConfig = config.tunnel;

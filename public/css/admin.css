@@ -903,3 +903,208 @@ html, body {
 .job-stat {
   white-space: nowrap;
 }
+
+/* Nav cards (link to subpages) */
+.nav-card {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 16px 20px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  text-decoration: none;
+  color: var(--text);
+  transition: border-color 0.15s, background 0.15s;
+  margin-top: 12px;
+}
+
+.nav-card:hover {
+  border-color: var(--accent);
+  background: var(--surface-hover);
+}
+
+.nav-card-icon {
+  font-size: 28px;
+  flex-shrink: 0;
+}
+
+.nav-card-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+}
+
+.nav-card-text strong {
+  color: var(--accent);
+  font-size: 15px;
+}
+
+.nav-card-text span:last-child {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.nav-card-arrow {
+  font-size: 20px;
+  color: var(--text-muted);
+  transition: color 0.15s;
+}
+
+.nav-card:hover .nav-card-arrow {
+  color: var(--accent);
+}
+
+/* Standalone page shared styles */
+.page-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 16px 0;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 24px;
+}
+
+.page-header h1 {
+  font-size: 22px;
+  font-weight: 600;
+  flex: 1;
+}
+
+.page-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.page-toolbar .text-input {
+  flex: 1;
+}
+
+/* Prompt variable preview */
+.prompt-variable-preview {
+  margin-top: 8px;
+  padding: 10px 12px;
+  background: rgba(88, 166, 255, 0.05);
+  border: 1px solid rgba(88, 166, 255, 0.15);
+  border-radius: 6px;
+}
+
+.prompt-preview-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 6px;
+}
+
+.prompt-variable-pill {
+  display: inline-block;
+  background: rgba(88, 166, 255, 0.15);
+  color: var(--accent);
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-family: var(--mono);
+  margin: 2px 4px 2px 0;
+}
+
+/* Prompt card metadata */
+.prompt-card-meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 8px;
+}
+
+/* Job name row */
+.job-name-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Section description text */
+.section-desc {
+  font-size: 13px;
+  color: var(--text-muted);
+  line-height: 1.5;
+  margin-bottom: 4px;
+}
+
+/* Cron field breakdown */
+.cron-field-preview {
+  display: flex;
+  gap: 16px;
+  margin-top: 8px;
+  padding: 8px 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+.cron-field {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+.cron-field-value {
+  font-family: var(--mono);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.cron-field-label {
+  color: var(--text-muted);
+  font-size: 10px;
+  text-transform: uppercase;
+}
+
+/* Job status badges in scheduler */
+.job-status-enabled {
+  color: var(--success);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.job-status-disabled {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+/* Prompt payload summary in job cards */
+.job-payload-prompt {
+  color: var(--accent);
+  font-size: 13px;
+  margin-top: 4px;
+}
+
+/* Toast notification */
+.toast-notification {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 12px 20px;
+  border-radius: var(--radius);
+  font-size: 13px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  z-index: 9999;
+  opacity: 0;
+  transform: translateY(10px);
+  transition: opacity 0.2s, transform 0.2s;
+}
+
+.toast-notification.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
