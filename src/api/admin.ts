@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { loadConfig } from "../config/index.js";
 import type { ToolRegistry } from "../mcp/tool-registry.js";
+import type { DockerSidecarManager } from "../mcp/docker-sidecar-manager.js";
 
 type EnvEntry = {
   name: string;
@@ -55,9 +56,10 @@ const toStringArray = (value: unknown): string[] => {
 
 export type AdminRouterOptions = {
   toolRegistry: ToolRegistry;
+  sidecarManager?: DockerSidecarManager;
 };
 
-export const createAdminRouter = ({ toolRegistry }: AdminRouterOptions) => {
+export const createAdminRouter = ({ toolRegistry, sidecarManager }: AdminRouterOptions) => {
   const router = Router();
 
   router.get("/tools", (_req, res) => {
@@ -201,6 +203,37 @@ export const createAdminRouter = ({ toolRegistry }: AdminRouterOptions) => {
 
       await writeUserConfig(configPath, nextConfig);
       return res.json({ ok: true, restartRequired: true });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return res.status(500).json({ error: message });
+    }
+  });
+
+  // ── MCP Sidecar Management ──
+  router.get("/sidecars", (_req, res) => {
+    if (!sidecarManager) {
+      return res.json({ sidecars: [], dockerAvailable: false });
+    }
+    const statuses = sidecarManager.getAllStatuses();
+    const configured = sidecarManager.getConfiguredSidecars();
+    return res.json({
+      sidecars: statuses,
+      configuredSidecars: configured,
+      dockerAvailable: true,
+    });
+  });
+
+  router.post("/sidecars/:name/restart", async (req, res) => {
+    const { name } = req.params;
+    if (!sidecarManager) {
+      return res.status(503).json({ error: "Docker sidecar manager not available" });
+    }
+    try {
+      const status = await sidecarManager.restartSidecar(name);
+      if (!status) {
+        return res.status(404).json({ error: `Unknown sidecar: ${name}` });
+      }
+      return res.json({ ok: true, status });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return res.status(500).json({ error: message });

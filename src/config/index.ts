@@ -69,6 +69,19 @@ export type TunnelConfig = {
   namedTunnel?: NamedTunnelConfig;
 };
 
+export type SidecarConfig = {
+  enabled: boolean;
+};
+
+export type McpServersConfig = {
+  autoProvision: boolean;
+  skipUnconfigured: boolean;
+  healthRetries: number;
+  healthRetryDelay: number;
+  network: string;
+  sidecars: Record<string, SidecarConfig>;
+};
+
 export type AppConfig = {
   server: {
     port: number;
@@ -80,6 +93,7 @@ export type AppConfig = {
   messaging?: MessagingConfig;
   channels?: ChannelsConfig;
   tunnel?: TunnelConfig;
+  mcpServers?: McpServersConfig;
 };
 
 const rateLimitSchema = z.object({
@@ -148,6 +162,19 @@ const tunnelSchema = z.object({
   }
 });
 
+const sidecarConfigSchema = z.object({
+  enabled: z.boolean()
+});
+
+const mcpServersSchema = z.object({
+  autoProvision: z.boolean(),
+  skipUnconfigured: z.boolean(),
+  healthRetries: z.number(),
+  healthRetryDelay: z.number(),
+  network: z.string(),
+  sidecars: z.record(z.string(), sidecarConfigSchema)
+}).optional();
+
 const appConfigSchema = z.object({
   server: z.object({
     port: z.number()
@@ -158,7 +185,8 @@ const appConfigSchema = z.object({
   auth: authSchema,
   messaging: messagingSchema,
   channels: channelsSchema,
-  tunnel: tunnelSchema.optional()
+  tunnel: tunnelSchema.optional(),
+  mcpServers: mcpServersSchema
 });
 
 export type LoadConfigOptions = {

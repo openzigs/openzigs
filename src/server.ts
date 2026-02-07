@@ -25,6 +25,7 @@ import { launchChrome, killChrome } from "./browser/chrome-launcher.js";
 import { getDatabase, closeDatabase } from "./productivity/database.js";
 import { PromptManager } from "./productivity/prompt-manager.js";
 import { Scheduler } from "./productivity/scheduler.js";
+import { DockerSidecarManager } from "./mcp/docker-sidecar-manager.js";
 
 const config = await loadConfig();
 const auditLogger = new AuditLogger();
@@ -64,6 +65,44 @@ const scheduler = new Scheduler({
 });
 scheduler.startAll();
 
+// ── MCP Sidecar Auto-Provisioning ──
+const mcpServersConfig = config.mcpServers;
+const sidecarManager = new DockerSidecarManager({
+  skipUnconfigured: mcpServersConfig?.skipUnconfigured ?? true,
+  healthRetries: mcpServersConfig?.healthRetries ?? 3,
+  healthRetryDelay: mcpServersConfig?.healthRetryDelay ?? 2000,
+});
+
+let sidecarUrls = new Map<string, string>();
+
+if (mcpServersConfig?.autoProvision !== false) {
+  const dockerAvailable = await sidecarManager.isDockerAvailable();
+  if (dockerAvailable) {
+    logger.info("Docker detected — auto-provisioning MCP sidecars...");
+    sidecarUrls = await sidecarManager.startAll();
+    const started = Array.from(sidecarUrls.keys());
+    if (started.length > 0) {
+      logger.info(`MCP sidecars ready: ${started.join(", ")}`);
+    } else {
+      logger.info("No MCP sidecars started (check API credentials in .env)");
+    }
+  } else {
+    logger.info("Docker not available — using env-var sidecar URLs (manual mode)");
+  }
+}
+
+// Resolve sidecar URLs: auto-provisioned URLs take priority, env vars as fallback
+const resolveSidecarUrl = (name: string, envVar: string, defaultPort: number): string | undefined => {
+  const autoUrl = sidecarUrls.get(name);
+  if (autoUrl) return autoUrl;
+  const envUrl = process.env[envVar];
+  if (envUrl) return envUrl;
+  // Only return default if sidecar is explicitly configured but not auto-provisioned
+  if (mcpServersConfig?.sidecars?.[name]?.enabled === false) return undefined;
+  if (mcpServersConfig?.autoProvision !== false && sidecarUrls.size > 0) return undefined;
+  return `http://localhost:${defaultPort}`;
+};
+
 registerMcpTools(toolRegistry, {
   allowedDirs: allowedDirs.length > 0 ? allowedDirs : [process.cwd()],
   braveApiKey: process.env.BRAVE_API_KEY,
@@ -73,11 +112,11 @@ registerMcpTools(toolRegistry, {
   approvalQueue,
   promptManager,
   scheduler,
-  linkedinSidecarUrl: process.env.MCP_LINKEDIN_URL ?? "http://localhost:5101",
-  twitterSidecarUrl: process.env.MCP_TWITTER_URL ?? "http://localhost:5102",
-  facebookSidecarUrl: process.env.MCP_FACEBOOK_URL ?? "http://localhost:5103",
-  pinterestSidecarUrl: process.env.MCP_PINTEREST_URL ?? "http://localhost:5104",
-  wordSidecarUrl: process.env.MCP_WORD_URL ?? "http://localhost:5201",
+  linkedinSidecarUrl: resolveSidecarUrl("linkedin", "MCP_LINKEDIN_URL", 5101),
+  twitterSidecarUrl: resolveSidecarUrl("twitter", "MCP_TWITTER_URL", 5102),
+  facebookSidecarUrl: resolveSidecarUrl("facebook", "MCP_FACEBOOK_URL", 5103),
+  pinterestSidecarUrl: resolveSidecarUrl("pinterest", "MCP_PINTEREST_URL", 5104),
+  wordSidecarUrl: resolveSidecarUrl("word", "MCP_WORD_URL", 5201),
   calendarSidecarUrl: process.env.MCP_CALENDAR_URL,
 });
 const app = createApp(config, { auditLogger, approvalQueue, toolRegistry, promptManager, scheduler });
@@ -100,7 +139,7 @@ const modelsRouter = createModelsRouter({ copilot });
 app.use("/api/models", modelsRouter);
 
 // Admin API routes (no auth for local dev; gate behind auth in prod)
-const adminRouter = createAdminRouter({ toolRegistry });
+const adminRouter = createAdminRouter({ toolRegistry, sidecarManager });
 app.use("/api/admin", adminRouter);
 
 const tunnelConfig = config.tunnel;
@@ -143,6 +182,22 @@ toolRegistry.on("tool:toggled", (payload) => {
 
 scheduler.on("job:executed", (result) => {
   io.emit("job:executed", result);
+});
+
+sidecarManager.on("sidecar:started", (status) => {
+  io.emit("sidecar:status", status);
+});
+
+sidecarManager.on("sidecar:stopped", (status) => {
+  io.emit("sidecar:status", status);
+});
+
+sidecarManager.on("sidecar:healthy", (status) => {
+  io.emit("sidecar:status", status);
+});
+
+sidecarManager.on("sidecar:unhealthy", (status) => {
+  io.emit("sidecar:status", status);
 });
 
 const normalizeTelegramAllowlist = (ids: string[]) => {
@@ -375,18 +430,18 @@ httpServer.listen(port, () => {
   }
 });
 
-// Clean up Chrome + Scheduler + Database on process exit
+// Clean up Chrome + Scheduler + Database + Sidecars on process exit
 process.on("SIGINT", () => {
   scheduler.stopAll();
   closeDatabase();
   killChrome();
-  process.exit(0);
+  void sidecarManager.stopAll().finally(() => process.exit(0));
 });
 process.on("SIGTERM", () => {
   scheduler.stopAll();
   closeDatabase();
   killChrome();
-  process.exit(0);
+  void sidecarManager.stopAll().finally(() => process.exit(0));
 });
 
 export { app, httpServer };
