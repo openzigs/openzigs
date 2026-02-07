@@ -1,6 +1,40 @@
 import Docker from "dockerode";
 import { EventEmitter } from "node:events";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { logger } from "../logging/logger.js";
+
+/**
+ * Resolve the Docker socket path for the current platform.
+ * macOS Docker Desktop uses ~/.docker/run/docker.sock instead of /var/run/docker.sock.
+ */
+function resolveDockerSocketPath(): string {
+  const candidates = [
+    "/var/run/docker.sock",
+    path.join(os.homedir(), ".docker", "run", "docker.sock"),
+    path.join(
+      os.homedir(),
+      "Library",
+      "Containers",
+      "com.docker.docker",
+      "Data",
+      "docker.raw.sock"
+    ),
+  ];
+
+  for (const candidate of candidates) {
+    try {
+      fs.accessSync(candidate, fs.constants.R_OK);
+      return candidate;
+    } catch {
+      // Not accessible, try next
+    }
+  }
+
+  // Fallback to default
+  return "/var/run/docker.sock";
+}
 
 // ── Sidecar Definition ──────────────────────────────────────────────────────
 
@@ -123,9 +157,9 @@ export class DockerSidecarManager extends EventEmitter {
 
   constructor(options: DockerSidecarManagerOptions = {}) {
     super();
-    this.docker =
-      options.dockerInstance ??
-      new Docker({ socketPath: options.socketPath ?? "/var/run/docker.sock" });
+    const socketPath = options.socketPath ?? resolveDockerSocketPath();
+    this.docker = options.dockerInstance ?? new Docker({ socketPath });
+    logger.debug(`DockerSidecarManager using socket: ${socketPath}`);
     this.definitions = options.definitions ?? DEFAULT_SIDECAR_DEFINITIONS;
     this.healthRetries = options.healthRetries ?? 3;
     this.healthRetryDelay = options.healthRetryDelay ?? 2000;
