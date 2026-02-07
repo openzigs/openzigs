@@ -229,6 +229,7 @@ if (telegramConfig?.enabled && telegramConfig.token) {
         res.status(403).send("Forbidden");
         return;
       }
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       return (webhookHandler as any)(req, res, next);
     });
   } else {
