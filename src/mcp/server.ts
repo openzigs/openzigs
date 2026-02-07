@@ -5,6 +5,7 @@ import * as z from "zod";
 import { createFilesystemHandlers } from "./tools/filesystem.js";
 import { createBraveSearchHandler } from "./tools/brave-search.js";
 import { createChromeDevtoolsHandler } from "./tools/chrome-devtools.js";
+import { createBrowserNavigateHandler } from "./tools/browser-navigate.js";
 import { createShellExecuteHandler } from "./tools/shell.js";
 import { ToolRegistry, type ToolDefinition } from "./tool-registry.js";
 import { AuditLogger } from "../logging/audit-logger.js";
@@ -22,11 +23,23 @@ export type McpServerOptions = {
   approvalQueue?: ApprovalQueue;
 };
 
+export type RegisterMcpToolsOptions = Pick<
+  McpServerOptions,
+  "allowedDirs" | "braveApiKey" | "chromeDebugHost" | "chromeDebugPort" | "auditLogger" | "approvalQueue"
+>;
+
 const readFileSchema = z.object({ path: z.string() });
 const listDirectorySchema = z.object({ path: z.string() });
 const writeFileSchema = z.object({ path: z.string(), content: z.string() });
 const webSearchSchema = z.object({ query: z.string(), count: z.number().optional() });
 const browserReadSchema = z.object({ selector: z.string().optional() });
+const browserNavigateSchema = z.object({
+  action: z.enum(["navigate", "click", "type", "screenshot", "get-text", "list-tabs", "evaluate"]),
+  url: z.string().optional(),
+  selector: z.string().optional(),
+  text: z.string().optional(),
+  expression: z.string().optional()
+});
 const shellExecuteSchema = z.object({
   command: z.string(),
   args: z.array(z.string()).optional(),
@@ -39,6 +52,7 @@ type ListDirectoryInput = z.infer<typeof listDirectorySchema>;
 type WriteFileInput = z.infer<typeof writeFileSchema>;
 type WebSearchInput = z.infer<typeof webSearchSchema>;
 type BrowserReadInput = z.infer<typeof browserReadSchema>;
+type BrowserNavigateInput = z.infer<typeof browserNavigateSchema>;
 type ShellExecuteInput = z.infer<typeof shellExecuteSchema>;
 
 const parseArgs = (schema: z.ZodSchema, args: Record<string, unknown>) => {
@@ -75,6 +89,88 @@ export const createMcpServer = (options: McpServerOptions) => {
       defaultEnabledTools: options.defaultEnabledTools
     });
 
+  registerMcpTools(toolRegistry, options);
+
+  server.setRequestHandler(ListToolsRequestSchema, async () => {
+    return {
+      tools: toolRegistry.listEnabledTools().map((tool) => ({
+        name: tool.name,
+        description: tool.description,
+        inputSchema: tool.inputSchema
+      }))
+    };
+  });
+
+  server.setRequestHandler(CallToolRequestSchema, async (request) => {
+    const toolName = request.params.name;
+    const tool = toolRegistry.getToolDefinition(toolName);
+
+    if (!tool) {
+      return {
+        content: [{ type: "text", text: `Unknown tool: ${toolName}` }],
+        isError: true
+      };
+    }
+
+    if (!toolRegistry.isEnabled(toolName)) {
+      return {
+        content: [{ type: "text", text: `Tool disabled: ${toolName}` }],
+        isError: true
+      };
+    }
+
+    const args = request.params.arguments ?? {};
+    const validated = parseArgs(tool.zodSchema, args);
+    if (!validated.ok) {
+      return {
+        content: [{ type: "text", text: validated.error }],
+        isError: true
+      };
+    }
+
+    if (toolRegistry.requiresApproval(toolName)) {
+      if (!options.approvalQueue) {
+        return {
+          content: [{ type: "text", text: `Approval required for tool: ${toolName}` }],
+          isError: true
+        };
+      }
+
+      const approval = await options.approvalQueue.requestApproval({
+        tool: toolName,
+        args: validated.data as Record<string, unknown>,
+        riskLevel: "high",
+        explanation: "High-risk tool execution requires approval.",
+        preview: buildApprovalPreview(toolName, validated.data as Record<string, unknown>),
+        channelType: "web"
+      });
+
+      if (!approval.approved) {
+        const reason = approval.status === "expired" ? "Approval timed out" : "Approval rejected";
+        return {
+          content: [{ type: "text", text: reason }],
+          isError: true
+        };
+      }
+    }
+
+    const result = await tool
+      .handler(validated.data as Record<string, unknown>)
+      .catch((error) => {
+        const message = error instanceof Error ? error.message : String(error);
+        return { text: `Tool execution failed: ${message}`, isError: true };
+      });
+
+    return {
+      content: [{ type: "text", text: result.text }],
+      isError: result.isError ?? false
+    };
+  });
+
+  return server;
+};
+
+export const registerMcpTools = (toolRegistry: ToolRegistry, options: RegisterMcpToolsOptions) => {
   const filesystemHandlers = createFilesystemHandlers({
     allowedDirs: options.allowedDirs
   });
@@ -84,6 +180,11 @@ export const createMcpServer = (options: McpServerOptions) => {
   });
 
   const chromeDevtoolsHandler = createChromeDevtoolsHandler({
+    host: options.chromeDebugHost ?? "",
+    port: options.chromeDebugPort ?? 9222
+  });
+
+  const browserNavigateHandler = createBrowserNavigateHandler({
     host: options.chromeDebugHost ?? "",
     port: options.chromeDebugPort ?? 9222
   });
@@ -186,6 +287,30 @@ export const createMcpServer = (options: McpServerOptions) => {
   });
 
   registerTool({
+    name: "browser-navigate",
+    description: "Control Chrome browser: navigate to URLs, click elements, type text, take screenshots, extract text, list tabs, or evaluate JavaScript. Requires Chrome with --remote-debugging-port.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        action: { type: "string", enum: ["navigate", "click", "type", "screenshot", "get-text", "list-tabs", "evaluate"] },
+        url: { type: "string" },
+        selector: { type: "string" },
+        text: { type: "string" },
+        expression: { type: "string" }
+      },
+      required: ["action"]
+    },
+    zodSchema: browserNavigateSchema,
+    category: "browser",
+    riskLevel: "high",
+    handler: async (args) => {
+      const input = args as BrowserNavigateInput;
+      const output = await browserNavigateHandler(input);
+      return { text: JSON.stringify(output) };
+    }
+  });
+
+  registerTool({
     name: "shell-execute",
     description: "Run a command in the terminal",
     inputSchema: {
@@ -207,82 +332,4 @@ export const createMcpServer = (options: McpServerOptions) => {
       return { text: JSON.stringify(output) };
     }
   });
-
-  server.setRequestHandler(ListToolsRequestSchema, async () => {
-    return {
-      tools: toolRegistry.listEnabledTools().map((tool) => ({
-        name: tool.name,
-        description: tool.description,
-        inputSchema: tool.inputSchema
-      }))
-    };
-  });
-
-  server.setRequestHandler(CallToolRequestSchema, async (request) => {
-    const toolName = request.params.name;
-    const tool = toolRegistry.getToolDefinition(toolName);
-
-    if (!tool) {
-      return {
-        content: [{ type: "text", text: `Unknown tool: ${toolName}` }],
-        isError: true
-      };
-    }
-
-    if (!toolRegistry.isEnabled(toolName)) {
-      return {
-        content: [{ type: "text", text: `Tool disabled: ${toolName}` }],
-        isError: true
-      };
-    }
-
-    const args = request.params.arguments ?? {};
-    const validated = parseArgs(tool.zodSchema, args);
-    if (!validated.ok) {
-      return {
-        content: [{ type: "text", text: validated.error }],
-        isError: true
-      };
-    }
-
-    if (toolRegistry.requiresApproval(toolName)) {
-      if (!options.approvalQueue) {
-        return {
-          content: [{ type: "text", text: `Approval required for tool: ${toolName}` }],
-          isError: true
-        };
-      }
-
-      const approval = await options.approvalQueue.requestApproval({
-        tool: toolName,
-        args: validated.data as Record<string, unknown>,
-        riskLevel: "high",
-        explanation: "High-risk tool execution requires approval.",
-        preview: buildApprovalPreview(toolName, validated.data as Record<string, unknown>),
-        channelType: "web"
-      });
-
-      if (!approval.approved) {
-        const reason = approval.status === "expired" ? "Approval timed out" : "Approval rejected";
-        return {
-          content: [{ type: "text", text: reason }],
-          isError: true
-        };
-      }
-    }
-
-    const result = await tool
-      .handler(validated.data as Record<string, unknown>)
-      .catch((error) => {
-        const message = error instanceof Error ? error.message : String(error);
-        return { text: `Tool execution failed: ${message}`, isError: true };
-      });
-
-    return {
-      content: [{ type: "text", text: result.text }],
-      isError: result.isError ?? false
-    };
-  });
-
-  return server;
 };

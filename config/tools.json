@@ -1,8 +1,12 @@
 {
   "enabledTools": [
-    "read-file",
+    "browser-navigate",
+    "browser-read",
     "list-directory",
-    "web-search"
+    "read-file",
+    "shell-execute",
+    "web-search",
+    "write-file"
   ],
   "customRiskOverrides": {}
 }

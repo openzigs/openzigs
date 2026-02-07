@@ -24,19 +24,40 @@ const writeUserConfig = async (configPath: string, data: Record<string, unknown>
   await fs.writeFile(configPath, JSON.stringify(data, null, 2), "utf-8");
 };
 
+const withTimeout = <T>(promise: Promise<T>, ms: number, label: string): Promise<T> => {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+    promise.then(
+      (value) => { clearTimeout(timer); resolve(value); },
+      (err) => { clearTimeout(timer); reject(err); }
+    );
+  });
+};
+
+const FALLBACK_MODELS = [
+  { id: "gpt-4.1" },
+  { id: "gpt-4o" },
+  { id: "gpt-4.1-mini" },
+  { id: "claude-sonnet-4" },
+  { id: "claude-3.5-sonnet" },
+  { id: "o3-mini" },
+];
+
 export const createModelsRouter = ({ copilot, userConfigPath }: ModelsRouterOptions): Router => {
   const router = Router();
   const configPath = userConfigPath ?? defaultUserConfigPath();
 
   router.get("/", async (_req, res) => {
     try {
-      const models = await copilot.listModels();
+      const models = await withTimeout(copilot.listModels(), 5000, "listModels");
       const userConfig = await readUserConfig(configPath);
       const selectedModel = typeof userConfig.selectedModel === "string" ? userConfig.selectedModel : null;
       return res.status(200).json({ models, selectedModel });
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return res.status(500).json({ error: message });
+      // SDK unavailable — return well-known fallback models so the UI is usable
+      const userConfig = await readUserConfig(configPath);
+      const selectedModel = typeof userConfig.selectedModel === "string" ? userConfig.selectedModel : null;
+      return res.status(200).json({ models: FALLBACK_MODELS, selectedModel, fallback: true });
     }
   });
 

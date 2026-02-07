@@ -104,6 +104,18 @@ html, body {
   background: var(--danger);
 }
 
+.admin-link {
+  font-size: 18px;
+  color: var(--text-muted);
+  text-decoration: none;
+  margin-left: 4px;
+  transition: color 0.15s;
+}
+
+.admin-link:hover {
+  color: var(--accent);
+}
+
 /* Messages */
 .messages-container {
   flex: 1;
@@ -305,4 +317,15 @@ html, body {
 .btn-deny {
   background: var(--danger);
   color: #fff;
+}
+
+/* Fallback warning banner */
+.fallback-warning {
+  background: #2d1b00;
+  color: #f0b429;
+  border-bottom: 1px solid #5a3e1a;
+  padding: 8px 20px;
+  font-size: 13px;
+  text-align: center;
+  line-height: 1.4;
 }

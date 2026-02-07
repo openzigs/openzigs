@@ -15,19 +15,47 @@ import { AuditLogger } from "./logging/audit-logger.js";
 import { ApprovalQueue } from "./approvals/index.js";
 import { CopilotWrapperService } from "./copilot/index.js";
 import { ToolRegistry } from "./mcp/tool-registry.js";
-import { registerToolCatalog } from "./mcp/tool-catalog.js";
+import { registerMcpTools } from "./mcp/index.js";
 import { MessageRouter } from "./routing/index.js";
 import { SessionManager } from "./sessions/index.js";
 import { CloudflareTunnel } from "./tunnel/index.js";
 import { createModelsRouter } from "./api/models.js";
+import { createAdminRouter } from "./api/admin.js";
+import { launchChrome, killChrome } from "./browser/chrome-launcher.js";
 
 const config = await loadConfig();
 const auditLogger = new AuditLogger();
+const approvalQueue = new ApprovalQueue({ auditLogger });
 const toolRegistry = new ToolRegistry({
   statePath: path.resolve(process.cwd(), "config", "tools.json")
 });
-registerToolCatalog(toolRegistry);
-const approvalQueue = new ApprovalQueue({ auditLogger });
+const allowedDirsRaw = process.env.OPENZIGS_ALLOWED_DIRS ?? "";
+const allowedDirs = allowedDirsRaw
+  .split(",")
+  .map((entry) => entry.trim())
+  .filter(Boolean);
+const chromeDebugPort = process.env.CHROME_DEBUG_PORT
+  ? Number(process.env.CHROME_DEBUG_PORT)
+  : undefined;
+
+// Auto-launch Chrome with remote debugging (set CHROME_AUTO_LAUNCH=false to disable)
+const chromeAutoLaunch = process.env.CHROME_AUTO_LAUNCH !== "false";
+if (chromeAutoLaunch && process.env.CHROME_DEBUG_HOST) {
+  await launchChrome({
+    host: process.env.CHROME_DEBUG_HOST,
+    port: chromeDebugPort ?? 9222,
+    reuseExisting: true
+  });
+}
+
+registerMcpTools(toolRegistry, {
+  allowedDirs: allowedDirs.length > 0 ? allowedDirs : [process.cwd()],
+  braveApiKey: process.env.BRAVE_API_KEY,
+  chromeDebugHost: process.env.CHROME_DEBUG_HOST,
+  chromeDebugPort,
+  auditLogger,
+  approvalQueue
+});
 const app = createApp(config, { auditLogger, approvalQueue, toolRegistry });
 const port = Number(process.env.PORT ?? 3000);
 const uiOrigin = process.env.OPENZIGS_UI_ORIGIN ?? "http://localhost:3000";
@@ -38,9 +66,18 @@ const copilot = new CopilotWrapperService({ toolRegistry });
 // Serve static chat UI
 app.use(express.static(path.resolve(process.cwd(), "public")));
 
+// Friendly admin route
+app.get("/admin", (_req, res) => {
+  res.sendFile(path.resolve(process.cwd(), "public", "admin.html"));
+});
+
 // Model API routes
 const modelsRouter = createModelsRouter({ copilot });
 app.use("/api/models", modelsRouter);
+
+// Admin API routes (no auth for local dev; gate behind auth in prod)
+const adminRouter = createAdminRouter({ toolRegistry });
+app.use("/api/admin", adminRouter);
 
 const tunnelConfig = config.tunnel;
 const tunnel = tunnelConfig?.enabled
@@ -90,21 +127,22 @@ const defaultAccessControl = {
   blockedUsers: []
 };
 
-function setupChannelRouting(
-  channel: MessageChannel,
-  router: MessageRouter,
-  approvalQueue: ApprovalQueue,
-  sessionManager: SessionManager,
-  logger: Logger
-) {
-  const channelType = channel.type;
-
-  channel.onMessage((message) => {
-    void router.route(message).catch((error) => {
-      const details = error instanceof Error ? error.message : String(error);
-      logger.error(`${channelType} message routing failed: ${details}`);
+  const setupChannelRouting = (
+    channel: MessageChannel,
+    router: MessageRouter,
+    approvalQueue: ApprovalQueue,
+    sessionManager: SessionManager,
+    logger: Logger,
+    model?: string
+  ) => {
+    const channelType = channel.type;
+  
+    channel.onMessage((message) => {
+      void router.route(message, { model }).catch((error) => {
+        const details = error instanceof Error ? error.message : String(error);
+        logger.error(`${channelType} message routing failed: ${details}`);
+      });
     });
-  });
 
   channel.onApprovalResponse((response) => {
     approvalQueue.handleDecision(response.approvalId, {
@@ -157,6 +195,7 @@ if (telegramConfig?.enabled && telegramConfig.token) {
     config: {
       botToken: telegramConfig.token,
       webhookUrl: telegramConfig.webhookUrl,
+      webhookSecret: telegramConfig.webhookSecret,
       adminUserId: telegramConfig.adminUserId
     },
     toolRegistry,
@@ -175,9 +214,28 @@ if (telegramConfig?.enabled && telegramConfig.token) {
 
   await telegramChannel.connect();
   channelManager.register(telegramChannel);
-  app.use("/telegram/webhook", telegramChannel.getWebhookCallback());
 
-  setupChannelRouting(telegramChannel, router, approvalQueue, sessionManager, logger);
+  if (telegramConfig.webhookUrl) {
+    logger.info(`Telegram webhook URL: ${telegramConfig.webhookUrl}`);
+  }
+
+  // Mount webhook with optional secret token validation
+  const telegramWebhookSecret = telegramConfig.webhookSecret;
+  const webhookHandler = telegramChannel.getWebhookCallback();
+  if (telegramWebhookSecret && typeof telegramWebhookSecret === "string" && telegramWebhookSecret.length > 0) {
+    app.post("/telegram/webhook", (req, res, next) => {
+      const header = (req.get("x-telegram-bot-api-secret-token") || "").toString();
+      if (!header || header !== telegramWebhookSecret) {
+        res.status(403).send("Forbidden");
+        return;
+      }
+      return (webhookHandler as any)(req, res, next);
+    });
+  } else {
+    app.use("/telegram/webhook", webhookHandler);
+  }
+
+  setupChannelRouting(telegramChannel, router, approvalQueue, sessionManager, logger, telegramConfig.model);
 }
 
 const discordConfig = config.channels?.discord;
@@ -224,7 +282,10 @@ if (webConfig?.enabled !== false) {
       .catch((error) => {
         const details = error instanceof Error ? error.message : String(error);
         logger.error(`web chat message routing failed: ${details}`);
-        void webChatChannel.sendError(message.chatId, "Something went wrong");
+        const userMessage = /SDK|CLI|unavailable|timed out/i.test(details)
+          ? details
+          : "Something went wrong";
+        void webChatChannel.sendError(message.chatId, userMessage);
       });
   });
 
@@ -283,6 +344,16 @@ httpServer.listen(port, () => {
       logger.error(`Cloudflare tunnel failed: ${details}`);
     });
   }
+});
+
+// Clean up Chrome on process exit
+process.on("SIGINT", () => {
+  killChrome();
+  process.exit(0);
+});
+process.on("SIGTERM", () => {
+  killChrome();
+  process.exit(0);
 });
 
 export { app, httpServer };

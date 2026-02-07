@@ -169,4 +169,42 @@ describe("copilot wrapper", () => {
     const models = await wrapper.listModels();
     expect(models).toEqual([{ id: "gpt-4.1" }]);
   });
+
+  it("sets startFailed when client.start() throws, and chat() throws descriptive error", async () => {
+    const client = {
+      async start() { throw new Error("unknown option '--headless'"); },
+      async createSession(_config: { tools?: unknown[]; model?: string }) {
+        return new FakeSession();
+      },
+      async stop() { return [] as Error[]; },
+      async listModels() { return [{ id: "gpt-4.1" }]; }
+    };
+    const wrapper = new CopilotWrapperService({ client });
+
+    // listModels should throw since SDK failed to start
+    await expect(wrapper.listModels()).rejects.toThrow(/failed to start/);
+
+    // chat should throw with a descriptive message
+    const gen = wrapper.chat("Hello");
+    await expect(gen.next()).rejects.toThrow(/SDK is unavailable/);
+  });
+
+  it("sets startFailed when client.start() times out", async () => {
+    const client = {
+      async start() { return new Promise<void>(() => { /* never resolves */ }); },
+      async createSession(_config: { tools?: unknown[]; model?: string }) {
+        return new FakeSession();
+      },
+      async stop() { return [] as Error[]; },
+      async listModels() { return [{ id: "gpt-4.1" }]; }
+    };
+    const wrapper = new CopilotWrapperService({ client });
+
+    // listModels should throw since SDK timed out
+    await expect(wrapper.listModels()).rejects.toThrow(/failed to start/);
+
+    // chat should throw
+    const gen = wrapper.chat("Hello");
+    await expect(gen.next()).rejects.toThrow(/SDK is unavailable/);
+  }, 15000);
 });

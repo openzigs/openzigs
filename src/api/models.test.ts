@@ -136,4 +136,19 @@ describe("Models API", () => {
     const { body } = await jsonFetch(`${base}/api/models`);
     expect(body.selectedModel).toBe("gpt-4.1");
   });
+
+  it("GET /api/models returns fallback models when SDK errors", async () => {
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "openzigs-models-"));
+    cleanupDirs.push(tmpDir);
+    const configPath = path.join(tmpDir, "user.json");
+
+    const brokenCopilot = new FakeCopilot();
+    brokenCopilot.listModels = async () => { throw new Error("CLI not available"); };
+    const base = await startApp(brokenCopilot, configPath);
+
+    const { status, body } = await jsonFetch(`${base}/api/models`);
+    expect(status).toBe(200);
+    expect(body.models.length).toBeGreaterThan(0);
+    expect(body.fallback).toBe(true);
+  });
 });

@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OpenZigs Admin</title>
+  <link rel="stylesheet" href="/css/admin.css">
+</head>
+<body>
+  <div id="app">
+    <header class="admin-header">
+      <a href="/" class="back-link">&larr; Chat</a>
+      <h1 class="admin-title">OpenZigs Admin</h1>
+    </header>
+
+    <main class="admin-main">
+      <section class="admin-section">
+        <h2>Channels</h2>
+        <p class="section-desc">Enable messaging channels. Changes require restart to take effect.</p>
+        <div id="channels-form" class="channels-form">
+          <div class="loading">Loading…</div>
+        </div>
+      </section>
+
+      <section class="admin-section">
+        <h2>Tools</h2>
+        <p class="section-desc">Enable or disable agent tools. High-risk tools require approval before execution.</p>
+        <div id="tools-list" class="tools-list">
+          <div class="loading">Loading tools…</div>
+        </div>
+      </section>
+
+      <section class="admin-section">
+        <h2>Environment</h2>
+        <p class="section-desc">Read-only view of configured integrations. Edit <code>.env</code> to change.</p>
+        <div id="env-status" class="env-grid">
+          <div class="loading">Loading…</div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="/js/admin.js"></script>
+</body>
+</html>

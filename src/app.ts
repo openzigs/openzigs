@@ -65,7 +65,22 @@ export const createApp = (config: AppConfig, options: CreateAppOptions = {}) => 
 
   app.set("trust proxy", true);
 
-  app.use(helmet());
+  const uiOrigin = process.env.OPENZIGS_UI_ORIGIN ?? "http://localhost:3000";
+  app.use(helmet({
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        connectSrc: [
+          "'self'",
+          uiOrigin,
+          "http://localhost:3000",
+          "http://localhost:9222",
+          "ws://localhost:3000",
+          "ws://localhost:9222"
+        ]
+      }
+    }
+  }));
   app.use(cors());
   app.use(express.json());
 

@@ -34,8 +34,10 @@ export type TelegramConfig = {
   enabled: boolean;
   token: string;
   webhookUrl?: string;
+  webhookSecret?: string;
   allowedUsers: string[];
   adminUserId?: string;
+  model?: string;
 };
 
 export type DiscordConfig = {
@@ -106,8 +108,10 @@ const telegramSchema = z.object({
   enabled: z.boolean(),
   token: z.string(),
   webhookUrl: z.string().optional(),
+  webhookSecret: z.string().optional(),
   allowedUsers: z.array(z.string()),
-  adminUserId: z.string().optional()
+  adminUserId: z.string().optional(),
+  model: z.string().optional()
 });
 
 const discordSchema = z.object({
@@ -269,14 +273,16 @@ export const loadConfig = async (options: LoadConfigOptions = {}): Promise<AppCo
     ?? defaultConfigPath();
 
   const defaultConfigRaw = await readJsonFile(defaultConfigFile());
-  const defaultConfig = applyEnv(defaultConfigRaw ?? {}) as Record<string, unknown>;
-  const userConfig = await readJsonFile(configPath);
+  // We apply env substitution after merging so user config can also use ${ENV_VARS}
+  const userConfigRaw = await readJsonFile(configPath);
 
-  const merged = deepMerge(defaultConfig, userConfig ?? {}) as AppConfig;
+  const mergedRaw = deepMerge(defaultConfigRaw ?? {}, userConfigRaw ?? {});
+  const merged = applyEnv(mergedRaw) as AppConfig;
+
   const parsed = appConfigSchema.safeParse(merged);
   if (!parsed.success) {
     throw new Error(`Invalid config: ${parsed.error.message}`);
   }
 
-  return ensureToken(parsed.data, configPath, userConfig);
+  return ensureToken(parsed.data, configPath, userConfigRaw);
 };

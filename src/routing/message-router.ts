@@ -87,7 +87,11 @@ export class MessageRouter {
       content: response
     });
 
-    await channel.sendMessage(message.chatId, this.buildReply(response));
+    // When streaming via onChunk, the channel handler manages delivery;
+    // only send the full message when not streaming.
+    if (!options?.onChunk) {
+      await channel.sendMessage(message.chatId, this.buildReply(response));
+    }
   }
 
   private buildReply(text: string): MessageContent {

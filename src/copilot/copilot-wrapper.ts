@@ -217,6 +217,8 @@ export class CopilotWrapperService implements CopilotWrapper {
   private model: string;
   private authTimeoutMs: number;
   private started = false;
+  private startFailed = false;
+  private startPromise?: Promise<void>;
   private pendingAuth?: Promise<AuthState>;
   private toolCallHandler?: (tool: string, args: unknown) => Promise<void>;
   private permissionHandler?: (request: { kind: string; toolName?: string; toolArgs?: unknown }) => Promise<{
@@ -291,6 +293,13 @@ export class CopilotWrapperService implements CopilotWrapper {
   async *chat(message: string, tools?: ToolDefinition[], model?: string): AsyncGenerator<string> {
     await this.ensureStarted();
 
+    if (this.startFailed) {
+      throw new Error(
+        "Copilot SDK is unavailable. The Copilot CLI may be outdated or missing. " +
+        "Please update your GitHub Copilot extension to get CLI version 0.0.394 or later."
+      );
+    }
+
     const effectiveModel = model ?? this.model;
     const toolList = tools ?? this.toolRegistry?.listEnabledTools() ?? [];
     const wrappedTools = toolList.map((tool) =>
@@ -354,6 +363,9 @@ export class CopilotWrapperService implements CopilotWrapper {
 
   async listModels(): Promise<CopilotModel[]> {
     await this.ensureStarted();
+    if (this.startFailed) {
+      throw new Error("Copilot SDK failed to start — cannot list models");
+    }
     if (!this.client.listModels) {
       return [{ id: this.model }];
     }
@@ -361,13 +373,31 @@ export class CopilotWrapperService implements CopilotWrapper {
   }
 
   private async ensureStarted() {
-    if (this.started) {
+    if (this.started || this.startFailed) {
       return;
     }
-    if (this.client.start) {
-      await this.client.start();
+    if (!this.startPromise) {
+      this.startPromise = this.doStart();
     }
-    this.started = true;
+    await this.startPromise;
+  }
+
+  private async doStart() {
+    if (!this.client.start) {
+      this.started = true;
+      return;
+    }
+    try {
+      await Promise.race([
+        this.client.start(),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("Copilot CLI start timed out after 10s")), 10_000)
+        )
+      ]);
+      this.started = true;
+    } catch {
+      this.startFailed = true;
+    }
   }
 
   private async sendWithRetries(session: CopilotSessionLike, prompt: string) {

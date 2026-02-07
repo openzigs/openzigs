@@ -16,12 +16,13 @@ const TELEGRAM_MAX_MESSAGE_LENGTH = 4000;
 export type TelegramConfig = {
   botToken: string;
   webhookUrl?: string;
+  webhookSecret?: string;
   adminUserId?: string;
 };
 
 type TelegramApiLike = {
   sendMessage: (chatId: string, text: string, options?: Record<string, unknown>) => Promise<unknown>;
-  setWebhook?: (url: string) => Promise<unknown>;
+  setWebhook?: (url: string, options?: Record<string, unknown>) => Promise<unknown>;
   answerCallbackQuery?: (id: string, options?: Record<string, unknown>) => Promise<unknown>;
   editMessageText?: (chatId: string, messageId: number, text: string, options?: Record<string, unknown>) => Promise<unknown>;
 };
@@ -66,6 +67,7 @@ export class TelegramChannel implements MessageChannel {
   private toolRegistry?: ToolRegistry;
   private logger?: Logger;
   private webhookUrl?: string;
+  private webhookSecret?: string;
   private adminUserId?: string;
 
   constructor({ config, toolRegistry, logger, bot }: TelegramChannelOptions) {
@@ -75,6 +77,7 @@ export class TelegramChannel implements MessageChannel {
     this.toolRegistry = toolRegistry;
     this.logger = logger;
     this.webhookUrl = config.webhookUrl;
+    this.webhookSecret = config.webhookSecret;
     this.adminUserId = config.adminUserId;
 
     this.bot.command("start", async (ctx) => {
@@ -215,7 +218,11 @@ export class TelegramChannel implements MessageChannel {
     this.connected = true;
     if (this.webhookUrl && this.bot.api.setWebhook) {
       try {
-        await this.bot.api.setWebhook(this.webhookUrl);
+        const params: Record<string, unknown> = {};
+        if (this.webhookSecret && this.webhookSecret.length > 0) {
+          params.secret_token = this.webhookSecret;
+        }
+        await this.bot.api.setWebhook(this.webhookUrl, params);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         this.logger?.warn(`Failed to set Telegram webhook: ${message}`);

@@ -286,8 +286,9 @@ describe("MessageRouter", () => {
     });
 
     expect(received).toEqual(["Hello", " ", "world"]);
-    expect(telegram.messages).toHaveLength(1);
-    expect(telegram.messages[0].content.text).toBe("Hello world");
+    // When streaming (onChunk provided), the router does NOT call sendMessage;
+    // the channel handler is responsible for delivery via chunks.
+    expect(telegram.messages).toHaveLength(0);
   });
 
   it("passes model override to copilot.chat", async () => {

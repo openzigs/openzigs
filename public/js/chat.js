@@ -21,6 +21,7 @@
   let streamingMessageEl = null;
   let streamingContent = "";
   let pendingApprovalId = null;
+  let inputStuckTimer = null;
 
   // ── Socket.IO ──
   const socket = io({
@@ -73,6 +74,7 @@
     finalizeStream();
     appendMessage("error", data.error || "An error occurred");
     enableInput();
+    clearInputStuckTimer();
   });
 
   socket.on("approval:request", (data) => {
@@ -110,6 +112,16 @@
     input.value = "";
     autoResize();
     disableInput();
+
+    // Safety net: re-enable input if no response arrives within 30s
+    clearInputStuckTimer();
+    inputStuckTimer = setTimeout(() => {
+      if (input.disabled) {
+        finalizeStream();
+        appendMessage("error", "No response received — the Copilot SDK may be unavailable. Check server logs.");
+        enableInput();
+      }
+    }, 30000);
   });
 
   // Enter to send, Shift+Enter for newline
@@ -152,12 +164,20 @@
   }
 
   function finalizeStream() {
+    clearInputStuckTimer();
     if (streamingMessageEl) {
       const cursor = streamingMessageEl.querySelector(".cursor");
       if (cursor) cursor.remove();
       streamingMessageEl = null;
       streamingContent = "";
       enableInput();
+    }
+  }
+
+  function clearInputStuckTimer() {
+    if (inputStuckTimer) {
+      clearTimeout(inputStuckTimer);
+      inputStuckTimer = null;
     }
   }
 
@@ -200,6 +220,11 @@
         opt.textContent = "No models available";
         modelSelect.appendChild(opt);
       }
+
+      // Show fallback banner if SDK is unavailable
+      if (data.fallback) {
+        showFallbackWarning();
+      }
     } catch (err) {
       // Models endpoint not available, leave disabled
       console.error("Failed to load models:", err);
@@ -222,4 +247,18 @@
   });
 
   loadModels();
+
+  // ── Fallback warning ──
+  function showFallbackWarning() {
+    const existing = document.getElementById("fallback-warning");
+    if (existing) return;
+    const banner = document.createElement("div");
+    banner.id = "fallback-warning";
+    banner.className = "fallback-warning";
+    banner.textContent = "⚠ Copilot SDK unavailable — using fallback model list. Update your Copilot CLI to v0.0.394+ for full functionality.";
+    const header = document.querySelector(".chat-header");
+    if (header && header.parentNode) {
+      header.parentNode.insertBefore(banner, header.nextSibling);
+    }
+  }
 })();

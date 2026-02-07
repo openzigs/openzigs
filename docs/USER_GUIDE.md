@@ -190,6 +190,8 @@ Toggle state is persisted to `config/tools.json`. Disabled tools are **not** pas
 
 ## Connecting Telegram
 
+For the full, step-by-step Telegram setup (including Cloudflare Tunnel and access control), see [docs/TELEGRAM_SETUP.md](docs/TELEGRAM_SETUP.md).
+
 1. Create a Telegram bot via [@BotFather](https://t.me/BotFather) and copy the token.
 
 2. Set the token in your `.env`:
