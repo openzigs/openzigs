@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { loadConfig } from "../config/index.js";
+import { logger } from "../logging/logger.js";
 import type { ToolRegistry } from "../mcp/tool-registry.js";
 import type { DockerSidecarManager } from "../mcp/docker-sidecar-manager.js";
 
@@ -31,16 +32,64 @@ const ENV_CHECKS = [
 type SidecarCredential = {
   platform: string;
   label: string;
+  imageAvailable: boolean;
   envVars: { name: string; configured: boolean }[];
 };
 
-const SIDECAR_CREDENTIALS: Array<{ platform: string; label: string; envVars: string[] }> = [
-  { platform: "linkedin", label: "LinkedIn", envVars: ["LINKEDIN_ACCESS_TOKEN"] },
-  { platform: "twitter", label: "Twitter / X", envVars: ["TWITTER_BEARER_TOKEN", "TWITTER_API_KEY", "TWITTER_API_SECRET"] },
-  { platform: "facebook", label: "Facebook", envVars: ["FACEBOOK_PAGE_TOKEN"] },
-  { platform: "pinterest", label: "Pinterest", envVars: ["PINTEREST_APP_ID", "PINTEREST_APP_SECRET"] },
-  { platform: "word", label: "Word / Office", envVars: [] },
+const SIDECAR_CREDENTIALS: Array<{ platform: string; label: string; envVars: string[]; imageAvailable: boolean }> = [
+  { platform: "linkedin", label: "LinkedIn", envVars: ["LINKEDIN_ACCESS_TOKEN"], imageAvailable: true },
+  { platform: "twitter", label: "Twitter / X", envVars: ["TWITTER_BEARER_TOKEN", "TWITTER_API_KEY", "TWITTER_API_SECRET"], imageAvailable: true },
+  { platform: "facebook", label: "Facebook", envVars: ["FACEBOOK_PAGE_TOKEN"], imageAvailable: true },
+  { platform: "pinterest", label: "Pinterest", envVars: ["PINTEREST_APP_ID", "PINTEREST_APP_SECRET"], imageAvailable: true },
+  { platform: "word", label: "Word / Office", envVars: [], imageAvailable: false },
 ];
+
+// ── .env file helpers ──
+
+const defaultEnvPath = () =>
+  path.resolve(process.env.OPENZIGS_ENV_PATH ?? path.join(process.cwd(), ".env"));
+
+/**
+ * Upsert key=value pairs into a .env file, preserving comments and ordering.
+ * New keys are appended under a dedicated "# MCP Credentials" section.
+ */
+const upsertEnvFile = async (envPath: string, updates: Record<string, string>): Promise<void> => {
+  let content = "";
+  try {
+    content = await fs.readFile(envPath, "utf-8");
+  } catch {
+    // File doesn't exist yet — will create
+  }
+
+  const lines = content.split("\n");
+  const remaining = new Map(Object.entries(updates));
+
+  // Update existing lines in-place
+  const updatedLines = lines.map((line) => {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) return line;
+    const eqIdx = trimmed.indexOf("=");
+    if (eqIdx === -1) return line;
+    const key = trimmed.slice(0, eqIdx).trim();
+    if (remaining.has(key)) {
+      const value = remaining.get(key)!;
+      remaining.delete(key);
+      return `${key}=${value}`;
+    }
+    return line;
+  });
+
+  // Append new keys
+  if (remaining.size > 0) {
+    updatedLines.push("");
+    updatedLines.push("# MCP Credentials");
+    for (const [key, value] of remaining) {
+      updatedLines.push(`${key}=${value}`);
+    }
+  }
+
+  await fs.writeFile(envPath, updatedLines.join("\n"), { encoding: "utf-8", mode: 0o600 });
+};
 
 const TELEGRAM_TOKEN_PLACEHOLDER = "${TELEGRAM_BOT_TOKEN}";
 const DISCORD_TOKEN_PLACEHOLDER = "${DISCORD_BOT_TOKEN}";
@@ -242,6 +291,7 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager }: AdminRouterO
     const credentials: SidecarCredential[] = SIDECAR_CREDENTIALS.map((cred) => ({
       platform: cred.platform,
       label: cred.label,
+      imageAvailable: cred.imageAvailable,
       envVars: cred.envVars.map((name) => ({
         name,
         configured: !!(process.env[name] && process.env[name]!.trim().length > 0)
@@ -254,6 +304,50 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager }: AdminRouterO
       credentials,
       dockerAvailable,
     });
+  });
+
+  // ── Save MCP sidecar credentials ──
+  router.post("/sidecars/credentials", async (req, res) => {
+    const body = req.body as Record<string, unknown>;
+    const credentials = body.credentials as Record<string, string> | undefined;
+
+    if (!credentials || typeof credentials !== "object") {
+      return res.status(400).json({ error: "credentials must be an object of { ENV_VAR: value }" });
+    }
+
+    // Validate: only allow known sidecar env vars
+    const allEnvVars = new Set(SIDECAR_CREDENTIALS.flatMap((c) => c.envVars));
+    const filtered: Record<string, string> = {};
+    for (const [key, value] of Object.entries(credentials)) {
+      if (!allEnvVars.has(key)) {
+        return res.status(400).json({ error: `Unknown credential: ${key}` });
+      }
+      if (typeof value !== "string") {
+        return res.status(400).json({ error: `Value for ${key} must be a string` });
+      }
+      filtered[key] = value.trim();
+    }
+
+    try {
+      // Write to .env file
+      const envPath = defaultEnvPath();
+      await upsertEnvFile(envPath, filtered);
+
+      // Update process.env in-memory so sidecars can start immediately
+      for (const [key, value] of Object.entries(filtered)) {
+        if (value) {
+          process.env[key] = value;
+        } else {
+          delete process.env[key];
+        }
+      }
+
+      logger.info(`MCP credentials saved: ${Object.keys(filtered).join(", ")}`);
+      return res.json({ ok: true, saved: Object.keys(filtered) });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return res.status(500).json({ error: message });
+    }
   });
 
   router.post("/sidecars/:name/restart", async (req, res) => {

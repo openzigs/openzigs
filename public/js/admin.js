@@ -438,7 +438,10 @@
 
     var badge = document.createElement("span");
     badge.className = "sidecar-badge";
-    if (status && status.running && status.healthy) {
+    if (!cred.imageAvailable) {
+      badge.classList.add("coming-soon");
+      badge.textContent = "Coming Soon";
+    } else if (status && status.running && status.healthy) {
       badge.classList.add("healthy");
       badge.textContent = "Healthy";
     } else if (status && status.running && !status.healthy) {
@@ -457,47 +460,134 @@
     header.appendChild(badge);
     card.appendChild(header);
 
-    // Credential checklist
+    // Coming soon notice
+    if (!cred.imageAvailable) {
+      var notice = document.createElement("div");
+      notice.className = "sidecar-coming-soon";
+      notice.textContent = "Docker image not yet available. This integration is coming in a future release.";
+      card.appendChild(notice);
+      return card;
+    }
+
+    // Credential input fields
     if (cred.envVars.length > 0) {
       var credSection = document.createElement("div");
       credSection.className = "sidecar-creds";
 
       var credLabel = document.createElement("div");
       credLabel.className = "sidecar-creds-label";
-      credLabel.textContent = "Required credentials";
+      credLabel.textContent = "API Credentials";
       credSection.appendChild(credLabel);
+
+      var inputs = {};
 
       for (var j = 0; j < cred.envVars.length; j++) {
         var envVar = cred.envVars[j];
-        var row = document.createElement("div");
-        row.className = "sidecar-cred-row";
+        var fieldWrapper = document.createElement("div");
+        fieldWrapper.className = "sidecar-cred-field";
 
-        var dot = document.createElement("span");
-        dot.className = "env-dot " + (envVar.configured ? "configured" : "missing");
-        row.appendChild(dot);
+        var fieldLabel = document.createElement("label");
+        fieldLabel.className = "sidecar-cred-label";
+        fieldLabel.textContent = envVar.name;
+        fieldWrapper.appendChild(fieldLabel);
 
-        var varName = document.createElement("span");
-        varName.className = "sidecar-cred-name";
-        varName.textContent = envVar.name;
-        row.appendChild(varName);
+        var inputRow = document.createElement("div");
+        inputRow.className = "sidecar-cred-input-row";
 
-        var varStatus = document.createElement("span");
-        varStatus.className = "sidecar-cred-status " + (envVar.configured ? "configured" : "missing");
-        varStatus.textContent = envVar.configured ? "Set" : "Missing";
-        row.appendChild(varStatus);
+        var input = document.createElement("input");
+        input.className = "sidecar-cred-input";
+        input.type = "password";
+        input.placeholder = envVar.configured ? "••••••••  (already set)" : "Paste your key here…";
+        input.setAttribute("data-env", envVar.name);
+        input.setAttribute("autocomplete", "off");
+        inputRow.appendChild(input);
 
-        credSection.appendChild(row);
+        var toggleVis = document.createElement("button");
+        toggleVis.type = "button";
+        toggleVis.className = "sidecar-cred-toggle";
+        toggleVis.textContent = "👁";
+        toggleVis.title = "Show/hide value";
+        (function (inp, btn) {
+          btn.addEventListener("click", function () {
+            if (inp.type === "password") {
+              inp.type = "text";
+              btn.textContent = "🔒";
+            } else {
+              inp.type = "password";
+              btn.textContent = "👁";
+            }
+          });
+        })(input, toggleVis);
+        inputRow.appendChild(toggleVis);
+
+        fieldWrapper.appendChild(inputRow);
+
+        var statusIndicator = document.createElement("div");
+        statusIndicator.className = "sidecar-cred-indicator " + (envVar.configured ? "configured" : "missing");
+        statusIndicator.textContent = envVar.configured ? "✓ Configured" : "✗ Not set";
+        fieldWrapper.appendChild(statusIndicator);
+
+        credSection.appendChild(fieldWrapper);
+        inputs[envVar.name] = input;
       }
 
       card.appendChild(credSection);
+
+      // Save credentials button
+      var saveActions = document.createElement("div");
+      saveActions.className = "sidecar-actions";
+
+      var saveBtn = document.createElement("button");
+      saveBtn.className = "sidecar-btn save";
+      saveBtn.textContent = "Save Credentials";
+      (function (platform, inputsMap, btn) {
+        btn.addEventListener("click", function () {
+          saveCredentials(platform, inputsMap, btn);
+        });
+      })(cred.platform, inputs, saveBtn);
+      saveActions.appendChild(saveBtn);
+
+      if (dockerAvailable) {
+        var restartBtn = document.createElement("button");
+        restartBtn.className = "sidecar-btn restart";
+        restartBtn.textContent = "Restart";
+        restartBtn.disabled = !status || status.error === "credentials_missing";
+        (function (name, btn) {
+          btn.addEventListener("click", function () {
+            restartSidecar(name, btn);
+          });
+        })(cred.platform, restartBtn);
+        saveActions.appendChild(restartBtn);
+      }
+
+      card.appendChild(saveActions);
     } else {
       var noCredsNote = document.createElement("div");
       noCredsNote.className = "sidecar-creds-label";
       noCredsNote.textContent = "No credentials required";
       card.appendChild(noCredsNote);
+
+      // Actions for no-cred sidecars (just restart)
+      if (dockerAvailable) {
+        var actionsDiv = document.createElement("div");
+        actionsDiv.className = "sidecar-actions";
+
+        var restBtn = document.createElement("button");
+        restBtn.className = "sidecar-btn restart";
+        restBtn.textContent = "Restart";
+        restBtn.disabled = !status;
+        (function (name, btn) {
+          btn.addEventListener("click", function () {
+            restartSidecar(name, btn);
+          });
+        })(cred.platform, restBtn);
+        actionsDiv.appendChild(restBtn);
+
+        card.appendChild(actionsDiv);
+      }
     }
 
-    // URL info
+    // URL info (below actions)
     if (status && status.url) {
       var urlRow = document.createElement("div");
       urlRow.className = "sidecar-url";
@@ -505,24 +595,51 @@
       card.appendChild(urlRow);
     }
 
-    // Actions
-    if (dockerAvailable) {
-      var actions = document.createElement("div");
-      actions.className = "sidecar-actions";
+    return card;
+  }
 
-      var restartBtn = document.createElement("button");
-      restartBtn.className = "sidecar-btn restart";
-      restartBtn.textContent = "Restart";
-      restartBtn.disabled = !status || status.error === "credentials_missing";
-      restartBtn.addEventListener("click", function () {
-        restartSidecar(cred.platform, restartBtn);
-      });
-      actions.appendChild(restartBtn);
-
-      card.appendChild(actions);
+  async function saveCredentials(platform, inputs, button) {
+    // Collect non-empty inputs
+    var credentials = {};
+    var hasValue = false;
+    for (var key in inputs) {
+      var value = inputs[key].value.trim();
+      if (value) {
+        credentials[key] = value;
+        hasValue = true;
+      }
     }
 
-    return card;
+    if (!hasValue) {
+      showToast("Enter at least one credential to save.");
+      return;
+    }
+
+    button.disabled = true;
+    button.textContent = "Saving…";
+    try {
+      var res = await fetch("/api/admin/sidecars/credentials", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ credentials: credentials })
+      });
+      if (!res.ok) {
+        var data = await res.json().catch(function () { return {}; });
+        throw new Error(data.error || "Failed to save credentials");
+      }
+      showToast(platform + " credentials saved! Restart to activate.");
+      // Clear inputs and reload to show updated status
+      for (var k in inputs) {
+        inputs[k].value = "";
+      }
+      await loadSidecars();
+    } catch (err) {
+      var message = err && err.message ? err.message : String(err);
+      showToast("Error: " + message);
+    } finally {
+      button.disabled = false;
+      button.textContent = "Save Credentials";
+    }
   }
 
   async function restartSidecar(name, button) {
