@@ -207,6 +207,13 @@ export const createApp = (config: AppConfig, options: CreateAppOptions = {}) => 
       return res.status(200).json({ prompts });
     });
 
+    app.get("/api/prompts/:id", authMiddleware, (req, res) => {
+      const prompt = promptManager.getById(req.params.id);
+      return prompt
+        ? res.status(200).json(prompt)
+        : res.status(404).json({ error: "Prompt not found" });
+    });
+
     app.post("/api/prompts", authMiddleware, (req, res) => {
       const body = req.body as Record<string, unknown>;
       const name = typeof body.name === "string" ? body.name : "";
@@ -228,6 +235,22 @@ export const createApp = (config: AppConfig, options: CreateAppOptions = {}) => 
       }
     });
 
+    app.put("/api/prompts/:id", authMiddleware, (req, res) => {
+      const body = req.body as Record<string, unknown>;
+      try {
+        const updated = promptManager.update(req.params.id, {
+          name: typeof body.name === "string" ? body.name : undefined,
+          template: typeof body.template === "string" ? body.template : undefined,
+          description: typeof body.description === "string" ? body.description : undefined,
+          tags: Array.isArray(body.tags) ? (body.tags as string[]) : undefined,
+        });
+        return res.status(200).json(updated);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return res.status(400).json({ error: message });
+      }
+    });
+
     app.delete("/api/prompts/:id", authMiddleware, (req, res) => {
       const deleted = promptManager.delete(req.params.id);
       return deleted
@@ -241,6 +264,13 @@ export const createApp = (config: AppConfig, options: CreateAppOptions = {}) => 
   if (scheduler) {
     app.get("/api/jobs", authMiddleware, (_req, res) => {
       return res.status(200).json({ jobs: scheduler.list() });
+    });
+
+    app.get("/api/jobs/:id", authMiddleware, (req, res) => {
+      const job = scheduler.getById(req.params.id);
+      return job
+        ? res.status(200).json(job)
+        : res.status(404).json({ error: "Job not found" });
     });
 
     app.post("/api/jobs", authMiddleware, (req, res) => {
@@ -282,6 +312,21 @@ export const createApp = (config: AppConfig, options: CreateAppOptions = {}) => 
       return deleted
         ? res.status(200).json({ ok: true })
         : res.status(404).json({ error: "Job not found" });
+    });
+
+    app.post("/api/jobs/:id/toggle", authMiddleware, (req, res) => {
+      const body = req.body as Record<string, unknown>;
+      const enabled = typeof body.enabled === "boolean" ? body.enabled : undefined;
+      if (enabled === undefined) {
+        return res.status(400).json({ error: "enabled must be a boolean" });
+      }
+      try {
+        const updated = scheduler.setEnabled(req.params.id, enabled);
+        return res.status(200).json(updated);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return res.status(400).json({ error: message });
+      }
     });
   }
 

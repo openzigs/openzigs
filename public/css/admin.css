@@ -684,3 +684,222 @@ html, body {
     grid-template-columns: 1fr;
   }
 }
+
+/* ── Prompt Library ── */
+
+.library-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.library-toolbar {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.library-search {
+  flex: 1;
+}
+
+.library-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.library-empty {
+  color: var(--text-muted);
+  font-size: 13px;
+  padding: 16px 0;
+  text-align: center;
+}
+
+.prompt-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  transition: border-color 0.2s;
+}
+
+.prompt-card:hover {
+  border-color: var(--accent);
+}
+
+.prompt-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.prompt-card-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.prompt-card-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.prompt-card-desc {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.prompt-card-template {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-muted);
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 4px;
+  padding: 8px 10px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 100px;
+  overflow-y: auto;
+}
+
+.prompt-card-tags {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.prompt-tag {
+  font-size: 11px;
+  font-weight: 500;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: rgba(88, 166, 255, 0.12);
+  color: var(--accent);
+}
+
+/* ── Prompt / Job Form ── */
+
+.prompt-form-container {
+  background: var(--surface);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.prompt-form-container.hidden {
+  display: none;
+}
+
+.prompt-form-heading {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  margin: 0;
+}
+
+.prompt-textarea {
+  font-family: var(--mono);
+  font-size: 12px;
+  resize: vertical;
+  min-height: 80px;
+  line-height: 1.5;
+}
+
+.prompt-form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.delete-btn {
+  color: var(--danger) !important;
+  border-color: var(--danger) !important;
+}
+
+.delete-btn:hover:not(:disabled) {
+  background: rgba(248, 81, 73, 0.1) !important;
+}
+
+/* ── Scheduler ── */
+
+.scheduler-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.scheduler-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.job-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  transition: border-color 0.2s;
+}
+
+.job-card:hover {
+  border-color: var(--accent);
+}
+
+.job-type-badge {
+  display: inline-block;
+  font-size: 0.65rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 2px 7px;
+  border-radius: 4px;
+  background: var(--surface-hover);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+}
+
+.job-info-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.job-cron {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--accent);
+  background: rgba(88, 166, 255, 0.08);
+  padding: 3px 8px;
+  border-radius: 4px;
+}
+
+.job-tz {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.job-stats-row {
+  display: flex;
+  gap: 16px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.job-stat {
+  white-space: nowrap;
+}

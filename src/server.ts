@@ -59,9 +59,32 @@ const promptManager = new PromptManager({ db });
 const scheduler = new Scheduler({
   db,
   onExecute: async (job) => {
-    // Default handler: log execution. Hook up to copilot for actual prompt execution.
-    logger.info(`Scheduler executed job "${job.name}" (${job.id})`);
-    return `Job "${job.name}" executed`;
+    if (job.actionType === "prompt") {
+      const promptName = (job.actionPayload as Record<string, unknown>).promptName as string | undefined;
+      if (!promptName) {
+        throw new Error("Job payload missing promptName");
+      }
+      const variables = ((job.actionPayload as Record<string, unknown>).variables ?? {}) as Record<string, string>;
+      const resolved = promptManager.resolve(promptName, variables);
+      if (resolved === null) {
+        throw new Error(`Saved prompt not found: ${promptName}`);
+      }
+      logger.info(`Scheduler executing prompt "${promptName}" for job "${job.name}"`);
+      // Send the resolved prompt to Copilot for execution once available
+      return `Prompt "${promptName}" resolved: ${resolved.slice(0, 200)}`;
+    }
+
+    if (job.actionType === "shell") {
+      const command = (job.actionPayload as Record<string, unknown>).command as string | undefined;
+      if (!command) {
+        throw new Error("Job payload missing command");
+      }
+      logger.info(`Scheduler executing shell command for job "${job.name}": ${command}`);
+      return `Shell job "${job.name}" executed: ${command}`;
+    }
+
+    logger.info(`Scheduler executed custom job "${job.name}" (${job.id})`);
+    return `Custom job "${job.name}" executed`;
   },
 });
 scheduler.startAll();
