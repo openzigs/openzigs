@@ -46,5 +46,19 @@
       "credentialsFile": "~/.cloudflared/credentials.json",
       "hostname": "agent.example.com"
     }
+  },
+  "mcpServers": {
+    "autoProvision": true,
+    "skipUnconfigured": true,
+    "healthRetries": 3,
+    "healthRetryDelay": 2000,
+    "network": "openzigs-network",
+    "sidecars": {
+      "linkedin": { "enabled": true },
+      "twitter": { "enabled": true },
+      "facebook": { "enabled": true },
+      "pinterest": { "enabled": true },
+      "word": { "enabled": true }
+    }
   }
 }

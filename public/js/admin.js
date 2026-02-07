@@ -5,6 +5,17 @@
   const toolsList = document.getElementById("tools-list");
   const envStatus = document.getElementById("env-status");
   const channelsForm = document.getElementById("channels-form");
+  const sidecarsPanel = document.getElementById("sidecars-panel");
+
+  // ── Socket.IO for live sidecar updates ──
+  var socket = null;
+  try {
+    if (typeof io !== "undefined") {
+      socket = io();
+    }
+  } catch (_e) {
+    // Socket.IO not available
+  }
 
   // ── Toast ──
   let toastEl = null;
@@ -362,8 +373,207 @@
     }
   }
 
+  // ── Load MCP Sidecars ──
+  var sidecarData = null;
+
+  async function loadSidecars() {
+    try {
+      var res = await fetch("/api/admin/sidecars");
+      if (!res.ok) throw new Error("Failed to load sidecars");
+      sidecarData = await res.json();
+      renderSidecars(sidecarData);
+    } catch (err) {
+      sidecarsPanel.innerHTML = '<div class="loading">Failed to load MCP servers.</div>';
+      console.error(err);
+    }
+  }
+
+  function renderSidecars(data) {
+    sidecarsPanel.innerHTML = "";
+
+    // Docker status banner
+    var dockerBanner = document.createElement("div");
+    dockerBanner.className = "docker-banner " + (data.dockerAvailable ? "docker-ok" : "docker-missing");
+    var dockerIcon = document.createElement("span");
+    dockerIcon.className = "docker-icon";
+    dockerIcon.textContent = data.dockerAvailable ? "●" : "○";
+    dockerBanner.appendChild(dockerIcon);
+    var dockerText = document.createElement("span");
+    dockerText.textContent = data.dockerAvailable
+      ? "Docker connected — auto-provisioning active"
+      : "Docker not available — configure sidecar URLs manually via environment variables";
+    dockerBanner.appendChild(dockerText);
+    sidecarsPanel.appendChild(dockerBanner);
+
+    // Sidecar cards
+    var grid = document.createElement("div");
+    grid.className = "sidecar-grid";
+
+    var credentials = data.credentials || [];
+    var statuses = data.sidecars || [];
+
+    for (var i = 0; i < credentials.length; i++) {
+      var cred = credentials[i];
+      var status = statuses.find(function (s) { return s.name === cred.platform; }) || null;
+      var card = createSidecarCard(cred, status, data.dockerAvailable);
+      grid.appendChild(card);
+    }
+
+    sidecarsPanel.appendChild(grid);
+  }
+
+  function createSidecarCard(cred, status, dockerAvailable) {
+    var card = document.createElement("div");
+    card.className = "sidecar-card";
+    card.setAttribute("data-sidecar", cred.platform);
+
+    // Header row: name + status badge
+    var header = document.createElement("div");
+    header.className = "sidecar-header";
+
+    var title = document.createElement("div");
+    title.className = "sidecar-title";
+    title.textContent = cred.label;
+    header.appendChild(title);
+
+    var badge = document.createElement("span");
+    badge.className = "sidecar-badge";
+    if (status && status.running && status.healthy) {
+      badge.classList.add("healthy");
+      badge.textContent = "Healthy";
+    } else if (status && status.running && !status.healthy) {
+      badge.classList.add("unhealthy");
+      badge.textContent = "Unhealthy";
+    } else if (status && status.error === "credentials_missing") {
+      badge.classList.add("unconfigured");
+      badge.textContent = "No Credentials";
+    } else if (status && !status.running) {
+      badge.classList.add("stopped");
+      badge.textContent = "Stopped";
+    } else {
+      badge.classList.add("unknown");
+      badge.textContent = "Unknown";
+    }
+    header.appendChild(badge);
+    card.appendChild(header);
+
+    // Credential checklist
+    if (cred.envVars.length > 0) {
+      var credSection = document.createElement("div");
+      credSection.className = "sidecar-creds";
+
+      var credLabel = document.createElement("div");
+      credLabel.className = "sidecar-creds-label";
+      credLabel.textContent = "Required credentials";
+      credSection.appendChild(credLabel);
+
+      for (var j = 0; j < cred.envVars.length; j++) {
+        var envVar = cred.envVars[j];
+        var row = document.createElement("div");
+        row.className = "sidecar-cred-row";
+
+        var dot = document.createElement("span");
+        dot.className = "env-dot " + (envVar.configured ? "configured" : "missing");
+        row.appendChild(dot);
+
+        var varName = document.createElement("span");
+        varName.className = "sidecar-cred-name";
+        varName.textContent = envVar.name;
+        row.appendChild(varName);
+
+        var varStatus = document.createElement("span");
+        varStatus.className = "sidecar-cred-status " + (envVar.configured ? "configured" : "missing");
+        varStatus.textContent = envVar.configured ? "Set" : "Missing";
+        row.appendChild(varStatus);
+
+        credSection.appendChild(row);
+      }
+
+      card.appendChild(credSection);
+    } else {
+      var noCredsNote = document.createElement("div");
+      noCredsNote.className = "sidecar-creds-label";
+      noCredsNote.textContent = "No credentials required";
+      card.appendChild(noCredsNote);
+    }
+
+    // URL info
+    if (status && status.url) {
+      var urlRow = document.createElement("div");
+      urlRow.className = "sidecar-url";
+      urlRow.textContent = status.url;
+      card.appendChild(urlRow);
+    }
+
+    // Actions
+    if (dockerAvailable) {
+      var actions = document.createElement("div");
+      actions.className = "sidecar-actions";
+
+      var restartBtn = document.createElement("button");
+      restartBtn.className = "sidecar-btn restart";
+      restartBtn.textContent = "Restart";
+      restartBtn.disabled = !status || status.error === "credentials_missing";
+      restartBtn.addEventListener("click", function () {
+        restartSidecar(cred.platform, restartBtn);
+      });
+      actions.appendChild(restartBtn);
+
+      card.appendChild(actions);
+    }
+
+    return card;
+  }
+
+  async function restartSidecar(name, button) {
+    button.disabled = true;
+    button.textContent = "Restarting…";
+    try {
+      var res = await fetch("/api/admin/sidecars/" + encodeURIComponent(name) + "/restart", {
+        method: "POST"
+      });
+      if (!res.ok) {
+        var data = await res.json().catch(function () { return {}; });
+        throw new Error(data.error || "Failed to restart");
+      }
+      showToast(name + " restarted");
+      await loadSidecars();
+    } catch (err) {
+      var message = err && err.message ? err.message : String(err);
+      showToast("Error: " + message);
+    } finally {
+      button.disabled = false;
+      button.textContent = "Restart";
+    }
+  }
+
+  // ── Socket.IO live sidecar status ──
+  if (socket) {
+    socket.on("sidecar:status", function (status) {
+      // Update the specific card in-place
+      var card = document.querySelector('[data-sidecar="' + status.name + '"]');
+      if (card) {
+        var badge = card.querySelector(".sidecar-badge");
+        if (badge) {
+          badge.className = "sidecar-badge";
+          if (status.running && status.healthy) {
+            badge.classList.add("healthy");
+            badge.textContent = "Healthy";
+          } else if (status.running && !status.healthy) {
+            badge.classList.add("unhealthy");
+            badge.textContent = "Unhealthy";
+          } else {
+            badge.classList.add("stopped");
+            badge.textContent = "Stopped";
+          }
+        }
+      }
+    });
+  }
+
   // ── Init ──
   loadTools();
   loadChannels();
+  loadSidecars();
   loadEnv();
 })();

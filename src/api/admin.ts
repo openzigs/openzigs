@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { loadConfig } from "../config/index.js";
 import type { ToolRegistry } from "../mcp/tool-registry.js";
+import type { DockerSidecarManager } from "../mcp/docker-sidecar-manager.js";
 
 type EnvEntry = {
   name: string;
@@ -18,7 +19,28 @@ const ENV_CHECKS = [
   "GITHUB_CLIENT_ID",
   "TELEGRAM_BOT_TOKEN",
   "DISCORD_BOT_TOKEN",
+  "LINKEDIN_ACCESS_TOKEN",
+  "TWITTER_BEARER_TOKEN",
+  "TWITTER_API_KEY",
+  "TWITTER_API_SECRET",
+  "FACEBOOK_PAGE_TOKEN",
+  "PINTEREST_APP_ID",
+  "PINTEREST_APP_SECRET",
 ] as const;
+
+type SidecarCredential = {
+  platform: string;
+  label: string;
+  envVars: { name: string; configured: boolean }[];
+};
+
+const SIDECAR_CREDENTIALS: Array<{ platform: string; label: string; envVars: string[] }> = [
+  { platform: "linkedin", label: "LinkedIn", envVars: ["LINKEDIN_ACCESS_TOKEN"] },
+  { platform: "twitter", label: "Twitter / X", envVars: ["TWITTER_BEARER_TOKEN", "TWITTER_API_KEY", "TWITTER_API_SECRET"] },
+  { platform: "facebook", label: "Facebook", envVars: ["FACEBOOK_PAGE_TOKEN"] },
+  { platform: "pinterest", label: "Pinterest", envVars: ["PINTEREST_APP_ID", "PINTEREST_APP_SECRET"] },
+  { platform: "word", label: "Word / Office", envVars: [] },
+];
 
 const TELEGRAM_TOKEN_PLACEHOLDER = "${TELEGRAM_BOT_TOKEN}";
 const DISCORD_TOKEN_PLACEHOLDER = "${DISCORD_BOT_TOKEN}";
@@ -55,9 +77,10 @@ const toStringArray = (value: unknown): string[] => {
 
 export type AdminRouterOptions = {
   toolRegistry: ToolRegistry;
+  sidecarManager?: DockerSidecarManager;
 };
 
-export const createAdminRouter = ({ toolRegistry }: AdminRouterOptions) => {
+export const createAdminRouter = ({ toolRegistry, sidecarManager }: AdminRouterOptions) => {
   const router = Router();
 
   router.get("/tools", (_req, res) => {
@@ -201,6 +224,49 @@ export const createAdminRouter = ({ toolRegistry }: AdminRouterOptions) => {
 
       await writeUserConfig(configPath, nextConfig);
       return res.json({ ok: true, restartRequired: true });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return res.status(500).json({ error: message });
+    }
+  });
+
+  // ── MCP Sidecar Management ──
+  router.get("/sidecars", async (_req, res) => {
+    const dockerAvailable = sidecarManager
+      ? await sidecarManager.isDockerAvailable()
+      : false;
+
+    const statuses = sidecarManager?.getAllStatuses() ?? [];
+    const configured = sidecarManager?.getConfiguredSidecars() ?? [];
+
+    const credentials: SidecarCredential[] = SIDECAR_CREDENTIALS.map((cred) => ({
+      platform: cred.platform,
+      label: cred.label,
+      envVars: cred.envVars.map((name) => ({
+        name,
+        configured: !!(process.env[name] && process.env[name]!.trim().length > 0)
+      }))
+    }));
+
+    return res.json({
+      sidecars: statuses,
+      configuredSidecars: configured,
+      credentials,
+      dockerAvailable,
+    });
+  });
+
+  router.post("/sidecars/:name/restart", async (req, res) => {
+    const { name } = req.params;
+    if (!sidecarManager) {
+      return res.status(503).json({ error: "Docker sidecar manager not available" });
+    }
+    try {
+      const status = await sidecarManager.restartSidecar(name);
+      if (!status) {
+        return res.status(404).json({ error: `Unknown sidecar: ${name}` });
+      }
+      return res.json({ ok: true, status });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return res.status(500).json({ error: message });
