@@ -34,7 +34,7 @@ const writeFileSchema = z.object({ path: z.string(), content: z.string() });
 const webSearchSchema = z.object({ query: z.string(), count: z.number().optional() });
 const browserReadSchema = z.object({ selector: z.string().optional() });
 const browserNavigateSchema = z.object({
-  action: z.enum(["navigate", "click", "type", "screenshot", "get-text", "list-tabs", "evaluate"]),
+  action: z.enum(["navigate", "click", "type", "screenshot", "get-text", "list-tabs", "evaluate", "snapshot-dom"]),
   url: z.string().optional(),
   selector: z.string().optional(),
   text: z.string().optional(),
@@ -288,11 +288,11 @@ export const registerMcpTools = (toolRegistry: ToolRegistry, options: RegisterMc
 
   registerTool({
     name: "browser-navigate",
-    description: "Control Chrome browser: navigate to URLs, click elements, type text, take screenshots, extract text, list tabs, or evaluate JavaScript. Requires Chrome with --remote-debugging-port.",
+    description: "Control Chrome browser: navigate to URLs, click elements, type text, take screenshots, extract text, list tabs, snapshot DOM, or evaluate JavaScript. Requires Chrome with --remote-debugging-port.",
     inputSchema: {
       type: "object",
       properties: {
-        action: { type: "string", enum: ["navigate", "click", "type", "screenshot", "get-text", "list-tabs", "evaluate"] },
+        action: { type: "string", enum: ["navigate", "click", "type", "screenshot", "get-text", "list-tabs", "evaluate", "snapshot-dom"] },
         url: { type: "string" },
         selector: { type: "string" },
         text: { type: "string" },

@@ -8,7 +8,8 @@ export type BrowserNavigateAction =
   | "screenshot"
   | "get-text"
   | "list-tabs"
-  | "evaluate";
+  | "evaluate"
+  | "snapshot-dom";
 
 export type BrowserNavigateOutput = {
   success: boolean;
@@ -317,6 +318,57 @@ export const createBrowserNavigateHandler = ({ host, port }: BrowserNavigateOpti
           });
           const evalValue = extractValue(evalResult);
           return { success: true, text: typeof evalValue === "string" ? evalValue : JSON.stringify(evalValue) };
+        }
+
+        case "snapshot-dom": {
+          const snapshotExpr = `(() => {
+            function getUniqueSelector(el) {
+              if (el.id) return '#' + el.id;
+              let path = [];
+              let current = el;
+              while (current && current.nodeType === Node.ELEMENT_NODE) {
+                let selector = current.nodeName.toLowerCase();
+                if (current.id) {
+                  selector = '#' + current.id;
+                  path.unshift(selector);
+                  break;
+                }
+                let sib = current, nth = 1;
+                while (sib = sib.previousElementSibling) {
+                  if (sib.nodeName.toLowerCase() === selector) nth++;
+                }
+                if (nth !== 1) selector += ":nth-of-type(" + nth + ")";
+                path.unshift(selector);
+                current = current.parentNode;
+              }
+              return path.join(" > ");
+            }
+
+            function isVisible(el) {
+              const style = window.getComputedStyle(el);
+              return style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0' && el.getClientRects().length > 0;
+            }
+
+            const elements = document.querySelectorAll('a, button, input, textarea, select, [role="button"], [role="link"], [role="checkbox"], [role="menuitem"], [role="tab"]');
+            const items = [];
+            for (const el of elements) {
+              if (!isVisible(el)) continue;
+              let text = (el.innerText || el.value || el.getAttribute('aria-label') || el.alt || '').trim().replace(/\\s+/g, ' ').substring(0, 100);
+              const tagName = el.tagName.toLowerCase();
+              const uniqueSelector = getUniqueSelector(el);
+              items.push(\`\${tagName} "\${text}" => \${uniqueSelector}\`);
+            }
+            return items.join('\\n');
+          })()`;
+
+          const snapshotResult = await cdp.send("Runtime.evaluate", {
+            expression: snapshotExpr,
+            returnByValue: true
+          });
+          
+          const snapshotValue = extractValue(snapshotResult);
+          const domText = typeof snapshotValue === "string" ? snapshotValue : JSON.stringify(snapshotValue);
+          return { success: true, text: domText };
         }
 
         default:
