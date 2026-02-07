@@ -2,14 +2,26 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // Mock child_process before importing the module
 const mockSpawn = vi.fn();
+const mockExec = vi.fn((cmd, cb) => {
+  if (typeof cb === "function") {
+    cb(null, "", "");
+  } else if (typeof cmd === "function") {
+    // handle case where just callback is passed? unlikely for exec
+  }
+  return { unref: vi.fn(), kill: vi.fn() }; // return pseudo child process
+});
+
 vi.mock("node:child_process", () => ({
-  spawn: mockSpawn
+  spawn: mockSpawn,
+  exec: mockExec
 }));
 
 // Mock fs.existsSync
 const mockExistsSync = vi.fn();
+const mockMkdirSync = vi.fn();
 vi.mock("node:fs", () => ({
-  existsSync: mockExistsSync
+  existsSync: mockExistsSync,
+  mkdirSync: mockMkdirSync
 }));
 
 // Mock logger
@@ -84,7 +96,8 @@ describe("chrome-launcher", () => {
     const args = mockSpawn.mock.calls[0][1] as string[];
     expect(args).toContain("--remote-debugging-port=9222");
     expect(args).toContain("--no-first-run");
-    expect(fakeProcess.unref).toHaveBeenCalled();
+    // unref() removed in recent changes
+    // expect(fakeProcess.unref).toHaveBeenCalled();
   });
 
   it("killChrome is safe when no process was launched", async () => {
