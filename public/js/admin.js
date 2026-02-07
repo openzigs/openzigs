@@ -6,6 +6,7 @@
   const envStatus = document.getElementById("env-status");
   const channelsForm = document.getElementById("channels-form");
   const sidecarsPanel = document.getElementById("sidecars-panel");
+  const localServersPanel = document.getElementById("local-servers-panel");
 
   // ── Socket.IO for live sidecar updates ──
   var socket = null;
@@ -686,11 +687,263 @@
         }
       }
     });
+
+    socket.on("local-server:status", function (status) {
+      var card = document.querySelector('[data-local-server="' + status.name + '"]');
+      if (card) {
+        var badge = card.querySelector(".sidecar-badge");
+        if (badge) {
+          badge.className = "sidecar-badge";
+          if (status.running) {
+            badge.classList.add("healthy");
+            badge.textContent = "Running (" + status.toolCount + " tools)";
+          } else if (status.error === "credentials_missing") {
+            badge.classList.add("unconfigured");
+            badge.textContent = "No Credentials";
+          } else if (status.error === "runtime_unavailable") {
+            badge.classList.add("stopped");
+            badge.textContent = "Runtime Missing";
+          } else {
+            badge.classList.add("stopped");
+            badge.textContent = "Stopped";
+          }
+        }
+      }
+    });
+  }
+
+  // ── Load Local MCP Servers ──
+  async function loadLocalServers() {
+    try {
+      var res = await fetch("/api/admin/local-servers");
+      if (!res.ok) throw new Error("Failed to load local servers");
+      var data = await res.json();
+      renderLocalServers(data);
+    } catch (err) {
+      localServersPanel.innerHTML = '<div class="loading">Failed to load local MCP servers.</div>';
+      console.error(err);
+    }
+  }
+
+  function renderLocalServers(data) {
+    localServersPanel.innerHTML = "";
+
+    var grid = document.createElement("div");
+    grid.className = "sidecar-grid";
+
+    var servers = data.servers || [];
+    var credentials = data.credentials || [];
+    var definitions = data.definitions || [];
+
+    for (var i = 0; i < definitions.length; i++) {
+      var def = definitions[i];
+      var status = servers.find(function (s) { return s.name === def.name; }) || null;
+      var cred = credentials.find(function (c) { return c.server === def.name; }) || null;
+      var card = createLocalServerCard(def, status, cred);
+      grid.appendChild(card);
+    }
+
+    localServersPanel.appendChild(grid);
+  }
+
+  function createLocalServerCard(def, status, cred) {
+    var card = document.createElement("div");
+    card.className = "sidecar-card";
+    card.setAttribute("data-local-server", def.name);
+
+    // Header row: name + status badge
+    var header = document.createElement("div");
+    header.className = "sidecar-header";
+
+    var title = document.createElement("div");
+    title.className = "sidecar-title";
+    title.textContent = def.label;
+    header.appendChild(title);
+
+    var runtimeTag = document.createElement("span");
+    runtimeTag.className = "local-server-runtime";
+    runtimeTag.textContent = def.runtime;
+    header.appendChild(runtimeTag);
+
+    var badge = document.createElement("span");
+    badge.className = "sidecar-badge";
+    if (status && status.running) {
+      badge.classList.add("healthy");
+      badge.textContent = "Running (" + status.toolCount + " tools)";
+    } else if (status && status.error === "credentials_missing") {
+      badge.classList.add("unconfigured");
+      badge.textContent = "No Credentials";
+    } else if (status && status.error === "runtime_unavailable") {
+      badge.classList.add("stopped");
+      badge.textContent = "Runtime Missing";
+    } else if (status && status.error === "process_crashed") {
+      badge.classList.add("unhealthy");
+      badge.textContent = "Crashed";
+    } else if (status && !status.running) {
+      badge.classList.add("stopped");
+      badge.textContent = "Stopped";
+    } else {
+      badge.classList.add("unknown");
+      badge.textContent = "Unknown";
+    }
+    header.appendChild(badge);
+    card.appendChild(header);
+
+    // Command info
+    var cmdInfo = document.createElement("div");
+    cmdInfo.className = "sidecar-url";
+    cmdInfo.textContent = def.command + " " + def.args.join(" ");
+    card.appendChild(cmdInfo);
+
+    // Credential fields (if any)
+    if (cred && cred.envVars.length > 0) {
+      var credSection = document.createElement("div");
+      credSection.className = "sidecar-creds";
+
+      var credLabel = document.createElement("div");
+      credLabel.className = "sidecar-creds-label";
+      credLabel.textContent = "API Credentials";
+      credSection.appendChild(credLabel);
+
+      var inputs = {};
+
+      for (var j = 0; j < cred.envVars.length; j++) {
+        var envVar = cred.envVars[j];
+        var fieldWrapper = document.createElement("div");
+        fieldWrapper.className = "sidecar-cred-field";
+
+        var fieldLabel = document.createElement("label");
+        fieldLabel.className = "sidecar-cred-label";
+        fieldLabel.textContent = envVar.name;
+        fieldWrapper.appendChild(fieldLabel);
+
+        var inputRow = document.createElement("div");
+        inputRow.className = "sidecar-cred-input-row";
+
+        var input = document.createElement("input");
+        input.className = "sidecar-cred-input";
+        input.type = "password";
+        input.placeholder = envVar.configured ? "••••••••  (already set)" : "Paste your key here…";
+        input.setAttribute("data-env", envVar.name);
+        input.setAttribute("autocomplete", "off");
+        inputRow.appendChild(input);
+
+        var toggleVis = document.createElement("button");
+        toggleVis.type = "button";
+        toggleVis.className = "sidecar-cred-toggle";
+        toggleVis.textContent = "👁";
+        toggleVis.title = "Show/hide value";
+        (function (inp, btn) {
+          btn.addEventListener("click", function () {
+            if (inp.type === "password") {
+              inp.type = "text";
+              btn.textContent = "🔒";
+            } else {
+              inp.type = "password";
+              btn.textContent = "👁";
+            }
+          });
+        })(input, toggleVis);
+        inputRow.appendChild(toggleVis);
+
+        fieldWrapper.appendChild(inputRow);
+
+        var statusIndicator = document.createElement("div");
+        statusIndicator.className = "sidecar-cred-indicator " + (envVar.configured ? "configured" : "missing");
+        statusIndicator.textContent = envVar.configured ? "✓ Configured" : "✗ Not set";
+        fieldWrapper.appendChild(statusIndicator);
+
+        credSection.appendChild(fieldWrapper);
+        inputs[envVar.name] = input;
+      }
+
+      card.appendChild(credSection);
+
+      // Save + Restart buttons
+      var saveActions = document.createElement("div");
+      saveActions.className = "sidecar-actions";
+
+      var saveBtn = document.createElement("button");
+      saveBtn.className = "sidecar-btn save";
+      saveBtn.textContent = "Save Credentials";
+      (function (serverName, inputsMap, btn) {
+        btn.addEventListener("click", function () {
+          saveCredentials(serverName, inputsMap, btn);
+        });
+      })(def.name, inputs, saveBtn);
+      saveActions.appendChild(saveBtn);
+
+      var restartBtn = document.createElement("button");
+      restartBtn.className = "sidecar-btn restart";
+      restartBtn.textContent = "Restart";
+      (function (name, btn) {
+        btn.addEventListener("click", function () {
+          restartLocalServer(name, btn);
+        });
+      })(def.name, restartBtn);
+      saveActions.appendChild(restartBtn);
+
+      card.appendChild(saveActions);
+    } else {
+      var noCredsNote = document.createElement("div");
+      noCredsNote.className = "sidecar-creds-label";
+      noCredsNote.textContent = "No credentials required";
+      card.appendChild(noCredsNote);
+
+      // Just a restart button
+      var actionsDiv = document.createElement("div");
+      actionsDiv.className = "sidecar-actions";
+
+      var restBtn = document.createElement("button");
+      restBtn.className = "sidecar-btn restart";
+      restBtn.textContent = "Restart";
+      (function (name, btn) {
+        btn.addEventListener("click", function () {
+          restartLocalServer(name, btn);
+        });
+      })(def.name, restBtn);
+      actionsDiv.appendChild(restBtn);
+
+      card.appendChild(actionsDiv);
+    }
+
+    // Error detail
+    if (status && status.error && status.error !== "credentials_missing") {
+      var errorNote = document.createElement("div");
+      errorNote.className = "sidecar-coming-soon";
+      errorNote.textContent = "Error: " + status.error;
+      card.appendChild(errorNote);
+    }
+
+    return card;
+  }
+
+  async function restartLocalServer(name, button) {
+    button.disabled = true;
+    button.textContent = "Restarting…";
+    try {
+      var res = await fetch("/api/admin/local-servers/" + encodeURIComponent(name) + "/restart", {
+        method: "POST"
+      });
+      if (!res.ok) {
+        var data = await res.json().catch(function () { return {}; });
+        throw new Error(data.error || "Failed to restart");
+      }
+      showToast(name + " restarted");
+      await loadLocalServers();
+    } catch (err) {
+      var message = err && err.message ? err.message : String(err);
+      showToast("Error: " + message);
+    } finally {
+      button.disabled = false;
+      button.textContent = "Restart";
+    }
   }
 
   // ── Init ──
   loadTools();
   loadChannels();
   loadSidecars();
+  loadLocalServers();
   loadEnv();
 })();

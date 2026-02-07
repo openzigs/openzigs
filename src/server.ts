@@ -26,6 +26,7 @@ import { getDatabase, closeDatabase } from "./productivity/database.js";
 import { PromptManager } from "./productivity/prompt-manager.js";
 import { Scheduler } from "./productivity/scheduler.js";
 import { DockerSidecarManager } from "./mcp/docker-sidecar-manager.js";
+import { LocalMcpServerManager } from "./mcp/local-mcp-server-manager.js";
 
 const config = await loadConfig();
 const auditLogger = new AuditLogger();
@@ -103,6 +104,25 @@ const resolveSidecarUrl = (name: string, envVar: string, defaultPort: number): s
   return `http://localhost:${defaultPort}`;
 };
 
+// ── Local MCP Servers (subprocess-based: Word/Office, Google Calendar, etc.) ──
+const localServerManager = new LocalMcpServerManager({
+  skipUnconfigured: mcpServersConfig?.skipUnconfigured ?? true,
+});
+
+try {
+  logger.info("Starting local MCP servers (subprocess-based)...");
+  await localServerManager.startAll();
+  const running = localServerManager.getAllStatuses().filter((s) => s.running);
+  if (running.length > 0) {
+    logger.info(`Local MCP servers ready: ${running.map((s) => `${s.name} (${s.toolCount} tools)`).join(", ")}`);
+  } else {
+    logger.info("No local MCP servers started (check runtime availability and credentials)");
+  }
+} catch (error) {
+  const msg = error instanceof Error ? error.message : String(error);
+  logger.warn(`Local MCP server startup error: ${msg}`);
+}
+
 registerMcpTools(toolRegistry, {
   allowedDirs: allowedDirs.length > 0 ? allowedDirs : [process.cwd()],
   braveApiKey: process.env.BRAVE_API_KEY,
@@ -116,8 +136,7 @@ registerMcpTools(toolRegistry, {
   twitterSidecarUrl: resolveSidecarUrl("twitter", "MCP_TWITTER_URL", 5102),
   facebookSidecarUrl: resolveSidecarUrl("facebook", "MCP_FACEBOOK_URL", 5103),
   pinterestSidecarUrl: resolveSidecarUrl("pinterest", "MCP_PINTEREST_URL", 5104),
-  wordSidecarUrl: resolveSidecarUrl("word", "MCP_WORD_URL", 5201),
-  calendarSidecarUrl: process.env.MCP_CALENDAR_URL,
+  localServerManager,
 });
 const app = createApp(config, { auditLogger, approvalQueue, toolRegistry, promptManager, scheduler });
 const port = Number(process.env.PORT ?? 3000);
@@ -139,7 +158,7 @@ const modelsRouter = createModelsRouter({ copilot });
 app.use("/api/models", modelsRouter);
 
 // Admin API routes (no auth for local dev; gate behind auth in prod)
-const adminRouter = createAdminRouter({ toolRegistry, sidecarManager });
+const adminRouter = createAdminRouter({ toolRegistry, sidecarManager, localServerManager });
 app.use("/api/admin", adminRouter);
 
 const tunnelConfig = config.tunnel;
@@ -198,6 +217,18 @@ sidecarManager.on("sidecar:healthy", (status) => {
 
 sidecarManager.on("sidecar:unhealthy", (status) => {
   io.emit("sidecar:status", status);
+});
+
+localServerManager.on("server:started", (status) => {
+  io.emit("local-server:status", status);
+});
+
+localServerManager.on("server:stopped", (status) => {
+  io.emit("local-server:status", status);
+});
+
+localServerManager.on("server:error", (name, error) => {
+  io.emit("local-server:error", { name, error: error.message });
 });
 
 const normalizeTelegramAllowlist = (ids: string[]) => {
@@ -430,18 +461,24 @@ httpServer.listen(port, () => {
   }
 });
 
-// Clean up Chrome + Scheduler + Database + Sidecars on process exit
+// Clean up Chrome + Scheduler + Database + Sidecars + Local MCP servers on process exit
 process.on("SIGINT", () => {
   scheduler.stopAll();
   closeDatabase();
   killChrome();
-  void sidecarManager.stopAll().finally(() => process.exit(0));
+  void Promise.all([
+    sidecarManager.stopAll(),
+    localServerManager.stopAll(),
+  ]).finally(() => process.exit(0));
 });
 process.on("SIGTERM", () => {
   scheduler.stopAll();
   closeDatabase();
   killChrome();
-  void sidecarManager.stopAll().finally(() => process.exit(0));
+  void Promise.all([
+    sidecarManager.stopAll(),
+    localServerManager.stopAll(),
+  ]).finally(() => process.exit(0));
 });
 
 export { app, httpServer };

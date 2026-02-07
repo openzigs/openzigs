@@ -6,6 +6,7 @@ import { loadConfig } from "../config/index.js";
 import { logger } from "../logging/logger.js";
 import type { ToolRegistry } from "../mcp/tool-registry.js";
 import type { DockerSidecarManager } from "../mcp/docker-sidecar-manager.js";
+import type { LocalMcpServerManager } from "../mcp/local-mcp-server-manager.js";
 
 type EnvEntry = {
   name: string;
@@ -27,6 +28,7 @@ const ENV_CHECKS = [
   "FACEBOOK_PAGE_TOKEN",
   "PINTEREST_APP_ID",
   "PINTEREST_APP_SECRET",
+  "GOOGLE_OAUTH_CREDENTIALS",
 ] as const;
 
 type SidecarCredential = {
@@ -41,7 +43,19 @@ const SIDECAR_CREDENTIALS: Array<{ platform: string; label: string; envVars: str
   { platform: "twitter", label: "Twitter / X", envVars: ["TWITTER_BEARER_TOKEN", "TWITTER_API_KEY", "TWITTER_API_SECRET"], imageAvailable: true },
   { platform: "facebook", label: "Facebook", envVars: ["FACEBOOK_PAGE_TOKEN"], imageAvailable: true },
   { platform: "pinterest", label: "Pinterest", envVars: ["PINTEREST_APP_ID", "PINTEREST_APP_SECRET"], imageAvailable: true },
-  { platform: "word", label: "Word / Office", envVars: [], imageAvailable: false },
+  // Word/Office and Calendar are NOT Docker sidecars — they use local MCP servers (see LOCAL_SERVER_CREDENTIALS below)
+];
+
+type LocalServerCredential = {
+  server: string;
+  label: string;
+  runtime: string;
+  envVars: { name: string; configured: boolean }[];
+};
+
+const LOCAL_SERVER_CREDENTIALS: Array<{ server: string; label: string; runtime: string; envVars: string[] }> = [
+  { server: "word", label: "Word / Office", runtime: "python", envVars: [] },
+  { server: "calendar", label: "Google Calendar", runtime: "node", envVars: ["GOOGLE_OAUTH_CREDENTIALS"] },
 ];
 
 // ── .env file helpers ──
@@ -127,9 +141,10 @@ const toStringArray = (value: unknown): string[] => {
 export type AdminRouterOptions = {
   toolRegistry: ToolRegistry;
   sidecarManager?: DockerSidecarManager;
+  localServerManager?: LocalMcpServerManager;
 };
 
-export const createAdminRouter = ({ toolRegistry, sidecarManager }: AdminRouterOptions) => {
+export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerManager }: AdminRouterOptions) => {
   const router = Router();
 
   router.get("/tools", (_req, res) => {
@@ -315,8 +330,11 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager }: AdminRouterO
       return res.status(400).json({ error: "credentials must be an object of { ENV_VAR: value }" });
     }
 
-    // Validate: only allow known sidecar env vars
-    const allEnvVars = new Set(SIDECAR_CREDENTIALS.flatMap((c) => c.envVars));
+    // Validate: only allow known sidecar + local server env vars
+    const allEnvVars = new Set([
+      ...SIDECAR_CREDENTIALS.flatMap((c) => c.envVars),
+      ...LOCAL_SERVER_CREDENTIALS.flatMap((c) => c.envVars),
+    ]);
     const filtered: Record<string, string> = {};
     for (const [key, value] of Object.entries(credentials)) {
       if (!allEnvVars.has(key)) {
@@ -360,6 +378,72 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager }: AdminRouterO
       if (!status) {
         return res.status(404).json({ error: `Unknown sidecar: ${name}` });
       }
+      return res.json({ ok: true, status });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return res.status(500).json({ error: message });
+    }
+  });
+
+  // ── Local MCP Server Management ──
+  router.get("/local-servers", async (_req, res) => {
+    const statuses = localServerManager?.getAllStatuses() ?? [];
+    const definitions = localServerManager?.getDefinitions() ?? [];
+    const configured = localServerManager?.getConfiguredServers() ?? [];
+
+    const credentials: LocalServerCredential[] = LOCAL_SERVER_CREDENTIALS.map((cred) => ({
+      server: cred.server,
+      label: cred.label,
+      runtime: cred.runtime,
+      envVars: cred.envVars.map((name) => ({
+        name,
+        configured: !!(process.env[name] && process.env[name]!.trim().length > 0),
+      })),
+    }));
+
+    return res.json({
+      servers: statuses,
+      definitions: definitions.map((d) => ({
+        name: d.name,
+        label: d.label,
+        command: d.command,
+        args: d.args,
+        runtime: d.runtime,
+        category: d.category,
+        requiresCredentials: d.requiresCredentials,
+      })),
+      configuredServers: configured,
+      credentials,
+    });
+  });
+
+  router.post("/local-servers/:name/restart", async (req, res) => {
+    const { name } = req.params;
+    if (!localServerManager) {
+      return res.status(503).json({ error: "Local MCP server manager not available" });
+    }
+    try {
+      const status = await localServerManager.restartServer(name);
+      if (!status) {
+        return res.status(404).json({ error: `Unknown local server: ${name}` });
+      }
+      return res.json({ ok: true, status });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return res.status(500).json({ error: message });
+    }
+  });
+
+  router.post("/local-servers/:name/stop", async (req, res) => {
+    const { name } = req.params;
+    if (!localServerManager) {
+      return res.status(503).json({ error: "Local MCP server manager not available" });
+    }
+    if (!localServerManager.isRunning(name)) {
+      return res.status(404).json({ error: `Server "${name}" is not running` });
+    }
+    try {
+      const status = await localServerManager.restartServer(name);
       return res.json({ ok: true, status });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

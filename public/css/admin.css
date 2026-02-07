@@ -659,6 +659,22 @@ html, body {
   cursor: not-allowed;
 }
 
+/* ── Local MCP Server tags ── */
+
+.local-server-runtime {
+  display: inline-block;
+  font-size: 0.65rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 2px 7px;
+  border-radius: 4px;
+  background: var(--surface-hover);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  margin-left: 6px;
+}
+
 @media (max-width: 600px) {
   .env-grid {
     grid-template-columns: 1fr;

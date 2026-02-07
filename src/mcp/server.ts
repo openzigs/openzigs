@@ -12,6 +12,7 @@ import { createSchedulerTools } from "./tools/scheduler-tools.js";
 import { createSocialMediaTools } from "./tools/social-media-tools.js";
 import { createDocumentIntelligenceTools } from "./tools/document-intelligence-tools.js";
 import { ToolRegistry, type ToolDefinition } from "./tool-registry.js";
+import type { LocalMcpServerManager } from "./local-mcp-server-manager.js";
 import { AuditLogger } from "../logging/audit-logger.js";
 import { ApprovalQueue } from "../approvals/index.js";
 import type { PromptManager } from "../productivity/prompt-manager.js";
@@ -33,8 +34,7 @@ export type McpServerOptions = {
   twitterSidecarUrl?: string;
   facebookSidecarUrl?: string;
   pinterestSidecarUrl?: string;
-  wordSidecarUrl?: string;
-  calendarSidecarUrl?: string;
+  localServerManager?: LocalMcpServerManager;
 };
 
 export type RegisterMcpToolsOptions = Pick<
@@ -51,8 +51,7 @@ export type RegisterMcpToolsOptions = Pick<
   | "twitterSidecarUrl"
   | "facebookSidecarUrl"
   | "pinterestSidecarUrl"
-  | "wordSidecarUrl"
-  | "calendarSidecarUrl"
+  | "localServerManager"
 >;
 
 const readFileSchema = z.object({ path: z.string() });
@@ -386,10 +385,9 @@ export const registerMcpTools = (toolRegistry: ToolRegistry, options: RegisterMc
     registerTool(tool);
   }
 
-  // ── Document Intelligence Tools ──
+  // ── Document Intelligence Tools (PDF native, Word/Calendar via local MCP servers) ──
   const docTools = createDocumentIntelligenceTools({
-    wordSidecarUrl: options.wordSidecarUrl,
-    calendarSidecarUrl: options.calendarSidecarUrl,
+    localServerManager: options.localServerManager,
   });
   for (const tool of docTools) {
     registerTool(tool);

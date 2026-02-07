@@ -119,15 +119,8 @@ export const DEFAULT_SIDECAR_DEFINITIONS: SidecarDefinition[] = [
     requiredEnvVars: ["PINTEREST_APP_ID", "PINTEREST_APP_SECRET"],
     volumes: ["pinterest-tokens:/app/tokens"],
   },
-  {
-    name: "word",
-    image: "ghcr.io/community/office-word-mcp-server:latest",
-    containerName: "openzigs-mcp-word",
-    ports: { host: 5201, container: 5000 },
-    env: {},
-    network: "openzigs-network",
-    requiredEnvVars: [],
-  },
+  // Word/Office and Google Calendar are local subprocess MCP servers,
+  // managed by LocalMcpServerManager (not Docker). See local-mcp-server-manager.ts.
 ];
 
 // ── Manager ──────────────────────────────────────────────────────────────────
