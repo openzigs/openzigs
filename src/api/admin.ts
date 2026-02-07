@@ -19,7 +19,28 @@ const ENV_CHECKS = [
   "GITHUB_CLIENT_ID",
   "TELEGRAM_BOT_TOKEN",
   "DISCORD_BOT_TOKEN",
+  "LINKEDIN_ACCESS_TOKEN",
+  "TWITTER_BEARER_TOKEN",
+  "TWITTER_API_KEY",
+  "TWITTER_API_SECRET",
+  "FACEBOOK_PAGE_TOKEN",
+  "PINTEREST_APP_ID",
+  "PINTEREST_APP_SECRET",
 ] as const;
+
+type SidecarCredential = {
+  platform: string;
+  label: string;
+  envVars: { name: string; configured: boolean }[];
+};
+
+const SIDECAR_CREDENTIALS: Array<{ platform: string; label: string; envVars: string[] }> = [
+  { platform: "linkedin", label: "LinkedIn", envVars: ["LINKEDIN_ACCESS_TOKEN"] },
+  { platform: "twitter", label: "Twitter / X", envVars: ["TWITTER_BEARER_TOKEN", "TWITTER_API_KEY", "TWITTER_API_SECRET"] },
+  { platform: "facebook", label: "Facebook", envVars: ["FACEBOOK_PAGE_TOKEN"] },
+  { platform: "pinterest", label: "Pinterest", envVars: ["PINTEREST_APP_ID", "PINTEREST_APP_SECRET"] },
+  { platform: "word", label: "Word / Office", envVars: [] },
+];
 
 const TELEGRAM_TOKEN_PLACEHOLDER = "${TELEGRAM_BOT_TOKEN}";
 const DISCORD_TOKEN_PLACEHOLDER = "${DISCORD_BOT_TOKEN}";
@@ -210,16 +231,28 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager }: AdminRouterO
   });
 
   // ── MCP Sidecar Management ──
-  router.get("/sidecars", (_req, res) => {
-    if (!sidecarManager) {
-      return res.json({ sidecars: [], dockerAvailable: false });
-    }
-    const statuses = sidecarManager.getAllStatuses();
-    const configured = sidecarManager.getConfiguredSidecars();
+  router.get("/sidecars", async (_req, res) => {
+    const dockerAvailable = sidecarManager
+      ? await sidecarManager.isDockerAvailable()
+      : false;
+
+    const statuses = sidecarManager?.getAllStatuses() ?? [];
+    const configured = sidecarManager?.getConfiguredSidecars() ?? [];
+
+    const credentials: SidecarCredential[] = SIDECAR_CREDENTIALS.map((cred) => ({
+      platform: cred.platform,
+      label: cred.label,
+      envVars: cred.envVars.map((name) => ({
+        name,
+        configured: !!(process.env[name] && process.env[name]!.trim().length > 0)
+      }))
+    }));
+
     return res.json({
       sidecars: statuses,
       configuredSidecars: configured,
-      dockerAvailable: true,
+      credentials,
+      dockerAvailable,
     });
   });
 

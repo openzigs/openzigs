@@ -23,6 +23,14 @@
       </section>
 
       <section class="admin-section">
+        <h2>MCP Servers</h2>
+        <p class="section-desc">Social media and productivity sidecars. Configure credentials and manage Docker containers.</p>
+        <div id="sidecars-panel" class="sidecars-panel">
+          <div class="loading">Loading…</div>
+        </div>
+      </section>
+
+      <section class="admin-section">
         <h2>Tools</h2>
         <p class="section-desc">Enable or disable agent tools. High-risk tools require approval before execution.</p>
         <div id="tools-list" class="tools-list">
@@ -40,6 +48,7 @@
     </main>
   </div>
 
+  <script src="/socket.io/socket.io.js"></script>
   <script src="/js/admin.js"></script>
 </body>
 </html>
