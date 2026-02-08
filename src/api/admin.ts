@@ -31,6 +31,9 @@ const ENV_CHECKS = [
   "PINTEREST_APP_ID",
   "PINTEREST_APP_SECRET",
   "GOOGLE_OAUTH_CREDENTIALS",
+  "GITHUB_PERSONAL_ACCESS_TOKEN",
+  "JDBC_URL",
+  "DB_PASSWORD",
 ] as const;
 
 type SidecarCredential = {
@@ -46,6 +49,10 @@ const SIDECAR_CREDENTIALS: Array<{ platform: string; label: string; envVars: str
   { platform: "facebook", label: "Facebook", envVars: ["FACEBOOK_PAGE_TOKEN"], imageAvailable: true },
   { platform: "pinterest", label: "Pinterest", envVars: ["PINTEREST_APP_ID", "PINTEREST_APP_SECRET"], imageAvailable: true },
   // Word/Office and Calendar are NOT Docker sidecars — they use local MCP servers (see LOCAL_SERVER_CREDENTIALS below)
+  { platform: "markitdown", label: "MarkItDown", envVars: [], imageAvailable: true },
+  { platform: "gmail", label: "Gmail", envVars: ["GOOGLE_OAUTH_CREDENTIALS"], imageAvailable: true },
+  { platform: "database", label: "Database (JDBC)", envVars: ["JDBC_URL", "DB_PASSWORD"], imageAvailable: true },
+  { platform: "github", label: "GitHub", envVars: ["GITHUB_PERSONAL_ACCESS_TOKEN"], imageAvailable: true },
 ];
 
 type LocalServerCredential = {
@@ -190,27 +197,30 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
   // ── Per-Sidecar Tool Listing ──
   router.get("/sidecars/:name/tools", (_req, res) => {
     const { name } = _req.params;
-    const sidecarToolMap: Record<string, string[]> = {
-      linkedin: ["social-post", "social-timeline", "social-profile"],
-      twitter: ["social-post", "social-timeline", "social-profile"],
-      facebook: ["social-post", "social-timeline", "social-profile"],
-      pinterest: ["social-post", "social-timeline", "social-profile", "pinterest-boards", "pinterest-pins"],
-      markitdown: ["convert-to-markdown"],
-      gmail: ["gmail-search", "gmail-read", "gmail-draft", "gmail-send"],
-      database: ["db-list-tables", "db-describe", "db-query"],
-      github: ["github-get-file", "github-search-code", "github-list-issues", "github-create-issue", "github-create-pr"],
-    };
-    const toolNames = sidecarToolMap[name];
-    if (!toolNames) {
-      return res.status(404).json({ error: `Unknown sidecar: ${name}` });
+
+    // For newer sidecars with source tags, derive tool list dynamically
+    const dynamicTools = toolRegistry.getToolsBySource(name);
+    if (dynamicTools.length > 0) {
+      return res.json({ sidecar: name, tools: dynamicTools });
     }
-    const tools = toolNames.map((toolName) => {
-      const info = toolRegistry.getToolInfo(toolName);
-      return info
-        ? { name: info.name, description: info.description, riskLevel: info.riskLevel, enabled: info.enabled }
-        : { name: toolName, description: "", riskLevel: "low", enabled: false };
-    });
-    return res.json({ sidecar: name, tools });
+
+    // Legacy social sidecars share cross-platform tools
+    const socialSidecars = new Set(["linkedin", "twitter", "facebook", "pinterest"]);
+    if (socialSidecars.has(name)) {
+      const toolNames = ["social-post", "social-timeline", "social-profile"];
+      if (name === "pinterest") {
+        toolNames.push("pinterest-boards", "pinterest-pins");
+      }
+      const tools = toolNames.map((toolName) => {
+        const info = toolRegistry.getToolInfo(toolName);
+        return info
+          ? { name: info.name, description: info.description, riskLevel: info.riskLevel, enabled: info.enabled }
+          : { name: toolName, description: "", riskLevel: "low", enabled: false };
+      });
+      return res.json({ sidecar: name, tools });
+    }
+
+    return res.status(404).json({ error: `Unknown sidecar: ${name}` });
   });
 
   // ── Per-Sidecar Tool Toggle ──
@@ -221,19 +231,26 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
       return res.status(400).json({ error: "disabledTools must be an array of tool names" });
     }
     try {
-      const configPath = path.resolve(process.cwd(), "config", "default.json");
-      const raw = await fs.readFile(configPath, "utf-8");
-      const config = JSON.parse(raw) as Record<string, unknown>;
-      const mcpServers = (config.mcpServers ?? {}) as Record<string, unknown>;
-      const sidecars = (mcpServers.sidecars ?? {}) as Record<string, Record<string, unknown>>;
-      const sidecar = sidecars[name] ?? {};
-      sidecar.disabledTools = disabledTools;
-      sidecars[name] = sidecar;
-      mcpServers.sidecars = sidecars;
-      config.mcpServers = mcpServers;
-      await fs.writeFile(configPath, JSON.stringify(config, null, 2), "utf-8");
+      // Use the ToolRegistry to toggle tools rather than writing config files directly
+      const allSidecarTools = toolRegistry.getToolsBySource(name);
+      const socialSidecars = new Set(["linkedin", "twitter", "facebook", "pinterest"]);
+      const toolNames: string[] = allSidecarTools.length > 0
+        ? allSidecarTools.map((t) => t.name)
+        : socialSidecars.has(name)
+          ? ["social-post", "social-timeline", "social-profile", ...(name === "pinterest" ? ["pinterest-boards", "pinterest-pins"] : [])]
+          : [];
+
+      if (toolNames.length === 0) {
+        return res.status(404).json({ error: `Unknown sidecar: ${name}` });
+      }
+
+      const disabledSet = new Set(disabledTools);
+      for (const toolName of toolNames) {
+        await toolRegistry.setEnabled(toolName, !disabledSet.has(toolName));
+      }
+
       logger.info(`Updated disabledTools for sidecar "${name}": ${disabledTools.join(", ") || "(none)"}`);
-      return res.json({ ok: true, sidecar: name, disabledTools, restartRequired: true });
+      return res.json({ ok: true, sidecar: name, disabledTools });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return res.status(500).json({ error: message });

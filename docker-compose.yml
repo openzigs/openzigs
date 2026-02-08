@@ -121,7 +121,7 @@ services:
       - "5302:5000"
     volumes:
       - gmail-credentials:/gmail-server
-      - ${HOME}/.gmail-mcp/gcp-oauth.keys.json:/gcp-oauth.keys.json:ro
+      - ${GMAIL_OAUTH_KEYS_PATH:-./.gmail-mcp/gcp-oauth.keys.json}:/gcp-oauth.keys.json:ro
     environment:
       - GMAIL_OAUTH_PATH=/gcp-oauth.keys.json
       - GMAIL_CREDENTIALS_PATH=/gmail-server/credentials.json

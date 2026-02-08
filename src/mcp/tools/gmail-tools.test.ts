@@ -27,10 +27,10 @@ describe("Gmail Tools", () => {
     expect(riskMap["gmail-send"]).toBe("high");
   });
 
-  it("should categorize all tools as documents", () => {
+  it("should categorize all tools as personal", () => {
     const tools = createGmailTools({ sidecarUrl: "http://localhost:5302" });
     for (const tool of tools) {
-      expect(tool.category).toBe("documents");
+      expect(tool.category).toBe("personal");
     }
   });
 

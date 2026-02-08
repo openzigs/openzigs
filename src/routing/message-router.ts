@@ -3,6 +3,7 @@ import type { IncomingMessage, MessageContent } from "../channels/types.js";
 import type { CopilotWrapper } from "../copilot/copilot-wrapper.js";
 import type { AccessControlConfig } from "../config/index.js";
 import type { ConversationEvent, SessionManager } from "../sessions/session-manager.js";
+import { ALWAYS_ON_TOOLS } from "../mcp/constants.js";
 
 export type RouteOptions = {
   /** Callback invoked for each streaming chunk. */
@@ -27,13 +28,7 @@ const defaultAccessControl: AccessControlConfig = {
   blockedUsers: []
 };
 
-/** Core tools that are always included regardless of maxToolsPerRequest filtering. */
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-export const ALWAYS_ON_TOOLS = new Set([
-  "read-file",
-  "list-directory",
-  "web-search",
-]);
+export { ALWAYS_ON_TOOLS };
 
 export class MessageRouter {
   private channelManager: ChannelManager;

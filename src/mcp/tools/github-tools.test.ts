@@ -29,10 +29,10 @@ describe("GitHub Tools", () => {
     expect(riskMap["github-create-pr"]).toBe("high");
   });
 
-  it("should categorize all tools as documents", () => {
+  it("should categorize all tools as developer", () => {
     const tools = createGitHubTools({ sidecarUrl: "http://localhost:5304" });
     for (const tool of tools) {
-      expect(tool.category).toBe("documents");
+      expect(tool.category).toBe("developer");
     }
   });
 

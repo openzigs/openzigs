@@ -119,52 +119,60 @@
 
   function renderTools(grouped) {
     toolsList.innerHTML = "";
-    const categoryOrder = ["filesystem", "search", "browser", "shell"];
+    var categoryOrder = [
+      "filesystem", "search", "browser", "shell",
+      "productivity", "social", "documents",
+      "personal", "data", "developer"
+    ];
 
-    for (const category of categoryOrder) {
-      const tools = grouped[category];
+    for (var c = 0; c < categoryOrder.length; c++) {
+      var category = categoryOrder[c];
+      var tools = grouped[category];
       if (!tools || tools.length === 0) continue;
 
-      const section = document.createElement("div");
+      var section = document.createElement("div");
       section.className = "tool-category";
 
-      const label = document.createElement("div");
+      var label = document.createElement("div");
       label.className = "tool-category-label";
       label.textContent = category;
       section.appendChild(label);
 
-      for (const tool of tools) {
-        const item = document.createElement("div");
+      for (var t = 0; t < tools.length; t++) {
+        var tool = tools[t];
+        var item = document.createElement("div");
         item.className = "tool-item";
 
-        const info = document.createElement("div");
+        var info = document.createElement("div");
         info.className = "tool-info";
 
-        const name = document.createElement("div");
+        var name = document.createElement("div");
         name.className = "tool-name";
         name.textContent = tool.name;
         info.appendChild(name);
 
-        const desc = document.createElement("div");
+        var desc = document.createElement("div");
         desc.className = "tool-desc";
         desc.textContent = tool.description;
         info.appendChild(desc);
 
         item.appendChild(info);
 
-        const risk = document.createElement("span");
+        var risk = document.createElement("span");
         risk.className = "tool-risk " + tool.riskLevel;
         risk.textContent = tool.riskLevel;
         item.appendChild(risk);
 
-        const toggle = document.createElement("label");
+        var toggle = document.createElement("label");
         toggle.className = "toggle";
-        const checkbox = document.createElement("input");
+        var checkbox = document.createElement("input");
         checkbox.type = "checkbox";
         checkbox.checked = tool.enabled;
-        checkbox.addEventListener("change", () => toggleTool(tool.name, checkbox.checked, checkbox));
+        checkbox.addEventListener("change", (function(toolName) {
+          return function () { toggleTool(toolName, this.checked, this); };
+        })(tool.name));
         toggle.appendChild(checkbox);
-        const slider = document.createElement("span");
+        var slider = document.createElement("span");
         slider.className = "slider";
         toggle.appendChild(slider);
         item.appendChild(toggle);
@@ -428,14 +436,24 @@
     card.className = "sidecar-card";
     card.setAttribute("data-sidecar", cred.platform);
 
-    // Header row: name + status badge
+    // Header row: expand icon + name + status badge (clickable to toggle)
     var header = document.createElement("div");
     header.className = "sidecar-header";
+
+    var headerLeft = document.createElement("div");
+    headerLeft.className = "sidecar-header-left";
+
+    var expandIcon = document.createElement("span");
+    expandIcon.className = "sidecar-expand-icon";
+    expandIcon.textContent = "▶";
+    headerLeft.appendChild(expandIcon);
 
     var title = document.createElement("div");
     title.className = "sidecar-title";
     title.textContent = cred.label;
-    header.appendChild(title);
+    headerLeft.appendChild(title);
+
+    header.appendChild(headerLeft);
 
     var badge = document.createElement("span");
     badge.className = "sidecar-badge";
@@ -461,12 +479,22 @@
     header.appendChild(badge);
     card.appendChild(header);
 
+    // Toggle expand/collapse on header click
+    header.addEventListener("click", function () {
+      card.classList.toggle("expanded");
+    });
+
+    // Body: collapsible content
+    var body = document.createElement("div");
+    body.className = "sidecar-body";
+
     // Coming soon notice
     if (!cred.imageAvailable) {
       var notice = document.createElement("div");
       notice.className = "sidecar-coming-soon";
       notice.textContent = "Docker image not yet available. This integration is coming in a future release.";
-      card.appendChild(notice);
+      body.appendChild(notice);
+      card.appendChild(body);
       return card;
     }
 
@@ -509,7 +537,8 @@
         toggleVis.textContent = "👁";
         toggleVis.title = "Show/hide value";
         (function (inp, btn) {
-          btn.addEventListener("click", function () {
+          btn.addEventListener("click", function (e) {
+            e.stopPropagation();
             if (inp.type === "password") {
               inp.type = "text";
               btn.textContent = "🔒";
@@ -532,7 +561,7 @@
         inputs[envVar.name] = input;
       }
 
-      card.appendChild(credSection);
+      body.appendChild(credSection);
 
       // Save credentials button
       var saveActions = document.createElement("div");
@@ -542,7 +571,8 @@
       saveBtn.className = "sidecar-btn save";
       saveBtn.textContent = "Save Credentials";
       (function (platform, inputsMap, btn) {
-        btn.addEventListener("click", function () {
+        btn.addEventListener("click", function (e) {
+          e.stopPropagation();
           saveCredentials(platform, inputsMap, btn);
         });
       })(cred.platform, inputs, saveBtn);
@@ -554,19 +584,20 @@
         restartBtn.textContent = "Restart";
         restartBtn.disabled = !status || status.error === "credentials_missing";
         (function (name, btn) {
-          btn.addEventListener("click", function () {
+          btn.addEventListener("click", function (e) {
+            e.stopPropagation();
             restartSidecar(name, btn);
           });
         })(cred.platform, restartBtn);
         saveActions.appendChild(restartBtn);
       }
 
-      card.appendChild(saveActions);
+      body.appendChild(saveActions);
     } else {
       var noCredsNote = document.createElement("div");
       noCredsNote.className = "sidecar-creds-label";
       noCredsNote.textContent = "No credentials required";
-      card.appendChild(noCredsNote);
+      body.appendChild(noCredsNote);
 
       // Actions for no-cred sidecars (just restart)
       if (dockerAvailable) {
@@ -578,25 +609,112 @@
         restBtn.textContent = "Restart";
         restBtn.disabled = !status;
         (function (name, btn) {
-          btn.addEventListener("click", function () {
+          btn.addEventListener("click", function (e) {
+            e.stopPropagation();
             restartSidecar(name, btn);
           });
         })(cred.platform, restBtn);
         actionsDiv.appendChild(restBtn);
 
-        card.appendChild(actionsDiv);
+        body.appendChild(actionsDiv);
       }
     }
+
+    // Per-tool toggles
+    var toolsSection = document.createElement("div");
+    toolsSection.className = "sidecar-tools";
+    var toolsLabel = document.createElement("div");
+    toolsLabel.className = "sidecar-tools-label";
+    toolsLabel.textContent = "Tools";
+    toolsSection.appendChild(toolsLabel);
+
+    var toolsLoading = document.createElement("div");
+    toolsLoading.className = "loading";
+    toolsLoading.textContent = "Loading tools…";
+    toolsSection.appendChild(toolsLoading);
+    body.appendChild(toolsSection);
+
+    // Lazy-load tools when card is first expanded
+    var toolsLoaded = false;
+    header.addEventListener("click", function () {
+      if (toolsLoaded || !card.classList.contains("expanded")) return;
+      toolsLoaded = true;
+      loadSidecarTools(cred.platform, toolsSection, toolsLoading);
+    });
 
     // URL info (below actions)
     if (status && status.url) {
       var urlRow = document.createElement("div");
       urlRow.className = "sidecar-url";
       urlRow.textContent = status.url;
-      card.appendChild(urlRow);
+      body.appendChild(urlRow);
     }
 
+    card.appendChild(body);
     return card;
+  }
+
+  async function loadSidecarTools(platform, container, loadingEl) {
+    try {
+      var res = await fetch("/api/admin/sidecars/" + encodeURIComponent(platform) + "/tools");
+      if (!res.ok) {
+        loadingEl.textContent = "No tools found.";
+        return;
+      }
+      var data = await res.json();
+      var tools = data.tools || [];
+      if (loadingEl.parentNode) loadingEl.remove();
+
+      for (var i = 0; i < tools.length; i++) {
+        var tool = tools[i];
+        var item = document.createElement("div");
+        item.className = "sidecar-tool-item";
+
+        var info = document.createElement("div");
+        info.className = "sidecar-tool-info";
+
+        var nameEl = document.createElement("div");
+        nameEl.className = "sidecar-tool-name";
+        nameEl.textContent = tool.name;
+        info.appendChild(nameEl);
+
+        if (tool.description) {
+          var descEl = document.createElement("div");
+          descEl.className = "sidecar-tool-desc";
+          descEl.textContent = tool.description;
+          info.appendChild(descEl);
+        }
+
+        item.appendChild(info);
+
+        var risk = document.createElement("span");
+        risk.className = "tool-risk " + tool.riskLevel;
+        risk.textContent = tool.riskLevel;
+        item.appendChild(risk);
+
+        var toggle = document.createElement("label");
+        toggle.className = "toggle";
+        var checkbox = document.createElement("input");
+        checkbox.type = "checkbox";
+        checkbox.checked = tool.enabled;
+        (function (toolName, cb) {
+          cb.addEventListener("change", function (e) {
+            e.stopPropagation();
+            toggleTool(toolName, cb.checked, cb);
+          });
+        })(tool.name, checkbox);
+        toggle.appendChild(checkbox);
+        var slider = document.createElement("span");
+        slider.className = "slider";
+        toggle.appendChild(slider);
+        item.appendChild(toggle);
+
+        container.appendChild(item);
+      }
+    } catch (err) {
+      loadingEl.textContent = "Failed to load tools.";
+      console.error(err);
+    }
   }
 
   async function saveCredentials(platform, inputs, button) {

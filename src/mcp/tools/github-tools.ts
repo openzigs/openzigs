@@ -101,8 +101,9 @@ export const createGitHubTools = (options: GitHubToolsOptions): ToolDefinition[]
         required: ["owner", "repo", "path"],
       },
       zodSchema: githubGetFileSchema,
-      category: "documents",
+      category: "developer",
       riskLevel: "low",
+      source: "github",
       handler: async (args) => {
         const input = args as z.infer<typeof githubGetFileSchema>;
         return callSidecar(options.sidecarUrl, "github_get_file", input);
@@ -122,8 +123,9 @@ export const createGitHubTools = (options: GitHubToolsOptions): ToolDefinition[]
         required: ["query"],
       },
       zodSchema: githubSearchCodeSchema,
-      category: "documents",
+      category: "developer",
       riskLevel: "low",
+      source: "github",
       handler: async (args) => {
         const input = args as z.infer<typeof githubSearchCodeSchema>;
         return callSidecar(options.sidecarUrl, "github_search_code", input);
@@ -144,8 +146,9 @@ export const createGitHubTools = (options: GitHubToolsOptions): ToolDefinition[]
         required: ["owner", "repo"],
       },
       zodSchema: githubListIssuesSchema,
-      category: "documents",
+      category: "developer",
       riskLevel: "low",
+      source: "github",
       handler: async (args) => {
         const input = args as z.infer<typeof githubListIssuesSchema>;
         return callSidecar(options.sidecarUrl, "github_list_issues", input);
@@ -167,8 +170,9 @@ export const createGitHubTools = (options: GitHubToolsOptions): ToolDefinition[]
         required: ["owner", "repo", "title"],
       },
       zodSchema: githubCreateIssueSchema,
-      category: "documents",
+      category: "developer",
       riskLevel: "medium",
+      source: "github",
       handler: async (args) => {
         const input = args as z.infer<typeof githubCreateIssueSchema>;
         return callSidecar(options.sidecarUrl, "github_create_issue", input);
@@ -192,8 +196,9 @@ export const createGitHubTools = (options: GitHubToolsOptions): ToolDefinition[]
         required: ["owner", "repo", "title", "head", "base"],
       },
       zodSchema: githubCreatePrSchema,
-      category: "documents",
+      category: "developer",
       riskLevel: "high",
+      source: "github",
       handler: async (args) => {
         const input = args as z.infer<typeof githubCreatePrSchema>;
         return callSidecar(options.sidecarUrl, "github_create_pr", input);

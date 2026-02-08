@@ -3,6 +3,7 @@ import path from "node:path";
 import fs from "node:fs/promises";
 import { CopilotClient, defineTool } from "@github/copilot-sdk";
 import type { ToolDefinition, ToolRegistry } from "../mcp/tool-registry.js";
+import { ALWAYS_ON_TOOLS } from "../mcp/constants.js";
 
 export type DeviceAuthInfo = {
   verificationUri: string;
@@ -310,12 +311,8 @@ export class CopilotWrapperService implements CopilotWrapper {
     // Enforce maxToolsPerRequest: if we exceed the cap, keep always-on core tools
     // and fill the remaining slots with the rest.
     if (toolList.length > this.maxToolsPerRequest) {
-      const coreTools = toolList.filter((t) =>
-        t.name === "read-file" || t.name === "list-directory" || t.name === "web-search"
-      );
-      const otherTools = toolList.filter((t) =>
-        t.name !== "read-file" && t.name !== "list-directory" && t.name !== "web-search"
-      );
+      const coreTools = toolList.filter((t) => ALWAYS_ON_TOOLS.has(t.name));
+      const otherTools = toolList.filter((t) => !ALWAYS_ON_TOOLS.has(t.name));
       const remainingSlots = Math.max(0, this.maxToolsPerRequest - coreTools.length);
       toolList = [...coreTools, ...otherTools.slice(0, remainingSlots)];
     }

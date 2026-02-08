@@ -25,10 +25,10 @@ describe("Database Tools", () => {
     expect(riskMap["db-query"]).toBe("high");
   });
 
-  it("should categorize all tools as documents", () => {
+  it("should categorize all tools as data", () => {
     const tools = createDatabaseTools({ sidecarUrl: "http://localhost:5303" });
     for (const tool of tools) {
-      expect(tool.category).toBe("documents");
+      expect(tool.category).toBe("data");
     }
   });
 

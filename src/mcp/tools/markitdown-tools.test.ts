@@ -16,7 +16,7 @@ describe("MarkItDown Tools", () => {
 
   it("should return error when sidecar URL is not configured", async () => {
     const tools = createMarkItDownTools({});
-    const result = await tools[0].handler({ filePath: "/data/test.pdf" });
+    const result = await tools[0].handler({ file_path: "/data/test.pdf" });
     expect(result.isError).toBe(true);
     expect(result.text).toContain("not configured");
   });
@@ -29,7 +29,7 @@ describe("MarkItDown Tools", () => {
     vi.stubGlobal("fetch", mockFetch);
 
     const tools = createMarkItDownTools({ sidecarUrl: "http://localhost:5301" });
-    const result = await tools[0].handler({ filePath: "/data/report.pdf" });
+    const result = await tools[0].handler({ file_path: "/data/report.pdf" });
 
     expect(result.text).toBe("# Converted Markdown\n\nContent here.");
     expect(result.isError).toBeUndefined();
@@ -46,7 +46,7 @@ describe("MarkItDown Tools", () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("ECONNREFUSED")));
 
     const tools = createMarkItDownTools({ sidecarUrl: "http://localhost:5301" });
-    const result = await tools[0].handler({ filePath: "/data/test.pdf" });
+    const result = await tools[0].handler({ file_path: "/data/test.pdf" });
 
     expect(result.isError).toBe(true);
     expect(result.text).toContain("Failed to reach MarkItDown sidecar");
@@ -61,7 +61,7 @@ describe("MarkItDown Tools", () => {
 
     const tools = createMarkItDownTools({ sidecarUrl: "http://localhost:5301" });
     await tools[0].handler({
-      filePath: "/data/image.png",
+      file_path: "/data/image.png",
       options: { enableOcr: true },
     });
 

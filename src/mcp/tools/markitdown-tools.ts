@@ -14,7 +14,7 @@ type MarkItDownOptions = {
 };
 
 const convertToMarkdownSchema = z.object({
-  filePath: z.string().describe("Path to the file to convert (relative to /workdir inside the container)"),
+  file_path: z.string().describe("Path to the file to convert (relative to /workdir inside the container)"),
   options: z
     .object({
       enableOcr: z.boolean().optional().describe("Enable OCR for images"),
@@ -65,7 +65,7 @@ export const createMarkItDownTools = (options: MarkItDownOptions): ToolDefinitio
       inputSchema: {
         type: "object",
         properties: {
-          filePath: { type: "string" },
+          file_path: { type: "string" },
           options: {
             type: "object",
             properties: {
@@ -74,15 +74,16 @@ export const createMarkItDownTools = (options: MarkItDownOptions): ToolDefinitio
             },
           },
         },
-        required: ["filePath"],
+        required: ["file_path"],
       },
       zodSchema: convertToMarkdownSchema,
       category: "documents",
       riskLevel: "low",
+      source: "markitdown",
       handler: async (args) => {
         const input = args as z.infer<typeof convertToMarkdownSchema>;
         return callSidecar(options.sidecarUrl, "convert_to_markdown", {
-          file_path: input.filePath,
+          file_path: input.file_path,
           ...(input.options ?? {}),
         });
       },

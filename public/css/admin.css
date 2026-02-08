@@ -427,10 +427,8 @@ html, body {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 14px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
   transition: border-color 0.2s;
 }
 
@@ -442,6 +440,26 @@ html, body {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  padding: 14px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.sidecar-header-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sidecar-expand-icon {
+  font-size: 10px;
+  color: var(--text-muted);
+  transition: transform 0.2s;
+  flex-shrink: 0;
+}
+
+.sidecar-card.expanded .sidecar-expand-icon {
+  transform: rotate(90deg);
 }
 
 .sidecar-title {
@@ -482,6 +500,17 @@ html, body {
 .sidecar-badge.unknown {
   background: rgba(139, 148, 158, 0.1);
   color: var(--text-muted);
+}
+
+.sidecar-body {
+  display: none;
+  padding: 0 14px 14px;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.sidecar-card.expanded .sidecar-body {
+  display: flex;
 }
 
 .sidecar-creds {
@@ -657,6 +686,52 @@ html, body {
 .sidecar-btn:disabled {
   opacity: 0.4;
   cursor: not-allowed;
+}
+
+/* Per-tool toggles inside sidecar cards */
+.sidecar-tools {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.sidecar-tools-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 600;
+  margin-bottom: 2px;
+}
+
+.sidecar-tool-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.sidecar-tool-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.sidecar-tool-name {
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.sidecar-tool-desc {
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* ── Local MCP Server tags ── */

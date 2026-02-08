@@ -209,7 +209,7 @@ Converts various file formats (PDF, DOCX, PPTX, XLSX, HTML, images, audio) into 
 
 ```yaml
 # docker-compose.yml excerpt
-markitdown-mcp-server:
+mcp-markitdown:
   image: markitdown-mcp:latest
   container_name: openzigs-mcp-markitdown
   volumes:
@@ -228,12 +228,12 @@ Reads, searches, and drafts Gmail messages. Requires Google Cloud OAuth credenti
 
 ```yaml
 # docker-compose.yml excerpt
-gmail-mcp-server:
+mcp-gmail:
   image: mcp/gmail:latest
   container_name: openzigs-mcp-gmail
   volumes:
     - gmail-credentials:/gmail-server
-    - ${HOME}/.gmail-mcp/gcp-oauth.keys.json:/gcp-oauth.keys.json:ro
+    - ${GMAIL_OAUTH_KEYS_PATH:-./.gmail-mcp/gcp-oauth.keys.json}:/gcp-oauth.keys.json:ro
   environment:
     GMAIL_OAUTH_PATH: /gcp-oauth.keys.json
     GMAIL_CREDENTIALS_PATH: /gmail-server/credentials.json
@@ -251,7 +251,7 @@ Provides SQL access to any JDBC-compatible database (PostgreSQL, MySQL, SQLite, 
 
 ```yaml
 # docker-compose.yml excerpt (or run via JBang locally)
-database-mcp-server:
+mcp-database:
   image: openzigs-mcp-database:latest
   container_name: openzigs-mcp-database
   environment:
@@ -277,7 +277,7 @@ Full GitHub API access — repos, issues, PRs, code search, actions. Uses a GitH
 
 ```yaml
 # docker-compose.yml excerpt
-github-mcp-server:
+mcp-github:
   image: ghcr.io/github/github-mcp-server:latest
   container_name: openzigs-mcp-github
   environment:
@@ -572,15 +572,15 @@ All services (`agent`, `tunnel`, MCP sidecars) share the `openzigs-network` brid
 | Connection | From → To | Address |
 |---|---|---|
 | Tunnel → Agent | `tunnel` → `agent` | `http://agent:3000` |
-| Agent → LinkedIn MCP | `agent` → `linkedin-mcp-server` | `http://linkedin-mcp-server:5101/mcp` |
-| Agent → Twitter MCP | `agent` → `twitter-mcp-server` | `http://twitter-mcp-server:5102/mcp` |
-| Agent → Facebook MCP | `agent` → `facebook-mcp-server` | `http://facebook-mcp-server:5103/mcp` |
-| Agent → Pinterest MCP | `agent` → `pinterest-mcp-server` | `http://pinterest-mcp-server:5104/mcp` |
-| Agent → Word MCP | `agent` → `word-mcp-server` | `http://word-mcp-server:5201/mcp` |
-| Agent → MarkItDown MCP | `agent` → `markitdown-mcp-server` | `http://markitdown-mcp-server:5301/mcp` |
-| Agent → Gmail MCP | `agent` → `gmail-mcp-server` | `http://gmail-mcp-server:5302/mcp` |
-| Agent → Database MCP | `agent` → `database-mcp-server` | `http://database-mcp-server:5303/mcp` |
-| Agent → GitHub MCP | `agent` → `github-mcp-server` | `http://github-mcp-server:5304/mcp` |
+| Agent → LinkedIn MCP | `agent` → `mcp-linkedin` | `http://mcp-linkedin:5000/mcp` |
+| Agent → Twitter MCP | `agent` → `mcp-twitter` | `http://mcp-twitter:5000/mcp` |
+| Agent → Facebook MCP | `agent` → `mcp-facebook` | `http://mcp-facebook:5000/mcp` |
+| Agent → Pinterest MCP | `agent` → `mcp-pinterest` | `http://mcp-pinterest:3052/mcp` |
+| Agent → Word MCP | `agent` → `mcp-word` | `http://mcp-word:5000/mcp` |
+| Agent → MarkItDown MCP | `agent` → `mcp-markitdown` | `http://mcp-markitdown:5000/mcp` |
+| Agent → Gmail MCP | `agent` → `mcp-gmail` | `http://mcp-gmail:5000/mcp` |
+| Agent → Database MCP | `agent` → `mcp-database` | `http://mcp-database:5000/mcp` |
+| Agent → GitHub MCP | `agent` → `mcp-github` | `http://mcp-github:5000/mcp` |
 | Agent → Chrome | `agent` → host | `host.docker.internal:9222` |
 
 MCP sidecar URLs are passed to the agent via environment variables (`MCP_LINKEDIN_URL`, `MCP_TWITTER_URL`, `MCP_MARKITDOWN_URL`, `MCP_GMAIL_URL`, `MCP_DATABASE_URL`, `MCP_GITHUB_URL`, etc.) in `docker-compose.yml`.

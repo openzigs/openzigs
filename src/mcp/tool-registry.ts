@@ -5,7 +5,7 @@ import path from "node:path";
 import type * as z from "zod";
 
 export type RiskLevel = "low" | "medium" | "high";
-export type ToolCategory = "filesystem" | "search" | "browser" | "shell" | "productivity" | "social" | "documents";
+export type ToolCategory = "filesystem" | "search" | "browser" | "shell" | "productivity" | "social" | "documents" | "personal" | "data" | "developer";
 
 export type ToolDefinition = {
   name: string;
@@ -19,6 +19,8 @@ export type ToolDefinition = {
   handler: (args: Record<string, unknown>) => Promise<{ text: string; isError?: boolean }>;
   category: ToolCategory;
   riskLevel: RiskLevel;
+  /** The sidecar/source this tool belongs to (e.g., "linkedin", "gmail", "github"). */
+  source?: string;
 };
 
 export type ToolInfo = {
@@ -79,7 +81,7 @@ const saveState = async (statePath: string, state: ToolRegistryState) => {
   await fsPromises.writeFile(statePath, JSON.stringify(state, null, 2), "utf-8");
 };
 
-const toolCategories: ToolCategory[] = ["filesystem", "search", "browser", "shell", "productivity", "social", "documents"];
+const toolCategories: ToolCategory[] = ["filesystem", "search", "browser", "shell", "productivity", "social", "documents", "personal", "data", "developer"];
 
 export type ToolRegistryOptions = {
   statePath: string;
@@ -149,6 +151,23 @@ export class ToolRegistry extends EventEmitter {
       riskLevel: this.getRiskLevel(name) ?? tool.riskLevel,
       enabled: this.isEnabled(name)
     };
+  }
+
+  /** Return all tools that belong to a given source/sidecar. */
+  getToolsBySource(source: string): ToolInfo[] {
+    const result: ToolInfo[] = [];
+    for (const tool of this.tools.values()) {
+      if (tool.source === source) {
+        result.push({
+          name: tool.name,
+          description: tool.description,
+          category: tool.category,
+          riskLevel: this.getRiskLevel(tool.name) ?? tool.riskLevel,
+          enabled: this.isEnabled(tool.name)
+        });
+      }
+    }
+    return result;
   }
 
   listEnabledTools(): ToolDefinition[] {

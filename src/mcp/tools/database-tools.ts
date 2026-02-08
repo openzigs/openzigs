@@ -71,8 +71,9 @@ export const createDatabaseTools = (options: DatabaseToolsOptions): ToolDefiniti
         },
       },
       zodSchema: dbListTablesSchema,
-      category: "documents",
+      category: "data",
       riskLevel: "low",
+      source: "database",
       handler: async (args) => {
         const input = args as z.infer<typeof dbListTablesSchema>;
         return callSidecar(options.sidecarUrl, "db_list_tables", input);
@@ -90,8 +91,9 @@ export const createDatabaseTools = (options: DatabaseToolsOptions): ToolDefiniti
         required: ["table"],
       },
       zodSchema: dbDescribeSchema,
-      category: "documents",
+      category: "data",
       riskLevel: "low",
+      source: "database",
       handler: async (args) => {
         const input = args as z.infer<typeof dbDescribeSchema>;
         return callSidecar(options.sidecarUrl, "db_describe", input);
@@ -110,8 +112,9 @@ export const createDatabaseTools = (options: DatabaseToolsOptions): ToolDefiniti
         required: ["query"],
       },
       zodSchema: dbQuerySchema,
-      category: "documents",
+      category: "data",
       riskLevel: "high",
+      source: "database",
       handler: async (args) => {
         const input = args as z.infer<typeof dbQuerySchema>;
         return callSidecar(options.sidecarUrl, "db_query", input);

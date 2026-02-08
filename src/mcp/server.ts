@@ -19,6 +19,7 @@ import { ToolRegistry, type ToolDefinition } from "./tool-registry.js";
 import type { LocalMcpServerManager } from "./local-mcp-server-manager.js";
 import { AuditLogger } from "../logging/audit-logger.js";
 import { ApprovalQueue } from "../approvals/index.js";
+import { formatApprovalContext } from "../approvals/approval-formatters.js";
 import type { PromptManager } from "../productivity/prompt-manager.js";
 import type { Scheduler } from "../productivity/scheduler.js";
 
@@ -108,43 +109,9 @@ const parseArgs = (schema: z.ZodSchema, args: Record<string, unknown>) => {
 };
 
 const buildApprovalPreview = (toolName: string, args: Record<string, unknown>) => {
-  if (toolName === "write-file") {
-    const path = typeof args.path === "string" ? args.path : "";
-    const content = typeof args.content === "string" ? args.content : "";
-    return `Would write ${content.length} bytes to ${path}`;
-  }
-  if (toolName === "shell-execute") {
-    const command = typeof args.command === "string" ? args.command : "";
-    const argList = Array.isArray(args.args) ? args.args.join(" ") : "";
-    return `Would run: ${command}${argList ? ` ${argList}` : ""}`;
-  }
-  if (toolName === "gmail-send") {
-    const to = typeof args.to === "string" ? args.to : "";
-    const subject = typeof args.subject === "string" ? args.subject : "";
-    const body = typeof args.body === "string" ? args.body.slice(0, 200) : "";
-    return `Would send email to ${to}\nSubject: ${subject}\nBody: ${body}${body.length >= 200 ? "..." : ""}`;
-  }
-  if (toolName === "db-query") {
-    const query = typeof args.query === "string" ? args.query : "";
-    return `Would execute SQL: ${query}`;
-  }
-  if (toolName === "github-create-pr") {
-    const owner = typeof args.owner === "string" ? args.owner : "";
-    const repo = typeof args.repo === "string" ? args.repo : "";
-    const title = typeof args.title === "string" ? args.title : "";
-    const head = typeof args.head === "string" ? args.head : "";
-    const base = typeof args.base === "string" ? args.base : "";
-    return `Would create PR in ${owner}/${repo}: "${title}" (${head} → ${base})`;
-  }
-  if (toolName === "social-post") {
-    const platform = typeof args.platform === "string" ? args.platform : "";
-    const content = typeof args.content === "string" ? args.content.slice(0, 200) : "";
-    return `Would post to ${platform}: ${content}${content.length >= 200 ? "..." : ""}`;
-  }
-  if (toolName === "browser-navigate") {
-    const action = typeof args.action === "string" ? args.action : "";
-    const url = typeof args.url === "string" ? args.url : "";
-    return `Would navigate browser: ${action}${url ? ` to ${url}` : ""}`;
+  const context = formatApprovalContext(toolName, args);
+  if (context) {
+    return context.summary;
   }
   return undefined;
 };

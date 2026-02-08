@@ -83,8 +83,9 @@ export const createGmailTools = (options: GmailToolsOptions): ToolDefinition[] =
         required: ["query"],
       },
       zodSchema: gmailSearchSchema,
-      category: "documents",
+      category: "personal",
       riskLevel: "low",
+      source: "gmail",
       handler: async (args) => {
         const input = args as z.infer<typeof gmailSearchSchema>;
         return callSidecar(options.sidecarUrl, "gmail_search", input);
@@ -101,8 +102,9 @@ export const createGmailTools = (options: GmailToolsOptions): ToolDefinition[] =
         required: ["messageId"],
       },
       zodSchema: gmailReadSchema,
-      category: "documents",
+      category: "personal",
       riskLevel: "low",
+      source: "gmail",
       handler: async (args) => {
         const input = args as z.infer<typeof gmailReadSchema>;
         return callSidecar(options.sidecarUrl, "gmail_read", input);
@@ -123,8 +125,9 @@ export const createGmailTools = (options: GmailToolsOptions): ToolDefinition[] =
         required: ["to", "subject", "body"],
       },
       zodSchema: gmailDraftSchema,
-      category: "documents",
+      category: "personal",
       riskLevel: "medium",
+      source: "gmail",
       handler: async (args) => {
         const input = args as z.infer<typeof gmailDraftSchema>;
         return callSidecar(options.sidecarUrl, "gmail_draft", input);
@@ -145,8 +148,9 @@ export const createGmailTools = (options: GmailToolsOptions): ToolDefinition[] =
         required: ["to", "subject", "body"],
       },
       zodSchema: gmailSendSchema,
-      category: "documents",
+      category: "personal",
       riskLevel: "high",
+      source: "gmail",
       handler: async (args) => {
         const input = args as z.infer<typeof gmailSendSchema>;
         return callSidecar(options.sidecarUrl, "gmail_send", input);
