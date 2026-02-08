@@ -153,6 +153,106 @@ const githubSearchUsersSchema = z.object({
   perPage: z.number().optional().describe("Results per page (max 100)"),
 });
 
+// ── Additional schemas ──
+
+const githubGetIssueSchema = z.object({
+  owner: z.string().describe("Repository owner"),
+  repo: z.string().describe("Repository name"),
+  issueNumber: z.number().describe("Issue number"),
+});
+
+const githubUpdateIssueSchema = z.object({
+  owner: z.string().describe("Repository owner"),
+  repo: z.string().describe("Repository name"),
+  issueNumber: z.number().describe("Issue number"),
+  title: z.string().optional().describe("New title"),
+  body: z.string().optional().describe("New body (Markdown)"),
+  state: z.enum(["open", "closed"]).optional().describe("Issue state"),
+  labels: z.array(z.string()).optional().describe("Labels to set (replaces existing)"),
+  assignees: z.array(z.string()).optional().describe("Assignees to set (replaces existing)"),
+});
+
+const githubAddIssueCommentSchema = z.object({
+  owner: z.string().describe("Repository owner"),
+  repo: z.string().describe("Repository name"),
+  issueNumber: z.number().describe("Issue or pull request number"),
+  body: z.string().describe("Comment body (Markdown)"),
+});
+
+const githubSearchIssuesSchema = z.object({
+  query: z.string().describe("Search query using GitHub issues search syntax"),
+  perPage: z.number().optional().describe("Results per page (max 100)"),
+});
+
+const githubSearchPullRequestsSchema = z.object({
+  query: z.string().describe("Search query using GitHub PR search syntax"),
+  perPage: z.number().optional().describe("Results per page (max 100)"),
+});
+
+const githubUpdatePrSchema = z.object({
+  owner: z.string().describe("Repository owner"),
+  repo: z.string().describe("Repository name"),
+  pullNumber: z.number().describe("Pull request number"),
+  title: z.string().optional().describe("New title"),
+  body: z.string().optional().describe("New body (Markdown)"),
+  state: z.enum(["open", "closed"]).optional().describe("PR state"),
+  base: z.string().optional().describe("New base branch"),
+});
+
+const githubUpdatePrBranchSchema = z.object({
+  owner: z.string().describe("Repository owner"),
+  repo: z.string().describe("Repository name"),
+  pullNumber: z.number().describe("Pull request number"),
+  expectedHeadSha: z.string().optional().describe("Expected SHA of the head branch"),
+});
+
+const githubPushFilesSchema = z.object({
+  owner: z.string().describe("Repository owner"),
+  repo: z.string().describe("Repository name"),
+  branch: z.string().describe("Branch to push to"),
+  message: z.string().describe("Commit message"),
+  files: z.array(z.object({
+    path: z.string().describe("File path"),
+    content: z.string().describe("File content"),
+  })).describe("Array of files to push"),
+});
+
+const githubListTagsSchema = z.object({
+  owner: z.string().describe("Repository owner"),
+  repo: z.string().describe("Repository name"),
+  perPage: z.number().optional().describe("Results per page (max 100)"),
+});
+
+const githubGetLatestReleaseSchema = z.object({
+  owner: z.string().describe("Repository owner"),
+  repo: z.string().describe("Repository name"),
+});
+
+const githubGetReleaseByTagSchema = z.object({
+  owner: z.string().describe("Repository owner"),
+  repo: z.string().describe("Repository name"),
+  tag: z.string().describe("Tag name"),
+});
+
+const githubGetRepoTreeSchema = z.object({
+  owner: z.string().describe("Repository owner"),
+  repo: z.string().describe("Repository name"),
+  sha: z.string().optional().describe("Branch name, tag, or commit SHA (defaults to default branch)"),
+  recursive: z.boolean().optional().describe("Whether to recursively list the tree"),
+});
+
+const githubListLabelsSchema = z.object({
+  owner: z.string().describe("Repository owner"),
+  repo: z.string().describe("Repository name"),
+  perPage: z.number().optional().describe("Results per page (max 100)"),
+});
+
+const githubGetLabelSchema = z.object({
+  owner: z.string().describe("Repository owner"),
+  repo: z.string().describe("Repository name"),
+  name: z.string().describe("Label name"),
+});
+
 const callSidecar = async (
   baseUrl: string | undefined,
   method: string,
@@ -633,6 +733,364 @@ export const createGitHubTools = (options: GitHubToolsOptions): ToolDefinition[]
       handler: async (args) => {
         const input = args as z.infer<typeof githubListReleasesSchema>;
         return callSidecar(options.sidecarUrl, "list_releases", input);
+      },
+    },
+    {
+      name: "github-get-latest-release",
+      description: "Get the latest release for a GitHub repository.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          owner: { type: "string" },
+          repo: { type: "string" },
+        },
+        required: ["owner", "repo"],
+      },
+      zodSchema: githubGetLatestReleaseSchema,
+      category: "developer",
+      riskLevel: "low",
+      source: "github",
+      handler: async (args) => {
+        const input = args as z.infer<typeof githubGetLatestReleaseSchema>;
+        return callSidecar(options.sidecarUrl, "get_latest_release", input);
+      },
+    },
+    {
+      name: "github-get-release-by-tag",
+      description: "Get a specific release by its tag name.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          owner: { type: "string" },
+          repo: { type: "string" },
+          tag: { type: "string" },
+        },
+        required: ["owner", "repo", "tag"],
+      },
+      zodSchema: githubGetReleaseByTagSchema,
+      category: "developer",
+      riskLevel: "low",
+      source: "github",
+      handler: async (args) => {
+        const input = args as z.infer<typeof githubGetReleaseByTagSchema>;
+        return callSidecar(options.sidecarUrl, "get_release_by_tag", input);
+      },
+    },
+
+    // ── Additional Issue Tools ──
+    {
+      name: "github-get-issue",
+      description: "Get details of a specific issue in a GitHub repository.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          owner: { type: "string" },
+          repo: { type: "string" },
+          issueNumber: { type: "number" },
+        },
+        required: ["owner", "repo", "issueNumber"],
+      },
+      zodSchema: githubGetIssueSchema,
+      category: "developer",
+      riskLevel: "low",
+      source: "github",
+      handler: async (args) => {
+        const input = args as z.infer<typeof githubGetIssueSchema>;
+        return callSidecar(options.sidecarUrl, "get_issue", {
+          owner: input.owner,
+          repo: input.repo,
+          issue_number: input.issueNumber,
+        });
+      },
+    },
+    {
+      name: "github-update-issue",
+      description: "Update an existing issue (title, body, state, labels, assignees).",
+      inputSchema: {
+        type: "object",
+        properties: {
+          owner: { type: "string" },
+          repo: { type: "string" },
+          issueNumber: { type: "number" },
+          title: { type: "string" },
+          body: { type: "string" },
+          state: { type: "string", enum: ["open", "closed"] },
+          labels: { type: "array", items: { type: "string" } },
+          assignees: { type: "array", items: { type: "string" } },
+        },
+        required: ["owner", "repo", "issueNumber"],
+      },
+      zodSchema: githubUpdateIssueSchema,
+      category: "developer",
+      riskLevel: "medium",
+      source: "github",
+      handler: async (args) => {
+        const input = args as z.infer<typeof githubUpdateIssueSchema>;
+        return callSidecar(options.sidecarUrl, "update_issue", {
+          owner: input.owner,
+          repo: input.repo,
+          issue_number: input.issueNumber,
+          title: input.title,
+          body: input.body,
+          state: input.state,
+          labels: input.labels,
+          assignees: input.assignees,
+        });
+      },
+    },
+    {
+      name: "github-add-issue-comment",
+      description: "Add a comment to an issue or pull request.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          owner: { type: "string" },
+          repo: { type: "string" },
+          issueNumber: { type: "number" },
+          body: { type: "string" },
+        },
+        required: ["owner", "repo", "issueNumber", "body"],
+      },
+      zodSchema: githubAddIssueCommentSchema,
+      category: "developer",
+      riskLevel: "medium",
+      source: "github",
+      handler: async (args) => {
+        const input = args as z.infer<typeof githubAddIssueCommentSchema>;
+        return callSidecar(options.sidecarUrl, "add_issue_comment", {
+          owner: input.owner,
+          repo: input.repo,
+          issue_number: input.issueNumber,
+          body: input.body,
+        });
+      },
+    },
+    {
+      name: "github-search-issues",
+      description: "Search issues across GitHub repositories using search syntax.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          query: { type: "string" },
+          perPage: { type: "number" },
+        },
+        required: ["query"],
+      },
+      zodSchema: githubSearchIssuesSchema,
+      category: "developer",
+      riskLevel: "low",
+      source: "github",
+      handler: async (args) => {
+        const input = args as z.infer<typeof githubSearchIssuesSchema>;
+        return callSidecar(options.sidecarUrl, "search_issues", input);
+      },
+    },
+
+    // ── Additional PR Tools ──
+    {
+      name: "github-search-prs",
+      description: "Search pull requests across GitHub repositories using search syntax.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          query: { type: "string" },
+          perPage: { type: "number" },
+        },
+        required: ["query"],
+      },
+      zodSchema: githubSearchPullRequestsSchema,
+      category: "developer",
+      riskLevel: "low",
+      source: "github",
+      handler: async (args) => {
+        const input = args as z.infer<typeof githubSearchPullRequestsSchema>;
+        return callSidecar(options.sidecarUrl, "search_pull_requests", input);
+      },
+    },
+    {
+      name: "github-update-pr",
+      description: "Update an existing pull request (title, body, state, base branch).",
+      inputSchema: {
+        type: "object",
+        properties: {
+          owner: { type: "string" },
+          repo: { type: "string" },
+          pullNumber: { type: "number" },
+          title: { type: "string" },
+          body: { type: "string" },
+          state: { type: "string", enum: ["open", "closed"] },
+          base: { type: "string" },
+        },
+        required: ["owner", "repo", "pullNumber"],
+      },
+      zodSchema: githubUpdatePrSchema,
+      category: "developer",
+      riskLevel: "medium",
+      source: "github",
+      handler: async (args) => {
+        const input = args as z.infer<typeof githubUpdatePrSchema>;
+        return callSidecar(options.sidecarUrl, "update_pull_request", {
+          owner: input.owner,
+          repo: input.repo,
+          pull_number: input.pullNumber,
+          title: input.title,
+          body: input.body,
+          state: input.state,
+          base: input.base,
+        });
+      },
+    },
+    {
+      name: "github-update-pr-branch",
+      description: "Update a pull request branch with the latest changes from the base branch.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          owner: { type: "string" },
+          repo: { type: "string" },
+          pullNumber: { type: "number" },
+          expectedHeadSha: { type: "string" },
+        },
+        required: ["owner", "repo", "pullNumber"],
+      },
+      zodSchema: githubUpdatePrBranchSchema,
+      category: "developer",
+      riskLevel: "medium",
+      source: "github",
+      handler: async (args) => {
+        const input = args as z.infer<typeof githubUpdatePrBranchSchema>;
+        return callSidecar(options.sidecarUrl, "update_pull_request_branch", {
+          owner: input.owner,
+          repo: input.repo,
+          pull_number: input.pullNumber,
+          expected_head_sha: input.expectedHeadSha,
+        });
+      },
+    },
+
+    // ── Multi-File Push ──
+    {
+      name: "github-push-files",
+      description: "Push multiple files to a GitHub repository in a single commit.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          owner: { type: "string" },
+          repo: { type: "string" },
+          branch: { type: "string" },
+          message: { type: "string" },
+          files: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                path: { type: "string" },
+                content: { type: "string" },
+              },
+              required: ["path", "content"],
+            },
+          },
+        },
+        required: ["owner", "repo", "branch", "message", "files"],
+      },
+      zodSchema: githubPushFilesSchema,
+      category: "developer",
+      riskLevel: "high",
+      source: "github",
+      handler: async (args) => {
+        const input = args as z.infer<typeof githubPushFilesSchema>;
+        return callSidecar(options.sidecarUrl, "push_files", input);
+      },
+    },
+
+    // ── Tags ──
+    {
+      name: "github-list-tags",
+      description: "List tags in a GitHub repository.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          owner: { type: "string" },
+          repo: { type: "string" },
+          perPage: { type: "number" },
+        },
+        required: ["owner", "repo"],
+      },
+      zodSchema: githubListTagsSchema,
+      category: "developer",
+      riskLevel: "low",
+      source: "github",
+      handler: async (args) => {
+        const input = args as z.infer<typeof githubListTagsSchema>;
+        return callSidecar(options.sidecarUrl, "list_tags", input);
+      },
+    },
+
+    // ── Repository Tree ──
+    {
+      name: "github-get-repo-tree",
+      description: "Get the file/directory tree of a GitHub repository.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          owner: { type: "string" },
+          repo: { type: "string" },
+          sha: { type: "string" },
+          recursive: { type: "boolean" },
+        },
+        required: ["owner", "repo"],
+      },
+      zodSchema: githubGetRepoTreeSchema,
+      category: "developer",
+      riskLevel: "low",
+      source: "github",
+      handler: async (args) => {
+        const input = args as z.infer<typeof githubGetRepoTreeSchema>;
+        return callSidecar(options.sidecarUrl, "get_repository_tree", input);
+      },
+    },
+
+    // ── Labels ──
+    {
+      name: "github-list-labels",
+      description: "List labels in a GitHub repository.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          owner: { type: "string" },
+          repo: { type: "string" },
+          perPage: { type: "number" },
+        },
+        required: ["owner", "repo"],
+      },
+      zodSchema: githubListLabelsSchema,
+      category: "developer",
+      riskLevel: "low",
+      source: "github",
+      handler: async (args) => {
+        const input = args as z.infer<typeof githubListLabelsSchema>;
+        return callSidecar(options.sidecarUrl, "list_labels", input);
+      },
+    },
+    {
+      name: "github-get-label",
+      description: "Get a specific label from a GitHub repository.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          owner: { type: "string" },
+          repo: { type: "string" },
+          name: { type: "string" },
+        },
+        required: ["owner", "repo", "name"],
+      },
+      zodSchema: githubGetLabelSchema,
+      category: "developer",
+      riskLevel: "low",
+      source: "github",
+      handler: async (args) => {
+        const input = args as z.infer<typeof githubGetLabelSchema>;
+        return callSidecar(options.sidecarUrl, "get_label", input);
       },
     },
   ];

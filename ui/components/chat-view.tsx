@@ -234,7 +234,7 @@ export const ChatView = () => {
   const showConnecting = connected && !chatId;
 
   return (
-    <div className="flex h-full flex-col bg-background">
+    <div className="flex h-full min-h-0 flex-col bg-background">
       {/* Header */}
       <header className="flex items-center gap-4 border-b border-border bg-card px-5 py-3">
         <h1 className="text-lg font-semibold text-foreground">OpenZigs</h1>
@@ -282,7 +282,7 @@ export const ChatView = () => {
       )}
 
       {/* Messages */}
-      <main className="flex flex-1 flex-col gap-4 overflow-y-auto p-5">
+      <main className="min-h-0 flex flex-1 flex-col gap-4 overflow-y-auto p-5">
         {messages.length === 0 && !thinking && (
           <div className="flex flex-1 flex-col items-center justify-center gap-3 text-muted-foreground">
             <Bot className="h-12 w-12 opacity-30" />

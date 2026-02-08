@@ -211,26 +211,19 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
   router.get("/sidecars/:name/tools", (_req, res) => {
     const { name } = _req.params;
 
-    // For newer sidecars with source tags, derive tool list dynamically
+    // For social sidecars, merge platform-specific tools + cross-platform social tools
+    const socialSidecars = new Set(["linkedin", "twitter", "facebook", "pinterest"]);
+    if (socialSidecars.has(name)) {
+      const platformTools = toolRegistry.getToolsBySource(name); // e.g. pinterest-specific
+      const crossPlatformTools = toolRegistry.getToolsBySource("social"); // social-post, etc.
+      const tools = [...platformTools, ...crossPlatformTools];
+      return res.json({ sidecar: name, tools });
+    }
+
+    // For other sidecars with source tags, derive tool list dynamically
     const dynamicTools = toolRegistry.getToolsBySource(name);
     if (dynamicTools.length > 0) {
       return res.json({ sidecar: name, tools: dynamicTools });
-    }
-
-    // Legacy social sidecars share cross-platform tools
-    const socialSidecars = new Set(["linkedin", "twitter", "facebook", "pinterest"]);
-    if (socialSidecars.has(name)) {
-      const toolNames = ["social-post", "social-timeline", "social-profile"];
-      if (name === "pinterest") {
-        toolNames.push("pinterest-boards", "pinterest-pins");
-      }
-      const tools = toolNames.map((toolName) => {
-        const info = toolRegistry.getToolInfo(toolName);
-        return info
-          ? { name: info.name, description: info.description, riskLevel: info.riskLevel, enabled: info.enabled }
-          : { name: toolName, description: "", riskLevel: "low", enabled: false };
-      });
-      return res.json({ sidecar: name, tools });
     }
 
     return res.status(404).json({ error: `Unknown sidecar: ${name}` });
@@ -244,14 +237,17 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
       return res.status(400).json({ error: "disabledTools must be an array of tool names" });
     }
     try {
-      // Use the ToolRegistry to toggle tools rather than writing config files directly
-      const allSidecarTools = toolRegistry.getToolsBySource(name);
+      // Merge platform-specific + cross-platform social tools
       const socialSidecars = new Set(["linkedin", "twitter", "facebook", "pinterest"]);
-      const toolNames: string[] = allSidecarTools.length > 0
-        ? allSidecarTools.map((t) => t.name)
-        : socialSidecars.has(name)
-          ? ["social-post", "social-timeline", "social-profile", ...(name === "pinterest" ? ["pinterest-boards", "pinterest-pins"] : [])]
-          : [];
+      let toolNames: string[];
+      if (socialSidecars.has(name)) {
+        const platformTools = toolRegistry.getToolsBySource(name);
+        const crossPlatformTools = toolRegistry.getToolsBySource("social");
+        toolNames = [...platformTools, ...crossPlatformTools].map((t) => t.name);
+      } else {
+        const allSidecarTools = toolRegistry.getToolsBySource(name);
+        toolNames = allSidecarTools.map((t) => t.name);
+      }
 
       if (toolNames.length === 0) {
         return res.status(404).json({ error: `Unknown sidecar: ${name}` });
@@ -596,30 +592,11 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
   router.get("/local-servers/:name/tools", (_req, res) => {
     const { name } = _req.params;
 
-    // Get tools registered in the ToolRegistry whose handler proxies to this local server
-    const serverToolMap: Record<string, string[]> = {
-      word: [
-        "create-word-doc", "word-add-heading", "word-add-paragraph",
-        "word-add-table", "word-read-doc", "word-to-pdf",
-      ],
-      calendar: [
-        "calendar-list", "calendar-create", "calendar-search", "calendar-freebusy",
-      ],
-    };
-
-    const toolNames = serverToolMap[name];
-    if (!toolNames) {
+    // Get tools registered in the ToolRegistry via source tag
+    const tools = toolRegistry.getToolsBySource(name);
+    if (tools.length === 0) {
       return res.status(404).json({ error: `Unknown local server: ${name}` });
     }
-
-    const tools = toolNames
-      .map((toolName) => {
-        const info = toolRegistry.getToolInfo(toolName);
-        return info
-          ? { name: info.name, description: info.description, riskLevel: info.riskLevel, enabled: info.enabled }
-          : null;
-      })
-      .filter(Boolean);
 
     return res.json({ server: name, tools });
   });

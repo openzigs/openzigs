@@ -185,6 +185,7 @@ export const createDocumentIntelligenceTools = (
       zodSchema: createWordDocSchema,
       category: "documents",
       riskLevel: "medium",
+      source: "word",
       handler: async (args) => {
         const input = args as z.infer<typeof createWordDocSchema>;
         return callLocalServer(mgr, "word", "create_document", input);
@@ -204,6 +205,7 @@ export const createDocumentIntelligenceTools = (
       zodSchema: wordAddHeadingSchema,
       category: "documents",
       riskLevel: "medium",
+      source: "word",
       handler: async (args) => {
         const input = args as z.infer<typeof wordAddHeadingSchema>;
         return callLocalServer(mgr, "word", "add_heading", input);
@@ -223,6 +225,7 @@ export const createDocumentIntelligenceTools = (
       zodSchema: wordAddParagraphSchema,
       category: "documents",
       riskLevel: "medium",
+      source: "word",
       handler: async (args) => {
         const input = args as z.infer<typeof wordAddParagraphSchema>;
         return callLocalServer(mgr, "word", "add_paragraph", input);
@@ -245,6 +248,7 @@ export const createDocumentIntelligenceTools = (
       zodSchema: wordAddTableSchema,
       category: "documents",
       riskLevel: "medium",
+      source: "word",
       handler: async (args) => {
         const input = args as z.infer<typeof wordAddTableSchema>;
         return callLocalServer(mgr, "word", "add_table", input);
@@ -263,6 +267,7 @@ export const createDocumentIntelligenceTools = (
       zodSchema: wordReadDocSchema,
       category: "documents",
       riskLevel: "low",
+      source: "word",
       handler: async (args) => {
         const input = args as z.infer<typeof wordReadDocSchema>;
         return callLocalServer(mgr, "word", "read_document", input);
@@ -282,6 +287,7 @@ export const createDocumentIntelligenceTools = (
       zodSchema: wordToPdfSchema,
       category: "documents",
       riskLevel: "medium",
+      source: "word",
       handler: async (args) => {
         const input = args as z.infer<typeof wordToPdfSchema>;
         return callLocalServer(mgr, "word", "convert_to_pdf", input);
@@ -303,6 +309,7 @@ export const createDocumentIntelligenceTools = (
       zodSchema: calendarListSchema,
       category: "documents",
       riskLevel: "low",
+      source: "calendar",
       handler: async (args) => {
         const input = args as z.infer<typeof calendarListSchema>;
         return callLocalServer(mgr, "calendar", "list-events", input);
@@ -327,6 +334,7 @@ export const createDocumentIntelligenceTools = (
       zodSchema: calendarCreateSchema,
       category: "documents",
       riskLevel: "medium",
+      source: "calendar",
       handler: async (args) => {
         const input = args as z.infer<typeof calendarCreateSchema>;
         return callLocalServer(mgr, "calendar", "create-event", input);
@@ -347,6 +355,7 @@ export const createDocumentIntelligenceTools = (
       zodSchema: calendarSearchSchema,
       category: "documents",
       riskLevel: "low",
+      source: "calendar",
       handler: async (args) => {
         const input = args as z.infer<typeof calendarSearchSchema>;
         return callLocalServer(mgr, "calendar", "search-events", input);
@@ -368,6 +377,7 @@ export const createDocumentIntelligenceTools = (
       zodSchema: calendarFreebusySchema,
       category: "documents",
       riskLevel: "low",
+      source: "calendar",
       handler: async (args) => {
         const input = args as z.infer<typeof calendarFreebusySchema>;
         return callLocalServer(mgr, "calendar", "get-freebusy", input);
