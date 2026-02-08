@@ -3,7 +3,7 @@
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { io, type Socket } from "socket.io-client";
 
-const SOCKET_URL = process.env.NEXT_PUBLIC_OPENZIGS_SOCKET_URL ?? process.env.NEXT_PUBLIC_OPENZIGS_API_BASE ?? "";
+const SOCKET_URL = process.env.NEXT_PUBLIC_OPENZIGS_SOCKET_URL ?? process.env.NEXT_PUBLIC_OPENZIGS_API_BASE ?? "http://localhost:3000";
 
 type SocketContextValue = {
   socket: Socket | null;

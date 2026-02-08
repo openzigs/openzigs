@@ -7,12 +7,12 @@ import type { EnvEntry } from "@/lib/types";
 export const EnvPanel = () => {
   const query = useQuery({
     queryKey: ["env"],
-    queryFn: () => fetchJson<EnvEntry[]>("/api/admin/env"),
+    queryFn: () => fetchJson<{ env: EnvEntry[] }>("/api/admin/env"),
   });
 
   if (query.isLoading) return <p className="text-sm text-ink/50">Loading…</p>;
 
-  const envItems = query.data ?? [];
+  const envItems = query.data?.env ?? [];
   if (envItems.length === 0) return <p className="text-sm text-ink/50">No environment items.</p>;
 
   return (
