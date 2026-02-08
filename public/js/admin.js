@@ -127,8 +127,15 @@
 
     for (var c = 0; c < categoryOrder.length; c++) {
       var category = categoryOrder[c];
-      var tools = grouped[category];
-      if (!tools || tools.length === 0) continue;
+      var allTools = grouped[category];
+      if (!allTools || allTools.length === 0) continue;
+
+      // Filter out tools that belong to an MCP sidecar (they appear in sidecar cards)
+      var tools = [];
+      for (var f = 0; f < allTools.length; f++) {
+        if (!allTools[f].source) tools.push(allTools[f]);
+      }
+      if (tools.length === 0) continue;
 
       var section = document.createElement("div");
       section.className = "tool-category";
@@ -436,7 +443,7 @@
     card.className = "sidecar-card";
     card.setAttribute("data-sidecar", cred.platform);
 
-    // Header row: expand icon + name + status badge (clickable to toggle)
+    // Header row: expand icon + name + enable toggle + status badge (clickable to toggle)
     var header = document.createElement("div");
     header.className = "sidecar-header";
 
@@ -455,11 +462,36 @@
 
     header.appendChild(headerLeft);
 
+    var headerRight = document.createElement("div");
+    headerRight.className = "sidecar-header-right";
+
+    // Server-level enable/disable toggle
+    var serverToggle = document.createElement("label");
+    serverToggle.className = "toggle";
+    var serverCheckbox = document.createElement("input");
+    serverCheckbox.type = "checkbox";
+    serverCheckbox.checked = cred.enabled !== false;
+    (function (platform, cb) {
+      cb.addEventListener("change", function (e) {
+        e.stopPropagation();
+        toggleSidecar(platform, cb.checked, cb);
+      });
+    })(cred.platform, serverCheckbox);
+    serverToggle.appendChild(serverCheckbox);
+    var serverSlider = document.createElement("span");
+    serverSlider.className = "slider";
+    serverToggle.appendChild(serverSlider);
+    serverToggle.addEventListener("click", function (e) { e.stopPropagation(); });
+    headerRight.appendChild(serverToggle);
+
     var badge = document.createElement("span");
     badge.className = "sidecar-badge";
     if (!cred.imageAvailable) {
       badge.classList.add("coming-soon");
       badge.textContent = "Coming Soon";
+    } else if (!cred.enabled) {
+      badge.classList.add("stopped");
+      badge.textContent = "Disabled";
     } else if (status && status.running && status.healthy) {
       badge.classList.add("healthy");
       badge.textContent = "Healthy";
@@ -476,7 +508,8 @@
       badge.classList.add("unknown");
       badge.textContent = "Unknown";
     }
-    header.appendChild(badge);
+    headerRight.appendChild(badge);
+    header.appendChild(headerRight);
     card.appendChild(header);
 
     // Toggle expand/collapse on header click
@@ -714,6 +747,28 @@
     } catch (err) {
       loadingEl.textContent = "Failed to load tools.";
       console.error(err);
+    }
+  }
+
+  async function toggleSidecar(name, enabled, checkbox) {
+    checkbox.disabled = true;
+    try {
+      var res = await fetch("/api/admin/sidecars/" + encodeURIComponent(name) + "/toggle", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: enabled })
+      });
+      if (!res.ok) {
+        var data = await res.json().catch(function () { return {}; });
+        throw new Error(data.error || "Failed");
+      }
+      showToast(name + " " + (enabled ? "enabled" : "disabled") + " — restart required");
+      await loadSidecars();
+    } catch (err) {
+      checkbox.checked = !enabled;
+      showToast("Error: " + (err && err.message ? err.message : String(err)));
+    } finally {
+      checkbox.disabled = false;
     }
   }
 

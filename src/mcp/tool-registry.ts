@@ -29,6 +29,8 @@ export type ToolInfo = {
   category: ToolCategory;
   riskLevel: RiskLevel;
   enabled: boolean;
+  /** The sidecar/source this tool belongs to, if any. */
+  source?: string;
 };
 
 export type ToolRegistryState = {
@@ -128,7 +130,8 @@ export class ToolRegistry extends EventEmitter {
         description: tool.description,
         category: tool.category,
         riskLevel,
-        enabled: this.isEnabled(tool.name)
+        enabled: this.isEnabled(tool.name),
+        source: tool.source,
       });
     }
 
@@ -149,7 +152,8 @@ export class ToolRegistry extends EventEmitter {
       description: tool.description,
       category: tool.category,
       riskLevel: this.getRiskLevel(name) ?? tool.riskLevel,
-      enabled: this.isEnabled(name)
+      enabled: this.isEnabled(name),
+      source: tool.source,
     };
   }
 
@@ -163,7 +167,8 @@ export class ToolRegistry extends EventEmitter {
           description: tool.description,
           category: tool.category,
           riskLevel: this.getRiskLevel(tool.name) ?? tool.riskLevel,
-          enabled: this.isEnabled(tool.name)
+          enabled: this.isEnabled(tool.name),
+          source: tool.source,
         });
       }
     }

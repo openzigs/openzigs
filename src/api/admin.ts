@@ -40,6 +40,7 @@ type SidecarCredential = {
   platform: string;
   label: string;
   imageAvailable: boolean;
+  enabled: boolean;
   envVars: { name: string; configured: boolean }[];
 };
 
@@ -393,10 +394,25 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
     const statuses = sidecarManager?.getAllStatuses() ?? [];
     const configured = sidecarManager?.getConfiguredSidecars() ?? [];
 
+    // Load sidecar enabled states from config
+    const sidecarEnabledMap: Record<string, boolean> = {};
+    try {
+      const config = await loadConfig();
+      const sidecars = config.mcpServers?.sidecars as Record<string, { enabled?: boolean }> | undefined;
+      if (sidecars) {
+        for (const [name, cfg] of Object.entries(sidecars)) {
+          sidecarEnabledMap[name] = cfg.enabled !== false; // default to true
+        }
+      }
+    } catch {
+      // Config unavailable — assume all enabled
+    }
+
     const credentials: SidecarCredential[] = SIDECAR_CREDENTIALS.map((cred) => ({
       platform: cred.platform,
       label: cred.label,
       imageAvailable: cred.imageAvailable,
+      enabled: sidecarEnabledMap[cred.platform] !== false,
       envVars: cred.envVars.map((name) => ({
         name,
         configured: !!(process.env[name] && process.env[name]!.trim().length > 0)
@@ -409,6 +425,46 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
       credentials,
       dockerAvailable,
     });
+  });
+
+  // ── Toggle MCP Sidecar Enabled/Disabled ──
+  router.post("/sidecars/:name/toggle", async (req, res) => {
+    const { name } = req.params;
+    const { enabled } = req.body as { enabled?: boolean };
+    if (typeof enabled !== "boolean") {
+      return res.status(400).json({ error: "enabled must be a boolean" });
+    }
+
+    const validSidecars = new Set(SIDECAR_CREDENTIALS.map((c) => c.platform));
+    if (!validSidecars.has(name)) {
+      return res.status(404).json({ error: `Unknown sidecar: ${name}` });
+    }
+
+    try {
+      const configPath = defaultConfigPath();
+      const userConfig = await readUserConfig(configPath);
+      const mcpServers = (userConfig.mcpServers && typeof userConfig.mcpServers === "object")
+        ? (userConfig.mcpServers as Record<string, unknown>)
+        : {};
+      const sidecars = (mcpServers.sidecars && typeof mcpServers.sidecars === "object")
+        ? (mcpServers.sidecars as Record<string, unknown>)
+        : {};
+      const existing = (sidecars[name] && typeof sidecars[name] === "object")
+        ? (sidecars[name] as Record<string, unknown>)
+        : {};
+
+      sidecars[name] = { ...existing, enabled };
+      mcpServers.sidecars = sidecars;
+      userConfig.mcpServers = mcpServers;
+
+      await writeUserConfig(configPath, userConfig);
+
+      logger.info(`Sidecar "${name}" ${enabled ? "enabled" : "disabled"}`);
+      return res.json({ ok: true, sidecar: name, enabled, restartRequired: true });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return res.status(500).json({ error: message });
+    }
   });
 
   // ── Save MCP sidecar credentials ──

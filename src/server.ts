@@ -159,6 +159,10 @@ registerMcpTools(toolRegistry, {
   twitterSidecarUrl: resolveSidecarUrl("twitter", "MCP_TWITTER_URL", 5102),
   facebookSidecarUrl: resolveSidecarUrl("facebook", "MCP_FACEBOOK_URL", 5103),
   pinterestSidecarUrl: resolveSidecarUrl("pinterest", "MCP_PINTEREST_URL", 5104),
+  markitdownSidecarUrl: resolveSidecarUrl("markitdown", "MCP_MARKITDOWN_URL", 5301),
+  gmailSidecarUrl: resolveSidecarUrl("gmail", "MCP_GMAIL_URL", 5302),
+  databaseSidecarUrl: resolveSidecarUrl("database", "MCP_DATABASE_URL", 5303),
+  githubSidecarUrl: resolveSidecarUrl("github", "MCP_GITHUB_URL", 5304),
   localServerManager,
 });
 const app = createApp(config, { auditLogger, approvalQueue, toolRegistry, promptManager, scheduler });

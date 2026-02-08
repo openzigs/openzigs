@@ -451,6 +451,12 @@ html, body {
   gap: 8px;
 }
 
+.sidecar-header-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
 .sidecar-expand-icon {
   font-size: 10px;
   color: var(--text-muted);

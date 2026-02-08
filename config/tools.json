@@ -2,6 +2,7 @@
   "enabledTools": [
     "browser-navigate",
     "browser-read",
+    "convert-to-markdown",
     "list-directory",
     "read-file",
     "shell-execute",
