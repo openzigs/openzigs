@@ -245,7 +245,7 @@ export class CopilotWrapperService implements CopilotWrapper {
     model = "gpt-4.1",
     authTimeoutMs = 5 * 60 * 1000,
     maxToolsPerRequest = 30,
-    sendAndWaitTimeoutMs = 10 * 60 * 1000, // 10 minutes — browser automation needs room
+    sendAndWaitTimeoutMs = 15 * 60 * 1000, // 15 minutes — browser automation needs room
     onToolCall,
     onPermissionRequest
   }: CopilotWrapperOptions = {}) {
