@@ -87,6 +87,13 @@ export class WebChatChannel implements MessageChannel {
     }
   }
 
+  async sendToolProgress(chatId: string, tool: string): Promise<void> {
+    const socket = this.getSocketByChatId(chatId);
+    if (socket) {
+      socket.emit("chat:tool_call", { tool });
+    }
+  }
+
   async sendApprovalRequest(chatId: string, request: ApprovalRequest): Promise<void> {
     if (!this.connected) {
       throw new Error("Channel is not connected");

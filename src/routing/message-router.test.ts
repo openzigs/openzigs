@@ -96,9 +96,9 @@ class FakeCopilot implements CopilotWrapper {
     return true;
   }
 
-  async *chat(message: string, _tools?: unknown[], model?: string): AsyncGenerator<string> {
+  async *chat(message: string, options?: { tools?: unknown[]; model?: string; onToolCall?: (tool: string, args: unknown) => void }): AsyncGenerator<string> {
     this.lastPrompt = message;
-    this.lastModel = model;
+    this.lastModel = options?.model;
     for (const chunk of this.chunks) {
       yield chunk;
     }

@@ -49,11 +49,17 @@ type CopilotClientLike = {
   listModels?: () => Promise<CopilotModel[]>;
 };
 
+export type ChatOptions = {
+  tools?: ToolDefinition[];
+  model?: string;
+  onToolCall?: (tool: string, args: unknown) => void;
+};
+
 export interface CopilotWrapper {
   authenticate(): Promise<DeviceAuthInfo>;
   waitForAuth(): Promise<void>;
   isAuthenticated(): Promise<boolean>;
-  chat(message: string, tools?: ToolDefinition[], model?: string): AsyncGenerator<string>;
+  chat(message: string, options?: ChatOptions): AsyncGenerator<string>;
   listModels(): Promise<CopilotModel[]>;
   onToolCall(tool: string, args: unknown): Promise<void>;
 }
@@ -295,7 +301,7 @@ export class CopilotWrapperService implements CopilotWrapper {
     return !isExpired(state.expiresAt);
   }
 
-  async *chat(message: string, tools?: ToolDefinition[], model?: string): AsyncGenerator<string> {
+  async *chat(message: string, options?: ChatOptions): AsyncGenerator<string> {
     await this.ensureStarted();
 
     if (this.startFailed) {
@@ -305,8 +311,9 @@ export class CopilotWrapperService implements CopilotWrapper {
       );
     }
 
-    const effectiveModel = model ?? this.model;
-    let toolList = tools ?? this.toolRegistry?.listEnabledTools() ?? [];
+    const effectiveModel = options?.model ?? this.model;
+    let toolList = options?.tools ?? this.toolRegistry?.listEnabledTools() ?? [];
+    const perCallToolCallback = options?.onToolCall;
 
     // Enforce maxToolsPerRequest: if we exceed the cap, keep always-on core tools
     // and fill the remaining slots with the rest.
@@ -323,6 +330,9 @@ export class CopilotWrapperService implements CopilotWrapper {
         parameters: tool.inputSchema,
         handler: async (args) => {
           await this.onToolCall(tool.name, args);
+          if (perCallToolCallback) {
+            perCallToolCallback(tool.name, args);
+          }
           const result = await tool.handler(args as Record<string, unknown>);
           if (result.isError) {
             throw new Error(result.text);

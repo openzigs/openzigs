@@ -160,14 +160,30 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
   const router = Router();
 
   // ── Server Restart ──
-  // The backend runs under tsx watch (dev) or a process manager (prod),
-  // so exiting the process triggers an automatic restart.
-  router.post("/restart", (_req, res) => {
+  // In dev mode, tsx watch only restarts on file changes — process.exit()
+  // just kills the process permanently.  We touch the server entry-point
+  // to trigger a genuine watch-based restart.  In prod (node / pm2),
+  // process.exit(0) still works because the process manager handles respawns.
+  router.post("/restart", async (_req, res) => {
     logger.info("Server restart requested via admin API");
     res.json({ ok: true, message: "Server restarting…" });
-    // Give the response time to flush before exiting
-    setTimeout(() => {
-      process.exit(0);
+
+    setTimeout(async () => {
+      const isDev = !!process.env.npm_lifecycle_script?.includes("tsx watch");
+      if (isDev) {
+        // Touch the entry-point so tsx watch picks up the "change"
+        const entry = path.resolve(process.cwd(), "src", "server.ts");
+        try {
+          const now = new Date();
+          await fs.utimes(entry, now, now);
+          logger.info("Touched src/server.ts to trigger tsx watch restart");
+        } catch {
+          // Fallback: exit and hope a process manager picks up
+          process.exit(0);
+        }
+      } else {
+        process.exit(0);
+      }
     }, 500);
   });
 

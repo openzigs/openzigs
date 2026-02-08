@@ -407,6 +407,9 @@ if (webConfig?.enabled !== false) {
         onChunk: (chunk) => {
           void webChatChannel.sendStreamChunk(message.chatId, chunk, messageId);
         },
+        onToolCall: (tool) => {
+          void webChatChannel.sendToolProgress(message.chatId, tool);
+        },
         model: message.model // Model is picked per-request via the UI; already read from user config by the model selector
       })
       .then(() => {
@@ -415,9 +418,9 @@ if (webConfig?.enabled !== false) {
       .catch((error) => {
         const details = error instanceof Error ? error.message : String(error);
         logger.error(`web chat message routing failed: ${details}`);
-        const userMessage = /SDK|CLI|unavailable|timed out/i.test(details)
+        const userMessage = /SDK|CLI|unavailable|timed out|rate.?limit/i.test(details)
           ? details
-          : "Something went wrong";
+          : "Something went wrong — check server logs for details.";
         void webChatChannel.sendError(message.chatId, userMessage);
       });
   });

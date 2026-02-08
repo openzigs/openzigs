@@ -5,6 +5,7 @@ import { useSocket } from "@/lib/socket-context";
 import { fetchJson } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import { ToastContainer } from "@/components/toast";
 import {
   Select,
   SelectContent,
@@ -46,6 +47,7 @@ export const ChatView = () => {
   const [selectedModel, setSelectedModel] = useState("");
   const [sending, setSending] = useState(false);
   const [thinking, setThinking] = useState(false);
+  const [activeTool, setActiveTool] = useState<string | null>(null);
   const [pendingApproval, setPendingApproval] = useState<ApprovalRequest | null>(null);
   const [fallbackWarning, setFallbackWarning] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -77,7 +79,20 @@ export const ChatView = () => {
     }
     setSending(false);
     setThinking(false);
+    setActiveTool(null);
   }, [clearStuckTimer]);
+
+  /** Reset the stuck timer — call on every inbound event to keep it alive during long tool executions. */
+  const resetStuckTimer = useCallback(() => {
+    clearStuckTimer();
+    inputStuckTimerRef.current = setTimeout(() => {
+      finalizeStream();
+      setMessages((prev) => [
+        ...prev,
+        { id: `err-${Date.now()}`, role: "error", content: "No response received — the Copilot SDK may be unavailable. Check server logs." },
+      ]);
+    }, 300_000); // 5 minutes — browser automation and multi-step tool chains can take a while
+  }, [clearStuckTimer, finalizeStream]);
 
   // Load models
   useEffect(() => {
@@ -110,8 +125,10 @@ export const ChatView = () => {
     };
 
     const onStream = (data: { chunk: string }) => {
-      // First stream chunk = stop thinking indicator
+      // Any stream chunk = work is happening, reset the stuck timer
+      resetStuckTimer();
       setThinking(false);
+      setActiveTool(null);
 
       if (!streamRef.current) {
         const id = `stream-${Date.now()}`;
@@ -139,8 +156,20 @@ export const ChatView = () => {
     };
 
     const onApprovalRequest = (data: ApprovalRequest) => {
+      resetStuckTimer();
       setThinking(false);
       setPendingApproval(data);
+    };
+
+    const onToolCall = (data: { tool: string }) => {
+      // A tool is executing — reset the stuck timer so we don't time out during long operations
+      resetStuckTimer();
+      setActiveTool(data.tool);
+    };
+
+    const onDisconnected = () => {
+      setChatId(null);
+      finalizeStream();
     };
 
     socket.on("chat:connected", onConnected);
@@ -148,7 +177,9 @@ export const ChatView = () => {
     socket.on("chat:stream", onStream);
     socket.on("chat:stream:end", onStreamEnd);
     socket.on("chat:error", onError);
+    socket.on("chat:tool_call", onToolCall);
     socket.on("approval:request", onApprovalRequest);
+    socket.on("disconnect", onDisconnected);
 
     return () => {
       socket.off("chat:connected", onConnected);
@@ -156,9 +187,11 @@ export const ChatView = () => {
       socket.off("chat:stream", onStream);
       socket.off("chat:stream:end", onStreamEnd);
       socket.off("chat:error", onError);
+      socket.off("chat:tool_call", onToolCall);
       socket.off("approval:request", onApprovalRequest);
+      socket.off("disconnect", onDisconnected);
     };
-  }, [socket, finalizeStream]);
+  }, [socket, finalizeStream, resetStuckTimer]);
 
   useEffect(() => {
     scrollToBottom();
@@ -166,7 +199,7 @@ export const ChatView = () => {
 
   const handleSend = useCallback(() => {
     const text = input.trim();
-    if (!text || !socket || sending) return;
+    if (!text || !socket || sending || !connected) return;
 
     // If not yet connected, show a warning instead of silently failing
     if (!chatId) {
@@ -188,15 +221,9 @@ export const ChatView = () => {
       textareaRef.current.style.height = "auto";
     }
 
-    clearStuckTimer();
-    inputStuckTimerRef.current = setTimeout(() => {
-      finalizeStream();
-      setMessages((prev) => [
-        ...prev,
-        { id: nextId(), role: "error", content: "No response received — the Copilot SDK may be unavailable. Check server logs." },
-      ]);
-    }, 30_000);
-  }, [input, chatId, socket, selectedModel, sending, nextId, clearStuckTimer, finalizeStream]);
+    // Start the stuck timer — will be reset on every stream chunk or tool-call event
+    resetStuckTimer();
+  }, [input, chatId, socket, selectedModel, sending, connected, nextId, resetStuckTimer]);
 
   const handleApprovalResponse = useCallback(
     (approved: boolean) => {
@@ -234,7 +261,8 @@ export const ChatView = () => {
   const showConnecting = connected && !chatId;
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-background">
+    <>
+      <div className="flex h-full min-h-0 flex-col bg-background">
       {/* Header */}
       <header className="flex items-center gap-4 border-b border-border bg-card px-5 py-3">
         <h1 className="text-lg font-semibold text-foreground">OpenZigs</h1>
@@ -343,7 +371,7 @@ export const ChatView = () => {
               <Bot className="h-4 w-4" />
             </div>
             <div className="flex items-center gap-1 rounded-2xl bg-muted px-4 py-3">
-              <ThinkingDots />
+              {activeTool ? <ToolProgress tool={activeTool} /> : <ThinkingDots />}
             </div>
           </div>
         )}
@@ -391,7 +419,7 @@ export const ChatView = () => {
             type="submit"
             size="icon"
             className="h-11 w-11 shrink-0 rounded-xl"
-            disabled={inputDisabled || !input.trim() || !chatId}
+            disabled={inputDisabled || !input.trim() || !chatId || !connected}
           >
             {sending ? (
               <Loader2 className="h-4 w-4 animate-spin" />
@@ -433,7 +461,9 @@ export const ChatView = () => {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </div>
+      </div>
+      <ToastContainer />
+    </>
   );
 };
 
@@ -445,6 +475,16 @@ const ThinkingDots = () => (
       <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-muted-foreground/50 [animation-delay:0ms]" />
       <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-muted-foreground/50 [animation-delay:150ms]" />
       <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-muted-foreground/50 [animation-delay:300ms]" />
+    </span>
+  </div>
+);
+
+/** Shows the active tool name with a pulsing indicator */
+const ToolProgress = ({ tool }: { tool: string }) => (
+  <div className="flex items-center gap-2">
+    <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
+    <span className="text-xs text-muted-foreground">
+      Using <span className="font-mono">{tool}</span>
     </span>
   </div>
 );

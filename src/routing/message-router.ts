@@ -10,6 +10,8 @@ export type RouteOptions = {
   onChunk?: (chunk: string) => void;
   /** Override the model for this request. */
   model?: string;
+  /** Callback invoked when a tool is called during processing. */
+  onToolCall?: (tool: string, args: unknown) => void;
 };
 
 export type MessageRouterOptions = {
@@ -74,7 +76,7 @@ export class MessageRouter {
     const prompt = this.buildPrompt(resume.history, message.content);
 
     let response = "";
-    for await (const chunk of this.copilot.chat(prompt, undefined, options?.model)) {
+    for await (const chunk of this.copilot.chat(prompt, { model: options?.model, onToolCall: options?.onToolCall })) {
       response += chunk;
       if (options?.onChunk) {
         options.onChunk(chunk);
