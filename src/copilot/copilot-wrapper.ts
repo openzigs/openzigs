@@ -25,7 +25,7 @@ type AuthState = {
 
 type CopilotSessionLike = {
   on: (event: string, handler: (event: { data?: { deltaContent?: string } }) => void) => void;
-  sendAndWait: (input: { prompt: string }) => Promise<unknown>;
+  sendAndWait: (input: { prompt: string }, timeout?: number) => Promise<unknown>;
 };
 
 export type CopilotModel = {
@@ -76,6 +76,8 @@ export type CopilotWrapperOptions = {
   onPermissionRequest?: (request: { kind: string; toolName?: string; toolArgs?: unknown }) => Promise<{
     kind: "approved" | "denied-by-rules" | "denied-by-user";
   }>;
+  /** Timeout in ms for each sendAndWait call. Default 600_000 (10 min). */
+  sendAndWaitTimeoutMs?: number;
 };
 
 const defaultAuthPath = () => path.join(os.homedir(), ".openzigs", "auth.json");
@@ -233,6 +235,7 @@ export class CopilotWrapperService implements CopilotWrapper {
     kind: "approved" | "denied-by-rules" | "denied-by-user";
   }>;
   private maxToolsPerRequest: number;
+  private sendAndWaitTimeoutMs: number;
 
   constructor({
     client,
@@ -242,6 +245,7 @@ export class CopilotWrapperService implements CopilotWrapper {
     model = "gpt-4.1",
     authTimeoutMs = 5 * 60 * 1000,
     maxToolsPerRequest = 30,
+    sendAndWaitTimeoutMs = 10 * 60 * 1000, // 10 minutes — browser automation needs room
     onToolCall,
     onPermissionRequest
   }: CopilotWrapperOptions = {}) {
@@ -253,6 +257,7 @@ export class CopilotWrapperService implements CopilotWrapper {
     this.model = model;
     this.authTimeoutMs = authTimeoutMs;
     this.maxToolsPerRequest = maxToolsPerRequest;
+    this.sendAndWaitTimeoutMs = sendAndWaitTimeoutMs;
     this.toolCallHandler = onToolCall;
     this.permissionHandler = onPermissionRequest;
   }
@@ -432,7 +437,7 @@ export class CopilotWrapperService implements CopilotWrapper {
     // eslint-disable-next-line no-constant-condition
     while (true) {
       try {
-        await session.sendAndWait({ prompt });
+        await session.sendAndWait({ prompt }, this.sendAndWaitTimeoutMs);
         return;
       } catch (error) {
         if (isUnauthorizedError(error)) {

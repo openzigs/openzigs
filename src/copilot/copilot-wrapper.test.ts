@@ -15,7 +15,7 @@ class FakeSession {
     this.handlers.set(event, list);
   }
 
-  async sendAndWait({ prompt }: { prompt: string }) {
+  async sendAndWait({ prompt }: { prompt: string }, _timeout?: number) {
     if (!prompt) {
       throw new Error("Missing prompt");
     }
