@@ -166,7 +166,7 @@ registerMcpTools(toolRegistry, {
 });
 const app = createApp(config, { auditLogger, approvalQueue, toolRegistry, promptManager, scheduler });
 const port = Number(process.env.PORT ?? 3000);
-const uiOrigin = process.env.OPENZIGS_UI_ORIGIN ?? "http://localhost:3000";
+const uiOrigin = process.env.OPENZIGS_UI_ORIGIN ?? "http://localhost:3001";
 const channelManager = new ChannelManager();
 const sessionManager = new SessionManager();
 const copilot = new CopilotWrapperService({ toolRegistry });

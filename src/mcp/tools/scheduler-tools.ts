@@ -73,7 +73,7 @@ export const createSchedulerTools = ({ scheduler }: SchedulerToolsOptions): Tool
     {
       name: "list-jobs",
       description: "List all scheduled jobs",
-      inputSchema: { type: "object" },
+      inputSchema: { type: "object", properties: {} },
       zodSchema: listJobsSchema,
       category: "productivity",
       riskLevel: "low",

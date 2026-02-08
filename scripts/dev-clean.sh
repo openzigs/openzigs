@@ -48,12 +48,20 @@ if [ -f "$CONFIG_FILE" ]; then
 fi
 
 cd "$PROJECT_ROOT"
-pnpm dev &
+DEV_LOG="$PROJECT_ROOT/.openzigs-dev.log"
+pnpm dev > "$DEV_LOG" 2>&1 &
 BACKEND_PID=$!
+
+echo "[clean-start] Backend logs: $DEV_LOG"
+tail -f "$DEV_LOG" &
+TAIL_PID=$!
 
 cleanup() {
   echo "[clean-start] Stopping OpenZigs dev servers..."
   kill -9 "$BACKEND_PID" 2>/dev/null || true
+  if [ -n "${TAIL_PID:-}" ]; then
+    kill -9 "$TAIL_PID" 2>/dev/null || true
+  fi
   pkill -f "next.*dev" || true
 }
 
