@@ -55,9 +55,9 @@ export default function LibraryPage() {
   return (
     <main className="mx-auto max-w-4xl px-6 py-10 lg:px-12">
       <header className="mb-8">
-        <p className="text-sm uppercase tracking-[0.3em] text-haze">OpenZigs</p>
-        <h1 className="mt-1 text-3xl font-semibold text-ink">Prompt Library</h1>
-        <p className="mt-1 text-sm text-ink/50">
+        <p className="text-sm uppercase tracking-[0.3em] text-muted-foreground">OpenZigs</p>
+        <h1 className="mt-1 text-3xl font-semibold text-foreground">Prompt Library</h1>
+        <p className="mt-1 text-sm text-muted-foreground">
           Create, edit, and manage reusable prompt templates.
         </p>
       </header>
@@ -69,11 +69,11 @@ export default function LibraryPage() {
           placeholder="Search prompts…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          className="flex-1 rounded-xl border border-ink/10 bg-white/80 px-4 py-2.5 text-sm"
+          className="flex-1 rounded-xl border border-border bg-card px-4 py-2.5 text-sm text-foreground"
         />
         <button
           onClick={handleNew}
-          className="rounded-xl bg-tide px-5 py-2.5 text-sm font-semibold text-white"
+          className="rounded-xl bg-primary px-5 py-2.5 text-sm font-semibold text-primary-foreground"
         >
           + New Prompt
         </button>
@@ -89,22 +89,22 @@ export default function LibraryPage() {
       {/* List */}
       <SectionCard title="Saved Prompts">
         {promptsQuery.isLoading ? (
-          <p className="text-sm text-ink/50">Loading…</p>
+          <p className="text-sm text-muted-foreground">Loading…</p>
         ) : prompts.length === 0 ? (
-          <p className="text-sm text-ink/50">
+          <p className="text-sm text-muted-foreground">
             {search ? "No prompts match your search." : 'No prompts saved yet. Click "+ New Prompt" to create one.'}
           </p>
         ) : (
           <div className="space-y-3">
             {prompts.map((prompt) => (
-              <div key={prompt.id} className="rounded-2xl border border-ink/10 bg-white/60 p-4">
+              <div key={prompt.id} className="rounded-2xl border border-border bg-card p-4">
                 <div className="flex items-start justify-between">
                   <div className="min-w-0 flex-1">
-                    <p className="text-sm font-semibold text-ink">{prompt.name}</p>
+                    <p className="text-sm font-semibold text-foreground">{prompt.name}</p>
                     {prompt.description && (
-                      <p className="mt-1 text-xs text-ink/60">{prompt.description}</p>
+                      <p className="mt-1 text-xs text-muted-foreground">{prompt.description}</p>
                     )}
-                    <pre className="mt-2 line-clamp-3 whitespace-pre-wrap break-words font-mono text-xs text-ink/40">
+                    <pre className="mt-2 line-clamp-3 whitespace-pre-wrap break-words font-mono text-xs text-muted-foreground">
                       {prompt.template.length > 300
                         ? prompt.template.slice(0, 300) + "…"
                         : prompt.template}
@@ -113,13 +113,13 @@ export default function LibraryPage() {
                   <div className="ml-3 flex shrink-0 gap-2">
                     <button
                       onClick={() => handleEdit(prompt)}
-                      className="rounded-lg border border-tide px-3 py-1.5 text-xs font-semibold text-tide hover:bg-tide/5"
+                      className="rounded-lg border border-primary px-3 py-1.5 text-xs font-semibold text-primary hover:bg-primary/5"
                     >
                       Edit
                     </button>
                     <button
                       onClick={() => handleDelete(prompt)}
-                      className="rounded-lg border border-ember/30 px-3 py-1.5 text-xs font-semibold text-ember hover:bg-ember/5"
+                      className="rounded-lg border border-destructive/30 px-3 py-1.5 text-xs font-semibold text-destructive hover:bg-destructive/5"
                     >
                       Delete
                     </button>
@@ -128,13 +128,13 @@ export default function LibraryPage() {
                 {prompt.tags.length > 0 && (
                   <div className="mt-2 flex flex-wrap gap-1">
                     {prompt.tags.map((tag) => (
-                      <span key={tag} className="rounded-full bg-tide/10 px-2 py-0.5 text-[10px] font-semibold text-tide">
+                      <span key={tag} className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold text-primary">
                         {tag}
                       </span>
                     ))}
                   </div>
                 )}
-                <p className="mt-2 text-[11px] text-ink/30">
+                <p className="mt-2 text-[11px] text-muted-foreground">
                   Updated {new Date(prompt.updatedAt).toLocaleDateString()}
                 </p>
               </div>
@@ -194,8 +194,8 @@ const PromptForm = ({ existing, onClose }: { existing: SavedPrompt | null; onClo
   }, [template]);
 
   return (
-    <div className="rounded-2xl border border-tide/20 bg-white/60 p-5">
-      <h3 className="mb-4 text-lg font-semibold text-ink">
+    <div className="rounded-2xl border border-primary/20 bg-card p-5">
+      <h3 className="mb-4 text-lg font-semibold text-foreground">
         {existing ? "Edit Prompt" : "New Prompt"}
       </h3>
 
@@ -203,7 +203,7 @@ const PromptForm = ({ existing, onClose }: { existing: SavedPrompt | null; onClo
         <Field label="Name">
           <input
             type="text"
-            className="w-full rounded-lg border border-ink/10 bg-white/80 px-3 py-2 text-sm"
+            className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-foreground"
             placeholder="e.g., daily-summary"
             value={name}
             onChange={(e) => setName(e.target.value)}
@@ -214,7 +214,7 @@ const PromptForm = ({ existing, onClose }: { existing: SavedPrompt | null; onClo
         <Field label="Description" hint="Optional — helps you remember what it's for.">
           <input
             type="text"
-            className="w-full rounded-lg border border-ink/10 bg-white/80 px-3 py-2 text-sm"
+            className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-foreground"
             placeholder="What this prompt does…"
             value={description}
             onChange={(e) => setDescription(e.target.value)}
@@ -223,7 +223,7 @@ const PromptForm = ({ existing, onClose }: { existing: SavedPrompt | null; onClo
 
         <Field label="Template">
           <textarea
-            className="w-full rounded-lg border border-ink/10 bg-white/80 px-3 py-2 font-mono text-sm"
+            className="w-full rounded-lg border border-border bg-card px-3 py-2 font-mono text-sm text-foreground"
             rows={8}
             placeholder={"Write your prompt template here.\nUse {{variable}} for dynamic placeholders."}
             value={template}
@@ -233,7 +233,7 @@ const PromptForm = ({ existing, onClose }: { existing: SavedPrompt | null; onClo
             <div className="mt-1 flex flex-wrap items-center gap-1">
               <span className="text-[11px] text-ink/40">Variables:</span>
               {variables.map((v) => (
-                <code key={v} className="rounded bg-tide/10 px-1.5 py-0.5 font-mono text-[11px] text-tide">
+                <code key={v} className="rounded bg-primary/10 px-1.5 py-0.5 font-mono text-[11px] text-primary">
                   {`{{${v}}}`}
                 </code>
               ))}
@@ -244,7 +244,7 @@ const PromptForm = ({ existing, onClose }: { existing: SavedPrompt | null; onClo
         <Field label="Tags" hint="Comma-separated. Used for filtering.">
           <input
             type="text"
-            className="w-full rounded-lg border border-ink/10 bg-white/80 px-3 py-2 text-sm"
+            className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-foreground"
             placeholder="marketing, daily, report"
             value={tagsInput}
             onChange={(e) => setTagsInput(e.target.value)}
@@ -254,7 +254,7 @@ const PromptForm = ({ existing, onClose }: { existing: SavedPrompt | null; onClo
         <div className="flex justify-end gap-2 pt-2">
           <button
             onClick={onClose}
-            className="rounded-lg border border-ink/10 px-4 py-2 text-xs font-semibold text-ink/60 hover:bg-ink/5"
+            className="rounded-lg border border-border px-4 py-2 text-xs font-semibold text-muted-foreground hover:bg-muted"
           >
             Cancel
           </button>
@@ -273,8 +273,8 @@ const PromptForm = ({ existing, onClose }: { existing: SavedPrompt | null; onClo
 
 const Field = ({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) => (
   <div className="space-y-1">
-    <label className="text-xs font-medium text-ink/50">{label}</label>
+    <label className="text-xs font-medium text-muted-foreground">{label}</label>
     {children}
-    {hint && <p className="text-[11px] text-ink/40">{hint}</p>}
+    {hint && <p className="text-[11px] text-muted-foreground/60">{hint}</p>}
   </div>
 );

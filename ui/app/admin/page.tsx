@@ -22,9 +22,9 @@ export default function AdminPage() {
   return (
     <main className="mx-auto max-w-6xl px-6 py-10 lg:px-12">
       <header className="mb-8">
-        <p className="text-sm uppercase tracking-[0.3em] text-haze">OpenZigs</p>
-        <h1 className="mt-1 text-3xl font-semibold text-ink">Administration</h1>
-        <p className="mt-1 text-sm text-ink/50">
+        <p className="text-sm uppercase tracking-[0.3em] text-muted-foreground">OpenZigs</p>
+        <h1 className="mt-1 text-3xl font-semibold text-foreground">Administration</h1>
+        <p className="mt-1 text-sm text-muted-foreground">
           Channels, sidecars, tool controls, and environment at a glance.
         </p>
       </header>

@@ -8,9 +8,9 @@ import type { SidecarCredential, SidecarStatus, SidecarsResponse, ToolInfo } fro
 import { showToast } from "@/components/toast";
 
 const riskColors: Record<string, string> = {
-  low: "bg-moss/15 text-moss",
-  medium: "bg-amber-500/15 text-amber-600",
-  high: "bg-ember/15 text-ember",
+  low: "bg-moss/15 text-moss dark:bg-moss/20 dark:text-green-400",
+  medium: "bg-amber-500/15 text-amber-600 dark:bg-amber-500/20 dark:text-amber-400",
+  high: "bg-ember/15 text-ember dark:bg-ember/20 dark:text-red-400",
 };
 
 export const SidecarsPanel = () => {
@@ -31,7 +31,7 @@ export const SidecarsPanel = () => {
   }, [socket, queryClient]);
 
   if (sidecarsQuery.isLoading) {
-    return <p className="text-sm text-ink/50">Loading…</p>;
+    return <p className="text-sm text-muted-foreground">Loading…</p>;
   }
 
   const data = sidecarsQuery.data;
@@ -137,7 +137,7 @@ const SidecarCard = ({ credential, status, dockerAvailable }: SidecarCardProps) 
 
   return (
     <div
-      className={`rounded-2xl border transition ${expanded ? "border-tide/30" : "border-ink/10"} bg-white/60`}
+      className={`rounded-2xl border transition ${expanded ? "border-primary/30" : "border-border"} bg-card`}
     >
       {/* Header */}
       <div
@@ -146,11 +146,11 @@ const SidecarCard = ({ credential, status, dockerAvailable }: SidecarCardProps) 
       >
         <div className="flex items-center gap-2">
           <span
-            className={`text-[10px] text-ink/40 transition-transform ${expanded ? "rotate-90" : ""}`}
+            className={`text-[10px] text-muted-foreground transition-transform ${expanded ? "rotate-90" : ""}`}
           >
             ▶
           </span>
-          <span className="text-sm font-semibold text-ink">{credential.label}</span>
+          <span className="text-sm font-semibold text-foreground">{credential.label}</span>
         </div>
         <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
           <ToggleSwitch
@@ -166,9 +166,9 @@ const SidecarCard = ({ credential, status, dockerAvailable }: SidecarCardProps) 
 
       {/* Expandable body */}
       {expanded && (
-        <div className="space-y-4 border-t border-ink/5 px-4 py-3">
+        <div className="space-y-4 border-t border-border px-4 py-3">
           {!credential.imageAvailable ? (
-            <p className="text-xs italic text-ink/40">
+            <p className="text-xs italic text-muted-foreground">
               Docker image not yet available. This integration is coming in a future release.
             </p>
           ) : (
@@ -176,16 +176,16 @@ const SidecarCard = ({ credential, status, dockerAvailable }: SidecarCardProps) 
               {/* Credential fields */}
               {credential.envVars.length > 0 ? (
                 <div className="space-y-2">
-                  <p className="text-[11px] font-semibold uppercase tracking-widest text-ink/40">
+                  <p className="text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">
                     API Credentials
                   </p>
                   {credential.envVars.map((envVar) => (
                     <div key={envVar.name} className="space-y-1">
-                      <label className="font-mono text-[11px] text-ink/50">{envVar.name}</label>
+                      <label className="font-mono text-[11px] text-muted-foreground">{envVar.name}</label>
                       <div className="flex items-center gap-1">
                         <input
                           type={showPasswords[envVar.name] ? "text" : "password"}
-                          className="flex-1 rounded-lg border border-ink/10 bg-white/80 px-3 py-1.5 font-mono text-xs"
+                          className="flex-1 rounded-lg border border-border bg-card px-3 py-1.5 font-mono text-xs"
                           placeholder={envVar.configured ? "••••••••  (already set)" : "Paste your key here…"}
                           value={credValues[envVar.name] ?? ""}
                           onChange={(e) => setCredValues({ ...credValues, [envVar.name]: e.target.value })}
@@ -193,7 +193,7 @@ const SidecarCard = ({ credential, status, dockerAvailable }: SidecarCardProps) 
                         />
                         <button
                           type="button"
-                          className="rounded-lg border border-ink/10 px-2 py-1.5 text-sm text-ink/50 hover:border-tide"
+                          className="rounded-lg border border-border px-2 py-1.5 text-sm text-muted-foreground hover:border-primary"
                           onClick={() =>
                             setShowPasswords({ ...showPasswords, [envVar.name]: !showPasswords[envVar.name] })
                           }
@@ -201,21 +201,21 @@ const SidecarCard = ({ credential, status, dockerAvailable }: SidecarCardProps) 
                           {showPasswords[envVar.name] ? "🔒" : "👁"}
                         </button>
                       </div>
-                      <p className={`text-[11px] font-medium ${envVar.configured ? "text-moss" : "text-ink/40"}`}>
+                      <p className={`text-[11px] font-medium ${envVar.configured ? "text-moss" : "text-muted-foreground"}`}>
                         {envVar.configured ? "✓ Configured" : "✗ Not set"}
                       </p>
                     </div>
                   ))}
                 </div>
               ) : (
-                <p className="text-[11px] text-ink/40">No credentials required</p>
+                <p className="text-[11px] text-muted-foreground">No credentials required</p>
               )}
 
               {/* Actions */}
               <div className="flex gap-2">
                 {credential.envVars.length > 0 && (
                   <button
-                    className="rounded-lg bg-tide px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-40"
+                    className="rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-40"
                     disabled={saveMutation.isPending}
                     onClick={handleSave}
                   >
@@ -224,7 +224,7 @@ const SidecarCard = ({ credential, status, dockerAvailable }: SidecarCardProps) 
                 )}
                 {dockerAvailable && (
                   <button
-                    className="rounded-lg border border-tide px-3 py-1.5 text-xs font-semibold text-tide disabled:opacity-40"
+                    className="rounded-lg border border-primary px-3 py-1.5 text-xs font-semibold text-primary disabled:opacity-40"
                     disabled={restartMutation.isPending || (!status?.running && status?.error !== "credentials_missing")}
                     onClick={() => restartMutation.mutate()}
                   >
@@ -238,7 +238,7 @@ const SidecarCard = ({ credential, status, dockerAvailable }: SidecarCardProps) 
 
               {/* URL info */}
               {status?.url && (
-                <p className="break-all rounded bg-ink/[0.03] px-2 py-1 font-mono text-[11px] text-ink/40">
+                <p className="break-all rounded bg-muted px-2 py-1 font-mono text-[11px] text-muted-foreground">
                   {status.url}
                 </p>
               )}
@@ -276,33 +276,33 @@ const SidecarTools = ({ platform }: { platform: string }) => {
   const tools = toolsQuery.data?.tools ?? [];
 
   if (toolsQuery.isLoading) {
-    return <p className="text-xs text-ink/40">Loading tools…</p>;
+    return <p className="text-xs text-muted-foreground">Loading tools…</p>;
   }
 
   if (tools.length === 0) return null;
 
   return (
     <div className="space-y-1">
-      <p className="text-[11px] font-semibold uppercase tracking-widest text-ink/40">Tools</p>
+      <p className="text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">Tools</p>
       {tools.map((tool) => (
         <div
           key={tool.name}
-          className="flex items-center gap-2 rounded-lg border border-ink/5 bg-white/40 px-3 py-1.5"
+          className="flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-1.5"
         >
           <div className="min-w-0 flex-1">
-            <p className="font-mono text-xs font-semibold text-ink">{tool.name}</p>
+            <p className="font-mono text-xs font-semibold text-foreground">{tool.name}</p>
             {tool.description && (
-              <p className="truncate text-[11px] text-ink/40">{tool.description}</p>
+              <p className="truncate text-[11px] text-muted-foreground">{tool.description}</p>
             )}
           </div>
           <span
-            className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase ${riskColors[tool.riskLevel] ?? "bg-ink/5 text-ink/50"}`}
+            className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase ${riskColors[tool.riskLevel] ?? "bg-muted text-muted-foreground"}`}
           >
             {tool.riskLevel}
           </span>
           <button
             className={`w-12 rounded-full px-2 py-0.5 text-[10px] font-semibold transition ${
-              tool.enabled ? "bg-moss text-white" : "bg-ink/10 text-ink/60"
+              tool.enabled ? "bg-moss text-white" : "bg-muted text-ink/60"
             }`}
             onClick={(e) => {
               e.stopPropagation();
@@ -320,13 +320,13 @@ const SidecarTools = ({ platform }: { platform: string }) => {
 /* ── Helpers ── */
 
 const getBadgeInfo = (cred: SidecarCredential, status: SidecarStatus | null) => {
-  if (!cred.imageAvailable) return { className: "bg-ink/5 text-ink/40", label: "Coming Soon" };
-  if (!cred.enabled) return { className: "bg-ink/10 text-ink/50", label: "Disabled" };
+  if (!cred.imageAvailable) return { className: "bg-muted text-muted-foreground", label: "Coming Soon" };
+  if (!cred.enabled) return { className: "bg-muted text-muted-foreground", label: "Disabled" };
   if (status?.running && status.healthy) return { className: "bg-moss/15 text-moss", label: "Healthy" };
   if (status?.running && !status.healthy) return { className: "bg-ember/15 text-ember", label: "Unhealthy" };
   if (status?.error === "credentials_missing") return { className: "bg-amber-500/15 text-amber-600", label: "No Credentials" };
-  if (status && !status.running) return { className: "bg-ink/10 text-ink/50", label: "Stopped" };
-  return { className: "bg-ink/5 text-ink/40", label: "Unknown" };
+  if (status && !status.running) return { className: "bg-muted text-muted-foreground", label: "Stopped" };
+  return { className: "bg-muted text-muted-foreground", label: "Unknown" };
 };
 
 const ToggleSwitch = ({
@@ -343,7 +343,7 @@ const ToggleSwitch = ({
     role="switch"
     aria-checked={checked}
     disabled={disabled}
-    className={`relative h-5 w-9 rounded-full transition-colors disabled:opacity-40 ${checked ? "bg-moss" : "bg-ink/20"}`}
+    className={`relative h-5 w-9 rounded-full transition-colors disabled:opacity-40 ${checked ? "bg-moss" : "bg-muted"}`}
     onClick={() => onChange(!checked)}
   >
     <span

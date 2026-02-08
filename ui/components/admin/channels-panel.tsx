@@ -66,15 +66,15 @@ export const ChannelsPanel = () => {
   };
 
   if (channelsQuery.isLoading) {
-    return <p className="text-sm text-ink/50">Loading…</p>;
+    return <p className="text-sm text-muted-foreground">Loading…</p>;
   }
 
   return (
     <div className="space-y-6">
       {/* Telegram */}
-      <div className="rounded-2xl border border-ink/10 bg-white/60 p-4">
+      <div className="rounded-2xl border border-border bg-card p-4">
         <div className="mb-4 flex items-center justify-between">
-          <h3 className="text-sm font-semibold text-ink">Telegram</h3>
+          <h3 className="text-sm font-semibold text-foreground">Telegram</h3>
           <ToggleSwitch
             checked={tgEnabled ?? tg?.enabled ?? false}
             onChange={(v) => setTgEnabled(v)}
@@ -83,7 +83,7 @@ export const ChannelsPanel = () => {
         <div className="space-y-3">
           <Field label="Model">
             <select
-              className="w-full rounded-lg border border-ink/10 bg-white/80 px-3 py-2 text-sm"
+              className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-foreground"
               value={tgModel ?? tg?.model ?? ""}
               onChange={(e) => setTgModel(e.target.value)}
             >
@@ -96,7 +96,7 @@ export const ChannelsPanel = () => {
           <Field label="Webhook URL" hint="Required for inbound messages (set via tunnel).">
             <input
               type="text"
-              className="w-full rounded-lg border border-ink/10 bg-white/80 px-3 py-2 text-sm"
+              className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-foreground"
               placeholder="https://example.com/telegram/webhook"
               value={tgWebhook ?? tg?.webhookUrl ?? ""}
               onChange={(e) => setTgWebhook(e.target.value)}
@@ -105,7 +105,7 @@ export const ChannelsPanel = () => {
           <Field label="Webhook Secret" hint="Optional: validates incoming webhooks.">
             <input
               type="text"
-              className="w-full rounded-lg border border-ink/10 bg-white/80 px-3 py-2 text-sm"
+              className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-foreground"
               placeholder="random-secret-token"
               value={tgSecret ?? tg?.webhookSecret ?? ""}
               onChange={(e) => setTgSecret(e.target.value)}
@@ -114,7 +114,7 @@ export const ChannelsPanel = () => {
           <Field label="Admin User ID" hint="Optional: user allowed to run /toggle.">
             <input
               type="text"
-              className="w-full rounded-lg border border-ink/10 bg-white/80 px-3 py-2 text-sm"
+              className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-foreground"
               placeholder="123456789"
               value={tgAdmin ?? tg?.adminUserId ?? ""}
               onChange={(e) => setTgAdmin(e.target.value)}
@@ -123,7 +123,7 @@ export const ChannelsPanel = () => {
           <Field label="Allowed Users" hint="Comma-separated Telegram user IDs.">
             <input
               type="text"
-              className="w-full rounded-lg border border-ink/10 bg-white/80 px-3 py-2 text-sm"
+              className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-foreground"
               placeholder="user1, user2"
               value={tgAllowed ?? (tg?.allowedUsers ?? []).join(", ")}
               onChange={(e) => setTgAllowed(e.target.value)}
@@ -133,9 +133,9 @@ export const ChannelsPanel = () => {
       </div>
 
       {/* Discord */}
-      <div className="rounded-2xl border border-ink/10 bg-white/60 p-4">
+      <div className="rounded-2xl border border-border bg-card p-4">
         <div className="mb-4 flex items-center justify-between">
-          <h3 className="text-sm font-semibold text-ink">Discord</h3>
+          <h3 className="text-sm font-semibold text-foreground">Discord</h3>
           <ToggleSwitch
             checked={dcEnabled ?? dc?.enabled ?? false}
             onChange={(v) => setDcEnabled(v)}
@@ -144,7 +144,7 @@ export const ChannelsPanel = () => {
         <Field label="Allowed Guilds" hint="Comma-separated guild IDs. Leave empty for DMs only.">
           <input
             type="text"
-            className="w-full rounded-lg border border-ink/10 bg-white/80 px-3 py-2 text-sm"
+            className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-foreground"
             placeholder="guild-id-1, guild-id-2"
             value={dcGuilds ?? (dc?.allowedGuilds ?? []).join(", ")}
             onChange={(e) => setDcGuilds(e.target.value)}
@@ -154,7 +154,7 @@ export const ChannelsPanel = () => {
 
       <div className="flex justify-end">
         <button
-          className="rounded-xl bg-tide px-5 py-2 text-sm font-semibold text-white disabled:opacity-40"
+          className="rounded-xl bg-primary px-5 py-2 text-sm font-semibold text-primary-foreground disabled:opacity-40"
           disabled={saveMutation.isPending}
           onClick={handleSave}
         >
@@ -169,9 +169,9 @@ export const ChannelsPanel = () => {
 
 const Field = ({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) => (
   <div className="space-y-1">
-    <label className="text-xs text-ink/50">{label}</label>
+    <label className="text-xs text-muted-foreground">{label}</label>
     {children}
-    {hint && <p className="text-[11px] text-ink/40">{hint}</p>}
+    {hint && <p className="text-[11px] text-muted-foreground/60">{hint}</p>}
   </div>
 );
 

@@ -73,6 +73,10 @@ jobs:
         working-directory: ui
         run: pnpm lint
 
+      - name: Test UI
+        working-directory: ui
+        run: pnpm test
+
       - name: Build UI
         working-directory: ui
         run: pnpm build

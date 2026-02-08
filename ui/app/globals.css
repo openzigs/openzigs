@@ -2,36 +2,78 @@
 @tailwind components;
 @tailwind utilities;
 
-:root {
-  color-scheme: light;
-  --surface: #f5f1ea;
-  --ink: #0b0b10;
-  --accent: #ff6a3d;
-  --tone: #1b4d6d;
-  --moss: #4d6a4a;
+@layer base {
+  :root {
+    /* OpenZigs light palette — stone / ink / ember / tide / moss */
+    --background: 36 29% 94%;       /* #f5f1ea stone */
+    --foreground: 240 25% 6%;       /* #0b0b10 ink */
+    --card: 36 29% 94%;
+    --card-foreground: 240 25% 6%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 240 25% 6%;
+    --primary: 200 60% 27%;         /* #1b4d6d tide */
+    --primary-foreground: 0 0% 100%;
+    --secondary: 36 17% 75%;        /* #c7c1b7 haze */
+    --secondary-foreground: 240 25% 6%;
+    --muted: 36 17% 88%;
+    --muted-foreground: 240 5% 40%;
+    --accent: 16 100% 59%;          /* #ff6a3d ember */
+    --accent-foreground: 240 25% 6%;
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 36 10% 82%;
+    --input: 36 10% 82%;
+    --ring: 200 60% 27%;
+    --radius: 0.75rem;
+
+    color-scheme: light;
+  }
+
+  .dark {
+    --background: 240 25% 6%;       /* ink */
+    --foreground: 36 29% 94%;       /* stone */
+    --card: 240 15% 10%;
+    --card-foreground: 36 29% 94%;
+    --popover: 240 15% 10%;
+    --popover-foreground: 36 29% 94%;
+    --primary: 200 60% 42%;         /* brighter tide for dark */
+    --primary-foreground: 0 0% 100%;
+    --secondary: 240 10% 18%;
+    --secondary-foreground: 36 29% 94%;
+    --muted: 240 10% 15%;
+    --muted-foreground: 36 10% 60%;
+    --accent: 16 100% 59%;          /* ember stays vivid */
+    --accent-foreground: 0 0% 100%;
+    --destructive: 0 62% 50%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 240 10% 18%;
+    --input: 240 10% 18%;
+    --ring: 200 60% 42%;
+
+    color-scheme: dark;
+  }
 }
 
-* {
-  box-sizing: border-box;
-}
+@layer base {
+  * {
+    @apply border-border;
+    box-sizing: border-box;
+  }
 
-body {
-  margin: 0;
-  min-height: 100vh;
-  background:
-    radial-gradient(circle at 10% 10%, rgba(255, 106, 61, 0.18), transparent 45%),
-    radial-gradient(circle at 90% 20%, rgba(27, 77, 109, 0.2), transparent 50%),
-    linear-gradient(160deg, #f7f1e5 0%, #e6e0d6 50%, #f3ede3 100%);
-  color: var(--ink);
-  font-family: var(--font-sans), system-ui, sans-serif;
-}
+  body {
+    @apply bg-background text-foreground;
+    margin: 0;
+    min-height: 100vh;
+    font-family: var(--font-sans), system-ui, sans-serif;
+  }
 
-main {
-  min-height: 100vh;
-}
+  main {
+    min-height: 100vh;
+  }
 
-::selection {
-  background: rgba(255, 106, 61, 0.3);
+  ::selection {
+    background: hsla(16, 100%, 59%, 0.3);
+  }
 }
 
 .dashboard-grid {

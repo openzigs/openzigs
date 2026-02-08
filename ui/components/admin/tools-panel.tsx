@@ -16,9 +16,9 @@ const CATEGORY_ORDER = [
 ];
 
 const riskColors: Record<string, string> = {
-  low: "bg-moss/15 text-moss",
-  medium: "bg-amber-500/15 text-amber-600",
-  high: "bg-ember/15 text-ember",
+  low: "bg-moss/15 text-moss dark:bg-moss/20 dark:text-green-400",
+  medium: "bg-amber-500/15 text-amber-600 dark:bg-amber-500/20 dark:text-amber-400",
+  high: "bg-ember/15 text-ember dark:bg-ember/20 dark:text-red-400",
 };
 
 export const ToolsPanel = ({ toolGroups }: ToolsPanelProps) => {
@@ -49,18 +49,18 @@ export const ToolsPanel = ({ toolGroups }: ToolsPanelProps) => {
 
         return (
           <div key={category}>
-            <p className="mb-2 text-[11px] font-semibold uppercase tracking-widest text-ink/50">
+            <p className="mb-2 text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">
               {category}
             </p>
             <div className="space-y-1">
               {tools.map((tool) => (
                 <div
                   key={tool.name}
-                  className="flex items-center gap-3 rounded-xl border border-ink/5 bg-white/60 px-4 py-2.5 transition hover:border-ink/10"
+                  className="flex items-center gap-3 rounded-xl border border-border bg-card px-4 py-2.5 transition hover:border-ring/30"
                 >
                   <div className="min-w-0 flex-1">
-                    <p className="font-mono text-[13px] font-semibold text-ink">{tool.name}</p>
-                    <p className="truncate text-xs text-ink/50">{tool.description}</p>
+                    <p className="font-mono text-[13px] font-semibold text-foreground">{tool.name}</p>
+                    <p className="truncate text-xs text-muted-foreground">{tool.description}</p>
                   </div>
                   <span
                     className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${riskColors[tool.riskLevel] ?? "bg-ink/5 text-ink/50"}`}
@@ -69,7 +69,7 @@ export const ToolsPanel = ({ toolGroups }: ToolsPanelProps) => {
                   </span>
                   <button
                     className={`w-16 rounded-full px-3 py-1 text-xs font-semibold transition ${
-                      tool.enabled ? "bg-moss text-white" : "bg-ink/10 text-ink/60"
+                      tool.enabled ? "bg-moss text-white" : "bg-muted text-muted-foreground"
                     } disabled:opacity-40`}
                     disabled={togglingTool === tool.name}
                     onClick={() => {

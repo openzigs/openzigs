@@ -7,6 +7,7 @@ import { fetchJson } from "@/lib/api";
 import type { ToolInfo, Approval, AuditEntry } from "@/lib/types";
 import { SectionCard } from "./section-card";
 import { ToastContainer, showToast } from "./toast";
+import { Button } from "@/components/ui/button";
 
 export const Dashboard = () => {
   const queryClient = useQueryClient();
@@ -98,18 +99,18 @@ export const Dashboard = () => {
 
   return (
     <div className="mx-auto flex max-w-6xl flex-col gap-8">
-      <header className="rounded-3xl bg-ink p-6 text-stone shadow-panel">
+      <header className="rounded-2xl bg-foreground p-6 text-background shadow-panel">
         <div className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
           <div>
-            <p className="text-sm uppercase tracking-[0.3em] text-haze">OpenZigs</p>
+            <p className="text-sm uppercase tracking-[0.3em] text-muted-foreground">OpenZigs</p>
             <h1 className="mt-2 text-4xl font-semibold">Control Panel</h1>
-            <p className="mt-2 text-sm text-haze">
+            <p className="mt-2 text-sm text-muted-foreground">
               Monitor approvals, tool controls, and audit activity in real time.
             </p>
           </div>
-          <div className="flex items-center gap-4 rounded-2xl bg-stone/10 px-5 py-3">
-            <span className="text-sm text-haze">Agent status</span>
-            <span className="rounded-full bg-ember px-3 py-1 text-xs font-semibold text-ink">
+          <div className="flex items-center gap-4 rounded-2xl bg-background/10 px-5 py-3">
+            <span className="text-sm text-muted-foreground">Agent status</span>
+            <span className="rounded-full bg-accent px-3 py-1 text-xs font-semibold text-accent-foreground">
               {statusText}
             </span>
           </div>
@@ -121,7 +122,7 @@ export const Dashboard = () => {
           <SectionCard title="Audit Log">
             <div className="mb-4 flex flex-wrap items-center gap-3">
               <select
-                className="rounded-full border border-ink/10 bg-white/80 px-3 py-2 text-xs uppercase tracking-[0.2em]"
+                className="rounded-full border border-border bg-card px-3 py-2 text-xs uppercase tracking-[0.2em] text-foreground"
                 value={logCategory}
                 onChange={(event) => setLogCategory(event.target.value)}
               >
@@ -131,7 +132,7 @@ export const Dashboard = () => {
                 <option value="security">Security</option>
               </select>
               <select
-                className="rounded-full border border-ink/10 bg-white/80 px-3 py-2 text-xs uppercase tracking-[0.2em]"
+                className="rounded-full border border-border bg-card px-3 py-2 text-xs uppercase tracking-[0.2em] text-foreground"
                 value={logLevel}
                 onChange={(event) => setLogLevel(event.target.value)}
               >
@@ -141,25 +142,22 @@ export const Dashboard = () => {
                 <option value="error">Error</option>
                 <option value="security">Security</option>
               </select>
-              <button
-                className="rounded-full border border-ink/10 bg-ember px-4 py-2 text-xs font-semibold text-ink"
-                onClick={handleExport}
-              >
+              <Button variant="default" size="sm" onClick={handleExport} className="rounded-full">
                 Export JSON
-              </button>
+              </Button>
             </div>
             <div className="space-y-3">
               {recentLogs.length === 0 ? (
-                <p className="text-sm text-ink/60">No activity yet.</p>
+                <p className="text-sm text-muted-foreground">No activity yet.</p>
               ) : (
                 recentLogs.map((log) => (
-                  <div key={log.id} className="rounded-2xl border border-ink/10 bg-white/60 p-3">
+                  <div key={log.id} className="rounded-xl border border-border bg-card p-3">
                     <div className="flex items-center justify-between">
                       <div>
-                        <p className="text-sm font-semibold text-ink">{log.event}</p>
-                        <p className="text-xs text-ink/60">{log.category} · {log.level}</p>
+                        <p className="text-sm font-semibold text-foreground">{log.event}</p>
+                        <p className="text-xs text-muted-foreground">{log.category} · {log.level}</p>
                       </div>
-                      <span className="text-xs text-ink/50">
+                      <span className="text-xs text-muted-foreground">
                         {new Date(log.timestamp).toLocaleTimeString()}
                       </span>
                     </div>
@@ -173,13 +171,13 @@ export const Dashboard = () => {
         <div className="flex flex-col gap-6">
           <SectionCard title="Snapshot">
             <div className="grid gap-4 sm:grid-cols-2">
-              <div className="rounded-2xl border border-ink/10 bg-white/60 p-4">
-                <p className="text-xs uppercase tracking-[0.2em] text-ink/60">Tools</p>
-                <p className="mt-2 text-2xl font-semibold text-ink">{toolCount}</p>
+              <div className="rounded-xl border border-border bg-card p-4">
+                <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Tools</p>
+                <p className="mt-2 text-2xl font-semibold text-foreground">{toolCount}</p>
               </div>
-              <div className="rounded-2xl border border-ink/10 bg-white/60 p-4">
-                <p className="text-xs uppercase tracking-[0.2em] text-ink/60">Approvals</p>
-                <p className="mt-2 text-2xl font-semibold text-ink">{pendingApprovals.length}</p>
+              <div className="rounded-xl border border-border bg-card p-4">
+                <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Approvals</p>
+                <p className="mt-2 text-2xl font-semibold text-foreground">{pendingApprovals.length}</p>
               </div>
             </div>
           </SectionCard>
@@ -187,35 +185,29 @@ export const Dashboard = () => {
           <SectionCard title="Pending Approvals">
             <div className="space-y-4">
               {pendingApprovals.length === 0 ? (
-                <p className="text-sm text-ink/60">No approvals waiting.</p>
+                <p className="text-sm text-muted-foreground">No approvals waiting.</p>
               ) : (
                 pendingApprovals.map((approval) => (
-                  <div key={approval.id} className="rounded-2xl border border-ink/10 bg-white/60 p-4">
+                  <div key={approval.id} className="rounded-xl border border-border bg-card p-4">
                     <div className="flex items-center justify-between">
                       <div>
-                        <p className="text-sm font-semibold text-ink">{approval.tool}</p>
-                        <p className="text-xs text-ink/60">{approval.explanation}</p>
+                        <p className="text-sm font-semibold text-foreground">{approval.tool}</p>
+                        <p className="text-xs text-muted-foreground">{approval.explanation}</p>
                       </div>
-                      <span className="rounded-full bg-ember px-3 py-1 text-[10px] font-semibold uppercase text-ink">
+                      <span className="rounded-full bg-accent/15 px-3 py-1 text-[10px] font-semibold uppercase text-accent">
                         {approval.riskLevel}
                       </span>
                     </div>
                     {approval.preview ? (
-                      <p className="mt-2 text-xs text-ink/70">{approval.preview}</p>
+                      <p className="mt-2 text-xs text-muted-foreground">{approval.preview}</p>
                     ) : null}
                     <div className="mt-3 flex items-center gap-2">
-                      <button
-                        className="rounded-full bg-moss px-4 py-1 text-xs font-semibold text-white"
-                        onClick={() => decisionMutation.mutate({ id: approval.id, approved: true })}
-                      >
+                      <Button size="sm" className="rounded-full" onClick={() => decisionMutation.mutate({ id: approval.id, approved: true })}>
                         Approve
-                      </button>
-                      <button
-                        className="rounded-full border border-ink/20 px-4 py-1 text-xs font-semibold text-ink"
-                        onClick={() => decisionMutation.mutate({ id: approval.id, approved: false })}
-                      >
+                      </Button>
+                      <Button variant="outline" size="sm" className="rounded-full" onClick={() => decisionMutation.mutate({ id: approval.id, approved: false })}>
                         Reject
-                      </button>
+                      </Button>
                     </div>
                   </div>
                 ))

@@ -77,9 +77,9 @@ export default function SchedulerPage() {
   return (
     <main className="mx-auto max-w-4xl px-6 py-10 lg:px-12">
       <header className="mb-8">
-        <p className="text-sm uppercase tracking-[0.3em] text-haze">OpenZigs</p>
-        <h1 className="mt-1 text-3xl font-semibold text-ink">Scheduler</h1>
-        <p className="mt-1 text-sm text-ink/50">
+        <p className="text-sm uppercase tracking-[0.3em] text-muted-foreground">OpenZigs</p>
+        <h1 className="mt-1 text-3xl font-semibold text-foreground">Scheduler</h1>
+        <p className="mt-1 text-sm text-muted-foreground">
           Schedule recurring prompts, shell commands, and custom actions.
         </p>
       </header>
@@ -87,7 +87,7 @@ export default function SchedulerPage() {
       <div className="mb-6 flex justify-end">
         <button
           onClick={handleNew}
-          className="rounded-xl bg-tide px-5 py-2.5 text-sm font-semibold text-white"
+          className="rounded-xl bg-primary px-5 py-2.5 text-sm font-semibold text-primary-foreground"
         >
           + New Job
         </button>
@@ -101,23 +101,23 @@ export default function SchedulerPage() {
 
       <SectionCard title="Scheduled Jobs">
         {jobsQuery.isLoading ? (
-          <p className="text-sm text-ink/50">Loading…</p>
+          <p className="text-sm text-muted-foreground">Loading…</p>
         ) : jobs.length === 0 ? (
-          <p className="text-sm text-ink/50">
+          <p className="text-sm text-muted-foreground">
             No scheduled jobs yet. Click &quot;+ New Job&quot; to create one.
           </p>
         ) : (
           <div className="space-y-3">
             {jobs.map((job) => (
-              <div key={job.id} className="rounded-2xl border border-ink/10 bg-white/60 p-4">
+              <div key={job.id} className="rounded-2xl border border-border bg-card p-4">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
-                    <p className="text-sm font-semibold text-ink">{job.name}</p>
-                    <span className="rounded bg-tide/10 px-2 py-0.5 text-[10px] font-semibold uppercase text-tide">
+                    <p className="text-sm font-semibold text-foreground">{job.name}</p>
+                    <span className="rounded bg-primary/10 px-2 py-0.5 text-[10px] font-semibold uppercase text-primary">
                       {job.actionType || "prompt"}
                     </span>
                     {!job.enabled && (
-                      <span className="rounded bg-ink/10 px-2 py-0.5 text-[10px] font-semibold uppercase text-ink/50">
+                      <span className="rounded bg-muted px-2 py-0.5 text-[10px] font-semibold uppercase text-muted-foreground">
                         Disabled
                       </span>
                     )}
@@ -129,30 +129,30 @@ export default function SchedulerPage() {
                     />
                     <button
                       onClick={() => handleEdit(job)}
-                      className="rounded-lg border border-tide px-3 py-1.5 text-xs font-semibold text-tide hover:bg-tide/5"
+                      className="rounded-lg border border-primary px-3 py-1.5 text-xs font-semibold text-primary hover:bg-primary/5"
                     >
                       Edit
                     </button>
                     <button
                       onClick={() => handleDelete(job)}
-                      className="rounded-lg border border-ember/30 px-3 py-1.5 text-xs font-semibold text-ember hover:bg-ember/5"
+                      className="rounded-lg border border-destructive/30 px-3 py-1.5 text-xs font-semibold text-destructive hover:bg-destructive/5"
                     >
                       Delete
                     </button>
                   </div>
                 </div>
                 <div className="mt-2 flex items-center gap-3">
-                  <code className="rounded bg-ink/5 px-2 py-1 font-mono text-xs text-ink/60">{job.cronExpression}</code>
-                  <span className="text-xs text-ink/40">{job.timezone || "UTC"}</span>
+                  <code className="rounded bg-muted px-2 py-1 font-mono text-xs text-muted-foreground">{job.cronExpression}</code>
+                  <span className="text-xs text-muted-foreground">{job.timezone || "UTC"}</span>
                 </div>
                 {job.actionPayload && Object.keys(job.actionPayload).length > 0 && (
-                  <pre className="mt-2 whitespace-pre-wrap break-words font-mono text-xs text-ink/40">
+                  <pre className="mt-2 whitespace-pre-wrap break-words font-mono text-xs text-muted-foreground">
                     {job.actionType === "prompt" && job.actionPayload.promptName
                       ? `Prompt: ${job.actionPayload.promptName}`
                       : JSON.stringify(job.actionPayload, null, 2).slice(0, 200)}
                   </pre>
                 )}
-                <div className="mt-2 flex items-center gap-4 text-[11px] text-ink/30">
+                <div className="mt-2 flex items-center gap-4 text-[11px] text-muted-foreground">
                   <span>Runs: {job.runCount || 0}</span>
                   {job.lastRunAt && <span>Last: {new Date(job.lastRunAt).toLocaleString()}</span>}
                 </div>
@@ -241,8 +241,8 @@ const JobForm = ({ existing, onClose }: { existing: ScheduledJob | null; onClose
   }, [cronExpression]);
 
   return (
-    <div className="rounded-2xl border border-tide/20 bg-white/60 p-5">
-      <h3 className="mb-4 text-lg font-semibold text-ink">
+    <div className="rounded-2xl border border-primary/20 bg-card p-5">
+      <h3 className="mb-4 text-lg font-semibold text-foreground">
         {existing ? "Edit Job" : "New Job"}
       </h3>
 
@@ -250,7 +250,7 @@ const JobForm = ({ existing, onClose }: { existing: ScheduledJob | null; onClose
         <Field label="Name">
           <input
             type="text"
-            className="w-full rounded-lg border border-ink/10 bg-white/80 px-3 py-2 text-sm"
+            className="w-full rounded-lg border border-border bg-card text-foreground px-3 py-2 text-sm"
             placeholder="e.g., daily-report"
             value={name}
             onChange={(e) => setName(e.target.value)}
@@ -263,7 +263,7 @@ const JobForm = ({ existing, onClose }: { existing: ScheduledJob | null; onClose
           hint={`"Prompt" executes a saved prompt template. "Shell" runs a command. "Custom" sends raw payload.`}
         >
           <select
-            className="w-full rounded-lg border border-ink/10 bg-white/80 px-3 py-2 text-sm"
+            className="w-full rounded-lg border border-border bg-card text-foreground px-3 py-2 text-sm"
             value={actionType}
             onChange={(e) => setActionType(e.target.value)}
           >
@@ -276,7 +276,7 @@ const JobForm = ({ existing, onClose }: { existing: ScheduledJob | null; onClose
         {actionType === "prompt" ? (
           <Field label="Linked Prompt" hint="The saved prompt to execute on each run.">
             <select
-              className="w-full rounded-lg border border-ink/10 bg-white/80 px-3 py-2 text-sm"
+              className="w-full rounded-lg border border-border bg-card text-foreground px-3 py-2 text-sm"
               value={promptName}
               onChange={(e) => setPromptName(e.target.value)}
             >
@@ -288,9 +288,9 @@ const JobForm = ({ existing, onClose }: { existing: ScheduledJob | null; onClose
               ))}
             </select>
             {prompts.length === 0 && (
-              <p className="mt-1 text-[11px] text-ink/40">
+              <p className="mt-1 text-[11px] text-muted-foreground">
                 No prompts saved yet.{" "}
-                <a href="/library" className="text-tide hover:underline">Create one first</a>.
+                <a href="/library" className="text-primary hover:underline">Create one first</a>.
               </p>
             )}
           </Field>
@@ -300,7 +300,7 @@ const JobForm = ({ existing, onClose }: { existing: ScheduledJob | null; onClose
             hint={actionType === "shell" ? '{"command": "echo hello"}' : "Any valid JSON object."}
           >
             <textarea
-              className="w-full rounded-lg border border-ink/10 bg-white/80 px-3 py-2 font-mono text-sm"
+              className="w-full rounded-lg border border-border bg-card text-foreground px-3 py-2 font-mono text-sm"
               rows={4}
               placeholder='{"command": "echo hello"}'
               value={payloadText}
@@ -315,7 +315,7 @@ const JobForm = ({ existing, onClose }: { existing: ScheduledJob | null; onClose
         >
           <input
             type="text"
-            className="w-full rounded-lg border border-ink/10 bg-white/80 px-3 py-2 font-mono text-sm"
+            className="w-full rounded-lg border border-border bg-card text-foreground px-3 py-2 font-mono text-sm"
             placeholder="*/5 * * * *"
             value={cronExpression}
             onChange={(e) => setCronExpression(e.target.value)}
@@ -324,7 +324,7 @@ const JobForm = ({ existing, onClose }: { existing: ScheduledJob | null; onClose
             <div className="mt-1 flex flex-wrap gap-1">
               {cronParts ? (
                 cronParts.map((p) => (
-                  <code key={p.label} className="rounded bg-tide/10 px-1.5 py-0.5 font-mono text-[11px] text-tide">
+                  <code key={p.label} className="rounded bg-primary/10 px-1.5 py-0.5 font-mono text-[11px] text-primary">
                     {p.label}={p.value}
                   </code>
                 ))
@@ -340,7 +340,7 @@ const JobForm = ({ existing, onClose }: { existing: ScheduledJob | null; onClose
         <Field label="Timezone" hint="IANA timezone identifier.">
           <input
             type="text"
-            className="w-full rounded-lg border border-ink/10 bg-white/80 px-3 py-2 text-sm"
+            className="w-full rounded-lg border border-border bg-card text-foreground px-3 py-2 text-sm"
             placeholder="America/New_York"
             value={timezone}
             onChange={(e) => setTimezone(e.target.value)}
@@ -350,7 +350,7 @@ const JobForm = ({ existing, onClose }: { existing: ScheduledJob | null; onClose
         <div className="flex justify-end gap-2 pt-2">
           <button
             onClick={onClose}
-            className="rounded-lg border border-ink/10 px-4 py-2 text-xs font-semibold text-ink/60 hover:bg-ink/5"
+            className="rounded-lg border border-border px-4 py-2 text-xs font-semibold text-muted-foreground hover:bg-muted"
           >
             Cancel
           </button>
@@ -369,9 +369,9 @@ const JobForm = ({ existing, onClose }: { existing: ScheduledJob | null; onClose
 
 const Field = ({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) => (
   <div className="space-y-1">
-    <label className="text-xs font-medium text-ink/50">{label}</label>
+    <label className="text-xs font-medium text-muted-foreground">{label}</label>
     {children}
-    {hint && <p className="text-[11px] text-ink/40">{hint}</p>}
+    {hint && <p className="text-[11px] text-muted-foreground/60">{hint}</p>}
   </div>
 );
 
@@ -380,7 +380,7 @@ const ToggleSwitch = ({ checked, onChange }: { checked: boolean; onChange: (v: b
     type="button"
     role="switch"
     aria-checked={checked}
-    className={`relative h-5 w-9 rounded-full transition-colors ${checked ? "bg-moss" : "bg-ink/20"}`}
+    className={`relative h-5 w-9 rounded-full transition-colors ${checked ? "bg-moss" : "bg-muted"}`}
     onClick={() => onChange(!checked)}
   >
     <span

@@ -23,8 +23,8 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en">
-      <body className={`${spaceGrotesk.variable} ${jetBrains.variable}`}>
+    <html lang="en" suppressHydrationWarning>
+      <body className={`${spaceGrotesk.variable} ${jetBrains.variable} antialiased`}>
         <Providers>
           <NavBar />
           {children}

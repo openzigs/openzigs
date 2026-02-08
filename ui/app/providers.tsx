@@ -3,12 +3,20 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useState } from "react";
 import { SocketProvider } from "@/lib/socket-context";
+import { ThemeProvider } from "@/components/theme-provider";
+import { TooltipProvider } from "@/components/ui/tooltip";
 
 export const Providers = ({ children }: { children: React.ReactNode }) => {
   const [client] = useState(() => new QueryClient());
   return (
-    <QueryClientProvider client={client}>
-      <SocketProvider>{children}</SocketProvider>
-    </QueryClientProvider>
+    <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
+      <QueryClientProvider client={client}>
+        <SocketProvider>
+          <TooltipProvider>
+            {children}
+          </TooltipProvider>
+        </SocketProvider>
+      </QueryClientProvider>
+    </ThemeProvider>
   );
 };

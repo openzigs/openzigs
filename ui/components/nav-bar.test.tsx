@@ -34,9 +34,9 @@ describe("NavBar", () => {
     render(<NavBar />);
 
     const adminLink = screen.getByText("Admin");
-    expect(adminLink.className).toContain("bg-tide");
+    expect(adminLink.className).toContain("bg-primary");
 
     const chatLink = screen.getByText("Chat");
-    expect(chatLink.className).not.toContain("bg-tide");
+    expect(chatLink.className).not.toContain("bg-primary");
   });
 });

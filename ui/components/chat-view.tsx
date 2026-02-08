@@ -3,6 +3,24 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useSocket } from "@/lib/socket-context";
 import { fetchJson } from "@/lib/api";
+import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import { Send, Loader2, Bot, User, AlertCircle } from "lucide-react";
 import type { ModelInfo } from "@/lib/types";
 
 type ChatMessage = {
@@ -27,6 +45,7 @@ export const ChatView = () => {
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [selectedModel, setSelectedModel] = useState("");
   const [sending, setSending] = useState(false);
+  const [thinking, setThinking] = useState(false);
   const [pendingApproval, setPendingApproval] = useState<ApprovalRequest | null>(null);
   const [fallbackWarning, setFallbackWarning] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -55,8 +74,9 @@ export const ChatView = () => {
     clearStuckTimer();
     if (streamRef.current) {
       streamRef.current = null;
-      setSending(false);
     }
+    setSending(false);
+    setThinking(false);
   }, [clearStuckTimer]);
 
   // Load models
@@ -90,6 +110,9 @@ export const ChatView = () => {
     };
 
     const onStream = (data: { chunk: string }) => {
+      // First stream chunk = stop thinking indicator
+      setThinking(false);
+
       if (!streamRef.current) {
         const id = `stream-${Date.now()}`;
         streamRef.current = { id, content: "" };
@@ -113,10 +136,10 @@ export const ChatView = () => {
         ...prev,
         { id: `err-${Date.now()}`, role: "error", content: data.error ?? "An error occurred" },
       ]);
-      setSending(false);
     };
 
     const onApprovalRequest = (data: ApprovalRequest) => {
+      setThinking(false);
       setPendingApproval(data);
     };
 
@@ -139,27 +162,39 @@ export const ChatView = () => {
 
   useEffect(() => {
     scrollToBottom();
-  }, [messages, scrollToBottom]);
+  }, [messages, thinking, scrollToBottom]);
 
   const handleSend = useCallback(() => {
     const text = input.trim();
-    if (!text || !chatId || !socket) return;
+    if (!text || !socket || sending) return;
+
+    // If not yet connected, show a warning instead of silently failing
+    if (!chatId) {
+      setMessages((prev) => [
+        ...prev,
+        { id: `err-${Date.now()}`, role: "error", content: "Waiting for server connection. Please try again in a moment." },
+      ]);
+      return;
+    }
 
     setMessages((prev) => [...prev, { id: nextId(), role: "user", content: text }]);
     socket.emit("chat:message", { content: text, model: selectedModel || undefined });
     setInput("");
     setSending(true);
+    setThinking(true);
+
+    // Reset textarea height
+    if (textareaRef.current) {
+      textareaRef.current.style.height = "auto";
+    }
 
     clearStuckTimer();
     inputStuckTimerRef.current = setTimeout(() => {
-      if (sending) {
-        finalizeStream();
-        setMessages((prev) => [
-          ...prev,
-          { id: nextId(), role: "error", content: "No response received — the Copilot SDK may be unavailable. Check server logs." },
-        ]);
-        setSending(false);
-      }
+      finalizeStream();
+      setMessages((prev) => [
+        ...prev,
+        { id: nextId(), role: "error", content: "No response received — the Copilot SDK may be unavailable. Check server logs." },
+      ]);
     }, 30_000);
   }, [input, chatId, socket, selectedModel, sending, nextId, clearStuckTimer, finalizeStream]);
 
@@ -168,6 +203,7 @@ export const ChatView = () => {
       if (pendingApproval && socket) {
         socket.emit("approval:response", { approvalId: pendingApproval.id, approved });
         setPendingApproval(null);
+        setThinking(true);
       }
     },
     [pendingApproval, socket]
@@ -189,37 +225,42 @@ export const ChatView = () => {
     const el = textareaRef.current;
     if (el) {
       el.style.height = "auto";
-      el.style.height = `${Math.min(el.scrollHeight, 150)}px`;
+      el.style.height = `${Math.min(el.scrollHeight, 300)}px`;
     }
   }, []);
 
-  const disabled = !chatId || sending;
+  // Allow sending while connected to socket, show connecting state if no chatId yet
+  const inputDisabled = sending;
+  const showConnecting = connected && !chatId;
 
   return (
-    <div className="flex h-screen flex-col">
+    <div className="flex h-screen flex-col bg-background">
       {/* Header */}
-      <header className="flex items-center gap-4 border-b border-ink/10 bg-stone/95 px-5 py-3 backdrop-blur">
-        <h1 className="text-lg font-semibold text-ink">OpenZigs</h1>
+      <header className="flex items-center gap-4 border-b border-border bg-card px-5 py-3">
+        <h1 className="text-lg font-semibold text-foreground">OpenZigs</h1>
         <div className="ml-auto flex items-center gap-3">
-          <label htmlFor="model-select" className="text-xs text-ink/60">
-            Model
-          </label>
-          <select
-            id="model-select"
-            className="rounded-lg border border-ink/10 bg-white/80 px-3 py-1.5 font-mono text-xs text-ink"
+          <span className="text-xs text-muted-foreground">Model</span>
+          <Select
             value={selectedModel}
-            onChange={(e) => void handleModelChange(e.target.value)}
+            onValueChange={(value) => void handleModelChange(value)}
             disabled={models.length === 0}
           >
-            {models.length === 0 && <option value="">Loading…</option>}
-            {models.map((m) => (
-              <option key={m.id} value={m.id}>
-                {m.id}
-              </option>
-            ))}
-          </select>
+            <SelectTrigger className="h-8 w-48 font-mono text-xs">
+              <SelectValue placeholder="Loading…" />
+            </SelectTrigger>
+            <SelectContent>
+              {models.map((m) => (
+                <SelectItem key={m.id} value={m.id} className="font-mono text-xs">
+                  {m.id}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
           <span
-            className={`h-2.5 w-2.5 rounded-full ${connected ? "bg-moss" : "bg-ember"}`}
+            className={cn(
+              "h-2.5 w-2.5 rounded-full transition-colors",
+              connected ? "bg-moss" : "bg-destructive"
+            )}
             title={connected ? "Connected" : "Disconnected"}
           />
         </div>
@@ -227,100 +268,183 @@ export const ChatView = () => {
 
       {/* Fallback warning */}
       {fallbackWarning && (
-        <div className="border-b border-amber-600/30 bg-amber-900/10 px-5 py-2 text-center text-xs text-amber-700">
+        <div className="border-b border-amber-600/30 bg-amber-500/10 px-5 py-2 text-center text-xs text-amber-700 dark:text-amber-400">
           Copilot SDK unavailable — using fallback model list. Update your Copilot CLI to v0.0.394+ for full functionality.
         </div>
       )}
 
+      {/* Connecting indicator */}
+      {showConnecting && (
+        <div className="border-b border-primary/20 bg-primary/5 px-5 py-2 text-center text-xs text-primary">
+          <Loader2 className="mr-1.5 inline-block h-3 w-3 animate-spin" />
+          Connecting to server…
+        </div>
+      )}
+
       {/* Messages */}
-      <main className="flex flex-1 flex-col gap-3 overflow-y-auto p-5">
+      <main className="flex flex-1 flex-col gap-4 overflow-y-auto p-5">
+        {messages.length === 0 && !thinking && (
+          <div className="flex flex-1 flex-col items-center justify-center gap-3 text-muted-foreground">
+            <Bot className="h-12 w-12 opacity-30" />
+            <p className="text-sm">Send a message to start chatting with OpenZigs.</p>
+          </div>
+        )}
+
         {messages.map((msg) => (
           <div
             key={msg.id}
-            className={`max-w-[80%] whitespace-pre-wrap rounded-2xl px-4 py-2.5 text-sm leading-relaxed ${
-              msg.role === "user"
-                ? "self-end bg-tide text-white"
-                : msg.role === "error"
-                  ? "self-center border border-ember/40 bg-transparent text-xs text-ember"
-                  : "self-start bg-ink/5 text-ink"
-            }`}
-          >
-            {msg.content}
-            {msg.role === "assistant" && streamRef.current?.id === msg.id && (
-              <span className="ml-0.5 inline-block h-[1em] w-0.5 animate-pulse bg-tide align-text-bottom" />
+            className={cn(
+              "flex items-start gap-3 animate-slide-in",
+              msg.role === "user" && "flex-row-reverse"
             )}
+          >
+            {/* Avatar */}
+            <div
+              className={cn(
+                "flex h-8 w-8 shrink-0 items-center justify-center rounded-full",
+                msg.role === "user"
+                  ? "bg-primary text-primary-foreground"
+                  : msg.role === "error"
+                    ? "bg-destructive/10 text-destructive"
+                    : "bg-muted text-muted-foreground"
+              )}
+            >
+              {msg.role === "user" ? (
+                <User className="h-4 w-4" />
+              ) : msg.role === "error" ? (
+                <AlertCircle className="h-4 w-4" />
+              ) : (
+                <Bot className="h-4 w-4" />
+              )}
+            </div>
+            {/* Bubble */}
+            <div
+              className={cn(
+                "max-w-[75%] whitespace-pre-wrap rounded-2xl px-4 py-3 text-sm leading-relaxed",
+                msg.role === "user"
+                  ? "bg-primary text-primary-foreground"
+                  : msg.role === "error"
+                    ? "border border-destructive/30 bg-destructive/5 text-destructive text-xs"
+                    : "bg-muted text-foreground"
+              )}
+            >
+              {msg.content}
+              {msg.role === "assistant" && streamRef.current?.id === msg.id && (
+                <span className="ml-0.5 inline-block h-[1em] w-0.5 animate-pulse bg-primary align-text-bottom" />
+              )}
+            </div>
           </div>
         ))}
+
+        {/* Thinking indicator */}
+        {thinking && (
+          <div className="flex items-start gap-3 animate-slide-in">
+            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground">
+              <Bot className="h-4 w-4" />
+            </div>
+            <div className="flex items-center gap-1 rounded-2xl bg-muted px-4 py-3">
+              <ThinkingDots />
+            </div>
+          </div>
+        )}
+
         <div ref={messagesEndRef} />
       </main>
 
       {/* Input */}
-      <footer className="border-t border-ink/10 bg-stone/95 px-5 py-3 backdrop-blur">
+      <footer className="border-t border-border bg-card px-5 py-4">
         <form
-          className="flex items-end gap-2"
+          className="mx-auto flex max-w-3xl items-end gap-3"
           onSubmit={(e) => {
             e.preventDefault();
             handleSend();
           }}
         >
-          <textarea
-            ref={textareaRef}
-            className="flex-1 resize-none rounded-xl border border-ink/10 bg-white/80 px-4 py-2.5 text-sm text-ink placeholder:text-ink/40 focus:border-tide focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
-            placeholder="Type a message…"
-            rows={1}
-            value={input}
-            onChange={(e) => {
-              setInput(e.target.value);
-              autoResize();
-            }}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                handleSend();
+          <div className="relative flex-1">
+            <textarea
+              ref={textareaRef}
+              className="w-full resize-none rounded-xl border border-input bg-background px-4 py-3 text-sm text-foreground placeholder:text-muted-foreground focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+              placeholder={
+                !connected
+                  ? "Connecting…"
+                  : showConnecting
+                    ? "Almost ready…"
+                    : "Type a message… (Shift+Enter for new line)"
               }
-            }}
-            disabled={disabled}
-          />
-          <button
+              rows={2}
+              value={input}
+              onChange={(e) => {
+                setInput(e.target.value);
+                autoResize();
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  handleSend();
+                }
+              }}
+              disabled={inputDisabled}
+              style={{ maxHeight: "300px" }}
+            />
+          </div>
+          <Button
             type="submit"
-            className="rounded-xl bg-tide px-5 py-2.5 text-sm font-semibold text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
-            disabled={disabled || !input.trim()}
+            size="icon"
+            className="h-11 w-11 shrink-0 rounded-xl"
+            disabled={inputDisabled || !input.trim() || !chatId}
           >
-            Send
-          </button>
+            {sending ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Send className="h-4 w-4" />
+            )}
+          </Button>
         </form>
       </footer>
 
-      {/* Approval overlay */}
-      {pendingApproval && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/50 backdrop-blur-sm">
-          <div className="w-full max-w-md rounded-2xl border border-ink/10 bg-stone p-6 shadow-panel">
-            <h3 className="mb-3 text-base font-semibold text-ink">Tool Approval Required</h3>
-            <p className="mb-1 font-mono text-sm text-tide">{pendingApproval.tool}</p>
-            {pendingApproval.explanation && (
-              <p className="mb-3 text-sm text-ink/60">{pendingApproval.explanation}</p>
-            )}
-            <pre className="mb-4 max-h-48 overflow-y-auto whitespace-pre-wrap rounded-xl border border-ink/10 bg-white/60 p-3 font-mono text-xs text-ink/60">
-              {pendingApproval.preview ??
-                JSON.stringify(pendingApproval.args, null, 2)}
-            </pre>
-            <div className="flex justify-end gap-3">
-              <button
-                className="rounded-xl bg-moss px-5 py-2 text-sm font-semibold text-white"
-                onClick={() => handleApprovalResponse(true)}
-              >
-                Approve
-              </button>
-              <button
-                className="rounded-xl border border-ink/20 px-5 py-2 text-sm font-semibold text-ink"
-                onClick={() => handleApprovalResponse(false)}
-              >
-                Deny
-              </button>
+      {/* Approval dialog */}
+      <Dialog open={!!pendingApproval} onOpenChange={(open) => !open && handleApprovalResponse(false)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Tool Approval Required</DialogTitle>
+            <DialogDescription>
+              The assistant wants to use a tool that requires your approval.
+            </DialogDescription>
+          </DialogHeader>
+          {pendingApproval && (
+            <div className="space-y-3">
+              <p className="font-mono text-sm text-primary">{pendingApproval.tool}</p>
+              {pendingApproval.explanation && (
+                <p className="text-sm text-muted-foreground">{pendingApproval.explanation}</p>
+              )}
+              <pre className="max-h-48 overflow-y-auto whitespace-pre-wrap rounded-lg border border-border bg-muted p-3 font-mono text-xs text-muted-foreground">
+                {pendingApproval.preview ??
+                  JSON.stringify(pendingApproval.args, null, 2)}
+              </pre>
             </div>
-          </div>
-        </div>
-      )}
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => handleApprovalResponse(false)}>
+              Deny
+            </Button>
+            <Button onClick={() => handleApprovalResponse(true)}>
+              Approve
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };
+
+/** Animated thinking dots — mimics the GitHub Copilot thinking indicator */
+const ThinkingDots = () => (
+  <div className="flex items-center gap-1">
+    <span className="text-xs text-muted-foreground">Thinking</span>
+    <span className="flex gap-0.5">
+      <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-muted-foreground/50 [animation-delay:0ms]" />
+      <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-muted-foreground/50 [animation-delay:150ms]" />
+      <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-muted-foreground/50 [animation-delay:300ms]" />
+    </span>
+  </div>
+);

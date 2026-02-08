@@ -13,7 +13,7 @@ const createWrapper = (data: EnvEntry[]) => {
       },
     },
   });
-  qc.setQueryData(["env"], data);
+  qc.setQueryData(["env"], { env: data });
 
   const Wrapper = ({ children }: { children: React.ReactNode }) => (
     <QueryClientProvider client={qc}>{children}</QueryClientProvider>
