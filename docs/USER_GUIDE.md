@@ -1,5 +1,32 @@
 # User Guide
 
+> **Version:** Phase 1 (Core Agent Infrastructure)  
+> **Coming Soon:** Personal Assistant features (see [ROADMAP.md](ROADMAP.md) for future capabilities)
+
+---
+
+## What's Available Now
+
+OpenZigs is a secure, local-first AI agent that can:
+- 💬 Chat with you via Web UI, Telegram, or Discord
+- 📁 Read/write files and execute shell commands (with your approval)
+- 🔍 Search the web and browse pages
+- 📝 Save reusable prompts and schedule automated tasks
+- 📱 Post to social media (LinkedIn, Twitter, Facebook, Pinterest)
+- 📄 Read PDFs and create Word documents
+
+## What's Coming Next
+
+We're evolving into a **full Personal Assistant** with:
+- 🧠 **Contextual Memory** — Remembers your preferences, projects, and past conversations
+- ✅ **Proactive Task Detection** — Automatically extracts tasks from emails and messages
+- 📚 **Advanced Document Intelligence** — OCR, semantic search, multi-format conversion
+- ⚙️ **Productivity Automation** — Visual workflow builder, email/calendar automation
+
+See the [Roadmap](ROADMAP.md) for the complete vision and timeline.
+
+---
+
 ## Prerequisites
 
 Before you begin, ensure the following are installed and available:
@@ -634,3 +661,132 @@ All configuration lives in `config/default.json`. Environment variables are inte
 | Social media tool returns "ECONNREFUSED" | MCP sidecar container not running. | Start the relevant sidecar: `docker compose up -d linkedin-mcp-server`. |
 | Scheduled job not firing | Scheduler not started or job disabled. | Check job status with `list-jobs` tool or `GET /api/jobs`. Ensure `enabled: true`. |
 | "fetch failed" on Word/Calendar tools | Word or Calendar MCP sidecar not reachable. | Verify the sidecar is running: `docker compose ps word-mcp-server`. |
+
+---
+
+## Future Features Preview
+
+The following capabilities are planned for upcoming releases. See [ROADMAP.md](ROADMAP.md) for detailed timelines and specifications.
+
+### Personal Assistant Core (Q2 2026)
+
+**Contextual Memory System**
+- OpenZigs will remember your preferences, projects, and past conversations
+- Semantic search across your entire conversation history
+- Privacy controls: "Forget this" commands, configurable retention policies
+
+**Proactive Task Detection**
+- Automatically extract tasks, deadlines, and action items from emails, messages, and calendar
+- Suggest task creation with auto-populated fields
+- Context-aware reminders based on location, time, and activity
+
+**Preference Learning**
+- The agent learns your communication style (formal vs. casual)
+- Adapts tool selections based on your usage patterns
+- Detects your work rhythm (focus hours, break patterns) for smarter scheduling
+
+**Example Usage:**
+```
+You: I prefer direct, concise answers
+Agent: ✅ Updated communication style preference
+
+You: [After approving several file writes]
+Agent: I notice you often write logs to /var/logs/. Should I remember this as your default log directory?
+You: Yes
+Agent: ✅ Preference saved
+```
+
+### Advanced Document Intelligence (Q3 2026)
+
+**Multi-Format Document Reading**
+- **OCR Support:** Scan and extract text from images and scanned PDFs
+- **Table Extraction:** Parse tables into structured data (JSON, CSV, Excel)
+- **Office Suite:** Read/write Excel spreadsheets, PowerPoint presentations, Outlook emails
+- **Code Formats:** Execute Jupyter notebooks, render Markdown/HTML, compile LaTeX
+- **Media Files:** Transcribe audio, generate video subtitles, analyze images
+
+**Document Search & Knowledge Base**
+- Index all your local documents for instant search
+- Semantic search: "What did the contract say about termination?"
+- Cross-document Q&A with citations (page and section references)
+- Sync with Google Drive, Dropbox, OneDrive for cloud document access
+
+**Document Generation**
+- Create documents from templates (contracts, reports, proposals)
+- Apply brand style guides (colors, fonts, logos)
+- Convert between formats: PDF ↔ Word ↔ Markdown ↔ HTML
+
+**Example Usage:**
+```
+You: Search all my documents for references to "Q4 budget"
+Agent: Found 7 documents:
+  1. Q4_Planning.docx (page 3): "Budget allocation: $500K for marketing"
+  2. 2025_Annual_Report.pdf (page 12): "Q4 budget exceeded by 8%"
+  ...
+
+You: Summarize the Q4 budget findings
+Agent: [Synthesizes information from all 7 documents]
+
+You: Create a Word doc summarizing these findings
+Agent: ✅ Created Q4_Budget_Summary.docx
+```
+
+### Productivity Automation (Q4 2026)
+
+**Visual Workflow Builder**
+- Drag-and-drop interface for creating automation workflows
+- 100+ pre-built templates (daily standup, expense reports, meeting prep)
+- Branching logic (if/else), loops, error handling
+- Human approval checkpoints for sensitive actions
+
+**Email Assistant**
+- Auto-categorize incoming mail (urgent, FYI, spam)
+- Draft context-aware replies with tone adjustment
+- Extract tasks/events and add to your calendar
+- Summarize long email threads
+
+**Calendar Intelligence**
+- Auto-decline meeting conflicts
+- Suggest optimal meeting times based on attendee availability and your focus hours
+- Generate meeting prep briefs (agenda, attendee bios, related docs)
+- Extract action items and create follow-up reminders
+
+**Cross-Platform Integrations (30+ platforms)**
+- **Project Management:** Jira, Asana, Trello, GitHub Issues
+- **Communication:** Slack, Microsoft Teams, Zoom
+- **Finance:** QuickBooks, Expensify, Stripe
+- **Cloud Storage:** Google Drive, Dropbox, OneDrive
+- **CRM:** Salesforce, HubSpot, Pipedrive
+
+**Example Usage:**
+```
+You: When I receive an email with "urgent" in the subject, notify me on Slack immediately
+Agent: ✅ Created workflow "Urgent Email Alert"
+
+You: Every Monday at 9am, post my weekly goals to the #team channel on Slack
+Agent: ✅ Scheduled workflow "Weekly Goals Sync"
+
+You: [New email arrives: "URGENT: Production down"]
+Agent: [Immediately posts to Slack] 🚨 Urgent email from ops@company.com: "Production down"
+```
+
+### How to Stay Updated
+
+- **GitHub Issues:** Follow [mgcronin/openzigs](https://github.com/mgcronin/openzigs/issues) for feature requests and progress
+- **Roadmap:** Check [ROADMAP.md](ROADMAP.md) for quarterly updates
+- **Release Notes:** Subscribe to releases for new features and breaking changes
+- **Community Discord:** Join the discussion and beta test new features (link coming soon)
+
+### Beta Testing
+
+Want early access to Personal Assistant features? Join our beta program:
+
+```bash
+# Enable beta features (when available)
+pnpm setup --beta
+
+# Opt into specific feature flags
+echo '{ "features": { "contextMemory": true, "proactiveTasks": false } }' > config/beta.json
+```
+
+*Beta features are experimental and may have bugs. Always test in a non-production environment first.*

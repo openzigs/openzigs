@@ -1,5 +1,20 @@
 # Architecture
 
+## Vision: Personal Assistant Platform
+
+OpenZigs is evolving from a **secure AI agent platform** into a **comprehensive Personal Assistant** that combines the power of the [GitHub Copilot SDK](https://github.com/github/copilot-sdk) with advanced document intelligence, proactive task management, and seamless productivity automation.
+
+### Evolution Path
+
+| Phase | Status | Description |
+|---|---|---|
+| **Phase 1: Core Agent Infrastructure** | ✅ Complete | Secure, containerized AI agent with tool execution and human-in-the-loop controls |
+| **Phase 2: Personal Assistant Core** | 🚧 Q2 2026 | Contextual memory, proactive task detection, preference learning |
+| **Phase 3: Document Intelligence** | 📋 Q3 2026 | Multi-format reading/writing, OCR, semantic search, knowledge base |
+| **Phase 4: Productivity Automation** | 📋 Q4 2026 | Workflow orchestration, email/calendar automation, cross-platform integrations |
+
+See [ROADMAP.md](ROADMAP.md) for the complete evolution plan.
+
 ## High-Level Overview
 
 OpenZigs is a **local-first AI agent platform** built on top of the [GitHub Copilot SDK](https://github.com/github/copilot-sdk). It follows a "Safe Agent" philosophy:
@@ -465,3 +480,287 @@ All services (`agent`, `tunnel`, MCP sidecars) share the `openzigs-network` brid
 | Agent → Chrome | `agent` → host | `host.docker.internal:9222` |
 
 MCP sidecar URLs are passed to the agent via environment variables (`MCP_LINKEDIN_URL`, `MCP_TWITTER_URL`, etc.) in `docker-compose.yml`.
+
+---
+
+## Future Architecture: Personal Assistant Platform
+
+As OpenZigs evolves into a full Personal Assistant, the architecture will expand to include contextual awareness, proactive intelligence, and advanced document processing capabilities.
+
+### Phase 2: Personal Assistant Core (Q2 2026)
+
+```mermaid
+graph TB
+    subgraph PersonalAssistant["Personal Assistant Layer"]
+        CTX[Context Engine<br/>Long-term Memory]
+        INTENT[Intent Recognition<br/>Task Detection]
+        PREF[Preference Learning<br/>User Model]
+    end
+
+    subgraph CurrentCore["Core Agent (Phase 1)"]
+        CW[Copilot Wrapper]
+        TR[Tool Registry]
+        SM[Session Manager]
+    end
+
+    USER[User Messages] --> INTENT
+    INTENT --> CTX
+    CTX --> PREF
+    PREF --> CW
+    CW --> TR
+    TR --> SM
+    
+    CTX -.->|Vector Search| VECTORDB[(Vector Store<br/>FAISS/Qdrant)]
+    PREF -.->|User Profile| SQLITE[(SQLite<br/>Preferences)]
+    
+    style PersonalAssistant fill:#2d1b69,stroke:#16213e,color:#fff
+```
+
+**New Components:**
+
+| Component | Technology | Purpose |
+|---|---|---|
+| **Context Engine** | FAISS/Qdrant + SQLite | Stores user preferences, project context, historical patterns. Semantic search over past conversations. |
+| **Intent Recognition** | LLM-based classifier | Parses messages for actionable tasks, deadlines, and dependencies. Suggests task creation. |
+| **Preference Learning** | Bayesian model | Learns from user approvals/denials, adapts communication style, predicts tool preferences. |
+
+**Integration Points:**
+- **Context Engine** injects relevant memories into every LLM call
+- **Intent Recognition** runs asynchronously on incoming messages (email, chat, calendar)
+- **Preference Learning** updates the user model after each interaction
+
+### Phase 3: Advanced Document Intelligence (Q3 2026)
+
+```mermaid
+graph LR
+    subgraph DocumentPipeline["Document Intelligence Pipeline"]
+        WATCH[File Watcher<br/>Local + Cloud]
+        EXTRACT[Content Extraction<br/>OCR · Tables · Metadata]
+        INDEX[Indexing Engine<br/>Full-text + Semantic]
+        QUERY[Query Interface<br/>Natural Language]
+    end
+
+    subgraph Storage["Document Storage"]
+        LOCAL[(Local Files<br/>~/.openzigs/docs)]
+        CLOUD[(Cloud Storage<br/>Drive · Dropbox)]
+        VECTORDOCS[(Vector Store<br/>Document Embeddings)]
+    end
+
+    WATCH --> EXTRACT
+    EXTRACT --> INDEX
+    INDEX --> VECTORDOCS
+    INDEX --> LOCAL
+    CLOUD --> WATCH
+    
+    USER[User Query:<br/>"What did the contract say?"] --> QUERY
+    QUERY --> VECTORDOCS
+    VECTORDOCS --> QUERY
+    QUERY --> USER
+    
+    style DocumentPipeline fill:#0f3460,stroke:#16213e,color:#fff
+```
+
+**New MCP Tools:**
+
+| Tool Category | Examples | Risk Level |
+|---|---|---|
+| **OCR & Extraction** | `ocr-scan`, `extract-tables`, `extract-forms` | 🟢 Low |
+| **Format Conversion** | `pdf-to-word`, `excel-to-json`, `markdown-to-pdf` | 🟢 Low |
+| **Document Generation** | `generate-from-template`, `apply-style-guide`, `create-presentation` | 🟡 Medium |
+| **Semantic Search** | `search-documents`, `find-similar`, `answer-from-docs` | 🟢 Low |
+| **Cloud Sync** | `sync-google-drive`, `sync-dropbox`, `sync-onedrive` | 🟡 Medium |
+
+**Supported Formats (Target: 20+):**
+- **Office:** Word (.docx), Excel (.xlsx), PowerPoint (.pptx)
+- **Documents:** PDF, Markdown, HTML, LaTeX
+- **Data:** CSV, JSON, XML, YAML
+- **Code:** Jupyter (.ipynb), source files with syntax highlighting
+- **Media:** Images (with OCR), Audio (transcription), Video (subtitle extraction)
+
+### Phase 4: Productivity Automation (Q4 2026)
+
+```mermaid
+graph TB
+    subgraph WorkflowEngine["Workflow Orchestration Engine"]
+        WB[Visual Workflow Builder<br/>Web UI]
+        TRIGGER[Trigger Manager<br/>Cron · Events · Conditions]
+        EXEC[Workflow Executor<br/>State Machine]
+        MONITOR[Monitoring & Alerts<br/>Metrics · Logs]
+    end
+
+    subgraph Integrations["Cross-Platform Integrations"]
+        EMAIL[Email Assistant<br/>Auto-categorize · Draft]
+        CAL[Calendar Intelligence<br/>Optimal Scheduling]
+        PM[Project Management<br/>Jira · Asana · GitHub]
+        COMM[Communications<br/>Slack · Teams · Zoom]
+    end
+
+    USER[User or Schedule] --> TRIGGER
+    TRIGGER --> EXEC
+    EXEC --> EMAIL
+    EXEC --> CAL
+    EXEC --> PM
+    EXEC --> COMM
+    EMAIL --> MONITOR
+    CAL --> MONITOR
+    PM --> MONITOR
+    COMM --> MONITOR
+    MONITOR --> USER
+    
+    style WorkflowEngine fill:#1a1a2e,stroke:#16213e,color:#fff
+    style Integrations fill:#16213e,stroke:#1a1a2e,color:#fff
+```
+
+**Workflow Capabilities:**
+- **Templates:** 100+ pre-built workflows (daily standup, expense reports, meeting prep)
+- **Visual Builder:** Drag-and-drop nodes for triggers, actions, conditions, loops
+- **Advanced Logic:** Branching (if/else), error handling, retries, human approval checkpoints
+- **Monitoring:** Real-time execution logs, success/failure metrics, performance dashboards
+
+**Integration MCP Servers (Target: 30+):**
+
+| Category | Platforms |
+|---|---|
+| **Email** | Gmail, Outlook, ProtonMail |
+| **Calendar** | Google Calendar, Outlook Calendar, Apple Calendar |
+| **Project Management** | Jira, Asana, Trello, Monday.com, GitHub Projects |
+| **Communication** | Slack, Microsoft Teams, Zoom, Discord |
+| **Finance** | QuickBooks, Expensify, Stripe, PayPal |
+| **Cloud Storage** | Google Drive, Dropbox, OneDrive, Box |
+| **CRM** | Salesforce, HubSpot, Pipedrive |
+| **Developer Tools** | GitHub, GitLab, Bitbucket, CircleCI, Jenkins |
+
+**Email Assistant Features:**
+- Auto-categorize incoming mail (urgent, FYI, spam)
+- Draft context-aware replies with tone adjustment
+- Extract tasks/events and auto-add to calendar
+- Summarize long email threads
+
+**Calendar Intelligence:**
+- Auto-decline meeting conflicts
+- Suggest optimal meeting times based on attendee availability and user focus hours
+- Generate meeting prep briefs (agenda, attendee bios, related documents)
+- Post-meeting action item extraction and follow-up reminders
+
+---
+
+## Architectural Principles (All Phases)
+
+As OpenZigs expands, these principles remain constant:
+
+### 1. Security First
+- **Zero Trust:** Every component assumes hostile input. All data is validated, sanitized, and permission-checked.
+- **Least Privilege:** Tools run with minimal permissions. High-risk actions always require human approval.
+- **Audit Everything:** All actions are logged with timestamp, user, args, and result. Queryable via API.
+- **Data Privacy:** User data never leaves the local environment unless explicitly approved. No telemetry without opt-in.
+
+### 2. Extensibility
+- **MCP-First:** All new capabilities are MCP tools. Sidecars run as isolated containers.
+- **Plugin Architecture:** Community-contributed tools/channels/workflows via standardized interfaces.
+- **API-Driven:** Every UI feature has a corresponding REST API for automation.
+
+### 3. User Control
+- **Transparency:** The agent explains its reasoning and shows its work.
+- **Configurability:** Every feature can be toggled, customized, or disabled.
+- **Ownership:** Users own their data, can export/delete it, and control retention policies.
+
+### 4. Performance
+- **Streaming:** All LLM interactions stream results word-by-word for immediate feedback.
+- **Caching:** Frequently accessed data (documents, user preferences) is cached in-memory.
+- **Async Processing:** Long-running tasks (OCR, indexing) run asynchronously with progress updates.
+
+### 5. Reliability
+- **Idempotency:** Tool calls can be retried safely without side effects.
+- **Graceful Degradation:** If a sidecar is down, the agent still functions with remaining tools.
+- **State Persistence:** All workflows and jobs survive restarts. No data loss on crash.
+
+---
+
+## Technology Roadmap
+
+### Current Stack (Phase 1)
+- **Runtime:** Node.js 22+ / TypeScript (ESM)
+- **AI:** GitHub Copilot SDK (GPT-4.1, Claude Sonnet)
+- **Tools:** MCP servers (filesystem, search, browser, shell, social, documents)
+- **Channels:** Web (Socket.IO), Telegram (grammY), Discord (discord.js)
+- **Infrastructure:** Docker, Cloudflare Tunnel
+- **Persistence:** SQLite (prompts, jobs, audit logs), JSONL (sessions)
+
+### Planned Additions
+
+#### Phase 2 (Q2 2026)
+- **Vector Store:** FAISS or Qdrant for semantic search and long-term memory
+- **User Model Store:** SQLite tables for preferences, habits, and learned patterns
+- **Intent Classifier:** Fine-tuned LLM or rule-based NLP for task detection
+
+#### Phase 3 (Q3 2026)
+- **OCR Engine:** Tesseract for scanned document reading
+- **Speech-to-Text:** OpenAI Whisper for audio transcription
+- **Document Indexer:** Apache Tika or custom extraction pipeline
+- **Cloud Storage SDKs:** Google Drive API, Dropbox SDK, OneDrive SDK
+
+#### Phase 4 (Q4 2026)
+- **Workflow Engine:** Temporal.io or custom state machine with SQLite persistence
+- **Message Queue:** Redis or RabbitMQ for async job distribution
+- **Monitoring:** Prometheus + Grafana for metrics and dashboards
+- **Integration SDKs:** Jira API, Slack SDK, Zoom API, Gmail API, etc.
+
+---
+
+## Deployment Evolution
+
+### Current: Single-User Local Deployment
+- Docker Compose on a single host
+- Data persisted to `~/.openzigs/`
+- Cloudflare Tunnel for public access
+
+### Future: Multi-User Deployment (Phase 7 — Q3 2027)
+```mermaid
+graph TB
+    subgraph LoadBalancer["Load Balancer"]
+        LB[NGINX / HAProxy]
+    end
+
+    subgraph AgentCluster["Agent Cluster"]
+        A1[Agent Instance 1]
+        A2[Agent Instance 2]
+        A3[Agent Instance 3]
+    end
+
+    subgraph SharedServices["Shared Services"]
+        PG[(PostgreSQL<br/>Users · Teams · Permissions)]
+        REDIS[(Redis<br/>Sessions · Cache)]
+        S3[(S3-Compatible<br/>Documents · Attachments)]
+        VECTOR[(Vector Store<br/>Shared Knowledge Base)]
+    end
+
+    LB --> A1
+    LB --> A2
+    LB --> A3
+    
+    A1 --> PG
+    A2 --> PG
+    A3 --> PG
+    
+    A1 --> REDIS
+    A2 --> REDIS
+    A3 --> REDIS
+    
+    A1 --> S3
+    A2 --> S3
+    A3 --> S3
+    
+    A1 --> VECTOR
+    A2 --> VECTOR
+    A3 --> VECTOR
+    
+    style LoadBalancer fill:#2d1b69,stroke:#16213e,color:#fff
+    style SharedServices fill:#0f3460,stroke:#16213e,color:#fff
+```
+
+**Enterprise Features:**
+- **Multi-Tenancy:** Workspace isolation with per-team resources
+- **SSO/SAML:** Integration with corporate identity providers
+- **Compliance:** SOC 2, GDPR, HIPAA logging and retention policies
+- **High Availability:** Horizontal scaling with shared state
+- **Monitoring:** Centralized logging, metrics, and alerting
