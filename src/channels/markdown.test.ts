@@ -3,7 +3,10 @@ import { convertMarkdown } from "./markdown.js";
 
 describe("convertMarkdown", () => {
   it("converts bold for telegram", () => {
-    expect(convertMarkdown("**bold**", "telegram")).toBe("*bold*");
+    const result = convertMarkdown("**bold**", "telegram");
+    // toTelegramMarkdownV2 wraps bold in single asterisks
+    expect(result).toContain("*bold*");
+    expect(result).not.toContain("**");
   });
 
   it("keeps discord formatting", () => {

@@ -9,6 +9,8 @@ import type { DockerSidecarManager } from "../mcp/docker-sidecar-manager.js";
 import type { LocalMcpServerManager } from "../mcp/local-mcp-server-manager.js";
 import type { PromptManager } from "../productivity/prompt-manager.js";
 import type { Scheduler } from "../productivity/scheduler.js";
+import type { PersonalityManager } from "../personality/personality-manager.js";
+import type { SessionManager } from "../sessions/session-manager.js";
 
 type EnvEntry = {
   name: string;
@@ -154,9 +156,11 @@ export type AdminRouterOptions = {
   localServerManager?: LocalMcpServerManager;
   promptManager?: PromptManager;
   scheduler?: Scheduler;
+  personalityManager?: PersonalityManager;
+  sessionManager?: SessionManager;
 };
 
-export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerManager, promptManager, scheduler }: AdminRouterOptions) => {
+export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerManager, promptManager, scheduler, personalityManager, sessionManager }: AdminRouterOptions) => {
   const router = Router();
 
   // ── Server Restart ──
@@ -721,6 +725,7 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
           timezone: typeof body.timezone === "string" ? body.timezone : undefined,
           actionType: typeof body.actionType === "string" ? (body.actionType as "prompt" | "shell" | "custom") : undefined,
           actionPayload: (body.actionPayload ?? {}) as Record<string, unknown>,
+          model: typeof body.model === "string" ? body.model : undefined,
           enabled: typeof body.enabled === "boolean" ? body.enabled : undefined,
         });
         return res.status(201).json(job);
@@ -738,6 +743,7 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
           cronExpression: typeof body.cronExpression === "string" ? body.cronExpression.trim() : undefined,
           timezone: typeof body.timezone === "string" ? body.timezone : undefined,
           actionPayload: body.actionPayload as Record<string, unknown> | undefined,
+          model: typeof body.model === "string" ? body.model : (body.model === null ? null : undefined),
           enabled: typeof body.enabled === "boolean" ? body.enabled : undefined,
         });
         return res.json(updated);
@@ -767,6 +773,90 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
       return deleted
         ? res.json({ ok: true })
         : res.status(404).json({ error: "Job not found" });
+    });
+  }
+
+  // ── Personality Management ──
+  if (personalityManager) {
+    router.get("/personality", (_req, res) => {
+      return res.json(personalityManager.getConfig());
+    });
+
+    router.put("/personality", (req, res) => {
+      const body = req.body as Record<string, unknown>;
+      try {
+        const updated = personalityManager.update({
+          systemInstruction: typeof body.systemInstruction === "string" ? body.systemInstruction : undefined,
+          prePrompt: typeof body.prePrompt === "string" ? body.prePrompt : undefined,
+          postPrompt: typeof body.postPrompt === "string" ? body.postPrompt : undefined,
+          enabled: typeof body.enabled === "boolean" ? body.enabled : undefined,
+        });
+        return res.json(updated);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return res.status(400).json({ error: message });
+      }
+    });
+
+    router.post("/personality/reset", (_req, res) => {
+      const config = personalityManager.reset();
+      return res.json(config);
+    });
+  }
+
+  // ── Sessions ──
+  if (sessionManager) {
+    router.get("/sessions", async (_req, res) => {
+      try {
+        const sessions = await sessionManager.listSessions();
+        return res.json({ sessions });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return res.status(500).json({ error: message });
+      }
+    });
+
+    router.get("/sessions/:id", async (req, res) => {
+      try {
+        const session = await sessionManager.getSession(req.params.id);
+        return res.json(session);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return res.status(404).json({ error: message });
+      }
+    });
+
+    router.get("/sessions/:id/history", async (req, res) => {
+      try {
+        const limit = req.query.limit ? Number(req.query.limit) : undefined;
+        const events = await sessionManager.getHistory(req.params.id, limit);
+        return res.json({ events });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return res.status(404).json({ error: message });
+      }
+    });
+
+    router.post("/sessions/:id/fork", async (req, res) => {
+      try {
+        const body = req.body as Record<string, unknown>;
+        const upToIndex = typeof body.upToIndex === "number" ? body.upToIndex : 0;
+        const forked = await sessionManager.forkSession(req.params.id, upToIndex);
+        return res.status(201).json(forked);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return res.status(400).json({ error: message });
+      }
+    });
+
+    router.delete("/sessions/:id", async (req, res) => {
+      try {
+        await sessionManager.deleteSession(req.params.id);
+        return res.json({ deleted: true });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return res.status(400).json({ error: message });
+      }
     });
   }
 

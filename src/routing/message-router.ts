@@ -3,6 +3,7 @@ import type { IncomingMessage, MessageContent } from "../channels/types.js";
 import type { CopilotWrapper } from "../copilot/copilot-wrapper.js";
 import type { AccessControlConfig } from "../config/index.js";
 import type { ConversationEvent, SessionManager } from "../sessions/session-manager.js";
+import type { PersonalityManager } from "../personality/personality-manager.js";
 import { ALWAYS_ON_TOOLS } from "../mcp/constants.js";
 
 export type RouteOptions = {
@@ -22,6 +23,7 @@ export type MessageRouterOptions = {
   historyLimit?: number;
   maxToolsPerRequest?: number;
   clock?: () => Date;
+  personalityManager?: PersonalityManager;
 };
 
 const defaultAccessControl: AccessControlConfig = {
@@ -41,6 +43,7 @@ export class MessageRouter {
   private historyLimit: number;
   public readonly maxToolsPerRequest: number;
   private clock: () => Date;
+  private personalityManager?: PersonalityManager;
 
   constructor({
     channelManager,
@@ -49,7 +52,8 @@ export class MessageRouter {
     accessControl,
     historyLimit = 20,
     maxToolsPerRequest = 30,
-    clock
+    clock,
+    personalityManager
   }: MessageRouterOptions) {
     this.channelManager = channelManager;
     this.sessionManager = sessionManager;
@@ -58,6 +62,7 @@ export class MessageRouter {
     this.historyLimit = historyLimit;
     this.maxToolsPerRequest = maxToolsPerRequest;
     this.clock = clock ?? (() => new Date());
+    this.personalityManager = personalityManager;
   }
 
   async route(message: IncomingMessage, options?: RouteOptions): Promise<void> {
@@ -141,6 +146,19 @@ export class MessageRouter {
 
   private buildPrompt(history: ConversationEvent[], message: string): string {
     const lines: string[] = [];
+    const personality = this.personalityManager?.getConfig();
+
+    // System instruction & pre-prompt injection
+    if (personality?.enabled) {
+      if (personality.systemInstruction) {
+        lines.push(`System: ${personality.systemInstruction}`);
+        lines.push("");
+      }
+      if (personality.prePrompt) {
+        lines.push(personality.prePrompt);
+        lines.push("");
+      }
+    }
 
     if (history.length > 0) {
       lines.push("Conversation so far:");
@@ -166,6 +184,13 @@ export class MessageRouter {
     }
 
     lines.push(`User: ${message}`);
+
+    // Post-prompt injection
+    if (personality?.enabled && personality.postPrompt) {
+      lines.push("");
+      lines.push(personality.postPrompt);
+    }
+
     return lines.join("\n");
   }
 
