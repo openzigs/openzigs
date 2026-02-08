@@ -187,13 +187,107 @@ The user does not need to manually register tools with any CLI. OpenZigs handles
 
 ### Current MCP Sidecars
 
-| Service | Container | Port | Platform | Category |
-|---|---|---|---|---|
-| `mcp-linkedin` | `openzigs-mcp-linkedin` | 5101 | LinkedIn | social |
-| `mcp-twitter` | `openzigs-mcp-twitter` | 5102 | Twitter/X | social |
-| `mcp-facebook` | `openzigs-mcp-facebook` | 5103 | Facebook | social |
-| `mcp-pinterest` | `openzigs-mcp-pinterest` | 5104 | Pinterest | social |
-| `mcp-word` | `openzigs-mcp-word` | 5201 | Office Word | documents |
+| Service | Container | Port | Platform | Category | Runtime |
+|---|---|---|---|---|---|
+| `mcp-linkedin` | `openzigs-mcp-linkedin` | 5101 | LinkedIn | social | Docker (Python) |
+| `mcp-twitter` | `openzigs-mcp-twitter` | 5102 | Twitter/X | social | Docker (Python) |
+| `mcp-facebook` | `openzigs-mcp-facebook` | 5103 | Facebook | social | Docker (Python) |
+| `mcp-pinterest` | `openzigs-mcp-pinterest` | 5104 | Pinterest | social | Docker (Python) |
+| `mcp-word` | `openzigs-mcp-word` | 5201 | Office Word | documents | Docker (Python) |
+| `mcp-markitdown` | `openzigs-mcp-markitdown` | 5301 | MarkItDown | documents | Docker (Python) |
+| `mcp-gmail` | `openzigs-mcp-gmail` | 5302 | Gmail | personal | Docker (Node.js) |
+| `mcp-database` | `openzigs-mcp-database` | 5303 | JDBC Database | data | JBang (Java) |
+| `mcp-github` | `openzigs-mcp-github` | 5304 | GitHub | developer | Docker (Go) |
+
+### New MCP Server Details
+
+#### MarkItDown (`mcp-markitdown`)
+
+**Source:** [microsoft/markitdown](https://github.com/microsoft/markitdown)
+
+Converts various file formats (PDF, DOCX, PPTX, XLSX, HTML, images, audio) into Markdown for LLM consumption. Runs as a Docker container with volume mounts for file access.
+
+```yaml
+# docker-compose.yml excerpt
+markitdown-mcp-server:
+  image: markitdown-mcp:latest
+  container_name: openzigs-mcp-markitdown
+  volumes:
+    - /data:/workdir
+  networks:
+    - openzigs-network
+```
+
+**Tools:** `convert-to-markdown` (🟢 low risk)
+
+#### Gmail (`mcp-gmail`)
+
+**Source:** [GongRzhe/Gmail-MCP-Server](https://github.com/GongRzhe/Gmail-MCP-Server)
+
+Reads, searches, and drafts Gmail messages. Requires Google Cloud OAuth credentials (`gcp-oauth.keys.json`).
+
+```yaml
+# docker-compose.yml excerpt
+gmail-mcp-server:
+  image: mcp/gmail:latest
+  container_name: openzigs-mcp-gmail
+  volumes:
+    - gmail-credentials:/gmail-server
+    - ${HOME}/.gmail-mcp/gcp-oauth.keys.json:/gcp-oauth.keys.json:ro
+  environment:
+    GMAIL_OAUTH_PATH: /gcp-oauth.keys.json
+    GMAIL_CREDENTIALS_PATH: /gmail-server/credentials.json
+  networks:
+    - openzigs-network
+```
+
+**Tools:** `gmail-search` (🟢 low), `gmail-read` (🟢 low), `gmail-draft` (🟡 medium), `gmail-send` (🔴 high)
+
+#### Database / JDBC (`mcp-database`)
+
+**Source:** [quarkiverse/quarkus-mcp-servers](https://github.com/quarkiverse/quarkus-mcp-servers/tree/main/jdbc)
+
+Provides SQL access to any JDBC-compatible database (PostgreSQL, MySQL, SQLite, H2). Requires Java/JBang runtime.
+
+```yaml
+# docker-compose.yml excerpt (or run via JBang locally)
+database-mcp-server:
+  image: openzigs-mcp-database:latest
+  container_name: openzigs-mcp-database
+  environment:
+    JDBC_URL: jdbc:postgresql://host.docker.internal:5432/mydb
+    DB_USER: postgres
+    DB_PASSWORD: ${DB_PASSWORD}
+  networks:
+    - openzigs-network
+```
+
+**Alternative (JBang, no Docker):**
+```bash
+jbang jdbc@quarkiverse/quarkus-mcp-servers jdbc:postgresql://localhost:5432/mydb -u postgres -p secret
+```
+
+**Tools:** `db-query` (🔴 high), `db-describe` (🟢 low), `db-list-tables` (🟢 low)
+
+#### GitHub (`mcp-github`)
+
+**Source:** [github/github-mcp-server](https://github.com/github/github-mcp-server)
+
+Full GitHub API access — repos, issues, PRs, code search, actions. Uses a GitHub Personal Access Token.
+
+```yaml
+# docker-compose.yml excerpt
+github-mcp-server:
+  image: ghcr.io/github/github-mcp-server:latest
+  container_name: openzigs-mcp-github
+  environment:
+    GITHUB_PERSONAL_ACCESS_TOKEN: ${GITHUB_PERSONAL_ACCESS_TOKEN}
+    GITHUB_TOOLSETS: repos,issues,pull_requests,code_security
+  networks:
+    - openzigs-network
+```
+
+**Tools:** `github-get-file` (🟢 low), `github-search-code` (🟢 low), `github-list-issues` (🟢 low), `github-create-issue` (🟡 medium), `github-create-pr` (🔴 high)
 
 ---
 
@@ -400,6 +494,24 @@ Logs are queryable via `GET /api/logs` with filters for `category`, `level`, `si
 | `calendar-list` | documents | 🟢 low | List upcoming Google Calendar events. |
 | `calendar-create` | documents | 🟡 medium | Create a new Google Calendar event. |
 
+### Personal Assistant Tools (MCP Sidecars — Planned)
+
+| Tool | Category | Risk | Description |
+|---|---|---|---|
+| `convert-to-markdown` | documents | 🟢 low | Convert PDF, DOCX, PPTX, XLSX, HTML, images to Markdown via MarkItDown. |
+| `gmail-search` | personal | 🟢 low | Search Gmail messages by query. |
+| `gmail-read` | personal | 🟢 low | Read a specific Gmail message by ID. |
+| `gmail-draft` | personal | 🟡 medium | Create a draft email in Gmail. |
+| `gmail-send` | personal | 🔴 high | Send an email via Gmail. Requires human approval. |
+| `db-query` | data | 🔴 high | Execute a SQL query against a JDBC database. Requires human approval. |
+| `db-describe` | data | 🟢 low | Describe a database table's schema. |
+| `db-list-tables` | data | 🟢 low | List all tables in the connected database. |
+| `github-get-file` | developer | 🟢 low | Get file contents from a GitHub repository. |
+| `github-search-code` | developer | 🟢 low | Search code across GitHub repositories. |
+| `github-list-issues` | developer | 🟢 low | List issues in a GitHub repository. |
+| `github-create-issue` | developer | 🟡 medium | Create a new issue in a GitHub repository. |
+| `github-create-pr` | developer | 🔴 high | Create a pull request. Requires human approval. |
+
 ### Path Restrictions
 
 Filesystem and shell tools enforce an `allowedDirs` list. Any path outside these directories is rejected with `Access denied`.
@@ -465,3 +577,194 @@ All services (`agent`, `tunnel`, MCP sidecars) share the `openzigs-network` brid
 | Agent → Chrome | `agent` → host | `host.docker.internal:9222` |
 
 MCP sidecar URLs are passed to the agent via environment variables (`MCP_LINKEDIN_URL`, `MCP_TWITTER_URL`, etc.) in `docker-compose.yml`.
+
+| Agent → MarkItDown MCP | `agent` → `markitdown-mcp-server` | `http://markitdown-mcp-server:5301/mcp` |
+| Agent → Gmail MCP | `agent` → `gmail-mcp-server` | `http://gmail-mcp-server:5302/mcp` |
+| Agent → Database MCP | `agent` → `database-mcp-server` | `http://database-mcp-server:5303/mcp` |
+| Agent → GitHub MCP | `agent` → `github-mcp-server` | `http://github-mcp-server:5304/mcp` |
+
+---
+
+## Granular Tool Configuration
+
+OpenZigs supports **per-tool enable/disable** within each MCP server. This allows users to activate a server (e.g., Gmail) while restricting specific tools (e.g., allowing `gmail-read` but blocking `gmail-send`).
+
+### Config Schema
+
+Each sidecar entry in `config/default.json` accepts an optional `disabledTools` array:
+
+```json
+{
+  "mcpServers": {
+    "sidecars": {
+      "gmail": {
+        "enabled": true,
+        "disabledTools": ["gmail-send"]
+      },
+      "database": {
+        "enabled": true,
+        "disabledTools": ["db-query"]
+      }
+    }
+  }
+}
+```
+
+### How It Works
+
+1. At startup, `registerMcpTools()` loads each sidecar's tool definitions.
+2. Before registering a tool with the `ToolRegistry`, it checks whether the tool name appears in the sidecar's `disabledTools` array.
+3. Disabled tools are **never** passed to `createSession({ tools })` — the LLM does not know they exist.
+4. The Admin UI's "Edit" button on the MCP settings page queries the server for its full tool list via `mcp.listTools()`, renders each tool with a toggle switch, and persists changes to `disabledTools` in `config/default.json`.
+
+### UI Workflow
+
+```mermaid
+sequenceDiagram
+    participant Admin as Admin UI
+    participant API as Admin API
+    participant Registry as Tool Registry
+    participant Sidecar as MCP Sidecar
+
+    Admin->>API: GET /api/admin/sidecars/:name/tools
+    API->>Sidecar: mcp.listTools()
+    Sidecar-->>API: [tool1, tool2, tool3, ...]
+    API->>Registry: get disabledTools for sidecar
+    API-->>Admin: tools[] with enabled/disabled state
+    Admin->>API: PUT /api/admin/sidecars/:name/tools
+    API->>Registry: update disabledTools
+    API-->>Admin: 200 OK
+```
+
+---
+
+## Session & Context Management
+
+As OpenZigs scales to 50+ tools, managing the LLM's context window and conversation state becomes critical.
+
+### The Context Overload Problem
+
+Each tool definition sent to the Copilot SDK consumes ~200-500 tokens (name, description, JSON schema). With 50+ tools, tool definitions alone consume **10,000-25,000 tokens** — a significant fraction of the context window before any conversation history is included.
+
+### Strategy: Dynamic Tool Loading
+
+OpenZigs implements (or will implement) a **two-phase tool resolution** strategy:
+
+1. **Phase 1 — Intent Classification (current: disabled by default)**
+   - A lightweight pre-pass classifies the user's message into tool categories (`filesystem`, `search`, `social`, `personal`, `data`, `developer`).
+   - Only tools from matching categories are sent to the main LLM call.
+   - Controlled by `config.session.dynamicToolLoading` (default: `false`).
+
+2. **Phase 2 — Always-Available Core Tools**
+   - A small set of "always-on" tools (e.g., `web-search`, `read-file`, `list-directory`) are included in every request regardless of classification.
+   - High-frequency tools that the LLM needs across all contexts.
+
+### Configuration
+
+```json
+{
+  "session": {
+    "historyWindow": 20,
+    "maxToolsPerRequest": 30,
+    "dynamicToolLoading": false
+  }
+}
+```
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `session.historyWindow` | number | `20` | Max conversation turns to include in context. |
+| `session.maxToolsPerRequest` | number | `30` | Hard cap on tools sent per LLM request. |
+| `session.dynamicToolLoading` | boolean | `false` | Enable intent-based tool filtering. |
+
+### Conversation State Architecture
+
+OpenZigs uses a **stateful session model** with a sliding window:
+
+1. **Session Manager** persists all conversation events to JSONL files (`~/.openzigs/sessions/<sessionId>/`).
+2. **Message Router** loads the last `historyWindow` turns before each LLM call.
+3. **Tool call results** are included in history so the LLM has continuity across multi-step tasks.
+4. **Session pruning** — older events beyond the window are retained on disk but not sent to the LLM.
+
+```mermaid
+flowchart TB
+    MSG[User Message] --> MR[Message Router]
+    MR --> SM[Session Manager]
+    SM --> HIST[Load last N turns]
+    HIST --> CW[Copilot Wrapper]
+    CW --> SDK[createSession<br/>tools + history + message]
+    SDK --> RESP[Streamed Response]
+    RESP --> SM2[Append to JSONL]
+
+    subgraph Context Window
+        TOOLS[Enabled Tools<br/>≤ maxToolsPerRequest]
+        HIST2[Conversation History<br/>≤ historyWindow turns]
+        SYSP[System Prompt]
+    end
+
+    CW --> Context Window
+```
+
+### Recommendation
+
+For the current Express/Node.js stack:
+
+1. **Keep `dynamicToolLoading: false` initially.** With < 30 tools, full tool lists fit comfortably. Enable when crossing ~40 tools.
+2. **Set `historyWindow: 20`** as default — sufficient for multi-step tasks without exhausting context.
+3. **Implement `maxToolsPerRequest: 30`** as a safety valve immediately.
+4. **Future: vector-based tool retrieval** — embed tool descriptions and retrieve top-K by semantic similarity to the user query. This is the long-term scalable solution.
+
+---
+
+## Human-in-the-Loop Execution (Detailed)
+
+The Human-in-the-Loop (HITL) system is the cornerstone of OpenZigs' "Safe Agent" philosophy. Every destructive or externally-impactful action **must** receive explicit human confirmation before execution.
+
+### Threat Model
+
+| Threat | Mitigation |
+|---|---|
+| LLM hallucination triggers destructive tool | 🔴 High-risk tools require approval |
+| Prompt injection causes data exfiltration | `gmail-send`, `social-post` gated by approval |
+| Unintended SQL execution | `db-query` classified as 🔴 high risk |
+| Credential exposure via shell | `shell-execute` requires approval + allowlist |
+| Mass GitHub operations | `github-create-pr` gated by approval |
+
+### Confirmation Flow (Expanded)
+
+1. **Tool Invocation** — The Copilot SDK calls a tool handler.
+2. **Risk Check** — `ToolRegistry` looks up the tool's `riskLevel`.
+3. **Gate Decision:**
+   - 🟢 **Low** → Execute immediately, log result.
+   - 🟡 **Medium** → Execute immediately, log with elevated visibility.
+   - 🔴 **High** → **Pause execution.** Create an `ApprovalRequest`.
+4. **Multi-Channel Broadcast** — The approval request is sent to all connected channels simultaneously (Web Chat overlay, Telegram inline keyboard, Discord button row).
+5. **First-Response-Wins** — The first human to approve or deny across any channel resolves the request.
+6. **Execution or Rejection** — The tool either runs and returns results to the LLM, or a denial message is returned.
+7. **Audit Trail** — Every decision (approve/deny), the deciding user, timestamp, and channel are logged.
+
+### High-Risk Tool Registry
+
+The following tools **always** require human confirmation:
+
+| Tool | Category | Why It's High Risk |
+|---|---|---|
+| `write-file` | filesystem | Modifies host filesystem |
+| `shell-execute` | shell | Arbitrary command execution |
+| `social-post` | social | Public-facing content creation |
+| `browser-navigate` | browser | Can execute arbitrary JS |
+| `gmail-send` | personal | Sends email on user's behalf |
+| `db-query` | data | Arbitrary SQL execution |
+| `github-create-pr` | developer | Creates public code changes |
+
+### Admin Override
+
+Admins can reclassify any tool's risk level via the API or Admin UI:
+
+```bash
+curl -X POST http://localhost:3000/api/admin/tools/db-query/risk \
+  -H "Content-Type: application/json" \
+  -d '{"riskLevel": "medium"}'
+```
+
+> **Warning:** Downgrading a high-risk tool removes the human confirmation gate. Use with extreme caution.

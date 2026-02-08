@@ -54,11 +54,56 @@
     "healthRetryDelay": 2000,
     "network": "openzigs-network",
     "sidecars": {
-      "linkedin": { "enabled": true },
-      "twitter": { "enabled": true },
-      "facebook": { "enabled": true },
-      "pinterest": { "enabled": true },
-      "word": { "enabled": true }
+      "linkedin": { "enabled": true, "disabledTools": [] },
+      "twitter": { "enabled": true, "disabledTools": [] },
+      "facebook": { "enabled": true, "disabledTools": [] },
+      "pinterest": { "enabled": true, "disabledTools": [] },
+      "word": { "enabled": true, "disabledTools": [] },
+      "markitdown": {
+        "enabled": false,
+        "disabledTools": [],
+        "runtime": "docker",
+        "image": "markitdown-mcp:latest",
+        "port": 5301,
+        "volumes": ["/data:/workdir"]
+      },
+      "gmail": {
+        "enabled": false,
+        "disabledTools": [],
+        "runtime": "docker",
+        "image": "mcp/gmail:latest",
+        "port": 5302,
+        "env": {
+          "GMAIL_OAUTH_PATH": "/gcp-oauth.keys.json",
+          "GMAIL_CREDENTIALS_PATH": "/gmail-server/credentials.json"
+        }
+      },
+      "database": {
+        "enabled": false,
+        "disabledTools": [],
+        "runtime": "jbang",
+        "command": "jbang",
+        "args": ["jdbc@quarkiverse/quarkus-mcp-servers", "${JDBC_URL}"],
+        "port": 5303,
+        "env": {
+          "JDBC_URL": "${JDBC_URL}"
+        }
+      },
+      "github": {
+        "enabled": false,
+        "disabledTools": [],
+        "runtime": "docker",
+        "image": "ghcr.io/github/github-mcp-server:latest",
+        "port": 5304,
+        "env": {
+          "GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_PERSONAL_ACCESS_TOKEN}"
+        }
+      }
     }
+  },
+  "session": {
+    "historyWindow": 20,
+    "maxToolsPerRequest": 30,
+    "dynamicToolLoading": false
   }
 }

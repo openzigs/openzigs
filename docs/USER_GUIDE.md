@@ -27,8 +27,11 @@ Before you begin, ensure the following are installed and available:
 
 | Requirement | Purpose |
 |---|---|
-| **Python 3.10+** | Some MCP servers (LinkedIn, Twitter, Facebook) are Python-based. |
+| **Python 3.10+** | Some MCP servers (LinkedIn, Twitter, Facebook, MarkItDown) are Python-based. |
+| **Java 17+ / JBang** | Required for the JDBC Database MCP server. [Install JBang](https://www.jbang.dev/download/). |
 | **LinkedIn / Twitter / Facebook / Pinterest API credentials** | Required by respective MCP sidecars. Passed via environment variables in `docker-compose.yml`. |
+| **Google Cloud OAuth credentials** | Required for Gmail MCP server. Create an OAuth app in Google Cloud Console. |
+| **GitHub Personal Access Token** | Required for GitHub MCP server. Create at github.com/settings/tokens. |
 
 ---
 
@@ -75,6 +78,12 @@ TUNNEL_TOKEN=your-cloudflare-tunnel-token
 # MCP_FACEBOOK_URL=http://facebook-mcp-server:5103
 # MCP_PINTEREST_URL=http://pinterest-mcp-server:5104
 # MCP_WORD_URL=http://word-mcp-server:5201
+
+# ── Optional: Personal Assistant MCP Servers ──
+# GMAIL_OAUTH_PATH=~/.gmail-mcp/gcp-oauth.keys.json
+# GITHUB_PERSONAL_ACCESS_TOKEN=ghp_your_token_here
+# JDBC_URL=jdbc:postgresql://localhost:5432/mydb
+# DB_PASSWORD=your-db-password
 
 # ── Server ──
 PORT=3000
@@ -344,6 +353,10 @@ This starts the complete stack:
 | `facebook-mcp-server` | Facebook MCP sidecar | 5103 |
 | `pinterest-mcp-server` | Pinterest MCP sidecar | 5104 |
 | `word-mcp-server` | Office Word MCP sidecar | 5201 |
+| `markitdown-mcp-server` | MarkItDown file converter | 5301 |
+| `gmail-mcp-server` | Gmail MCP sidecar | 5302 |
+| `database-mcp-server` | JDBC Database MCP sidecar | 5303 |
+| `github-mcp-server` | GitHub MCP sidecar | 5304 |
 
 All containers share the `openzigs-network` Docker bridge. The agent communicates with MCP sidecars via HTTP on their internal ports.
 
@@ -591,6 +604,157 @@ Agent: [calls calendar-create] ✅ Event created
 
 ---
 
+## Personal Assistant Tools
+
+Personal assistant tools connect OpenZigs to your email, databases, GitHub, and document processing pipelines.
+
+### MarkItDown (Document Converter)
+
+Converts PDF, DOCX, PPTX, XLSX, HTML, images, and audio files into Markdown for LLM consumption.
+
+**Source:** [microsoft/markitdown](https://github.com/microsoft/markitdown)
+
+```
+You: Convert /data/report.pdf to markdown
+Agent: [calls convert-to-markdown] Here’s the markdown content: ...
+
+You: Summarize the PowerPoint at /data/deck.pptx
+Agent: [calls convert-to-markdown, then summarizes] Key points: ...
+```
+
+**Setup:**
+
+1. Build the Docker image:
+   ```bash
+   docker build -t markitdown-mcp:latest -f sidecars/markitdown/Dockerfile .
+   ```
+
+2. Enable in `config/default.json`:
+   ```json
+   { "mcpServers": { "sidecars": { "markitdown": { "enabled": true } } } }
+   ```
+
+3. Mount your data directory via Docker volumes so the server can access files.
+
+### Gmail
+
+Read, search, and send emails via Gmail.
+
+**Source:** [GongRzhe/Gmail-MCP-Server](https://github.com/GongRzhe/Gmail-MCP-Server)
+
+```
+You: Search my email for messages from john@example.com about invoices
+Agent: [calls gmail-search] Found 3 emails: ...
+
+You: Draft a reply to the latest one saying "Thanks, I’ll review this today"
+Agent: [calls gmail-draft] ✅ Draft created
+
+You: Send it
+Agent: ⚠️ This action requires approval (gmail-send is high-risk)
+[Approval overlay appears] Approve / Deny
+```
+
+**Setup:**
+
+1. Create a Google Cloud project and enable the Gmail API.
+2. Create OAuth 2.0 credentials and download `gcp-oauth.keys.json`.
+3. Place credentials:
+   ```bash
+   mkdir -p ~/.gmail-mcp
+   mv gcp-oauth.keys.json ~/.gmail-mcp/
+   ```
+4. Run initial auth:
+   ```bash
+   npx @gongrzhe/server-gmail-autoauth-mcp auth
+   ```
+5. Enable in config:
+   ```json
+   { "mcpServers": { "sidecars": { "gmail": { "enabled": true } } } }
+   ```
+
+> **Security:** `gmail-send` is classified as 🔴 high risk and requires human approval before execution.
+
+### Database (JDBC)
+
+Query any JDBC-compatible database (PostgreSQL, MySQL, SQLite, H2).
+
+**Source:** [quarkiverse/quarkus-mcp-servers](https://github.com/quarkiverse/quarkus-mcp-servers/tree/main/jdbc)
+
+```
+You: List all tables in my database
+Agent: [calls db-list-tables] Tables: users, orders, products, ...
+
+You: Describe the orders table
+Agent: [calls db-describe] Columns: id (int), user_id (int), total (decimal), created_at (timestamp)
+
+You: How many orders were placed last month?
+Agent: ⚠️ This action requires approval (db-query is high-risk)
+[Approval overlay] SELECT COUNT(*) FROM orders WHERE created_at >= '2026-01-01'
+Approve / Deny
+```
+
+**Setup:**
+
+1. Install JBang: https://www.jbang.dev/download/
+2. Set environment variables:
+   ```dotenv
+   JDBC_URL=jdbc:postgresql://localhost:5432/mydb
+   DB_PASSWORD=your-password
+   ```
+3. Enable in config:
+   ```json
+   { "mcpServers": { "sidecars": { "database": { "enabled": true } } } }
+   ```
+
+> **Security:** `db-query` is classified as 🔴 high risk. The agent shows the exact SQL query in the approval prompt so you can verify it before execution.
+
+### GitHub
+
+Manage repositories, issues, pull requests, and code search.
+
+**Source:** [github/github-mcp-server](https://github.com/github/github-mcp-server)
+
+```
+You: List open issues in mgcronin/openzigs
+Agent: [calls github-list-issues] Found 12 open issues: ...
+
+You: Search for files containing "ToolRegistry" in the repo
+Agent: [calls github-search-code] Found in 3 files: ...
+```
+
+**Setup:**
+
+1. Create a GitHub Personal Access Token at https://github.com/settings/tokens.
+2. Set the token:
+   ```dotenv
+   GITHUB_PERSONAL_ACCESS_TOKEN=ghp_your_token_here
+   ```
+3. Enable in config:
+   ```json
+   { "mcpServers": { "sidecars": { "github": { "enabled": true } } } }
+   ```
+
+### Granular Tool Control
+
+You can enable an MCP server while disabling specific tools within it. For example, enable Gmail but block sending:
+
+```json
+{
+  "mcpServers": {
+    "sidecars": {
+      "gmail": {
+        "enabled": true,
+        "disabledTools": ["gmail-send"]
+      }
+    }
+  }
+}
+```
+
+Disabled tools are never sent to the LLM — the model cannot call them. Use the Admin UI's MCP settings page to toggle tools visually.
+
+---
+
 ## Configuration Reference
 
 All configuration lives in `config/default.json`. Environment variables are interpolated using `${VAR_NAME}` syntax.
@@ -618,6 +782,13 @@ All configuration lives in `config/default.json`. Environment variables are inte
 | `MCP_FACEBOOK_URL` | `http://facebook-mcp-server:5103` | Facebook MCP sidecar URL. |
 | `MCP_PINTEREST_URL` | `http://pinterest-mcp-server:5104` | Pinterest MCP sidecar URL. |
 | `MCP_WORD_URL` | `http://word-mcp-server:5201` | Office Word MCP sidecar URL. |
+| `MCP_MARKITDOWN_URL` | `http://markitdown-mcp-server:5301` | MarkItDown file converter URL. |
+| `MCP_GMAIL_URL` | `http://gmail-mcp-server:5302` | Gmail MCP sidecar URL. |
+| `MCP_DATABASE_URL` | `http://database-mcp-server:5303` | JDBC Database MCP sidecar URL. |
+| `MCP_GITHUB_URL` | `http://github-mcp-server:5304` | GitHub MCP sidecar URL. |
+| `GITHUB_PERSONAL_ACCESS_TOKEN` | — | GitHub PAT for the GitHub MCP server. |
+| `JDBC_URL` | — | JDBC connection string for the Database MCP server. |
+| `DB_PASSWORD` | — | Database password. |
 
 ---
 
@@ -634,3 +805,7 @@ All configuration lives in `config/default.json`. Environment variables are inte
 | Social media tool returns "ECONNREFUSED" | MCP sidecar container not running. | Start the relevant sidecar: `docker compose up -d linkedin-mcp-server`. |
 | Scheduled job not firing | Scheduler not started or job disabled. | Check job status with `list-jobs` tool or `GET /api/jobs`. Ensure `enabled: true`. |
 | "fetch failed" on Word/Calendar tools | Word or Calendar MCP sidecar not reachable. | Verify the sidecar is running: `docker compose ps word-mcp-server`. |
+| Gmail auth errors | Missing or expired OAuth credentials. | Re-run `npx @gongrzhe/server-gmail-autoauth-mcp auth`. Ensure `gcp-oauth.keys.json` is in `~/.gmail-mcp/`. |
+| `db-query` returns "connection refused" | Database MCP server not running or JDBC_URL incorrect. | Check `JDBC_URL` env var and ensure the database is reachable from Docker. |
+| GitHub tools return 401 | Invalid or expired PAT. | Regenerate your GitHub Personal Access Token and update `GITHUB_PERSONAL_ACCESS_TOKEN`. |
+| MarkItDown returns empty content | File not accessible inside container. | Ensure the file path is within the mounted volume (`/workdir` inside the container). |
