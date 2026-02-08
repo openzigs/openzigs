@@ -94,7 +94,11 @@ PORT=3000
 **Development mode (with auto-reload):**
 
 ```bash
+# Terminal 1: Start the backend
 pnpm dev
+
+# Terminal 2: Start the Next.js UI
+cd ui && pnpm dev
 ```
 
 **Production build:**
@@ -102,6 +106,9 @@ pnpm dev
 ```bash
 pnpm build
 pnpm start
+
+# Build and serve the UI separately
+cd ui && pnpm build && pnpm start
 ```
 
 **Docker (recommended for production):**
@@ -110,7 +117,7 @@ pnpm start
 docker compose up -d
 ```
 
-The server starts at **http://localhost:3000** by default.
+The backend API starts at **http://localhost:3000** and the Next.js UI at **http://localhost:3001** by default. Access the UI at `http://localhost:3001`.
 
 ---
 
@@ -139,11 +146,23 @@ You only need to do this once. The token persists across restarts.
 
 ---
 
-## Using the Web Chat
+## Using the Web UI
 
-1. Open **http://localhost:3000** in your browser.
+The OpenZigs UI is a **Next.js** application with a navigation bar providing access to five pages:
 
-2. You see a dark-themed chat interface with:
+| Page | URL | Purpose |
+|---|---|---|
+| **Dashboard** | `/` | System snapshot, pending approvals, audit log |
+| **Chat** | `/chat` | AI chat with streaming, model selection, approval overlays |
+| **Admin** | `/admin` | Channel config, sidecar management, tool toggles, env status |
+| **Library** | `/library` | Saved prompt templates with `{{variable}}` interpolation |
+| **Scheduler** | `/scheduler` | Cron-based job scheduling with prompt linking |
+
+### Chat
+
+1. Navigate to **http://localhost:3001/chat**.
+
+2. The chat interface includes:
    - A **model selector** dropdown in the header.
    - A **connection indicator** (green = connected).
    - A **message input** area at the bottom.
@@ -160,16 +179,56 @@ If the agent calls a high-risk tool (e.g., writing a file or running a shell com
 - Click **Approve** to allow the action, or **Deny** to block it.
 - The first approval (from any connected channel) wins.
 
+### Dashboard
+
+The dashboard at `/` provides:
+
+- **Snapshot stats** — total enabled tools, pending approvals, active sessions.
+- **Pending approvals** — approve or deny high-risk tool calls inline.
+- **Audit log** — filterable log of tool calls, auth events, and system changes with CSV export.
+
+### Admin
+
+The admin page at `/admin` consolidates all configuration:
+
+- **Channels** — Configure Telegram and Discord tokens, toggle channels on/off, select default model.
+- **MCP Sidecars** — View Docker sidecar status (running, credentials missing, offline), manage credentials, restart containers, toggle per-tool within each sidecar.
+- **Local MCP Servers** — View status of locally-running MCP servers (MarkItDown, Database, GitHub).
+- **Tools** — Toggle any tool on/off, view risk level badges (🟢 low, 🟡 medium, 🔴 high), grouped by category.
+- **Environment** — Status grid showing which environment variables are configured vs. missing.
+
+### Library (Saved Prompts)
+
+The library at `/library` provides a visual interface for managing saved prompt templates:
+
+- **Create** new prompts with name, content, and tags.
+- **Edit** existing prompts inline.
+- **Search** prompts by name, content, or tags.
+- **Variable preview** — `{{variable}}` placeholders are highlighted and listed.
+- **Delete** with confirmation.
+
+### Scheduler
+
+The scheduler at `/scheduler` manages cron-based automated jobs:
+
+- **Create** jobs with name, cron expression, and action (prompt, shell command, or custom).
+- **Prompt linking** — link a job to a saved prompt from the Library.
+- **Cron preview** — visual breakdown of minute, hour, day, month, weekday fields.
+- **Enable/disable** individual jobs with toggle switches.
+- **Live execution events** via Socket.IO — see when jobs fire in real time.
+
 ---
 
 ## Model Selection
 
-The Web Chat UI includes a model selector in the header bar.
+The Chat page includes a model selector in the header bar.
 
 1. Click the dropdown to see available models (fetched from the Copilot SDK).
 2. Select a model. Your choice is:
    - **Applied immediately** to the next message you send.
    - **Persisted** to `config/user.json` so it survives page refreshes.
+
+You can also set the default model from the **Admin** page under the Channels panel.
 
 Available models depend on your Copilot subscription. Common options include:
 
@@ -182,9 +241,17 @@ Available models depend on your Copilot subscription. Common options include:
 
 ## Enabling and Disabling Tools
 
-Tools are managed via the REST API. Each tool can be toggled independently.
+Tools can be managed via the **Admin** page at `/admin` or via the REST API. Each tool can be toggled independently.
 
-### List All Tools
+### Admin UI
+
+Navigate to **http://localhost:3001/admin** and scroll to the **Tools** section. Tools are grouped by category (`filesystem`, `search`, `browser`, `shell`, `productivity`, `social`, `documents`, `personal`, `data`, `developer`). Each tool shows its risk level badge and a toggle switch.
+
+For MCP sidecar tools, expand a sidecar card and use the per-tool toggles to enable or disable individual tools within that server.
+
+### REST API
+
+#### List All Tools
 
 ```bash
 curl -H "Authorization: Bearer <token>" http://localhost:3000/api/tools | jq
@@ -211,8 +278,6 @@ curl -X POST \
 ```
 
 Toggle state is persisted to `config/tools.json`. Disabled tools are **not** passed to the Copilot SDK; the model cannot call them.
-
-> **Note:** A full Web UI for tool toggles, the approval queue viewer, and the audit log viewer is planned in [Epic #11](https://github.com/mgcronin/openzigs/issues/11) *(Coming Soon)*.
 
 ---
 
@@ -751,7 +816,7 @@ You can enable an MCP server while disabling specific tools within it. For examp
 }
 ```
 
-Disabled tools are never sent to the LLM — the model cannot call them. Use the Admin UI's MCP settings page to toggle tools visually.
+Disabled tools are never sent to the LLM — the model cannot call them. Use the **Admin** page at `/admin` to expand a sidecar card and toggle tools visually.
 
 ---
 

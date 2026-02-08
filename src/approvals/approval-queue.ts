@@ -1,6 +1,7 @@
 import { EventEmitter } from "node:events";
-import { randomUUID } from "node:crypto";
+import { randomUUID, createHash } from "node:crypto";
 import type { AuditLogger } from "../logging/audit-logger.js";
+import { formatApprovalContext, type ApprovalContext } from "./approval-formatters.js";
 
 export type ApprovalChannel = "web" | "telegram" | "discord";
 export type ApprovalStatus = "pending" | "approved" | "rejected" | "expired";
@@ -32,6 +33,14 @@ export type PendingApproval = {
   decidedBy?: string;
   decidedAt?: Date;
   decidedVia?: ApprovalChannel;
+  /** Human-readable formatted context for the approval prompt */
+  context?: ApprovalContext;
+  /** SHA-256 hash of the parameters for tamper detection */
+  parameterHash?: string;
+  /** Time between request and decision in milliseconds */
+  approvalLatency?: number;
+  /** Tool category for audit filtering */
+  toolCategory?: string;
 };
 
 export type ApprovalDecision = {
@@ -74,6 +83,10 @@ export class ApprovalQueue extends EventEmitter {
   async requestApproval(request: ApprovalRequest): Promise<ApprovalResult> {
     const createdAt = this.clock();
     const timeoutMs = request.timeoutMs ?? this.timeoutMs;
+    const context = formatApprovalContext(request.tool, request.args);
+    const parameterHash = createHash("sha256")
+      .update(JSON.stringify(request.args))
+      .digest("hex");
     const approval: PendingApproval = {
       id: randomUUID(),
       sessionId: request.sessionId,
@@ -84,8 +97,12 @@ export class ApprovalQueue extends EventEmitter {
       status: "pending",
       createdAt,
       expiresAt: new Date(createdAt.getTime() + timeoutMs),
-      explanation: request.explanation,
-      preview: request.preview
+      explanation: context?.destructiveAction ?? request.explanation,
+      preview: context
+        ? `${context.summary}\n${context.details.join("\n")}`
+        : request.preview,
+      context,
+      parameterHash,
     };
 
     this.approvals.set(approval.id, approval);
@@ -149,12 +166,14 @@ export class ApprovalQueue extends EventEmitter {
     }
 
     const decidedAt = this.clock();
+    const approvalLatency = decidedAt.getTime() - approval.createdAt.getTime();
     const updated: PendingApproval = {
       ...approval,
       status,
       decidedAt,
       decidedBy: decision.decidedBy,
-      decidedVia: decision.decidedVia
+      decidedVia: decision.decidedVia,
+      approvalLatency,
     };
 
     this.approvals.set(id, updated);
@@ -189,7 +208,9 @@ export class ApprovalQueue extends EventEmitter {
           riskLevel: updated.riskLevel,
           status: updated.status,
           decidedBy: updated.decidedBy,
-          decidedVia: updated.decidedVia
+          decidedVia: updated.decidedVia,
+          approvalLatency: updated.approvalLatency,
+          parameterHash: updated.parameterHash,
         }
       });
     }

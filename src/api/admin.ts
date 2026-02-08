@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { loadConfig } from "../config/index.js";
 import { logger } from "../logging/logger.js";
-import type { ToolRegistry } from "../mcp/tool-registry.js";
+import type { ToolRegistry, RiskLevel } from "../mcp/tool-registry.js";
 import type { DockerSidecarManager } from "../mcp/docker-sidecar-manager.js";
 import type { LocalMcpServerManager } from "../mcp/local-mcp-server-manager.js";
 import type { PromptManager } from "../productivity/prompt-manager.js";
@@ -31,12 +31,16 @@ const ENV_CHECKS = [
   "PINTEREST_APP_ID",
   "PINTEREST_APP_SECRET",
   "GOOGLE_OAUTH_CREDENTIALS",
+  "GITHUB_PERSONAL_ACCESS_TOKEN",
+  "JDBC_URL",
+  "DB_PASSWORD",
 ] as const;
 
 type SidecarCredential = {
   platform: string;
   label: string;
   imageAvailable: boolean;
+  enabled: boolean;
   envVars: { name: string; configured: boolean }[];
 };
 
@@ -46,6 +50,10 @@ const SIDECAR_CREDENTIALS: Array<{ platform: string; label: string; envVars: str
   { platform: "facebook", label: "Facebook", envVars: ["FACEBOOK_PAGE_TOKEN"], imageAvailable: true },
   { platform: "pinterest", label: "Pinterest", envVars: ["PINTEREST_APP_ID", "PINTEREST_APP_SECRET"], imageAvailable: true },
   // Word/Office and Calendar are NOT Docker sidecars — they use local MCP servers (see LOCAL_SERVER_CREDENTIALS below)
+  { platform: "markitdown", label: "MarkItDown", envVars: [], imageAvailable: true },
+  { platform: "gmail", label: "Gmail", envVars: ["GOOGLE_OAUTH_CREDENTIALS"], imageAvailable: true },
+  { platform: "database", label: "Database (JDBC)", envVars: ["JDBC_URL", "DB_PASSWORD"], imageAvailable: true },
+  { platform: "github", label: "GitHub", envVars: ["GITHUB_PERSONAL_ACCESS_TOKEN"], imageAvailable: true },
 ];
 
 type LocalServerCredential = {
@@ -151,6 +159,34 @@ export type AdminRouterOptions = {
 export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerManager, promptManager, scheduler }: AdminRouterOptions) => {
   const router = Router();
 
+  // ── Server Restart ──
+  // In dev mode, tsx watch only restarts on file changes — process.exit()
+  // just kills the process permanently.  We touch the server entry-point
+  // to trigger a genuine watch-based restart.  In prod (node / pm2),
+  // process.exit(0) still works because the process manager handles respawns.
+  router.post("/restart", async (_req, res) => {
+    logger.info("Server restart requested via admin API");
+    res.json({ ok: true, message: "Server restarting…" });
+
+    setTimeout(async () => {
+      const isDev = !!process.env.npm_lifecycle_script?.includes("tsx watch");
+      if (isDev) {
+        // Touch the entry-point so tsx watch picks up the "change"
+        const entry = path.resolve(process.cwd(), "src", "server.ts");
+        try {
+          const now = new Date();
+          await fs.utimes(entry, now, now);
+          logger.info("Touched src/server.ts to trigger tsx watch restart");
+        } catch {
+          // Fallback: exit and hope a process manager picks up
+          process.exit(0);
+        }
+      } else {
+        process.exit(0);
+      }
+    }, 500);
+  });
+
   router.get("/tools", (_req, res) => {
     const tools = toolRegistry.getAllTools();
     res.json({ tools });
@@ -168,6 +204,81 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return res.status(400).json({ error: message });
+    }
+  });
+
+  // ── Admin Risk Override ──
+  router.post("/tools/:name/risk", async (req, res) => {
+    const { name } = req.params;
+    const { riskLevel } = req.body as { riskLevel?: string };
+    if (!riskLevel || !["low", "medium", "high"].includes(riskLevel)) {
+      return res.status(400).json({ error: "riskLevel must be 'low', 'medium', or 'high'" });
+    }
+    try {
+      await toolRegistry.setRiskOverride(name, riskLevel as RiskLevel);
+      return res.json({ ok: true, tool: name, riskLevel });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return res.status(400).json({ error: message });
+    }
+  });
+
+  // ── Per-Sidecar Tool Listing ──
+  router.get("/sidecars/:name/tools", (_req, res) => {
+    const { name } = _req.params;
+
+    // For social sidecars, merge platform-specific tools + cross-platform social tools
+    const socialSidecars = new Set(["linkedin", "twitter", "facebook", "pinterest"]);
+    if (socialSidecars.has(name)) {
+      const platformTools = toolRegistry.getToolsBySource(name); // e.g. pinterest-specific
+      const crossPlatformTools = toolRegistry.getToolsBySource("social"); // social-post, etc.
+      const tools = [...platformTools, ...crossPlatformTools];
+      return res.json({ sidecar: name, tools });
+    }
+
+    // For other sidecars with source tags, derive tool list dynamically
+    const dynamicTools = toolRegistry.getToolsBySource(name);
+    if (dynamicTools.length > 0) {
+      return res.json({ sidecar: name, tools: dynamicTools });
+    }
+
+    return res.status(404).json({ error: `Unknown sidecar: ${name}` });
+  });
+
+  // ── Per-Sidecar Tool Toggle ──
+  router.put("/sidecars/:name/tools", async (req, res) => {
+    const { name } = req.params;
+    const { disabledTools } = req.body as { disabledTools?: string[] };
+    if (!Array.isArray(disabledTools)) {
+      return res.status(400).json({ error: "disabledTools must be an array of tool names" });
+    }
+    try {
+      // Merge platform-specific + cross-platform social tools
+      const socialSidecars = new Set(["linkedin", "twitter", "facebook", "pinterest"]);
+      let toolNames: string[];
+      if (socialSidecars.has(name)) {
+        const platformTools = toolRegistry.getToolsBySource(name);
+        const crossPlatformTools = toolRegistry.getToolsBySource("social");
+        toolNames = [...platformTools, ...crossPlatformTools].map((t) => t.name);
+      } else {
+        const allSidecarTools = toolRegistry.getToolsBySource(name);
+        toolNames = allSidecarTools.map((t) => t.name);
+      }
+
+      if (toolNames.length === 0) {
+        return res.status(404).json({ error: `Unknown sidecar: ${name}` });
+      }
+
+      const disabledSet = new Set(disabledTools);
+      for (const toolName of toolNames) {
+        await toolRegistry.setEnabled(toolName, !disabledSet.has(toolName));
+      }
+
+      logger.info(`Updated disabledTools for sidecar "${name}": ${disabledTools.join(", ") || "(none)"}`);
+      return res.json({ ok: true, sidecar: name, disabledTools });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return res.status(500).json({ error: message });
     }
   });
 
@@ -307,10 +418,25 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
     const statuses = sidecarManager?.getAllStatuses() ?? [];
     const configured = sidecarManager?.getConfiguredSidecars() ?? [];
 
+    // Load sidecar enabled states from config
+    const sidecarEnabledMap: Record<string, boolean> = {};
+    try {
+      const config = await loadConfig();
+      const sidecars = config.mcpServers?.sidecars as Record<string, { enabled?: boolean }> | undefined;
+      if (sidecars) {
+        for (const [name, cfg] of Object.entries(sidecars)) {
+          sidecarEnabledMap[name] = cfg.enabled !== false; // default to true
+        }
+      }
+    } catch {
+      // Config unavailable — assume all enabled
+    }
+
     const credentials: SidecarCredential[] = SIDECAR_CREDENTIALS.map((cred) => ({
       platform: cred.platform,
       label: cred.label,
       imageAvailable: cred.imageAvailable,
+      enabled: sidecarEnabledMap[cred.platform] !== false,
       envVars: cred.envVars.map((name) => ({
         name,
         configured: !!(process.env[name] && process.env[name]!.trim().length > 0)
@@ -323,6 +449,46 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
       credentials,
       dockerAvailable,
     });
+  });
+
+  // ── Toggle MCP Sidecar Enabled/Disabled ──
+  router.post("/sidecars/:name/toggle", async (req, res) => {
+    const { name } = req.params;
+    const { enabled } = req.body as { enabled?: boolean };
+    if (typeof enabled !== "boolean") {
+      return res.status(400).json({ error: "enabled must be a boolean" });
+    }
+
+    const validSidecars = new Set(SIDECAR_CREDENTIALS.map((c) => c.platform));
+    if (!validSidecars.has(name)) {
+      return res.status(404).json({ error: `Unknown sidecar: ${name}` });
+    }
+
+    try {
+      const configPath = defaultConfigPath();
+      const userConfig = await readUserConfig(configPath);
+      const mcpServers = (userConfig.mcpServers && typeof userConfig.mcpServers === "object")
+        ? (userConfig.mcpServers as Record<string, unknown>)
+        : {};
+      const sidecars = (mcpServers.sidecars && typeof mcpServers.sidecars === "object")
+        ? (mcpServers.sidecars as Record<string, unknown>)
+        : {};
+      const existing = (sidecars[name] && typeof sidecars[name] === "object")
+        ? (sidecars[name] as Record<string, unknown>)
+        : {};
+
+      sidecars[name] = { ...existing, enabled };
+      mcpServers.sidecars = sidecars;
+      userConfig.mcpServers = mcpServers;
+
+      await writeUserConfig(configPath, userConfig);
+
+      logger.info(`Sidecar "${name}" ${enabled ? "enabled" : "disabled"}`);
+      return res.json({ ok: true, sidecar: name, enabled, restartRequired: true });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return res.status(500).json({ error: message });
+    }
   });
 
   // ── Save MCP sidecar credentials ──
@@ -436,6 +602,19 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
       const message = error instanceof Error ? error.message : String(error);
       return res.status(500).json({ error: message });
     }
+  });
+
+  // ── Per-Local-Server Tool Listing ──
+  router.get("/local-servers/:name/tools", (_req, res) => {
+    const { name } = _req.params;
+
+    // Get tools registered in the ToolRegistry via source tag
+    const tools = toolRegistry.getToolsBySource(name);
+    if (tools.length === 0) {
+      return res.status(404).json({ error: `Unknown local server: ${name}` });
+    }
+
+    return res.json({ server: name, tools });
   });
 
   router.post("/local-servers/:name/stop", async (req, res) => {

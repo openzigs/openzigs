@@ -15,7 +15,7 @@ class FakeSession {
     this.handlers.set(event, list);
   }
 
-  async sendAndWait({ prompt }: { prompt: string }) {
+  async sendAndWait({ prompt }: { prompt: string }, _timeout?: number) {
     if (!prompt) {
       throw new Error("Missing prompt");
     }
@@ -127,7 +127,7 @@ describe("copilot wrapper", () => {
     const wrapper = new CopilotWrapperService({ client });
 
     const chunks: string[] = [];
-    for await (const chunk of wrapper.chat("Hello", undefined, "claude-sonnet-4")) {
+    for await (const chunk of wrapper.chat("Hello", { model: "claude-sonnet-4" })) {
       chunks.push(chunk);
     }
 

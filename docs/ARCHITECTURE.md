@@ -66,11 +66,16 @@ graph TB
         Data[(~/.openzigs/<br/>sessions · auth · sqlite)]
     end
 
-    subgraph Clients["Clients"]
-        WEB[Web Chat UI<br/>localhost:3000]
+    subgraph NextJS["Next.js UI (localhost:3001)"]
+        NAV[NavBar<br/>Dashboard · Chat · Admin · Library · Scheduler]
+        DASH[Dashboard<br/>Stats · Approvals · Audit Log]
+        CHAT[Chat View<br/>Streaming · Approvals]
+        ADMIN[Admin Page<br/>Channels · Sidecars · Tools · Env]
+        LIB[Library<br/>Saved Prompts · Templates]
+        SCHED[Scheduler<br/>Cron Jobs · Actions]
     end
 
-    WEB <-->|Socket.IO| EX
+    NextJS <-->|Socket.IO + API proxy| EX
     TG -->|Webhook| CF
     DC -->|Gateway| EX
     CF <-->|Tunnel| CFD
@@ -98,7 +103,86 @@ graph TB
     style MCPSidecars fill:#1e3a5f,stroke:#16213e,color:#fff
     style Server fill:#16213e,stroke:#1a1a2e,color:#fff
     style Tunnel fill:#2d1b69,stroke:#16213e,color:#fff
+    style NextJS fill:#0d2137,stroke:#16213e,color:#fff
 ```
+
+---
+
+## UI Architecture
+
+The frontend is a **Next.js 14 App Router** application in the `ui/` directory. It replaces the earlier vanilla JS/HTML frontend that was served via Express static middleware.
+
+### Stack
+
+| Technology | Purpose |
+|---|---|
+| **Next.js 14** (App Router) | SSR/SSG framework, file-based routing |
+| **React 18** | Component model |
+| **Tailwind CSS** | Utility-first styling with custom theme (ink, stone, ember, tide, moss, haze) |
+| **React Query** (`@tanstack/react-query`) | Server state management, caching, mutations |
+| **Socket.IO Client** | Real-time streaming (chat responses, approval events, job executions, server status) |
+| **Space Grotesk + JetBrains Mono** | Typography |
+
+### Route Map
+
+| Route | Component | Purpose |
+|---|---|---|
+| `/` | `dashboard.tsx` | Snapshot stats, pending approvals, audit log |
+| `/chat` | `chat-view.tsx` | Full chat with streaming, model selector, approval overlay |
+| `/admin` | `admin/page.tsx` | Channel config, sidecar management, tool toggles, env status |
+| `/library` | `library/page.tsx` | Saved prompt CRUD with `{{variable}}` template preview |
+| `/scheduler` | `scheduler/page.tsx` | Cron job CRUD with action types, prompt linking, live execution events |
+
+### Component Structure
+
+```
+ui/
+├── app/
+│   ├── layout.tsx          # Root layout with NavBar + Providers
+│   ├── providers.tsx       # QueryClientProvider + SocketProvider
+│   ├── page.tsx            # Dashboard route
+│   ├── chat/page.tsx       # Chat route
+│   ├── admin/page.tsx      # Admin route
+│   ├── library/page.tsx    # Library route
+│   └── scheduler/page.tsx  # Scheduler route
+├── components/
+│   ├── nav-bar.tsx         # Sticky top navigation
+│   ├── chat-view.tsx       # Chat with streaming + approvals
+│   ├── dashboard.tsx       # Stats + approvals + audit log
+│   ├── section-card.tsx    # Reusable card wrapper
+│   └── admin/
+│       ├── tools-panel.tsx        # Tool list with risk badges + toggles
+│       ├── channels-panel.tsx     # Telegram + Discord config forms
+│       ├── sidecars-panel.tsx     # Docker sidecar management
+│       ├── local-servers-panel.tsx # Local MCP server status
+│       └── env-panel.tsx          # Environment variable status
+└── lib/
+    ├── api.ts              # Shared fetchJson utility + API_BASE
+    ├── types.ts            # All shared TypeScript types
+    └── socket-context.tsx  # SocketProvider + useSocket hook
+```
+
+### API Proxying
+
+The Next.js dev server proxies API and WebSocket traffic to the Express backend. This is configured in `next.config.mjs`:
+
+```javascript
+// next.config.mjs
+rewrites: async () => [
+  { source: "/api/:path*", destination: `${API_BASE}/api/:path*` },
+  { source: "/socket.io/:path*", destination: `${API_BASE}/socket.io/:path*` },
+]
+```
+
+In development, the backend runs on port 3000 and the Next.js dev server runs on port 3001. The user accesses the UI at `http://localhost:3001`, and all `/api/*` and `/socket.io/*` requests are transparently proxied to the backend.
+
+### Express Server (Backend Only)
+
+The Express server (`src/server.ts`) no longer serves any static files or HTML routes. It provides only:
+
+- REST API endpoints (`/api/*`)
+- Socket.IO WebSocket server
+- Health check (`/health`)
 
 ---
 
@@ -209,7 +293,7 @@ Converts various file formats (PDF, DOCX, PPTX, XLSX, HTML, images, audio) into 
 
 ```yaml
 # docker-compose.yml excerpt
-markitdown-mcp-server:
+mcp-markitdown:
   image: markitdown-mcp:latest
   container_name: openzigs-mcp-markitdown
   volumes:
@@ -228,12 +312,12 @@ Reads, searches, and drafts Gmail messages. Requires Google Cloud OAuth credenti
 
 ```yaml
 # docker-compose.yml excerpt
-gmail-mcp-server:
+mcp-gmail:
   image: mcp/gmail:latest
   container_name: openzigs-mcp-gmail
   volumes:
     - gmail-credentials:/gmail-server
-    - ${HOME}/.gmail-mcp/gcp-oauth.keys.json:/gcp-oauth.keys.json:ro
+    - ${GMAIL_OAUTH_KEYS_PATH:-./.gmail-mcp/gcp-oauth.keys.json}:/gcp-oauth.keys.json:ro
   environment:
     GMAIL_OAUTH_PATH: /gcp-oauth.keys.json
     GMAIL_CREDENTIALS_PATH: /gmail-server/credentials.json
@@ -251,7 +335,7 @@ Provides SQL access to any JDBC-compatible database (PostgreSQL, MySQL, SQLite, 
 
 ```yaml
 # docker-compose.yml excerpt (or run via JBang locally)
-database-mcp-server:
+mcp-database:
   image: openzigs-mcp-database:latest
   container_name: openzigs-mcp-database
   environment:
@@ -277,7 +361,7 @@ Full GitHub API access — repos, issues, PRs, code search, actions. Uses a GitH
 
 ```yaml
 # docker-compose.yml excerpt
-github-mcp-server:
+mcp-github:
   image: ghcr.io/github/github-mcp-server:latest
   container_name: openzigs-mcp-github
   environment:
@@ -544,6 +628,9 @@ The shell executor uses a **command allowlist**. If the allowlist is empty, the 
 | `PUT` | `/api/jobs/:id` | Token | Update a scheduled job. |
 | `DELETE` | `/api/jobs/:id` | Token | Delete a scheduled job. |
 | `POST` | `/api/jobs/:id/toggle` | Token | Enable or disable a scheduled job. |
+| `POST` | `/api/admin/tools/:name/risk` | Admin | Override a tool's risk level. |
+| `GET` | `/api/admin/sidecars/:name/tools` | Admin | List tools for a specific MCP sidecar. |
+| `PUT` | `/api/admin/sidecars/:name/tools` | Admin | Update disabled tools for a sidecar. |
 
 ---
 
@@ -569,19 +656,18 @@ All services (`agent`, `tunnel`, MCP sidecars) share the `openzigs-network` brid
 | Connection | From → To | Address |
 |---|---|---|
 | Tunnel → Agent | `tunnel` → `agent` | `http://agent:3000` |
-| Agent → LinkedIn MCP | `agent` → `linkedin-mcp-server` | `http://linkedin-mcp-server:5101/mcp` |
-| Agent → Twitter MCP | `agent` → `twitter-mcp-server` | `http://twitter-mcp-server:5102/mcp` |
-| Agent → Facebook MCP | `agent` → `facebook-mcp-server` | `http://facebook-mcp-server:5103/mcp` |
-| Agent → Pinterest MCP | `agent` → `pinterest-mcp-server` | `http://pinterest-mcp-server:5104/mcp` |
-| Agent → Word MCP | `agent` → `word-mcp-server` | `http://word-mcp-server:5201/mcp` |
+| Agent → LinkedIn MCP | `agent` → `mcp-linkedin` | `http://mcp-linkedin:5000/mcp` |
+| Agent → Twitter MCP | `agent` → `mcp-twitter` | `http://mcp-twitter:5000/mcp` |
+| Agent → Facebook MCP | `agent` → `mcp-facebook` | `http://mcp-facebook:5000/mcp` |
+| Agent → Pinterest MCP | `agent` → `mcp-pinterest` | `http://mcp-pinterest:3052/mcp` |
+| Agent → Word MCP | `agent` → `mcp-word` | `http://mcp-word:5000/mcp` |
+| Agent → MarkItDown MCP | `agent` → `mcp-markitdown` | `http://mcp-markitdown:5000/mcp` |
+| Agent → Gmail MCP | `agent` → `mcp-gmail` | `http://mcp-gmail:5000/mcp` |
+| Agent → Database MCP | `agent` → `mcp-database` | `http://mcp-database:5000/mcp` |
+| Agent → GitHub MCP | `agent` → `mcp-github` | `http://mcp-github:5000/mcp` |
 | Agent → Chrome | `agent` → host | `host.docker.internal:9222` |
 
-MCP sidecar URLs are passed to the agent via environment variables (`MCP_LINKEDIN_URL`, `MCP_TWITTER_URL`, etc.) in `docker-compose.yml`.
-
-| Agent → MarkItDown MCP | `agent` → `markitdown-mcp-server` | `http://markitdown-mcp-server:5301/mcp` |
-| Agent → Gmail MCP | `agent` → `gmail-mcp-server` | `http://gmail-mcp-server:5302/mcp` |
-| Agent → Database MCP | `agent` → `database-mcp-server` | `http://database-mcp-server:5303/mcp` |
-| Agent → GitHub MCP | `agent` → `github-mcp-server` | `http://github-mcp-server:5304/mcp` |
+MCP sidecar URLs are passed to the agent via environment variables (`MCP_LINKEDIN_URL`, `MCP_TWITTER_URL`, `MCP_MARKITDOWN_URL`, `MCP_GMAIL_URL`, `MCP_DATABASE_URL`, `MCP_GITHUB_URL`, etc.) in `docker-compose.yml`.
 
 ---
 

@@ -3,12 +3,15 @@ import type { IncomingMessage, MessageContent } from "../channels/types.js";
 import type { CopilotWrapper } from "../copilot/copilot-wrapper.js";
 import type { AccessControlConfig } from "../config/index.js";
 import type { ConversationEvent, SessionManager } from "../sessions/session-manager.js";
+import { ALWAYS_ON_TOOLS } from "../mcp/constants.js";
 
 export type RouteOptions = {
   /** Callback invoked for each streaming chunk. */
   onChunk?: (chunk: string) => void;
   /** Override the model for this request. */
   model?: string;
+  /** Callback invoked when a tool is called during processing. */
+  onToolCall?: (tool: string, args: unknown) => void;
 };
 
 export type MessageRouterOptions = {
@@ -17,6 +20,7 @@ export type MessageRouterOptions = {
   copilot: CopilotWrapper;
   accessControl?: AccessControlConfig;
   historyLimit?: number;
+  maxToolsPerRequest?: number;
   clock?: () => Date;
 };
 
@@ -26,6 +30,8 @@ const defaultAccessControl: AccessControlConfig = {
   blockedUsers: []
 };
 
+export { ALWAYS_ON_TOOLS };
+
 export class MessageRouter {
   private channelManager: ChannelManager;
   private sessionManager: SessionManager;
@@ -33,6 +39,7 @@ export class MessageRouter {
   private userSessions = new Map<string, string>();
   private accessControl: AccessControlConfig;
   private historyLimit: number;
+  public readonly maxToolsPerRequest: number;
   private clock: () => Date;
 
   constructor({
@@ -40,7 +47,8 @@ export class MessageRouter {
     sessionManager,
     copilot,
     accessControl,
-    historyLimit = 10,
+    historyLimit = 20,
+    maxToolsPerRequest = 30,
     clock
   }: MessageRouterOptions) {
     this.channelManager = channelManager;
@@ -48,6 +56,7 @@ export class MessageRouter {
     this.copilot = copilot;
     this.accessControl = accessControl ?? defaultAccessControl;
     this.historyLimit = historyLimit;
+    this.maxToolsPerRequest = maxToolsPerRequest;
     this.clock = clock ?? (() => new Date());
   }
 
@@ -67,7 +76,7 @@ export class MessageRouter {
     const prompt = this.buildPrompt(resume.history, message.content);
 
     let response = "";
-    for await (const chunk of this.copilot.chat(prompt, undefined, options?.model)) {
+    for await (const chunk of this.copilot.chat(prompt, { model: options?.model, onToolCall: options?.onToolCall })) {
       response += chunk;
       if (options?.onChunk) {
         options.onChunk(chunk);

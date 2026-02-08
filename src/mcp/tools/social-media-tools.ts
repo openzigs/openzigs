@@ -123,6 +123,7 @@ export const createSocialMediaTools = (options: SocialMediaOptions): ToolDefinit
       zodSchema: postContentSchema,
       category: "social",
       riskLevel: "high",
+      source: "social",
       handler: async (args) => {
         const input = args as z.infer<typeof postContentSchema>;
         const url = getSidecarUrl(input.platform, options);
@@ -147,6 +148,7 @@ export const createSocialMediaTools = (options: SocialMediaOptions): ToolDefinit
       zodSchema: getTimelineSchema,
       category: "social",
       riskLevel: "medium",
+      source: "social",
       handler: async (args) => {
         const input = args as z.infer<typeof getTimelineSchema>;
         const url = getSidecarUrl(input.platform, options);
@@ -170,6 +172,7 @@ export const createSocialMediaTools = (options: SocialMediaOptions): ToolDefinit
       zodSchema: getProfileSchema,
       category: "social",
       riskLevel: "low",
+      source: "social",
       handler: async (args) => {
         const input = args as z.infer<typeof getProfileSchema>;
         const url = getSidecarUrl(input.platform, options);
@@ -202,6 +205,7 @@ export const createSocialMediaTools = (options: SocialMediaOptions): ToolDefinit
       zodSchema: pinterestBoardsSchema,
       category: "social",
       riskLevel: "medium",
+      source: "pinterest",
       handler: async (args) => {
         const input = args as z.infer<typeof pinterestBoardsSchema>;
         const url = options.pinterestSidecarUrl;
@@ -238,6 +242,7 @@ export const createSocialMediaTools = (options: SocialMediaOptions): ToolDefinit
       zodSchema: pinterestPinsSchema,
       category: "social",
       riskLevel: "medium",
+      source: "pinterest",
       handler: async (args) => {
         const input = args as z.infer<typeof pinterestPinsSchema>;
         const url = options.pinterestSidecarUrl;

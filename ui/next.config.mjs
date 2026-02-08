@@ -1,4 +1,4 @@
-const apiBase = process.env.NEXT_PUBLIC_OPENZIGS_API_BASE ?? "http://localhost:3001";
+const apiBase = process.env.NEXT_PUBLIC_OPENZIGS_API_BASE ?? "http://localhost:3000";
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {

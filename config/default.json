@@ -60,7 +60,7 @@
       "pinterest": { "enabled": true, "disabledTools": [] },
       "word": { "enabled": true, "disabledTools": [] },
       "markitdown": {
-        "enabled": false,
+        "enabled": true,
         "disabledTools": [],
         "runtime": "docker",
         "image": "markitdown-mcp:latest",
@@ -68,7 +68,7 @@
         "volumes": ["/data:/workdir"]
       },
       "gmail": {
-        "enabled": false,
+        "enabled": true,
         "disabledTools": [],
         "runtime": "docker",
         "image": "mcp/gmail:latest",
@@ -79,7 +79,7 @@
         }
       },
       "database": {
-        "enabled": false,
+        "enabled": true,
         "disabledTools": [],
         "runtime": "jbang",
         "command": "jbang",
@@ -90,7 +90,7 @@
         }
       },
       "github": {
-        "enabled": false,
+        "enabled": true,
         "disabledTools": [],
         "runtime": "docker",
         "image": "ghcr.io/github/github-mcp-server:latest",

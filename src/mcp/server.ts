@@ -11,10 +11,15 @@ import { createPromptTools } from "./tools/prompt-tools.js";
 import { createSchedulerTools } from "./tools/scheduler-tools.js";
 import { createSocialMediaTools } from "./tools/social-media-tools.js";
 import { createDocumentIntelligenceTools } from "./tools/document-intelligence-tools.js";
+import { createMarkItDownTools } from "./tools/markitdown-tools.js";
+import { createGmailTools } from "./tools/gmail-tools.js";
+import { createDatabaseTools } from "./tools/database-tools.js";
+import { createGitHubTools } from "./tools/github-tools.js";
 import { ToolRegistry, type ToolDefinition } from "./tool-registry.js";
 import type { LocalMcpServerManager } from "./local-mcp-server-manager.js";
 import { AuditLogger } from "../logging/audit-logger.js";
 import { ApprovalQueue } from "../approvals/index.js";
+import { formatApprovalContext } from "../approvals/approval-formatters.js";
 import type { PromptManager } from "../productivity/prompt-manager.js";
 import type { Scheduler } from "../productivity/scheduler.js";
 
@@ -34,7 +39,13 @@ export type McpServerOptions = {
   twitterSidecarUrl?: string;
   facebookSidecarUrl?: string;
   pinterestSidecarUrl?: string;
+  markitdownSidecarUrl?: string;
+  gmailSidecarUrl?: string;
+  databaseSidecarUrl?: string;
+  githubSidecarUrl?: string;
   localServerManager?: LocalMcpServerManager;
+  /** Per-sidecar disabled tool lists from config */
+  disabledTools?: Record<string, string[]>;
 };
 
 export type RegisterMcpToolsOptions = Pick<
@@ -51,7 +62,12 @@ export type RegisterMcpToolsOptions = Pick<
   | "twitterSidecarUrl"
   | "facebookSidecarUrl"
   | "pinterestSidecarUrl"
+  | "markitdownSidecarUrl"
+  | "gmailSidecarUrl"
+  | "databaseSidecarUrl"
+  | "githubSidecarUrl"
   | "localServerManager"
+  | "disabledTools"
 >;
 
 const readFileSchema = z.object({ path: z.string() });
@@ -93,15 +109,9 @@ const parseArgs = (schema: z.ZodSchema, args: Record<string, unknown>) => {
 };
 
 const buildApprovalPreview = (toolName: string, args: Record<string, unknown>) => {
-  if (toolName === "write-file") {
-    const path = typeof args.path === "string" ? args.path : "";
-    const content = typeof args.content === "string" ? args.content : "";
-    return `Would write ${content.length} bytes to ${path}`;
-  }
-  if (toolName === "shell-execute") {
-    const command = typeof args.command === "string" ? args.command : "";
-    const argList = Array.isArray(args.args) ? args.args.join(" ") : "";
-    return `Would run: ${command}${argList ? ` ${argList}` : ""}`;
+  const context = formatApprovalContext(toolName, args);
+  if (context) {
+    return context.summary;
   }
   return undefined;
 };
@@ -197,6 +207,10 @@ export const createMcpServer = (options: McpServerOptions) => {
 };
 
 export const registerMcpTools = (toolRegistry: ToolRegistry, options: RegisterMcpToolsOptions) => {
+  const disabledToolSet = new Set(
+    Object.values(options.disabledTools ?? {}).flat()
+  );
+
   const filesystemHandlers = createFilesystemHandlers({
     allowedDirs: options.allowedDirs
   });
@@ -221,6 +235,9 @@ export const registerMcpTools = (toolRegistry: ToolRegistry, options: RegisterMc
   });
 
   const registerTool = (tool: ToolDefinition) => {
+    if (disabledToolSet.has(tool.name)) {
+      return;
+    }
     toolRegistry.registerTool(tool);
   };
 
@@ -390,6 +407,38 @@ export const registerMcpTools = (toolRegistry: ToolRegistry, options: RegisterMc
     localServerManager: options.localServerManager,
   });
   for (const tool of docTools) {
+    registerTool(tool);
+  }
+
+  // ── MarkItDown Tools (Docker sidecar) ──
+  const markitdownTools = createMarkItDownTools({
+    sidecarUrl: options.markitdownSidecarUrl,
+  });
+  for (const tool of markitdownTools) {
+    registerTool(tool);
+  }
+
+  // ── Gmail Tools (Docker sidecar) ──
+  const gmailTools = createGmailTools({
+    sidecarUrl: options.gmailSidecarUrl,
+  });
+  for (const tool of gmailTools) {
+    registerTool(tool);
+  }
+
+  // ── Database Tools (Docker/JBang sidecar) ──
+  const databaseTools = createDatabaseTools({
+    sidecarUrl: options.databaseSidecarUrl,
+  });
+  for (const tool of databaseTools) {
+    registerTool(tool);
+  }
+
+  // ── GitHub Tools (Docker sidecar) ──
+  const githubTools = createGitHubTools({
+    sidecarUrl: options.githubSidecarUrl,
+  });
+  for (const tool of githubTools) {
     registerTool(tool);
   }
 };

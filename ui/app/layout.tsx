@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Space_Grotesk, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 import { Providers } from "./providers";
+import { NavBar } from "@/components/nav-bar";
 
 const spaceGrotesk = Space_Grotesk({
   subsets: ["latin"],
@@ -22,9 +23,12 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en">
-      <body className={`${spaceGrotesk.variable} ${jetBrains.variable}`}>
-        <Providers>{children}</Providers>
+    <html lang="en" suppressHydrationWarning>
+      <body className={`${spaceGrotesk.variable} ${jetBrains.variable} flex h-dvh flex-col overflow-hidden antialiased`}>
+        <Providers>
+          <NavBar />
+          <div className="min-h-0 flex-1 overflow-y-auto">{children}</div>
+        </Providers>
       </body>
     </html>
   );

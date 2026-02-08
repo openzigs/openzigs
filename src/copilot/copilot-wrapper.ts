@@ -3,6 +3,7 @@ import path from "node:path";
 import fs from "node:fs/promises";
 import { CopilotClient, defineTool } from "@github/copilot-sdk";
 import type { ToolDefinition, ToolRegistry } from "../mcp/tool-registry.js";
+import { ALWAYS_ON_TOOLS } from "../mcp/constants.js";
 
 export type DeviceAuthInfo = {
   verificationUri: string;
@@ -24,7 +25,7 @@ type AuthState = {
 
 type CopilotSessionLike = {
   on: (event: string, handler: (event: { data?: { deltaContent?: string } }) => void) => void;
-  sendAndWait: (input: { prompt: string }) => Promise<unknown>;
+  sendAndWait: (input: { prompt: string }, timeout?: number) => Promise<unknown>;
 };
 
 export type CopilotModel = {
@@ -48,11 +49,17 @@ type CopilotClientLike = {
   listModels?: () => Promise<CopilotModel[]>;
 };
 
+export type ChatOptions = {
+  tools?: ToolDefinition[];
+  model?: string;
+  onToolCall?: (tool: string, args: unknown) => void;
+};
+
 export interface CopilotWrapper {
   authenticate(): Promise<DeviceAuthInfo>;
   waitForAuth(): Promise<void>;
   isAuthenticated(): Promise<boolean>;
-  chat(message: string, tools?: ToolDefinition[], model?: string): AsyncGenerator<string>;
+  chat(message: string, options?: ChatOptions): AsyncGenerator<string>;
   listModels(): Promise<CopilotModel[]>;
   onToolCall(tool: string, args: unknown): Promise<void>;
 }
@@ -64,10 +71,13 @@ export type CopilotWrapperOptions = {
   clientId?: string;
   model?: string;
   authTimeoutMs?: number;
+  maxToolsPerRequest?: number;
   onToolCall?: (tool: string, args: unknown) => Promise<void>;
   onPermissionRequest?: (request: { kind: string; toolName?: string; toolArgs?: unknown }) => Promise<{
     kind: "approved" | "denied-by-rules" | "denied-by-user";
   }>;
+  /** Timeout in ms for each sendAndWait call. Default 600_000 (10 min). */
+  sendAndWaitTimeoutMs?: number;
 };
 
 const defaultAuthPath = () => path.join(os.homedir(), ".openzigs", "auth.json");
@@ -224,6 +234,8 @@ export class CopilotWrapperService implements CopilotWrapper {
   private permissionHandler?: (request: { kind: string; toolName?: string; toolArgs?: unknown }) => Promise<{
     kind: "approved" | "denied-by-rules" | "denied-by-user";
   }>;
+  private maxToolsPerRequest: number;
+  private sendAndWaitTimeoutMs: number;
 
   constructor({
     client,
@@ -232,6 +244,8 @@ export class CopilotWrapperService implements CopilotWrapper {
     clientId = process.env.GITHUB_CLIENT_ID ?? "",
     model = "gpt-4.1",
     authTimeoutMs = 5 * 60 * 1000,
+    maxToolsPerRequest = 30,
+    sendAndWaitTimeoutMs = 15 * 60 * 1000, // 15 minutes — browser automation needs room
     onToolCall,
     onPermissionRequest
   }: CopilotWrapperOptions = {}) {
@@ -242,6 +256,8 @@ export class CopilotWrapperService implements CopilotWrapper {
     this.clientId = clientId;
     this.model = model;
     this.authTimeoutMs = authTimeoutMs;
+    this.maxToolsPerRequest = maxToolsPerRequest;
+    this.sendAndWaitTimeoutMs = sendAndWaitTimeoutMs;
     this.toolCallHandler = onToolCall;
     this.permissionHandler = onPermissionRequest;
   }
@@ -290,7 +306,7 @@ export class CopilotWrapperService implements CopilotWrapper {
     return !isExpired(state.expiresAt);
   }
 
-  async *chat(message: string, tools?: ToolDefinition[], model?: string): AsyncGenerator<string> {
+  async *chat(message: string, options?: ChatOptions): AsyncGenerator<string> {
     await this.ensureStarted();
 
     if (this.startFailed) {
@@ -300,14 +316,28 @@ export class CopilotWrapperService implements CopilotWrapper {
       );
     }
 
-    const effectiveModel = model ?? this.model;
-    const toolList = tools ?? this.toolRegistry?.listEnabledTools() ?? [];
+    const effectiveModel = options?.model ?? this.model;
+    let toolList = options?.tools ?? this.toolRegistry?.listEnabledTools() ?? [];
+    const perCallToolCallback = options?.onToolCall;
+
+    // Enforce maxToolsPerRequest: if we exceed the cap, keep always-on core tools
+    // and fill the remaining slots with the rest.
+    if (toolList.length > this.maxToolsPerRequest) {
+      const coreTools = toolList.filter((t) => ALWAYS_ON_TOOLS.has(t.name));
+      const otherTools = toolList.filter((t) => !ALWAYS_ON_TOOLS.has(t.name));
+      const remainingSlots = Math.max(0, this.maxToolsPerRequest - coreTools.length);
+      toolList = [...coreTools, ...otherTools.slice(0, remainingSlots)];
+    }
+
     const wrappedTools = toolList.map((tool) =>
       defineTool(tool.name, {
         description: tool.description,
         parameters: tool.inputSchema,
         handler: async (args) => {
           await this.onToolCall(tool.name, args);
+          if (perCallToolCallback) {
+            perCallToolCallback(tool.name, args);
+          }
           const result = await tool.handler(args as Record<string, unknown>);
           if (result.isError) {
             throw new Error(result.text);
@@ -407,7 +437,7 @@ export class CopilotWrapperService implements CopilotWrapper {
     // eslint-disable-next-line no-constant-condition
     while (true) {
       try {
-        await session.sendAndWait({ prompt });
+        await session.sendAndWait({ prompt }, this.sendAndWaitTimeoutMs);
         return;
       } catch (error) {
         if (isUnauthorizedError(error)) {

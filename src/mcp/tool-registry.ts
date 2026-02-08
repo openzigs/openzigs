@@ -5,7 +5,7 @@ import path from "node:path";
 import type * as z from "zod";
 
 export type RiskLevel = "low" | "medium" | "high";
-export type ToolCategory = "filesystem" | "search" | "browser" | "shell" | "productivity" | "social" | "documents";
+export type ToolCategory = "filesystem" | "search" | "browser" | "shell" | "productivity" | "social" | "documents" | "personal" | "data" | "developer";
 
 export type ToolDefinition = {
   name: string;
@@ -19,6 +19,8 @@ export type ToolDefinition = {
   handler: (args: Record<string, unknown>) => Promise<{ text: string; isError?: boolean }>;
   category: ToolCategory;
   riskLevel: RiskLevel;
+  /** The sidecar/source this tool belongs to (e.g., "linkedin", "gmail", "github"). */
+  source?: string;
 };
 
 export type ToolInfo = {
@@ -27,6 +29,8 @@ export type ToolInfo = {
   category: ToolCategory;
   riskLevel: RiskLevel;
   enabled: boolean;
+  /** The sidecar/source this tool belongs to, if any. */
+  source?: string;
 };
 
 export type ToolRegistryState = {
@@ -79,7 +83,7 @@ const saveState = async (statePath: string, state: ToolRegistryState) => {
   await fsPromises.writeFile(statePath, JSON.stringify(state, null, 2), "utf-8");
 };
 
-const toolCategories: ToolCategory[] = ["filesystem", "search", "browser", "shell", "productivity", "social", "documents"];
+const toolCategories: ToolCategory[] = ["filesystem", "search", "browser", "shell", "productivity", "social", "documents", "personal", "data", "developer"];
 
 export type ToolRegistryOptions = {
   statePath: string;
@@ -126,7 +130,8 @@ export class ToolRegistry extends EventEmitter {
         description: tool.description,
         category: tool.category,
         riskLevel,
-        enabled: this.isEnabled(tool.name)
+        enabled: this.isEnabled(tool.name),
+        source: tool.source,
       });
     }
 
@@ -147,8 +152,27 @@ export class ToolRegistry extends EventEmitter {
       description: tool.description,
       category: tool.category,
       riskLevel: this.getRiskLevel(name) ?? tool.riskLevel,
-      enabled: this.isEnabled(name)
+      enabled: this.isEnabled(name),
+      source: tool.source,
     };
+  }
+
+  /** Return all tools that belong to a given source/sidecar. */
+  getToolsBySource(source: string): ToolInfo[] {
+    const result: ToolInfo[] = [];
+    for (const tool of this.tools.values()) {
+      if (tool.source === source) {
+        result.push({
+          name: tool.name,
+          description: tool.description,
+          category: tool.category,
+          riskLevel: this.getRiskLevel(tool.name) ?? tool.riskLevel,
+          enabled: this.isEnabled(tool.name),
+          source: tool.source,
+        });
+      }
+    }
+    return result;
   }
 
   listEnabledTools(): ToolDefinition[] {
@@ -191,6 +215,29 @@ export class ToolRegistry extends EventEmitter {
   requiresApproval(name: string): boolean {
     const riskLevel = this.getRiskLevel(name) ?? this.tools.get(name)?.riskLevel;
     return riskLevel === "high";
+  }
+
+  async setRiskOverride(name: string, riskLevel: RiskLevel) {
+    if (!this.tools.has(name)) {
+      throw new Error(`Unknown tool: ${name}`);
+    }
+
+    this.customRiskOverrides[name] = riskLevel;
+
+    if (this.enabledTools === null) {
+      this.enabledTools = new Set(this.tools.keys());
+    }
+
+    await saveState(this.statePath, {
+      enabledTools: Array.from(this.enabledTools).sort(),
+      customRiskOverrides: this.customRiskOverrides
+    });
+
+    this.emit("tool:riskChanged", { name, riskLevel });
+  }
+
+  getEffectiveRiskLevel(name: string): RiskLevel | undefined {
+    return this.getRiskLevel(name) ?? this.tools.get(name)?.riskLevel;
   }
 
   private getRiskLevel(name: string): RiskLevel | undefined {

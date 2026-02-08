@@ -21,9 +21,9 @@ export const showToast = (message: string, type: Toast["type"] = "info") => {
 };
 
 const typeStyles: Record<Toast["type"], string> = {
-  info: "bg-tide text-white",
+  info: "bg-primary text-primary-foreground",
   success: "bg-moss text-white",
-  error: "bg-ember text-white",
+  error: "bg-destructive text-destructive-foreground",
 };
 
 export const ToastContainer = () => {

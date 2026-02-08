@@ -1,7 +1,6 @@
 import "dotenv/config";
 import { createServer } from "node:http";
 import path from "node:path";
-import express from "express";
 import { Server as SocketIOServer } from "socket.io";
 import { nanoid } from "nanoid";
 import { createApp } from "./app.js";
@@ -159,30 +158,18 @@ registerMcpTools(toolRegistry, {
   twitterSidecarUrl: resolveSidecarUrl("twitter", "MCP_TWITTER_URL", 5102),
   facebookSidecarUrl: resolveSidecarUrl("facebook", "MCP_FACEBOOK_URL", 5103),
   pinterestSidecarUrl: resolveSidecarUrl("pinterest", "MCP_PINTEREST_URL", 5104),
+  markitdownSidecarUrl: resolveSidecarUrl("markitdown", "MCP_MARKITDOWN_URL", 5301),
+  gmailSidecarUrl: resolveSidecarUrl("gmail", "MCP_GMAIL_URL", 5302),
+  databaseSidecarUrl: resolveSidecarUrl("database", "MCP_DATABASE_URL", 5303),
+  githubSidecarUrl: resolveSidecarUrl("github", "MCP_GITHUB_URL", 5304),
   localServerManager,
 });
 const app = createApp(config, { auditLogger, approvalQueue, toolRegistry, promptManager, scheduler });
 const port = Number(process.env.PORT ?? 3000);
-const uiOrigin = process.env.OPENZIGS_UI_ORIGIN ?? "http://localhost:3000";
+const uiOrigin = process.env.OPENZIGS_UI_ORIGIN ?? "http://localhost:3001";
 const channelManager = new ChannelManager();
 const sessionManager = new SessionManager();
 const copilot = new CopilotWrapperService({ toolRegistry });
-
-// Serve static chat UI
-app.use(express.static(path.resolve(process.cwd(), "public")));
-
-// Friendly admin route
-app.get("/admin", (_req, res) => {
-  res.sendFile(path.resolve(process.cwd(), "public", "admin.html"));
-});
-
-app.get("/library", (_req, res) => {
-  res.sendFile(path.resolve(process.cwd(), "public", "library.html"));
-});
-
-app.get("/scheduler", (_req, res) => {
-  res.sendFile(path.resolve(process.cwd(), "public", "scheduler.html"));
-});
 
 // Model API routes
 const modelsRouter = createModelsRouter({ copilot });
@@ -420,6 +407,9 @@ if (webConfig?.enabled !== false) {
         onChunk: (chunk) => {
           void webChatChannel.sendStreamChunk(message.chatId, chunk, messageId);
         },
+        onToolCall: (tool) => {
+          void webChatChannel.sendToolProgress(message.chatId, tool);
+        },
         model: message.model // Model is picked per-request via the UI; already read from user config by the model selector
       })
       .then(() => {
@@ -428,9 +418,9 @@ if (webConfig?.enabled !== false) {
       .catch((error) => {
         const details = error instanceof Error ? error.message : String(error);
         logger.error(`web chat message routing failed: ${details}`);
-        const userMessage = /SDK|CLI|unavailable|timed out/i.test(details)
+        const userMessage = /SDK|CLI|unavailable|timed out|rate.?limit/i.test(details)
           ? details
-          : "Something went wrong";
+          : "Something went wrong — check server logs for details.";
         void webChatChannel.sendError(message.chatId, userMessage);
       });
   });
