@@ -37,6 +37,8 @@ Open **http://localhost:3000** to start chatting. Run `pnpm setup` on first laun
 | **[Architecture](docs/ARCHITECTURE.md)** | System design, component breakdown, security model, Mermaid diagrams. Future Personal Assistant architecture. |
 | **[User Guide](docs/USER_GUIDE.md)** | Installation, configuration, connecting channels, tool management. Preview of upcoming features. |
 | **[Roadmap](docs/ROADMAP.md)** | Product vision, quarterly roadmap, planned features for Personal Assistant evolution. |
+| **[Implementation Timeline](docs/IMPLEMENTATION_TIMELINE.md)** | Detailed week-by-week development plan with milestones and success metrics. |
+| **[Comparison Guide](docs/COMPARISON.md)** | OpenZigs vs. ChatGPT, GitHub Copilot, AutoGPT, and LangChain. |
 
 ---
 
