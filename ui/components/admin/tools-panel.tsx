@@ -1,0 +1,90 @@
+"use client";
+
+import { useState } from "react";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { fetchJson } from "@/lib/api";
+import type { ToolInfo } from "@/lib/types";
+
+type ToolsPanelProps = {
+  toolGroups: Record<string, ToolInfo[]>;
+};
+
+const CATEGORY_ORDER = [
+  "filesystem", "search", "browser", "shell",
+  "productivity", "social", "documents",
+  "personal", "data", "developer",
+];
+
+const riskColors: Record<string, string> = {
+  low: "bg-moss/15 text-moss",
+  medium: "bg-amber-500/15 text-amber-600",
+  high: "bg-ember/15 text-ember",
+};
+
+export const ToolsPanel = ({ toolGroups }: ToolsPanelProps) => {
+  const queryClient = useQueryClient();
+  const [togglingTool, setTogglingTool] = useState<string | null>(null);
+
+  const toggleMutation = useMutation({
+    mutationFn: ({ name, enabled }: { name: string; enabled: boolean }) =>
+      fetchJson(`/api/admin/tools/${encodeURIComponent(name)}/toggle`, {
+        method: "POST",
+        body: JSON.stringify({ enabled }),
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["tools"] });
+      setTogglingTool(null);
+    },
+    onError: () => setTogglingTool(null),
+  });
+
+  return (
+    <div className="space-y-4">
+      {CATEGORY_ORDER.map((category) => {
+        const allTools = toolGroups[category];
+        if (!allTools || allTools.length === 0) return null;
+        // Filter out tools that belong to an MCP sidecar
+        const tools = allTools.filter((t) => !t.source);
+        if (tools.length === 0) return null;
+
+        return (
+          <div key={category}>
+            <p className="mb-2 text-[11px] font-semibold uppercase tracking-widest text-ink/50">
+              {category}
+            </p>
+            <div className="space-y-1">
+              {tools.map((tool) => (
+                <div
+                  key={tool.name}
+                  className="flex items-center gap-3 rounded-xl border border-ink/5 bg-white/60 px-4 py-2.5 transition hover:border-ink/10"
+                >
+                  <div className="min-w-0 flex-1">
+                    <p className="font-mono text-[13px] font-semibold text-ink">{tool.name}</p>
+                    <p className="truncate text-xs text-ink/50">{tool.description}</p>
+                  </div>
+                  <span
+                    className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${riskColors[tool.riskLevel] ?? "bg-ink/5 text-ink/50"}`}
+                  >
+                    {tool.riskLevel}
+                  </span>
+                  <button
+                    className={`w-16 rounded-full px-3 py-1 text-xs font-semibold transition ${
+                      tool.enabled ? "bg-moss text-white" : "bg-ink/10 text-ink/60"
+                    } disabled:opacity-40`}
+                    disabled={togglingTool === tool.name}
+                    onClick={() => {
+                      setTogglingTool(tool.name);
+                      toggleMutation.mutate({ name: tool.name, enabled: !tool.enabled });
+                    }}
+                  >
+                    {tool.enabled ? "On" : "Off"}
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+};

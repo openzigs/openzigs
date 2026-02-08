@@ -66,11 +66,16 @@ graph TB
         Data[(~/.openzigs/<br/>sessions · auth · sqlite)]
     end
 
-    subgraph Clients["Clients"]
-        WEB[Web Chat UI<br/>localhost:3000]
+    subgraph NextJS["Next.js UI (localhost:3001)"]
+        NAV[NavBar<br/>Dashboard · Chat · Admin · Library · Scheduler]
+        DASH[Dashboard<br/>Stats · Approvals · Audit Log]
+        CHAT[Chat View<br/>Streaming · Approvals]
+        ADMIN[Admin Page<br/>Channels · Sidecars · Tools · Env]
+        LIB[Library<br/>Saved Prompts · Templates]
+        SCHED[Scheduler<br/>Cron Jobs · Actions]
     end
 
-    WEB <-->|Socket.IO| EX
+    NextJS <-->|Socket.IO + API proxy| EX
     TG -->|Webhook| CF
     DC -->|Gateway| EX
     CF <-->|Tunnel| CFD
@@ -98,7 +103,86 @@ graph TB
     style MCPSidecars fill:#1e3a5f,stroke:#16213e,color:#fff
     style Server fill:#16213e,stroke:#1a1a2e,color:#fff
     style Tunnel fill:#2d1b69,stroke:#16213e,color:#fff
+    style NextJS fill:#0d2137,stroke:#16213e,color:#fff
 ```
+
+---
+
+## UI Architecture
+
+The frontend is a **Next.js 14 App Router** application in the `ui/` directory. It replaces the earlier vanilla JS/HTML frontend that was served via Express static middleware.
+
+### Stack
+
+| Technology | Purpose |
+|---|---|
+| **Next.js 14** (App Router) | SSR/SSG framework, file-based routing |
+| **React 18** | Component model |
+| **Tailwind CSS** | Utility-first styling with custom theme (ink, stone, ember, tide, moss, haze) |
+| **React Query** (`@tanstack/react-query`) | Server state management, caching, mutations |
+| **Socket.IO Client** | Real-time streaming (chat responses, approval events, job executions, server status) |
+| **Space Grotesk + JetBrains Mono** | Typography |
+
+### Route Map
+
+| Route | Component | Purpose |
+|---|---|---|
+| `/` | `dashboard.tsx` | Snapshot stats, pending approvals, audit log |
+| `/chat` | `chat-view.tsx` | Full chat with streaming, model selector, approval overlay |
+| `/admin` | `admin/page.tsx` | Channel config, sidecar management, tool toggles, env status |
+| `/library` | `library/page.tsx` | Saved prompt CRUD with `{{variable}}` template preview |
+| `/scheduler` | `scheduler/page.tsx` | Cron job CRUD with action types, prompt linking, live execution events |
+
+### Component Structure
+
+```
+ui/
+├── app/
+│   ├── layout.tsx          # Root layout with NavBar + Providers
+│   ├── providers.tsx       # QueryClientProvider + SocketProvider
+│   ├── page.tsx            # Dashboard route
+│   ├── chat/page.tsx       # Chat route
+│   ├── admin/page.tsx      # Admin route
+│   ├── library/page.tsx    # Library route
+│   └── scheduler/page.tsx  # Scheduler route
+├── components/
+│   ├── nav-bar.tsx         # Sticky top navigation
+│   ├── chat-view.tsx       # Chat with streaming + approvals
+│   ├── dashboard.tsx       # Stats + approvals + audit log
+│   ├── section-card.tsx    # Reusable card wrapper
+│   └── admin/
+│       ├── tools-panel.tsx        # Tool list with risk badges + toggles
+│       ├── channels-panel.tsx     # Telegram + Discord config forms
+│       ├── sidecars-panel.tsx     # Docker sidecar management
+│       ├── local-servers-panel.tsx # Local MCP server status
+│       └── env-panel.tsx          # Environment variable status
+└── lib/
+    ├── api.ts              # Shared fetchJson utility + API_BASE
+    ├── types.ts            # All shared TypeScript types
+    └── socket-context.tsx  # SocketProvider + useSocket hook
+```
+
+### API Proxying
+
+The Next.js dev server proxies API and WebSocket traffic to the Express backend. This is configured in `next.config.mjs`:
+
+```javascript
+// next.config.mjs
+rewrites: async () => [
+  { source: "/api/:path*", destination: `${API_BASE}/api/:path*` },
+  { source: "/socket.io/:path*", destination: `${API_BASE}/socket.io/:path*` },
+]
+```
+
+In development, the backend runs on port 3000 and the Next.js dev server runs on port 3001. The user accesses the UI at `http://localhost:3001`, and all `/api/*` and `/socket.io/*` requests are transparently proxied to the backend.
+
+### Express Server (Backend Only)
+
+The Express server (`src/server.ts`) no longer serves any static files or HTML routes. It provides only:
+
+- REST API endpoints (`/api/*`)
+- Socket.IO WebSocket server
+- Health check (`/health`)
 
 ---
 

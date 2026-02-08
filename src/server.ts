@@ -1,7 +1,6 @@
 import "dotenv/config";
 import { createServer } from "node:http";
 import path from "node:path";
-import express from "express";
 import { Server as SocketIOServer } from "socket.io";
 import { nanoid } from "nanoid";
 import { createApp } from "./app.js";
@@ -171,22 +170,6 @@ const uiOrigin = process.env.OPENZIGS_UI_ORIGIN ?? "http://localhost:3000";
 const channelManager = new ChannelManager();
 const sessionManager = new SessionManager();
 const copilot = new CopilotWrapperService({ toolRegistry });
-
-// Serve static chat UI
-app.use(express.static(path.resolve(process.cwd(), "public")));
-
-// Friendly admin route
-app.get("/admin", (_req, res) => {
-  res.sendFile(path.resolve(process.cwd(), "public", "admin.html"));
-});
-
-app.get("/library", (_req, res) => {
-  res.sendFile(path.resolve(process.cwd(), "public", "library.html"));
-});
-
-app.get("/scheduler", (_req, res) => {
-  res.sendFile(path.resolve(process.cwd(), "public", "scheduler.html"));
-});
 
 // Model API routes
 const modelsRouter = createModelsRouter({ copilot });

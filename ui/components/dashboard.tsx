@@ -1,77 +1,18 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { io, type Socket } from "socket.io-client";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useSocket } from "@/lib/socket-context";
+import { fetchJson } from "@/lib/api";
+import type { ToolInfo, Approval, AuditEntry } from "@/lib/types";
 import { SectionCard } from "./section-card";
-import { PromptLibraryDrawer } from "./prompt-library-drawer";
-import { ScheduleManagerPanel } from "./schedule-manager-panel";
 import { ToastContainer, showToast } from "./toast";
-
-type ToolInfo = {
-  name: string;
-  description: string;
-  category: string;
-  riskLevel: string;
-  enabled: boolean;
-};
-
-type Approval = {
-  id: string;
-  tool: string;
-  riskLevel: string;
-  status: string;
-  createdAt: string;
-  explanation: string;
-  preview?: string;
-  decidedVia?: string;
-};
-
-type AuditEntry = {
-  id: string;
-  timestamp: string;
-  level: string;
-  category: string;
-  event: string;
-  details: Record<string, unknown>;
-};
-
-const API_BASE = process.env.NEXT_PUBLIC_OPENZIGS_API_BASE ?? "";
-const SOCKET_URL = process.env.NEXT_PUBLIC_OPENZIGS_SOCKET_URL ?? API_BASE;
-const AUTH_TOKEN = process.env.NEXT_PUBLIC_OPENZIGS_TOKEN ?? "";
-
-const buildUrl = (path: string) => {
-  if (!API_BASE) {
-    return path;
-  }
-  return `${API_BASE}${path}`;
-};
-
-const fetchJson = async <T,>(path: string, options?: RequestInit): Promise<T> => {
-  const headers = new Headers(options?.headers);
-  if (!headers.has("Content-Type")) {
-    headers.set("Content-Type", "application/json");
-  }
-  if (AUTH_TOKEN) {
-    headers.set("Authorization", `Bearer ${AUTH_TOKEN}`);
-  }
-
-  const response = await fetch(buildUrl(path), {
-    ...options,
-    headers
-  });
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(text || response.statusText);
-  }
-  return response.json() as Promise<T>;
-};
 
 export const Dashboard = () => {
   const queryClient = useQueryClient();
+  const { socket, connected } = useSocket();
   const [logCategory, setLogCategory] = useState("all");
   const [logLevel, setLogLevel] = useState("all");
-  const [promptDrawerOpen, setPromptDrawerOpen] = useState(false);
 
   const toolsQuery = useQuery({
     queryKey: ["tools"],
@@ -87,12 +28,8 @@ export const Dashboard = () => {
     queryKey: ["logs", logCategory, logLevel],
     queryFn: () => {
       const params = new URLSearchParams({ limit: "8" });
-      if (logCategory !== "all") {
-        params.set("category", logCategory);
-      }
-      if (logLevel !== "all") {
-        params.set("level", logLevel);
-      }
+      if (logCategory !== "all") params.set("category", logCategory);
+      if (logLevel !== "all") params.set("level", logLevel);
       return fetchJson<{ entries: AuditEntry[] }>(`/api/logs?${params.toString()}`);
     }
   });
@@ -100,15 +37,6 @@ export const Dashboard = () => {
   const healthQuery = useQuery({
     queryKey: ["health"],
     queryFn: () => fetchJson<{ status: string }>("/api/health")
-  });
-
-  const toggleMutation = useMutation({
-    mutationFn: ({ name, enabled }: { name: string; enabled: boolean }) =>
-      fetchJson(`/api/tools/${name}/toggle`, {
-        method: "POST",
-        body: JSON.stringify({ enabled })
-      }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["tools"] })
   });
 
   const decisionMutation = useMutation({
@@ -121,50 +49,41 @@ export const Dashboard = () => {
   });
 
   useEffect(() => {
-    if (!SOCKET_URL) {
-      return;
-    }
-    const socket: Socket = io(SOCKET_URL, {
-      transports: ["websocket"],
-      withCredentials: true
-    });
+    if (!socket) return;
 
-    socket.on("approval:request", () => {
-      queryClient.invalidateQueries({ queryKey: ["approvals"] });
-    });
-
-    socket.on("approval:decided", () => {
-      queryClient.invalidateQueries({ queryKey: ["approvals"] });
-    });
-
-    socket.on("tool:toggled", () => {
-      queryClient.invalidateQueries({ queryKey: ["tools"] });
-    });
-
-    socket.on("job:executed", (data: { jobName?: string; success?: boolean }) => {
+    const refreshApprovals = () => queryClient.invalidateQueries({ queryKey: ["approvals"] });
+    const refreshTools = () => queryClient.invalidateQueries({ queryKey: ["tools"] });
+    const onJobExecuted = (data: { jobName?: string; success?: boolean }) => {
       const name = data.jobName ?? "Job";
-      if (data.success) {
-        showToast(`${name} completed`, "success");
-      } else {
-        showToast(`${name} failed`, "error");
-      }
-      queryClient.invalidateQueries({ queryKey: ["jobs"] });
-    });
+      showToast(`${name} ${data.success ? "completed" : "failed"}`, data.success ? "success" : "error");
+    };
+
+    socket.on("approval:request", refreshApprovals);
+    socket.on("approval:decided", refreshApprovals);
+    socket.on("tool:toggled", refreshTools);
+    socket.on("job:executed", onJobExecuted);
 
     return () => {
-      socket.disconnect();
+      socket.off("approval:request", refreshApprovals);
+      socket.off("approval:decided", refreshApprovals);
+      socket.off("tool:toggled", refreshTools);
+      socket.off("job:executed", onJobExecuted);
     };
-  }, [queryClient]);
+  }, [socket, queryClient]);
 
-  const toolGroups = toolsQuery.data?.tools ?? {};
-  const pendingApprovals = approvalsQuery.data?.approvals ?? [];
-  const recentLogs = logsQuery.data?.entries ?? [];
+  const toolGroups = toolsQuery.data?.tools;
 
-  const statusText = healthQuery.isSuccess ? "Connected" : healthQuery.isError ? "Needs auth" : "Connecting";
+  const statusText = healthQuery.isSuccess
+    ? connected ? "Connected" : "Polling"
+    : healthQuery.isError ? "Needs auth" : "Connecting";
 
   const toolCount = useMemo(() => {
+    if (!toolGroups) return 0;
     return Object.values(toolGroups).reduce((acc, group) => acc + group.length, 0);
   }, [toolGroups]);
+
+  const pendingApprovals = approvalsQuery.data?.approvals ?? [];
+  const recentLogs = logsQuery.data?.entries ?? [];
 
   const handleExport = () => {
     const payload = JSON.stringify(recentLogs, null, 2);
@@ -189,12 +108,6 @@ export const Dashboard = () => {
             </p>
           </div>
           <div className="flex items-center gap-4 rounded-2xl bg-stone/10 px-5 py-3">
-            <button
-              onClick={() => setPromptDrawerOpen(true)}
-              className="rounded-full bg-tide px-4 py-2 text-xs font-semibold text-white"
-            >
-              Prompt Library
-            </button>
             <span className="text-sm text-haze">Agent status</span>
             <span className="rounded-full bg-ember px-3 py-1 text-xs font-semibold text-ink">
               {statusText}
@@ -205,49 +118,6 @@ export const Dashboard = () => {
 
       <div className="dashboard-grid">
         <div className="flex flex-col gap-6">
-          <SectionCard title="Tool Management">
-            <div className="space-y-4">
-              {Object.entries(toolGroups).map(([groupName, tools]) => (
-                <div key={groupName} className="rounded-2xl border border-ink/10 bg-white/60 p-4">
-                  <div className="mb-3 flex items-center justify-between">
-                    <h3 className="text-sm font-semibold uppercase tracking-[0.2em] text-tide">
-                      {groupName}
-                    </h3>
-                    <span className="text-xs text-ink/70">{tools.length} tools</span>
-                  </div>
-                  <div className="space-y-3">
-                    {tools.map((tool) => (
-                      <div key={tool.name} className="flex flex-col gap-2 rounded-xl bg-stone/80 p-3">
-                        <div className="flex items-center justify-between">
-                          <div>
-                            <p className="text-sm font-semibold text-ink">{tool.name}</p>
-                            <p className="text-xs text-ink/60">{tool.description}</p>
-                          </div>
-                          <button
-                            className={`rounded-full px-4 py-1 text-xs font-semibold transition ${
-                              tool.enabled
-                                ? "bg-moss text-white"
-                                : "bg-ink/10 text-ink"
-                            }`}
-                            onClick={() => toggleMutation.mutate({ name: tool.name, enabled: !tool.enabled })}
-                          >
-                            {tool.enabled ? "Enabled" : "Disabled"}
-                          </button>
-                        </div>
-                        <div className="flex items-center gap-3 text-xs text-ink/60">
-                          <span className="uppercase tracking-[0.2em]">{tool.category}</span>
-                          <span className="rounded-full bg-ink/10 px-2 py-1 text-[10px] font-semibold uppercase">
-                            {tool.riskLevel}
-                          </span>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </SectionCard>
-
           <SectionCard title="Audit Log">
             <div className="mb-4 flex flex-wrap items-center gap-3">
               <select
@@ -352,14 +222,9 @@ export const Dashboard = () => {
               )}
             </div>
           </SectionCard>
-
-          <SectionCard title="Scheduler">
-            <ScheduleManagerPanel />
-          </SectionCard>
         </div>
       </div>
 
-      <PromptLibraryDrawer open={promptDrawerOpen} onClose={() => setPromptDrawerOpen(false)} />
       <ToastContainer />
     </div>
   );
