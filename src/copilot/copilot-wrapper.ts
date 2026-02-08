@@ -64,6 +64,7 @@ export type CopilotWrapperOptions = {
   clientId?: string;
   model?: string;
   authTimeoutMs?: number;
+  maxToolsPerRequest?: number;
   onToolCall?: (tool: string, args: unknown) => Promise<void>;
   onPermissionRequest?: (request: { kind: string; toolName?: string; toolArgs?: unknown }) => Promise<{
     kind: "approved" | "denied-by-rules" | "denied-by-user";
@@ -224,6 +225,7 @@ export class CopilotWrapperService implements CopilotWrapper {
   private permissionHandler?: (request: { kind: string; toolName?: string; toolArgs?: unknown }) => Promise<{
     kind: "approved" | "denied-by-rules" | "denied-by-user";
   }>;
+  private maxToolsPerRequest: number;
 
   constructor({
     client,
@@ -232,6 +234,7 @@ export class CopilotWrapperService implements CopilotWrapper {
     clientId = process.env.GITHUB_CLIENT_ID ?? "",
     model = "gpt-4.1",
     authTimeoutMs = 5 * 60 * 1000,
+    maxToolsPerRequest = 30,
     onToolCall,
     onPermissionRequest
   }: CopilotWrapperOptions = {}) {
@@ -242,6 +245,7 @@ export class CopilotWrapperService implements CopilotWrapper {
     this.clientId = clientId;
     this.model = model;
     this.authTimeoutMs = authTimeoutMs;
+    this.maxToolsPerRequest = maxToolsPerRequest;
     this.toolCallHandler = onToolCall;
     this.permissionHandler = onPermissionRequest;
   }
@@ -301,7 +305,21 @@ export class CopilotWrapperService implements CopilotWrapper {
     }
 
     const effectiveModel = model ?? this.model;
-    const toolList = tools ?? this.toolRegistry?.listEnabledTools() ?? [];
+    let toolList = tools ?? this.toolRegistry?.listEnabledTools() ?? [];
+
+    // Enforce maxToolsPerRequest: if we exceed the cap, keep always-on core tools
+    // and fill the remaining slots with the rest.
+    if (toolList.length > this.maxToolsPerRequest) {
+      const coreTools = toolList.filter((t) =>
+        t.name === "read-file" || t.name === "list-directory" || t.name === "web-search"
+      );
+      const otherTools = toolList.filter((t) =>
+        t.name !== "read-file" && t.name !== "list-directory" && t.name !== "web-search"
+      );
+      const remainingSlots = Math.max(0, this.maxToolsPerRequest - coreTools.length);
+      toolList = [...coreTools, ...otherTools.slice(0, remainingSlots)];
+    }
+
     const wrappedTools = toolList.map((tool) =>
       defineTool(tool.name, {
         description: tool.description,

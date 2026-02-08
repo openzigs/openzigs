@@ -544,6 +544,9 @@ The shell executor uses a **command allowlist**. If the allowlist is empty, the 
 | `PUT` | `/api/jobs/:id` | Token | Update a scheduled job. |
 | `DELETE` | `/api/jobs/:id` | Token | Delete a scheduled job. |
 | `POST` | `/api/jobs/:id/toggle` | Token | Enable or disable a scheduled job. |
+| `POST` | `/api/admin/tools/:name/risk` | Admin | Override a tool's risk level. |
+| `GET` | `/api/admin/sidecars/:name/tools` | Admin | List tools for a specific MCP sidecar. |
+| `PUT` | `/api/admin/sidecars/:name/tools` | Admin | Update disabled tools for a sidecar. |
 
 ---
 
@@ -574,14 +577,13 @@ All services (`agent`, `tunnel`, MCP sidecars) share the `openzigs-network` brid
 | Agent → Facebook MCP | `agent` → `facebook-mcp-server` | `http://facebook-mcp-server:5103/mcp` |
 | Agent → Pinterest MCP | `agent` → `pinterest-mcp-server` | `http://pinterest-mcp-server:5104/mcp` |
 | Agent → Word MCP | `agent` → `word-mcp-server` | `http://word-mcp-server:5201/mcp` |
-| Agent → Chrome | `agent` → host | `host.docker.internal:9222` |
-
-MCP sidecar URLs are passed to the agent via environment variables (`MCP_LINKEDIN_URL`, `MCP_TWITTER_URL`, etc.) in `docker-compose.yml`.
-
 | Agent → MarkItDown MCP | `agent` → `markitdown-mcp-server` | `http://markitdown-mcp-server:5301/mcp` |
 | Agent → Gmail MCP | `agent` → `gmail-mcp-server` | `http://gmail-mcp-server:5302/mcp` |
 | Agent → Database MCP | `agent` → `database-mcp-server` | `http://database-mcp-server:5303/mcp` |
 | Agent → GitHub MCP | `agent` → `github-mcp-server` | `http://github-mcp-server:5304/mcp` |
+| Agent → Chrome | `agent` → host | `host.docker.internal:9222` |
+
+MCP sidecar URLs are passed to the agent via environment variables (`MCP_LINKEDIN_URL`, `MCP_TWITTER_URL`, `MCP_MARKITDOWN_URL`, `MCP_GMAIL_URL`, `MCP_DATABASE_URL`, `MCP_GITHUB_URL`, etc.) in `docker-compose.yml`.
 
 ---
 

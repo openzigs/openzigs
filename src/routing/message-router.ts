@@ -17,6 +17,7 @@ export type MessageRouterOptions = {
   copilot: CopilotWrapper;
   accessControl?: AccessControlConfig;
   historyLimit?: number;
+  maxToolsPerRequest?: number;
   clock?: () => Date;
 };
 
@@ -26,6 +27,14 @@ const defaultAccessControl: AccessControlConfig = {
   blockedUsers: []
 };
 
+/** Core tools that are always included regardless of maxToolsPerRequest filtering. */
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+export const ALWAYS_ON_TOOLS = new Set([
+  "read-file",
+  "list-directory",
+  "web-search",
+]);
+
 export class MessageRouter {
   private channelManager: ChannelManager;
   private sessionManager: SessionManager;
@@ -33,6 +42,7 @@ export class MessageRouter {
   private userSessions = new Map<string, string>();
   private accessControl: AccessControlConfig;
   private historyLimit: number;
+  public readonly maxToolsPerRequest: number;
   private clock: () => Date;
 
   constructor({
@@ -40,7 +50,8 @@ export class MessageRouter {
     sessionManager,
     copilot,
     accessControl,
-    historyLimit = 10,
+    historyLimit = 20,
+    maxToolsPerRequest = 30,
     clock
   }: MessageRouterOptions) {
     this.channelManager = channelManager;
@@ -48,6 +59,7 @@ export class MessageRouter {
     this.copilot = copilot;
     this.accessControl = accessControl ?? defaultAccessControl;
     this.historyLimit = historyLimit;
+    this.maxToolsPerRequest = maxToolsPerRequest;
     this.clock = clock ?? (() => new Date());
   }
 

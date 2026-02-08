@@ -193,6 +193,29 @@ export class ToolRegistry extends EventEmitter {
     return riskLevel === "high";
   }
 
+  async setRiskOverride(name: string, riskLevel: RiskLevel) {
+    if (!this.tools.has(name)) {
+      throw new Error(`Unknown tool: ${name}`);
+    }
+
+    this.customRiskOverrides[name] = riskLevel;
+
+    if (this.enabledTools === null) {
+      this.enabledTools = new Set(this.tools.keys());
+    }
+
+    await saveState(this.statePath, {
+      enabledTools: Array.from(this.enabledTools).sort(),
+      customRiskOverrides: this.customRiskOverrides
+    });
+
+    this.emit("tool:riskChanged", { name, riskLevel });
+  }
+
+  getEffectiveRiskLevel(name: string): RiskLevel | undefined {
+    return this.getRiskLevel(name) ?? this.tools.get(name)?.riskLevel;
+  }
+
   private getRiskLevel(name: string): RiskLevel | undefined {
     return this.customRiskOverrides[name];
   }

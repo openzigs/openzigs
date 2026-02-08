@@ -11,6 +11,10 @@ import { createPromptTools } from "./tools/prompt-tools.js";
 import { createSchedulerTools } from "./tools/scheduler-tools.js";
 import { createSocialMediaTools } from "./tools/social-media-tools.js";
 import { createDocumentIntelligenceTools } from "./tools/document-intelligence-tools.js";
+import { createMarkItDownTools } from "./tools/markitdown-tools.js";
+import { createGmailTools } from "./tools/gmail-tools.js";
+import { createDatabaseTools } from "./tools/database-tools.js";
+import { createGitHubTools } from "./tools/github-tools.js";
 import { ToolRegistry, type ToolDefinition } from "./tool-registry.js";
 import type { LocalMcpServerManager } from "./local-mcp-server-manager.js";
 import { AuditLogger } from "../logging/audit-logger.js";
@@ -34,7 +38,13 @@ export type McpServerOptions = {
   twitterSidecarUrl?: string;
   facebookSidecarUrl?: string;
   pinterestSidecarUrl?: string;
+  markitdownSidecarUrl?: string;
+  gmailSidecarUrl?: string;
+  databaseSidecarUrl?: string;
+  githubSidecarUrl?: string;
   localServerManager?: LocalMcpServerManager;
+  /** Per-sidecar disabled tool lists from config */
+  disabledTools?: Record<string, string[]>;
 };
 
 export type RegisterMcpToolsOptions = Pick<
@@ -51,7 +61,12 @@ export type RegisterMcpToolsOptions = Pick<
   | "twitterSidecarUrl"
   | "facebookSidecarUrl"
   | "pinterestSidecarUrl"
+  | "markitdownSidecarUrl"
+  | "gmailSidecarUrl"
+  | "databaseSidecarUrl"
+  | "githubSidecarUrl"
   | "localServerManager"
+  | "disabledTools"
 >;
 
 const readFileSchema = z.object({ path: z.string() });
@@ -102,6 +117,34 @@ const buildApprovalPreview = (toolName: string, args: Record<string, unknown>) =
     const command = typeof args.command === "string" ? args.command : "";
     const argList = Array.isArray(args.args) ? args.args.join(" ") : "";
     return `Would run: ${command}${argList ? ` ${argList}` : ""}`;
+  }
+  if (toolName === "gmail-send") {
+    const to = typeof args.to === "string" ? args.to : "";
+    const subject = typeof args.subject === "string" ? args.subject : "";
+    const body = typeof args.body === "string" ? args.body.slice(0, 200) : "";
+    return `Would send email to ${to}\nSubject: ${subject}\nBody: ${body}${body.length >= 200 ? "..." : ""}`;
+  }
+  if (toolName === "db-query") {
+    const query = typeof args.query === "string" ? args.query : "";
+    return `Would execute SQL: ${query}`;
+  }
+  if (toolName === "github-create-pr") {
+    const owner = typeof args.owner === "string" ? args.owner : "";
+    const repo = typeof args.repo === "string" ? args.repo : "";
+    const title = typeof args.title === "string" ? args.title : "";
+    const head = typeof args.head === "string" ? args.head : "";
+    const base = typeof args.base === "string" ? args.base : "";
+    return `Would create PR in ${owner}/${repo}: "${title}" (${head} → ${base})`;
+  }
+  if (toolName === "social-post") {
+    const platform = typeof args.platform === "string" ? args.platform : "";
+    const content = typeof args.content === "string" ? args.content.slice(0, 200) : "";
+    return `Would post to ${platform}: ${content}${content.length >= 200 ? "..." : ""}`;
+  }
+  if (toolName === "browser-navigate") {
+    const action = typeof args.action === "string" ? args.action : "";
+    const url = typeof args.url === "string" ? args.url : "";
+    return `Would navigate browser: ${action}${url ? ` to ${url}` : ""}`;
   }
   return undefined;
 };
@@ -197,6 +240,10 @@ export const createMcpServer = (options: McpServerOptions) => {
 };
 
 export const registerMcpTools = (toolRegistry: ToolRegistry, options: RegisterMcpToolsOptions) => {
+  const disabledToolSet = new Set(
+    Object.values(options.disabledTools ?? {}).flat()
+  );
+
   const filesystemHandlers = createFilesystemHandlers({
     allowedDirs: options.allowedDirs
   });
@@ -221,6 +268,9 @@ export const registerMcpTools = (toolRegistry: ToolRegistry, options: RegisterMc
   });
 
   const registerTool = (tool: ToolDefinition) => {
+    if (disabledToolSet.has(tool.name)) {
+      return;
+    }
     toolRegistry.registerTool(tool);
   };
 
@@ -390,6 +440,38 @@ export const registerMcpTools = (toolRegistry: ToolRegistry, options: RegisterMc
     localServerManager: options.localServerManager,
   });
   for (const tool of docTools) {
+    registerTool(tool);
+  }
+
+  // ── MarkItDown Tools (Docker sidecar) ──
+  const markitdownTools = createMarkItDownTools({
+    sidecarUrl: options.markitdownSidecarUrl,
+  });
+  for (const tool of markitdownTools) {
+    registerTool(tool);
+  }
+
+  // ── Gmail Tools (Docker sidecar) ──
+  const gmailTools = createGmailTools({
+    sidecarUrl: options.gmailSidecarUrl,
+  });
+  for (const tool of gmailTools) {
+    registerTool(tool);
+  }
+
+  // ── Database Tools (Docker/JBang sidecar) ──
+  const databaseTools = createDatabaseTools({
+    sidecarUrl: options.databaseSidecarUrl,
+  });
+  for (const tool of databaseTools) {
+    registerTool(tool);
+  }
+
+  // ── GitHub Tools (Docker sidecar) ──
+  const githubTools = createGitHubTools({
+    sidecarUrl: options.githubSidecarUrl,
+  });
+  for (const tool of githubTools) {
     registerTool(tool);
   }
 };

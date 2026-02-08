@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { loadConfig } from "../config/index.js";
 import { logger } from "../logging/logger.js";
-import type { ToolRegistry } from "../mcp/tool-registry.js";
+import type { ToolRegistry, RiskLevel } from "../mcp/tool-registry.js";
 import type { DockerSidecarManager } from "../mcp/docker-sidecar-manager.js";
 import type { LocalMcpServerManager } from "../mcp/local-mcp-server-manager.js";
 import type { PromptManager } from "../productivity/prompt-manager.js";
@@ -168,6 +168,75 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return res.status(400).json({ error: message });
+    }
+  });
+
+  // ── Admin Risk Override ──
+  router.post("/tools/:name/risk", async (req, res) => {
+    const { name } = req.params;
+    const { riskLevel } = req.body as { riskLevel?: string };
+    if (!riskLevel || !["low", "medium", "high"].includes(riskLevel)) {
+      return res.status(400).json({ error: "riskLevel must be 'low', 'medium', or 'high'" });
+    }
+    try {
+      await toolRegistry.setRiskOverride(name, riskLevel as RiskLevel);
+      return res.json({ ok: true, tool: name, riskLevel });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return res.status(400).json({ error: message });
+    }
+  });
+
+  // ── Per-Sidecar Tool Listing ──
+  router.get("/sidecars/:name/tools", (_req, res) => {
+    const { name } = _req.params;
+    const sidecarToolMap: Record<string, string[]> = {
+      linkedin: ["social-post", "social-timeline", "social-profile"],
+      twitter: ["social-post", "social-timeline", "social-profile"],
+      facebook: ["social-post", "social-timeline", "social-profile"],
+      pinterest: ["social-post", "social-timeline", "social-profile", "pinterest-boards", "pinterest-pins"],
+      markitdown: ["convert-to-markdown"],
+      gmail: ["gmail-search", "gmail-read", "gmail-draft", "gmail-send"],
+      database: ["db-list-tables", "db-describe", "db-query"],
+      github: ["github-get-file", "github-search-code", "github-list-issues", "github-create-issue", "github-create-pr"],
+    };
+    const toolNames = sidecarToolMap[name];
+    if (!toolNames) {
+      return res.status(404).json({ error: `Unknown sidecar: ${name}` });
+    }
+    const tools = toolNames.map((toolName) => {
+      const info = toolRegistry.getToolInfo(toolName);
+      return info
+        ? { name: info.name, description: info.description, riskLevel: info.riskLevel, enabled: info.enabled }
+        : { name: toolName, description: "", riskLevel: "low", enabled: false };
+    });
+    return res.json({ sidecar: name, tools });
+  });
+
+  // ── Per-Sidecar Tool Toggle ──
+  router.put("/sidecars/:name/tools", async (req, res) => {
+    const { name } = req.params;
+    const { disabledTools } = req.body as { disabledTools?: string[] };
+    if (!Array.isArray(disabledTools)) {
+      return res.status(400).json({ error: "disabledTools must be an array of tool names" });
+    }
+    try {
+      const configPath = path.resolve(process.cwd(), "config", "default.json");
+      const raw = await fs.readFile(configPath, "utf-8");
+      const config = JSON.parse(raw) as Record<string, unknown>;
+      const mcpServers = (config.mcpServers ?? {}) as Record<string, unknown>;
+      const sidecars = (mcpServers.sidecars ?? {}) as Record<string, Record<string, unknown>>;
+      const sidecar = sidecars[name] ?? {};
+      sidecar.disabledTools = disabledTools;
+      sidecars[name] = sidecar;
+      mcpServers.sidecars = sidecars;
+      config.mcpServers = mcpServers;
+      await fs.writeFile(configPath, JSON.stringify(config, null, 2), "utf-8");
+      logger.info(`Updated disabledTools for sidecar "${name}": ${disabledTools.join(", ") || "(none)"}`);
+      return res.json({ ok: true, sidecar: name, disabledTools, restartRequired: true });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return res.status(500).json({ error: message });
     }
   });
 

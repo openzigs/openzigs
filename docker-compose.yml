@@ -101,9 +101,60 @@ services:
     networks:
       - openzigs-network
 
+  # ── Personal Assistant MCP Sidecars ──
+  mcp-markitdown:
+    image: markitdown-mcp:latest
+    container_name: openzigs-mcp-markitdown
+    restart: unless-stopped
+    ports:
+      - "5301:5000"
+    volumes:
+      - openzigs-data:/workdir
+    networks:
+      - openzigs-network
+
+  mcp-gmail:
+    image: mcp/gmail:latest
+    container_name: openzigs-mcp-gmail
+    restart: unless-stopped
+    ports:
+      - "5302:5000"
+    volumes:
+      - gmail-credentials:/gmail-server
+      - ${HOME}/.gmail-mcp/gcp-oauth.keys.json:/gcp-oauth.keys.json:ro
+    environment:
+      - GMAIL_OAUTH_PATH=/gcp-oauth.keys.json
+      - GMAIL_CREDENTIALS_PATH=/gmail-server/credentials.json
+    networks:
+      - openzigs-network
+
+  mcp-database:
+    image: openzigs-mcp-database:latest
+    container_name: openzigs-mcp-database
+    restart: unless-stopped
+    ports:
+      - "5303:5000"
+    environment:
+      - JDBC_URL=${JDBC_URL:-}
+      - DB_PASSWORD=${DB_PASSWORD:-}
+    networks:
+      - openzigs-network
+
+  mcp-github:
+    image: ghcr.io/github/github-mcp-server:latest
+    container_name: openzigs-mcp-github
+    restart: unless-stopped
+    ports:
+      - "5304:5000"
+    environment:
+      - GITHUB_PERSONAL_ACCESS_TOKEN=${GITHUB_PERSONAL_ACCESS_TOKEN:-}
+    networks:
+      - openzigs-network
+
 volumes:
   openzigs-data:
   pinterest-tokens:
+  gmail-credentials:
 
 networks:
   openzigs-network:
