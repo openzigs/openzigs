@@ -6,27 +6,47 @@ describe("GitHub Tools", () => {
     vi.restoreAllMocks();
   });
 
-  it("should create five tools", () => {
+  it("should create 20 tools", () => {
     const tools = createGitHubTools({ sidecarUrl: "http://localhost:5304" });
-    expect(tools).toHaveLength(5);
+    expect(tools).toHaveLength(20);
 
     const names = tools.map((t) => t.name);
+    expect(names).toContain("github-get-me");
     expect(names).toContain("github-get-file");
     expect(names).toContain("github-search-code");
+    expect(names).toContain("github-search-repos");
+    expect(names).toContain("github-search-users");
     expect(names).toContain("github-list-issues");
     expect(names).toContain("github-create-issue");
+    expect(names).toContain("github-list-commits");
+    expect(names).toContain("github-get-commit");
+    expect(names).toContain("github-list-branches");
+    expect(names).toContain("github-create-branch");
+    expect(names).toContain("github-list-prs");
+    expect(names).toContain("github-get-pr");
     expect(names).toContain("github-create-pr");
+    expect(names).toContain("github-merge-pr");
+    expect(names).toContain("github-create-or-update-file");
+    expect(names).toContain("github-delete-file");
+    expect(names).toContain("github-fork-repo");
+    expect(names).toContain("github-create-repo");
+    expect(names).toContain("github-list-releases");
   });
 
   it("should assign correct risk levels", () => {
     const tools = createGitHubTools({ sidecarUrl: "http://localhost:5304" });
     const riskMap = Object.fromEntries(tools.map((t) => [t.name, t.riskLevel]));
 
+    expect(riskMap["github-get-me"]).toBe("low");
     expect(riskMap["github-get-file"]).toBe("low");
     expect(riskMap["github-search-code"]).toBe("low");
     expect(riskMap["github-list-issues"]).toBe("low");
+    expect(riskMap["github-list-commits"]).toBe("low");
     expect(riskMap["github-create-issue"]).toBe("medium");
+    expect(riskMap["github-create-branch"]).toBe("medium");
     expect(riskMap["github-create-pr"]).toBe("high");
+    expect(riskMap["github-merge-pr"]).toBe("high");
+    expect(riskMap["github-create-repo"]).toBe("high");
   });
 
   it("should categorize all tools as developer", () => {
@@ -56,7 +76,7 @@ describe("GitHub Tools", () => {
 
     expect(result.isError).toBeUndefined();
     const body = JSON.parse(mockFetch.mock.calls[0][1].body);
-    expect(body.method).toBe("github_get_file");
+    expect(body.method).toBe("get_file_contents");
     expect(body.params.owner).toBe("octocat");
     expect(body.params.repo).toBe("hello-world");
     expect(body.params.path).toBe("README.md");
@@ -85,7 +105,7 @@ describe("GitHub Tools", () => {
 
     expect(result.isError).toBeUndefined();
     const body = JSON.parse(mockFetch.mock.calls[0][1].body);
-    expect(body.method).toBe("github_create_pr");
+    expect(body.method).toBe("create_pull_request");
     expect(body.params.title).toBe("Fix typo");
     expect(body.params.head).toBe("fix-typo");
     expect(body.params.base).toBe("main");
@@ -103,7 +123,7 @@ describe("GitHub Tools", () => {
     await searchTool.handler({ query: "function handleClick language:typescript" });
 
     const body = JSON.parse(mockFetch.mock.calls[0][1].body);
-    expect(body.method).toBe("github_search_code");
+    expect(body.method).toBe("search_code");
     expect(body.params.query).toBe("function handleClick language:typescript");
   });
 });

@@ -159,6 +159,18 @@ export type AdminRouterOptions = {
 export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerManager, promptManager, scheduler }: AdminRouterOptions) => {
   const router = Router();
 
+  // ── Server Restart ──
+  // The backend runs under tsx watch (dev) or a process manager (prod),
+  // so exiting the process triggers an automatic restart.
+  router.post("/restart", (_req, res) => {
+    logger.info("Server restart requested via admin API");
+    res.json({ ok: true, message: "Server restarting…" });
+    // Give the response time to flush before exiting
+    setTimeout(() => {
+      process.exit(0);
+    }, 500);
+  });
+
   router.get("/tools", (_req, res) => {
     const tools = toolRegistry.getAllTools();
     res.json({ tools });
@@ -578,6 +590,38 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
       const message = error instanceof Error ? error.message : String(error);
       return res.status(500).json({ error: message });
     }
+  });
+
+  // ── Per-Local-Server Tool Listing ──
+  router.get("/local-servers/:name/tools", (_req, res) => {
+    const { name } = _req.params;
+
+    // Get tools registered in the ToolRegistry whose handler proxies to this local server
+    const serverToolMap: Record<string, string[]> = {
+      word: [
+        "create-word-doc", "word-add-heading", "word-add-paragraph",
+        "word-add-table", "word-read-doc", "word-to-pdf",
+      ],
+      calendar: [
+        "calendar-list", "calendar-create", "calendar-search", "calendar-freebusy",
+      ],
+    };
+
+    const toolNames = serverToolMap[name];
+    if (!toolNames) {
+      return res.status(404).json({ error: `Unknown local server: ${name}` });
+    }
+
+    const tools = toolNames
+      .map((toolName) => {
+        const info = toolRegistry.getToolInfo(toolName);
+        return info
+          ? { name: info.name, description: info.description, riskLevel: info.riskLevel, enabled: info.enabled }
+          : null;
+      })
+      .filter(Boolean);
+
+    return res.json({ server: name, tools });
   });
 
   router.post("/local-servers/:name/stop", async (req, res) => {

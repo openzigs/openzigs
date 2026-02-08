@@ -234,7 +234,7 @@ export const ChatView = () => {
   const showConnecting = connected && !chatId;
 
   return (
-    <div className="flex h-screen flex-col bg-background">
+    <div className="flex h-full flex-col bg-background">
       {/* Header */}
       <header className="flex items-center gap-4 border-b border-border bg-card px-5 py-3">
         <h1 className="text-lg font-semibold text-foreground">OpenZigs</h1>

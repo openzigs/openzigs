@@ -24,10 +24,10 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" suppressHydrationWarning>
-      <body className={`${spaceGrotesk.variable} ${jetBrains.variable} antialiased`}>
+      <body className={`${spaceGrotesk.variable} ${jetBrains.variable} flex h-dvh flex-col overflow-hidden antialiased`}>
         <Providers>
           <NavBar />
-          {children}
+          <div className="min-h-0 flex-1 overflow-y-auto">{children}</div>
         </Providers>
       </body>
     </html>
