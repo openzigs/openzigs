@@ -44,6 +44,8 @@ export type OrchestrateContext = {
   sessionId?: string;
   channelType?: ChannelType;
   chatId?: string;
+  /** When set (by MessageRouter), sub-tasks inherit this as their parentTaskId. */
+  parentTaskId?: string;
 };
 
 export type OrchestrateAgentsOptions = {
@@ -206,7 +208,7 @@ export const createOrchestrateAgentsTools = ({
                 goal: agent.goal,
                 context: agent.context,
                 notifyOnComplete: false, // Orchestrator handles notification
-                parentTaskId: input.parentTaskId,
+                parentTaskId: input.parentTaskId ?? activeOrchestrateContext.parentTaskId,
                 sessionId,
                 channelType,
                 chatId,

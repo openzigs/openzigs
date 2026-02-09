@@ -25,6 +25,8 @@ export type ChatContext = {
   sessionId?: string;
   channelType?: ChannelType;
   chatId?: string;
+  /** When set (by MessageRouter), spawned agents inherit this as their parentTaskId. */
+  parentTaskId?: string;
 };
 
 export type AgentToolsOptions = {
@@ -90,7 +92,7 @@ export const createAgentTools = ({ taskEngine }: AgentToolsOptions): ToolDefinit
               context: input.context,
               notifyOnComplete: input.notify_user ?? true,
               model: input.model,
-              parentTaskId: input.parentTaskId,
+              parentTaskId: input.parentTaskId ?? activeChatContext.parentTaskId,
               sessionId,
               channelType,
               chatId,
