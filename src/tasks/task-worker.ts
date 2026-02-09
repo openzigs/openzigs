@@ -82,6 +82,20 @@ export class TaskWorker extends EventEmitter {
     return this.running;
   }
 
+  /** Get the current max concurrent limit. */
+  get concurrencyLimit(): number {
+    return this.maxConcurrent;
+  }
+
+  /** Update the max concurrent limit at runtime without restarting. */
+  setMaxConcurrent(n: number): void {
+    if (n < 1 || n > 10) {
+      throw new RangeError("maxConcurrent must be between 1 and 10");
+    }
+    this.maxConcurrent = n;
+    this.log.info(`TaskWorker maxConcurrent updated to ${n}`);
+  }
+
   /** Single poll iteration: dequeue up to available capacity. */
   private async poll(): Promise<void> {
     if (this.stopped) {

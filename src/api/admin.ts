@@ -12,6 +12,8 @@ import type { PromptManager } from "../productivity/prompt-manager.js";
 import type { Scheduler } from "../productivity/scheduler.js";
 import type { PersonalityManager } from "../personality/personality-manager.js";
 import type { SessionManager } from "../sessions/session-manager.js";
+import type { TaskWorker } from "../tasks/task-worker.js";
+import type { TaskEngine } from "../tasks/task-engine.js";
 
 type EnvEntry = {
   name: string;
@@ -160,6 +162,8 @@ export type AdminRouterOptions = {
   personalityManager?: PersonalityManager;
   sessionManager?: SessionManager;
   copilot?: CopilotWrapper;
+  taskWorker?: TaskWorker;
+  taskEngine?: TaskEngine;
 };
 
 type SchedulerSuggestion = {
@@ -214,7 +218,7 @@ const normalizeSchedulerSuggestion = (
   };
 };
 
-export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerManager, promptManager, scheduler, personalityManager, sessionManager, copilot }: AdminRouterOptions) => {
+export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerManager, promptManager, scheduler, personalityManager, sessionManager, copilot, taskWorker, taskEngine }: AdminRouterOptions) => {
   const router = Router();
 
   // ── Server Restart ──
@@ -971,6 +975,46 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
       }
     });
   }
+
+  // ── Task Engine Configuration ──
+  router.get("/tasks/config", (_req, res) => {
+    const maxConcurrent = taskWorker?.concurrencyLimit ?? 2;
+    const stats = taskEngine?.getStats() ?? { queued: 0, running: 0 };
+    return res.json({
+      maxConcurrent,
+      stats,
+    });
+  });
+
+  router.put("/tasks/config", async (req, res) => {
+    const body = req.body as Record<string, unknown>;
+    const maxConcurrent = typeof body.maxConcurrent === "number" ? body.maxConcurrent : undefined;
+
+    if (maxConcurrent === undefined || !Number.isInteger(maxConcurrent) || maxConcurrent < 1 || maxConcurrent > 10) {
+      return res.status(400).json({ error: "maxConcurrent must be an integer between 1 and 10" });
+    }
+
+    try {
+      if (taskWorker) {
+        taskWorker.setMaxConcurrent(maxConcurrent);
+      }
+
+      // Persist to user config
+      const configPath = defaultConfigPath();
+      const userConfig = await readUserConfig(configPath);
+      const existingTasks = (userConfig.tasks && typeof userConfig.tasks === "object")
+        ? (userConfig.tasks as Record<string, unknown>)
+        : {};
+      userConfig.tasks = { ...existingTasks, maxConcurrent };
+      await writeUserConfig(configPath, userConfig);
+
+      logger.info(`Task engine maxConcurrent updated to ${maxConcurrent}`);
+      return res.json({ ok: true, maxConcurrent });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return res.status(400).json({ error: message });
+    }
+  });
 
   return router;
 };

@@ -17,6 +17,7 @@ import { createGmailTools } from "./tools/gmail-tools.js";
 import { createDatabaseTools } from "./tools/database-tools.js";
 import { createGitHubTools } from "./tools/github-tools.js";
 import { createAgentTools } from "./tools/agent-tools.js";
+import { createOrchestrateAgentsTools } from "./tools/orchestrate-agents.js";
 import { ToolRegistry, type ToolDefinition } from "./tool-registry.js";
 import type { LocalMcpServerManager } from "./local-mcp-server-manager.js";
 import { AuditLogger } from "../logging/audit-logger.js";
@@ -26,6 +27,7 @@ import type { PromptManager } from "../productivity/prompt-manager.js";
 import type { Scheduler } from "../productivity/scheduler.js";
 import type { PersonalityManager } from "../personality/personality-manager.js";
 import type { TaskEngine } from "../tasks/task-engine.js";
+import type { CopilotWrapper } from "../copilot/copilot-wrapper.js";
 
 export type McpServerOptions = {
   allowedDirs: string[];
@@ -41,6 +43,7 @@ export type McpServerOptions = {
   scheduler?: Scheduler;
   personalityManager?: PersonalityManager;
   taskEngine?: TaskEngine;
+  copilot?: CopilotWrapper;
   linkedinSidecarUrl?: string;
   twitterSidecarUrl?: string;
   facebookSidecarUrl?: string;
@@ -66,6 +69,7 @@ export type RegisterMcpToolsOptions = Pick<
   | "scheduler"
   | "personalityManager"
   | "taskEngine"
+  | "copilot"
   | "linkedinSidecarUrl"
   | "twitterSidecarUrl"
   | "facebookSidecarUrl"
@@ -462,6 +466,17 @@ export const registerMcpTools = (toolRegistry: ToolRegistry, options: RegisterMc
   if (options.taskEngine) {
     const agentTools = createAgentTools({ taskEngine: options.taskEngine });
     for (const tool of agentTools) {
+      registerTool(tool);
+    }
+  }
+
+  // ── Orchestrate Agents (fan-out/fan-in) ──
+  if (options.taskEngine && options.copilot) {
+    const orchestrateTools = createOrchestrateAgentsTools({
+      taskEngine: options.taskEngine,
+      copilot: options.copilot,
+    });
+    for (const tool of orchestrateTools) {
       registerTool(tool);
     }
   }

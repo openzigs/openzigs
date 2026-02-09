@@ -11,6 +11,7 @@
     "list-directory",
     "list-jobs",
     "list-prompts",
+    "orchestrate-agents",
     "read-file",
     "run-prompt",
     "save-prompt",

@@ -568,6 +568,7 @@ Logs are queryable via `GET /api/logs` with filters for `category`, `level`, `si
 | Tool | Category | Risk | Description |
 |---|---|---|---|
 | `spawn-agent` | productivity | 🟡 medium | Spawn an asynchronous background sub-agent for long-running or independent tasks. |
+| `orchestrate-agents` | productivity | 🟡 medium | Fan-out/fan-in: dispatch multiple agents in parallel, wait for all results, optionally aggregate via Copilot. |
 
 ### Social Media Tools (MCP Sidecars)
 
@@ -642,6 +643,8 @@ The shell executor uses a **command allowlist**. If the allowlist is empty, the 
 | `GET` | `/api/admin/sidecars/:name/tools` | Admin | List tools for a specific MCP sidecar. |
 | `PUT` | `/api/admin/sidecars/:name/tools` | Admin | Update disabled tools for a sidecar. |
 | `POST` | `/api/admin/scheduler/assist` | Admin | Generate scheduler field suggestions from a natural language request. |
+| `GET` | `/api/admin/tasks/config` | Admin | Get current task concurrency config and queue stats. |
+| `PUT` | `/api/admin/tasks/config` | Admin | Update task concurrency settings at runtime. |
 | `GET` | `/api/tasks` | Token | List agent tasks (filterable by status, trigger, parent). |
 | `GET` | `/api/tasks/:id` | Token | Get task details including child count. |
 | `POST` | `/api/tasks/:id/cancel` | Token | Cancel a queued or running task. |
@@ -1054,9 +1057,66 @@ CREATE INDEX IF NOT EXISTS idx_tasks_parent ON agent_tasks(parent_task_id);
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
+| `tasks.maxConcurrent` | number | `2` | Max parallel background tasks. Adjustable at runtime (1–10) via Admin UI or `PUT /api/admin/tasks/config`. |
 | `tasks.pollIntervalMs` | number | `2000` | How often the worker checks the queue |
-| `tasks.maxConcurrent` | number | `2` | Max parallel background tasks |
 | `tasks.maxRecursionDepth` | number | `5` | Max nesting depth for recursive chaining |
 | `tasks.maxChildrenPerTask` | number | `10` | Max sub-tasks a single parent can spawn |
+
+### Orchestration Engine (`orchestrate-agents`)
+
+The `orchestrate-agents` tool implements a **fan-out / fan-in** pattern that dispatches multiple background sub-agents concurrently, waits for all to reach a terminal state, and optionally synthesizes their outputs via a Copilot aggregation call.
+
+```mermaid
+flowchart TB
+    ORCH[orchestrate-agents handler] -->|submit N tasks| TE[TaskEngine]
+    TE --> Q[(SQLite Queue)]
+    Q --> TW1[TaskWorker slot 1]
+    Q --> TW2[TaskWorker slot 2]
+    Q --> TWN[TaskWorker slot N]
+
+    TW1 -->|task:completed / failed| EE[EventEmitter]
+    TW2 -->|task:completed / failed| EE
+    TWN -->|task:completed / failed| EE
+
+    EE -->|waitForTask×N| WAIT[Promise.allSettled]
+    WAIT --> AGG{aggregation_prompt?}
+    AGG -->|Yes| COP[Copilot call<br/>tools: none]
+    AGG -->|No| RAW[Raw results JSON]
+    COP --> RESULT[Aggregated deliverable]
+    RAW --> RESULT
+```
+
+#### How It Works
+
+1. **Fan-Out:** The handler calls `taskEngine.submit()` for each agent definition, creating background `AgentTask` entries with `notifyOnComplete: false` (the orchestrator handles notification).
+
+2. **Fan-In:** For each submitted task, a `waitForTask()` promise attaches listeners to the `TaskEngine` EventEmitter for `task:completed`, `task:failed`, and `task:cancelled`. All promises are awaited via `Promise.allSettled()` — partial failures do not abort the entire orchestration.
+
+3. **Race Condition Guard:** Between submitting a task and attaching the listener, the task may already complete (especially for fast tasks). `waitForTask()` uses a check → listen → re-check pattern to prevent missed events.
+
+4. **Timeout:** An `AbortController` fires after `timeout_seconds`, aborting any outstanding `waitForTask()` promises. Timed-out tasks are reported as failed in the result set.
+
+5. **Aggregation (optional):** If `aggregation_prompt` is provided and at least one agent produced a result, a final Copilot call synthesizes the outputs. This call uses `tools: []` to prevent recursive tool calls.
+
+#### Concurrency Configuration
+
+The maximum number of concurrent background tasks is configurable:
+
+- **Config file:** `config/default.json` → `tasks.maxConcurrent` (default: 2)
+- **Runtime API:** `PUT /api/admin/tasks/config` → `{ "maxConcurrent": N }` (range: 1–10)
+- **Admin UI:** Task Engine panel with slider + save button
+
+Changes take effect immediately — no server restart required. The `TaskWorker.setMaxConcurrent()` method validates the range and logs the update.
+
+```bash
+# Read current concurrency config
+curl -H "Authorization: Bearer <token>" http://localhost:3000/api/admin/tasks/config
+
+# Update concurrency at runtime
+curl -X PUT -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"maxConcurrent": 4}' \
+  http://localhost:3000/api/admin/tasks/config
+```
 
 ### Tracking: [Epic #81](https://github.com/mgcronin/openzigs/issues/81)
