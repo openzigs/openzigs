@@ -83,6 +83,21 @@ describe("orchestrate-agents tool", () => {
     expect(parsed.metadata.total).toBe(3);
     expect(parsed.metadata.completed).toBe(3);
     expect(parsed.metadata.failed).toBe(0);
+
+    // Verify orchestration parent task was created and completed
+    const allTasks = engine.listTasks({});
+    // 1 orchestration parent + 3 sub-agents = 4
+    expect(allTasks.length).toBe(4);
+    const orchParent = allTasks.find((t) => t.goal.startsWith("Orchestrate 3 agents"));
+    expect(orchParent).toBeDefined();
+    expect(orchParent!.status).toBe("completed");
+
+    // Sub-agents should be children of the orchestration parent
+    const children = engine.getChildren(orchParent!.id);
+    expect(children.length).toBe(3);
+    children.forEach((child) => {
+      expect(child.parentTaskId).toBe(orchParent!.id);
+    });
   }, 15_000);
 
   it("handles partial failures gracefully (allSettled)", async () => {
@@ -197,6 +212,14 @@ describe("orchestrate-agents tool", () => {
     expect(parsed.metadata.failed).toBe(1);
     expect(parsed.results[0].error).toContain("Timeout waiting for task");
 
+    // The orchestration parent should still be completed (with the summary)
+    const allTasks = engine.listTasks({});
+    // 1 orchestration parent + 1 sub-agent = 2
+    expect(allTasks.length).toBe(2);
+    const orchParent = allTasks.find((t) => t.goal.startsWith("Orchestrate 1 agent"));
+    expect(orchParent).toBeDefined();
+    expect(orchParent!.status).toBe("completed");
+
     vi.useRealTimers();
   });
 
@@ -254,5 +277,56 @@ describe("orchestrate-agents tool", () => {
     // Verify context was passed to copilot.chat
     const prompt = mockCopilot.chat.mock.calls[0][0] as string;
     expect(prompt).toContain("Focus on AI coding assistants");
+  }, 15_000);
+
+  it("creates correct tree hierarchy: chat → orchestrator → sub-agents", async () => {
+    const mockCopilot = createMockCopilot(["agent done"]);
+
+    worker = new TaskWorker({
+      engine,
+      copilot: mockCopilot,
+      maxConcurrent: 3,
+      pollIntervalMs: 50,
+      log: silentLog,
+    });
+    worker.start();
+
+    // Simulate a chat task (the root)
+    const chatTask = engine.submit(
+      { trigger: "chat", goal: "Compare cloud pricing", sessionId: "test-session" },
+      { mode: "immediate" }
+    );
+
+    const tools = createOrchestrateAgentsTools({ taskEngine: engine, copilot: mockCopilot });
+    const orchestrateTool = tools[0];
+
+    // Call with parentTaskId pointing to the chat task
+    const result = await orchestrateTool.handler({
+      agents: [
+        { goal: "Research AWS" },
+        { goal: "Research GCP" },
+      ],
+      timeout_seconds: 30,
+      parentTaskId: chatTask.id,
+      sessionId: "test-session",
+    });
+
+    expect(result.isError).toBeUndefined();
+
+    // Verify tree: chat → orchestrator → [AWS, GCP]
+    const root = engine.getRoot(chatTask.id);
+    expect(root.id).toBe(chatTask.id);
+
+    const descendants = engine.getDescendants(chatTask.id);
+    // 1 orchestration parent + 2 sub-agents = 3 descendants
+    expect(descendants.length).toBe(3);
+
+    const orchParent = descendants.find((t) => t.parentTaskId === chatTask.id);
+    expect(orchParent).toBeDefined();
+    expect(orchParent!.goal).toContain("Orchestrate 2 agents");
+
+    const subAgents = descendants.filter((t) => t.parentTaskId === orchParent!.id);
+    expect(subAgents.length).toBe(2);
+    expect(subAgents.map((a) => a.goal).sort()).toEqual(["Research AWS", "Research GCP"]);
   }, 15_000);
 });

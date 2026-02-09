@@ -53,17 +53,23 @@ export const createTasksRouter = ({ taskEngine }: TasksRouterOptions): Router =>
   });
 
   /**
-   * GET /api/tasks/:id/tree — Full task tree (root + all descendants).
+   * GET /api/tasks/:id/tree — Full task tree from root to all descendants.
    *
-   * Returns React Flow-compatible `nodes` and `edges` arrays for the
-   * Visual Workflow Graph component.
+   * Always walks UP to the root of the tree first, then returns the full
+   * hierarchy regardless of which node the user clicked — this ensures the
+   * orchestration graph always shows the complete workflow.
+   *
+   * Returns React Flow-compatible `nodes` and `edges` arrays.
    */
   router.get("/:id/tree", (req, res) => {
-    const root = taskEngine.getTask(req.params.id);
-    if (!root) {
+    const task = taskEngine.getTask(req.params.id);
+    if (!task) {
       res.status(404).json({ error: "Task not found" });
       return;
     }
+
+    // Walk up to the root of the tree
+    const root = taskEngine.getRoot(req.params.id);
 
     const descendants = taskEngine.getDescendants(root.id);
     const allTasks = [root, ...descendants];

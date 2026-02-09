@@ -77,24 +77,11 @@ export class TaskRepository {
     // Before the parentTaskId propagation fix, spawn-agent/orchestrate-agents
     // never set parentTaskId. This backfill matches orphaned agent tasks to
     // the most recent CHAT task in the same session created within 60 seconds
-    // before the agent task. Agent tasks spawned from the same chat are
-    // siblings, so we match only to chat-trigger parents.
+    // before the agent task.
     //
-    // First, reset any mis-linked agent→agent backfills from a previous
-    // version of this migration (agent tasks whose parent is another agent
-    // task — only possible from a bad backfill, not from normal operation
-    // before the fix since parentTaskId was always null).
-    this.db.exec(`
-      UPDATE agent_tasks
-      SET parent_task_id = NULL, depth = 0
-      WHERE trigger = 'agent'
-        AND parent_task_id IS NOT NULL
-        AND parent_task_id IN (
-          SELECT id FROM agent_tasks WHERE trigger = 'agent'
-        );
-    `);
-
-    // Now backfill correctly: match orphaned agent tasks to their parent chat task.
+    // NOTE: This only touches tasks with parent_task_id IS NULL, so it will
+    // never overwrite legitimately-set parent links from the new code that
+    // creates orchestration parent tasks (agent→agent hierarchies).
     this.db.exec(`
       UPDATE agent_tasks
       SET parent_task_id = (
