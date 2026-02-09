@@ -434,6 +434,12 @@ if (webConfig?.enabled !== false) {
   await webChatChannel.connect();
   channelManager.register(webChatChannel);
 
+  // When a user clears their chat, invalidate the router's cached session
+  // so the next message creates a brand new session.
+  webChatChannel.onClear(({ userId }) => {
+    router.clearUserSession("web", userId);
+  });
+
   // Streaming-aware routing for web chat
   webChatChannel.onMessage((message) => {
     const messageId = nanoid();

@@ -32,6 +32,7 @@ export class WebChatChannel implements MessageChannel {
   private chatIdToSocketId = new Map<string, string>();
   private messageHandlers: Array<(msg: IncomingMessage) => void> = [];
   private approvalHandlers: Array<(response: ApprovalResponse) => void> = [];
+  private clearHandlers: Array<(data: { userId: string }) => void> = [];
 
   constructor({ io, sessionManager }: WebChatChannelOptions) {
     this.io = io;
@@ -59,6 +60,11 @@ export class WebChatChannel implements MessageChannel {
 
   onApprovalResponse(handler: (response: ApprovalResponse) => void): void {
     this.approvalHandlers.push(handler);
+  }
+
+  /** Register a handler called when a user clears their chat (session ended). */
+  onClear(handler: (data: { userId: string }) => void): void {
+    this.clearHandlers.push(handler);
   }
 
   async sendMessage(chatId: string, content: MessageContent): Promise<void> {
@@ -171,11 +177,16 @@ export class WebChatChannel implements MessageChannel {
       }
     });
 
-    // Clear the current session history on the server
+    // End the current session and start fresh on next message
     socket.on("chat:clear", () => {
       if (this.sessionManager) {
         void this.clearSessionHistory(userId).then((cleared) => {
           socket.emit("chat:cleared", { success: cleared });
+          if (cleared) {
+            for (const handler of this.clearHandlers) {
+              handler({ userId });
+            }
+          }
         }).catch(() => {
           socket.emit("chat:cleared", { success: false });
         });
@@ -207,24 +218,17 @@ export class WebChatChannel implements MessageChannel {
     return this.sockets.get(socketId)?.socket;
   }
 
-  /** Load the most recent web session for this userId and send conversation history to the socket. */
+  /** Load the most recent active (non-ended) web session for this userId and send conversation history to the socket. */
   private async sendSessionHistory(socket: Socket, userId: string): Promise<void> {
     if (!this.sessionManager) return;
     const sessions = await this.sessionManager.listSessions({ channel: "web", userId });
-    if (sessions.length === 0) return;
-    const session = sessions[0];
+    // Find the latest active (non-ended) session
+    const session = sessions.find((s) => !s.metadata?.ended);
+    if (!session) return;
     const history = await this.sessionManager.getHistory(session.id, 50);
 
-    // If the session was cleared, only show events after the clear timestamp
-    const clearedAt = typeof session.metadata?.clearedAt === "string"
-      ? new Date(session.metadata.clearedAt).getTime()
-      : 0;
-
     const messages = history
-      .filter((event) =>
-        (event.type === "user" || event.type === "assistant") &&
-        event.timestamp.getTime() > clearedAt
-      )
+      .filter((event) => event.type === "user" || event.type === "assistant")
       .map((event) => ({
         role: event.type as "user" | "assistant",
         content: event.content,

@@ -73,6 +73,12 @@ export class MessageRouter {
     this.taskEngine = taskEngine;
   }
 
+  /** Invalidate the cached session for a user so the next message creates a new session. */
+  clearUserSession(channelType: string, userId: string): void {
+    const key = this.keyFor(channelType, userId);
+    this.userSessions.delete(key);
+  }
+
   async route(message: IncomingMessage, options?: RouteOptions): Promise<void> {
     const channel = this.channelManager.getChannel(message.channelType);
     if (!channel) {
@@ -186,10 +192,11 @@ export class MessageRouter {
       userId: message.userId
     });
 
-    if (sessions.length > 0) {
-      const sessionId = sessions[0].id;
-      this.userSessions.set(key, sessionId);
-      return sessionId;
+    // Find the first active (non-ended) session
+    const active = sessions.find((s) => !s.metadata?.ended);
+    if (active) {
+      this.userSessions.set(key, active.id);
+      return active.id;
     }
 
     const session = await this.sessionManager.createSession({

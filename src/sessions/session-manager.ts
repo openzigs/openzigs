@@ -188,10 +188,9 @@ export class SessionManager {
   }
 
   /**
-   * Mark a session as "cleared" without deleting the conversation events.
-   * Sets `metadata.clearedAt` so that normal reconnect history can be
-   * filtered (events before the mark are hidden), while admin restore
-   * and session-history views still see the full history.
+   * End a session without deleting its conversation events.
+   * Sets `metadata.ended = true` so the router creates a new session
+   * for subsequent messages, while admin views still see the full history.
    */
   async clearSession(id: string): Promise<Session> {
     const session = await this.getSession(id);
@@ -199,7 +198,7 @@ export class SessionManager {
     const updated = {
       ...session,
       lastActiveAt: now,
-      metadata: { ...session.metadata, clearedAt: now.toISOString() },
+      metadata: { ...session.metadata, ended: true, endedAt: now.toISOString() },
     };
     await this.updateSession(updated);
     return updated;
