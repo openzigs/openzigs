@@ -4,7 +4,9 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
-import type { ComponentPropsWithoutRef } from "react";
+import { MermaidDiagram } from "./mermaid-diagram";
+import type { ComponentPropsWithoutRef, ReactElement } from "react";
+import { isValidElement } from "react";
 
 // The react-syntax-highlighter types export the style as a union that doesn't
 // match the component's prop type. This is a well-known issue — cast once here.
@@ -19,7 +21,7 @@ type ChatMarkdownProps = {
 
 /**
  * Renders assistant markdown content with syntax highlighting, GFM tables,
- * mermaid diagrams (as mermaid.ink images), and proper typography styles.
+ * mermaid diagrams (client-side via mermaid lib), and proper typography styles.
  */
 export const ChatMarkdown = ({ content, isStreaming }: ChatMarkdownProps) => {
   return (
@@ -27,35 +29,33 @@ export const ChatMarkdown = ({ content, isStreaming }: ChatMarkdownProps) => {
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{
+          // Override <pre> to unwrap mermaid blocks (which don't need <pre>)
+          pre({ children, ...rest }) {
+            // If the sole child is our mermaid component, render it without the <pre> wrapper
+            if (isMermaidChild(children)) {
+              return <>{children}</>;
+            }
+            return <pre {...rest}>{children}</pre>;
+          },
+
           // Code blocks with syntax highlighting + mermaid support
           code({ className, children, ...rest }: ComponentPropsWithoutRef<"code"> & { inline?: boolean }) {
             const match = /language-(\w+)/.exec(className || "");
             const lang = match?.[1];
             const text = String(children).replace(/\n$/, "");
 
-            // Mermaid: render as an ink image link
-            if (lang === "mermaid") {
-              const encoded = btoa(text);
-              const url = `https://mermaid.ink/img/${encoded}`;
-              return (
-                <a href={url} target="_blank" rel="noopener noreferrer" className="block my-2">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src={url}
-                    alt="Mermaid diagram"
-                    className="max-w-full rounded-lg border border-border"
-                    loading="lazy"
-                  />
-                </a>
-              );
+            // Mermaid: only render the diagram after streaming is complete
+            // to avoid spamming mermaid.render() with incomplete syntax.
+            if (lang === "mermaid" && !isStreaming) {
+              return <MermaidDiagram chart={text} />;
             }
 
-            // Multi-line code block
+            // Multi-line code block (also used for mermaid while streaming)
             if (lang || text.includes("\n")) {
               return (
                 <SyntaxHighlighter
                   style={codeStyle}
-                  language={lang || "text"}
+                  language={lang === "mermaid" ? "text" : (lang || "text")}
                   PreTag="div"
                   customStyle={{
                     margin: 0,
@@ -112,3 +112,9 @@ export const ChatMarkdown = ({ content, isStreaming }: ChatMarkdownProps) => {
     </div>
   );
 };
+
+/** Check whether the children of a `<pre>` is a MermaidDiagram element. */
+function isMermaidChild(children: unknown): boolean {
+  if (!isValidElement(children)) return false;
+  return (children as ReactElement).type === MermaidDiagram;
+}
