@@ -2,6 +2,7 @@ import Database from "better-sqlite3";
 import path from "node:path";
 import os from "node:os";
 import fs from "node:fs";
+import { TaskRepository } from "../tasks/task-repository.js";
 
 export type DatabaseOptions = {
   dbPath?: string;
@@ -24,6 +25,11 @@ export const getDatabase = (options: DatabaseOptions = {}): Database.Database =>
   db.pragma("foreign_keys = ON");
 
   initSchema(db);
+
+  // Run task-engine migration (agent_tasks table)
+  const taskRepo = new TaskRepository(db);
+  taskRepo.migrate();
+
   sharedDb = db;
   return db;
 };
@@ -70,5 +76,9 @@ export const createTestDatabase = (): Database.Database => {
   db.pragma("journal_mode = WAL");
   db.pragma("foreign_keys = ON");
   initSchema(db);
+
+  const taskRepo = new TaskRepository(db);
+  taskRepo.migrate();
+
   return db;
 };

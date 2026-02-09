@@ -1,0 +1,121 @@
+import { EventEmitter } from "node:events";
+import { TaskRepository } from "./task-repository.js";
+import { TASK_LIMITS } from "./types.js";
+import type { AgentTask, CreateTaskInput, TaskMode, TaskStatus } from "./types.js";
+
+export type TaskEngineOptions = {
+  repository: TaskRepository;
+  clock?: () => Date;
+};
+
+export type SubmitOptions = {
+  /** Whether to execute inline (streaming) or send to the background queue. */
+  mode: TaskMode;
+};
+
+/**
+ * Central coordinator for the task lifecycle.
+ *
+ * - Accepts task submissions from any trigger source (chat, cron, spawn_agent).
+ * - Validates recursion limits and rate limits.
+ * - Decides whether to run immediately (inline streaming) or enqueue for background.
+ * - Emits lifecycle events for other components (TaskWorker, NotificationDispatcher, UI).
+ */
+export class TaskEngine extends EventEmitter {
+  private repository: TaskRepository;
+
+  constructor({ repository }: TaskEngineOptions) {
+    super();
+    this.repository = repository;
+  }
+
+  /**
+   * Submit a new task. Validates safety limits, inserts the task, and emits
+   * the appropriate event based on mode.
+   *
+   * @returns The created AgentTask.
+   */
+  submit(input: CreateTaskInput, options: SubmitOptions): AgentTask {
+    // Rate-limit: max N tasks per session per minute
+    if (input.sessionId) {
+      const recent = this.repository.countRecentBySession(input.sessionId, 60_000);
+      if (recent >= TASK_LIMITS.maxRatePerMinute) {
+        throw new Error(
+          `Rate limit: max ${TASK_LIMITS.maxRatePerMinute} tasks per minute per session`
+        );
+      }
+    }
+
+    const task = this.repository.insert(input);
+
+    if (options.mode === "immediate") {
+      this.repository.markRunning(task.id);
+      const running = this.repository.getById(task.id)!;
+      this.emit("task:running", running);
+      return running;
+    }
+
+    // Background mode — leave as queued, TaskWorker will pick it up
+    this.emit("task:queued", task);
+    return task;
+  }
+
+  /** Mark a task as completed. Emits `task:completed`. */
+  complete(taskId: string, result: string): AgentTask {
+    this.repository.markCompleted(taskId, result);
+    const task = this.repository.getById(taskId)!;
+    this.emit("task:completed", task);
+    return task;
+  }
+
+  /** Mark a task as failed. Emits `task:failed`. */
+  fail(taskId: string, error: string): AgentTask {
+    this.repository.markFailed(taskId, error);
+    const task = this.repository.getById(taskId)!;
+    this.emit("task:failed", task);
+    return task;
+  }
+
+  /** Cancel a queued or running task. Emits `task:cancelled`. Returns the task or null. */
+  cancel(taskId: string): AgentTask | null {
+    const cancelled = this.repository.cancel(taskId);
+    if (!cancelled) {
+      return null;
+    }
+    const task = this.repository.getById(taskId)!;
+    this.emit("task:cancelled", task);
+    return task;
+  }
+
+  /** Get a single task by ID. */
+  getTask(taskId: string): AgentTask | null {
+    return this.repository.getById(taskId);
+  }
+
+  /** List tasks with optional filters. */
+  listTasks(options?: { status?: TaskStatus; limit?: number; parentTaskId?: string }): AgentTask[] {
+    return this.repository.list(options);
+  }
+
+  /** Get children of a task. */
+  getChildren(taskId: string): AgentTask[] {
+    return this.repository.getChildren(taskId);
+  }
+
+  /** Dequeue the next background task. Used by TaskWorker. */
+  dequeue(): AgentTask | null {
+    const task = this.repository.dequeue();
+    if (task) {
+      this.emit("task:running", task);
+    }
+    return task;
+  }
+
+  /** Get queue stats for monitoring. */
+  getStats(): { queued: number; running: number } {
+    return {
+      queued: this.repository.countQueued(),
+      running: this.repository.countRunning(),
+    };
+  }
+}

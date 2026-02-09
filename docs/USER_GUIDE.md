@@ -157,6 +157,7 @@ The OpenZigs UI is a **Next.js** application with a navigation bar providing acc
 | **Admin** | `/admin` | Channel config, sidecar management, tool toggles, env status |
 | **Library** | `/library` | Saved prompt templates with `{{variable}}` interpolation |
 | **Scheduler** | `/scheduler` | Cron-based job scheduling with prompt linking and model overrides |
+| **Tasks** | `/tasks` | Monitor background agent tasks, sub-agents, and scheduled work |
 
 ### Chat
 
@@ -220,6 +221,45 @@ The scheduler at `/scheduler` manages cron-based automated jobs:
 - **Cron preview** — visual breakdown of minute, hour, day, month, weekday fields.
 - **Enable/disable** individual jobs with toggle switches.
 - **Live execution events** via Socket.IO — see when jobs fire in real time.
+
+### Tasks (Background Agents)
+
+The Tasks page at `/tasks` provides real-time monitoring of background agent tasks:
+
+- **Queue stats** — live counters showing queued and running task counts.
+- **Task list** — all tasks with status badges (queued, running, completed, failed, cancelled), trigger type (chat, cron, agent), model, and depth.
+- **Status filter** — filter by task status.
+- **Cancel** — cancel queued or running tasks.
+- **Results / errors** — view task output or error details inline.
+- **Child tasks** — expand a task to see its spawned sub-tasks (recursive chaining).
+- **Real-time updates** — Socket.IO pushes update the list when tasks complete or fail.
+
+**How background tasks are created:**
+
+1. **spawn-agent tool** — During a conversation, the AI can call the `spawn-agent` MCP tool to delegate long-running work to a background sub-agent.
+2. **Scheduled jobs** — Prompt-type scheduled jobs are automatically submitted as background tasks via the TaskEngine.
+3. **Chat messages** — Every routed chat message is also tracked as an immediate-mode task for observability.
+
+**Recursive chaining:** Sub-agents can themselves call `spawn-agent` to create nested sub-tasks, up to a configurable depth limit (default: 5 levels). Each level tracks its parent and depth.
+
+**REST API:**
+
+```bash
+# List all tasks  
+curl -H "Authorization: Bearer <token>" http://localhost:3000/api/tasks
+
+# Get queue stats
+curl -H "Authorization: Bearer <token>" http://localhost:3000/api/tasks/stats
+
+# Get a specific task
+curl -H "Authorization: Bearer <token>" http://localhost:3000/api/tasks/<id>
+
+# Get children of a task
+curl -H "Authorization: Bearer <token>" http://localhost:3000/api/tasks/<id>/children
+
+# Cancel a task
+curl -X POST -H "Authorization: Bearer <token>" http://localhost:3000/api/tasks/<id>/cancel
+```
 
 ---
 

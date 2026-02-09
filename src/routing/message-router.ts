@@ -4,6 +4,7 @@ import type { CopilotWrapper } from "../copilot/copilot-wrapper.js";
 import type { AccessControlConfig } from "../config/index.js";
 import type { ConversationEvent, SessionManager } from "../sessions/session-manager.js";
 import type { PersonalityManager } from "../personality/personality-manager.js";
+import type { TaskEngine } from "../tasks/task-engine.js";
 import { ALWAYS_ON_TOOLS } from "../mcp/constants.js";
 
 export type RouteOptions = {
@@ -24,6 +25,8 @@ export type MessageRouterOptions = {
   maxToolsPerRequest?: number;
   clock?: () => Date;
   personalityManager?: PersonalityManager;
+  /** When provided, chat messages are tracked as TaskEngine tasks. */
+  taskEngine?: TaskEngine;
 };
 
 const defaultAccessControl: AccessControlConfig = {
@@ -44,6 +47,7 @@ export class MessageRouter {
   public readonly maxToolsPerRequest: number;
   private clock: () => Date;
   private personalityManager?: PersonalityManager;
+  private taskEngine?: TaskEngine;
 
   constructor({
     channelManager,
@@ -53,7 +57,8 @@ export class MessageRouter {
     historyLimit = 20,
     maxToolsPerRequest = 30,
     clock,
-    personalityManager
+    personalityManager,
+    taskEngine
   }: MessageRouterOptions) {
     this.channelManager = channelManager;
     this.sessionManager = sessionManager;
@@ -63,6 +68,7 @@ export class MessageRouter {
     this.maxToolsPerRequest = maxToolsPerRequest;
     this.clock = clock ?? (() => new Date());
     this.personalityManager = personalityManager;
+    this.taskEngine = taskEngine;
   }
 
   async route(message: IncomingMessage, options?: RouteOptions): Promise<void> {
@@ -77,15 +83,52 @@ export class MessageRouter {
     }
 
     const sessionId = await this.getOrCreateSessionId(message);
+
+    // Create a tracked task when TaskEngine is available
+    let taskId: string | undefined;
+    if (this.taskEngine) {
+      try {
+        const task = this.taskEngine.submit(
+          {
+            trigger: "chat",
+            goal: message.content.slice(0, 200),
+            sessionId,
+            channelType: message.channelType,
+            chatId: message.chatId,
+            model: options?.model,
+            notifyOnComplete: false, // Chat messages are delivered inline
+          },
+          { mode: "immediate" }
+        );
+        taskId = task.id;
+      } catch {
+        // Rate limit or other task submission failure — proceed without tracking
+      }
+    }
+
     const resume = await this.sessionManager.resumeSession(sessionId, this.historyLimit);
     const prompt = this.buildPrompt(resume.history, message.content);
 
     let response = "";
-    for await (const chunk of this.copilot.chat(prompt, { model: options?.model, onToolCall: options?.onToolCall })) {
-      response += chunk;
-      if (options?.onChunk) {
-        options.onChunk(chunk);
+    try {
+      for await (const chunk of this.copilot.chat(prompt, { model: options?.model, onToolCall: options?.onToolCall })) {
+        response += chunk;
+        if (options?.onChunk) {
+          options.onChunk(chunk);
+        }
       }
+
+      // Mark task completed
+      if (taskId && this.taskEngine) {
+        this.taskEngine.complete(taskId, response.slice(0, 500));
+      }
+    } catch (error) {
+      // Mark task failed
+      if (taskId && this.taskEngine) {
+        const msg = error instanceof Error ? error.message : String(error);
+        this.taskEngine.fail(taskId, msg);
+      }
+      throw error;
     }
 
     const now = this.clock();
