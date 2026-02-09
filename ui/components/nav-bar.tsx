@@ -10,6 +10,7 @@ const NAV_ITEMS = [
   { href: "/admin", label: "Admin" },
   { href: "/library", label: "Library" },
   { href: "/scheduler", label: "Scheduler" },
+  { href: "/tasks", label: "Tasks" },
 ];
 
 export const NavBar = () => {

@@ -5,6 +5,7 @@ import { EventEmitter } from "node:events";
 import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
+import type { TaskEngine } from "../tasks/task-engine.js";
 
 export type ScheduledJob = {
   id: string;
@@ -71,6 +72,8 @@ export type SchedulerOptions = {
   auditLogDir?: string;
   clock?: () => Date;
   onExecute?: (job: ScheduledJob) => Promise<string>;
+  /** When provided, scheduled prompt/shell jobs are submitted as background tasks. */
+  taskEngine?: TaskEngine;
 };
 
 const toJob = (row: StoredJob): ScheduledJob => ({
@@ -97,14 +100,21 @@ export class Scheduler extends EventEmitter {
   private auditLogDir: string;
   private tasks = new Map<string, cron.ScheduledTask>();
   private onExecute?: (job: ScheduledJob) => Promise<string>;
+  private taskEngine?: TaskEngine;
 
-  constructor({ db, auditLogDir, clock, onExecute }: SchedulerOptions) {
+  constructor({ db, auditLogDir, clock, onExecute, taskEngine }: SchedulerOptions) {
     super();
     this.db = db;
     this.clock = clock ?? (() => new Date());
     this.auditLogDir = auditLogDir ?? defaultAuditDir();
     this.onExecute = onExecute;
+    this.taskEngine = taskEngine;
     this.migrateSchema();
+  }
+
+  /** Set the TaskEngine (for deferred wiring when engine is created after scheduler). */
+  setTaskEngine(engine: TaskEngine): void {
+    this.taskEngine = engine;
   }
 
   /** Run lightweight schema migrations (add columns if missing). */
@@ -266,6 +276,49 @@ export class Scheduler extends EventEmitter {
     }
 
     const now = this.clock();
+
+    // If TaskEngine is available, submit prompt jobs as background tasks
+    if (this.taskEngine && job.actionType === "prompt") {
+      try {
+        const promptName = (job.actionPayload as Record<string, unknown>).promptName as string | undefined;
+        const goal = promptName
+          ? `Execute scheduled prompt: "${promptName}" (job: ${job.name})`
+          : `Execute scheduled job: "${job.name}"`;
+        const context = `Scheduled job ID: ${job.id}\nAction: ${job.actionType}\nPayload: ${JSON.stringify(job.actionPayload)}`;
+
+        this.taskEngine.submit(
+          {
+            trigger: "cron",
+            goal,
+            context,
+            model: job.model ?? undefined,
+            notifyOnComplete: true,
+          },
+          { mode: "background" }
+        );
+
+        // Update run metadata even when delegating to TaskEngine
+        this.db
+          .prepare(
+            `UPDATE scheduled_jobs SET last_run_at = ?, run_count = run_count + 1, updated_at = ? WHERE id = ?`
+          )
+          .run(now.toISOString(), now.toISOString(), jobId);
+
+        const result: JobExecutionResult = {
+          jobId: job.id,
+          jobName: job.name,
+          executedAt: now,
+          success: true,
+          result: `Submitted as background task via TaskEngine`,
+        };
+        await this.appendAuditLog(result);
+        this.emit("job:executed", result);
+        return;
+      } catch {
+        // Fall through to legacy onExecute if TaskEngine submission fails
+      }
+    }
+
     let result: JobExecutionResult;
 
     try {

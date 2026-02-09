@@ -67,7 +67,7 @@ graph TB
     end
 
     subgraph NextJS["Next.js UI (localhost:3001)"]
-        NAV[NavBar<br/>Dashboard · Chat · Admin · Library · Scheduler]
+        NAV[NavBar<br/>Dashboard · Chat · Admin · Library · Scheduler · Tasks]
         DASH[Dashboard<br/>Stats · Approvals · Audit Log]
         CHAT[Chat View<br/>Streaming · Approvals]
         ADMIN[Admin Page<br/>Channels · Personality · Sidecars · Tools · Env]
@@ -132,6 +132,7 @@ The frontend is a **Next.js 14 App Router** application in the `ui/` directory. 
 | `/admin` | `admin/page.tsx` | Channel config, personality settings, sidecar management, tool toggles, env status |
 | `/library` | `library/page.tsx` | Saved prompt CRUD with `{{variable}}` template preview and system prompt apply |
 | `/scheduler` | `scheduler/page.tsx` | Cron job CRUD with action types, prompt linking, model overrides, AI assist, live execution events |
+| `/tasks` | `task-dashboard.tsx` | Background task queue, status filters, cancel, recursive child expansion, real-time updates |
 
 ### Component Structure
 
@@ -144,11 +145,13 @@ ui/
 │   ├── chat/page.tsx       # Chat route
 │   ├── admin/page.tsx      # Admin route
 │   ├── library/page.tsx    # Library route
-│   └── scheduler/page.tsx  # Scheduler route
+│   ├── scheduler/page.tsx  # Scheduler route
+│   └── tasks/page.tsx      # Tasks route
 ├── components/
 │   ├── nav-bar.tsx         # Sticky top navigation
 │   ├── chat-view.tsx       # Chat with streaming + approvals
 │   ├── dashboard.tsx       # Stats + approvals + audit log
+│   ├── task-dashboard.tsx  # Background task queue + recursive children
 │   ├── section-card.tsx    # Reusable card wrapper
 │   └── admin/
 │       ├── tools-panel.tsx        # Tool list with risk badges + toggles
@@ -901,6 +904,7 @@ type AgentTask = {
   goal: string;                      // The instruction/prompt
   context: string;                   // Additional data passed to the sub-agent
   result: string | null;             // Final output
+  depth: number;                     // Recursion depth (0 = root)
   error: string | null;
   sessionId: string | null;          // Links to chat session for notifications
   channelType: string | null;        // Where to push completion notifications
@@ -978,6 +982,7 @@ The LLM calls this tool to offload work to a background sub-agent:
 | `goal` | string | Yes | The instruction for the sub-agent |
 | `context` | string | No | Data to pass to the sub-agent |
 | `notify_user` | boolean | No (default: true) | Push notification on completion |
+| `model` | string | No | Model override for the sub-agent |
 
 **Behavior in Chat:** Returns `"Background task started: [goal]. You'll be notified when it completes."` — chat continues immediately.
 
@@ -1009,7 +1014,8 @@ CREATE TABLE IF NOT EXISTS agent_tasks (
   created_at TEXT NOT NULL,
   started_at TEXT,
   completed_at TEXT,
-  spawned_by TEXT
+  spawned_by TEXT,
+  depth INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE INDEX IF NOT EXISTS idx_tasks_status ON agent_tasks(status);
@@ -1026,14 +1032,23 @@ CREATE INDEX IF NOT EXISTS idx_tasks_parent ON agent_tasks(parent_task_id);
 | `GET` | `/api/tasks/:id/children` | List direct child tasks |
 | `GET` | `/api/tasks/stats` | Aggregate counts by status |
 
-### Socket.IO Events
+### Events
+
+**TaskEngine EventEmitter** (internal):
+
+| Event | Payload | Description |
+|-------|---------|-------------|
+| `task:queued` | `AgentTask` | Task submitted to background queue |
+| `task:running` | `AgentTask` | Task dequeued and execution started |
+| `task:completed` | `AgentTask` | Task finished successfully |
+| `task:failed` | `AgentTask` | Task execution failed |
+| `task:cancelled` | `AgentTask` | Task cancelled by user |
+
+**Socket.IO** (client-facing, via `NotificationDispatcher`):
 
 | Event | Payload | Direction |
 |-------|---------|-----------|
-| `task:created` | `{ id, goal, trigger, parentTaskId }` | Server → Client |
-| `task:started` | `{ id }` | Server → Client |
-| `task:completed` | `{ id, goal, result, completedAt }` | Server → Client |
-| `task:failed` | `{ id, goal, error }` | Server → Client |
+| `task:notification` | `{ type: "completed" \| "failed", task: AgentTask }` | Server → Client |
 
 ### Background Worker Configuration
 

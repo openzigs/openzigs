@@ -20,7 +20,9 @@ import { SessionManager } from "./sessions/index.js";
 import { CloudflareTunnel } from "./tunnel/index.js";
 import { createModelsRouter } from "./api/models.js";
 import { createAdminRouter } from "./api/admin.js";
+import { createTasksRouter } from "./api/tasks.js";
 import { launchChrome, killChrome } from "./browser/chrome-launcher.js";
+import { TaskRepository, TaskEngine, TaskWorker, NotificationDispatcher } from "./tasks/index.js";
 import { getDatabase, closeDatabase } from "./productivity/database.js";
 import { PromptManager } from "./productivity/prompt-manager.js";
 import { Scheduler } from "./productivity/scheduler.js";
@@ -53,10 +55,12 @@ if (chromeAutoLaunch && process.env.CHROME_DEBUG_HOST) {
   });
 }
 
-// ── Productivity: SQLite + Prompts + Scheduler ──
+// ── Productivity: SQLite + Prompts + Scheduler + Tasks ──
 const db = getDatabase();
 const promptManager = new PromptManager({ db });
 const personalityManager = new PersonalityManager({ db });
+const taskRepository = new TaskRepository(db);
+const taskEngine = new TaskEngine({ repository: taskRepository });
 const scheduler = new Scheduler({
   db,
   onExecute: async (job) => {
@@ -92,6 +96,7 @@ const scheduler = new Scheduler({
     return `Custom job "${job.name}" executed`;
   },
 });
+scheduler.setTaskEngine(taskEngine);
 scheduler.startAll();
 
 // ── MCP Sidecar Auto-Provisioning ──
@@ -161,6 +166,7 @@ registerMcpTools(toolRegistry, {
   promptManager,
   scheduler,
   personalityManager,
+  taskEngine,
   linkedinSidecarUrl: resolveSidecarUrl("linkedin", "MCP_LINKEDIN_URL", 5101),
   twitterSidecarUrl: resolveSidecarUrl("twitter", "MCP_TWITTER_URL", 5102),
   facebookSidecarUrl: resolveSidecarUrl("facebook", "MCP_FACEBOOK_URL", 5103),
@@ -186,6 +192,14 @@ app.use("/api/models", modelsRouter);
 const adminRouter = createAdminRouter({ toolRegistry, sidecarManager, localServerManager, promptManager, scheduler, personalityManager, sessionManager, copilot });
 app.use("/api/admin", adminRouter);
 
+// Tasks API routes
+const tasksRouter = createTasksRouter({ taskEngine });
+app.use("/api/tasks", tasksRouter);
+
+// ── Task Background Worker + Notification Dispatcher ──
+const taskWorker = new TaskWorker({ engine: taskEngine, copilot });
+taskWorker.start();
+
 const tunnelConfig = config.tunnel;
 const tunnel = tunnelConfig?.enabled
   ? new CloudflareTunnel({
@@ -205,6 +219,15 @@ const io = new SocketIOServer(httpServer, {
 
 io.on("connection", (socket) => {
   socket.emit("status:update", { connected: true });
+});
+
+// Wire NotificationDispatcher now that we have the Socket.IO server
+// (side-effect: registers event listeners on TaskEngine)
+new NotificationDispatcher({
+  engine: taskEngine,
+  channelManager,
+  sessionManager,
+  io,
 });
 
 approvalQueue.on("approval:created", (approval) => {
@@ -325,7 +348,8 @@ const createRouter = (accessControlOverride?: AccessControlConfig) => {
     sessionManager,
     copilot,
     accessControl: accessControlOverride ?? (config.messaging?.accessControl ?? defaultAccessControl),
-    personalityManager
+    personalityManager,
+    taskEngine
   });
 };
 
@@ -490,9 +514,10 @@ httpServer.listen(port, () => {
   }
 });
 
-// Clean up Chrome + Scheduler + Database + Sidecars + Local MCP servers on process exit
+// Clean up Chrome + Scheduler + Tasks + Database + Sidecars + Local MCP servers on process exit
 process.on("SIGINT", () => {
   scheduler.stopAll();
+  void taskWorker.stop();
   closeDatabase();
   killChrome();
   void Promise.all([
@@ -502,6 +527,7 @@ process.on("SIGINT", () => {
 });
 process.on("SIGTERM", () => {
   scheduler.stopAll();
+  void taskWorker.stop();
   closeDatabase();
   killChrome();
   void Promise.all([

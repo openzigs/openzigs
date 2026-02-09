@@ -16,6 +16,7 @@ import { createMarkItDownTools } from "./tools/markitdown-tools.js";
 import { createGmailTools } from "./tools/gmail-tools.js";
 import { createDatabaseTools } from "./tools/database-tools.js";
 import { createGitHubTools } from "./tools/github-tools.js";
+import { createAgentTools } from "./tools/agent-tools.js";
 import { ToolRegistry, type ToolDefinition } from "./tool-registry.js";
 import type { LocalMcpServerManager } from "./local-mcp-server-manager.js";
 import { AuditLogger } from "../logging/audit-logger.js";
@@ -24,6 +25,7 @@ import { formatApprovalContext } from "../approvals/approval-formatters.js";
 import type { PromptManager } from "../productivity/prompt-manager.js";
 import type { Scheduler } from "../productivity/scheduler.js";
 import type { PersonalityManager } from "../personality/personality-manager.js";
+import type { TaskEngine } from "../tasks/task-engine.js";
 
 export type McpServerOptions = {
   allowedDirs: string[];
@@ -38,6 +40,7 @@ export type McpServerOptions = {
   promptManager?: PromptManager;
   scheduler?: Scheduler;
   personalityManager?: PersonalityManager;
+  taskEngine?: TaskEngine;
   linkedinSidecarUrl?: string;
   twitterSidecarUrl?: string;
   facebookSidecarUrl?: string;
@@ -62,6 +65,7 @@ export type RegisterMcpToolsOptions = Pick<
   | "promptManager"
   | "scheduler"
   | "personalityManager"
+  | "taskEngine"
   | "linkedinSidecarUrl"
   | "twitterSidecarUrl"
   | "facebookSidecarUrl"
@@ -452,5 +456,13 @@ export const registerMcpTools = (toolRegistry: ToolRegistry, options: RegisterMc
   });
   for (const tool of githubTools) {
     registerTool(tool);
+  }
+
+  // ── Agent / Task Tools (spawn-agent) ──
+  if (options.taskEngine) {
+    const agentTools = createAgentTools({ taskEngine: options.taskEngine });
+    for (const tool of agentTools) {
+      registerTool(tool);
+    }
   }
 };
