@@ -1,17 +1,20 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { fetchJson } from "@/lib/api";
-import type { PersonalityConfig, SavedPrompt } from "@/lib/types";
+import type { ModelInfo, PersonalityConfig, SavedPrompt, ToolInfo } from "@/lib/types";
 import { SectionCard } from "@/components/section-card";
 import { ToastContainer, showToast } from "@/components/toast";
+import { SmartTextarea } from "@/components/smart-textarea";
 
 export default function LibraryPage() {
   const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
   const [editingPrompt, setEditingPrompt] = useState<SavedPrompt | null>(null);
   const [showForm, setShowForm] = useState(false);
+  const [tools, setTools] = useState<ToolInfo[]>([]);
+  const [models, setModels] = useState<ModelInfo[]>([]);
 
   const promptsQuery = useQuery({
     queryKey: ["prompts", search],
@@ -22,6 +25,33 @@ export default function LibraryPage() {
   });
 
   const prompts = promptsQuery.data?.prompts ?? [];
+
+  useEffect(() => {
+    const loadTools = async () => {
+      try {
+        const data = await fetchJson<{ tools: ToolInfo[] | Record<string, ToolInfo[]> }>("/api/tools");
+        if (Array.isArray(data.tools)) {
+          setTools(data.tools);
+        } else if (data.tools && typeof data.tools === "object") {
+          setTools(Object.values(data.tools).flat());
+        } else {
+          setTools([]);
+        }
+      } catch {
+        // Tools not available
+      }
+    };
+    const loadModels = async () => {
+      try {
+        const data = await fetchJson<{ models: ModelInfo[] }>("/api/models");
+        setModels(data.models ?? []);
+      } catch {
+        // Models not available
+      }
+    };
+    void loadTools();
+    void loadModels();
+  }, []);
 
   const deleteMutation = useMutation({
     mutationFn: (id: string) => fetchJson(`/api/admin/prompts/${id}`, { method: "DELETE" }),
@@ -99,7 +129,13 @@ export default function LibraryPage() {
       {/* Form */}
       {showForm && (
         <div className="mb-6">
-          <PromptForm existing={editingPrompt} onClose={handleFormClose} />
+          <PromptForm
+            existing={editingPrompt}
+            onClose={handleFormClose}
+            tools={tools}
+            models={models}
+            prompts={prompts}
+          />
         </div>
       )}
 
@@ -173,7 +209,19 @@ export default function LibraryPage() {
 
 /* ── Prompt Form (create / edit) ── */
 
-const PromptForm = ({ existing, onClose }: { existing: SavedPrompt | null; onClose: () => void }) => {
+const PromptForm = ({
+  existing,
+  onClose,
+  tools,
+  models,
+  prompts,
+}: {
+  existing: SavedPrompt | null;
+  onClose: () => void;
+  tools: ToolInfo[];
+  models: ModelInfo[];
+  prompts: SavedPrompt[];
+}) => {
   const queryClient = useQueryClient();
   const [name, setName] = useState(existing?.name ?? "");
   const [description, setDescription] = useState(existing?.description ?? "");
@@ -246,12 +294,15 @@ const PromptForm = ({ existing, onClose }: { existing: SavedPrompt | null; onClo
         </Field>
 
         <Field label="Template">
-          <textarea
+          <SmartTextarea
             className="w-full rounded-lg border border-border bg-card px-3 py-2 font-mono text-sm text-foreground"
             rows={8}
             placeholder={"Write your prompt template here.\nUse {{variable}} for dynamic placeholders."}
             value={template}
-            onChange={(e) => setTemplate(e.target.value)}
+            onValueChange={setTemplate}
+            tools={tools}
+            models={models}
+            prompts={prompts}
           />
           {variables.length > 0 && (
             <div className="mt-1 flex flex-wrap items-center gap-1">

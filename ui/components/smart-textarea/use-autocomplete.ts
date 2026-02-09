@@ -42,8 +42,16 @@ export type UseAutocompleteReturn = {
   query: string;
   /** Filtered items matching the current query. */
   filtered: AutocompleteItem[];
+  /** Index of the currently highlighted item. */
+  activeIndex: number;
+  /** Set the highlighted index directly. */
+  setActiveIndex: (index: number) => void;
   /** Call when user selects an item from the popover. */
   onSelect: (item: AutocompleteItem) => void;
+  /** Move the highlight by N items (positive or negative). */
+  moveSelection: (delta: number) => void;
+  /** Select the currently highlighted item, if any. */
+  selectActive: () => void;
   /** Dismiss the popover manually. */
   dismiss: () => void;
 };
@@ -63,6 +71,7 @@ export function useAutocomplete({
   const [triggerKind, setTriggerKind] = useState<TriggerKind | null>(null);
   const [query, setQuery] = useState("");
   const [triggerPosition, setTriggerPosition] = useState<number | null>(null);
+  const [activeIndex, setActiveIndex] = useState(-1);
   const dismissed = useRef(false);
 
   /**
@@ -141,6 +150,14 @@ export function useAutocomplete({
       );
   }, [items, triggerKind, query]);
 
+  useEffect(() => {
+    if (!open || filtered.length === 0) {
+      setActiveIndex(-1);
+      return;
+    }
+    setActiveIndex(0);
+  }, [open, filtered.length]);
+
   /** Replace the trigger + query in the textarea with the selected item value. */
   const onSelect = useCallback(
     (item: AutocompleteItem) => {
@@ -172,6 +189,22 @@ export function useAutocomplete({
     [triggerPosition, value, onChange, textareaRef]
   );
 
+  const moveSelection = useCallback(
+    (delta: number) => {
+      if (filtered.length === 0) return;
+      setActiveIndex((prev) => {
+        const next = prev < 0 ? 0 : (prev + delta + filtered.length) % filtered.length;
+        return next;
+      });
+    },
+    [filtered.length]
+  );
+
+  const selectActive = useCallback(() => {
+    if (activeIndex < 0 || activeIndex >= filtered.length) return;
+    onSelect(filtered[activeIndex]);
+  }, [activeIndex, filtered, onSelect]);
+
   const dismiss = useCallback(() => {
     dismissed.current = true;
     setOpen(false);
@@ -180,5 +213,16 @@ export function useAutocomplete({
     setTriggerPosition(null);
   }, []);
 
-  return { open, triggerKind, query, filtered, onSelect, dismiss };
+  return {
+    open,
+    triggerKind,
+    query,
+    filtered,
+    activeIndex,
+    setActiveIndex,
+    onSelect,
+    moveSelection,
+    selectActive,
+    dismiss,
+  };
 }

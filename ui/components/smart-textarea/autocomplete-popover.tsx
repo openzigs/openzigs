@@ -4,11 +4,12 @@ import { useEffect, useRef } from "react";
 import { Command } from "cmdk";
 import * as Popover from "@radix-ui/react-popover";
 import { Hash, Slash, AtSign } from "lucide-react";
+import { cn } from "@/lib/utils";
 import type { TriggerKind, UseAutocompleteReturn } from "./use-autocomplete";
 
 type AutocompletePopoverProps = Pick<
   UseAutocompleteReturn,
-  "open" | "triggerKind" | "query" | "filtered" | "onSelect" | "dismiss"
+  "open" | "triggerKind" | "query" | "filtered" | "activeIndex" | "setActiveIndex" | "onSelect" | "dismiss"
 > & {
   /** Anchor element — the textarea the popover attaches to. */
   anchorRef: React.RefObject<HTMLTextAreaElement | null>;
@@ -35,6 +36,8 @@ export const AutocompletePopover = ({
   open,
   triggerKind,
   filtered,
+  activeIndex,
+  setActiveIndex,
   onSelect,
   dismiss,
   anchorRef,
@@ -51,6 +54,13 @@ export const AutocompletePopover = ({
     document.addEventListener("keydown", handleKey);
     return () => document.removeEventListener("keydown", handleKey);
   }, [open, dismiss]);
+
+  useEffect(() => {
+    if (activeIndex < 0) return;
+    const list = listRef.current;
+    const item = list?.querySelector(`[data-index="${activeIndex}"]`) as HTMLElement | null;
+    item?.scrollIntoView({ block: "nearest" });
+  }, [activeIndex]);
 
   if (!open || !triggerKind || filtered.length === 0) return null;
 
@@ -107,12 +117,17 @@ export const AutocompletePopover = ({
               <Command.Empty className="px-3 py-2 text-xs text-muted-foreground">
                 No matches
               </Command.Empty>
-              {filtered.map((item) => (
+              {filtered.map((item, index) => (
                 <Command.Item
                   key={`${item.kind}-${item.value}`}
                   value={item.value}
                   onSelect={() => onSelect(item)}
-                  className="flex cursor-pointer flex-col gap-0.5 rounded-lg px-3 py-2 text-sm aria-selected:bg-accent aria-selected:text-accent-foreground"
+                  data-index={index}
+                  onMouseEnter={() => setActiveIndex(index)}
+                  className={cn(
+                    "flex cursor-pointer flex-col gap-0.5 rounded-lg px-3 py-2 text-sm",
+                    index === activeIndex && "bg-accent text-accent-foreground"
+                  )}
                 >
                   <span className="font-medium">{item.label}</span>
                   {item.description && (

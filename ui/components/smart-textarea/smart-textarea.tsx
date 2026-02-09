@@ -35,7 +35,7 @@ export type SmartTextareaProps = Omit<
  * are forwarded.
  */
 export const SmartTextarea = forwardRef<HTMLTextAreaElement, SmartTextareaProps>(
-  ({ value, onValueChange, tools, prompts, models, className, ...rest }, ref) => {
+  ({ value, onValueChange, tools, prompts, models, className, onKeyDown, ...rest }, ref) => {
     // Stable ref object for the autocomplete hook
     const stableRef = useMemo(() => ({ current: null as HTMLTextAreaElement | null }), []);
     const mergedRef = useCallback(
@@ -51,7 +51,7 @@ export const SmartTextarea = forwardRef<HTMLTextAreaElement, SmartTextareaProps>
     const items: AutocompleteItem[] = useMemo(() => {
       const result: AutocompleteItem[] = [];
 
-      if (tools) {
+      if (Array.isArray(tools)) {
         for (const tool of tools) {
           if (!tool.enabled) continue;
           result.push({
@@ -94,6 +94,36 @@ export const SmartTextarea = forwardRef<HTMLTextAreaElement, SmartTextareaProps>
       textareaRef: stableRef,
     });
 
+    const handleKeyDown = useCallback(
+      (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+        if (autocomplete.open) {
+          if (event.key === "ArrowDown") {
+            event.preventDefault();
+            autocomplete.moveSelection(1);
+            return;
+          }
+          if (event.key === "ArrowUp") {
+            event.preventDefault();
+            autocomplete.moveSelection(-1);
+            return;
+          }
+          if (event.key === "Enter" || event.key === "Tab") {
+            event.preventDefault();
+            autocomplete.selectActive();
+            return;
+          }
+          if (event.key === "Escape") {
+            event.preventDefault();
+            autocomplete.dismiss();
+            return;
+          }
+        }
+
+        onKeyDown?.(event);
+      },
+      [autocomplete, onKeyDown]
+    );
+
     return (
       <div className="relative">
         {/* Popover rendered above the textarea */}
@@ -102,6 +132,8 @@ export const SmartTextarea = forwardRef<HTMLTextAreaElement, SmartTextareaProps>
           triggerKind={autocomplete.triggerKind}
           query={autocomplete.query}
           filtered={autocomplete.filtered}
+          activeIndex={autocomplete.activeIndex}
+          setActiveIndex={autocomplete.setActiveIndex}
           onSelect={autocomplete.onSelect}
           dismiss={autocomplete.dismiss}
           anchorRef={stableRef}
@@ -111,6 +143,7 @@ export const SmartTextarea = forwardRef<HTMLTextAreaElement, SmartTextareaProps>
           ref={mergedRef}
           value={value}
           onChange={(e) => onValueChange(e.target.value)}
+          onKeyDown={handleKeyDown}
           className={cn(
             "w-full resize-none rounded-xl border border-input bg-background px-4 py-3 text-sm text-foreground placeholder:text-muted-foreground focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring disabled:cursor-not-allowed disabled:opacity-50",
             className

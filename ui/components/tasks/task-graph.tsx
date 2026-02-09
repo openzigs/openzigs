@@ -11,7 +11,6 @@ import {
   type Node,
   type Edge,
 } from "@xyflow/react";
-import dagre from "@dagrejs/dagre";
 import { fetchJson } from "@/lib/api";
 import { useQuery } from "@tanstack/react-query";
 import { TaskNode } from "./task-node";
@@ -20,32 +19,85 @@ import "@xyflow/react/dist/style.css";
 
 const NODE_WIDTH = 240;
 const NODE_HEIGHT = 120;
+const NODE_SEP_X = 60;
+const RANK_SEP_Y = 80;
 
-/** Apply dagre hierarchical layout (top-to-bottom) to nodes and edges. */
-function applyDagreLayout(nodes: Node[], edges: Edge[]): Node[] {
-  const g = new dagre.graphlib.Graph();
-  g.setDefaultEdgeLabel(() => ({}));
-  g.setGraph({ rankdir: "TB", nodesep: 60, ranksep: 80 });
+/**
+ * Simple hierarchical (top-to-bottom) layout for a DAG.
+ * Assigns ranks via BFS from root nodes, then spaces nodes within each rank.
+ * No external dependency required — replaces dagre.
+ */
+function applyHierarchicalLayout(nodes: Node[], edges: Edge[]): Node[] {
+  if (nodes.length === 0) return nodes;
 
-  for (const node of nodes) {
-    g.setNode(node.id, { width: NODE_WIDTH, height: NODE_HEIGHT });
+  // Build adjacency: parent → children
+  const children = new Map<string, string[]>();
+  const parents = new Map<string, string[]>();
+  const nodeIds = new Set(nodes.map((n) => n.id));
+
+  for (const id of nodeIds) {
+    children.set(id, []);
+    parents.set(id, []);
   }
   for (const edge of edges) {
-    g.setEdge(edge.source, edge.target);
+    children.get(edge.source)?.push(edge.target);
+    parents.get(edge.target)?.push(edge.source);
   }
 
-  dagre.layout(g);
+  // Assign ranks via BFS from roots (nodes with no incoming edges)
+  const rank = new Map<string, number>();
+  const roots = nodes.filter((n) => (parents.get(n.id)?.length ?? 0) === 0);
+  const queue: { id: string; depth: number }[] = roots.map((n) => ({
+    id: n.id,
+    depth: 0,
+  }));
 
-  return nodes.map((node) => {
-    const pos = g.node(node.id);
-    return {
-      ...node,
-      position: {
-        x: pos.x - NODE_WIDTH / 2,
-        y: pos.y - NODE_HEIGHT / 2,
-      },
-    };
-  });
+  // If there are no roots (cycle), just use the first node
+  if (queue.length === 0) {
+    queue.push({ id: nodes[0].id, depth: 0 });
+  }
+
+  while (queue.length > 0) {
+    const { id, depth } = queue.shift()!;
+    if (rank.has(id)) continue;
+    rank.set(id, depth);
+    for (const child of children.get(id) ?? []) {
+      if (!rank.has(child)) {
+        queue.push({ id: child, depth: depth + 1 });
+      }
+    }
+  }
+
+  // Fallback: assign rank 0 to any unreached node
+  for (const node of nodes) {
+    if (!rank.has(node.id)) rank.set(node.id, 0);
+  }
+
+  // Group by rank
+  const rankGroups = new Map<number, string[]>();
+  for (const node of nodes) {
+    const r = rank.get(node.id) ?? 0;
+    if (!rankGroups.has(r)) rankGroups.set(r, []);
+    rankGroups.get(r)!.push(node.id);
+  }
+
+  // Position nodes: center each rank horizontally
+  const positions = new Map<string, { x: number; y: number }>();
+  for (const [r, ids] of rankGroups) {
+    const totalWidth = ids.length * NODE_WIDTH + (ids.length - 1) * NODE_SEP_X;
+    const startX = -totalWidth / 2;
+    ids.forEach((id, i) => {
+      positions.set(id, {
+        x: startX + i * (NODE_WIDTH + NODE_SEP_X),
+        y: r * (NODE_HEIGHT + RANK_SEP_Y),
+      });
+    });
+  }
+
+  return nodes.map((node) => ({
+    ...node,
+    position: positions.get(node.id) ?? { x: 0, y: 0 },
+  }));
 }
 
 const nodeTypes = { taskNode: TaskNode };
@@ -76,7 +128,7 @@ export const TaskGraph = ({ taskId, height = 500 }: TaskGraphProps) => {
   useEffect(() => {
     if (!data) return;
 
-    const laidOut = applyDagreLayout(data.nodes, data.edges);
+    const laidOut = applyHierarchicalLayout(data.nodes, data.edges);
     setNodes(laidOut);
     setEdges(data.edges);
   }, [data, setNodes, setEdges]);

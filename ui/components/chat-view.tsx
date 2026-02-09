@@ -148,8 +148,15 @@ export const ChatView = () => {
   useEffect(() => {
     const loadTools = async () => {
       try {
-        const data = await fetchJson<{ tools: ToolInfo[] }>("/api/tools");
-        setTools(data.tools ?? []);
+        const data = await fetchJson<{ tools: ToolInfo[] | Record<string, ToolInfo[]> }>("/api/tools");
+        if (Array.isArray(data.tools)) {
+          setTools(data.tools);
+        } else if (data.tools && typeof data.tools === "object") {
+          const flattened = Object.values(data.tools).flat();
+          setTools(flattened);
+        } else {
+          setTools([]);
+        }
       } catch {
         // Tools not available
       }
