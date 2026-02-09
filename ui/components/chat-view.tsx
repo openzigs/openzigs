@@ -24,7 +24,8 @@ import {
 } from "@/components/ui/dialog";
 import { Send, Loader2, Bot, User, AlertCircle, Trash2 } from "lucide-react";
 import { ChatMarkdown } from "@/components/chat-markdown";
-import type { ModelInfo } from "@/lib/types";
+import { SmartTextarea } from "@/components/smart-textarea";
+import type { ModelInfo, ToolInfo, SavedPrompt } from "@/lib/types";
 
 type ChatMessage = {
   id: string;
@@ -53,6 +54,8 @@ export const ChatView = () => {
   const [activeTool, setActiveTool] = useState<string | null>(null);
   const [pendingApproval, setPendingApproval] = useState<ApprovalRequest | null>(null);
   const [fallbackWarning, setFallbackWarning] = useState(false);
+  const [tools, setTools] = useState<ToolInfo[]>([]);
+  const [prompts, setPrompts] = useState<SavedPrompt[]>([]);
   const [history, setHistory] = useState<string[]>([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
   const [draftInput, setDraftInput] = useState("");
@@ -139,6 +142,28 @@ export const ChatView = () => {
       }
     };
     void load();
+  }, []);
+
+  // Load tools and prompts for SmartTextarea autocomplete
+  useEffect(() => {
+    const loadTools = async () => {
+      try {
+        const data = await fetchJson<{ tools: ToolInfo[] }>("/api/tools");
+        setTools(data.tools ?? []);
+      } catch {
+        // Tools not available
+      }
+    };
+    const loadPrompts = async () => {
+      try {
+        const data = await fetchJson<{ prompts: SavedPrompt[] }>("/api/admin/prompts");
+        setPrompts(data.prompts ?? []);
+      } catch {
+        // Prompts not available
+      }
+    };
+    void loadTools();
+    void loadPrompts();
   }, []);
 
   // Socket events
@@ -515,22 +540,24 @@ export const ChatView = () => {
           }}
         >
           <div className="relative flex-1">
-            <textarea
+            <SmartTextarea
               ref={textareaRef}
-              className="w-full resize-none rounded-xl border border-input bg-background px-4 py-3 text-sm text-foreground placeholder:text-muted-foreground focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+              value={input}
+              onValueChange={(val) => {
+                setInput(val);
+                autoResize();
+              }}
+              tools={tools}
+              prompts={prompts}
+              models={models}
               placeholder={
                 !connected
                   ? "Connecting…"
                   : showConnecting
                     ? "Almost ready…"
-                    : "Type a message… (Shift+Enter for new line)"
+                    : "Type a message… (/ prompts · # tools · @ models)"
               }
               rows={2}
-              value={input}
-              onChange={(e) => {
-                setInput(e.target.value);
-                autoResize();
-              }}
               onKeyDown={(e) => {
                 if (e.key === "Enter" && !e.shiftKey) {
                   e.preventDefault();

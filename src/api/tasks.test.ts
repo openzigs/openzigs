@@ -129,4 +129,48 @@ describe("Tasks API", () => {
       expect(res.status).toBe(409);
     });
   });
+
+  describe("GET /api/tasks/:id/tree", () => {
+    it("returns nodes and edges for a root task with children", async () => {
+      const root = engine.submit({ trigger: "chat", goal: "Root" }, { mode: "immediate" });
+      const child1 = engine.submit(
+        { trigger: "agent", goal: "Child A", parentTaskId: root.id },
+        { mode: "background" }
+      );
+      engine.submit(
+        { trigger: "agent", goal: "Child B", parentTaskId: root.id },
+        { mode: "background" }
+      );
+      engine.submit(
+        { trigger: "agent", goal: "Grandchild", parentTaskId: child1.id },
+        { mode: "background" }
+      );
+
+      const res = await request(app).get(`/api/tasks/${root.id}/tree`);
+      expect(res.status).toBe(200);
+      expect(res.body.nodes).toHaveLength(4);
+      expect(res.body.edges).toHaveLength(3);
+
+      // Root has no parent edge
+      const rootNode = res.body.nodes.find((n: { id: string }) => n.id === root.id);
+      expect(rootNode.data.goal).toBe("Root");
+      expect(rootNode.type).toBe("taskNode");
+
+      // All edges point from parent to child
+      const edgeTargets = res.body.edges.map((e: { target: string }) => e.target);
+      expect(edgeTargets).not.toContain(root.id);
+    });
+
+    it("returns 404 for unknown task", async () => {
+      const res = await request(app).get("/api/tasks/nonexistent/tree");
+      expect(res.status).toBe(404);
+    });
+
+    it("returns single node and no edges for a leaf task", async () => {
+      const leaf = engine.submit({ trigger: "chat", goal: "Leaf" }, { mode: "background" });
+      const res = await request(app).get(`/api/tasks/${leaf.id}/tree`);
+      expect(res.body.nodes).toHaveLength(1);
+      expect(res.body.edges).toHaveLength(0);
+    });
+  });
 });

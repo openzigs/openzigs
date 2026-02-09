@@ -52,6 +52,41 @@ export const createTasksRouter = ({ taskEngine }: TasksRouterOptions): Router =>
     });
   });
 
+  /**
+   * GET /api/tasks/:id/tree — Full task tree (root + all descendants).
+   *
+   * Returns React Flow-compatible `nodes` and `edges` arrays for the
+   * Visual Workflow Graph component.
+   */
+  router.get("/:id/tree", (req, res) => {
+    const root = taskEngine.getTask(req.params.id);
+    if (!root) {
+      res.status(404).json({ error: "Task not found" });
+      return;
+    }
+
+    const descendants = taskEngine.getDescendants(root.id);
+    const allTasks = [root, ...descendants];
+
+    const nodes = allTasks.map((task) => ({
+      id: task.id,
+      type: "taskNode",
+      data: serializeTask(task),
+      position: { x: 0, y: 0 }, // Layout is computed client-side by dagre
+    }));
+
+    const edges = allTasks
+      .filter((task) => task.parentTaskId !== null)
+      .map((task) => ({
+        id: `e-${task.parentTaskId}-${task.id}`,
+        source: task.parentTaskId!,
+        target: task.id,
+        animated: task.status === "running",
+      }));
+
+    res.json({ nodes, edges });
+  });
+
   /** POST /api/tasks/:id/cancel — Cancel a queued or running task. */
   router.post("/:id/cancel", (req, res) => {
     const cancelled = taskEngine.cancel(req.params.id);

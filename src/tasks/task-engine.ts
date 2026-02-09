@@ -102,6 +102,26 @@ export class TaskEngine extends EventEmitter {
     return this.repository.getChildren(taskId);
   }
 
+  /**
+   * Recursively collect a task and all its descendants into a flat list.
+   * Used by the /tree endpoint to build the full DAG for visualisation.
+   */
+  getDescendants(taskId: string): AgentTask[] {
+    const result: AgentTask[] = [];
+    const queue = [taskId];
+
+    while (queue.length > 0) {
+      const id = queue.shift()!;
+      const children = this.repository.getChildren(id);
+      for (const child of children) {
+        result.push(child);
+        queue.push(child.id);
+      }
+    }
+
+    return result;
+  }
+
   /** Dequeue the next background task. Used by TaskWorker. */
   dequeue(): AgentTask | null {
     const task = this.repository.dequeue();
