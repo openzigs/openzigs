@@ -186,6 +186,8 @@ export class WebChatChannel implements MessageChannel {
     socket.on("chat:restore-session", (data: { sessionId?: string }) => {
       const sessionId = typeof data?.sessionId === "string" ? data.sessionId : "";
       if (!sessionId || !this.sessionManager) return;
+      // Emit chat:connected so the client gets a chatId (it may have skipped chat:request-session)
+      socket.emit("chat:connected", { chatId });
       void this.restoreSession(socket, sessionId).catch(() => {
         socket.emit("chat:error", { error: `Failed to restore session ${sessionId}` });
       });
