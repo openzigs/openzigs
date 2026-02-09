@@ -44,6 +44,8 @@ export type OrchestrateContext = {
   sessionId?: string;
   channelType?: ChannelType;
   chatId?: string;
+  /** When set (by MessageRouter), sub-tasks inherit this as their parentTaskId. */
+  parentTaskId?: string;
 };
 
 export type OrchestrateAgentsOptions = {
@@ -193,12 +195,30 @@ export const createOrchestrateAgentsTools = ({
           const channelType =
             (input.channelType as ChannelType | undefined) ?? activeOrchestrateContext.channelType;
           const chatId = input.chatId ?? activeOrchestrateContext.chatId;
+          const contextParentTaskId = input.parentTaskId ?? activeOrchestrateContext.parentTaskId;
 
           logger.info(
             `orchestrate-agents: dispatching ${input.agents.length} agents (timeout=${input.timeout_seconds ?? 300}s)`
           );
 
-          // ── Fan-Out: submit all tasks ──
+          // ── Create orchestration parent task ──
+          // This serves as the tree parent for all sub-agents, giving the
+          // graph a proper Orchestrator → Agent hierarchy.
+          const orchestrationGoal = `Orchestrate ${input.agents.length} agents: ${input.agents.map((a) => a.goal.slice(0, 50)).join("; ")}`;
+          const orchestrationTask = taskEngine.submit(
+            {
+              trigger: "agent",
+              goal: orchestrationGoal,
+              notifyOnComplete: !contextParentTaskId, // Notify unless nested inside another task
+              parentTaskId: contextParentTaskId,
+              sessionId,
+              channelType,
+              chatId,
+            },
+            { mode: "immediate" }
+          );
+
+          // ── Fan-Out: submit all tasks as children of the orchestration parent ──
           const tasks = input.agents.map((agent) =>
             taskEngine.submit(
               {
@@ -206,7 +226,7 @@ export const createOrchestrateAgentsTools = ({
                 goal: agent.goal,
                 context: agent.context,
                 notifyOnComplete: false, // Orchestrator handles notification
-                parentTaskId: input.parentTaskId,
+                parentTaskId: orchestrationTask.id,
                 sessionId,
                 channelType,
                 chatId,
@@ -248,6 +268,8 @@ export const createOrchestrateAgentsTools = ({
           const cancelled = agentResults.filter(
             (r) => r.status === "cancelled"
           ).length;
+
+          const summary = `Orchestration complete: ${completed}/${input.agents.length} agents succeeded in ${Math.round(elapsedMs / 1000)}s`;
 
           logger.info(
             `orchestrate-agents: done in ${elapsedMs}ms — ${completed} completed, ${failed} failed, ${cancelled} cancelled`
@@ -311,31 +333,9 @@ export const createOrchestrateAgentsTools = ({
             );
           }
 
-          // ── Notification: submit a completed notification task so
-          // NotificationDispatcher delivers to originating + cross-channels.
-          // Skip when inside a background task (parent will notify on completion).
-          if ((channelType || sessionId) && !input.parentTaskId) {
-            try {
-              const summary = `Orchestration complete: ${completed}/${input.agents.length} agents succeeded in ${Math.round(elapsedMs / 1000)}s`;
-              const notifTask = taskEngine.submit(
-                {
-                  trigger: "agent",
-                  goal: summary,
-                  notifyOnComplete: true,
-                  sessionId,
-                  channelType,
-                  chatId,
-                },
-                { mode: "immediate" }
-              );
-              taskEngine.complete(notifTask.id, summary);
-            } catch (err) {
-              // Non-fatal: log and continue
-              logger.warn(
-                `orchestrate-agents: notification task failed: ${err instanceof Error ? err.message : String(err)}`
-              );
-            }
-          }
+          // ── Complete the orchestration parent task ──
+          // This triggers NotificationDispatcher if notifyOnComplete is set.
+          taskEngine.complete(orchestrationTask.id, summary);
 
           return { text: finalText };
         } catch (error) {

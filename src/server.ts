@@ -234,6 +234,31 @@ new NotificationDispatcher({
   io,
 });
 
+// Forward ALL task lifecycle events to Socket.IO for real-time graph updates
+for (const event of ["task:queued", "task:running", "task:completed", "task:failed", "task:cancelled"] as const) {
+  taskEngine.on(event, (task: import("./tasks/types.js").AgentTask) => {
+    io.emit("task:status", {
+      event,
+      task: {
+        id: task.id,
+        parentTaskId: task.parentTaskId,
+        status: task.status,
+        goal: task.goal,
+        trigger: task.trigger,
+        depth: task.depth,
+        model: task.model,
+        result: task.result,
+        error: task.error,
+        spawnedBy: task.spawnedBy,
+        sessionId: task.sessionId,
+        createdAt: task.createdAt.toISOString(),
+        startedAt: task.startedAt?.toISOString() ?? null,
+        completedAt: task.completedAt?.toISOString() ?? null,
+      },
+    });
+  });
+}
+
 approvalQueue.on("approval:created", (approval) => {
   io.emit("approval:request", approval);
 });

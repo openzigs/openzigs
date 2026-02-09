@@ -72,6 +72,35 @@ export class TaskRepository {
       CREATE INDEX IF NOT EXISTS idx_tasks_parent ON agent_tasks(parent_task_id);
       CREATE INDEX IF NOT EXISTS idx_tasks_session ON agent_tasks(session_id);
     `);
+
+    // ── Backfill: link orphaned agent tasks to their parent ──
+    // Before the parentTaskId propagation fix, spawn-agent/orchestrate-agents
+    // never set parentTaskId. This backfill matches orphaned agent tasks to
+    // the most recent CHAT task in the same session created within 60 seconds
+    // before the agent task.
+    //
+    // NOTE: This only touches tasks with parent_task_id IS NULL, so it will
+    // never overwrite legitimately-set parent links from the new code that
+    // creates orchestration parent tasks (agent→agent hierarchies).
+    this.db.exec(`
+      UPDATE agent_tasks
+      SET parent_task_id = (
+        SELECT p.id
+        FROM agent_tasks p
+        WHERE p.trigger = 'chat'
+          AND p.session_id = agent_tasks.session_id
+          AND p.session_id IS NOT NULL
+          AND p.id != agent_tasks.id
+          AND p.created_at < agent_tasks.created_at
+          AND julianday(agent_tasks.created_at) - julianday(p.created_at) < 60.0 / 86400.0
+        ORDER BY p.created_at DESC
+        LIMIT 1
+      ),
+      depth = 1
+      WHERE trigger = 'agent'
+        AND parent_task_id IS NULL
+        AND session_id IS NOT NULL;
+    `);
   }
 
   // ── CRUD ────────────────────────────────────────────────────────────

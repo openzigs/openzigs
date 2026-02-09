@@ -102,6 +102,51 @@ export class TaskEngine extends EventEmitter {
     return this.repository.getChildren(taskId);
   }
 
+  /**
+   * Recursively collect a task and all its descendants into a flat list.
+   * Used by the /tree endpoint to build the full DAG for visualisation.
+   */
+  getDescendants(taskId: string): AgentTask[] {
+    const result: AgentTask[] = [];
+    const queue = [taskId];
+    const visited = new Set<string>();
+
+    while (queue.length > 0) {
+      const id = queue.shift()!;
+      if (visited.has(id)) continue;
+      visited.add(id);
+
+      const children = this.repository.getChildren(id);
+      for (const child of children) {
+        result.push(child);
+        queue.push(child.id);
+      }
+    }
+
+    return result;
+  }
+
+  /**
+   * Walk up the parentTaskId chain to find the root of the task tree.
+   * Used by the /tree endpoint to always display the full tree from root,
+   * regardless of which node the user clicked.
+   */
+  getRoot(taskId: string): AgentTask {
+    let current = this.repository.getById(taskId);
+    if (!current) throw new Error(`Task ${taskId} not found`);
+
+    const visited = new Set<string>();
+    while (current.parentTaskId) {
+      if (visited.has(current.id)) break; // cycle guard
+      visited.add(current.id);
+      const parent = this.repository.getById(current.parentTaskId);
+      if (!parent) break;
+      current = parent;
+    }
+
+    return current;
+  }
+
   /** Dequeue the next background task. Used by TaskWorker. */
   dequeue(): AgentTask | null {
     const task = this.repository.dequeue();

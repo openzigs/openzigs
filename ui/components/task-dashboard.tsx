@@ -1,11 +1,17 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import dynamic from "next/dynamic";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useSocket } from "@/lib/socket-context";
 import { fetchJson } from "@/lib/api";
 import { SectionCard } from "./section-card";
 import { Button } from "@/components/ui/button";
+
+const TaskGraph = dynamic(
+  () => import("@/components/tasks/task-graph").then((mod) => ({ default: mod.TaskGraph })),
+  { ssr: false, loading: () => <p className="text-sm text-muted-foreground p-4">Loading graph…</p> }
+);
 
 type TaskData = {
   id: string;
@@ -68,6 +74,7 @@ export const TaskDashboard = () => {
   const { socket } = useSocket();
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [expandedTask, setExpandedTask] = useState<string | null>(null);
+  const [graphTaskId, setGraphTaskId] = useState<string | null>(null);
 
   const tasksQuery = useQuery({
     queryKey: ["tasks", statusFilter],
@@ -229,6 +236,12 @@ export const TaskDashboard = () => {
                   >
                     {expandedTask === task.id ? "▼ Hide children" : "▶ Show children"}
                   </button>
+                  <button
+                    className="text-xs text-muted-foreground hover:text-foreground"
+                    onClick={() => setGraphTaskId(graphTaskId === task.id ? null : task.id)}
+                  >
+                    {graphTaskId === task.id ? "◆ Hide graph" : "◇ View graph"}
+                  </button>
                 </div>
 
                 {expandedTask === task.id && childrenQuery.data && (
@@ -246,6 +259,13 @@ export const TaskDashboard = () => {
                         </div>
                       ))
                     )}
+                  </div>
+                )}
+
+                {/* Task workflow graph */}
+                {graphTaskId === task.id && (
+                  <div className="mt-3">
+                    <TaskGraph taskId={task.id} height={400} />
                   </div>
                 )}
               </div>

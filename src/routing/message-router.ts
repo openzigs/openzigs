@@ -124,11 +124,13 @@ export class MessageRouter {
         sessionId,
         channelType: message.channelType as import("../channels/types.js").ChannelType,
         chatId: message.chatId,
+        parentTaskId: taskId,
       });
       setActiveOrchestrateContext({
         sessionId,
         channelType: message.channelType as import("../channels/types.js").ChannelType,
         chatId: message.chatId,
+        parentTaskId: taskId,
       });
 
       for await (const chunk of this.copilot.chat(prompt, { model: options?.model, onToolCall: options?.onToolCall })) {

@@ -166,11 +166,35 @@ The OpenZigs UI is a **Next.js** application with a navigation bar providing acc
 2. The chat interface includes:
    - A **model selector** dropdown in the header.
    - A **connection indicator** (green = connected).
-   - A **message input** area at the bottom.
+   - A **message input** area at the bottom with **IntelliSense autocomplete**.
 
 3. Type a message and press **Enter** (or click **Send**).
 
 4. The assistant responds in real time via streaming — text appears word-by-word as the model generates it.
+
+### Smart Input (IntelliSense Autocomplete)
+
+The chat input features trigger-based autocomplete for fast access to tools, saved prompts, and models. Type a trigger character to open the autocomplete popover:
+
+| Trigger | Category | What it shows |
+|---------|----------|---------------|
+| `/` | Prompts | Saved prompt templates from the Library |
+| `#` | Tools | All enabled MCP tools by name |
+| `@` | Models | Available Copilot models |
+
+**Keyboard shortcuts:**
+
+| Key | Action |
+|-----|--------|
+| `/`, `#`, `@` | Open autocomplete (after whitespace or at start of input) |
+| ↑ / ↓ | Navigate the autocomplete list |
+| Enter | Select the highlighted item |
+| Escape | Dismiss the popover |
+| Arrow Up (at start of input, no popover) | Scroll through command history |
+| Arrow Down (in history mode) | Navigate forward in history |
+| Shift + Enter | Insert a new line |
+
+When you select an item from the autocomplete, its name is inserted into the input field. For example, typing `#web-` and selecting `web-search` inserts `web-search` at the cursor position.
 
 ### Approval Prompts
 
@@ -234,6 +258,42 @@ The Tasks page at `/tasks` provides real-time monitoring of background agent tas
 - **Results / errors** — view task output or error details inline.
 - **Child tasks** — expand a task to see its spawned sub-tasks (recursive chaining).
 - **Real-time updates** — Socket.IO pushes update the list when tasks complete or fail.
+- **Visual workflow graph** — click **◇ View graph** on any task to see a full interactive DAG (directed acyclic graph) of the task tree.
+
+### Visual Workflow Graph
+
+The task graph provides an interactive visualisation of a task and all its descendants, powered by React Flow and dagre layout.
+
+**How to use:**
+
+1. Navigate to the **Tasks** page at `/tasks`.
+2. Find a task that has spawned sub-agents (any task created via `spawn-agent` or `orchestrate-agents`).
+3. Click **◇ View graph** to expand the DAG below that task card.
+4. The graph renders all tasks as nodes, connected by edges showing parent-child relationships.
+
+**Node features:**
+
+| Element | Description |
+|---------|-------------|
+| Status dot | Color-coded (🟡 queued, 🔵 running, 🟢 completed, 🔴 failed, ⚪ cancelled). Running nodes pulse. |
+| Trigger icon | 💬 chat, ⏰ cron, 🤖 agent |
+| Goal text | The task's goal, truncated to 2 lines |
+| Model | The model used for execution (shown at bottom) |
+| Duration | Time from creation to completion |
+| Result/Error | One-line preview of output or error |
+
+**Graph controls:**
+
+| Control | Action |
+|---------|--------|
+| Mouse drag | Pan the graph |
+| Scroll wheel | Zoom in/out |
+| Bottom-right controls | Zoom buttons, fit view |
+| Bottom-left minimap | Overview of full graph, draggable viewport |
+
+**Animated edges:** Edges to running tasks are animated with a dashed stroke to indicate active execution.
+
+The graph auto-refreshes every 10 seconds to reflect status changes.
 
 **How background tasks are created:**
 
