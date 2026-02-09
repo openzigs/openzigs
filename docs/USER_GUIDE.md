@@ -263,6 +263,189 @@ curl -X POST -H "Authorization: Bearer <token>" http://localhost:3000/api/tasks/
 
 ---
 
+## Advanced: Agent Chaining Patterns
+
+The **Recursive Agent Chaining** system lets you orchestrate multi-step, long-running workflows by composing background sub-agents. Under the hood, the agent uses the `spawn-agent` MCP tool to create independent `AgentTask` entries in the SQLite queue. Each task executes asynchronously via the `TaskWorker`, persists its result to the database, and notifies you when it completes — even if you close the browser.
+
+This section covers three real-world patterns that demonstrate how to unlock chaining in practice.
+
+### 1. The "Fire and Forget" Pattern (Chat → Background)
+
+**When to use:** You want a thorough answer to a complex question, but you don't want to sit and watch the chat stream for several minutes.
+
+**Example prompt (in Chat):**
+
+```
+Research the history of the weirdest V8 engines ever made. This will take a while,
+so please run it in the background and notify me when done.
+```
+
+**What happens:**
+
+| Step | Component | Action |
+|------|-----------|--------|
+| 1 | **MessageRouter** | Receives your message and streams it to the LLM as an immediate-mode task. |
+| 2 | **LLM** | Recognizes the "background" intent and calls the `spawn-agent` tool instead of answering inline. |
+| 3 | **`spawn-agent` tool** | Creates a new `AgentTask` with `trigger: "agent"`, `mode: "background"`, and `notifyOnComplete: true`. The task is inserted into the SQLite `agent_tasks` queue. |
+| 4 | **Chat** | Returns immediately: *"Background task started: Research the history of the weirdest V8 engines ever made. You'll be notified when it completes."* |
+| 5 | **TaskWorker** | Polls the queue, dequeues the task, and executes it via `CopilotWrapper.chat()` with a structured prompt built from the task's `goal` and `context`. |
+| 6 | **NotificationDispatcher** | On completion, pushes a `task:notification` Socket.IO event to the UI, sends a message to the originating channel (Web Chat, Telegram, or Discord), and appends the result to the session JSONL. |
+
+**Tracking:** Navigate to **http://localhost:3001/tasks** to see real-time status. The task appears with a 🤖 agent trigger icon, a `running` badge, and updates to `completed` (with the full result) or `failed` (with the error) when done.
+
+**Key detail:** The task persists in SQLite. If you close your browser, shut your laptop, or even restart the server, the result is waiting for you when you come back. The notification is delivered the next time you connect.
+
+---
+
+### 2. The "Morning Briefing" Pattern (Cron → Parallel Agents)
+
+**When to use:** You have a scheduled job that needs to gather information from multiple independent sources in parallel, then synthesize the results.
+
+**Setup:** Create a scheduled job via the Scheduler UI at `/scheduler` (or the `schedule-job` tool):
+
+| Field | Value |
+|-------|-------|
+| **Name** | `morning-briefing` |
+| **Cron** | `0 6 * * *` (6:00 AM daily) |
+| **Action** | Prompt |
+| **Prompt** | *(see below)* |
+
+**Job prompt:**
+
+```
+You are the Chief of Staff. Your job is to prepare a morning briefing.
+
+Spawn three separate background agents to research the following topics in parallel:
+1. "Summarize the top 5 AI and machine learning news stories from the last 24 hours."
+2. "Get the current prices of Bitcoin, Ethereum, and Solana. Include 24h change percentages."
+3. "What is the weather forecast for New York City today? Include temperature, precipitation, and wind."
+
+Once all three agents complete, compile their reports into a single concise briefing document.
+```
+
+**What happens:**
+
+```
+6:00 AM — Scheduler fires
+  └─ TaskEngine.submit(trigger: "cron", mode: "background")
+       └─ TaskWorker dequeues → LLM executes the prompt
+            ├─ spawn-agent → "AI News"       (Depth 1, child task #1)
+            ├─ spawn-agent → "Crypto Prices"  (Depth 1, child task #2)
+            └─ spawn-agent → "Local Weather"  (Depth 1, child task #3)
+```
+
+| Task | Trigger | Depth | Status |
+|------|---------|-------|--------|
+| `morning-briefing` (root) | ⏰ cron | 0 | Running — waiting for children |
+| `AI News` | 🤖 agent | 1 | Queued → Running → Completed |
+| `Crypto Prices` | 🤖 agent | 1 | Queued → Running → Completed |
+| `Local Weather` | 🤖 agent | 1 | Queued → Running → Completed |
+
+The three child tasks execute independently and in parallel (up to `maxConcurrent: 2` at a time). Each child's result is returned to the root agent's LLM context via the `spawn-agent` tool response. The root agent then compiles the results into a final briefing.
+
+**Viewing in the Tasks UI:** The root task shows a **▶ Expand** button. Clicking it reveals the three child tasks with their individual statuses, results, and timing. Each child is linked to the parent via `parentTaskId`.
+
+**Notification:** When the root task completes, the `NotificationDispatcher` sends the compiled briefing to the configured notification channel.
+
+---
+
+### 3. The "Manager-Worker" Pattern (Recursive Depth)
+
+**When to use:** You have a multi-phase task where each phase depends on the output of the previous one — a pipeline of specialists.
+
+**Example prompt (in Chat):**
+
+```
+Build a Python script that scrapes product pricing from example.com.
+Break this into phases: first write a spec, then write the code based on the spec.
+Run each phase as a separate background agent.
+```
+
+**What happens — a three-level task tree:**
+
+```
+Root Agent (Depth 0) — "Build a Python pricing scraper"
+  │
+  ├─ spawn-agent → Spec Writer (Depth 1)
+  │    goal: "Write a technical specification for a Python script that scrapes
+  │           product pricing from example.com. Include: target URLs, data fields
+  │           to extract, output format (CSV), error handling strategy, and
+  │           rate-limiting approach."
+  │    context: "This spec will be handed to a coding agent to implement."
+  │
+  │    ┌─ Spec Writer completes with the spec document
+  │    │
+  │    └─ spawn-agent → Coder (Depth 2)
+  │         goal: "Implement the following specification as a Python script."
+  │         context: [the full spec from Depth 1]
+  │
+  │         └─ Coder completes with the Python script
+  │
+  └─ Root agent receives the final script → task marked completed
+```
+
+**Task tree in the UI:**
+
+| Task | Depth | Parent | Status |
+|------|-------|--------|--------|
+| Build a Python pricing scraper | 0 | — | Completed |
+| ↳ Write technical specification | 1 | *(root)* | Completed |
+| &nbsp;&nbsp;&nbsp;&nbsp;↳ Implement the specification | 2 | *(spec writer)* | Completed |
+
+**How depth tracking works:**
+
+1. When the root agent calls `spawn-agent`, the tool handler reads the current task's `depth` (0) and creates the child at `depth + 1` (1).
+2. When the Spec Writer agent calls `spawn-agent`, the child is created at `depth + 1` (2).
+3. The `TaskRepository` enforces `TASK_LIMITS.maxDepth` (default: **5**). If an agent at depth 5 attempts to spawn a child, the tool returns an error: *"Maximum task depth exceeded."*
+4. Additional safeguards: each parent can have at most **10 children** (`maxChildren`), and each session is limited to **20 spawns per minute** (`maxRatePerMinute`).
+
+**Visualizing the tree:** On the `/tasks` page, click the root task's **▶ Expand** button to see its children. Click a child to expand further. Each level shows the task's goal, status badge, model, result preview, and timing.
+
+---
+
+### Chaining Reference
+
+#### `spawn-agent` Tool Parameters
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `goal` | string | Yes | — | The instruction for the sub-agent. Be specific and self-contained. |
+| `context` | string | No | `""` | Additional data passed to the sub-agent's prompt (e.g., output from a previous step). |
+| `notify_user` | boolean | No | `true` | Send a notification to the originating channel when the task completes or fails. |
+| `model` | string | No | *(server default)* | Model override for the sub-agent (e.g., `gpt-4.1`, `claude-sonnet-4`). |
+
+#### Safeguard Limits
+
+| Limit | Default | Description |
+|-------|---------|-------------|
+| Max recursion depth | **5** | Maximum nesting levels (root = 0, first child = 1, etc.). |
+| Max children per parent | **10** | Maximum sub-tasks a single agent can spawn. |
+| Max spawns per minute | **20** | Rate limit per session to prevent runaway loops. |
+
+#### Task Lifecycle
+
+```
+queued → running → completed
+                 → failed
+         → cancelled (user-initiated via API or UI)
+```
+
+Tasks that are `queued` or `running` can be cancelled from the Tasks UI or via the REST API:
+
+```bash
+curl -X POST -H "Authorization: Bearer <token>" \
+  http://localhost:3000/api/tasks/<task-id>/cancel
+```
+
+#### Persistence Guarantees
+
+- All tasks are persisted in the SQLite `agent_tasks` table with WAL mode.
+- Task results survive server restarts, browser closures, and network disconnections.
+- Notifications are delivered via Socket.IO on reconnect and/or pushed to the originating messaging channel (Telegram, Discord).
+- Session JSONL logs include task completion events for full audit traceability.
+
+---
+
 ## Model Selection
 
 The Chat page includes a model selector in the header bar.
