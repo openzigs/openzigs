@@ -212,9 +212,19 @@ export class WebChatChannel implements MessageChannel {
     if (!this.sessionManager) return;
     const sessions = await this.sessionManager.listSessions({ channel: "web", userId });
     if (sessions.length === 0) return;
-    const history = await this.sessionManager.getHistory(sessions[0].id, 50);
+    const session = sessions[0];
+    const history = await this.sessionManager.getHistory(session.id, 50);
+
+    // If the session was cleared, only show events after the clear timestamp
+    const clearedAt = typeof session.metadata?.clearedAt === "string"
+      ? new Date(session.metadata.clearedAt).getTime()
+      : 0;
+
     const messages = history
-      .filter((event) => event.type === "user" || event.type === "assistant")
+      .filter((event) =>
+        (event.type === "user" || event.type === "assistant") &&
+        event.timestamp.getTime() > clearedAt
+      )
       .map((event) => ({
         role: event.type as "user" | "assistant",
         content: event.content,

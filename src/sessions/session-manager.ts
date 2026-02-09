@@ -188,15 +188,19 @@ export class SessionManager {
   }
 
   /**
-   * Clear all conversation events from a session while keeping the session
-   * metadata intact. Resets the JSONL events file to empty and updates
-   * the lastActiveAt timestamp.
+   * Mark a session as "cleared" without deleting the conversation events.
+   * Sets `metadata.clearedAt` so that normal reconnect history can be
+   * filtered (events before the mark are hidden), while admin restore
+   * and session-history views still see the full history.
    */
   async clearSession(id: string): Promise<Session> {
     const session = await this.getSession(id);
-    await fs.writeFile(this.eventsPath(id), "", "utf-8");
     const now = this.clock();
-    const updated = { ...session, lastActiveAt: now };
+    const updated = {
+      ...session,
+      lastActiveAt: now,
+      metadata: { ...session.metadata, clearedAt: now.toISOString() },
+    };
     await this.updateSession(updated);
     return updated;
   }
