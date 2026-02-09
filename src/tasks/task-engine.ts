@@ -109,9 +109,13 @@ export class TaskEngine extends EventEmitter {
   getDescendants(taskId: string): AgentTask[] {
     const result: AgentTask[] = [];
     const queue = [taskId];
+    const visited = new Set<string>();
 
     while (queue.length > 0) {
       const id = queue.shift()!;
+      if (visited.has(id)) continue;
+      visited.add(id);
+
       const children = this.repository.getChildren(id);
       for (const child of children) {
         result.push(child);
