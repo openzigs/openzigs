@@ -560,6 +560,12 @@ Logs are queryable via `GET /api/logs` with filters for `category`, `level`, `si
 | `delete-job` | productivity | 🟡 medium | Delete a scheduled job. |
 | `toggle-job` | productivity | 🟡 medium | Enable or disable a scheduled job. |
 
+### Agent Chaining Tools
+
+| Tool | Category | Risk | Description |
+|---|---|---|---|
+| `spawn-agent` | productivity | 🟡 medium | Spawn an asynchronous background sub-agent for long-running or independent tasks. |
+
 ### Social Media Tools (MCP Sidecars)
 
 | Tool | Category | Risk | Description |
@@ -633,6 +639,11 @@ The shell executor uses a **command allowlist**. If the allowlist is empty, the 
 | `GET` | `/api/admin/sidecars/:name/tools` | Admin | List tools for a specific MCP sidecar. |
 | `PUT` | `/api/admin/sidecars/:name/tools` | Admin | Update disabled tools for a sidecar. |
 | `POST` | `/api/admin/scheduler/assist` | Admin | Generate scheduler field suggestions from a natural language request. |
+| `GET` | `/api/tasks` | Token | List agent tasks (filterable by status, trigger, parent). |
+| `GET` | `/api/tasks/:id` | Token | Get task details including child count. |
+| `POST` | `/api/tasks/:id/cancel` | Token | Cancel a queued or running task. |
+| `GET` | `/api/tasks/:id/children` | Token | List direct child tasks. |
+| `GET` | `/api/tasks/stats` | Token | Aggregate task counts by status. |
 
 ---
 
@@ -856,3 +867,181 @@ curl -X POST http://localhost:3000/api/admin/tools/db-query/risk \
 ```
 
 > **Warning:** Downgrading a high-risk tool removes the human confirmation gate. Use with extreme caution.
+
+---
+
+## Recursive Agent Chaining (Task Engine)
+
+OpenZigs supports **Recursive Agent Chaining** — the ability for any agent (triggered by a user message, cron schedule, or another agent) to spawn asynchronous sub-tasks that execute independently, persist state in SQLite, and notify the user upon completion.
+
+### The Problem
+
+Before the Task Engine, chat and cron followed completely separate execution paths:
+
+| Path | Flow | Limitation |
+|------|------|------------|
+| **Chat** | `Channel → MessageRouter → CopilotWrapper.chat()` | Synchronous, blocks until complete. No background work. |
+| **Cron** | `Scheduler.executeJob() → copilot.chat()` | Fire-and-forget. No sub-tasks, no user notification. |
+
+This meant:
+- A user couldn't ask "research X in the background" — the chat would hang for minutes.
+- A cron job couldn't spawn child tasks (e.g., "every morning, research 3 topics and compile a report").
+- If a user closed the browser during a long operation, the result was lost.
+
+### Unified Model: `AgentTask`
+
+Every unit of work is now an `AgentTask`, regardless of origin:
+
+```typescript
+type AgentTask = {
+  id: string;
+  parentTaskId: string | null;       // null = root task
+  trigger: "chat" | "cron" | "agent";
+  status: "queued" | "running" | "completed" | "failed" | "cancelled";
+  goal: string;                      // The instruction/prompt
+  context: string;                   // Additional data passed to the sub-agent
+  result: string | null;             // Final output
+  error: string | null;
+  sessionId: string | null;          // Links to chat session for notifications
+  channelType: string | null;        // Where to push completion notifications
+  chatId: string | null;             // Target chat for notification delivery
+  model: string | null;              // Model override
+  notifyOnComplete: boolean;
+  createdAt: Date;
+  startedAt: Date | null;
+  completedAt: Date | null;
+  spawnedBy: string | null;          // Job ID or tool call that created this
+};
+```
+
+- A **chat message** is an `AgentTask(trigger: "chat", mode: "immediate")` — streams inline.
+- A **cron job** is an `AgentTask(trigger: "cron", mode: "background")` — enqueued for the worker.
+- A **sub-agent** is an `AgentTask(trigger: "agent", parentTaskId: ...)` — spawned by `spawn_agent` tool.
+
+### Architecture
+
+```mermaid
+flowchart TB
+    subgraph Triggers
+        WC[Web Chat]
+        TG[Telegram]
+        CR[Cron Scheduler]
+    end
+
+    WC --> TE[TaskEngine.submit]
+    TG --> TE
+    CR --> TE
+
+    TE -->|mode: immediate| IMM[Inline Streaming<br/>CopilotWrapper.chat]
+    TE -->|mode: background| Q[(SQLite Queue<br/>agent_tasks)]
+
+    Q --> TW[TaskWorker<br/>polls & executes]
+    TW --> CW[CopilotWrapper.chat]
+
+    CW -->|tool call| SA[spawn_agent tool]
+    SA -->|new AgentTask| TE
+
+    TW -->|on complete| ND[NotificationDispatcher]
+    ND -->|Socket.IO| WC2[Web Chat]
+    ND -->|sendMessage| TG2[Telegram]
+    ND -->|sendMessage| DC2[Discord]
+    ND -->|appendEvent| SM[Session JSONL]
+```
+
+### Component Breakdown
+
+| Component | Location | Responsibility |
+|-----------|----------|----------------|
+| `AgentTask` type | `src/tasks/types.ts` | Core data model, persisted in SQLite `agent_tasks` table |
+| `TaskEngine` | `src/tasks/task-engine.ts` | Accepts submissions, routes immediate vs background, manages lifecycle |
+| `TaskWorker` | `src/tasks/task-worker.ts` | Background polling loop, dequeues tasks, calls `CopilotWrapper.chat()` |
+| `spawn_agent` tool | `src/mcp/tools/agent-tools.ts` | MCP tool the LLM calls to create child tasks |
+| `NotificationDispatcher` | `src/tasks/notification-dispatcher.ts` | Routes completion alerts to the originating channel |
+| Task API | `src/api/tasks.ts` | REST endpoints: list, get, cancel, stats |
+
+### Execution Scenarios
+
+| Scenario | What Happens |
+|----------|-------------|
+| **Normal chat** | `MessageRouter` creates `AgentTask(trigger: "chat", mode: "immediate")` → streams response inline |
+| **Chat → background** | LLM calls `spawn_agent` → `AgentTask(trigger: "agent", mode: "background")` → "Task started" returned to chat → worker executes → notification sent |
+| **Cron fires** | `Scheduler` creates `AgentTask(trigger: "cron", mode: "background")` → worker executes |
+| **Cron → sub-task** | Cron task's LLM calls `spawn_agent` → child `AgentTask` → worker executes child independently |
+| **Recursive** | Agent A → `spawn_agent` → Agent B → `spawn_agent` → Agent C (depth limit enforced) |
+
+### `spawn_agent` Tool
+
+The LLM calls this tool to offload work to a background sub-agent:
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `goal` | string | Yes | The instruction for the sub-agent |
+| `context` | string | No | Data to pass to the sub-agent |
+| `notify_user` | boolean | No (default: true) | Push notification on completion |
+
+**Behavior in Chat:** Returns `"Background task started: [goal]. You'll be notified when it completes."` — chat continues immediately.
+
+**Behavior in Cron:** Returns `"Sub-task queued: [goal]. Task ID: [id]."` — logged in audit.
+
+**Safeguards:**
+- Max recursion depth: 5 levels
+- Max children per parent: 10
+- Rate limit: 20 spawns/minute/session
+
+### Database Schema
+
+```sql
+CREATE TABLE IF NOT EXISTS agent_tasks (
+  id TEXT PRIMARY KEY,
+  parent_task_id TEXT REFERENCES agent_tasks(id),
+  trigger TEXT NOT NULL CHECK(trigger IN ('chat', 'cron', 'agent')),
+  status TEXT NOT NULL DEFAULT 'queued'
+    CHECK(status IN ('queued', 'running', 'completed', 'failed', 'cancelled')),
+  goal TEXT NOT NULL,
+  context TEXT NOT NULL DEFAULT '',
+  result TEXT,
+  error TEXT,
+  session_id TEXT,
+  channel_type TEXT,
+  chat_id TEXT,
+  model TEXT,
+  notify_on_complete INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  started_at TEXT,
+  completed_at TEXT,
+  spawned_by TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_tasks_status ON agent_tasks(status);
+CREATE INDEX IF NOT EXISTS idx_tasks_parent ON agent_tasks(parent_task_id);
+```
+
+### Task API
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/tasks` | List tasks (filterable by status, trigger, parentTaskId) |
+| `GET` | `/api/tasks/:id` | Get task details including child count |
+| `POST` | `/api/tasks/:id/cancel` | Cancel a queued or running task |
+| `GET` | `/api/tasks/:id/children` | List direct child tasks |
+| `GET` | `/api/tasks/stats` | Aggregate counts by status |
+
+### Socket.IO Events
+
+| Event | Payload | Direction |
+|-------|---------|-----------|
+| `task:created` | `{ id, goal, trigger, parentTaskId }` | Server → Client |
+| `task:started` | `{ id }` | Server → Client |
+| `task:completed` | `{ id, goal, result, completedAt }` | Server → Client |
+| `task:failed` | `{ id, goal, error }` | Server → Client |
+
+### Background Worker Configuration
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `tasks.pollIntervalMs` | number | `2000` | How often the worker checks the queue |
+| `tasks.maxConcurrent` | number | `2` | Max parallel background tasks |
+| `tasks.maxRecursionDepth` | number | `5` | Max nesting depth for recursive chaining |
+| `tasks.maxChildrenPerTask` | number | `10` | Max sub-tasks a single parent can spawn |
+
+### Tracking: [Epic #81](https://github.com/mgcronin/openzigs/issues/81)
