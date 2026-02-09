@@ -1,6 +1,6 @@
 import { Router } from "express";
 import type { TaskEngine } from "../tasks/task-engine.js";
-import type { TaskStatus } from "../tasks/types.js";
+import type { AgentTask, TaskStatus } from "../tasks/types.js";
 
 export type TasksRouterOptions = {
   taskEngine: TaskEngine;
@@ -65,9 +65,9 @@ export const createTasksRouter = ({ taskEngine }: TasksRouterOptions): Router =>
   return router;
 };
 
-const serializeTask = (task: { [key: string]: unknown; createdAt: Date; startedAt: Date | null; completedAt: Date | null }) => ({
+const serializeTask = (task: AgentTask) => ({
   ...task,
-  createdAt: (task.createdAt as Date).toISOString(),
-  startedAt: task.startedAt ? (task.startedAt as Date).toISOString() : null,
-  completedAt: task.completedAt ? (task.completedAt as Date).toISOString() : null,
+  createdAt: task.createdAt.toISOString(),
+  startedAt: task.startedAt?.toISOString() ?? null,
+  completedAt: task.completedAt?.toISOString() ?? null,
 });

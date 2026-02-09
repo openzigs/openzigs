@@ -117,10 +117,13 @@ describe("Task System Integration", () => {
       expect(io.emit).toHaveBeenCalledWith(
         "task:notification",
         expect.objectContaining({
-          taskId: task.id,
-          status: "completed",
-          goal: "Research quantum computing trends",
-          result: "Research results here",
+          type: "completed",
+          task: expect.objectContaining({
+            id: task.id,
+            status: "completed",
+            goal: "Research quantum computing trends",
+            result: "Research results here",
+          }),
         })
       );
     });
@@ -167,8 +170,11 @@ describe("Task System Integration", () => {
       expect(io.emit).toHaveBeenCalledWith(
         "task:notification",
         expect.objectContaining({
-          taskId: task.id,
-          status: "failed",
+          type: "failed",
+          task: expect.objectContaining({
+            id: task.id,
+            status: "failed",
+          }),
         })
       );
     });

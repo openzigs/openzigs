@@ -240,6 +240,56 @@ describe("TaskWorker", () => {
     expect(prompt).toContain("Dataset: sales-2026.csv");
   });
 
+  it("injects parentTaskId and sessionId via onToolCall for spawn-agent", async () => {
+    let capturedOnToolCall: ((toolName: string, args: unknown) => void) | undefined;
+
+    const mockCopilot = {
+      authenticate: vi.fn(),
+      waitForAuth: vi.fn(),
+      isAuthenticated: vi.fn().mockResolvedValue(true),
+      listModels: vi.fn().mockResolvedValue([]),
+      onToolCall: vi.fn(),
+      chat: vi.fn().mockImplementation(async function* (_prompt: string, options?: { onToolCall?: (t: string, a: unknown) => void }) {
+        capturedOnToolCall = options?.onToolCall;
+        yield "done";
+      }),
+    };
+
+    worker = new TaskWorker({
+      engine,
+      copilot: mockCopilot,
+      maxConcurrent: 1,
+      pollIntervalMs: 50,
+      log: silentLog,
+    });
+
+    const task = engine.submit(
+      { trigger: "cron", goal: "Parent job", sessionId: "sess-42" },
+      { mode: "background" }
+    );
+
+    const donePromise = new Promise<void>((resolve) => {
+      worker.on("task:done", () => resolve());
+    });
+
+    worker.start();
+    await donePromise;
+
+    // Verify onToolCall was passed to copilot.chat
+    expect(capturedOnToolCall).toBeDefined();
+
+    // Simulate calling spawn-agent — should inject parentTaskId and sessionId
+    const args: Record<string, unknown> = { goal: "child work" };
+    capturedOnToolCall!("spawn-agent", args);
+    expect(args.parentTaskId).toBe(task.id);
+    expect(args.sessionId).toBe("sess-42");
+
+    // Non-spawn-agent tools should not be modified
+    const otherArgs: Record<string, unknown> = { query: "search" };
+    capturedOnToolCall!("web-search", otherArgs);
+    expect(otherArgs.parentTaskId).toBeUndefined();
+  });
+
   it("start is idempotent", () => {
     const mockCopilot = {
       authenticate: vi.fn(),

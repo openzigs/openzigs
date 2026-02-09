@@ -61,12 +61,13 @@ export class NotificationDispatcher {
     // 1. Always emit via Socket.IO for the web dashboard
     if (this.io) {
       this.io.emit("task:notification", {
-        taskId: task.id,
-        status: task.status,
-        goal: task.goal,
-        result: task.result,
-        error: task.error,
-        completedAt: task.completedAt?.toISOString(),
+        type: task.status,
+        task: {
+          ...task,
+          createdAt: task.createdAt.toISOString(),
+          startedAt: task.startedAt?.toISOString() ?? null,
+          completedAt: task.completedAt?.toISOString() ?? null,
+        },
       });
     }
 

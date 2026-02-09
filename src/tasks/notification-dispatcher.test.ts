@@ -74,10 +74,13 @@ describe("NotificationDispatcher", () => {
     await new Promise((r) => setTimeout(r, 50));
 
     expect(io.emit).toHaveBeenCalledWith("task:notification", expect.objectContaining({
-      taskId: task.id,
-      status: "completed",
-      goal: "Test goal",
-      result: "Task result here",
+      type: "completed",
+      task: expect.objectContaining({
+        id: task.id,
+        status: "completed",
+        goal: "Test goal",
+        result: "Task result here",
+      }),
     }));
   });
 
@@ -193,8 +196,10 @@ describe("NotificationDispatcher", () => {
     await new Promise((r) => setTimeout(r, 50));
 
     expect(io.emit).toHaveBeenCalledWith("task:notification", expect.objectContaining({
-      status: "failed",
-      error: "Something went wrong",
+      type: "failed",
+      task: expect.objectContaining({
+        error: "Something went wrong",
+      }),
     }));
   });
 

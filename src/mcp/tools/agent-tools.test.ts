@@ -65,6 +65,25 @@ describe("agent-tools (spawn-agent)", () => {
     expect(task.notifyOnComplete).toBe(false);
   });
 
+  it("passes parentTaskId and sessionId for recursive chaining", async () => {
+    // Create a parent task first
+    const parent = engine.submit(
+      { trigger: "chat", goal: "Parent task", sessionId: "sess-1" },
+      { mode: "immediate" }
+    );
+
+    const result = await tool.handler({
+      goal: "Child work",
+      parentTaskId: parent.id,
+      sessionId: "sess-1",
+    });
+    const parsed = JSON.parse(result.text);
+    const child = engine.getTask(parsed.taskId)!;
+    expect(child.parentTaskId).toBe(parent.id);
+    expect(child.sessionId).toBe("sess-1");
+    expect(child.depth).toBe(1);
+  });
+
   it("returns error on rate limit", async () => {
     // Exhaust rate limit by creating many tasks with same session
     // spawn-agent doesn't set sessionId, so this tests the error path differently

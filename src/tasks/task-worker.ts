@@ -114,7 +114,17 @@ export class TaskWorker extends EventEmitter {
       const prompt = this.buildPrompt(task);
       let result = "";
 
-      for await (const chunk of this.copilot.chat(prompt, { model: task.model ?? undefined })) {
+      for await (const chunk of this.copilot.chat(prompt, {
+        model: task.model ?? undefined,
+        onToolCall: (toolName, args) => {
+          if (toolName === "spawn-agent") {
+            // Inject parent task ID and session for recursive chaining.
+            const a = args as Record<string, unknown>;
+            a.parentTaskId = task.id;
+            a.sessionId = task.sessionId;
+          }
+        },
+      })) {
         result += chunk;
       }
 

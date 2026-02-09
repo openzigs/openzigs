@@ -7,6 +7,9 @@ const spawnAgentSchema = z.object({
   context: z.string().optional().describe("Additional context or data for the sub-agent"),
   notify_user: z.boolean().optional().describe("Whether to notify the user when the task completes (default: true)"),
   model: z.string().optional().describe("Model override for the sub-agent (e.g., 'gpt-4.1', 'claude-sonnet-4')"),
+  // Internal fields for recursive chaining — injected by TaskWorker's onToolCall, not set by the LLM.
+  parentTaskId: z.string().optional(),
+  sessionId: z.string().optional(),
 });
 
 type SpawnAgentInput = z.infer<typeof spawnAgentSchema>;
@@ -52,6 +55,8 @@ export const createAgentTools = ({ taskEngine }: AgentToolsOptions): ToolDefinit
               context: input.context,
               notifyOnComplete: input.notify_user ?? true,
               model: input.model,
+              parentTaskId: input.parentTaskId,
+              sessionId: input.sessionId,
             },
             { mode: "background" }
           );
