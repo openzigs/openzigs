@@ -9,6 +9,7 @@ import { createBrowserNavigateHandler } from "./tools/browser-navigate.js";
 import { createShellExecuteHandler } from "./tools/shell.js";
 import { createPromptTools } from "./tools/prompt-tools.js";
 import { createSchedulerTools } from "./tools/scheduler-tools.js";
+import { createPersonalityTools } from "./tools/personality-tools.js";
 import { createSocialMediaTools } from "./tools/social-media-tools.js";
 import { createDocumentIntelligenceTools } from "./tools/document-intelligence-tools.js";
 import { createMarkItDownTools } from "./tools/markitdown-tools.js";
@@ -22,6 +23,7 @@ import { ApprovalQueue } from "../approvals/index.js";
 import { formatApprovalContext } from "../approvals/approval-formatters.js";
 import type { PromptManager } from "../productivity/prompt-manager.js";
 import type { Scheduler } from "../productivity/scheduler.js";
+import type { PersonalityManager } from "../personality/personality-manager.js";
 
 export type McpServerOptions = {
   allowedDirs: string[];
@@ -35,6 +37,7 @@ export type McpServerOptions = {
   approvalQueue?: ApprovalQueue;
   promptManager?: PromptManager;
   scheduler?: Scheduler;
+  personalityManager?: PersonalityManager;
   linkedinSidecarUrl?: string;
   twitterSidecarUrl?: string;
   facebookSidecarUrl?: string;
@@ -58,6 +61,7 @@ export type RegisterMcpToolsOptions = Pick<
   | "approvalQueue"
   | "promptManager"
   | "scheduler"
+  | "personalityManager"
   | "linkedinSidecarUrl"
   | "twitterSidecarUrl"
   | "facebookSidecarUrl"
@@ -387,6 +391,14 @@ export const registerMcpTools = (toolRegistry: ToolRegistry, options: RegisterMc
   if (options.scheduler) {
     const schedulerTools = createSchedulerTools({ scheduler: options.scheduler });
     for (const tool of schedulerTools) {
+      registerTool(tool);
+    }
+  }
+
+  // ── Personality Tools ──
+  if (options.personalityManager) {
+    const personalityToolList = createPersonalityTools({ personalityManager: options.personalityManager });
+    for (const tool of personalityToolList) {
       registerTool(tool);
     }
   }

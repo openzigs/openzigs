@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { fetchJson } from "@/lib/api";
-import type { SavedPrompt } from "@/lib/types";
+import type { PersonalityConfig, SavedPrompt } from "@/lib/types";
 import { SectionCard } from "@/components/section-card";
 import { ToastContainer, showToast } from "@/components/toast";
 
@@ -31,6 +31,23 @@ export default function LibraryPage() {
     },
     onError: (err) => showToast(`Error: ${err.message}`, "error"),
   });
+
+  const applyAsSystemPromptMutation = useMutation({
+    mutationFn: (template: string) =>
+      fetchJson<PersonalityConfig>("/api/admin/personality", {
+        method: "PUT",
+        body: JSON.stringify({ systemInstruction: template }),
+      }),
+    onSuccess: () => {
+      showToast("Applied as active system prompt", "success");
+    },
+    onError: (err) => showToast(`Error: ${err.message}`, "error"),
+  });
+
+  const handleApplyAsSystemPrompt = (prompt: SavedPrompt) => {
+    if (!confirm(`Set "${prompt.name}" as the active system prompt? This replaces the current personality system instruction.`)) return;
+    applyAsSystemPromptMutation.mutate(prompt.template);
+  };
 
   const handleDelete = (prompt: SavedPrompt) => {
     if (!confirm(`Delete prompt "${prompt.name}"? This cannot be undone.`)) return;
@@ -111,6 +128,13 @@ export default function LibraryPage() {
                     </pre>
                   </div>
                   <div className="ml-3 flex shrink-0 gap-2">
+                    <button
+                      onClick={() => handleApplyAsSystemPrompt(prompt)}
+                      title="Use this prompt as the active system instruction in AI Personality"
+                      className="rounded-lg border border-moss/30 px-3 py-1.5 text-xs font-semibold text-moss hover:bg-moss/5"
+                    >
+                      Use as System Prompt
+                    </button>
                     <button
                       onClick={() => handleEdit(prompt)}
                       className="rounded-lg border border-primary px-3 py-1.5 text-xs font-semibold text-primary hover:bg-primary/5"

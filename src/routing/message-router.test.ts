@@ -15,6 +15,8 @@ import type { CopilotWrapper } from "../copilot/copilot-wrapper.js";
 import type { CopilotModel } from "../copilot/copilot-wrapper.js";
 import { SessionManager } from "../sessions/session-manager.js";
 import { MessageRouter } from "./message-router.js";
+import Database from "better-sqlite3";
+import { PersonalityManager } from "../personality/personality-manager.js";
 
 const createTempDir = async () => {
   return fs.mkdtemp(path.join(os.tmpdir(), "openzigs-router-"));
@@ -307,5 +309,60 @@ describe("MessageRouter", () => {
     await router.route(baseMessage({ content: "model test" }), { model: "claude-sonnet-4" });
 
     expect(copilot.lastModel).toBe("claude-sonnet-4");
+  });
+
+  it("injects personality system instruction and pre-prompt into the prompt", async () => {
+    const baseDir = await createTempDir();
+    cleanupDirs.push(baseDir);
+
+    const db = new Database(":memory:");
+    db.pragma("journal_mode = WAL");
+    const personalityManager = new PersonalityManager({ db });
+    personalityManager.update({
+      systemInstruction: "You are a pirate.",
+      prePrompt: "Respond in rhyme.",
+      postPrompt: "Always sign off with 'Arrr'.",
+      enabled: true,
+    });
+
+    const channelManager = new ChannelManager();
+    const telegram = new RecordingChannel("telegram");
+    await telegram.connect();
+    channelManager.register(telegram);
+
+    const sessionManager = new SessionManager({ baseDir });
+    const copilot = new FakeCopilot("Ahoy");
+    const router = new MessageRouter({ channelManager, sessionManager, copilot, personalityManager });
+
+    await router.route(baseMessage({ content: "Tell me a joke" }));
+
+    expect(copilot.lastPrompt).toContain("System: You are a pirate.");
+    expect(copilot.lastPrompt).toContain("Respond in rhyme.");
+    expect(copilot.lastPrompt).toContain("User: Tell me a joke");
+    expect(copilot.lastPrompt).toContain("Always sign off with 'Arrr'.");
+  });
+
+  it("skips personality injection when disabled", async () => {
+    const baseDir = await createTempDir();
+    cleanupDirs.push(baseDir);
+
+    const db = new Database(":memory:");
+    db.pragma("journal_mode = WAL");
+    const personalityManager = new PersonalityManager({ db });
+    personalityManager.update({ enabled: false });
+
+    const channelManager = new ChannelManager();
+    const telegram = new RecordingChannel("telegram");
+    await telegram.connect();
+    channelManager.register(telegram);
+
+    const sessionManager = new SessionManager({ baseDir });
+    const copilot = new FakeCopilot("ok");
+    const router = new MessageRouter({ channelManager, sessionManager, copilot, personalityManager });
+
+    await router.route(baseMessage({ content: "Hello" }));
+
+    expect(copilot.lastPrompt).not.toContain("System:");
+    expect(copilot.lastPrompt).toBe("User: Hello");
   });
 });

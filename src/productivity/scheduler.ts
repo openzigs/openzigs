@@ -13,6 +13,7 @@ export type ScheduledJob = {
   timezone: string;
   actionType: "prompt" | "shell" | "custom";
   actionPayload: Record<string, unknown>;
+  model: string | null;
   enabled: boolean;
   lastRunAt: Date | null;
   nextRunAt: Date | null;
@@ -27,6 +28,7 @@ export type CreateJobInput = {
   timezone?: string;
   actionType?: "prompt" | "shell" | "custom";
   actionPayload: Record<string, unknown>;
+  model?: string;
   enabled?: boolean;
 };
 
@@ -35,6 +37,7 @@ export type UpdateJobInput = {
   cronExpression?: string;
   timezone?: string;
   actionPayload?: Record<string, unknown>;
+  model?: string | null;
   enabled?: boolean;
 };
 
@@ -45,6 +48,7 @@ type StoredJob = {
   timezone: string;
   action_type: string;
   action_payload: string;
+  model: string | null;
   enabled: number;
   last_run_at: string | null;
   next_run_at: string | null;
@@ -76,6 +80,7 @@ const toJob = (row: StoredJob): ScheduledJob => ({
   timezone: row.timezone,
   actionType: row.action_type as ScheduledJob["actionType"],
   actionPayload: JSON.parse(row.action_payload) as Record<string, unknown>,
+  model: row.model ?? null,
   enabled: row.enabled === 1,
   lastRunAt: row.last_run_at ? new Date(row.last_run_at) : null,
   nextRunAt: row.next_run_at ? new Date(row.next_run_at) : null,
@@ -99,6 +104,17 @@ export class Scheduler extends EventEmitter {
     this.clock = clock ?? (() => new Date());
     this.auditLogDir = auditLogDir ?? defaultAuditDir();
     this.onExecute = onExecute;
+    this.migrateSchema();
+  }
+
+  /** Run lightweight schema migrations (add columns if missing). */
+  private migrateSchema(): void {
+    // Add 'model' column if it doesn't exist (safe for existing DBs)
+    const columns = this.db.pragma("table_info(scheduled_jobs)") as Array<{ name: string }>;
+    const hasModel = columns.some((c) => c.name === "model");
+    if (!hasModel) {
+      this.db.exec("ALTER TABLE scheduled_jobs ADD COLUMN model TEXT DEFAULT NULL");
+    }
   }
 
   /** Create a new scheduled job and optionally start it. */
@@ -114,8 +130,8 @@ export class Scheduler extends EventEmitter {
     this.db
       .prepare(
         `INSERT INTO scheduled_jobs
-          (id, name, cron_expression, timezone, action_type, action_payload, enabled, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          (id, name, cron_expression, timezone, action_type, action_payload, model, enabled, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         id,
@@ -124,6 +140,7 @@ export class Scheduler extends EventEmitter {
         input.timezone ?? "UTC",
         input.actionType ?? "prompt",
         JSON.stringify(input.actionPayload),
+        input.model ?? null,
         enabled ? 1 : 0,
         now,
         now
@@ -165,15 +182,16 @@ export class Scheduler extends EventEmitter {
     const cronExpression = input.cronExpression ?? existing.cronExpression;
     const timezone = input.timezone ?? existing.timezone;
     const actionPayload = JSON.stringify(input.actionPayload ?? existing.actionPayload);
+    const model = input.model !== undefined ? input.model : existing.model;
     const enabled = input.enabled ?? existing.enabled;
 
     this.db
       .prepare(
         `UPDATE scheduled_jobs
-         SET name = ?, cron_expression = ?, timezone = ?, action_payload = ?, enabled = ?, updated_at = ?
+         SET name = ?, cron_expression = ?, timezone = ?, action_payload = ?, model = ?, enabled = ?, updated_at = ?
          WHERE id = ?`
       )
-      .run(name, cronExpression, timezone, actionPayload, enabled ? 1 : 0, now, id);
+      .run(name, cronExpression, timezone, actionPayload, model, enabled ? 1 : 0, now, id);
 
     // Restart the cron task if expression or timezone changed
     this.stopTask(id);

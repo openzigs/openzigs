@@ -8,6 +8,7 @@ const createJobSchema = z.object({
   timezone: z.string().optional(),
   actionType: z.enum(["prompt", "shell", "custom"]).optional(),
   actionPayload: z.record(z.unknown()),
+  model: z.string().optional(),
   enabled: z.boolean().optional(),
 });
 
@@ -23,6 +24,7 @@ const updateJobSchema = z.object({
   cronExpression: z.string().optional(),
   timezone: z.string().optional(),
   actionPayload: z.record(z.unknown()).optional(),
+  model: z.string().nullable().optional(),
   enabled: z.boolean().optional(),
 });
 
@@ -43,7 +45,7 @@ export const createSchedulerTools = ({ scheduler }: SchedulerToolsOptions): Tool
   return [
     {
       name: "schedule-job",
-      description: "Schedule a recurring job with a cron expression. Supports timezone-aware scheduling.",
+      description: "Schedule a recurring job with a cron expression. Supports timezone-aware scheduling and model selection.",
       inputSchema: {
         type: "object",
         properties: {
@@ -52,6 +54,7 @@ export const createSchedulerTools = ({ scheduler }: SchedulerToolsOptions): Tool
           timezone: { type: "string" },
           actionType: { type: "string", enum: ["prompt", "shell", "custom"] },
           actionPayload: { type: "object" },
+          model: { type: "string", description: "LLM model to use for this job (e.g. gpt-4.1, claude-sonnet-4)" },
           enabled: { type: "boolean" },
         },
         required: ["name", "cronExpression", "actionPayload"],
@@ -113,6 +116,7 @@ export const createSchedulerTools = ({ scheduler }: SchedulerToolsOptions): Tool
           cronExpression: { type: "string" },
           timezone: { type: "string" },
           actionPayload: { type: "object" },
+          model: { type: "string", description: "LLM model override (set to null to use default)" },
           enabled: { type: "boolean" },
         },
         required: ["id"],

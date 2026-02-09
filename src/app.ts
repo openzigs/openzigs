@@ -21,6 +21,7 @@ import {
 import type { ToolRegistry } from "./mcp/tool-registry.js";
 import type { PromptManager } from "./productivity/prompt-manager.js";
 import type { Scheduler } from "./productivity/scheduler.js";
+import type { PersonalityManager } from "./personality/personality-manager.js";
 
 type CreateAppOptions = {
   auditLogger?: AuditLogger;
@@ -28,6 +29,7 @@ type CreateAppOptions = {
   toolRegistry?: ToolRegistry;
   promptManager?: PromptManager;
   scheduler?: Scheduler;
+  personalityManager?: PersonalityManager;
 };
 
 const isAuditCategory = (value: string): value is AuditCategory => {

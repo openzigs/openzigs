@@ -24,6 +24,7 @@ import { launchChrome, killChrome } from "./browser/chrome-launcher.js";
 import { getDatabase, closeDatabase } from "./productivity/database.js";
 import { PromptManager } from "./productivity/prompt-manager.js";
 import { Scheduler } from "./productivity/scheduler.js";
+import { PersonalityManager } from "./personality/personality-manager.js";
 import { DockerSidecarManager } from "./mcp/docker-sidecar-manager.js";
 import { LocalMcpServerManager } from "./mcp/local-mcp-server-manager.js";
 
@@ -55,6 +56,7 @@ if (chromeAutoLaunch && process.env.CHROME_DEBUG_HOST) {
 // ── Productivity: SQLite + Prompts + Scheduler ──
 const db = getDatabase();
 const promptManager = new PromptManager({ db });
+const personalityManager = new PersonalityManager({ db });
 const scheduler = new Scheduler({
   db,
   onExecute: async (job) => {
@@ -69,8 +71,12 @@ const scheduler = new Scheduler({
         throw new Error(`Saved prompt not found: ${promptName}`);
       }
       logger.info(`Scheduler executing prompt "${promptName}" for job "${job.name}"`);
-      // Send the resolved prompt to Copilot for execution once available
-      return `Prompt "${promptName}" resolved: ${resolved.slice(0, 200)}`;
+      const chatModel = job.model ?? undefined;
+      let result = "";
+      for await (const chunk of copilot.chat(resolved, { model: chatModel })) {
+        result += chunk;
+      }
+      return result || `Prompt "${promptName}" executed (no response)`;
     }
 
     if (job.actionType === "shell") {
@@ -154,6 +160,7 @@ registerMcpTools(toolRegistry, {
   approvalQueue,
   promptManager,
   scheduler,
+  personalityManager,
   linkedinSidecarUrl: resolveSidecarUrl("linkedin", "MCP_LINKEDIN_URL", 5101),
   twitterSidecarUrl: resolveSidecarUrl("twitter", "MCP_TWITTER_URL", 5102),
   facebookSidecarUrl: resolveSidecarUrl("facebook", "MCP_FACEBOOK_URL", 5103),
@@ -164,7 +171,7 @@ registerMcpTools(toolRegistry, {
   githubSidecarUrl: resolveSidecarUrl("github", "MCP_GITHUB_URL", 5304),
   localServerManager,
 });
-const app = createApp(config, { auditLogger, approvalQueue, toolRegistry, promptManager, scheduler });
+const app = createApp(config, { auditLogger, approvalQueue, toolRegistry, promptManager, scheduler, personalityManager });
 const port = Number(process.env.PORT ?? 3000);
 const uiOrigin = process.env.OPENZIGS_UI_ORIGIN ?? "http://localhost:3001";
 const channelManager = new ChannelManager();
@@ -176,7 +183,7 @@ const modelsRouter = createModelsRouter({ copilot });
 app.use("/api/models", modelsRouter);
 
 // Admin API routes (no auth for local dev; gate behind auth in prod)
-const adminRouter = createAdminRouter({ toolRegistry, sidecarManager, localServerManager, promptManager, scheduler });
+const adminRouter = createAdminRouter({ toolRegistry, sidecarManager, localServerManager, promptManager, scheduler, personalityManager, sessionManager, copilot });
 app.use("/api/admin", adminRouter);
 
 const tunnelConfig = config.tunnel;
@@ -317,7 +324,8 @@ const createRouter = (accessControlOverride?: AccessControlConfig) => {
     channelManager,
     sessionManager,
     copilot,
-    accessControl: accessControlOverride ?? (config.messaging?.accessControl ?? defaultAccessControl)
+    accessControl: accessControlOverride ?? (config.messaging?.accessControl ?? defaultAccessControl),
+    personalityManager
   });
 };
 

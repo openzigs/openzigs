@@ -22,6 +22,7 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { Send, Loader2, Bot, User, AlertCircle } from "lucide-react";
+import { ChatMarkdown } from "@/components/chat-markdown";
 import type { ModelInfo } from "@/lib/types";
 
 type ChatMessage = {
@@ -50,11 +51,38 @@ export const ChatView = () => {
   const [activeTool, setActiveTool] = useState<string | null>(null);
   const [pendingApproval, setPendingApproval] = useState<ApprovalRequest | null>(null);
   const [fallbackWarning, setFallbackWarning] = useState(false);
+  const [history, setHistory] = useState<string[]>([]);
+  const [historyIndex, setHistoryIndex] = useState(-1);
+  const [draftInput, setDraftInput] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const streamRef = useRef<{ id: string; content: string } | null>(null);
   const inputStuckTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const msgCounter = useRef(0);
+  const HISTORY_KEY = "openzigs:chat-history";
+  const MAX_HISTORY = 100;
+
+  // Load history from localStorage on mount
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem(HISTORY_KEY);
+      if (stored) {
+        const parsed = JSON.parse(stored) as string[];
+        if (Array.isArray(parsed)) setHistory(parsed.slice(-MAX_HISTORY));
+      }
+    } catch {
+      // Ignore corrupt localStorage
+    }
+  }, []);
+
+  // Persist history on change
+  useEffect(() => {
+    try {
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(history.slice(-MAX_HISTORY)));
+    } catch {
+      // localStorage full or unavailable
+    }
+  }, [history]);
 
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -215,6 +243,10 @@ export const ChatView = () => {
     setInput("");
     setSending(true);
     setThinking(true);
+    // Push to history
+    setHistory((prev) => [...prev.slice(-(MAX_HISTORY - 1)), text]);
+    setHistoryIndex(-1);
+    setDraftInput("");
 
     // Reset textarea height
     if (textareaRef.current) {
@@ -348,17 +380,21 @@ export const ChatView = () => {
             {/* Bubble */}
             <div
               className={cn(
-                "max-w-[75%] whitespace-pre-wrap rounded-2xl px-4 py-3 text-sm leading-relaxed",
+                "max-w-[75%] rounded-2xl px-4 py-3 text-sm leading-relaxed",
                 msg.role === "user"
-                  ? "bg-primary text-primary-foreground"
+                  ? "whitespace-pre-wrap bg-primary text-primary-foreground"
                   : msg.role === "error"
-                    ? "border border-destructive/30 bg-destructive/5 text-destructive text-xs"
+                    ? "whitespace-pre-wrap border border-destructive/30 bg-destructive/5 text-destructive text-xs"
                     : "bg-muted text-foreground"
               )}
             >
-              {msg.content}
-              {msg.role === "assistant" && streamRef.current?.id === msg.id && (
-                <span className="ml-0.5 inline-block h-[1em] w-0.5 animate-pulse bg-primary align-text-bottom" />
+              {msg.role === "assistant" ? (
+                <ChatMarkdown
+                  content={msg.content}
+                  isStreaming={streamRef.current?.id === msg.id}
+                />
+              ) : (
+                msg.content
               )}
             </div>
           </div>
@@ -409,6 +445,44 @@ export const ChatView = () => {
                 if (e.key === "Enter" && !e.shiftKey) {
                   e.preventDefault();
                   handleSend();
+                  return;
+                }
+                // History navigation: only when cursor is at position 0 or input is empty
+                const el = textareaRef.current;
+                const atStart = !el || el.selectionStart === 0;
+                if (e.key === "ArrowUp" && (atStart || !input)) {
+                  e.preventDefault();
+                  if (history.length === 0) return;
+                  if (historyIndex === -1) {
+                    // Entering history mode — save current draft
+                    setDraftInput(input);
+                    const idx = history.length - 1;
+                    setHistoryIndex(idx);
+                    setInput(history[idx]);
+                  } else if (historyIndex > 0) {
+                    const idx = historyIndex - 1;
+                    setHistoryIndex(idx);
+                    setInput(history[idx]);
+                  }
+                  return;
+                }
+                if (e.key === "ArrowDown" && historyIndex >= 0) {
+                  e.preventDefault();
+                  if (historyIndex < history.length - 1) {
+                    const idx = historyIndex + 1;
+                    setHistoryIndex(idx);
+                    setInput(history[idx]);
+                  } else {
+                    // Past the end — restore draft
+                    setHistoryIndex(-1);
+                    setInput(draftInput);
+                  }
+                  return;
+                }
+                if (e.key === "Escape" && historyIndex >= 0) {
+                  e.preventDefault();
+                  setHistoryIndex(-1);
+                  setInput(draftInput);
                 }
               }}
               disabled={inputDisabled}

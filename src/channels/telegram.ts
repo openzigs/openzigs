@@ -1,6 +1,7 @@
 import { Bot, InlineKeyboard, webhookCallback } from "grammy";
 import type { Context } from "grammy";
 import { convertMarkdown } from "./markdown.js";
+import { splitTelegramMessage as splitMessage } from "./telegram-formatter.js";
 import type {
   ApprovalRequest,
   ApprovalResponse,
@@ -42,18 +43,9 @@ export type TelegramChannelOptions = {
   bot?: TelegramBotLike;
 };
 
-const splitTelegramMessage = (text: string) => {
-  if (text.length <= TELEGRAM_MAX_MESSAGE_LENGTH) {
-    return [text];
-  }
-
-  const chunks: string[] = [];
-  let offset = 0;
-  while (offset < text.length) {
-    chunks.push(text.slice(offset, offset + TELEGRAM_MAX_MESSAGE_LENGTH));
-    offset += TELEGRAM_MAX_MESSAGE_LENGTH;
-  }
-  return chunks;
+/** @deprecated Use splitTelegramMessage from telegram-formatter.ts instead */
+const splitTelegramMessageLegacy = (text: string) => {
+  return splitMessage(text, TELEGRAM_MAX_MESSAGE_LENGTH);
 };
 
 export class TelegramChannel implements MessageChannel {
@@ -208,7 +200,7 @@ export class TelegramChannel implements MessageChannel {
           callbackMessage.chat.id.toString(),
           callbackMessage.message_id,
           `${originalText}\n\nStatus: ${approved ? "APPROVED" : "REJECTED"}`,
-          { parse_mode: "Markdown" }
+          { parse_mode: "MarkdownV2" }
         );
       }
     });
@@ -251,9 +243,9 @@ export class TelegramChannel implements MessageChannel {
       throw new Error("Channel is not connected");
     }
     const rawText = content.markdown ? convertMarkdown(content.text, "telegram") : content.text;
-    const chunks = splitTelegramMessage(rawText);
+    const chunks = splitMessage(rawText, TELEGRAM_MAX_MESSAGE_LENGTH);
     for (const chunk of chunks) {
-      await this.bot.api.sendMessage(chatId, chunk, content.markdown ? { parse_mode: "Markdown" } : undefined);
+      await this.bot.api.sendMessage(chatId, chunk, content.markdown ? { parse_mode: "MarkdownV2" } : undefined);
     }
   }
 
@@ -280,7 +272,7 @@ export class TelegramChannel implements MessageChannel {
     );
 
     await this.bot.api.sendMessage(chatId, message, {
-      parse_mode: "Markdown",
+      parse_mode: "MarkdownV2",
       reply_markup: keyboard
     });
   }
@@ -302,4 +294,4 @@ export class TelegramChannel implements MessageChannel {
   }
 }
 
-export { splitTelegramMessage };
+export { splitTelegramMessageLegacy as splitTelegramMessage };

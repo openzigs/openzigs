@@ -47,6 +47,7 @@ export type ScheduledJob = {
   timezone: string;
   actionType: string;
   actionPayload: Record<string, unknown>;
+  model?: string | null;
   enabled: boolean;
   lastRunAt: string | null;
   runCount: number;
@@ -129,4 +130,12 @@ export type LocalServersResponse = {
   servers: LocalServerStatus[];
   credentials: LocalServerCredential[];
   definitions: LocalServerDefinition[];
+};
+
+export type PersonalityConfig = {
+  systemInstruction: string;
+  prePrompt: string;
+  postPrompt: string;
+  enabled: boolean;
+  updatedAt: string;
 };

@@ -208,6 +208,36 @@ export class SessionManager {
     return events;
   }
 
+  /**
+   * Fork a session at a specific event index.
+   * Creates a new session pre-populated with events [0..upToIndex] from the
+   * source session. Returns the new session.
+   */
+  async forkSession(sourceSessionId: string, upToIndex: number): Promise<Session> {
+    const sourceSession = await this.getSession(sourceSessionId);
+    const allEvents = await this.readEvents(sourceSessionId);
+    const slicedEvents = allEvents.slice(0, upToIndex + 1);
+
+    // Create a new session with the same channel and user
+    const forked = await this.createSession({
+      channel: sourceSession.channel,
+      userId: sourceSession.userId,
+      metadata: {
+        ...sourceSession.metadata,
+        forkedFrom: sourceSessionId,
+        forkedAtIndex: upToIndex,
+      },
+    });
+
+    // Write the events to the new session's JSONL
+    if (slicedEvents.length > 0) {
+      const lines = slicedEvents.map((event) => JSON.stringify(serializeEvent(event))).join("\n") + "\n";
+      await fs.writeFile(this.eventsPath(forked.id), lines, "utf-8");
+    }
+
+    return forked;
+  }
+
   private sessionPath(id: string) {
     return path.join(this.baseDir, `${id}.json`);
   }
