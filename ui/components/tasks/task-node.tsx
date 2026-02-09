@@ -1,6 +1,6 @@
 "use client";
 
-import { memo } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import { Handle, Position, type NodeProps } from "@xyflow/react";
 
 export type TaskNodeData = {
@@ -17,20 +17,55 @@ export type TaskNodeData = {
   spawnedBy: string | null;
   /** Injected by the graph: number of children this task spawned */
   childCount?: number;
+  /** Whether this node has running children (waiting on sub-agents) */
+  isWaiting?: boolean;
+  /** Previous status for transition animations */
+  prevStatus?: string;
 };
 
 /* ─── Status → visual mapping ─── */
 const STATUS_STYLES: Record<string, {
   ring: string;
+  ringGlow: string;
   iconBg: string;
-  pulse: boolean;
+  dotColor: string;
   label: string;
 }> = {
-  queued:    { ring: "ring-yellow-500/60", iconBg: "bg-yellow-500/20 text-yellow-400", pulse: false, label: "Queued" },
-  running:   { ring: "ring-blue-500/60",   iconBg: "bg-blue-500/20 text-blue-400",     pulse: true,  label: "Running" },
-  completed: { ring: "ring-emerald-500/60", iconBg: "bg-emerald-500/20 text-emerald-400", pulse: false, label: "Done" },
-  failed:    { ring: "ring-red-500/60",     iconBg: "bg-red-500/20 text-red-400",       pulse: false, label: "Failed" },
-  cancelled: { ring: "ring-gray-500/60",    iconBg: "bg-gray-500/20 text-gray-400",     pulse: false, label: "Cancelled" },
+  queued:    {
+    ring: "ring-amber-400/40",
+    ringGlow: "",
+    iconBg: "bg-amber-500/10 text-amber-400",
+    dotColor: "bg-amber-400",
+    label: "Queued",
+  },
+  running:   {
+    ring: "ring-blue-500/70",
+    ringGlow: "shadow-[0_0_20px_4px_rgba(59,130,246,0.3)]",
+    iconBg: "bg-blue-500/15 text-blue-400",
+    dotColor: "bg-blue-500",
+    label: "Running",
+  },
+  completed: {
+    ring: "ring-emerald-500/70",
+    ringGlow: "shadow-[0_0_12px_2px_rgba(16,185,129,0.25)]",
+    iconBg: "bg-emerald-500/15 text-emerald-400",
+    dotColor: "bg-emerald-500",
+    label: "Done",
+  },
+  failed:    {
+    ring: "ring-red-500/70",
+    ringGlow: "shadow-[0_0_12px_2px_rgba(239,68,68,0.25)]",
+    iconBg: "bg-red-500/15 text-red-400",
+    dotColor: "bg-red-500",
+    label: "Failed",
+  },
+  cancelled: {
+    ring: "ring-gray-500/40",
+    ringGlow: "",
+    iconBg: "bg-gray-500/10 text-gray-400",
+    dotColor: "bg-gray-500",
+    label: "Cancelled",
+  },
 };
 
 /* ─── Role-based node icons (SVG paths) ─── */
@@ -74,17 +109,58 @@ function shortLabel(goal: string, maxLen = 40): string {
 }
 
 /**
- * Orchestration-style node for the task graph.
+ * Orchestration-style node with real-time status animations.
  *
- * Circular icon badge at top, label below, status indicator,
- * model + timing metadata. Designed to resemble a professional
- * orchestration / workflow diagram.
+ * - Running: pulsing glow, animated status dot, spinning progress ring
+ * - Completed: green glow, pop-in transition, checkmark overlay
+ * - Failed: red glow, error pulse
+ * - Waiting: breathing animation for orchestrators waiting on children
+ * - Queued: subtle amber dot
  */
 export const TaskNode = memo(({ data }: NodeProps) => {
   const task = data as unknown as TaskNodeData;
   const style = STATUS_STYLES[task.status] ?? STATUS_STYLES.queued;
   const role = getRole(task);
   const icon = ROLE_ICON[role] ?? ROLE_ICON.worker;
+  const isRunning = task.status === "running";
+  const isCompleted = task.status === "completed";
+  const isFailed = task.status === "failed";
+  const isWaiting = task.isWaiting && isRunning;
+
+  // Track status transitions for pop animation
+  const [justCompleted, setJustCompleted] = useState(false);
+  const prevStatusRef = useRef(task.status);
+
+  useEffect(() => {
+    if (prevStatusRef.current !== "completed" && task.status === "completed") {
+      setJustCompleted(true);
+      const timer = setTimeout(() => setJustCompleted(false), 500);
+      return () => clearTimeout(timer);
+    }
+    prevStatusRef.current = task.status;
+  }, [task.status]);
+
+  // Elapsed time for running tasks
+  const [elapsed, setElapsed] = useState("");
+  useEffect(() => {
+    if (!isRunning) {
+      setElapsed("");
+      return;
+    }
+    const start = new Date(task.createdAt).getTime();
+    const tick = () => {
+      const ms = Date.now() - start;
+      if (ms < 1000) setElapsed(`${ms}ms`);
+      else {
+        const secs = Math.floor(ms / 1000);
+        if (secs < 60) setElapsed(`${secs}s`);
+        else setElapsed(`${Math.floor(secs / 60)}m ${secs % 60}s`);
+      }
+    };
+    tick();
+    const interval = setInterval(tick, 1000);
+    return () => clearInterval(interval);
+  }, [isRunning, task.createdAt]);
 
   return (
     <>
@@ -95,32 +171,88 @@ export const TaskNode = memo(({ data }: NodeProps) => {
       />
 
       <div className="flex flex-col items-center gap-1.5 group">
-        {/* ─── Circular icon ─── */}
-        <div
-          className={`
-            relative flex h-14 w-14 items-center justify-center rounded-full
-            ring-2 ${style.ring} ${style.iconBg}
-            bg-card shadow-lg
-            transition-all duration-200
-            group-hover:shadow-xl group-hover:scale-105
-            ${style.pulse ? "animate-pulse" : ""}
-          `}
-        >
-          <svg
-            viewBox="0 0 24 24"
-            className="h-6 w-6"
-            dangerouslySetInnerHTML={{ __html: icon.svg }}
-          />
+        {/* ─── Circular icon with animated effects ─── */}
+        <div className="relative">
+          {/* Outer glow ring for running state */}
+          {isRunning && !isWaiting && (
+            <div className="absolute inset-[-4px] rounded-full bg-blue-500/10 node-running" />
+          )}
+          {/* Waiting state: orbiting dots */}
+          {isWaiting && (
+            <>
+              <div className="absolute inset-[-6px] rounded-full node-waiting">
+                <div className="absolute inset-0 flex items-center justify-center">
+                  <div className="h-2 w-2 rounded-full bg-blue-400/60" style={{ animation: "waiting-orbit 2s linear infinite" }} />
+                </div>
+              </div>
+              <div className="absolute inset-[-6px] rounded-full">
+                <div className="absolute inset-0 flex items-center justify-center">
+                  <div className="h-1.5 w-1.5 rounded-full bg-blue-300/40" style={{ animation: "waiting-orbit 2s linear infinite 0.67s" }} />
+                </div>
+              </div>
+              <div className="absolute inset-[-6px] rounded-full">
+                <div className="absolute inset-0 flex items-center justify-center">
+                  <div className="h-1.5 w-1.5 rounded-full bg-blue-300/30" style={{ animation: "waiting-orbit 2s linear infinite 1.33s" }} />
+                </div>
+              </div>
+            </>
+          )}
+
+          {/* Spinning progress ring for running */}
+          {isRunning && (
+            <svg
+              className="absolute inset-[-3px] h-[62px] w-[62px]"
+              viewBox="0 0 62 62"
+              style={{ animation: "ring-spin 3s linear infinite" }}
+            >
+              <circle
+                cx="31"
+                cy="31"
+                r="29"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                strokeDasharray="40 142"
+                className="text-blue-500/40"
+                strokeLinecap="round"
+              />
+            </svg>
+          )}
+
+          <div
+            className={`
+              relative flex h-14 w-14 items-center justify-center rounded-full
+              ring-2 ${style.ring}
+              ${style.iconBg}
+              ${style.ringGlow}
+              bg-card
+              transition-all duration-500 ease-out
+              group-hover:scale-110
+              ${justCompleted ? "node-completed-pop" : ""}
+            `}
+          >
+            <svg
+              viewBox="0 0 24 24"
+              className={`h-6 w-6 transition-all duration-300 ${isRunning ? "opacity-80" : ""}`}
+              dangerouslySetInnerHTML={{ __html: icon.svg }}
+            />
+
+            {/* Completion checkmark overlay */}
+            {isCompleted && (
+              <div className="absolute inset-0 flex items-center justify-center">
+                <div className="absolute inset-0 rounded-full bg-emerald-500/10" />
+              </div>
+            )}
+          </div>
 
           {/* Status dot — bottom-right of circle */}
           <span
             className={`
-              absolute -bottom-0.5 -right-0.5 h-3.5 w-3.5 rounded-full border-2 border-card
-              ${task.status === "completed" ? "bg-emerald-500" :
-                task.status === "running" ? "bg-blue-500 animate-pulse" :
-                task.status === "failed" ? "bg-red-500" :
-                task.status === "queued" ? "bg-yellow-500" :
-                "bg-gray-500"}
+              absolute -bottom-0.5 -right-0.5 h-3.5 w-3.5 rounded-full
+              border-2 border-card
+              ${style.dotColor}
+              ${isRunning ? "status-dot-active" : ""}
+              transition-colors duration-500
             `}
             title={style.label}
           />
@@ -128,21 +260,33 @@ export const TaskNode = memo(({ data }: NodeProps) => {
 
         {/* ─── Label card ─── */}
         <div className="flex flex-col items-center gap-0.5 max-w-[180px]">
-          <span className="text-[9px] font-bold uppercase tracking-[0.15em] text-muted-foreground">
-            {icon.label}
+          <span className={`text-[9px] font-bold uppercase tracking-[0.15em] transition-colors duration-300 ${
+            isRunning ? "text-blue-400" :
+            isCompleted ? "text-emerald-400" :
+            isFailed ? "text-red-400" :
+            "text-muted-foreground"
+          }`}>
+            {isWaiting ? "Waiting" : icon.label}
           </span>
 
           <p className="text-center text-[11px] font-medium leading-tight text-foreground line-clamp-2">
             {shortLabel(task.goal)}
           </p>
 
+          {/* Model badge */}
           {task.model && (
             <span className="mt-0.5 rounded-full bg-muted/60 px-2 py-[1px] text-[9px] font-mono text-muted-foreground">
               {task.model}
             </span>
           )}
 
-          {task.completedAt && (
+          {/* Duration: live elapsed for running, final for completed */}
+          {isRunning && elapsed && (
+            <span className="text-[9px] font-mono text-blue-400 tabular-nums">
+              {elapsed}
+            </span>
+          )}
+          {task.completedAt && !isRunning && (
             <span className="text-[9px] text-muted-foreground">
               {formatDuration(task.createdAt, task.completedAt)}
             </span>
@@ -150,17 +294,26 @@ export const TaskNode = memo(({ data }: NodeProps) => {
         </div>
 
         {/* ─── Result / Error preview ─── */}
-        {task.status === "completed" && task.result && (
-          <div className="max-w-[200px] rounded-md bg-emerald-500/10 px-2 py-1">
+        {isCompleted && task.result && (
+          <div className="max-w-[200px] rounded-md bg-emerald-500/10 px-2 py-1 animate-slide-in">
             <p className="text-center text-[9px] leading-tight text-emerald-600 dark:text-emerald-400 line-clamp-2">
               {task.result.slice(0, 100)}
             </p>
           </div>
         )}
-        {task.status === "failed" && task.error && (
-          <div className="max-w-[200px] rounded-md bg-red-500/10 px-2 py-1">
+        {isFailed && task.error && (
+          <div className="max-w-[200px] rounded-md bg-red-500/10 px-2 py-1 animate-slide-in">
             <p className="text-center text-[9px] leading-tight text-red-600 dark:text-red-400 line-clamp-2">
               {task.error.slice(0, 100)}
+            </p>
+          </div>
+        )}
+
+        {/* Waiting indicator for orchestrators */}
+        {isWaiting && (
+          <div className="max-w-[200px] rounded-md bg-blue-500/10 px-2 py-1 animate-slide-in">
+            <p className="text-center text-[9px] leading-tight text-blue-400">
+              Waiting on {task.childCount ?? 0} sub-agent{(task.childCount ?? 0) > 1 ? "s" : ""}…
             </p>
           </div>
         )}

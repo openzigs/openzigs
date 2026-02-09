@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo } from "react";
+import { useEffect, useRef } from "react";
 import {
   ReactFlow,
   Background,
@@ -8,6 +8,8 @@ import {
   MiniMap,
   useNodesState,
   useEdgesState,
+  useReactFlow,
+  ReactFlowProvider,
   type Node,
   type Edge,
   type EdgeProps,
@@ -17,8 +19,9 @@ import {
   MarkerType,
 } from "@xyflow/react";
 import { fetchJson } from "@/lib/api";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { TaskNode } from "./task-node";
+import { useSocket } from "@/lib/socket-context";
 
 import "@xyflow/react/dist/style.css";
 
@@ -33,7 +36,7 @@ const RANK_SEP_Y = 120;
 type LayoutNode = {
   id: string;
   children: string[];
-  width: number;        // subtree width
+  width: number;
   x: number;
   y: number;
 };
@@ -58,11 +61,9 @@ function applyTreeLayout(nodes: Node[], edges: Edge[]): Node[] {
     parentMap.set(edge.target, edge.source);
   }
 
-  // Find roots
   const roots = nodes.filter((n) => parentMap.get(n.id) === null);
   if (roots.length === 0) roots.push(nodes[0]);
 
-  // Bottom-up: compute subtree widths
   const layoutNodes = new Map<string, LayoutNode>();
 
   function computeWidth(id: string): number {
@@ -80,7 +81,6 @@ function applyTreeLayout(nodes: Node[], edges: Edge[]): Node[] {
     return w;
   }
 
-  // Top-down: assign positions
   function assignPositions(id: string, x: number, y: number) {
     const ln = layoutNodes.get(id)!;
     ln.x = x;
@@ -101,7 +101,6 @@ function applyTreeLayout(nodes: Node[], edges: Edge[]): Node[] {
     });
   }
 
-  // Handle multiple roots side by side
   const rootWidths = roots.map((r) => computeWidth(r.id));
   const totalRootWidth = rootWidths.reduce((a, b) => a + b, 0) + (roots.length - 1) * NODE_SEP_X;
   let startX = -totalRootWidth / 2;
@@ -121,9 +120,29 @@ function applyTreeLayout(nodes: Node[], edges: Edge[]): Node[] {
   });
 }
 
-/* ─── Custom edge with animated arrow + optional label ─── */
+/* ─── Status → edge style mapping ─── */
 
-function OrchestrationEdge({
+const EDGE_COLORS = {
+  running:   { stroke: "hsl(217, 91%, 60%)", glow: "drop-shadow(0 0 4px rgba(59,130,246,0.5))" },
+  completed: { stroke: "hsl(160, 84%, 39%)", glow: "" },
+  failed:    { stroke: "hsl(0, 84%, 60%)",   glow: "drop-shadow(0 0 3px rgba(239,68,68,0.4))" },
+  queued:    { stroke: "hsl(var(--muted-foreground))", glow: "" },
+  cancelled: { stroke: "hsl(var(--muted-foreground))", glow: "" },
+} as const;
+
+function getEdgeLabel(status: string | undefined): string {
+  switch (status) {
+    case "running": return "executing";
+    case "completed": return "completed";
+    case "failed": return "failed";
+    case "cancelled": return "cancelled";
+    default: return "spawned";
+  }
+}
+
+/* ─── Animated edge with flowing particles ─── */
+
+function AnimatedOrchestrationEdge({
   id,
   sourceX,
   sourceY,
@@ -145,19 +164,86 @@ function OrchestrationEdge({
     borderRadius: 16,
   });
 
-  const label = (data as Record<string, unknown> | undefined)?.label as string | undefined;
+  const edgeData = data as Record<string, unknown> | undefined;
+  const label = edgeData?.label as string | undefined;
+  const status = edgeData?.targetStatus as string | undefined;
+  const isRunning = status === "running";
+  const isCompleted = status === "completed";
+  const isFailed = status === "failed";
+
+  const colors = EDGE_COLORS[status as keyof typeof EDGE_COLORS] ?? EDGE_COLORS.queued;
 
   return (
     <>
-      <BaseEdge id={id} path={edgePath} style={style} markerEnd={markerEnd} />
+      {/* Glow layer for running edges */}
+      {isRunning && (
+        <BaseEdge
+          id={`${id}-glow`}
+          path={edgePath}
+          style={{
+            stroke: colors.stroke,
+            strokeWidth: 6,
+            opacity: 0.15,
+            filter: "blur(4px)",
+          }}
+        />
+      )}
+
+      {/* Main edge path */}
+      <BaseEdge
+        id={id}
+        path={edgePath}
+        style={{
+          ...style,
+          stroke: colors.stroke,
+          strokeWidth: isRunning ? 2.5 : 2,
+          strokeDasharray: isRunning ? "8 4" : undefined,
+          strokeDashoffset: 0,
+          animation: isRunning ? "edge-dash-flow 0.6s linear infinite" : undefined,
+          transition: "stroke 0.5s ease, stroke-width 0.3s ease",
+        }}
+        markerEnd={markerEnd}
+      />
+
+      {/* Flowing particles along running edges */}
+      {isRunning && (
+        <g>
+          <circle r="3" fill={colors.stroke} opacity="0.8">
+            <animateMotion dur="1.5s" repeatCount="indefinite" path={edgePath} />
+          </circle>
+          <circle r="2" fill={colors.stroke} opacity="0.5">
+            <animateMotion dur="1.5s" repeatCount="indefinite" path={edgePath} begin="0.5s" />
+          </circle>
+          <circle r="1.5" fill={colors.stroke} opacity="0.3">
+            <animateMotion dur="1.5s" repeatCount="indefinite" path={edgePath} begin="1s" />
+          </circle>
+        </g>
+      )}
+
+      {/* Edge label */}
       {label && (
         <EdgeLabelRenderer>
           <div
-            className="nodrag nopan pointer-events-none absolute rounded-full bg-card/90 px-2 py-0.5 text-[9px] font-medium text-muted-foreground shadow-sm border border-border/50"
+            className={`
+              nodrag nopan pointer-events-none absolute rounded-full px-2 py-0.5
+              text-[9px] font-medium shadow-sm border
+              transition-all duration-500
+              ${isRunning
+                ? "bg-blue-500/10 text-blue-400 border-blue-500/30"
+                : isCompleted
+                ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/30"
+                : isFailed
+                ? "bg-red-500/10 text-red-400 border-red-500/30"
+                : "bg-card/90 text-muted-foreground border-border/50"
+              }
+            `}
             style={{
               transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`,
             }}
           >
+            {isRunning && (
+              <span className="inline-block h-1.5 w-1.5 rounded-full bg-blue-400 mr-1 status-dot-active" />
+            )}
             {label}
           </div>
         </EdgeLabelRenderer>
@@ -167,25 +253,71 @@ function OrchestrationEdge({
 }
 
 const nodeTypes = { taskNode: TaskNode };
-const edgeTypes = { orchestration: OrchestrationEdge };
+const edgeTypes = { orchestration: AnimatedOrchestrationEdge };
 
 type TaskGraphProps = {
   taskId: string;
   height?: number;
 };
 
+type TaskStatusEvent = {
+  event: string;
+  task: {
+    id: string;
+    parentTaskId: string | null;
+    status: string;
+    goal: string;
+    trigger: string;
+    depth: number;
+    model: string | null;
+    result: string | null;
+    error: string | null;
+    spawnedBy: string | null;
+    sessionId: string | null;
+    createdAt: string;
+    startedAt: string | null;
+    completedAt: string | null;
+  };
+};
+
 /**
- * Interactive orchestration graph visualizing task → sub-agent relationships.
- * Shows the full task tree as a workflow diagram with role-based icons,
- * animated connections, and edge labels.
+ * Interactive orchestration graph with real-time animated status updates.
+ *
+ * Features:
+ * - Pulsing/flowing nodes for running agents
+ * - Animated particle edges for active connections
+ * - Green completion transitions, red failure states
+ * - "Waiting" state for orchestrators with running children
+ * - Socket.IO real-time updates + polling fallback
  */
-export const TaskGraph = ({ taskId, height = 500 }: TaskGraphProps) => {
+function TaskGraphInner({ taskId, height = 500 }: TaskGraphProps) {
+  const { socket } = useSocket();
+  const queryClient = useQueryClient();
+  const { fitView } = useReactFlow();
+  const prevNodeCountRef = useRef(0);
+
   const { data, isLoading, error } = useQuery({
     queryKey: ["taskTree", taskId],
     queryFn: () =>
       fetchJson<{ nodes: Node[]; edges: Edge[] }>(`/api/tasks/${taskId}/tree`),
-    refetchInterval: 10_000,
+    refetchInterval: 3_000, // faster polling for near-real-time feel
   });
+
+  // Listen for Socket.IO task status events to trigger instant refetch
+  useEffect(() => {
+    if (!socket) return;
+
+    const handleTaskStatus = (_payload: TaskStatusEvent) => {
+      // Only refetch if this event is relevant to the current task tree
+      // (the task itself, or a descendant)
+      queryClient.invalidateQueries({ queryKey: ["taskTree", taskId] });
+    };
+
+    socket.on("task:status", handleTaskStatus);
+    return () => {
+      socket.off("task:status", handleTaskStatus);
+    };
+  }, [socket, taskId, queryClient]);
 
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
@@ -199,33 +331,55 @@ export const TaskGraph = ({ taskId, height = 500 }: TaskGraphProps) => {
       childCounts.set(edge.source, (childCounts.get(edge.source) ?? 0) + 1);
     }
 
-    // Inject childCount into node data
-    const enrichedNodes = data.nodes.map((node) => ({
-      ...node,
-      data: {
-        ...(node.data as Record<string, unknown>),
-        childCount: childCounts.get(node.id) ?? 0,
-      },
-    }));
+    // Determine which parents have running children (= waiting state)
+    const runningChildParents = new Set<string>();
+    for (const edge of data.edges) {
+      const targetNode = data.nodes.find((n) => n.id === edge.target);
+      const targetData = targetNode?.data as Record<string, unknown> | undefined;
+      if (targetData?.status === "running" || targetData?.status === "queued") {
+        runningChildParents.add(edge.source);
+      }
+    }
 
-    // Build relationship labels for edges
+    // Inject enrichment into node data
+    const enrichedNodes = data.nodes.map((node) => {
+      const nodeData = node.data as Record<string, unknown>;
+      const hasChildren = (childCounts.get(node.id) ?? 0) > 0;
+      const isRunning = nodeData.status === "running";
+      const hasRunningChildren = runningChildParents.has(node.id);
+
+      return {
+        ...node,
+        data: {
+          ...nodeData,
+          childCount: childCounts.get(node.id) ?? 0,
+          isWaiting: hasChildren && isRunning && hasRunningChildren,
+        },
+      };
+    });
+
+    // Build enriched edges with status-aware styling
     const nodeMap = new Map(data.nodes.map((n) => [n.id, n.data as Record<string, unknown>]));
     const enrichedEdges: Edge[] = data.edges.map((edge) => {
       const target = nodeMap.get(edge.target);
-      const isRunning = target?.status === "running";
+      const targetStatus = (target?.status as string) ?? "queued";
+
       return {
         ...edge,
         type: "orchestration",
-        animated: isRunning,
+        animated: false, // handled by our custom edge
         data: {
-          label: isRunning ? "executing" : target?.status === "completed" ? "completed" : target?.status === "failed" ? "failed" : "spawned",
+          label: getEdgeLabel(targetStatus),
+          targetStatus,
         },
-        markerEnd: { type: MarkerType.ArrowClosed, width: 16, height: 16 },
+        markerEnd: {
+          type: MarkerType.ArrowClosed,
+          width: 14,
+          height: 14,
+          color: (EDGE_COLORS[targetStatus as keyof typeof EDGE_COLORS] ?? EDGE_COLORS.queued).stroke,
+        },
         style: {
-          stroke: isRunning ? "hsl(217, 91%, 60%)" :
-            target?.status === "completed" ? "hsl(160, 84%, 39%)" :
-            target?.status === "failed" ? "hsl(0, 84%, 60%)" :
-            "hsl(var(--muted-foreground))",
+          stroke: (EDGE_COLORS[targetStatus as keyof typeof EDGE_COLORS] ?? EDGE_COLORS.queued).stroke,
           strokeWidth: 2,
         },
       };
@@ -234,7 +388,13 @@ export const TaskGraph = ({ taskId, height = 500 }: TaskGraphProps) => {
     const laidOut = applyTreeLayout(enrichedNodes, enrichedEdges);
     setNodes(laidOut);
     setEdges(enrichedEdges);
-  }, [data, setNodes, setEdges]);
+
+    // Fit view when new nodes appear
+    if (laidOut.length !== prevNodeCountRef.current) {
+      prevNodeCountRef.current = laidOut.length;
+      requestAnimationFrame(() => fitView({ padding: 0.3, duration: 300 }));
+    }
+  }, [data, setNodes, setEdges, fitView]);
 
   if (isLoading) {
     return (
@@ -242,7 +402,10 @@ export const TaskGraph = ({ taskId, height = 500 }: TaskGraphProps) => {
         className="flex items-center justify-center rounded-xl border border-border bg-card"
         style={{ height }}
       >
-        <p className="text-sm text-muted-foreground">Loading orchestration graph…</p>
+        <div className="flex flex-col items-center gap-3">
+          <div className="h-8 w-8 rounded-full border-2 border-blue-500/30 border-t-blue-500 animate-spin" />
+          <p className="text-sm text-muted-foreground">Loading orchestration graph…</p>
+        </div>
       </div>
     );
   }
@@ -300,5 +463,17 @@ export const TaskGraph = ({ taskId, height = 500 }: TaskGraphProps) => {
         />
       </ReactFlow>
     </div>
+  );
+}
+
+/**
+ * Wrapper component that provides ReactFlowProvider context.
+ * Required for useReactFlow() hook to work inside TaskGraphInner.
+ */
+export const TaskGraph = ({ taskId, height = 500 }: TaskGraphProps) => {
+  return (
+    <ReactFlowProvider>
+      <TaskGraphInner taskId={taskId} height={height} />
+    </ReactFlowProvider>
   );
 };
