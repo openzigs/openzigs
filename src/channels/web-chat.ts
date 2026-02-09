@@ -32,6 +32,7 @@ export class WebChatChannel implements MessageChannel {
   private chatIdToSocketId = new Map<string, string>();
   private messageHandlers: Array<(msg: IncomingMessage) => void> = [];
   private approvalHandlers: Array<(response: ApprovalResponse) => void> = [];
+  private clearHandlers: Array<(data: { userId: string }) => void> = [];
 
   constructor({ io, sessionManager }: WebChatChannelOptions) {
     this.io = io;
@@ -59,6 +60,11 @@ export class WebChatChannel implements MessageChannel {
 
   onApprovalResponse(handler: (response: ApprovalResponse) => void): void {
     this.approvalHandlers.push(handler);
+  }
+
+  /** Register a handler called when a user clears their chat (session ended). */
+  onClear(handler: (data: { userId: string }) => void): void {
+    this.clearHandlers.push(handler);
   }
 
   async sendMessage(chatId: string, content: MessageContent): Promise<void> {
@@ -171,6 +177,33 @@ export class WebChatChannel implements MessageChannel {
       }
     });
 
+    // End the current session and start fresh on next message
+    socket.on("chat:clear", () => {
+      if (this.sessionManager) {
+        void this.clearSessionHistory(userId).then((cleared) => {
+          socket.emit("chat:cleared", { success: cleared });
+          if (cleared) {
+            for (const handler of this.clearHandlers) {
+              handler({ userId });
+            }
+          }
+        }).catch(() => {
+          socket.emit("chat:cleared", { success: false });
+        });
+      }
+    });
+
+    // Restore a specific session's history into the chat window
+    socket.on("chat:restore-session", (data: { sessionId?: string }) => {
+      const sessionId = typeof data?.sessionId === "string" ? data.sessionId : "";
+      if (!sessionId || !this.sessionManager) return;
+      // Emit chat:connected so the client gets a chatId (it may have skipped chat:request-session)
+      socket.emit("chat:connected", { chatId });
+      void this.restoreSession(socket, sessionId).catch(() => {
+        socket.emit("chat:error", { error: `Failed to restore session ${sessionId}` });
+      });
+    });
+
     socket.on("disconnect", () => {
       this.sockets.delete(socket.id);
       this.chatIdToSocketId.delete(chatId);
@@ -185,12 +218,15 @@ export class WebChatChannel implements MessageChannel {
     return this.sockets.get(socketId)?.socket;
   }
 
-  /** Load the most recent web session for this userId and send conversation history to the socket. */
+  /** Load the most recent active (non-ended) web session for this userId and send conversation history to the socket. */
   private async sendSessionHistory(socket: Socket, userId: string): Promise<void> {
     if (!this.sessionManager) return;
     const sessions = await this.sessionManager.listSessions({ channel: "web", userId });
-    if (sessions.length === 0) return;
-    const history = await this.sessionManager.getHistory(sessions[0].id, 50);
+    // Find the latest active (non-ended) session
+    const session = sessions.find((s) => !s.metadata?.ended);
+    if (!session) return;
+    const history = await this.sessionManager.getHistory(session.id, 50);
+
     const messages = history
       .filter((event) => event.type === "user" || event.type === "assistant")
       .map((event) => ({
@@ -201,5 +237,29 @@ export class WebChatChannel implements MessageChannel {
     if (messages.length > 0) {
       socket.emit("chat:history", { messages });
     }
+  }
+
+  /** Clear the most recent web session's conversation history. */
+  private async clearSessionHistory(userId: string): Promise<boolean> {
+    if (!this.sessionManager) return false;
+    const sessions = await this.sessionManager.listSessions({ channel: "web", userId });
+    if (sessions.length === 0) return false;
+    await this.sessionManager.clearSession(sessions[0].id);
+    return true;
+  }
+
+  /** Load a specific session's history and send it to the socket. */
+  private async restoreSession(socket: Socket, sessionId: string): Promise<void> {
+    if (!this.sessionManager) return;
+    const history = await this.sessionManager.getHistory(sessionId, 50);
+    const messages = history
+      .filter((event) => event.type === "user" || event.type === "assistant")
+      .map((event) => ({
+        role: event.type as "user" | "assistant",
+        content: event.content,
+        timestamp: event.timestamp.toISOString(),
+      }));
+    // Send as history (replaces current chat messages on client)
+    socket.emit("chat:history", { messages, restored: true });
   }
 }

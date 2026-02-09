@@ -157,6 +157,13 @@ try {
   logger.warn(`Local MCP server startup error: ${msg}`);
 }
 
+const app = createApp(config, { auditLogger, approvalQueue, toolRegistry, promptManager, scheduler, personalityManager });
+const port = Number(process.env.PORT ?? 3000);
+const uiOrigin = process.env.OPENZIGS_UI_ORIGIN ?? "http://localhost:3001";
+const channelManager = new ChannelManager();
+const sessionManager = new SessionManager();
+const copilot = new CopilotWrapperService({ toolRegistry });
+
 registerMcpTools(toolRegistry, {
   allowedDirs: allowedDirs.length > 0 ? allowedDirs : [process.cwd(), os.tmpdir(), os.homedir(), "/tmp", "/private/tmp"],
   braveApiKey: process.env.BRAVE_API_KEY,
@@ -168,6 +175,7 @@ registerMcpTools(toolRegistry, {
   scheduler,
   personalityManager,
   taskEngine,
+  copilot,
   linkedinSidecarUrl: resolveSidecarUrl("linkedin", "MCP_LINKEDIN_URL", 5101),
   twitterSidecarUrl: resolveSidecarUrl("twitter", "MCP_TWITTER_URL", 5102),
   facebookSidecarUrl: resolveSidecarUrl("facebook", "MCP_FACEBOOK_URL", 5103),
@@ -178,28 +186,23 @@ registerMcpTools(toolRegistry, {
   githubSidecarUrl: resolveSidecarUrl("github", "MCP_GITHUB_URL", 5304),
   localServerManager,
 });
-const app = createApp(config, { auditLogger, approvalQueue, toolRegistry, promptManager, scheduler, personalityManager });
-const port = Number(process.env.PORT ?? 3000);
-const uiOrigin = process.env.OPENZIGS_UI_ORIGIN ?? "http://localhost:3001";
-const channelManager = new ChannelManager();
-const sessionManager = new SessionManager();
-const copilot = new CopilotWrapperService({ toolRegistry });
+
+// ── Task Background Worker ──
+const maxConcurrent = config.tasks?.maxConcurrent ?? 2;
+const taskWorker = new TaskWorker({ engine: taskEngine, copilot, maxConcurrent });
+taskWorker.start();
 
 // Model API routes
 const modelsRouter = createModelsRouter({ copilot });
 app.use("/api/models", modelsRouter);
 
 // Admin API routes (no auth for local dev; gate behind auth in prod)
-const adminRouter = createAdminRouter({ toolRegistry, sidecarManager, localServerManager, promptManager, scheduler, personalityManager, sessionManager, copilot });
+const adminRouter = createAdminRouter({ toolRegistry, sidecarManager, localServerManager, promptManager, scheduler, personalityManager, sessionManager, copilot, taskWorker, taskEngine });
 app.use("/api/admin", adminRouter);
 
 // Tasks API routes
 const tasksRouter = createTasksRouter({ taskEngine });
 app.use("/api/tasks", tasksRouter);
-
-// ── Task Background Worker + Notification Dispatcher ──
-const taskWorker = new TaskWorker({ engine: taskEngine, copilot });
-taskWorker.start();
 
 const tunnelConfig = config.tunnel;
 const tunnel = tunnelConfig?.enabled
@@ -430,6 +433,12 @@ if (webConfig?.enabled !== false) {
 
   await webChatChannel.connect();
   channelManager.register(webChatChannel);
+
+  // When a user clears their chat, invalidate the router's cached session
+  // so the next message creates a brand new session.
+  webChatChannel.onClear(({ userId }) => {
+    router.clearUserSession("web", userId);
+  });
 
   // Streaming-aware routing for web chat
   webChatChannel.onMessage((message) => {

@@ -7,6 +7,7 @@ import type { PersonalityManager } from "../personality/personality-manager.js";
 import type { TaskEngine } from "../tasks/task-engine.js";
 import { ALWAYS_ON_TOOLS } from "../mcp/constants.js";
 import { setActiveChatContext, clearActiveChatContext } from "../mcp/tools/agent-tools.js";
+import { setActiveOrchestrateContext, clearActiveOrchestrateContext } from "../mcp/tools/orchestrate-agents.js";
 
 export type RouteOptions = {
   /** Callback invoked for each streaming chunk. */
@@ -72,6 +73,12 @@ export class MessageRouter {
     this.taskEngine = taskEngine;
   }
 
+  /** Invalidate the cached session for a user so the next message creates a new session. */
+  clearUserSession(channelType: string, userId: string): void {
+    const key = this.keyFor(channelType, userId);
+    this.userSessions.delete(key);
+  }
+
   async route(message: IncomingMessage, options?: RouteOptions): Promise<void> {
     const channel = this.channelManager.getChannel(message.channelType);
     if (!channel) {
@@ -112,8 +119,13 @@ export class MessageRouter {
 
     let response = "";
     try {
-      // Set chat context so spawn-agent can propagate originating session/channel info
+      // Set chat context so spawn-agent and orchestrate-agents can propagate originating session/channel info
       setActiveChatContext({
+        sessionId,
+        channelType: message.channelType as import("../channels/types.js").ChannelType,
+        chatId: message.chatId,
+      });
+      setActiveOrchestrateContext({
         sessionId,
         channelType: message.channelType as import("../channels/types.js").ChannelType,
         chatId: message.chatId,
@@ -127,6 +139,7 @@ export class MessageRouter {
       }
 
       clearActiveChatContext();
+      clearActiveOrchestrateContext();
 
       // Mark task completed
       if (taskId && this.taskEngine) {
@@ -134,6 +147,7 @@ export class MessageRouter {
       }
     } catch (error) {
       clearActiveChatContext();
+      clearActiveOrchestrateContext();
       // Mark task failed
       if (taskId && this.taskEngine) {
         const msg = error instanceof Error ? error.message : String(error);
@@ -178,10 +192,11 @@ export class MessageRouter {
       userId: message.userId
     });
 
-    if (sessions.length > 0) {
-      const sessionId = sessions[0].id;
-      this.userSessions.set(key, sessionId);
-      return sessionId;
+    // Find the first active (non-ended) session
+    const active = sessions.find((s) => !s.metadata?.ended);
+    if (active) {
+      this.userSessions.set(key, active.id);
+      return active.id;
     }
 
     const session = await this.sessionManager.createSession({

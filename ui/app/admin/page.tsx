@@ -11,6 +11,8 @@ import { LocalServersPanel } from "@/components/admin/local-servers-panel";
 import { ToolsPanel } from "@/components/admin/tools-panel";
 import { EnvPanel } from "@/components/admin/env-panel";
 import { PersonalityPanel } from "@/components/admin/personality-panel";
+import { TaskEnginePanel } from "@/components/admin/task-engine-panel";
+import { SessionsPanel } from "@/components/admin/sessions-panel";
 import { ToastContainer, showToast } from "@/components/toast";
 import { RotateCw } from "lucide-react";
 
@@ -65,6 +67,14 @@ export default function AdminPage() {
 
         <SectionCard title="AI Personality">
           <PersonalityPanel />
+        </SectionCard>
+
+        <SectionCard title="Task Engine">
+          <TaskEnginePanel />
+        </SectionCard>
+
+        <SectionCard title="Sessions">
+          <SessionsPanel />
         </SectionCard>
 
         <SectionCard title="MCP Sidecars (Docker)">

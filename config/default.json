@@ -101,6 +101,9 @@
       }
     }
   },
+  "tasks": {
+    "maxConcurrent": 2
+  },
   "session": {
     "historyWindow": 20,
     "maxToolsPerRequest": 30,

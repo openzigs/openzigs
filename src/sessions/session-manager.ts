@@ -187,6 +187,23 @@ export class SessionManager {
     ]);
   }
 
+  /**
+   * End a session without deleting its conversation events.
+   * Sets `metadata.ended = true` so the router creates a new session
+   * for subsequent messages, while admin views still see the full history.
+   */
+  async clearSession(id: string): Promise<Session> {
+    const session = await this.getSession(id);
+    const now = this.clock();
+    const updated = {
+      ...session,
+      lastActiveAt: now,
+      metadata: { ...session.metadata, ended: true, endedAt: now.toISOString() },
+    };
+    await this.updateSession(updated);
+    return updated;
+  }
+
   async appendEvent(sessionId: string, event: ConversationEvent): Promise<void> {
     const session = await this.getSession(sessionId);
     const storedEvent = serializeEvent(event);

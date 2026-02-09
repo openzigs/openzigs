@@ -82,6 +82,20 @@ export class TaskWorker extends EventEmitter {
     return this.running;
   }
 
+  /** Get the current max concurrent limit. */
+  get concurrencyLimit(): number {
+    return this.maxConcurrent;
+  }
+
+  /** Update the max concurrent limit at runtime without restarting. */
+  setMaxConcurrent(n: number): void {
+    if (n < 1 || n > 10) {
+      throw new RangeError("maxConcurrent must be between 1 and 10");
+    }
+    this.maxConcurrent = n;
+    this.log.info(`TaskWorker maxConcurrent updated to ${n}`);
+  }
+
   /** Single poll iteration: dequeue up to available capacity. */
   private async poll(): Promise<void> {
     if (this.stopped) {
@@ -117,7 +131,7 @@ export class TaskWorker extends EventEmitter {
       for await (const chunk of this.copilot.chat(prompt, {
         model: task.model ?? undefined,
         onToolCall: (toolName, args) => {
-          if (toolName === "spawn-agent") {
+          if (toolName === "spawn-agent" || toolName === "orchestrate-agents") {
             // Inject parent task ID, session, and channel info for recursive chaining.
             const a = args as Record<string, unknown>;
             a.parentTaskId = task.id;

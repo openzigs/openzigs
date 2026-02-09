@@ -194,6 +194,7 @@ The admin page at `/admin` consolidates all configuration:
 
 - **Channels** — Configure Telegram and Discord tokens, toggle channels on/off, select default model.
 - **AI Personality** — Configure the system instruction and optional pre/post prompts, or disable injection globally.
+- **Task Engine** — Adjust the maximum concurrent background agents (1–10) at runtime, view live queue stats (running, queued, concurrency limit).
 - **MCP Sidecars** — View Docker sidecar status (running, credentials missing, offline), manage credentials, restart containers, toggle per-tool within each sidecar.
 - **Local MCP Servers** — View status of locally-running MCP servers (MarkItDown, Database, GitHub).
 - **Tools** — Toggle any tool on/off, view risk level badges (🟢 low, 🟡 medium, 🔴 high), grouped by category.
@@ -413,6 +414,52 @@ Root Agent (Depth 0) — "Build a Python pricing scraper"
 | `context` | string | No | `""` | Additional data passed to the sub-agent's prompt (e.g., output from a previous step). |
 | `notify_user` | boolean | No | `true` | Send a notification to the originating channel when the task completes or fails. |
 | `model` | string | No | *(server default)* | Model override for the sub-agent (e.g., `gpt-4.1`, `claude-sonnet-4`). |
+
+#### `orchestrate-agents` Tool Parameters
+
+The `orchestrate-agents` tool provides a **fan-out / fan-in** pattern: it dispatches multiple sub-agents in parallel, waits for all to finish (or timeout), and optionally aggregates their results via a Copilot call.
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `agents` | array | Yes | — | Array of 1–10 agent definitions, each with `goal` (string, required) and optional `context` (string). |
+| `aggregation_prompt` | string | No | — | If provided, a final Copilot call synthesizes the agent outputs into a single deliverable. |
+| `timeout_seconds` | number | No | `300` | Maximum time to wait for all agents (30–600 seconds). |
+
+**When to use `orchestrate-agents` vs `spawn-agent`:**
+
+| Scenario | Tool | Why |
+|----------|------|-----|
+| Fire-and-forget background work | `spawn-agent` | You don't need the result inline — the notification arrives later. |
+| Parallel research with combined report | `orchestrate-agents` | You need all results before producing a deliverable. |
+| Sequential pipeline (spec → code) | `spawn-agent` (chained) | Each step depends on the previous one. |
+| Multi-source comparison | `orchestrate-agents` | Fan-out to N sources, aggregate into a comparison table. |
+
+**Example prompt:**
+
+```
+Compare the pricing of AWS, GCP, and Azure for a 3-node Kubernetes cluster.
+Use orchestrate-agents to research all three in parallel, then combine the
+findings into a comparison table.
+```
+
+**What happens:**
+
+```
+Root Agent (Chat)
+  └─ orchestrate-agents(
+       agents: [
+         { goal: "Research AWS EKS pricing for 3-node cluster" },
+         { goal: "Research GCP GKE pricing for 3-node cluster" },
+         { goal: "Research Azure AKS pricing for 3-node cluster" },
+       ],
+       aggregation_prompt: "Create a comparison table of pricing across providers"
+     )
+       ├─ Agent 1: AWS research (background task)
+       ├─ Agent 2: GCP research (background task)
+       └─ Agent 3: Azure research (background task)
+       
+       [All 3 complete → Copilot aggregation call → comparison table returned to chat]
+```
 
 #### Safeguard Limits
 
@@ -1062,6 +1109,7 @@ All configuration lives in `config/default.json`. Environment variables are inte
 | `channels.telegram.enabled` | boolean | `false` | Enable Telegram channel. |
 | `channels.discord.enabled` | boolean | `false` | Enable Discord channel. |
 | `channels.web.enabled` | boolean | `true` | Enable Web Chat channel. |
+| `tasks.maxConcurrent` | number | `2` | Maximum parallel background agent tasks (1–10). Adjustable at runtime via Admin UI or API. |
 | `tunnel.enabled` | boolean | `false` | Enable the embedded Cloudflare Tunnel. Set to `false` (default) when using the Docker sidecar pattern. |
 | `tunnel.mode` | string | `"quick"` | `"quick"` or `"named"`. Only applies when `tunnel.enabled` is `true`. |
 

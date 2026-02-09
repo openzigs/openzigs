@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { useSocket } from "@/lib/socket-context";
 import { fetchJson } from "@/lib/api";
 import { cn } from "@/lib/utils";
@@ -41,6 +42,7 @@ type ApprovalRequest = {
 
 export const ChatView = () => {
   const { socket, connected } = useSocket();
+  const searchParams = useSearchParams();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [chatId, setChatId] = useState<string | null>(null);
@@ -58,6 +60,8 @@ export const ChatView = () => {
   const streamRef = useRef<{ id: string; content: string } | null>(null);
   const inputStuckTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const restoredRef = useRef(false);
+  const pendingRestoreRef = useRef(false);
   const msgCounter = useRef(0);
   const HISTORY_KEY = "openzigs:chat-history";
   const MAX_HISTORY = 100;
@@ -145,14 +149,33 @@ export const ChatView = () => {
       setChatId(data.chatId);
     };
 
-    const onHistory = (data: { messages?: Array<{ role: "user" | "assistant"; content: string }> }) => {
+    const onHistory = (data: { messages?: Array<{ role: "user" | "assistant"; content: string }>; restored?: boolean }) => {
+      // If we're waiting for a restore, ignore non-restore history events
+      // (prevents chat:request-session / initial connection history from
+      // overwriting the restored session due to async race conditions)
+      if (pendingRestoreRef.current && !data.restored) return;
+
       if (data.messages?.length) {
         const restored: ChatMessage[] = data.messages.map((m, i) => ({
           id: `history-${i}`,
           role: m.role,
           content: m.content,
         }));
-        setMessages(restored);
+        if (data.restored) {
+          pendingRestoreRef.current = false;
+          setMessages([
+            { id: "restored-banner", role: "error" as const, content: "📂 Restored session history" },
+            ...restored,
+          ]);
+        } else {
+          setMessages(restored);
+        }
+      } else if (data.restored) {
+        // Restore came back empty — still clear the pending flag
+        pendingRestoreRef.current = false;
+        setMessages([
+          { id: "restored-banner", role: "error" as const, content: "📂 Session exists but has no conversation history." },
+        ]);
       }
     };
 
@@ -240,10 +263,18 @@ export const ChatView = () => {
     socket.on("disconnect", onDisconnected);
     socket.on("task:notification", onTaskNotification);
 
-    // If the socket is already connected (e.g. after a client-side navigation
-    // where SocketProvider stayed mounted), request the session info now since
-    // the server won't re-emit chat:connected/chat:history automatically.
-    if (socket.connected) {
+    // If a ?session=<id> query param is present, restore that session
+    // instead of loading the current session. The restore handler on the
+    // server also emits chat:connected (sets chatId), so we skip
+    // chat:request-session entirely to avoid a race condition where the
+    // current session's history arrives after the restored one.
+    const restoreId = searchParams.get("session");
+    if (restoreId && !restoredRef.current) {
+      restoredRef.current = true;
+      pendingRestoreRef.current = true;
+      socket.emit("chat:restore-session", { sessionId: restoreId });
+    } else if (socket.connected) {
+      // Normal reconnect — request current session info
       socket.emit("chat:request-session");
     }
 
@@ -259,7 +290,7 @@ export const ChatView = () => {
       socket.off("disconnect", onDisconnected);
       socket.off("task:notification", onTaskNotification);
     };
-  }, [socket, finalizeStream, resetStuckTimer]);
+  }, [socket, finalizeStream, resetStuckTimer, searchParams]);
 
   useEffect(() => {
     scrollToBottom();
@@ -330,7 +361,11 @@ export const ChatView = () => {
 
   const handleClearChat = useCallback(() => {
     setMessages([]);
-  }, []);
+    // Clear server-side session history so it doesn't return on refresh
+    if (socket) {
+      socket.emit("chat:clear");
+    }
+  }, [socket]);
 
   // Allow sending while connected to socket, show connecting state if no chatId yet
   const inputDisabled = sending;

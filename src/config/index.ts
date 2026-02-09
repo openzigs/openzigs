@@ -82,6 +82,10 @@ export type McpServersConfig = {
   sidecars: Record<string, SidecarConfig>;
 };
 
+export type TasksConfig = {
+  maxConcurrent: number;
+};
+
 export type AppConfig = {
   server: {
     port: number;
@@ -94,6 +98,7 @@ export type AppConfig = {
   channels?: ChannelsConfig;
   tunnel?: TunnelConfig;
   mcpServers?: McpServersConfig;
+  tasks?: TasksConfig;
 };
 
 const rateLimitSchema = z.object({
@@ -175,6 +180,10 @@ const mcpServersSchema = z.object({
   sidecars: z.record(z.string(), sidecarConfigSchema)
 }).optional();
 
+const tasksSchema = z.object({
+  maxConcurrent: z.number().int().min(1).max(10).default(2),
+}).optional();
+
 const appConfigSchema = z.object({
   server: z.object({
     port: z.number()
@@ -186,7 +195,8 @@ const appConfigSchema = z.object({
   messaging: messagingSchema,
   channels: channelsSchema,
   tunnel: tunnelSchema.optional(),
-  mcpServers: mcpServersSchema
+  mcpServers: mcpServersSchema,
+  tasks: tasksSchema,
 });
 
 export type LoadConfigOptions = {
