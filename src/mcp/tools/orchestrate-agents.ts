@@ -263,6 +263,7 @@ export const createOrchestrateAgentsTools = ({
           };
 
           // ── Optional Aggregation via Copilot ──
+          let finalText: string;
           if (
             input.aggregation_prompt &&
             agentResults.some((r) => r.result)
@@ -285,21 +286,17 @@ export const createOrchestrateAgentsTools = ({
               aggregated += chunk;
             }
 
-            return {
-              text: JSON.stringify(
-                {
-                  aggregated_result: aggregated,
-                  metadata,
-                },
-                null,
-                2
-              ),
-            };
-          }
-
-          // No aggregation — return raw results
-          return {
-            text: JSON.stringify(
+            finalText = JSON.stringify(
+              {
+                aggregated_result: aggregated,
+                metadata,
+              },
+              null,
+              2
+            );
+          } else {
+            // No aggregation — return raw results
+            finalText = JSON.stringify(
               {
                 results: agentResults.map((r) => ({
                   goal: r.goal,
@@ -311,8 +308,36 @@ export const createOrchestrateAgentsTools = ({
               },
               null,
               2
-            ),
-          };
+            );
+          }
+
+          // ── Notification: submit a completed notification task so
+          // NotificationDispatcher delivers to originating + cross-channels.
+          // Skip when inside a background task (parent will notify on completion).
+          if ((channelType || sessionId) && !input.parentTaskId) {
+            try {
+              const summary = `Orchestration complete: ${completed}/${input.agents.length} agents succeeded in ${Math.round(elapsedMs / 1000)}s`;
+              const notifTask = taskEngine.submit(
+                {
+                  trigger: "agent",
+                  goal: summary,
+                  notifyOnComplete: true,
+                  sessionId,
+                  channelType,
+                  chatId,
+                },
+                { mode: "immediate" }
+              );
+              taskEngine.complete(notifTask.id, summary);
+            } catch (err) {
+              // Non-fatal: log and continue
+              logger.warn(
+                `orchestrate-agents: notification task failed: ${err instanceof Error ? err.message : String(err)}`
+              );
+            }
+          }
+
+          return { text: finalText };
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           logger.error(`orchestrate-agents: ${message}`);

@@ -171,6 +171,17 @@ export class WebChatChannel implements MessageChannel {
       }
     });
 
+    // Clear the current session history on the server
+    socket.on("chat:clear", () => {
+      if (this.sessionManager) {
+        void this.clearSessionHistory(userId).then((cleared) => {
+          socket.emit("chat:cleared", { success: cleared });
+        }).catch(() => {
+          socket.emit("chat:cleared", { success: false });
+        });
+      }
+    });
+
     socket.on("disconnect", () => {
       this.sockets.delete(socket.id);
       this.chatIdToSocketId.delete(chatId);
@@ -201,5 +212,14 @@ export class WebChatChannel implements MessageChannel {
     if (messages.length > 0) {
       socket.emit("chat:history", { messages });
     }
+  }
+
+  /** Clear the most recent web session's conversation history. */
+  private async clearSessionHistory(userId: string): Promise<boolean> {
+    if (!this.sessionManager) return false;
+    const sessions = await this.sessionManager.listSessions({ channel: "web", userId });
+    if (sessions.length === 0) return false;
+    await this.sessionManager.clearSession(sessions[0].id);
+    return true;
   }
 }

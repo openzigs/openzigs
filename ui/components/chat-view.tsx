@@ -330,7 +330,11 @@ export const ChatView = () => {
 
   const handleClearChat = useCallback(() => {
     setMessages([]);
-  }, []);
+    // Clear server-side session history so it doesn't return on refresh
+    if (socket) {
+      socket.emit("chat:clear");
+    }
+  }, [socket]);
 
   // Allow sending while connected to socket, show connecting state if no chatId yet
   const inputDisabled = sending;

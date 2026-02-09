@@ -139,3 +139,23 @@ export type PersonalityConfig = {
   enabled: boolean;
   updatedAt: string;
 };
+
+export type SessionInfo = {
+  id: string;
+  createdAt: string;
+  lastActiveAt: string;
+  channel: string;
+  userId: string;
+  metadata: Record<string, unknown>;
+};
+
+export type ConversationEvent = {
+  timestamp: string;
+  type: "user" | "assistant" | "tool_call" | "tool_result";
+  content: string;
+  metadata?: {
+    toolName?: string;
+    args?: Record<string, unknown>;
+    duration?: number;
+  };
+};

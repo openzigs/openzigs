@@ -187,6 +187,20 @@ export class SessionManager {
     ]);
   }
 
+  /**
+   * Clear all conversation events from a session while keeping the session
+   * metadata intact. Resets the JSONL events file to empty and updates
+   * the lastActiveAt timestamp.
+   */
+  async clearSession(id: string): Promise<Session> {
+    const session = await this.getSession(id);
+    await fs.writeFile(this.eventsPath(id), "", "utf-8");
+    const now = this.clock();
+    const updated = { ...session, lastActiveAt: now };
+    await this.updateSession(updated);
+    return updated;
+  }
+
   async appendEvent(sessionId: string, event: ConversationEvent): Promise<void> {
     const session = await this.getSession(sessionId);
     const storedEvent = serializeEvent(event);

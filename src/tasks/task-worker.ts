@@ -131,7 +131,7 @@ export class TaskWorker extends EventEmitter {
       for await (const chunk of this.copilot.chat(prompt, {
         model: task.model ?? undefined,
         onToolCall: (toolName, args) => {
-          if (toolName === "spawn-agent") {
+          if (toolName === "spawn-agent" || toolName === "orchestrate-agents") {
             // Inject parent task ID, session, and channel info for recursive chaining.
             const a = args as Record<string, unknown>;
             a.parentTaskId = task.id;
