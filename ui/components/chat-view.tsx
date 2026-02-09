@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { useSocket } from "@/lib/socket-context";
 import { fetchJson } from "@/lib/api";
 import { cn } from "@/lib/utils";
@@ -41,6 +42,7 @@ type ApprovalRequest = {
 
 export const ChatView = () => {
   const { socket, connected } = useSocket();
+  const searchParams = useSearchParams();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [chatId, setChatId] = useState<string | null>(null);
@@ -58,6 +60,7 @@ export const ChatView = () => {
   const streamRef = useRef<{ id: string; content: string } | null>(null);
   const inputStuckTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const restoredRef = useRef(false);
   const msgCounter = useRef(0);
   const HISTORY_KEY = "openzigs:chat-history";
   const MAX_HISTORY = 100;
@@ -145,7 +148,7 @@ export const ChatView = () => {
       setChatId(data.chatId);
     };
 
-    const onHistory = (data: { messages?: Array<{ role: "user" | "assistant"; content: string }> }) => {
+    const onHistory = (data: { messages?: Array<{ role: "user" | "assistant"; content: string }>; restored?: boolean }) => {
       if (data.messages?.length) {
         const restored: ChatMessage[] = data.messages.map((m, i) => ({
           id: `history-${i}`,
@@ -153,6 +156,12 @@ export const ChatView = () => {
           content: m.content,
         }));
         setMessages(restored);
+        if (data.restored) {
+          setMessages((prev) => [
+            { id: "restored-banner", role: "error" as const, content: "📂 Restored session history" },
+            ...prev,
+          ]);
+        }
       }
     };
 
@@ -247,7 +256,19 @@ export const ChatView = () => {
       socket.emit("chat:request-session");
     }
 
+    // If a ?session=<id> query param is present, restore that session into chat
+    const restoreId = searchParams.get("session");
+    let restoreTimer: ReturnType<typeof setTimeout> | undefined;
+    if (restoreId && !restoredRef.current) {
+      restoredRef.current = true;
+      // Small delay to let chat:connected fire first so the socket is fully wired
+      restoreTimer = setTimeout(() => {
+        socket.emit("chat:restore-session", { sessionId: restoreId });
+      }, 300);
+    }
+
     return () => {
+      if (restoreTimer) clearTimeout(restoreTimer);
       socket.off("chat:connected", onConnected);
       socket.off("chat:history", onHistory);
       socket.off("chat:response", onResponse);
@@ -259,7 +280,7 @@ export const ChatView = () => {
       socket.off("disconnect", onDisconnected);
       socket.off("task:notification", onTaskNotification);
     };
-  }, [socket, finalizeStream, resetStuckTimer]);
+  }, [socket, finalizeStream, resetStuckTimer, searchParams]);
 
   useEffect(() => {
     scrollToBottom();

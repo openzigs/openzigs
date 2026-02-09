@@ -182,6 +182,15 @@ export class WebChatChannel implements MessageChannel {
       }
     });
 
+    // Restore a specific session's history into the chat window
+    socket.on("chat:restore-session", (data: { sessionId?: string }) => {
+      const sessionId = typeof data?.sessionId === "string" ? data.sessionId : "";
+      if (!sessionId || !this.sessionManager) return;
+      void this.restoreSession(socket, sessionId).catch(() => {
+        socket.emit("chat:error", { error: `Failed to restore session ${sessionId}` });
+      });
+    });
+
     socket.on("disconnect", () => {
       this.sockets.delete(socket.id);
       this.chatIdToSocketId.delete(chatId);
@@ -221,5 +230,20 @@ export class WebChatChannel implements MessageChannel {
     if (sessions.length === 0) return false;
     await this.sessionManager.clearSession(sessions[0].id);
     return true;
+  }
+
+  /** Load a specific session's history and send it to the socket. */
+  private async restoreSession(socket: Socket, sessionId: string): Promise<void> {
+    if (!this.sessionManager) return;
+    const history = await this.sessionManager.getHistory(sessionId, 50);
+    const messages = history
+      .filter((event) => event.type === "user" || event.type === "assistant")
+      .map((event) => ({
+        role: event.type as "user" | "assistant",
+        content: event.content,
+        timestamp: event.timestamp.toISOString(),
+      }));
+    // Send as history (replaces current chat messages on client)
+    socket.emit("chat:history", { messages, restored: true });
   }
 }

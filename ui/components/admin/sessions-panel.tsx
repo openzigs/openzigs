@@ -5,6 +5,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { fetchJson } from "@/lib/api";
 import type { SessionInfo, ConversationEvent } from "@/lib/types";
 import { showToast } from "@/components/toast";
+import Link from "next/link";
 import {
   MessageSquare,
   Trash2,
@@ -16,6 +17,8 @@ import {
   Wrench,
   Bot,
   Hash,
+  RotateCcw,
+  Shield,
 } from "lucide-react";
 
 const CHANNEL_COLORS: Record<string, string> = {
@@ -114,6 +117,25 @@ export const SessionsPanel = () => {
           />
         ))}
       </div>
+
+      {/* Cleanup Policy */}
+      <div className="rounded-xl border border-border bg-muted/30 p-4 space-y-2">
+        <div className="flex items-center gap-2">
+          <Shield className="h-4 w-4 text-primary" />
+          <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+            Auto-Cleanup Policy
+          </h3>
+        </div>
+        <div className="grid grid-cols-3 gap-2 text-xs">
+          <LimitItem label="Max Age" value="7 days" />
+          <LimitItem label="Max Sessions" value="100" />
+          <LimitItem label="Max Size" value="10 MB" />
+        </div>
+        <p className="text-[11px] text-muted-foreground">
+          Sessions older than 7 days are automatically deleted. Individual event files are
+          truncated at 10 MB, keeping the most recent messages.
+        </p>
+      </div>
     </div>
   );
 };
@@ -161,8 +183,17 @@ const SessionRow = ({ session, expanded, onToggle, onDelete, deleting }: Session
           {relativeTime(session.lastActiveAt)}
         </span>
 
+        <Link
+          href={`/chat?session=${session.id}`}
+          className="ml-2 rounded-lg p-1.5 text-muted-foreground transition hover:bg-primary/10 hover:text-primary"
+          onClick={(e) => e.stopPropagation()}
+          title="Restore to Chat"
+        >
+          <RotateCcw className="h-3.5 w-3.5" />
+        </Link>
+
         <button
-          className="ml-2 rounded-lg p-1.5 text-muted-foreground transition hover:bg-destructive/10 hover:text-destructive"
+          className="rounded-lg p-1.5 text-muted-foreground transition hover:bg-destructive/10 hover:text-destructive"
           onClick={(e) => {
             e.stopPropagation();
             onDelete();
@@ -251,5 +282,12 @@ const StatBadge = ({ label, value, color }: { label: string; value: number; colo
   <div className="flex flex-col items-center rounded-xl border border-border bg-card p-3">
     <span className={`text-2xl font-bold tabular-nums ${color}`}>{value}</span>
     <span className="text-xs text-muted-foreground">{label}</span>
+  </div>
+);
+
+const LimitItem = ({ label, value }: { label: string; value: string }) => (
+  <div className="flex items-center justify-between rounded-lg border border-border bg-card px-3 py-1.5">
+    <span className="text-muted-foreground">{label}</span>
+    <span className="font-semibold text-foreground">{value}</span>
   </div>
 );
