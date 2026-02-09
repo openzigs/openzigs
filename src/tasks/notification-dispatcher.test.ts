@@ -205,8 +205,8 @@ describe("NotificationDispatcher", () => {
 
   it("truncates long results in channel messages", async () => {
     const mockChannel = {
-      id: "web",
-      type: "web" as const,
+      id: "telegram",
+      type: "telegram" as const,
       sendMessage: vi.fn().mockResolvedValue(undefined),
       connect: vi.fn(),
       disconnect: vi.fn(),
@@ -230,7 +230,7 @@ describe("NotificationDispatcher", () => {
       {
         trigger: "agent",
         goal: "Long output",
-        channelType: "web",
+        channelType: "telegram",
         chatId: "c1",
         notifyOnComplete: true,
       },
@@ -243,5 +243,98 @@ describe("NotificationDispatcher", () => {
     const sentText = mockChannel.sendMessage.mock.calls[0][1].text as string;
     expect(sentText.length).toBeLessThan(longResult.length);
     expect(sentText).toContain("…");
+  });
+
+  it("skips channel.sendMessage for web channel (Socket.IO broadcast sufficient)", async () => {
+    const mockWebChannel = {
+      id: "web-chat",
+      type: "web" as const,
+      sendMessage: vi.fn().mockResolvedValue(undefined),
+      connect: vi.fn(),
+      disconnect: vi.fn(),
+      isConnected: vi.fn().mockReturnValue(true),
+      sendApprovalRequest: vi.fn(),
+      onMessage: vi.fn(),
+      onApprovalResponse: vi.fn(),
+    };
+    channelManager.getChannel.mockReturnValue(mockWebChannel);
+    channelManager.listChannels.mockReturnValue([mockWebChannel]);
+
+    new NotificationDispatcher({
+      engine,
+      channelManager: channelManager as unknown as ChannelManager,
+      sessionManager: sessionManager as unknown as SessionManager,
+      io,
+      log: silentLog,
+    });
+
+    const task = engine.submit(
+      {
+        trigger: "agent",
+        goal: "Web task",
+        channelType: "web",
+        chatId: "c1",
+        notifyOnComplete: true,
+      },
+      { mode: "immediate" }
+    );
+    engine.complete(task.id, "Done");
+
+    await new Promise((r) => setTimeout(r, 50));
+
+    // io.emit fires (Socket.IO broadcast)
+    expect(io.emit).toHaveBeenCalledWith("task:notification", expect.anything());
+    // But channel.sendMessage should NOT be called for web
+    expect(mockWebChannel.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it("sends cross-channel notifications to other configured channels", async () => {
+    const mockTelegram = {
+      id: "telegram",
+      type: "telegram" as const,
+      sendMessage: vi.fn().mockResolvedValue(undefined),
+      connect: vi.fn(),
+      disconnect: vi.fn(),
+      isConnected: vi.fn().mockReturnValue(true),
+      sendApprovalRequest: vi.fn(),
+      onMessage: vi.fn(),
+      onApprovalResponse: vi.fn(),
+    };
+    channelManager.getChannel.mockReturnValue(undefined);
+    channelManager.listChannels.mockReturnValue([mockTelegram]);
+
+    // Return a session with a chatId for the telegram channel
+    sessionManager.listSessions.mockResolvedValue([
+      { id: "sess-t", channel: "telegram", userId: "tg:123", metadata: { chatId: "tg-chat-42" }, createdAt: new Date(), lastActiveAt: new Date() },
+    ]);
+
+    new NotificationDispatcher({
+      engine,
+      channelManager: channelManager as unknown as ChannelManager,
+      sessionManager: sessionManager as unknown as SessionManager,
+      io,
+      log: silentLog,
+    });
+
+    // Task originated from web (not telegram)
+    const task = engine.submit(
+      {
+        trigger: "agent",
+        goal: "Cross-channel test",
+        channelType: "web",
+        chatId: "web-c1",
+        notifyOnComplete: true,
+      },
+      { mode: "immediate" }
+    );
+    engine.complete(task.id, "Results");
+
+    await new Promise((r) => setTimeout(r, 50));
+
+    // Should send cross-channel notification to telegram
+    expect(mockTelegram.sendMessage).toHaveBeenCalledWith(
+      "tg-chat-42",
+      expect.objectContaining({ text: expect.stringContaining("Cross-channel test") })
+    );
   });
 });

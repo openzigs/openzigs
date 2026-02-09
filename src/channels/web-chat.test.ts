@@ -5,11 +5,13 @@ import type { IncomingMessage, ApprovalResponse } from "./types.js";
 
 class FakeSocket extends EventEmitter {
   readonly id: string;
+  readonly handshake: { query: Record<string, string> };
   emitted: Array<{ event: string; data: unknown }> = [];
 
-  constructor(id: string) {
+  constructor(id: string, query: Record<string, string> = {}) {
     super();
     this.id = id;
+    this.handshake = { query };
   }
 
   emit(event: string, ...args: unknown[]): boolean {
@@ -21,8 +23,8 @@ class FakeSocket extends EventEmitter {
 class FakeIOServer extends EventEmitter {
   sockets: FakeSocket[] = [];
 
-  simulateConnection(socketId = "socket-1"): FakeSocket {
-    const socket = new FakeSocket(socketId);
+  simulateConnection(socketId = "socket-1", query: Record<string, string> = {}): FakeSocket {
+    const socket = new FakeSocket(socketId, query);
     this.sockets.push(socket);
     this.emit("connection", socket);
     return socket;
@@ -171,6 +173,31 @@ describe("WebChatChannel", () => {
     // No error thrown, message just not delivered — socket is gone
     const responses = socket.emitted.filter((e) => e.event === "chat:response");
     expect(responses).toHaveLength(0);
+  });
+
+  it("uses stable userId when clientId is provided in handshake", async () => {
+    await setup();
+    const received: IncomingMessage[] = [];
+    channel.onMessage((msg) => received.push(msg));
+
+    const socket = io.simulateConnection("sock-stable", { clientId: "my-stable-id" });
+    socket.emit("chat:message", { content: "Hello" });
+
+    expect(received).toHaveLength(1);
+    expect(received[0].userId).toBe("web:my-stable-id");
+  });
+
+  it("falls back to chatId-based userId when no clientId", async () => {
+    await setup();
+    const received: IncomingMessage[] = [];
+    channel.onMessage((msg) => received.push(msg));
+
+    const socket = io.simulateConnection("sock-fallback");
+    const chatId = (socket.emitted.find((e) => e.event === "chat:connected")?.data as { chatId: string }).chatId;
+    socket.emit("chat:message", { content: "Hi" });
+
+    expect(received).toHaveLength(1);
+    expect(received[0].userId).toBe(`web:${chatId}`);
   });
 
   it("throws when sending on a disconnected channel", async () => {

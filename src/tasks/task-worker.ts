@@ -118,10 +118,12 @@ export class TaskWorker extends EventEmitter {
         model: task.model ?? undefined,
         onToolCall: (toolName, args) => {
           if (toolName === "spawn-agent") {
-            // Inject parent task ID and session for recursive chaining.
+            // Inject parent task ID, session, and channel info for recursive chaining.
             const a = args as Record<string, unknown>;
             a.parentTaskId = task.id;
             a.sessionId = task.sessionId;
+            a.channelType = task.channelType;
+            a.chatId = task.chatId;
           }
         },
       })) {

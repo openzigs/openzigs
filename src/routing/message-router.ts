@@ -6,6 +6,7 @@ import type { ConversationEvent, SessionManager } from "../sessions/session-mana
 import type { PersonalityManager } from "../personality/personality-manager.js";
 import type { TaskEngine } from "../tasks/task-engine.js";
 import { ALWAYS_ON_TOOLS } from "../mcp/constants.js";
+import { setActiveChatContext, clearActiveChatContext } from "../mcp/tools/agent-tools.js";
 
 export type RouteOptions = {
   /** Callback invoked for each streaming chunk. */
@@ -111,6 +112,13 @@ export class MessageRouter {
 
     let response = "";
     try {
+      // Set chat context so spawn-agent can propagate originating session/channel info
+      setActiveChatContext({
+        sessionId,
+        channelType: message.channelType as import("../channels/types.js").ChannelType,
+        chatId: message.chatId,
+      });
+
       for await (const chunk of this.copilot.chat(prompt, { model: options?.model, onToolCall: options?.onToolCall })) {
         response += chunk;
         if (options?.onChunk) {
@@ -118,11 +126,14 @@ export class MessageRouter {
         }
       }
 
+      clearActiveChatContext();
+
       // Mark task completed
       if (taskId && this.taskEngine) {
         this.taskEngine.complete(taskId, response.slice(0, 500));
       }
     } catch (error) {
+      clearActiveChatContext();
       // Mark task failed
       if (taskId && this.taskEngine) {
         const msg = error instanceof Error ? error.message : String(error);

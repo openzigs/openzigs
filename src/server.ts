@@ -1,5 +1,6 @@
 import "dotenv/config";
 import { createServer } from "node:http";
+import os from "node:os";
 import path from "node:path";
 import { Server as SocketIOServer } from "socket.io";
 import { nanoid } from "nanoid";
@@ -157,7 +158,7 @@ try {
 }
 
 registerMcpTools(toolRegistry, {
-  allowedDirs: allowedDirs.length > 0 ? allowedDirs : [process.cwd()],
+  allowedDirs: allowedDirs.length > 0 ? allowedDirs : [process.cwd(), os.tmpdir(), os.homedir(), "/tmp", "/private/tmp"],
   braveApiKey: process.env.BRAVE_API_KEY,
   chromeDebugHost: process.env.CHROME_DEBUG_HOST,
   chromeDebugPort,
@@ -424,7 +425,7 @@ if (discordConfig?.enabled && discordConfig.token) {
 // ── Web Chat Channel ──
 const webConfig = config.channels?.web;
 if (webConfig?.enabled !== false) {
-  const webChatChannel = new WebChatChannel({ io });
+  const webChatChannel = new WebChatChannel({ io, sessionManager });
   const router = createRouter();
 
   await webChatChannel.connect();

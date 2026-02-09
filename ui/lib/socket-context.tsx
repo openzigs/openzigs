@@ -5,6 +5,22 @@ import { io, type Socket } from "socket.io-client";
 import { showToast } from "@/components/toast";
 
 const SOCKET_URL = process.env.NEXT_PUBLIC_OPENZIGS_SOCKET_URL ?? process.env.NEXT_PUBLIC_OPENZIGS_API_BASE ?? "http://localhost:3000";
+const CLIENT_ID_KEY = "openzigs:client-id";
+
+/** Get or generate a stable client identity that persists across page navigations. */
+const getStableClientId = (): string => {
+  if (typeof window === "undefined") return "ssr";
+  try {
+    let clientId = localStorage.getItem(CLIENT_ID_KEY);
+    if (!clientId) {
+      clientId = crypto.randomUUID();
+      localStorage.setItem(CLIENT_ID_KEY, clientId);
+    }
+    return clientId;
+  } catch {
+    return crypto.randomUUID();
+  }
+};
 
 type SocketContextValue = {
   socket: Socket | null;
@@ -22,7 +38,9 @@ export const SocketProvider = ({ children }: { children: ReactNode }) => {
   const reconnectTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
+    const clientId = getStableClientId();
     const socket = io(SOCKET_URL || undefined, {
+      query: { clientId },
       transports: ["websocket", "polling"],
       reconnection: true,
       reconnectionAttempts: Infinity,

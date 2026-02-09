@@ -1,6 +1,7 @@
 import * as z from "zod";
 import type { ToolDefinition } from "../tool-registry.js";
 import type { TaskEngine } from "../../tasks/task-engine.js";
+import type { ChannelType } from "../../channels/types.js";
 
 const spawnAgentSchema = z.object({
   goal: z.string().describe("What the sub-agent should accomplish"),
@@ -10,12 +11,40 @@ const spawnAgentSchema = z.object({
   // Internal fields for recursive chaining — injected by TaskWorker's onToolCall, not set by the LLM.
   parentTaskId: z.string().optional(),
   sessionId: z.string().optional(),
+  channelType: z.string().optional(),
+  chatId: z.string().optional(),
 });
 
 type SpawnAgentInput = z.infer<typeof spawnAgentSchema>;
 
+/**
+ * Chat context injected by MessageRouter so that spawned tasks can
+ * route notifications back to the originating session/channel.
+ */
+export type ChatContext = {
+  sessionId?: string;
+  channelType?: ChannelType;
+  chatId?: string;
+};
+
 export type AgentToolsOptions = {
   taskEngine: TaskEngine;
+};
+
+/**
+ * Mutable chat context — set by MessageRouter before each request
+ * so that the spawn-agent handler can propagate originating session info.
+ */
+let activeChatContext: ChatContext = {};
+
+/** Set the active chat context. Called by MessageRouter before routing. */
+export const setActiveChatContext = (ctx: ChatContext): void => {
+  activeChatContext = ctx;
+};
+
+/** Clear the active chat context. Called by MessageRouter after routing. */
+export const clearActiveChatContext = (): void => {
+  activeChatContext = {};
 };
 
 /**
@@ -48,6 +77,12 @@ export const createAgentTools = ({ taskEngine }: AgentToolsOptions): ToolDefinit
         const input = args as SpawnAgentInput;
 
         try {
+          // Resolve context: explicit args (from TaskWorker recursive injection) take
+          // priority, then fall back to the active chat context set by MessageRouter.
+          const sessionId = input.sessionId ?? activeChatContext.sessionId;
+          const channelType = (input.channelType as ChannelType | undefined) ?? activeChatContext.channelType;
+          const chatId = input.chatId ?? activeChatContext.chatId;
+
           const task = taskEngine.submit(
             {
               trigger: "agent",
@@ -56,7 +91,9 @@ export const createAgentTools = ({ taskEngine }: AgentToolsOptions): ToolDefinit
               notifyOnComplete: input.notify_user ?? true,
               model: input.model,
               parentTaskId: input.parentTaskId,
-              sessionId: input.sessionId,
+              sessionId,
+              channelType,
+              chatId,
             },
             { mode: "background" }
           );

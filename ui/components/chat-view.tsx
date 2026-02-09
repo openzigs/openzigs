@@ -21,7 +21,7 @@ import {
   DialogDescription,
   DialogFooter,
 } from "@/components/ui/dialog";
-import { Send, Loader2, Bot, User, AlertCircle } from "lucide-react";
+import { Send, Loader2, Bot, User, AlertCircle, Trash2 } from "lucide-react";
 import { ChatMarkdown } from "@/components/chat-markdown";
 import type { ModelInfo } from "@/lib/types";
 
@@ -145,6 +145,17 @@ export const ChatView = () => {
       setChatId(data.chatId);
     };
 
+    const onHistory = (data: { messages?: Array<{ role: "user" | "assistant"; content: string }> }) => {
+      if (data.messages?.length) {
+        const restored: ChatMessage[] = data.messages.map((m, i) => ({
+          id: `history-${i}`,
+          role: m.role,
+          content: m.content,
+        }));
+        setMessages(restored);
+      }
+    };
+
     const onResponse = (data: { content?: string }) => {
       finalizeStream();
       if (data.content) {
@@ -200,7 +211,26 @@ export const ChatView = () => {
       finalizeStream();
     };
 
+    const onTaskNotification = (data: { type: string; task: { goal?: string; result?: string; error?: string; status?: string } }) => {
+      const task = data.task;
+      const status = task.status ?? data.type;
+      let notifContent: string;
+      if (status === "completed") {
+        const preview = task.result && task.result.length > 500
+          ? task.result.slice(0, 500) + "…"
+          : task.result ?? "(no output)";
+        notifContent = `✅ **Background task completed:** "${task.goal ?? "Unknown"}"\n\n${preview}`;
+      } else {
+        notifContent = `❌ **Background task failed:** "${task.goal ?? "Unknown"}"\n\nError: ${task.error ?? "Unknown error"}`;
+      }
+      setMessages((prev) => [
+        ...prev,
+        { id: `task-${Date.now()}`, role: "assistant", content: notifContent },
+      ]);
+    };
+
     socket.on("chat:connected", onConnected);
+    socket.on("chat:history", onHistory);
     socket.on("chat:response", onResponse);
     socket.on("chat:stream", onStream);
     socket.on("chat:stream:end", onStreamEnd);
@@ -208,9 +238,18 @@ export const ChatView = () => {
     socket.on("chat:tool_call", onToolCall);
     socket.on("approval:request", onApprovalRequest);
     socket.on("disconnect", onDisconnected);
+    socket.on("task:notification", onTaskNotification);
+
+    // If the socket is already connected (e.g. after a client-side navigation
+    // where SocketProvider stayed mounted), request the session info now since
+    // the server won't re-emit chat:connected/chat:history automatically.
+    if (socket.connected) {
+      socket.emit("chat:request-session");
+    }
 
     return () => {
       socket.off("chat:connected", onConnected);
+      socket.off("chat:history", onHistory);
       socket.off("chat:response", onResponse);
       socket.off("chat:stream", onStream);
       socket.off("chat:stream:end", onStreamEnd);
@@ -218,6 +257,7 @@ export const ChatView = () => {
       socket.off("chat:tool_call", onToolCall);
       socket.off("approval:request", onApprovalRequest);
       socket.off("disconnect", onDisconnected);
+      socket.off("task:notification", onTaskNotification);
     };
   }, [socket, finalizeStream, resetStuckTimer]);
 
@@ -288,6 +328,10 @@ export const ChatView = () => {
     }
   }, []);
 
+  const handleClearChat = useCallback(() => {
+    setMessages([]);
+  }, []);
+
   // Allow sending while connected to socket, show connecting state if no chatId yet
   const inputDisabled = sending;
   const showConnecting = connected && !chatId;
@@ -323,6 +367,17 @@ export const ChatView = () => {
             )}
             title={connected ? "Connected" : "Disconnected"}
           />
+          {messages.length > 0 && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8"
+              onClick={handleClearChat}
+              title="Clear chat"
+            >
+              <Trash2 className="h-4 w-4 text-muted-foreground" />
+            </Button>
+          )}
         </div>
       </header>
 

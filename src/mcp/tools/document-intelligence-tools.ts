@@ -1,6 +1,9 @@
 import * as z from "zod";
+import * as fs from "node:fs";
+import * as path from "node:path";
 import type { ToolDefinition } from "../tool-registry.js";
 import type { LocalMcpServerManager } from "../local-mcp-server-manager.js";
+import { Document, Packer, Paragraph, HeadingLevel, TextRun } from "docx";
 
 /**
  * Document intelligence MCP tools for PDF reading, Word generation,
@@ -169,16 +172,16 @@ export const createDocumentIntelligenceTools = (
       },
     },
 
-    // ────── Word/Office (local Python MCP server) ──────
+    // ────── Word/Office (local Python MCP server, native Node.js fallback) ──────
     {
       name: "create-word-doc",
       description:
-        "Create a Word document (.docx) with the given text content. Uses the Office Word MCP server (Python).",
+        "Create a Word document (.docx) with the given text content. Supports markdown-style headings (# H1, ## H2, etc.) and plain text paragraphs.",
       inputSchema: {
         type: "object",
         properties: {
-          content: { type: "string" },
-          output_path: { type: "string" },
+          content: { type: "string", description: "Text content for the document. Use # for headings, plain text for paragraphs." },
+          output_path: { type: "string", description: "Absolute path for the output .docx file" },
         },
         required: ["content", "output_path"],
       },
@@ -188,7 +191,71 @@ export const createDocumentIntelligenceTools = (
       source: "word",
       handler: async (args) => {
         const input = args as z.infer<typeof createWordDocSchema>;
-        return callLocalServer(mgr, "word", "create_document", input);
+
+        // Always use native Node.js docx for create-word-doc (more reliable than Python sidecar)
+        // Native fallback: parse content into headings + paragraphs
+        try {
+          const lines = input.content.split("\n");
+          const children: Paragraph[] = [];
+
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed) {
+              children.push(new Paragraph({ text: "" }));
+              continue;
+            }
+
+            const headingMatch = trimmed.match(/^(#{1,6})\s+(.*)/);
+            if (headingMatch) {
+              const level = headingMatch[1].length;
+              const headingLevels: Record<number, (typeof HeadingLevel)[keyof typeof HeadingLevel]> = {
+                1: HeadingLevel.HEADING_1,
+                2: HeadingLevel.HEADING_2,
+                3: HeadingLevel.HEADING_3,
+                4: HeadingLevel.HEADING_4,
+                5: HeadingLevel.HEADING_5,
+                6: HeadingLevel.HEADING_6,
+              };
+              children.push(
+                new Paragraph({
+                  heading: headingLevels[level] ?? HeadingLevel.HEADING_1,
+                  children: [new TextRun({ text: headingMatch[2], bold: true })],
+                })
+              );
+            } else if (trimmed.startsWith("- ") || trimmed.startsWith("* ")) {
+              children.push(
+                new Paragraph({
+                  text: trimmed.slice(2),
+                  bullet: { level: 0 },
+                })
+              );
+            } else if (trimmed.startsWith("**") && trimmed.endsWith("**")) {
+              children.push(
+                new Paragraph({
+                  children: [new TextRun({ text: trimmed.slice(2, -2), bold: true })],
+                })
+              );
+            } else {
+              children.push(new Paragraph({ text: trimmed }));
+            }
+          }
+
+          const doc = new Document({
+            sections: [{ children }],
+          });
+
+          const buffer = await Packer.toBuffer(doc);
+          const outputDir = path.dirname(input.output_path);
+          if (!fs.existsSync(outputDir)) {
+            fs.mkdirSync(outputDir, { recursive: true });
+          }
+          fs.writeFileSync(input.output_path, buffer);
+
+          return { text: `Word document created: ${input.output_path} (${buffer.length} bytes)` };
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          return { text: `Failed to create Word document: ${message}`, isError: true };
+        }
       },
     },
     {

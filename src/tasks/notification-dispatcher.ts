@@ -71,8 +71,9 @@ export class NotificationDispatcher {
       });
     }
 
-    // 2. Send to originating channel if available  
-    if (task.channelType && task.chatId) {
+    // 2. Send to originating channel if available
+    //    Skip web channel — Socket.IO broadcast (step 1) already delivers to web clients.
+    if (task.channelType && task.chatId && task.channelType !== "web") {
       const channel = this.channelManager.getChannel(task.channelType);
       if (channel) {
         try {
@@ -85,6 +86,28 @@ export class NotificationDispatcher {
         }
       } else {
         this.log.warn(`Channel ${task.channelType} not registered — cannot notify for task ${task.id}`);
+      }
+    }
+
+    // 4. Cross-channel notifications — notify all other configured channels
+    for (const channel of this.channelManager.listChannels()) {
+      // Skip originating channel (already notified above) and web (handled by Socket.IO)
+      if (channel.type === task.channelType || channel.type === "web") continue;
+      if (!channel.isConnected()) continue;
+
+      try {
+        const sessions = await this.sessionManager.listSessions({ channel: channel.type as import("../sessions/session-manager.js").SessionChannel });
+        if (sessions.length > 0) {
+          const chatId = typeof sessions[0].metadata.chatId === "string" ? sessions[0].metadata.chatId : undefined;
+          if (chatId) {
+            await channel.sendMessage(chatId, { text: message });
+            this.log.info(`Cross-channel notification sent to ${channel.type}:${chatId} for task ${task.id}`);
+          }
+        }
+      } catch (err) {
+        this.log.warn(
+          `Cross-channel notification to ${channel.type} failed: ${err instanceof Error ? err.message : String(err)}`
+        );
       }
     }
 
