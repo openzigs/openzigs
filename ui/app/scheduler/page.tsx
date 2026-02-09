@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSocket } from "@/lib/socket-context";
 import { fetchJson } from "@/lib/api";
-import type { SavedPrompt, ScheduledJob } from "@/lib/types";
+import type { ModelInfo, SavedPrompt, ScheduledJob } from "@/lib/types";
 import { SectionCard } from "@/components/section-card";
 import { ToastContainer, showToast } from "@/components/toast";
 
@@ -144,6 +144,11 @@ export default function SchedulerPage() {
                 <div className="mt-2 flex items-center gap-3">
                   <code className="rounded bg-muted px-2 py-1 font-mono text-xs text-muted-foreground">{job.cronExpression}</code>
                   <span className="text-xs text-muted-foreground">{job.timezone || "UTC"}</span>
+                  {job.model && (
+                    <span className="rounded bg-primary/10 px-2 py-0.5 text-[10px] font-semibold text-primary">
+                      Model: {job.model}
+                    </span>
+                  )}
                 </div>
                 {job.actionPayload && Object.keys(job.actionPayload).length > 0 && (
                   <pre className="mt-2 whitespace-pre-wrap break-words font-mono text-xs text-muted-foreground">
@@ -170,6 +175,8 @@ export default function SchedulerPage() {
 
 const JobForm = ({ existing, onClose }: { existing: ScheduledJob | null; onClose: () => void }) => {
   const queryClient = useQueryClient();
+  const [assistantInput, setAssistantInput] = useState("");
+  const [assistantOutput, setAssistantOutput] = useState<string | null>(null);
   const [name, setName] = useState(existing?.name ?? "");
   const [actionType, setActionType] = useState(existing?.actionType ?? "prompt");
   const [promptName, setPromptName] = useState(
@@ -184,6 +191,7 @@ const JobForm = ({ existing, onClose }: { existing: ScheduledJob | null; onClose
   );
   const [cronExpression, setCronExpression] = useState(existing?.cronExpression ?? "");
   const [timezone, setTimezone] = useState(existing?.timezone ?? "UTC");
+  const [model, setModel] = useState(existing?.model ?? "");
 
   // Fetch prompts for the dropdown
   const promptsQuery = useQuery({
@@ -191,6 +199,29 @@ const JobForm = ({ existing, onClose }: { existing: ScheduledJob | null; onClose
     queryFn: () => fetchJson<{ prompts: SavedPrompt[] }>("/api/admin/prompts"),
   });
   const prompts = promptsQuery.data?.prompts ?? [];
+
+  const modelsQuery = useQuery({
+    queryKey: ["models"],
+    queryFn: () => fetchJson<{ models: ModelInfo[] }>("/api/models"),
+  });
+  const models = modelsQuery.data?.models ?? [];
+
+  const assistMutation = useMutation({
+    mutationFn: (message: string) =>
+      fetchJson<{ suggestion: SchedulerSuggestion }>("/api/admin/scheduler/assist", {
+        method: "POST",
+        body: JSON.stringify({
+          message,
+          promptNames: prompts.map((p) => p.name),
+        }),
+      }),
+    onSuccess: ({ suggestion }) => {
+      applySuggestion(suggestion);
+      setAssistantOutput(JSON.stringify(suggestion, null, 2));
+      showToast("Fields updated from AI suggestion", "success");
+    },
+    onError: (err) => showToast(`Error: ${err.message}`, "error"),
+  });
 
   const saveMutation = useMutation({
     mutationFn: (payload: Record<string, unknown>) => {
@@ -223,13 +254,57 @@ const JobForm = ({ existing, onClose }: { existing: ScheduledJob | null; onClose
       }
     }
 
-    saveMutation.mutate({
+    const payload: Record<string, unknown> = {
       name: name.trim(),
       cronExpression: cronExpression.trim(),
       timezone: timezone.trim() || "UTC",
       actionType,
       actionPayload,
-    });
+    };
+
+    if (actionType === "prompt") {
+      const modelValue = model.trim();
+      if (existing) {
+        payload.model = modelValue || null;
+      } else if (modelValue) {
+        payload.model = modelValue;
+      }
+    }
+
+    saveMutation.mutate(payload);
+  };
+
+  const applySuggestion = (suggestion: SchedulerSuggestion) => {
+    if (suggestion.name) setName(suggestion.name);
+    if (suggestion.cronExpression) setCronExpression(suggestion.cronExpression);
+    if (suggestion.timezone) setTimezone(suggestion.timezone);
+    if (suggestion.actionType) setActionType(suggestion.actionType);
+
+    if (suggestion.actionType === "prompt") {
+      if (suggestion.promptName) {
+        setPromptName(suggestion.promptName);
+      } else if (prompts.length > 0) {
+        showToast("AI suggested a prompt job but no matching prompt was found.", "error");
+        setPromptName("");
+      }
+      setPayloadText("");
+    } else if (suggestion.actionPayload) {
+      setPromptName("");
+      setPayloadText(JSON.stringify(suggestion.actionPayload, null, 2));
+    }
+
+    if (typeof suggestion.model === "string") {
+      setModel(suggestion.model);
+    }
+  };
+
+  const handleAssist = () => {
+    const message = assistantInput.trim();
+    if (!message) {
+      showToast("Describe the schedule you want first.", "error");
+      return;
+    }
+    assistMutation.mutate(message);
   };
 
   // Cron preview
@@ -247,6 +322,31 @@ const JobForm = ({ existing, onClose }: { existing: ScheduledJob | null; onClose
       </h3>
 
       <div className="space-y-3">
+        <Field label="AI Scheduler Assistant" hint="Describe the schedule and let GPT-5-mini fill the fields.">
+          <textarea
+            className="w-full rounded-lg border border-border bg-card text-foreground px-3 py-2 text-sm"
+            rows={3}
+            placeholder="e.g., Every weekday at 9am, run the daily-summary prompt in America/New_York"
+            value={assistantInput}
+            onChange={(e) => setAssistantInput(e.target.value)}
+          />
+          <div className="mt-2 flex items-center justify-between">
+            <span className="text-[11px] text-muted-foreground">Model: gpt-5-mini</span>
+            <button
+              onClick={handleAssist}
+              disabled={assistMutation.isPending}
+              className="rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground disabled:opacity-40"
+            >
+              {assistMutation.isPending ? "Generating…" : "Generate Fields"}
+            </button>
+          </div>
+          {assistantOutput && (
+            <pre className="mt-2 whitespace-pre-wrap break-words rounded-lg border border-border bg-muted/60 p-2 font-mono text-[11px] text-muted-foreground">
+              {assistantOutput}
+            </pre>
+          )}
+        </Field>
+
         <Field label="Name">
           <input
             type="text"
@@ -306,6 +406,22 @@ const JobForm = ({ existing, onClose }: { existing: ScheduledJob | null; onClose
               value={payloadText}
               onChange={(e) => setPayloadText(e.target.value)}
             />
+          </Field>
+        )}
+
+        {actionType === "prompt" && (
+          <Field label="Model" hint="Optional — defaults to the system model.">
+            <select
+              className="w-full rounded-lg border border-border bg-card text-foreground px-3 py-2 text-sm"
+              value={model ?? ""}
+              onChange={(e) => setModel(e.target.value)}
+              disabled={modelsQuery.isLoading}
+            >
+              <option value="">Default (System)</option>
+              {models.map((m) => (
+                <option key={m.id} value={m.id}>{m.id}</option>
+              ))}
+            </select>
           </Field>
         )}
 
@@ -388,3 +504,13 @@ const ToggleSwitch = ({ checked, onChange }: { checked: boolean; onChange: (v: b
     />
   </button>
 );
+
+type SchedulerSuggestion = {
+  name: string;
+  actionType: "prompt" | "shell" | "custom";
+  cronExpression: string;
+  timezone: string;
+  promptName?: string;
+  actionPayload?: Record<string, unknown>;
+  model?: string;
+};

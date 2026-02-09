@@ -10,6 +10,7 @@ import { SidecarsPanel } from "@/components/admin/sidecars-panel";
 import { LocalServersPanel } from "@/components/admin/local-servers-panel";
 import { ToolsPanel } from "@/components/admin/tools-panel";
 import { EnvPanel } from "@/components/admin/env-panel";
+import { PersonalityPanel } from "@/components/admin/personality-panel";
 import { ToastContainer, showToast } from "@/components/toast";
 import { RotateCw } from "lucide-react";
 
@@ -60,6 +61,10 @@ export default function AdminPage() {
       <div className="flex flex-col gap-8">
         <SectionCard title="Channels">
           <ChannelsPanel />
+        </SectionCard>
+
+        <SectionCard title="AI Personality">
+          <PersonalityPanel />
         </SectionCard>
 
         <SectionCard title="MCP Sidecars (Docker)">

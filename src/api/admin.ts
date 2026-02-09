@@ -5,6 +5,7 @@ import path from "node:path";
 import { loadConfig } from "../config/index.js";
 import { logger } from "../logging/logger.js";
 import type { ToolRegistry, RiskLevel } from "../mcp/tool-registry.js";
+import type { CopilotWrapper } from "../copilot/index.js";
 import type { DockerSidecarManager } from "../mcp/docker-sidecar-manager.js";
 import type { LocalMcpServerManager } from "../mcp/local-mcp-server-manager.js";
 import type { PromptManager } from "../productivity/prompt-manager.js";
@@ -158,9 +159,62 @@ export type AdminRouterOptions = {
   scheduler?: Scheduler;
   personalityManager?: PersonalityManager;
   sessionManager?: SessionManager;
+  copilot?: CopilotWrapper;
 };
 
-export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerManager, promptManager, scheduler, personalityManager, sessionManager }: AdminRouterOptions) => {
+type SchedulerSuggestion = {
+  name: string;
+  actionType: "prompt" | "shell" | "custom";
+  cronExpression: string;
+  timezone: string;
+  promptName?: string;
+  actionPayload?: Record<string, unknown>;
+  model?: string;
+};
+
+const extractJsonBlock = (text: string): string | null => {
+  const fenced = text.match(/```json\s*([\s\S]*?)```/i);
+  if (fenced?.[1]) {
+    return fenced[1].trim();
+  }
+  const first = text.indexOf("{");
+  const last = text.lastIndexOf("}");
+  if (first !== -1 && last !== -1 && last > first) {
+    return text.slice(first, last + 1).trim();
+  }
+  return null;
+};
+
+const normalizeSchedulerSuggestion = (
+  raw: unknown,
+  promptNames: string[]
+): SchedulerSuggestion => {
+  const data = (raw && typeof raw === "object") ? (raw as Record<string, unknown>) : {};
+  const promptName = typeof data.promptName === "string" ? data.promptName.trim() : "";
+  const actionType = (data.actionType === "prompt" || data.actionType === "shell" || data.actionType === "custom")
+    ? data.actionType
+    : (promptName ? "prompt" : "custom");
+  const actionPayload = (data.actionPayload && typeof data.actionPayload === "object" && !Array.isArray(data.actionPayload))
+    ? (data.actionPayload as Record<string, unknown>)
+    : undefined;
+  const model = typeof data.model === "string" ? data.model.trim() : undefined;
+  const name = typeof data.name === "string" && data.name.trim() ? data.name.trim() : "scheduled-job";
+  const cronExpression = typeof data.cronExpression === "string" ? data.cronExpression.trim() : "";
+  const timezone = typeof data.timezone === "string" && data.timezone.trim() ? data.timezone.trim() : "UTC";
+  const promptNameValid = promptName && promptNames.includes(promptName);
+
+  return {
+    name,
+    actionType,
+    cronExpression,
+    timezone,
+    promptName: promptNameValid ? promptName : undefined,
+    actionPayload,
+    model: model || undefined,
+  };
+};
+
+export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerManager, promptManager, scheduler, personalityManager, sessionManager, copilot }: AdminRouterOptions) => {
   const router = Router();
 
   // ── Server Restart ──
@@ -773,6 +827,64 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
       return deleted
         ? res.json({ ok: true })
         : res.status(404).json({ error: "Job not found" });
+    });
+  }
+
+  // ── Scheduler Assistant ──
+  if (copilot) {
+    router.post("/scheduler/assist", async (req, res) => {
+      const body = req.body as Record<string, unknown>;
+      const message = typeof body.message === "string" ? body.message.trim() : "";
+      const promptNames = Array.isArray(body.promptNames)
+        ? body.promptNames.filter((entry): entry is string => typeof entry === "string")
+        : [];
+
+      if (!message) {
+        return res.status(400).json({ error: "message is required" });
+      }
+
+      const promptList = promptNames.length > 0
+        ? `Available saved prompts: ${promptNames.join(", ")}.`
+        : "No saved prompts are available.";
+
+      const instructions = [
+        "You are a scheduling assistant for OpenZigs.",
+        "Return ONLY valid JSON with these fields:",
+        "name (string), actionType (prompt|shell|custom), cronExpression (string), timezone (IANA string),",
+        "promptName (string, only if actionType is prompt), actionPayload (object, only if actionType is shell or custom),",
+        "model (string, optional).",
+        "Use 5-field cron format. Default timezone to UTC if not specified.",
+        "If actionType is prompt, promptName must be one of the available saved prompts.",
+        promptList,
+        "User request:",
+        message
+      ].join("\n");
+
+      try {
+        let response = "";
+        for await (const chunk of copilot.chat(instructions, { model: "gpt-5-mini", tools: [] })) {
+          response += chunk;
+        }
+
+        const jsonText = extractJsonBlock(response);
+        if (!jsonText) {
+          return res.status(400).json({ error: "Assistant response was not JSON.", raw: response });
+        }
+
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(jsonText);
+        } catch (error) {
+          const details = error instanceof Error ? error.message : String(error);
+          return res.status(400).json({ error: `Invalid JSON from assistant: ${details}`, raw: response });
+        }
+
+        const suggestion = normalizeSchedulerSuggestion(parsed, promptNames);
+        return res.json({ suggestion });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return res.status(500).json({ error: message });
+      }
     });
   }
 

@@ -156,7 +156,7 @@ The OpenZigs UI is a **Next.js** application with a navigation bar providing acc
 | **Chat** | `/chat` | AI chat with streaming, model selection, approval overlays |
 | **Admin** | `/admin` | Channel config, sidecar management, tool toggles, env status |
 | **Library** | `/library` | Saved prompt templates with `{{variable}}` interpolation |
-| **Scheduler** | `/scheduler` | Cron-based job scheduling with prompt linking |
+| **Scheduler** | `/scheduler` | Cron-based job scheduling with prompt linking and model overrides |
 
 ### Chat
 
@@ -192,6 +192,7 @@ The dashboard at `/` provides:
 The admin page at `/admin` consolidates all configuration:
 
 - **Channels** — Configure Telegram and Discord tokens, toggle channels on/off, select default model.
+- **AI Personality** — Configure the system instruction and optional pre/post prompts, or disable injection globally.
 - **MCP Sidecars** — View Docker sidecar status (running, credentials missing, offline), manage credentials, restart containers, toggle per-tool within each sidecar.
 - **Local MCP Servers** — View status of locally-running MCP servers (MarkItDown, Database, GitHub).
 - **Tools** — Toggle any tool on/off, view risk level badges (🟢 low, 🟡 medium, 🔴 high), grouped by category.
@@ -205,6 +206,7 @@ The library at `/library` provides a visual interface for managing saved prompt 
 - **Edit** existing prompts inline.
 - **Search** prompts by name, content, or tags.
 - **Variable preview** — `{{variable}}` placeholders are highlighted and listed.
+- **Use as System Prompt** — Apply any saved prompt as the active system instruction in the AI Personality panel.
 - **Delete** with confirmation.
 
 ### Scheduler
@@ -213,6 +215,8 @@ The scheduler at `/scheduler` manages cron-based automated jobs:
 
 - **Create** jobs with name, cron expression, and action (prompt, shell command, or custom).
 - **Prompt linking** — link a job to a saved prompt from the Library.
+- **Model selection** — optionally choose a model override per prompt job.
+- **AI Scheduler Assistant** — describe the schedule in plain English and auto-fill fields (uses `gpt-5-mini`).
 - **Cron preview** — visual breakdown of minute, hour, day, month, weekday fields.
 - **Enable/disable** individual jobs with toggle switches.
 - **Live execution events** via Socket.IO — see when jobs fire in real time.

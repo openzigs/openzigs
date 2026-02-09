@@ -183,7 +183,7 @@ const modelsRouter = createModelsRouter({ copilot });
 app.use("/api/models", modelsRouter);
 
 // Admin API routes (no auth for local dev; gate behind auth in prod)
-const adminRouter = createAdminRouter({ toolRegistry, sidecarManager, localServerManager, promptManager, scheduler, personalityManager, sessionManager });
+const adminRouter = createAdminRouter({ toolRegistry, sidecarManager, localServerManager, promptManager, scheduler, personalityManager, sessionManager, copilot });
 app.use("/api/admin", adminRouter);
 
 const tunnelConfig = config.tunnel;

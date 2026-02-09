@@ -70,7 +70,7 @@ graph TB
         NAV[NavBar<br/>Dashboard · Chat · Admin · Library · Scheduler]
         DASH[Dashboard<br/>Stats · Approvals · Audit Log]
         CHAT[Chat View<br/>Streaming · Approvals]
-        ADMIN[Admin Page<br/>Channels · Sidecars · Tools · Env]
+        ADMIN[Admin Page<br/>Channels · Personality · Sidecars · Tools · Env]
         LIB[Library<br/>Saved Prompts · Templates]
         SCHED[Scheduler<br/>Cron Jobs · Actions]
     end
@@ -129,9 +129,9 @@ The frontend is a **Next.js 14 App Router** application in the `ui/` directory. 
 |---|---|---|
 | `/` | `dashboard.tsx` | Snapshot stats, pending approvals, audit log |
 | `/chat` | `chat-view.tsx` | Full chat with streaming, model selector, approval overlay |
-| `/admin` | `admin/page.tsx` | Channel config, sidecar management, tool toggles, env status |
-| `/library` | `library/page.tsx` | Saved prompt CRUD with `{{variable}}` template preview |
-| `/scheduler` | `scheduler/page.tsx` | Cron job CRUD with action types, prompt linking, live execution events |
+| `/admin` | `admin/page.tsx` | Channel config, personality settings, sidecar management, tool toggles, env status |
+| `/library` | `library/page.tsx` | Saved prompt CRUD with `{{variable}}` template preview and system prompt apply |
+| `/scheduler` | `scheduler/page.tsx` | Cron job CRUD with action types, prompt linking, model overrides, AI assist, live execution events |
 
 ### Component Structure
 
@@ -155,6 +155,7 @@ ui/
 │       ├── channels-panel.tsx     # Telegram + Discord config forms
 │       ├── sidecars-panel.tsx     # Docker sidecar management
 │       ├── local-servers-panel.tsx # Local MCP server status
+│       ├── personality-panel.tsx  # System instruction + pre/post prompts
 │       └── env-panel.tsx          # Environment variable status
 └── lib/
     ├── api.ts              # Shared fetchJson utility + API_BASE
@@ -631,6 +632,7 @@ The shell executor uses a **command allowlist**. If the allowlist is empty, the 
 | `POST` | `/api/admin/tools/:name/risk` | Admin | Override a tool's risk level. |
 | `GET` | `/api/admin/sidecars/:name/tools` | Admin | List tools for a specific MCP sidecar. |
 | `PUT` | `/api/admin/sidecars/:name/tools` | Admin | Update disabled tools for a sidecar. |
+| `POST` | `/api/admin/scheduler/assist` | Admin | Generate scheduler field suggestions from a natural language request. |
 
 ---
 
