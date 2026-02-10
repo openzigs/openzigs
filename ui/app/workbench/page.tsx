@@ -7,7 +7,8 @@ import { fetchJson } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { ForwardRefEditor } from "@/components/workbench/forward-ref-editor";
 import { FileSidebar } from "@/components/workbench/file-sidebar";
-import { Save, FileText, Circle } from "lucide-react";
+import { ImportDocumentDialog } from "@/components/workbench/import-document-dialog";
+import { Save, FileText, Circle, FileUp } from "lucide-react";
 
 const DEFAULT_ROOT = process.env.NEXT_PUBLIC_WORKBENCH_ROOT ?? ".";
 
@@ -19,6 +20,7 @@ export default function WorkbenchPage() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [localContent, setLocalContent] = useState("# Welcome to the Workbench\n\nStart writing or open a file from the sidebar.");
+  const [importOpen, setImportOpen] = useState(false);
 
   // Fetch file content when a file is selected
   const { isFetching } = useQuery({
@@ -107,6 +109,18 @@ export default function WorkbenchPage() {
     [handleSave]
   );
 
+  const handleImportComplete = useCallback(
+    (markdown: string, originalPath: string) => {
+      editorRef.current?.setMarkdown(markdown);
+      setLocalContent(markdown);
+      // Derive a .md sibling path from the original document
+      const baseName = originalPath.replace(/\.[^.]+$/, "");
+      setActiveFile(`${baseName}.md`);
+      setDirty(true);
+    },
+    []
+  );
+
   const fileName = activeFile
     ? activeFile.split("/").pop() ?? "Untitled"
     : "Untitled";
@@ -138,19 +152,29 @@ export default function WorkbenchPage() {
               <span className="text-xs text-muted-foreground">Loading…</span>
             )}
           </div>
-          <button
-            onClick={handleSave}
-            disabled={saveMutation.isPending}
-            className={cn(
-              "flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition",
-              dirty
-                ? "bg-primary text-primary-foreground hover:bg-primary/90"
-                : "bg-muted text-muted-foreground"
-            )}
-          >
-            <Save className="h-3.5 w-3.5" />
-            {saveMutation.isPending ? "Saving…" : "Save"}
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setImportOpen(true)}
+              className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold text-muted-foreground transition hover:bg-muted hover:text-foreground"
+              title="Import document (Word, PDF, etc.)"
+            >
+              <FileUp className="h-3.5 w-3.5" />
+              Import
+            </button>
+            <button
+              onClick={handleSave}
+              disabled={saveMutation.isPending}
+              className={cn(
+                "flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition",
+                dirty
+                  ? "bg-primary text-primary-foreground hover:bg-primary/90"
+                  : "bg-muted text-muted-foreground"
+              )}
+            >
+              <Save className="h-3.5 w-3.5" />
+              {saveMutation.isPending ? "Saving…" : "Save"}
+            </button>
+          </div>
         </div>
 
         {/* Editor */}
@@ -175,6 +199,14 @@ export default function WorkbenchPage() {
           </span>
         </div>
       </div>
+
+      {/* Import Document Dialog */}
+      <ImportDocumentDialog
+        open={importOpen}
+        onOpenChange={setImportOpen}
+        rootDir={DEFAULT_ROOT}
+        onImport={handleImportComplete}
+      />
     </div>
   );
 }

@@ -281,8 +281,25 @@ The Workbench at `/workbench` is a rich Markdown editor for drafting documents, 
 - **Open a file:** Click any file in the sidebar to load its content into the editor.
 - **New file:** Click the **+** button in the sidebar header. The editor resets to a blank document.
 - **Save:** Click the **Save** button in the toolbar or press **Cmd+S** (macOS) / **Ctrl+S** (Windows/Linux). If no file is open, you'll be prompted for a file path.
+- **Import document:** Click the **Import** button in the toolbar to open the Import Document dialog. Browse the file tree, select a document (Word, PDF, PowerPoint, Excel, HTML, images, or audio), and click **Import**. The file is converted to Markdown via the MarkItDown MCP tool and loaded into the editor as a new unsaved document.
 - **Refresh:** Click the **↻** button in the sidebar header to reload the file tree.
 - **Collapse sidebar:** Click the **›** button to collapse the sidebar to a narrow icon strip.
+
+**Importing documents:**
+
+The Import Document feature converts non-Markdown files into editable Markdown directly in the Workbench. It uses the LLM + the `convert-to-markdown` MCP tool (powered by [Microsoft MarkItDown](https://github.com/microsoft/markitdown)) to transform documents on the fly.
+
+| Supported format | Extensions |
+|------------------|------------|
+| **Office documents** | `.docx`, `.pptx`, `.xlsx` |
+| **PDF** | `.pdf` |
+| **Web/text** | `.html`, `.htm`, `.rtf`, `.csv`, `.tsv`, `.epub` |
+| **Images** (OCR) | `.jpg`, `.jpeg`, `.png`, `.gif`, `.bmp`, `.tiff`, `.webp` |
+| **Audio** (transcription) | `.mp3`, `.wav`, `.m4a`, `.ogg` |
+
+After import, the converted Markdown is loaded into the editor with a suggested file path (the original filename with a `.md` extension). The document is marked as unsaved — press **Cmd+S** to save it.
+
+> **Prerequisite:** The MarkItDown MCP sidecar (`markitdown-mcp-server`) must be running. Start it via `docker compose up -d markitdown-mcp-server`.
 
 **Keyboard shortcuts:**
 

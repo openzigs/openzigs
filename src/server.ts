@@ -209,7 +209,7 @@ app.use("/api/tasks", tasksRouter);
 const effectiveAllowedDirs = allowedDirs.length > 0
   ? allowedDirs
   : [process.cwd(), os.tmpdir(), os.homedir(), "/tmp", "/private/tmp"];
-const filesRouter = createFilesRouter({ allowedDirs: effectiveAllowedDirs });
+const filesRouter = createFilesRouter({ allowedDirs: effectiveAllowedDirs, copilot });
 app.use("/api/files", filesRouter);
 
 const tunnelConfig = config.tunnel;
