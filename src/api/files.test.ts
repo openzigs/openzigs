@@ -6,7 +6,6 @@ import express from "express";
 import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { createFilesRouter, CONVERTIBLE_EXTENSIONS } from "./files.js";
-import type { CopilotWrapper } from "../copilot/copilot-wrapper.js";
 
 let tmpRoot: string;
 let server: Server;
@@ -191,33 +190,51 @@ describe("DELETE /api/files", () => {
 /*  POST /api/files/convert                                           */
 /* ------------------------------------------------------------------ */
 
+// Mock child_process.execFile so we don't actually run uvx in tests
+vi.mock("node:child_process", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:child_process")>();
+  return {
+    ...actual,
+    execFile: vi.fn(),
+  };
+});
+
+import { execFile } from "node:child_process";
+
+const mockExecFile = vi.mocked(execFile);
+
+/** Simulate a successful execFile callback. */
+const mockExecSuccess = (stdout: string) => {
+  mockExecFile.mockImplementationOnce((_cmd, _args, _opts, callback) => {
+    // Callback is the 3rd or 4th arg depending on overload — handle both
+    const cb = typeof _opts === "function" ? _opts : callback;
+    if (cb) (cb as (err: null, stdout: string, stderr: string) => void)(null, stdout, "");
+    return {} as ReturnType<typeof execFile>;
+  });
+};
+
+/** Simulate a failed execFile callback. */
+const mockExecFailure = (message: string) => {
+  mockExecFile.mockImplementationOnce((_cmd, _args, _opts, callback) => {
+    const cb = typeof _opts === "function" ? _opts : callback;
+    if (cb) (cb as (err: Error) => void)(new Error(message));
+    return {} as ReturnType<typeof execFile>;
+  });
+};
+
 describe("POST /api/files/convert", () => {
   let convertServer: Server;
   let convertBaseUrl: string;
-  let mockChat: ReturnType<typeof vi.fn>;
-
-  /** Helper to create a mock CopilotWrapper with a controllable chat generator. */
-  const makeMockCopilot = (chatFn: (...args: unknown[]) => AsyncGenerator<string>): CopilotWrapper => {
-    return { chat: chatFn } as unknown as CopilotWrapper;
-  };
-
-  /** Helper to create an async generator that yields chunks. */
-  async function* yieldChunks(...chunks: string[]): AsyncGenerator<string> {
-    for (const c of chunks) yield c;
-  }
 
   beforeAll(async () => {
-    // Seed a .docx test file (content doesn't matter — copilot is mocked)
+    // Seed test files
     await fs.writeFile(path.join(tmpRoot, "report.docx"), "fake-docx-bytes", "utf-8");
     await fs.writeFile(path.join(tmpRoot, "slides.pptx"), "fake-pptx-bytes", "utf-8");
     await fs.writeFile(path.join(tmpRoot, "data.json"), '{"not":"convertible"}', "utf-8");
 
-    mockChat = vi.fn();
-    const mockCopilot = makeMockCopilot(mockChat);
-
     const app = express();
     app.use(express.json());
-    const router = createFilesRouter({ allowedDirs: [tmpRoot], copilot: mockCopilot });
+    const router = createFilesRouter({ allowedDirs: [tmpRoot] });
     app.use("/api/files", router);
 
     convertServer = app.listen(0);
@@ -229,27 +246,6 @@ describe("POST /api/files/convert", () => {
     await new Promise<void>((resolve, reject) =>
       convertServer.close((e) => (e ? reject(e) : resolve()))
     );
-  });
-
-  it("returns 503 when copilot is not available", async () => {
-    const noCopilotApp = express();
-    noCopilotApp.use(express.json());
-    noCopilotApp.use("/api/files", createFilesRouter({ allowedDirs: [tmpRoot] }));
-    const noCopilotServer = noCopilotApp.listen(0);
-    const addr = noCopilotServer.address() as AddressInfo;
-
-    try {
-      const res = await fetch(`http://127.0.0.1:${addr.port}/api/files/convert`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ path: path.join(tmpRoot, "report.docx") }),
-      });
-      expect(res.status).toBe(503);
-      const body = (await res.json()) as { error: string };
-      expect(body.error).toMatch(/copilot/i);
-    } finally {
-      await new Promise<void>((r, e) => noCopilotServer.close((err) => (err ? e(err) : r())));
-    }
   });
 
   it("returns 400 when path is missing", async () => {
@@ -291,8 +287,8 @@ describe("POST /api/files/convert", () => {
     expect(body.error).toContain(".json");
   });
 
-  it("converts a document and returns markdown", async () => {
-    mockChat.mockReturnValueOnce(yieldChunks("# Report\n\n", "Content from the document."));
+  it("converts a document and returns markdown via local CLI", async () => {
+    mockExecSuccess("# Report\n\nContent from the document.");
 
     const res = await fetch(`${convertBaseUrl}/api/files/convert`, {
       method: "POST",
@@ -305,38 +301,8 @@ describe("POST /api/files/convert", () => {
     expect(body.originalPath).toBe(path.join(tmpRoot, "report.docx"));
   });
 
-  it("strips markdown code fences from LLM output", async () => {
-    mockChat.mockReturnValueOnce(
-      yieldChunks("```markdown\n# Fenced Output\n\nBody here\n```")
-    );
-
-    const res = await fetch(`${convertBaseUrl}/api/files/convert`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ path: path.join(tmpRoot, "report.docx") }),
-    });
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as { markdown: string };
-    expect(body.markdown).toBe("# Fenced Output\n\nBody here");
-  });
-
-  it("returns 502 when LLM outputs CONVERSION_ERROR sentinel", async () => {
-    mockChat.mockReturnValueOnce(
-      yieldChunks("CONVERSION_ERROR: Tool timed out after 30s")
-    );
-
-    const res = await fetch(`${convertBaseUrl}/api/files/convert`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ path: path.join(tmpRoot, "slides.pptx") }),
-    });
-    expect(res.status).toBe(502);
-    const body = (await res.json()) as { error: string };
-    expect(body.error).toContain("Tool timed out");
-  });
-
-  it("returns 502 when conversion returns empty content", async () => {
-    mockChat.mockReturnValueOnce(yieldChunks(""));
+  it("returns 502 when conversion returns empty output", async () => {
+    mockExecSuccess("");
 
     const res = await fetch(`${convertBaseUrl}/api/files/convert`, {
       method: "POST",
@@ -345,38 +311,20 @@ describe("POST /api/files/convert", () => {
     });
     expect(res.status).toBe(502);
     const body = (await res.json()) as { error: string };
-    expect(body.error).toMatch(/empty/i);
+    expect(body.error).toMatch(/empty|failed/i);
   });
 
-  it("returns 500 when copilot.chat() throws", async () => {
-    // eslint-disable-next-line require-yield
-    mockChat.mockImplementationOnce(async function* () {
-      throw new Error("LLM connection refused");
-    });
+  it("returns 502 when markitdown CLI fails", async () => {
+    mockExecFailure("markitdown: command not found");
 
     const res = await fetch(`${convertBaseUrl}/api/files/convert`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ path: path.join(tmpRoot, "report.docx") }),
     });
-    expect(res.status).toBe(500);
+    expect(res.status).toBe(502);
     const body = (await res.json()) as { error: string };
-    expect(body.error).toContain("LLM connection refused");
-  });
-
-  it("passes the model option when provided", async () => {
-    mockChat.mockReturnValueOnce(yieldChunks("# Result"));
-
-    await fetch(`${convertBaseUrl}/api/files/convert`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ path: path.join(tmpRoot, "report.docx"), model: "gpt-4o" }),
-    });
-
-    expect(mockChat).toHaveBeenLastCalledWith(
-      expect.stringContaining("report.docx"),
-      expect.objectContaining({ model: "gpt-4o" })
-    );
+    expect(body.error).toContain("command not found");
   });
 });
 

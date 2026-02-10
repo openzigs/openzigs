@@ -1,8 +1,25 @@
 import { Router } from "express";
 import path from "node:path";
 import fs from "node:fs/promises";
+import { execFile } from "node:child_process";
 import { isPathAllowed } from "../mcp/tools/path-utils.js";
-import type { CopilotWrapper } from "../copilot/copilot-wrapper.js";
+
+/**
+ * Promise wrapper for execFile that returns { stdout, stderr }.
+ * We avoid `promisify(execFile)` because the custom promisify symbol
+ * is lost when the module is auto-mocked in tests.
+ */
+const execFileAsync = (
+  cmd: string,
+  args: string[],
+  opts: { maxBuffer: number; timeout: number },
+): Promise<{ stdout: string; stderr: string }> =>
+  new Promise((resolve, reject) => {
+    execFile(cmd, args, opts, (err, stdout, stderr) => {
+      if (err) reject(err);
+      else resolve({ stdout: stdout as string, stderr: stderr as string });
+    });
+  });
 
 /** File extensions the convert endpoint accepts for document import. */
 export const CONVERTIBLE_EXTENSIONS = new Set([
@@ -14,7 +31,8 @@ export const CONVERTIBLE_EXTENSIONS = new Set([
 
 export type FilesRouterOptions = {
   allowedDirs: string[];
-  copilot?: CopilotWrapper;
+  /** URL of the MarkItDown Docker sidecar (e.g. http://markitdown-mcp-server:5301). */
+  markitdownUrl?: string;
 };
 
 /**
@@ -22,7 +40,54 @@ export type FilesRouterOptions = {
  * that gates the MCP filesystem tools. All paths are resolved and validated
  * before any I/O occurs; requests outside the sandbox receive a 403.
  */
-export const createFilesRouter = ({ allowedDirs, copilot }: FilesRouterOptions): Router => {
+/**
+ * Convert a document to Markdown. Attempts the Docker sidecar first;
+ * falls back to a local `uvx markitdown[all]` invocation.
+ */
+const convertToMarkdown = async (
+  filePath: string,
+  sidecarUrl?: string,
+): Promise<string> => {
+  // ── Strategy 1: Docker sidecar ──
+  if (sidecarUrl) {
+    try {
+      const resp = await fetch(`${sidecarUrl}/mcp`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          method: "convert_to_markdown",
+          params: { file_path: filePath },
+        }),
+      });
+      if (resp.ok) {
+        const body = (await resp.json()) as { result?: string };
+        if (body.result) return body.result;
+      }
+      // Fall through to local CLI on non-ok responses
+    } catch {
+      // Sidecar unreachable — fall through
+    }
+  }
+
+  // ── Strategy 2: local CLI via uvx ──
+  try {
+    const { stdout, stderr } = await execFileAsync(
+      "uvx",
+      ["--with", "markitdown[all]", "markitdown", filePath],
+      { maxBuffer: 20 * 1024 * 1024, timeout: 120_000 },
+    );
+    const output = stdout.trim();
+    if (!output) {
+      throw new Error(stderr.trim() || "markitdown returned empty output");
+    }
+    return output;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    throw new Error(`Document conversion failed: ${msg}`);
+  }
+};
+
+export const createFilesRouter = ({ allowedDirs, markitdownUrl }: FilesRouterOptions): Router => {
   const router = Router();
 
   const guardPath = (rawPath: string | undefined): { resolved: string } | { error: string } => {
@@ -161,21 +226,15 @@ export const createFilesRouter = ({ allowedDirs, copilot }: FilesRouterOptions):
   });
 
   /**
-   * POST /api/files/convert — Convert a document to Markdown via the LLM +
-   * the `convert-to-markdown` MCP tool (MarkItDown sidecar).
+   * POST /api/files/convert — Convert a document to Markdown using
+   * Microsoft MarkItDown (Docker sidecar → local CLI fallback).
    *
-   * Body: { path: string, model?: string }
+   * Body: { path: string }
    * Response: { markdown: string, originalPath: string }
    */
   router.post("/convert", async (req, res) => {
-    if (!copilot) {
-      res.status(503).json({ error: "Copilot service is not available" });
-      return;
-    }
-
     const body = req.body as Record<string, unknown>;
     const rawPath = typeof body.path === "string" ? body.path : undefined;
-    const model = typeof body.model === "string" ? body.model : undefined;
 
     if (!rawPath) {
       res.status(400).json({ error: "path is required" });
@@ -206,47 +265,12 @@ export const createFilesRouter = ({ allowedDirs, copilot }: FilesRouterOptions):
       return;
     }
 
-    // Build the prompt that forces the LLM to use the convert-to-markdown tool
-    const systemPrompt = [
-      "System: You are a document conversion assistant. The user wants to edit a document in a Markdown editor.",
-      `Use the convert-to-markdown tool to convert the file at "${result.resolved}" to Markdown.`,
-      "Return ONLY the raw Markdown content from the tool's output.",
-      "Do not add any conversational text, greetings, explanations, or markdown code fences.",
-      "If the tool fails, respond with exactly: CONVERSION_ERROR: <reason>",
-      "",
-      `User: Convert the file at "${result.resolved}" to Markdown.`,
-    ].join("\n");
-
     try {
-      let markdown = "";
-      for await (const chunk of copilot.chat(systemPrompt, { model })) {
-        markdown += chunk;
-      }
-
-      // Strip accidental markdown code fences the LLM may wrap around output
-      markdown = markdown.trim();
-      const fenceMatch = markdown.match(/^```(?:markdown|md)?\n([\s\S]*?)\n```$/);
-      if (fenceMatch) {
-        markdown = fenceMatch[1];
-      }
-
-      // Check for conversion error
-      if (markdown.startsWith("CONVERSION_ERROR:")) {
-        res.status(502).json({
-          error: markdown.slice("CONVERSION_ERROR:".length).trim(),
-        });
-        return;
-      }
-
-      if (!markdown) {
-        res.status(502).json({ error: "Conversion returned empty content" });
-        return;
-      }
-
+      const markdown = await convertToMarkdown(result.resolved, markitdownUrl);
       res.json({ markdown, originalPath: result.resolved });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      res.status(500).json({ error: `Conversion failed: ${msg}` });
+      res.status(502).json({ error: `Conversion failed: ${msg}` });
     }
   });
 

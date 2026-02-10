@@ -209,7 +209,10 @@ app.use("/api/tasks", tasksRouter);
 const effectiveAllowedDirs = allowedDirs.length > 0
   ? allowedDirs
   : [process.cwd(), os.tmpdir(), os.homedir(), "/tmp", "/private/tmp"];
-const filesRouter = createFilesRouter({ allowedDirs: effectiveAllowedDirs, copilot });
+const filesRouter = createFilesRouter({
+  allowedDirs: effectiveAllowedDirs,
+  markitdownUrl: process.env.MCP_MARKITDOWN_URL,
+});
 app.use("/api/files", filesRouter);
 
 const tunnelConfig = config.tunnel;
