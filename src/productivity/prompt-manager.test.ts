@@ -131,4 +131,71 @@ describe("PromptManager", () => {
     pm.create({ name: "unique", template: "a" });
     expect(() => pm.create({ name: "unique", template: "b" })).toThrow();
   });
+
+  it("creates a prompt with preferredTools", () => {
+    const prompt = pm.create({
+      name: "scoped-prompt",
+      template: "Analyze {{file}}",
+      preferredTools: ["read-file", "shell-execute"],
+    });
+
+    expect(prompt.preferredTools).toEqual(["read-file", "shell-execute"]);
+
+    const found = pm.getById(prompt.id);
+    expect(found!.preferredTools).toEqual(["read-file", "shell-execute"]);
+  });
+
+  it("creates a prompt without preferredTools (null by default)", () => {
+    const prompt = pm.create({ name: "no-tools", template: "plain" });
+    expect(prompt.preferredTools).toBeNull();
+  });
+
+  it("updates preferredTools on a prompt", () => {
+    const prompt = pm.create({ name: "updatable", template: "text" });
+
+    const updated = pm.update(prompt.id, {
+      preferredTools: ["web-search", "browser-navigate"],
+    });
+    expect(updated.preferredTools).toEqual(["web-search", "browser-navigate"]);
+  });
+
+  it("clears preferredTools by setting null", () => {
+    const prompt = pm.create({
+      name: "clearable",
+      template: "text",
+      preferredTools: ["web-search"],
+    });
+    expect(prompt.preferredTools).toEqual(["web-search"]);
+
+    const updated = pm.update(prompt.id, { preferredTools: null });
+    expect(updated.preferredTools).toBeNull();
+  });
+
+  it("resolveWithTools returns text and preferredTools", () => {
+    pm.create({
+      name: "tooled",
+      template: "Search for {{query}}",
+      preferredTools: ["web-search"],
+    });
+
+    const result = pm.resolveWithTools("tooled", { query: "AI news" });
+    expect(result).toEqual({
+      text: "Search for AI news",
+      preferredTools: ["web-search"],
+    });
+  });
+
+  it("resolveWithTools returns null preferredTools when not set", () => {
+    pm.create({ name: "plain", template: "Hello" });
+
+    const result = pm.resolveWithTools("plain");
+    expect(result).toEqual({
+      text: "Hello",
+      preferredTools: null,
+    });
+  });
+
+  it("resolveWithTools returns null for unknown prompt", () => {
+    expect(pm.resolveWithTools("nonexistent")).toBeNull();
+  });
 });

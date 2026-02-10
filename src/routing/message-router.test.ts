@@ -371,4 +371,102 @@ describe("MessageRouter", () => {
     expect(copilot.lastPrompt).not.toContain("System:");
     expect(copilot.lastPrompt).toBe("User: Hello");
   });
+
+  it("passes scoped tools to copilot.chat when allowedTools provided", async () => {
+    const baseDir = await createTempDir();
+    cleanupDirs.push(baseDir);
+
+    const channelManager = new ChannelManager();
+    const telegram = new RecordingChannel("telegram");
+    await telegram.connect();
+    channelManager.register(telegram);
+
+    const sessionManager = new SessionManager({ baseDir });
+
+    // Track what tools were passed to chat
+    let capturedTools: unknown[] | undefined;
+    const copilot = {
+      ...new FakeCopilot("ok"),
+      chat: async function* (_message: string, options?: { tools?: unknown[]; model?: string; onToolCall?: (tool: string, args: unknown) => void }) {
+        capturedTools = options?.tools;
+        yield "scoped response";
+      },
+    } as unknown as CopilotWrapper;
+
+    // Create a minimal mock ToolRegistry
+    const mockToolDefs = [
+      { name: "read-file", description: "Read file", category: "filesystem", riskLevel: "low" },
+      { name: "web-search", description: "Search", category: "search", riskLevel: "low" },
+      { name: "shell-execute", description: "Execute shell", category: "shell", riskLevel: "high" },
+      { name: "spawn-agent", description: "Spawn agent", category: "developer", riskLevel: "medium" },
+      { name: "list-directory", description: "List dir", category: "filesystem", riskLevel: "low" },
+      { name: "browser-navigate", description: "Navigate", category: "browser", riskLevel: "high" },
+      { name: "orchestrate-agents", description: "Orchestrate", category: "developer", riskLevel: "medium" },
+      { name: "linkedin-post", description: "Post to LinkedIn", category: "social", riskLevel: "medium" },
+    ];
+
+    const mockToolRegistry = {
+      listEnabledTools: () => mockToolDefs,
+    };
+
+    const router = new MessageRouter({
+      channelManager,
+      sessionManager,
+      copilot,
+      toolRegistry: mockToolRegistry as unknown as import("../mcp/tool-registry.js").ToolRegistry,
+    });
+
+    await router.route(baseMessage({ content: "Search LinkedIn" }), {
+      allowedTools: ["web-search", "linkedin-post"],
+    });
+
+    expect(capturedTools).toBeDefined();
+    const toolNames = (capturedTools as Array<{ name: string }>).map((t) => t.name);
+    // Should include explicitly allowed tools
+    expect(toolNames).toContain("web-search");
+    expect(toolNames).toContain("linkedin-post");
+    // Should include always-on tools
+    expect(toolNames).toContain("read-file");
+    expect(toolNames).toContain("spawn-agent");
+    // Should NOT include tools not in the allowlist (unless they're always-on)
+    // shell-execute IS always-on, so it should still be there
+    expect(toolNames).toContain("shell-execute");
+  });
+
+  it("does not scope tools when allowedTools not provided", async () => {
+    const baseDir = await createTempDir();
+    cleanupDirs.push(baseDir);
+
+    const channelManager = new ChannelManager();
+    const telegram = new RecordingChannel("telegram");
+    await telegram.connect();
+    channelManager.register(telegram);
+
+    const sessionManager = new SessionManager({ baseDir });
+
+    let capturedTools: unknown[] | undefined;
+    const copilot = {
+      ...new FakeCopilot("ok"),
+      chat: async function* (_message: string, options?: { tools?: unknown[]; model?: string }) {
+        capturedTools = options?.tools;
+        yield "unscoped response";
+      },
+    } as unknown as CopilotWrapper;
+
+    const mockToolRegistry = {
+      listEnabledTools: () => [],
+    };
+
+    const router = new MessageRouter({
+      channelManager,
+      sessionManager,
+      copilot,
+      toolRegistry: mockToolRegistry as unknown as import("../mcp/tool-registry.js").ToolRegistry,
+    });
+
+    await router.route(baseMessage({ content: "Hello" }));
+
+    // tools should be undefined (no scoping)
+    expect(capturedTools).toBeUndefined();
+  });
 });

@@ -735,6 +735,7 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
           template,
           description: typeof body.description === "string" ? body.description : undefined,
           tags: Array.isArray(body.tags) ? (body.tags as string[]) : undefined,
+          preferredTools: Array.isArray(body.preferredTools) ? (body.preferredTools as string[]) : undefined,
         });
         return res.status(201).json(prompt);
       } catch (error) {
@@ -751,6 +752,7 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
           template: typeof body.template === "string" ? body.template : undefined,
           description: typeof body.description === "string" ? body.description : undefined,
           tags: Array.isArray(body.tags) ? (body.tags as string[]) : undefined,
+          preferredTools: Array.isArray(body.preferredTools) ? (body.preferredTools as string[]) : (body.preferredTools === null ? null : undefined),
         });
         return res.json(updated);
       } catch (error) {
@@ -795,6 +797,7 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
           actionType: typeof body.actionType === "string" ? (body.actionType as "prompt" | "shell" | "custom") : undefined,
           actionPayload: (body.actionPayload ?? {}) as Record<string, unknown>,
           model: typeof body.model === "string" ? body.model : undefined,
+          allowedTools: Array.isArray(body.allowedTools) ? (body.allowedTools as string[]) : undefined,
           enabled: typeof body.enabled === "boolean" ? body.enabled : undefined,
         });
         return res.status(201).json(job);
@@ -813,6 +816,7 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
           timezone: typeof body.timezone === "string" ? body.timezone : undefined,
           actionPayload: body.actionPayload as Record<string, unknown> | undefined,
           model: typeof body.model === "string" ? body.model : (body.model === null ? null : undefined),
+          allowedTools: Array.isArray(body.allowedTools) ? (body.allowedTools as string[]) : (body.allowedTools === null ? null : undefined),
           enabled: typeof body.enabled === "boolean" ? body.enabled : undefined,
         });
         return res.json(updated);

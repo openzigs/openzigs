@@ -132,7 +132,7 @@ export class WebChatChannel implements MessageChannel {
       void this.sendSessionHistory(socket, userId).catch(() => {});
     }
 
-    socket.on("chat:message", (data: { content?: string; model?: string }) => {
+    socket.on("chat:message", (data: { content?: string; model?: string; tools?: string[] }) => {
       const content = typeof data?.content === "string" ? data.content.trim() : "";
       if (!content) {
         return;
@@ -145,6 +145,7 @@ export class WebChatChannel implements MessageChannel {
         username: "web-user",
         content,
         model: data.model,
+        tools: Array.isArray(data.tools) ? data.tools : undefined,
         timestamp: new Date()
       };
       for (const handler of this.messageHandlers) {

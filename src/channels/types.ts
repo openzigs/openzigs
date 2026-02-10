@@ -30,6 +30,8 @@ export type IncomingMessage = {
   username?: string;
   content: string;
   model?: string;
+  /** Optional per-message tool allowlist (web chat only, for V2 scoping). */
+  tools?: string[];
   attachments?: Attachment[];
   timestamp: Date;
 };

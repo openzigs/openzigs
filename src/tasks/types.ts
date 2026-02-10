@@ -17,6 +17,8 @@ export type AgentTask = {
   channelType: ChannelType | null;
   chatId: string | null;
   model: string | null;
+  /** Optional tool allowlist. null = all enabled tools. */
+  allowedTools: string[] | null;
   notifyOnComplete: boolean;
   depth: number;
   createdAt: Date;
@@ -34,6 +36,8 @@ export type CreateTaskInput = {
   channelType?: ChannelType;
   chatId?: string;
   model?: string;
+  /** Optional tool allowlist for this task. */
+  allowedTools?: string[];
   notifyOnComplete?: boolean;
   spawnedBy?: string;
 };
@@ -52,6 +56,7 @@ export type StoredTask = {
   channel_type: string | null;
   chat_id: string | null;
   model: string | null;
+  allowed_tools: string | null;
   notify_on_complete: number;
   depth: number;
   created_at: string;

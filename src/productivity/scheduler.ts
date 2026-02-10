@@ -15,6 +15,8 @@ export type ScheduledJob = {
   actionType: "prompt" | "shell" | "custom";
   actionPayload: Record<string, unknown>;
   model: string | null;
+  /** Optional list of tool names this job is allowed to use. null = all enabled tools. */
+  allowedTools: string[] | null;
   enabled: boolean;
   lastRunAt: Date | null;
   nextRunAt: Date | null;
@@ -30,6 +32,8 @@ export type CreateJobInput = {
   actionType?: "prompt" | "shell" | "custom";
   actionPayload: Record<string, unknown>;
   model?: string;
+  /** Optional list of tool names this job is allowed to use. */
+  allowedTools?: string[];
   enabled?: boolean;
 };
 
@@ -39,6 +43,8 @@ export type UpdateJobInput = {
   timezone?: string;
   actionPayload?: Record<string, unknown>;
   model?: string | null;
+  /** Set to an array to restrict tools, or null to clear restriction. */
+  allowedTools?: string[] | null;
   enabled?: boolean;
 };
 
@@ -50,6 +56,7 @@ type StoredJob = {
   action_type: string;
   action_payload: string;
   model: string | null;
+  allowed_tools: string | null;
   enabled: number;
   last_run_at: string | null;
   next_run_at: string | null;
@@ -84,6 +91,7 @@ const toJob = (row: StoredJob): ScheduledJob => ({
   actionType: row.action_type as ScheduledJob["actionType"],
   actionPayload: JSON.parse(row.action_payload) as Record<string, unknown>,
   model: row.model ?? null,
+  allowedTools: row.allowed_tools ? (JSON.parse(row.allowed_tools) as string[]) : null,
   enabled: row.enabled === 1,
   lastRunAt: row.last_run_at ? new Date(row.last_run_at) : null,
   nextRunAt: row.next_run_at ? new Date(row.next_run_at) : null,
@@ -119,11 +127,16 @@ export class Scheduler extends EventEmitter {
 
   /** Run lightweight schema migrations (add columns if missing). */
   private migrateSchema(): void {
-    // Add 'model' column if it doesn't exist (safe for existing DBs)
     const columns = this.db.pragma("table_info(scheduled_jobs)") as Array<{ name: string }>;
-    const hasModel = columns.some((c) => c.name === "model");
-    if (!hasModel) {
+
+    // Add 'model' column if it doesn't exist (safe for existing DBs)
+    if (!columns.some((c) => c.name === "model")) {
       this.db.exec("ALTER TABLE scheduled_jobs ADD COLUMN model TEXT DEFAULT NULL");
+    }
+
+    // Add 'allowed_tools' column — JSON array of tool names or NULL (= all tools)
+    if (!columns.some((c) => c.name === "allowed_tools")) {
+      this.db.exec("ALTER TABLE scheduled_jobs ADD COLUMN allowed_tools TEXT DEFAULT NULL");
     }
   }
 
@@ -140,8 +153,8 @@ export class Scheduler extends EventEmitter {
     this.db
       .prepare(
         `INSERT INTO scheduled_jobs
-          (id, name, cron_expression, timezone, action_type, action_payload, model, enabled, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          (id, name, cron_expression, timezone, action_type, action_payload, model, allowed_tools, enabled, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         id,
@@ -151,6 +164,7 @@ export class Scheduler extends EventEmitter {
         input.actionType ?? "prompt",
         JSON.stringify(input.actionPayload),
         input.model ?? null,
+        input.allowedTools ? JSON.stringify(input.allowedTools) : null,
         enabled ? 1 : 0,
         now,
         now
@@ -193,15 +207,18 @@ export class Scheduler extends EventEmitter {
     const timezone = input.timezone ?? existing.timezone;
     const actionPayload = JSON.stringify(input.actionPayload ?? existing.actionPayload);
     const model = input.model !== undefined ? input.model : existing.model;
+    const allowedTools = input.allowedTools !== undefined
+      ? (input.allowedTools ? JSON.stringify(input.allowedTools) : null)
+      : (existing.allowedTools ? JSON.stringify(existing.allowedTools) : null);
     const enabled = input.enabled ?? existing.enabled;
 
     this.db
       .prepare(
         `UPDATE scheduled_jobs
-         SET name = ?, cron_expression = ?, timezone = ?, action_payload = ?, model = ?, enabled = ?, updated_at = ?
+         SET name = ?, cron_expression = ?, timezone = ?, action_payload = ?, model = ?, allowed_tools = ?, enabled = ?, updated_at = ?
          WHERE id = ?`
       )
-      .run(name, cronExpression, timezone, actionPayload, model, enabled ? 1 : 0, now, id);
+      .run(name, cronExpression, timezone, actionPayload, model, allowedTools, enabled ? 1 : 0, now, id);
 
     // Restart the cron task if expression or timezone changed
     this.stopTask(id);
@@ -292,6 +309,7 @@ export class Scheduler extends EventEmitter {
             goal,
             context,
             model: job.model ?? undefined,
+            allowedTools: job.allowedTools ?? undefined,
             notifyOnComplete: true,
           },
           { mode: "background" }

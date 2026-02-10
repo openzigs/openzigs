@@ -77,6 +77,28 @@ describe("TaskRepository", () => {
       expect(task.spawnedBy).toBe("job-123");
     });
 
+    it("stores and retrieves allowedTools", () => {
+      const task = repo.insert({
+        trigger: "cron",
+        goal: "Scoped task",
+        allowedTools: ["web-search", "read-file"],
+      });
+
+      expect(task.allowedTools).toEqual(["web-search", "read-file"]);
+
+      const fetched = repo.getById(task.id);
+      expect(fetched!.allowedTools).toEqual(["web-search", "read-file"]);
+    });
+
+    it("defaults allowedTools to null when not provided", () => {
+      const task = repo.insert({
+        trigger: "chat",
+        goal: "Unscoped task",
+      });
+
+      expect(task.allowedTools).toBeNull();
+    });
+
     it("sets depth from parent", () => {
       const parent = repo.insert({ trigger: "chat", goal: "Parent" });
       const child = repo.insert({

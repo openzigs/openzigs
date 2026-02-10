@@ -194,7 +194,7 @@ registerMcpTools(toolRegistry, {
 
 // ── Task Background Worker ──
 const maxConcurrent = config.tasks?.maxConcurrent ?? 2;
-const taskWorker = new TaskWorker({ engine: taskEngine, copilot, maxConcurrent });
+const taskWorker = new TaskWorker({ engine: taskEngine, copilot, toolRegistry, maxConcurrent });
 taskWorker.start();
 
 // Model API routes
@@ -344,7 +344,7 @@ const defaultAccessControl = {
     const channelType = channel.type;
   
     channel.onMessage((message) => {
-      void router.route(message, { model }).catch((error) => {
+      void router.route(message, { model, allowedTools: message.tools }).catch((error) => {
         const details = error instanceof Error ? error.message : String(error);
         logger.error(`${channelType} message routing failed: ${details}`);
       });
@@ -391,6 +391,7 @@ const createRouter = (accessControlOverride?: AccessControlConfig) => {
     channelManager,
     sessionManager,
     copilot,
+    toolRegistry,
     accessControl: accessControlOverride ?? (config.messaging?.accessControl ?? defaultAccessControl),
     personalityManager,
     taskEngine
@@ -492,7 +493,8 @@ if (webConfig?.enabled !== false) {
         onToolCall: (tool) => {
           void webChatChannel.sendToolProgress(message.chatId, tool);
         },
-        model: message.model // Model is picked per-request via the UI; already read from user config by the model selector
+        model: message.model, // Model is picked per-request via the UI; already read from user config by the model selector
+        allowedTools: message.tools
       })
       .then(() => {
         void webChatChannel.sendStreamEnd(message.chatId, messageId);

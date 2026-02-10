@@ -17,6 +17,7 @@ export const toTask = (row: StoredTask): AgentTask => ({
   channelType: row.channel_type as AgentTask["channelType"],
   chatId: row.chat_id,
   model: row.model,
+  allowedTools: row.allowed_tools ? (JSON.parse(row.allowed_tools) as string[]) : null,
   notifyOnComplete: row.notify_on_complete === 1,
   depth: row.depth,
   createdAt: new Date(row.created_at),
@@ -72,6 +73,12 @@ export class TaskRepository {
       CREATE INDEX IF NOT EXISTS idx_tasks_parent ON agent_tasks(parent_task_id);
       CREATE INDEX IF NOT EXISTS idx_tasks_session ON agent_tasks(session_id);
     `);
+
+    // Add 'allowed_tools' column if missing (safe for existing DBs)
+    const columns = this.db.pragma("table_info(agent_tasks)") as Array<{ name: string }>;
+    if (!columns.some((c) => c.name === "allowed_tools")) {
+      this.db.exec("ALTER TABLE agent_tasks ADD COLUMN allowed_tools TEXT DEFAULT NULL");
+    }
 
     // ── Backfill: link orphaned agent tasks to their parent ──
     // Before the parentTaskId propagation fix, spawn-agent/orchestrate-agents
@@ -136,9 +143,9 @@ export class TaskRepository {
       .prepare(
         `INSERT INTO agent_tasks
           (id, parent_task_id, trigger, status, goal, context,
-           session_id, channel_type, chat_id, model,
+           session_id, channel_type, chat_id, model, allowed_tools,
            notify_on_complete, depth, created_at, spawned_by)
-         VALUES (?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         VALUES (?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         id,
@@ -150,6 +157,7 @@ export class TaskRepository {
         input.channelType ?? null,
         input.chatId ?? null,
         input.model ?? null,
+        input.allowedTools ? JSON.stringify(input.allowedTools) : null,
         input.notifyOnComplete ? 1 : 0,
         depth,
         now,

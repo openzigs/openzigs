@@ -841,6 +841,31 @@ A configurable hard cap (default: **30**, range: **1-128**) limits the total num
 
 This cap is configurable at runtime via the **Admin UI slider** or the **Session Config API** — no server restart required.
 
+#### Layer 2.5 — Per-Entity Tool Scoping
+
+Individual scheduled jobs, saved prompts, and web chat requests can declare an **explicit tool allowlist** that restricts which tools are available for that specific execution. This supplements the global `maxToolsPerRequest` cap with fine-grained, per-context control.
+
+| Scope | Field | Storage | Effect |
+|---|---|---|---|
+| **Scheduled Jobs** | `allowedTools: string[]` | SQLite `scheduled_jobs.allowed_tools` (JSON) | Only listed tools + ALWAYS_ON_TOOLS are sent to the LLM when the job fires |
+| **Saved Prompts** | `preferredTools: string[]` | SQLite `saved_prompts.preferred_tools` (JSON) | Only listed tools + ALWAYS_ON_TOOLS are available when the prompt is executed |
+| **Web Chat Messages** | `tools: string[]` | Transient (Socket.IO payload) | Per-message scoping from the UI — only listed tools + ALWAYS_ON_TOOLS are used |
+
+**How scoping resolves:**
+1. The caller provides an explicit tool name list (e.g., `["web-search", "linkedin-post"]`).
+2. The runtime unions that list with `ALWAYS_ON_TOOLS` (7 tools).
+3. The resulting set is intersected with `ToolRegistry.listEnabledTools()` — disabled tools are never included.
+4. The filtered `ToolDefinition[]` array is passed to `copilot.chat({ tools })`.
+
+**When no explicit scoping is provided**, the default behavior applies: all enabled tools up to `maxToolsPerRequest`.
+
+**API endpoints:**
+- `POST /api/jobs` and `PUT /api/jobs/:id` accept `allowedTools: string[]` (or `null` to clear)
+- `POST /api/prompts` and `PUT /api/prompts/:id` accept `preferredTools: string[]` (or `null` to clear)
+- Web chat `chat:message` Socket.IO event accepts `tools: string[]`
+
+For the full research RFC on tool selection strategies, see [docs/rfc-tool-selection-strategy.md](rfc-tool-selection-strategy.md).
+
 #### Layer 3 — Intent Classification (future, disabled by default)
 
 1. **Intent Classification**
