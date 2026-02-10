@@ -22,7 +22,7 @@ export type PersonalityUpdate = {
 
 export const DEFAULT_PERSONALITY: PersonalityConfig = {
   systemInstruction: "You are OpenZigs, a helpful personal AI assistant.",
-  prePrompt: "Output chat sessions in markdown format and use mermaid diagrams where applicable.",
+  prePrompt: "Output chat sessions in markdown format and use mermaid diagrams where applicable. When posting to social media, always convert Markdown formatting to platform-native text using Unicode characters. Never post raw Markdown syntax to social platforms.",
   postPrompt: "",
   enabled: true,
   updatedAt: new Date().toISOString(),

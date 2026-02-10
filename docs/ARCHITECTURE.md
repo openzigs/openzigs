@@ -67,12 +67,13 @@ graph TB
     end
 
     subgraph NextJS["Next.js UI (localhost:3001)"]
-        NAV[NavBar<br/>Dashboard · Chat · Admin · Library · Scheduler · Tasks]
+        NAV[NavBar<br/>Dashboard · Chat · Workbench · Admin · Library · Scheduler · Tasks]
         DASH[Dashboard<br/>Stats · Approvals · Audit Log]
         CHAT[Chat View<br/>Streaming · Approvals]
         ADMIN[Admin Page<br/>Channels · Personality · Sidecars · Tools · Env]
         LIB[Library<br/>Saved Prompts · Templates]
         SCHED[Scheduler<br/>Cron Jobs · Actions]
+        WB[Workbench<br/>MDXEditor · File Sidebar]
     end
 
     NextJS <-->|Socket.IO + API proxy| EX
@@ -133,6 +134,7 @@ The frontend is a **Next.js 14 App Router** application in the `ui/` directory. 
 | `/library` | `library/page.tsx` | Saved prompt CRUD with `{{variable}}` template preview and system prompt apply |
 | `/scheduler` | `scheduler/page.tsx` | Cron job CRUD with action types, prompt linking, model overrides, AI assist, live execution events |
 | `/tasks` | `task-dashboard.tsx` | Background task queue, status filters, cancel, recursive child expansion, real-time updates |
+| `/workbench` | `workbench/page.tsx` | Rich Markdown editor (MDXEditor) with file sidebar, live file system CRUD, Cmd/Ctrl+S save |
 
 ### Component Structure
 
@@ -146,13 +148,18 @@ ui/
 │   ├── admin/page.tsx      # Admin route
 │   ├── library/page.tsx    # Library route
 │   ├── scheduler/page.tsx  # Scheduler route
-│   └── tasks/page.tsx      # Tasks route
+│   ├── tasks/page.tsx      # Tasks route
+│   └── workbench/page.tsx  # Workbench route (MDXEditor + file sidebar)
 ├── components/
 │   ├── nav-bar.tsx         # Sticky top navigation
 │   ├── chat-view.tsx       # Chat with streaming + approvals
 │   ├── dashboard.tsx       # Stats + approvals + audit log
 │   ├── task-dashboard.tsx  # Background task queue + recursive children
 │   ├── section-card.tsx    # Reusable card wrapper
+│   ├── workbench/
+│   │   ├── initialized-mdx-editor.tsx  # MDXEditor with full plugin config
+│   │   ├── forward-ref-editor.tsx      # Dynamic SSR-safe import wrapper
+│   │   └── file-sidebar.tsx            # Recursive file tree browser
 │   └── admin/
 │       ├── tools-panel.tsx        # Tool list with risk badges + toggles
 │       ├── channels-panel.tsx     # Telegram + Discord config forms
@@ -440,6 +447,24 @@ When a tool with `riskLevel: "high"` is invoked:
 4. **First response wins** — the tool either executes or is denied.
 5. The decision is audit-logged.
 
+### Social Formatter (`src/channels/social-formatter.ts`)
+
+Converts Markdown content to platform-safe plain text using Unicode character transformations. Social platforms (LinkedIn, X/Twitter, Facebook) do not render Markdown; posting raw `**bold**` looks broken.
+
+| Markdown | Output | Unicode Range |
+|---|---|---|
+| `**bold**` | **𝗯𝗼𝗹𝗱** | Mathematical Bold Sans-Serif (U+1D5D4) |
+| `*italic*` | *𝑖𝑡𝑎𝑙𝑖𝑐* | Mathematical Italic (U+1D434) |
+| `**123**` | 𝟭𝟮𝟯 | Bold Digits (U+1D7EC) |
+| `# Heading` | 𝗛𝗘𝗔𝗗𝗜𝗡𝗚 | Bold uppercase |
+| `[text](url)` | text (url) | Plain text |
+| `![alt](url)` | [Image: alt] | Placeholder |
+| `- item` | • item | Bullet |
+| `> quote` | ❝quote❞ | Curly quotes |
+| `---` | ───────── | Box drawing |
+
+Used by the `social-post` tool handler in `src/mcp/tools/social-media-tools.ts` to preprocess content before dispatching to MCP sidecars. The system prompt also instructs the LLM to prefer Unicode formatting for social media output.
+
 ### Channel Abstraction (`src/channels/types.ts`)
 
 All messaging surfaces implement the `MessageChannel` interface:
@@ -609,7 +634,7 @@ Logs are queryable via `GET /api/logs` with filters for `category`, `level`, `si
 
 ### Path Restrictions
 
-Filesystem and shell tools enforce an `allowedDirs` list. Any path outside these directories is rejected with `Access denied`.
+Filesystem tools, shell tools, and the File System REST API (`/api/files/*`) all enforce the same `allowedDirs` sandbox via `isPathAllowed()` from `src/mcp/tools/path-utils.ts`. Any path outside these directories is rejected with a 403 `Access denied`.
 
 ### Shell Allowlist
 
@@ -643,6 +668,11 @@ The shell executor uses a **command allowlist**. If the allowlist is empty, the 
 | `GET` | `/api/admin/sidecars/:name/tools` | Admin | List tools for a specific MCP sidecar. |
 | `PUT` | `/api/admin/sidecars/:name/tools` | Admin | Update disabled tools for a sidecar. |
 | `POST` | `/api/admin/scheduler/assist` | Admin | Generate scheduler field suggestions from a natural language request. |
+| `GET` | `/api/files/list?path=` | Token | List directory entries within sandbox. |
+| `GET` | `/api/files/content?path=` | Token | Read file content within sandbox. |
+| `POST` | `/api/files/save` | Token | Write content to a file within sandbox (auto-creates parent dirs). |
+| `POST` | `/api/files/mkdir` | Token | Create a directory within sandbox. |
+| `DELETE` | `/api/files?path=` | Token | Delete a file within sandbox. |
 | `GET` | `/api/admin/tasks/config` | Admin | Get current task concurrency config and queue stats. |
 | `PUT` | `/api/admin/tasks/config` | Admin | Update task concurrency settings at runtime. |
 | `GET` | `/api/tasks` | Token | List agent tasks (filterable by status, trigger, parent). |

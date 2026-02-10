@@ -211,3 +211,54 @@
   stroke-dasharray: 8 4;
   animation: edge-dash-flow 0.6s linear infinite;
 }
+
+/* ─── MDXEditor / Workbench overrides ─── */
+
+.workbench-editor .mdxeditor {
+  --accentBase: hsl(var(--primary));
+  --accentBgSubtle: hsl(var(--muted));
+  --accentText: hsl(var(--primary));
+  --baseBase: hsl(var(--background));
+  --baseBgSubtle: hsl(var(--card));
+  --baseBorder: hsl(var(--border));
+  --baseText: hsl(var(--foreground));
+  --baseTextSubtle: hsl(var(--muted-foreground));
+
+  border: none;
+  font-family: var(--font-sans), system-ui, sans-serif;
+}
+
+.workbench-editor [role="toolbar"] {
+  background: hsl(var(--card));
+  border-bottom: 1px solid hsl(var(--border));
+  border-radius: 0;
+  padding: 4px 8px;
+  flex-wrap: wrap;
+  gap: 2px;
+}
+
+.workbench-editor [role="toolbar"] button {
+  border-radius: 6px;
+  color: hsl(var(--muted-foreground));
+  transition: all 0.15s;
+}
+
+.workbench-editor [role="toolbar"] button:hover {
+  background: hsl(var(--accent) / 0.1);
+  color: hsl(var(--foreground));
+}
+
+.workbench-editor [role="toolbar"] button[data-state="on"],
+.workbench-editor [role="toolbar"] button[aria-pressed="true"] {
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+}
+
+.workbench-editor .mdxeditor-toolbar select {
+  background: hsl(var(--card));
+  border: 1px solid hsl(var(--border));
+  border-radius: 6px;
+  color: hsl(var(--foreground));
+  font-size: 12px;
+  padding: 2px 6px;
+}
