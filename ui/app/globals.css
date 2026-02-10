@@ -211,3 +211,221 @@
   stroke-dasharray: 8 4;
   animation: edge-dash-flow 0.6s linear infinite;
 }
+
+/* ─── MDXEditor / Workbench overrides ─── */
+
+.workbench-editor .mdxeditor {
+  border: none;
+  font-family: var(--font-sans), system-ui, sans-serif;
+}
+
+/* Light theme variables */
+.workbench-editor .mdxeditor {
+  --accentBase: hsl(200 60% 97%);
+  --accentBgSubtle: hsl(200 60% 94%);
+  --accentBg: hsl(200 60% 90%);
+  --accentBgHover: hsl(200 60% 85%);
+  --accentBgActive: hsl(200 60% 80%);
+  --accentLine: hsl(200 60% 72%);
+  --accentBorder: hsl(200 60% 60%);
+  --accentBorderHover: hsl(200 60% 50%);
+  --accentSolid: hsl(200 60% 27%);
+  --accentSolidHover: hsl(200 60% 22%);
+  --accentText: hsl(200 60% 27%);
+  --accentTextContrast: hsl(200 60% 15%);
+
+  --baseBase: hsl(36 29% 98%);
+  --baseBgSubtle: hsl(36 29% 96%);
+  --baseBg: hsl(36 29% 94%);
+  --baseBgHover: hsl(36 17% 90%);
+  --baseBgActive: hsl(36 17% 86%);
+  --baseLine: hsl(36 10% 82%);
+  --baseBorder: hsl(36 10% 78%);
+  --baseBorderHover: hsl(36 10% 70%);
+  --baseSolid: hsl(240 5% 50%);
+  --baseSolidHover: hsl(240 5% 42%);
+  --baseText: hsl(240 25% 20%);
+  --baseTextContrast: hsl(240 25% 6%);
+
+  --basePageBg: hsl(36 29% 94%);
+  background: transparent;
+  color: var(--baseTextContrast);
+}
+
+/* Dark theme – applied via className="dark-theme dark-editor" on MDXEditor */
+.dark .workbench-editor .dark-editor,
+.workbench-editor .dark-editor {
+  --accentBase: hsl(200 40% 10%);
+  --accentBgSubtle: hsl(200 40% 14%);
+  --accentBg: hsl(200 40% 18%);
+  --accentBgHover: hsl(200 40% 24%);
+  --accentBgActive: hsl(200 40% 30%);
+  --accentLine: hsl(200 40% 36%);
+  --accentBorder: hsl(200 50% 42%);
+  --accentBorderHover: hsl(200 55% 50%);
+  --accentSolid: hsl(200 60% 55%);
+  --accentSolidHover: hsl(200 60% 62%);
+  --accentText: hsl(200 60% 70%);
+  --accentTextContrast: hsl(200 60% 85%);
+
+  --baseBase: hsl(240 15% 8%);
+  --baseBgSubtle: hsl(240 12% 11%);
+  --baseBg: hsl(240 12% 14%);
+  --baseBgHover: hsl(240 10% 18%);
+  --baseBgActive: hsl(240 10% 22%);
+  --baseLine: hsl(240 8% 26%);
+  --baseBorder: hsl(240 8% 30%);
+  --baseBorderHover: hsl(240 8% 38%);
+  --baseSolid: hsl(240 5% 50%);
+  --baseSolidHover: hsl(240 5% 58%);
+  --baseText: hsl(36 10% 70%);
+  --baseTextContrast: hsl(36 29% 90%);
+
+  --basePageBg: hsl(240 25% 6%);
+  background: transparent;
+  color: var(--baseTextContrast);
+}
+
+.workbench-editor [role="toolbar"] {
+  background: var(--baseBg);
+  border-bottom: 1px solid var(--baseBorder);
+  border-radius: 0;
+  padding: 4px 8px;
+  flex-wrap: wrap;
+  gap: 2px;
+}
+
+.workbench-editor [role="toolbar"] button,
+.workbench-editor [role="toolbar"] [role="radio"] {
+  border-radius: 6px;
+  color: var(--baseText);
+  transition: all 0.15s;
+}
+
+.workbench-editor [role="toolbar"] button:hover,
+.workbench-editor [role="toolbar"] [role="radio"]:hover {
+  background: var(--baseBgHover);
+  color: var(--baseTextContrast);
+}
+
+.workbench-editor [role="toolbar"] button[data-state="on"],
+.workbench-editor [role="toolbar"] [role="radio"][data-state="on"],
+.workbench-editor [role="toolbar"] button[aria-pressed="true"],
+.workbench-editor [role="toolbar"] [role="radio"][aria-pressed="true"] {
+  background: var(--accentSolid);
+  color: white;
+}
+
+.workbench-editor .mdxeditor-toolbar select,
+.workbench-editor [role="toolbar"] select {
+  background: var(--baseBgSubtle);
+  border: 1px solid var(--baseBorder);
+  border-radius: 6px;
+  color: var(--baseTextContrast);
+  font-size: 12px;
+  padding: 2px 6px;
+}
+
+/* Popup / dialog styling for link, image dialogs */
+.workbench-editor .mdxeditor-popup-container {
+  background: var(--baseBgSubtle);
+  border: 1px solid var(--baseBorder);
+  color: var(--baseTextContrast);
+}
+
+/* Ensure content area text is visible */
+.workbench-editor .mdxeditor [role="textbox"] {
+  color: var(--baseTextContrast);
+  caret-color: var(--accentSolid);
+}
+
+.workbench-editor .mdxeditor [role="textbox"] h1,
+.workbench-editor .mdxeditor [role="textbox"] h2,
+.workbench-editor .mdxeditor [role="textbox"] h3,
+.workbench-editor .mdxeditor [role="textbox"] h4,
+.workbench-editor .mdxeditor [role="textbox"] h5,
+.workbench-editor .mdxeditor [role="textbox"] h6 {
+  color: var(--baseTextContrast);
+}
+
+.workbench-editor .mdxeditor [role="textbox"] a {
+  color: var(--accentText);
+}
+
+.workbench-editor .mdxeditor [role="textbox"] blockquote {
+  border-left-color: var(--accentBorder);
+  color: var(--baseText);
+}
+
+.workbench-editor .mdxeditor [role="textbox"] code {
+  background: var(--baseBgHover);
+  color: var(--accentText);
+  padding: 2px 4px;
+  border-radius: 4px;
+  font-size: 0.9em;
+}
+
+.workbench-editor .mdxeditor [role="textbox"] hr {
+  border-color: var(--baseBorder);
+}
+
+.workbench-editor .mdxeditor [role="textbox"] table {
+  border-color: var(--baseBorder);
+}
+
+.workbench-editor .mdxeditor [role="textbox"] th,
+.workbench-editor .mdxeditor [role="textbox"] td {
+  border-color: var(--baseBorder);
+}
+
+/* CodeMirror code block dark theme */
+.workbench-editor .cm-editor {
+  background: var(--baseBgSubtle) !important;
+}
+
+.workbench-editor .cm-editor .cm-gutters {
+  background: var(--baseBg) !important;
+  border-right-color: var(--baseBorder) !important;
+  color: var(--baseSolid) !important;
+}
+
+.workbench-editor .cm-editor .cm-content {
+  color: var(--baseTextContrast) !important;
+  caret-color: var(--accentSolid) !important;
+}
+
+.workbench-editor .cm-editor .cm-activeLine {
+  background: var(--baseBgHover) !important;
+}
+
+.workbench-editor .cm-editor .cm-activeLineGutter {
+  background: var(--baseBgHover) !important;
+}
+
+.workbench-editor .cm-editor .cm-selectionBackground,
+.workbench-editor .cm-editor .cm-content ::selection {
+  background: var(--accentBgActive) !important;
+}
+
+/* Code block wrapper */
+.workbench-editor .mdxeditor [data-lexical-decorator="true"] {
+  background: var(--baseBgSubtle);
+  border: 1px solid var(--baseBorder);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+/* Code block language selector in dark */
+.workbench-editor .mdxeditor [data-lexical-decorator="true"] select {
+  background: var(--baseBg) !important;
+  border-color: var(--baseBorder) !important;
+  color: var(--baseText) !important;
+}
+
+.workbench-editor .mdxeditor [data-lexical-decorator="true"] button {
+  color: var(--baseText) !important;
+}
+
+.workbench-editor .mdxeditor [data-lexical-decorator="true"] button:hover {
+  color: var(--baseTextContrast) !important;
+}

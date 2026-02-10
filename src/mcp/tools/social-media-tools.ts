@@ -1,5 +1,6 @@
 import * as z from "zod";
 import type { ToolDefinition } from "../tool-registry.js";
+import { markdownToSocialText } from "../../channels/social-formatter.js";
 
 /**
  * Social media MCP tools connect to external Python sidecar MCP servers
@@ -106,7 +107,11 @@ export const createSocialMediaTools = (options: SocialMediaOptions): ToolDefinit
     {
       name: "social-post",
       description:
-        "Post content to a social media platform (LinkedIn, Twitter/X, or Facebook) via MCP sidecar",
+        "Post content to a social media platform (LinkedIn, Twitter/X, or Facebook) via MCP sidecar. " +
+        "If the input content is Markdown, it will be automatically converted to platform-safe plain text " +
+        "before posting: **bold** → Unicode bold, *italic* → Unicode italic, [text](url) → text (url), " +
+        "# Heading → HEADING (bold uppercase), - list → • list, > quote → ❝quote❞. " +
+        "Do NOT include raw Markdown syntax in the posted text.",
       inputSchema: {
         type: "object",
         properties: {
@@ -127,7 +132,8 @@ export const createSocialMediaTools = (options: SocialMediaOptions): ToolDefinit
       handler: async (args) => {
         const input = args as z.infer<typeof postContentSchema>;
         const url = getSidecarUrl(input.platform, options);
-        return callSidecar(url, "post_content", input);
+        const safeContent = markdownToSocialText(input.content);
+        return callSidecar(url, "post_content", { ...input, content: safeContent });
       },
     },
     {

@@ -154,6 +154,7 @@ The OpenZigs UI is a **Next.js** application with a navigation bar providing acc
 |---|---|---|
 | **Dashboard** | `/` | System snapshot, pending approvals, audit log |
 | **Chat** | `/chat` | AI chat with streaming, model selection, approval overlays |
+| **Workbench** | `/workbench` | Rich Markdown editor with file browser for drafting and editing documents |
 | **Admin** | `/admin` | Channel config, sidecar management, tool toggles, env status |
 | **Library** | `/library` | Saved prompt templates with `{{variable}}` interpolation |
 | **Scheduler** | `/scheduler` | Cron-based job scheduling with prompt linking and model overrides |
@@ -246,6 +247,72 @@ The scheduler at `/scheduler` manages cron-based automated jobs:
 - **Cron preview** — visual breakdown of minute, hour, day, month, weekday fields.
 - **Enable/disable** individual jobs with toggle switches.
 - **Live execution events** via Socket.IO — see when jobs fire in real time.
+
+### Workbench (Project Editor)
+
+The Workbench at `/workbench` is a rich Markdown editor for drafting documents, notes, and content — powered by [MDXEditor](https://mdxeditor.dev/).
+
+**Layout:**
+
+| Area | Description |
+|------|-------------|
+| **File sidebar** (left) | Recursive file tree browser. Click folders to expand, click files to open. |
+| **Editor** (center) | WYSIWYG Markdown editor with formatting toolbar. |
+| **Status bar** (bottom) | Active file path and save state ("Modified" / "Saved"). |
+
+**Toolbar actions:**
+
+| Button | Action |
+|--------|--------|
+| Undo / Redo | Step through edit history |
+| **B** *I* U | Bold, italic, underline toggles |
+| `</>` | Inline code toggle |
+| Block type | Switch between paragraph, headings (H1–H6), and quote |
+| Lists | Ordered and unordered list toggles |
+| Link | Insert or edit a hyperlink |
+| Image | Insert an image by URL |
+| Table | Insert a Markdown table |
+| Horizontal rule | Insert a thematic break (`---`) |
+
+**Code blocks:** The editor supports syntax-highlighted code blocks via CodeMirror for JavaScript, TypeScript, TSX, JSX, CSS, HTML, JSON, Python, Bash, SQL, and plain text.
+
+**File management:**
+
+- **Open a file:** Click any file in the sidebar to load its content into the editor.
+- **New file:** Click the **+** button in the sidebar header. The editor resets to a blank document.
+- **Save:** Click the **Save** button in the toolbar or press **Cmd+S** (macOS) / **Ctrl+S** (Windows/Linux). If no file is open, you'll be prompted for a file path.
+- **Import document:** Click the **Import** button in the toolbar to open the Import Document dialog. Browse the file tree, select a document (Word, PDF, PowerPoint, Excel, HTML, images, or audio), and click **Import**. The file is converted to Markdown via the MarkItDown MCP tool and loaded into the editor as a new unsaved document.
+- **Refresh:** Click the **↻** button in the sidebar header to reload the file tree.
+- **Collapse sidebar:** Click the **›** button to collapse the sidebar to a narrow icon strip.
+
+**Importing documents:**
+
+The Import Document feature converts non-Markdown files into editable Markdown directly in the Workbench. It uses the LLM + the `convert-to-markdown` MCP tool (powered by [Microsoft MarkItDown](https://github.com/microsoft/markitdown)) to transform documents on the fly.
+
+| Supported format | Extensions |
+|------------------|------------|
+| **Office documents** | `.docx`, `.pptx`, `.xlsx` |
+| **PDF** | `.pdf` |
+| **Web/text** | `.html`, `.htm`, `.rtf`, `.csv`, `.tsv`, `.epub` |
+| **Images** (OCR) | `.jpg`, `.jpeg`, `.png`, `.gif`, `.bmp`, `.tiff`, `.webp` |
+| **Audio** (transcription) | `.mp3`, `.wav`, `.m4a`, `.ogg` |
+
+After import, the converted Markdown is loaded into the editor with a suggested file path (the original filename with a `.md` extension). The document is marked as unsaved — press **Cmd+S** to save it.
+
+> **Prerequisite:** The MarkItDown MCP sidecar (`markitdown-mcp-server`) must be running. Start it via `docker compose up -d markitdown-mcp-server`.
+
+**Keyboard shortcuts:**
+
+| Key | Action |
+|-----|--------|
+| Cmd/Ctrl + S | Save the current file |
+| Standard Markdown shortcuts | Bold (`**`), italic (`*`), code (`` ` ``), headings (`#`), lists (`-`) via Markdown shortcut plugin |
+
+**Unsaved changes:** An amber dot appears next to the file name when you have unsaved edits. The status bar also shows "Modified" until you save.
+
+**File path sandbox:** The Workbench uses the same `allowedDirs` sandbox as the MCP filesystem tools. You can only browse and edit files within the allowed directories (by default: the project root, home directory, and temp directories).
+
+**Environment variable:** Set `NEXT_PUBLIC_WORKBENCH_ROOT` to change the default root directory for the file sidebar (defaults to `.`, the project root).
 
 ### Tasks (Background Agents)
 
@@ -942,6 +1009,8 @@ Social media tools are powered by **MCP sidecars** — separate Docker container
 | **Pinterest** | `pinterest-mcp-server` | 5104 | `social-post`, `social-timeline`, `social-profile`, `pinterest-boards`, `pinterest-pins` |
 
 ### Usage
+
+When posting to social media, the agent automatically converts Markdown formatting to platform-native Unicode text. Social platforms do not render Markdown — so `**bold**` becomes 𝗯𝗼𝗹𝗱, `*italic*` becomes 𝑖𝑡𝑎𝑙𝑖𝑐, headings become BOLD UPPERCASE, and links are expanded to `text (url)` format. This conversion happens transparently before posts are dispatched to the MCP sidecars.
 
 ```
 You: Post "Just shipped a new feature! 🚀" to LinkedIn

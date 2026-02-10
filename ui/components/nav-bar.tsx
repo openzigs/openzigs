@@ -7,6 +7,7 @@ import { ModeToggle } from "@/components/mode-toggle";
 const NAV_ITEMS = [
   { href: "/", label: "Dashboard" },
   { href: "/chat", label: "Chat" },
+  { href: "/workbench", label: "Workbench" },
   { href: "/admin", label: "Admin" },
   { href: "/library", label: "Library" },
   { href: "/scheduler", label: "Scheduler" },

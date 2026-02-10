@@ -22,6 +22,7 @@ import { CloudflareTunnel } from "./tunnel/index.js";
 import { createModelsRouter } from "./api/models.js";
 import { createAdminRouter } from "./api/admin.js";
 import { createTasksRouter } from "./api/tasks.js";
+import { createFilesRouter } from "./api/files.js";
 import { launchChrome, killChrome } from "./browser/chrome-launcher.js";
 import { TaskRepository, TaskEngine, TaskWorker, NotificationDispatcher } from "./tasks/index.js";
 import { getDatabase, closeDatabase } from "./productivity/database.js";
@@ -203,6 +204,16 @@ app.use("/api/admin", adminRouter);
 // Tasks API routes
 const tasksRouter = createTasksRouter({ taskEngine });
 app.use("/api/tasks", tasksRouter);
+
+// Files API routes (Workbench file management)
+const effectiveAllowedDirs = allowedDirs.length > 0
+  ? allowedDirs
+  : [process.cwd(), os.tmpdir(), os.homedir(), "/tmp", "/private/tmp"];
+const filesRouter = createFilesRouter({
+  allowedDirs: effectiveAllowedDirs,
+  markitdownUrl: process.env.MCP_MARKITDOWN_URL,
+});
+app.use("/api/files", filesRouter);
 
 const tunnelConfig = config.tunnel;
 const tunnel = tunnelConfig?.enabled
