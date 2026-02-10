@@ -90,6 +90,7 @@ const convertToMarkdown = async (
 export const createFilesRouter = ({ allowedDirs, markitdownUrl }: FilesRouterOptions): Router => {
   const router = Router();
 
+  /** Resolve and validate a raw path against the sandbox. */
   const guardPath = (rawPath: string | undefined): { resolved: string } | { error: string } => {
     if (!rawPath || typeof rawPath !== "string") {
       return { error: "path query parameter is required" };
@@ -101,14 +102,31 @@ export const createFilesRouter = ({ allowedDirs, markitdownUrl }: FilesRouterOpt
     return { resolved };
   };
 
+  /** Send a guardPath error with the appropriate status code. */
+  const sendGuardError = (res: import("express").Response, error: string): void => {
+    const status = error === "Access denied" ? 403 : 400;
+    res.status(status).json({ error });
+  };
+
+  /** Map ENOENT to 404; everything else to 500. */
+  const sendFsError = (
+    res: import("express").Response,
+    err: unknown,
+    notFoundLabel: string,
+    resolvedPath: string,
+  ): void => {
+    const msg = err instanceof Error ? err.message : String(err);
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+      res.status(404).json({ error: `${notFoundLabel}: ${resolvedPath}` });
+      return;
+    }
+    res.status(500).json({ error: msg });
+  };
+
   /** GET /api/files/list?path=/dir — List directory entries. */
   router.get("/list", async (req, res) => {
     const result = guardPath(req.query.path as string | undefined);
-    if ("error" in result) {
-      const status = result.error === "Access denied" ? 403 : 400;
-      res.status(status).json({ error: result.error });
-      return;
-    }
+    if ("error" in result) { sendGuardError(res, result.error); return; }
 
     try {
       const entries = await fs.readdir(result.resolved, { withFileTypes: true });
@@ -119,34 +137,20 @@ export const createFilesRouter = ({ allowedDirs, markitdownUrl }: FilesRouterOpt
         })),
       });
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-        res.status(404).json({ error: `Directory not found: ${result.resolved}` });
-        return;
-      }
-      res.status(500).json({ error: msg });
+      sendFsError(res, err, "Directory not found", result.resolved);
     }
   });
 
   /** GET /api/files/content?path=/file — Read file content. */
   router.get("/content", async (req, res) => {
     const result = guardPath(req.query.path as string | undefined);
-    if ("error" in result) {
-      const status = result.error === "Access denied" ? 403 : 400;
-      res.status(status).json({ error: result.error });
-      return;
-    }
+    if ("error" in result) { sendGuardError(res, result.error); return; }
 
     try {
       const content = await fs.readFile(result.resolved, "utf-8");
       res.json({ content, path: result.resolved });
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-        res.status(404).json({ error: `File not found: ${result.resolved}` });
-        return;
-      }
-      res.status(500).json({ error: msg });
+      sendFsError(res, err, "File not found", result.resolved);
     }
   });
 
@@ -166,11 +170,7 @@ export const createFilesRouter = ({ allowedDirs, markitdownUrl }: FilesRouterOpt
     }
 
     const result = guardPath(rawPath);
-    if ("error" in result) {
-      const status = result.error === "Access denied" ? 403 : 400;
-      res.status(status).json({ error: result.error });
-      return;
-    }
+    if ("error" in result) { sendGuardError(res, result.error); return; }
 
     try {
       await fs.mkdir(path.dirname(result.resolved), { recursive: true });
@@ -188,11 +188,7 @@ export const createFilesRouter = ({ allowedDirs, markitdownUrl }: FilesRouterOpt
     const rawPath = typeof body.path === "string" ? body.path : undefined;
 
     const result = guardPath(rawPath);
-    if ("error" in result) {
-      const status = result.error === "Access denied" ? 403 : 400;
-      res.status(status).json({ error: result.error });
-      return;
-    }
+    if ("error" in result) { sendGuardError(res, result.error); return; }
 
     try {
       await fs.mkdir(result.resolved, { recursive: true });
@@ -206,22 +202,13 @@ export const createFilesRouter = ({ allowedDirs, markitdownUrl }: FilesRouterOpt
   /** DELETE /api/files?path=/file — Delete a file. */
   router.delete("/", async (req, res) => {
     const result = guardPath(req.query.path as string | undefined);
-    if ("error" in result) {
-      const status = result.error === "Access denied" ? 403 : 400;
-      res.status(status).json({ error: result.error });
-      return;
-    }
+    if ("error" in result) { sendGuardError(res, result.error); return; }
 
     try {
       await fs.unlink(result.resolved);
       res.json({ success: true, path: result.resolved });
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-        res.status(404).json({ error: `File not found: ${result.resolved}` });
-        return;
-      }
-      res.status(500).json({ error: msg });
+      sendFsError(res, err, "File not found", result.resolved);
     }
   });
 
@@ -242,11 +229,7 @@ export const createFilesRouter = ({ allowedDirs, markitdownUrl }: FilesRouterOpt
     }
 
     const result = guardPath(rawPath);
-    if ("error" in result) {
-      const status = result.error === "Access denied" ? 403 : 400;
-      res.status(status).json({ error: result.error });
-      return;
-    }
+    if ("error" in result) { sendGuardError(res, result.error); return; }
 
     // Validate the file exists
     try {

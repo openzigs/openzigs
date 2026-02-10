@@ -9,6 +9,7 @@ import { ForwardRefEditor } from "@/components/workbench/forward-ref-editor";
 import { FileSidebar } from "@/components/workbench/file-sidebar";
 import { ImportDocumentDialog } from "@/components/workbench/import-document-dialog";
 import { Save, FileText, Circle, FileUp } from "lucide-react";
+import { showToast } from "@/components/toast";
 
 const DEFAULT_ROOT = process.env.NEXT_PUBLIC_WORKBENCH_ROOT ?? ".";
 
@@ -70,8 +71,9 @@ export default function WorkbenchPage() {
         setLocalContent(data.content);
         editorRef.current?.setMarkdown(data.content);
         setDirty(false);
-      } catch {
-        // Silently ignore — file may not be readable
+      } catch (error) {
+        console.error("Failed to load file:", error);
+        showToast("Failed to load file. It may not be readable.", "error");
       }
     },
     []
