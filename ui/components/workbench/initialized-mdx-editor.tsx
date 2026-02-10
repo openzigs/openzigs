@@ -1,6 +1,7 @@
 "use client";
 
 import type { ForwardedRef } from "react";
+import { useTheme } from "next-themes";
 import {
   headingsPlugin,
   listsPlugin,
@@ -34,8 +35,12 @@ export default function InitializedMDXEditor({
   editorRef,
   ...props
 }: { editorRef: ForwardedRef<MDXEditorMethods> | null } & MDXEditorProps) {
+  const { resolvedTheme } = useTheme();
+  const isDark = resolvedTheme === "dark";
+
   return (
     <MDXEditor
+      className={isDark ? "dark-theme dark-editor" : ""}
       plugins={[
         headingsPlugin(),
         listsPlugin(),
