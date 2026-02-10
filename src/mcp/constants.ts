@@ -3,4 +3,8 @@ export const ALWAYS_ON_TOOLS = new Set([
   "read-file",
   "list-directory",
   "web-search",
+  "browser-navigate",
+  "shell-execute",
+  "spawn-agent",
+  "orchestrate-agents",
 ]);

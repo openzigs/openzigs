@@ -62,6 +62,8 @@ export interface CopilotWrapper {
   chat(message: string, options?: ChatOptions): AsyncGenerator<string>;
   listModels(): Promise<CopilotModel[]>;
   onToolCall(tool: string, args: unknown): Promise<void>;
+  setMaxToolsPerRequest(n: number): void;
+  getMaxToolsPerRequest(): number;
 }
 
 export type CopilotWrapperOptions = {
@@ -260,6 +262,14 @@ export class CopilotWrapperService implements CopilotWrapper {
     this.sendAndWaitTimeoutMs = sendAndWaitTimeoutMs;
     this.toolCallHandler = onToolCall;
     this.permissionHandler = onPermissionRequest;
+  }
+
+  setMaxToolsPerRequest(n: number): void {
+    this.maxToolsPerRequest = Math.max(1, Math.min(128, Math.floor(n)));
+  }
+
+  getMaxToolsPerRequest(): number {
+    return this.maxToolsPerRequest;
   }
 
   async authenticate(): Promise<DeviceAuthInfo> {

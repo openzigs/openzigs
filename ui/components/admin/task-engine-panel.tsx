@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { fetchJson } from "@/lib/api";
 import { showToast } from "@/components/toast";
-import { Activity, Save, Minus, Plus } from "lucide-react";
+import { Activity, Save, Minus, Plus, Wrench } from "lucide-react";
 
 type TaskEngineConfig = {
   maxConcurrent: number;
@@ -12,6 +12,12 @@ type TaskEngineConfig = {
     queued: number;
     running: number;
   };
+};
+
+type SessionConfig = {
+  maxToolsPerRequest: number;
+  totalTools: number;
+  alwaysOnCount: number;
 };
 
 export const TaskEnginePanel = () => {
@@ -23,8 +29,17 @@ export const TaskEnginePanel = () => {
     refetchInterval: 5_000,
   });
 
+  const sessionQuery = useQuery({
+    queryKey: ["session-config"],
+    queryFn: () => fetchJson<SessionConfig>("/api/admin/session/config"),
+    refetchInterval: 10_000,
+  });
+
   const [localMax, setLocalMax] = useState<number | null>(null);
   const effectiveMax = localMax ?? query.data?.maxConcurrent ?? 2;
+
+  const [localToolLimit, setLocalToolLimit] = useState<number | null>(null);
+  const effectiveToolLimit = localToolLimit ?? sessionQuery.data?.maxToolsPerRequest ?? 30;
 
   const mutation = useMutation({
     mutationFn: (maxConcurrent: number) =>
@@ -42,11 +57,31 @@ export const TaskEnginePanel = () => {
     },
   });
 
+  const toolLimitMutation = useMutation({
+    mutationFn: (maxToolsPerRequest: number) =>
+      fetchJson("/api/admin/session/config", {
+        method: "PUT",
+        body: JSON.stringify({ maxToolsPerRequest }),
+      }),
+    onSuccess: () => {
+      setLocalToolLimit(null);
+      void queryClient.invalidateQueries({ queryKey: ["session-config"] });
+      showToast("Tool limit updated.", "success");
+    },
+    onError: (err) => {
+      showToast(`Failed: ${err instanceof Error ? err.message : String(err)}`, "error");
+    },
+  });
+
   const isDirty = localMax !== null && localMax !== (query.data?.maxConcurrent ?? 2);
+  const isToolLimitDirty =
+    localToolLimit !== null && localToolLimit !== (sessionQuery.data?.maxToolsPerRequest ?? 30);
 
   if (query.isLoading) return <p className="text-sm text-muted-foreground">Loading…</p>;
 
   const stats = query.data?.stats ?? { queued: 0, running: 0 };
+  const totalTools = sessionQuery.data?.totalTools ?? 0;
+  const alwaysOnCount = sessionQuery.data?.alwaysOnCount ?? 0;
 
   return (
     <div className="space-y-5">
@@ -108,6 +143,64 @@ export const TaskEnginePanel = () => {
           >
             <Save className="h-4 w-4" />
             {mutation.isPending ? "Saving…" : "Save"}
+          </button>
+        )}
+      </div>
+
+      {/* Tool Limit Control */}
+      <div className="rounded-xl border border-border bg-muted/30 p-4 space-y-3">
+        <div className="flex items-center gap-2">
+          <Wrench className="h-4 w-4 text-primary" />
+          <h3 className="text-sm font-semibold text-foreground">Tool Limit per Request</h3>
+        </div>
+        <p className="text-xs text-muted-foreground">
+          Maximum number of tools sent to the model per request. {alwaysOnCount} core tools are
+          always included. {totalTools > 0 && (
+            <span className="font-medium text-foreground">{totalTools} tools</span>
+          )}{totalTools > 0 && " registered total. "}
+          Higher values give the model more capabilities but consume more context window.
+        </p>
+        <div className="flex items-center gap-3">
+          <button
+            className="flex h-8 w-8 items-center justify-center rounded-lg border border-border bg-card text-foreground transition hover:bg-muted disabled:opacity-30"
+            onClick={() => setLocalToolLimit(Math.max(1, effectiveToolLimit - 5))}
+            disabled={effectiveToolLimit <= 1 || toolLimitMutation.isPending}
+          >
+            <Minus className="h-4 w-4" />
+          </button>
+
+          <input
+            type="range"
+            min={1}
+            max={128}
+            step={1}
+            value={effectiveToolLimit}
+            onChange={(e) => setLocalToolLimit(Number(e.target.value))}
+            disabled={toolLimitMutation.isPending}
+            className="h-2 w-full cursor-pointer appearance-none rounded-full bg-border accent-primary"
+          />
+
+          <button
+            className="flex h-8 w-8 items-center justify-center rounded-lg border border-border bg-card text-foreground transition hover:bg-muted disabled:opacity-30"
+            onClick={() => setLocalToolLimit(Math.min(128, effectiveToolLimit + 5))}
+            disabled={effectiveToolLimit >= 128 || toolLimitMutation.isPending}
+          >
+            <Plus className="h-4 w-4" />
+          </button>
+
+          <span className="min-w-[3ch] text-center text-sm font-bold text-foreground tabular-nums">
+            {effectiveToolLimit}
+          </span>
+        </div>
+
+        {isToolLimitDirty && (
+          <button
+            className="flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground transition hover:bg-primary/90 disabled:opacity-40"
+            onClick={() => toolLimitMutation.mutate(effectiveToolLimit)}
+            disabled={toolLimitMutation.isPending}
+          >
+            <Save className="h-4 w-4" />
+            {toolLimitMutation.isPending ? "Saving…" : "Save"}
           </button>
         )}
       </div>

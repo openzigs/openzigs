@@ -2,6 +2,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { execSync } from "node:child_process";
 import { EventEmitter } from "node:events";
+import path from "node:path";
 import { logger } from "../logging/logger.js";
 
 // ── Local MCP Server Definition ──────────────────────────────────────────────
@@ -70,6 +71,21 @@ export const DEFAULT_LOCAL_SERVER_DEFINITIONS: LocalMcpServerDefinition[] = [
     requiredEnvVars: ["GOOGLE_OAUTH_CREDENTIALS"],
     runtime: "node",
     category: "documents",
+    requiresCredentials: true,
+  },
+  {
+    name: "instagram",
+    label: "Instagram",
+    command: path.join(process.cwd(), "external/ig-mcp/.venv/bin/python"),
+    args: [path.join(process.cwd(), "external/ig-mcp/src/instagram_mcp_server.py")],
+    requiredEnvVars: [
+      "INSTAGRAM_ACCESS_TOKEN",
+      "FACEBOOK_APP_ID",
+      "FACEBOOK_APP_SECRET",
+      "INSTAGRAM_BUSINESS_ACCOUNT_ID"
+    ],
+    runtime: "python",
+    category: "social",
     requiresCredentials: true,
   },
 ];

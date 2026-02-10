@@ -219,7 +219,7 @@ The admin page at `/admin` consolidates all configuration:
 
 - **Channels** — Configure Telegram and Discord tokens, toggle channels on/off, select default model.
 - **AI Personality** — Configure the system instruction and optional pre/post prompts, or disable injection globally.
-- **Task Engine** — Adjust the maximum concurrent background agents (1–10) at runtime, view live queue stats (running, queued, concurrency limit).
+- **Task Engine** — Adjust the maximum concurrent background agents (1–10) at runtime, view live queue stats (running, queued, concurrency limit). Configure the **tool limit per request** (1–128) to control how many tools are sent to the LLM in each call — see [Tool Limit Configuration](#tool-limit-configuration) below.
 - **MCP Sidecars** — View Docker sidecar status (running, credentials missing, offline), manage credentials, restart containers, toggle per-tool within each sidecar.
 - **Local MCP Servers** — View status of locally-running MCP servers (MarkItDown, Database, GitHub).
 - **Tools** — Toggle any tool on/off, view risk level badges (🟢 low, 🟡 medium, 🔴 high), grouped by category.
@@ -617,6 +617,65 @@ curl -X POST -H "Authorization: Bearer <token>" \
 - Task results survive server restarts, browser closures, and network disconnections.
 - Notifications are delivered via Socket.IO on reconnect and/or pushed to the originating messaging channel (Telegram, Discord).
 - Session JSONL logs include task completion events for full audit traceability.
+
+---
+
+## Tool Limit Configuration
+
+OpenZigs registers 90+ MCP tools, but sending all of them to the LLM in every request wastes context window tokens and can degrade response quality. The **tool limit** controls how many tools are included per LLM call.
+
+### Why It Matters
+
+Each tool schema consumes **~100-300 tokens** in the model's context window. With 91 tools, that's **9,000-27,000 tokens** used before any conversation happens. This can cause:
+
+- **Reduced conversation capacity** — fewer tokens available for chat history and responses.
+- **Hallucinated tool calls** — weaker models may "invent" tool calls with incorrect parameters when overwhelmed with schemas.
+- **Slower responses** — more input tokens = longer processing time.
+
+The Copilot SDK itself has **no hard tool limit**, but the underlying models do (e.g., OpenAI supports up to 128 functions per request).
+
+### Always-On Tools
+
+**7 critical tools** are always included regardless of the cap:
+
+`read-file`, `list-directory`, `web-search`, `browser-navigate`, `shell-execute`, `spawn-agent`, `orchestrate-agents`
+
+These tools are essential for core agent functionality and will never be silently dropped.
+
+### Admin UI
+
+Navigate to **http://localhost:3001/admin** and find the **Tool Limit per Request** slider in the Task Engine panel:
+
+- **Range:** 1–128 tools
+- **Default:** 30
+- **±5 buttons** for quick adjustment
+- **Current stats** displayed: total registered tools, always-on count
+- **Immediate effect** — changes apply to the next LLM request without restarting the server
+
+The setting is persisted to `~/.openzigs/config.json` under `session.maxToolsPerRequest`.
+
+### REST API
+
+```bash
+# Read current session config
+curl -H "Authorization: Bearer <token>" http://localhost:3000/api/admin/session/config
+# Response: { "maxToolsPerRequest": 30, "totalTools": 91, "alwaysOnCount": 7 }
+
+# Update the tool limit
+curl -X PUT -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"maxToolsPerRequest": 50}' \
+  http://localhost:3000/api/admin/session/config
+```
+
+### Recommendations
+
+| Scenario | Suggested Limit | Why |
+|---|---|---|
+| Default / general use | **30** | Balances capability vs. context budget. |
+| Lightweight chat only | **15-20** | Faster responses, more room for conversation history. |
+| Full-featured (all sidecars active) | **50-80** | Ensures sidecar tools are included. |
+| Maximum coverage | **128** | All tools included — monitor for quality degradation. |
 
 ---
 
@@ -1239,6 +1298,9 @@ All configuration lives in `config/default.json`. Environment variables are inte
 | `channels.discord.enabled` | boolean | `false` | Enable Discord channel. |
 | `channels.web.enabled` | boolean | `true` | Enable Web Chat channel. |
 | `tasks.maxConcurrent` | number | `2` | Maximum parallel background agent tasks (1–10). Adjustable at runtime via Admin UI or API. |
+| `session.historyWindow` | number | `20` | Max conversation turns included in LLM context. |
+| `session.maxToolsPerRequest` | number | `30` | Max tools sent per LLM request (1–128). Adjustable at runtime via Admin UI or `PUT /api/admin/session/config`. |
+| `session.dynamicToolLoading` | boolean | `false` | Enable intent-based tool filtering (experimental). |
 | `tunnel.enabled` | boolean | `false` | Enable the embedded Cloudflare Tunnel. Set to `false` (default) when using the Docker sidecar pattern. |
 | `tunnel.mode` | string | `"quick"` | `"quick"` or `"named"`. Only applies when `tunnel.enabled` is `true`. |
 
@@ -1277,4 +1339,6 @@ All configuration lives in `config/default.json`. Environment variables are inte
 | Gmail auth errors | Missing or expired OAuth credentials. | Re-run `npx @gongrzhe/server-gmail-autoauth-mcp auth`. Ensure `gcp-oauth.keys.json` is in `~/.gmail-mcp/`. |
 | `db-query` returns "connection refused" | Database MCP server not running or JDBC_URL incorrect. | Check `JDBC_URL` env var and ensure the database is reachable from Docker. |
 | GitHub tools return 401 | Invalid or expired PAT. | Regenerate your GitHub Personal Access Token and update `GITHUB_PERSONAL_ACCESS_TOKEN`. |
+| Agent not using expected tools | `maxToolsPerRequest` too low; tool got excluded. | Increase the tool limit in Admin → Task Engine → Tool Limit slider or via `PUT /api/admin/session/config`. Check if the tool should be added to ALWAYS_ON_TOOLS. |
+| Model hallucinating tool calls | Too many tools sent, or model calling a tool that was excluded. | Reduce `maxToolsPerRequest` or switch to a stronger model (e.g., `gpt-4.1`). |
 | MarkItDown returns empty content | File not accessible inside container. | Ensure the file path is within the mounted volume (`/workdir` inside the container). |

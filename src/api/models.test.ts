@@ -34,6 +34,9 @@ class FakeCopilot implements CopilotWrapper {
   }
 
   async onToolCall(): Promise<void> {}
+
+  setMaxToolsPerRequest(_n: number): void {}
+  getMaxToolsPerRequest(): number { return 30; }
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any

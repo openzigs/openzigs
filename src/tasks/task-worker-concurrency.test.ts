@@ -23,6 +23,8 @@ const createMockCopilot = () => ({
   isAuthenticated: vi.fn().mockResolvedValue(true),
   listModels: vi.fn().mockResolvedValue([]),
   onToolCall: vi.fn(),
+  setMaxToolsPerRequest: vi.fn(),
+  getMaxToolsPerRequest: vi.fn().mockReturnValue(30),
   chat: vi.fn().mockImplementation(async function* () {
     yield "ok";
   }),

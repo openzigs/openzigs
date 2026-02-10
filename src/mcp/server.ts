@@ -16,6 +16,7 @@ import { createMarkItDownTools } from "./tools/markitdown-tools.js";
 import { createGmailTools } from "./tools/gmail-tools.js";
 import { createDatabaseTools } from "./tools/database-tools.js";
 import { createGitHubTools } from "./tools/github-tools.js";
+import { createInstagramTools } from "./tools/instagram-tools.js";
 import { createAgentTools } from "./tools/agent-tools.js";
 import { createOrchestrateAgentsTools } from "./tools/orchestrate-agents.js";
 import { ToolRegistry, type ToolDefinition } from "./tool-registry.js";
@@ -463,6 +464,14 @@ export const registerMcpTools = (toolRegistry: ToolRegistry, options: RegisterMc
     token: options.githubToken,
   });
   for (const tool of githubTools) {
+    registerTool(tool);
+  }
+
+  // ── Instagram Tools (Local python MCP server) ──
+  const instagramTools = createInstagramTools({
+    localServerManager: options.localServerManager,
+  });
+  for (const tool of instagramTools) {
     registerTool(tool);
   }
 

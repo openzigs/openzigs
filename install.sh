@@ -25,8 +25,11 @@ fi
 
 echo "Installing OpenZigs..."
 
-git clone https://github.com/mgcronin/openzigs.git "$install_dir"
+git clone --recurse-submodules https://github.com/mgcronin/openzigs.git "$install_dir"
 cd "$install_dir"
+
+# Ensure submodules are initialized (Instagram MCP server)
+git submodule update --init
 
 if [ -f .env.example ]; then
   cp .env.example .env

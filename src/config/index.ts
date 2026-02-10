@@ -86,6 +86,12 @@ export type TasksConfig = {
   maxConcurrent: number;
 };
 
+export type SessionConfig = {
+  historyWindow: number;
+  maxToolsPerRequest: number;
+  dynamicToolLoading: boolean;
+};
+
 export type AppConfig = {
   server: {
     port: number;
@@ -99,6 +105,7 @@ export type AppConfig = {
   tunnel?: TunnelConfig;
   mcpServers?: McpServersConfig;
   tasks?: TasksConfig;
+  session?: SessionConfig;
 };
 
 const rateLimitSchema = z.object({
@@ -184,6 +191,12 @@ const tasksSchema = z.object({
   maxConcurrent: z.number().int().min(1).max(10).default(2),
 }).optional();
 
+const sessionSchema = z.object({
+  historyWindow: z.number().int().min(1).default(20),
+  maxToolsPerRequest: z.number().int().min(1).max(128).default(30),
+  dynamicToolLoading: z.boolean().default(false),
+}).optional();
+
 const appConfigSchema = z.object({
   server: z.object({
     port: z.number()
@@ -197,6 +210,7 @@ const appConfigSchema = z.object({
   tunnel: tunnelSchema.optional(),
   mcpServers: mcpServersSchema,
   tasks: tasksSchema,
+  session: sessionSchema,
 });
 
 export type LoadConfigOptions = {

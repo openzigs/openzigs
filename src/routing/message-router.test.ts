@@ -113,6 +113,12 @@ class FakeCopilot implements CopilotWrapper {
   async onToolCall(): Promise<void> {
     return undefined;
   }
+
+  setMaxToolsPerRequest(_n: number): void {}
+
+  getMaxToolsPerRequest(): number {
+    return 30;
+  }
 }
 
 const baseMessage = (overrides: Partial<IncomingMessage> = {}): IncomingMessage => {

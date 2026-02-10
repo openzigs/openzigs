@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { loadConfig } from "../config/index.js";
 import { logger } from "../logging/logger.js";
+import { ALWAYS_ON_TOOLS } from "../mcp/constants.js";
 import type { ToolRegistry, RiskLevel } from "../mcp/tool-registry.js";
 import type { CopilotWrapper } from "../copilot/index.js";
 import type { DockerSidecarManager } from "../mcp/docker-sidecar-manager.js";
@@ -39,6 +40,10 @@ const ENV_CHECKS = [
   "GITHUB_PERSONAL_ACCESS_TOKEN",
   "JDBC_URL",
   "DB_PASSWORD",
+  "INSTAGRAM_ACCESS_TOKEN",
+  "FACEBOOK_APP_ID",
+  "FACEBOOK_APP_SECRET",
+  "INSTAGRAM_BUSINESS_ACCOUNT_ID",
 ] as const;
 
 type SidecarCredential = {
@@ -71,6 +76,12 @@ type LocalServerCredential = {
 const LOCAL_SERVER_CREDENTIALS: Array<{ server: string; label: string; runtime: string; envVars: string[] }> = [
   { server: "word", label: "Word / Office", runtime: "python", envVars: [] },
   { server: "calendar", label: "Google Calendar", runtime: "node", envVars: ["GOOGLE_OAUTH_CREDENTIALS"] },
+  {
+    server: "instagram",
+    label: "Instagram",
+    runtime: "python",
+    envVars: ["INSTAGRAM_ACCESS_TOKEN", "FACEBOOK_APP_ID", "FACEBOOK_APP_SECRET", "INSTAGRAM_BUSINESS_ACCOUNT_ID"]
+  },
 ];
 
 // ── .env file helpers ──
@@ -975,6 +986,50 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
       }
     });
   }
+
+  // ── Session / Tool-Limit Configuration ──
+  router.get("/session/config", (_req, res) => {
+    const maxToolsPerRequest = copilot?.getMaxToolsPerRequest() ?? 30;
+    const totalTools = toolRegistry.listEnabledTools().length;
+    const alwaysOnCount = ALWAYS_ON_TOOLS.size;
+    return res.json({ maxToolsPerRequest, totalTools, alwaysOnCount });
+  });
+
+  router.put("/session/config", async (req, res) => {
+    const body = req.body as Record<string, unknown>;
+    const maxToolsPerRequest =
+      typeof body.maxToolsPerRequest === "number" ? body.maxToolsPerRequest : undefined;
+
+    if (
+      maxToolsPerRequest === undefined ||
+      !Number.isInteger(maxToolsPerRequest) ||
+      maxToolsPerRequest < 1 ||
+      maxToolsPerRequest > 128
+    ) {
+      return res.status(400).json({ error: "maxToolsPerRequest must be an integer between 1 and 128" });
+    }
+
+    try {
+      if (copilot) {
+        copilot.setMaxToolsPerRequest(maxToolsPerRequest);
+      }
+
+      const configPath = defaultConfigPath();
+      const userConfig = await readUserConfig(configPath);
+      const existingSession =
+        userConfig.session && typeof userConfig.session === "object"
+          ? (userConfig.session as Record<string, unknown>)
+          : {};
+      userConfig.session = { ...existingSession, maxToolsPerRequest };
+      await writeUserConfig(configPath, userConfig);
+
+      logger.info(`maxToolsPerRequest updated to ${maxToolsPerRequest}`);
+      return res.json({ ok: true, maxToolsPerRequest });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return res.status(400).json({ error: message });
+    }
+  });
 
   // ── Task Engine Configuration ──
   router.get("/tasks/config", (_req, res) => {

@@ -397,7 +397,8 @@ Wraps `@github/copilot-sdk`'s `CopilotClient`. Responsibilities:
 | **Device Auth** | `authenticate()` / `waitForAuth()` | OAuth device-flow for GitHub Copilot access. Persists token to `~/.openzigs/auth.json` with `0600` permissions. |
 | **Streaming Chat** | `chat(message, tools?, model?)` | Returns an `AsyncGenerator<string>` that yields deltas as they arrive from the SDK. Tools are wrapped via `defineTool()` and passed to `createSession({ tools })`. |
 | **Model Selection** | `listModels()` | Proxies `client.listModels()` to enumerate available models (e.g., `gpt-4.1`, `claude-sonnet-4`). |
-| **Tool Dispatch** | Internal | When the SDK invokes a tool, the handler calls the `ToolDefinition.handler()` — which may proxy to an MCP sidecar or execute locally. |
+| **Tool Limit Control** | `setMaxToolsPerRequest(n)` / `getMaxToolsPerRequest()` | Get or set the maximum number of tools sent per LLM request (range: 1-128). Changes take effect on the next `chat()` call. |
+| **Tool Dispatch** | Internal | When the SDK invokes a tool, the handler calls the `ToolDefinition.handler()` — which may proxy to an MCP sidecar or execute locally. ALWAYS_ON_TOOLS (7 tools) are guaranteed inclusion before filling remaining slots. |
 | **Retry Logic** | Internal | Automatic retries with exponential backoff for rate-limit (429) and timeout errors. Clears auth on 401. |
 
 ### Tool Registry (`src/mcp/tool-registry.ts`)
@@ -673,6 +674,8 @@ The shell executor uses a **command allowlist**. If the allowlist is empty, the 
 | `POST` | `/api/files/save` | Token | Write content to a file within sandbox (auto-creates parent dirs). |
 | `POST` | `/api/files/mkdir` | Token | Create a directory within sandbox. |
 | `DELETE` | `/api/files?path=` | Token | Delete a file within sandbox. |
+| `GET` | `/api/admin/session/config` | Admin | Get current session config (maxToolsPerRequest, totalTools, alwaysOnCount). |
+| `PUT` | `/api/admin/session/config` | Admin | Update `maxToolsPerRequest` at runtime (range: 1-128). Persists to `~/.openzigs/config.json`. |
 | `GET` | `/api/admin/tasks/config` | Admin | Get current task concurrency config and queue stats. |
 | `PUT` | `/api/admin/tasks/config` | Admin | Update task concurrency settings at runtime. |
 | `GET` | `/api/tasks` | Token | List agent tasks (filterable by status, trigger, parent). |
@@ -779,20 +782,71 @@ As OpenZigs scales to 50+ tools, managing the LLM's context window and conversat
 
 ### The Context Overload Problem
 
-Each tool definition sent to the Copilot SDK consumes ~200-500 tokens (name, description, JSON schema). With 50+ tools, tool definitions alone consume **10,000-25,000 tokens** — a significant fraction of the context window before any conversation history is included.
+Each tool definition sent to the Copilot SDK consumes **~100-300 tokens** (name, description, JSON schema parameters). With 91 registered tools, tool definitions alone consume **9,000-27,000 tokens** — a significant fraction of the model's context window before any conversation history or system prompt is included.
 
-### Strategy: Dynamic Tool Loading
+#### Why Too Many Tools Hurt LLM Performance
 
-OpenZigs implements (or will implement) a **two-phase tool resolution** strategy:
+| Factor | Impact | Details |
+|---|---|---|
+| **Context window consumption** | High | Tool schemas compete with conversation history and system prompts for limited context space. GPT-4.1 has 128k tokens; Claude Sonnet has 200k — but tool definitions can consume 10-20% of that budget before any user content. |
+| **Provider function limits** | Hard cap | OpenAI supports a maximum of **128 functions** per request. Other providers may impose lower limits. |
+| **Hallucination risk** | Medium-High | When presented with dozens of tool schemas, weaker models may "hallucinate" tool calls — invoking tools by name that exist in the schema but with incorrect parameters, or calling tools that were silently dropped from the context. |
+| **Response quality degradation** | Medium | More tools = more noise in the system prompt. The model spends attention budget parsing tool schemas instead of focusing on the user's actual request. |
+| **Copilot SDK** | No hard limit | The `@github/copilot-sdk` (v0.1.22) imposes **no hardcoded tool count limit** — tools are passed as a plain array to `createSession({ tools })`. The practical limit is the underlying model's context window. |
 
-1. **Phase 1 — Intent Classification (current: disabled by default)**
+#### Token Math Example
+
+With 91 registered tools at ~200 tokens each:
+
+```
+Tool schemas:        91 × 200 = ~18,200 tokens
+System prompt:       ~500 tokens
+Conversation history: 20 turns × ~300 = ~6,000 tokens
+─────────────────────────────────────────
+Total context used:  ~24,700 tokens (before the user's current message)
+```
+
+This is manageable for large-context models but becomes a problem when:
+- Using models with smaller context windows (e.g., 8k-32k)
+- Conversations grow long with tool call results in history
+- Multiple tool calls in a single turn each inject result tokens
+
+### Strategy: Tool Limiting & Dynamic Loading
+
+OpenZigs uses a **multi-layered tool management** strategy:
+
+#### Layer 1 — Always-On Tools (`ALWAYS_ON_TOOLS`)
+
+A curated set of **7 critical tools** are **always** included in every LLM request, regardless of the `maxToolsPerRequest` cap. These tools are essential for core agent functionality and must never be silently dropped:
+
+| Tool | Why It's Always-On |
+|---|---|
+| `read-file` | Core filesystem access for all file-based tasks |
+| `list-directory` | Directory navigation — needed for exploration |
+| `web-search` | Primary information retrieval capability |
+| `browser-navigate` | Chrome automation — critical for browser-based tasks |
+| `shell-execute` | Command execution — core agent capability |
+| `spawn-agent` | Background task delegation — required for async workflows |
+| `orchestrate-agents` | Multi-agent fan-out — required for parallel workflows |
+
+Defined in `src/mcp/constants.ts` as an exported `Set<string>`.
+
+#### Layer 2 — `maxToolsPerRequest` Cap
+
+A configurable hard cap (default: **30**, range: **1-128**) limits the total number of tools sent per LLM request. The tool selection algorithm:
+
+1. Start with all 7 ALWAYS_ON_TOOLS (guaranteed inclusion)
+2. Fill remaining slots (`maxToolsPerRequest - 7 = 23` by default) from enabled tools in registration order
+3. Tools beyond the cap are silently excluded from that request
+
+This cap is configurable at runtime via the **Admin UI slider** or the **Session Config API** — no server restart required.
+
+#### Layer 3 — Intent Classification (future, disabled by default)
+
+1. **Intent Classification**
    - A lightweight pre-pass classifies the user's message into tool categories (`filesystem`, `search`, `social`, `personal`, `data`, `developer`).
    - Only tools from matching categories are sent to the main LLM call.
    - Controlled by `config.session.dynamicToolLoading` (default: `false`).
-
-2. **Phase 2 — Always-Available Core Tools**
-   - A small set of "always-on" tools (e.g., `web-search`, `read-file`, `list-directory`) are included in every request regardless of classification.
-   - High-frequency tools that the LLM needs across all contexts.
 
 ### Configuration
 
@@ -806,11 +860,27 @@ OpenZigs implements (or will implement) a **two-phase tool resolution** strategy
 }
 ```
 
-| Key | Type | Default | Description |
-|---|---|---|---|
-| `session.historyWindow` | number | `20` | Max conversation turns to include in context. |
-| `session.maxToolsPerRequest` | number | `30` | Hard cap on tools sent per LLM request. |
-| `session.dynamicToolLoading` | boolean | `false` | Enable intent-based tool filtering. |
+| Key | Type | Default | Range | Description |
+|---|---|---|---|---|
+| `session.historyWindow` | number | `20` | — | Max conversation turns to include in context. |
+| `session.maxToolsPerRequest` | number | `30` | 1-128 | Hard cap on tools sent per LLM request. Adjustable at runtime via Admin UI or `PUT /api/admin/session/config`. |
+| `session.dynamicToolLoading` | boolean | `false` | — | Enable intent-based tool filtering (Phase 3, not yet implemented). |
+
+#### Runtime Tool Limit API
+
+```bash
+# Read current session config (includes tool counts)
+curl -H "Authorization: Bearer <token>" http://localhost:3000/api/admin/session/config
+# Response: { "maxToolsPerRequest": 30, "totalTools": 91, "alwaysOnCount": 7 }
+
+# Update the tool limit at runtime (takes effect immediately)
+curl -X PUT -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"maxToolsPerRequest": 50}' \
+  http://localhost:3000/api/admin/session/config
+```
+
+The Admin UI provides a **Tool Limit per Request** slider (1-128) in the Task Engine panel with ±5 increment buttons. Changes persist to `~/.openzigs/config.json` and take effect on the next LLM request without restarting the server.
 
 ### Conversation State Architecture
 
@@ -844,10 +914,11 @@ flowchart TB
 
 For the current Express/Node.js stack:
 
-1. **Keep `dynamicToolLoading: false` initially.** With < 30 tools, full tool lists fit comfortably. Enable when crossing ~40 tools.
+1. **Keep `dynamicToolLoading: false` for now.** With the ALWAYS_ON_TOOLS guarantee and `maxToolsPerRequest` cap, the current approach works well up to ~100 tools.
 2. **Set `historyWindow: 20`** as default — sufficient for multi-step tasks without exhausting context.
-3. **Implement `maxToolsPerRequest: 30`** as a safety valve immediately.
-4. **Future: vector-based tool retrieval** — embed tool descriptions and retrieve top-K by semantic similarity to the user query. This is the long-term scalable solution.
+3. **`maxToolsPerRequest: 30` is implemented** as a runtime-configurable safety valve. Increase to 50-80 if you need broader tool coverage per request; decrease if you hit context limits or observe hallucinated tool calls.
+4. **Monitor tool-related failures.** If the model calls tools that were excluded by the cap, increase the limit or add the tool to `ALWAYS_ON_TOOLS` in `src/mcp/constants.ts`.
+5. **Future: vector-based tool retrieval** — embed tool descriptions and retrieve top-K by semantic similarity to the user query. This is the long-term scalable solution. See [Epic #112](https://github.com/mgcronin/openzigs/issues/112).
 
 ---
 

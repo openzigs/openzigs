@@ -9,10 +9,12 @@ OpenZigs gives you a "God Mode" AI assistant that can read files, search the web
 ## Quick Start
 
 ```bash
-git clone https://github.com/mgcronin/openzigs.git && cd openzigs
+git clone --recurse-submodules https://github.com/mgcronin/openzigs.git && cd openzigs
 pnpm install
 pnpm dev
 ```
+
+> **Already cloned without `--recurse-submodules`?** Run `git submodule update --init` to fetch external dependencies.
 
 Open **http://localhost:3000** to start chatting. Run `pnpm setup` on first launch to authenticate with GitHub Copilot.
 
@@ -43,10 +45,11 @@ Open **http://localhost:3000** to start chatting. Run `pnpm setup` on first laun
 
 - **Runtime:** Node.js 22+ / TypeScript (ESM)
 - **AI:** `@github/copilot-sdk` with streaming and tool calling
-- **Tools:** Filesystem, Brave Search, Chrome DevTools, Shell (all risk-classified)
+- **Tools:** Filesystem, Brave Search, Chrome DevTools, Shell, Instagram (all risk-classified)
 - **Channels:** Web Chat (Socket.IO), Telegram (grammY), Discord (discord.js)
 - **Infra:** Docker, Cloudflare Tunnel
-- **Testing:** Vitest (79 tests)
+- **External:** [ig-mcp](https://github.com/jlbadano/ig-mcp) (git submodule in `external/ig-mcp`)
+- **Testing:** Vitest (370+ tests)
 
 ---
 
@@ -58,11 +61,22 @@ Open **http://localhost:3000** to start chatting. Run `pnpm setup` on first laun
 - Tool registry with risk classification and runtime toggles
 - Human-in-the-loop approval queue
 - Session management (JSONL persistence)
-- Web Chat UI with model selector
+- Web Chat UI with model selector and admin panels
 - Telegram and Discord channel integrations
 - Cloudflare Tunnel integration (quick and named modes)
 - Auth middleware with role-based access control
 - Audit logging with queryable API
+- Recursive agent chaining (spawn-agent, orchestrate-agents)
+- Instagram MCP tools via [ig-mcp](https://github.com/jlbadano/ig-mcp) submodule
+- Configurable tool limit per request (1–128) with always-on tool guarantees
+
+### Git Submodules
+
+The Instagram MCP server lives in `external/ig-mcp` as a **git submodule** referencing [jlbadano/ig-mcp](https://github.com/jlbadano/ig-mcp). All other MCP sidecars use pre-built Docker images. After cloning, run:
+
+```bash
+git submodule update --init
+```
 
 ### Open Epics
 

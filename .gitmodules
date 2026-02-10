@@ -1,0 +1,3 @@
+[submodule "external/ig-mcp"]
+	path = external/ig-mcp
+	url = https://github.com/jlbadano/ig-mcp.git

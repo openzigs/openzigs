@@ -46,6 +46,8 @@ describe("TaskWorker", () => {
       isAuthenticated: vi.fn().mockResolvedValue(true),
       listModels: vi.fn().mockResolvedValue([]),
       onToolCall: vi.fn(),
+      setMaxToolsPerRequest: vi.fn(),
+      getMaxToolsPerRequest: vi.fn().mockReturnValue(30),
       chat: vi.fn().mockImplementation(async function* () {
         for (const chunk of chunks) {
           yield chunk;
@@ -89,6 +91,8 @@ describe("TaskWorker", () => {
       isAuthenticated: vi.fn().mockResolvedValue(true),
       listModels: vi.fn().mockResolvedValue([]),
       onToolCall: vi.fn(),
+      setMaxToolsPerRequest: vi.fn(),
+      getMaxToolsPerRequest: vi.fn().mockReturnValue(30),
       chat: vi.fn().mockImplementation(async function* () {
         yield ""; // eslint requires yield in generators
         throw new Error("LLM exploded");
@@ -130,6 +134,8 @@ describe("TaskWorker", () => {
       isAuthenticated: vi.fn().mockResolvedValue(true),
       listModels: vi.fn().mockResolvedValue([]),
       onToolCall: vi.fn(),
+      setMaxToolsPerRequest: vi.fn(),
+      getMaxToolsPerRequest: vi.fn().mockReturnValue(30),
       chat: vi.fn().mockImplementation(async function* () {
         concurrent++;
         concurrentPeak = Math.max(concurrentPeak, concurrent);
@@ -174,6 +180,8 @@ describe("TaskWorker", () => {
       isAuthenticated: vi.fn().mockResolvedValue(true),
       listModels: vi.fn().mockResolvedValue([]),
       onToolCall: vi.fn(),
+      setMaxToolsPerRequest: vi.fn(),
+      getMaxToolsPerRequest: vi.fn().mockReturnValue(30),
       chat: vi.fn().mockImplementation(async function* () {
         yield "ok";
       }),
@@ -210,6 +218,8 @@ describe("TaskWorker", () => {
       isAuthenticated: vi.fn().mockResolvedValue(true),
       listModels: vi.fn().mockResolvedValue([]),
       onToolCall: vi.fn(),
+      setMaxToolsPerRequest: vi.fn(),
+      getMaxToolsPerRequest: vi.fn().mockReturnValue(30),
       chat: vi.fn().mockImplementation(async function* () {
         yield "ok";
       }),
@@ -249,6 +259,8 @@ describe("TaskWorker", () => {
       isAuthenticated: vi.fn().mockResolvedValue(true),
       listModels: vi.fn().mockResolvedValue([]),
       onToolCall: vi.fn(),
+      setMaxToolsPerRequest: vi.fn(),
+      getMaxToolsPerRequest: vi.fn().mockReturnValue(30),
       chat: vi.fn().mockImplementation(async function* (_prompt: string, options?: { onToolCall?: (t: string, a: unknown) => void }) {
         capturedOnToolCall = options?.onToolCall;
         yield "done";
@@ -297,6 +309,8 @@ describe("TaskWorker", () => {
       isAuthenticated: vi.fn().mockResolvedValue(true),
       listModels: vi.fn().mockResolvedValue([]),
       onToolCall: vi.fn(),
+      setMaxToolsPerRequest: vi.fn(),
+      getMaxToolsPerRequest: vi.fn().mockReturnValue(30),
       chat: vi.fn().mockImplementation(async function* () { yield "x"; }),
     };
 

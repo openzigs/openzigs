@@ -163,7 +163,10 @@ const port = Number(process.env.PORT ?? 3000);
 const uiOrigin = process.env.OPENZIGS_UI_ORIGIN ?? "http://localhost:3001";
 const channelManager = new ChannelManager();
 const sessionManager = new SessionManager();
-const copilot = new CopilotWrapperService({ toolRegistry });
+const copilot = new CopilotWrapperService({
+  toolRegistry,
+  maxToolsPerRequest: config.session?.maxToolsPerRequest ?? 30,
+});
 
 registerMcpTools(toolRegistry, {
   allowedDirs: allowedDirs.length > 0 ? allowedDirs : [process.cwd(), os.tmpdir(), os.homedir(), "/tmp", "/private/tmp"],
