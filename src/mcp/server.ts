@@ -52,6 +52,8 @@ export type McpServerOptions = {
   gmailSidecarUrl?: string;
   databaseSidecarUrl?: string;
   githubSidecarUrl?: string;
+  /** GitHub Personal Access Token — enables direct REST API calls without a sidecar. */
+  githubToken?: string;
   localServerManager?: LocalMcpServerManager;
   /** Per-sidecar disabled tool lists from config */
   disabledTools?: Record<string, string[]>;
@@ -78,6 +80,7 @@ export type RegisterMcpToolsOptions = Pick<
   | "gmailSidecarUrl"
   | "databaseSidecarUrl"
   | "githubSidecarUrl"
+  | "githubToken"
   | "localServerManager"
   | "disabledTools"
 >;
@@ -457,6 +460,7 @@ export const registerMcpTools = (toolRegistry: ToolRegistry, options: RegisterMc
   // ── GitHub Tools (Docker sidecar) ──
   const githubTools = createGitHubTools({
     sidecarUrl: options.githubSidecarUrl,
+    token: options.githubToken,
   });
   for (const tool of githubTools) {
     registerTool(tool);

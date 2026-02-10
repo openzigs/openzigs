@@ -4,12 +4,14 @@ import type { ToolDefinition } from "../tool-registry.js";
 /**
  * GitHub MCP tools for repository management, issues, PRs, and code search.
  *
- * Connects to the GitHub MCP Docker sidecar (github/github-mcp-server)
- * which provides full GitHub API access via a Personal Access Token.
+ * Connectivity: Direct GitHub REST API calls using a Personal Access Token,
+ * with an optional Docker sidecar fallback (github/github-mcp-server).
  */
 
 type GitHubToolsOptions = {
   sidecarUrl?: string;
+  /** GitHub Personal Access Token — enables direct REST API calls without a sidecar. */
+  token?: string;
 };
 
 const githubGetFileSchema = z.object({
@@ -253,36 +255,425 @@ const githubGetLabelSchema = z.object({
   name: z.string().describe("Label name"),
 });
 
-const callSidecar = async (
-  baseUrl: string | undefined,
+// ── GitHub REST API direct caller ──
+
+const GITHUB_API = "https://api.github.com";
+
+type ApiRoute = {
+  method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+  path: (p: Record<string, unknown>) => string;
+  query?: (p: Record<string, unknown>) => Record<string, string>;
+  body?: (p: Record<string, unknown>) => Record<string, unknown> | undefined;
+};
+
+/** Map sidecar method names → GitHub REST API routes. */
+const API_ROUTES: Record<string, ApiRoute> = {
+  get_me: {
+    method: "GET",
+    path: () => "/user",
+  },
+  get_file_contents: {
+    method: "GET",
+    path: (p) => `/repos/${p.owner}/${p.repo}/contents/${p.path}`,
+    query: (p) => { const q: Record<string, string> = {}; if (p.ref) q.ref = String(p.ref); return q; },
+  },
+  search_code: {
+    method: "GET",
+    path: () => "/search/code",
+    query: (p) => {
+      let q = String(p.query);
+      if (p.owner && p.repo) q += ` repo:${p.owner}/${p.repo}`;
+      else if (p.owner) q += ` org:${p.owner}`;
+      const params: Record<string, string> = { q };
+      if (p.perPage) params.per_page = String(p.perPage);
+      return params;
+    },
+  },
+  search_repositories: {
+    method: "GET",
+    path: () => "/search/repositories",
+    query: (p) => {
+      const params: Record<string, string> = { q: String(p.query) };
+      if (p.perPage) params.per_page = String(p.perPage);
+      return params;
+    },
+  },
+  search_users: {
+    method: "GET",
+    path: () => "/search/users",
+    query: (p) => {
+      const params: Record<string, string> = { q: String(p.query) };
+      if (p.perPage) params.per_page = String(p.perPage);
+      return params;
+    },
+  },
+  list_issues: {
+    method: "GET",
+    path: (p) => `/repos/${p.owner}/${p.repo}/issues`,
+    query: (p) => {
+      const params: Record<string, string> = {};
+      if (p.state) params.state = String(p.state);
+      if (p.labels) params.labels = String(p.labels);
+      if (p.perPage) params.per_page = String(p.perPage);
+      return params;
+    },
+  },
+  create_issue: {
+    method: "POST",
+    path: (p) => `/repos/${p.owner}/${p.repo}/issues`,
+    body: (p) => ({ title: p.title, body: p.body, labels: p.labels, assignees: p.assignees }),
+  },
+  get_issue: {
+    method: "GET",
+    path: (p) => `/repos/${p.owner}/${p.repo}/issues/${p.issue_number}`,
+  },
+  update_issue: {
+    method: "PATCH",
+    path: (p) => `/repos/${p.owner}/${p.repo}/issues/${p.issue_number}`,
+    body: (p) => {
+      const b: Record<string, unknown> = {};
+      if (p.title !== undefined) b.title = p.title;
+      if (p.body !== undefined) b.body = p.body;
+      if (p.state !== undefined) b.state = p.state;
+      if (p.labels !== undefined) b.labels = p.labels;
+      if (p.assignees !== undefined) b.assignees = p.assignees;
+      return b;
+    },
+  },
+  add_issue_comment: {
+    method: "POST",
+    path: (p) => `/repos/${p.owner}/${p.repo}/issues/${p.issue_number}/comments`,
+    body: (p) => ({ body: p.body }),
+  },
+  search_issues: {
+    method: "GET",
+    path: () => "/search/issues",
+    query: (p) => {
+      const params: Record<string, string> = { q: `${p.query} is:issue` };
+      if (p.perPage) params.per_page = String(p.perPage);
+      return params;
+    },
+  },
+  list_commits: {
+    method: "GET",
+    path: (p) => `/repos/${p.owner}/${p.repo}/commits`,
+    query: (p) => {
+      const params: Record<string, string> = {};
+      if (p.sha) params.sha = String(p.sha);
+      if (p.perPage) params.per_page = String(p.perPage);
+      return params;
+    },
+  },
+  get_commit: {
+    method: "GET",
+    path: (p) => `/repos/${p.owner}/${p.repo}/commits/${p.ref}`,
+  },
+  list_branches: {
+    method: "GET",
+    path: (p) => `/repos/${p.owner}/${p.repo}/branches`,
+    query: (p) => { const q: Record<string, string> = {}; if (p.perPage) q.per_page = String(p.perPage); return q; },
+  },
+  create_branch: {
+    method: "POST",
+    path: (p) => `/repos/${p.owner}/${p.repo}/git/refs`,
+    body: (p) => ({ ref: `refs/heads/${p.branch}`, sha: String(p.from ?? "") }),
+  },
+  list_pull_requests: {
+    method: "GET",
+    path: (p) => `/repos/${p.owner}/${p.repo}/pulls`,
+    query: (p) => {
+      const params: Record<string, string> = {};
+      if (p.state) params.state = String(p.state);
+      if (p.head) params.head = String(p.head);
+      if (p.base) params.base = String(p.base);
+      if (p.perPage) params.per_page = String(p.perPage);
+      return params;
+    },
+  },
+  get_pull_request: {
+    method: "GET",
+    path: (p) => `/repos/${p.owner}/${p.repo}/pulls/${p.pullNumber}`,
+  },
+  create_pull_request: {
+    method: "POST",
+    path: (p) => `/repos/${p.owner}/${p.repo}/pulls`,
+    body: (p) => ({ title: p.title, body: p.body, head: p.head, base: p.base, draft: p.draft }),
+  },
+  merge_pull_request: {
+    method: "PUT",
+    path: (p) => `/repos/${p.owner}/${p.repo}/pulls/${p.pullNumber}/merge`,
+    body: (p) => ({
+      merge_method: p.mergeMethod,
+      commit_title: p.commitTitle,
+      commit_message: p.commitMessage,
+    }),
+  },
+  create_or_update_file: {
+    method: "PUT",
+    path: (p) => `/repos/${p.owner}/${p.repo}/contents/${p.path}`,
+    body: (p) => ({
+      message: p.message,
+      content: Buffer.from(String(p.content)).toString("base64"),
+      branch: p.branch,
+      sha: p.sha,
+    }),
+  },
+  delete_file: {
+    method: "DELETE",
+    path: (p) => `/repos/${p.owner}/${p.repo}/contents/${p.path}`,
+    body: (p) => ({ message: p.message, sha: p.sha, branch: p.branch }),
+  },
+  fork_repository: {
+    method: "POST",
+    path: (p) => `/repos/${p.owner}/${p.repo}/forks`,
+    body: (p) => (p.organization ? { organization: p.organization } : undefined),
+  },
+  create_repository: {
+    method: "POST",
+    path: () => "/user/repos",
+    body: (p) => ({ name: p.name, description: p.description, private: p.private, auto_init: p.autoInit }),
+  },
+  list_releases: {
+    method: "GET",
+    path: (p) => `/repos/${p.owner}/${p.repo}/releases`,
+    query: (p) => { const q: Record<string, string> = {}; if (p.perPage) q.per_page = String(p.perPage); return q; },
+  },
+  get_latest_release: {
+    method: "GET",
+    path: (p) => `/repos/${p.owner}/${p.repo}/releases/latest`,
+  },
+  get_release_by_tag: {
+    method: "GET",
+    path: (p) => `/repos/${p.owner}/${p.repo}/releases/tags/${p.tag}`,
+  },
+  search_pull_requests: {
+    method: "GET",
+    path: () => "/search/issues",
+    query: (p) => {
+      const params: Record<string, string> = { q: `${p.query} is:pr` };
+      if (p.perPage) params.per_page = String(p.perPage);
+      return params;
+    },
+  },
+  update_pull_request: {
+    method: "PATCH",
+    path: (p) => `/repos/${p.owner}/${p.repo}/pulls/${p.pull_number}`,
+    body: (p) => {
+      const b: Record<string, unknown> = {};
+      if (p.title !== undefined) b.title = p.title;
+      if (p.body !== undefined) b.body = p.body;
+      if (p.state !== undefined) b.state = p.state;
+      if (p.base !== undefined) b.base = p.base;
+      return b;
+    },
+  },
+  update_pull_request_branch: {
+    method: "PUT",
+    path: (p) => `/repos/${p.owner}/${p.repo}/pulls/${p.pull_number}/update-branch`,
+    body: (p) => (p.expected_head_sha ? { expected_head_sha: p.expected_head_sha } : undefined),
+  },
+  push_files: {
+    // push_files is complex (tree API) — handled specially
+    method: "POST",
+    path: () => "/special/push_files",
+  },
+  list_tags: {
+    method: "GET",
+    path: (p) => `/repos/${p.owner}/${p.repo}/tags`,
+    query: (p) => { const q: Record<string, string> = {}; if (p.perPage) q.per_page = String(p.perPage); return q; },
+  },
+  get_repository_tree: {
+    method: "GET",
+    path: (p) => `/repos/${p.owner}/${p.repo}/git/trees/${p.sha ?? "HEAD"}`,
+    query: (p) => { const q: Record<string, string> = {}; if (p.recursive) q.recursive = "1"; return q; },
+  },
+  list_labels: {
+    method: "GET",
+    path: (p) => `/repos/${p.owner}/${p.repo}/labels`,
+    query: (p) => { const q: Record<string, string> = {}; if (p.perPage) q.per_page = String(p.perPage); return q; },
+  },
+  get_label: {
+    method: "GET",
+    path: (p) => `/repos/${p.owner}/${p.repo}/labels/${encodeURIComponent(String(p.name))}`,
+  },
+};
+
+/** GitHub REST API call with token auth. */
+const callGitHubApi = async (
+  token: string,
   method: string,
-  params: Record<string, unknown>
+  params: Record<string, unknown>,
 ): Promise<{ text: string; isError?: boolean }> => {
-  if (!baseUrl) {
+  // Special case: push_files requires the Git Data API (blobs → tree → commit → ref)
+  if (method === "push_files") {
+    return pushFilesViaApi(token, params);
+  }
+
+  const route = API_ROUTES[method];
+  if (!route) {
+    return { text: `Unknown GitHub API method: ${method}`, isError: true };
+  }
+
+  const urlPath = route.path(params);
+  const queryParams = route.query?.(params) ?? {};
+  const qs = new URLSearchParams(queryParams).toString();
+  const fullUrl = `${GITHUB_API}${urlPath}${qs ? `?${qs}` : ""}`;
+
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${token}`,
+    Accept: "application/vnd.github+json",
+    "X-GitHub-Api-Version": "2022-11-28",
+    "User-Agent": "OpenZigs/0.1",
+  };
+
+  const fetchOpts: RequestInit = { method: route.method, headers };
+
+  if (route.body && (route.method === "POST" || route.method === "PUT" || route.method === "PATCH" || route.method === "DELETE")) {
+    const bodyData = route.body(params);
+    if (bodyData !== undefined) {
+      headers["Content-Type"] = "application/json";
+      fetchOpts.body = JSON.stringify(bodyData);
+    }
+  }
+
+  try {
+    const resp = await fetch(fullUrl, fetchOpts);
+    const text = await resp.text();
+
+    if (!resp.ok) {
+      return { text: `GitHub API error (${resp.status}): ${text}`, isError: true };
+    }
+
+    // Return parsed JSON as formatted text for the LLM
+    try {
+      const json = JSON.parse(text);
+      return { text: JSON.stringify(json, null, 2) };
+    } catch {
+      return { text };
+    }
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    return { text: `GitHub API request failed: ${msg}`, isError: true };
+  }
+};
+
+/** Push multiple files in a single commit via Git Data API. */
+const pushFilesViaApi = async (
+  token: string,
+  params: Record<string, unknown>,
+): Promise<{ text: string; isError?: boolean }> => {
+  const { owner, repo, branch, message, files } = params as {
+    owner: string;
+    repo: string;
+    branch: string;
+    message: string;
+    files: Array<{ path: string; content: string }>;
+  };
+
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${token}`,
+    Accept: "application/vnd.github+json",
+    "X-GitHub-Api-Version": "2022-11-28",
+    "Content-Type": "application/json",
+    "User-Agent": "OpenZigs/0.1",
+  };
+
+  try {
+    // 1. Get the current ref
+    const refResp = await fetch(`${GITHUB_API}/repos/${owner}/${repo}/git/ref/heads/${branch}`, { headers });
+    if (!refResp.ok) return { text: `Failed to get ref: ${await refResp.text()}`, isError: true };
+    const refData = (await refResp.json()) as { object: { sha: string } };
+    const baseSha = refData.object.sha;
+
+    // 2. Get the base tree
+    const commitResp = await fetch(`${GITHUB_API}/repos/${owner}/${repo}/git/commits/${baseSha}`, { headers });
+    if (!commitResp.ok) return { text: `Failed to get commit: ${await commitResp.text()}`, isError: true };
+    const commitData = (await commitResp.json()) as { tree: { sha: string } };
+    const baseTreeSha = commitData.tree.sha;
+
+    // 3. Create blobs for each file
+    const tree: Array<{ path: string; mode: string; type: string; sha: string }> = [];
+    for (const file of files) {
+      const blobResp = await fetch(`${GITHUB_API}/repos/${owner}/${repo}/git/blobs`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ content: file.content, encoding: "utf-8" }),
+      });
+      if (!blobResp.ok) return { text: `Failed to create blob: ${await blobResp.text()}`, isError: true };
+      const blob = (await blobResp.json()) as { sha: string };
+      tree.push({ path: file.path, mode: "100644", type: "blob", sha: blob.sha });
+    }
+
+    // 4. Create new tree
+    const treeResp = await fetch(`${GITHUB_API}/repos/${owner}/${repo}/git/trees`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ base_tree: baseTreeSha, tree }),
+    });
+    if (!treeResp.ok) return { text: `Failed to create tree: ${await treeResp.text()}`, isError: true };
+    const newTree = (await treeResp.json()) as { sha: string };
+
+    // 5. Create commit
+    const newCommitResp = await fetch(`${GITHUB_API}/repos/${owner}/${repo}/git/commits`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ message, tree: newTree.sha, parents: [baseSha] }),
+    });
+    if (!newCommitResp.ok) return { text: `Failed to create commit: ${await newCommitResp.text()}`, isError: true };
+    const newCommit = (await newCommitResp.json()) as { sha: string; html_url?: string };
+
+    // 6. Update ref
+    const updateRefResp = await fetch(`${GITHUB_API}/repos/${owner}/${repo}/git/refs/heads/${branch}`, {
+      method: "PATCH",
+      headers,
+      body: JSON.stringify({ sha: newCommit.sha }),
+    });
+    if (!updateRefResp.ok) return { text: `Failed to update ref: ${await updateRefResp.text()}`, isError: true };
+
+    return { text: JSON.stringify({ sha: newCommit.sha, files: files.length, branch }) };
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    return { text: `Push files failed: ${msg}`, isError: true };
+  }
+};
+
+/**
+ * Call GitHub: tries Docker sidecar first, then falls back to direct REST API.
+ */
+const callGitHub = async (
+  sidecarUrl: string | undefined,
+  token: string | undefined,
+  method: string,
+  params: Record<string, unknown>,
+): Promise<{ text: string; isError?: boolean }> => {
+  // Strategy 1: Docker sidecar (if configured and reachable)
+  if (sidecarUrl) {
+    try {
+      const response = await fetch(`${sidecarUrl}/mcp`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ method, params }),
+      });
+
+      if (response.ok) {
+        const result = (await response.json()) as { result?: string };
+        return { text: result.result ?? JSON.stringify(result) };
+      }
+      // Non-ok response — fall through to direct API
+    } catch {
+      // Sidecar unreachable — fall through
+    }
+  }
+
+  // Strategy 2: Direct GitHub REST API
+  if (!token) {
     return {
-      text: "GitHub sidecar not configured. Set MCP_GITHUB_URL and GITHUB_PERSONAL_ACCESS_TOKEN in environment variables.",
+      text: "GitHub not configured. Set GITHUB_PERSONAL_ACCESS_TOKEN in the Admin panel or .env file.",
       isError: true,
     };
   }
 
-  try {
-    const response = await fetch(`${baseUrl}/mcp`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ method, params }),
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      return { text: `GitHub sidecar error: ${errorText}`, isError: true };
-    }
-
-    const result = (await response.json()) as { result?: string };
-    return { text: result.result ?? JSON.stringify(result) };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return { text: `Failed to reach GitHub sidecar: ${message}`, isError: true };
-  }
+  return callGitHubApi(token, method, params);
 };
 
 export const createGitHubTools = (options: GitHubToolsOptions): ToolDefinition[] => {
@@ -296,7 +687,7 @@ export const createGitHubTools = (options: GitHubToolsOptions): ToolDefinition[]
       category: "developer",
       riskLevel: "low",
       source: "github",
-      handler: async () => callSidecar(options.sidecarUrl, "get_me", {}),
+      handler: async () => callGitHub(options.sidecarUrl, options.token, "get_me", {}),
     },
     {
       name: "github-get-file",
@@ -317,7 +708,7 @@ export const createGitHubTools = (options: GitHubToolsOptions): ToolDefinition[]
       source: "github",
       handler: async (args) => {
         const input = args as z.infer<typeof githubGetFileSchema>;
-        return callSidecar(options.sidecarUrl, "get_file_contents", input);
+        return callGitHub(options.sidecarUrl, options.token, "get_file_contents", input);
       },
     },
     {
@@ -339,7 +730,7 @@ export const createGitHubTools = (options: GitHubToolsOptions): ToolDefinition[]
       source: "github",
       handler: async (args) => {
         const input = args as z.infer<typeof githubSearchCodeSchema>;
-        return callSidecar(options.sidecarUrl, "search_code", input);
+        return callGitHub(options.sidecarUrl, options.token, "search_code", input);
       },
     },
     {
@@ -359,7 +750,7 @@ export const createGitHubTools = (options: GitHubToolsOptions): ToolDefinition[]
       source: "github",
       handler: async (args) => {
         const input = args as z.infer<typeof githubSearchReposSchema>;
-        return callSidecar(options.sidecarUrl, "search_repositories", input);
+        return callGitHub(options.sidecarUrl, options.token, "search_repositories", input);
       },
     },
     {
@@ -379,7 +770,7 @@ export const createGitHubTools = (options: GitHubToolsOptions): ToolDefinition[]
       source: "github",
       handler: async (args) => {
         const input = args as z.infer<typeof githubSearchUsersSchema>;
-        return callSidecar(options.sidecarUrl, "search_users", input);
+        return callGitHub(options.sidecarUrl, options.token, "search_users", input);
       },
     },
 
@@ -404,7 +795,7 @@ export const createGitHubTools = (options: GitHubToolsOptions): ToolDefinition[]
       source: "github",
       handler: async (args) => {
         const input = args as z.infer<typeof githubListIssuesSchema>;
-        return callSidecar(options.sidecarUrl, "list_issues", input);
+        return callGitHub(options.sidecarUrl, options.token, "list_issues", input);
       },
     },
     {
@@ -428,7 +819,7 @@ export const createGitHubTools = (options: GitHubToolsOptions): ToolDefinition[]
       source: "github",
       handler: async (args) => {
         const input = args as z.infer<typeof githubCreateIssueSchema>;
-        return callSidecar(options.sidecarUrl, "create_issue", input);
+        return callGitHub(options.sidecarUrl, options.token, "create_issue", input);
       },
     },
 
@@ -452,7 +843,7 @@ export const createGitHubTools = (options: GitHubToolsOptions): ToolDefinition[]
       source: "github",
       handler: async (args) => {
         const input = args as z.infer<typeof githubListCommitsSchema>;
-        return callSidecar(options.sidecarUrl, "list_commits", input);
+        return callGitHub(options.sidecarUrl, options.token, "list_commits", input);
       },
     },
     {
@@ -473,7 +864,7 @@ export const createGitHubTools = (options: GitHubToolsOptions): ToolDefinition[]
       source: "github",
       handler: async (args) => {
         const input = args as z.infer<typeof githubGetCommitSchema>;
-        return callSidecar(options.sidecarUrl, "get_commit", input);
+        return callGitHub(options.sidecarUrl, options.token, "get_commit", input);
       },
     },
     {
@@ -494,7 +885,7 @@ export const createGitHubTools = (options: GitHubToolsOptions): ToolDefinition[]
       source: "github",
       handler: async (args) => {
         const input = args as z.infer<typeof githubListBranchesSchema>;
-        return callSidecar(options.sidecarUrl, "list_branches", input);
+        return callGitHub(options.sidecarUrl, options.token, "list_branches", input);
       },
     },
     {
@@ -516,7 +907,7 @@ export const createGitHubTools = (options: GitHubToolsOptions): ToolDefinition[]
       source: "github",
       handler: async (args) => {
         const input = args as z.infer<typeof githubCreateBranchSchema>;
-        return callSidecar(options.sidecarUrl, "create_branch", input);
+        return callGitHub(options.sidecarUrl, options.token, "create_branch", input);
       },
     },
 
@@ -542,7 +933,7 @@ export const createGitHubTools = (options: GitHubToolsOptions): ToolDefinition[]
       source: "github",
       handler: async (args) => {
         const input = args as z.infer<typeof githubListPullRequestsSchema>;
-        return callSidecar(options.sidecarUrl, "list_pull_requests", input);
+        return callGitHub(options.sidecarUrl, options.token, "list_pull_requests", input);
       },
     },
     {
@@ -563,7 +954,7 @@ export const createGitHubTools = (options: GitHubToolsOptions): ToolDefinition[]
       source: "github",
       handler: async (args) => {
         const input = args as z.infer<typeof githubGetPullRequestSchema>;
-        return callSidecar(options.sidecarUrl, "get_pull_request", input);
+        return callGitHub(options.sidecarUrl, options.token, "get_pull_request", input);
       },
     },
     {
@@ -589,7 +980,7 @@ export const createGitHubTools = (options: GitHubToolsOptions): ToolDefinition[]
       source: "github",
       handler: async (args) => {
         const input = args as z.infer<typeof githubCreatePrSchema>;
-        return callSidecar(options.sidecarUrl, "create_pull_request", input);
+        return callGitHub(options.sidecarUrl, options.token, "create_pull_request", input);
       },
     },
     {
@@ -613,7 +1004,7 @@ export const createGitHubTools = (options: GitHubToolsOptions): ToolDefinition[]
       source: "github",
       handler: async (args) => {
         const input = args as z.infer<typeof githubMergePrSchema>;
-        return callSidecar(options.sidecarUrl, "merge_pull_request", input);
+        return callGitHub(options.sidecarUrl, options.token, "merge_pull_request", input);
       },
     },
 
@@ -640,7 +1031,7 @@ export const createGitHubTools = (options: GitHubToolsOptions): ToolDefinition[]
       source: "github",
       handler: async (args) => {
         const input = args as z.infer<typeof githubCreateOrUpdateFileSchema>;
-        return callSidecar(options.sidecarUrl, "create_or_update_file", input);
+        return callGitHub(options.sidecarUrl, options.token, "create_or_update_file", input);
       },
     },
     {
@@ -664,7 +1055,7 @@ export const createGitHubTools = (options: GitHubToolsOptions): ToolDefinition[]
       source: "github",
       handler: async (args) => {
         const input = args as z.infer<typeof githubDeleteFileSchema>;
-        return callSidecar(options.sidecarUrl, "delete_file", input);
+        return callGitHub(options.sidecarUrl, options.token, "delete_file", input);
       },
     },
 
@@ -687,7 +1078,7 @@ export const createGitHubTools = (options: GitHubToolsOptions): ToolDefinition[]
       source: "github",
       handler: async (args) => {
         const input = args as z.infer<typeof githubForkRepoSchema>;
-        return callSidecar(options.sidecarUrl, "fork_repository", input);
+        return callGitHub(options.sidecarUrl, options.token, "fork_repository", input);
       },
     },
     {
@@ -709,7 +1100,7 @@ export const createGitHubTools = (options: GitHubToolsOptions): ToolDefinition[]
       source: "github",
       handler: async (args) => {
         const input = args as z.infer<typeof githubCreateRepoSchema>;
-        return callSidecar(options.sidecarUrl, "create_repository", input);
+        return callGitHub(options.sidecarUrl, options.token, "create_repository", input);
       },
     },
 
@@ -732,7 +1123,7 @@ export const createGitHubTools = (options: GitHubToolsOptions): ToolDefinition[]
       source: "github",
       handler: async (args) => {
         const input = args as z.infer<typeof githubListReleasesSchema>;
-        return callSidecar(options.sidecarUrl, "list_releases", input);
+        return callGitHub(options.sidecarUrl, options.token, "list_releases", input);
       },
     },
     {
@@ -752,7 +1143,7 @@ export const createGitHubTools = (options: GitHubToolsOptions): ToolDefinition[]
       source: "github",
       handler: async (args) => {
         const input = args as z.infer<typeof githubGetLatestReleaseSchema>;
-        return callSidecar(options.sidecarUrl, "get_latest_release", input);
+        return callGitHub(options.sidecarUrl, options.token, "get_latest_release", input);
       },
     },
     {
@@ -773,7 +1164,7 @@ export const createGitHubTools = (options: GitHubToolsOptions): ToolDefinition[]
       source: "github",
       handler: async (args) => {
         const input = args as z.infer<typeof githubGetReleaseByTagSchema>;
-        return callSidecar(options.sidecarUrl, "get_release_by_tag", input);
+        return callGitHub(options.sidecarUrl, options.token, "get_release_by_tag", input);
       },
     },
 
@@ -796,7 +1187,7 @@ export const createGitHubTools = (options: GitHubToolsOptions): ToolDefinition[]
       source: "github",
       handler: async (args) => {
         const input = args as z.infer<typeof githubGetIssueSchema>;
-        return callSidecar(options.sidecarUrl, "get_issue", {
+        return callGitHub(options.sidecarUrl, options.token, "get_issue", {
           owner: input.owner,
           repo: input.repo,
           issue_number: input.issueNumber,
@@ -826,7 +1217,7 @@ export const createGitHubTools = (options: GitHubToolsOptions): ToolDefinition[]
       source: "github",
       handler: async (args) => {
         const input = args as z.infer<typeof githubUpdateIssueSchema>;
-        return callSidecar(options.sidecarUrl, "update_issue", {
+        return callGitHub(options.sidecarUrl, options.token, "update_issue", {
           owner: input.owner,
           repo: input.repo,
           issue_number: input.issueNumber,
@@ -857,7 +1248,7 @@ export const createGitHubTools = (options: GitHubToolsOptions): ToolDefinition[]
       source: "github",
       handler: async (args) => {
         const input = args as z.infer<typeof githubAddIssueCommentSchema>;
-        return callSidecar(options.sidecarUrl, "add_issue_comment", {
+        return callGitHub(options.sidecarUrl, options.token, "add_issue_comment", {
           owner: input.owner,
           repo: input.repo,
           issue_number: input.issueNumber,
@@ -882,7 +1273,7 @@ export const createGitHubTools = (options: GitHubToolsOptions): ToolDefinition[]
       source: "github",
       handler: async (args) => {
         const input = args as z.infer<typeof githubSearchIssuesSchema>;
-        return callSidecar(options.sidecarUrl, "search_issues", input);
+        return callGitHub(options.sidecarUrl, options.token, "search_issues", input);
       },
     },
 
@@ -904,7 +1295,7 @@ export const createGitHubTools = (options: GitHubToolsOptions): ToolDefinition[]
       source: "github",
       handler: async (args) => {
         const input = args as z.infer<typeof githubSearchPullRequestsSchema>;
-        return callSidecar(options.sidecarUrl, "search_pull_requests", input);
+        return callGitHub(options.sidecarUrl, options.token, "search_pull_requests", input);
       },
     },
     {
@@ -929,7 +1320,7 @@ export const createGitHubTools = (options: GitHubToolsOptions): ToolDefinition[]
       source: "github",
       handler: async (args) => {
         const input = args as z.infer<typeof githubUpdatePrSchema>;
-        return callSidecar(options.sidecarUrl, "update_pull_request", {
+        return callGitHub(options.sidecarUrl, options.token, "update_pull_request", {
           owner: input.owner,
           repo: input.repo,
           pull_number: input.pullNumber,
@@ -959,7 +1350,7 @@ export const createGitHubTools = (options: GitHubToolsOptions): ToolDefinition[]
       source: "github",
       handler: async (args) => {
         const input = args as z.infer<typeof githubUpdatePrBranchSchema>;
-        return callSidecar(options.sidecarUrl, "update_pull_request_branch", {
+        return callGitHub(options.sidecarUrl, options.token, "update_pull_request_branch", {
           owner: input.owner,
           repo: input.repo,
           pull_number: input.pullNumber,
@@ -999,7 +1390,7 @@ export const createGitHubTools = (options: GitHubToolsOptions): ToolDefinition[]
       source: "github",
       handler: async (args) => {
         const input = args as z.infer<typeof githubPushFilesSchema>;
-        return callSidecar(options.sidecarUrl, "push_files", input);
+        return callGitHub(options.sidecarUrl, options.token, "push_files", input);
       },
     },
 
@@ -1022,7 +1413,7 @@ export const createGitHubTools = (options: GitHubToolsOptions): ToolDefinition[]
       source: "github",
       handler: async (args) => {
         const input = args as z.infer<typeof githubListTagsSchema>;
-        return callSidecar(options.sidecarUrl, "list_tags", input);
+        return callGitHub(options.sidecarUrl, options.token, "list_tags", input);
       },
     },
 
@@ -1046,7 +1437,7 @@ export const createGitHubTools = (options: GitHubToolsOptions): ToolDefinition[]
       source: "github",
       handler: async (args) => {
         const input = args as z.infer<typeof githubGetRepoTreeSchema>;
-        return callSidecar(options.sidecarUrl, "get_repository_tree", input);
+        return callGitHub(options.sidecarUrl, options.token, "get_repository_tree", input);
       },
     },
 
@@ -1069,7 +1460,7 @@ export const createGitHubTools = (options: GitHubToolsOptions): ToolDefinition[]
       source: "github",
       handler: async (args) => {
         const input = args as z.infer<typeof githubListLabelsSchema>;
-        return callSidecar(options.sidecarUrl, "list_labels", input);
+        return callGitHub(options.sidecarUrl, options.token, "list_labels", input);
       },
     },
     {
@@ -1090,7 +1481,7 @@ export const createGitHubTools = (options: GitHubToolsOptions): ToolDefinition[]
       source: "github",
       handler: async (args) => {
         const input = args as z.infer<typeof githubGetLabelSchema>;
-        return callSidecar(options.sidecarUrl, "get_label", input);
+        return callGitHub(options.sidecarUrl, options.token, "get_label", input);
       },
     },
   ];

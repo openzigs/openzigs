@@ -185,6 +185,7 @@ registerMcpTools(toolRegistry, {
   gmailSidecarUrl: resolveSidecarUrl("gmail", "MCP_GMAIL_URL", 5302),
   databaseSidecarUrl: resolveSidecarUrl("database", "MCP_DATABASE_URL", 5303),
   githubSidecarUrl: resolveSidecarUrl("github", "MCP_GITHUB_URL", 5304),
+  githubToken: process.env.GITHUB_PERSONAL_ACCESS_TOKEN,
   localServerManager,
 });
 
