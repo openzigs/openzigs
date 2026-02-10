@@ -135,6 +135,57 @@ describe("Scheduler", () => {
     expect(job.enabled).toBe(false);
   });
 
+  it("creates a job with allowedTools", () => {
+    const job = scheduler.create({
+      name: "scoped-job",
+      cronExpression: "0 9 * * *",
+      actionType: "prompt",
+      actionPayload: { promptName: "daily-summary" },
+      allowedTools: ["web-search", "read-file"],
+    });
+
+    expect(job.allowedTools).toEqual(["web-search", "read-file"]);
+
+    const found = scheduler.getById(job.id);
+    expect(found!.allowedTools).toEqual(["web-search", "read-file"]);
+  });
+
+  it("creates a job without allowedTools (null by default)", () => {
+    const job = scheduler.create({
+      name: "unscoped-job",
+      cronExpression: "0 9 * * *",
+      actionPayload: {},
+    });
+
+    expect(job.allowedTools).toBeNull();
+  });
+
+  it("updates allowedTools on a job", () => {
+    const job = scheduler.create({
+      name: "updatable",
+      cronExpression: "0 9 * * *",
+      actionPayload: {},
+    });
+
+    const updated = scheduler.update(job.id, {
+      allowedTools: ["shell-execute", "browser-navigate"],
+    });
+    expect(updated.allowedTools).toEqual(["shell-execute", "browser-navigate"]);
+  });
+
+  it("clears allowedTools by setting null", () => {
+    const job = scheduler.create({
+      name: "clearable",
+      cronExpression: "0 9 * * *",
+      actionPayload: {},
+      allowedTools: ["web-search"],
+    });
+    expect(job.allowedTools).toEqual(["web-search"]);
+
+    const updated = scheduler.update(job.id, { allowedTools: null });
+    expect(updated.allowedTools).toBeNull();
+  });
+
   it("emits job:executed event", async () => {
     const handler = vi.fn();
     const executingScheduler = new Scheduler({

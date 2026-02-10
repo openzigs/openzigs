@@ -1,6 +1,7 @@
 import type { ChannelManager } from "../channels/channel-manager.js";
 import type { IncomingMessage, MessageContent } from "../channels/types.js";
 import type { CopilotWrapper } from "../copilot/copilot-wrapper.js";
+import type { ToolRegistry } from "../mcp/tool-registry.js";
 import type { AccessControlConfig } from "../config/index.js";
 import type { ConversationEvent, SessionManager } from "../sessions/session-manager.js";
 import type { PersonalityManager } from "../personality/personality-manager.js";
@@ -16,12 +17,16 @@ export type RouteOptions = {
   model?: string;
   /** Callback invoked when a tool is called during processing. */
   onToolCall?: (tool: string, args: unknown) => void;
+  /** Optional tool allowlist for this request. Only these tools (+ ALWAYS_ON_TOOLS) will be available. */
+  allowedTools?: string[];
 };
 
 export type MessageRouterOptions = {
   channelManager: ChannelManager;
   sessionManager: SessionManager;
   copilot: CopilotWrapper;
+  /** Tool registry, needed to resolve per-request tool scoping. */
+  toolRegistry?: ToolRegistry;
   accessControl?: AccessControlConfig;
   historyLimit?: number;
   maxToolsPerRequest?: number;
@@ -43,6 +48,7 @@ export class MessageRouter {
   private channelManager: ChannelManager;
   private sessionManager: SessionManager;
   private copilot: CopilotWrapper;
+  private toolRegistry?: ToolRegistry;
   private userSessions = new Map<string, string>();
   private accessControl: AccessControlConfig;
   private historyLimit: number;
@@ -55,6 +61,7 @@ export class MessageRouter {
     channelManager,
     sessionManager,
     copilot,
+    toolRegistry,
     accessControl,
     historyLimit = 20,
     maxToolsPerRequest = 30,
@@ -65,6 +72,7 @@ export class MessageRouter {
     this.channelManager = channelManager;
     this.sessionManager = sessionManager;
     this.copilot = copilot;
+    this.toolRegistry = toolRegistry;
     this.accessControl = accessControl ?? defaultAccessControl;
     this.historyLimit = historyLimit;
     this.maxToolsPerRequest = maxToolsPerRequest;
@@ -133,7 +141,10 @@ export class MessageRouter {
         parentTaskId: taskId,
       });
 
-      for await (const chunk of this.copilot.chat(prompt, { model: options?.model, onToolCall: options?.onToolCall })) {
+      // Resolve per-request tool scoping if the caller provided an allowedTools list
+      const scopedTools = this.resolveScopedTools(options?.allowedTools);
+
+      for await (const chunk of this.copilot.chat(prompt, { model: options?.model, tools: scopedTools, onToolCall: options?.onToolCall })) {
         response += chunk;
         if (options?.onChunk) {
           options.onChunk(chunk);
@@ -180,6 +191,20 @@ export class MessageRouter {
 
   private buildReply(text: string): MessageContent {
     return { text };
+  }
+
+  /**
+   * Resolve a scoped tool list from an allowedTools name list.
+   * Returns undefined when no scoping is needed (uses default copilot tool set).
+   */
+  private resolveScopedTools(allowedTools?: string[]) {
+    if (!allowedTools || !this.toolRegistry) {
+      return undefined;
+    }
+    const allowedSet = new Set([...allowedTools, ...ALWAYS_ON_TOOLS]);
+    return this.toolRegistry
+      .listEnabledTools()
+      .filter((t) => allowedSet.has(t.name));
   }
 
   private async getOrCreateSessionId(message: IncomingMessage): Promise<string> {

@@ -679,6 +679,112 @@ curl -X PUT -H "Authorization: Bearer <token>" \
 
 ---
 
+## Per-Entity Tool Scoping
+
+Beyond the global tool limit, OpenZigs supports **per-entity tool scoping** — restricting which tools are available for a specific scheduled job, saved prompt, or chat message. This lets you lock down a job to only the tools it needs, or give a prompt access to a curated toolset.
+
+### How It Works
+
+Each entity (job, prompt, or message) can declare an allowlist of tool names. When the entity executes, only those tools (plus the 7 always-on tools) are sent to the LLM. If no allowlist is set, the full enabled toolset is used as before.
+
+**Resolution algorithm:**
+
+1. Start with the entity's tool allowlist (e.g., `["web-search", "read-file"]`).
+2. Merge in the 7 always-on tools (`read-file`, `list-directory`, `web-search`, `browser-navigate`, `shell-execute`, `spawn-agent`, `orchestrate-agents`).
+3. Filter to only tools currently enabled in the `ToolRegistry`.
+4. Pass the resulting set to the LLM — no other tools are visible.
+
+### Scheduled Jobs (`allowedTools`)
+
+Restrict a cron job to a specific set of tools:
+
+```bash
+# Create a job scoped to web-search and read-file only
+curl -X POST -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "news-digest",
+    "cron": "0 7 * * *",
+    "action": "prompt",
+    "promptText": "Find the top 5 AI news stories from today",
+    "allowedTools": ["web-search", "read-file"]
+  }' \
+  http://localhost:3000/api/jobs
+
+# Update a job to change its allowed tools
+curl -X PUT -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"allowedTools": ["web-search", "browser-navigate", "read-file"]}' \
+  http://localhost:3000/api/jobs/1
+
+# Clear tool scoping (use all enabled tools)
+curl -X PUT -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"allowedTools": null}' \
+  http://localhost:3000/api/jobs/1
+```
+
+When a scoped job executes, only the listed tools plus always-on tools are sent to the LLM. This is useful for security-sensitive jobs (e.g., a reporting job that should never call `shell-execute`) or for reducing token consumption on simple jobs.
+
+### Saved Prompts (`preferredTools`)
+
+Attach a preferred toolset to a saved prompt template:
+
+```bash
+# Create a prompt with preferred tools
+curl -X POST -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "code-review",
+    "content": "Review the code in {{file}} for security issues",
+    "preferredTools": ["read-file", "list-directory", "shell-execute"]
+  }' \
+  http://localhost:3000/api/prompts
+
+# Update preferred tools
+curl -X PUT -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"preferredTools": ["read-file", "web-search"]}' \
+  http://localhost:3000/api/prompts/1
+
+# Clear preferred tools
+curl -X PUT -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"preferredTools": null}' \
+  http://localhost:3000/api/prompts/1
+```
+
+The `resolveWithTools()` method returns both the interpolated prompt text and its preferred tools, making it easy for callers to scope tool access when executing a prompt.
+
+### Web Chat Messages (`tools`)
+
+The web chat Socket.IO interface accepts an optional `tools` array per message:
+
+```javascript
+// Client-side: send a message with tool scoping
+socket.emit('chat:message', {
+  content: 'Search for the latest TypeScript release notes',
+  model: 'gpt-4.1',
+  tools: ['web-search', 'browser-navigate']
+});
+```
+
+When `tools` is provided, only those tools (plus always-on tools) are available for that specific message. This is useful for building UI controls that let users restrict tool access per-message — for example, a "search only" mode or a "code only" mode.
+
+### Scoping Summary
+
+| Entity | Field | API | Effect |
+|--------|-------|-----|--------|
+| Scheduled Job | `allowedTools` | `POST/PUT /api/jobs` | Restricts tools when the job fires |
+| Saved Prompt | `preferredTools` | `POST/PUT /api/prompts` | Attaches tool preferences to the prompt |
+| Chat Message | `tools` | Socket.IO `chat:message` | Restricts tools for that single message |
+
+All three scopes follow the same resolution: **entity allowlist ∪ always-on tools ∩ enabled tools**.
+
+> **Tip:** For a deeper analysis of tool selection strategies, token costs, and future plans, see [docs/rfc-tool-selection-strategy.md](rfc-tool-selection-strategy.md).
+
+---
+
 ## Model Selection
 
 The Chat page includes a model selector in the header bar.

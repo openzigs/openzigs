@@ -325,4 +325,119 @@ describe("TaskWorker", () => {
     worker.start();
     worker.start(); // Should not throw or double-start
   });
+
+  it("passes scoped tools to copilot.chat when task has allowedTools", async () => {
+    const mockCopilot = {
+      authenticate: vi.fn(),
+      waitForAuth: vi.fn(),
+      isAuthenticated: vi.fn().mockResolvedValue(true),
+      listModels: vi.fn().mockResolvedValue([]),
+      onToolCall: vi.fn(),
+      setMaxToolsPerRequest: vi.fn(),
+      getMaxToolsPerRequest: vi.fn().mockReturnValue(30),
+      chat: vi.fn().mockImplementation(async function* () {
+        yield "done";
+      }),
+    };
+
+    // Create a minimal mock ToolRegistry
+    const mockToolDefs = [
+      { name: "read-file", description: "Read file", category: "filesystem", riskLevel: "low" },
+      { name: "web-search", description: "Search", category: "search", riskLevel: "low" },
+      { name: "shell-execute", description: "Execute shell", category: "shell", riskLevel: "high" },
+      { name: "spawn-agent", description: "Spawn agent", category: "developer", riskLevel: "medium" },
+      { name: "list-directory", description: "List dir", category: "filesystem", riskLevel: "low" },
+      { name: "browser-navigate", description: "Navigate", category: "browser", riskLevel: "high" },
+      { name: "orchestrate-agents", description: "Orchestrate", category: "developer", riskLevel: "medium" },
+      { name: "linkedin-post", description: "Post to LinkedIn", category: "social", riskLevel: "medium" },
+      { name: "twitter-post", description: "Post to Twitter", category: "social", riskLevel: "medium" },
+    ];
+
+    const mockToolRegistry = {
+      listEnabledTools: vi.fn().mockReturnValue(mockToolDefs),
+    };
+
+    worker = new TaskWorker({
+      engine,
+      copilot: mockCopilot,
+      toolRegistry: mockToolRegistry as unknown as import("../mcp/tool-registry.js").ToolRegistry,
+      maxConcurrent: 1,
+      pollIntervalMs: 50,
+      log: silentLog,
+    });
+
+    // Submit a task WITH allowedTools — only web-search and linkedin-post
+    const taskInput = {
+      trigger: "cron" as const,
+      goal: "Post summary to LinkedIn",
+      allowedTools: ["web-search", "linkedin-post"],
+    };
+    engine.submit(taskInput, { mode: "background" });
+
+    const donePromise = new Promise<void>((resolve) => {
+      worker.on("task:done", () => resolve());
+    });
+
+    worker.start();
+    await donePromise;
+
+    // Verify tools were passed to copilot.chat
+    const chatOptions = mockCopilot.chat.mock.calls[0][1] as { tools?: unknown[] };
+    expect(chatOptions.tools).toBeDefined();
+
+    const toolNames = (chatOptions.tools as Array<{ name: string }>).map((t) => t.name);
+    // Should include the explicitly allowed tools
+    expect(toolNames).toContain("web-search");
+    expect(toolNames).toContain("linkedin-post");
+    // Should include always-on tools
+    expect(toolNames).toContain("read-file");
+    expect(toolNames).toContain("spawn-agent");
+    expect(toolNames).toContain("orchestrate-agents");
+    // Should NOT include twitter-post (not in allowedTools)
+    expect(toolNames).not.toContain("twitter-post");
+  });
+
+  it("does not scope tools when task has no allowedTools", async () => {
+    const mockCopilot = {
+      authenticate: vi.fn(),
+      waitForAuth: vi.fn(),
+      isAuthenticated: vi.fn().mockResolvedValue(true),
+      listModels: vi.fn().mockResolvedValue([]),
+      onToolCall: vi.fn(),
+      setMaxToolsPerRequest: vi.fn(),
+      getMaxToolsPerRequest: vi.fn().mockReturnValue(30),
+      chat: vi.fn().mockImplementation(async function* () {
+        yield "done";
+      }),
+    };
+
+    const mockToolRegistry = {
+      listEnabledTools: vi.fn().mockReturnValue([]),
+    };
+
+    worker = new TaskWorker({
+      engine,
+      copilot: mockCopilot,
+      toolRegistry: mockToolRegistry as unknown as import("../mcp/tool-registry.js").ToolRegistry,
+      maxConcurrent: 1,
+      pollIntervalMs: 50,
+      log: silentLog,
+    });
+
+    engine.submit(
+      { trigger: "cron", goal: "No scoping" },
+      { mode: "background" }
+    );
+
+    const donePromise = new Promise<void>((resolve) => {
+      worker.on("task:done", () => resolve());
+    });
+
+    worker.start();
+    await donePromise;
+
+    // tools should be undefined (no scoping)
+    const chatOptions = mockCopilot.chat.mock.calls[0][1] as { tools?: unknown[] };
+    expect(chatOptions.tools).toBeUndefined();
+  });
 });

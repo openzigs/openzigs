@@ -7,6 +7,8 @@ export type SavedPrompt = {
   template: string;
   description: string;
   tags: string[];
+  /** Optional list of preferred tool names for this prompt. null = no preference. */
+  preferredTools: string[] | null;
   createdAt: Date;
   updatedAt: Date;
 };
@@ -16,6 +18,8 @@ export type CreatePromptInput = {
   template: string;
   description?: string;
   tags?: string[];
+  /** Optional list of preferred tool names for this prompt. */
+  preferredTools?: string[];
 };
 
 export type UpdatePromptInput = {
@@ -23,6 +27,8 @@ export type UpdatePromptInput = {
   template?: string;
   description?: string;
   tags?: string[];
+  /** Set to an array to configure preferred tools, or null to clear. */
+  preferredTools?: string[] | null;
 };
 
 type StoredPrompt = {
@@ -31,6 +37,7 @@ type StoredPrompt = {
   template: string;
   description: string;
   tags: string;
+  preferred_tools: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -41,6 +48,7 @@ const toPrompt = (row: StoredPrompt): SavedPrompt => ({
   template: row.template,
   description: row.description,
   tags: JSON.parse(row.tags) as string[],
+  preferredTools: row.preferred_tools ? (JSON.parse(row.preferred_tools) as string[]) : null,
   createdAt: new Date(row.created_at),
   updatedAt: new Date(row.updated_at),
 });
@@ -82,6 +90,17 @@ export class PromptManager {
   constructor({ db, clock }: PromptManagerOptions) {
     this.db = db;
     this.clock = clock ?? (() => new Date());
+    this.migrateSchema();
+  }
+
+  /** Run lightweight schema migrations (add columns if missing). */
+  private migrateSchema(): void {
+    const columns = this.db.pragma("table_info(saved_prompts)") as Array<{ name: string }>;
+
+    // Add 'preferred_tools' column — JSON array of tool names or NULL
+    if (!columns.some((c) => c.name === "preferred_tools")) {
+      this.db.exec("ALTER TABLE saved_prompts ADD COLUMN preferred_tools TEXT DEFAULT NULL");
+    }
   }
 
   create(input: CreatePromptInput): SavedPrompt {
@@ -91,10 +110,10 @@ export class PromptManager {
 
     this.db
       .prepare(
-        `INSERT INTO saved_prompts (id, name, template, description, tags, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO saved_prompts (id, name, template, description, tags, preferred_tools, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
       )
-      .run(id, input.name, input.template, input.description ?? "", tags, now, now);
+      .run(id, input.name, input.template, input.description ?? "", tags, input.preferredTools ? JSON.stringify(input.preferredTools) : null, now, now);
 
     return this.getById(id)!;
   }
@@ -143,13 +162,16 @@ export class PromptManager {
     const template = input.template ?? existing.template;
     const description = input.description ?? existing.description;
     const tags = JSON.stringify(input.tags ?? existing.tags);
+    const preferredTools = input.preferredTools !== undefined
+      ? (input.preferredTools ? JSON.stringify(input.preferredTools) : null)
+      : (existing.preferredTools ? JSON.stringify(existing.preferredTools) : null);
 
     this.db
       .prepare(
-        `UPDATE saved_prompts SET name = ?, template = ?, description = ?, tags = ?, updated_at = ?
+        `UPDATE saved_prompts SET name = ?, template = ?, description = ?, tags = ?, preferred_tools = ?, updated_at = ?
          WHERE id = ?`
       )
-      .run(name, template, description, tags, now, id);
+      .run(name, template, description, tags, preferredTools, now, id);
 
     return this.getById(id)!;
   }
@@ -170,5 +192,24 @@ export class PromptManager {
       return null;
     }
     return interpolateTemplate(prompt.template, variables);
+  }
+
+  /**
+   * Resolve a prompt by name, returning both the interpolated text and any
+   * preferred tools attached to the prompt. Used by the scheduler to scope
+   * tool access when executing prompt-based jobs.
+   */
+  resolveWithTools(
+    name: string,
+    variables: Record<string, string> = {}
+  ): { text: string; preferredTools: string[] | null } | null {
+    const prompt = this.getByName(name);
+    if (!prompt) {
+      return null;
+    }
+    return {
+      text: interpolateTemplate(prompt.template, variables),
+      preferredTools: prompt.preferredTools,
+    };
   }
 }
