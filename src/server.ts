@@ -42,9 +42,10 @@ let defaultAgents: CustomAgentConfig[] = [];
 try {
   const agentsPath = path.resolve(process.cwd(), "config", "agents.json");
   const raw = await fs.readFile(agentsPath, "utf-8");
-  const parsed = JSON.parse(raw) as unknown;
-  if (Array.isArray(parsed)) {
-    defaultAgents = parsed as CustomAgentConfig[];
+  const parsed = JSON.parse(raw) as { agents?: unknown };
+  const agentsArray = Array.isArray(parsed.agents) ? parsed.agents : (Array.isArray(parsed) ? parsed : []);
+  if (agentsArray.length > 0) {
+    defaultAgents = agentsArray as CustomAgentConfig[];
   }
 } catch {
   // agents.json is optional — continue without default archetypes

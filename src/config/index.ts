@@ -269,56 +269,46 @@ const providerSchema = z.discriminatedUnion("type", [
   }),
 ]);
 
+/** Zod schema for a single MCP server config entry (local/stdio or http/sse). */
+export const mcpServerConfigSchema = z.union([
+  z.object({
+    type: z.enum(["local", "stdio"]),
+    command: z.string(),
+    args: z.array(z.string()).optional(),
+    env: z.record(z.string(), z.string()).optional(),
+    cwd: z.string().optional(),
+    tools: z.array(z.string()).optional(),
+    timeout: z.number().optional(),
+  }),
+  z.object({
+    type: z.enum(["http", "sse"]),
+    url: z.string(),
+    headers: z.record(z.string(), z.string()).optional(),
+    tools: z.array(z.string()).optional(),
+    timeout: z.number().optional(),
+  }),
+]);
+
+/** Zod schema for a single custom agent entry. */
+export const customAgentSchema = z.object({
+  name: z.string(),
+  displayName: z.string(),
+  description: z.string().optional(),
+  prompt: z.string(),
+  tools: z.array(z.string()).nullable().optional(),
+  infer: z.boolean().optional(),
+  mcpServers: z.record(z.string(), mcpServerConfigSchema).optional(),
+});
+
+/** Zod schema for the nativeMcpServers record. */
+export const nativeMcpServersSchema = z.record(z.string(), mcpServerConfigSchema);
+
 const copilotSchema = z.object({
   provider: providerSchema.nullable().optional().default(null),
   defaultReasoningEffort: z.enum(["low", "medium", "high", "xhigh"]).optional().default("medium"),
   defaultWorkingDirectory: z.string().nullable().optional().default(null),
-  customAgents: z.array(
-    z.object({
-      name: z.string(),
-      displayName: z.string(),
-      description: z.string().optional(),
-      prompt: z.string(),
-      tools: z.array(z.string()).nullable().optional(),
-      infer: z.boolean().optional(),
-      mcpServers: z.record(z.string(), z.union([
-        z.object({
-          type: z.enum(["local", "stdio"]),
-          command: z.string(),
-          args: z.array(z.string()).optional(),
-          env: z.record(z.string(), z.string()).optional(),
-          cwd: z.string().optional(),
-          tools: z.array(z.string()).optional(),
-          timeout: z.number().optional(),
-        }),
-        z.object({
-          type: z.enum(["http", "sse"]),
-          url: z.string(),
-          headers: z.record(z.string(), z.string()).optional(),
-          tools: z.array(z.string()).optional(),
-          timeout: z.number().optional(),
-        }),
-      ])).optional(),
-    })
-  ).optional().default([]),
-  nativeMcpServers: z.record(z.string(), z.union([
-    z.object({
-      type: z.enum(["local", "stdio"]),
-      command: z.string(),
-      args: z.array(z.string()).optional(),
-      env: z.record(z.string(), z.string()).optional(),
-      cwd: z.string().optional(),
-      tools: z.array(z.string()).optional(),
-      timeout: z.number().optional(),
-    }),
-    z.object({
-      type: z.enum(["http", "sse"]),
-      url: z.string(),
-      headers: z.record(z.string(), z.string()).optional(),
-      tools: z.array(z.string()).optional(),
-      timeout: z.number().optional(),
-    }),
-  ])).optional().default({}),
+  customAgents: z.array(customAgentSchema).optional().default([]),
+  nativeMcpServers: nativeMcpServersSchema.optional().default({}),
 }).optional();
 
 const appConfigSchema = z.object({
