@@ -37,6 +37,10 @@ class FakeCopilot implements CopilotWrapper {
 
   setMaxToolsPerRequest(_n: number): void {}
   getMaxToolsPerRequest(): number { return 30; }
+
+  async destroySession(_conversationId: string): Promise<void> {}
+  hasSession(_conversationId: string): boolean { return false; }
+  async clearAllSessions(): Promise<void> {}
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any

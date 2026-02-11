@@ -243,9 +243,9 @@ OpenZigs acts as an **MCP Host** — it orchestrates multiple external MCP serve
 ### How It Works
 
 1. **User sends a message** via Web Chat, Telegram, or Discord.
-2. **Message Router** resolves the session and forwards the prompt to the **Copilot Wrapper**.
-3. **Copilot Wrapper** calls `@github/copilot-sdk`'s `createSession()` with all enabled tools wrapped via `defineTool()`.
-4. **GitHub Copilot** (the intelligence layer) decides which tools to invoke based on the user's intent.
+2. **Message Router** resolves the session and forwards only the personality + current message to the **Copilot Wrapper** along with the `conversationId`.
+3. **Copilot Wrapper** reuses a cached SDK session (or creates / resumes one) via `getOrCreateSession()`. Tools are wrapped via `defineTool()` and passed to the session configuration.
+4. **GitHub Copilot** (the intelligence layer) decides which tools to invoke based on the user's intent. The SDK maintains multi-turn context natively within the session.
 5. **Tool execution returns to OpenZigs**, which dispatches to either a built-in handler or an HTTP proxy call to an MCP sidecar container.
 6. **MCP sidecar** processes the request (e.g., posts to LinkedIn, creates a Pinterest pin) and returns the result.
 7. **Result flows back** through the Copilot SDK to the user as a streamed response.
@@ -395,11 +395,15 @@ Wraps `@github/copilot-sdk`'s `CopilotClient`. Responsibilities:
 | Capability | Method | Description |
 |---|---|---|
 | **Device Auth** | `authenticate()` / `waitForAuth()` | OAuth device-flow for GitHub Copilot access. Persists token to `~/.openzigs/auth.json` with `0600` permissions. |
-| **Streaming Chat** | `chat(message, tools?, model?)` | Returns an `AsyncGenerator<string>` that yields deltas as they arrive from the SDK. Tools are wrapped via `defineTool()` and passed to `createSession({ tools })`. |
+| **Streaming Chat** | `chat(message, options?)` | Returns an `AsyncGenerator<string>` that yields deltas as they arrive from the SDK. When `conversationId` is provided, sessions are cached and reused across calls for native multi-turn context. |
+| **Session Lifecycle** | `destroySession(id)` / `hasSession(id)` / `clearAllSessions()` | Manage cached SDK sessions. `destroySession` frees resources and resets context for a conversation. |
+| **Session Resumption** | Internal | On first call with a `conversationId`, attempts `client.resumeSession()` to restore persisted SDK state, falling back to `createSession({ sessionId })` for deterministic session IDs. |
+| **Infinite Sessions** | Config | When `infiniteSessions.enabled` is true, the SDK automatically compacts context at configurable thresholds (`backgroundCompactionThreshold`, `bufferExhaustionThreshold`), preventing context window exhaustion in long conversations. |
 | **Model Selection** | `listModels()` | Proxies `client.listModels()` to enumerate available models (e.g., `gpt-4.1`, `claude-sonnet-4`). |
 | **Tool Limit Control** | `setMaxToolsPerRequest(n)` / `getMaxToolsPerRequest()` | Get or set the maximum number of tools sent per LLM request (range: 1-128). Changes take effect on the next `chat()` call. |
 | **Tool Dispatch** | Internal | When the SDK invokes a tool, the handler calls the `ToolDefinition.handler()` — which may proxy to an MCP sidecar or execute locally. ALWAYS_ON_TOOLS (7 tools) are guaranteed inclusion before filling remaining slots. |
 | **Retry Logic** | Internal | Automatic retries with exponential backoff for rate-limit (429) and timeout errors. Clears auth on 401. |
+| **Handler Cleanup** | Internal | Per-call event handlers (`assistant.message_delta`, `session.idle`) are unsubscribed in a `finally` block after each `chat()` call, preventing handler accumulation on reused sessions. |
 
 ### Tool Registry (`src/mcp/tool-registry.ts`)
 
@@ -410,7 +414,7 @@ Central registry for every tool the agent can invoke. Each tool has:
 - **`riskLevel`** — `low`, `medium`, or `high`.
 - **`enabled`** — Boolean, persisted to `config/tools.json`.
 
-The registry exposes `listEnabledTools()` which the Copilot Wrapper passes to the SDK's `createSession({ tools })`.
+The registry exposes `listEnabledTools()` which the Copilot Wrapper passes to the SDK's session configuration via `buildSessionConfig()`.
 
 ### Productivity Engine (`src/productivity/`)
 
@@ -426,16 +430,17 @@ Routes an `IncomingMessage` from any channel through a pipeline:
 
 1. **Access Control** — Open / allowlist / blocklist per-channel.
 2. **Session Resolution** — Finds or creates a session for the `(channelType, userId)` pair.
-3. **History Retrieval** — Loads the last N conversation events from the session.
-4. **LLM Call** — Streams the prompt through `CopilotWrapper.chat()`, forwarding chunks to the channel if a `RouteOptions.onChunk` callback is provided.
-5. **Persistence** — Appends the user message and assistant response to the session's JSONL log.
+3. **Session Touch** — Calls `sessionManager.resumeSession()` to update `lastActiveAt` (history is retained for admin/audit views).
+4. **LLM Call** — Streams the prompt through `CopilotWrapper.chat()` with `conversationId: sessionId`, forwarding chunks to the channel if a `RouteOptions.onChunk` callback is provided. The SDK handles multi-turn context natively; only personality prompt + current user message are sent.
+5. **Persistence** — Appends the user message and assistant response to the session's JSONL log for admin views and auditing.
+6. **Session Clear** — `clearUserSession()` also calls `copilot.destroySession()` to free the cached SDK session.
 
 ### Session Manager (`src/sessions/session-manager.ts`)
 
-Append-only session storage:
+Append-only session storage used for user↔session mapping, admin views, and audit trails:
 
 - **Metadata** — `{channel, userId, chatId, username}` stored in a JSON sidecar file.
-- **History** — Conversation events (user, assistant, tool_call, tool_result) appended to a JSONL file.
+- **History** — Conversation events (user, assistant, tool_call, tool_result) appended to a JSONL file. Used for admin session viewer and auditing; **not** injected into the LLM prompt (the SDK maintains multi-turn context natively).
 - **Location** — `~/.openzigs/sessions/<sessionId>/`.
 
 ### Approval Queue (`src/approvals/approval-queue.ts`)
@@ -909,38 +914,42 @@ The Admin UI provides a **Tool Limit per Request** slider (1-128) in the Task En
 
 ### Conversation State Architecture
 
-OpenZigs uses a **stateful session model** with a sliding window:
+OpenZigs uses **native SDK session management** with long-lived, cached sessions:
 
-1. **Session Manager** persists all conversation events to JSONL files (`~/.openzigs/sessions/<sessionId>/`).
-2. **Message Router** loads the last `historyWindow` turns before each LLM call.
-3. **Tool call results** are included in history so the LLM has continuity across multi-step tasks.
-4. **Session pruning** — older events beyond the window are retained on disk but not sent to the LLM.
+1. **SDK Session Cache** — `CopilotWrapperService` maintains a `Map<conversationId, CopilotSession>`. Sessions are reused across messages within the same conversation.
+2. **Session Resumption** — On the first message for a conversation, the wrapper attempts `client.resumeSession()` to restore persisted SDK state, falling back to `createSession({ sessionId })` for deterministic IDs.
+3. **Infinite Sessions** — When enabled (default), the SDK automatically compacts context at configurable thresholds, preventing context window exhaustion in long conversations.
+4. **JSONL Audit Trail** — The Session Manager still appends events to JSONL files for admin views and auditing, but this history is **not** injected into the LLM prompt.
+5. **Session Cleanup** — `clearUserSession()` calls `copilot.destroySession()` to free the cached SDK session and reset context.
 
 ```mermaid
 flowchart TB
     MSG[User Message] --> MR[Message Router]
-    MR --> SM[Session Manager]
-    SM --> HIST[Load last N turns]
-    HIST --> CW[Copilot Wrapper]
-    CW --> SDK[createSession<br/>tools + history + message]
+    MR --> SM[Session Manager<br/>Touch lastActiveAt]
+    MR --> CW[Copilot Wrapper<br/>getOrCreateSession]
+    CW -->|conversationId| CACHE{Session Cache}
+    CACHE -->|Hit| REUSE[Reuse Cached Session]
+    CACHE -->|Miss| TRY[resumeSession fallback createSession]
+    TRY --> REUSE
+    REUSE --> SDK[sendAndWait<br/>personality + message]
     SDK --> RESP[Streamed Response]
-    RESP --> SM2[Append to JSONL]
+    RESP --> SM2[Append to JSONL<br/>Admin/Audit]
 
-    subgraph Context Window
+    subgraph SDK Session Context
         TOOLS[Enabled Tools<br/>≤ maxToolsPerRequest]
-        HIST2[Conversation History<br/>≤ historyWindow turns]
-        SYSP[System Prompt]
+        MULTI[Native Multi-Turn History]
+        INF[Infinite Sessions<br/>Auto-Compaction]
     end
 
-    CW --> Context Window
+    REUSE --> SDK Session Context
 ```
 
 ### Recommendation
 
 For the current Express/Node.js stack:
 
-1. **Keep `dynamicToolLoading: false` for now.** With the ALWAYS_ON_TOOLS guarantee and `maxToolsPerRequest` cap, the current approach works well up to ~100 tools.
-2. **Set `historyWindow: 20`** as default — sufficient for multi-step tasks without exhausting context.
+1. **Keep `infiniteSessions.enabled: true` (default).** The SDK handles context compaction automatically — no manual history window management needed.
+2. **`historyWindow: 20` is retained** for the JSONL audit trail and admin session viewer, but no longer affects the LLM context.
 3. **`maxToolsPerRequest: 30` is implemented** as a runtime-configurable safety valve. Increase to 50-80 if you need broader tool coverage per request; decrease if you hit context limits or observe hallucinated tool calls.
 4. **Monitor tool-related failures.** If the model calls tools that were excluded by the cap, increase the limit or add the tool to `ALWAYS_ON_TOOLS` in `src/mcp/constants.ts`.
 5. **Future: vector-based tool retrieval** — embed tool descriptions and retrieve top-K by semantic similarity to the user query. This is the long-term scalable solution. See [Epic #112](https://github.com/mgcronin/openzigs/issues/112).

@@ -3,7 +3,7 @@ import type { IncomingMessage, MessageContent } from "../channels/types.js";
 import type { CopilotWrapper } from "../copilot/copilot-wrapper.js";
 import type { ToolRegistry } from "../mcp/tool-registry.js";
 import type { AccessControlConfig } from "../config/index.js";
-import type { ConversationEvent, SessionManager } from "../sessions/session-manager.js";
+import type { SessionManager } from "../sessions/session-manager.js";
 import type { PersonalityManager } from "../personality/personality-manager.js";
 import type { TaskEngine } from "../tasks/task-engine.js";
 import { ALWAYS_ON_TOOLS } from "../mcp/constants.js";
@@ -84,7 +84,13 @@ export class MessageRouter {
   /** Invalidate the cached session for a user so the next message creates a new session. */
   clearUserSession(channelType: string, userId: string): void {
     const key = this.keyFor(channelType, userId);
+    const sessionId = this.userSessions.get(key);
     this.userSessions.delete(key);
+
+    // Also destroy the SDK session to free resources and reset context
+    if (sessionId) {
+      void this.copilot.destroySession(sessionId);
+    }
   }
 
   async route(message: IncomingMessage, options?: RouteOptions): Promise<void> {
@@ -122,8 +128,10 @@ export class MessageRouter {
       }
     }
 
-    const resume = await this.sessionManager.resumeSession(sessionId, this.historyLimit);
-    const prompt = this.buildPrompt(resume.history, message.content);
+    // Touch the session to update lastActiveAt (history is still persisted for admin/audit views)
+    await this.sessionManager.resumeSession(sessionId, this.historyLimit);
+    // SDK handles multi-turn context natively; only send personality + current message
+    const prompt = this.buildPrompt(message.content);
 
     let response = "";
     try {
@@ -144,7 +152,12 @@ export class MessageRouter {
       // Resolve per-request tool scoping if the caller provided an allowedTools list
       const scopedTools = this.resolveScopedTools(options?.allowedTools);
 
-      for await (const chunk of this.copilot.chat(prompt, { model: options?.model, tools: scopedTools, onToolCall: options?.onToolCall })) {
+      for await (const chunk of this.copilot.chat(prompt, {
+        model: options?.model,
+        tools: scopedTools,
+        onToolCall: options?.onToolCall,
+        conversationId: sessionId,
+      })) {
         response += chunk;
         if (options?.onChunk) {
           options.onChunk(chunk);
@@ -240,7 +253,7 @@ export class MessageRouter {
     return session.id;
   }
 
-  private buildPrompt(history: ConversationEvent[], message: string): string {
+  private buildPrompt(message: string): string {
     const lines: string[] = [];
     const personality = this.personalityManager?.getConfig();
 
@@ -256,28 +269,8 @@ export class MessageRouter {
       }
     }
 
-    if (history.length > 0) {
-      lines.push("Conversation so far:");
-      for (const event of history) {
-        let label = "User";
-        switch (event.type) {
-          case "assistant":
-            label = "Assistant";
-            break;
-          case "tool_call":
-            label = "Tool call";
-            break;
-          case "tool_result":
-            label = "Tool result";
-            break;
-          case "user":
-            label = "User";
-            break;
-        }
-        lines.push(`${label}: ${event.content}`);
-      }
-      lines.push("");
-    }
+    // NOTE: Conversation history is no longer injected into the prompt.
+    // The SDK maintains multi-turn context natively within the session.
 
     lines.push(`User: ${message}`);
 

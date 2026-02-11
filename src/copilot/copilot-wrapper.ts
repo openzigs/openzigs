@@ -23,9 +23,30 @@ type AuthState = {
   obtainedAt: number;
 };
 
+type PermissionRequest = { kind: string; toolName?: string; toolArgs?: unknown };
+type PermissionResponse = { kind: "approved" | "denied-by-rules" | "denied-by-user" };
+type PermissionRequestHandler = (request: PermissionRequest) => Promise<PermissionResponse>;
+
+export type InfiniteSessionConfig = {
+  enabled?: boolean;
+  backgroundCompactionThreshold?: number;
+  bufferExhaustionThreshold?: number;
+};
+
+type SessionCreateConfig = {
+  sessionId?: string;
+  model?: string;
+  streaming?: boolean;
+  tools?: unknown[];
+  infiniteSessions?: InfiniteSessionConfig;
+  onPermissionRequest?: PermissionRequestHandler;
+};
+
 type CopilotSessionLike = {
-  on: (event: string, handler: (event: { data?: { deltaContent?: string } }) => void) => void;
+  readonly sessionId: string;
+  on: (event: string, handler: (event: { data?: { deltaContent?: string } }) => void) => (() => void);
   sendAndWait: (input: { prompt: string }, timeout?: number) => Promise<unknown>;
+  destroy: () => Promise<void>;
 };
 
 export type CopilotModel = {
@@ -35,14 +56,8 @@ export type CopilotModel = {
 
 type CopilotClientLike = {
   start?: () => Promise<void>;
-  createSession: (config: {
-    model?: string;
-    streaming?: boolean;
-    tools?: unknown[];
-    onPermissionRequest?: (request: { kind: string; toolName?: string; toolArgs?: unknown }) => Promise<{
-      kind: "approved" | "denied-by-rules" | "denied-by-user";
-    }>;
-  }) => Promise<CopilotSessionLike>;
+  createSession: (config: SessionCreateConfig) => Promise<CopilotSessionLike>;
+  resumeSession?: (sessionId: string, config?: Omit<SessionCreateConfig, "sessionId">) => Promise<CopilotSessionLike>;
   stop?: () => Promise<Error[]>;
   startDeviceAuth?: (input: { clientId: string; scopes: string[] }) => Promise<DeviceAuthInfo>;
   waitForAuth?: (input: { timeoutMs: number }) => Promise<unknown>;
@@ -53,6 +68,8 @@ export type ChatOptions = {
   tools?: ToolDefinition[];
   model?: string;
   onToolCall?: (tool: string, args: unknown) => void;
+  /** When provided, the SDK session is cached and reused across calls for multi-turn context. */
+  conversationId?: string;
 };
 
 export interface CopilotWrapper {
@@ -64,6 +81,12 @@ export interface CopilotWrapper {
   onToolCall(tool: string, args: unknown): Promise<void>;
   setMaxToolsPerRequest(n: number): void;
   getMaxToolsPerRequest(): number;
+  /** Destroy the cached SDK session for a conversation, freeing resources. */
+  destroySession(conversationId: string): Promise<void>;
+  /** Check if a cached session exists for the given conversation ID. */
+  hasSession(conversationId: string): boolean;
+  /** Destroy all cached sessions. */
+  clearAllSessions(): Promise<void>;
 }
 
 export type CopilotWrapperOptions = {
@@ -75,11 +98,11 @@ export type CopilotWrapperOptions = {
   authTimeoutMs?: number;
   maxToolsPerRequest?: number;
   onToolCall?: (tool: string, args: unknown) => Promise<void>;
-  onPermissionRequest?: (request: { kind: string; toolName?: string; toolArgs?: unknown }) => Promise<{
-    kind: "approved" | "denied-by-rules" | "denied-by-user";
-  }>;
+  onPermissionRequest?: PermissionRequestHandler;
   /** Timeout in ms for each sendAndWait call. Default 600_000 (10 min). */
   sendAndWaitTimeoutMs?: number;
+  /** Infinite session configuration for automatic context compaction. */
+  infiniteSessions?: InfiniteSessionConfig;
 };
 
 const defaultAuthPath = () => path.join(os.homedir(), ".openzigs", "auth.json");
@@ -233,11 +256,11 @@ export class CopilotWrapperService implements CopilotWrapper {
   private startPromise?: Promise<void>;
   private pendingAuth?: Promise<AuthState>;
   private toolCallHandler?: (tool: string, args: unknown) => Promise<void>;
-  private permissionHandler?: (request: { kind: string; toolName?: string; toolArgs?: unknown }) => Promise<{
-    kind: "approved" | "denied-by-rules" | "denied-by-user";
-  }>;
+  private permissionHandler?: PermissionRequestHandler;
   private maxToolsPerRequest: number;
   private sendAndWaitTimeoutMs: number;
+  private infiniteSessionsConfig?: InfiniteSessionConfig;
+  private sessionCache = new Map<string, CopilotSessionLike>();
 
   constructor({
     client,
@@ -249,7 +272,8 @@ export class CopilotWrapperService implements CopilotWrapper {
     maxToolsPerRequest = 30,
     sendAndWaitTimeoutMs = 15 * 60 * 1000, // 15 minutes — browser automation needs room
     onToolCall,
-    onPermissionRequest
+    onPermissionRequest,
+    infiniteSessions
   }: CopilotWrapperOptions = {}) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     this.client = client ?? (new CopilotClient() as any);
@@ -262,6 +286,7 @@ export class CopilotWrapperService implements CopilotWrapper {
     this.sendAndWaitTimeoutMs = sendAndWaitTimeoutMs;
     this.toolCallHandler = onToolCall;
     this.permissionHandler = onPermissionRequest;
+    this.infiniteSessionsConfig = infiniteSessions;
   }
 
   setMaxToolsPerRequest(n: number): void {
@@ -357,42 +382,64 @@ export class CopilotWrapperService implements CopilotWrapper {
       })
     );
 
-    const session = await this.client.createSession({
-      model: effectiveModel,
-      streaming: true,
-      tools: wrappedTools,
-      onPermissionRequest: async (request) => {
-        if (this.permissionHandler) {
-          return this.permissionHandler(request);
-        }
-        return { kind: "approved" };
-      }
-    });
+    const session = await this.getOrCreateSession(
+      options?.conversationId,
+      effectiveModel,
+      wrappedTools
+    );
 
     const queue = new AsyncQueue<string>();
     let sendError: unknown;
 
-    session.on("assistant.message_delta", (event) => {
+    // Register event handlers — capture unsubscribe fns to clean up after this call
+    const unsubDelta = session.on("assistant.message_delta", (event) => {
       const chunk = event.data?.deltaContent ?? "";
       if (chunk) {
         queue.push(chunk);
       }
     });
 
-    session.on("session.idle", () => {
+    const unsubIdle = session.on("session.idle", () => {
       queue.end();
     });
 
-    void this.sendWithRetries(session, message).catch((error) => {
-      sendError = error;
-      queue.end();
-    });
+    try {
+      void this.sendWithRetries(session, message).catch((error) => {
+        sendError = error;
+        queue.end();
+      });
 
-    yield* this.streamQueue(queue, () => {
-      if (sendError) {
-        throw sendError;
-      }
-    });
+      yield* this.streamQueue(queue, () => {
+        if (sendError) {
+          throw sendError;
+        }
+      });
+    } finally {
+      // Always unsubscribe per-call handlers to prevent accumulation on reused sessions
+      unsubDelta();
+      unsubIdle();
+    }
+  }
+
+  async destroySession(conversationId: string): Promise<void> {
+    const session = this.sessionCache.get(conversationId);
+    if (session) {
+      this.sessionCache.delete(conversationId);
+      await session.destroy();
+    }
+  }
+
+  hasSession(conversationId: string): boolean {
+    return this.sessionCache.has(conversationId);
+  }
+
+  async clearAllSessions(): Promise<void> {
+    const destroyPromises: Promise<void>[] = [];
+    for (const session of this.sessionCache.values()) {
+      destroyPromises.push(session.destroy());
+    }
+    this.sessionCache.clear();
+    await Promise.allSettled(destroyPromises);
   }
 
   async onToolCall(tool: string, args: unknown): Promise<void> {
@@ -485,6 +532,69 @@ export class CopilotWrapperService implements CopilotWrapper {
       }
       throw error;
     }
+  }
+
+  /**
+   * Build the session configuration shared between create and resume paths.
+   */
+  private buildSessionConfig(model: string, tools: unknown[], sessionId?: string): SessionCreateConfig {
+    return {
+      ...(sessionId ? { sessionId } : {}),
+      model,
+      streaming: true,
+      tools,
+      ...(this.infiniteSessionsConfig ? { infiniteSessions: this.infiniteSessionsConfig } : {}),
+      onPermissionRequest: async (request) => {
+        if (this.permissionHandler) {
+          return this.permissionHandler(request);
+        }
+        return { kind: "approved" };
+      }
+    };
+  }
+
+  /**
+   * Retrieve a cached session by conversationId, or create/resume one.
+   * When no conversationId is provided, an ephemeral session is created (not cached).
+   */
+  private async getOrCreateSession(
+    conversationId: string | undefined,
+    model: string,
+    tools: unknown[]
+  ): Promise<CopilotSessionLike> {
+    if (conversationId) {
+      const cached = this.sessionCache.get(conversationId);
+      if (cached) {
+        return cached;
+      }
+
+      let session: CopilotSessionLike;
+
+      // Try to resume a persisted session first, then fall back to create
+      if (this.client.resumeSession) {
+        try {
+          session = await this.client.resumeSession(
+            conversationId,
+            this.buildSessionConfig(model, tools)
+          );
+        } catch {
+          // Resume failed (e.g. session not found) — create a new one
+          session = await this.client.createSession(
+            this.buildSessionConfig(model, tools, conversationId)
+          );
+        }
+      } else {
+        session = await this.client.createSession(
+          this.buildSessionConfig(model, tools, conversationId)
+        );
+      }
+
+      this.sessionCache.set(conversationId, session);
+      return session;
+    }
+
+    // No conversationId — ephemeral session (backward compatible)
+    return this.client.createSession(this.buildSessionConfig(model, tools));
   }
 
   private async *streamQueue(queue: AsyncQueue<string>, onEnd: () => void): AsyncGenerator<string> {

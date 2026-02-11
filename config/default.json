@@ -107,6 +107,11 @@
   "session": {
     "historyWindow": 20,
     "maxToolsPerRequest": 30,
-    "dynamicToolLoading": false
+    "dynamicToolLoading": false,
+    "infiniteSessions": {
+      "enabled": true,
+      "backgroundCompactionThreshold": 0.80,
+      "bufferExhaustionThreshold": 0.95
+    }
   }
 }

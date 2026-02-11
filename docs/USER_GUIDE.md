@@ -620,6 +620,49 @@ curl -X POST -H "Authorization: Bearer <token>" \
 
 ---
 
+## Session Lifecycle & Infinite Context
+
+OpenZigs uses the GitHub Copilot SDK's **native session management** for multi-turn conversations. This means the SDK maintains conversation context automatically — no manual history reconstruction.
+
+### How It Works
+
+1. **Long-Lived Sessions** — When you chat, OpenZigs creates an SDK session tied to your conversation ID and caches it. Subsequent messages reuse the same session, so the AI remembers what you said.
+2. **Session Resumption** — If the server restarts, OpenZigs attempts to resume your session via the SDK's `resumeSession()` API. If that fails (e.g., the session expired), a new session is created automatically.
+3. **Infinite Sessions** — Enabled by default. When the conversation grows long, the SDK automatically compacts older context in the background, preventing context window exhaustion without losing the thread of the conversation.
+4. **Session Cleanup** — When you click "New Chat" in the web UI, the cached SDK session is destroyed, freeing resources and starting fresh.
+
+### Configuration
+
+In `config/default.json`:
+
+```json
+{
+  "session": {
+    "historyWindow": 20,
+    "maxToolsPerRequest": 30,
+    "dynamicToolLoading": false,
+    "infiniteSessions": {
+      "enabled": true,
+      "backgroundCompactionThreshold": 0.80,
+      "bufferExhaustionThreshold": 0.95
+    }
+  }
+}
+```
+
+| Setting | Default | Description |
+|---|---|---|
+| `infiniteSessions.enabled` | `true` | Enable automatic context compaction for long conversations. |
+| `infiniteSessions.backgroundCompactionThreshold` | `0.80` | Start compacting in the background when context usage reaches 80%. |
+| `infiniteSessions.bufferExhaustionThreshold` | `0.95` | Force compaction when context usage reaches 95% (prevents hard failures). |
+| `historyWindow` | `20` | Number of events retained in the JSONL audit log for admin views. Does **not** affect the LLM context (the SDK manages that natively). |
+
+### Background Tasks
+
+Background tasks (sub-agents, scheduled jobs) use **ephemeral sessions** — each task gets its own short-lived session that is not cached or reused. This is by design: background tasks are independent, self-contained operations.
+
+---
+
 ## Tool Limit Configuration
 
 OpenZigs registers 90+ MCP tools, but sending all of them to the LLM in every request wastes context window tokens and can degrade response quality. The **tool limit** controls how many tools are included per LLM call.
@@ -1404,9 +1447,12 @@ All configuration lives in `config/default.json`. Environment variables are inte
 | `channels.discord.enabled` | boolean | `false` | Enable Discord channel. |
 | `channels.web.enabled` | boolean | `true` | Enable Web Chat channel. |
 | `tasks.maxConcurrent` | number | `2` | Maximum parallel background agent tasks (1–10). Adjustable at runtime via Admin UI or API. |
-| `session.historyWindow` | number | `20` | Max conversation turns included in LLM context. |
+| `session.historyWindow` | number | `20` | Max conversation turns retained in JSONL audit log for admin views. Does **not** affect LLM context (the SDK manages multi-turn context natively). |
 | `session.maxToolsPerRequest` | number | `30` | Max tools sent per LLM request (1–128). Adjustable at runtime via Admin UI or `PUT /api/admin/session/config`. |
 | `session.dynamicToolLoading` | boolean | `false` | Enable intent-based tool filtering (experimental). |
+| `session.infiniteSessions.enabled` | boolean | `true` | Enable automatic context compaction for long conversations. |
+| `session.infiniteSessions.backgroundCompactionThreshold` | number | `0.80` | Context usage threshold (0-1) at which background compaction begins. |
+| `session.infiniteSessions.bufferExhaustionThreshold` | number | `0.95` | Context usage threshold (0-1) at which forced compaction occurs to prevent failures. |
 | `tunnel.enabled` | boolean | `false` | Enable the embedded Cloudflare Tunnel. Set to `false` (default) when using the Docker sidecar pattern. |
 | `tunnel.mode` | string | `"quick"` | `"quick"` or `"named"`. Only applies when `tunnel.enabled` is `true`. |
 

@@ -78,8 +78,10 @@ class RecordingChannel implements MessageChannel {
 class FakeCopilot implements CopilotWrapper {
   lastPrompt = "";
   lastModel?: string;
+  lastConversationId?: string;
   response: string;
   chunks: string[];
+  destroyedSessions: string[] = [];
 
   constructor(response = "pong", chunks?: string[]) {
     this.response = response;
@@ -98,9 +100,10 @@ class FakeCopilot implements CopilotWrapper {
     return true;
   }
 
-  async *chat(message: string, options?: { tools?: unknown[]; model?: string; onToolCall?: (tool: string, args: unknown) => void }): AsyncGenerator<string> {
+  async *chat(message: string, options?: { tools?: unknown[]; model?: string; onToolCall?: (tool: string, args: unknown) => void; conversationId?: string }): AsyncGenerator<string> {
     this.lastPrompt = message;
     this.lastModel = options?.model;
+    this.lastConversationId = options?.conversationId;
     for (const chunk of this.chunks) {
       yield chunk;
     }
@@ -118,6 +121,18 @@ class FakeCopilot implements CopilotWrapper {
 
   getMaxToolsPerRequest(): number {
     return 30;
+  }
+
+  async destroySession(conversationId: string): Promise<void> {
+    this.destroyedSessions.push(conversationId);
+  }
+
+  hasSession(_conversationId: string): boolean {
+    return false;
+  }
+
+  async clearAllSessions(): Promise<void> {
+    return undefined;
   }
 }
 
@@ -166,7 +181,7 @@ describe("MessageRouter", () => {
     expect(history).toHaveLength(2);
   });
 
-  it("reuses the same session for the same user", async () => {
+  it("reuses the same session for the same user and passes conversationId", async () => {
     const baseDir = await createTempDir();
     cleanupDirs.push(baseDir);
 
@@ -186,7 +201,11 @@ describe("MessageRouter", () => {
     const secondSession = (await sessionManager.listSessions())[0];
 
     expect(secondSession.id).toBe(firstSession.id);
-    expect(copilot.lastPrompt).toContain("First question");
+    // SDK handles multi-turn context natively; prompt should only contain the latest message
+    expect(copilot.lastPrompt).not.toContain("First question");
+    expect(copilot.lastPrompt).toContain("What did I just ask?");
+    // conversationId must be passed for session reuse
+    expect(copilot.lastConversationId).toBe(firstSession.id);
   });
 
   it("rejects users outside the allowlist", async () => {
@@ -468,5 +487,49 @@ describe("MessageRouter", () => {
 
     // tools should be undefined (no scoping)
     expect(capturedTools).toBeUndefined();
+  });
+
+  it("passes conversationId to copilot.chat on first message", async () => {
+    const baseDir = await createTempDir();
+    cleanupDirs.push(baseDir);
+
+    const channelManager = new ChannelManager();
+    const telegram = new RecordingChannel("telegram");
+    await telegram.connect();
+    channelManager.register(telegram);
+
+    const sessionManager = new SessionManager({ baseDir });
+    const copilot = new FakeCopilot("Hi");
+    const router = new MessageRouter({ channelManager, sessionManager, copilot });
+
+    await router.route(baseMessage({ content: "Hello" }));
+
+    const sessions = await sessionManager.listSessions();
+    expect(sessions).toHaveLength(1);
+    // conversationId should match the session ID
+    expect(copilot.lastConversationId).toBe(sessions[0].id);
+  });
+
+  it("destroys SDK session when clearing user session", async () => {
+    const baseDir = await createTempDir();
+    cleanupDirs.push(baseDir);
+
+    const channelManager = new ChannelManager();
+    const telegram = new RecordingChannel("telegram");
+    await telegram.connect();
+    channelManager.register(telegram);
+
+    const sessionManager = new SessionManager({ baseDir });
+    const copilot = new FakeCopilot("ok");
+    const router = new MessageRouter({ channelManager, sessionManager, copilot });
+
+    await router.route(baseMessage({ content: "Hello" }));
+    const sessions = await sessionManager.listSessions();
+    const sessionId = sessions[0].id;
+
+    router.clearUserSession("telegram", "user-1");
+
+    // Should have called destroySession with the session ID
+    expect(copilot.destroyedSessions).toContain(sessionId);
   });
 });

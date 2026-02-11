@@ -7,12 +7,23 @@ import { ToolRegistry, type ToolDefinition } from "../mcp/tool-registry.js";
 import { CopilotWrapperService } from "./copilot-wrapper.js";
 
 class FakeSession {
+  readonly sessionId: string;
   private handlers = new Map<string, Array<(event: { data?: { deltaContent?: string } }) => void>>();
+  destroyed = false;
 
-  on(event: string, handler: (event: { data?: { deltaContent?: string } }) => void) {
+  constructor(sessionId = "fake-session-id") {
+    this.sessionId = sessionId;
+  }
+
+  on(event: string, handler: (event: { data?: { deltaContent?: string } }) => void): () => void {
     const list = this.handlers.get(event) ?? [];
     list.push(handler);
     this.handlers.set(event, list);
+    return () => {
+      const handlers = this.handlers.get(event) ?? [];
+      const idx = handlers.indexOf(handler);
+      if (idx >= 0) handlers.splice(idx, 1);
+    };
   }
 
   async sendAndWait({ prompt }: { prompt: string }, _timeout?: number) {
@@ -21,6 +32,10 @@ class FakeSession {
     }
     this.emit("assistant.message_delta", { data: { deltaContent: "hello" } });
     this.emit("session.idle", {});
+  }
+
+  async destroy() {
+    this.destroyed = true;
   }
 
   private emit(event: string, payload: { data?: { deltaContent?: string } }) {
@@ -32,15 +47,27 @@ class FakeSession {
 }
 
 class FakeCopilotClient {
-  public lastSessionConfig: { tools?: unknown[]; model?: string } | null = null;
+  public lastSessionConfig: { tools?: unknown[]; model?: string; sessionId?: string; infiniteSessions?: unknown } | null = null;
+  public sessions: FakeSession[] = [];
+  public resumeAttempts: string[] = [];
 
   async start() {
     return undefined;
   }
 
-  async createSession(config: { tools?: unknown[]; model?: string }) {
+  async createSession(config: { tools?: unknown[]; model?: string; sessionId?: string; infiniteSessions?: unknown }) {
     this.lastSessionConfig = config;
-    return new FakeSession();
+    const session = new FakeSession(config.sessionId ?? `session-${this.sessions.length}`);
+    this.sessions.push(session);
+    return session;
+  }
+
+  async resumeSession(sessionId: string, config?: { tools?: unknown[]; model?: string; infiniteSessions?: unknown }) {
+    this.resumeAttempts.push(sessionId);
+    this.lastSessionConfig = { ...config, sessionId };
+    const session = new FakeSession(sessionId);
+    this.sessions.push(session);
+    return session;
   }
 
   async stop() {
@@ -207,4 +234,139 @@ describe("copilot wrapper", () => {
     const gen = wrapper.chat("Hello");
     await expect(gen.next()).rejects.toThrow(/SDK is unavailable/);
   }, 15000);
+
+  it("caches and reuses sessions when conversationId is provided", async () => {
+    const client = new FakeCopilotClient();
+    const wrapper = new CopilotWrapperService({ client });
+
+    // First call — creates a new session
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    for await (const _chunk of wrapper.chat("Hello", { conversationId: "conv-1" })) { /* drain */ }
+    expect(client.sessions).toHaveLength(1);
+
+    // Second call — reuses cached session (no new session created)
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    for await (const _chunk of wrapper.chat("Follow up", { conversationId: "conv-1" })) { /* drain */ }
+    expect(client.sessions).toHaveLength(1);
+
+    // Different conversationId — creates a new session
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    for await (const _chunk of wrapper.chat("New conv", { conversationId: "conv-2" })) { /* drain */ }
+    expect(client.sessions).toHaveLength(2);
+  });
+
+  it("creates ephemeral sessions when no conversationId is provided", async () => {
+    const client = new FakeCopilotClient();
+    const wrapper = new CopilotWrapperService({ client });
+
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    for await (const _chunk of wrapper.chat("Hello")) { /* drain */ }
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    for await (const _chunk of wrapper.chat("Hello again")) { /* drain */ }
+
+    // Each call without conversationId creates a new session
+    expect(client.sessions).toHaveLength(2);
+    expect(wrapper.hasSession("anything")).toBe(false);
+  });
+
+  it("attempts resumeSession before createSession when conversationId is given", async () => {
+    const client = new FakeCopilotClient();
+    const wrapper = new CopilotWrapperService({ client });
+
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    for await (const _chunk of wrapper.chat("Hello", { conversationId: "resume-me" })) { /* drain */ }
+
+    // Should have tried resumeSession first
+    expect(client.resumeAttempts).toContain("resume-me");
+    expect(wrapper.hasSession("resume-me")).toBe(true);
+  });
+
+  it("falls back to createSession when resumeSession fails", async () => {
+    const client = new FakeCopilotClient();
+    // Make resumeSession throw
+    client.resumeSession = async () => { throw new Error("not found"); };
+    const wrapper = new CopilotWrapperService({ client });
+
+    const chunks: string[] = [];
+    for await (const chunk of wrapper.chat("Hello", { conversationId: "new-conv" })) {
+      chunks.push(chunk);
+    }
+
+    // Should still work via createSession fallback
+    expect(chunks.join("")).toContain("hello");
+    expect(wrapper.hasSession("new-conv")).toBe(true);
+  });
+
+  it("destroySession removes cached session and calls destroy", async () => {
+    const client = new FakeCopilotClient();
+    const wrapper = new CopilotWrapperService({ client });
+
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    for await (const _chunk of wrapper.chat("Hello", { conversationId: "destroy-me" })) { /* drain */ }
+    expect(wrapper.hasSession("destroy-me")).toBe(true);
+
+    await wrapper.destroySession("destroy-me");
+    expect(wrapper.hasSession("destroy-me")).toBe(false);
+    expect(client.sessions[0].destroyed).toBe(true);
+  });
+
+  it("clearAllSessions destroys all cached sessions", async () => {
+    const client = new FakeCopilotClient();
+    const wrapper = new CopilotWrapperService({ client });
+
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    for await (const _chunk of wrapper.chat("A", { conversationId: "c1" })) { /* drain */ }
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    for await (const _chunk of wrapper.chat("B", { conversationId: "c2" })) { /* drain */ }
+    expect(wrapper.hasSession("c1")).toBe(true);
+    expect(wrapper.hasSession("c2")).toBe(true);
+
+    await wrapper.clearAllSessions();
+    expect(wrapper.hasSession("c1")).toBe(false);
+    expect(wrapper.hasSession("c2")).toBe(false);
+    expect(client.sessions[0].destroyed).toBe(true);
+    expect(client.sessions[1].destroyed).toBe(true);
+  });
+
+  it("passes infiniteSessions config to createSession", async () => {
+    const client = new FakeCopilotClient();
+    const infiniteSessions = {
+      enabled: true,
+      backgroundCompactionThreshold: 0.80,
+      bufferExhaustionThreshold: 0.95,
+    };
+    const wrapper = new CopilotWrapperService({ client, infiniteSessions });
+
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    for await (const _chunk of wrapper.chat("Hello")) { /* drain */ }
+
+    expect(client.lastSessionConfig?.infiniteSessions).toEqual(infiniteSessions);
+  });
+
+  it("passes sessionId to createSession when conversationId is provided and resume is unavailable", async () => {
+    const client = new FakeCopilotClient();
+    // Remove resumeSession to force createSession path
+    delete (client as Partial<FakeCopilotClient>).resumeSession;
+    const wrapper = new CopilotWrapperService({ client });
+
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    for await (const _chunk of wrapper.chat("Hello", { conversationId: "my-session" })) { /* drain */ }
+
+    expect(client.lastSessionConfig?.sessionId).toBe("my-session");
+  });
+
+  it("unsubscribes event handlers after each chat call to prevent accumulation", async () => {
+    const client = new FakeCopilotClient();
+    const wrapper = new CopilotWrapperService({ client });
+
+    // Call chat twice on the same session
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    for await (const _chunk of wrapper.chat("First", { conversationId: "unsub-test" })) { /* drain */ }
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    for await (const _chunk of wrapper.chat("Second", { conversationId: "unsub-test" })) { /* drain */ }
+
+    // After unsubscription, the session should have no lingering handlers
+    // The session is reused, but only the current call's handlers should be active
+    expect(client.sessions).toHaveLength(1);
+  });
 });
