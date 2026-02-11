@@ -267,6 +267,63 @@ const EnvVarEditor = ({
   );
 };
 
+/* ── String List Editor ── */
+
+const StringListEditor = ({
+  label,
+  items,
+  onChange,
+  placeholder = "Value",
+}: {
+  label: string;
+  items: string[];
+  onChange: (items: string[]) => void;
+  placeholder?: string;
+}) => {
+  const add = () => onChange([...items, ""]);
+  const remove = (idx: number) => onChange(items.filter((_, i) => i !== idx));
+  const update = (idx: number, value: string) => {
+    const next = [...items];
+    next[idx] = value;
+    onChange(next);
+  };
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between">
+        <label className="text-xs font-medium text-muted-foreground">{label}</label>
+        <button
+          type="button"
+          onClick={add}
+          className="flex items-center gap-1 text-[11px] font-semibold text-primary hover:underline"
+        >
+          <Plus className="h-3 w-3" />
+          Add
+        </button>
+      </div>
+      {items.map((item, idx) => (
+        <div key={idx} className="flex items-center gap-1">
+          <input
+            type="text"
+            className="flex-1 rounded-lg border border-border bg-background px-2 py-1.5 font-mono text-[11px] text-foreground"
+            placeholder={placeholder}
+            value={item}
+            onChange={(e) => update(idx, e.target.value)}
+          />
+          <button
+            type="button"
+            onClick={() => remove(idx)}
+            className="rounded border border-border p-1 text-destructive hover:border-destructive"
+            aria-label="Remove item"
+          >
+            <X className="h-3 w-3" />
+          </button>
+        </div>
+      ))}
+    </div>
+  );
+};
+
 /* ── Server Editor Dialog ── */
 
 const McpServerEditorDialog = ({
@@ -288,7 +345,9 @@ const McpServerEditorDialog = ({
   const [serverName, setServerName] = useState(initialName ?? "");
   const [serverType, setServerType] = useState<NativeMcpServerType>(initialType === "stdio" ? "local" : initialType);
   const [command, setCommand] = useState("command" in (def ?? {}) ? (def as { command: string }).command : "");
-  const [args, setArgs] = useState("args" in (def ?? {}) ? ((def as { args?: string[] }).args ?? []).join(" ") : "");
+  const [argEntries, setArgEntries] = useState<string[]>(
+    "args" in (def ?? {}) ? ((def as { args?: string[] }).args ?? []) : []
+  );
   const [cwd, setCwd] = useState("cwd" in (def ?? {}) ? ((def as { cwd?: string }).cwd ?? "") : "");
   const [url, setUrl] = useState("url" in (def ?? {}) ? (def as { url: string }).url : "");
   const [envEntries, setEnvEntries] = useState<[string, string][]>(
@@ -330,11 +389,11 @@ const McpServerEditorDialog = ({
       const env = envEntries.length > 0
         ? Object.fromEntries(envEntries.filter(([k, v]) => k.trim() && v.trim()))
         : undefined;
-      const parsedArgs = args.trim() ? args.trim().split(/\s+/) : undefined;
+      const parsedArgs = argEntries.map(a => a.trim()).filter(Boolean);
       definition = {
         type: "local",
         command: command.trim(),
-        ...(parsedArgs && { args: parsedArgs }),
+        ...(parsedArgs.length > 0 && { args: parsedArgs }),
         ...(env && Object.keys(env).length > 0 && { env }),
         ...(cwd.trim() && { cwd: cwd.trim() }),
         ...(timeoutMs && { timeout: timeoutMs }),
@@ -432,16 +491,12 @@ const McpServerEditorDialog = ({
                   onChange={(e) => setCommand(e.target.value)}
                 />
               </div>
-              <div className="space-y-1">
-                <label className="text-xs font-medium text-muted-foreground">Arguments</label>
-                <input
-                  type="text"
-                  className="w-full rounded-lg border border-border bg-background px-3 py-2 font-mono text-sm text-foreground"
-                  placeholder="./servers/my-server/index.js"
-                  value={args}
-                  onChange={(e) => setArgs(e.target.value)}
-                />
-              </div>
+              <StringListEditor
+                label="Arguments"
+                items={argEntries}
+                onChange={setArgEntries}
+                placeholder="--flag or value"
+              />
               <div className="space-y-1">
                 <label className="text-xs font-medium text-muted-foreground">Working Directory</label>
                 <input

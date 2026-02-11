@@ -25,6 +25,18 @@ export const AgentsPanel = () => {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingAgent, setEditingAgent] = useState<CustomAgentDefinition | null>(null);
 
+  const saveMutation = useMutation({
+    mutationFn: (payload: { agents: CustomAgentDefinition[] }) =>
+      fetchJson("/api/admin/agents", {
+        method: "PUT",
+        body: JSON.stringify(payload),
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["agents"] });
+    },
+    onError: (err) => showToast(`Error: ${err.message}`, "error"),
+  });
+
   const deleteMutation = useMutation({
     mutationFn: (name: string) =>
       fetchJson(`/api/admin/agents/${encodeURIComponent(name)}`, { method: "DELETE" }),
@@ -48,6 +60,30 @@ export const AgentsPanel = () => {
   const handleCreate = () => {
     setEditingAgent(null);
     setDialogOpen(true);
+  };
+
+  const handleSave = (agent: CustomAgentDefinition) => {
+    const existingAgents = query.data?.agents ?? [];
+    const isEdit = !!editingAgent;
+    let nextAgents: CustomAgentDefinition[];
+
+    if (isEdit) {
+      // Replace existing agent by name (invariant: name cannot change in edit mode)
+      nextAgents = existingAgents.map((a) => (a.name === agent.name ? agent : a));
+    } else {
+      // Append new agent
+      nextAgents = [...existingAgents, agent];
+    }
+
+    saveMutation.mutate(
+      { agents: nextAgents },
+      {
+        onSuccess: () => {
+          showToast(isEdit ? "Agent updated" : "Agent created", "success");
+          setDialogOpen(false);
+        },
+      }
+    );
   };
 
   const agents = query.data?.agents ?? [];
@@ -91,6 +127,8 @@ export const AgentsPanel = () => {
         <AgentEditorDialog
           agent={editingAgent}
           allTools={allTools}
+          onSave={handleSave}
+          isSaving={saveMutation.isPending}
           onClose={() => setDialogOpen(false)}
         />
       )}
@@ -163,13 +201,16 @@ const AgentCard = ({
 const AgentEditorDialog = ({
   agent,
   allTools,
+  onSave,
+  isSaving,
   onClose,
 }: {
   agent: CustomAgentDefinition | null;
   allTools: ToolInfo[];
+  onSave: (agent: CustomAgentDefinition) => void;
+  isSaving: boolean;
   onClose: () => void;
 }) => {
-  const queryClient = useQueryClient();
   const isEdit = !!agent;
 
   const [name, setName] = useState(agent?.name ?? "");
@@ -179,28 +220,6 @@ const AgentEditorDialog = ({
   const [selectedTools, setSelectedTools] = useState<string[]>(agent?.tools ?? []);
   const [infer, setInfer] = useState(agent?.infer ?? true);
   const [errors, setErrors] = useState<string[]>([]);
-
-  const saveMutation = useMutation({
-    mutationFn: (payload: Record<string, unknown>) => {
-      if (isEdit) {
-        // For updates, PUT the full agents array
-        return fetchJson(`/api/admin/agents/${encodeURIComponent(agent!.name)}`, {
-          method: "PUT",
-          body: JSON.stringify(payload),
-        });
-      }
-      return fetchJson("/api/admin/agents", {
-        method: "POST",
-        body: JSON.stringify(payload),
-      });
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["agents"] });
-      showToast(isEdit ? "Agent updated" : "Agent created", "success");
-      onClose();
-    },
-    onError: (err) => showToast(`Error: ${err.message}`, "error"),
-  });
 
   const validate = useCallback((): string[] => {
     const errs: string[] = [];
@@ -219,7 +238,7 @@ const AgentEditorDialog = ({
       return;
     }
     setErrors([]);
-    saveMutation.mutate({
+    onSave({
       name,
       displayName: displayName.trim(),
       description: description.trim() || undefined,
@@ -391,10 +410,10 @@ const AgentEditorDialog = ({
           </button>
           <button
             onClick={handleSave}
-            disabled={saveMutation.isPending}
+            disabled={isSaving}
             className="flex items-center gap-1.5 rounded-lg bg-moss px-4 py-2 text-xs font-semibold text-white disabled:opacity-40"
           >
-            {saveMutation.isPending ? (
+            {isSaving ? (
               <><RotateCw className="h-3.5 w-3.5 animate-spin" />Saving…</>
             ) : (
               isEdit ? "Save Agent" : "Create Agent"
