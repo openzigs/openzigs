@@ -580,4 +580,159 @@ describe("copilot wrapper", () => {
     // The session is reused, but only the current call's handlers should be active
     expect(client.sessions).toHaveLength(1);
   });
+
+  // ── Custom Agents ──
+
+  it("passes customAgents to createSession from constructor defaults", async () => {
+    const client = new FakeCopilotClient();
+    const agents = [
+      { name: "researcher", displayName: "Researcher", prompt: "You are a researcher." },
+      { name: "coder", displayName: "Coder", prompt: "You are a coder.", tools: ["read-file", "write-file"] },
+    ];
+    const wrapper = new CopilotWrapperService({ client, customAgents: agents });
+
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    for await (const _chunk of wrapper.chat("Hello")) { /* drain */ }
+
+    const config = client.lastSessionConfig as Record<string, unknown>;
+    expect(config.customAgents).toEqual(agents);
+  });
+
+  it("omits customAgents when none configured", async () => {
+    const client = new FakeCopilotClient();
+    const wrapper = new CopilotWrapperService({ client });
+
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    for await (const _chunk of wrapper.chat("Hello")) { /* drain */ }
+
+    const config = client.lastSessionConfig as Record<string, unknown>;
+    expect(config.customAgents).toBeUndefined();
+  });
+
+  it("per-chat customAgents override defaults by name", async () => {
+    const client = new FakeCopilotClient();
+    const defaults = [
+      { name: "researcher", displayName: "Researcher", prompt: "Default researcher" },
+      { name: "coder", displayName: "Coder", prompt: "Default coder" },
+    ];
+    const overrides = [
+      { name: "researcher", displayName: "Senior Researcher", prompt: "Override researcher" },
+    ];
+    const wrapper = new CopilotWrapperService({ client, customAgents: defaults });
+
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    for await (const _chunk of wrapper.chat("Hello", { customAgents: overrides })) { /* drain */ }
+
+    const config = client.lastSessionConfig as Record<string, unknown>;
+    const agents = config.customAgents as Array<{ name: string; displayName: string; prompt: string }>;
+    expect(agents).toHaveLength(2);
+    expect(agents.find((a) => a.name === "researcher")?.prompt).toBe("Override researcher");
+    expect(agents.find((a) => a.name === "coder")?.prompt).toBe("Default coder");
+  });
+
+  it("getCustomAgents / setCustomAgents work correctly", () => {
+    const wrapper = new CopilotWrapperService({});
+    expect(wrapper.getCustomAgents()).toEqual([]);
+
+    const agents = [{ name: "test", displayName: "Test", prompt: "test" }];
+    wrapper.setCustomAgents(agents);
+    expect(wrapper.getCustomAgents()).toEqual(agents);
+
+    // Returns a copy, not a reference
+    wrapper.getCustomAgents().push({ name: "injected", displayName: "X", prompt: "x" });
+    expect(wrapper.getCustomAgents()).toHaveLength(1);
+  });
+
+  it("setCustomAgents clears cached sessions", async () => {
+    const client = new FakeCopilotClient();
+    const wrapper = new CopilotWrapperService({ client });
+
+    // Create a cached session
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    for await (const _chunk of wrapper.chat("Hello", { conversationId: "conv-agents" })) { /* drain */ }
+    expect(wrapper.hasSession("conv-agents")).toBe(true);
+
+    wrapper.setCustomAgents([{ name: "new", displayName: "New", prompt: "new" }]);
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(wrapper.hasSession("conv-agents")).toBe(false);
+  });
+
+  // ── Native MCP Servers ──
+
+  it("passes mcpServers to createSession from constructor defaults", async () => {
+    const client = new FakeCopilotClient();
+    const servers = {
+      "my-server": { type: "stdio" as const, command: "npx", args: ["-y", "my-mcp-server"] },
+    };
+    const wrapper = new CopilotWrapperService({ client, nativeMcpServers: servers });
+
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    for await (const _chunk of wrapper.chat("Hello")) { /* drain */ }
+
+    const config = client.lastSessionConfig as Record<string, unknown>;
+    expect(config.mcpServers).toEqual(servers);
+  });
+
+  it("omits mcpServers when none configured", async () => {
+    const client = new FakeCopilotClient();
+    const wrapper = new CopilotWrapperService({ client });
+
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    for await (const _chunk of wrapper.chat("Hello")) { /* drain */ }
+
+    const config = client.lastSessionConfig as Record<string, unknown>;
+    expect(config.mcpServers).toBeUndefined();
+  });
+
+  it("per-chat mcpServers merge with defaults (per-call wins)", async () => {
+    const client = new FakeCopilotClient();
+    const defaults = {
+      "server-a": { type: "stdio" as const, command: "cmd-a" },
+      "server-b": { type: "http" as const, url: "http://localhost:3001" },
+    };
+    const overrides = {
+      "server-b": { type: "sse" as const, url: "http://localhost:4001" },
+      "server-c": { type: "stdio" as const, command: "cmd-c" },
+    };
+    const wrapper = new CopilotWrapperService({ client, nativeMcpServers: defaults });
+
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    for await (const _chunk of wrapper.chat("Hello", { mcpServers: overrides })) { /* drain */ }
+
+    const config = client.lastSessionConfig as Record<string, unknown>;
+    const servers = config.mcpServers as Record<string, { type: string }>;
+    expect(Object.keys(servers)).toHaveLength(3);
+    expect(servers["server-a"].type).toBe("stdio");
+    expect(servers["server-b"].type).toBe("sse"); // overridden
+    expect(servers["server-c"].type).toBe("stdio"); // new
+  });
+
+  it("getNativeMcpServers / setNativeMcpServers work correctly", () => {
+    const wrapper = new CopilotWrapperService({});
+    expect(wrapper.getNativeMcpServers()).toEqual({});
+
+    const servers = { "test-server": { type: "stdio" as const, command: "test" } };
+    wrapper.setNativeMcpServers(servers);
+    expect(wrapper.getNativeMcpServers()).toEqual(servers);
+
+    // Returns a copy, not a reference
+    const retrieved = wrapper.getNativeMcpServers();
+    retrieved["injected"] = { type: "http" as const, url: "http://evil.com" };
+    expect(Object.keys(wrapper.getNativeMcpServers())).toHaveLength(1);
+  });
+
+  it("setNativeMcpServers clears cached sessions", async () => {
+    const client = new FakeCopilotClient();
+    const wrapper = new CopilotWrapperService({ client });
+
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    for await (const _chunk of wrapper.chat("Hello", { conversationId: "conv-mcp" })) { /* drain */ }
+    expect(wrapper.hasSession("conv-mcp")).toBe(true);
+
+    wrapper.setNativeMcpServers({ "new-server": { type: "stdio" as const, command: "test" } });
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(wrapper.hasSession("conv-mcp")).toBe(false);
+  });
 });

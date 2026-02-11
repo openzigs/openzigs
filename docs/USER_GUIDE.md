@@ -1044,6 +1044,150 @@ curl -X PUT -H "Authorization: Bearer <token>" \
 
 ---
 
+## Custom Agents (Hierarchical Sub-Agents)
+
+OpenZigs supports native hierarchical agents via the Copilot SDK's `customAgents` API. Custom agents are specialized sub-agents that the primary model can delegate to for domain-specific tasks. Each agent has its own system prompt, tool access, and identity.
+
+### Default Agent Archetypes
+
+OpenZigs ships with five built-in agent archetypes defined in `config/agents.json`:
+
+| Name | Display Name | Description |
+|------|-------------|-------------|
+| `researcher` | Research Agent | Deep web research and analysis with full tool access |
+| `coder` | Code Agent | Code generation and file operations (read-file, write-file, list-directory, shell-execute) |
+| `writer` | Writing Agent | Content writing and editing (read-file, write-file, list-directory, web-search) |
+| `analyst` | Data Analyst | Data analysis and visualization with full tool access |
+| `reviewer` | Code Reviewer | Code review and quality assurance (read-file, list-directory, shell-execute) |
+
+### Configuration
+
+Add custom agents in your user config (`~/.openzigs/config.json`) or `config/default.json` under `copilot.customAgents`:
+
+```json
+{
+  "copilot": {
+    "customAgents": [
+      {
+        "name": "security-auditor",
+        "displayName": "Security Auditor",
+        "description": "Specialized in security analysis and vulnerability assessment",
+        "prompt": "You are an expert security auditor. Analyze code for vulnerabilities, review dependencies, and suggest hardening measures.",
+        "tools": ["read-file", "list-directory", "shell-execute", "web-search"],
+        "infer": false
+      }
+    ]
+  }
+}
+```
+
+User-configured agents override default archetypes when they share the same `name`. Agents not overridden are kept from`config/agents.json`.
+
+### Agent Definition Fields
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `name` | string | Yes | Unique agent identifier (used for delegation). |
+| `displayName` | string | Yes | Human-readable label shown in responses. |
+| `description` | string | No | Brief description of the agent's specialty. |
+| `prompt` | string | Yes | System prompt defining the agent's behavior. |
+| `tools` | string[] \| null | No | Tool allowlist for this agent (`null` = all tools). |
+| `infer` | boolean | No | Whether the SDK infers when to delegate to this agent. |
+| `mcpServers` | object | No | Per-agent MCP server connections (see Native MCP Servers below). |
+
+### Admin API
+
+```bash
+# List all custom agents
+curl http://localhost:3000/api/admin/agents
+
+# Add a new agent
+curl -X POST http://localhost:3000/api/admin/agents \
+  -H "Content-Type: application/json" \
+  -d '{"name":"qa","displayName":"QA Agent","prompt":"You test software."}'
+
+# Replace all agents
+curl -X PUT http://localhost:3000/api/admin/agents \
+  -H "Content-Type: application/json" \
+  -d '{"agents":[...]}'
+
+# Remove an agent
+curl -X DELETE http://localhost:3000/api/admin/agents/qa
+```
+
+### Per-Chat Override
+
+Custom agents can also be specified per-chat call via the `customAgents` option. Per-call agents merge with defaults — agents with the same `name` are overridden, new agents are appended.
+
+---
+
+## Native MCP Servers
+
+OpenZigs supports native MCP (Model Context Protocol) server connections via the Copilot SDK's built-in `mcpServers` API. This is the recommended way to connect external MCP servers — it replaces the legacy subprocess-based `LocalMcpServerManager`.
+
+### Configuration
+
+Add native MCP servers in `~/.openzigs/config.json` or `config/default.json` under `copilot.nativeMcpServers`:
+
+```json
+{
+  "copilot": {
+    "nativeMcpServers": {
+      "my-database": {
+        "type": "stdio",
+        "command": "npx",
+        "args": ["-y", "@modelcontextprotocol/server-postgres"],
+        "env": { "DATABASE_URL": "postgresql://localhost:5432/mydb" }
+      },
+      "remote-tools": {
+        "type": "http",
+        "url": "https://mcp.example.com/tools",
+        "headers": { "Authorization": "Bearer ${MCP_API_KEY}" }
+      }
+    }
+  }
+}
+```
+
+### Server Types
+
+| Type | Transport | Required Fields | Description |
+|------|-----------|----------------|-------------|
+| `stdio` | Subprocess | `command` | Spawns a local process communicating via stdin/stdout |
+| `local` | Subprocess | `command` | Alias for `stdio` |
+| `http` | HTTP | `url` | Connects to an HTTP-based MCP server |
+| `sse` | Server-Sent Events | `url` | Connects to an SSE-based MCP server |
+
+### Server Definition Fields
+
+| Field | Type | Applies To | Description |
+|-------|------|-----------|-------------|
+| `type` | string | All | Server type: `"stdio"`, `"local"`, `"http"`, or `"sse"` |
+| `command` | string | stdio/local | Command to spawn (e.g., `"npx"`, `"uvx"`, `"python3"`) |
+| `args` | string[] | stdio/local | Command arguments |
+| `env` | object | stdio/local | Environment variables for the subprocess |
+| `cwd` | string | stdio/local | Working directory for the subprocess |
+| `url` | string | http/sse | Server URL |
+| `headers` | object | http/sse | HTTP headers (e.g., auth tokens) |
+| `tools` | string[] | All | Tool allowlist (only expose these tools from the server) |
+| `timeout` | number | All | Connection timeout in milliseconds |
+
+### Admin API
+
+```bash
+# List configured native MCP servers
+curl http://localhost:3000/api/admin/native-mcp-servers
+
+# Replace all native MCP servers
+curl -X PUT http://localhost:3000/api/admin/native-mcp-servers \
+  -H "Content-Type: application/json" \
+  -d '{"servers":{"my-server":{"type":"stdio","command":"npx","args":["-y","my-mcp-server"]}}}'
+```
+
+> **Note:** Native MCP servers are managed by the Copilot SDK at the session level. Changing the server configuration clears all cached sessions. The `LocalMcpServerManager` (subprocess-based servers defined in `config/default.json` → `mcpServers.sidecars`) is now deprecated in favor of this native approach.
+
+---
+
 ## Enabling and Disabling Tools
 
 Tools can be managed via the **Admin** page at `/admin` or via the REST API. Each tool can be toggled independently.

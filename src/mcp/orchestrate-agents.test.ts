@@ -35,6 +35,10 @@ const createMockCopilot = (responseChunks: string[] = ["result"]) => ({
   setProvider: vi.fn(),
   getWorkingDirectory: vi.fn().mockReturnValue(undefined),
   setWorkingDirectory: vi.fn(),
+  getCustomAgents: vi.fn().mockReturnValue([]),
+  setCustomAgents: vi.fn(),
+  getNativeMcpServers: vi.fn().mockReturnValue({}),
+  setNativeMcpServers: vi.fn(),
   chat: vi.fn().mockImplementation(async function* () {
     for (const chunk of responseChunks) {
       yield chunk;

@@ -7,7 +7,7 @@ import request from "supertest";
 import { createAdminRouter } from "./admin.js";
 import { ToolRegistry } from "../mcp/tool-registry.js";
 import type { CopilotWrapper } from "../copilot/copilot-wrapper.js";
-import type { CopilotModel, ReasoningEffort, ProviderConfig } from "../copilot/copilot-wrapper.js";
+import type { CopilotModel, ReasoningEffort, ProviderConfig, CustomAgentDefinition, NativeMcpServerDefinition } from "../copilot/copilot-wrapper.js";
 
 class FakeCopilot implements CopilotWrapper {
   private reasoningEffort?: ReasoningEffort;
@@ -33,6 +33,10 @@ class FakeCopilot implements CopilotWrapper {
   setProvider(provider: ProviderConfig | undefined): void { this.provider = provider; }
   getWorkingDirectory(): string | undefined { return this.workingDirectory; }
   setWorkingDirectory(dir: string | undefined): void { this.workingDirectory = dir; }
+  getCustomAgents(): CustomAgentDefinition[] { return []; }
+  setCustomAgents(_agents: CustomAgentDefinition[]): void {}
+  getNativeMcpServers(): Record<string, NativeMcpServerDefinition> { return {}; }
+  setNativeMcpServers(_servers: Record<string, NativeMcpServerDefinition>): void {}
 }
 
 describe("Admin Models Config API", () => {
