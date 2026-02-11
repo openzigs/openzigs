@@ -2488,6 +2488,179 @@ Agent (Kubernetes Ops): Checking pod status in production...
 
 ---
 
+## AI-Assisted Configuration (Workflow Wizard)
+
+OpenZigs includes a **Workflow Wizard** — an interactive conversational assistant that guides you step-by-step through creating prompts, scheduled jobs, webhooks, and custom agents.
+
+### How It Works
+
+1. **Start** — In the Chat, describe what you want to create. The AI detects intent and activates the Wizard persona.
+2. **Guided Questions** — The Wizard asks one question at a time, suggesting sensible defaults.
+3. **Preview Card** — Once all details are gathered, a structured **Workflow Preview Card** appears in the chat showing the complete configuration.
+4. **Confirm / Edit / Test Run** — Click **Confirm** to save, **Edit** to change a field, or **Test Run** (for scheduled jobs) to preview what would happen without executing.
+
+### Preview Card Actions
+
+| Action | Description |
+|---|---|
+| **Confirm** | Persists the configuration (creates the prompt, job, webhook, or agent). |
+| **Edit** | Returns to the conversation so you can change specific fields. |
+| **Test Run** | (Scheduled jobs only) Shows a dry-run preview of the job's output. |
+
+### The `create-prompt` Tool
+
+A dedicated MCP tool for creating prompt templates with duplicate-name protection:
+
+```
+Tool: create-prompt (risk: high)
+Inputs:
+  name        — Unique prompt name
+  content     — Prompt template with {{variable}} placeholders
+  description — Optional description
+  tags        — Optional tag array
+  variables   — Optional variable metadata array
+  systemPrompt — When true, adds "system-prompt" tag
+```
+
+Unlike the existing `save-prompt` (which is an upsert), `create-prompt` rejects duplicate names to prevent accidental overwrites during wizard flows.
+
+### The `workflow-wizard` Tool
+
+The AI uses this tool to present structured preview cards:
+
+```
+Tool: workflow-wizard (risk: low)
+Inputs:
+  type    — "prompt" | "scheduled-job" | "webhook" | "agent"
+  name    — Human-readable name
+  summary — One-line description
+  config  — Key-value configuration to preview
+```
+
+---
+
+## Dry-Run & Job Testing
+
+Before running a scheduled job for real, you can test it safely with dry-run mode.
+
+### Dry Run from the UI
+
+Each job card in the **Scheduler** page now has a **🧪 Dry Run** button alongside the existing **▶ Run** button. Clicking it shows a preview panel below the job card with exactly what the job would do — without executing anything or incrementing run counts.
+
+### Dry Run via MCP Tools
+
+Two MCP tools support dry-run workflows:
+
+**`schedule-job` with `dry_run: true`**
+```json
+{
+  "name": "nightly-report",
+  "cronExpression": "0 22 * * *",
+  "actionType": "prompt",
+  "actionPayload": { "promptName": "daily-summary" },
+  "dry_run": true
+}
+```
+Returns a preview of the job configuration without saving it.
+
+**`test-job`**
+```json
+{ "id": "job-abc123" }
+```
+Takes an existing job ID and returns a dry-run preview of its current configuration.
+
+### Dry Run via API
+
+```bash
+curl -X POST http://localhost:4621/api/admin/jobs/JOB_ID/run?dry_run=true \
+  -H "Authorization: Bearer YOUR_TOKEN"
+```
+
+Returns the job preview JSON without triggering execution.
+
+---
+
+## Enterprise Webhooks
+
+Webhooks let external systems (CI/CD, monitoring, third-party services) trigger OpenZigs actions via HTTP POST requests.
+
+### Creating a Webhook
+
+1. Navigate to **Admin → Webhooks** (or `/admin/webhooks`).
+2. Click **+ New Webhook**.
+3. Configure:
+   - **Name** — Descriptive label (e.g., `github-deploy-hook`).
+   - **Action** — `prompt` (executes a saved prompt) or `goal` (sends a natural-language goal to the agent).
+   - **Prompt Name** or **Goal** — The target action.
+   - **Rate Limit** — Max requests per minute (default: 60).
+   - **Allowed IPs** — Optional comma-separated IP allowlist.
+4. Click **Create Webhook**.
+5. **Save the API key** — it's shown only once.
+
+### Triggering a Webhook
+
+```bash
+curl -X POST http://localhost:4621/api/webhooks/trigger \
+  -H "Authorization: Bearer whk_YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"topic": "deployment", "environment": "production"}'
+```
+
+The JSON body is passed as prompt variables (for `prompt` actions) or task context (for `goal` actions).
+
+### Authentication Methods
+
+| Method | Headers Required |
+|---|---|
+| **Bearer Token** | `Authorization: Bearer whk_...` |
+| **HMAC Signature** | `X-Webhook-Id: WEBHOOK_ID` + `X-Webhook-Signature: SHA256_HEX` |
+
+### Security Features
+
+- **API Key Hashing** — Keys are stored as SHA-256 hashes; plaintext is never persisted.
+- **Timing-Safe Comparison** — Prevents timing attacks on key/signature validation.
+- **IP Allowlisting** — Restrict which IPs can trigger the webhook.
+- **Rate Limiting** — Per-webhook rate limits (default 60/min).
+- **Key Rotation** — Rotate API keys from the UI without deleting the webhook.
+
+### Managing Webhooks
+
+| Action | UI | API |
+|---|---|---|
+| List all | Webhooks page | `GET /api/admin/webhooks` |
+| Create | + New Webhook form | `POST /api/admin/webhooks` |
+| Toggle | Toggle switch | `POST /api/admin/webhooks/:id/toggle` |
+| Rotate key | 🔄 Rotate Key button | `POST /api/admin/webhooks/:id/rotate-key` |
+| Delete | Delete button | `DELETE /api/admin/webhooks/:id` |
+
+---
+
+## Self-Aware Documentation
+
+The AI can answer questions about OpenZigs itself — its architecture, configuration, tools, and features — using the built-in documentation tools.
+
+### How It Works
+
+The `query-documentation` tool searches the project's markdown documentation and JSON config files by topic keyword. The AI can find relevant sections from:
+
+- **ARCHITECTURE.md** — System design, tool catalog, security model.
+- **USER_GUIDE.md** — Usage instructions, configuration reference.
+- **TELEGRAM_SETUP.md** — Channel setup guides.
+- **default.json / tools.json** — Configuration files.
+
+### Example Questions
+
+- *"How do tool risk levels work?"*
+- *"What's the architecture of the approval queue?"*
+- *"How do I configure Telegram?"*
+- *"What MCP tools are available?"*
+
+### Documentation Expert Agent
+
+A custom agent named `documentation-expert` is pre-configured in `config/agents.json` with `infer: true`. When the AI detects a question about OpenZigs itself, it can automatically delegate to this specialist agent.
+
+---
+
 ## Troubleshooting
 
 | Symptom | Likely Cause | Fix |

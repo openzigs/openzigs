@@ -19,6 +19,9 @@ import { createGitHubTools } from "./tools/github-tools.js";
 import { createInstagramTools } from "./tools/instagram-tools.js";
 import { createAgentTools } from "./tools/agent-tools.js";
 import { createOrchestrateAgentsTools } from "./tools/orchestrate-agents.js";
+import { createSystemConfigTools } from "./tools/system-config-tools.js";
+import { createDocumentationTools } from "./tools/documentation-tools.js";
+import { createWizardTools } from "./tools/wizard-tools.js";
 import { ToolRegistry, type ToolDefinition } from "./tool-registry.js";
 import type { LocalMcpServerManager } from "./local-mcp-server-manager.js";
 import { AuditLogger } from "../logging/audit-logger.js";
@@ -367,6 +370,12 @@ export const registerMcpTools = (toolRegistry: ToolRegistry, options: RegisterMc
     for (const tool of promptTools) {
       registerTool(tool);
     }
+
+    // System Configuration Tools (create-prompt — high-risk, requires approval)
+    const systemConfigTools = createSystemConfigTools({ promptManager: options.promptManager });
+    for (const tool of systemConfigTools) {
+      registerTool(tool);
+    }
   }
 
   if (options.scheduler) {
@@ -461,5 +470,17 @@ export const registerMcpTools = (toolRegistry: ToolRegistry, options: RegisterMc
     for (const tool of orchestrateTools) {
       registerTool(tool);
     }
+  }
+
+  // ── Documentation Tools (self-aware AI) ──
+  const docQueryTools = createDocumentationTools();
+  for (const tool of docQueryTools) {
+    registerTool(tool);
+  }
+
+  // ── Workflow Wizard (interactive preview cards) ──
+  const wizardTools = createWizardTools({});
+  for (const tool of wizardTools) {
+    registerTool(tool);
   }
 };

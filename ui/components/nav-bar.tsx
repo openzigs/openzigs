@@ -12,6 +12,7 @@ const NAV_ITEMS = [
   { href: "/library", label: "Library" },
   { href: "/scheduler", label: "Scheduler" },
   { href: "/tasks", label: "Tasks" },
+  { href: "/admin/webhooks", label: "Webhooks" },
 ];
 
 export const NavBar = () => {

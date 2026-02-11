@@ -16,6 +16,7 @@ import type { PersonalityManager } from "../personality/personality-manager.js";
 import type { SessionManager } from "../sessions/session-manager.js";
 import type { TaskWorker } from "../tasks/task-worker.js";
 import type { TaskEngine } from "../tasks/task-engine.js";
+import type { WebhookManager } from "../webhooks/webhook-manager.js";
 
 type EnvEntry = {
   name: string;
@@ -188,6 +189,7 @@ export type AdminRouterOptions = {
   copilot?: CopilotWrapper;
   taskWorker?: TaskWorker;
   taskEngine?: TaskEngine;
+  webhookManager?: WebhookManager;
 };
 
 type SchedulerSuggestion = {
@@ -242,7 +244,7 @@ const normalizeSchedulerSuggestion = (
   };
 };
 
-export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerManager, promptManager, scheduler, personalityManager, sessionManager, copilot, taskWorker, taskEngine }: AdminRouterOptions) => {
+export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerManager, promptManager, scheduler, personalityManager, sessionManager, copilot, taskWorker, taskEngine, webhookManager }: AdminRouterOptions) => {
   const router = Router();
 
   // ── Server Restart ──
@@ -871,6 +873,26 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
       if (!job.enabled) {
         return res.status(400).json({ error: "Job is disabled and cannot be run." });
       }
+
+      const dryRun = req.query.dry_run === "true";
+
+      if (dryRun) {
+        // Dry-run: return job config without executing or affecting run counts
+        return res.json({
+          ok: true,
+          dryRun: true,
+          jobId: job.id,
+          jobName: job.name,
+          preview: {
+            cronExpression: job.cronExpression,
+            timezone: job.timezone,
+            actionType: job.actionType,
+            actionPayload: job.actionPayload,
+            model: job.model,
+          },
+        });
+      }
+
       try {
         await scheduler.executeJob(job.id);
         return res.json({ ok: true, jobId: job.id, jobName: job.name });
@@ -1418,6 +1440,79 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
       const message = error instanceof Error ? error.message : String(error);
       return res.status(500).json({ error: message });
     }
+  });
+
+  // ── Webhooks ──
+
+  router.get("/webhooks", (_req, res) => {
+    if (!webhookManager) return res.status(501).json({ error: "Webhooks not enabled" });
+    const webhooks = webhookManager.list().map((wh) => ({
+      id: wh.id,
+      name: wh.name,
+      action: wh.action,
+      actionPayload: wh.actionPayload,
+      enabled: wh.enabled,
+      allowedIps: wh.allowedIps,
+      rateLimit: wh.rateLimit,
+      triggerCount: wh.triggerCount,
+      lastTriggeredAt: wh.lastTriggeredAt,
+      createdAt: wh.createdAt,
+    }));
+    return res.json({ webhooks });
+  });
+
+  router.post("/webhooks", (req, res) => {
+    if (!webhookManager) return res.status(501).json({ error: "Webhooks not enabled" });
+    const { name, action, actionPayload, allowedIps, rateLimit } = req.body ?? {};
+    if (!name || typeof name !== "string") return res.status(400).json({ error: "name is required" });
+    if (action !== "prompt" && action !== "goal") return res.status(400).json({ error: "action must be 'prompt' or 'goal'" });
+
+    const { webhook, apiKey } = webhookManager.create({
+      name: name.trim(),
+      action,
+      actionPayload: actionPayload ?? {},
+      allowedIps: Array.isArray(allowedIps) ? allowedIps : [],
+      rateLimit: typeof rateLimit === "number" ? rateLimit : 60,
+    });
+
+    logger.info(`Webhook created: ${webhook.name} (${webhook.id})`);
+    return res.status(201).json({
+      webhook: {
+        id: webhook.id,
+        name: webhook.name,
+        action: webhook.action,
+        enabled: webhook.enabled,
+        secret: webhook.secret,
+        rateLimit: webhook.rateLimit,
+        createdAt: webhook.createdAt,
+      },
+      apiKey, // Shown only once
+    });
+  });
+
+  router.post("/webhooks/:id/toggle", (req, res) => {
+    if (!webhookManager) return res.status(501).json({ error: "Webhooks not enabled" });
+    const { enabled } = req.body ?? {};
+    if (typeof enabled !== "boolean") return res.status(400).json({ error: "enabled is required (boolean)" });
+    const webhook = webhookManager.toggle(req.params.id, enabled);
+    if (!webhook) return res.status(404).json({ error: "Webhook not found" });
+    return res.json({ ok: true, enabled: webhook.enabled });
+  });
+
+  router.post("/webhooks/:id/rotate-key", (req, res) => {
+    if (!webhookManager) return res.status(501).json({ error: "Webhooks not enabled" });
+    const result = webhookManager.rotateKey(req.params.id);
+    if (!result) return res.status(404).json({ error: "Webhook not found" });
+    logger.info(`API key rotated for webhook ${req.params.id}`);
+    return res.json({ apiKey: result.apiKey });
+  });
+
+  router.delete("/webhooks/:id", (req, res) => {
+    if (!webhookManager) return res.status(501).json({ error: "Webhooks not enabled" });
+    const deleted = webhookManager.delete(req.params.id);
+    if (!deleted) return res.status(404).json({ error: "Webhook not found" });
+    logger.info(`Webhook deleted: ${req.params.id}`);
+    return res.json({ ok: true });
   });
 
   return router;

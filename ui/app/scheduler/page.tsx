@@ -51,6 +51,18 @@ export default function SchedulerPage() {
     onError: (err) => showToast(`Error: ${err.message}`, "error"),
   });
 
+  const [dryRunResult, setDryRunResult] = useState<{ id: string; preview: string } | null>(null);
+
+  const dryRunMutation = useMutation({
+    mutationFn: (id: string) =>
+      fetchJson<{ preview: Record<string, unknown> }>(`/api/admin/jobs/${id}/run?dry_run=true`, { method: "POST" }),
+    onSuccess: (data, id) => {
+      setDryRunResult({ id, preview: JSON.stringify(data.preview ?? data, null, 2) });
+      showToast("Dry run complete — preview below", "success");
+    },
+    onError: (err) => showToast(`Dry run error: ${err.message}`, "error"),
+  });
+
   useEffect(() => {
     if (!socket) return;
     const onExecuted = (data: { jobName?: string; success?: boolean }) => {
@@ -146,6 +158,14 @@ export default function SchedulerPage() {
                       ▶ Run
                     </button>
                     <button
+                      onClick={() => dryRunMutation.mutate(job.id)}
+                      disabled={dryRunMutation.isPending}
+                      title="Preview what this job would do without executing"
+                      className="rounded-lg border border-amber-400/30 px-3 py-1.5 text-xs font-semibold text-amber-500 hover:bg-amber-500/5 disabled:opacity-40"
+                    >
+                      🧪 Dry Run
+                    </button>
+                    <button
                       onClick={() => handleEdit(job)}
                       className="rounded-lg border border-primary px-3 py-1.5 text-xs font-semibold text-primary hover:bg-primary/5"
                     >
@@ -179,6 +199,22 @@ export default function SchedulerPage() {
                   <span>Runs: {job.runCount || 0}</span>
                   {job.lastRunAt && <span>Last: {new Date(job.lastRunAt).toLocaleString()}</span>}
                 </div>
+                {dryRunResult?.id === job.id && (
+                  <div className="mt-3 rounded-lg border border-amber-400/30 bg-amber-50/5 p-3">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-semibold text-amber-500">🧪 Dry Run Preview</span>
+                      <button
+                        onClick={() => setDryRunResult(null)}
+                        className="text-xs text-muted-foreground hover:text-foreground"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                    <pre className="mt-2 whitespace-pre-wrap break-words font-mono text-[11px] text-muted-foreground">
+                      {dryRunResult.preview}
+                    </pre>
+                  </div>
+                )}
               </div>
             ))}
           </div>

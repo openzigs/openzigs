@@ -28,6 +28,7 @@ import { SmartTextarea } from "@/components/smart-textarea";
 import { FileAttachmentButton, FileDropZone, AttachmentBar } from "@/components/file-attachment";
 import { ReasoningEffortSelector, ProviderBadge } from "@/components/reasoning-effort-selector";
 import { UserInputPrompt } from "@/components/user-input-prompt";
+import { WorkflowPreviewCard } from "@/components/workflow-preview-card";
 import { SessionContextBar } from "@/components/session-context-bar";
 import type {
   ModelInfo,
@@ -613,13 +614,31 @@ export const ChatView = () => {
           </div>
         ))}
 
-        {/* Active user input prompt */}
+        {/* Active user input prompt — or workflow preview card */}
         {activeInputRequest && (
-          <UserInputPrompt
-            key={activeInputRequest.requestId}
-            request={activeInputRequest}
-            onSubmit={handleInputResponse}
-          />
+          activeInputRequest.preview ? (
+            <div className="flex items-start gap-3 animate-slide-in">
+              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
+                <Bot className="h-4 w-4" />
+              </div>
+              <WorkflowPreviewCard
+                preview={activeInputRequest.preview}
+                onConfirm={() => handleInputResponse("confirm", false)}
+                onEdit={() => handleInputResponse("edit", true)}
+                onTestRun={
+                  activeInputRequest.preview.type === "scheduled-job"
+                    ? () => handleInputResponse("test-run", false)
+                    : undefined
+                }
+              />
+            </div>
+          ) : (
+            <UserInputPrompt
+              key={activeInputRequest.requestId}
+              request={activeInputRequest}
+              onSubmit={handleInputResponse}
+            />
+          )
         )}
 
         {/* Thinking indicator */}
