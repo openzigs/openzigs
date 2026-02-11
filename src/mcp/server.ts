@@ -479,7 +479,7 @@ export const registerMcpTools = (toolRegistry: ToolRegistry, options: RegisterMc
   }
 
   // ── Workflow Wizard (interactive preview cards) ──
-  const wizardTools = createWizardTools({});
+  const wizardTools = createWizardTools();
   for (const tool of wizardTools) {
     registerTool(tool);
   }

@@ -9,6 +9,7 @@ import type { TaskEngine } from "../tasks/task-engine.js";
 import { ALWAYS_ON_TOOLS } from "../mcp/constants.js";
 import { setActiveChatContext, clearActiveChatContext } from "../mcp/tools/agent-tools.js";
 import { setActiveOrchestrateContext, clearActiveOrchestrateContext } from "../mcp/tools/orchestrate-agents.js";
+import { setActiveWizardContext, clearActiveWizardContext } from "../mcp/tools/wizard-tools.js";
 
 export type RouteOptions = {
   /** Callback invoked for each streaming chunk. */
@@ -156,6 +157,11 @@ export class MessageRouter {
         chatId: message.chatId,
         parentTaskId: taskId,
       });
+      // Set wizard context so workflow-wizard can present interactive preview cards
+      setActiveWizardContext({
+        requestUserInput: this.userInputHandler,
+        sessionId,
+      });
 
       // Resolve SDK-native tool scoping: pass tool name strings instead of filtering ToolDefinition arrays.
       const availableTools = this.resolveAvailableTools(options?.allowedTools);
@@ -179,6 +185,7 @@ export class MessageRouter {
 
       clearActiveChatContext();
       clearActiveOrchestrateContext();
+      clearActiveWizardContext();
 
       // Mark task completed
       if (taskId && this.taskEngine) {
@@ -187,6 +194,7 @@ export class MessageRouter {
     } catch (error) {
       clearActiveChatContext();
       clearActiveOrchestrateContext();
+      clearActiveWizardContext();
       // Mark task failed
       if (taskId && this.taskEngine) {
         const msg = error instanceof Error ? error.message : String(error);

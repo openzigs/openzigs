@@ -1,5 +1,6 @@
 import * as z from "zod";
 import type { ToolDefinition } from "../tool-registry.js";
+import type { UserInputHandler } from "../../copilot/copilot-wrapper.js";
 
 /**
  * MCP tool: workflow-wizard
@@ -20,23 +21,36 @@ const wizardSchema = z.object({
   question: z.string().optional().describe("Optional clarifying question (default: 'Does this look right?')"),
 });
 
-export type WizardToolOptions = {
-  /** The function to call when we need user input (injected from CopilotWrapper). */
-  requestUserInput?: (request: {
-    question: string;
-    choices?: string[];
-    allowFreeform?: boolean;
-    preview?: {
-      type: string;
-      name: string;
-      summary: string;
-      config: Record<string, unknown>;
-    };
-  }, sessionId: string) => Promise<{ answer: string; wasFreeform?: boolean }>;
+/** Re-export UserInputHandler for callers that set context. */
+export type WizardUserInputFn = UserInputHandler;
+
+/**
+ * Mutable wizard context — set by MessageRouter before each request
+ * so that the workflow-wizard handler can present interactive preview
+ * cards to the originating channel. Same pattern as activeChatContext
+ * in agent-tools.ts.
+ */
+let activeWizardContext: {
+  requestUserInput?: WizardUserInputFn;
   sessionId?: string;
+} = {};
+
+/** Set the active wizard context. Called by MessageRouter before routing. */
+export const setActiveWizardContext = (ctx: {
+  requestUserInput?: WizardUserInputFn;
+  sessionId?: string;
+}): void => {
+  activeWizardContext = ctx;
 };
 
-export const createWizardTools = (options: WizardToolOptions): ToolDefinition[] => {
+/** Clear the active wizard context. Called by MessageRouter after routing. */
+export const clearActiveWizardContext = (): void => {
+  activeWizardContext = {};
+};
+
+export type WizardToolOptions = Record<string, never>;
+
+export const createWizardTools = (_options?: WizardToolOptions): ToolDefinition[] => {
   return [
     {
       name: "workflow-wizard",
@@ -65,8 +79,12 @@ export const createWizardTools = (options: WizardToolOptions): ToolDefinition[] 
       handler: async (args) => {
         const input = args as z.infer<typeof wizardSchema>;
 
-        if (!options.requestUserInput) {
-          // Fallback: no interactive UI available (e.g., non-web channel)
+        // Resolve requestUserInput from the active context (set by MessageRouter
+        // before each chat call, analogous to activeChatContext for spawn-agent).
+        const { requestUserInput, sessionId } = activeWizardContext;
+
+        if (!requestUserInput) {
+          // No interactive UI available (non-web channel, or context not set)
           return {
             text: JSON.stringify({
               action: "confirm",
@@ -77,7 +95,7 @@ export const createWizardTools = (options: WizardToolOptions): ToolDefinition[] 
         }
 
         try {
-          const response = await options.requestUserInput(
+          const response = await requestUserInput(
             {
               question: input.question ?? "Does this look right?",
               choices: ["confirm", "edit", "test-run"],
@@ -89,7 +107,7 @@ export const createWizardTools = (options: WizardToolOptions): ToolDefinition[] 
                 config: input.config,
               },
             },
-            options.sessionId ?? "unknown"
+            sessionId ?? "unknown"
           );
 
           return {

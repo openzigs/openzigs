@@ -1,9 +1,17 @@
-import { describe, it, expect, vi } from "vitest";
-import { createWizardTools } from "./wizard-tools.js";
+import { describe, it, expect, vi, afterEach } from "vitest";
+import {
+  createWizardTools,
+  setActiveWizardContext,
+  clearActiveWizardContext,
+} from "./wizard-tools.js";
 
 describe("workflow-wizard tool", () => {
+  afterEach(() => {
+    clearActiveWizardContext();
+  });
+
   it("registers with correct metadata", () => {
-    const tools = createWizardTools({});
+    const tools = createWizardTools();
     expect(tools).toHaveLength(1);
     const tool = tools[0];
     expect(tool.name).toBe("workflow-wizard");
@@ -12,7 +20,7 @@ describe("workflow-wizard tool", () => {
   });
 
   it("auto-confirms when no requestUserInput is available", async () => {
-    const tools = createWizardTools({});
+    const tools = createWizardTools();
     const result = await tools[0].handler({
       type: "prompt",
       name: "daily-summary",
@@ -26,10 +34,11 @@ describe("workflow-wizard tool", () => {
 
   it("forwards preview to requestUserInput and returns the answer", async () => {
     const mockInput = vi.fn().mockResolvedValue({ answer: "edit", wasFreeform: false });
-    const tools = createWizardTools({
+    setActiveWizardContext({
       requestUserInput: mockInput,
       sessionId: "test-session",
     });
+    const tools = createWizardTools();
 
     const result = await tools[0].handler({
       type: "scheduled-job",
@@ -54,7 +63,8 @@ describe("workflow-wizard tool", () => {
 
   it("auto-confirms on timeout", async () => {
     const mockInput = vi.fn().mockRejectedValue(new Error("timeout"));
-    const tools = createWizardTools({ requestUserInput: mockInput, sessionId: "s" });
+    setActiveWizardContext({ requestUserInput: mockInput, sessionId: "s" });
+    const tools = createWizardTools();
 
     const result = await tools[0].handler({
       type: "agent",
@@ -70,7 +80,8 @@ describe("workflow-wizard tool", () => {
 
   it("uses custom question when provided", async () => {
     const mockInput = vi.fn().mockResolvedValue({ answer: "confirm" });
-    const tools = createWizardTools({ requestUserInput: mockInput, sessionId: "s" });
+    setActiveWizardContext({ requestUserInput: mockInput, sessionId: "s" });
+    const tools = createWizardTools();
 
     await tools[0].handler({
       type: "prompt",
