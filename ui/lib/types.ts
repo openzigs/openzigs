@@ -162,3 +162,48 @@ export type ConversationEvent = {
     duration?: number;
   };
 };
+
+/* ── Chat Attachment types (#141) ── */
+
+export type ChatAttachment = {
+  type: "file" | "directory";
+  path: string;
+  name: string;
+};
+
+/* ── Reasoning Effort types (#142) ── */
+
+export type ReasoningEffort = "low" | "medium" | "high" | "xhigh";
+
+export type ProviderInfo = {
+  type: "copilot" | "azure" | "openai" | "anthropic" | "ollama" | "custom";
+  label: string;
+};
+
+/* ── User Input Request types (#143) ── */
+
+export type UserInputRequest = {
+  requestId: string;
+  question: string;
+  choices?: string[];
+  allowFreeform?: boolean;
+  timeout?: number;
+};
+
+export type UserInputResponse = {
+  requestId: string;
+  answer: string;
+  wasFreeform: boolean;
+};
+
+/* ── Session Status types (#144) ── */
+
+export type SessionStatus = {
+  sessionId: string;
+  contextUsage: number;
+  turnCount: number;
+  createdAt: string;
+  isResumed: boolean;
+  compactionActive: boolean;
+  infiniteSessionsEnabled: boolean;
+};

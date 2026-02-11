@@ -129,7 +129,7 @@ The frontend is a **Next.js 14 App Router** application in the `ui/` directory. 
 | Route | Component | Purpose |
 |---|---|---|
 | `/` | `dashboard.tsx` | Snapshot stats, pending approvals, audit log |
-| `/chat` | `chat-view.tsx` | Full chat with streaming, model selector, approval overlay |
+| `/chat` | `chat-view.tsx` | Full chat with streaming, model selector, reasoning effort, file attachments, session context bar, interactive clarification prompts, approval overlay |
 | `/admin` | `admin/page.tsx` | Channel config, personality settings, sidecar management, tool toggles, env status |
 | `/library` | `library/page.tsx` | Saved prompt CRUD with `{{variable}}` template preview and system prompt apply |
 | `/scheduler` | `scheduler/page.tsx` | Cron job CRUD with action types, prompt linking, model overrides, AI assist, live execution events |
@@ -152,7 +152,11 @@ ui/
 │   └── workbench/page.tsx  # Workbench route (MDXEditor + file sidebar)
 ├── components/
 │   ├── nav-bar.tsx         # Sticky top navigation
-│   ├── chat-view.tsx       # Chat with streaming + approvals
+│   ├── chat-view.tsx       # Chat with streaming + approvals + attachments + reasoning
+│   ├── file-attachment.tsx # File attachment button, drop zone, chips (#141)
+│   ├── reasoning-effort-selector.tsx  # Reasoning effort radio + provider badge (#142)
+│   ├── user-input-prompt.tsx  # Interactive clarification prompt cards (#143)
+│   ├── session-context-bar.tsx  # Session context gauge + compaction spinner (#144)
 │   ├── dashboard.tsx       # Stats + approvals + audit log
 │   ├── task-dashboard.tsx  # Background task queue + recursive children
 │   ├── section-card.tsx    # Reusable card wrapper
@@ -1036,6 +1040,7 @@ sequenceDiagram
 ### Implementation Details
 
 - **Web Chat** (`src/channels/web-chat.ts`): Maintains a `pendingInputRequests` map keyed by `requestId`. When a request arrives, it emits a `user_input_request` Socket.IO event and returns a promise that resolves when the client responds with `user_input_response` or the timeout elapses.
+- **Chat View UI** (`ui/components/chat-view.tsx`): Listens for `user_input_request` via Socket.IO and renders an inline `UserInputPrompt` card with choice radio buttons, freeform text input, countdown timeout bar, and state transitions (active → answered / timed-out). Emits `user_input_response` when the user submits an answer.
 - **Message Router** (`src/routing/message-router.ts`): Passes the `onUserInputRequest` handler from the web chat channel through to `copilot.chat()`.
 - **Task Worker** (`src/tasks/task-worker.ts`): Uses a static auto-skip handler: `async () => ({ answer: "", wasFreeform: false })`.
 - **Server** (`src/server.ts`): Wires the web chat's `sendUserInputRequest()` method into the `createRouter()` factory for the web channel, resolving the session's `chatId` from the `SessionManager`.
