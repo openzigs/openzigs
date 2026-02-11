@@ -5,6 +5,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { fetchJson } from "@/lib/api";
 import type { NativeMcpServerDefinition, NativeMcpServerType } from "@/lib/types";
 import { showToast } from "@/components/toast";
+import { ConfirmDialog } from "@/components/confirm-dialog";
 import { Plus, Edit, Trash2, Server, Globe, Radio, X, Eye, EyeOff } from "lucide-react";
 
 type ServersRecord = Record<string, NativeMcpServerDefinition>;
@@ -33,28 +34,51 @@ export const McpEditorPanel = () => {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingName, setEditingName] = useState<string | null>(null);
   const [editingDef, setEditingDef] = useState<NativeMcpServerDefinition | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<string | null>(null);
 
   const servers = query.data?.servers ?? {};
   const entries = Object.entries(servers);
 
-  const saveMutation = useMutation({
-    mutationFn: (payload: ServersRecord) =>
-      fetchJson("/api/admin/native-mcp-servers", {
-        method: "PUT",
-        body: JSON.stringify({ servers: payload }),
+  const createMutation = useMutation({
+    mutationFn: ({ name, def }: { name: string; def: NativeMcpServerDefinition }) =>
+      fetchJson(`/api/admin/native-mcp-servers/${encodeURIComponent(name)}`, {
+        method: "POST",
+        body: JSON.stringify(def),
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["native-mcp-servers"] });
+      showToast("Server added", "success");
+      setDialogOpen(false);
+    },
+    onError: (err) => showToast(`Error: ${err.message}`, "error"),
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: ({ name, def }: { name: string; def: NativeMcpServerDefinition }) =>
+      fetchJson(`/api/admin/native-mcp-servers/${encodeURIComponent(name)}`, {
+        method: "PUT",
+        body: JSON.stringify(def),
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["native-mcp-servers"] });
+      showToast("Server updated", "success");
+      setDialogOpen(false);
+    },
+    onError: (err) => showToast(`Error: ${err.message}`, "error"),
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: (name: string) =>
+      fetchJson(`/api/admin/native-mcp-servers/${encodeURIComponent(name)}`, { method: "DELETE" }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["native-mcp-servers"] });
+      showToast("Server removed", "success");
     },
     onError: (err) => showToast(`Error: ${err.message}`, "error"),
   });
 
   const handleDelete = (name: string) => {
-    if (!confirm(`Remove the "${name}" MCP server? This will disconnect all its tools from the agent.`)) return;
-    const updated = { ...servers };
-    delete updated[name];
-    saveMutation.mutate(updated);
-    showToast(`Server "${name}" removed`, "success");
+    setPendingDelete(name);
   };
 
   const handleEdit = (name: string, def: NativeMcpServerDefinition) => {
@@ -70,15 +94,11 @@ export const McpEditorPanel = () => {
   };
 
   const handleDialogSave = (name: string, def: NativeMcpServerDefinition) => {
-    const updated = { ...servers };
-    // If editing and name changed, remove old entry
-    if (editingName && editingName !== name) {
-      delete updated[editingName];
+    if (editingName) {
+      updateMutation.mutate({ name, def });
+    } else {
+      createMutation.mutate({ name, def });
     }
-    updated[name] = def;
-    saveMutation.mutate(updated);
-    showToast(editingName ? "Server updated" : "Server added", "success");
-    setDialogOpen(false);
   };
 
   if (query.isLoading) {
@@ -123,6 +143,20 @@ export const McpEditorPanel = () => {
           existingNames={Object.keys(servers)}
           onSave={handleDialogSave}
           onClose={() => setDialogOpen(false)}
+        />
+      )}
+
+      {pendingDelete && (
+        <ConfirmDialog
+          title="Remove MCP Server"
+          message={`Remove the "${pendingDelete}" MCP server? This will disconnect all its tools from the agent.`}
+          confirmLabel="Remove"
+          variant="danger"
+          onConfirm={() => {
+            deleteMutation.mutate(pendingDelete);
+            setPendingDelete(null);
+          }}
+          onCancel={() => setPendingDelete(null)}
         />
       )}
     </div>
@@ -356,6 +390,14 @@ const McpServerEditorDialog = ({
   const [headerEntries, setHeaderEntries] = useState<[string, string][]>(
     def && "headers" in def && def.headers ? Object.entries(def.headers) : []
   );
+
+  const updateHeader = (idx: number, field: 0 | 1, value: string) => {
+    const next = [...headerEntries];
+    next[idx] = [...next[idx]] as [string, string];
+    next[idx][field] = value;
+    setHeaderEntries(next);
+  };
+
   const [timeout, setTimeout_] = useState(def?.timeout?.toString() ?? "30000");
   const [errors, setErrors] = useState<string[]>([]);
 
@@ -540,22 +582,14 @@ const McpServerEditorDialog = ({
                       className="w-1/3 rounded-lg border border-border bg-background px-2 py-1.5 font-mono text-[11px] text-foreground"
                       placeholder="Header"
                       value={key}
-                      onChange={(e) => {
-                        const next = [...headerEntries];
-                        next[idx] = [e.target.value, next[idx][1]];
-                        setHeaderEntries(next);
-                      }}
+                      onChange={(e) => updateHeader(idx, 0, e.target.value)}
                     />
                     <input
                       type="text"
                       className="flex-1 rounded-lg border border-border bg-background px-2 py-1.5 font-mono text-[11px] text-foreground"
                       placeholder="Value"
                       value={value}
-                      onChange={(e) => {
-                        const next = [...headerEntries];
-                        next[idx] = [next[idx][0], e.target.value];
-                        setHeaderEntries(next);
-                      }}
+                      onChange={(e) => updateHeader(idx, 1, e.target.value)}
                     />
                     <button
                       type="button"

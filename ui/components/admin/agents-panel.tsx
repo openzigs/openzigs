@@ -5,6 +5,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { fetchJson } from "@/lib/api";
 import type { CustomAgentDefinition, ToolInfo } from "@/lib/types";
 import { showToast } from "@/components/toast";
+import { ConfirmDialog } from "@/components/confirm-dialog";
 import { Plus, Edit, Trash2, Bot, Zap, RotateCw, X } from "lucide-react";
 
 const NAME_REGEX = /^[a-z0-9][a-z0-9-]*$/;
@@ -24,15 +25,32 @@ export const AgentsPanel = () => {
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingAgent, setEditingAgent] = useState<CustomAgentDefinition | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<string | null>(null);
 
-  const saveMutation = useMutation({
-    mutationFn: (payload: { agents: CustomAgentDefinition[] }) =>
+  const createMutation = useMutation({
+    mutationFn: (agent: CustomAgentDefinition) =>
       fetchJson("/api/admin/agents", {
-        method: "PUT",
-        body: JSON.stringify(payload),
+        method: "POST",
+        body: JSON.stringify(agent),
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["agents"] });
+      showToast("Agent created", "success");
+      setDialogOpen(false);
+    },
+    onError: (err) => showToast(`Error: ${err.message}`, "error"),
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: (agent: CustomAgentDefinition) =>
+      fetchJson(`/api/admin/agents/${encodeURIComponent(agent.name)}`, {
+        method: "PUT",
+        body: JSON.stringify(agent),
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["agents"] });
+      showToast("Agent updated", "success");
+      setDialogOpen(false);
     },
     onError: (err) => showToast(`Error: ${err.message}`, "error"),
   });
@@ -48,8 +66,7 @@ export const AgentsPanel = () => {
   });
 
   const handleDelete = (name: string) => {
-    if (!confirm(`Delete agent "${name}"? This action cannot be undone.`)) return;
-    deleteMutation.mutate(name);
+    setPendingDelete(name);
   };
 
   const handleEdit = (agent: CustomAgentDefinition) => {
@@ -63,31 +80,16 @@ export const AgentsPanel = () => {
   };
 
   const handleSave = (agent: CustomAgentDefinition) => {
-    const existingAgents = query.data?.agents ?? [];
-    const isEdit = !!editingAgent;
-    let nextAgents: CustomAgentDefinition[];
-
-    if (isEdit) {
-      // Replace existing agent by name (invariant: name cannot change in edit mode)
-      nextAgents = existingAgents.map((a) => (a.name === agent.name ? agent : a));
+    if (editingAgent) {
+      updateMutation.mutate(agent);
     } else {
-      // Append new agent
-      nextAgents = [...existingAgents, agent];
+      createMutation.mutate(agent);
     }
-
-    saveMutation.mutate(
-      { agents: nextAgents },
-      {
-        onSuccess: () => {
-          showToast(isEdit ? "Agent updated" : "Agent created", "success");
-          setDialogOpen(false);
-        },
-      }
-    );
   };
 
   const agents = query.data?.agents ?? [];
   const allTools = Object.values(toolsQuery.data?.tools ?? {}).flat();
+  const isSaving = createMutation.isPending || updateMutation.isPending;
 
   if (query.isLoading) {
     return <p className="text-sm text-muted-foreground">Loading agents…</p>;
@@ -128,8 +130,22 @@ export const AgentsPanel = () => {
           agent={editingAgent}
           allTools={allTools}
           onSave={handleSave}
-          isSaving={saveMutation.isPending}
+          isSaving={isSaving}
           onClose={() => setDialogOpen(false)}
+        />
+      )}
+
+      {pendingDelete && (
+        <ConfirmDialog
+          title="Delete Agent"
+          message={`Delete agent "${pendingDelete}"? This action cannot be undone.`}
+          confirmLabel="Delete"
+          variant="danger"
+          onConfirm={() => {
+            deleteMutation.mutate(pendingDelete);
+            setPendingDelete(null);
+          }}
+          onCancel={() => setPendingDelete(null)}
         />
       )}
     </div>

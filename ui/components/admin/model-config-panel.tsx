@@ -5,6 +5,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { fetchJson } from "@/lib/api";
 import type { ModelConfig, ReasoningEffort, ProviderType } from "@/lib/types";
 import { showToast } from "@/components/toast";
+import { ConfirmDialog } from "@/components/confirm-dialog";
 import { RotateCw, Key, Eye, EyeOff, CheckCircle, XCircle, Cloud, Trash2 } from "lucide-react";
 
 const EFFORT_LEVELS: { value: ReasoningEffort; label: string; dots: number }[] = [
@@ -48,6 +49,7 @@ export const ModelConfigPanel = () => {
   const [azureApiVersion, setAzureApiVersion] = useState("2024-10-21");
   const [showKey, setShowKey] = useState(false);
   const [connectionResult, setConnectionResult] = useState<{ success: boolean; message: string } | null>(null);
+  const [showClearConfirm, setShowClearConfirm] = useState(false);
 
   useEffect(() => {
     if (config) {
@@ -134,7 +136,11 @@ export const ModelConfigPanel = () => {
   };
 
   const handleClearProvider = () => {
-    if (!confirm("Clear provider configuration? This will disable BYOK and use the default Copilot provider.")) return;
+    setShowClearConfirm(true);
+  };
+
+  const confirmClearProvider = () => {
+    setShowClearConfirm(false);
     setByokEnabled(false);
     setProviderType("openai");
     setBaseUrl("");
@@ -363,6 +369,17 @@ export const ModelConfigPanel = () => {
           )}
         </button>
       </div>
+
+      {showClearConfirm && (
+        <ConfirmDialog
+          title="Clear Provider"
+          message="Clear provider configuration? This will disable BYOK and use the default Copilot provider."
+          confirmLabel="Clear"
+          variant="danger"
+          onConfirm={confirmClearProvider}
+          onCancel={() => setShowClearConfirm(false)}
+        />
+      )}
     </div>
   );
 };
