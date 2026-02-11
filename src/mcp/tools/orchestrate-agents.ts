@@ -12,6 +12,8 @@ const orchestrateAgentsSchema = z.object({
       z.object({
         goal: z.string().describe("What this agent should accomplish"),
         context: z.string().optional().describe("Additional context or instructions"),
+        model: z.string().optional().describe("Model override for this specific agent (e.g., 'gpt-4.1', 'claude-sonnet-4')"),
+        auto_approve_tools: z.array(z.string()).optional().describe("Tools that bypass approval gating for this agent"),
       })
     )
     .min(1)
@@ -163,6 +165,12 @@ export const createOrchestrateAgentsTools = ({
               properties: {
                 goal: { type: "string", description: "What this agent should accomplish" },
                 context: { type: "string", description: "Additional context or instructions" },
+                model: { type: "string", description: "Model override for this specific agent" },
+                auto_approve_tools: {
+                  type: "array",
+                  items: { type: "string" },
+                  description: "Tools that bypass approval gating for this agent",
+                },
               },
               required: ["goal"],
             },
@@ -225,6 +233,8 @@ export const createOrchestrateAgentsTools = ({
                 trigger: "agent",
                 goal: agent.goal,
                 context: agent.context,
+                model: agent.model,
+                autoApproveTools: agent.auto_approve_tools,
                 notifyOnComplete: false, // Orchestrator handles notification
                 parentTaskId: orchestrationTask.id,
                 sessionId,

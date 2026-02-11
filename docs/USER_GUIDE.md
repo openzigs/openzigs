@@ -254,7 +254,25 @@ The scheduler at `/scheduler` manages cron-based automated jobs:
 - **AI Scheduler Assistant** — describe the schedule in plain English and auto-fill fields (uses `gpt-5-mini`).
 - **Cron preview** — visual breakdown of minute, hour, day, month, weekday fields.
 - **Enable/disable** individual jobs with toggle switches.
+- **Run Now** — trigger any job immediately with the ▶ Run button, bypassing the cron schedule.
+- **Auto-Approve Tools** — specify a comma-separated list of tool names that will bypass approval gating when this job runs. Useful for fully autonomous scheduled workflows (e.g., a nightly report that needs `shell-execute` and `write-file` without human confirmation).
 - **Live execution events** via Socket.IO — see when jobs fire in real time.
+
+#### Multi-Model Agent Chaining
+
+When using the `orchestrate-agents` tool (available to prompt-type jobs), you can assign **different models to each sub-agent** in the orchestration. For example, use `gpt-4o-mini` for cheap read-only analysis and `gpt-4.1` for complex code generation — all within a single scheduled job.
+
+Each agent in the `orchestrate-agents` array accepts an optional `model` field and `auto_approve_tools` array, giving you fine-grained control over cost, capability, and autonomy per sub-agent.
+
+#### Per-Run Approval Overrides
+
+Approval overrides let specific tools run without human confirmation during scheduled or agent-spawned tasks. This is critical for **autonomous workflows** where no human is present to approve.
+
+**How it works:**
+1. Set `autoApproveTools` on a scheduled job or pass `auto_approve_tools` when spawning/orchestrating agents.
+2. When the task executes and invokes a listed tool, the hooks layer skips the approval queue and immediately allows execution.
+3. An audit log entry (`tool_auto_approved`) is recorded for every auto-approved invocation.
+4. Tools **not** in the auto-approve list still follow normal approval gating.
 
 ### Workbench (Project Editor)
 

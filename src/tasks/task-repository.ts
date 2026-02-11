@@ -18,6 +18,7 @@ export const toTask = (row: StoredTask): AgentTask => ({
   chatId: row.chat_id,
   model: row.model,
   allowedTools: row.allowed_tools ? (JSON.parse(row.allowed_tools) as string[]) : null,
+  autoApproveTools: row.auto_approve_tools ? (JSON.parse(row.auto_approve_tools) as string[]) : null,
   notifyOnComplete: row.notify_on_complete === 1,
   depth: row.depth,
   createdAt: new Date(row.created_at),
@@ -78,6 +79,11 @@ export class TaskRepository {
     const columns = this.db.pragma("table_info(agent_tasks)") as Array<{ name: string }>;
     if (!columns.some((c) => c.name === "allowed_tools")) {
       this.db.exec("ALTER TABLE agent_tasks ADD COLUMN allowed_tools TEXT DEFAULT NULL");
+    }
+
+    // Add 'auto_approve_tools' column if missing — tools that bypass approval gating
+    if (!columns.some((c) => c.name === "auto_approve_tools")) {
+      this.db.exec("ALTER TABLE agent_tasks ADD COLUMN auto_approve_tools TEXT DEFAULT NULL");
     }
 
     // ── Backfill: link orphaned agent tasks to their parent ──
@@ -143,9 +149,9 @@ export class TaskRepository {
       .prepare(
         `INSERT INTO agent_tasks
           (id, parent_task_id, trigger, status, goal, context,
-           session_id, channel_type, chat_id, model, allowed_tools,
+           session_id, channel_type, chat_id, model, allowed_tools, auto_approve_tools,
            notify_on_complete, depth, created_at, spawned_by)
-         VALUES (?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         VALUES (?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         id,
@@ -158,6 +164,7 @@ export class TaskRepository {
         input.chatId ?? null,
         input.model ?? null,
         input.allowedTools ? JSON.stringify(input.allowedTools) : null,
+        input.autoApproveTools ? JSON.stringify(input.autoApproveTools) : null,
         input.notifyOnComplete ? 1 : 0,
         depth,
         now,

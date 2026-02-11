@@ -498,12 +498,32 @@ Append-only session storage used for user↔session mapping, admin views, and au
 
 When a tool with `riskLevel: "high"` is invoked, the SDK's `onPreToolUse` hook (wired via `src/copilot/hooks.ts`) intercepts the call:
 
-1. The hook checks the tool's risk level via `ToolRegistry`.
-2. For 🔴 high-risk tools, it calls `ApprovalQueue.requestApproval()`.
-3. An `approval:created` event is emitted.
-4. Every connected channel (Web Chat, Telegram, Discord) presents an approve/deny prompt.
-5. **First response wins** — the hook returns `"allow"` or `"deny"` to the SDK, which either executes or skips the tool.
-6. The decision is audit-logged via the `onPostToolUse` hook.
+1. The hook first checks the **per-task auto-approve list** (`activeAutoApproveTools`). If the tool is listed, it returns `"allow"` immediately, logs an audit entry (`tool_auto_approved`), and skips the approval queue entirely.
+2. Otherwise, the hook checks the tool's risk level via `ToolRegistry`.
+3. For 🔴 high-risk tools, it calls `ApprovalQueue.requestApproval()`.
+4. An `approval:created` event is emitted.
+5. Every connected channel (Web Chat, Telegram, Discord) presents an approve/deny prompt.
+6. **First response wins** — the hook returns `"allow"` or `"deny"` to the SDK, which either executes or skips the tool.
+7. The decision is audit-logged via the `onPostToolUse` hook.
+
+#### Per-Task Auto-Approve Overrides
+
+The approval override system uses a **thread-local context pattern** (same pattern as `setActiveChatContext` / `setActiveOrchestrateContext`):
+
+- `setActiveAutoApproveTools(tools)` — set before task execution in `TaskWorker.executeTask()`
+- `clearActiveAutoApproveTools()` — cleared in the `finally` block after execution
+- The `onPreToolUse` hook reads the active list and bypasses approval for matching tool names
+
+This enables fully autonomous scheduled workflows where specific tools (e.g., `shell-execute`, `write-file`) can run without human confirmation while unspecified tools still require approval.
+
+**Data flow:**
+```
+ScheduledJob.autoApproveTools → TaskEngine.submit({ autoApproveTools })
+  → AgentTask.autoApproveTools → TaskWorker.executeTask()
+    → setActiveAutoApproveTools(task.autoApproveTools)
+      → copilot.chat() → onPreToolUse hook checks activeAutoApproveTools
+    → clearActiveAutoApproveTools() (finally)
+```
 
 ### Social Formatter (`src/channels/social-formatter.ts`)
 
@@ -1264,6 +1284,18 @@ CREATE INDEX IF NOT EXISTS idx_tasks_parent ON agent_tasks(parent_task_id);
 | `GET` | `/api/tasks/:id/children` | List direct child tasks |
 | `GET` | `/api/tasks/stats` | Aggregate counts by status |
 
+#### Scheduler API
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/admin/jobs` | List all scheduled jobs |
+| `GET` | `/api/admin/jobs/:id` | Get a single job by ID |
+| `POST` | `/api/admin/jobs` | Create a new scheduled job |
+| `PUT` | `/api/admin/jobs/:id` | Update job (name, cron, payload, model, allowedTools, autoApproveTools, enabled) |
+| `POST` | `/api/admin/jobs/:id/toggle` | Enable or disable a job |
+| `DELETE` | `/api/admin/jobs/:id` | Delete a job |
+| `POST` | `/api/admin/jobs/:id/run` | Trigger immediate execution (Run Now) |
+
 ### Events
 
 **TaskEngine EventEmitter** (internal):
@@ -1317,7 +1349,7 @@ flowchart TB
 
 #### How It Works
 
-1. **Fan-Out:** The handler calls `taskEngine.submit()` for each agent definition, creating background `AgentTask` entries with `notifyOnComplete: false` (the orchestrator handles notification).
+1. **Fan-Out:** The handler calls `taskEngine.submit()` for each agent definition, creating background `AgentTask` entries with `notifyOnComplete: false` (the orchestrator handles notification). Each agent can specify a `model` override and `auto_approve_tools` list for per-agent control over capability and autonomy.
 
 2. **Fan-In:** For each submitted task, a `waitForTask()` promise attaches listeners to the `TaskEngine` EventEmitter for `task:completed`, `task:failed`, and `task:cancelled`. All promises are awaited via `Promise.allSettled()` — partial failures do not abort the entire orchestration.
 

@@ -1,5 +1,5 @@
-import { describe, expect, it, vi } from "vitest";
-import { createHooksConfig } from "./hooks.js";
+import { describe, expect, it, vi, afterEach } from "vitest";
+import { createHooksConfig, runWithAutoApproveContext } from "./hooks.js";
 
 const silentLog = {
   info: vi.fn(),
@@ -8,6 +8,10 @@ const silentLog = {
 };
 
 describe("createHooksConfig", () => {
+  afterEach(() => {
+    // AsyncLocalStorage cleans up automatically per-run; nothing to clear
+  });
+
   it("onPreToolUse allows tools that do not require approval", async () => {
     const toolRegistry = {
       requiresApproval: vi.fn().mockReturnValue(false),
@@ -216,5 +220,91 @@ describe("createHooksConfig", () => {
     });
 
     expect(result).toEqual({ errorHandling: "abort" });
+  });
+
+  it("onPreToolUse auto-approves tools in activeAutoApproveTools list", async () => {
+    const toolRegistry = {
+      requiresApproval: vi.fn().mockReturnValue(true),
+    };
+    const approvalQueue = {
+      requestApproval: vi.fn(),
+    };
+    const hooks = createHooksConfig({
+      toolRegistry: toolRegistry as unknown as import("../mcp/tool-registry.js").ToolRegistry,
+      approvalQueue: approvalQueue as unknown as import("../approvals/index.js").ApprovalQueue,
+      log: silentLog,
+    });
+
+    // Set auto-approve override for shell-execute
+    const result = await runWithAutoApproveContext(["shell-execute", "file-write"], () =>
+      hooks.onPreToolUse!({
+        toolName: "shell-execute",
+        toolArgs: { command: "echo hello" },
+        context: { sessionId: "test-session" },
+      })
+    );
+
+    expect(result.permissionDecision).toBe("allow");
+    // Should NOT have gone through approval queue
+    expect(approvalQueue.requestApproval).not.toHaveBeenCalled();
+    expect(silentLog.info).toHaveBeenCalledWith(
+      expect.stringContaining("Auto-approved")
+    );
+  });
+
+  it("onPreToolUse still gates tools NOT in activeAutoApproveTools list", async () => {
+    const toolRegistry = {
+      requiresApproval: vi.fn().mockReturnValue(true),
+    };
+    const approvalQueue = {
+      requestApproval: vi.fn().mockResolvedValue({
+        approved: false,
+        status: "rejected",
+      }),
+    };
+    const hooks = createHooksConfig({
+      toolRegistry: toolRegistry as unknown as import("../mcp/tool-registry.js").ToolRegistry,
+      approvalQueue: approvalQueue as unknown as import("../approvals/index.js").ApprovalQueue,
+      log: silentLog,
+    });
+
+    // Auto-approve only file-write — shell-execute should still gate
+    const result = await runWithAutoApproveContext(["file-write"], () =>
+      hooks.onPreToolUse!({
+        toolName: "shell-execute",
+        toolArgs: { command: "rm -rf /" },
+        context: { sessionId: "test-session" },
+      })
+    );
+
+    expect(result.permissionDecision).toBe("deny");
+    expect(approvalQueue.requestApproval).toHaveBeenCalled();
+  });
+
+  it("onPreToolUse auto-approve logs to audit logger", async () => {
+    const auditLogger = {
+      log: vi.fn().mockResolvedValue({ id: "entry-1" }),
+    };
+    const hooks = createHooksConfig({
+      auditLogger: auditLogger as unknown as import("../logging/audit-logger.js").AuditLogger,
+      log: silentLog,
+    });
+
+    await runWithAutoApproveContext(["shell-execute"], () =>
+      hooks.onPreToolUse!({
+        toolName: "shell-execute",
+        toolArgs: { command: "echo hi" },
+        context: { sessionId: "s-1" },
+      })
+    );
+
+    expect(auditLogger.log).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: "tool_auto_approved",
+        details: expect.objectContaining({
+          toolName: "shell-execute",
+        }),
+      })
+    );
   });
 });

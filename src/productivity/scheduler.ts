@@ -17,6 +17,8 @@ export type ScheduledJob = {
   model: string | null;
   /** Optional list of tool names this job is allowed to use. null = all enabled tools. */
   allowedTools: string[] | null;
+  /** Tools that bypass approval gating when this job runs. null = normal approval flow. */
+  autoApproveTools: string[] | null;
   enabled: boolean;
   lastRunAt: Date | null;
   nextRunAt: Date | null;
@@ -34,6 +36,8 @@ export type CreateJobInput = {
   model?: string;
   /** Optional list of tool names this job is allowed to use. */
   allowedTools?: string[];
+  /** Tools that bypass approval gating for this job. */
+  autoApproveTools?: string[];
   enabled?: boolean;
 };
 
@@ -45,6 +49,8 @@ export type UpdateJobInput = {
   model?: string | null;
   /** Set to an array to restrict tools, or null to clear restriction. */
   allowedTools?: string[] | null;
+  /** Set to an array to auto-approve tools, or null to clear. */
+  autoApproveTools?: string[] | null;
   enabled?: boolean;
 };
 
@@ -57,6 +63,7 @@ type StoredJob = {
   action_payload: string;
   model: string | null;
   allowed_tools: string | null;
+  auto_approve_tools: string | null;
   enabled: number;
   last_run_at: string | null;
   next_run_at: string | null;
@@ -92,6 +99,7 @@ const toJob = (row: StoredJob): ScheduledJob => ({
   actionPayload: JSON.parse(row.action_payload) as Record<string, unknown>,
   model: row.model ?? null,
   allowedTools: row.allowed_tools ? (JSON.parse(row.allowed_tools) as string[]) : null,
+  autoApproveTools: row.auto_approve_tools ? (JSON.parse(row.auto_approve_tools) as string[]) : null,
   enabled: row.enabled === 1,
   lastRunAt: row.last_run_at ? new Date(row.last_run_at) : null,
   nextRunAt: row.next_run_at ? new Date(row.next_run_at) : null,
@@ -138,6 +146,11 @@ export class Scheduler extends EventEmitter {
     if (!columns.some((c) => c.name === "allowed_tools")) {
       this.db.exec("ALTER TABLE scheduled_jobs ADD COLUMN allowed_tools TEXT DEFAULT NULL");
     }
+
+    // Add 'auto_approve_tools' column — tools that bypass approval gating
+    if (!columns.some((c) => c.name === "auto_approve_tools")) {
+      this.db.exec("ALTER TABLE scheduled_jobs ADD COLUMN auto_approve_tools TEXT DEFAULT NULL");
+    }
   }
 
   /** Create a new scheduled job and optionally start it. */
@@ -153,8 +166,8 @@ export class Scheduler extends EventEmitter {
     this.db
       .prepare(
         `INSERT INTO scheduled_jobs
-          (id, name, cron_expression, timezone, action_type, action_payload, model, allowed_tools, enabled, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          (id, name, cron_expression, timezone, action_type, action_payload, model, allowed_tools, auto_approve_tools, enabled, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         id,
@@ -165,6 +178,7 @@ export class Scheduler extends EventEmitter {
         JSON.stringify(input.actionPayload),
         input.model ?? null,
         input.allowedTools ? JSON.stringify(input.allowedTools) : null,
+        input.autoApproveTools ? JSON.stringify(input.autoApproveTools) : null,
         enabled ? 1 : 0,
         now,
         now
@@ -210,15 +224,18 @@ export class Scheduler extends EventEmitter {
     const allowedTools = input.allowedTools !== undefined
       ? (input.allowedTools ? JSON.stringify(input.allowedTools) : null)
       : (existing.allowedTools ? JSON.stringify(existing.allowedTools) : null);
+    const autoApproveTools = input.autoApproveTools !== undefined
+      ? (input.autoApproveTools ? JSON.stringify(input.autoApproveTools) : null)
+      : (existing.autoApproveTools ? JSON.stringify(existing.autoApproveTools) : null);
     const enabled = input.enabled ?? existing.enabled;
 
     this.db
       .prepare(
         `UPDATE scheduled_jobs
-         SET name = ?, cron_expression = ?, timezone = ?, action_payload = ?, model = ?, allowed_tools = ?, enabled = ?, updated_at = ?
+         SET name = ?, cron_expression = ?, timezone = ?, action_payload = ?, model = ?, allowed_tools = ?, auto_approve_tools = ?, enabled = ?, updated_at = ?
          WHERE id = ?`
       )
-      .run(name, cronExpression, timezone, actionPayload, model, allowedTools, enabled ? 1 : 0, now, id);
+      .run(name, cronExpression, timezone, actionPayload, model, allowedTools, autoApproveTools, enabled ? 1 : 0, now, id);
 
     // Restart the cron task if expression or timezone changed
     this.stopTask(id);
@@ -286,7 +303,7 @@ export class Scheduler extends EventEmitter {
     }
   }
 
-  private async executeJob(jobId: string): Promise<void> {
+  async executeJob(jobId: string): Promise<void> {
     const job = this.getById(jobId);
     if (!job || !job.enabled) {
       return;
@@ -310,6 +327,7 @@ export class Scheduler extends EventEmitter {
             context,
             model: job.model ?? undefined,
             allowedTools: job.allowedTools ?? undefined,
+            autoApproveTools: job.autoApproveTools ?? undefined,
             notifyOnComplete: true,
           },
           { mode: "background" }

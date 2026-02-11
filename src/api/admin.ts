@@ -811,6 +811,7 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
           actionPayload: (body.actionPayload ?? {}) as Record<string, unknown>,
           model: typeof body.model === "string" ? body.model : undefined,
           allowedTools: Array.isArray(body.allowedTools) ? (body.allowedTools as string[]) : undefined,
+          autoApproveTools: Array.isArray(body.autoApproveTools) ? (body.autoApproveTools as string[]) : undefined,
           enabled: typeof body.enabled === "boolean" ? body.enabled : undefined,
         });
         return res.status(201).json(job);
@@ -830,6 +831,7 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
           actionPayload: body.actionPayload as Record<string, unknown> | undefined,
           model: typeof body.model === "string" ? body.model : (body.model === null ? null : undefined),
           allowedTools: Array.isArray(body.allowedTools) ? (body.allowedTools as string[]) : (body.allowedTools === null ? null : undefined),
+          autoApproveTools: Array.isArray(body.autoApproveTools) ? (body.autoApproveTools as string[]) : (body.autoApproveTools === null ? null : undefined),
           enabled: typeof body.enabled === "boolean" ? body.enabled : undefined,
         });
         return res.json(updated);
@@ -859,6 +861,23 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
       return deleted
         ? res.json({ ok: true })
         : res.status(404).json({ error: "Job not found" });
+    });
+
+    router.post("/jobs/:id/run", async (req, res) => {
+      const job = scheduler.getById(req.params.id);
+      if (!job) {
+        return res.status(404).json({ error: "Job not found" });
+      }
+      if (!job.enabled) {
+        return res.status(400).json({ error: "Job is disabled and cannot be run." });
+      }
+      try {
+        await scheduler.executeJob(job.id);
+        return res.json({ ok: true, jobId: job.id, jobName: job.name });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return res.status(500).json({ error: message });
+      }
     });
   }
 

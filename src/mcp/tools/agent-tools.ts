@@ -8,6 +8,7 @@ const spawnAgentSchema = z.object({
   context: z.string().optional().describe("Additional context or data for the sub-agent"),
   notify_user: z.boolean().optional().describe("Whether to notify the user when the task completes (default: true)"),
   model: z.string().optional().describe("Model override for the sub-agent (e.g., 'gpt-4.1', 'claude-sonnet-4')"),
+  auto_approve_tools: z.array(z.string()).optional().describe("Tools that bypass approval gating for this sub-agent"),
   // Internal fields for recursive chaining — injected by TaskWorker's onToolCall, not set by the LLM.
   parentTaskId: z.string().optional(),
   sessionId: z.string().optional(),
@@ -69,6 +70,11 @@ export const createAgentTools = ({ taskEngine }: AgentToolsOptions): ToolDefinit
           context: { type: "string", description: "Additional context or data for the sub-agent" },
           notify_user: { type: "boolean", description: "Whether to notify the user when complete (default: true)" },
           model: { type: "string", description: "Model override for the sub-agent" },
+          auto_approve_tools: {
+            type: "array",
+            items: { type: "string" },
+            description: "Tools that bypass approval gating for this sub-agent",
+          },
         },
         required: ["goal"],
       },
@@ -92,6 +98,7 @@ export const createAgentTools = ({ taskEngine }: AgentToolsOptions): ToolDefinit
               context: input.context,
               notifyOnComplete: input.notify_user ?? true,
               model: input.model,
+              autoApproveTools: input.auto_approve_tools,
               parentTaskId: input.parentTaskId ?? activeChatContext.parentTaskId,
               sessionId,
               channelType,

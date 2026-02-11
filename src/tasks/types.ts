@@ -19,6 +19,8 @@ export type AgentTask = {
   model: string | null;
   /** Optional tool allowlist. null = all enabled tools. */
   allowedTools: string[] | null;
+  /** Tools that bypass normal approval gating for this task. null = no overrides. */
+  autoApproveTools: string[] | null;
   notifyOnComplete: boolean;
   depth: number;
   createdAt: Date;
@@ -38,6 +40,8 @@ export type CreateTaskInput = {
   model?: string;
   /** Optional tool allowlist for this task. */
   allowedTools?: string[];
+  /** Tools that bypass normal approval gating for this task. */
+  autoApproveTools?: string[];
   notifyOnComplete?: boolean;
   spawnedBy?: string;
 };
@@ -57,6 +61,7 @@ export type StoredTask = {
   chat_id: string | null;
   model: string | null;
   allowed_tools: string | null;
+  auto_approve_tools: string | null;
   notify_on_complete: number;
   depth: number;
   created_at: string;

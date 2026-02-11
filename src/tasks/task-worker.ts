@@ -3,6 +3,7 @@ import type { TaskEngine } from "./task-engine.js";
 import type { CopilotWrapper } from "../copilot/copilot-wrapper.js";
 import type { AgentTask } from "./types.js";
 import { ALWAYS_ON_TOOLS } from "../mcp/constants.js";
+import { runWithAutoApproveContext } from "../copilot/hooks.js";
 import { logger } from "../logging/logger.js";
 
 export type TaskWorkerOptions = {
@@ -133,24 +134,27 @@ export class TaskWorker extends EventEmitter {
 
       let result = "";
 
-      for await (const chunk of this.copilot.chat(prompt, {
-        model: task.model ?? undefined,
-        availableTools,
-        onToolCall: (toolName, args) => {
-          if (toolName === "spawn-agent" || toolName === "orchestrate-agents") {
-            // Inject parent task ID, session, and channel info for recursive chaining.
-            const a = args as Record<string, unknown>;
-            a.parentTaskId = task.id;
-            a.sessionId = task.sessionId;
-            a.channelType = task.channelType;
-            a.chatId = task.chatId;
-          }
-        },
-        // Background tasks auto-skip interactive clarifications with an empty answer.
-        onUserInputRequest: async () => ({ answer: "", wasFreeform: false }),
-      })) {
-        result += chunk;
-      }
+      // Use AsyncLocalStorage to create an isolated context for this task execution.
+      await runWithAutoApproveContext(task.autoApproveTools, async () => {
+        for await (const chunk of this.copilot.chat(prompt, {
+          model: task.model ?? undefined,
+          availableTools,
+          onToolCall: (toolName, args) => {
+            if (toolName === "spawn-agent" || toolName === "orchestrate-agents") {
+              // Inject parent task ID, session, and channel info for recursive chaining.
+              const a = args as Record<string, unknown>;
+              a.parentTaskId = task.id;
+              a.sessionId = task.sessionId;
+              a.channelType = task.channelType;
+              a.chatId = task.chatId;
+            }
+          },
+          // Background tasks auto-skip interactive clarifications with an empty answer.
+          onUserInputRequest: async () => ({ answer: "", wasFreeform: false }),
+        })) {
+          result += chunk;
+        }
+      });
 
       const completed = this.engine.complete(task.id, result);
       this.log.info(`TaskWorker completed task ${task.id}`);

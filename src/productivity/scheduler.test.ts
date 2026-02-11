@@ -203,9 +203,8 @@ describe("Scheduler", () => {
       actionPayload: {},
     });
 
-    // Manually trigger via internal method (simulate cron fire)
-    // We access the private method via type assertion for testing
-    await (executingScheduler as unknown as { executeJob: (id: string) => Promise<void> }).executeJob(job.id);
+    // Manually trigger execution (method is now public for Run Now support)
+    await executingScheduler.executeJob(job.id);
 
     expect(handler).toHaveBeenCalledOnce();
     expect(handler.mock.calls[0][0]).toMatchObject({
@@ -216,5 +215,95 @@ describe("Scheduler", () => {
     });
 
     executingScheduler.stopAll();
+  });
+
+  it("executeJob updates runCount and lastRunAt", async () => {
+    const executingScheduler = new Scheduler({
+      db,
+      clock: () => fixedNow,
+      auditLogDir: "/tmp/openzigs-test-audit",
+      onExecute: async () => "ok",
+    });
+
+    const job = executingScheduler.create({
+      name: "run-now-test",
+      cronExpression: "0 0 * * *",
+      actionPayload: {},
+    });
+
+    expect(job.runCount).toBe(0);
+    expect(job.lastRunAt).toBeNull();
+
+    await executingScheduler.executeJob(job.id);
+
+    const updated = executingScheduler.getById(job.id)!;
+    expect(updated.runCount).toBe(1);
+    expect(updated.lastRunAt).toEqual(fixedNow);
+
+    executingScheduler.stopAll();
+  });
+
+  it("executeJob skips disabled jobs", async () => {
+    const handler = vi.fn();
+    const executingScheduler = new Scheduler({
+      db,
+      clock: () => fixedNow,
+      auditLogDir: "/tmp/openzigs-test-audit",
+      onExecute: async () => "done",
+    });
+
+    executingScheduler.on("job:executed", handler);
+
+    const job = executingScheduler.create({
+      name: "disabled-run",
+      cronExpression: "0 0 * * *",
+      actionPayload: {},
+      enabled: false,
+    });
+
+    await executingScheduler.executeJob(job.id);
+
+    // Should not emit — job is disabled
+    expect(handler).not.toHaveBeenCalled();
+
+    executingScheduler.stopAll();
+  });
+
+  it("stores and retrieves autoApproveTools on a job", () => {
+    const job = scheduler.create({
+      name: "auto-approve-job",
+      cronExpression: "0 9 * * *",
+      actionPayload: { promptName: "test" },
+      autoApproveTools: ["shell-execute", "file-write"],
+    });
+
+    expect(job.autoApproveTools).toEqual(["shell-execute", "file-write"]);
+
+    const fetched = scheduler.getById(job.id)!;
+    expect(fetched.autoApproveTools).toEqual(["shell-execute", "file-write"]);
+  });
+
+  it("update can clear autoApproveTools with null", () => {
+    const job = scheduler.create({
+      name: "clear-approve",
+      cronExpression: "0 9 * * *",
+      actionPayload: {},
+      autoApproveTools: ["shell-execute"],
+    });
+
+    expect(job.autoApproveTools).toEqual(["shell-execute"]);
+
+    const updated = scheduler.update(job.id, { autoApproveTools: null });
+    expect(updated.autoApproveTools).toBeNull();
+  });
+
+  it("job defaults autoApproveTools to null when not provided", () => {
+    const job = scheduler.create({
+      name: "no-approve",
+      cronExpression: "0 9 * * *",
+      actionPayload: {},
+    });
+
+    expect(job.autoApproveTools).toBeNull();
   });
 });

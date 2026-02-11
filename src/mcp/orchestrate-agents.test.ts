@@ -294,6 +294,51 @@ describe("orchestrate-agents tool", () => {
     expect(prompt).toContain("Focus on AI coding assistants");
   }, 15_000);
 
+  it("passes per-agent model overrides to spawned tasks", async () => {
+    const mockCopilot = createMockCopilot(["done"]);
+
+    worker = new TaskWorker({
+      engine,
+      copilot: mockCopilot,
+      maxConcurrent: 3,
+      pollIntervalMs: 50,
+      log: silentLog,
+    });
+    worker.start();
+
+    const tools = createOrchestrateAgentsTools({ taskEngine: engine, copilot: mockCopilot });
+    const orchestrateTool = tools[0];
+
+    const result = await orchestrateTool.handler({
+      agents: [
+        { goal: "Fast analysis", model: "gpt-4.1-mini" },
+        { goal: "Deep analysis", model: "claude-sonnet-4" },
+        { goal: "Default analysis" },
+      ],
+      timeout_seconds: 30,
+    });
+
+    expect(result.isError).toBeUndefined();
+    const parsed = JSON.parse(result.text);
+    expect(parsed.metadata.completed).toBe(3);
+
+    // Verify models were passed through to the tasks
+    const allTasks = engine.listTasks({});
+    const orchParent = allTasks.find((t) => t.goal.startsWith("Orchestrate 3 agents"));
+    expect(orchParent).toBeDefined();
+
+    const children = engine.getChildren(orchParent!.id);
+    expect(children.length).toBe(3);
+
+    const fastTask = children.find((t) => t.goal === "Fast analysis");
+    const deepTask = children.find((t) => t.goal === "Deep analysis");
+    const defaultTask = children.find((t) => t.goal === "Default analysis");
+
+    expect(fastTask!.model).toBe("gpt-4.1-mini");
+    expect(deepTask!.model).toBe("claude-sonnet-4");
+    expect(defaultTask!.model).toBeNull();
+  }, 15_000);
+
   it("creates correct tree hierarchy: chat → orchestrator → sub-agents", async () => {
     const mockCopilot = createMockCopilot(["agent done"]);
 
