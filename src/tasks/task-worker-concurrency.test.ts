@@ -25,6 +25,9 @@ const createMockCopilot = () => ({
   onToolCall: vi.fn(),
   setMaxToolsPerRequest: vi.fn(),
   getMaxToolsPerRequest: vi.fn().mockReturnValue(30),
+  destroySession: vi.fn().mockResolvedValue(undefined),
+  hasSession: vi.fn().mockReturnValue(false),
+  clearAllSessions: vi.fn().mockResolvedValue(undefined),
   chat: vi.fn().mockImplementation(async function* () {
     yield "ok";
   }),

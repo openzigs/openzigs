@@ -112,6 +112,9 @@ export type LocalServerDefinition = {
   runtime: string;
   command: string;
   args: string[];
+  category: string;
+  requiresCredentials: boolean;
+  requiredEnvVars?: string[];
 };
 
 export type LocalServerStatus = {

@@ -86,10 +86,17 @@ export type TasksConfig = {
   maxConcurrent: number;
 };
 
+export type InfiniteSessionConfig = {
+  enabled?: boolean;
+  backgroundCompactionThreshold?: number;
+  bufferExhaustionThreshold?: number;
+};
+
 export type SessionConfig = {
   historyWindow: number;
   maxToolsPerRequest: number;
   dynamicToolLoading: boolean;
+  infiniteSessions?: InfiniteSessionConfig;
 };
 
 export type AppConfig = {
@@ -191,10 +198,17 @@ const tasksSchema = z.object({
   maxConcurrent: z.number().int().min(1).max(10).default(2),
 }).optional();
 
+const infiniteSessionsSchema = z.object({
+  enabled: z.boolean().default(true),
+  backgroundCompactionThreshold: z.number().min(0).max(1).default(0.80),
+  bufferExhaustionThreshold: z.number().min(0).max(1).default(0.95),
+}).optional();
+
 const sessionSchema = z.object({
   historyWindow: z.number().int().min(1).default(20),
   maxToolsPerRequest: z.number().int().min(1).max(128).default(30),
   dynamicToolLoading: z.boolean().default(false),
+  infiniteSessions: infiniteSessionsSchema,
 }).optional();
 
 const appConfigSchema = z.object({

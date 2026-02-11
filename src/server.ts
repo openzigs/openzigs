@@ -166,6 +166,7 @@ const sessionManager = new SessionManager();
 const copilot = new CopilotWrapperService({
   toolRegistry,
   maxToolsPerRequest: config.session?.maxToolsPerRequest ?? 30,
+  infiniteSessions: config.session?.infiniteSessions,
 });
 
 registerMcpTools(toolRegistry, {

@@ -231,8 +231,8 @@ describe("LocalMcpServerManager", () => {
       expect(cal!.requiredEnvVars).toContain("GOOGLE_OAUTH_CREDENTIALS");
     });
 
-    it("has exactly 2 default definitions", () => {
-      expect(DEFAULT_LOCAL_SERVER_DEFINITIONS).toHaveLength(2);
+    it("has exactly 3 default definitions", () => {
+      expect(DEFAULT_LOCAL_SERVER_DEFINITIONS).toHaveLength(3);
     });
   });
 
