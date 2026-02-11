@@ -6,7 +6,7 @@ import { useSocket } from "@/lib/socket-context";
 import { fetchJson } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import { ToastContainer } from "@/components/toast";
+import { ToastContainer, showToast } from "@/components/toast";
 import {
   Select,
   SelectContent,
@@ -25,7 +25,20 @@ import {
 import { Send, Loader2, Bot, User, AlertCircle, Trash2 } from "lucide-react";
 import { ChatMarkdown } from "@/components/chat-markdown";
 import { SmartTextarea } from "@/components/smart-textarea";
-import type { ModelInfo, ToolInfo, SavedPrompt } from "@/lib/types";
+import { FileAttachmentButton, FileDropZone, AttachmentBar } from "@/components/file-attachment";
+import { ReasoningEffortSelector, ProviderBadge } from "@/components/reasoning-effort-selector";
+import { UserInputPrompt } from "@/components/user-input-prompt";
+import { SessionContextBar } from "@/components/session-context-bar";
+import type {
+  ModelInfo,
+  ToolInfo,
+  SavedPrompt,
+  ChatAttachment,
+  ReasoningEffort,
+  ProviderInfo,
+  UserInputRequest,
+  SessionStatus,
+} from "@/lib/types";
 
 type ChatMessage = {
   id: string;
@@ -59,6 +72,11 @@ export const ChatView = () => {
   const [history, setHistory] = useState<string[]>([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
   const [draftInput, setDraftInput] = useState("");
+  const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
+  const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort>("medium");
+  const [provider, setProvider] = useState<ProviderInfo | null>(null);
+  const [sessionStatus, setSessionStatus] = useState<SessionStatus | null>(null);
+  const [activeInputRequest, setActiveInputRequest] = useState<UserInputRequest | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const streamRef = useRef<{ id: string; content: string } | null>(null);
   const inputStuckTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -266,6 +284,30 @@ export const ChatView = () => {
       finalizeStream();
     };
 
+    const onSessionStatus = (data: SessionStatus) => {
+      setSessionStatus(data);
+    };
+
+    const onProviderInfo = (data: ProviderInfo) => {
+      setProvider(data);
+    };
+
+    const onUserInputRequest = (data: UserInputRequest) => {
+      resetStuckTimer();
+      setThinking(false);
+      setActiveInputRequest(data);
+    };
+
+    const onCompactionStart = () => {
+      showToast("Context compaction started — summarizing older messages", "info");
+      setSessionStatus((prev) => prev ? { ...prev, compactionActive: true } : prev);
+    };
+
+    const onCompactionComplete = () => {
+      showToast("Context compaction complete", "success");
+      setSessionStatus((prev) => prev ? { ...prev, compactionActive: false } : prev);
+    };
+
     const onTaskNotification = (data: { type: string; task: { goal?: string; result?: string; error?: string; status?: string } }) => {
       const task = data.task;
       const status = task.status ?? data.type;
@@ -294,6 +336,11 @@ export const ChatView = () => {
     socket.on("approval:request", onApprovalRequest);
     socket.on("disconnect", onDisconnected);
     socket.on("task:notification", onTaskNotification);
+    socket.on("session:status", onSessionStatus);
+    socket.on("provider:info", onProviderInfo);
+    socket.on("user_input_request", onUserInputRequest);
+    socket.on("compaction:start", onCompactionStart);
+    socket.on("compaction:complete", onCompactionComplete);
 
     // If a ?session=<id> query param is present, restore that session
     // instead of loading the current session. The restore handler on the
@@ -321,6 +368,11 @@ export const ChatView = () => {
       socket.off("approval:request", onApprovalRequest);
       socket.off("disconnect", onDisconnected);
       socket.off("task:notification", onTaskNotification);
+      socket.off("session:status", onSessionStatus);
+      socket.off("provider:info", onProviderInfo);
+      socket.off("user_input_request", onUserInputRequest);
+      socket.off("compaction:start", onCompactionStart);
+      socket.off("compaction:complete", onCompactionComplete);
     };
   }, [socket, finalizeStream, resetStuckTimer, searchParams]);
 
@@ -342,8 +394,14 @@ export const ChatView = () => {
     }
 
     setMessages((prev) => [...prev, { id: nextId(), role: "user", content: text }]);
-    socket.emit("chat:message", { content: text, model: selectedModel || undefined });
+    socket.emit("chat:message", {
+      content: text,
+      model: selectedModel || undefined,
+      attachments: attachments.length > 0 ? attachments : undefined,
+      reasoningEffort: reasoningEffort !== "medium" ? reasoningEffort : undefined,
+    });
     setInput("");
+    setAttachments([]);
     setSending(true);
     setThinking(true);
     // Push to history
@@ -358,7 +416,30 @@ export const ChatView = () => {
 
     // Start the stuck timer — will be reset on every stream chunk or tool-call event
     resetStuckTimer();
-  }, [input, chatId, socket, selectedModel, sending, connected, nextId, resetStuckTimer]);
+  }, [input, chatId, socket, selectedModel, sending, connected, nextId, resetStuckTimer, attachments, reasoningEffort]);
+
+  const handleInputResponse = useCallback(
+    (answer: string, wasFreeform: boolean) => {
+      if (!socket || !activeInputRequest) return;
+      socket.emit("user_input_response", {
+        requestId: activeInputRequest.requestId,
+        answer,
+        wasFreeform,
+      });
+      setActiveInputRequest(null);
+      setThinking(true);
+      resetStuckTimer();
+    },
+    [socket, activeInputRequest, resetStuckTimer]
+  );
+
+  const handleAddAttachments = useCallback((newFiles: ChatAttachment[]) => {
+    setAttachments((prev) => [...prev, ...newFiles]);
+  }, []);
+
+  const handleRemoveAttachment = useCallback((index: number) => {
+    setAttachments((prev) => prev.filter((_, i) => i !== index));
+  }, []);
 
   const handleApprovalResponse = useCallback(
     (approved: boolean) => {
@@ -400,7 +481,7 @@ export const ChatView = () => {
   }, [socket]);
 
   // Allow sending while connected to socket, show connecting state if no chatId yet
-  const inputDisabled = sending;
+  const inputDisabled = sending || !!activeInputRequest;
   const showConnecting = connected && !chatId;
 
   return (
@@ -410,6 +491,12 @@ export const ChatView = () => {
       <header className="flex items-center gap-4 border-b border-border bg-card px-5 py-3">
         <h1 className="text-lg font-semibold text-foreground">OpenZigs</h1>
         <div className="ml-auto flex items-center gap-3">
+          <ReasoningEffortSelector
+            value={reasoningEffort}
+            onChange={setReasoningEffort}
+            modelId={selectedModel}
+          />
+          <ProviderBadge provider={provider} />
           <span className="text-xs text-muted-foreground">Model</span>
           <Select
             value={selectedModel}
@@ -447,6 +534,9 @@ export const ChatView = () => {
           )}
         </div>
       </header>
+
+      {/* Session context bar */}
+      <SessionContextBar status={sessionStatus} />
 
       {/* Fallback warning */}
       {fallbackWarning && (
@@ -522,6 +612,15 @@ export const ChatView = () => {
           </div>
         ))}
 
+        {/* Active user input prompt */}
+        {activeInputRequest && (
+          <UserInputPrompt
+            key={activeInputRequest.requestId}
+            request={activeInputRequest}
+            onSubmit={handleInputResponse}
+          />
+        )}
+
         {/* Thinking indicator */}
         {thinking && (
           <div className="flex items-start gap-3 animate-slide-in">
@@ -546,7 +645,17 @@ export const ChatView = () => {
             handleSend();
           }}
         >
+          <FileAttachmentButton
+            onAttach={handleAddAttachments}
+            disabled={inputDisabled}
+            attachmentCount={attachments.length}
+          />
           <div className="relative flex-1">
+            <FileDropZone
+              onDrop={handleAddAttachments}
+              attachmentCount={attachments.length}
+              disabled={inputDisabled}
+            >
             <SmartTextarea
               ref={textareaRef}
               value={input}
@@ -612,6 +721,8 @@ export const ChatView = () => {
               disabled={inputDisabled}
               style={{ maxHeight: "300px" }}
             />
+            </FileDropZone>
+            <AttachmentBar attachments={attachments} onRemove={handleRemoveAttachment} />
           </div>
           <Button
             type="submit"

@@ -166,12 +166,17 @@ The OpenZigs UI is a **Next.js** application with a navigation bar providing acc
 
 2. The chat interface includes:
    - A **model selector** dropdown in the header.
+   - A **reasoning effort selector** (dot-based radio buttons) — visible only when a reasoning-capable model is selected (e.g., `o1`, `o3`, `o4-mini`).
+   - A **provider badge** — shows when a non-Copilot BYOK provider is active.
    - A **connection indicator** (green = connected).
-   - A **message input** area at the bottom with **IntelliSense autocomplete**.
+   - A **session context bar** below the header showing session ID, context gauge, turn count, session age, and compaction status.
+   - A **message input** area at the bottom with **IntelliSense autocomplete**, **file attachment button**, and **drag-and-drop file zone**.
 
 3. Type a message and press **Enter** (or click **Send**).
 
 4. The assistant responds in real time via streaming — text appears word-by-word as the model generates it.
+
+5. During execution, the agent may display an **interactive clarification prompt** — either a set of radio-button choices or a free-text input — to gather additional information before continuing.
 
 ### Smart Input (IntelliSense Autocomplete)
 
@@ -830,18 +835,18 @@ All three scopes follow the same resolution: **entity allowlist ∪ always-on to
 
 ## Interactive Clarifications
 
-During a conversation, the AI agent may need additional information from you before continuing — for example, to choose between multiple options or confirm a detail. When this happens, a **clarification prompt** appears in the chat.
+During a conversation, the AI agent may need additional information from you before continuing — for example, to choose between multiple options or confirm a detail. When this happens, a **clarification prompt** appears inline in the chat.
 
 ### How It Works
 
 1. The agent encounters an ambiguous situation during tool execution.
-2. A prompt appears in the chat with a question — either free-form text input or a set of choices.
-3. You answer the question in the chat.
-4. The agent continues execution with your answer.
+2. A styled prompt card appears in the chat with a question — either a set of **radio-button choices** or a **free-text input** (or both).
+3. Select a choice or type your answer, then click **Submit** (or press **Enter** in the text field).
+4. The prompt transitions to an "Answered" state showing your response, and the agent continues execution.
 
 ### Timeout
 
-If you don't respond within **60 seconds**, the agent auto-skips the clarification and continues with a best-effort default. This prevents conversations from hanging indefinitely.
+If you don't respond within **60 seconds**, the prompt shows a "Timed out" state and the agent auto-skips the clarification, continuing with a best-effort default. A countdown bar above the Submit button shows remaining time. This prevents conversations from hanging indefinitely.
 
 ### Background Tasks
 
@@ -964,6 +969,41 @@ curl -X PUT -H "Authorization: Bearer <token>" \
 ```
 
 Changes take effect on the next LLM request without restarting the server.
+
+---
+
+## Session Context Bar
+
+The Chat page displays a **session context bar** below the header, providing real-time visibility into the current session's state.
+
+### Indicators
+
+| Indicator | Description |
+|---|---|
+| **Session ID** | Truncated session ID with a copy-to-clipboard button. Click to copy the full ID. |
+| **Context Gauge** | Colored progress bar showing context window usage (0–100%). Colors transition from green → amber → orange → red as usage increases. Pulses when above 80%. |
+| **Turn Count** | Number of conversation turns in the current session. |
+| **Session Age** | Relative time since session creation (e.g., "5m ago", "2h ago"). |
+| **Compaction Spinner** | Appears when background context compaction is in progress. Disappears when compaction completes. |
+
+### Context Thresholds
+
+| Usage | Color | Meaning |
+|---|---|---|
+| 0–60% | 🟢 Green | Normal — plenty of context remaining. |
+| 60–80% | 🟡 Amber | Context filling up. |
+| 80–95% | 🟠 Orange | Compaction will start soon (pulsing animation). |
+| 95–100% | 🔴 Red | Context nearly full — may block requests. |
+
+### Socket Events
+
+The context bar updates via the following real-time Socket.IO events:
+
+| Event | Direction | Payload |
+|---|---|---|
+| `session:status` | Server → Client | `{ sessionId, contextUsage, turnCount, createdAt, isResumed, compactionActive, infiniteSessionsEnabled }` |
+| `compaction:start` | Server → Client | *(empty)* — triggers a toast notification and spinner |
+| `compaction:complete` | Server → Client | *(empty)* — triggers a toast notification and hides spinner |
 
 ---
 
