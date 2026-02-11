@@ -169,6 +169,9 @@ const copilot = new CopilotWrapperService({
   maxToolsPerRequest: config.session?.maxToolsPerRequest ?? 30,
   infiniteSessions: config.session?.infiniteSessions,
   hooks: createHooksConfig({ toolRegistry, approvalQueue, auditLogger, sessionManager }),
+  defaultReasoningEffort: config.copilot?.defaultReasoningEffort ?? undefined,
+  provider: config.copilot?.provider ?? undefined,
+  defaultWorkingDirectory: config.copilot?.defaultWorkingDirectory ?? undefined,
 });
 
 registerMcpTools(toolRegistry, {
@@ -510,7 +513,9 @@ if (webConfig?.enabled !== false) {
           void webChatChannel.sendToolProgress(message.chatId, tool);
         },
         model: message.model, // Model is picked per-request via the UI; already read from user config by the model selector
-        allowedTools: message.tools
+        allowedTools: message.tools,
+        attachments: message.files,
+        workingDirectory: message.workingDirectory,
       })
       .then(() => {
         void webChatChannel.sendStreamEnd(message.chatId, messageId);

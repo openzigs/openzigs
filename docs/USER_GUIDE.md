@@ -873,6 +873,177 @@ Available models depend on your Copilot subscription. Common options include:
 
 ---
 
+## File Attachments
+
+When using the Web Chat, you can attach files and directories to your messages for the AI to reference during its response. Attachments are passed to the Copilot SDK alongside the prompt and provide the model with file contents or directory structure context.
+
+### Supported Attachment Types
+
+| Type | Description |
+|---|---|
+| `file` | A single file — the SDK reads its content and makes it available to the model. |
+| `directory` | A directory path — the SDK provides the directory's structure as context. |
+| `selection` | A code selection — a highlighted range within a file (with optional `startLine` / `endLine`). |
+
+### Socket.IO Interface
+
+Include a `files` array in the `chat:message` event:
+
+```javascript
+socket.emit('chat:message', {
+  content: 'Review this code for bugs',
+  files: [
+    { type: 'file', path: '/home/user/project/src/app.ts', displayName: 'app.ts' },
+    { type: 'directory', path: '/home/user/project/src' },
+    { type: 'selection', path: '/home/user/project/src/utils.ts', startLine: 10, endLine: 25 }
+  ]
+});
+```
+
+### Working Directory
+
+A **working directory** sets the base path for all tool operations (file reads, shell commands, etc.) during a conversation. You can set it per-message or as a server-wide default.
+
+**Per-message** (Socket.IO):
+
+```javascript
+socket.emit('chat:message', {
+  content: 'List all TypeScript files',
+  workingDirectory: '/home/user/my-project'
+});
+```
+
+**Server-wide default** (config):
+
+```json
+{
+  "copilot": {
+    "defaultWorkingDirectory": "/home/user/projects/main"
+  }
+}
+```
+
+Per-message values override the server default.
+
+---
+
+## Reasoning Effort
+
+Reasoning effort controls how deeply the model reasons through a problem before responding. Higher effort produces more thorough answers at the cost of latency and token usage. This setting is passed to the Copilot SDK's `reasoningEffort` parameter.
+
+| Level | Behavior |
+|---|---|
+| `low` | Quick responses, minimal reasoning. Good for simple lookups. |
+| `medium` | Balanced (default). Suitable for most tasks. |
+| `high` | Extended reasoning. Better for complex code generation, debugging, and planning. |
+| `xhigh` | Maximum reasoning. Best for difficult multi-step problems, architecture design, and thorough analysis. |
+
+### Configuration
+
+**Admin API:**
+
+```bash
+# Get current model config
+curl -H "Authorization: Bearer <token>" http://localhost:3000/api/admin/models/config
+
+# Set reasoning effort
+curl -X PUT -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"reasoningEffort": "high"}' \
+  http://localhost:3000/api/admin/models/config
+```
+
+**Config file** (`config/default.json` or `~/.openzigs/config.json`):
+
+```json
+{
+  "copilot": {
+    "defaultReasoningEffort": "high"
+  }
+}
+```
+
+Changes take effect on the next LLM request without restarting the server.
+
+---
+
+## BYOK Provider (Bring Your Own Key)
+
+OpenZigs supports connecting to alternative LLM providers via the Copilot SDK's **provider** configuration. This allows you to use your own API keys with OpenAI-compatible endpoints, Azure OpenAI, Anthropic, or Ollama.
+
+### Supported Provider Types
+
+| Provider | Description |
+|---|---|
+| `openai` | OpenAI API or any OpenAI-compatible endpoint (e.g., Together AI, Fireworks, local vLLM). |
+| `azure` | Azure OpenAI Service with optional API version. |
+| `anthropic` | Anthropic Claude API (direct access, not through Copilot). |
+| `ollama` | Local Ollama instance for running open-weight models. |
+
+### Configuration
+
+**Admin API:**
+
+```bash
+# Set an OpenAI-compatible provider
+curl -X PUT -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "provider": {
+      "type": "openai",
+      "baseUrl": "https://api.openai.com/v1",
+      "apiKey": "sk-..."
+    }
+  }' \
+  http://localhost:3000/api/admin/models/config
+
+# Set Ollama (local)
+curl -X PUT -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "provider": {
+      "type": "ollama",
+      "baseUrl": "http://localhost:11434"
+    }
+  }' \
+  http://localhost:3000/api/admin/models/config
+
+# Clear provider (revert to GitHub Copilot)
+curl -X PUT -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"provider": null}' \
+  http://localhost:3000/api/admin/models/config
+```
+
+**Config file** (`config/default.json` or `~/.openzigs/config.json`):
+
+```json
+{
+  "copilot": {
+    "provider": {
+      "type": "openai",
+      "baseUrl": "https://api.openai.com/v1",
+      "apiKey": "sk-your-key"
+    }
+  }
+}
+```
+
+### Provider Fields
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `type` | string | Yes | Provider type: `openai`, `azure`, `anthropic`, `ollama`. |
+| `baseUrl` | string | Yes | API base URL. |
+| `apiKey` | string | No | API key (used for `openai`, `azure`, `anthropic`). |
+| `bearerToken` | string | No | Alternative to `apiKey` — passed as Bearer token. |
+| `wireApi` | string | No | OpenAI only: `"openai"` or `"anthropic"` wire format. |
+| `azure.apiVersion` | string | No | Azure only: API version string (e.g., `"2024-02-15-preview"`). |
+
+> **Note:** Changing the provider clears all cached SDK sessions. The next message will create a fresh session with the new provider.
+
+---
+
 ## Enabling and Disabling Tools
 
 Tools can be managed via the **Admin** page at `/admin` or via the REST API. Each tool can be toggled independently.
@@ -1481,6 +1652,9 @@ All configuration lives in `config/default.json`. Environment variables are inte
 | `session.infiniteSessions.bufferExhaustionThreshold` | number | `0.95` | Context usage threshold (0-1) at which forced compaction occurs to prevent failures. |
 | `tunnel.enabled` | boolean | `false` | Enable the embedded Cloudflare Tunnel. Set to `false` (default) when using the Docker sidecar pattern. |
 | `tunnel.mode` | string | `"quick"` | `"quick"` or `"named"`. Only applies when `tunnel.enabled` is `true`. |
+| `copilot.provider` | object \| null | `null` | BYOK provider config. See [BYOK Provider](#byok-provider-bring-your-own-key). |
+| `copilot.defaultReasoningEffort` | string | `"medium"` | Default reasoning effort: `"low"`, `"medium"`, `"high"`, `"xhigh"`. |
+| `copilot.defaultWorkingDirectory` | string \| null | `null` | Default working directory path for tool operations. |
 
 **Environment variables for MCP sidecars** (typically set in `docker-compose.yml`):
 

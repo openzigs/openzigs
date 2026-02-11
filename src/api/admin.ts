@@ -7,6 +7,7 @@ import { logger } from "../logging/logger.js";
 import { ALWAYS_ON_TOOLS } from "../mcp/constants.js";
 import type { ToolRegistry, RiskLevel } from "../mcp/tool-registry.js";
 import type { CopilotWrapper } from "../copilot/index.js";
+import type { ReasoningEffort, ProviderConfig } from "../copilot/index.js";
 import type { DockerSidecarManager } from "../mcp/docker-sidecar-manager.js";
 import type { LocalMcpServerManager } from "../mcp/local-mcp-server-manager.js";
 import type { PromptManager } from "../productivity/prompt-manager.js";
@@ -1072,6 +1073,97 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return res.status(400).json({ error: message });
+    }
+  });
+
+  // ── Model / Copilot Configuration ──
+  router.get("/models/config", (_req, res) => {
+    const reasoningEffort = copilot?.getReasoningEffort() ?? "medium";
+    const provider = copilot?.getProvider() ?? null;
+    const workingDirectory = copilot?.getWorkingDirectory() ?? null;
+    return res.json({ reasoningEffort, provider, workingDirectory });
+  });
+
+  router.put("/models/config", async (req, res) => {
+    const body = req.body as Record<string, unknown>;
+
+    const validEfforts = new Set(["low", "medium", "high", "xhigh"]);
+
+    if (body.reasoningEffort !== undefined) {
+      if (body.reasoningEffort !== null && (typeof body.reasoningEffort !== "string" || !validEfforts.has(body.reasoningEffort))) {
+        return res.status(400).json({ error: "reasoningEffort must be 'low', 'medium', 'high', 'xhigh', or null" });
+      }
+    }
+
+    if (body.workingDirectory !== undefined) {
+      if (body.workingDirectory !== null && typeof body.workingDirectory !== "string") {
+        return res.status(400).json({ error: "workingDirectory must be a string or null" });
+      }
+    }
+
+    if (body.provider !== undefined) {
+      if (body.provider !== null) {
+        const prov = body.provider as Record<string, unknown>;
+        const validTypes = new Set(["openai", "azure", "anthropic", "ollama"]);
+        if (!prov || typeof prov !== "object" || !validTypes.has(prov.type as string)) {
+          return res.status(400).json({ error: "provider.type must be 'openai', 'azure', 'anthropic', or 'ollama'" });
+        }
+        if (typeof prov.baseUrl !== "string" || !prov.baseUrl) {
+          return res.status(400).json({ error: "provider.baseUrl is required" });
+        }
+      }
+    }
+
+    try {
+      // Apply changes in-memory
+      if (copilot) {
+        if (body.reasoningEffort !== undefined) {
+          copilot.setReasoningEffort(
+            body.reasoningEffort === null ? undefined : (body.reasoningEffort as ReasoningEffort)
+          );
+        }
+        if (body.workingDirectory !== undefined) {
+          copilot.setWorkingDirectory(
+            body.workingDirectory === null ? undefined : (body.workingDirectory as string)
+          );
+        }
+        if (body.provider !== undefined) {
+          copilot.setProvider(
+            body.provider === null ? undefined : (body.provider as ProviderConfig)
+          );
+        }
+      }
+
+      // Persist to user config
+      const configPath = defaultConfigPath();
+      const userConfig = await readUserConfig(configPath);
+      const existingCopilot = (userConfig.copilot && typeof userConfig.copilot === "object")
+        ? (userConfig.copilot as Record<string, unknown>)
+        : {};
+
+      if (body.reasoningEffort !== undefined) {
+        existingCopilot.defaultReasoningEffort = body.reasoningEffort ?? "medium";
+      }
+      if (body.workingDirectory !== undefined) {
+        existingCopilot.defaultWorkingDirectory = body.workingDirectory;
+      }
+      if (body.provider !== undefined) {
+        existingCopilot.provider = body.provider;
+      }
+
+      userConfig.copilot = existingCopilot;
+      await writeUserConfig(configPath, userConfig);
+
+      logger.info(`Model config updated: ${Object.keys(body).join(", ")}`);
+      return res.json({
+        ok: true,
+        reasoningEffort: copilot?.getReasoningEffort() ?? "medium",
+        provider: copilot?.getProvider() ?? null,
+        workingDirectory: copilot?.getWorkingDirectory() ?? null,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return res.status(500).json({ error: message });
     }
   });
 

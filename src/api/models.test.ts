@@ -6,10 +6,13 @@ import { createServer } from "node:http";
 import express from "express";
 import { createModelsRouter } from "./models.js";
 import type { CopilotWrapper } from "../copilot/copilot-wrapper.js";
-import type { CopilotModel } from "../copilot/copilot-wrapper.js";
+import type { CopilotModel, ReasoningEffort, ProviderConfig } from "../copilot/copilot-wrapper.js";
 
 class FakeCopilot implements CopilotWrapper {
   models: CopilotModel[];
+  private reasoningEffort?: ReasoningEffort;
+  private provider?: ProviderConfig;
+  private workingDirectory?: string;
 
   constructor(models: CopilotModel[] = [{ id: "gpt-4.1" }, { id: "claude-sonnet-4" }]) {
     this.models = models;
@@ -41,6 +44,13 @@ class FakeCopilot implements CopilotWrapper {
   async destroySession(_conversationId: string): Promise<void> {}
   hasSession(_conversationId: string): boolean { return false; }
   async clearAllSessions(): Promise<void> {}
+
+  getReasoningEffort(): ReasoningEffort | undefined { return this.reasoningEffort; }
+  setReasoningEffort(effort: ReasoningEffort | undefined): void { this.reasoningEffort = effort; }
+  getProvider(): ProviderConfig | undefined { return this.provider; }
+  setProvider(provider: ProviderConfig | undefined): void { this.provider = provider; }
+  getWorkingDirectory(): string | undefined { return this.workingDirectory; }
+  setWorkingDirectory(dir: string | undefined): void { this.workingDirectory = dir; }
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any

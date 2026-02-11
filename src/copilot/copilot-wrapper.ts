@@ -10,6 +10,27 @@ export type DeviceAuthInfo = {
   userCode: string;
 };
 
+// ── SDK Attachment Types ──
+export type SdkAttachment = {
+  type: "file" | "directory" | "selection";
+  path: string;
+  displayName?: string;
+  languageId?: string;
+  startLine?: number;
+  endLine?: number;
+  content?: string;
+};
+
+// ── Reasoning Effort ──
+export type ReasoningEffort = "low" | "medium" | "high" | "xhigh";
+
+// ── BYOK Provider Config ──
+export type ProviderConfig =
+  | { type: "openai"; baseUrl: string; apiKey?: string; bearerToken?: string; wireApi?: "openai" | "anthropic" }
+  | { type: "azure"; baseUrl: string; apiKey?: string; bearerToken?: string; azure?: { apiVersion?: string } }
+  | { type: "anthropic"; baseUrl: string; apiKey?: string; bearerToken?: string }
+  | { type: "ollama"; baseUrl: string };
+
 type DeviceAuthResult = {
   token: string;
   refreshToken?: string;
@@ -44,6 +65,9 @@ type SessionCreateConfig = {
   hooks?: HooksConfig;
   availableTools?: string[];
   excludedTools?: string[];
+  workingDirectory?: string;
+  reasoningEffort?: ReasoningEffort;
+  provider?: ProviderConfig;
   onUserInputRequest?: (
     request: { question: string; choices?: string[]; allowFreeform?: boolean },
     context: { sessionId: string }
@@ -53,7 +77,7 @@ type SessionCreateConfig = {
 type CopilotSessionLike = {
   readonly sessionId: string;
   on: (event: string, handler: (event: { data?: { deltaContent?: string } }) => void) => (() => void);
-  sendAndWait: (input: { prompt: string }, timeout?: number) => Promise<unknown>;
+  sendAndWait: (input: { prompt: string; attachments?: SdkAttachment[] }, timeout?: number) => Promise<unknown>;
   destroy: () => Promise<void>;
 };
 
@@ -158,6 +182,12 @@ export type ChatOptions = {
   excludedTools?: string[];
   /** Handler for interactive user input requests from the SDK's ask_user tool. */
   onUserInputRequest?: UserInputHandler;
+  /** File/directory/selection attachments sent alongside the prompt. */
+  attachments?: SdkAttachment[];
+  /** Working directory for the SDK session (base path for tool operations). */
+  workingDirectory?: string;
+  /** Reasoning effort for reasoning models (low, medium, high, xhigh). */
+  reasoningEffort?: ReasoningEffort;
 };
 
 export interface CopilotWrapper {
@@ -175,6 +205,18 @@ export interface CopilotWrapper {
   hasSession(conversationId: string): boolean;
   /** Destroy all cached sessions. */
   clearAllSessions(): Promise<void>;
+  /** Get the current reasoning effort setting. */
+  getReasoningEffort(): ReasoningEffort | undefined;
+  /** Set the default reasoning effort for reasoning models. */
+  setReasoningEffort(effort: ReasoningEffort | undefined): void;
+  /** Get the current BYOK provider configuration. */
+  getProvider(): ProviderConfig | undefined;
+  /** Set the BYOK provider configuration (clears all cached sessions). */
+  setProvider(provider: ProviderConfig | undefined): void;
+  /** Get the default working directory. */
+  getWorkingDirectory(): string | undefined;
+  /** Set the default working directory. */
+  setWorkingDirectory(dir: string | undefined): void;
 }
 
 export type CopilotWrapperOptions = {
@@ -195,6 +237,12 @@ export type CopilotWrapperOptions = {
   hooks?: HooksConfig;
   /** Default handler for interactive user input requests (ask_user). */
   onUserInputRequest?: UserInputHandler;
+  /** Default reasoning effort for reasoning models. */
+  defaultReasoningEffort?: ReasoningEffort;
+  /** BYOK provider configuration (OpenAI-compatible, Azure, Anthropic, Ollama). */
+  provider?: ProviderConfig;
+  /** Default working directory for SDK sessions. */
+  defaultWorkingDirectory?: string;
 };
 
 const defaultAuthPath = () => path.join(os.homedir(), ".openzigs", "auth.json");
@@ -354,6 +402,9 @@ export class CopilotWrapperService implements CopilotWrapper {
   private infiniteSessionsConfig?: InfiniteSessionConfig;
   private hooksConfig?: HooksConfig;
   private userInputHandler?: UserInputHandler;
+  private defaultReasoningEffort?: ReasoningEffort;
+  private providerConfig?: ProviderConfig;
+  private defaultWorkingDirectory?: string;
   private sessionCache = new Map<string, CopilotSessionLike>();
   private sessionCreationPromises = new Map<string, Promise<CopilotSessionLike>>();
 
@@ -370,7 +421,10 @@ export class CopilotWrapperService implements CopilotWrapper {
     onPermissionRequest,
     infiniteSessions,
     hooks,
-    onUserInputRequest
+    onUserInputRequest,
+    defaultReasoningEffort,
+    provider,
+    defaultWorkingDirectory
   }: CopilotWrapperOptions = {}) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     this.client = client ?? (new CopilotClient() as any);
@@ -386,6 +440,9 @@ export class CopilotWrapperService implements CopilotWrapper {
     this.infiniteSessionsConfig = infiniteSessions;
     this.hooksConfig = hooks;
     this.userInputHandler = onUserInputRequest;
+    this.defaultReasoningEffort = defaultReasoningEffort;
+    this.providerConfig = provider;
+    this.defaultWorkingDirectory = defaultWorkingDirectory;
   }
 
   setMaxToolsPerRequest(n: number): void {
@@ -394,6 +451,32 @@ export class CopilotWrapperService implements CopilotWrapper {
 
   getMaxToolsPerRequest(): number {
     return this.maxToolsPerRequest;
+  }
+
+  getReasoningEffort(): ReasoningEffort | undefined {
+    return this.defaultReasoningEffort;
+  }
+
+  setReasoningEffort(effort: ReasoningEffort | undefined): void {
+    this.defaultReasoningEffort = effort;
+  }
+
+  getProvider(): ProviderConfig | undefined {
+    return this.providerConfig;
+  }
+
+  setProvider(provider: ProviderConfig | undefined): void {
+    this.providerConfig = provider;
+    // Provider change invalidates all cached sessions
+    void this.clearAllSessions();
+  }
+
+  getWorkingDirectory(): string | undefined {
+    return this.defaultWorkingDirectory;
+  }
+
+  setWorkingDirectory(dir: string | undefined): void {
+    this.defaultWorkingDirectory = dir;
   }
 
   async authenticate(): Promise<DeviceAuthInfo> {
@@ -490,6 +573,8 @@ export class CopilotWrapperService implements CopilotWrapper {
         availableTools: options?.availableTools,
         excludedTools: options?.excludedTools,
         onUserInputRequest: options?.onUserInputRequest,
+        workingDirectory: options?.workingDirectory,
+        reasoningEffort: options?.reasoningEffort,
       }
     );
 
@@ -509,7 +594,7 @@ export class CopilotWrapperService implements CopilotWrapper {
     });
 
     try {
-      void this.sendWithRetries(session, message).catch((error) => {
+      void this.sendWithRetries(session, message, options?.attachments).catch((error) => {
         sendError = error;
         queue.end();
       });
@@ -592,14 +677,18 @@ export class CopilotWrapperService implements CopilotWrapper {
     }
   }
 
-  private async sendWithRetries(session: CopilotSessionLike, prompt: string) {
+  private async sendWithRetries(session: CopilotSessionLike, prompt: string, attachments?: SdkAttachment[]) {
     const maxRetries = 3;
     let attempt = 0;
 
     // eslint-disable-next-line no-constant-condition
     while (true) {
       try {
-        await session.sendAndWait({ prompt }, this.sendAndWaitTimeoutMs);
+        const input: { prompt: string; attachments?: SdkAttachment[] } = { prompt };
+        if (attachments && attachments.length > 0) {
+          input.attachments = attachments;
+        }
+        await session.sendAndWait(input, this.sendAndWaitTimeoutMs);
         return;
       } catch (error) {
         if (isUnauthorizedError(error)) {
@@ -651,10 +740,14 @@ export class CopilotWrapperService implements CopilotWrapper {
       availableTools?: string[];
       excludedTools?: string[];
       onUserInputRequest?: UserInputHandler;
+      workingDirectory?: string;
+      reasoningEffort?: ReasoningEffort;
     }
   ): SessionCreateConfig {
     const effectiveHooks = this.hooksConfig;
     const effectiveUserInput = extra?.onUserInputRequest ?? this.userInputHandler;
+    const effectiveWorkingDirectory = extra?.workingDirectory ?? this.defaultWorkingDirectory;
+    const effectiveReasoningEffort = extra?.reasoningEffort ?? this.defaultReasoningEffort;
 
     return {
       ...(sessionId ? { sessionId } : {}),
@@ -663,6 +756,9 @@ export class CopilotWrapperService implements CopilotWrapper {
       tools,
       ...(this.infiniteSessionsConfig ? { infiniteSessions: this.infiniteSessionsConfig } : {}),
       ...(extra?.systemMessage ? { systemMessage: extra.systemMessage } : {}),
+      ...(effectiveWorkingDirectory ? { workingDirectory: effectiveWorkingDirectory } : {}),
+      ...(effectiveReasoningEffort ? { reasoningEffort: effectiveReasoningEffort } : {}),
+      ...(this.providerConfig ? { provider: this.providerConfig } : {}),
       ...(effectiveHooks ? {
         hooks: {
           ...effectiveHooks,
@@ -708,6 +804,8 @@ export class CopilotWrapperService implements CopilotWrapper {
       availableTools?: string[];
       excludedTools?: string[];
       onUserInputRequest?: UserInputHandler;
+      workingDirectory?: string;
+      reasoningEffort?: ReasoningEffort;
     }
   ): Promise<CopilotSessionLike> {
     if (!conversationId) {

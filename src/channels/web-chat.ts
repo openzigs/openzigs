@@ -8,7 +8,7 @@ import type {
   MessageContent
 } from "./types.js";
 import type { SessionManager } from "../sessions/session-manager.js";
-import type { UserInputRequest, UserInputResponse } from "../copilot/copilot-wrapper.js";
+import type { UserInputRequest, UserInputResponse, SdkAttachment } from "../copilot/copilot-wrapper.js";
 
 export type WebChatChannelOptions = {
   io: SocketIOServer;
@@ -170,7 +170,7 @@ export class WebChatChannel implements MessageChannel {
       void this.sendSessionHistory(socket, userId).catch(() => {});
     }
 
-    socket.on("chat:message", (data: { content?: string; model?: string; tools?: string[] }) => {
+    socket.on("chat:message", (data: { content?: string; model?: string; tools?: string[]; files?: SdkAttachment[]; workingDirectory?: string }) => {
       const content = typeof data?.content === "string" ? data.content.trim() : "";
       if (!content) {
         return;
@@ -184,6 +184,8 @@ export class WebChatChannel implements MessageChannel {
         content,
         model: data.model,
         tools: Array.isArray(data.tools) ? data.tools : undefined,
+        files: Array.isArray(data.files) ? data.files : undefined,
+        workingDirectory: typeof data.workingDirectory === "string" ? data.workingDirectory : undefined,
         timestamp: new Date()
       };
       for (const handler of this.messageHandlers) {

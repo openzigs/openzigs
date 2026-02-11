@@ -28,6 +28,12 @@ const createMockCopilot = () => ({
   destroySession: vi.fn().mockResolvedValue(undefined),
   hasSession: vi.fn().mockReturnValue(false),
   clearAllSessions: vi.fn().mockResolvedValue(undefined),
+  getReasoningEffort: vi.fn().mockReturnValue(undefined),
+  setReasoningEffort: vi.fn(),
+  getProvider: vi.fn().mockReturnValue(undefined),
+  setProvider: vi.fn(),
+  getWorkingDirectory: vi.fn().mockReturnValue(undefined),
+  setWorkingDirectory: vi.fn(),
   chat: vi.fn().mockImplementation(async function* () {
     yield "ok";
   }),

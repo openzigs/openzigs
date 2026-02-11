@@ -1,7 +1,7 @@
 import type { ChannelManager } from "../channels/channel-manager.js";
 import type { IncomingMessage, MessageContent } from "../channels/types.js";
 import type { CopilotWrapper } from "../copilot/copilot-wrapper.js";
-import type { SystemMessageConfig, UserInputHandler } from "../copilot/copilot-wrapper.js";
+import type { SystemMessageConfig, UserInputHandler, SdkAttachment, ReasoningEffort } from "../copilot/copilot-wrapper.js";
 import type { AccessControlConfig } from "../config/index.js";
 import type { SessionManager } from "../sessions/session-manager.js";
 import type { PersonalityManager } from "../personality/personality-manager.js";
@@ -19,6 +19,12 @@ export type RouteOptions = {
   onToolCall?: (tool: string, args: unknown) => void;
   /** Optional tool allowlist for this request. Only these tools (+ ALWAYS_ON_TOOLS) will be available. */
   allowedTools?: string[];
+  /** File/directory/selection attachments to include with this message. */
+  attachments?: SdkAttachment[];
+  /** Working directory context for this message's SDK session. */
+  workingDirectory?: string;
+  /** Reasoning effort override for this message. */
+  reasoningEffort?: ReasoningEffort;
 };
 
 export type MessageRouterOptions = {
@@ -161,6 +167,9 @@ export class MessageRouter {
         systemMessage,
         availableTools,
         onUserInputRequest: this.userInputHandler,
+        attachments: options?.attachments,
+        workingDirectory: options?.workingDirectory,
+        reasoningEffort: options?.reasoningEffort,
       })) {
         response += chunk;
         if (options?.onChunk) {

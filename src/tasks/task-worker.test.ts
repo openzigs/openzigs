@@ -51,6 +51,12 @@ describe("TaskWorker", () => {
       destroySession: vi.fn().mockResolvedValue(undefined),
       hasSession: vi.fn().mockReturnValue(false),
       clearAllSessions: vi.fn().mockResolvedValue(undefined),
+      getReasoningEffort: vi.fn().mockReturnValue(undefined),
+      setReasoningEffort: vi.fn(),
+      getProvider: vi.fn().mockReturnValue(undefined),
+      setProvider: vi.fn(),
+      getWorkingDirectory: vi.fn().mockReturnValue(undefined),
+      setWorkingDirectory: vi.fn(),
       chat: vi.fn().mockImplementation(async function* () {
         for (const chunk of chunks) {
           yield chunk;
@@ -99,6 +105,12 @@ describe("TaskWorker", () => {
       destroySession: vi.fn().mockResolvedValue(undefined),
       hasSession: vi.fn().mockReturnValue(false),
       clearAllSessions: vi.fn().mockResolvedValue(undefined),
+      getReasoningEffort: vi.fn().mockReturnValue(undefined),
+      setReasoningEffort: vi.fn(),
+      getProvider: vi.fn().mockReturnValue(undefined),
+      setProvider: vi.fn(),
+      getWorkingDirectory: vi.fn().mockReturnValue(undefined),
+      setWorkingDirectory: vi.fn(),
       chat: vi.fn().mockImplementation(async function* () {
         yield ""; // eslint requires yield in generators
         throw new Error("LLM exploded");
@@ -145,6 +157,12 @@ describe("TaskWorker", () => {
       destroySession: vi.fn().mockResolvedValue(undefined),
       hasSession: vi.fn().mockReturnValue(false),
       clearAllSessions: vi.fn().mockResolvedValue(undefined),
+      getReasoningEffort: vi.fn().mockReturnValue(undefined),
+      setReasoningEffort: vi.fn(),
+      getProvider: vi.fn().mockReturnValue(undefined),
+      setProvider: vi.fn(),
+      getWorkingDirectory: vi.fn().mockReturnValue(undefined),
+      setWorkingDirectory: vi.fn(),
       chat: vi.fn().mockImplementation(async function* () {
         concurrent++;
         concurrentPeak = Math.max(concurrentPeak, concurrent);
@@ -194,6 +212,12 @@ describe("TaskWorker", () => {
       destroySession: vi.fn().mockResolvedValue(undefined),
       hasSession: vi.fn().mockReturnValue(false),
       clearAllSessions: vi.fn().mockResolvedValue(undefined),
+      getReasoningEffort: vi.fn().mockReturnValue(undefined),
+      setReasoningEffort: vi.fn(),
+      getProvider: vi.fn().mockReturnValue(undefined),
+      setProvider: vi.fn(),
+      getWorkingDirectory: vi.fn().mockReturnValue(undefined),
+      setWorkingDirectory: vi.fn(),
       chat: vi.fn().mockImplementation(async function* () {
         yield "ok";
       }),
@@ -235,6 +259,12 @@ describe("TaskWorker", () => {
       destroySession: vi.fn().mockResolvedValue(undefined),
       hasSession: vi.fn().mockReturnValue(false),
       clearAllSessions: vi.fn().mockResolvedValue(undefined),
+      getReasoningEffort: vi.fn().mockReturnValue(undefined),
+      setReasoningEffort: vi.fn(),
+      getProvider: vi.fn().mockReturnValue(undefined),
+      setProvider: vi.fn(),
+      getWorkingDirectory: vi.fn().mockReturnValue(undefined),
+      setWorkingDirectory: vi.fn(),
       chat: vi.fn().mockImplementation(async function* () {
         yield "ok";
       }),
@@ -279,6 +309,12 @@ describe("TaskWorker", () => {
       destroySession: vi.fn().mockResolvedValue(undefined),
       hasSession: vi.fn().mockReturnValue(false),
       clearAllSessions: vi.fn().mockResolvedValue(undefined),
+      getReasoningEffort: vi.fn().mockReturnValue(undefined),
+      setReasoningEffort: vi.fn(),
+      getProvider: vi.fn().mockReturnValue(undefined),
+      setProvider: vi.fn(),
+      getWorkingDirectory: vi.fn().mockReturnValue(undefined),
+      setWorkingDirectory: vi.fn(),
       chat: vi.fn().mockImplementation(async function* (_prompt: string, options?: { onToolCall?: (t: string, a: unknown) => void }) {
         capturedOnToolCall = options?.onToolCall;
         yield "done";
@@ -332,6 +368,12 @@ describe("TaskWorker", () => {
       destroySession: vi.fn().mockResolvedValue(undefined),
       hasSession: vi.fn().mockReturnValue(false),
       clearAllSessions: vi.fn().mockResolvedValue(undefined),
+      getReasoningEffort: vi.fn().mockReturnValue(undefined),
+      setReasoningEffort: vi.fn(),
+      getProvider: vi.fn().mockReturnValue(undefined),
+      setProvider: vi.fn(),
+      getWorkingDirectory: vi.fn().mockReturnValue(undefined),
+      setWorkingDirectory: vi.fn(),
       chat: vi.fn().mockImplementation(async function* () { yield "x"; }),
     };
 
@@ -359,6 +401,12 @@ describe("TaskWorker", () => {
       destroySession: vi.fn().mockResolvedValue(undefined),
       hasSession: vi.fn().mockReturnValue(false),
       clearAllSessions: vi.fn().mockResolvedValue(undefined),
+      getReasoningEffort: vi.fn().mockReturnValue(undefined),
+      setReasoningEffort: vi.fn(),
+      getProvider: vi.fn().mockReturnValue(undefined),
+      setProvider: vi.fn(),
+      getWorkingDirectory: vi.fn().mockReturnValue(undefined),
+      setWorkingDirectory: vi.fn(),
       chat: vi.fn().mockImplementation(async function* () {
         yield "done";
       }),
@@ -412,6 +460,12 @@ describe("TaskWorker", () => {
       destroySession: vi.fn().mockResolvedValue(undefined),
       hasSession: vi.fn().mockReturnValue(false),
       clearAllSessions: vi.fn().mockResolvedValue(undefined),
+      getReasoningEffort: vi.fn().mockReturnValue(undefined),
+      setReasoningEffort: vi.fn(),
+      getProvider: vi.fn().mockReturnValue(undefined),
+      setProvider: vi.fn(),
+      getWorkingDirectory: vi.fn().mockReturnValue(undefined),
+      setWorkingDirectory: vi.fn(),
       chat: vi.fn().mockImplementation(async function* () {
         yield "done";
       }),
