@@ -409,6 +409,163 @@ describe("copilot wrapper", () => {
     expect(config?.onUserInputRequest).toBeDefined();
   });
 
+  it("passes attachments to sendAndWait", async () => {
+    let capturedInput: Record<string, unknown> | null = null;
+    const session = new FakeSession();
+    const originalSend = session.sendAndWait.bind(session);
+    session.sendAndWait = async (input: Record<string, unknown>, timeout?: number) => {
+      capturedInput = input;
+      return originalSend(input as { prompt: string }, timeout);
+    };
+
+    const client = new FakeCopilotClient();
+    client.createSession = async (config) => {
+      client.lastSessionConfig = config;
+      client.sessions.push(session);
+      return session;
+    };
+
+    const wrapper = new CopilotWrapperService({ client });
+
+    const attachments = [
+      { type: "file" as const, path: "/tmp/test.ts", displayName: "test.ts" },
+      { type: "directory" as const, path: "/tmp/src" },
+    ];
+
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    for await (const _chunk of wrapper.chat("Review this", { attachments })) { /* drain */ }
+
+    expect(capturedInput!.attachments).toEqual(attachments);
+  });
+
+  it("omits attachments from sendAndWait when empty", async () => {
+    let capturedInput: Record<string, unknown> | null = null;
+    const session = new FakeSession();
+    const originalSend = session.sendAndWait.bind(session);
+    session.sendAndWait = async (input: Record<string, unknown>, timeout?: number) => {
+      capturedInput = input;
+      return originalSend(input as { prompt: string }, timeout);
+    };
+
+    const client = new FakeCopilotClient();
+    client.createSession = async (config) => {
+      client.lastSessionConfig = config;
+      client.sessions.push(session);
+      return session;
+    };
+
+    const wrapper = new CopilotWrapperService({ client });
+
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    for await (const _chunk of wrapper.chat("Hello")) { /* drain */ }
+
+    expect(capturedInput!.attachments).toBeUndefined();
+  });
+
+  it("passes workingDirectory to createSession", async () => {
+    const client = new FakeCopilotClient();
+    const wrapper = new CopilotWrapperService({ client });
+
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    for await (const _chunk of wrapper.chat("Hello", { workingDirectory: "/home/user/project" })) { /* drain */ }
+
+    expect((client.lastSessionConfig as Record<string, unknown>)?.workingDirectory).toBe("/home/user/project");
+  });
+
+  it("uses default workingDirectory when no per-chat override", async () => {
+    const client = new FakeCopilotClient();
+    const wrapper = new CopilotWrapperService({ client, defaultWorkingDirectory: "/default/dir" });
+
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    for await (const _chunk of wrapper.chat("Hello")) { /* drain */ }
+
+    expect((client.lastSessionConfig as Record<string, unknown>)?.workingDirectory).toBe("/default/dir");
+  });
+
+  it("per-chat workingDirectory overrides default", async () => {
+    const client = new FakeCopilotClient();
+    const wrapper = new CopilotWrapperService({ client, defaultWorkingDirectory: "/default/dir" });
+
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    for await (const _chunk of wrapper.chat("Hello", { workingDirectory: "/override/dir" })) { /* drain */ }
+
+    expect((client.lastSessionConfig as Record<string, unknown>)?.workingDirectory).toBe("/override/dir");
+  });
+
+  it("passes reasoningEffort to createSession", async () => {
+    const client = new FakeCopilotClient();
+    const wrapper = new CopilotWrapperService({ client });
+
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    for await (const _chunk of wrapper.chat("Hello", { reasoningEffort: "high" })) { /* drain */ }
+
+    expect((client.lastSessionConfig as Record<string, unknown>)?.reasoningEffort).toBe("high");
+  });
+
+  it("uses default reasoningEffort when no per-chat override", async () => {
+    const client = new FakeCopilotClient();
+    const wrapper = new CopilotWrapperService({ client, defaultReasoningEffort: "xhigh" });
+
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    for await (const _chunk of wrapper.chat("Hello")) { /* drain */ }
+
+    expect((client.lastSessionConfig as Record<string, unknown>)?.reasoningEffort).toBe("xhigh");
+  });
+
+  it("passes provider config to createSession", async () => {
+    const client = new FakeCopilotClient();
+    const provider = { type: "openai" as const, baseUrl: "https://api.openai.com/v1", apiKey: "sk-test" };
+    const wrapper = new CopilotWrapperService({ client, provider });
+
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    for await (const _chunk of wrapper.chat("Hello")) { /* drain */ }
+
+    expect((client.lastSessionConfig as Record<string, unknown>)?.provider).toEqual(provider);
+  });
+
+  it("setProvider clears all cached sessions", async () => {
+    const client = new FakeCopilotClient();
+    const wrapper = new CopilotWrapperService({ client });
+
+    // Create a cached session
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    for await (const _chunk of wrapper.chat("Hello", { conversationId: "conv-provider" })) { /* drain */ }
+    expect(wrapper.hasSession("conv-provider")).toBe(true);
+
+    // Change provider — should clear sessions
+    wrapper.setProvider({ type: "ollama", baseUrl: "http://localhost:11434" });
+
+    // Wait for async clearAllSessions to settle
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect(wrapper.hasSession("conv-provider")).toBe(false);
+    expect(wrapper.getProvider()?.type).toBe("ollama");
+  });
+
+  it("getReasoningEffort/setReasoningEffort work correctly", () => {
+    const wrapper = new CopilotWrapperService({});
+
+    expect(wrapper.getReasoningEffort()).toBeUndefined();
+
+    wrapper.setReasoningEffort("low");
+    expect(wrapper.getReasoningEffort()).toBe("low");
+
+    wrapper.setReasoningEffort(undefined);
+    expect(wrapper.getReasoningEffort()).toBeUndefined();
+  });
+
+  it("getWorkingDirectory/setWorkingDirectory work correctly", () => {
+    const wrapper = new CopilotWrapperService({ defaultWorkingDirectory: "/initial" });
+
+    expect(wrapper.getWorkingDirectory()).toBe("/initial");
+
+    wrapper.setWorkingDirectory("/updated");
+    expect(wrapper.getWorkingDirectory()).toBe("/updated");
+
+    wrapper.setWorkingDirectory(undefined);
+    expect(wrapper.getWorkingDirectory()).toBeUndefined();
+  });
+
   it("unsubscribes event handlers after each chat call to prevent accumulation", async () => {
     const client = new FakeCopilotClient();
     const wrapper = new CopilotWrapperService({ client });

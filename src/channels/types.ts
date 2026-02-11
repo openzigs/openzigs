@@ -1,3 +1,5 @@
+import type { SdkAttachment } from "../copilot/copilot-wrapper.js";
+
 export type ChannelType = "discord" | "telegram" | "web";
 
 export type Attachment = {
@@ -33,6 +35,10 @@ export type IncomingMessage = {
   /** Optional per-message tool allowlist (web chat only, for V2 scoping). */
   tools?: string[];
   attachments?: Attachment[];
+  /** SDK file/directory attachments for Copilot (web chat only). */
+  files?: SdkAttachment[];
+  /** Working directory context for tool operations (web chat only). */
+  workingDirectory?: string;
   timestamp: Date;
 };
 

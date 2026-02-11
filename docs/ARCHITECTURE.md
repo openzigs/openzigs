@@ -408,6 +408,10 @@ Wraps `@github/copilot-sdk`'s `CopilotClient`. Responsibilities:
 | **Tool Dispatch** | Internal | When the SDK invokes a tool, the handler calls the `ToolDefinition.handler()` — which may proxy to an MCP sidecar or execute locally. ALWAYS_ON_TOOLS (7 tools) are guaranteed inclusion before filling remaining slots. |
 | **Retry Logic** | Internal | Automatic retries with exponential backoff for rate-limit (429) and timeout errors. Clears auth on 401. |
 | **Handler Cleanup** | Internal | Per-call event handlers (`assistant.message_delta`, `session.idle`) are unsubscribed in a `finally` block after each `chat()` call, preventing handler accumulation on reused sessions. |
+| **File Attachments** | `chat({ attachments })` | Passes `SdkAttachment[]` (file, directory, or selection references) alongside the prompt. The SDK reads file contents and provides them as context to the model. |
+| **Working Directory** | `chat({ workingDirectory })` | Sets the base path for tool operations. Per-call override, with a server-wide default in config. Passed to `createSession({ workingDirectory })`. |
+| **Reasoning Effort** | `chat({ reasoningEffort })` | Controls model reasoning depth: `"low"`, `"medium"`, `"high"`, `"xhigh"`. Higher values increase answer quality at the cost of latency. Per-call override, with a server-wide default. |
+| **BYOK Provider** | Constructor `provider` option | Connects to alternative LLM providers (OpenAI-compatible, Azure, Anthropic, Ollama). Passed to `createSession({ provider })`. Changing the provider clears all cached sessions. |
 
 ### Tool Registry (`src/mcp/tool-registry.ts`)
 
@@ -723,6 +727,8 @@ The shell executor uses a **command allowlist**. If the allowlist is empty, the 
 | `PUT` | `/api/admin/session/config` | Admin | Update `maxToolsPerRequest` at runtime (range: 1-128). Persists to `~/.openzigs/config.json`. |
 | `GET` | `/api/admin/tasks/config` | Admin | Get current task concurrency config and queue stats. |
 | `PUT` | `/api/admin/tasks/config` | Admin | Update task concurrency settings at runtime. |
+| `GET` | `/api/admin/models/config` | Admin | Get current model config (reasoningEffort, provider, workingDirectory). |
+| `PUT` | `/api/admin/models/config` | Admin | Update model config at runtime. Persists to `~/.openzigs/config.json`. |
 | `GET` | `/api/tasks` | Token | List agent tasks (filterable by status, trigger, parent). |
 | `GET` | `/api/tasks/:id` | Token | Get task details including child count. |
 | `POST` | `/api/tasks/:id/cancel` | Token | Cancel a queued or running task. |

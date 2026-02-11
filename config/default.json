@@ -113,5 +113,10 @@
       "backgroundCompactionThreshold": 0.80,
       "bufferExhaustionThreshold": 0.95
     }
+  },
+  "copilot": {
+    "provider": null,
+    "defaultReasoningEffort": "medium",
+    "defaultWorkingDirectory": null
   }
 }

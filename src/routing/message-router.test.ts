@@ -137,6 +137,13 @@ class FakeCopilot implements CopilotWrapper {
   async clearAllSessions(): Promise<void> {
     return undefined;
   }
+
+  getReasoningEffort() { return undefined; }
+  setReasoningEffort() {}
+  getProvider() { return undefined; }
+  setProvider() {}
+  getWorkingDirectory() { return undefined; }
+  setWorkingDirectory() {}
 }
 
 const baseMessage = (overrides: Partial<IncomingMessage> = {}): IncomingMessage => {

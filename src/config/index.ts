@@ -99,6 +99,18 @@ export type SessionConfig = {
   infiniteSessions?: InfiniteSessionConfig;
 };
 
+export type CopilotProviderConfig =
+  | { type: "openai"; baseUrl: string; apiKey?: string; bearerToken?: string; wireApi?: "openai" | "anthropic" }
+  | { type: "azure"; baseUrl: string; apiKey?: string; bearerToken?: string; azure?: { apiVersion?: string } }
+  | { type: "anthropic"; baseUrl: string; apiKey?: string; bearerToken?: string }
+  | { type: "ollama"; baseUrl: string };
+
+export type CopilotConfig = {
+  provider?: CopilotProviderConfig | null;
+  defaultReasoningEffort?: "low" | "medium" | "high" | "xhigh";
+  defaultWorkingDirectory?: string | null;
+};
+
 export type AppConfig = {
   server: {
     port: number;
@@ -113,6 +125,7 @@ export type AppConfig = {
   mcpServers?: McpServersConfig;
   tasks?: TasksConfig;
   session?: SessionConfig;
+  copilot?: CopilotConfig;
 };
 
 const rateLimitSchema = z.object({
@@ -211,6 +224,39 @@ const sessionSchema = z.object({
   infiniteSessions: infiniteSessionsSchema,
 }).optional();
 
+const providerSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("openai"),
+    baseUrl: z.string(),
+    apiKey: z.string().optional(),
+    bearerToken: z.string().optional(),
+    wireApi: z.enum(["openai", "anthropic"]).optional(),
+  }),
+  z.object({
+    type: z.literal("azure"),
+    baseUrl: z.string(),
+    apiKey: z.string().optional(),
+    bearerToken: z.string().optional(),
+    azure: z.object({ apiVersion: z.string().optional() }).optional(),
+  }),
+  z.object({
+    type: z.literal("anthropic"),
+    baseUrl: z.string(),
+    apiKey: z.string().optional(),
+    bearerToken: z.string().optional(),
+  }),
+  z.object({
+    type: z.literal("ollama"),
+    baseUrl: z.string(),
+  }),
+]);
+
+const copilotSchema = z.object({
+  provider: providerSchema.nullable().optional().default(null),
+  defaultReasoningEffort: z.enum(["low", "medium", "high", "xhigh"]).optional().default("medium"),
+  defaultWorkingDirectory: z.string().nullable().optional().default(null),
+}).optional();
+
 const appConfigSchema = z.object({
   server: z.object({
     port: z.number()
@@ -225,6 +271,7 @@ const appConfigSchema = z.object({
   mcpServers: mcpServersSchema,
   tasks: tasksSchema,
   session: sessionSchema,
+  copilot: copilotSchema,
 });
 
 export type LoadConfigOptions = {
