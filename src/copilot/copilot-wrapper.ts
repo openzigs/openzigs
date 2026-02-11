@@ -31,6 +31,22 @@ export type ProviderConfig =
   | { type: "anthropic"; baseUrl: string; apiKey?: string; bearerToken?: string }
   | { type: "ollama"; baseUrl: string };
 
+// ── Native Custom Agent Definition ──
+export type CustomAgentDefinition = {
+  name: string;
+  displayName: string;
+  description?: string;
+  prompt: string;
+  tools?: string[] | null;
+  infer?: boolean;
+  mcpServers?: Record<string, NativeMcpServerDefinition>;
+};
+
+// ── Native MCP Server Definition (SDK-level) ──
+export type NativeMcpServerDefinition =
+  | { type: "local" | "stdio"; command: string; args?: string[]; env?: Record<string, string>; cwd?: string; tools?: string[]; timeout?: number }
+  | { type: "http" | "sse"; url: string; headers?: Record<string, string>; tools?: string[]; timeout?: number };
+
 type DeviceAuthResult = {
   token: string;
   refreshToken?: string;
@@ -68,6 +84,8 @@ type SessionCreateConfig = {
   workingDirectory?: string;
   reasoningEffort?: ReasoningEffort;
   provider?: ProviderConfig;
+  customAgents?: CustomAgentDefinition[];
+  mcpServers?: Record<string, NativeMcpServerDefinition>;
   onUserInputRequest?: (
     request: { question: string; choices?: string[]; allowFreeform?: boolean },
     context: { sessionId: string }
@@ -188,6 +206,10 @@ export type ChatOptions = {
   workingDirectory?: string;
   /** Reasoning effort for reasoning models (low, medium, high, xhigh). */
   reasoningEffort?: ReasoningEffort;
+  /** Per-call custom agent overrides — merged with (or replaces) default agents. */
+  customAgents?: CustomAgentDefinition[];
+  /** Per-call native MCP server overrides — merged with (or replaces) default servers. */
+  mcpServers?: Record<string, NativeMcpServerDefinition>;
 };
 
 export interface CopilotWrapper {
@@ -217,6 +239,14 @@ export interface CopilotWrapper {
   getWorkingDirectory(): string | undefined;
   /** Set the default working directory. */
   setWorkingDirectory(dir: string | undefined): void;
+  /** Get the configured custom agents. */
+  getCustomAgents(): CustomAgentDefinition[];
+  /** Replace the full set of custom agents (clears all cached sessions). */
+  setCustomAgents(agents: CustomAgentDefinition[]): void;
+  /** Get the configured native MCP servers. */
+  getNativeMcpServers(): Record<string, NativeMcpServerDefinition>;
+  /** Replace the full set of native MCP servers (clears all cached sessions). */
+  setNativeMcpServers(servers: Record<string, NativeMcpServerDefinition>): void;
 }
 
 export type CopilotWrapperOptions = {
@@ -243,6 +273,10 @@ export type CopilotWrapperOptions = {
   provider?: ProviderConfig;
   /** Default working directory for SDK sessions. */
   defaultWorkingDirectory?: string;
+  /** Default custom agent definitions passed to every SDK session. */
+  customAgents?: CustomAgentDefinition[];
+  /** Default native MCP server definitions passed to every SDK session. */
+  nativeMcpServers?: Record<string, NativeMcpServerDefinition>;
 };
 
 const defaultAuthPath = () => path.join(os.homedir(), ".openzigs", "auth.json");
@@ -405,6 +439,8 @@ export class CopilotWrapperService implements CopilotWrapper {
   private defaultReasoningEffort?: ReasoningEffort;
   private providerConfig?: ProviderConfig;
   private defaultWorkingDirectory?: string;
+  private customAgentsConfig: CustomAgentDefinition[];
+  private nativeMcpServersConfig: Record<string, NativeMcpServerDefinition>;
   private sessionCache = new Map<string, CopilotSessionLike>();
   private sessionCreationPromises = new Map<string, Promise<CopilotSessionLike>>();
 
@@ -424,7 +460,9 @@ export class CopilotWrapperService implements CopilotWrapper {
     onUserInputRequest,
     defaultReasoningEffort,
     provider,
-    defaultWorkingDirectory
+    defaultWorkingDirectory,
+    customAgents,
+    nativeMcpServers
   }: CopilotWrapperOptions = {}) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     this.client = client ?? (new CopilotClient() as any);
@@ -443,6 +481,8 @@ export class CopilotWrapperService implements CopilotWrapper {
     this.defaultReasoningEffort = defaultReasoningEffort;
     this.providerConfig = provider;
     this.defaultWorkingDirectory = defaultWorkingDirectory;
+    this.customAgentsConfig = customAgents ?? [];
+    this.nativeMcpServersConfig = nativeMcpServers ?? {};
   }
 
   setMaxToolsPerRequest(n: number): void {
@@ -477,6 +517,26 @@ export class CopilotWrapperService implements CopilotWrapper {
 
   setWorkingDirectory(dir: string | undefined): void {
     this.defaultWorkingDirectory = dir;
+  }
+
+  getCustomAgents(): CustomAgentDefinition[] {
+    return [...this.customAgentsConfig];
+  }
+
+  setCustomAgents(agents: CustomAgentDefinition[]): void {
+    this.customAgentsConfig = [...agents];
+    // Agent changes invalidate all cached sessions
+    void this.clearAllSessions();
+  }
+
+  getNativeMcpServers(): Record<string, NativeMcpServerDefinition> {
+    return { ...this.nativeMcpServersConfig };
+  }
+
+  setNativeMcpServers(servers: Record<string, NativeMcpServerDefinition>): void {
+    this.nativeMcpServersConfig = { ...servers };
+    // MCP server changes invalidate all cached sessions
+    void this.clearAllSessions();
   }
 
   async authenticate(): Promise<DeviceAuthInfo> {
@@ -575,6 +635,8 @@ export class CopilotWrapperService implements CopilotWrapper {
         onUserInputRequest: options?.onUserInputRequest,
         workingDirectory: options?.workingDirectory,
         reasoningEffort: options?.reasoningEffort,
+        customAgents: options?.customAgents,
+        mcpServers: options?.mcpServers,
       }
     );
 
@@ -731,6 +793,23 @@ export class CopilotWrapperService implements CopilotWrapper {
   /**
    * Build the session configuration shared between create and resume paths.
    */
+  /**
+   * Merge two sets of custom agent definitions. Per-call agents override
+   * defaults when they share the same `name`; new agents are appended.
+   */
+  private mergeCustomAgents(
+    defaults: CustomAgentDefinition[],
+    overrides?: CustomAgentDefinition[]
+  ): CustomAgentDefinition[] {
+    if (!overrides?.length) return defaults;
+    if (!defaults.length) return overrides;
+
+    const merged = new Map<string, CustomAgentDefinition>();
+    for (const agent of defaults) merged.set(agent.name, agent);
+    for (const agent of overrides) merged.set(agent.name, agent);
+    return [...merged.values()];
+  }
+
   private buildSessionConfig(
     model: string,
     tools: unknown[],
@@ -742,12 +821,25 @@ export class CopilotWrapperService implements CopilotWrapper {
       onUserInputRequest?: UserInputHandler;
       workingDirectory?: string;
       reasoningEffort?: ReasoningEffort;
+      customAgents?: CustomAgentDefinition[];
+      mcpServers?: Record<string, NativeMcpServerDefinition>;
     }
   ): SessionCreateConfig {
     const effectiveHooks = this.hooksConfig;
     const effectiveUserInput = extra?.onUserInputRequest ?? this.userInputHandler;
     const effectiveWorkingDirectory = extra?.workingDirectory ?? this.defaultWorkingDirectory;
     const effectiveReasoningEffort = extra?.reasoningEffort ?? this.defaultReasoningEffort;
+
+    // Merge per-call agent overrides with defaults (per-call wins on name collision)
+    const mergedAgents = this.mergeCustomAgents(
+      this.customAgentsConfig,
+      extra?.customAgents
+    );
+    // Merge per-call MCP server overrides with defaults (per-call wins on key collision)
+    const mergedMcpServers = {
+      ...this.nativeMcpServersConfig,
+      ...(extra?.mcpServers ?? {}),
+    };
 
     return {
       ...(sessionId ? { sessionId } : {}),
@@ -759,6 +851,8 @@ export class CopilotWrapperService implements CopilotWrapper {
       ...(effectiveWorkingDirectory ? { workingDirectory: effectiveWorkingDirectory } : {}),
       ...(effectiveReasoningEffort ? { reasoningEffort: effectiveReasoningEffort } : {}),
       ...(this.providerConfig ? { provider: this.providerConfig } : {}),
+      ...(mergedAgents.length > 0 ? { customAgents: mergedAgents } : {}),
+      ...(Object.keys(mergedMcpServers).length > 0 ? { mcpServers: mergedMcpServers } : {}),
       ...(effectiveHooks ? {
         hooks: {
           ...effectiveHooks,
@@ -806,6 +900,8 @@ export class CopilotWrapperService implements CopilotWrapper {
       onUserInputRequest?: UserInputHandler;
       workingDirectory?: string;
       reasoningEffort?: ReasoningEffort;
+      customAgents?: CustomAgentDefinition[];
+      mcpServers?: Record<string, NativeMcpServerDefinition>;
     }
   ): Promise<CopilotSessionLike> {
     if (!conversationId) {

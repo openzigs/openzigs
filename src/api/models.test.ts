@@ -6,7 +6,7 @@ import { createServer } from "node:http";
 import express from "express";
 import { createModelsRouter } from "./models.js";
 import type { CopilotWrapper } from "../copilot/copilot-wrapper.js";
-import type { CopilotModel, ReasoningEffort, ProviderConfig } from "../copilot/copilot-wrapper.js";
+import type { CopilotModel, ReasoningEffort, ProviderConfig, CustomAgentDefinition, NativeMcpServerDefinition } from "../copilot/copilot-wrapper.js";
 
 class FakeCopilot implements CopilotWrapper {
   models: CopilotModel[];
@@ -51,6 +51,10 @@ class FakeCopilot implements CopilotWrapper {
   setProvider(provider: ProviderConfig | undefined): void { this.provider = provider; }
   getWorkingDirectory(): string | undefined { return this.workingDirectory; }
   setWorkingDirectory(dir: string | undefined): void { this.workingDirectory = dir; }
+  getCustomAgents(): CustomAgentDefinition[] { return []; }
+  setCustomAgents(_agents: CustomAgentDefinition[]): void {}
+  getNativeMcpServers(): Record<string, NativeMcpServerDefinition> { return {}; }
+  setNativeMcpServers(_servers: Record<string, NativeMcpServerDefinition>): void {}
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any

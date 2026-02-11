@@ -101,6 +101,13 @@ export type LocalMcpServerManagerOptions = {
   connectTimeout?: number;
 };
 
+/**
+ * Manages subprocess-based MCP servers (word, calendar, etc.).
+ *
+ * @deprecated Prefer the native `mcpServers` configuration in `copilot.nativeMcpServers`
+ * (or `config/default.json` → `copilot.nativeMcpServers`), which uses the Copilot SDK's
+ * built-in MCP server orchestration. This class will be removed in a future release.
+ */
 export class LocalMcpServerManager extends EventEmitter {
   private definitions: LocalMcpServerDefinition[];
   private skipUnconfigured: boolean;

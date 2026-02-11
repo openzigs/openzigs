@@ -117,6 +117,8 @@
   "copilot": {
     "provider": null,
     "defaultReasoningEffort": "medium",
-    "defaultWorkingDirectory": null
+    "defaultWorkingDirectory": null,
+    "customAgents": [],
+    "nativeMcpServers": {}
   }
 }

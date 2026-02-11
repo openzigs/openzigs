@@ -1,5 +1,6 @@
 import "dotenv/config";
 import { createServer } from "node:http";
+import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { Server as SocketIOServer } from "socket.io";
@@ -9,6 +10,7 @@ import { ChannelManager, DiscordChannel, TelegramChannel, WebChatChannel } from 
 import type { MessageChannel } from "./channels/index.js";
 import { loadConfig } from "./config/index.js";
 import type { AccessControlConfig } from "./config/index.js";
+import type { CustomAgentConfig, NativeMcpServerConfig } from "./config/index.js";
 import { logger } from "./logging/logger.js";
 import type { Logger } from "winston";
 import { AuditLogger } from "./logging/audit-logger.js";
@@ -34,6 +36,31 @@ import { DockerSidecarManager } from "./mcp/docker-sidecar-manager.js";
 import { LocalMcpServerManager } from "./mcp/local-mcp-server-manager.js";
 
 const config = await loadConfig();
+
+// ── Load default agent archetypes from config/agents.json ──
+let defaultAgents: CustomAgentConfig[] = [];
+try {
+  const agentsPath = path.resolve(process.cwd(), "config", "agents.json");
+  const raw = await fs.readFile(agentsPath, "utf-8");
+  const parsed = JSON.parse(raw) as { agents?: unknown };
+  const agentsArray = Array.isArray(parsed.agents) ? parsed.agents : (Array.isArray(parsed) ? parsed : []);
+  if (agentsArray.length > 0) {
+    defaultAgents = agentsArray as CustomAgentConfig[];
+  }
+} catch {
+  // agents.json is optional — continue without default archetypes
+}
+
+// Merge: user config agents override defaults by name; remaining defaults are kept
+const userAgents: CustomAgentConfig[] = config.copilot?.customAgents ?? [];
+const mergedAgentMap = new Map<string, CustomAgentConfig>();
+for (const agent of defaultAgents) mergedAgentMap.set(agent.name, agent);
+for (const agent of userAgents) mergedAgentMap.set(agent.name, agent);
+const resolvedCustomAgents = [...mergedAgentMap.values()];
+
+// Native MCP servers from config (no default file — purely user-configured)
+const resolvedNativeMcpServers: Record<string, NativeMcpServerConfig> = config.copilot?.nativeMcpServers ?? {};
+
 const auditLogger = new AuditLogger();
 const approvalQueue = new ApprovalQueue({ auditLogger });
 const toolRegistry = new ToolRegistry({
@@ -172,6 +199,8 @@ const copilot = new CopilotWrapperService({
   defaultReasoningEffort: config.copilot?.defaultReasoningEffort ?? undefined,
   provider: config.copilot?.provider ?? undefined,
   defaultWorkingDirectory: config.copilot?.defaultWorkingDirectory ?? undefined,
+  customAgents: resolvedCustomAgents,
+  nativeMcpServers: resolvedNativeMcpServers,
 });
 
 registerMcpTools(toolRegistry, {

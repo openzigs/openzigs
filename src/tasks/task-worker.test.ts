@@ -57,6 +57,10 @@ describe("TaskWorker", () => {
       setProvider: vi.fn(),
       getWorkingDirectory: vi.fn().mockReturnValue(undefined),
       setWorkingDirectory: vi.fn(),
+      getCustomAgents: vi.fn().mockReturnValue([]),
+      setCustomAgents: vi.fn(),
+      getNativeMcpServers: vi.fn().mockReturnValue({}),
+      setNativeMcpServers: vi.fn(),
       chat: vi.fn().mockImplementation(async function* () {
         for (const chunk of chunks) {
           yield chunk;
@@ -111,6 +115,10 @@ describe("TaskWorker", () => {
       setProvider: vi.fn(),
       getWorkingDirectory: vi.fn().mockReturnValue(undefined),
       setWorkingDirectory: vi.fn(),
+      getCustomAgents: vi.fn().mockReturnValue([]),
+      setCustomAgents: vi.fn(),
+      getNativeMcpServers: vi.fn().mockReturnValue({}),
+      setNativeMcpServers: vi.fn(),
       chat: vi.fn().mockImplementation(async function* () {
         yield ""; // eslint requires yield in generators
         throw new Error("LLM exploded");
@@ -163,6 +171,10 @@ describe("TaskWorker", () => {
       setProvider: vi.fn(),
       getWorkingDirectory: vi.fn().mockReturnValue(undefined),
       setWorkingDirectory: vi.fn(),
+      getCustomAgents: vi.fn().mockReturnValue([]),
+      setCustomAgents: vi.fn(),
+      getNativeMcpServers: vi.fn().mockReturnValue({}),
+      setNativeMcpServers: vi.fn(),
       chat: vi.fn().mockImplementation(async function* () {
         concurrent++;
         concurrentPeak = Math.max(concurrentPeak, concurrent);
@@ -218,6 +230,10 @@ describe("TaskWorker", () => {
       setProvider: vi.fn(),
       getWorkingDirectory: vi.fn().mockReturnValue(undefined),
       setWorkingDirectory: vi.fn(),
+      getCustomAgents: vi.fn().mockReturnValue([]),
+      setCustomAgents: vi.fn(),
+      getNativeMcpServers: vi.fn().mockReturnValue({}),
+      setNativeMcpServers: vi.fn(),
       chat: vi.fn().mockImplementation(async function* () {
         yield "ok";
       }),
@@ -265,6 +281,10 @@ describe("TaskWorker", () => {
       setProvider: vi.fn(),
       getWorkingDirectory: vi.fn().mockReturnValue(undefined),
       setWorkingDirectory: vi.fn(),
+      getCustomAgents: vi.fn().mockReturnValue([]),
+      setCustomAgents: vi.fn(),
+      getNativeMcpServers: vi.fn().mockReturnValue({}),
+      setNativeMcpServers: vi.fn(),
       chat: vi.fn().mockImplementation(async function* () {
         yield "ok";
       }),
@@ -315,6 +335,10 @@ describe("TaskWorker", () => {
       setProvider: vi.fn(),
       getWorkingDirectory: vi.fn().mockReturnValue(undefined),
       setWorkingDirectory: vi.fn(),
+      getCustomAgents: vi.fn().mockReturnValue([]),
+      setCustomAgents: vi.fn(),
+      getNativeMcpServers: vi.fn().mockReturnValue({}),
+      setNativeMcpServers: vi.fn(),
       chat: vi.fn().mockImplementation(async function* (_prompt: string, options?: { onToolCall?: (t: string, a: unknown) => void }) {
         capturedOnToolCall = options?.onToolCall;
         yield "done";
@@ -374,6 +398,10 @@ describe("TaskWorker", () => {
       setProvider: vi.fn(),
       getWorkingDirectory: vi.fn().mockReturnValue(undefined),
       setWorkingDirectory: vi.fn(),
+      getCustomAgents: vi.fn().mockReturnValue([]),
+      setCustomAgents: vi.fn(),
+      getNativeMcpServers: vi.fn().mockReturnValue({}),
+      setNativeMcpServers: vi.fn(),
       chat: vi.fn().mockImplementation(async function* () { yield "x"; }),
     };
 
@@ -407,6 +435,10 @@ describe("TaskWorker", () => {
       setProvider: vi.fn(),
       getWorkingDirectory: vi.fn().mockReturnValue(undefined),
       setWorkingDirectory: vi.fn(),
+      getCustomAgents: vi.fn().mockReturnValue([]),
+      setCustomAgents: vi.fn(),
+      getNativeMcpServers: vi.fn().mockReturnValue({}),
+      setNativeMcpServers: vi.fn(),
       chat: vi.fn().mockImplementation(async function* () {
         yield "done";
       }),
@@ -466,6 +498,10 @@ describe("TaskWorker", () => {
       setProvider: vi.fn(),
       getWorkingDirectory: vi.fn().mockReturnValue(undefined),
       setWorkingDirectory: vi.fn(),
+      getCustomAgents: vi.fn().mockReturnValue([]),
+      setCustomAgents: vi.fn(),
+      getNativeMcpServers: vi.fn().mockReturnValue({}),
+      setNativeMcpServers: vi.fn(),
       chat: vi.fn().mockImplementation(async function* () {
         yield "done";
       }),

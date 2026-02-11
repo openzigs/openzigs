@@ -412,6 +412,8 @@ Wraps `@github/copilot-sdk`'s `CopilotClient`. Responsibilities:
 | **Working Directory** | `chat({ workingDirectory })` | Sets the base path for tool operations. Per-call override, with a server-wide default in config. Passed to `createSession({ workingDirectory })`. |
 | **Reasoning Effort** | `chat({ reasoningEffort })` | Controls model reasoning depth: `"low"`, `"medium"`, `"high"`, `"xhigh"`. Higher values increase answer quality at the cost of latency. Per-call override, with a server-wide default. |
 | **BYOK Provider** | Constructor `provider` option | Connects to alternative LLM providers (OpenAI-compatible, Azure, Anthropic, Ollama). Passed to `createSession({ provider })`. Changing the provider clears all cached sessions. |
+| **Custom Agents** | `getCustomAgents()` / `setCustomAgents()` / `chat({ customAgents })` | Hierarchical sub-agents defined via the SDK's `customAgents` API. Each agent has a name, display name, system prompt, optional tool allowlist, and optional per-agent MCP servers. Default archetypes are loaded from `config/agents.json` and merged with user config. Per-call overrides merge by name. Changing agents clears all cached sessions. |
+| **Native MCP Servers** | `getNativeMcpServers()` / `setNativeMcpServers()` / `chat({ mcpServers })` | SDK-managed MCP server connections via `mcpServers` config. Supports `stdio`/`local` (subprocess) and `http`/`sse` (remote) transports. Replaces the legacy `LocalMcpServerManager`. Per-call overrides merge by key. Changing servers clears all cached sessions. |
 
 ### Tool Registry (`src/mcp/tool-registry.ts`)
 
@@ -1339,3 +1341,67 @@ curl -X PUT -H "Authorization: Bearer <token>" \
 ```
 
 ### Tracking: [Epic #81](https://github.com/mgcronin/openzigs/issues/81)
+
+---
+
+## Native Orchestration — Hierarchical Agents
+
+OpenZigs supports **native hierarchical orchestration** via the Copilot SDK's `customAgents` and `mcpServers` APIs. This provides SDK-level sub-agent delegation and MCP server management without custom subprocess orchestration.
+
+### Custom Agents (`customAgents`)
+
+Custom agents are specialized sub-agents that the primary model can delegate to. They are defined as named archetypes with dedicated system prompts and optional tool scoping.
+
+**Data flow:**
+
+```
+config/agents.json (defaults)
+        ↓
+~/.openzigs/config.json (user overrides, merged by name)
+        ↓
+CopilotWrapperService constructor (customAgents option)
+        ↓
+buildSessionConfig() → createSession({ customAgents: [...] })
+        ↓
+SDK delegates to named agents during chat execution
+```
+
+**Merge strategy:** Default archetypes from `config/agents.json` are loaded at startup. User-configured agents in `copilot.customAgents` override defaults when they share the same `name`; remaining defaults are preserved. Per-chat `customAgents` in `ChatOptions` further override at call time.
+
+**Session impact:** Calling `setCustomAgents()` clears all cached SDK sessions (same pattern as `setProvider()`).
+
+### Native MCP Servers (`mcpServers`)
+
+The SDK's built-in `mcpServers` parameter replaces the legacy `LocalMcpServerManager` for connecting to external MCP tool servers. Server definitions are passed directly to `createSession()` — the SDK handles subprocess lifecycle, connection management, and tool discovery.
+
+**Data flow:**
+
+```
+~/.openzigs/config.json → copilot.nativeMcpServers
+        ↓
+CopilotWrapperService constructor (nativeMcpServers option)
+        ↓
+buildSessionConfig() → createSession({ mcpServers: {...} })
+        ↓
+SDK manages subprocess/connection lifecycle
+```
+
+**Transport types:**
+- `stdio` / `local` — Spawns a subprocess, communicates via stdin/stdout
+- `http` — Connects to an HTTP-based MCP server
+- `sse` — Connects to a Server-Sent Events MCP server
+
+**Migration path:** The `LocalMcpServerManager` class is now deprecated. Existing subprocess-based MCP servers (word, calendar, etc.) should migrate to `copilot.nativeMcpServers` configuration. The Docker-based `DockerSidecarManager` remains separate — it manages containerized sidecars with health checks and port mapping.
+
+### Admin API Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/admin/agents` | List all custom agents |
+| `POST` | `/api/admin/agents` | Add a single agent |
+| `PUT` | `/api/admin/agents` | Replace all agents |
+| `DELETE` | `/api/admin/agents/:name` | Remove an agent by name |
+| `GET` | `/api/admin/native-mcp-servers` | List native MCP servers |
+| `PUT` | `/api/admin/native-mcp-servers` | Replace all native MCP servers |
+
+### Tracking: [Epic #135](https://github.com/mgcronin/openzigs/issues/135)

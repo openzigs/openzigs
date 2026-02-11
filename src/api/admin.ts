@@ -2,12 +2,12 @@ import { Router } from "express";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { loadConfig } from "../config/index.js";
+import { loadConfig, customAgentSchema, nativeMcpServersSchema } from "../config/index.js";
 import { logger } from "../logging/logger.js";
 import { ALWAYS_ON_TOOLS } from "../mcp/constants.js";
 import type { ToolRegistry, RiskLevel } from "../mcp/tool-registry.js";
 import type { CopilotWrapper } from "../copilot/index.js";
-import type { ReasoningEffort, ProviderConfig } from "../copilot/index.js";
+import type { ReasoningEffort, ProviderConfig, CustomAgentDefinition, NativeMcpServerDefinition } from "../copilot/index.js";
 import type { DockerSidecarManager } from "../mcp/docker-sidecar-manager.js";
 import type { LocalMcpServerManager } from "../mcp/local-mcp-server-manager.js";
 import type { PromptManager } from "../productivity/prompt-manager.js";
@@ -154,6 +154,18 @@ const writeUserConfig = async (configPath: string, data: Record<string, unknown>
   await fs.mkdir(path.dirname(configPath), { recursive: true, mode: 0o700 });
   await fs.writeFile(configPath, JSON.stringify(data, null, 2), { encoding: "utf-8", mode: 0o600 });
   await fs.chmod(configPath, 0o600);
+};
+
+/** Read user config, update a single key under `copilot`, and write back. */
+const updateCopilotConfig = async (key: string, value: unknown) => {
+  const configPath = defaultConfigPath();
+  const userConfig = await readUserConfig(configPath);
+  const existingCopilot = (userConfig.copilot && typeof userConfig.copilot === "object")
+    ? (userConfig.copilot as Record<string, unknown>)
+    : {};
+  existingCopilot[key] = value;
+  userConfig.copilot = existingCopilot;
+  await writeUserConfig(configPath, userConfig);
 };
 
 const toStringArray = (value: unknown): string[] => {
@@ -1161,6 +1173,124 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
         provider: copilot?.getProvider() ?? null,
         workingDirectory: copilot?.getWorkingDirectory() ?? null,
       });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return res.status(500).json({ error: message });
+    }
+  });
+
+  // ── Custom Agents Management ──
+  router.get("/agents", (_req, res) => {
+    const agents = copilot?.getCustomAgents() ?? [];
+    return res.json({ agents });
+  });
+
+  router.put("/agents", async (req, res) => {
+    const body = req.body as Record<string, unknown>;
+    const agents = body.agents;
+    if (!Array.isArray(agents)) {
+      return res.status(400).json({ error: "agents must be an array" });
+    }
+
+    // Validate each agent against the Zod schema
+    for (const agent of agents) {
+      const result = customAgentSchema.safeParse(agent);
+      if (!result.success) {
+        const name = (agent as Record<string, unknown>).name ?? "unknown";
+        return res.status(400).json({ error: `Agent '${name}': ${result.error.issues.map((i) => i.message).join(", ")}` });
+      }
+    }
+
+    try {
+      if (copilot) {
+        copilot.setCustomAgents(agents as CustomAgentDefinition[]);
+      }
+
+      await updateCopilotConfig("customAgents", agents);
+
+      logger.info(`Custom agents updated: ${agents.length} agent(s)`);
+      return res.json({ ok: true, agents: copilot?.getCustomAgents() ?? agents });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return res.status(500).json({ error: message });
+    }
+  });
+
+  router.post("/agents", async (req, res) => {
+    const parsed = customAgentSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.issues.map((i) => i.message).join(", ") });
+    }
+
+    try {
+      const current = copilot?.getCustomAgents() ?? [];
+      if (current.some((a) => a.name === parsed.data.name)) {
+        return res.status(409).json({ error: `Agent '${parsed.data.name}' already exists` });
+      }
+
+      const newAgent = parsed.data as CustomAgentDefinition;
+      const updated = [...current, newAgent];
+      if (copilot) copilot.setCustomAgents(updated);
+
+      await updateCopilotConfig("customAgents", updated);
+
+      logger.info(`Custom agent added: ${newAgent.name}`);
+      return res.status(201).json({ ok: true, agent: newAgent });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return res.status(500).json({ error: message });
+    }
+  });
+
+  router.delete("/agents/:name", async (req, res) => {
+    const { name } = req.params;
+    const current = copilot?.getCustomAgents() ?? [];
+    const filtered = current.filter((a) => a.name !== name);
+    if (filtered.length === current.length) {
+      return res.status(404).json({ error: `Agent '${name}' not found` });
+    }
+
+    try {
+      if (copilot) copilot.setCustomAgents(filtered);
+
+      await updateCopilotConfig("customAgents", filtered);
+
+      logger.info(`Custom agent removed: ${name}`);
+      return res.json({ ok: true });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return res.status(500).json({ error: message });
+    }
+  });
+
+  // ── Native MCP Servers Management ──
+  router.get("/native-mcp-servers", (_req, res) => {
+    const servers = copilot?.getNativeMcpServers() ?? {};
+    return res.json({ servers });
+  });
+
+  router.put("/native-mcp-servers", async (req, res) => {
+    const body = req.body as Record<string, unknown>;
+    const servers = body.servers;
+    if (!servers || typeof servers !== "object" || Array.isArray(servers)) {
+      return res.status(400).json({ error: "servers must be an object (Record<string, ServerConfig>)" });
+    }
+
+    // Validate the entire servers record against the Zod schema
+    const parsed = nativeMcpServersSchema.safeParse(servers);
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join(", ") });
+    }
+
+    try {
+      if (copilot) {
+        copilot.setNativeMcpServers(parsed.data as Record<string, NativeMcpServerDefinition>);
+      }
+
+      await updateCopilotConfig("nativeMcpServers", parsed.data);
+
+      logger.info(`Native MCP servers updated: ${Object.keys(parsed.data).length} server(s)`);
+      return res.json({ ok: true, servers: copilot?.getNativeMcpServers() ?? parsed.data });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return res.status(500).json({ error: message });
