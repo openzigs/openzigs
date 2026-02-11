@@ -1,7 +1,7 @@
 import type { ChannelManager } from "../channels/channel-manager.js";
 import type { IncomingMessage, MessageContent } from "../channels/types.js";
 import type { CopilotWrapper } from "../copilot/copilot-wrapper.js";
-import type { ToolRegistry } from "../mcp/tool-registry.js";
+import type { SystemMessageConfig, UserInputHandler } from "../copilot/copilot-wrapper.js";
 import type { AccessControlConfig } from "../config/index.js";
 import type { SessionManager } from "../sessions/session-manager.js";
 import type { PersonalityManager } from "../personality/personality-manager.js";
@@ -25,8 +25,6 @@ export type MessageRouterOptions = {
   channelManager: ChannelManager;
   sessionManager: SessionManager;
   copilot: CopilotWrapper;
-  /** Tool registry, needed to resolve per-request tool scoping. */
-  toolRegistry?: ToolRegistry;
   accessControl?: AccessControlConfig;
   historyLimit?: number;
   maxToolsPerRequest?: number;
@@ -34,6 +32,8 @@ export type MessageRouterOptions = {
   personalityManager?: PersonalityManager;
   /** When provided, chat messages are tracked as TaskEngine tasks. */
   taskEngine?: TaskEngine;
+  /** Handler for interactive user input requests during agent execution. */
+  onUserInputRequest?: UserInputHandler;
 };
 
 const defaultAccessControl: AccessControlConfig = {
@@ -48,7 +48,6 @@ export class MessageRouter {
   private channelManager: ChannelManager;
   private sessionManager: SessionManager;
   private copilot: CopilotWrapper;
-  private toolRegistry?: ToolRegistry;
   private userSessions = new Map<string, string>();
   private accessControl: AccessControlConfig;
   private historyLimit: number;
@@ -56,29 +55,30 @@ export class MessageRouter {
   private clock: () => Date;
   private personalityManager?: PersonalityManager;
   private taskEngine?: TaskEngine;
+  private userInputHandler?: UserInputHandler;
 
   constructor({
     channelManager,
     sessionManager,
     copilot,
-    toolRegistry,
     accessControl,
     historyLimit = 20,
     maxToolsPerRequest = 30,
     clock,
     personalityManager,
-    taskEngine
+    taskEngine,
+    onUserInputRequest
   }: MessageRouterOptions) {
     this.channelManager = channelManager;
     this.sessionManager = sessionManager;
     this.copilot = copilot;
-    this.toolRegistry = toolRegistry;
     this.accessControl = accessControl ?? defaultAccessControl;
     this.historyLimit = historyLimit;
     this.maxToolsPerRequest = maxToolsPerRequest;
     this.clock = clock ?? (() => new Date());
     this.personalityManager = personalityManager;
     this.taskEngine = taskEngine;
+    this.userInputHandler = onUserInputRequest;
   }
 
   /** Invalidate the cached session for a user so the next message creates a new session. */
@@ -130,8 +130,10 @@ export class MessageRouter {
 
     // Touch the session to update lastActiveAt (history is still persisted for admin/audit views)
     await this.sessionManager.resumeSession(sessionId, this.historyLimit);
-    // SDK handles multi-turn context natively; only send personality + current message
+    // SDK handles multi-turn context natively; only send the current user message
     const prompt = this.buildPrompt(message.content);
+    // Build system message from personality config for SDK-level injection
+    const systemMessage = this.buildSystemMessage();
 
     let response = "";
     try {
@@ -149,14 +151,16 @@ export class MessageRouter {
         parentTaskId: taskId,
       });
 
-      // Resolve per-request tool scoping if the caller provided an allowedTools list
-      const scopedTools = this.resolveScopedTools(options?.allowedTools);
+      // Resolve SDK-native tool scoping: pass tool name strings instead of filtering ToolDefinition arrays.
+      const availableTools = this.resolveAvailableTools(options?.allowedTools);
 
       for await (const chunk of this.copilot.chat(prompt, {
         model: options?.model,
-        tools: scopedTools,
         onToolCall: options?.onToolCall,
         conversationId: sessionId,
+        systemMessage,
+        availableTools,
+        onUserInputRequest: this.userInputHandler,
       })) {
         response += chunk;
         if (options?.onChunk) {
@@ -207,17 +211,14 @@ export class MessageRouter {
   }
 
   /**
-   * Resolve a scoped tool list from an allowedTools name list.
-   * Returns undefined when no scoping is needed (uses default copilot tool set).
+   * Resolve SDK-native availableTools from a caller-provided allowedTools list.
+   * Merges ALWAYS_ON_TOOLS into the list. Returns undefined when no scoping is needed.
    */
-  private resolveScopedTools(allowedTools?: string[]) {
-    if (!allowedTools || !this.toolRegistry) {
+  private resolveAvailableTools(allowedTools?: string[]): string[] | undefined {
+    if (!allowedTools) {
       return undefined;
     }
-    const allowedSet = new Set([...allowedTools, ...ALWAYS_ON_TOOLS]);
-    return this.toolRegistry
-      .listEnabledTools()
-      .filter((t) => allowedSet.has(t.name));
+    return [...new Set([...allowedTools, ...ALWAYS_ON_TOOLS])];
   }
 
   private async getOrCreateSessionId(message: IncomingMessage): Promise<string> {
@@ -253,34 +254,35 @@ export class MessageRouter {
     return session.id;
   }
 
-  private buildPrompt(message: string): string {
-    const lines: string[] = [];
+  /**
+   * Build the SDK-level system message from personality config.
+   * Returns undefined when personality is disabled — omitting systemMessage entirely.
+   */
+  private buildSystemMessage(): SystemMessageConfig | undefined {
     const personality = this.personalityManager?.getConfig();
-
-    // System instruction & pre-prompt injection
-    if (personality?.enabled) {
-      if (personality.systemInstruction) {
-        lines.push(`System: ${personality.systemInstruction}`);
-        lines.push("");
-      }
-      if (personality.prePrompt) {
-        lines.push(personality.prePrompt);
-        lines.push("");
-      }
+    if (!personality?.enabled) {
+      return undefined;
     }
 
-    // NOTE: Conversation history is no longer injected into the prompt.
-    // The SDK maintains multi-turn context natively within the session.
+    const parts = [
+      personality.systemInstruction,
+      personality.prePrompt,
+      personality.postPrompt,
+    ].filter(Boolean);
 
-    lines.push(`User: ${message}`);
-
-    // Post-prompt injection
-    if (personality?.enabled && personality.postPrompt) {
-      lines.push("");
-      lines.push(personality.postPrompt);
+    if (parts.length === 0) {
+      return undefined;
     }
 
-    return lines.join("\n");
+    return {
+      mode: personality.mode ?? "append",
+      content: parts.join("\n\n"),
+    };
+  }
+
+  private buildPrompt(message: string): string {
+    // Personality is now injected via SDK systemMessage — prompt only contains the user message.
+    return `User: ${message}`;
   }
 
   private isAllowed(message: IncomingMessage): boolean {

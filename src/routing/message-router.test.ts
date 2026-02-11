@@ -100,10 +100,13 @@ class FakeCopilot implements CopilotWrapper {
     return true;
   }
 
-  async *chat(message: string, options?: { tools?: unknown[]; model?: string; onToolCall?: (tool: string, args: unknown) => void; conversationId?: string }): AsyncGenerator<string> {
+  lastSystemMessage?: import("../copilot/copilot-wrapper.js").SystemMessageConfig;
+
+  async *chat(message: string, options?: { tools?: unknown[]; model?: string; onToolCall?: (tool: string, args: unknown) => void; conversationId?: string; systemMessage?: import("../copilot/copilot-wrapper.js").SystemMessageConfig }): AsyncGenerator<string> {
     this.lastPrompt = message;
     this.lastModel = options?.model;
     this.lastConversationId = options?.conversationId;
+    this.lastSystemMessage = options?.systemMessage;
     for (const chunk of this.chunks) {
       yield chunk;
     }
@@ -336,7 +339,7 @@ describe("MessageRouter", () => {
     expect(copilot.lastModel).toBe("claude-sonnet-4");
   });
 
-  it("injects personality system instruction and pre-prompt into the prompt", async () => {
+  it("injects personality via SDK systemMessage instead of in the prompt", async () => {
     const baseDir = await createTempDir();
     cleanupDirs.push(baseDir);
 
@@ -361,10 +364,16 @@ describe("MessageRouter", () => {
 
     await router.route(baseMessage({ content: "Tell me a joke" }));
 
-    expect(copilot.lastPrompt).toContain("System: You are a pirate.");
-    expect(copilot.lastPrompt).toContain("Respond in rhyme.");
-    expect(copilot.lastPrompt).toContain("User: Tell me a joke");
-    expect(copilot.lastPrompt).toContain("Always sign off with 'Arrr'.");
+    // Personality should be injected via systemMessage, NOT in the prompt text
+    expect(copilot.lastPrompt).not.toContain("System:");
+    expect(copilot.lastPrompt).toBe("User: Tell me a joke");
+
+    // systemMessage should contain personality content with append mode
+    expect(copilot.lastSystemMessage).toBeDefined();
+    expect(copilot.lastSystemMessage!.mode).toBe("append");
+    expect(copilot.lastSystemMessage!.content).toContain("You are a pirate.");
+    expect(copilot.lastSystemMessage!.content).toContain("Respond in rhyme.");
+    expect(copilot.lastSystemMessage!.content).toContain("Always sign off with 'Arrr'.");
   });
 
   it("skips personality injection when disabled", async () => {
@@ -389,9 +398,11 @@ describe("MessageRouter", () => {
 
     expect(copilot.lastPrompt).not.toContain("System:");
     expect(copilot.lastPrompt).toBe("User: Hello");
+    // systemMessage should be undefined when personality is disabled
+    expect(copilot.lastSystemMessage).toBeUndefined();
   });
 
-  it("passes scoped tools to copilot.chat when allowedTools provided", async () => {
+  it("passes SDK-native availableTools when allowedTools provided", async () => {
     const baseDir = await createTempDir();
     cleanupDirs.push(baseDir);
 
@@ -402,54 +413,34 @@ describe("MessageRouter", () => {
 
     const sessionManager = new SessionManager({ baseDir });
 
-    // Track what tools were passed to chat
-    let capturedTools: unknown[] | undefined;
+    // Track what availableTools were passed to chat
+    let capturedAvailableTools: string[] | undefined;
     const copilot = {
       ...new FakeCopilot("ok"),
-      chat: async function* (_message: string, options?: { tools?: unknown[]; model?: string; onToolCall?: (tool: string, args: unknown) => void }) {
-        capturedTools = options?.tools;
+      chat: async function* (_message: string, options?: { availableTools?: string[]; model?: string; onToolCall?: (tool: string, args: unknown) => void }) {
+        capturedAvailableTools = options?.availableTools;
         yield "scoped response";
       },
     } as unknown as CopilotWrapper;
-
-    // Create a minimal mock ToolRegistry
-    const mockToolDefs = [
-      { name: "read-file", description: "Read file", category: "filesystem", riskLevel: "low" },
-      { name: "web-search", description: "Search", category: "search", riskLevel: "low" },
-      { name: "shell-execute", description: "Execute shell", category: "shell", riskLevel: "high" },
-      { name: "spawn-agent", description: "Spawn agent", category: "developer", riskLevel: "medium" },
-      { name: "list-directory", description: "List dir", category: "filesystem", riskLevel: "low" },
-      { name: "browser-navigate", description: "Navigate", category: "browser", riskLevel: "high" },
-      { name: "orchestrate-agents", description: "Orchestrate", category: "developer", riskLevel: "medium" },
-      { name: "linkedin-post", description: "Post to LinkedIn", category: "social", riskLevel: "medium" },
-    ];
-
-    const mockToolRegistry = {
-      listEnabledTools: () => mockToolDefs,
-    };
 
     const router = new MessageRouter({
       channelManager,
       sessionManager,
       copilot,
-      toolRegistry: mockToolRegistry as unknown as import("../mcp/tool-registry.js").ToolRegistry,
     });
 
     await router.route(baseMessage({ content: "Search LinkedIn" }), {
       allowedTools: ["web-search", "linkedin-post"],
     });
 
-    expect(capturedTools).toBeDefined();
-    const toolNames = (capturedTools as Array<{ name: string }>).map((t) => t.name);
+    expect(capturedAvailableTools).toBeDefined();
     // Should include explicitly allowed tools
-    expect(toolNames).toContain("web-search");
-    expect(toolNames).toContain("linkedin-post");
-    // Should include always-on tools
-    expect(toolNames).toContain("read-file");
-    expect(toolNames).toContain("spawn-agent");
-    // Should NOT include tools not in the allowlist (unless they're always-on)
-    // shell-execute IS always-on, so it should still be there
-    expect(toolNames).toContain("shell-execute");
+    expect(capturedAvailableTools).toContain("web-search");
+    expect(capturedAvailableTools).toContain("linkedin-post");
+    // Should include always-on tools merged in
+    expect(capturedAvailableTools).toContain("read-file");
+    expect(capturedAvailableTools).toContain("spawn-agent");
+    expect(capturedAvailableTools).toContain("shell-execute");
   });
 
   it("does not scope tools when allowedTools not provided", async () => {
@@ -463,30 +454,25 @@ describe("MessageRouter", () => {
 
     const sessionManager = new SessionManager({ baseDir });
 
-    let capturedTools: unknown[] | undefined;
+    let capturedAvailableTools: string[] | undefined;
     const copilot = {
       ...new FakeCopilot("ok"),
-      chat: async function* (_message: string, options?: { tools?: unknown[]; model?: string }) {
-        capturedTools = options?.tools;
+      chat: async function* (_message: string, options?: { availableTools?: string[]; model?: string }) {
+        capturedAvailableTools = options?.availableTools;
         yield "unscoped response";
       },
     } as unknown as CopilotWrapper;
-
-    const mockToolRegistry = {
-      listEnabledTools: () => [],
-    };
 
     const router = new MessageRouter({
       channelManager,
       sessionManager,
       copilot,
-      toolRegistry: mockToolRegistry as unknown as import("../mcp/tool-registry.js").ToolRegistry,
     });
 
     await router.route(baseMessage({ content: "Hello" }));
 
-    // tools should be undefined (no scoping)
-    expect(capturedTools).toBeUndefined();
+    // availableTools should be undefined (no scoping)
+    expect(capturedAvailableTools).toBeUndefined();
   });
 
   it("passes conversationId to copilot.chat on first message", async () => {

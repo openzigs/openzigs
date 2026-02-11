@@ -8,11 +8,14 @@ import type {
   MessageContent
 } from "./types.js";
 import type { SessionManager } from "../sessions/session-manager.js";
+import type { UserInputRequest, UserInputResponse } from "../copilot/copilot-wrapper.js";
 
 export type WebChatChannelOptions = {
   io: SocketIOServer;
   /** When provided, session history is sent to clients on connect. */
   sessionManager?: SessionManager;
+  /** Timeout in ms for interactive user input requests. Default 60_000 (60s). */
+  userInputTimeoutMs?: number;
 };
 
 type SocketEntry = {
@@ -21,22 +24,30 @@ type SocketEntry = {
   socket: Socket;
 };
 
+type PendingInputRequest = {
+  resolve: (response: UserInputResponse) => void;
+  timer: ReturnType<typeof setTimeout>;
+};
+
 export class WebChatChannel implements MessageChannel {
   readonly id = "web-chat";
   readonly type = "web" as const;
 
   private io: SocketIOServer;
   private sessionManager?: SessionManager;
+  private userInputTimeoutMs: number;
   private connected = false;
   private sockets = new Map<string, SocketEntry>();
   private chatIdToSocketId = new Map<string, string>();
+  private pendingInputRequests = new Map<string, PendingInputRequest>();
   private messageHandlers: Array<(msg: IncomingMessage) => void> = [];
   private approvalHandlers: Array<(response: ApprovalResponse) => void> = [];
   private clearHandlers: Array<(data: { userId: string }) => void> = [];
 
-  constructor({ io, sessionManager }: WebChatChannelOptions) {
+  constructor({ io, sessionManager, userInputTimeoutMs }: WebChatChannelOptions) {
     this.io = io;
     this.sessionManager = sessionManager;
+    this.userInputTimeoutMs = userInputTimeoutMs ?? 60_000;
   }
 
   async connect(): Promise<void> {
@@ -115,6 +126,33 @@ export class WebChatChannel implements MessageChannel {
     }
   }
 
+  /**
+   * Send an interactive user input request to the client and wait for a response.
+   * Returns a Promise that resolves with the user's answer or rejects on timeout.
+   */
+  async sendUserInputRequest(chatId: string, request: UserInputRequest): Promise<UserInputResponse> {
+    const socket = this.getSocketByChatId(chatId);
+    if (!socket) {
+      return { answer: "", wasFreeform: false };
+    }
+
+    const requestId = nanoid();
+    return new Promise<UserInputResponse>((resolve) => {
+      const timer = setTimeout(() => {
+        this.pendingInputRequests.delete(requestId);
+        resolve({ answer: "", wasFreeform: false });
+      }, this.userInputTimeoutMs);
+
+      this.pendingInputRequests.set(requestId, { resolve, timer });
+      socket.emit("user_input_request", {
+        requestId,
+        question: request.question,
+        choices: request.choices,
+        allowFreeform: request.allowFreeform ?? true,
+      });
+    });
+  }
+
   private handleConnection(socket: Socket) {
     const clientId = typeof socket.handshake.query.clientId === "string"
       ? socket.handshake.query.clientId
@@ -166,6 +204,20 @@ export class WebChatChannel implements MessageChannel {
       };
       for (const handler of this.approvalHandlers) {
         handler(response);
+      }
+    });
+
+    // Handle user input responses for interactive clarifications
+    socket.on("user_input_response", (data: { requestId?: string; answer?: string }) => {
+      const requestId = typeof data?.requestId === "string" ? data.requestId : "";
+      const answer = typeof data?.answer === "string" ? data.answer : "";
+      if (!requestId) return;
+
+      const pending = this.pendingInputRequests.get(requestId);
+      if (pending) {
+        clearTimeout(pending.timer);
+        this.pendingInputRequests.delete(requestId);
+        pending.resolve({ answer, wasFreeform: true });
       }
     });
 

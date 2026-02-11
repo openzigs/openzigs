@@ -347,7 +347,7 @@ describe("TaskWorker", () => {
     worker.start(); // Should not throw or double-start
   });
 
-  it("passes scoped tools to copilot.chat when task has allowedTools", async () => {
+  it("passes SDK-native availableTools when task has allowedTools", async () => {
     const mockCopilot = {
       authenticate: vi.fn(),
       waitForAuth: vi.fn(),
@@ -364,27 +364,9 @@ describe("TaskWorker", () => {
       }),
     };
 
-    // Create a minimal mock ToolRegistry
-    const mockToolDefs = [
-      { name: "read-file", description: "Read file", category: "filesystem", riskLevel: "low" },
-      { name: "web-search", description: "Search", category: "search", riskLevel: "low" },
-      { name: "shell-execute", description: "Execute shell", category: "shell", riskLevel: "high" },
-      { name: "spawn-agent", description: "Spawn agent", category: "developer", riskLevel: "medium" },
-      { name: "list-directory", description: "List dir", category: "filesystem", riskLevel: "low" },
-      { name: "browser-navigate", description: "Navigate", category: "browser", riskLevel: "high" },
-      { name: "orchestrate-agents", description: "Orchestrate", category: "developer", riskLevel: "medium" },
-      { name: "linkedin-post", description: "Post to LinkedIn", category: "social", riskLevel: "medium" },
-      { name: "twitter-post", description: "Post to Twitter", category: "social", riskLevel: "medium" },
-    ];
-
-    const mockToolRegistry = {
-      listEnabledTools: vi.fn().mockReturnValue(mockToolDefs),
-    };
-
     worker = new TaskWorker({
       engine,
       copilot: mockCopilot,
-      toolRegistry: mockToolRegistry as unknown as import("../mcp/tool-registry.js").ToolRegistry,
       maxConcurrent: 1,
       pollIntervalMs: 50,
       log: silentLog,
@@ -405,20 +387,17 @@ describe("TaskWorker", () => {
     worker.start();
     await donePromise;
 
-    // Verify tools were passed to copilot.chat
-    const chatOptions = mockCopilot.chat.mock.calls[0][1] as { tools?: unknown[] };
-    expect(chatOptions.tools).toBeDefined();
+    // Verify availableTools string array was passed to copilot.chat
+    const chatOptions = mockCopilot.chat.mock.calls[0][1] as { availableTools?: string[] };
+    expect(chatOptions.availableTools).toBeDefined();
 
-    const toolNames = (chatOptions.tools as Array<{ name: string }>).map((t) => t.name);
     // Should include the explicitly allowed tools
-    expect(toolNames).toContain("web-search");
-    expect(toolNames).toContain("linkedin-post");
+    expect(chatOptions.availableTools).toContain("web-search");
+    expect(chatOptions.availableTools).toContain("linkedin-post");
     // Should include always-on tools
-    expect(toolNames).toContain("read-file");
-    expect(toolNames).toContain("spawn-agent");
-    expect(toolNames).toContain("orchestrate-agents");
-    // Should NOT include twitter-post (not in allowedTools)
-    expect(toolNames).not.toContain("twitter-post");
+    expect(chatOptions.availableTools).toContain("read-file");
+    expect(chatOptions.availableTools).toContain("spawn-agent");
+    expect(chatOptions.availableTools).toContain("orchestrate-agents");
   });
 
   it("does not scope tools when task has no allowedTools", async () => {
@@ -438,14 +417,9 @@ describe("TaskWorker", () => {
       }),
     };
 
-    const mockToolRegistry = {
-      listEnabledTools: vi.fn().mockReturnValue([]),
-    };
-
     worker = new TaskWorker({
       engine,
       copilot: mockCopilot,
-      toolRegistry: mockToolRegistry as unknown as import("../mcp/tool-registry.js").ToolRegistry,
       maxConcurrent: 1,
       pollIntervalMs: 50,
       log: silentLog,
@@ -463,8 +437,8 @@ describe("TaskWorker", () => {
     worker.start();
     await donePromise;
 
-    // tools should be undefined (no scoping)
-    const chatOptions = mockCopilot.chat.mock.calls[0][1] as { tools?: unknown[] };
-    expect(chatOptions.tools).toBeUndefined();
+    // availableTools should be undefined (no scoping)
+    const chatOptions = mockCopilot.chat.mock.calls[0][1] as { availableTools?: string[] };
+    expect(chatOptions.availableTools).toBeUndefined();
   });
 });

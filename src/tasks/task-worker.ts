@@ -1,7 +1,6 @@
 import { EventEmitter } from "node:events";
 import type { TaskEngine } from "./task-engine.js";
 import type { CopilotWrapper } from "../copilot/copilot-wrapper.js";
-import type { ToolRegistry } from "../mcp/tool-registry.js";
 import type { AgentTask } from "./types.js";
 import { ALWAYS_ON_TOOLS } from "../mcp/constants.js";
 import { logger } from "../logging/logger.js";
@@ -9,8 +8,6 @@ import { logger } from "../logging/logger.js";
 export type TaskWorkerOptions = {
   engine: TaskEngine;
   copilot: CopilotWrapper;
-  /** Tool registry, needed to resolve allowedTools into ToolDefinition[]. */
-  toolRegistry?: ToolRegistry;
   /** Maximum concurrent background tasks. Default 2. */
   maxConcurrent?: number;
   /** Poll interval in milliseconds. Default 2000. */
@@ -29,7 +26,6 @@ export type TaskWorkerOptions = {
 export class TaskWorker extends EventEmitter {
   private engine: TaskEngine;
   private copilot: CopilotWrapper;
-  private toolRegistry?: ToolRegistry;
   private maxConcurrent: number;
   private pollIntervalMs: number;
   private log: Pick<typeof logger, "info" | "warn" | "error">;
@@ -40,7 +36,6 @@ export class TaskWorker extends EventEmitter {
   constructor({
     engine,
     copilot,
-    toolRegistry,
     maxConcurrent = 2,
     pollIntervalMs = 2_000,
     log: logOverride,
@@ -48,7 +43,6 @@ export class TaskWorker extends EventEmitter {
     super();
     this.engine = engine;
     this.copilot = copilot;
-    this.toolRegistry = toolRegistry;
     this.maxConcurrent = maxConcurrent;
     this.pollIntervalMs = pollIntervalMs;
     this.log = logOverride ?? logger;
@@ -134,14 +128,14 @@ export class TaskWorker extends EventEmitter {
     try {
       const prompt = this.buildPrompt(task);
 
-      // Build scoped tool list when the task has an allowedTools restriction
-      const tools = this.resolveScopedTools(task);
+      // Build SDK-native tool scoping: pass tool name strings instead of filtering ToolDefinition arrays.
+      const availableTools = this.resolveAvailableTools(task);
 
       let result = "";
 
       for await (const chunk of this.copilot.chat(prompt, {
         model: task.model ?? undefined,
-        tools,
+        availableTools,
         onToolCall: (toolName, args) => {
           if (toolName === "spawn-agent" || toolName === "orchestrate-agents") {
             // Inject parent task ID, session, and channel info for recursive chaining.
@@ -152,6 +146,8 @@ export class TaskWorker extends EventEmitter {
             a.chatId = task.chatId;
           }
         },
+        // Background tasks auto-skip interactive clarifications with an empty answer.
+        onUserInputRequest: async () => ({ answer: "", wasFreeform: false }),
       })) {
         result += chunk;
       }
@@ -168,19 +164,14 @@ export class TaskWorker extends EventEmitter {
   }
 
   /**
-   * Resolve a scoped tool list for a task. When `task.allowedTools` is set,
-   * only those tools (plus ALWAYS_ON_TOOLS) are included. Returns undefined
-   * when no scoping is needed (uses default copilot tool set).
+   * Resolve SDK-native availableTools for a task. Merges ALWAYS_ON_TOOLS
+   * into the list. Returns undefined when no scoping is needed.
    */
-  private resolveScopedTools(task: AgentTask) {
-    if (!task.allowedTools || !this.toolRegistry) {
+  private resolveAvailableTools(task: AgentTask): string[] | undefined {
+    if (!task.allowedTools) {
       return undefined;
     }
-
-    const allowedSet = new Set([...task.allowedTools, ...ALWAYS_ON_TOOLS]);
-    return this.toolRegistry
-      .listEnabledTools()
-      .filter((t) => allowedSet.has(t.name));
+    return [...new Set([...task.allowedTools, ...ALWAYS_ON_TOOLS])];
   }
 
   /** Build a prompt string for the background task. */

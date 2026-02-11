@@ -1,5 +1,7 @@
 import type Database from "better-sqlite3";
 
+export type SystemMessageMode = "append" | "replace";
+
 export type PersonalityConfig = {
   /** The system instruction / persona */
   systemInstruction: string;
@@ -11,6 +13,10 @@ export type PersonalityConfig = {
   enabled: boolean;
   /** ISO timestamp of last update */
   updatedAt: string;
+  /** Controls how the system message interacts with SDK guardrails.
+   *  "append" (default) — keeps SDK guardrails and appends our persona.
+   *  "replace" — replaces SDK guardrails entirely (power-user mode). */
+  mode: SystemMessageMode;
 };
 
 export type PersonalityUpdate = {
@@ -18,6 +24,7 @@ export type PersonalityUpdate = {
   prePrompt?: string;
   postPrompt?: string;
   enabled?: boolean;
+  mode?: SystemMessageMode;
 };
 
 export const DEFAULT_PERSONALITY: PersonalityConfig = {
@@ -26,6 +33,7 @@ export const DEFAULT_PERSONALITY: PersonalityConfig = {
   postPrompt: "",
   enabled: true,
   updatedAt: new Date().toISOString(),
+  mode: "append",
 };
 
 export type PersonalityManagerOptions = {
@@ -40,6 +48,7 @@ type StoredPersonality = {
   post_prompt: string;
   enabled: number;
   updated_at: string;
+  mode: string;
 };
 
 export class PersonalityManager {
@@ -60,23 +69,31 @@ export class PersonalityManager {
         pre_prompt TEXT NOT NULL DEFAULT '',
         post_prompt TEXT NOT NULL DEFAULT '',
         enabled INTEGER NOT NULL DEFAULT 1,
-        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+        mode TEXT NOT NULL DEFAULT 'append'
       )
     `);
+
+    // Migrate: add mode column if missing (existing installs)
+    const cols = this.db.pragma("table_info(personality)") as Array<{ name: string }>;
+    if (!cols.some((c) => c.name === "mode")) {
+      this.db.exec("ALTER TABLE personality ADD COLUMN mode TEXT NOT NULL DEFAULT 'append'");
+    }
 
     // Seed default row if empty
     const row = this.db.prepare("SELECT COUNT(*) as count FROM personality").get() as { count: number };
     if (row.count === 0) {
       this.db
         .prepare(
-          `INSERT INTO personality (id, system_instruction, pre_prompt, post_prompt, enabled, updated_at)
-           VALUES (1, ?, ?, ?, 1, ?)`
+          `INSERT INTO personality (id, system_instruction, pre_prompt, post_prompt, enabled, updated_at, mode)
+           VALUES (1, ?, ?, ?, 1, ?, ?)`
         )
         .run(
           DEFAULT_PERSONALITY.systemInstruction,
           DEFAULT_PERSONALITY.prePrompt,
           DEFAULT_PERSONALITY.postPrompt,
-          this.clock().toISOString()
+          this.clock().toISOString(),
+          DEFAULT_PERSONALITY.mode
         );
     }
   }
@@ -92,6 +109,7 @@ export class PersonalityManager {
       postPrompt: row.post_prompt,
       enabled: row.enabled === 1,
       updatedAt: row.updated_at,
+      mode: (row.mode === "replace" ? "replace" : "append") as SystemMessageMode,
     };
   }
 
@@ -103,14 +121,15 @@ export class PersonalityManager {
     const prePrompt = input.prePrompt ?? current.prePrompt;
     const postPrompt = input.postPrompt ?? current.postPrompt;
     const enabled = input.enabled ?? current.enabled;
+    const mode = input.mode ?? current.mode;
 
     this.db
       .prepare(
         `UPDATE personality
-         SET system_instruction = ?, pre_prompt = ?, post_prompt = ?, enabled = ?, updated_at = ?
+         SET system_instruction = ?, pre_prompt = ?, post_prompt = ?, enabled = ?, updated_at = ?, mode = ?
          WHERE id = 1`
       )
-      .run(systemInstruction, prePrompt, postPrompt, enabled ? 1 : 0, now);
+      .run(systemInstruction, prePrompt, postPrompt, enabled ? 1 : 0, now, mode);
 
     return this.getConfig();
   }
@@ -120,14 +139,15 @@ export class PersonalityManager {
     this.db
       .prepare(
         `UPDATE personality
-         SET system_instruction = ?, pre_prompt = ?, post_prompt = ?, enabled = 1, updated_at = ?
+         SET system_instruction = ?, pre_prompt = ?, post_prompt = ?, enabled = 1, updated_at = ?, mode = ?
          WHERE id = 1`
       )
       .run(
         DEFAULT_PERSONALITY.systemInstruction,
         DEFAULT_PERSONALITY.prePrompt,
         DEFAULT_PERSONALITY.postPrompt,
-        now
+        now,
+        DEFAULT_PERSONALITY.mode
       );
     return this.getConfig();
   }

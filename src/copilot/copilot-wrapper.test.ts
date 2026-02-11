@@ -355,6 +355,56 @@ describe("copilot wrapper", () => {
     expect(client.lastSessionConfig?.sessionId).toBe("my-session");
   });
 
+  it("passes systemMessage config to createSession", async () => {
+    const client = new FakeCopilotClient();
+    const wrapper = new CopilotWrapperService({ client });
+
+    const systemMessage = { mode: "append" as const, content: "You are a pirate." };
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    for await (const _chunk of wrapper.chat("Hello", { systemMessage })) { /* drain */ }
+
+    expect((client.lastSessionConfig as Record<string, unknown>)?.systemMessage).toEqual(systemMessage);
+  });
+
+  it("passes hooks config to createSession", async () => {
+    const client = new FakeCopilotClient();
+    const hooks = {
+      onPreToolUse: async () => ({ permissionDecision: "allow" as const }),
+      onPostToolUse: async () => null,
+    };
+    const wrapper = new CopilotWrapperService({ client, hooks });
+
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    for await (const _chunk of wrapper.chat("Hello")) { /* drain */ }
+
+    expect((client.lastSessionConfig as Record<string, unknown>)?.hooks).toEqual(hooks);
+  });
+
+  it("passes onUserInputRequest handler to createSession", async () => {
+    const client = new FakeCopilotClient();
+    const handler = async () => ({ answer: "test", wasFreeform: true });
+    const wrapper = new CopilotWrapperService({ client, onUserInputRequest: handler });
+
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    for await (const _chunk of wrapper.chat("Hello")) { /* drain */ }
+
+    expect((client.lastSessionConfig as Record<string, unknown>)?.onUserInputRequest).toBeDefined();
+  });
+
+  it("per-chat onUserInputRequest overrides the default handler", async () => {
+    const client = new FakeCopilotClient();
+    const defaultHandler = async () => ({ answer: "default", wasFreeform: false });
+    const perChatHandler = async () => ({ answer: "override", wasFreeform: true });
+    const wrapper = new CopilotWrapperService({ client, onUserInputRequest: defaultHandler });
+
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    for await (const _chunk of wrapper.chat("Hello", { onUserInputRequest: perChatHandler })) { /* drain */ }
+
+    // The per-chat handler should take precedence
+    const config = client.lastSessionConfig as Record<string, unknown>;
+    expect(config?.onUserInputRequest).toBeDefined();
+  });
+
   it("unsubscribes event handlers after each chat call to prevent accumulation", async () => {
     const client = new FakeCopilotClient();
     const wrapper = new CopilotWrapperService({ client });
