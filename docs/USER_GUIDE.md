@@ -164,6 +164,8 @@ The OpenZigs UI is a **Next.js** application with a navigation bar providing acc
 
 1. Navigate to **http://localhost:3001/chat**.
 
+![Chat overview — model selector, reasoning effort, and message input](images/chat-overview.png)
+
 2. The chat interface includes:
    - A **model selector** dropdown in the header.
    - A **reasoning effort selector** (dot-based radio buttons) — visible only when a reasoning-capable model is selected (e.g., `o1`, `o3`, `o4-mini`).
@@ -174,7 +176,11 @@ The OpenZigs UI is a **Next.js** application with a navigation bar providing acc
 
 3. Type a message and press **Enter** (or click **Send**).
 
+![Chat with xHigh reasoning effort selected](images/chat-reasoning-xhigh.png)
+
 4. The assistant responds in real time via streaming — text appears word-by-word as the model generates it.
+
+![Live chat response with tool calls and Markdown table rendering](images/chat-conversation-response.png)
 
 5. During execution, the agent may display an **interactive clarification prompt** — either a set of radio-button choices or a free-text input — to gather additional information before continuing.
 
@@ -200,6 +206,12 @@ The chat input features trigger-based autocomplete for fast access to tools, sav
 | Arrow Down (in history mode) | Navigate forward in history |
 | Shift + Enter | Insert a new line |
 
+![IntelliSense autocomplete showing saved prompts (/ trigger)](images/chat-intellisense-prompts.png)
+
+![IntelliSense autocomplete showing available tools (# trigger)](images/chat-intellisense-tools.png)
+
+![IntelliSense autocomplete showing models (@ trigger)](images/chat-intellisense-models.png)
+
 When you select an item from the autocomplete, its name is inserted into the input field. For example, typing `#web-` and selecting `web-search` inserts `web-search` at the cursor position.
 
 ### Approval Prompts
@@ -212,6 +224,8 @@ If the agent calls a high-risk tool (e.g., writing a file or running a shell com
 
 ### Dashboard
 
+![Dashboard — system snapshot, pending approvals, and audit log](images/dashboard.png)
+
 The dashboard at `/` provides:
 
 - **Snapshot stats** — total enabled tools, pending approvals, active sessions.
@@ -220,13 +234,21 @@ The dashboard at `/` provides:
 
 ### Admin
 
+![Admin page — channels, personality, model configuration, and tools](images/admin-overview.png)
+
 The admin page at `/admin` consolidates all configuration:
 
 - **Channels** — Configure Telegram and Discord tokens, toggle channels on/off, select default model.
 - **AI Personality** — Configure the system instruction and optional pre/post prompts, or disable injection globally. Set the **mode** to `append` (merge your personality with SDK defaults) or `replace` (fully override the system prompt with your personality text). A warning banner is displayed when replace mode is selected, and the prompt preview reflects the selected mode.
+![Model Configuration — reasoning effort and BYOK provider settings](images/admin-model-config.png)
+
 - **Model Configuration** — Set the default reasoning effort (Low / Medium / High / xHigh) for reasoning models. Enable **BYOK (Bring Your Own Key)** to configure a custom provider (OpenAI, Azure, Anthropic, Ollama, or Custom) with base URL, API key (masked by default), and optional Azure API version. Test the connection before saving, or clear the provider to revert to GitHub Copilot.
 - **Task Engine** — Adjust the maximum concurrent background agents (1–10) at runtime, view live queue stats (running, queued, concurrency limit). Configure the **tool limit per request** (1–128) to control how many tools are sent to the LLM in each call — see [Tool Limit Configuration](#tool-limit-configuration) below.
+![Custom Agents — agent cards with tool badges and infer indicators](images/admin-custom-agents.png)
+
 - **Custom Agents** — Create, edit, and delete custom agent archetypes. Each agent has a name (identifier), display name, description, system prompt, tool allowlist (multi-select grouped by category), and auto-invoke toggle. Agents are displayed as cards with tool badges and infer indicators.
+
+![New Agent form — name, description, system prompt, tool selection, and auto-invoke toggle](images/admin-new-agent-form.png)
 - **MCP Sidecars** — View Docker sidecar status (running, credentials missing, offline), manage credentials, restart containers, toggle per-tool within each sidecar.
 - **Local MCP Servers** — View status of locally-running MCP servers (MarkItDown, Database, GitHub).
 - **Native MCP Servers** — Define and manage native MCP server connections. Supports Local (stdio), HTTP, and SSE transport types. Local servers are configured with a command, arguments, working directory, and environment variables (sensitive values are masked). HTTP/SSE servers are configured with a URL and optional headers. Each server has a configurable timeout.
@@ -234,6 +256,8 @@ The admin page at `/admin` consolidates all configuration:
 - **Environment** — Status grid showing which environment variables are configured vs. missing.
 
 ### Library (Saved Prompts)
+
+![Library — saved prompt templates with variable highlighting](images/library-prompts.png)
 
 The library at `/library` provides a visual interface for managing saved prompt templates:
 
@@ -246,6 +270,8 @@ The library at `/library` provides a visual interface for managing saved prompt 
 
 ### Scheduler
 
+![Scheduler — cron-based job management with existing jobs](images/scheduler-page.png)
+
 The scheduler at `/scheduler` manages cron-based automated jobs:
 
 - **Create** jobs with name, cron expression, and action (prompt, shell command, or custom).
@@ -256,6 +282,8 @@ The scheduler at `/scheduler` manages cron-based automated jobs:
 - **Enable/disable** individual jobs with toggle switches.
 - **Run Now** — trigger any job immediately with the ▶ Run button, bypassing the cron schedule.
 - **Auto-Approve Tools** — specify a comma-separated list of tool names that will bypass approval gating when this job runs. Useful for fully autonomous scheduled workflows (e.g., a nightly report that needs `shell-execute` and `write-file` without human confirmation).
+
+![New Job form — model selection, cron expression, and auto-approve tools](images/scheduler-new-job-form.png)
 - **Live execution events** via Socket.IO — see when jobs fire in real time.
 
 #### Multi-Model Agent Chaining
@@ -342,6 +370,8 @@ After import, the converted Markdown is loaded into the editor with a suggested 
 
 ### Tasks (Background Agents)
 
+![Tasks page — queue stats, task list with status badges and results](images/tasks-page.png)
+
 The Tasks page at `/tasks` provides real-time monitoring of background agent tasks:
 
 - **Queue stats** — live counters showing queued and running task counts.
@@ -354,6 +384,8 @@ The Tasks page at `/tasks` provides real-time monitoring of background agent tas
 - **Visual workflow graph** — click **◇ View graph** on any task to see a full interactive DAG (directed acyclic graph) of the task tree.
 
 ### Visual Workflow Graph
+
+![Task workflow graph — interactive DAG visualization of task tree](images/tasks-graph-view.png)
 
 The task graph provides an interactive visualisation of a task and all its descendants, powered by React Flow and dagre layout.
 
@@ -1888,6 +1920,8 @@ This section demonstrates real-world workflows that combine multiple features �
 
 ### Example 1: Multi-Model Reasoning Chain (Chat)
 
+![Model selector dropdown showing available models](images/chat-model-selector.png)
+
 Use a reasoning model for planning, then a fast model for execution — all in one conversation.
 
 **Chat transcript:**
@@ -2265,6 +2299,8 @@ Scheduler fires → TaskEngine.submit()
 ---
 
 ### Example 7: BYOK Provider with Local Ollama for Private Data
+
+![BYOK Provider configuration panel — provider type, base URL, and API key](images/admin-byok-provider.png)
 
 Run sensitive workloads entirely on your local network using Ollama, then switch back to Copilot for general tasks.
 
