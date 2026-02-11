@@ -261,6 +261,7 @@ export class CopilotWrapperService implements CopilotWrapper {
   private sendAndWaitTimeoutMs: number;
   private infiniteSessionsConfig?: InfiniteSessionConfig;
   private sessionCache = new Map<string, CopilotSessionLike>();
+  private sessionCreationPromises = new Map<string, Promise<CopilotSessionLike>>();
 
   constructor({
     client,
@@ -562,39 +563,53 @@ export class CopilotWrapperService implements CopilotWrapper {
     model: string,
     tools: unknown[]
   ): Promise<CopilotSessionLike> {
-    if (conversationId) {
-      const cached = this.sessionCache.get(conversationId);
-      if (cached) {
-        return cached;
-      }
+    if (!conversationId) {
+      // No conversationId — ephemeral session (backward compatible)
+      return this.client.createSession(this.buildSessionConfig(model, tools));
+    }
 
-      let session: CopilotSessionLike;
+    const cached = this.sessionCache.get(conversationId);
+    if (cached) {
+      return cached;
+    }
 
-      // Try to resume a persisted session first, then fall back to create
-      if (this.client.resumeSession) {
-        try {
-          session = await this.client.resumeSession(
-            conversationId,
-            this.buildSessionConfig(model, tools)
-          );
-        } catch {
-          // Resume failed (e.g. session not found) — create a new one
+    const pendingPromise = this.sessionCreationPromises.get(conversationId);
+    if (pendingPromise) {
+      return pendingPromise;
+    }
+
+    const createPromise = (async (): Promise<CopilotSessionLike> => {
+      try {
+        let session: CopilotSessionLike;
+        // Try to resume a persisted session first, then fall back to create
+        if (this.client.resumeSession) {
+          try {
+            session = await this.client.resumeSession(
+              conversationId,
+              this.buildSessionConfig(model, tools)
+            );
+          } catch (resumeError) {
+            // It's useful to log why resume failed, even if we fall back gracefully.
+            // console.warn(`Failed to resume session ${conversationId}, creating a new one. Error:`, resumeError);
+            session = await this.client.createSession(
+              this.buildSessionConfig(model, tools, conversationId)
+            );
+          }
+        } else {
           session = await this.client.createSession(
             this.buildSessionConfig(model, tools, conversationId)
           );
         }
-      } else {
-        session = await this.client.createSession(
-          this.buildSessionConfig(model, tools, conversationId)
-        );
+        this.sessionCache.set(conversationId, session);
+        return session;
+      } finally {
+        // Once the session is created and cached (or failed), remove the promise from the map.
+        this.sessionCreationPromises.delete(conversationId);
       }
+    })();
 
-      this.sessionCache.set(conversationId, session);
-      return session;
-    }
-
-    // No conversationId — ephemeral session (backward compatible)
-    return this.client.createSession(this.buildSessionConfig(model, tools));
+    this.sessionCreationPromises.set(conversationId, createPromise);
+    return createPromise;
   }
 
   private async *streamQueue(queue: AsyncQueue<string>, onEnd: () => void): AsyncGenerator<string> {
