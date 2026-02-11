@@ -934,6 +934,7 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
           prePrompt: typeof body.prePrompt === "string" ? body.prePrompt : undefined,
           postPrompt: typeof body.postPrompt === "string" ? body.postPrompt : undefined,
           enabled: typeof body.enabled === "boolean" ? body.enabled : undefined,
+          mode: body.mode === "append" || body.mode === "replace" ? body.mode : undefined,
         });
         return res.json(updated);
       } catch (error) {

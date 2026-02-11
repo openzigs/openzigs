@@ -13,6 +13,9 @@ import { EnvPanel } from "@/components/admin/env-panel";
 import { PersonalityPanel } from "@/components/admin/personality-panel";
 import { TaskEnginePanel } from "@/components/admin/task-engine-panel";
 import { SessionsPanel } from "@/components/admin/sessions-panel";
+import { ModelConfigPanel } from "@/components/admin/model-config-panel";
+import { AgentsPanel } from "@/components/admin/agents-panel";
+import { McpEditorPanel } from "@/components/admin/mcp-editor-panel";
 import { ToastContainer, showToast } from "@/components/toast";
 import { RotateCw } from "lucide-react";
 
@@ -69,8 +72,16 @@ export default function AdminPage() {
           <PersonalityPanel />
         </SectionCard>
 
+        <SectionCard title="Model Configuration">
+          <ModelConfigPanel />
+        </SectionCard>
+
         <SectionCard title="Task Engine">
           <TaskEnginePanel />
+        </SectionCard>
+
+        <SectionCard title="Custom Agents">
+          <AgentsPanel />
         </SectionCard>
 
         <SectionCard title="Sessions">
@@ -83,6 +94,10 @@ export default function AdminPage() {
 
         <SectionCard title="Local MCP Servers">
           <LocalServersPanel />
+        </SectionCard>
+
+        <SectionCard title="Native MCP Servers">
+          <McpEditorPanel />
         </SectionCard>
 
         <SectionCard title="Tools">

@@ -5,7 +5,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { fetchJson } from "@/lib/api";
 import type { PersonalityConfig } from "@/lib/types";
 import { showToast } from "@/components/toast";
-import { RotateCw, Eye, EyeOff, RotateCcw } from "lucide-react";
+import { RotateCw, Eye, EyeOff, RotateCcw, AlertTriangle } from "lucide-react";
 
 export const PersonalityPanel = () => {
   const queryClient = useQueryClient();
@@ -22,6 +22,7 @@ export const PersonalityPanel = () => {
   const [prePrompt, setPrePrompt] = useState("");
   const [postPrompt, setPostPrompt] = useState("");
   const [enabled, setEnabled] = useState(true);
+  const [mode, setMode] = useState<"append" | "replace">("append");
 
   // Sync form state when data loads
   useEffect(() => {
@@ -30,6 +31,7 @@ export const PersonalityPanel = () => {
       setPrePrompt(config.prePrompt);
       setPostPrompt(config.postPrompt);
       setEnabled(config.enabled);
+      setMode(config.mode ?? "append");
     }
   }, [config]);
 
@@ -38,7 +40,8 @@ export const PersonalityPanel = () => {
     (systemInstruction !== config.systemInstruction ||
       prePrompt !== config.prePrompt ||
       postPrompt !== config.postPrompt ||
-      enabled !== config.enabled);
+      enabled !== config.enabled ||
+      mode !== (config.mode ?? "append"));
 
   const saveMutation = useMutation({
     mutationFn: (payload: Record<string, unknown>) =>
@@ -62,13 +65,14 @@ export const PersonalityPanel = () => {
       setPrePrompt(data.prePrompt);
       setPostPrompt(data.postPrompt);
       setEnabled(data.enabled);
+      setMode(data.mode ?? "append");
       showToast("Personality reset to defaults", "success");
     },
     onError: (err) => showToast(`Error: ${err.message}`, "error"),
   });
 
   const handleSave = () => {
-    saveMutation.mutate({ systemInstruction, prePrompt, postPrompt, enabled });
+    saveMutation.mutate({ systemInstruction, prePrompt, postPrompt, enabled, mode });
   };
 
   const handleReset = () => {
@@ -108,6 +112,40 @@ export const PersonalityPanel = () => {
             }`}
           />
         </button>
+      </div>
+
+      {/* Mode selector */}
+      <div className="space-y-2">
+        <p className="text-xs font-medium text-muted-foreground">System Prompt Mode</p>
+        <div className="flex gap-2" role="radiogroup" aria-label="System Prompt Mode">
+          {(["append", "replace"] as const).map((m) => (
+            <button
+              key={m}
+              role="radio"
+              aria-checked={mode === m}
+              onClick={() => setMode(m)}
+              disabled={!enabled}
+              className={`rounded-lg border px-4 py-2 text-xs font-semibold capitalize transition disabled:opacity-40 ${
+                mode === m
+                  ? "border-primary bg-primary/10 text-primary"
+                  : "border-border bg-card text-muted-foreground hover:border-primary/30"
+              }`}
+            >
+              {m}{m === "append" ? " (recommended)" : ""}
+            </button>
+          ))}
+        </div>
+        <p className="text-[11px] text-muted-foreground/60">
+          &ldquo;Append&rdquo; keeps Copilot SDK safety guardrails and adds your instructions. &ldquo;Replace&rdquo; overrides ALL default system behavior.
+        </p>
+        {mode === "replace" && (
+          <div className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+            <p className="text-xs text-amber-700 dark:text-amber-400">
+              Replace mode removes all SDK safety guardrails. The model will follow ONLY your system instruction. Use with caution.
+            </p>
+          </div>
+        )}
       </div>
 
       {/* System Instruction */}
@@ -176,7 +214,7 @@ export const PersonalityPanel = () => {
             </p>
             <pre className="whitespace-pre-wrap break-words font-mono text-xs text-foreground/80">
               {enabled
-                ? buildPreview(systemInstruction, prePrompt, postPrompt)
+                ? buildPreview(systemInstruction, prePrompt, postPrompt, mode)
                 : "(Personality injection disabled — raw message sent)"}
             </pre>
           </div>
@@ -224,9 +262,15 @@ export const PersonalityPanel = () => {
 function buildPreview(
   systemInstruction: string,
   prePrompt: string,
-  postPrompt: string
+  postPrompt: string,
+  mode: "append" | "replace"
 ): string {
   const lines: string[] = [];
+
+  if (mode === "append") {
+    lines.push("[SDK Default Guardrails]");
+    lines.push("");
+  }
 
   if (systemInstruction) {
     lines.push(`System: ${systemInstruction}`);
@@ -243,6 +287,11 @@ function buildPreview(
   if (postPrompt) {
     lines.push("");
     lines.push(postPrompt);
+  }
+
+  if (mode === "replace") {
+    lines.push("");
+    lines.push("⚠ No SDK guardrails applied (Replace mode)");
   }
 
   return lines.join("\n");

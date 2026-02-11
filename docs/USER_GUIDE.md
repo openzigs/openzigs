@@ -223,10 +223,13 @@ The dashboard at `/` provides:
 The admin page at `/admin` consolidates all configuration:
 
 - **Channels** — Configure Telegram and Discord tokens, toggle channels on/off, select default model.
-- **AI Personality** — Configure the system instruction and optional pre/post prompts, or disable injection globally. Set the **mode** to `append` (merge your personality with SDK defaults) or `replace` (fully override the system prompt with your personality text).
+- **AI Personality** — Configure the system instruction and optional pre/post prompts, or disable injection globally. Set the **mode** to `append` (merge your personality with SDK defaults) or `replace` (fully override the system prompt with your personality text). A warning banner is displayed when replace mode is selected, and the prompt preview reflects the selected mode.
+- **Model Configuration** — Set the default reasoning effort (Low / Medium / High / xHigh) for reasoning models. Enable **BYOK (Bring Your Own Key)** to configure a custom provider (OpenAI, Azure, Anthropic, Ollama, or Custom) with base URL, API key (masked by default), and optional Azure API version. Test the connection before saving, or clear the provider to revert to GitHub Copilot.
 - **Task Engine** — Adjust the maximum concurrent background agents (1–10) at runtime, view live queue stats (running, queued, concurrency limit). Configure the **tool limit per request** (1–128) to control how many tools are sent to the LLM in each call — see [Tool Limit Configuration](#tool-limit-configuration) below.
+- **Custom Agents** — Create, edit, and delete custom agent archetypes. Each agent has a name (identifier), display name, description, system prompt, tool allowlist (multi-select grouped by category), and auto-invoke toggle. Agents are displayed as cards with tool badges and infer indicators.
 - **MCP Sidecars** — View Docker sidecar status (running, credentials missing, offline), manage credentials, restart containers, toggle per-tool within each sidecar.
 - **Local MCP Servers** — View status of locally-running MCP servers (MarkItDown, Database, GitHub).
+- **Native MCP Servers** — Define and manage native MCP server connections. Supports Local (stdio), HTTP, and SSE transport types. Local servers are configured with a command, arguments, working directory, and environment variables (sensitive values are masked). HTTP/SSE servers are configured with a URL and optional headers. Each server has a configurable timeout.
 - **Tools** — Toggle any tool on/off, view risk level badges (🟢 low, 🟡 medium, 🔴 high), grouped by category.
 - **Environment** — Status grid showing which environment variables are configured vs. missing.
 
