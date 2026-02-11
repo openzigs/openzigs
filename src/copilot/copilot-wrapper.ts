@@ -98,6 +98,9 @@ export type HookPreToolUseInput = {
   toolArgs: unknown;
   cwd?: string;
   timestamp?: number;
+  context: {
+    sessionId: string;
+  };
 };
 
 export type HookPreToolUseResult = {
@@ -660,7 +663,19 @@ export class CopilotWrapperService implements CopilotWrapper {
       tools,
       ...(this.infiniteSessionsConfig ? { infiniteSessions: this.infiniteSessionsConfig } : {}),
       ...(extra?.systemMessage ? { systemMessage: extra.systemMessage } : {}),
-      ...(effectiveHooks ? { hooks: effectiveHooks } : {}),
+      ...(effectiveHooks ? {
+        hooks: {
+          ...effectiveHooks,
+          onPreToolUse: effectiveHooks.onPreToolUse
+            ? async (input: Omit<HookPreToolUseInput, "context">) => {
+                return effectiveHooks.onPreToolUse!({
+                  ...input,
+                  context: { sessionId: sessionId ?? "ephemeral" },
+                });
+              }
+            : undefined,
+        }
+      } : {}),
       ...(extra?.availableTools ? { availableTools: extra.availableTools } : {}),
       ...(extra?.excludedTools ? { excludedTools: extra.excludedTools } : {}),
       ...(effectiveUserInput

@@ -9,8 +9,9 @@ import type {
   HookErrorInput,
 } from "./copilot-wrapper.js";
 import type { ToolRegistry } from "../mcp/tool-registry.js";
-import type { ApprovalQueue } from "../approvals/index.js";
+import type { ApprovalQueue, ApprovalChannel } from "../approvals/index.js";
 import type { AuditLogger } from "../logging/audit-logger.js";
+import type { SessionManager } from "../sessions/session-manager.js";
 import { formatApprovalContext } from "../approvals/approval-formatters.js";
 import { logger } from "../logging/logger.js";
 
@@ -18,6 +19,7 @@ export type HooksFactoryOptions = {
   toolRegistry?: ToolRegistry;
   approvalQueue?: ApprovalQueue;
   auditLogger?: AuditLogger;
+  sessionManager?: SessionManager;
   /** For testing: inject a logger. */
   log?: Pick<typeof logger, "info" | "warn" | "error">;
 };
@@ -30,12 +32,25 @@ export const createHooksConfig = ({
   toolRegistry,
   approvalQueue,
   auditLogger,
+  sessionManager,
   log = logger,
 }: HooksFactoryOptions): HooksConfig => {
   return {
     onPreToolUse: async (input: HookPreToolUseInput): Promise<HookPreToolUseResult> => {
       // Gate high-risk tools through the approval queue
       if (toolRegistry?.requiresApproval(input.toolName) && approvalQueue) {
+        let channelType: ApprovalChannel = "web";
+        if (sessionManager && input.context?.sessionId) {
+          try {
+            const session = await sessionManager.getSession(input.context.sessionId);
+            if (session?.channel) {
+              channelType = session.channel as ApprovalChannel;
+            }
+          } catch {
+            // If session lookup fails, default to web
+          }
+        }
+
         const preview = formatApprovalContext(
           input.toolName,
           input.toolArgs as Record<string, unknown>
@@ -46,8 +61,10 @@ export const createHooksConfig = ({
           riskLevel: "high",
           explanation: "High-risk tool execution requires approval.",
           preview: preview?.summary,
-          channelType: "web",
+          channelType,
+          sessionId: input.context?.sessionId,
         });
+
 
         if (!approval.approved) {
           const reason = approval.status === "expired"

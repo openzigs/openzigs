@@ -168,7 +168,7 @@ const copilot = new CopilotWrapperService({
   toolRegistry,
   maxToolsPerRequest: config.session?.maxToolsPerRequest ?? 30,
   infiniteSessions: config.session?.infiniteSessions,
-  hooks: createHooksConfig({ toolRegistry, approvalQueue, auditLogger }),
+  hooks: createHooksConfig({ toolRegistry, approvalQueue, auditLogger, sessionManager }),
 });
 
 registerMcpTools(toolRegistry, {

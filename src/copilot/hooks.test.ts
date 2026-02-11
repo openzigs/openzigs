@@ -20,6 +20,7 @@ describe("createHooksConfig", () => {
     const result = await hooks.onPreToolUse!({
       toolName: "read-file",
       toolArgs: { path: "/tmp/test.txt" },
+      context: { sessionId: "test-session" },
     });
 
     expect(result.permissionDecision).toBe("allow");
@@ -45,6 +46,7 @@ describe("createHooksConfig", () => {
     const result = await hooks.onPreToolUse!({
       toolName: "shell-execute",
       toolArgs: { command: "rm -rf /" },
+      context: { sessionId: "test-session" },
     });
 
     expect(result.permissionDecision).toBe("deny");
@@ -70,6 +72,7 @@ describe("createHooksConfig", () => {
     const result = await hooks.onPreToolUse!({
       toolName: "shell-execute",
       toolArgs: { command: "ls" },
+      context: { sessionId: "test-session" },
     });
 
     expect(result.permissionDecision).toBe("deny");
@@ -94,10 +97,44 @@ describe("createHooksConfig", () => {
 
     const result = await hooks.onPreToolUse!({
       toolName: "shell-execute",
+      context: { sessionId: "test-session" },
       toolArgs: { command: "echo hello" },
     });
 
     expect(result.permissionDecision).toBe("allow");
+  });
+  it("onPreToolUse resolves channel from sessionManager", async () => {
+    const toolRegistry = {
+      requiresApproval: vi.fn().mockReturnValue(true),
+    };
+    const approvalQueue = {
+      requestApproval: vi.fn().mockResolvedValue({
+        approved: true,
+        status: "approved",
+      }),
+    };
+    const sessionManager = {
+      getSession: vi.fn().mockResolvedValue({ channel: "telegram" }),
+    };
+    const hooks = createHooksConfig({
+      toolRegistry: toolRegistry as unknown as import("../mcp/tool-registry.js").ToolRegistry,
+      approvalQueue: approvalQueue as unknown as import("../approvals/index.js").ApprovalQueue,
+      sessionManager: sessionManager as unknown as import("../sessions/session-manager.js").SessionManager,
+      log: silentLog,
+    });
+
+    await hooks.onPreToolUse!({
+      toolName: "shell-execute",
+      toolArgs: { command: "echo hello" },
+      context: { sessionId: "session-123" },
+    });
+
+    expect(sessionManager.getSession).toHaveBeenCalledWith("session-123");
+    expect(approvalQueue.requestApproval).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channelType: "telegram",
+      })
+    );
   });
 
   it("onPostToolUse logs to audit logger", async () => {

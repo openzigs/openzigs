@@ -377,7 +377,11 @@ describe("copilot wrapper", () => {
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     for await (const _chunk of wrapper.chat("Hello")) { /* drain */ }
 
-    expect((client.lastSessionConfig as Record<string, unknown>)?.hooks).toEqual(hooks);
+    const sessionHooks = (client.lastSessionConfig as Record<string, unknown>)?.hooks as Record<string, unknown>;
+    expect(sessionHooks.onPostToolUse).toBe(hooks.onPostToolUse);
+    expect(typeof sessionHooks.onPreToolUse).toBe("function");
+    // Verify it's not the exact same reference because it's wrapped to inject sessionId
+    expect(sessionHooks.onPreToolUse).not.toBe(hooks.onPreToolUse);
   });
 
   it("passes onUserInputRequest handler to createSession", async () => {

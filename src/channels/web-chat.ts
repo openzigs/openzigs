@@ -208,16 +208,17 @@ export class WebChatChannel implements MessageChannel {
     });
 
     // Handle user input responses for interactive clarifications
-    socket.on("user_input_response", (data: { requestId?: string; answer?: string }) => {
+    socket.on("user_input_response", (data: { requestId?: string; answer?: string; wasFreeform?: boolean }) => {
       const requestId = typeof data?.requestId === "string" ? data.requestId : "";
       const answer = typeof data?.answer === "string" ? data.answer : "";
+      const wasFreeform = typeof data?.wasFreeform === "boolean" ? data.wasFreeform : true;
       if (!requestId) return;
 
       const pending = this.pendingInputRequests.get(requestId);
       if (pending) {
         clearTimeout(pending.timer);
         this.pendingInputRequests.delete(requestId);
-        pending.resolve({ answer, wasFreeform: true });
+        pending.resolve({ answer, wasFreeform });
       }
     });
 
