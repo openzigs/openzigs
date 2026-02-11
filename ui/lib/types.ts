@@ -48,6 +48,8 @@ export type ScheduledJob = {
   actionType: string;
   actionPayload: Record<string, unknown>;
   model?: string | null;
+  allowedTools?: string[] | null;
+  autoApproveTools?: string[] | null;
   enabled: boolean;
   lastRunAt: string | null;
   runCount: number;

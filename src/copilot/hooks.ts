@@ -15,6 +15,22 @@ import type { SessionManager } from "../sessions/session-manager.js";
 import { formatApprovalContext } from "../approvals/approval-formatters.js";
 import { logger } from "../logging/logger.js";
 
+// ── Thread-local auto-approve context ──────────────────────────────────
+// Per-task override: tools listed here bypass approval gating entirely.
+// Set/clear around each task execution in TaskWorker (same pattern as
+// setActiveChatContext / setActiveOrchestrateContext).
+let activeAutoApproveTools: string[] | null = null;
+
+export const setActiveAutoApproveTools = (tools: string[] | null): void => {
+  activeAutoApproveTools = tools;
+};
+
+export const clearActiveAutoApproveTools = (): void => {
+  activeAutoApproveTools = null;
+};
+
+export const getActiveAutoApproveTools = (): string[] | null => activeAutoApproveTools;
+
 export type HooksFactoryOptions = {
   toolRegistry?: ToolRegistry;
   approvalQueue?: ApprovalQueue;
@@ -37,6 +53,24 @@ export const createHooksConfig = ({
 }: HooksFactoryOptions): HooksConfig => {
   return {
     onPreToolUse: async (input: HookPreToolUseInput): Promise<HookPreToolUseResult> => {
+      // Per-task auto-approve override: skip approval gating entirely
+      if (activeAutoApproveTools?.includes(input.toolName)) {
+        log.info(`Auto-approved tool "${input.toolName}" (per-task override)`);
+        if (auditLogger) {
+          await auditLogger.log({
+            level: "info",
+            category: "tool",
+            event: "tool_auto_approved",
+            details: {
+              toolName: input.toolName,
+              toolArgs: input.toolArgs,
+              sessionId: input.context?.sessionId,
+            },
+          });
+        }
+        return { permissionDecision: "allow" };
+      }
+
       // Gate high-risk tools through the approval queue
       if (toolRegistry?.requiresApproval(input.toolName) && approvalQueue) {
         let channelType: ApprovalChannel = "web";

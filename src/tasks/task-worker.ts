@@ -3,6 +3,7 @@ import type { TaskEngine } from "./task-engine.js";
 import type { CopilotWrapper } from "../copilot/copilot-wrapper.js";
 import type { AgentTask } from "./types.js";
 import { ALWAYS_ON_TOOLS } from "../mcp/constants.js";
+import { setActiveAutoApproveTools, clearActiveAutoApproveTools } from "../copilot/hooks.js";
 import { logger } from "../logging/logger.js";
 
 export type TaskWorkerOptions = {
@@ -133,23 +134,31 @@ export class TaskWorker extends EventEmitter {
 
       let result = "";
 
-      for await (const chunk of this.copilot.chat(prompt, {
-        model: task.model ?? undefined,
-        availableTools,
-        onToolCall: (toolName, args) => {
-          if (toolName === "spawn-agent" || toolName === "orchestrate-agents") {
-            // Inject parent task ID, session, and channel info for recursive chaining.
-            const a = args as Record<string, unknown>;
-            a.parentTaskId = task.id;
-            a.sessionId = task.sessionId;
-            a.channelType = task.channelType;
-            a.chatId = task.chatId;
-          }
-        },
-        // Background tasks auto-skip interactive clarifications with an empty answer.
-        onUserInputRequest: async () => ({ answer: "", wasFreeform: false }),
-      })) {
-        result += chunk;
+      // Set per-task auto-approve overrides so the hooks layer can bypass
+      // approval gating for the listed tools during this execution.
+      setActiveAutoApproveTools(task.autoApproveTools);
+
+      try {
+        for await (const chunk of this.copilot.chat(prompt, {
+          model: task.model ?? undefined,
+          availableTools,
+          onToolCall: (toolName, args) => {
+            if (toolName === "spawn-agent" || toolName === "orchestrate-agents") {
+              // Inject parent task ID, session, and channel info for recursive chaining.
+              const a = args as Record<string, unknown>;
+              a.parentTaskId = task.id;
+              a.sessionId = task.sessionId;
+              a.channelType = task.channelType;
+              a.chatId = task.chatId;
+            }
+          },
+          // Background tasks auto-skip interactive clarifications with an empty answer.
+          onUserInputRequest: async () => ({ answer: "", wasFreeform: false }),
+        })) {
+          result += chunk;
+        }
+      } finally {
+        clearActiveAutoApproveTools();
       }
 
       const completed = this.engine.complete(task.id, result);

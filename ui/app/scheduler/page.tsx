@@ -41,6 +41,16 @@ export default function SchedulerPage() {
     onError: (err) => showToast(`Error: ${err.message}`, "error"),
   });
 
+  const runNowMutation = useMutation({
+    mutationFn: (id: string) =>
+      fetchJson(`/api/admin/jobs/${id}/run`, { method: "POST" }),
+    onSuccess: (_data, _id) => {
+      queryClient.invalidateQueries({ queryKey: ["jobs"] });
+      showToast("Job triggered", "success");
+    },
+    onError: (err) => showToast(`Error: ${err.message}`, "error"),
+  });
+
   useEffect(() => {
     if (!socket) return;
     const onExecuted = (data: { jobName?: string; success?: boolean }) => {
@@ -128,6 +138,14 @@ export default function SchedulerPage() {
                       onChange={(v) => toggleMutation.mutate({ id: job.id, enabled: v })}
                     />
                     <button
+                      onClick={() => runNowMutation.mutate(job.id)}
+                      disabled={runNowMutation.isPending}
+                      title="Run this job now"
+                      className="rounded-lg border border-moss/30 px-3 py-1.5 text-xs font-semibold text-moss hover:bg-moss/5 disabled:opacity-40"
+                    >
+                      ▶ Run
+                    </button>
+                    <button
                       onClick={() => handleEdit(job)}
                       className="rounded-lg border border-primary px-3 py-1.5 text-xs font-semibold text-primary hover:bg-primary/5"
                     >
@@ -192,6 +210,9 @@ const JobForm = ({ existing, onClose }: { existing: ScheduledJob | null; onClose
   const [cronExpression, setCronExpression] = useState(existing?.cronExpression ?? "");
   const [timezone, setTimezone] = useState(existing?.timezone ?? "UTC");
   const [model, setModel] = useState(existing?.model ?? "");
+  const [autoApproveToolsText, setAutoApproveToolsText] = useState(
+    existing?.autoApproveTools ? existing.autoApproveTools.join(", ") : ""
+  );
 
   // Fetch prompts for the dropdown
   const promptsQuery = useQuery({
@@ -269,6 +290,14 @@ const JobForm = ({ existing, onClose }: { existing: ScheduledJob | null; onClose
       } else if (modelValue) {
         payload.model = modelValue;
       }
+    }
+
+    // Auto-approve tools: comma-separated list → string array (or null to clear)
+    const autoApproveRaw = autoApproveToolsText.trim();
+    if (autoApproveRaw) {
+      payload.autoApproveTools = autoApproveRaw.split(",").map((s) => s.trim()).filter(Boolean);
+    } else if (existing) {
+      payload.autoApproveTools = null;
     }
 
     saveMutation.mutate(payload);
@@ -460,6 +489,19 @@ const JobForm = ({ existing, onClose }: { existing: ScheduledJob | null; onClose
             placeholder="America/New_York"
             value={timezone}
             onChange={(e) => setTimezone(e.target.value)}
+          />
+        </Field>
+
+        <Field
+          label="Auto-Approve Tools"
+          hint="Comma-separated tool names that skip approval gating for this job. Leave empty for normal approval flow."
+        >
+          <input
+            type="text"
+            className="w-full rounded-lg border border-border bg-card text-foreground px-3 py-2 font-mono text-sm"
+            placeholder="e.g., shell_execute, file_write"
+            value={autoApproveToolsText}
+            onChange={(e) => setAutoApproveToolsText(e.target.value)}
           />
         </Field>
 
