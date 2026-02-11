@@ -104,8 +104,21 @@ export type ChannelConfig = {
   };
 };
 
+export type ModelCapabilities = {
+  supports: {
+    reasoningEffort: boolean;
+    vision?: boolean;
+  };
+  limits?: {
+    max_context_window_tokens?: number;
+  };
+};
+
 export type ModelInfo = {
   id: string;
+  capabilities?: ModelCapabilities;
+  supportedReasoningEfforts?: ReasoningEffort[];
+  defaultReasoningEffort?: ReasoningEffort;
 };
 
 export type LocalServerDefinition = {

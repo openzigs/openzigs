@@ -140,6 +140,7 @@ class FakeCopilot implements CopilotWrapper {
 
   getReasoningEffort() { return undefined; }
   setReasoningEffort() {}
+  modelSupportsReasoning() { return false; }
   getProvider() { return undefined; }
   setProvider() {}
   getWorkingDirectory() { return undefined; }

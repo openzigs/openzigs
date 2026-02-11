@@ -30,6 +30,7 @@ const createMockCopilot = () => ({
   clearAllSessions: vi.fn().mockResolvedValue(undefined),
   getReasoningEffort: vi.fn().mockReturnValue(undefined),
   setReasoningEffort: vi.fn(),
+  modelSupportsReasoning: vi.fn().mockReturnValue(false),
   getProvider: vi.fn().mockReturnValue(undefined),
   setProvider: vi.fn(),
   getWorkingDirectory: vi.fn().mockReturnValue(undefined),

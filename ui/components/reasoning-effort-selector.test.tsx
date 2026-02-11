@@ -26,6 +26,18 @@ describe("supportsReasoning", () => {
     expect(supportsReasoning("claude-3.5-sonnet")).toBe(false);
     expect(supportsReasoning("llama-3")).toBe(false);
   });
+
+  it("uses dynamic capabilities when provided", () => {
+    // Model name doesn't look like reasoning, but capabilities say it supports it
+    expect(supportsReasoning("custom-model", { supports: { reasoningEffort: true } })).toBe(true);
+    // Model name looks like reasoning, but capabilities say it doesn't
+    expect(supportsReasoning("o3-mini", { supports: { reasoningEffort: false } })).toBe(false);
+  });
+
+  it("falls back to static check when capabilities are undefined", () => {
+    expect(supportsReasoning("o3-mini", undefined)).toBe(true);
+    expect(supportsReasoning("gpt-4.1", undefined)).toBe(false);
+  });
 });
 
 describe("ReasoningEffortSelector", () => {

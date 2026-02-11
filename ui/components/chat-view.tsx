@@ -495,6 +495,7 @@ export const ChatView = () => {
             value={reasoningEffort}
             onChange={setReasoningEffort}
             modelId={selectedModel}
+            modelCapabilities={models.find((m) => m.id === selectedModel)?.capabilities}
           />
           <ProviderBadge provider={provider} />
           <span className="text-xs text-muted-foreground">Model</span>

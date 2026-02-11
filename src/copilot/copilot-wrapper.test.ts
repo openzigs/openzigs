@@ -4,7 +4,7 @@ import path from "node:path";
 import fs from "node:fs/promises";
 import * as z from "zod";
 import { ToolRegistry, type ToolDefinition } from "../mcp/tool-registry.js";
-import { CopilotWrapperService } from "./copilot-wrapper.js";
+import { CopilotWrapperService, type CopilotModel } from "./copilot-wrapper.js";
 
 class FakeSession {
   readonly sessionId: string;
@@ -82,8 +82,13 @@ class FakeCopilotClient {
     return { token: "token-123", expiresAt: Date.now() + 60_000 };
   }
 
-  async listModels() {
-    return [{ id: "gpt-4.1" }, { id: "claude-sonnet-4" }];
+  async listModels(): Promise<CopilotModel[]> {
+    return [
+      { id: "gpt-4.1", capabilities: { supports: { reasoningEffort: false } } },
+      { id: "claude-sonnet-4", capabilities: { supports: { reasoningEffort: false } } },
+      { id: "o3-mini", capabilities: { supports: { reasoningEffort: true } }, supportedReasoningEfforts: ["low", "medium", "high"] },
+      { id: "o4-mini", capabilities: { supports: { reasoningEffort: true } }, supportedReasoningEfforts: ["low", "medium", "high", "xhigh"] },
+    ];
   }
 }
 
@@ -178,9 +183,11 @@ describe("copilot wrapper", () => {
     const wrapper = new CopilotWrapperService({ client });
 
     const models = await wrapper.listModels();
-    expect(models).toHaveLength(2);
+    expect(models).toHaveLength(4);
     expect(models[0].id).toBe("gpt-4.1");
     expect(models[1].id).toBe("claude-sonnet-4");
+    expect(models[2].id).toBe("o3-mini");
+    expect(models[3].id).toBe("o4-mini");
   });
 
   it("returns fallback model when client has no listModels", async () => {
@@ -492,24 +499,60 @@ describe("copilot wrapper", () => {
     expect((client.lastSessionConfig as Record<string, unknown>)?.workingDirectory).toBe("/override/dir");
   });
 
-  it("passes reasoningEffort to createSession", async () => {
+  it("passes reasoningEffort to createSession for reasoning-capable models", async () => {
     const client = new FakeCopilotClient();
     const wrapper = new CopilotWrapperService({ client });
 
+    // Populate model capabilities cache
+    await wrapper.listModels();
+
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    for await (const _chunk of wrapper.chat("Hello", { reasoningEffort: "high" })) { /* drain */ }
+    for await (const _chunk of wrapper.chat("Hello", { model: "o3-mini", reasoningEffort: "high" })) { /* drain */ }
 
     expect((client.lastSessionConfig as Record<string, unknown>)?.reasoningEffort).toBe("high");
   });
 
-  it("uses default reasoningEffort when no per-chat override", async () => {
+  it("strips reasoningEffort for non-reasoning models", async () => {
+    const client = new FakeCopilotClient();
+    const wrapper = new CopilotWrapperService({ client, defaultReasoningEffort: "high" });
+
+    // Populate model capabilities cache
+    await wrapper.listModels();
+
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    for await (const _chunk of wrapper.chat("Hello", { model: "gpt-4.1" })) { /* drain */ }
+
+    expect((client.lastSessionConfig as Record<string, unknown>)?.reasoningEffort).toBeUndefined();
+  });
+
+  it("uses default reasoningEffort when no per-chat override on reasoning model", async () => {
     const client = new FakeCopilotClient();
     const wrapper = new CopilotWrapperService({ client, defaultReasoningEffort: "xhigh" });
 
+    // Populate model capabilities cache
+    await wrapper.listModels();
+
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    for await (const _chunk of wrapper.chat("Hello")) { /* drain */ }
+    for await (const _chunk of wrapper.chat("Hello", { model: "o4-mini" })) { /* drain */ }
 
     expect((client.lastSessionConfig as Record<string, unknown>)?.reasoningEffort).toBe("xhigh");
+  });
+
+  it("falls back to static reasoning check when model cache is unpopulated", async () => {
+    const client = new FakeCopilotClient();
+    const wrapper = new CopilotWrapperService({ client, defaultReasoningEffort: "high" });
+
+    // Do NOT call listModels() — cache is empty, should use static fallback
+
+    // o3-mini starts with "o3" so static check passes
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    for await (const _chunk of wrapper.chat("Hello", { model: "o3-mini" })) { /* drain */ }
+    expect((client.lastSessionConfig as Record<string, unknown>)?.reasoningEffort).toBe("high");
+
+    // gpt-4.1 doesn't match static pattern, so reasoning effort is stripped
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    for await (const _chunk of wrapper.chat("Hello2", { model: "gpt-4.1" })) { /* drain */ }
+    expect((client.lastSessionConfig as Record<string, unknown>)?.reasoningEffort).toBeUndefined();
   });
 
   it("passes provider config to createSession", async () => {

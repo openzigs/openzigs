@@ -18,11 +18,16 @@ const EFFORT_LEVELS: { value: ReasoningEffort; label: string; dots: number; desc
   { value: "xhigh", label: "xHigh", dots: 4, description: "Maximum depth, significantly slower and more expensive" },
 ];
 
-/** Models known to support reasoning effort. */
+/** Models known to support reasoning effort (static fallback when capabilities aren't available). */
 const REASONING_MODELS = new Set(["o1", "o1-mini", "o1-preview", "o3", "o3-mini", "o4-mini"]);
 
 /** Returns true if a model ID likely supports reasoning effort. */
-export const supportsReasoning = (modelId: string): boolean => {
+export const supportsReasoning = (modelId: string, modelCapabilities?: { supports?: { reasoningEffort?: boolean } }): boolean => {
+  // Use dynamic capabilities from the SDK when available
+  if (modelCapabilities?.supports?.reasoningEffort !== undefined) {
+    return modelCapabilities.supports.reasoningEffort;
+  }
+  // Fall back to static set when capabilities aren't loaded yet
   const lower = modelId.toLowerCase();
   return REASONING_MODELS.has(lower) || lower.startsWith("o1") || lower.startsWith("o3") || lower.startsWith("o4");
 };
@@ -33,12 +38,14 @@ export const ReasoningEffortSelector = ({
   value,
   onChange,
   modelId,
+  modelCapabilities,
 }: {
   value: ReasoningEffort;
   onChange: (effort: ReasoningEffort) => void;
   modelId: string;
+  modelCapabilities?: { supports?: { reasoningEffort?: boolean } };
 }) => {
-  if (!supportsReasoning(modelId)) return null;
+  if (!supportsReasoning(modelId, modelCapabilities)) return null;
 
   const currentLevel = EFFORT_LEVELS.find((l) => l.value === value) ?? EFFORT_LEVELS[1];
 

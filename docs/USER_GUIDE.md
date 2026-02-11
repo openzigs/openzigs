@@ -1880,6 +1880,578 @@ All configuration lives in `config/default.json`. Environment variables are inte
 
 ---
 
+## Advanced Examples: Combining Capabilities
+
+This section demonstrates real-world workflows that combine multiple features — model overrides, reasoning effort, prompt chaining, custom agents, scheduled automation, and interactive clarifications — to showcase the full power of the platform.
+
+---
+
+### Example 1: Multi-Model Reasoning Chain (Chat)
+
+Use a reasoning model for planning, then a fast model for execution — all in one conversation.
+
+**Chat transcript:**
+
+```
+You: I need to refactor the authentication module in my project. The code is in /home/user/project/src/auth/.
+     Use high reasoning to analyze the architecture first, then generate the refactored code.
+
+[Model: o4-mini | Reasoning: high]
+
+Agent: I'll analyze the architecture with deep reasoning first.
+
+     [calls read-file: /home/user/project/src/auth/index.ts]
+     [calls list-directory: /home/user/project/src/auth/]
+     [calls read-file: /home/user/project/src/auth/middleware.ts]
+
+     Analysis complete. The current auth module has three issues:
+     1. Token validation is duplicated across 4 files
+     2. The session store uses synchronous file I/O
+     3. Rate limiting is hardcoded instead of configurable
+
+     I'll now spawn a coding agent with gpt-4.1 to implement the refactored code
+     based on this analysis.
+
+     [calls spawn-agent:
+       goal: "Refactor the auth module at /home/user/project/src/auth/ based on
+              the following analysis: (1) Extract token validation into a shared
+              validateToken() utility, (2) Replace sync file I/O with async
+              session store, (3) Make rate limiting configurable via config.json"
+       model: "gpt-4.1"
+       notify_user: true
+     ]
+
+     Background task started. The coding agent (gpt-4.1) is implementing the
+     refactored code. You'll be notified when it completes.
+```
+
+**What's happening:**
+
+| Step | Model | Reasoning | Purpose |
+|------|-------|-----------|---------|
+| 1. Architecture analysis | `o4-mini` | `high` | Deep reasoning identifies structural problems |
+| 2. Code generation | `gpt-4.1` | *(default)* | Fast, cost-efficient code output via `spawn-agent` |
+
+**Key takeaway:** Select `o4-mini` with high reasoning in the Chat UI for the analysis phase, then let the agent delegate to `gpt-4.1` for the implementation. You get the best of both models.
+
+---
+
+### Example 2: Prompt Templates Calling Other Prompts
+
+Compose reusable prompt templates that chain together via the LLM's tool-calling loop. Each prompt can target a different model.
+
+**Step 1 — Create the building-block prompts in the Library:**
+
+| Prompt Name | Content | Preferred Tools |
+|-------------|---------|-----------------|
+| `research-topic` | `Research the topic "{{topic}}" thoroughly. Find at least 5 credible sources and summarize key findings with citations.` | `web-search`, `browser-navigate` |
+| `write-article` | `Write a {{length}}-word article about the following research:\n\n{{research}}\n\nUse a {{tone}} tone. Include an introduction, 3-5 sections with subheadings, and a conclusion.` | `read-file`, `write-file` |
+| `review-content` | `Review the following article for factual accuracy, grammar, and readability. Provide specific suggestions:\n\n{{content}}` | `read-file` |
+
+**Step 2 — Use the chain in Chat:**
+
+```
+You: I need a blog post about quantum computing breakthroughs in 2025.
+     First, run the prompt "research-topic" with topic="quantum computing
+     breakthroughs 2025". Then take that output and run "write-article"
+     with length=1500 and tone=conversational. Finally, run "review-content"
+     on the result.
+
+Agent: I'll chain these prompts together.
+
+     [calls run-prompt: name="research-topic",
+      variables={"topic": "quantum computing breakthroughs 2025"}]
+
+     Research complete. Key findings from 5 sources: ...
+
+     [calls run-prompt: name="write-article",
+      variables={"research": "<research output>", "length": "1500",
+                  "tone": "conversational"}]
+
+     Article drafted (1,487 words). Writing to file...
+
+     [calls write-file: /home/user/blog/quantum-2025.md]
+
+     [calls run-prompt: name="review-content",
+      variables={"content": "<article text>"}]
+
+     Review complete:
+     - ✅ Factually accurate (all claims verified against sources)
+     - ⚠️ Paragraph 3 could be split for readability
+     - ⚠️ Consider adding a concrete example in the "Error Correction" section
+```
+
+**Step 3 — Automate the chain with a scheduled job:**
+
+Create a scheduled job in the Scheduler UI that runs this workflow automatically:
+
+| Field | Value |
+|-------|-------|
+| **Name** | `weekly-blog-research` |
+| **Cron** | `0 9 * * 1` (Monday 9 AM) |
+| **Action** | Prompt |
+| **Prompt** | See below |
+| **Model** | `gpt-4.1` |
+| **Auto-Approve Tools** | `web-search, browser-navigate, write-file` |
+
+**Job prompt:**
+
+```
+Run the following prompts in sequence:
+
+1. Run prompt "research-topic" with topic="AI industry news this week"
+2. Take the research output and run prompt "write-article" with
+   length=2000 and tone=professional
+3. Save the article to /home/user/blog/weekly-ai-digest.md
+4. Run prompt "review-content" on the saved article
+5. If the review finds issues, revise the article and save again
+
+This is an autonomous job — complete all steps without human intervention.
+```
+
+**Key takeaway:** Prompts are composable building blocks. The LLM chains them by calling `run-prompt` repeatedly, passing output from one as input variables to the next. Each prompt can also carry its own `preferredTools` to scope tool access.
+
+---
+
+### Example 3: Multi-Model Orchestration with `orchestrate-agents`
+
+Fan out to multiple models in parallel, each optimized for a different task, then aggregate results.
+
+**Chat transcript:**
+
+```
+You: I'm evaluating whether to migrate our API from Express to Fastify.
+     Use orchestrate-agents to research this from three angles simultaneously,
+     using the best model for each task.
+
+Agent: I'll dispatch three specialized agents in parallel.
+
+     [calls orchestrate-agents:
+       agents: [
+         {
+           goal: "Benchmark Express vs Fastify performance. Find recent
+                  benchmarks (2024-2025), compare request throughput, latency
+                  p99, and memory usage under load. Use web-search.",
+           model: "gpt-4.1"
+         },
+         {
+           goal: "Analyze the migration effort from Express to Fastify. Review
+                  the codebase at /home/user/api/src/ and identify: (1) number
+                  of route handlers, (2) middleware that needs rewriting,
+                  (3) Express-specific patterns with no Fastify equivalent.
+                  Provide an estimated effort in developer-days.",
+           model: "o4-mini"
+         },
+         {
+           goal: "Research Fastify's ecosystem maturity. Check: plugin count on
+                  npm, TypeScript support quality, community activity (GitHub
+                  stars, recent commits, open issues), and production adoption
+                  by notable companies.",
+           model: "gpt-4.1"
+         }
+       ],
+       aggregation_prompt: "Compile the three analyses into an executive summary
+         with a recommendation table: Performance | Migration Effort | Ecosystem.
+         Include a final GO / NO-GO recommendation with justification.",
+       timeout_seconds: 300
+     ]
+
+     ┌─────────────────────────────────────────────────────────┐
+     │ Agent 1 (gpt-4.1): Performance benchmarks         ✅   │
+     │ Agent 2 (o4-mini):  Migration effort analysis      ✅   │
+     │ Agent 3 (gpt-4.1): Ecosystem research              ✅   │
+     └─────────────────────────────────────────────────────────┘
+
+     Executive Summary: Express → Fastify Migration Assessment
+
+     | Dimension        | Finding                              | Score |
+     |------------------|--------------------------------------|-------|
+     | Performance      | 2.3x throughput improvement           | ✅ GO |
+     | Migration Effort | ~12 dev-days for 47 routes            | ⚠️    |
+     | Ecosystem        | 350+ plugins, excellent TS support    | ✅ GO |
+
+     Recommendation: **GO** — Performance gains justify the 12-day investment...
+```
+
+**Why different models?**
+
+| Agent | Model | Rationale |
+|-------|-------|-----------|
+| Benchmarks | `gpt-4.1` | Fast web search and data summarization |
+| Migration analysis | `o4-mini` | Needs deep reasoning to analyze code patterns |
+| Ecosystem research | `gpt-4.1` | Broad web research, no deep reasoning needed |
+
+---
+
+### Example 4: Custom Agent with Interactive Clarifications
+
+Custom agents can ask clarifying questions before proceeding. This example shows a security audit agent that asks the user to specify scope.
+
+**Setup — define the agent in Admin → Custom Agents:**
+
+| Field | Value |
+|-------|-------|
+| **Name** | `security-auditor` |
+| **Display Name** | Security Auditor |
+| **Description** | Analyzes code for vulnerabilities and suggests hardening measures |
+| **System Prompt** | `You are a senior security engineer. Before starting an audit, always ask the user to clarify the scope (which directories, what threat model, and compliance framework). Use the interactive clarification feature to present options.` |
+| **Tools** | `read-file`, `list-directory`, `shell-execute`, `web-search` |
+| **Auto-Invoke** | ✅ Enabled (`infer: true`) |
+
+**Chat transcript:**
+
+```
+You: @security-auditor Audit the authentication code in my project at
+     /home/user/project/src/
+
+Agent (Security Auditor): Before I begin, I need to understand the scope.
+
+     ┌─────────────────────────────────────────────────┐
+     │ What compliance framework should I audit against?│
+     │                                                  │
+     │ ○ OWASP Top 10 (Web application security)      │
+     │ ○ SOC 2 (Enterprise compliance)                 │
+     │ ○ PCI DSS (Payment card industry)               │
+     │ ○ Custom / General best practices               │
+     │                                                  │
+     │ Or type a custom framework: [____________]       │
+     │                                                  │
+     │                            [Submit]    ████░ 45s │
+     └─────────────────────────────────────────────────┘
+
+You: [selects "OWASP Top 10"]
+
+Agent (Security Auditor): Auditing against OWASP Top 10. Scanning...
+
+     [calls list-directory: /home/user/project/src/auth/]
+     [calls read-file: /home/user/project/src/auth/login.ts]
+     [calls read-file: /home/user/project/src/auth/session.ts]
+     [calls shell-execute: grep -rn "eval\|exec\|innerHTML" src/]
+
+     Security Audit Report — OWASP Top 10
+     ─────────────────────────────────────
+
+     🔴 A01:2021 Broken Access Control
+        • session.ts:42 — No CSRF token validation on state-changing endpoints
+
+     🟡 A02:2021 Cryptographic Failures
+        • login.ts:18 — bcrypt rounds set to 8 (recommend ≥12)
+
+     🟢 A03:2021 Injection — No issues found
+     ...
+```
+
+**Key takeaway:** The `@security-auditor` mention routes to the custom agent. The `infer: true` setting means the SDK could also auto-delegate security-related questions to this agent without an explicit mention. Interactive clarifications let the agent gather structured input mid-conversation with a 60-second timeout.
+
+---
+
+### Example 5: File Attachments + Reasoning for Code Review
+
+Attach files directly in the Chat UI and combine with high reasoning for thorough analysis.
+
+**Chat transcript:**
+
+```
+[Attachments: 📎 src/api/handlers.ts  📎 src/api/middleware.ts]
+[Model: o4-mini | Reasoning: high]
+
+You: Review these two files for performance issues and race conditions.
+     Focus on the database query patterns and async error handling.
+
+Agent: Analyzing both attached files with extended reasoning...
+
+     [Reading: src/api/handlers.ts (247 lines)]
+     [Reading: src/api/middleware.ts (89 lines)]
+
+     Performance & Concurrency Review
+     ═════════════════════════════════
+
+     🔴 Critical: Race condition in handlers.ts lines 78-92
+        The `updateUserBalance()` function reads the balance, modifies it,
+        and writes it back without a transaction or optimistic lock. Under
+        concurrent requests, two updates can read the same stale value:
+
+        // Current (unsafe):
+        const balance = await db.getBalance(userId);
+        await db.setBalance(userId, balance + amount);
+
+        // Recommended (transaction with row lock):
+        await db.transaction(async (tx) => {
+          const balance = await tx.getBalance(userId, { forUpdate: true });
+          await tx.setBalance(userId, balance + amount);
+        });
+
+     🟡 Performance: N+1 query in handlers.ts lines 134-148
+        The user list endpoint fetches all users, then loops to fetch each
+        user's profile. Replace with a JOIN or batch query.
+
+     🟢 middleware.ts: Error handling looks correct — async errors are
+        properly caught and forwarded to the error handler.
+```
+
+**How it works:**
+1. Click the 📎 button in the Chat input (or drag files onto the drop zone) to attach up to 10 files.
+2. Attached files are sent to the Copilot SDK as `SdkAttachment` objects — the SDK reads file contents automatically.
+3. Select a reasoning model (`o4-mini`, `o3-mini`) and set reasoning effort to `high` for thorough analysis.
+4. The model receives both the file contents and your prompt, combining deep reasoning with full file context.
+
+---
+
+### Example 6: Fully Autonomous Scheduled Pipeline
+
+A production-ready example: a nightly data pipeline that runs without human intervention, using auto-approved tools, multi-model orchestration, and prompt templates.
+
+**Step 1 — Create the prompts:**
+
+| Name | Content |
+|------|---------|
+| `extract-metrics` | `Query the database for {{metric_type}} metrics from the last {{period}}. Use the db-query tool. Return raw JSON data.` |
+| `generate-report` | `Generate a Markdown report from the following data:\n\n{{data}}\n\nInclude: executive summary, trend analysis with percentage changes, and anomaly flags for any metric that deviated >2σ from the 30-day mean. Save to {{output_path}}.` |
+
+**Step 2 — Create the scheduled job:**
+
+| Field | Value |
+|-------|-------|
+| **Name** | `nightly-metrics-pipeline` |
+| **Cron** | `0 2 * * *` (2 AM daily) |
+| **Model** | `gpt-4.1` |
+| **Auto-Approve Tools** | `db-query, read-file, write-file, shell-execute, spawn-agent, orchestrate-agents` |
+
+**Job prompt:**
+
+```
+You are an autonomous data pipeline agent. Execute the following steps:
+
+1. Use orchestrate-agents to gather metrics in parallel:
+   - Agent 1 (model: gpt-4.1): Run prompt "extract-metrics" with
+     metric_type="revenue" and period="24 hours"
+   - Agent 2 (model: gpt-4.1): Run prompt "extract-metrics" with
+     metric_type="user_engagement" and period="24 hours"
+   - Agent 3 (model: gpt-4.1): Run prompt "extract-metrics" with
+     metric_type="system_performance" and period="24 hours"
+
+2. Combine all three datasets and run prompt "generate-report" with
+   output_path="/data/reports/daily-metrics-{{date}}.md"
+
+3. Run shell command: git -C /data/reports add . && git commit -m
+   "Daily metrics report $(date +%Y-%m-%d)" && git push
+
+Complete all steps autonomously. Do not wait for human input.
+```
+
+**Execution flow (2:00 AM):**
+
+```
+Scheduler fires → TaskEngine.submit()
+  └─ TaskWorker dequeues → LLM executes
+       ├─ orchestrate-agents (3 parallel sub-agents)
+       │   ├─ Agent 1: db-query → revenue data          [auto-approved]
+       │   ├─ Agent 2: db-query → engagement data        [auto-approved]
+       │   └─ Agent 3: db-query → performance data       [auto-approved]
+       │
+       ├─ run-prompt "generate-report" → Markdown report
+       │   └─ write-file → /data/reports/daily-metrics-2025-07-15.md
+       │                                                 [auto-approved]
+       │
+       └─ shell-execute → git add, commit, push          [auto-approved]
+```
+
+**Key features used:**
+- **Auto-approved tools**: `db-query`, `write-file`, and `shell-execute` bypass the approval queue — the audit log records each as `tool_auto_approved`.
+- **Prompt templates**: Reusable `extract-metrics` and `generate-report` prompts keep the job definition clean.
+- **Multi-agent parallel execution**: Three data extraction agents run concurrently for speed.
+- **Autonomous end-to-end**: No human in the loop — ideal for off-hours pipelines.
+
+---
+
+### Example 7: BYOK Provider with Local Ollama for Private Data
+
+Run sensitive workloads entirely on your local network using Ollama, then switch back to Copilot for general tasks.
+
+**Step 1 — Configure Ollama in Admin → Model Configuration:**
+
+| Field | Value |
+|-------|-------|
+| **Provider** | Ollama |
+| **Base URL** | `http://localhost:11434` |
+| **API Key** | *(leave blank — Ollama doesn't require one)* |
+
+Click **Test Connection** to verify Ollama is reachable, then **Save**.
+
+**Step 2 — Chat with your private data:**
+
+```
+[Provider badge shows: 🏷️ Ollama]
+[Attachments: 📎 /data/confidential/q2-financials.xlsx]
+
+You: Analyze these Q2 financial results. Identify the three highest-growth
+     product lines and flag any revenue anomalies.
+
+Agent (via Ollama - llama3.3): Analyzing Q2 financial data locally...
+
+     [calls convert-to-markdown: /data/confidential/q2-financials.xlsx]
+     [calls read-file: converted output]
+
+     Q2 Financial Analysis
+     ═════════════════════
+
+     Top 3 Growth Product Lines:
+     1. Cloud Services: +34% QoQ ($12.4M → $16.6M)
+     2. API Platform: +28% QoQ ($8.1M → $10.4M)
+     3. Enterprise Support: +19% QoQ ($5.2M → $6.2M)
+
+     ⚠️ Anomaly: Hardware division revenue dropped 42% — investigate
+     potential reporting error or delayed shipments.
+```
+
+**Step 3 — Switch back to Copilot for non-sensitive work:**
+
+Navigate to Admin → Model Configuration → click **Clear Provider** to revert to GitHub Copilot. The provider badge disappears, and subsequent messages route through the Copilot SDK.
+
+**Key takeaway:** BYOK providers let you keep sensitive data processing on-premises while still using Copilot for general-purpose tasks. Switch providers at runtime — no restart required. All cached SDK sessions are cleared on provider change.
+
+---
+
+### Example 8: Session Continuity with Infinite Context
+
+Long-running research sessions that survive context window limits and server restarts.
+
+**Chat transcript (over several hours):**
+
+```
+[Session: abc-123 | Context: ░░░░░░░░░░ 12% | Turns: 1 | Age: just now]
+
+You: Let's research the history of type systems in programming languages.
+     Start with the lambda calculus foundations.
+
+Agent: The formal foundations begin with Alonzo Church's lambda calculus
+       in the 1930s...
+
+     [... 45 minutes of deep conversation, reading papers, taking notes ...]
+
+[Session: abc-123 | Context: ████████░░ 82% | Turns: 34 | Age: 47m]
+[🔄 Compacting context in background...]
+[✅ Context compacted]
+
+[Session: abc-123 | Context: ████░░░░░░ 38% | Turns: 34 | Age: 48m]
+
+You: Now compare the type systems of Haskell, Rust, and TypeScript
+     based on everything we've discussed.
+
+Agent: Drawing from our earlier discussion of the Hindley-Milner
+       foundations and the evolution through ML and System F...
+
+     [The agent retains the full thread of the conversation despite
+      the context window being compacted — key concepts and findings
+      are preserved while verbose intermediate steps are summarized]
+```
+
+**What's happening behind the scenes:**
+
+| Event | Context Usage | Action |
+|-------|--------------|--------|
+| Conversation starts | 0% | New SDK session created |
+| Turn 20 | 60% | Normal operation |
+| Turn 30 | 80% | Background compaction threshold reached — SDK compacts older context |
+| Post-compaction | ~38% | Older turns summarized, recent turns preserved verbatim |
+| Turn 50 | 75% | Conversation continues naturally |
+| Turn 60 | 80% | Another compaction cycle |
+
+**Session resumption after restart:**
+
+```
+[Server restarts]
+[Session: abc-123 | Resumed ✅ | Context: 42% | Turns: 60]
+
+You: Where were we? Can you summarize what we covered about
+     dependent types?
+
+Agent: In our earlier discussion, we covered dependent types in the
+       context of Idris and Agda...
+```
+
+The SDK's `resumeSession()` API restores the session state. If the session has expired, a new session is created — the JSONL audit log preserves the conversation history for reference.
+
+---
+
+### Example 9: Custom Agent with its Own MCP Server
+
+Define a custom agent that brings its own tools via a dedicated MCP server — useful for domain-specific tooling.
+
+**Configuration (Admin → Custom Agents or `~/.openzigs/config.json`):**
+
+```json
+{
+  "copilot": {
+    "customAgents": [
+      {
+        "name": "k8s-ops",
+        "displayName": "Kubernetes Ops Agent",
+        "description": "Manages Kubernetes clusters with kubectl and helm",
+        "prompt": "You are a Kubernetes operations expert. Use your dedicated k8s tools (via your MCP server) and the standard shell tools to manage clusters. Always check current state before making changes. Explain what you're about to do before executing destructive operations.",
+        "tools": ["shell-execute", "read-file"],
+        "infer": true,
+        "mcpServers": {
+          "kubectl-mcp": {
+            "type": "stdio",
+            "command": "npx",
+            "args": ["-y", "@example/kubectl-mcp-server"],
+            "env": {
+              "KUBECONFIG": "/home/user/.kube/config"
+            }
+          }
+        }
+      }
+    ]
+  }
+}
+```
+
+**Chat transcript:**
+
+```
+You: @k8s-ops What pods are failing in the production namespace?
+
+Agent (Kubernetes Ops): Checking pod status in production...
+
+     [calls kubectl-get-pods: namespace=production, status=Failed]
+
+     3 pods are in a failing state:
+
+     | Pod | Status | Restarts | Last Error |
+     |-----|--------|----------|------------|
+     | api-server-7b4d | CrashLoopBackOff | 12 | OOMKilled |
+     | worker-3a1c | Error | 3 | Exit code 137 |
+     | cache-9f2e | ImagePullBackOff | 0 | Image not found |
+
+     The api-server and worker pods are running out of memory.
+     The cache pod has an image reference issue.
+
+     Want me to investigate the resource limits, or should I fix
+     the image reference for the cache pod first?
+```
+
+**Key takeaway:** The `mcpServers` field on a custom agent gives it access to tools that only that agent can use — other agents and the primary model don't see them. This keeps the tool namespace clean and lets you create purpose-built agents with specialized tooling.
+
+---
+
+### Quick Reference: Feature Combinations
+
+| I want to... | Features to combine |
+|---|---|
+| Analyze code deeply, then generate fixes cheaply | Reasoning model (`o4-mini`, high effort) → `spawn-agent` with `gpt-4.1` |
+| Run a multi-source research report on a schedule | Scheduler + `orchestrate-agents` + auto-approve tools |
+| Chain reusable prompt templates | Library prompts + `run-prompt` tool (LLM calls it sequentially) |
+| Process sensitive data locally | BYOK Ollama provider + file attachments |
+| Create a domain expert agent | Custom agent + dedicated MCP server + specific tool allowlist |
+| Never lose context in long sessions | Infinite sessions (enabled by default) + session context bar monitoring |
+| Get structured input during a workflow | Interactive clarifications (choices + free-text + 60s timeout) |
+| Review files without copy-pasting | File attachments (📎 button or drag-and-drop) + reasoning model |
+| Run a nightly pipeline end-to-end | Scheduler + prompt chaining + `orchestrate-agents` + auto-approve |
+| Delegate automatically to specialists | Custom agents with `infer: true` |
+
+---
+
 ## Troubleshooting
 
 | Symptom | Likely Cause | Fix |

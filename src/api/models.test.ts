@@ -47,6 +47,7 @@ class FakeCopilot implements CopilotWrapper {
 
   getReasoningEffort(): ReasoningEffort | undefined { return this.reasoningEffort; }
   setReasoningEffort(effort: ReasoningEffort | undefined): void { this.reasoningEffort = effort; }
+  modelSupportsReasoning(): boolean { return false; }
   getProvider(): ProviderConfig | undefined { return this.provider; }
   setProvider(provider: ProviderConfig | undefined): void { this.provider = provider; }
   getWorkingDirectory(): string | undefined { return this.workingDirectory; }

@@ -99,8 +99,21 @@ type CopilotSessionLike = {
   destroy: () => Promise<void>;
 };
 
+export type ModelCapabilities = {
+  supports: {
+    reasoningEffort: boolean;
+    vision?: boolean;
+  };
+  limits?: {
+    max_context_window_tokens?: number;
+  };
+};
+
 export type CopilotModel = {
   id: string;
+  capabilities?: ModelCapabilities;
+  supportedReasoningEfforts?: ReasoningEffort[];
+  defaultReasoningEffort?: ReasoningEffort;
   [key: string]: unknown;
 };
 
@@ -247,6 +260,8 @@ export interface CopilotWrapper {
   getNativeMcpServers(): Record<string, NativeMcpServerDefinition>;
   /** Replace the full set of native MCP servers (clears all cached sessions). */
   setNativeMcpServers(servers: Record<string, NativeMcpServerDefinition>): void;
+  /** Check whether a model supports reasoning effort configuration. */
+  modelSupportsReasoning(modelId: string): boolean;
 }
 
 export type CopilotWrapperOptions = {
@@ -443,6 +458,7 @@ export class CopilotWrapperService implements CopilotWrapper {
   private nativeMcpServersConfig: Record<string, NativeMcpServerDefinition>;
   private sessionCache = new Map<string, CopilotSessionLike>();
   private sessionCreationPromises = new Map<string, Promise<CopilotSessionLike>>();
+  private modelCapabilitiesCache = new Map<string, { supportsReasoning: boolean }>();
 
   constructor({
     client,
@@ -700,6 +716,17 @@ export class CopilotWrapperService implements CopilotWrapper {
     }
   }
 
+  modelSupportsReasoning(modelId: string): boolean {
+    const cached = this.modelCapabilitiesCache.get(modelId);
+    if (cached !== undefined) {
+      return cached.supportsReasoning;
+    }
+    // If we haven't fetched model info yet, fall back to a well-known list of reasoning models.
+    // This prevents errors when the model cache hasn't been populated.
+    const lower = modelId.toLowerCase();
+    return lower.startsWith("o1") || lower.startsWith("o3") || lower.startsWith("o4");
+  }
+
   async listModels(): Promise<CopilotModel[]> {
     await this.ensureStarted();
     if (this.startFailed) {
@@ -708,7 +735,14 @@ export class CopilotWrapperService implements CopilotWrapper {
     if (!this.client.listModels) {
       return [{ id: this.model }];
     }
-    return this.client.listModels();
+    const models = await this.client.listModels();
+    // Cache model capabilities for reasoning-effort gating
+    for (const model of models) {
+      const supportsReasoning = model.capabilities?.supports?.reasoningEffort === true
+        || (model.supportedReasoningEfforts != null && model.supportedReasoningEfforts.length > 0);
+      this.modelCapabilitiesCache.set(model.id, { supportsReasoning });
+    }
+    return models;
   }
 
   private async ensureStarted() {
@@ -828,7 +862,12 @@ export class CopilotWrapperService implements CopilotWrapper {
     const effectiveHooks = this.hooksConfig;
     const effectiveUserInput = extra?.onUserInputRequest ?? this.userInputHandler;
     const effectiveWorkingDirectory = extra?.workingDirectory ?? this.defaultWorkingDirectory;
-    const effectiveReasoningEffort = extra?.reasoningEffort ?? this.defaultReasoningEffort;
+    // Only include reasoning effort when the model actually supports it.
+    // Non-reasoning models (gpt-4.1, claude-sonnet-4, etc.) reject this parameter.
+    const rawReasoningEffort = extra?.reasoningEffort ?? this.defaultReasoningEffort;
+    const effectiveReasoningEffort = rawReasoningEffort && this.modelSupportsReasoning(model)
+      ? rawReasoningEffort
+      : undefined;
 
     // Merge per-call agent overrides with defaults (per-call wins on name collision)
     const mergedAgents = this.mergeCustomAgents(
