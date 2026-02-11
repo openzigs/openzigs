@@ -29,6 +29,8 @@ import { createFilesRouter } from "./api/files.js";
 import { launchChrome, killChrome } from "./browser/chrome-launcher.js";
 import { TaskRepository, TaskEngine, TaskWorker, NotificationDispatcher } from "./tasks/index.js";
 import { getDatabase, closeDatabase } from "./productivity/database.js";
+import { WebhookManager } from "./webhooks/webhook-manager.js";
+import { createWebhookRouter } from "./webhooks/webhook-routes.js";
 import { PromptManager } from "./productivity/prompt-manager.js";
 import { Scheduler } from "./productivity/scheduler.js";
 import { PersonalityManager } from "./personality/personality-manager.js";
@@ -232,13 +234,20 @@ const maxConcurrent = config.tasks?.maxConcurrent ?? 2;
 const taskWorker = new TaskWorker({ engine: taskEngine, copilot, maxConcurrent });
 taskWorker.start();
 
+// ── Webhook Manager ──
+const webhookManager = new WebhookManager();
+
 // Model API routes
 const modelsRouter = createModelsRouter({ copilot });
 app.use("/api/models", modelsRouter);
 
 // Admin API routes (no auth for local dev; gate behind auth in prod)
-const adminRouter = createAdminRouter({ toolRegistry, sidecarManager, localServerManager, promptManager, scheduler, personalityManager, sessionManager, copilot, taskWorker, taskEngine });
+const adminRouter = createAdminRouter({ toolRegistry, sidecarManager, localServerManager, promptManager, scheduler, personalityManager, sessionManager, copilot, taskWorker, taskEngine, webhookManager });
 app.use("/api/admin", adminRouter);
+
+// Webhook trigger routes (public-facing)
+const webhookRouter = createWebhookRouter({ webhookManager, taskEngine, promptManager });
+app.use("/api/webhooks/trigger", webhookRouter);
 
 // Tasks API routes
 const tasksRouter = createTasksRouter({ taskEngine });

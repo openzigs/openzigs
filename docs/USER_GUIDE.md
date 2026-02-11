@@ -159,6 +159,7 @@ The OpenZigs UI is a **Next.js** application with a navigation bar providing acc
 | **Library** | `/library` | Saved prompt templates with `{{variable}}` interpolation |
 | **Scheduler** | `/scheduler` | Cron-based job scheduling with prompt linking and model overrides |
 | **Tasks** | `/tasks` | Monitor background agent tasks, sub-agents, and scheduled work |
+| **Webhooks** | `/admin/webhooks` | Create and manage inbound webhooks for external integrations |
 
 ### Chat
 
@@ -2547,6 +2548,10 @@ Before running a scheduled job for real, you can test it safely with dry-run mod
 
 Each job card in the **Scheduler** page now has a **🧪 Dry Run** button alongside the existing **▶ Run** button. Clicking it shows a preview panel below the job card with exactly what the job would do — without executing anything or incrementing run counts.
 
+![Scheduler with Dry Run button alongside Run button](images/scheduler-dry-run-button.png)
+
+![Dry Run preview panel showing job configuration JSON](images/scheduler-dry-run-preview.png)
+
 ### Dry Run via MCP Tools
 
 Two MCP tools support dry-run workflows:
@@ -2572,7 +2577,7 @@ Takes an existing job ID and returns a dry-run preview of its current configurat
 ### Dry Run via API
 
 ```bash
-curl -X POST http://localhost:4621/api/admin/jobs/JOB_ID/run?dry_run=true \
+curl -X POST http://localhost:3000/api/admin/jobs/JOB_ID/run?dry_run=true \
   -H "Authorization: Bearer YOUR_TOKEN"
 ```
 
@@ -2586,6 +2591,8 @@ Webhooks let external systems (CI/CD, monitoring, third-party services) trigger 
 
 ### Creating a Webhook
 
+![Webhooks admin page — create form, webhook list with toggle and rotate key controls](images/webhooks-admin-list.png)
+
 1. Navigate to **Admin → Webhooks** (or `/admin/webhooks`).
 2. Click **+ New Webhook**.
 3. Configure:
@@ -2595,12 +2602,17 @@ Webhooks let external systems (CI/CD, monitoring, third-party services) trigger 
    - **Rate Limit** — Max requests per minute (default: 60).
    - **Allowed IPs** — Optional comma-separated IP allowlist.
 4. Click **Create Webhook**.
+
+![Webhook creation form with name, action type, prompt name, rate limit, and IP allowlist](images/webhooks-create-form.png)
+
 5. **Save the API key** — it's shown only once.
+
+![API key reveal banner after webhook creation](images/webhooks-created-with-key.png)
 
 ### Triggering a Webhook
 
 ```bash
-curl -X POST http://localhost:4621/api/webhooks/trigger \
+curl -X POST http://localhost:3000/api/webhooks/trigger \
   -H "Authorization: Bearer whk_YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"topic": "deployment", "environment": "production"}'
