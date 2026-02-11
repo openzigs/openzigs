@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, afterEach } from "vitest";
-import { createHooksConfig, setActiveAutoApproveTools, clearActiveAutoApproveTools } from "./hooks.js";
+import { createHooksConfig, runWithAutoApproveContext } from "./hooks.js";
 
 const silentLog = {
   info: vi.fn(),
@@ -9,7 +9,7 @@ const silentLog = {
 
 describe("createHooksConfig", () => {
   afterEach(() => {
-    clearActiveAutoApproveTools();
+    // AsyncLocalStorage cleans up automatically per-run; nothing to clear
   });
 
   it("onPreToolUse allows tools that do not require approval", async () => {
@@ -236,13 +236,13 @@ describe("createHooksConfig", () => {
     });
 
     // Set auto-approve override for shell-execute
-    setActiveAutoApproveTools(["shell-execute", "file-write"]);
-
-    const result = await hooks.onPreToolUse!({
-      toolName: "shell-execute",
-      toolArgs: { command: "echo hello" },
-      context: { sessionId: "test-session" },
-    });
+    const result = await runWithAutoApproveContext(["shell-execute", "file-write"], () =>
+      hooks.onPreToolUse!({
+        toolName: "shell-execute",
+        toolArgs: { command: "echo hello" },
+        context: { sessionId: "test-session" },
+      })
+    );
 
     expect(result.permissionDecision).toBe("allow");
     // Should NOT have gone through approval queue
@@ -269,13 +269,13 @@ describe("createHooksConfig", () => {
     });
 
     // Auto-approve only file-write — shell-execute should still gate
-    setActiveAutoApproveTools(["file-write"]);
-
-    const result = await hooks.onPreToolUse!({
-      toolName: "shell-execute",
-      toolArgs: { command: "rm -rf /" },
-      context: { sessionId: "test-session" },
-    });
+    const result = await runWithAutoApproveContext(["file-write"], () =>
+      hooks.onPreToolUse!({
+        toolName: "shell-execute",
+        toolArgs: { command: "rm -rf /" },
+        context: { sessionId: "test-session" },
+      })
+    );
 
     expect(result.permissionDecision).toBe("deny");
     expect(approvalQueue.requestApproval).toHaveBeenCalled();
@@ -290,13 +290,13 @@ describe("createHooksConfig", () => {
       log: silentLog,
     });
 
-    setActiveAutoApproveTools(["shell-execute"]);
-
-    await hooks.onPreToolUse!({
-      toolName: "shell-execute",
-      toolArgs: { command: "echo hi" },
-      context: { sessionId: "s-1" },
-    });
+    await runWithAutoApproveContext(["shell-execute"], () =>
+      hooks.onPreToolUse!({
+        toolName: "shell-execute",
+        toolArgs: { command: "echo hi" },
+        context: { sessionId: "s-1" },
+      })
+    );
 
     expect(auditLogger.log).toHaveBeenCalledWith(
       expect.objectContaining({

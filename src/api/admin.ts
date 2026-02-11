@@ -868,6 +868,9 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
       if (!job) {
         return res.status(404).json({ error: "Job not found" });
       }
+      if (!job.enabled) {
+        return res.status(400).json({ error: "Job is disabled and cannot be run." });
+      }
       try {
         await scheduler.executeJob(job.id);
         return res.json({ ok: true, jobId: job.id, jobName: job.name });

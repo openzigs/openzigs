@@ -12,24 +12,23 @@ import type { ToolRegistry } from "../mcp/tool-registry.js";
 import type { ApprovalQueue, ApprovalChannel } from "../approvals/index.js";
 import type { AuditLogger } from "../logging/audit-logger.js";
 import type { SessionManager } from "../sessions/session-manager.js";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { formatApprovalContext } from "../approvals/approval-formatters.js";
 import { logger } from "../logging/logger.js";
 
-// ── Thread-local auto-approve context ──────────────────────────────────
+// ── Async-local auto-approve context ──────────────────────────────────
 // Per-task override: tools listed here bypass approval gating entirely.
-// Set/clear around each task execution in TaskWorker (same pattern as
-// setActiveChatContext / setActiveOrchestrateContext).
-let activeAutoApproveTools: string[] | null = null;
+// This uses AsyncLocalStorage to ensure context is not shared between
+// concurrent task executions.
+const autoApproveContext = new AsyncLocalStorage<string[] | null>();
 
-export const setActiveAutoApproveTools = (tools: string[] | null): void => {
-  activeAutoApproveTools = tools;
+export const runWithAutoApproveContext = <T>(tools: string[] | null, fn: () => T): T => {
+  return autoApproveContext.run(tools ?? null, fn);
 };
 
-export const clearActiveAutoApproveTools = (): void => {
-  activeAutoApproveTools = null;
+export const getActiveAutoApproveTools = (): string[] | null => {
+  return autoApproveContext.getStore() ?? null;
 };
-
-export const getActiveAutoApproveTools = (): string[] | null => activeAutoApproveTools;
 
 export type HooksFactoryOptions = {
   toolRegistry?: ToolRegistry;
@@ -54,6 +53,7 @@ export const createHooksConfig = ({
   return {
     onPreToolUse: async (input: HookPreToolUseInput): Promise<HookPreToolUseResult> => {
       // Per-task auto-approve override: skip approval gating entirely
+      const activeAutoApproveTools = getActiveAutoApproveTools();
       if (activeAutoApproveTools?.includes(input.toolName)) {
         log.info(`Auto-approved tool "${input.toolName}" (per-task override)`);
         if (auditLogger) {

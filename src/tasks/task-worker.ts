@@ -3,7 +3,7 @@ import type { TaskEngine } from "./task-engine.js";
 import type { CopilotWrapper } from "../copilot/copilot-wrapper.js";
 import type { AgentTask } from "./types.js";
 import { ALWAYS_ON_TOOLS } from "../mcp/constants.js";
-import { setActiveAutoApproveTools, clearActiveAutoApproveTools } from "../copilot/hooks.js";
+import { runWithAutoApproveContext } from "../copilot/hooks.js";
 import { logger } from "../logging/logger.js";
 
 export type TaskWorkerOptions = {
@@ -134,11 +134,8 @@ export class TaskWorker extends EventEmitter {
 
       let result = "";
 
-      // Set per-task auto-approve overrides so the hooks layer can bypass
-      // approval gating for the listed tools during this execution.
-      setActiveAutoApproveTools(task.autoApproveTools);
-
-      try {
+      // Use AsyncLocalStorage to create an isolated context for this task execution.
+      await runWithAutoApproveContext(task.autoApproveTools, async () => {
         for await (const chunk of this.copilot.chat(prompt, {
           model: task.model ?? undefined,
           availableTools,
@@ -157,9 +154,7 @@ export class TaskWorker extends EventEmitter {
         })) {
           result += chunk;
         }
-      } finally {
-        clearActiveAutoApproveTools();
-      }
+      });
 
       const completed = this.engine.complete(task.id, result);
       this.log.info(`TaskWorker completed task ${task.id}`);
