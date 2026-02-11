@@ -6,6 +6,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import type { TaskEngine } from "../tasks/task-engine.js";
+import type { PipelineStage } from "../tasks/types.js";
 
 export type ScheduledJob = {
   id: string;
@@ -88,6 +89,12 @@ export type SchedulerOptions = {
   onExecute?: (job: ScheduledJob) => Promise<string>;
   /** When provided, scheduled prompt/shell jobs are submitted as background tasks. */
   taskEngine?: TaskEngine;
+  /** Resolve a saved prompt name to its template text and optional pipeline stages. */
+  promptResolver?: (promptName: string, variables?: Record<string, string>) => {
+    text: string;
+    preferredTools: string[] | null;
+    stages: PipelineStage[] | null;
+  } | null;
 };
 
 const toJob = (row: StoredJob): ScheduledJob => ({
@@ -117,14 +124,20 @@ export class Scheduler extends EventEmitter {
   private tasks = new Map<string, cron.ScheduledTask>();
   private onExecute?: (job: ScheduledJob) => Promise<string>;
   private taskEngine?: TaskEngine;
+  private promptResolver?: (promptName: string, variables?: Record<string, string>) => {
+    text: string;
+    preferredTools: string[] | null;
+    stages: PipelineStage[] | null;
+  } | null;
 
-  constructor({ db, auditLogDir, clock, onExecute, taskEngine }: SchedulerOptions) {
+  constructor({ db, auditLogDir, clock, onExecute, taskEngine, promptResolver }: SchedulerOptions) {
     super();
     this.db = db;
     this.clock = clock ?? (() => new Date());
     this.auditLogDir = auditLogDir ?? defaultAuditDir();
     this.onExecute = onExecute;
     this.taskEngine = taskEngine;
+    this.promptResolver = promptResolver;
     this.migrateSchema();
   }
 
@@ -315,10 +328,26 @@ export class Scheduler extends EventEmitter {
     if (this.taskEngine && job.actionType === "prompt") {
       try {
         const promptName = (job.actionPayload as Record<string, unknown>).promptName as string | undefined;
-        const goal = promptName
-          ? `Execute scheduled prompt: "${promptName}" (job: ${job.name})`
-          : `Execute scheduled job: "${job.name}"`;
-        const context = `Scheduled job ID: ${job.id}\nAction: ${job.actionType}\nPayload: ${JSON.stringify(job.actionPayload)}`;
+        const variables = ((job.actionPayload as Record<string, unknown>).variables ?? {}) as Record<string, string>;
+
+        // Resolve the saved prompt template (with stages if configured)
+        let resolvedPrompt: string | null = null;
+        let pipelineStages: PipelineStage[] | null = null;
+
+        if (promptName && this.promptResolver) {
+          const resolved = this.promptResolver(promptName, variables);
+          if (resolved) {
+            resolvedPrompt = resolved.text;
+            pipelineStages = resolved.stages;
+          }
+        }
+
+        const goal = resolvedPrompt
+          ? resolvedPrompt
+          : (promptName
+            ? `Execute scheduled prompt: "${promptName}" (job: ${job.name})`
+            : `Execute scheduled job: "${job.name}"`);
+        const context = `Scheduled job ID: ${job.id}\nAction: ${job.actionType}\nPrompt: ${promptName ?? "(none)"}\nPayload: ${JSON.stringify(job.actionPayload)}`;
 
         this.taskEngine.submit(
           {
@@ -328,6 +357,7 @@ export class Scheduler extends EventEmitter {
             model: job.model ?? undefined,
             allowedTools: job.allowedTools ?? undefined,
             autoApproveTools: job.autoApproveTools ?? undefined,
+            pipeline: pipelineStages ? { stages: pipelineStages } : undefined,
             notifyOnComplete: true,
           },
           { mode: "background" }

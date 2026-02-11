@@ -4,6 +4,31 @@ export type TaskTrigger = "chat" | "cron" | "agent" | "webhook";
 export type TaskStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
 export type TaskMode = "immediate" | "background";
 
+// ── Pipeline types ────────────────────────────────────────────────────
+
+/** A single stage in a multi-stage pipeline. Each stage runs as its own agent task with a fresh SDK session. */
+export type PipelineStage = {
+  /** Human-readable stage name (e.g., "clone-and-read", "review", "report"). */
+  name: string;
+  /** Prompt text for this stage. Supports {{variable}} interpolation. */
+  prompt: string;
+  /** Tool allowlist for this stage. null = all enabled tools. */
+  tools?: string[] | null;
+  /** Tools that bypass approval gating for this stage. */
+  autoApproveTools?: string[];
+  /** Model override for this stage. */
+  model?: string;
+  /** Per-stage timeout in seconds (default: 300). */
+  timeoutSeconds?: number;
+};
+
+/** Ordered list of stages for sequential pipeline execution. */
+export type PipelineDefinition = {
+  stages: PipelineStage[];
+};
+
+// ── Task types ────────────────────────────────────────────────────────
+
 export type AgentTask = {
   id: string;
   parentTaskId: string | null;
@@ -21,6 +46,8 @@ export type AgentTask = {
   allowedTools: string[] | null;
   /** Tools that bypass normal approval gating for this task. null = no overrides. */
   autoApproveTools: string[] | null;
+  /** Pipeline definition for multi-stage sequential execution. null = single-stage task. */
+  pipeline: PipelineDefinition | null;
   notifyOnComplete: boolean;
   depth: number;
   createdAt: Date;
@@ -42,6 +69,8 @@ export type CreateTaskInput = {
   allowedTools?: string[];
   /** Tools that bypass normal approval gating for this task. */
   autoApproveTools?: string[];
+  /** Pipeline definition for multi-stage sequential execution. */
+  pipeline?: PipelineDefinition;
   notifyOnComplete?: boolean;
   spawnedBy?: string;
 };
@@ -62,6 +91,7 @@ export type StoredTask = {
   model: string | null;
   allowed_tools: string | null;
   auto_approve_tools: string | null;
+  pipeline: string | null;
   notify_on_complete: number;
   depth: number;
   created_at: string;

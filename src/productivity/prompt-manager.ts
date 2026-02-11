@@ -1,5 +1,6 @@
 import type Database from "better-sqlite3";
 import { randomUUID } from "node:crypto";
+import type { PipelineStage } from "../tasks/types.js";
 
 export type SavedPrompt = {
   id: string;
@@ -9,6 +10,8 @@ export type SavedPrompt = {
   tags: string[];
   /** Optional list of preferred tool names for this prompt. null = no preference. */
   preferredTools: string[] | null;
+  /** Optional pipeline stages for multi-stage execution. null = single-stage prompt. */
+  stages: PipelineStage[] | null;
   createdAt: Date;
   updatedAt: Date;
 };
@@ -20,6 +23,8 @@ export type CreatePromptInput = {
   tags?: string[];
   /** Optional list of preferred tool names for this prompt. */
   preferredTools?: string[];
+  /** Optional pipeline stages for multi-stage execution. */
+  stages?: PipelineStage[];
 };
 
 export type UpdatePromptInput = {
@@ -29,6 +34,8 @@ export type UpdatePromptInput = {
   tags?: string[];
   /** Set to an array to configure preferred tools, or null to clear. */
   preferredTools?: string[] | null;
+  /** Set to an array to configure pipeline stages, or null to clear. */
+  stages?: PipelineStage[] | null;
 };
 
 type StoredPrompt = {
@@ -38,6 +45,7 @@ type StoredPrompt = {
   description: string;
   tags: string;
   preferred_tools: string | null;
+  stages: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -49,6 +57,7 @@ const toPrompt = (row: StoredPrompt): SavedPrompt => ({
   description: row.description,
   tags: JSON.parse(row.tags) as string[],
   preferredTools: row.preferred_tools ? (JSON.parse(row.preferred_tools) as string[]) : null,
+  stages: row.stages ? (JSON.parse(row.stages) as PipelineStage[]) : null,
   createdAt: new Date(row.created_at),
   updatedAt: new Date(row.updated_at),
 });
@@ -101,6 +110,11 @@ export class PromptManager {
     if (!columns.some((c) => c.name === "preferred_tools")) {
       this.db.exec("ALTER TABLE saved_prompts ADD COLUMN preferred_tools TEXT DEFAULT NULL");
     }
+
+    // Add 'stages' column — JSON array of pipeline stage definitions or NULL
+    if (!columns.some((c) => c.name === "stages")) {
+      this.db.exec("ALTER TABLE saved_prompts ADD COLUMN stages TEXT DEFAULT NULL");
+    }
   }
 
   create(input: CreatePromptInput): SavedPrompt {
@@ -110,10 +124,10 @@ export class PromptManager {
 
     this.db
       .prepare(
-        `INSERT INTO saved_prompts (id, name, template, description, tags, preferred_tools, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO saved_prompts (id, name, template, description, tags, preferred_tools, stages, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
-      .run(id, input.name, input.template, input.description ?? "", tags, input.preferredTools ? JSON.stringify(input.preferredTools) : null, now, now);
+      .run(id, input.name, input.template, input.description ?? "", tags, input.preferredTools ? JSON.stringify(input.preferredTools) : null, input.stages ? JSON.stringify(input.stages) : null, now, now);
 
     return this.getById(id)!;
   }
@@ -165,13 +179,16 @@ export class PromptManager {
     const preferredTools = input.preferredTools !== undefined
       ? (input.preferredTools ? JSON.stringify(input.preferredTools) : null)
       : (existing.preferredTools ? JSON.stringify(existing.preferredTools) : null);
+    const stages = input.stages !== undefined
+      ? (input.stages ? JSON.stringify(input.stages) : null)
+      : (existing.stages ? JSON.stringify(existing.stages) : null);
 
     this.db
       .prepare(
-        `UPDATE saved_prompts SET name = ?, template = ?, description = ?, tags = ?, preferred_tools = ?, updated_at = ?
+        `UPDATE saved_prompts SET name = ?, template = ?, description = ?, tags = ?, preferred_tools = ?, stages = ?, updated_at = ?
          WHERE id = ?`
       )
-      .run(name, template, description, tags, preferredTools, now, id);
+      .run(name, template, description, tags, preferredTools, stages, now, id);
 
     return this.getById(id)!;
   }
@@ -210,6 +227,33 @@ export class PromptManager {
     return {
       text: interpolateTemplate(prompt.template, variables),
       preferredTools: prompt.preferredTools,
+    };
+  }
+
+  /**
+   * Resolve a prompt by name with full metadata: interpolated text,
+   * preferred tools, and pipeline stages (with variable interpolation
+   * applied to each stage's prompt text).
+   */
+  resolveWithStages(
+    name: string,
+    variables: Record<string, string> = {}
+  ): { text: string; preferredTools: string[] | null; stages: PipelineStage[] | null } | null {
+    const prompt = this.getByName(name);
+    if (!prompt) {
+      return null;
+    }
+
+    // Interpolate variables in stage prompts too
+    const resolvedStages = prompt.stages?.map((stage) => ({
+      ...stage,
+      prompt: interpolateTemplate(stage.prompt, variables),
+    })) ?? null;
+
+    return {
+      text: interpolateTemplate(prompt.template, variables),
+      preferredTools: prompt.preferredTools,
+      stages: resolvedStages,
     };
   }
 }

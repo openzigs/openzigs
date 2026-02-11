@@ -16,6 +16,7 @@ import type { PersonalityManager } from "../personality/personality-manager.js";
 import type { SessionManager } from "../sessions/session-manager.js";
 import type { TaskWorker } from "../tasks/task-worker.js";
 import type { TaskEngine } from "../tasks/task-engine.js";
+import type { PipelineStage } from "../tasks/types.js";
 import type { WebhookManager } from "../webhooks/webhook-manager.js";
 
 type EnvEntry = {
@@ -376,6 +377,38 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
       configured: !!(process.env[name] && process.env[name]!.trim().length > 0)
     }));
     res.json({ env });
+  });
+
+  router.get("/allowed-dirs", (_req, res) => {
+    const value = (process.env.OPENZIGS_ALLOWED_DIRS ?? "").trim();
+    res.json({ value });
+  });
+
+  router.post("/allowed-dirs", async (req, res) => {
+    const body = req.body as Record<string, unknown>;
+    const rawValue = typeof body.value === "string" ? body.value : "";
+    const normalized = rawValue
+      .split(",")
+      .map((entry) => entry.trim())
+      .filter(Boolean)
+      .join(",");
+
+    try {
+      const envPath = defaultEnvPath();
+      await upsertEnvFile(envPath, { OPENZIGS_ALLOWED_DIRS: normalized });
+
+      if (normalized) {
+        process.env.OPENZIGS_ALLOWED_DIRS = normalized;
+      } else {
+        delete process.env.OPENZIGS_ALLOWED_DIRS;
+      }
+
+      logger.info("Updated OPENZIGS_ALLOWED_DIRS via admin UI");
+      return res.json({ ok: true, value: normalized, restartRequired: true });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return res.status(500).json({ error: message });
+    }
   });
 
   router.get("/channels", async (_req, res) => {
@@ -751,6 +784,7 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
           description: typeof body.description === "string" ? body.description : undefined,
           tags: Array.isArray(body.tags) ? (body.tags as string[]) : undefined,
           preferredTools: Array.isArray(body.preferredTools) ? (body.preferredTools as string[]) : undefined,
+          stages: Array.isArray(body.stages) ? (body.stages as PipelineStage[]) : undefined,
         });
         return res.status(201).json(prompt);
       } catch (error) {
@@ -768,6 +802,7 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
           description: typeof body.description === "string" ? body.description : undefined,
           tags: Array.isArray(body.tags) ? (body.tags as string[]) : undefined,
           preferredTools: Array.isArray(body.preferredTools) ? (body.preferredTools as string[]) : (body.preferredTools === null ? null : undefined),
+          stages: Array.isArray(body.stages) ? (body.stages as PipelineStage[]) : (body.stages === null ? null : undefined),
         });
         return res.json(updated);
       } catch (error) {

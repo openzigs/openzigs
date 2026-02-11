@@ -95,6 +95,7 @@ const taskRepository = new TaskRepository(db);
 const taskEngine = new TaskEngine({ repository: taskRepository });
 const scheduler = new Scheduler({
   db,
+  promptResolver: (name, variables) => promptManager.resolveWithStages(name, variables ?? {}),
   onExecute: async (job) => {
     if (job.actionType === "prompt") {
       const promptName = (job.actionPayload as Record<string, unknown>).promptName as string | undefined;
@@ -207,6 +208,7 @@ const copilot = new CopilotWrapperService({
 
 registerMcpTools(toolRegistry, {
   allowedDirs: allowedDirs.length > 0 ? allowedDirs : [process.cwd(), os.tmpdir(), os.homedir(), "/tmp", "/private/tmp"],
+  shellAllowlist: (process.env.OPENZIGS_SHELL_ALLOWLIST ?? "git,find,ls,cat,head,tail,grep,wc,echo,pwd,mkdir,cp,mv,rm,which,date,curl,bash,sh,java,javac,python3,node").split(",").map(s => s.trim()).filter(Boolean),
   braveApiKey: process.env.BRAVE_API_KEY,
   chromeDebugHost: process.env.CHROME_DEBUG_HOST,
   chromeDebugPort,

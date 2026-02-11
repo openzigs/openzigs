@@ -2,9 +2,9 @@ import * as z from "zod";
 import type { ToolDefinition } from "../tool-registry.js";
 import type { TaskEngine } from "../../tasks/task-engine.js";
 import type { CopilotWrapper } from "../../copilot/copilot-wrapper.js";
-import type { AgentTask } from "../../tasks/types.js";
 import type { ChannelType } from "../../channels/types.js";
 import { logger } from "../../logging/logger.js";
+import { waitForTask } from "../../tasks/wait-for-task.js";
 
 const orchestrateAgentsSchema = z.object({
   agents: z
@@ -54,73 +54,6 @@ export type OrchestrateAgentsOptions = {
   taskEngine: TaskEngine;
   copilot: CopilotWrapper;
 };
-
-/**
- * Wait for a specific task to reach a terminal state.
- *
- * Uses a listener + re-check pattern to avoid race conditions:
- * 1. Check if already completed
- * 2. Attach listeners
- * 3. Re-check (task may have completed between step 1 and 2)
- */
-const waitForTask = (
-  engine: TaskEngine,
-  taskId: string,
-  signal: AbortSignal
-): Promise<AgentTask> => {
-  // Fast path: already in terminal state
-  const existing = engine.getTask(taskId);
-  if (existing && isTerminal(existing.status)) {
-    return Promise.resolve(existing);
-  }
-
-  return new Promise<AgentTask>((resolve, reject) => {
-    const onComplete = (task: AgentTask) => {
-      if (task.id === taskId) {
-        cleanup();
-        resolve(task);
-      }
-    };
-    const onFail = (task: AgentTask) => {
-      if (task.id === taskId) {
-        cleanup();
-        resolve(task); // Resolve (not reject) — we handle failures in aggregation
-      }
-    };
-    const onCancel = (task: AgentTask) => {
-      if (task.id === taskId) {
-        cleanup();
-        resolve(task);
-      }
-    };
-    const onAbort = () => {
-      cleanup();
-      reject(new Error(`Timeout waiting for task ${taskId}`));
-    };
-
-    const cleanup = () => {
-      engine.off("task:completed", onComplete);
-      engine.off("task:failed", onFail);
-      engine.off("task:cancelled", onCancel);
-      signal.removeEventListener("abort", onAbort);
-    };
-
-    engine.on("task:completed", onComplete);
-    engine.on("task:failed", onFail);
-    engine.on("task:cancelled", onCancel);
-    signal.addEventListener("abort", onAbort, { once: true });
-
-    // Re-check after attaching listeners (race condition guard)
-    const recheck = engine.getTask(taskId);
-    if (recheck && isTerminal(recheck.status)) {
-      cleanup();
-      resolve(recheck);
-    }
-  });
-};
-
-const isTerminal = (status: string): boolean =>
-  status === "completed" || status === "failed" || status === "cancelled";
 
 /**
  * Module-level mutable context — set by MessageRouter before each request

@@ -47,6 +47,8 @@ export type McpServerOptions = {
   personalityManager?: PersonalityManager;
   taskEngine?: TaskEngine;
   copilot?: CopilotWrapper;
+  /** Commands allowed for shell-execute tool. Empty = tool disabled. */
+  shellAllowlist?: string[];
   linkedinSidecarUrl?: string;
   twitterSidecarUrl?: string;
   facebookSidecarUrl?: string;
@@ -68,6 +70,7 @@ export type RegisterMcpToolsOptions = Pick<
   | "braveApiKey"
   | "chromeDebugHost"
   | "chromeDebugPort"
+  | "shellAllowlist"
   | "auditLogger"
   | "approvalQueue"
   | "promptManager"
@@ -89,7 +92,7 @@ export type RegisterMcpToolsOptions = Pick<
 >;
 
 const readFileSchema = z.object({ path: z.string() });
-const listDirectorySchema = z.object({ path: z.string() });
+const listDirectorySchema = z.object({ path: z.string(), recursive: z.boolean().optional() });
 const writeFileSchema = z.object({ path: z.string(), content: z.string() });
 const webSearchSchema = z.object({ query: z.string(), count: z.number().optional() });
 const browserReadSchema = z.object({ selector: z.string().optional() });
@@ -218,6 +221,7 @@ export const registerMcpTools = (toolRegistry: ToolRegistry, options: RegisterMc
   });
 
   const shellExecuteHandler = createShellExecuteHandler({
+    allowlist: options.shellAllowlist,
     allowedDirs: options.allowedDirs,
     auditLogger: options.auditLogger
   });
@@ -249,18 +253,25 @@ export const registerMcpTools = (toolRegistry: ToolRegistry, options: RegisterMc
 
   registerTool({
     name: "list-directory",
-    description: "List directory entries from allowed directories",
+    description: "List directory entries from allowed directories. Set recursive=true to list all files and subdirectories recursively.",
     inputSchema: {
       type: "object",
-      properties: { path: { type: "string" } },
+      properties: {
+        path: { type: "string" },
+        recursive: { type: "boolean", description: "When true, list all entries recursively including nested subdirectories" }
+      },
       required: ["path"]
     },
     zodSchema: listDirectorySchema,
     category: "filesystem",
     riskLevel: "low",
     handler: async (args) => {
-      const { path } = args as ListDirectoryInput;
-      const output = await filesystemHandlers.listDirectory({ path });
+      const { path: dirPath, recursive } = args as ListDirectoryInput;
+      if (recursive) {
+        const output = await filesystemHandlers.listDirectoryRecursive({ path: dirPath });
+        return { text: JSON.stringify(output) };
+      }
+      const output = await filesystemHandlers.listDirectory({ path: dirPath });
       return { text: JSON.stringify(output) };
     }
   });

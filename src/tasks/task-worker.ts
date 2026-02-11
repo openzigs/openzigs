@@ -4,6 +4,7 @@ import type { CopilotWrapper } from "../copilot/copilot-wrapper.js";
 import type { AgentTask } from "./types.js";
 import { ALWAYS_ON_TOOLS } from "../mcp/constants.js";
 import { runWithAutoApproveContext } from "../copilot/hooks.js";
+import { waitForTask } from "./wait-for-task.js";
 import { logger } from "../logging/logger.js";
 
 export type TaskWorkerOptions = {
@@ -126,6 +127,11 @@ export class TaskWorker extends EventEmitter {
     this.log.info(`TaskWorker executing task ${task.id}: "${task.goal.slice(0, 80)}"`);
     this.emit("task:executing", task);
 
+    // Pipeline tasks: run stages sequentially, each as its own child task
+    if (task.pipeline && task.pipeline.stages.length > 0) {
+      return this.executePipeline(task);
+    }
+
     try {
       const prompt = this.buildPrompt(task);
 
@@ -195,5 +201,147 @@ export class TaskWorker extends EventEmitter {
     lines.push("Complete this task thoroughly and return your results. Be concise but comprehensive.");
 
     return lines.join("\n");
+  }
+
+  /**
+   * Execute a multi-stage pipeline. Each stage runs as its own child task
+   * with a fresh SDK session, solving the turn-limit problem for complex prompts.
+   *
+   * Stage N's output is passed as context to stage N+1, creating an accumulating
+   * context chain. The parent task completes with the final stage's result.
+   */
+  private async executePipeline(task: AgentTask): Promise<void> {
+    const { stages } = task.pipeline!;
+    const stageCount = stages.length;
+    this.log.info(`TaskWorker pipeline: ${stageCount} stages for task ${task.id}`);
+
+    const controller = new AbortController();
+    const stageResults: Array<{ name: string; status: string; result?: string; error?: string }> = [];
+    let accumulatedContext = task.context || "";
+
+    try {
+      for (let i = 0; i < stageCount; i++) {
+        const stage = stages[i];
+        const stageLabel = `[${i + 1}/${stageCount}] ${stage.name}`;
+        const timeoutMs = (stage.timeoutSeconds ?? 300) * 1_000;
+
+        this.log.info(`TaskWorker pipeline stage ${stageLabel}: starting`);
+
+        // Build stage prompt with accumulated context from previous stages
+        const stagePrompt = this.buildStagePrompt(stage.prompt, accumulatedContext, i, stageCount);
+
+        // Merge stage-level autoApproveTools with parent task's autoApproveTools
+        const stageAutoApprove = [
+          ...(task.autoApproveTools ?? []),
+          ...(stage.autoApproveTools ?? []),
+        ];
+
+        // Submit stage as a child task
+        const childTask = this.engine.submit(
+          {
+            trigger: task.trigger,
+            goal: stagePrompt,
+            context: accumulatedContext,
+            model: stage.model ?? task.model ?? undefined,
+            allowedTools: stage.tools ?? task.allowedTools ?? undefined,
+            autoApproveTools: stageAutoApprove.length > 0 ? [...new Set(stageAutoApprove)] : undefined,
+            notifyOnComplete: false, // Parent handles notification
+            parentTaskId: task.id,
+            sessionId: task.sessionId ?? undefined,
+            channelType: task.channelType ?? undefined,
+            chatId: task.chatId ?? undefined,
+          },
+          { mode: "background" }
+        );
+
+        // Wait for stage to complete
+        const stageTimer = setTimeout(() => controller.abort(), timeoutMs);
+        let completedStage: AgentTask;
+        try {
+          completedStage = await waitForTask(this.engine, childTask.id, controller.signal);
+        } finally {
+          clearTimeout(stageTimer);
+        }
+
+        const stageRecord = {
+          name: stage.name,
+          status: completedStage.status,
+          result: completedStage.result ?? undefined,
+          error: completedStage.error ?? undefined,
+        };
+        stageResults.push(stageRecord);
+
+        this.log.info(`TaskWorker pipeline stage ${stageLabel}: ${completedStage.status}`);
+
+        if (completedStage.status === "failed" || completedStage.status === "cancelled") {
+          // Abort pipeline on stage failure
+          const errorMsg = `Pipeline aborted: stage "${stage.name}" ${completedStage.status}: ${completedStage.error ?? "unknown error"}`;
+          this.log.error(errorMsg);
+          const failed = this.engine.fail(task.id, errorMsg);
+          this.emit("task:error", failed);
+          return;
+        }
+
+        // Accumulate context: append this stage's result for the next stage
+        if (completedStage.result) {
+          accumulatedContext += `\n\n--- Output from stage "${stage.name}" ---\n${completedStage.result}`;
+        }
+      }
+
+      // All stages completed — build final result
+      const finalResult = this.buildPipelineResult(stageResults);
+      const completed = this.engine.complete(task.id, finalResult);
+      this.log.info(`TaskWorker pipeline completed task ${task.id}: ${stageCount} stages`);
+      this.emit("task:done", completed);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const failed = this.engine.fail(task.id, `Pipeline error: ${message}`);
+      this.log.error(`TaskWorker pipeline failed task ${task.id}: ${message}`);
+      this.emit("task:error", failed);
+    }
+  }
+
+  /** Build a prompt for a pipeline stage, injecting context from prior stages. */
+  private buildStagePrompt(
+    stagePrompt: string,
+    accumulatedContext: string,
+    stageIndex: number,
+    totalStages: number
+  ): string {
+    const lines: string[] = [];
+
+    lines.push("You are an autonomous agent executing a pipeline stage.");
+    lines.push(`This is stage ${stageIndex + 1} of ${totalStages}.`);
+    lines.push("");
+    lines.push("IMPORTANT: Complete ONLY the task described below. Do NOT delegate to sub-tasks or use the task tool.");
+    lines.push("");
+    lines.push("Stage Task:");
+    lines.push(stagePrompt);
+
+    if (accumulatedContext) {
+      lines.push("");
+      lines.push("Context from previous stages:");
+      lines.push(accumulatedContext);
+    }
+
+    lines.push("");
+    lines.push("Complete this stage thoroughly and return your results. Be concise but comprehensive.");
+
+    return lines.join("\n");
+  }
+
+  /** Build the final result summary for a completed pipeline. */
+  private buildPipelineResult(
+    stageResults: Array<{ name: string; status: string; result?: string; error?: string }>
+  ): string {
+    const lastStage = stageResults[stageResults.length - 1];
+    if (lastStage?.result) {
+      // Return the last stage's result as the primary output (it has the cumulative context)
+      return lastStage.result;
+    }
+    // Fallback: summarize all stages
+    return stageResults
+      .map((s) => `## ${s.name} (${s.status})\n${s.result ?? s.error ?? "No output"}`)
+      .join("\n\n");
   }
 }

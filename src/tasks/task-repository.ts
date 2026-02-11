@@ -1,6 +1,6 @@
 import type Database from "better-sqlite3";
 import { randomUUID } from "node:crypto";
-import type { AgentTask, CreateTaskInput, StoredTask, TaskStatus } from "./types.js";
+import type { AgentTask, CreateTaskInput, PipelineDefinition, StoredTask, TaskStatus } from "./types.js";
 import { TASK_LIMITS } from "./types.js";
 
 /** Convert a SQLite row into a domain `AgentTask`. */
@@ -19,6 +19,7 @@ export const toTask = (row: StoredTask): AgentTask => ({
   model: row.model,
   allowedTools: row.allowed_tools ? (JSON.parse(row.allowed_tools) as string[]) : null,
   autoApproveTools: row.auto_approve_tools ? (JSON.parse(row.auto_approve_tools) as string[]) : null,
+  pipeline: row.pipeline ? (JSON.parse(row.pipeline) as PipelineDefinition) : null,
   notifyOnComplete: row.notify_on_complete === 1,
   depth: row.depth,
   createdAt: new Date(row.created_at),
@@ -86,6 +87,11 @@ export class TaskRepository {
       this.db.exec("ALTER TABLE agent_tasks ADD COLUMN auto_approve_tools TEXT DEFAULT NULL");
     }
 
+    // Add 'pipeline' column — JSON pipeline definition for multi-stage tasks
+    if (!columns.some((c) => c.name === "pipeline")) {
+      this.db.exec("ALTER TABLE agent_tasks ADD COLUMN pipeline TEXT DEFAULT NULL");
+    }
+
     // ── Backfill: link orphaned agent tasks to their parent ──
     // Before the parentTaskId propagation fix, spawn-agent/orchestrate-agents
     // never set parentTaskId. This backfill matches orphaned agent tasks to
@@ -150,8 +156,8 @@ export class TaskRepository {
         `INSERT INTO agent_tasks
           (id, parent_task_id, trigger, status, goal, context,
            session_id, channel_type, chat_id, model, allowed_tools, auto_approve_tools,
-           notify_on_complete, depth, created_at, spawned_by)
-         VALUES (?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+           pipeline, notify_on_complete, depth, created_at, spawned_by)
+         VALUES (?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         id,
@@ -165,6 +171,7 @@ export class TaskRepository {
         input.model ?? null,
         input.allowedTools ? JSON.stringify(input.allowedTools) : null,
         input.autoApproveTools ? JSON.stringify(input.autoApproveTools) : null,
+        input.pipeline ? JSON.stringify(input.pipeline) : null,
         input.notifyOnComplete ? 1 : 0,
         depth,
         now,
