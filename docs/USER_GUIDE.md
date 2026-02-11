@@ -2500,6 +2500,12 @@ OpenZigs includes a **Workflow Wizard** — an interactive conversational assist
 3. **Preview Card** — Once all details are gathered, a structured **Workflow Preview Card** appears in the chat showing the complete configuration.
 4. **Confirm / Edit / Test Run** — Click **Confirm** to save, **Edit** to change a field, or **Test Run** (for scheduled jobs) to preview what would happen without executing.
 
+![Workflow preview card for a prompt template showing config details and Confirm / Edit buttons](images/workflow-preview-prompt.png)
+
+![Scheduled job preview card with Confirm, Edit, and Test Run buttons](images/workflow-preview-scheduled-job.png)
+
+![Webhook preview card with action and rate limit config](images/workflow-preview-webhook.png)
+
 ### Preview Card Actions
 
 | Action | Description |
@@ -2652,6 +2658,8 @@ The JSON body is passed as prompt variables (for `prompt` actions) or task conte
 The AI can answer questions about OpenZigs itself — its architecture, configuration, tools, and features — using the built-in documentation tools.
 
 ### How It Works
+
+![Admin tools panel showing query-documentation enabled alongside other productivity tools](images/admin-tools-doc-enabled.png)
 
 The `query-documentation` tool searches the project's markdown documentation and JSON config files by topic keyword. The AI can find relevant sections from:
 

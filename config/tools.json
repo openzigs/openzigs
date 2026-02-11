@@ -43,6 +43,7 @@
     "list-jobs",
     "list-prompts",
     "orchestrate-agents",
+    "query-documentation",
     "read-file",
     "run-prompt",
     "save-prompt",
