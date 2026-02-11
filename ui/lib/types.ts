@@ -141,6 +141,7 @@ export type PersonalityConfig = {
   postPrompt: string;
   enabled: boolean;
   updatedAt: string;
+  mode: "append" | "replace";
 };
 
 export type SessionInfo = {
@@ -207,3 +208,42 @@ export type SessionStatus = {
   compactionActive: boolean;
   infiniteSessionsEnabled: boolean;
 };
+
+/* ── Model & Provider Config types (#145) ── */
+
+export type ProviderType = "openai" | "azure" | "anthropic" | "ollama" | "custom";
+
+export type ProviderConfig = {
+  type: ProviderType;
+  baseUrl: string;
+  apiKey?: string;
+  bearerToken?: string;
+  azure?: { apiVersion?: string };
+  wireApi?: "openai" | "anthropic";
+  headers?: Record<string, string>;
+};
+
+export type ModelConfig = {
+  reasoningEffort: ReasoningEffort;
+  provider: ProviderConfig | null;
+  workingDirectory: string | null;
+};
+
+/* ── Custom Agent types (#146) ── */
+
+export type CustomAgentDefinition = {
+  name: string;
+  displayName: string;
+  description?: string;
+  prompt: string;
+  tools?: string[] | null;
+  infer?: boolean;
+};
+
+/* ── Native MCP Server types (#147) ── */
+
+export type NativeMcpServerType = "local" | "stdio" | "http" | "sse";
+
+export type NativeMcpServerDefinition =
+  | { type: "local" | "stdio"; command: string; args?: string[]; env?: Record<string, string>; cwd?: string; tools?: string[]; timeout?: number }
+  | { type: "http" | "sse"; url: string; headers?: Record<string, string>; tools?: string[]; timeout?: number };

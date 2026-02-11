@@ -130,7 +130,7 @@ The frontend is a **Next.js 14 App Router** application in the `ui/` directory. 
 |---|---|---|
 | `/` | `dashboard.tsx` | Snapshot stats, pending approvals, audit log |
 | `/chat` | `chat-view.tsx` | Full chat with streaming, model selector, reasoning effort, file attachments, session context bar, interactive clarification prompts, approval overlay |
-| `/admin` | `admin/page.tsx` | Channel config, personality settings, sidecar management, tool toggles, env status |
+| `/admin` | `admin/page.tsx` | Channel config, personality settings with mode selector, model & provider configuration, custom agent management, sidecar management, native MCP server editor, tool toggles, env status |
 | `/library` | `library/page.tsx` | Saved prompt CRUD with `{{variable}}` template preview and system prompt apply |
 | `/scheduler` | `scheduler/page.tsx` | Cron job CRUD with action types, prompt linking, model overrides, AI assist, live execution events |
 | `/tasks` | `task-dashboard.tsx` | Background task queue, status filters, cancel, recursive child expansion, real-time updates |
@@ -169,7 +169,10 @@ ui/
 │       ├── channels-panel.tsx     # Telegram + Discord config forms
 │       ├── sidecars-panel.tsx     # Docker sidecar management
 │       ├── local-servers-panel.tsx # Local MCP server status
-│       ├── personality-panel.tsx  # System instruction + pre/post prompts
+│       ├── personality-panel.tsx  # System instruction + pre/post prompts + mode selector
+│       ├── model-config-panel.tsx # Reasoning effort + BYOK provider configuration
+│       ├── agents-panel.tsx       # Custom agent CRUD with tool multi-select
+│       ├── mcp-editor-panel.tsx   # Native MCP server definition editor (Local/HTTP/SSE)
 │       └── env-panel.tsx          # Environment variable status
 └── lib/
     ├── api.ts              # Shared fetchJson utility + API_BASE

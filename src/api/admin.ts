@@ -2,7 +2,7 @@ import { Router } from "express";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { loadConfig, customAgentSchema, nativeMcpServersSchema } from "../config/index.js";
+import { loadConfig, customAgentSchema, mcpServerConfigSchema, nativeMcpServersSchema } from "../config/index.js";
 import { logger } from "../logging/logger.js";
 import { ALWAYS_ON_TOOLS } from "../mcp/constants.js";
 import type { ToolRegistry, RiskLevel } from "../mcp/tool-registry.js";
@@ -934,6 +934,7 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
           prePrompt: typeof body.prePrompt === "string" ? body.prePrompt : undefined,
           postPrompt: typeof body.postPrompt === "string" ? body.postPrompt : undefined,
           enabled: typeof body.enabled === "boolean" ? body.enabled : undefined,
+          mode: body.mode === "append" || body.mode === "replace" ? body.mode : undefined,
         });
         return res.json(updated);
       } catch (error) {
@@ -1242,6 +1243,35 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
     }
   });
 
+  router.put("/agents/:name", async (req, res) => {
+    const { name } = req.params;
+    const parsed = customAgentSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.issues.map((i) => i.message).join(", ") });
+    }
+
+    try {
+      const current = copilot?.getCustomAgents() ?? [];
+      const idx = current.findIndex((a) => a.name === name);
+      if (idx === -1) {
+        return res.status(404).json({ error: `Agent '${name}' not found` });
+      }
+
+      const updatedAgent = parsed.data as CustomAgentDefinition;
+      const updated = [...current];
+      updated[idx] = updatedAgent;
+      if (copilot) copilot.setCustomAgents(updated);
+
+      await updateCopilotConfig("customAgents", updated);
+
+      logger.info(`Custom agent updated: ${name}`);
+      return res.json({ ok: true, agent: updatedAgent });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return res.status(500).json({ error: message });
+    }
+  });
+
   router.delete("/agents/:name", async (req, res) => {
     const { name } = req.params;
     const current = copilot?.getCustomAgents() ?? [];
@@ -1291,6 +1321,80 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
 
       logger.info(`Native MCP servers updated: ${Object.keys(parsed.data).length} server(s)`);
       return res.json({ ok: true, servers: copilot?.getNativeMcpServers() ?? parsed.data });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return res.status(500).json({ error: message });
+    }
+  });
+
+  router.post("/native-mcp-servers/:name", async (req, res) => {
+    const { name } = req.params;
+    const parsed = mcpServerConfigSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.issues.map((i) => i.message).join(", ") });
+    }
+
+    try {
+      const current = copilot?.getNativeMcpServers() ?? {};
+      if (name in current) {
+        return res.status(409).json({ error: `Server '${name}' already exists` });
+      }
+
+      const updated = { ...current, [name]: parsed.data as NativeMcpServerDefinition };
+      if (copilot) copilot.setNativeMcpServers(updated);
+
+      await updateCopilotConfig("nativeMcpServers", updated);
+
+      logger.info(`Native MCP server added: ${name}`);
+      return res.status(201).json({ ok: true, server: parsed.data });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return res.status(500).json({ error: message });
+    }
+  });
+
+  router.put("/native-mcp-servers/:name", async (req, res) => {
+    const { name } = req.params;
+    const parsed = mcpServerConfigSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.issues.map((i) => i.message).join(", ") });
+    }
+
+    try {
+      const current = copilot?.getNativeMcpServers() ?? {};
+      if (!(name in current)) {
+        return res.status(404).json({ error: `Server '${name}' not found` });
+      }
+
+      const updated = { ...current, [name]: parsed.data as NativeMcpServerDefinition };
+      if (copilot) copilot.setNativeMcpServers(updated);
+
+      await updateCopilotConfig("nativeMcpServers", updated);
+
+      logger.info(`Native MCP server updated: ${name}`);
+      return res.json({ ok: true, server: parsed.data });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return res.status(500).json({ error: message });
+    }
+  });
+
+  router.delete("/native-mcp-servers/:name", async (req, res) => {
+    const { name } = req.params;
+    const current = copilot?.getNativeMcpServers() ?? {};
+    if (!(name in current)) {
+      return res.status(404).json({ error: `Server '${name}' not found` });
+    }
+
+    try {
+      const remaining = { ...current };
+      delete remaining[name];
+      if (copilot) copilot.setNativeMcpServers(remaining as Record<string, NativeMcpServerDefinition>);
+
+      await updateCopilotConfig("nativeMcpServers", remaining);
+
+      logger.info(`Native MCP server removed: ${name}`);
+      return res.json({ ok: true });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return res.status(500).json({ error: message });
