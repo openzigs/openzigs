@@ -218,7 +218,7 @@ The dashboard at `/` provides:
 The admin page at `/admin` consolidates all configuration:
 
 - **Channels** — Configure Telegram and Discord tokens, toggle channels on/off, select default model.
-- **AI Personality** — Configure the system instruction and optional pre/post prompts, or disable injection globally.
+- **AI Personality** — Configure the system instruction and optional pre/post prompts, or disable injection globally. Set the **mode** to `append` (merge your personality with SDK defaults) or `replace` (fully override the system prompt with your personality text).
 - **Task Engine** — Adjust the maximum concurrent background agents (1–10) at runtime, view live queue stats (running, queued, concurrency limit). Configure the **tool limit per request** (1–128) to control how many tools are sent to the LLM in each call — see [Tool Limit Configuration](#tool-limit-configuration) below.
 - **MCP Sidecars** — View Docker sidecar status (running, credentials missing, offline), manage credentials, restart containers, toggle per-tool within each sidecar.
 - **Local MCP Servers** — View status of locally-running MCP servers (MarkItDown, Database, GitHub).
@@ -825,6 +825,31 @@ When `tools` is provided, only those tools (plus always-on tools) are available 
 All three scopes follow the same resolution: **entity allowlist ∪ always-on tools ∩ enabled tools**.
 
 > **Tip:** For a deeper analysis of tool selection strategies, token costs, and future plans, see [docs/rfc-tool-selection-strategy.md](rfc-tool-selection-strategy.md).
+
+---
+
+## Interactive Clarifications
+
+During a conversation, the AI agent may need additional information from you before continuing — for example, to choose between multiple options or confirm a detail. When this happens, a **clarification prompt** appears in the chat.
+
+### How It Works
+
+1. The agent encounters an ambiguous situation during tool execution.
+2. A prompt appears in the chat with a question — either free-form text input or a set of choices.
+3. You answer the question in the chat.
+4. The agent continues execution with your answer.
+
+### Timeout
+
+If you don't respond within **60 seconds**, the agent auto-skips the clarification and continues with a best-effort default. This prevents conversations from hanging indefinitely.
+
+### Background Tasks
+
+Background tasks (sub-agents, scheduled jobs) **never** prompt for clarifications. They automatically skip all input requests so they can run unattended. If a background task encounters an ambiguous situation, it proceeds with the default behavior instead of blocking.
+
+### Messaging Channels
+
+Interactive clarifications are currently supported only in the **Web Chat** UI. Telegram and Discord channels auto-skip clarification prompts. Support for these channels is planned for a future release.
 
 ---
 
@@ -1443,6 +1468,7 @@ All configuration lives in `config/default.json`. Environment variables are inte
 | `auth.rateLimit.windowMs` | number | `60000` | Rate-limit window (ms). |
 | `auth.rateLimit.max` | number | `10` | Max failed auth attempts per window. |
 | `messaging.accessControl.mode` | string | `"open"` | `"open"`, `"allowlist"`, or `"blocklist"`. |
+| `personality.mode` | string | `"append"` | System prompt mode: `"append"` merges your personality with SDK defaults, `"replace"` fully overrides the system prompt. |
 | `channels.telegram.enabled` | boolean | `false` | Enable Telegram channel. |
 | `channels.discord.enabled` | boolean | `false` | Enable Discord channel. |
 | `channels.web.enabled` | boolean | `true` | Enable Web Chat channel. |

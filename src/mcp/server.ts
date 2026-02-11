@@ -23,7 +23,6 @@ import { ToolRegistry, type ToolDefinition } from "./tool-registry.js";
 import type { LocalMcpServerManager } from "./local-mcp-server-manager.js";
 import { AuditLogger } from "../logging/audit-logger.js";
 import { ApprovalQueue } from "../approvals/index.js";
-import { formatApprovalContext } from "../approvals/approval-formatters.js";
 import type { PromptManager } from "../productivity/prompt-manager.js";
 import type { Scheduler } from "../productivity/scheduler.js";
 import type { PersonalityManager } from "../personality/personality-manager.js";
@@ -124,14 +123,6 @@ const parseArgs = (schema: z.ZodSchema, args: Record<string, unknown>) => {
   return { ok: true as const, data: parsed.data };
 };
 
-const buildApprovalPreview = (toolName: string, args: Record<string, unknown>) => {
-  const context = formatApprovalContext(toolName, args);
-  if (context) {
-    return context.summary;
-  }
-  return undefined;
-};
-
 export const createMcpServer = (options: McpServerOptions) => {
   const server = new Server({ name: "openzigs", version: "0.1.0" });
   const toolRegistry = options.toolRegistry
@@ -180,31 +171,9 @@ export const createMcpServer = (options: McpServerOptions) => {
       };
     }
 
-    if (toolRegistry.requiresApproval(toolName)) {
-      if (!options.approvalQueue) {
-        return {
-          content: [{ type: "text", text: `Approval required for tool: ${toolName}` }],
-          isError: true
-        };
-      }
-
-      const approval = await options.approvalQueue.requestApproval({
-        tool: toolName,
-        args: validated.data as Record<string, unknown>,
-        riskLevel: "high",
-        explanation: "High-risk tool execution requires approval.",
-        preview: buildApprovalPreview(toolName, validated.data as Record<string, unknown>),
-        channelType: "web"
-      });
-
-      if (!approval.approved) {
-        const reason = approval.status === "expired" ? "Approval timed out" : "Approval rejected";
-        return {
-          content: [{ type: "text", text: reason }],
-          isError: true
-        };
-      }
-    }
+    // Approval gating has been migrated to SDK hooks (onPreToolUse).
+    // The MCP protocol handler no longer gates high-risk tools inline;
+    // Copilot SDK sessions enforce approval via the hooks config.
 
     const result = await tool
       .handler(validated.data as Record<string, unknown>)

@@ -396,6 +396,10 @@ Wraps `@github/copilot-sdk`'s `CopilotClient`. Responsibilities:
 |---|---|---|
 | **Device Auth** | `authenticate()` / `waitForAuth()` | OAuth device-flow for GitHub Copilot access. Persists token to `~/.openzigs/auth.json` with `0600` permissions. |
 | **Streaming Chat** | `chat(message, options?)` | Returns an `AsyncGenerator<string>` that yields deltas as they arrive from the SDK. When `conversationId` is provided, sessions are cached and reused across calls for native multi-turn context. |
+| **Native System Prompts** | `chat({ systemMessage })` | Personality instructions are passed via the SDK's native `systemMessage` field with a `mode` of `"append"` (merge with SDK defaults) or `"replace"` (fully override). This replaces the legacy approach of prepending `System: ...` to the user prompt. |
+| **SDK Hooks** | Constructor `hooks` option | Lifecycle hooks (`onPreToolUse`, `onPostToolUse`, `onSessionStart`, `onSessionEnd`, `onErrorOccurred`) are wired at construction time and passed to every session. See [SDK Hooks](#sdk-hooks) below. |
+| **Native Tool Scoping** | `chat({ availableTools, excludedTools })` | Per-call tool allowlists/blocklists are passed as `string[]` to the SDK, which handles filtering natively. Replaces the previous approach of filtering `ToolDefinition[]` arrays before passing to the session. |
+| **Interactive Clarifications** | `chat({ onUserInputRequest })` | The SDK can request free-form or choice-based input from the user mid-execution via `onUserInputRequest`. In web chat, this surfaces as a Socket.IO prompt; background tasks auto-skip with an empty answer. |
 | **Session Lifecycle** | `destroySession(id)` / `hasSession(id)` / `clearAllSessions()` | Manage cached SDK sessions. `destroySession` frees resources and resets context for a conversation. |
 | **Session Resumption** | Internal | On first call with a `conversationId`, attempts `client.resumeSession()` to restore persisted SDK state, falling back to `createSession({ sessionId })` for deterministic session IDs. |
 | **Infinite Sessions** | Config | When `infiniteSessions.enabled` is true, the SDK automatically compacts context at configurable thresholds (`backgroundCompactionThreshold`, `bufferExhaustionThreshold`), preventing context window exhaustion in long conversations. |
@@ -416,6 +420,38 @@ Central registry for every tool the agent can invoke. Each tool has:
 
 The registry exposes `listEnabledTools()` which the Copilot Wrapper passes to the SDK's session configuration via `buildSessionConfig()`.
 
+### SDK Hooks (`src/copilot/hooks.ts`)
+
+The Copilot SDK supports lifecycle hooks that intercept tool calls, session events, and errors. OpenZigs wires these via `createHooksConfig()` at server startup, connecting them to the approval queue and audit logger.
+
+| Hook | Trigger | OpenZigs Behavior |
+|---|---|---|
+| **`onPreToolUse`** | Before every tool execution | Checks `ToolRegistry` risk level. 🔴 High-risk tools are routed through the `ApprovalQueue` — execution pauses until a human approves or denies. Low/medium-risk tools are auto-allowed. |
+| **`onPostToolUse`** | After every tool execution | Logs the tool name, arguments, and result to the `AuditLogger` for the security audit trail. |
+| **`onSessionStart`** | When an SDK session is created | Logs session creation for lifecycle tracking. |
+| **`onSessionEnd`** | When an SDK session is destroyed | Logs session teardown. |
+| **`onErrorOccurred`** | When the SDK encounters an error | Returns `"retry"` for recoverable errors (network, rate-limit) and `"abort"` for non-recoverable failures. |
+
+**Migration from manual approval wrapper:** Prior to SDK hooks, high-risk tool gating was implemented as a manual wrapper in `src/mcp/server.ts` that intercepted `CallToolRequestSchema` before dispatching. The hook-based approach is cleaner — approval logic lives in a dedicated factory function and is applied uniformly to all tool calls, including those from background tasks and agent chains.
+
+```mermaid
+sequenceDiagram
+    participant SDK as Copilot SDK
+    participant Hook as onPreToolUse Hook
+    participant TR as Tool Registry
+    participant AQ as Approval Queue
+    participant User as Human (any channel)
+
+    SDK->>Hook: tool_call("write-file", args)
+    Hook->>TR: getRiskLevel("write-file")
+    TR-->>Hook: "high"
+    Hook->>AQ: requestApproval(tool, args)
+    AQ->>User: Approve / Deny?
+    User-->>AQ: Approved
+    AQ-->>Hook: { approved: true }
+    Hook-->>SDK: { permissionDecision: "allow" }
+```
+
 ### Productivity Engine (`src/productivity/`)
 
 Embedded SQLite-backed subsystem for saved prompts and cron scheduling:
@@ -431,9 +467,11 @@ Routes an `IncomingMessage` from any channel through a pipeline:
 1. **Access Control** — Open / allowlist / blocklist per-channel.
 2. **Session Resolution** — Finds or creates a session for the `(channelType, userId)` pair.
 3. **Session Touch** — Calls `sessionManager.resumeSession()` to update `lastActiveAt` (history is retained for admin/audit views).
-4. **LLM Call** — Streams the prompt through `CopilotWrapper.chat()` with `conversationId: sessionId`, forwarding chunks to the channel if a `RouteOptions.onChunk` callback is provided. The SDK handles multi-turn context natively; only personality prompt + current user message are sent.
-5. **Persistence** — Appends the user message and assistant response to the session's JSONL log for admin views and auditing.
-6. **Session Clear** — `clearUserSession()` also calls `copilot.destroySession()` to free the cached SDK session.
+4. **System Message Construction** — `buildSystemMessage()` reads the personality config and produces a `SystemMessageConfig` with `content` (the personality text) and `mode` (`"append"` to merge with SDK defaults, or `"replace"` to fully override). If personality is disabled, no system message is sent.
+5. **Tool Scoping** — `resolveAvailableTools()` resolves per-message tool allowlists into `string[]` (tool names), which the SDK filters natively via `availableTools`. Replaces the previous `ToolDefinition[]` filtering approach.
+6. **LLM Call** — Streams the prompt through `CopilotWrapper.chat()` with `conversationId: sessionId`, `systemMessage`, `availableTools`, and `onUserInputRequest`, forwarding chunks to the channel if a `RouteOptions.onChunk` callback is provided. The SDK handles multi-turn context natively; only the current user message is sent as the prompt.
+7. **Persistence** — Appends the user message and assistant response to the session's JSONL log for admin views and auditing.
+8. **Session Clear** — `clearUserSession()` also calls `copilot.destroySession()` to free the cached SDK session.
 
 ### Session Manager (`src/sessions/session-manager.ts`)
 
@@ -445,13 +483,14 @@ Append-only session storage used for user↔session mapping, admin views, and au
 
 ### Approval Queue (`src/approvals/approval-queue.ts`)
 
-When a tool with `riskLevel: "high"` is invoked:
+When a tool with `riskLevel: "high"` is invoked, the SDK's `onPreToolUse` hook (wired via `src/copilot/hooks.ts`) intercepts the call:
 
-1. The agent pauses execution.
-2. An `approval:created` event is emitted.
-3. Every connected channel (Web Chat, Telegram, Discord) presents an approve/deny prompt.
-4. **First response wins** — the tool either executes or is denied.
-5. The decision is audit-logged.
+1. The hook checks the tool's risk level via `ToolRegistry`.
+2. For 🔴 high-risk tools, it calls `ApprovalQueue.requestApproval()`.
+3. An `approval:created` event is emitted.
+4. Every connected channel (Web Chat, Telegram, Discord) presents an approve/deny prompt.
+5. **First response wins** — the hook returns `"allow"` or `"deny"` to the SDK, which either executes or skips the tool.
+6. The decision is audit-logged via the `onPostToolUse` hook.
 
 ### Social Formatter (`src/channels/social-formatter.ts`)
 
@@ -529,13 +568,14 @@ Every tool is classified at registration time:
   - `viewer` — Read-only health.
 - **Rate Limiting:** Failed auth attempts are rate-limited (default: 10 attempts per 60 s window).
 
-### Dual-Channel Approval Flow
+### Dual-Channel Approval Flow (via SDK Hooks)
 
 ```mermaid
 flowchart LR
-    TC[Tool Call<br/>write-file] --> RC{Risk<br/>Check}
-    RC -->|🟢 Low| EXEC[Execute]
-    RC -->|🟡 Medium| LOG[Log + Execute]
+    TC[Tool Call<br/>write-file] --> HOOK[onPreToolUse Hook]
+    HOOK --> RC{Risk<br/>Check}
+    RC -->|🟢 Low| ALLOW[allow → Execute]
+    RC -->|🟡 Medium| ALLOW
     RC -->|🔴 High| AQ[Approval Queue]
 
     AQ --> WEB[Web Chat<br/>Approve / Deny]
@@ -546,8 +586,8 @@ flowchart LR
     TG2 --> FRW
     DC2 --> FRW
 
-    FRW -->|Approved| EXEC
-    FRW -->|Denied| DENY[Reject + Log]
+    FRW -->|Approved| ALLOW
+    FRW -->|Denied| DENY[deny → Skip + Log]
 ```
 
 ### Audit Trail
@@ -846,7 +886,7 @@ A configurable hard cap (default: **30**, range: **1-128**) limits the total num
 
 This cap is configurable at runtime via the **Admin UI slider** or the **Session Config API** — no server restart required.
 
-#### Layer 2.5 — Per-Entity Tool Scoping
+#### Layer 2.5 — Per-Entity Tool Scoping (Native SDK)
 
 Individual scheduled jobs, saved prompts, and web chat requests can declare an **explicit tool allowlist** that restricts which tools are available for that specific execution. This supplements the global `maxToolsPerRequest` cap with fine-grained, per-context control.
 
@@ -856,11 +896,11 @@ Individual scheduled jobs, saved prompts, and web chat requests can declare an *
 | **Saved Prompts** | `preferredTools: string[]` | SQLite `saved_prompts.preferred_tools` (JSON) | Only listed tools + ALWAYS_ON_TOOLS are available when the prompt is executed |
 | **Web Chat Messages** | `tools: string[]` | Transient (Socket.IO payload) | Per-message scoping from the UI — only listed tools + ALWAYS_ON_TOOLS are used |
 
-**How scoping resolves:**
+**How scoping resolves (native SDK):**
 1. The caller provides an explicit tool name list (e.g., `["web-search", "linkedin-post"]`).
 2. The runtime unions that list with `ALWAYS_ON_TOOLS` (7 tools).
-3. The resulting set is intersected with `ToolRegistry.listEnabledTools()` — disabled tools are never included.
-4. The filtered `ToolDefinition[]` array is passed to `copilot.chat({ tools })`.
+3. The resulting `string[]` is passed to `copilot.chat({ availableTools })` — the SDK handles filtering natively.
+4. Disabled tools (from `ToolRegistry`) are excluded via `excludedTools`.
 
 **When no explicit scoping is provided**, the default behavior applies: all enabled tools up to `maxToolsPerRequest`.
 
@@ -953,6 +993,44 @@ For the current Express/Node.js stack:
 3. **`maxToolsPerRequest: 30` is implemented** as a runtime-configurable safety valve. Increase to 50-80 if you need broader tool coverage per request; decrease if you hit context limits or observe hallucinated tool calls.
 4. **Monitor tool-related failures.** If the model calls tools that were excluded by the cap, increase the limit or add the tool to `ALWAYS_ON_TOOLS` in `src/mcp/constants.ts`.
 5. **Future: vector-based tool retrieval** — embed tool descriptions and retrieve top-K by semantic similarity to the user query. This is the long-term scalable solution. See [Epic #112](https://github.com/mgcronin/openzigs/issues/112).
+
+---
+
+## Interactive Clarifications (`onUserInputRequest`)
+
+The Copilot SDK supports mid-execution user input requests — the LLM can pause and ask the user a question (free-form text or multiple-choice) before continuing. OpenZigs wires this via the `onUserInputRequest` callback.
+
+### How It Works
+
+```mermaid
+sequenceDiagram
+    participant SDK as Copilot SDK
+    participant Agent as OpenZigs Agent
+    participant WC as Web Chat (Socket.IO)
+    participant User as Human
+
+    SDK->>Agent: onUserInputRequest({ question, options? })
+    Agent->>WC: emit("user_input_request", { requestId, question, options })
+    WC->>User: UI prompt (text input or radio buttons)
+    User-->>WC: answer
+    WC->>Agent: emit("user_input_response", { requestId, answer })
+    Agent-->>SDK: { answer, wasFreeform }
+```
+
+### Channel Behavior
+
+| Channel | Behavior |
+|---|---|
+| **Web Chat** | Real-time Socket.IO prompt with a 60-second timeout. If the user doesn't respond, an empty answer is returned. |
+| **Background Tasks** | Auto-skipped. The handler immediately returns `{ answer: "", wasFreeform: false }` so background agents never block on user input. |
+| **Telegram / Discord** | Not yet wired — clarifications are auto-skipped on these channels. |
+
+### Implementation Details
+
+- **Web Chat** (`src/channels/web-chat.ts`): Maintains a `pendingInputRequests` map keyed by `requestId`. When a request arrives, it emits a `user_input_request` Socket.IO event and returns a promise that resolves when the client responds with `user_input_response` or the timeout elapses.
+- **Message Router** (`src/routing/message-router.ts`): Passes the `onUserInputRequest` handler from the web chat channel through to `copilot.chat()`.
+- **Task Worker** (`src/tasks/task-worker.ts`): Uses a static auto-skip handler: `async () => ({ answer: "", wasFreeform: false })`.
+- **Server** (`src/server.ts`): Wires the web chat's `sendUserInputRequest()` method into the `createRouter()` factory for the web channel, resolving the session's `chatId` from the `SessionManager`.
 
 ---
 

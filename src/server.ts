@@ -14,6 +14,7 @@ import type { Logger } from "winston";
 import { AuditLogger } from "./logging/audit-logger.js";
 import { ApprovalQueue } from "./approvals/index.js";
 import { CopilotWrapperService } from "./copilot/index.js";
+import { createHooksConfig } from "./copilot/hooks.js";
 import { ToolRegistry } from "./mcp/tool-registry.js";
 import { registerMcpTools } from "./mcp/index.js";
 import { MessageRouter } from "./routing/index.js";
@@ -167,6 +168,7 @@ const copilot = new CopilotWrapperService({
   toolRegistry,
   maxToolsPerRequest: config.session?.maxToolsPerRequest ?? 30,
   infiniteSessions: config.session?.infiniteSessions,
+  hooks: createHooksConfig({ toolRegistry, approvalQueue, auditLogger, sessionManager }),
 });
 
 registerMcpTools(toolRegistry, {
@@ -195,7 +197,7 @@ registerMcpTools(toolRegistry, {
 
 // ── Task Background Worker ──
 const maxConcurrent = config.tasks?.maxConcurrent ?? 2;
-const taskWorker = new TaskWorker({ engine: taskEngine, copilot, toolRegistry, maxConcurrent });
+const taskWorker = new TaskWorker({ engine: taskEngine, copilot, maxConcurrent });
 taskWorker.start();
 
 // Model API routes
@@ -387,15 +389,15 @@ const defaultAccessControl = {
   });
 }
 
-const createRouter = (accessControlOverride?: AccessControlConfig) => {
+const createRouter = (accessControlOverride?: AccessControlConfig, onUserInputRequest?: import("./copilot/copilot-wrapper.js").UserInputHandler) => {
   return new MessageRouter({
     channelManager,
     sessionManager,
     copilot,
-    toolRegistry,
     accessControl: accessControlOverride ?? (config.messaging?.accessControl ?? defaultAccessControl),
     personalityManager,
-    taskEngine
+    taskEngine,
+    onUserInputRequest,
   });
 };
 
@@ -471,7 +473,20 @@ if (discordConfig?.enabled && discordConfig.token) {
 const webConfig = config.channels?.web;
 if (webConfig?.enabled !== false) {
   const webChatChannel = new WebChatChannel({ io, sessionManager });
-  const router = createRouter();
+  const router = createRouter(undefined, async (request, sessionId) => {
+    // Route interactive questions through the web chat channel.
+    // Resolve the chatId for this session so we send the prompt to the right socket.
+    try {
+      const session = await sessionManager.getSession(sessionId);
+      const chatId = typeof session.metadata?.chatId === "string" ? session.metadata.chatId : undefined;
+      if (!chatId) {
+        return { answer: "", wasFreeform: false };
+      }
+      return webChatChannel.sendUserInputRequest(chatId, request);
+    } catch {
+      return { answer: "", wasFreeform: false };
+    }
+  });
 
   await webChatChannel.connect();
   channelManager.register(webChatChannel);

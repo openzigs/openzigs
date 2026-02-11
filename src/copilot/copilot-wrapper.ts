@@ -40,6 +40,14 @@ type SessionCreateConfig = {
   tools?: unknown[];
   infiniteSessions?: InfiniteSessionConfig;
   onPermissionRequest?: PermissionRequestHandler;
+  systemMessage?: SystemMessageConfig;
+  hooks?: HooksConfig;
+  availableTools?: string[];
+  excludedTools?: string[];
+  onUserInputRequest?: (
+    request: { question: string; choices?: string[]; allowFreeform?: boolean },
+    context: { sessionId: string }
+  ) => Promise<{ answer: string; wasFreeform?: boolean }>;
 };
 
 type CopilotSessionLike = {
@@ -64,12 +72,92 @@ type CopilotClientLike = {
   listModels?: () => Promise<CopilotModel[]>;
 };
 
+export type SystemMessageConfig = {
+  mode: "append" | "replace";
+  content: string;
+};
+
+export type UserInputRequest = {
+  question: string;
+  choices?: string[];
+  allowFreeform?: boolean;
+};
+
+export type UserInputResponse = {
+  answer: string;
+  wasFreeform?: boolean;
+};
+
+export type UserInputHandler = (
+  request: UserInputRequest,
+  sessionId: string
+) => Promise<UserInputResponse>;
+
+export type HookPreToolUseInput = {
+  toolName: string;
+  toolArgs: unknown;
+  cwd?: string;
+  timestamp?: number;
+  context: {
+    sessionId: string;
+  };
+};
+
+export type HookPreToolUseResult = {
+  permissionDecision: "allow" | "deny" | "ask";
+  permissionDecisionReason?: string;
+  modifiedArgs?: unknown;
+  additionalContext?: string;
+};
+
+export type HookPostToolUseInput = {
+  toolName: string;
+  toolArgs: unknown;
+  toolResult: unknown;
+  timestamp?: number;
+};
+
+export type HookPostToolUseResult = {
+  modifiedResult?: unknown;
+  additionalContext?: string;
+} | null;
+
+export type HookSessionStartInput = {
+  source?: string;
+};
+
+export type HookSessionEndInput = {
+  reason?: string;
+};
+
+export type HookErrorInput = {
+  error: string;
+  errorContext?: string;
+  recoverable?: boolean;
+};
+
+export type HooksConfig = {
+  onPreToolUse?: (input: HookPreToolUseInput) => Promise<HookPreToolUseResult>;
+  onPostToolUse?: (input: HookPostToolUseInput) => Promise<HookPostToolUseResult>;
+  onSessionStart?: (input: HookSessionStartInput) => Promise<{ additionalContext?: string } | null>;
+  onSessionEnd?: (input: HookSessionEndInput) => Promise<null>;
+  onErrorOccurred?: (input: HookErrorInput) => Promise<{ errorHandling: "retry" | "abort" } | null>;
+};
+
 export type ChatOptions = {
   tools?: ToolDefinition[];
   model?: string;
   onToolCall?: (tool: string, args: unknown) => void;
   /** When provided, the SDK session is cached and reused across calls for multi-turn context. */
   conversationId?: string;
+  /** System message injected at the SDK session level instead of in the user prompt. */
+  systemMessage?: SystemMessageConfig;
+  /** Per-session tool allowlist — only these tool names are visible to the model. */
+  availableTools?: string[];
+  /** Per-session tool blocklist — these tool names are hidden from the model. */
+  excludedTools?: string[];
+  /** Handler for interactive user input requests from the SDK's ask_user tool. */
+  onUserInputRequest?: UserInputHandler;
 };
 
 export interface CopilotWrapper {
@@ -103,6 +191,10 @@ export type CopilotWrapperOptions = {
   sendAndWaitTimeoutMs?: number;
   /** Infinite session configuration for automatic context compaction. */
   infiniteSessions?: InfiniteSessionConfig;
+  /** SDK hooks for tool lifecycle, session events, and error handling. */
+  hooks?: HooksConfig;
+  /** Default handler for interactive user input requests (ask_user). */
+  onUserInputRequest?: UserInputHandler;
 };
 
 const defaultAuthPath = () => path.join(os.homedir(), ".openzigs", "auth.json");
@@ -260,6 +352,8 @@ export class CopilotWrapperService implements CopilotWrapper {
   private maxToolsPerRequest: number;
   private sendAndWaitTimeoutMs: number;
   private infiniteSessionsConfig?: InfiniteSessionConfig;
+  private hooksConfig?: HooksConfig;
+  private userInputHandler?: UserInputHandler;
   private sessionCache = new Map<string, CopilotSessionLike>();
   private sessionCreationPromises = new Map<string, Promise<CopilotSessionLike>>();
 
@@ -274,7 +368,9 @@ export class CopilotWrapperService implements CopilotWrapper {
     sendAndWaitTimeoutMs = 15 * 60 * 1000, // 15 minutes — browser automation needs room
     onToolCall,
     onPermissionRequest,
-    infiniteSessions
+    infiniteSessions,
+    hooks,
+    onUserInputRequest
   }: CopilotWrapperOptions = {}) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     this.client = client ?? (new CopilotClient() as any);
@@ -288,6 +384,8 @@ export class CopilotWrapperService implements CopilotWrapper {
     this.toolCallHandler = onToolCall;
     this.permissionHandler = onPermissionRequest;
     this.infiniteSessionsConfig = infiniteSessions;
+    this.hooksConfig = hooks;
+    this.userInputHandler = onUserInputRequest;
   }
 
   setMaxToolsPerRequest(n: number): void {
@@ -386,7 +484,13 @@ export class CopilotWrapperService implements CopilotWrapper {
     const session = await this.getOrCreateSession(
       options?.conversationId,
       effectiveModel,
-      wrappedTools
+      wrappedTools,
+      {
+        systemMessage: options?.systemMessage,
+        availableTools: options?.availableTools,
+        excludedTools: options?.excludedTools,
+        onUserInputRequest: options?.onUserInputRequest,
+      }
     );
 
     const queue = new AsyncQueue<string>();
@@ -538,13 +642,50 @@ export class CopilotWrapperService implements CopilotWrapper {
   /**
    * Build the session configuration shared between create and resume paths.
    */
-  private buildSessionConfig(model: string, tools: unknown[], sessionId?: string): SessionCreateConfig {
+  private buildSessionConfig(
+    model: string,
+    tools: unknown[],
+    sessionId?: string,
+    extra?: {
+      systemMessage?: SystemMessageConfig;
+      availableTools?: string[];
+      excludedTools?: string[];
+      onUserInputRequest?: UserInputHandler;
+    }
+  ): SessionCreateConfig {
+    const effectiveHooks = this.hooksConfig;
+    const effectiveUserInput = extra?.onUserInputRequest ?? this.userInputHandler;
+
     return {
       ...(sessionId ? { sessionId } : {}),
       model,
       streaming: true,
       tools,
       ...(this.infiniteSessionsConfig ? { infiniteSessions: this.infiniteSessionsConfig } : {}),
+      ...(extra?.systemMessage ? { systemMessage: extra.systemMessage } : {}),
+      ...(effectiveHooks ? {
+        hooks: {
+          ...effectiveHooks,
+          onPreToolUse: effectiveHooks.onPreToolUse
+            ? async (input: Omit<HookPreToolUseInput, "context">) => {
+                return effectiveHooks.onPreToolUse!({
+                  ...input,
+                  context: { sessionId: sessionId ?? "ephemeral" },
+                });
+              }
+            : undefined,
+        }
+      } : {}),
+      ...(extra?.availableTools ? { availableTools: extra.availableTools } : {}),
+      ...(extra?.excludedTools ? { excludedTools: extra.excludedTools } : {}),
+      ...(effectiveUserInput
+        ? {
+            onUserInputRequest: async (
+              request: { question: string; choices?: string[]; allowFreeform?: boolean },
+              context: { sessionId: string }
+            ) => effectiveUserInput(request, context.sessionId),
+          }
+        : {}),
       onPermissionRequest: async (request) => {
         if (this.permissionHandler) {
           return this.permissionHandler(request);
@@ -561,11 +702,17 @@ export class CopilotWrapperService implements CopilotWrapper {
   private async getOrCreateSession(
     conversationId: string | undefined,
     model: string,
-    tools: unknown[]
+    tools: unknown[],
+    extra?: {
+      systemMessage?: SystemMessageConfig;
+      availableTools?: string[];
+      excludedTools?: string[];
+      onUserInputRequest?: UserInputHandler;
+    }
   ): Promise<CopilotSessionLike> {
     if (!conversationId) {
       // No conversationId — ephemeral session (backward compatible)
-      return this.client.createSession(this.buildSessionConfig(model, tools));
+      return this.client.createSession(this.buildSessionConfig(model, tools, undefined, extra));
     }
 
     const cached = this.sessionCache.get(conversationId);
@@ -586,18 +733,18 @@ export class CopilotWrapperService implements CopilotWrapper {
           try {
             session = await this.client.resumeSession(
               conversationId,
-              this.buildSessionConfig(model, tools)
+              this.buildSessionConfig(model, tools, undefined, extra)
             );
           } catch (resumeError) {
             // It's useful to log why resume failed, even if we fall back gracefully.
             // console.warn(`Failed to resume session ${conversationId}, creating a new one. Error:`, resumeError);
             session = await this.client.createSession(
-              this.buildSessionConfig(model, tools, conversationId)
+              this.buildSessionConfig(model, tools, conversationId, extra)
             );
           }
         } else {
           session = await this.client.createSession(
-            this.buildSessionConfig(model, tools, conversationId)
+            this.buildSessionConfig(model, tools, conversationId, extra)
           );
         }
         this.sessionCache.set(conversationId, session);
