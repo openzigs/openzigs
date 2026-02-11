@@ -198,12 +198,20 @@ export type ProviderInfo = {
 
 /* ── User Input Request types (#143) ── */
 
+export type WorkflowPreview = {
+  type: "prompt" | "scheduled-job" | "webhook" | "agent";
+  name: string;
+  summary: string;
+  config: Record<string, unknown>;
+};
+
 export type UserInputRequest = {
   requestId: string;
   question: string;
   choices?: string[];
   allowFreeform?: boolean;
   timeout?: number;
+  preview?: WorkflowPreview;
 };
 
 export type UserInputResponse = {

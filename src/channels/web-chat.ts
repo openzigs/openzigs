@@ -149,6 +149,7 @@ export class WebChatChannel implements MessageChannel {
         question: request.question,
         choices: request.choices,
         allowFreeform: request.allowFreeform ?? true,
+        preview: request.preview,
       });
     });
   }

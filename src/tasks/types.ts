@@ -1,6 +1,6 @@
 import type { ChannelType } from "../channels/types.js";
 
-export type TaskTrigger = "chat" | "cron" | "agent";
+export type TaskTrigger = "chat" | "cron" | "agent" | "webhook";
 export type TaskStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
 export type TaskMode = "immediate" | "background";
 

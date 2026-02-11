@@ -132,10 +132,18 @@ export type SystemMessageConfig = {
   content: string;
 };
 
+export type WorkflowPreview = {
+  type: "prompt" | "scheduled-job" | "webhook" | "agent";
+  name: string;
+  summary: string;
+  config: Record<string, unknown>;
+};
+
 export type UserInputRequest = {
   question: string;
   choices?: string[];
   allowFreeform?: boolean;
+  preview?: WorkflowPreview;
 };
 
 export type UserInputResponse = {

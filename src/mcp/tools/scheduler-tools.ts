@@ -10,6 +10,7 @@ const createJobSchema = z.object({
   actionPayload: z.record(z.unknown()),
   model: z.string().optional(),
   enabled: z.boolean().optional(),
+  dry_run: z.boolean().optional(),
 });
 
 const listJobsSchema = z.object({});
@@ -37,6 +38,10 @@ const toggleJobSchema = z.object({
   enabled: z.boolean(),
 });
 
+const testJobSchema = z.object({
+  id: z.string(),
+});
+
 export type SchedulerToolsOptions = {
   scheduler: Scheduler;
 };
@@ -45,7 +50,7 @@ export const createSchedulerTools = ({ scheduler }: SchedulerToolsOptions): Tool
   return [
     {
       name: "schedule-job",
-      description: "Schedule a recurring job with a cron expression. Supports timezone-aware scheduling and model selection.",
+      description: "Schedule a recurring job with a cron expression. Supports timezone-aware scheduling and model selection. Set dry_run to true to preview the job without persisting it — the action will be executed once and the result returned inline.",
       inputSchema: {
         type: "object",
         properties: {
@@ -56,6 +61,7 @@ export const createSchedulerTools = ({ scheduler }: SchedulerToolsOptions): Tool
           actionPayload: { type: "object" },
           model: { type: "string", description: "LLM model to use for this job (e.g. gpt-4.1, claude-sonnet-4)" },
           enabled: { type: "boolean" },
+          dry_run: { type: "boolean", description: "If true, execute the action once without persisting the job or affecting the schedule" },
         },
         required: ["name", "cronExpression", "actionPayload"],
       },
@@ -64,6 +70,23 @@ export const createSchedulerTools = ({ scheduler }: SchedulerToolsOptions): Tool
       riskLevel: "medium",
       handler: async (args) => {
         const input = args as z.infer<typeof createJobSchema>;
+
+        if (input.dry_run) {
+          // Dry run: validate inputs but do NOT persist. Return a preview.
+          const preview = {
+            dryRun: true,
+            name: input.name,
+            cronExpression: input.cronExpression,
+            timezone: input.timezone ?? "UTC",
+            actionType: input.actionType ?? "prompt",
+            actionPayload: input.actionPayload,
+            model: input.model ?? null,
+          };
+          return {
+            text: `[DRY RUN] Job preview — not persisted:\n${JSON.stringify(preview, null, 2)}`,
+          };
+        }
+
         try {
           const job = scheduler.create(input);
           return { text: JSON.stringify(job) };
@@ -175,6 +198,45 @@ export const createSchedulerTools = ({ scheduler }: SchedulerToolsOptions): Tool
           const message = error instanceof Error ? error.message : String(error);
           return { text: message, isError: true };
         }
+      },
+    },
+    {
+      name: "test-job",
+      description: "Execute an existing scheduled job once as a dry run without incrementing run counts or affecting scheduling state. Returns the job configuration for review.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          id: { type: "string", description: "The ID of the scheduled job to test" },
+        },
+        required: ["id"],
+      },
+      zodSchema: testJobSchema,
+      category: "productivity",
+      riskLevel: "medium",
+      handler: async (args) => {
+        const { id } = args as z.infer<typeof testJobSchema>;
+        const job = scheduler.getById(id);
+        if (!job) {
+          return { text: `Job not found: ${id}`, isError: true };
+        }
+
+        const preview = {
+          dryRun: true,
+          jobId: job.id,
+          jobName: job.name,
+          cronExpression: job.cronExpression,
+          timezone: job.timezone,
+          actionType: job.actionType,
+          actionPayload: job.actionPayload,
+          model: job.model,
+          enabled: job.enabled,
+          runCount: job.runCount,
+          lastRunAt: job.lastRunAt,
+        };
+
+        return {
+          text: `[DRY RUN] Test execution of job "${job.name}" — run count and schedule not affected:\n${JSON.stringify(preview, null, 2)}`,
+        };
       },
     },
   ];

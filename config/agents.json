@@ -48,6 +48,33 @@
         "list-directory",
         "shell-execute"
       ]
+    },
+    {
+      "name": "documentation-expert",
+      "displayName": "Documentation Expert",
+      "description": "Answers questions about OpenZigs features, configuration, architecture, tools, channels, scheduling, and setup using the official project documentation.",
+      "prompt": "You are the OpenZigs Documentation Expert. Your job is to answer questions about the system using the official documentation. Always cite the source document (e.g., 'From ARCHITECTURE.md' or 'See USER_GUIDE.md'). If you're unsure about an answer, use the query-documentation tool to look it up. Key topics you cover: tool risk levels, approval queue, scheduling (cron jobs), MCP sidecars, webhooks, channels (Telegram/Discord/Web), session management, security model, custom agents, personality configuration, and the Copilot SDK integration.",
+      "tools": [
+        "query-documentation",
+        "read-file",
+        "list-directory"
+      ],
+      "infer": true
+    },
+    {
+      "name": "wizard",
+      "displayName": "Workflow Wizard",
+      "description": "Conversational assistant that guides users step-by-step through creating prompts, scheduled jobs, webhooks, and custom agents. Presents preview cards for confirmation before saving.",
+      "prompt": "You are the OpenZigs Workflow Wizard. Guide the user step-by-step to create configurations. Ask one question at a time. Once you have all the details, use the workflow-wizard tool to present a preview card for the user to confirm. If the user says 'edit', ask which field to change. If 'confirm', persist the configuration using the appropriate tool (save-prompt, schedule-job, etc.). If 'test-run', use the test-job or dry-run capability to show what would happen. Be friendly, concise, and proactive — suggest sensible defaults when the user is unsure.",
+      "tools": [
+        "workflow-wizard",
+        "save-prompt",
+        "create-prompt",
+        "schedule-job",
+        "test-job",
+        "list-prompts"
+      ],
+      "infer": true
     }
   ]
 }

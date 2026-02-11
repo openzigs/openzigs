@@ -1533,3 +1533,130 @@ SDK manages subprocess/connection lifecycle
 | `PUT` | `/api/admin/native-mcp-servers` | Replace all native MCP servers |
 
 ### Tracking: [Epic #135](https://github.com/mgcronin/openzigs/issues/135)
+
+---
+
+## AI-Assisted Configuration & Enterprise Webhooks
+
+This section covers the AI-assisted configuration system, enterprise webhooks, dry-run capabilities, and self-aware documentation features added in [Epic #156](https://github.com/mgcronin/openzigs/issues/156).
+
+### Workflow Wizard Architecture
+
+The Workflow Wizard is a conversational assistant that guides users through creating configurations. It bridges the MCP tool layer with the interactive UI:
+
+```
+User describes intent in Chat
+        ↓
+AI activates Wizard persona (config/agents.json → "wizard" agent)
+        ↓
+Gathers details via conversation (one question at a time)
+        ↓
+Calls workflow-wizard MCP tool with structured preview
+        ↓
+Tool invokes CopilotWrapper.onUserInputRequest()
+        ↓
+WebChatChannel emits "user_input_request" with preview field
+        ↓
+ChatView renders WorkflowPreviewCard (Confirm / Edit / Test Run)
+        ↓
+User response flows back through socket → tool returns action string
+        ↓
+AI persists via create-prompt / schedule-job / etc.
+```
+
+**Key components:**
+
+| Component | Path | Purpose |
+|-----------|------|---------|
+| `WorkflowPreviewCard` | `ui/components/workflow-preview-card.tsx` | Structured preview card with Confirm/Edit/Test Run buttons |
+| `workflow-wizard` tool | `src/mcp/tools/wizard-tools.ts` | MCP tool that presents previews via user input mechanism |
+| `create-prompt` tool | `src/mcp/tools/system-config-tools.ts` | Safe prompt creation with duplicate-name protection |
+| Wizard agent | `config/agents.json` | Persona configuration with scoped tools |
+| `WorkflowPreview` type | `src/copilot/copilot-wrapper.ts` + `ui/lib/types.ts` | Shared preview data shape |
+
+### Dry-Run Architecture
+
+Dry-run mode allows previewing job execution without side effects:
+
+```
+schedule-job(dry_run: true)  →  Returns preview JSON (no persistence)
+test-job(id)                 →  Reads existing job, returns [DRY RUN] preview
+POST /api/admin/jobs/:id/run?dry_run=true  →  Returns preview without execution
+```
+
+The UI renders dry-run results in an amber-bordered panel below the job card.
+
+### Enterprise Webhooks Architecture
+
+Webhooks enable external systems to trigger OpenZigs actions via authenticated HTTP POST:
+
+```
+External System
+        ↓
+POST /api/webhooks/trigger (Bearer token or HMAC signature)
+        ↓
+webhook-auth.ts middleware (auth + IP allowlist + rate limit)
+        ↓
+webhook-routes.ts handler
+        ↓
+TaskEngine.submit({ trigger: "webhook", goal: resolved })
+        ↓
+Normal task execution pipeline (approval queue, tool execution, etc.)
+```
+
+**Components:**
+
+| Component | Path | Purpose |
+|-----------|------|---------|
+| `WebhookManager` | `src/webhooks/webhook-manager.ts` | CRUD, API key hashing, rate limiting, signature verification |
+| `webhookAuth` | `src/webhooks/webhook-auth.ts` | Express middleware for Bearer/HMAC auth |
+| `createWebhookRouter` | `src/webhooks/webhook-routes.ts` | Public trigger endpoint |
+| Admin API | `src/api/admin.ts` | CRUD endpoints under `/api/admin/webhooks` |
+| Webhooks UI | `ui/app/admin/webhooks/page.tsx` | Admin page for managing webhooks |
+
+**Security model:**
+- API keys use `whk_` prefix, stored as SHA-256 hashes
+- Timing-safe comparison for both key and signature validation
+- Per-webhook rate limits (configurable, default 60 req/min)
+- Optional IP allowlisting
+- Key rotation without webhook deletion
+
+**Webhook Admin API:**
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/admin/webhooks` | List all webhooks |
+| `POST` | `/api/admin/webhooks` | Create a webhook (returns API key once) |
+| `POST` | `/api/admin/webhooks/:id/toggle` | Enable/disable |
+| `POST` | `/api/admin/webhooks/:id/rotate-key` | Rotate API key |
+| `DELETE` | `/api/admin/webhooks/:id` | Delete a webhook |
+| `POST` | `/api/webhooks/trigger` | Public trigger endpoint |
+
+### Self-Aware Documentation
+
+The `query-documentation` MCP tool enables the AI to answer questions about OpenZigs itself:
+
+```
+User asks "How do tool risk levels work?"
+        ↓
+AI calls query-documentation(topic: "tool risk levels")
+        ↓
+Tool scans docs/*.md and config/*.json for matching sections
+        ↓
+Returns up to 5 relevant sections per file (80 lines max each)
+        ↓
+AI synthesizes answer citing source documents
+```
+
+A `documentation-expert` custom agent (with `infer: true`) can be automatically delegated to when the AI detects questions about the system.
+
+### MCP Tool Catalog Updates
+
+| Tool | Category | Risk | Description |
+|------|----------|------|-------------|
+| `create-prompt` | productivity | high | Create prompt with duplicate-name protection |
+| `workflow-wizard` | productivity | low | Present workflow preview cards to user |
+| `test-job` | productivity | medium | Dry-run an existing scheduled job |
+| `query-documentation` | productivity | low | Search project documentation by topic |
+
+### Tracking: [Epic #156](https://github.com/mgcronin/openzigs/issues/156)
