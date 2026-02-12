@@ -253,7 +253,10 @@ The admin page at `/admin` consolidates all configuration:
 - **MCP Sidecars** — View Docker sidecar status (running, credentials missing, offline), manage credentials, restart containers, toggle per-tool within each sidecar.
 - **Local MCP Servers** — View status of locally-running MCP servers (MarkItDown, Database, GitHub).
 - **Native MCP Servers** — Define and manage native MCP server connections. Supports Local (stdio), HTTP, and SSE transport types. Local servers are configured with a command, arguments, working directory, and environment variables (sensitive values are masked). HTTP/SSE servers are configured with a URL and optional headers. Each server has a configurable timeout.
-- **Tools** — Toggle any tool on/off, view risk level badges (🟢 low, 🟡 medium, 🔴 high), grouped by category.
+- **Tools** — Toggle any tool on/off, view risk level badges (🟢 low, 🟡 medium, 🔴 high), grouped by category. Each tool also has a **🔓/🔒 global approval lock** toggle — see [Global Tool Approval Lock](#global-tool-approval-lock).
+
+![Admin tools with global approval lock toggles — 🔓 unlocked, 🔒 locked](images/admin-tools-global-lock.png)
+
 - **Environment** — Status grid showing which environment variables are configured vs. missing.
 
 ### Library (Saved Prompts)
@@ -307,6 +310,8 @@ Approval overrides let specific tools run without human confirmation during sche
 
 The scheduler now supports **pipeline** as a job action type. A pipeline job executes a multi-stage agent workflow where each stage runs sequentially (or in parallel groups) with its own prompt, tool restrictions, and optional model override.
 
+![New Job form — Pipeline action type with visual editor](images/scheduler-pipeline-editor-with-stages.png)
+
 **Creating a pipeline job:**
 
 1. In the New Job form, select **Pipeline** as the action type.
@@ -333,6 +338,8 @@ The scheduler now supports **pipeline** as a job action type. A pipeline job exe
 5. Make adjustments if needed, then confirm to create the pipeline.
 
 #### Global Tool Approval Lock
+
+![Admin tools — shell-execute with global approval lock active (🔒)](images/admin-tools-global-lock-active.png)
 
 Administrators can set a **global approval lock** on any tool from the Admin → Tools panel. When a tool is locked:
 
