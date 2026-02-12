@@ -7,6 +7,8 @@ export type ToolInfo = {
   riskLevel: string;
   enabled: boolean;
   source?: string;
+  /** Whether this tool has a global approval lock (always requires approval). */
+  globalApprovalRequired?: boolean;
 };
 
 export type Approval = {
@@ -48,6 +50,7 @@ export type ScheduledJob = {
   actionType: string;
   actionPayload: Record<string, unknown>;
   model?: string | null;
+  reasoningEffort?: ReasoningEffort | null;
   allowedTools?: string[] | null;
   autoApproveTools?: string[] | null;
   enabled: boolean;

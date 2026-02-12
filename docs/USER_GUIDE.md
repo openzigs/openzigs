@@ -253,7 +253,10 @@ The admin page at `/admin` consolidates all configuration:
 - **MCP Sidecars** — View Docker sidecar status (running, credentials missing, offline), manage credentials, restart containers, toggle per-tool within each sidecar.
 - **Local MCP Servers** — View status of locally-running MCP servers (MarkItDown, Database, GitHub).
 - **Native MCP Servers** — Define and manage native MCP server connections. Supports Local (stdio), HTTP, and SSE transport types. Local servers are configured with a command, arguments, working directory, and environment variables (sensitive values are masked). HTTP/SSE servers are configured with a URL and optional headers. Each server has a configurable timeout.
-- **Tools** — Toggle any tool on/off, view risk level badges (🟢 low, 🟡 medium, 🔴 high), grouped by category.
+- **Tools** — Toggle any tool on/off, view risk level badges (🟢 low, 🟡 medium, 🔴 high), grouped by category. Each tool also has a **🔓/🔒 global approval lock** toggle — see [Global Tool Approval Lock](#global-tool-approval-lock).
+
+![Admin tools with global approval lock toggles — 🔓 unlocked, 🔒 locked](images/admin-tools-global-lock.png)
+
 - **Environment** — Status grid showing which environment variables are configured vs. missing.
 
 ### Library (Saved Prompts)
@@ -275,16 +278,16 @@ The library at `/library` provides a visual interface for managing saved prompt 
 
 The scheduler at `/scheduler` manages cron-based automated jobs:
 
-- **Create** jobs with name, cron expression, and action (prompt, shell command, or custom).
+- **Create** jobs with name, cron expression, and action (prompt, shell command, pipeline, or custom).
 - **Prompt linking** — link a job to a saved prompt from the Library.
-- **Model selection** — optionally choose a model override per prompt job.
+- **Model selection** — optionally choose a model override per prompt or pipeline job.
 - **AI Scheduler Assistant** — describe the schedule in plain English and auto-fill fields (uses `gpt-5-mini`).
 - **Cron preview** — visual breakdown of minute, hour, day, month, weekday fields.
 - **Enable/disable** individual jobs with toggle switches.
 - **Run Now** — trigger any job immediately with the ▶ Run button, bypassing the cron schedule.
-- **Auto-Approve Tools** — specify a comma-separated list of tool names that will bypass approval gating when this job runs. Useful for fully autonomous scheduled workflows (e.g., a nightly report that needs `shell-execute` and `write-file` without human confirmation).
+- **Auto-Approve Tools** — for prompt/shell/custom jobs, specify tool names that bypass approval gating. For **pipeline jobs**, auto-approve tools are **automatically derived** from the union of all stage-level tool restrictions — any tool a stage uses is auto-approved during scheduled runs.
 
-![New Job form — model selection, cron expression, and auto-approve tools](images/scheduler-new-job-form.png)
+![New Job form — Pipeline action type with model selector and wizard/manual chooser](images/scheduler-pipeline-new-job.png)
 - **Live execution events** via Socket.IO — see when jobs fire in real time.
 
 #### Multi-Model Agent Chaining
@@ -302,6 +305,81 @@ Approval overrides let specific tools run without human confirmation during sche
 2. When the task executes and invokes a listed tool, the hooks layer skips the approval queue and immediately allows execution.
 3. An audit log entry (`tool_auto_approved`) is recorded for every auto-approved invocation.
 4. Tools **not** in the auto-approve list still follow normal approval gating.
+
+#### Pipeline Jobs (Visual Workflow Builder)
+
+The scheduler supports **pipeline** as a job action type. A pipeline job executes a multi-stage agent workflow where each stage runs sequentially (or in parallel groups) with its own prompt, tool restrictions, and optional model override.
+
+![Pipeline editor with multiple stages and a parallel group](images/pipeline-editor-multi-stage.png)
+
+**Creating a pipeline job:**
+
+1. In the New Job form, select **Pipeline** as the action type.
+2. A **Wizard/Manual chooser** appears:
+   - **🧙 Workflow Wizard** — Describe your goal in plain English and let AI auto-plan the pipeline stages.
+   - **🔧 Manual Editor** — Build the pipeline yourself using the visual drag-and-drop editor.
+
+![Wizard/Manual chooser for pipeline creation](images/pipeline-wizard-chooser.png)
+
+3. In the **Manual Editor**, the Visual Pipeline Editor canvas (powered by React Flow) provides:
+   - **+ Stage** button — Adds a prompt stage (single LLM agent step).
+   - **+ Parallel** button — Adds a parallel group (multiple stages running concurrently).
+   - **MiniMap** (bottom-left) — Overview of the full pipeline graph.
+   - **Controls** (bottom-right) — Zoom, fit view, toggle interactivity.
+4. Click any node to open the **Stage Editor** sidebar:
+   - **Name** — Display label for the stage.
+   - **Prompt** — The instruction sent to the LLM. Supports a prompt selector (press `/` to search saved prompts).
+   - **Tools** — Multi-select dropdown with tools grouped by category (Browser, Developer, Documents, Filesystem, Productivity, Search, Shell). The dropdown renders as a portal overlay for full visibility.
+   - **Timeout** — Maximum execution time in seconds (default: 300).
+5. Connect nodes by dragging from output handles (bottom) to input handles (top).
+6. Click **Save** when done. The pipeline must have at least 2 stages to create the job.
+
+![Tool multi-select dropdown with full portal rendering](images/pipeline-tool-dropdown.png)
+
+**Model selection:** Pipeline jobs now include a **Model** selector below the editor, allowing you to choose an LLM model override for the entire pipeline (e.g., `claude-sonnet-4`, `gpt-5`). This applies to all stages unless individual stages specify a model.
+
+**Auto-derived auto-approve:** When stages have specific tool restrictions, the pipeline job's auto-approve list is **automatically derived** from the union of all stage tools. For example, if stage-1 uses `browser-navigate, list-directory, shell-execute`, those 3 tools are automatically auto-approved for the pipeline job's scheduled runs.
+
+![Auto-approve tools derived from pipeline stage configuration](images/pipeline-auto-approve-derived.png)
+
+**Recursive pipelines:** Parallel groups can contain nested stages or further parallel groups, up to 4 levels deep. This allows complex fan-out/fan-in patterns.
+
+**Pipeline Planner (Auto-Plan):** The **Workflow Wizard** provides an AI-assisted pipeline creation flow:
+
+![Workflow Wizard step 1 — describe your goal](images/workflow-wizard-step1.png)
+
+1. Select **🧙 Workflow Wizard** from the chooser.
+2. Describe your goal in plain English (e.g., "Research competitors, analyze their pricing, and draft a comparison report").
+3. Click **Auto-Plan Pipeline** — the system calls the Pipeline Planner Agent (`POST /api/admin/pipeline/plan`) which generates a structured pipeline definition.
+4. Review the AI's rationale and the generated pipeline in the visual editor.
+5. Make adjustments if needed, then confirm to create the pipeline.
+6. You can also click **Skip to Manual Editor** at any time to switch to manual mode.
+
+#### Global Tool Approval Lock
+
+![Admin tools — approval toggles with 🔓/🔒 lock buttons and risk level badges](images/admin-tools-approval-toggles.png)
+
+Administrators can set a **global approval lock** on any tool from the Admin → Tools panel. When a tool is locked:
+
+- A 🔒 icon appears on the tool card. Click it to toggle the lock.
+- **Locked tools always require human approval**, even if they appear in a task's `autoApproveTools` list or the interactive auto-approve context.
+- This provides an admin-level safety mechanism for dangerous tools (e.g., `shell-execute`, `write-file`) that cannot be bypassed by any automation.
+
+To toggle a lock via the API:
+
+```bash
+# Lock a tool
+curl -X POST -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"required": true}' \
+  http://localhost:3000/api/admin/tools/shell-execute/global-approval
+
+# Unlock a tool
+curl -X POST -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"required": false}' \
+  http://localhost:3000/api/admin/tools/shell-execute/global-approval
+```
 
 ### Workbench (Project Editor)
 

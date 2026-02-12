@@ -4,9 +4,32 @@ import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSocket } from "@/lib/socket-context";
 import { fetchJson } from "@/lib/api";
-import type { ModelInfo, SavedPrompt, ScheduledJob } from "@/lib/types";
+import type { ModelInfo, ReasoningEffort, SavedPrompt, ScheduledJob, ToolInfo } from "@/lib/types";
 import { SectionCard } from "@/components/section-card";
 import { ToastContainer, showToast } from "@/components/toast";
+import { PipelineEditor, type BackendPipelineNode } from "@/components/pipeline/pipeline-editor";
+import { WorkflowWizard } from "@/components/pipeline/workflow-wizard";
+import { ToolMultiSelect, type ToolOption } from "@/components/pipeline/tool-multi-select";
+
+const FALLBACK_MODEL_IDS = [
+  "gpt-5-mini",
+  "gpt-4.1",
+  "gpt-4o",
+  "gpt-4.1-mini",
+  "claude-sonnet-4.5",
+  "claude-sonnet-4",
+  "o3-mini",
+];
+
+const REASONING_EFFORT_LEVELS: ReasoningEffort[] = ["low", "medium", "high", "xhigh"];
+
+const supportsReasoningModel = (modelId: string, modelCapabilities?: { supports?: { reasoningEffort?: boolean } }) => {
+  if (modelCapabilities?.supports?.reasoningEffort !== undefined) {
+    return modelCapabilities.supports.reasoningEffort;
+  }
+  const lower = modelId.toLowerCase();
+  return lower.startsWith("o1") || lower.startsWith("o3") || lower.startsWith("o4");
+};
 
 export default function SchedulerPage() {
   const queryClient = useQueryClient();
@@ -239,15 +262,21 @@ const JobForm = ({ existing, onClose }: { existing: ScheduledJob | null; onClose
       : ""
   );
   const [payloadText, setPayloadText] = useState(
-    existing && existing.actionType !== "prompt" && existing.actionPayload
+    existing && existing.actionType !== "prompt" && existing.actionType !== "pipeline" && existing.actionPayload
       ? JSON.stringify(existing.actionPayload, null, 2)
       : ""
+  );
+  const [pipelineStages, setPipelineStages] = useState<BackendPipelineNode[]>(
+    existing?.actionType === "pipeline" && existing?.actionPayload?.stages
+      ? (existing.actionPayload.stages as BackendPipelineNode[])
+      : []
   );
   const [cronExpression, setCronExpression] = useState(existing?.cronExpression ?? "");
   const [timezone, setTimezone] = useState(existing?.timezone ?? "UTC");
   const [model, setModel] = useState(existing?.model ?? "");
-  const [autoApproveToolsText, setAutoApproveToolsText] = useState(
-    existing?.autoApproveTools ? existing.autoApproveTools.join(", ") : ""
+  const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort>(existing?.reasoningEffort ?? "medium");
+  const [autoApproveTools, setAutoApproveTools] = useState<string[]>(
+    existing?.autoApproveTools ?? []
   );
 
   // Fetch prompts for the dropdown
@@ -259,9 +288,105 @@ const JobForm = ({ existing, onClose }: { existing: ScheduledJob | null; onClose
 
   const modelsQuery = useQuery({
     queryKey: ["models"],
-    queryFn: () => fetchJson<{ models: ModelInfo[] }>("/api/models"),
+    queryFn: () => fetchJson<{ models: ModelInfo[]; selectedModel?: string | null }>("/api/models"),
   });
-  const models = modelsQuery.data?.models ?? [];
+  const modelOptions = useMemo(() => {
+    const ids = new Set<string>();
+    const models = modelsQuery.data?.models ?? [];
+    for (const model of models) {
+      if (typeof model?.id === "string" && model.id.trim()) {
+        ids.add(model.id.trim());
+      }
+    }
+    for (const fallback of FALLBACK_MODEL_IDS) {
+      ids.add(fallback);
+    }
+    const selectedModel = modelsQuery.data?.selectedModel;
+    if (typeof selectedModel === "string" && selectedModel.trim()) {
+      ids.add(selectedModel.trim());
+    }
+    if (typeof existing?.model === "string" && existing.model.trim()) {
+      ids.add(existing.model.trim());
+    }
+    if (typeof model === "string" && model.trim()) {
+      ids.add(model.trim());
+    }
+    return Array.from(ids).sort((a, b) => a.localeCompare(b));
+  }, [existing?.model, model, modelsQuery.data]);
+
+  const selectedModelMeta = useMemo(() => {
+    const selected = model.trim();
+    if (!selected) return null;
+    const models = modelsQuery.data?.models ?? [];
+    return models.find((m) => m.id === selected) ?? null;
+  }, [model, modelsQuery.data?.models]);
+
+  const modelSupportsReasoning = useMemo(() => {
+    const selected = model.trim();
+    if (!selected) return false;
+    return supportsReasoningModel(selected, selectedModelMeta?.capabilities);
+  }, [model, selectedModelMeta?.capabilities]);
+
+  const availableReasoningEfforts = useMemo(() => {
+    const supported = selectedModelMeta?.supportedReasoningEfforts;
+    if (supported && supported.length > 0) {
+      return supported;
+    }
+    return REASONING_EFFORT_LEVELS;
+  }, [selectedModelMeta?.supportedReasoningEfforts]);
+
+  useEffect(() => {
+    if (!modelSupportsReasoning) return;
+    if (!availableReasoningEfforts.includes(reasoningEffort)) {
+      setReasoningEffort(availableReasoningEfforts[0] ?? "medium");
+    }
+  }, [availableReasoningEfforts, modelSupportsReasoning, reasoningEffort]);
+
+  useEffect(() => {
+    if (existing) return;
+    if (model.trim()) return;
+    const selectedModel = modelsQuery.data?.selectedModel;
+    if (typeof selectedModel === "string" && selectedModel.trim()) {
+      setModel(selectedModel.trim());
+    }
+  }, [existing, model, modelsQuery.data?.selectedModel]);
+
+  // Fetch tools for multi-select (stage tools + auto-approve tools)
+  const toolsQuery = useQuery({
+    queryKey: ["tools"],
+    queryFn: () => fetchJson<{ tools: Record<string, ToolInfo[]> }>("/api/admin/tools"),
+  });
+  const allTools: ToolOption[] = useMemo(() => {
+    if (!toolsQuery.data?.tools) return [];
+    return Object.entries(toolsQuery.data.tools).flatMap(([category, categoryTools]) =>
+      categoryTools.map((t) => ({
+        name: t.name,
+        description: t.description,
+        category,
+        enabled: t.enabled,
+      }))
+    );
+  }, [toolsQuery.data]);
+
+  // Convert prompts for PipelineEditor
+  const availablePrompts = useMemo(
+    () => prompts.map((p) => ({ id: p.id, name: p.name, description: p.description, template: p.template })),
+    [prompts]
+  );
+
+  // For pipeline jobs, auto-derive auto-approve from the union of all stage tools.
+  // If a stage uses specific tools, those must be auto-approved (no human to approve during scheduled runs).
+  const derivedAutoApproveTools = useMemo(() => {
+    if (actionType !== "pipeline") return null;
+    const toolSet = new Set<string>();
+    for (const stage of pipelineStages) {
+      const tools = stage.tools;
+      if (tools && Array.isArray(tools)) {
+        for (const t of tools) toolSet.add(t);
+      }
+    }
+    return toolSet.size > 0 ? Array.from(toolSet).sort() : null;
+  }, [actionType, pipelineStages]);
 
   const assistMutation = useMutation({
     mutationFn: (message: string) =>
@@ -302,6 +427,9 @@ const JobForm = ({ existing, onClose }: { existing: ScheduledJob | null; onClose
     if (actionType === "prompt") {
       if (!promptName) { showToast("Select a prompt for this job.", "error"); return; }
       actionPayload = { promptName };
+    } else if (actionType === "pipeline") {
+      if (pipelineStages.length < 2) { showToast("Pipeline needs at least 2 stages.", "error"); return; }
+      actionPayload = { stages: pipelineStages };
     } else {
       try {
         actionPayload = JSON.parse(payloadText.trim() || "{}");
@@ -319,19 +447,28 @@ const JobForm = ({ existing, onClose }: { existing: ScheduledJob | null; onClose
       actionPayload,
     };
 
-    if (actionType === "prompt") {
-      const modelValue = model.trim();
-      if (existing) {
-        payload.model = modelValue || null;
-      } else if (modelValue) {
-        payload.model = modelValue;
-      }
+    const modelValue = model.trim();
+    if (existing) {
+      payload.model = modelValue || null;
+    } else if (modelValue) {
+      payload.model = modelValue;
     }
 
-    // Auto-approve tools: comma-separated list → string array (or null to clear)
-    const autoApproveRaw = autoApproveToolsText.trim();
-    if (autoApproveRaw) {
-      payload.autoApproveTools = autoApproveRaw.split(",").map((s) => s.trim()).filter(Boolean);
+    if (modelValue && modelSupportsReasoning) {
+      payload.reasoningEffort = reasoningEffort;
+    } else if (existing) {
+      payload.reasoningEffort = null;
+    }
+
+    // Auto-approve tools: for pipelines, derived from stage tools; for others, manual selection
+    if (actionType === "pipeline") {
+      if (derivedAutoApproveTools && derivedAutoApproveTools.length > 0) {
+        payload.autoApproveTools = derivedAutoApproveTools;
+      } else if (existing) {
+        payload.autoApproveTools = null;
+      }
+    } else if (autoApproveTools.length > 0) {
+      payload.autoApproveTools = autoApproveTools;
     } else if (existing) {
       payload.autoApproveTools = null;
     }
@@ -433,6 +570,7 @@ const JobForm = ({ existing, onClose }: { existing: ScheduledJob | null; onClose
             onChange={(e) => setActionType(e.target.value)}
           >
             <option value="prompt">Prompt</option>
+            <option value="pipeline">Pipeline</option>
             <option value="shell">Shell</option>
             <option value="custom">Custom</option>
           </select>
@@ -459,6 +597,13 @@ const JobForm = ({ existing, onClose }: { existing: ScheduledJob | null; onClose
               </p>
             )}
           </Field>
+        ) : actionType === "pipeline" ? (
+          <PipelineSection
+            pipelineStages={pipelineStages}
+            setPipelineStages={setPipelineStages}
+            availableTools={allTools}
+            availablePrompts={availablePrompts}
+          />
         ) : (
           <Field
             label="Action Payload (JSON)"
@@ -474,17 +619,29 @@ const JobForm = ({ existing, onClose }: { existing: ScheduledJob | null; onClose
           </Field>
         )}
 
-        {actionType === "prompt" && (
-          <Field label="Model" hint="Optional — defaults to the system model.">
+        <Field label="Model" hint="Optional — defaults to the system model.">
+          <select
+            className="w-full rounded-lg border border-border bg-card text-foreground px-3 py-2 text-sm"
+            value={model ?? ""}
+            onChange={(e) => setModel(e.target.value)}
+            disabled={modelsQuery.isLoading && modelOptions.length === 0}
+          >
+            <option value="">Default (System)</option>
+            {modelOptions.map((modelId) => (
+              <option key={modelId} value={modelId}>{modelId}</option>
+            ))}
+          </select>
+        </Field>
+
+        {model.trim() && modelSupportsReasoning && (
+          <Field label="Reasoning Effort" hint="Used only for reasoning-capable models.">
             <select
               className="w-full rounded-lg border border-border bg-card text-foreground px-3 py-2 text-sm"
-              value={model ?? ""}
-              onChange={(e) => setModel(e.target.value)}
-              disabled={modelsQuery.isLoading}
+              value={reasoningEffort}
+              onChange={(e) => setReasoningEffort(e.target.value as ReasoningEffort)}
             >
-              <option value="">Default (System)</option>
-              {models.map((m) => (
-                <option key={m.id} value={m.id}>{m.id}</option>
+              {availableReasoningEfforts.map((effort) => (
+                <option key={effort} value={effort}>{effort}</option>
               ))}
             </select>
           </Field>
@@ -530,15 +687,44 @@ const JobForm = ({ existing, onClose }: { existing: ScheduledJob | null; onClose
 
         <Field
           label="Auto-Approve Tools"
-          hint="Comma-separated tool names that skip approval gating for this job. Leave empty for normal approval flow."
+          hint={actionType === "pipeline"
+            ? "Automatically derived from your pipeline stages. Any tool a stage uses is auto-approved during scheduled runs."
+            : "Tools that skip approval gating for this job. Leave empty for normal approval flow."}
         >
-          <input
-            type="text"
-            className="w-full rounded-lg border border-border bg-card text-foreground px-3 py-2 font-mono text-sm"
-            placeholder="e.g., shell_execute, file_write"
-            value={autoApproveToolsText}
-            onChange={(e) => setAutoApproveToolsText(e.target.value)}
-          />
+          {actionType === "pipeline" ? (
+            <div className="mt-1 rounded-lg border border-border bg-muted/30 px-3 py-2">
+              {derivedAutoApproveTools && derivedAutoApproveTools.length > 0 ? (
+                <div className="space-y-1.5">
+                  <p className="text-xs text-emerald-600 dark:text-emerald-400 font-medium">
+                    {derivedAutoApproveTools.length} tool{derivedAutoApproveTools.length !== 1 ? "s" : ""} auto-approved from stage configuration
+                  </p>
+                  <div className="flex flex-wrap gap-1">
+                    {derivedAutoApproveTools.slice(0, 8).map((t) => (
+                      <span key={t} className="inline-flex rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] text-emerald-700 dark:text-emerald-400">
+                        {t}
+                      </span>
+                    ))}
+                    {derivedAutoApproveTools.length > 8 && (
+                      <span className="text-[10px] text-muted-foreground">+{derivedAutoApproveTools.length - 8} more</span>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  No stage-specific tools configured — all tools available, normal approval flow applies.
+                  Set tools on individual stages to auto-approve them.
+                </p>
+              )}
+            </div>
+          ) : (
+            <ToolMultiSelect
+              tools={allTools}
+              selected={autoApproveTools.length > 0 ? autoApproveTools : null}
+              onChange={(selected) => setAutoApproveTools(selected ?? [])}
+              placeholder="None (normal approval flow)"
+              allowAll={false}
+            />
+          )}
         </Field>
 
         <div className="flex justify-end gap-2 pt-2">
@@ -568,6 +754,116 @@ const Field = ({ label, hint, children }: { label: string; hint?: string; childr
     {hint && <p className="text-[11px] text-muted-foreground/60">{hint}</p>}
   </div>
 );
+
+/* ── Pipeline Section: wizard vs. manual toggle ── */
+
+const PipelineSection = ({
+  pipelineStages,
+  setPipelineStages,
+  availableTools,
+  availablePrompts,
+}: {
+  pipelineStages: BackendPipelineNode[];
+  setPipelineStages: (stages: BackendPipelineNode[]) => void;
+  availableTools: ToolOption[];
+  availablePrompts: { id: string; name: string; description?: string; template?: string }[];
+}) => {
+  const [mode, setMode] = useState<"choose" | "wizard" | "manual">(
+    pipelineStages.length > 0 ? "manual" : "choose"
+  );
+
+  if (mode === "choose") {
+    return (
+      <div className="space-y-3">
+        <label className="text-xs font-medium text-muted-foreground">Pipeline Stages</label>
+        <div className="grid grid-cols-2 gap-3">
+          <button
+            type="button"
+            onClick={() => setMode("wizard")}
+            className="flex flex-col items-center gap-2 rounded-xl border-2 border-dashed border-primary/40 bg-primary/5 p-4 hover:border-primary hover:bg-primary/10 transition"
+          >
+            <span className="text-2xl">🧙</span>
+            <span className="text-sm font-semibold text-foreground">Workflow Wizard</span>
+            <span className="text-[11px] text-muted-foreground text-center">
+              Describe your goal and let AI auto-plan the pipeline stages for you.
+            </span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setMode("manual")}
+            className="flex flex-col items-center gap-2 rounded-xl border-2 border-dashed border-border bg-muted/30 p-4 hover:border-primary hover:bg-muted/50 transition"
+          >
+            <span className="text-2xl">🔧</span>
+            <span className="text-sm font-semibold text-foreground">Manual Editor</span>
+            <span className="text-[11px] text-muted-foreground text-center">
+              Build the pipeline yourself using the visual drag-and-drop editor.
+            </span>
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (mode === "wizard") {
+    return (
+      <div className="space-y-2">
+        <div className="flex items-center justify-between">
+          <label className="text-xs font-medium text-muted-foreground">Workflow Wizard</label>
+          <button
+            type="button"
+            onClick={() => setMode("choose")}
+            className="text-[10px] text-muted-foreground hover:text-foreground"
+          >
+            ← Back to options
+          </button>
+        </div>
+        <WorkflowWizard
+          onComplete={(pipeline) => {
+            setPipelineStages(pipeline.stages as BackendPipelineNode[]);
+            setMode("manual");
+            showToast("Pipeline created via wizard — review and save below.", "success");
+          }}
+          onCancel={() => setMode("choose")}
+          availableTools={availableTools}
+          availablePrompts={availablePrompts}
+        />
+      </div>
+    );
+  }
+
+  // Manual editor mode
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between">
+        <label className="text-xs font-medium text-muted-foreground">Pipeline Stages</label>
+        {pipelineStages.length === 0 && (
+          <button
+            type="button"
+            onClick={() => setMode("choose")}
+            className="text-[10px] text-muted-foreground hover:text-foreground"
+          >
+            ← Back to options
+          </button>
+        )}
+      </div>
+      <PipelineEditor
+        initialStages={pipelineStages}
+        onSave={(stages) => setPipelineStages(stages)}
+        height="350px"
+        availableTools={availableTools}
+        availablePrompts={availablePrompts}
+      />
+      {pipelineStages.length > 0 && (
+        <p className="mt-1 text-[11px] text-emerald-600 dark:text-emerald-400">
+          {pipelineStages.length} stage{pipelineStages.length !== 1 ? "s" : ""} configured
+        </p>
+      )}
+      <p className="text-[11px] text-muted-foreground/60">
+        Design a multi-stage pipeline using the visual editor. Click Save in the editor when done.
+      </p>
+    </div>
+  );
+};
 
 const ToggleSwitch = ({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) => (
   <button

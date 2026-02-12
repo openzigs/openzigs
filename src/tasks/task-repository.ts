@@ -17,6 +17,7 @@ export const toTask = (row: StoredTask): AgentTask => ({
   channelType: row.channel_type as AgentTask["channelType"],
   chatId: row.chat_id,
   model: row.model,
+  reasoningEffort: (row.reasoning_effort as AgentTask["reasoningEffort"]) ?? null,
   allowedTools: row.allowed_tools ? (JSON.parse(row.allowed_tools) as string[]) : null,
   autoApproveTools: row.auto_approve_tools ? (JSON.parse(row.auto_approve_tools) as string[]) : null,
   pipeline: row.pipeline ? (JSON.parse(row.pipeline) as PipelineDefinition) : null,
@@ -63,6 +64,7 @@ export class TaskRepository {
         channel_type TEXT,
         chat_id TEXT,
         model TEXT,
+        reasoning_effort TEXT,
         notify_on_complete INTEGER NOT NULL DEFAULT 0,
         depth INTEGER NOT NULL DEFAULT 0,
         created_at TEXT NOT NULL,
@@ -85,6 +87,11 @@ export class TaskRepository {
     // Add 'auto_approve_tools' column if missing — tools that bypass approval gating
     if (!columns.some((c) => c.name === "auto_approve_tools")) {
       this.db.exec("ALTER TABLE agent_tasks ADD COLUMN auto_approve_tools TEXT DEFAULT NULL");
+    }
+
+    // Add 'reasoning_effort' column if missing
+    if (!columns.some((c) => c.name === "reasoning_effort")) {
+      this.db.exec("ALTER TABLE agent_tasks ADD COLUMN reasoning_effort TEXT DEFAULT NULL");
     }
 
     // Add 'pipeline' column — JSON pipeline definition for multi-stage tasks
@@ -155,9 +162,9 @@ export class TaskRepository {
       .prepare(
         `INSERT INTO agent_tasks
           (id, parent_task_id, trigger, status, goal, context,
-           session_id, channel_type, chat_id, model, allowed_tools, auto_approve_tools,
+           session_id, channel_type, chat_id, model, reasoning_effort, allowed_tools, auto_approve_tools,
            pipeline, notify_on_complete, depth, created_at, spawned_by)
-         VALUES (?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         VALUES (?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         id,
@@ -169,6 +176,7 @@ export class TaskRepository {
         input.channelType ?? null,
         input.chatId ?? null,
         input.model ?? null,
+        input.reasoningEffort ?? null,
         input.allowedTools ? JSON.stringify(input.allowedTools) : null,
         input.autoApproveTools ? JSON.stringify(input.autoApproveTools) : null,
         input.pipeline ? JSON.stringify(input.pipeline) : null,

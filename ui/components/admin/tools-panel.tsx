@@ -38,6 +38,17 @@ export const ToolsPanel = ({ toolGroups }: ToolsPanelProps) => {
     onError: () => setTogglingTool(null),
   });
 
+  const globalApprovalMutation = useMutation({
+    mutationFn: ({ name, required }: { name: string; required: boolean }) =>
+      fetchJson(`/api/admin/tools/${encodeURIComponent(name)}/global-approval`, {
+        method: "POST",
+        body: JSON.stringify({ required }),
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["tools"] });
+    },
+  });
+
   return (
     <div className="space-y-4">
       {CATEGORY_ORDER.map((category) => {
@@ -67,6 +78,22 @@ export const ToolsPanel = ({ toolGroups }: ToolsPanelProps) => {
                   >
                     {tool.riskLevel}
                   </span>
+                  <button
+                    title={tool.globalApprovalRequired ? "Global approval lock ON — click to remove" : "Click to require approval for every call"}
+                    className={`rounded-lg px-2 py-1 text-sm transition ${
+                      tool.globalApprovalRequired
+                        ? "bg-ember/15 text-ember dark:bg-ember/20 dark:text-red-400"
+                        : "bg-muted/50 text-muted-foreground hover:bg-muted"
+                    }`}
+                    onClick={() => {
+                      globalApprovalMutation.mutate({
+                        name: tool.name,
+                        required: !tool.globalApprovalRequired,
+                      });
+                    }}
+                  >
+                    {tool.globalApprovalRequired ? "🔒" : "🔓"}
+                  </button>
                   <button
                     className={`w-16 rounded-full px-3 py-1 text-xs font-semibold transition ${
                       tool.enabled ? "bg-moss text-white" : "bg-muted text-muted-foreground"

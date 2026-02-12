@@ -1,4 +1,5 @@
 import type { ChannelType } from "../channels/types.js";
+import type { ReasoningEffort } from "../copilot/copilot-wrapper.js";
 
 export type TaskTrigger = "chat" | "cron" | "agent" | "webhook";
 export type TaskStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
@@ -8,6 +9,8 @@ export type TaskMode = "immediate" | "background";
 
 /** A single stage in a multi-stage pipeline. Each stage runs as its own agent task with a fresh SDK session. */
 export type PipelineStage = {
+  /** Discriminator — always "prompt" for a single LLM stage. Legacy stages without `type` are treated as "prompt". */
+  type?: "prompt";
   /** Human-readable stage name (e.g., "clone-and-read", "review", "report"). */
   name: string;
   /** Prompt text for this stage. Supports {{variable}} interpolation. */
@@ -29,6 +32,18 @@ export type PipelineStage = {
   postAction?: PipelinePostAction;
 };
 
+/** A group of pipeline nodes executed concurrently via Promise.all. */
+export type ParallelGroup = {
+  type: "parallel";
+  /** Human-readable group name (e.g., "research-phase"). */
+  name: string;
+  /** Nodes to execute in parallel. Each branch is a PipelineNode. */
+  branches: PipelineNode[];
+};
+
+/** Recursive union: either a prompt stage or a parallel group containing nested nodes. */
+export type PipelineNode = PipelineStage | ParallelGroup;
+
 /** Deterministic post-action configuration for a pipeline stage. */
 export type PipelinePostAction = {
   /** Action type (e.g., "create-github-issues"). */
@@ -37,9 +52,9 @@ export type PipelinePostAction = {
   config?: Record<string, unknown>;
 };
 
-/** Ordered list of stages for sequential pipeline execution. */
+/** Ordered list of nodes for pipeline execution (sequential at top level, parallel within groups). */
 export type PipelineDefinition = {
-  stages: PipelineStage[];
+  stages: PipelineNode[];
 };
 
 // ── Task types ────────────────────────────────────────────────────────
@@ -57,6 +72,8 @@ export type AgentTask = {
   channelType: ChannelType | null;
   chatId: string | null;
   model: string | null;
+  /** Optional reasoning effort override for reasoning-capable models. */
+  reasoningEffort: ReasoningEffort | null;
   /** Optional tool allowlist. null = all enabled tools. */
   allowedTools: string[] | null;
   /** Tools that bypass normal approval gating for this task. null = no overrides. */
@@ -80,6 +97,8 @@ export type CreateTaskInput = {
   channelType?: ChannelType;
   chatId?: string;
   model?: string;
+  /** Optional reasoning effort override for reasoning-capable models. */
+  reasoningEffort?: ReasoningEffort;
   /** Optional tool allowlist for this task. */
   allowedTools?: string[];
   /** Tools that bypass normal approval gating for this task. */
@@ -104,6 +123,7 @@ export type StoredTask = {
   channel_type: string | null;
   chat_id: string | null;
   model: string | null;
+  reasoning_effort: string | null;
   allowed_tools: string | null;
   auto_approve_tools: string | null;
   pipeline: string | null;
