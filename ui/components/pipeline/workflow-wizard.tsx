@@ -4,7 +4,8 @@ import { useState, useCallback } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { fetchJson } from "@/lib/api";
 import { showToast } from "@/components/toast";
-import { PipelineEditor, type PromptStageData } from "./pipeline-editor";
+import { PipelineEditor, type PromptStageData, type AvailablePrompt } from "./pipeline-editor";
+import { type ToolOption } from "./tool-multi-select";
 import { Wand2, ArrowRight, ArrowLeft, Check, Loader2 } from "lucide-react";
 
 /* ── Types ── */
@@ -33,6 +34,10 @@ export type WorkflowWizardProps = {
   onComplete?: (pipeline: { stages: BackendPipelineNode[] }) => void;
   /** Called when the wizard is cancelled. */
   onCancel?: () => void;
+  /** Available tools for stage tool selection. */
+  availableTools?: ToolOption[];
+  /** Available saved prompts for the prompt selector. */
+  availablePrompts?: AvailablePrompt[];
 };
 
 /* ── Step Indicator ── */
@@ -80,7 +85,7 @@ const StepIndicator = ({ current }: { current: WizardStep }) => (
 
 /* ── Main Wizard ── */
 
-export const WorkflowWizard = ({ onComplete, onCancel }: WorkflowWizardProps) => {
+export const WorkflowWizard = ({ onComplete, onCancel, availableTools = [], availablePrompts = [] }: WorkflowWizardProps) => {
   const [step, setStep] = useState<WizardStep>("goal");
   const [goal, setGoal] = useState("");
   const [rationale, setRationale] = useState("");
@@ -207,6 +212,8 @@ export const WorkflowWizard = ({ onComplete, onCancel }: WorkflowWizardProps) =>
             initialStages={stages}
             onSave={handleEditorSave}
             height="450px"
+            availableTools={availableTools}
+            availablePrompts={availablePrompts}
           />
           <div className="flex gap-2">
             <button

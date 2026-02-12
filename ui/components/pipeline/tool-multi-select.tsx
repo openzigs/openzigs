@@ -236,7 +236,13 @@ export const ToolMultiSelect = ({
           })}
 
           {Object.keys(filteredGrouped).length === 0 && (
-            <p className="px-3 py-2 text-xs text-muted-foreground">No tools match your search.</p>
+            <p className="px-3 py-2 text-xs text-muted-foreground">
+              {tools.length === 0
+                ? "Loading tools…"
+                : Object.keys(grouped).length === 0
+                  ? "No enabled tools available."
+                  : "No tools match your search."}
+            </p>
           )}
         </div>
       )}

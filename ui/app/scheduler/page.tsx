@@ -294,6 +294,20 @@ const JobForm = ({ existing, onClose }: { existing: ScheduledJob | null; onClose
     [prompts]
   );
 
+  // For pipeline jobs, auto-derive auto-approve from the union of all stage tools.
+  // If a stage uses specific tools, those must be auto-approved (no human to approve during scheduled runs).
+  const derivedAutoApproveTools = useMemo(() => {
+    if (actionType !== "pipeline") return null;
+    const toolSet = new Set<string>();
+    for (const stage of pipelineStages) {
+      const tools = stage.tools as string[] | null | undefined;
+      if (tools && Array.isArray(tools)) {
+        for (const t of tools) toolSet.add(t);
+      }
+    }
+    return toolSet.size > 0 ? Array.from(toolSet).sort() : null;
+  }, [actionType, pipelineStages]);
+
   const assistMutation = useMutation({
     mutationFn: (message: string) =>
       fetchJson<{ suggestion: SchedulerSuggestion }>("/api/admin/scheduler/assist", {
@@ -362,8 +376,14 @@ const JobForm = ({ existing, onClose }: { existing: ScheduledJob | null; onClose
       }
     }
 
-    // Auto-approve tools
-    if (autoApproveTools.length > 0) {
+    // Auto-approve tools: for pipelines, derived from stage tools; for others, manual selection
+    if (actionType === "pipeline") {
+      if (derivedAutoApproveTools && derivedAutoApproveTools.length > 0) {
+        payload.autoApproveTools = derivedAutoApproveTools;
+      } else if (existing) {
+        payload.autoApproveTools = null;
+      }
+    } else if (autoApproveTools.length > 0) {
       payload.autoApproveTools = autoApproveTools;
     } else if (existing) {
       payload.autoApproveTools = null;
@@ -571,15 +591,44 @@ const JobForm = ({ existing, onClose }: { existing: ScheduledJob | null; onClose
 
         <Field
           label="Auto-Approve Tools"
-          hint="Tools that skip approval gating for this job. Leave empty for normal approval flow."
+          hint={actionType === "pipeline"
+            ? "Automatically derived from your pipeline stages. Any tool a stage uses is auto-approved during scheduled runs."
+            : "Tools that skip approval gating for this job. Leave empty for normal approval flow."}
         >
-          <ToolMultiSelect
-            tools={allTools}
-            selected={autoApproveTools.length > 0 ? autoApproveTools : null}
-            onChange={(selected) => setAutoApproveTools(selected ?? [])}
-            placeholder="None (normal approval flow)"
-            allowAll={false}
-          />
+          {actionType === "pipeline" ? (
+            <div className="mt-1 rounded-lg border border-border bg-muted/30 px-3 py-2">
+              {derivedAutoApproveTools && derivedAutoApproveTools.length > 0 ? (
+                <div className="space-y-1.5">
+                  <p className="text-xs text-emerald-600 dark:text-emerald-400 font-medium">
+                    {derivedAutoApproveTools.length} tool{derivedAutoApproveTools.length !== 1 ? "s" : ""} auto-approved from stage configuration
+                  </p>
+                  <div className="flex flex-wrap gap-1">
+                    {derivedAutoApproveTools.slice(0, 8).map((t) => (
+                      <span key={t} className="inline-flex rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] text-emerald-700 dark:text-emerald-400">
+                        {t}
+                      </span>
+                    ))}
+                    {derivedAutoApproveTools.length > 8 && (
+                      <span className="text-[10px] text-muted-foreground">+{derivedAutoApproveTools.length - 8} more</span>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  No stage-specific tools configured — all tools available, normal approval flow applies.
+                  Set tools on individual stages to auto-approve them.
+                </p>
+              )}
+            </div>
+          ) : (
+            <ToolMultiSelect
+              tools={allTools}
+              selected={autoApproveTools.length > 0 ? autoApproveTools : null}
+              onChange={(selected) => setAutoApproveTools(selected ?? [])}
+              placeholder="None (normal approval flow)"
+              allowAll={false}
+            />
+          )}
         </Field>
 
         <div className="flex justify-end gap-2 pt-2">
@@ -679,6 +728,8 @@ const PipelineSection = ({
             showToast("Pipeline created via wizard — review and save below.", "success");
           }}
           onCancel={() => setMode("choose")}
+          availableTools={availableTools}
+          availablePrompts={availablePrompts}
         />
       </div>
     );
