@@ -367,7 +367,7 @@ const JobForm = ({ existing, onClose }: { existing: ScheduledJob | null; onClose
       actionPayload,
     };
 
-    if (actionType === "prompt") {
+    if (actionType === "prompt" || actionType === "pipeline") {
       const modelValue = model.trim();
       if (existing) {
         payload.model = modelValue || null;
@@ -535,7 +535,7 @@ const JobForm = ({ existing, onClose }: { existing: ScheduledJob | null; onClose
           </Field>
         )}
 
-        {actionType === "prompt" && (
+        {(actionType === "prompt" || actionType === "pipeline") && (
           <Field label="Model" hint="Optional — defaults to the system model.">
             <select
               className="w-full rounded-lg border border-border bg-card text-foreground px-3 py-2 text-sm"

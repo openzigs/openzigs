@@ -18,7 +18,7 @@ import {
   Position,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { Plus, Trash2, GitBranch, Save, ChevronDown, Search } from "lucide-react";
+import { Plus, Trash2, GitBranch, Save, Search } from "lucide-react";
 import { ToolMultiSelect, type ToolOption } from "./tool-multi-select";
 
 /* ── Pipeline node types (matches backend PipelineNode) ── */

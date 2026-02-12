@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { ChevronDown, Check, X } from "lucide-react";
 
 export type ToolOption = {
@@ -41,6 +42,43 @@ export const ToolMultiSelect = ({
 }: ToolMultiSelectProps) => {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
+  const [mounted, setMounted] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+  const [dropdownStyle, setDropdownStyle] = useState<React.CSSProperties>({});
+
+  // Portal needs client-side only
+  useEffect(() => { setMounted(true); }, []);
+
+  // Position the fixed dropdown relative to the trigger button
+  const updateDropdownPosition = useCallback(() => {
+    if (!triggerRef.current) return;
+    const rect = triggerRef.current.getBoundingClientRect();
+    const viewportH = window.innerHeight;
+    const spaceBelow = viewportH - rect.bottom;
+    const spaceAbove = rect.top;
+    const maxH = 288; // max-h-72 = 18rem = 288px
+    const openAbove = spaceBelow < Math.min(maxH, 200) && spaceAbove > spaceBelow;
+
+    setDropdownStyle({
+      width: rect.width,
+      left: rect.left,
+      ...(openAbove
+        ? { bottom: viewportH - rect.top + 4, maxHeight: Math.min(maxH, spaceAbove - 8) }
+        : { top: rect.bottom + 4, maxHeight: Math.min(maxH, spaceBelow - 8) }),
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!open) return;
+    updateDropdownPosition();
+    window.addEventListener("scroll", updateDropdownPosition, true);
+    window.addEventListener("resize", updateDropdownPosition);
+    return () => {
+      window.removeEventListener("scroll", updateDropdownPosition, true);
+      window.removeEventListener("resize", updateDropdownPosition);
+    };
+  }, [open, updateDropdownPosition]);
 
   const grouped: GroupedTools = useMemo(() => {
     const result: GroupedTools = {};
@@ -121,6 +159,7 @@ export const ToolMultiSelect = ({
 
       {/* Trigger */}
       <button
+        ref={triggerRef}
         type="button"
         onClick={() => setOpen(!open)}
         className="mt-1 flex w-full items-center justify-between rounded-lg border border-border bg-background px-3 py-1.5 text-sm text-left"
@@ -154,102 +193,107 @@ export const ToolMultiSelect = ({
         </div>
       )}
 
-      {/* Dropdown */}
-      {open && (
-        <div className="absolute z-50 mt-1 w-full max-h-64 overflow-y-auto rounded-lg border border-border bg-card shadow-lg">
-          {/* Search */}
-          <div className="sticky top-0 bg-card p-2 border-b border-border">
-            <input
-              type="text"
-              placeholder="Search tools…"
-              className="w-full rounded-md border border-border bg-background px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-primary"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              autoFocus
-            />
+      {/* Dropdown — portalled to <body> with fixed positioning to escape overflow-hidden ancestors */}
+      {open && mounted && createPortal(
+        <>
+          {/* Click-away backdrop */}
+          <div className="fixed inset-0 z-[9998]" onClick={() => { setOpen(false); setSearch(""); }} />
+          {/* Dropdown menu */}
+          <div
+            ref={dropdownRef}
+            className="fixed z-[9999] max-h-72 overflow-y-auto rounded-lg border border-border bg-card shadow-xl"
+            style={dropdownStyle}
+          >
+            {/* Search */}
+            <div className="sticky top-0 bg-card p-2 border-b border-border">
+              <input
+                type="text"
+                placeholder="Search tools…"
+                className="w-full rounded-md border border-border bg-background px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-primary"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                autoFocus
+              />
+            </div>
+
+            {/* "All tools" option */}
+            {allowAll && (
+              <button
+                type="button"
+                onClick={() => { onChange(null); }}
+                className={`flex w-full items-center gap-2 px-3 py-1.5 text-xs hover:bg-muted/50 ${
+                  isAllSelected ? "bg-primary/5 text-primary font-semibold" : "text-foreground"
+                }`}
+              >
+                <div className={`h-3.5 w-3.5 rounded border flex items-center justify-center ${
+                  isAllSelected ? "border-primary bg-primary" : "border-border"
+                }`}>
+                  {isAllSelected && <Check className="h-2.5 w-2.5 text-primary-foreground" />}
+                </div>
+                All tools (no restriction)
+              </button>
+            )}
+
+            {/* Categories */}
+            {Object.entries(filteredGrouped).map(([cat, catTools]) => {
+              const catAllSelected = !isAllSelected && catTools.every((t) => selectedSet.has(t.name));
+              const catSomeSelected = !isAllSelected && catTools.some((t) => selectedSet.has(t.name));
+              return (
+                <div key={cat}>
+                  <button
+                    type="button"
+                    onClick={() => selectCategory(cat)}
+                    className="flex w-full items-center gap-2 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground hover:bg-muted/50 border-t border-border"
+                  >
+                    <div className={`h-3.5 w-3.5 rounded border flex items-center justify-center ${
+                      catAllSelected ? "border-primary bg-primary" : catSomeSelected ? "border-primary bg-primary/30" : "border-border"
+                    }`}>
+                      {catAllSelected && <Check className="h-2.5 w-2.5 text-primary-foreground" />}
+                      {catSomeSelected && !catAllSelected && <div className="h-1.5 w-1.5 rounded-sm bg-primary" />}
+                    </div>
+                    {cat}
+                  </button>
+                  {catTools.map((tool) => {
+                    const checked = isAllSelected || selectedSet.has(tool.name);
+                    return (
+                      <button
+                        key={tool.name}
+                        type="button"
+                        onClick={() => toggleTool(tool.name)}
+                        className={`flex w-full items-center gap-2 px-3 py-1 pl-6 text-xs hover:bg-muted/50 ${
+                          checked && !isAllSelected ? "bg-primary/5" : ""
+                        }`}
+                      >
+                        <div className={`h-3.5 w-3.5 rounded border flex items-center justify-center shrink-0 ${
+                          checked && !isAllSelected ? "border-primary bg-primary" : "border-border"
+                        }`}>
+                          {checked && !isAllSelected && <Check className="h-2.5 w-2.5 text-primary-foreground" />}
+                        </div>
+                        <div className="text-left min-w-0">
+                          <span className="text-foreground">{tool.name}</span>
+                          {tool.description && (
+                            <p className="text-[10px] text-muted-foreground truncate">{tool.description}</p>
+                          )}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              );
+            })}
+
+            {Object.keys(filteredGrouped).length === 0 && (
+              <p className="px-3 py-2 text-xs text-muted-foreground">
+                {tools.length === 0
+                  ? "Loading tools…"
+                  : Object.keys(grouped).length === 0
+                    ? "No enabled tools available."
+                    : "No tools match your search."}
+              </p>
+            )}
           </div>
-
-          {/* "All tools" option */}
-          {allowAll && (
-            <button
-              type="button"
-              onClick={() => { onChange(null); }}
-              className={`flex w-full items-center gap-2 px-3 py-1.5 text-xs hover:bg-muted/50 ${
-                isAllSelected ? "bg-primary/5 text-primary font-semibold" : "text-foreground"
-              }`}
-            >
-              <div className={`h-3.5 w-3.5 rounded border flex items-center justify-center ${
-                isAllSelected ? "border-primary bg-primary" : "border-border"
-              }`}>
-                {isAllSelected && <Check className="h-2.5 w-2.5 text-primary-foreground" />}
-              </div>
-              All tools (no restriction)
-            </button>
-          )}
-
-          {/* Categories */}
-          {Object.entries(filteredGrouped).map(([cat, catTools]) => {
-            const catAllSelected = !isAllSelected && catTools.every((t) => selectedSet.has(t.name));
-            const catSomeSelected = !isAllSelected && catTools.some((t) => selectedSet.has(t.name));
-            return (
-              <div key={cat}>
-                <button
-                  type="button"
-                  onClick={() => selectCategory(cat)}
-                  className="flex w-full items-center gap-2 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground hover:bg-muted/50 border-t border-border"
-                >
-                  <div className={`h-3.5 w-3.5 rounded border flex items-center justify-center ${
-                    catAllSelected ? "border-primary bg-primary" : catSomeSelected ? "border-primary bg-primary/30" : "border-border"
-                  }`}>
-                    {catAllSelected && <Check className="h-2.5 w-2.5 text-primary-foreground" />}
-                    {catSomeSelected && !catAllSelected && <div className="h-1.5 w-1.5 rounded-sm bg-primary" />}
-                  </div>
-                  {cat}
-                </button>
-                {catTools.map((tool) => {
-                  const checked = isAllSelected || selectedSet.has(tool.name);
-                  return (
-                    <button
-                      key={tool.name}
-                      type="button"
-                      onClick={() => toggleTool(tool.name)}
-                      className={`flex w-full items-center gap-2 px-3 py-1 pl-6 text-xs hover:bg-muted/50 ${
-                        checked && !isAllSelected ? "bg-primary/5" : ""
-                      }`}
-                    >
-                      <div className={`h-3.5 w-3.5 rounded border flex items-center justify-center shrink-0 ${
-                        checked && !isAllSelected ? "border-primary bg-primary" : "border-border"
-                      }`}>
-                        {checked && !isAllSelected && <Check className="h-2.5 w-2.5 text-primary-foreground" />}
-                      </div>
-                      <div className="text-left min-w-0">
-                        <span className="text-foreground">{tool.name}</span>
-                        {tool.description && (
-                          <p className="text-[10px] text-muted-foreground truncate">{tool.description}</p>
-                        )}
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
-            );
-          })}
-
-          {Object.keys(filteredGrouped).length === 0 && (
-            <p className="px-3 py-2 text-xs text-muted-foreground">
-              {tools.length === 0
-                ? "Loading tools…"
-                : Object.keys(grouped).length === 0
-                  ? "No enabled tools available."
-                  : "No tools match your search."}
-            </p>
-          )}
-        </div>
-      )}
-
-      {/* Click-away */}
-      {open && (
-        <div className="fixed inset-0 z-40" onClick={() => { setOpen(false); setSearch(""); }} />
+        </>,
+        document.body
       )}
     </div>
   );

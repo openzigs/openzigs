@@ -4,7 +4,7 @@ import { useState, useCallback } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { fetchJson } from "@/lib/api";
 import { showToast } from "@/components/toast";
-import { PipelineEditor, type PromptStageData, type AvailablePrompt } from "./pipeline-editor";
+import { PipelineEditor, type AvailablePrompt } from "./pipeline-editor";
 import { type ToolOption } from "./tool-multi-select";
 import { Wand2, ArrowRight, ArrowLeft, Check, Loader2 } from "lucide-react";
 

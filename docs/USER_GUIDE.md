@@ -278,16 +278,16 @@ The library at `/library` provides a visual interface for managing saved prompt 
 
 The scheduler at `/scheduler` manages cron-based automated jobs:
 
-- **Create** jobs with name, cron expression, and action (prompt, shell command, or custom).
+- **Create** jobs with name, cron expression, and action (prompt, shell command, pipeline, or custom).
 - **Prompt linking** — link a job to a saved prompt from the Library.
-- **Model selection** — optionally choose a model override per prompt job.
+- **Model selection** — optionally choose a model override per prompt or pipeline job.
 - **AI Scheduler Assistant** — describe the schedule in plain English and auto-fill fields (uses `gpt-5-mini`).
 - **Cron preview** — visual breakdown of minute, hour, day, month, weekday fields.
 - **Enable/disable** individual jobs with toggle switches.
 - **Run Now** — trigger any job immediately with the ▶ Run button, bypassing the cron schedule.
-- **Auto-Approve Tools** — specify a comma-separated list of tool names that will bypass approval gating when this job runs. Useful for fully autonomous scheduled workflows (e.g., a nightly report that needs `shell-execute` and `write-file` without human confirmation).
+- **Auto-Approve Tools** — for prompt/shell/custom jobs, specify tool names that bypass approval gating. For **pipeline jobs**, auto-approve tools are **automatically derived** from the union of all stage-level tool restrictions — any tool a stage uses is auto-approved during scheduled runs.
 
-![New Job form — model selection, cron expression, and auto-approve tools](images/scheduler-new-job-form.png)
+![New Job form — Pipeline action type with model selector and wizard/manual chooser](images/scheduler-pipeline-new-job.png)
 - **Live execution events** via Socket.IO — see when jobs fire in real time.
 
 #### Multi-Model Agent Chaining
@@ -308,38 +308,56 @@ Approval overrides let specific tools run without human confirmation during sche
 
 #### Pipeline Jobs (Visual Workflow Builder)
 
-The scheduler now supports **pipeline** as a job action type. A pipeline job executes a multi-stage agent workflow where each stage runs sequentially (or in parallel groups) with its own prompt, tool restrictions, and optional model override.
+The scheduler supports **pipeline** as a job action type. A pipeline job executes a multi-stage agent workflow where each stage runs sequentially (or in parallel groups) with its own prompt, tool restrictions, and optional model override.
 
-![New Job form — Pipeline action type with visual editor](images/scheduler-pipeline-editor-with-stages.png)
+![Pipeline editor with multiple stages and a parallel group](images/pipeline-editor-multi-stage.png)
 
 **Creating a pipeline job:**
 
 1. In the New Job form, select **Pipeline** as the action type.
-2. The **Visual Pipeline Editor** appears inline, powered by React Flow.
-3. Add stages using the toolbar buttons:
-   - **+ Stage** — Adds a prompt stage (single LLM agent step).
-   - **+ Parallel** — Adds a parallel group (multiple stages running concurrently).
+2. A **Wizard/Manual chooser** appears:
+   - **🧙 Workflow Wizard** — Describe your goal in plain English and let AI auto-plan the pipeline stages.
+   - **🔧 Manual Editor** — Build the pipeline yourself using the visual drag-and-drop editor.
+
+![Wizard/Manual chooser for pipeline creation](images/pipeline-wizard-chooser.png)
+
+3. In the **Manual Editor**, the Visual Pipeline Editor canvas (powered by React Flow) provides:
+   - **+ Stage** button — Adds a prompt stage (single LLM agent step).
+   - **+ Parallel** button — Adds a parallel group (multiple stages running concurrently).
+   - **MiniMap** (bottom-left) — Overview of the full pipeline graph.
+   - **Controls** (bottom-right) — Zoom, fit view, toggle interactivity.
 4. Click any node to open the **Stage Editor** sidebar:
    - **Name** — Display label for the stage.
-   - **Prompt** — The instruction sent to the LLM for this stage.
-   - **Tools** — Comma-separated tool allowlist restricting which MCP tools are available.
-   - **Timeout** — Maximum execution time in seconds.
+   - **Prompt** — The instruction sent to the LLM. Supports a prompt selector (press `/` to search saved prompts).
+   - **Tools** — Multi-select dropdown with tools grouped by category (Browser, Developer, Documents, Filesystem, Productivity, Search, Shell). The dropdown renders as a portal overlay for full visibility.
+   - **Timeout** — Maximum execution time in seconds (default: 300).
 5. Connect nodes by dragging from output handles (bottom) to input handles (top).
-6. Click **Save** when the pipeline has at least 2 stages.
+6. Click **Save** when done. The pipeline must have at least 2 stages to create the job.
+
+![Tool multi-select dropdown with full portal rendering](images/pipeline-tool-dropdown.png)
+
+**Model selection:** Pipeline jobs now include a **Model** selector below the editor, allowing you to choose an LLM model override for the entire pipeline (e.g., `claude-sonnet-4`, `gpt-5`). This applies to all stages unless individual stages specify a model.
+
+**Auto-derived auto-approve:** When stages have specific tool restrictions, the pipeline job's auto-approve list is **automatically derived** from the union of all stage tools. For example, if stage-1 uses `browser-navigate, list-directory, shell-execute`, those 3 tools are automatically auto-approved for the pipeline job's scheduled runs.
+
+![Auto-approve tools derived from pipeline stage configuration](images/pipeline-auto-approve-derived.png)
 
 **Recursive pipelines:** Parallel groups can contain nested stages or further parallel groups, up to 4 levels deep. This allows complex fan-out/fan-in patterns.
 
 **Pipeline Planner (Auto-Plan):** The **Workflow Wizard** provides an AI-assisted pipeline creation flow:
 
-1. Navigate to the Workflow Wizard (available from the pipeline editor).
+![Workflow Wizard step 1 — describe your goal](images/workflow-wizard-step1.png)
+
+1. Select **🧙 Workflow Wizard** from the chooser.
 2. Describe your goal in plain English (e.g., "Research competitors, analyze their pricing, and draft a comparison report").
 3. Click **Auto-Plan Pipeline** — the system calls the Pipeline Planner Agent (`POST /api/admin/pipeline/plan`) which generates a structured pipeline definition.
 4. Review the AI's rationale and the generated pipeline in the visual editor.
 5. Make adjustments if needed, then confirm to create the pipeline.
+6. You can also click **Skip to Manual Editor** at any time to switch to manual mode.
 
 #### Global Tool Approval Lock
 
-![Admin tools — shell-execute with global approval lock active (🔒)](images/admin-tools-global-lock-active.png)
+![Admin tools — approval toggles with 🔓/🔒 lock buttons and risk level badges](images/admin-tools-approval-toggles.png)
 
 Administrators can set a **global approval lock** on any tool from the Admin → Tools panel. When a tool is locked:
 
