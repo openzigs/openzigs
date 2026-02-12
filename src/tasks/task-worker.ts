@@ -1,7 +1,7 @@
 import { EventEmitter } from "node:events";
 import type { TaskEngine } from "./task-engine.js";
 import type { CopilotWrapper } from "../copilot/copilot-wrapper.js";
-import type { AgentTask, PipelineNode } from "./types.js";
+import type { AgentTask, PipelineNode, PipelineStage, ParallelGroup } from "./types.js";
 
 import { executePostAction } from "./post-actions.js";
 import { normalizeLegacyStages } from "./pipeline-schema.js";
@@ -297,28 +297,28 @@ export class TaskWorker extends EventEmitter {
     nodeIndex: number,
   ): Promise<{ records: Array<{ name: string; status: string; result?: string; error?: string }>; context: string; failed: boolean; error?: string }> {
     if (node.type === "parallel") {
-      return this.executeParallelGroup(node, task, accumulatedContext);
+      return this.executeParallelGroup(node as ParallelGroup, task, accumulatedContext);
     }
 
-    // Prompt stage (leaf node)
-    return this.executePromptStage(node, task, accumulatedContext, totalNodes, nodeIndex);
+    // Prompt stage (leaf node) — type narrowed to PipelineStage
+    return this.executePromptStage(node as PipelineStage, task, accumulatedContext, totalNodes, nodeIndex);
   }
 
   /**
    * Execute a single prompt stage as a child task.
    */
   private async executePromptStage(
-    stage: PipelineNode & { type?: "prompt" },
+    stage: PipelineStage,
     task: AgentTask,
     accumulatedContext: string,
     totalStages: number,
     stageIndex: number,
   ): Promise<{ records: Array<{ name: string; status: string; result?: string; error?: string }>; context: string; failed: boolean; error?: string }> {
     const stageLabel = `[${stageIndex + 1}/${totalStages}] ${stage.name}`;
-    const timeoutMs = ((stage as { timeoutSeconds?: number }).timeoutSeconds ?? 300) * 1_000;
+    const timeoutMs = (stage.timeoutSeconds ?? 300) * 1_000;
 
     const stagePrompt = this.buildStagePrompt(
-      (stage as { prompt: string }).prompt,
+      stage.prompt,
       accumulatedContext,
       stageIndex,
       totalStages
@@ -327,7 +327,7 @@ export class TaskWorker extends EventEmitter {
     // Merge stage-level autoApproveTools with parent task's autoApproveTools
     const stageAutoApprove = [
       ...(task.autoApproveTools ?? []),
-      ...((stage as { autoApproveTools?: string[] }).autoApproveTools ?? []),
+      ...(stage.autoApproveTools ?? []),
     ];
 
     // Submit stage as a child task
@@ -336,8 +336,8 @@ export class TaskWorker extends EventEmitter {
         trigger: task.trigger,
         goal: stagePrompt,
         context: accumulatedContext,
-        model: (stage as { model?: string }).model ?? task.model ?? undefined,
-        allowedTools: (stage as { tools?: string[] | null }).tools ?? task.allowedTools ?? undefined,
+        model: stage.model ?? task.model ?? undefined,
+        allowedTools: stage.tools ?? task.allowedTools ?? undefined,
         autoApproveTools: stageAutoApprove.length > 0 ? [...new Set(stageAutoApprove)] : undefined,
         notifyOnComplete: false,
         parentTaskId: task.id,
@@ -382,7 +382,7 @@ export class TaskWorker extends EventEmitter {
     }
 
     // Run deterministic post-action if configured
-    const postAction = (stage as { postAction?: { type: string; config?: Record<string, unknown> } }).postAction;
+    const postAction = stage.postAction;
     if (postAction && completedStage.result) {
       this.log.info(`TaskWorker pipeline stage ${stageLabel}: running post-action "${postAction.type}"`);
       try {
@@ -404,7 +404,7 @@ export class TaskWorker extends EventEmitter {
    * If any branch fails, the entire group is marked as failed.
    */
   private async executeParallelGroup(
-    group: PipelineNode & { type: "parallel"; branches: PipelineNode[] },
+    group: ParallelGroup,
     task: AgentTask,
     accumulatedContext: string,
   ): Promise<{ records: Array<{ name: string; status: string; result?: string; error?: string }>; context: string; failed: boolean; error?: string }> {

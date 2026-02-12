@@ -50,48 +50,64 @@ export const createHooksConfig = ({
   sessionManager,
   log = logger,
 }: HooksFactoryOptions): HooksConfig => {
+
+  /**
+   * Shared helper: resolve the approval channel, format context, and submit
+   * the approval request. Returns a deny result if the user rejects or the
+   * request times out, or null when approval is granted.
+   */
+  const requestToolApproval = async (
+    input: HookPreToolUseInput,
+    explanation: string,
+  ): Promise<HookPreToolUseResult | null> => {
+    if (!approvalQueue) return null;
+
+    let channelType: ApprovalChannel = "web";
+    if (sessionManager && input.context?.sessionId) {
+      try {
+        const session = await sessionManager.getSession(input.context.sessionId);
+        if (session?.channel) {
+          channelType = session.channel as ApprovalChannel;
+        }
+      } catch {
+        // If session lookup fails, default to web
+      }
+    }
+
+    const preview = formatApprovalContext(
+      input.toolName,
+      input.toolArgs as Record<string, unknown>,
+    );
+
+    const approval = await approvalQueue.requestApproval({
+      tool: input.toolName,
+      args: input.toolArgs as Record<string, unknown>,
+      riskLevel: "high",
+      explanation,
+      preview: preview?.summary,
+      channelType,
+      sessionId: input.context?.sessionId,
+    });
+
+    if (!approval.approved) {
+      const reason = approval.status === "expired" ? "Approval timed out" : "User denied";
+      return { permissionDecision: "deny", permissionDecisionReason: reason };
+    }
+
+    return null; // approved
+  };
+
   return {
     onPreToolUse: async (input: HookPreToolUseInput): Promise<HookPreToolUseResult> => {
       // Priority 1: Global approval lock — tool requires approval regardless of risk level.
       // This is checked BEFORE auto-approve so that global locks cannot be bypassed.
-      if (toolRegistry?.requiresGlobalApproval(input.toolName) && approvalQueue) {
-        let channelType: ApprovalChannel = "web";
-        if (sessionManager && input.context?.sessionId) {
-          try {
-            const session = await sessionManager.getSession(input.context.sessionId);
-            if (session?.channel) {
-              channelType = session.channel as ApprovalChannel;
-            }
-          } catch {
-            // If session lookup fails, default to web
-          }
-        }
-
-        const preview = formatApprovalContext(
-          input.toolName,
-          input.toolArgs as Record<string, unknown>
-        );
+      if (toolRegistry?.requiresGlobalApproval(input.toolName)) {
         log.info(`Global approval lock triggered for tool "${input.toolName}"`);
-        const approval = await approvalQueue.requestApproval({
-          tool: input.toolName,
-          args: input.toolArgs as Record<string, unknown>,
-          riskLevel: "high",
-          explanation: "Global approval lock: this tool always requires human confirmation.",
-          preview: preview?.summary,
-          channelType,
-          sessionId: input.context?.sessionId,
-        });
-
-        if (!approval.approved) {
-          const reason = approval.status === "expired"
-            ? "Approval timed out"
-            : "User denied";
-          return {
-            permissionDecision: "deny",
-            permissionDecisionReason: reason,
-          };
-        }
-
+        const denied = await requestToolApproval(
+          input,
+          "Global approval lock: this tool always requires human confirmation.",
+        );
+        if (denied) return denied;
         return { permissionDecision: "allow" };
       }
 
@@ -118,43 +134,12 @@ export const createHooksConfig = ({
       }
 
       // Gate high-risk tools through the approval queue
-      if (toolRegistry?.requiresApproval(input.toolName) && approvalQueue) {
-        let channelType: ApprovalChannel = "web";
-        if (sessionManager && input.context?.sessionId) {
-          try {
-            const session = await sessionManager.getSession(input.context.sessionId);
-            if (session?.channel) {
-              channelType = session.channel as ApprovalChannel;
-            }
-          } catch {
-            // If session lookup fails, default to web
-          }
-        }
-
-        const preview = formatApprovalContext(
-          input.toolName,
-          input.toolArgs as Record<string, unknown>
+      if (toolRegistry?.requiresApproval(input.toolName)) {
+        const denied = await requestToolApproval(
+          input,
+          "High-risk tool execution requires approval.",
         );
-        const approval = await approvalQueue.requestApproval({
-          tool: input.toolName,
-          args: input.toolArgs as Record<string, unknown>,
-          riskLevel: "high",
-          explanation: "High-risk tool execution requires approval.",
-          preview: preview?.summary,
-          channelType,
-          sessionId: input.context?.sessionId,
-        });
-
-
-        if (!approval.approved) {
-          const reason = approval.status === "expired"
-            ? "Approval timed out"
-            : "User denied";
-          return {
-            permissionDecision: "deny",
-            permissionDecisionReason: reason,
-          };
-        }
+        if (denied) return denied;
       }
 
       return { permissionDecision: "allow" };

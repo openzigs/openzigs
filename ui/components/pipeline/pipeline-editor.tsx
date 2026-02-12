@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ReactFlow,
   Background,
@@ -36,6 +36,8 @@ export type ParallelGroupData = {
   type: "parallel";
   name: string;
   branchCount: number;
+  /** Preserved branch data for roundtrip fidelity. */
+  branches: BackendPipelineNode[][];
 };
 
 export type PipelineNodeData = PromptStageData | ParallelGroupData;
@@ -95,7 +97,7 @@ const nodeTypes: NodeTypes = {
 
 /* ── Conversion: PipelineNode[] ↔ React Flow nodes/edges ── */
 
-type BackendPipelineNode = {
+export type BackendPipelineNode = {
   type?: "prompt" | "parallel";
   name: string;
   prompt?: string;
@@ -122,6 +124,10 @@ const pipelineToFlow = (
     const isParallel = stage.type === "parallel";
 
     if (isParallel) {
+      // Flatten branches (arrays of nodes) into a 2D array to preserve for roundtrip
+      const branchArrays: BackendPipelineNode[][] = (stage.branches ?? []).map((b) =>
+        Array.isArray(b) ? b : [b]
+      );
       nodes.push({
         id,
         type: "parallel",
@@ -129,7 +135,8 @@ const pipelineToFlow = (
         data: {
           type: "parallel" as const,
           name: stage.name,
-          branchCount: stage.branches?.length ?? 0,
+          branchCount: branchArrays.length,
+          branches: branchArrays,
         } satisfies ParallelGroupData,
       });
     } else {
@@ -203,10 +210,11 @@ const flowToPipeline = (nodes: Node[], edges: Edge[]): BackendPipelineNode[] => 
     const d = node.data as PipelineNodeData;
 
     if (d.type === "parallel") {
+      const pd = d as ParallelGroupData;
       stages.push({
         type: "parallel",
-        name: d.name,
-        branches: [],  // Branches are represented as child nodes in full implementation
+        name: pd.name,
+        branches: pd.branches?.flat() ?? [],
       });
     } else {
       stages.push({
@@ -442,10 +450,21 @@ export const PipelineEditor = ({
   availableTools = [],
   availablePrompts = [],
 }: PipelineEditorProps) => {
-  const initial = useMemo(() => pipelineToFlow(initialStages), []);  // eslint-disable-line react-hooks/exhaustive-deps
+  const initial = useMemo(() => pipelineToFlow(initialStages), [initialStages]);
   const [nodes, setNodes, onNodesChange] = useNodesState(initial.nodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(initial.edges);
   const [selectedNode, setSelectedNode] = useState<Node | null>(null);
+
+  // Re-sync flow state when initialStages changes (e.g. wizard re-generates a plan)
+  const initialStagesRef = useRef(initialStages);
+  useEffect(() => {
+    if (initialStages === initialStagesRef.current) return;
+    initialStagesRef.current = initialStages;
+    const flow = pipelineToFlow(initialStages);
+    setNodes(flow.nodes);
+    setEdges(flow.edges);
+    setSelectedNode(null);
+  }, [initialStages, setNodes, setEdges]);
 
   const onConnect: OnConnect = useCallback(
     (params) => setEdges((eds) => addEdge({ ...params, type: "smoothstep", animated: true }, eds)),
@@ -502,6 +521,7 @@ export const PipelineEditor = ({
         type: "parallel" as const,
         name: `parallel-${nodes.filter((n) => (n.data as PipelineNodeData).type === "parallel").length + 1}`,
         branchCount: 2,
+        branches: [[], []],
       } satisfies ParallelGroupData,
     };
 

@@ -7,7 +7,7 @@ import { fetchJson } from "@/lib/api";
 import type { ModelInfo, ReasoningEffort, SavedPrompt, ScheduledJob, ToolInfo } from "@/lib/types";
 import { SectionCard } from "@/components/section-card";
 import { ToastContainer, showToast } from "@/components/toast";
-import { PipelineEditor } from "@/components/pipeline/pipeline-editor";
+import { PipelineEditor, type BackendPipelineNode } from "@/components/pipeline/pipeline-editor";
 import { WorkflowWizard } from "@/components/pipeline/workflow-wizard";
 import { ToolMultiSelect, type ToolOption } from "@/components/pipeline/tool-multi-select";
 
@@ -266,9 +266,9 @@ const JobForm = ({ existing, onClose }: { existing: ScheduledJob | null; onClose
       ? JSON.stringify(existing.actionPayload, null, 2)
       : ""
   );
-  const [pipelineStages, setPipelineStages] = useState<Array<Record<string, unknown>>>(
+  const [pipelineStages, setPipelineStages] = useState<BackendPipelineNode[]>(
     existing?.actionType === "pipeline" && existing?.actionPayload?.stages
-      ? (existing.actionPayload.stages as Array<Record<string, unknown>>)
+      ? (existing.actionPayload.stages as BackendPipelineNode[])
       : []
   );
   const [cronExpression, setCronExpression] = useState(existing?.cronExpression ?? "");
@@ -380,7 +380,7 @@ const JobForm = ({ existing, onClose }: { existing: ScheduledJob | null; onClose
     if (actionType !== "pipeline") return null;
     const toolSet = new Set<string>();
     for (const stage of pipelineStages) {
-      const tools = stage.tools as string[] | null | undefined;
+      const tools = stage.tools;
       if (tools && Array.isArray(tools)) {
         for (const t of tools) toolSet.add(t);
       }
@@ -763,8 +763,8 @@ const PipelineSection = ({
   availableTools,
   availablePrompts,
 }: {
-  pipelineStages: Array<Record<string, unknown>>;
-  setPipelineStages: (stages: Array<Record<string, unknown>>) => void;
+  pipelineStages: BackendPipelineNode[];
+  setPipelineStages: (stages: BackendPipelineNode[]) => void;
   availableTools: ToolOption[];
   availablePrompts: { id: string; name: string; description?: string; template?: string }[];
 }) => {
@@ -819,7 +819,7 @@ const PipelineSection = ({
         </div>
         <WorkflowWizard
           onComplete={(pipeline) => {
-            setPipelineStages(pipeline.stages as unknown as Array<Record<string, unknown>>);
+            setPipelineStages(pipeline.stages as BackendPipelineNode[]);
             setMode("manual");
             showToast("Pipeline created via wizard — review and save below.", "success");
           }}
@@ -847,8 +847,8 @@ const PipelineSection = ({
         )}
       </div>
       <PipelineEditor
-        initialStages={pipelineStages as never[]}
-        onSave={(stages) => setPipelineStages(stages as unknown as Array<Record<string, unknown>>)}
+        initialStages={pipelineStages}
+        onSave={(stages) => setPipelineStages(stages)}
         height="350px"
         availableTools={availableTools}
         availablePrompts={availablePrompts}
