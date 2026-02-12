@@ -163,6 +163,8 @@ export type HookPreToolUseInput = {
   timestamp?: number;
   context: {
     sessionId: string;
+    /** Closure-captured auto-approve list (survives JSON-RPC boundary). */
+    autoApproveTools?: string[];
   };
 };
 
@@ -231,6 +233,8 @@ export type ChatOptions = {
   customAgents?: CustomAgentDefinition[];
   /** Per-call native MCP server overrides — merged with (or replaces) default servers. */
   mcpServers?: Record<string, NativeMcpServerDefinition>;
+  /** Tools to auto-approve without approval-queue gating (closure-based, survives JSON-RPC boundary). */
+  autoApproveTools?: string[];
 };
 
 export interface CopilotWrapper {
@@ -661,6 +665,7 @@ export class CopilotWrapperService implements CopilotWrapper {
         reasoningEffort: options?.reasoningEffort,
         customAgents: options?.customAgents,
         mcpServers: options?.mcpServers,
+        autoApproveTools: options?.autoApproveTools,
       }
     );
 
@@ -865,9 +870,11 @@ export class CopilotWrapperService implements CopilotWrapper {
       reasoningEffort?: ReasoningEffort;
       customAgents?: CustomAgentDefinition[];
       mcpServers?: Record<string, NativeMcpServerDefinition>;
+      autoApproveTools?: string[];
     }
   ): SessionCreateConfig {
     const effectiveHooks = this.hooksConfig;
+    const closureAutoApproveTools = extra?.autoApproveTools;
     const effectiveUserInput = extra?.onUserInputRequest ?? this.userInputHandler;
     const effectiveWorkingDirectory = extra?.workingDirectory ?? this.defaultWorkingDirectory;
     // Only include reasoning effort when the model actually supports it.
@@ -907,7 +914,12 @@ export class CopilotWrapperService implements CopilotWrapper {
             ? async (input: Omit<HookPreToolUseInput, "context">) => {
                 return effectiveHooks.onPreToolUse!({
                   ...input,
-                  context: { sessionId: sessionId ?? "ephemeral" },
+                  context: {
+                    sessionId: sessionId ?? "ephemeral",
+                    // Closure-captured auto-approve list survives JSON-RPC boundaries
+                    // (AsyncLocalStorage context is lost across vscode-jsonrpc dispatches).
+                    autoApproveTools: closureAutoApproveTools,
+                  },
                 });
               }
             : undefined,
@@ -949,6 +961,7 @@ export class CopilotWrapperService implements CopilotWrapper {
       reasoningEffort?: ReasoningEffort;
       customAgents?: CustomAgentDefinition[];
       mcpServers?: Record<string, NativeMcpServerDefinition>;
+      autoApproveTools?: string[];
     }
   ): Promise<CopilotSessionLike> {
     if (!conversationId) {

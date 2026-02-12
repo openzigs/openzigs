@@ -2,8 +2,8 @@ import { EventEmitter } from "node:events";
 import type { TaskEngine } from "./task-engine.js";
 import type { CopilotWrapper } from "../copilot/copilot-wrapper.js";
 import type { AgentTask } from "./types.js";
-import { ALWAYS_ON_TOOLS } from "../mcp/constants.js";
-import { runWithAutoApproveContext } from "../copilot/hooks.js";
+
+import { executePostAction } from "./post-actions.js";
 import { waitForTask } from "./wait-for-task.js";
 import { logger } from "../logging/logger.js";
 
@@ -139,31 +139,36 @@ export class TaskWorker extends EventEmitter {
       const availableTools = this.resolveAvailableTools(task);
 
       let result = "";
+      const toolCallLog: Array<{ tool: string; timestamp: number }> = [];
 
-      // Use AsyncLocalStorage to create an isolated context for this task execution.
-      await runWithAutoApproveContext(task.autoApproveTools, async () => {
-        for await (const chunk of this.copilot.chat(prompt, {
-          model: task.model ?? undefined,
-          availableTools,
-          onToolCall: (toolName, args) => {
-            if (toolName === "spawn-agent" || toolName === "orchestrate-agents") {
-              // Inject parent task ID, session, and channel info for recursive chaining.
-              const a = args as Record<string, unknown>;
-              a.parentTaskId = task.id;
-              a.sessionId = task.sessionId;
-              a.channelType = task.channelType;
-              a.chatId = task.chatId;
-            }
-          },
-          // Background tasks auto-skip interactive clarifications with an empty answer.
-          onUserInputRequest: async () => ({ answer: "", wasFreeform: false }),
-        })) {
-          result += chunk;
-        }
-      });
+      // Pass autoApproveTools via ChatOptions so it's captured in the
+      // buildSessionConfig closure — this survives JSON-RPC boundaries
+      // (AsyncLocalStorage context is lost when the SDK's hooks handler
+      // runs in the I/O event context of the subprocess pipe).
+      for await (const chunk of this.copilot.chat(prompt, {
+        model: task.model ?? undefined,
+        availableTools,
+        autoApproveTools: task.autoApproveTools,
+        onToolCall: (toolName, args) => {
+          this.log.info(`TaskWorker tool call [${task.id}]: ${toolName}(${JSON.stringify(args).slice(0, 200)})`);
+          toolCallLog.push({ tool: toolName, timestamp: Date.now() });
+          if (toolName === "spawn-agent" || toolName === "orchestrate-agents") {
+            // Inject parent task ID, session, and channel info for recursive chaining.
+            const a = args as Record<string, unknown>;
+            a.parentTaskId = task.id;
+            a.sessionId = task.sessionId;
+            a.channelType = task.channelType;
+            a.chatId = task.chatId;
+          }
+        },
+        // Background tasks auto-skip interactive clarifications with an empty answer.
+        onUserInputRequest: async () => ({ answer: "", wasFreeform: false }),
+      })) {
+        result += chunk;
+      }
 
       const completed = this.engine.complete(task.id, result);
-      this.log.info(`TaskWorker completed task ${task.id}`);
+      this.log.info(`TaskWorker completed task ${task.id} (${toolCallLog.length} tool calls: ${[...new Set(toolCallLog.map(t => t.tool))].join(", ") || "none"}, availableTools: ${JSON.stringify(availableTools ?? "all")})`);
       this.emit("task:done", completed);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -174,14 +179,19 @@ export class TaskWorker extends EventEmitter {
   }
 
   /**
-   * Resolve SDK-native availableTools for a task. Merges ALWAYS_ON_TOOLS
-   * into the list. Returns undefined when no scoping is needed.
+   * Resolve SDK-native availableTools for a task.
+   *
+   * When a task explicitly sets allowedTools (e.g. pipeline stages), we
+   * respect that restriction and do NOT merge ALWAYS_ON_TOOLS — the whole
+   * point of allowedTools is to scope what the agent can use.
+   *
+   * Returns undefined when no scoping is needed (task.allowedTools unset).
    */
   private resolveAvailableTools(task: AgentTask): string[] | undefined {
     if (!task.allowedTools) {
       return undefined;
     }
-    return [...new Set([...task.allowedTools, ...ALWAYS_ON_TOOLS])];
+    return [...task.allowedTools];
   }
 
   /** Build a prompt string for the background task. */
@@ -215,7 +225,6 @@ export class TaskWorker extends EventEmitter {
     const stageCount = stages.length;
     this.log.info(`TaskWorker pipeline: ${stageCount} stages for task ${task.id}`);
 
-    const controller = new AbortController();
     const stageResults: Array<{ name: string; status: string; result?: string; error?: string }> = [];
     let accumulatedContext = task.context || "";
 
@@ -255,10 +264,14 @@ export class TaskWorker extends EventEmitter {
         );
 
         // Wait for stage to complete
-        const stageTimer = setTimeout(() => controller.abort(), timeoutMs);
+        // Important: use a fresh AbortController per stage.
+        // Re-using a single controller would permanently poison subsequent stages
+        // (once aborted, its signal stays aborted forever).
+        const stageController = new AbortController();
+        const stageTimer = setTimeout(() => stageController.abort(), timeoutMs);
         let completedStage: AgentTask;
         try {
-          completedStage = await waitForTask(this.engine, childTask.id, controller.signal);
+          completedStage = await waitForTask(this.engine, childTask.id, stageController.signal);
         } finally {
           clearTimeout(stageTimer);
         }
@@ -285,6 +298,21 @@ export class TaskWorker extends EventEmitter {
         // Accumulate context: append this stage's result for the next stage
         if (completedStage.result) {
           accumulatedContext += `\n\n--- Output from stage "${stage.name}" ---\n${completedStage.result}`;
+        }
+
+        // Run deterministic post-action if configured (e.g. create GitHub issues)
+        if (stage.postAction && completedStage.result) {
+          this.log.info(`TaskWorker pipeline stage ${stageLabel}: running post-action "${stage.postAction.type}"`);
+          try {
+            const actionResult = await executePostAction(stage.postAction, completedStage.result);
+            accumulatedContext += `\n\n--- Post-action "${stage.postAction.type}" result ---\n${actionResult}`;
+            // Update the stage record with the action result
+            stageRecord.result = actionResult;
+          } catch (actionErr) {
+            const msg = actionErr instanceof Error ? actionErr.message : String(actionErr);
+            this.log.error(`TaskWorker pipeline post-action failed: ${msg}`);
+            stageRecord.error = `Post-action error: ${msg}`;
+          }
         }
       }
 

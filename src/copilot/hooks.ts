@@ -52,8 +52,11 @@ export const createHooksConfig = ({
 }: HooksFactoryOptions): HooksConfig => {
   return {
     onPreToolUse: async (input: HookPreToolUseInput): Promise<HookPreToolUseResult> => {
-      // Per-task auto-approve override: skip approval gating entirely
-      const activeAutoApproveTools = getActiveAutoApproveTools();
+      // Per-task auto-approve override: skip approval gating entirely.
+      // Check both AsyncLocalStorage (works within same async chain, e.g. task-worker)
+      // and closure-captured context (survives JSON-RPC boundaries, e.g. chat sessions).
+      const activeAutoApproveTools =
+        getActiveAutoApproveTools() ?? input.context?.autoApproveTools ?? null;
       if (activeAutoApproveTools?.includes(input.toolName)) {
         log.info(`Auto-approved tool "${input.toolName}" (per-task override)`);
         if (auditLogger) {

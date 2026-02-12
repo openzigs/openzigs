@@ -24,6 +24,62 @@ type ShellExecuteOptions = {
   auditLogger?: AuditLogger;
 };
 
+/**
+ * Shell operators and control characters that indicate compound/piped commands.
+ * These are rejected because execFile cannot safely handle them and they
+ * could be used for injection.
+ */
+const SHELL_OPERATORS = ["&&", "||", "|", ";", ">", ">>", "<", "$(", "`"];
+
+/**
+ * Normalise LLM-provided shell input into a clean binary + args pair.
+ *
+ * LLMs frequently send the full command line as `command` instead of splitting
+ * into command + args.  For example:
+ *   { command: "find /path -name '*.java'" }  instead of
+ *   { command: "find", args: ["/path", "-name", "*.java"] }
+ *
+ * This function:
+ * 1. Detects compound / piped commands (&&, ||, |, ;, etc.) → rejects them.
+ * 2. If `args` is empty and `command` contains whitespace, splits `command`
+ *    on whitespace to extract binary + args.
+ * 3. Strips surrounding quotes from individual tokens.
+ */
+export const normaliseShellInput = (
+  command: string,
+  args: string[]
+): { binary: string; args: string[] } | { error: string } => {
+  // Reject compound commands — these require a real shell interpreter
+  // and would bypass the allowlist intent.
+  for (const op of SHELL_OPERATORS) {
+    if (command.includes(op)) {
+      return { error: `Compound shell operators (${op}) are not allowed. Run each command separately.` };
+    }
+  }
+
+  const trimmed = command.trim();
+  if (!trimmed) {
+    return { error: "Empty command" };
+  }
+
+  // If args are already provided, just extract the binary name.
+  if (args.length > 0) {
+    const binary = trimmed.split(/\s+/)[0];
+    return { binary, args };
+  }
+
+  // No args supplied — split the command string.
+  // Use a simple split on whitespace (covers the common case).
+  const tokens = trimmed.split(/\s+/);
+  const binary = tokens[0];
+  const parsedArgs = tokens.slice(1).map((t) =>
+    // Strip matching surrounding quotes that the LLM sometimes adds
+    t.replace(/^(["'])(.+)\1$/, "$2")
+  );
+
+  return { binary, args: parsedArgs };
+};
+
 export const createShellExecuteHandler = (
   { allowlist = [], allowedDirs = [], auditLogger }: ShellExecuteOptions = {}
 ) => {
@@ -58,11 +114,25 @@ export const createShellExecuteHandler = (
       };
     }
 
-    if (!allowlist.includes(command)) {
+    // Normalise the LLM-provided input: extract binary name and split
+    // args when the model jams everything into the command field.
+    const parsed = normaliseShellInput(command, args);
+    if ("error" in parsed) {
+      logDenial("compound_command_rejected");
+      return {
+        stdout: "",
+        stderr: parsed.error,
+        exitCode: 1
+      };
+    }
+
+    const { binary, args: resolvedArgs } = parsed;
+
+    if (!allowlist.includes(binary)) {
       logDenial("command_not_allowed");
       return {
         stdout: "",
-        stderr: `Shell command not allowed: ${command}`,
+        stderr: `Shell command not allowed: ${binary}`,
         exitCode: 1
       };
     }
@@ -78,7 +148,7 @@ export const createShellExecuteHandler = (
 
     let output: ShellExecuteOutput;
     try {
-      const result = await execFileAsync(command, args, { cwd, timeout, maxBuffer: 10 * 1024 * 1024 });
+      const result = await execFileAsync(binary, resolvedArgs, { cwd, timeout, maxBuffer: 10 * 1024 * 1024 });
       output = {
         stdout: result.stdout ?? "",
         stderr: result.stderr ?? "",
@@ -99,8 +169,8 @@ export const createShellExecuteHandler = (
         category: "tool",
         event: "shell_execute_result",
         details: {
-          command,
-          args,
+          command: binary,
+          args: resolvedArgs,
           cwd,
           timeout,
           exitCode: output.exitCode,

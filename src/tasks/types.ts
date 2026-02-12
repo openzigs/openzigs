@@ -20,6 +20,21 @@ export type PipelineStage = {
   model?: string;
   /** Per-stage timeout in seconds (default: 300). */
   timeoutSeconds?: number;
+  /**
+   * Optional deterministic post-action to run after this stage's LLM task completes.
+   * Instead of relying on the LLM to call tools, the action executes code directly.
+   * Supported actions:
+   *   - "create-github-issues": Parse findings from stage output and create GitHub issues.
+   */
+  postAction?: PipelinePostAction;
+};
+
+/** Deterministic post-action configuration for a pipeline stage. */
+export type PipelinePostAction = {
+  /** Action type (e.g., "create-github-issues"). */
+  type: string;
+  /** Action-specific configuration. */
+  config?: Record<string, unknown>;
 };
 
 /** Ordered list of stages for sequential pipeline execution. */

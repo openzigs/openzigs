@@ -482,10 +482,12 @@ describe("TaskWorker", () => {
     // Should include the explicitly allowed tools
     expect(chatOptions.availableTools).toContain("web-search");
     expect(chatOptions.availableTools).toContain("linkedin-post");
-    // Should include always-on tools
-    expect(chatOptions.availableTools).toContain("read-file");
-    expect(chatOptions.availableTools).toContain("spawn-agent");
-    expect(chatOptions.availableTools).toContain("orchestrate-agents");
+    // When allowedTools is explicitly set, ALWAYS_ON_TOOLS are NOT merged —
+    // the whole point of allowedTools is to scope what the agent can use.
+    expect(chatOptions.availableTools).toHaveLength(2);
+    expect(chatOptions.availableTools).not.toContain("read-file");
+    expect(chatOptions.availableTools).not.toContain("spawn-agent");
+    expect(chatOptions.availableTools).not.toContain("orchestrate-agents");
   });
 
   it("does not scope tools when task has no allowedTools", async () => {

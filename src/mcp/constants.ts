@@ -8,3 +8,17 @@ export const ALWAYS_ON_TOOLS = new Set([
   "spawn-agent",
   "orchestrate-agents",
 ]);
+
+/**
+ * High-risk tools that are auto-approved during interactive chat sessions.
+ *
+ * When a human user is actively chatting, they are the implicit approver —
+ * forcing them through the approval queue for every tool call they initiated
+ * is bad UX. Background/automated tasks still go through the normal
+ * approval flow unless their task config includes autoApproveTools.
+ */
+export const INTERACTIVE_CHAT_AUTO_APPROVE_TOOLS = [
+  "shell-execute",
+  "browser-navigate",
+  "write-file",
+];

@@ -6,7 +6,7 @@ import type { AccessControlConfig } from "../config/index.js";
 import type { SessionManager } from "../sessions/session-manager.js";
 import type { PersonalityManager } from "../personality/personality-manager.js";
 import type { TaskEngine } from "../tasks/task-engine.js";
-import { ALWAYS_ON_TOOLS } from "../mcp/constants.js";
+import { ALWAYS_ON_TOOLS, INTERACTIVE_CHAT_AUTO_APPROVE_TOOLS } from "../mcp/constants.js";
 import { setActiveChatContext, clearActiveChatContext } from "../mcp/tools/agent-tools.js";
 import { setActiveOrchestrateContext, clearActiveOrchestrateContext } from "../mcp/tools/orchestrate-agents.js";
 import { setActiveWizardContext, clearActiveWizardContext } from "../mcp/tools/wizard-tools.js";
@@ -166,6 +166,11 @@ export class MessageRouter {
       // Resolve SDK-native tool scoping: pass tool name strings instead of filtering ToolDefinition arrays.
       const availableTools = this.resolveAvailableTools(options?.allowedTools);
 
+      // Interactive chat sessions auto-approve high-risk tools.
+      // The user is the human-in-the-loop — they initiated the request,
+      // so forcing an approval-queue round-trip is just friction.
+      // N.B. autoApproveTools is closure-based (captured in buildSessionConfig),
+      // NOT AsyncLocalStorage — the latter is lost across JSON-RPC boundaries.
       for await (const chunk of this.copilot.chat(prompt, {
         model: options?.model,
         onToolCall: options?.onToolCall,
@@ -176,6 +181,7 @@ export class MessageRouter {
         attachments: options?.attachments,
         workingDirectory: options?.workingDirectory,
         reasoningEffort: options?.reasoningEffort,
+        autoApproveTools: INTERACTIVE_CHAT_AUTO_APPROVE_TOOLS,
       })) {
         response += chunk;
         if (options?.onChunk) {
