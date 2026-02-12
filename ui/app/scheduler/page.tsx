@@ -8,6 +8,7 @@ import type { ModelInfo, SavedPrompt, ScheduledJob, ToolInfo } from "@/lib/types
 import { SectionCard } from "@/components/section-card";
 import { ToastContainer, showToast } from "@/components/toast";
 import { PipelineEditor } from "@/components/pipeline/pipeline-editor";
+import { WorkflowWizard } from "@/components/pipeline/workflow-wizard";
 import { ToolMultiSelect, type ToolOption } from "@/components/pipeline/tool-multi-select";
 
 export default function SchedulerPage() {
@@ -493,20 +494,12 @@ const JobForm = ({ existing, onClose }: { existing: ScheduledJob | null; onClose
             )}
           </Field>
         ) : actionType === "pipeline" ? (
-          <Field label="Pipeline Stages" hint="Design a multi-stage pipeline using the visual editor. Click Save in the editor when done.">
-            <PipelineEditor
-              initialStages={pipelineStages as never[]}
-              onSave={(stages) => setPipelineStages(stages as unknown as Array<Record<string, unknown>>)}
-              height="350px"
-              availableTools={allTools}
-              availablePrompts={availablePrompts}
-            />
-            {pipelineStages.length > 0 && (
-              <p className="mt-1 text-[11px] text-emerald-600 dark:text-emerald-400">
-                {pipelineStages.length} stage{pipelineStages.length !== 1 ? "s" : ""} configured
-              </p>
-            )}
-          </Field>
+          <PipelineSection
+            pipelineStages={pipelineStages}
+            setPipelineStages={setPipelineStages}
+            availableTools={allTools}
+            availablePrompts={availablePrompts}
+          />
         ) : (
           <Field
             label="Action Payload (JSON)"
@@ -616,6 +609,114 @@ const Field = ({ label, hint, children }: { label: string; hint?: string; childr
     {hint && <p className="text-[11px] text-muted-foreground/60">{hint}</p>}
   </div>
 );
+
+/* ── Pipeline Section: wizard vs. manual toggle ── */
+
+const PipelineSection = ({
+  pipelineStages,
+  setPipelineStages,
+  availableTools,
+  availablePrompts,
+}: {
+  pipelineStages: Array<Record<string, unknown>>;
+  setPipelineStages: (stages: Array<Record<string, unknown>>) => void;
+  availableTools: ToolOption[];
+  availablePrompts: { id: string; name: string; description?: string; template?: string }[];
+}) => {
+  const [mode, setMode] = useState<"choose" | "wizard" | "manual">(
+    pipelineStages.length > 0 ? "manual" : "choose"
+  );
+
+  if (mode === "choose") {
+    return (
+      <div className="space-y-3">
+        <label className="text-xs font-medium text-muted-foreground">Pipeline Stages</label>
+        <div className="grid grid-cols-2 gap-3">
+          <button
+            type="button"
+            onClick={() => setMode("wizard")}
+            className="flex flex-col items-center gap-2 rounded-xl border-2 border-dashed border-primary/40 bg-primary/5 p-4 hover:border-primary hover:bg-primary/10 transition"
+          >
+            <span className="text-2xl">🧙</span>
+            <span className="text-sm font-semibold text-foreground">Workflow Wizard</span>
+            <span className="text-[11px] text-muted-foreground text-center">
+              Describe your goal and let AI auto-plan the pipeline stages for you.
+            </span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setMode("manual")}
+            className="flex flex-col items-center gap-2 rounded-xl border-2 border-dashed border-border bg-muted/30 p-4 hover:border-primary hover:bg-muted/50 transition"
+          >
+            <span className="text-2xl">🔧</span>
+            <span className="text-sm font-semibold text-foreground">Manual Editor</span>
+            <span className="text-[11px] text-muted-foreground text-center">
+              Build the pipeline yourself using the visual drag-and-drop editor.
+            </span>
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (mode === "wizard") {
+    return (
+      <div className="space-y-2">
+        <div className="flex items-center justify-between">
+          <label className="text-xs font-medium text-muted-foreground">Workflow Wizard</label>
+          <button
+            type="button"
+            onClick={() => setMode("choose")}
+            className="text-[10px] text-muted-foreground hover:text-foreground"
+          >
+            ← Back to options
+          </button>
+        </div>
+        <WorkflowWizard
+          onComplete={(pipeline) => {
+            setPipelineStages(pipeline.stages as unknown as Array<Record<string, unknown>>);
+            setMode("manual");
+            showToast("Pipeline created via wizard — review and save below.", "success");
+          }}
+          onCancel={() => setMode("choose")}
+        />
+      </div>
+    );
+  }
+
+  // Manual editor mode
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between">
+        <label className="text-xs font-medium text-muted-foreground">Pipeline Stages</label>
+        {pipelineStages.length === 0 && (
+          <button
+            type="button"
+            onClick={() => setMode("choose")}
+            className="text-[10px] text-muted-foreground hover:text-foreground"
+          >
+            ← Back to options
+          </button>
+        )}
+      </div>
+      <PipelineEditor
+        initialStages={pipelineStages as never[]}
+        onSave={(stages) => setPipelineStages(stages as unknown as Array<Record<string, unknown>>)}
+        height="350px"
+        availableTools={availableTools}
+        availablePrompts={availablePrompts}
+      />
+      {pipelineStages.length > 0 && (
+        <p className="mt-1 text-[11px] text-emerald-600 dark:text-emerald-400">
+          {pipelineStages.length} stage{pipelineStages.length !== 1 ? "s" : ""} configured
+        </p>
+      )}
+      <p className="text-[11px] text-muted-foreground/60">
+        Design a multi-stage pipeline using the visual editor. Click Save in the editor when done.
+      </p>
+    </div>
+  );
+};
 
 const ToggleSwitch = ({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) => (
   <button
