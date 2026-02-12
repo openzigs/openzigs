@@ -148,6 +148,7 @@ export class TaskWorker extends EventEmitter {
       // runs in the I/O event context of the subprocess pipe).
       for await (const chunk of this.copilot.chat(prompt, {
         model: task.model ?? undefined,
+        reasoningEffort: task.reasoningEffort ?? undefined,
         availableTools,
         autoApproveTools: task.autoApproveTools ?? undefined,
         onToolCall: (toolName, args) => {

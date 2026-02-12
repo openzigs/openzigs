@@ -50,6 +50,7 @@ export type ScheduledJob = {
   actionType: string;
   actionPayload: Record<string, unknown>;
   model?: string | null;
+  reasoningEffort?: ReasoningEffort | null;
   allowedTools?: string[] | null;
   autoApproveTools?: string[] | null;
   enabled: boolean;

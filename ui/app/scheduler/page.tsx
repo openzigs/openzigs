@@ -4,12 +4,32 @@ import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSocket } from "@/lib/socket-context";
 import { fetchJson } from "@/lib/api";
-import type { ModelInfo, SavedPrompt, ScheduledJob, ToolInfo } from "@/lib/types";
+import type { ModelInfo, ReasoningEffort, SavedPrompt, ScheduledJob, ToolInfo } from "@/lib/types";
 import { SectionCard } from "@/components/section-card";
 import { ToastContainer, showToast } from "@/components/toast";
 import { PipelineEditor } from "@/components/pipeline/pipeline-editor";
 import { WorkflowWizard } from "@/components/pipeline/workflow-wizard";
 import { ToolMultiSelect, type ToolOption } from "@/components/pipeline/tool-multi-select";
+
+const FALLBACK_MODEL_IDS = [
+  "gpt-5-mini",
+  "gpt-4.1",
+  "gpt-4o",
+  "gpt-4.1-mini",
+  "claude-sonnet-4.5",
+  "claude-sonnet-4",
+  "o3-mini",
+];
+
+const REASONING_EFFORT_LEVELS: ReasoningEffort[] = ["low", "medium", "high", "xhigh"];
+
+const supportsReasoningModel = (modelId: string, modelCapabilities?: { supports?: { reasoningEffort?: boolean } }) => {
+  if (modelCapabilities?.supports?.reasoningEffort !== undefined) {
+    return modelCapabilities.supports.reasoningEffort;
+  }
+  const lower = modelId.toLowerCase();
+  return lower.startsWith("o1") || lower.startsWith("o3") || lower.startsWith("o4");
+};
 
 export default function SchedulerPage() {
   const queryClient = useQueryClient();
@@ -254,6 +274,7 @@ const JobForm = ({ existing, onClose }: { existing: ScheduledJob | null; onClose
   const [cronExpression, setCronExpression] = useState(existing?.cronExpression ?? "");
   const [timezone, setTimezone] = useState(existing?.timezone ?? "UTC");
   const [model, setModel] = useState(existing?.model ?? "");
+  const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort>(existing?.reasoningEffort ?? "medium");
   const [autoApproveTools, setAutoApproveTools] = useState<string[]>(
     existing?.autoApproveTools ?? []
   );
@@ -267,9 +288,68 @@ const JobForm = ({ existing, onClose }: { existing: ScheduledJob | null; onClose
 
   const modelsQuery = useQuery({
     queryKey: ["models"],
-    queryFn: () => fetchJson<{ models: ModelInfo[] }>("/api/models"),
+    queryFn: () => fetchJson<{ models: ModelInfo[]; selectedModel?: string | null }>("/api/models"),
   });
-  const models = modelsQuery.data?.models ?? [];
+  const modelOptions = useMemo(() => {
+    const ids = new Set<string>();
+    const models = modelsQuery.data?.models ?? [];
+    for (const model of models) {
+      if (typeof model?.id === "string" && model.id.trim()) {
+        ids.add(model.id.trim());
+      }
+    }
+    for (const fallback of FALLBACK_MODEL_IDS) {
+      ids.add(fallback);
+    }
+    const selectedModel = modelsQuery.data?.selectedModel;
+    if (typeof selectedModel === "string" && selectedModel.trim()) {
+      ids.add(selectedModel.trim());
+    }
+    if (typeof existing?.model === "string" && existing.model.trim()) {
+      ids.add(existing.model.trim());
+    }
+    if (typeof model === "string" && model.trim()) {
+      ids.add(model.trim());
+    }
+    return Array.from(ids).sort((a, b) => a.localeCompare(b));
+  }, [existing?.model, model, modelsQuery.data]);
+
+  const selectedModelMeta = useMemo(() => {
+    const selected = model.trim();
+    if (!selected) return null;
+    const models = modelsQuery.data?.models ?? [];
+    return models.find((m) => m.id === selected) ?? null;
+  }, [model, modelsQuery.data?.models]);
+
+  const modelSupportsReasoning = useMemo(() => {
+    const selected = model.trim();
+    if (!selected) return false;
+    return supportsReasoningModel(selected, selectedModelMeta?.capabilities);
+  }, [model, selectedModelMeta?.capabilities]);
+
+  const availableReasoningEfforts = useMemo(() => {
+    const supported = selectedModelMeta?.supportedReasoningEfforts;
+    if (supported && supported.length > 0) {
+      return supported;
+    }
+    return REASONING_EFFORT_LEVELS;
+  }, [selectedModelMeta?.supportedReasoningEfforts]);
+
+  useEffect(() => {
+    if (!modelSupportsReasoning) return;
+    if (!availableReasoningEfforts.includes(reasoningEffort)) {
+      setReasoningEffort(availableReasoningEfforts[0] ?? "medium");
+    }
+  }, [availableReasoningEfforts, modelSupportsReasoning, reasoningEffort]);
+
+  useEffect(() => {
+    if (existing) return;
+    if (model.trim()) return;
+    const selectedModel = modelsQuery.data?.selectedModel;
+    if (typeof selectedModel === "string" && selectedModel.trim()) {
+      setModel(selectedModel.trim());
+    }
+  }, [existing, model, modelsQuery.data?.selectedModel]);
 
   // Fetch tools for multi-select (stage tools + auto-approve tools)
   const toolsQuery = useQuery({
@@ -367,13 +447,17 @@ const JobForm = ({ existing, onClose }: { existing: ScheduledJob | null; onClose
       actionPayload,
     };
 
-    if (actionType === "prompt" || actionType === "pipeline") {
-      const modelValue = model.trim();
-      if (existing) {
-        payload.model = modelValue || null;
-      } else if (modelValue) {
-        payload.model = modelValue;
-      }
+    const modelValue = model.trim();
+    if (existing) {
+      payload.model = modelValue || null;
+    } else if (modelValue) {
+      payload.model = modelValue;
+    }
+
+    if (modelValue && modelSupportsReasoning) {
+      payload.reasoningEffort = reasoningEffort;
+    } else if (existing) {
+      payload.reasoningEffort = null;
     }
 
     // Auto-approve tools: for pipelines, derived from stage tools; for others, manual selection
@@ -535,17 +619,29 @@ const JobForm = ({ existing, onClose }: { existing: ScheduledJob | null; onClose
           </Field>
         )}
 
-        {(actionType === "prompt" || actionType === "pipeline") && (
-          <Field label="Model" hint="Optional — defaults to the system model.">
+        <Field label="Model" hint="Optional — defaults to the system model.">
+          <select
+            className="w-full rounded-lg border border-border bg-card text-foreground px-3 py-2 text-sm"
+            value={model ?? ""}
+            onChange={(e) => setModel(e.target.value)}
+            disabled={modelsQuery.isLoading && modelOptions.length === 0}
+          >
+            <option value="">Default (System)</option>
+            {modelOptions.map((modelId) => (
+              <option key={modelId} value={modelId}>{modelId}</option>
+            ))}
+          </select>
+        </Field>
+
+        {model.trim() && modelSupportsReasoning && (
+          <Field label="Reasoning Effort" hint="Used only for reasoning-capable models.">
             <select
               className="w-full rounded-lg border border-border bg-card text-foreground px-3 py-2 text-sm"
-              value={model ?? ""}
-              onChange={(e) => setModel(e.target.value)}
-              disabled={modelsQuery.isLoading}
+              value={reasoningEffort}
+              onChange={(e) => setReasoningEffort(e.target.value as ReasoningEffort)}
             >
-              <option value="">Default (System)</option>
-              {models.map((m) => (
-                <option key={m.id} value={m.id}>{m.id}</option>
+              {availableReasoningEfforts.map((effort) => (
+                <option key={effort} value={effort}>{effort}</option>
               ))}
             </select>
           </Field>

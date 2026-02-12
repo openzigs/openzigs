@@ -1,4 +1,5 @@
 import type { ChannelType } from "../channels/types.js";
+import type { ReasoningEffort } from "../copilot/copilot-wrapper.js";
 
 export type TaskTrigger = "chat" | "cron" | "agent" | "webhook";
 export type TaskStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
@@ -71,6 +72,8 @@ export type AgentTask = {
   channelType: ChannelType | null;
   chatId: string | null;
   model: string | null;
+  /** Optional reasoning effort override for reasoning-capable models. */
+  reasoningEffort: ReasoningEffort | null;
   /** Optional tool allowlist. null = all enabled tools. */
   allowedTools: string[] | null;
   /** Tools that bypass normal approval gating for this task. null = no overrides. */
@@ -94,6 +97,8 @@ export type CreateTaskInput = {
   channelType?: ChannelType;
   chatId?: string;
   model?: string;
+  /** Optional reasoning effort override for reasoning-capable models. */
+  reasoningEffort?: ReasoningEffort;
   /** Optional tool allowlist for this task. */
   allowedTools?: string[];
   /** Tools that bypass normal approval gating for this task. */
@@ -118,6 +123,7 @@ export type StoredTask = {
   channel_type: string | null;
   chat_id: string | null;
   model: string | null;
+  reasoning_effort: string | null;
   allowed_tools: string | null;
   auto_approve_tools: string | null;
   pipeline: string | null;

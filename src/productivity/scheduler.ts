@@ -7,6 +7,7 @@ import path from "node:path";
 import os from "node:os";
 import type { TaskEngine } from "../tasks/task-engine.js";
 import type { PipelineStage } from "../tasks/types.js";
+import type { ReasoningEffort } from "../copilot/copilot-wrapper.js";
 
 export type ScheduledJob = {
   id: string;
@@ -16,6 +17,7 @@ export type ScheduledJob = {
   actionType: "prompt" | "shell" | "custom";
   actionPayload: Record<string, unknown>;
   model: string | null;
+  reasoningEffort: ReasoningEffort | null;
   /** Optional list of tool names this job is allowed to use. null = all enabled tools. */
   allowedTools: string[] | null;
   /** Tools that bypass approval gating when this job runs. null = normal approval flow. */
@@ -35,6 +37,7 @@ export type CreateJobInput = {
   actionType?: "prompt" | "shell" | "custom";
   actionPayload: Record<string, unknown>;
   model?: string;
+  reasoningEffort?: ReasoningEffort;
   /** Optional list of tool names this job is allowed to use. */
   allowedTools?: string[];
   /** Tools that bypass approval gating for this job. */
@@ -48,6 +51,7 @@ export type UpdateJobInput = {
   timezone?: string;
   actionPayload?: Record<string, unknown>;
   model?: string | null;
+  reasoningEffort?: ReasoningEffort | null;
   /** Set to an array to restrict tools, or null to clear restriction. */
   allowedTools?: string[] | null;
   /** Set to an array to auto-approve tools, or null to clear. */
@@ -63,6 +67,7 @@ type StoredJob = {
   action_type: string;
   action_payload: string;
   model: string | null;
+  reasoning_effort: string | null;
   allowed_tools: string | null;
   auto_approve_tools: string | null;
   enabled: number;
@@ -105,6 +110,7 @@ const toJob = (row: StoredJob): ScheduledJob => ({
   actionType: row.action_type as ScheduledJob["actionType"],
   actionPayload: JSON.parse(row.action_payload) as Record<string, unknown>,
   model: row.model ?? null,
+  reasoningEffort: (row.reasoning_effort as ReasoningEffort | null) ?? null,
   allowedTools: row.allowed_tools ? (JSON.parse(row.allowed_tools) as string[]) : null,
   autoApproveTools: row.auto_approve_tools ? (JSON.parse(row.auto_approve_tools) as string[]) : null,
   enabled: row.enabled === 1,
@@ -160,6 +166,11 @@ export class Scheduler extends EventEmitter {
       this.db.exec("ALTER TABLE scheduled_jobs ADD COLUMN allowed_tools TEXT DEFAULT NULL");
     }
 
+    // Add 'reasoning_effort' column if it doesn't exist
+    if (!columns.some((c) => c.name === "reasoning_effort")) {
+      this.db.exec("ALTER TABLE scheduled_jobs ADD COLUMN reasoning_effort TEXT DEFAULT NULL");
+    }
+
     // Add 'auto_approve_tools' column — tools that bypass approval gating
     if (!columns.some((c) => c.name === "auto_approve_tools")) {
       this.db.exec("ALTER TABLE scheduled_jobs ADD COLUMN auto_approve_tools TEXT DEFAULT NULL");
@@ -179,8 +190,8 @@ export class Scheduler extends EventEmitter {
     this.db
       .prepare(
         `INSERT INTO scheduled_jobs
-          (id, name, cron_expression, timezone, action_type, action_payload, model, allowed_tools, auto_approve_tools, enabled, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          (id, name, cron_expression, timezone, action_type, action_payload, model, reasoning_effort, allowed_tools, auto_approve_tools, enabled, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         id,
@@ -190,6 +201,7 @@ export class Scheduler extends EventEmitter {
         input.actionType ?? "prompt",
         JSON.stringify(input.actionPayload),
         input.model ?? null,
+        input.reasoningEffort ?? null,
         input.allowedTools ? JSON.stringify(input.allowedTools) : null,
         input.autoApproveTools ? JSON.stringify(input.autoApproveTools) : null,
         enabled ? 1 : 0,
@@ -234,6 +246,7 @@ export class Scheduler extends EventEmitter {
     const timezone = input.timezone ?? existing.timezone;
     const actionPayload = JSON.stringify(input.actionPayload ?? existing.actionPayload);
     const model = input.model !== undefined ? input.model : existing.model;
+    const reasoningEffort = input.reasoningEffort !== undefined ? input.reasoningEffort : existing.reasoningEffort;
     const allowedTools = input.allowedTools !== undefined
       ? (input.allowedTools ? JSON.stringify(input.allowedTools) : null)
       : (existing.allowedTools ? JSON.stringify(existing.allowedTools) : null);
@@ -245,10 +258,10 @@ export class Scheduler extends EventEmitter {
     this.db
       .prepare(
         `UPDATE scheduled_jobs
-         SET name = ?, cron_expression = ?, timezone = ?, action_payload = ?, model = ?, allowed_tools = ?, auto_approve_tools = ?, enabled = ?, updated_at = ?
+          SET name = ?, cron_expression = ?, timezone = ?, action_payload = ?, model = ?, reasoning_effort = ?, allowed_tools = ?, auto_approve_tools = ?, enabled = ?, updated_at = ?
          WHERE id = ?`
       )
-      .run(name, cronExpression, timezone, actionPayload, model, allowedTools, autoApproveTools, enabled ? 1 : 0, now, id);
+        .run(name, cronExpression, timezone, actionPayload, model, reasoningEffort, allowedTools, autoApproveTools, enabled ? 1 : 0, now, id);
 
     // Restart the cron task if expression or timezone changed
     this.stopTask(id);
@@ -355,6 +368,7 @@ export class Scheduler extends EventEmitter {
             goal,
             context,
             model: job.model ?? undefined,
+            reasoningEffort: job.reasoningEffort ?? undefined,
             allowedTools: job.allowedTools ?? undefined,
             autoApproveTools: job.autoApproveTools ?? undefined,
             pipeline: pipelineStages ? { stages: pipelineStages } : undefined,

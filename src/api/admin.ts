@@ -246,6 +246,16 @@ const normalizeSchedulerSuggestion = (
   };
 };
 
+const VALID_REASONING_EFFORTS = new Set<ReasoningEffort>(["low", "medium", "high", "xhigh"]);
+
+const parseReasoningEffort = (value: unknown): ReasoningEffort | undefined => {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return VALID_REASONING_EFFORTS.has(trimmed as ReasoningEffort)
+    ? (trimmed as ReasoningEffort)
+    : undefined;
+};
+
 export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerManager, promptManager, scheduler, personalityManager, sessionManager, copilot, taskWorker, taskEngine, webhookManager }: AdminRouterOptions) => {
   const router = Router();
 
@@ -853,8 +863,12 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
       const body = req.body as Record<string, unknown>;
       const name = typeof body.name === "string" ? body.name.trim() : "";
       const cronExpression = typeof body.cronExpression === "string" ? body.cronExpression.trim() : "";
+      const reasoningEffort = parseReasoningEffort(body.reasoningEffort);
       if (!name || !cronExpression) {
         return res.status(400).json({ error: "name and cronExpression are required" });
+      }
+      if (body.reasoningEffort !== undefined && body.reasoningEffort !== null && !reasoningEffort) {
+        return res.status(400).json({ error: "reasoningEffort must be 'low', 'medium', 'high', or 'xhigh'" });
       }
       try {
         const job = scheduler.create({
@@ -864,6 +878,7 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
           actionType: typeof body.actionType === "string" ? (body.actionType as "prompt" | "shell" | "custom") : undefined,
           actionPayload: (body.actionPayload ?? {}) as Record<string, unknown>,
           model: typeof body.model === "string" ? body.model : undefined,
+          reasoningEffort,
           allowedTools: Array.isArray(body.allowedTools) ? (body.allowedTools as string[]) : undefined,
           autoApproveTools: Array.isArray(body.autoApproveTools) ? (body.autoApproveTools as string[]) : undefined,
           enabled: typeof body.enabled === "boolean" ? body.enabled : undefined,
@@ -877,6 +892,10 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
 
     router.put("/jobs/:id", (req, res) => {
       const body = req.body as Record<string, unknown>;
+      const reasoningEffort = parseReasoningEffort(body.reasoningEffort);
+      if (body.reasoningEffort !== undefined && body.reasoningEffort !== null && !reasoningEffort) {
+        return res.status(400).json({ error: "reasoningEffort must be 'low', 'medium', 'high', 'xhigh', or null" });
+      }
       try {
         const updated = scheduler.update(req.params.id, {
           name: typeof body.name === "string" ? body.name.trim() : undefined,
@@ -884,6 +903,7 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
           timezone: typeof body.timezone === "string" ? body.timezone : undefined,
           actionPayload: body.actionPayload as Record<string, unknown> | undefined,
           model: typeof body.model === "string" ? body.model : (body.model === null ? null : undefined),
+          reasoningEffort: reasoningEffort ?? (body.reasoningEffort === null ? null : undefined),
           allowedTools: Array.isArray(body.allowedTools) ? (body.allowedTools as string[]) : (body.allowedTools === null ? null : undefined),
           autoApproveTools: Array.isArray(body.autoApproveTools) ? (body.autoApproveTools as string[]) : (body.autoApproveTools === null ? null : undefined),
           enabled: typeof body.enabled === "boolean" ? body.enabled : undefined,
