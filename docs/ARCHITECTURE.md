@@ -1660,3 +1660,107 @@ A `documentation-expert` custom agent (with `infer: true`) can be automatically 
 | `query-documentation` | productivity | low | Search project documentation by topic |
 
 ### Tracking: [Epic #156](https://github.com/mgcronin/openzigs/issues/156)
+
+---
+
+## UX 2.0: Advanced Workflow Builder (Epic #163)
+
+### Recursive Pipeline Schema
+
+Pipelines now support recursive node types via a discriminated union (Zod):
+
+```
+PipelineNode = PipelineStage (type: "prompt") | ParallelGroup (type: "parallel")
+```
+
+- **PipelineStage** (`type: "prompt"`): A single LLM agent stage with prompt, tool restrictions, model override, timeout, and optional post-action.
+- **ParallelGroup** (`type: "parallel"`): Contains `branches: PipelineNode[]` executed concurrently via `Promise.all`.
+- **Recursion**: `ParallelGroup.branches` can contain nested `PipelineStage` or further `ParallelGroup` nodes (max depth: 4).
+- **Backward Compatibility**: Legacy stages without `type` are auto-detected and normalized via `normalizeLegacyStages()`.
+
+**Execution model in `TaskWorker`:**
+
+```
+executePipeline(task)
+  → normalize legacy stages
+  → for each top-level node (sequential):
+      → executeNode(node)
+        → if "prompt": executePromptStage() → submit child task, wait
+        → if "parallel": executeParallelGroup()
+          → Promise.all(branches.map(b => executeNode(b)))
+```
+
+| Component | Path | Purpose |
+|-----------|------|---------|
+| `pipelineNodeSchema` | `src/tasks/pipeline-schema.ts` | Zod schema with `z.lazy()` + `z.discriminatedUnion()` |
+| `validatePipeline()` | `src/tasks/pipeline-schema.ts` | Schema validation + depth limit check |
+| `flattenPipeline()` | `src/tasks/pipeline-schema.ts` | Flatten recursive tree to ordered stage list |
+| `normalizeLegacyStages()` | `src/tasks/pipeline-schema.ts` | Add `type: "prompt"` to legacy stages |
+| `executeNode()` | `src/tasks/task-worker.ts` | Recursive node dispatcher |
+| `executeParallelGroup()` | `src/tasks/task-worker.ts` | Promise.all branch execution |
+
+### Global Approval Lock Override
+
+Global approval overrides are stored per-tool in `config/tools.json` under `globalApprovalOverrides`. When a tool has a global approval lock:
+
+1. The lock check runs **before** auto-approve evaluation in `createHooksConfig()`.
+2. Even if the tool is in the task's `autoApproveTools` list or the interactive auto-approve context, the lock **forces approval queue gating**.
+3. This provides admin-level control over dangerous tools that cannot be bypassed by any automation.
+
+```
+Priority chain in onPreToolUse:
+  1. requiresGlobalApproval(name) → always ask (cannot bypass)
+  2. autoApproveTools list → allow (skip approval queue)
+  3. requiresApproval(name) [risk-based] → ask/allow
+  4. default → allow
+```
+
+| Component | Path | Purpose |
+|-----------|------|---------|
+| `requiresGlobalApproval()` | `src/mcp/tool-registry.ts` | Check global lock state |
+| `setGlobalApprovalOverride()` | `src/mcp/tool-registry.ts` | Toggle + persist lock state |
+| Lock check in hooks | `src/copilot/hooks.ts` | Priority-1 gate before auto-approve |
+| Admin API endpoint | `src/api/admin.ts` | `POST /tools/:name/global-approval` |
+| UI toggle | `ui/components/admin/tools-panel.tsx` | Lock/unlock icon button per tool |
+
+### Pipeline Planner Agent
+
+The `PipelinePlanner` class generates multi-stage pipeline definitions from natural language goals using a lightweight LLM call (defaults to `gpt-5-mini`).
+
+```
+User describes goal
+  → PipelinePlanner.plan(goal, { availableTools })
+  → System prompt + goal → LLM call (no tools, structured JSON output)
+  → Parse + validate via pipelineNodeSchema
+  → Return { pipeline, rationale }
+```
+
+| Component | Path | Purpose |
+|-----------|------|---------|
+| `PipelinePlanner` | `src/tasks/pipeline-planner.ts` | LLM-based pipeline generation |
+| Admin API | `src/api/admin.ts` | `POST /pipeline/plan` endpoint |
+
+### Visual Pipeline Editor
+
+The frontend pipeline editor uses **React Flow** (`@xyflow/react`) to render an interactive DAG canvas:
+
+- **Custom node types**: `PromptNode` (green dot, shows prompt preview + tool badges) and `ParallelNode` (dashed blue border, branch count).
+- **Bidirectional conversion**: `pipelineToFlow()` converts `PipelineNode[]` → React Flow nodes/edges; `flowToPipeline()` does the reverse via topological sort.
+- **Editor sidebar**: Click a node to edit its name, prompt, tools, and timeout.
+- **Controls**: "Add Stage" (prompt), "Add Parallel" (group), "Save" buttons.
+- **Read-only mode**: Disable editing during pipeline execution.
+
+| Component | Path | Purpose |
+|-----------|------|---------|
+| `PipelineEditor` | `ui/components/pipeline/pipeline-editor.tsx` | React Flow DAG canvas |
+| `WorkflowWizard` | `ui/components/pipeline/workflow-wizard.tsx` | 4-step wizard (goal → plan → edit → confirm) |
+
+### Scheduler Pipeline Integration
+
+The scheduler job form now supports a `pipeline` action type alongside `prompt`, `shell`, and `custom`:
+
+- Selecting "Pipeline" shows the `PipelineEditor` inline in the job form.
+- Pipeline stages are stored in `actionPayload.stages` on the scheduled job.
+- Validation enforces a minimum of 2 stages before saving.
+
+### Tracking: [Epic #163](https://github.com/mgcronin/openzigs/issues/163)

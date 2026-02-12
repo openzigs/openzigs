@@ -31,16 +31,21 @@ export type ToolInfo = {
   enabled: boolean;
   /** The sidecar/source this tool belongs to, if any. */
   source?: string;
+  /** Whether this tool has a global approval lock (requires approval regardless of risk level). */
+  globalApprovalRequired?: boolean;
 };
 
 export type ToolRegistryState = {
   enabledTools: string[];
   customRiskOverrides: Record<string, RiskLevel>;
+  /** Per-tool global approval override: true = always require approval regardless of risk level. */
+  globalApprovalOverrides: Record<string, boolean>;
 };
 
 const defaultState: ToolRegistryState = {
   enabledTools: [],
-  customRiskOverrides: {}
+  customRiskOverrides: {},
+  globalApprovalOverrides: {},
 };
 
 const isRiskLevel = (value: unknown): value is RiskLevel => {
@@ -68,9 +73,19 @@ const loadState = (statePath: string): ToolRegistryState | null => {
       }
     }
 
+    const globalApprovalOverrides: Record<string, boolean> = {};
+    if (parsed.globalApprovalOverrides && typeof parsed.globalApprovalOverrides === "object") {
+      for (const [tool, value] of Object.entries(parsed.globalApprovalOverrides as Record<string, unknown>)) {
+        if (typeof value === "boolean") {
+          globalApprovalOverrides[tool] = value;
+        }
+      }
+    }
+
     return {
       enabledTools,
-      customRiskOverrides
+      customRiskOverrides,
+      globalApprovalOverrides,
     };
   } catch (error) {
     console.error(`[ToolRegistry] Failed to load state from ${statePath}:`, error);
@@ -94,6 +109,7 @@ export class ToolRegistry extends EventEmitter {
   private tools = new Map<string, ToolDefinition>();
   private enabledTools: Set<string> | null;
   private customRiskOverrides: Record<string, RiskLevel>;
+  private globalApprovalOverrides: Record<string, boolean>;
   private statePath: string;
 
   constructor({ statePath, defaultEnabledTools = [] }: ToolRegistryOptions) {
@@ -104,9 +120,11 @@ export class ToolRegistry extends EventEmitter {
     if (state) {
       this.enabledTools = new Set(state.enabledTools);
       this.customRiskOverrides = state.customRiskOverrides;
+      this.globalApprovalOverrides = state.globalApprovalOverrides;
     } else {
       this.enabledTools = defaultEnabledTools.length > 0 ? new Set(defaultEnabledTools) : null;
       this.customRiskOverrides = { ...defaultState.customRiskOverrides };
+      this.globalApprovalOverrides = { ...defaultState.globalApprovalOverrides };
     }
   }
 
@@ -132,6 +150,7 @@ export class ToolRegistry extends EventEmitter {
         riskLevel,
         enabled: this.isEnabled(tool.name),
         source: tool.source,
+        globalApprovalRequired: this.globalApprovalOverrides[tool.name] === true ? true : undefined,
       });
     }
 
@@ -154,6 +173,7 @@ export class ToolRegistry extends EventEmitter {
       riskLevel: this.getRiskLevel(name) ?? tool.riskLevel,
       enabled: this.isEnabled(name),
       source: tool.source,
+      globalApprovalRequired: this.globalApprovalOverrides[name] === true ? true : undefined,
     };
   }
 
@@ -169,6 +189,7 @@ export class ToolRegistry extends EventEmitter {
           riskLevel: this.getRiskLevel(tool.name) ?? tool.riskLevel,
           enabled: this.isEnabled(tool.name),
           source: tool.source,
+          globalApprovalRequired: this.globalApprovalOverrides[tool.name] === true ? true : undefined,
         });
       }
     }
@@ -204,17 +225,38 @@ export class ToolRegistry extends EventEmitter {
       this.enabledTools.delete(name);
     }
 
-    await saveState(this.statePath, {
-      enabledTools: Array.from(this.enabledTools).sort(),
-      customRiskOverrides: this.customRiskOverrides
-    });
-
+    await this.persistState();
     this.emit("tool:toggled", { name, enabled });
   }
 
+  /** Returns true if the tool requires approval (either via risk level or global override). */
   requiresApproval(name: string): boolean {
+    if (this.globalApprovalOverrides[name] === true) {
+      return true;
+    }
     const riskLevel = this.getRiskLevel(name) ?? this.tools.get(name)?.riskLevel;
     return riskLevel === "high";
+  }
+
+  /** Returns true if the tool has a global approval lock (regardless of risk level). */
+  requiresGlobalApproval(name: string): boolean {
+    return this.globalApprovalOverrides[name] === true;
+  }
+
+  /** Set or clear a global approval override for a tool. */
+  async setGlobalApprovalOverride(name: string, required: boolean) {
+    if (!this.tools.has(name)) {
+      throw new Error(`Unknown tool: ${name}`);
+    }
+
+    if (required) {
+      this.globalApprovalOverrides[name] = true;
+    } else {
+      delete this.globalApprovalOverrides[name];
+    }
+
+    await this.persistState();
+    this.emit("tool:globalApprovalChanged", { name, required });
   }
 
   async setRiskOverride(name: string, riskLevel: RiskLevel) {
@@ -228,11 +270,7 @@ export class ToolRegistry extends EventEmitter {
       this.enabledTools = new Set(this.tools.keys());
     }
 
-    await saveState(this.statePath, {
-      enabledTools: Array.from(this.enabledTools).sort(),
-      customRiskOverrides: this.customRiskOverrides
-    });
-
+    await this.persistState();
     this.emit("tool:riskChanged", { name, riskLevel });
   }
 
@@ -242,5 +280,17 @@ export class ToolRegistry extends EventEmitter {
 
   private getRiskLevel(name: string): RiskLevel | undefined {
     return this.customRiskOverrides[name];
+  }
+
+  /** Persist the full registry state (enabled tools, risk overrides, global approval overrides). */
+  private async persistState() {
+    if (this.enabledTools === null) {
+      this.enabledTools = new Set(this.tools.keys());
+    }
+    await saveState(this.statePath, {
+      enabledTools: Array.from(this.enabledTools).sort(),
+      customRiskOverrides: this.customRiskOverrides,
+      globalApprovalOverrides: this.globalApprovalOverrides,
+    });
   }
 }

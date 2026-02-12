@@ -303,6 +303,59 @@ Approval overrides let specific tools run without human confirmation during sche
 3. An audit log entry (`tool_auto_approved`) is recorded for every auto-approved invocation.
 4. Tools **not** in the auto-approve list still follow normal approval gating.
 
+#### Pipeline Jobs (Visual Workflow Builder)
+
+The scheduler now supports **pipeline** as a job action type. A pipeline job executes a multi-stage agent workflow where each stage runs sequentially (or in parallel groups) with its own prompt, tool restrictions, and optional model override.
+
+**Creating a pipeline job:**
+
+1. In the New Job form, select **Pipeline** as the action type.
+2. The **Visual Pipeline Editor** appears inline, powered by React Flow.
+3. Add stages using the toolbar buttons:
+   - **+ Stage** — Adds a prompt stage (single LLM agent step).
+   - **+ Parallel** — Adds a parallel group (multiple stages running concurrently).
+4. Click any node to open the **Stage Editor** sidebar:
+   - **Name** — Display label for the stage.
+   - **Prompt** — The instruction sent to the LLM for this stage.
+   - **Tools** — Comma-separated tool allowlist restricting which MCP tools are available.
+   - **Timeout** — Maximum execution time in seconds.
+5. Connect nodes by dragging from output handles (bottom) to input handles (top).
+6. Click **Save** when the pipeline has at least 2 stages.
+
+**Recursive pipelines:** Parallel groups can contain nested stages or further parallel groups, up to 4 levels deep. This allows complex fan-out/fan-in patterns.
+
+**Pipeline Planner (Auto-Plan):** The **Workflow Wizard** provides an AI-assisted pipeline creation flow:
+
+1. Navigate to the Workflow Wizard (available from the pipeline editor).
+2. Describe your goal in plain English (e.g., "Research competitors, analyze their pricing, and draft a comparison report").
+3. Click **Auto-Plan Pipeline** — the system calls the Pipeline Planner Agent (`POST /api/admin/pipeline/plan`) which generates a structured pipeline definition.
+4. Review the AI's rationale and the generated pipeline in the visual editor.
+5. Make adjustments if needed, then confirm to create the pipeline.
+
+#### Global Tool Approval Lock
+
+Administrators can set a **global approval lock** on any tool from the Admin → Tools panel. When a tool is locked:
+
+- A 🔒 icon appears on the tool card. Click it to toggle the lock.
+- **Locked tools always require human approval**, even if they appear in a task's `autoApproveTools` list or the interactive auto-approve context.
+- This provides an admin-level safety mechanism for dangerous tools (e.g., `shell-execute`, `write-file`) that cannot be bypassed by any automation.
+
+To toggle a lock via the API:
+
+```bash
+# Lock a tool
+curl -X POST -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"required": true}' \
+  http://localhost:3000/api/admin/tools/shell-execute/global-approval
+
+# Unlock a tool
+curl -X POST -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"required": false}' \
+  http://localhost:3000/api/admin/tools/shell-execute/global-approval
+```
+
 ### Workbench (Project Editor)
 
 The Workbench at `/workbench` is a rich Markdown editor for drafting documents, notes, and content — powered by [MDXEditor](https://mdxeditor.dev/).

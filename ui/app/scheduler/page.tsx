@@ -7,6 +7,7 @@ import { fetchJson } from "@/lib/api";
 import type { ModelInfo, SavedPrompt, ScheduledJob } from "@/lib/types";
 import { SectionCard } from "@/components/section-card";
 import { ToastContainer, showToast } from "@/components/toast";
+import { PipelineEditor } from "@/components/pipeline/pipeline-editor";
 
 export default function SchedulerPage() {
   const queryClient = useQueryClient();
@@ -239,9 +240,14 @@ const JobForm = ({ existing, onClose }: { existing: ScheduledJob | null; onClose
       : ""
   );
   const [payloadText, setPayloadText] = useState(
-    existing && existing.actionType !== "prompt" && existing.actionPayload
+    existing && existing.actionType !== "prompt" && existing.actionType !== "pipeline" && existing.actionPayload
       ? JSON.stringify(existing.actionPayload, null, 2)
       : ""
+  );
+  const [pipelineStages, setPipelineStages] = useState<Array<Record<string, unknown>>>(
+    existing?.actionType === "pipeline" && existing?.actionPayload?.stages
+      ? (existing.actionPayload.stages as Array<Record<string, unknown>>)
+      : []
   );
   const [cronExpression, setCronExpression] = useState(existing?.cronExpression ?? "");
   const [timezone, setTimezone] = useState(existing?.timezone ?? "UTC");
@@ -302,6 +308,9 @@ const JobForm = ({ existing, onClose }: { existing: ScheduledJob | null; onClose
     if (actionType === "prompt") {
       if (!promptName) { showToast("Select a prompt for this job.", "error"); return; }
       actionPayload = { promptName };
+    } else if (actionType === "pipeline") {
+      if (pipelineStages.length < 2) { showToast("Pipeline needs at least 2 stages.", "error"); return; }
+      actionPayload = { stages: pipelineStages };
     } else {
       try {
         actionPayload = JSON.parse(payloadText.trim() || "{}");
@@ -433,6 +442,7 @@ const JobForm = ({ existing, onClose }: { existing: ScheduledJob | null; onClose
             onChange={(e) => setActionType(e.target.value)}
           >
             <option value="prompt">Prompt</option>
+            <option value="pipeline">Pipeline</option>
             <option value="shell">Shell</option>
             <option value="custom">Custom</option>
           </select>
@@ -456,6 +466,19 @@ const JobForm = ({ existing, onClose }: { existing: ScheduledJob | null; onClose
               <p className="mt-1 text-[11px] text-muted-foreground">
                 No prompts saved yet.{" "}
                 <a href="/library" className="text-primary hover:underline">Create one first</a>.
+              </p>
+            )}
+          </Field>
+        ) : actionType === "pipeline" ? (
+          <Field label="Pipeline Stages" hint="Design a multi-stage pipeline using the visual editor. Click Save in the editor when done.">
+            <PipelineEditor
+              initialStages={pipelineStages as never[]}
+              onSave={(stages) => setPipelineStages(stages as unknown as Array<Record<string, unknown>>)}
+              height="350px"
+            />
+            {pipelineStages.length > 0 && (
+              <p className="mt-1 text-[11px] text-emerald-600 dark:text-emerald-400">
+                {pipelineStages.length} stage{pipelineStages.length !== 1 ? "s" : ""} configured
               </p>
             )}
           </Field>

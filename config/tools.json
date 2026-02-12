@@ -61,5 +61,6 @@
     "word-to-pdf",
     "write-file"
   ],
-  "customRiskOverrides": {}
+  "customRiskOverrides": {},
+  "globalApprovalOverrides": {}
 }

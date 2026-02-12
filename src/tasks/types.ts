@@ -8,6 +8,8 @@ export type TaskMode = "immediate" | "background";
 
 /** A single stage in a multi-stage pipeline. Each stage runs as its own agent task with a fresh SDK session. */
 export type PipelineStage = {
+  /** Discriminator — always "prompt" for a single LLM stage. Legacy stages without `type` are treated as "prompt". */
+  type?: "prompt";
   /** Human-readable stage name (e.g., "clone-and-read", "review", "report"). */
   name: string;
   /** Prompt text for this stage. Supports {{variable}} interpolation. */
@@ -29,6 +31,18 @@ export type PipelineStage = {
   postAction?: PipelinePostAction;
 };
 
+/** A group of pipeline nodes executed concurrently via Promise.all. */
+export type ParallelGroup = {
+  type: "parallel";
+  /** Human-readable group name (e.g., "research-phase"). */
+  name: string;
+  /** Nodes to execute in parallel. Each branch is a PipelineNode. */
+  branches: PipelineNode[];
+};
+
+/** Recursive union: either a prompt stage or a parallel group containing nested nodes. */
+export type PipelineNode = PipelineStage | ParallelGroup;
+
 /** Deterministic post-action configuration for a pipeline stage. */
 export type PipelinePostAction = {
   /** Action type (e.g., "create-github-issues"). */
@@ -37,9 +51,9 @@ export type PipelinePostAction = {
   config?: Record<string, unknown>;
 };
 
-/** Ordered list of stages for sequential pipeline execution. */
+/** Ordered list of nodes for pipeline execution (sequential at top level, parallel within groups). */
 export type PipelineDefinition = {
-  stages: PipelineStage[];
+  stages: PipelineNode[];
 };
 
 // ── Task types ────────────────────────────────────────────────────────

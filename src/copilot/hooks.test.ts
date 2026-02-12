@@ -15,6 +15,7 @@ describe("createHooksConfig", () => {
   it("onPreToolUse allows tools that do not require approval", async () => {
     const toolRegistry = {
       requiresApproval: vi.fn().mockReturnValue(false),
+      requiresGlobalApproval: vi.fn().mockReturnValue(false),
     };
     const hooks = createHooksConfig({
       toolRegistry: toolRegistry as unknown as import("../mcp/tool-registry.js").ToolRegistry,
@@ -33,6 +34,7 @@ describe("createHooksConfig", () => {
   it("onPreToolUse denies tools when approval is rejected", async () => {
     const toolRegistry = {
       requiresApproval: vi.fn().mockReturnValue(true),
+      requiresGlobalApproval: vi.fn().mockReturnValue(false),
     };
     const approvalQueue = {
       requestApproval: vi.fn().mockResolvedValue({
@@ -60,6 +62,7 @@ describe("createHooksConfig", () => {
   it("onPreToolUse reports timeout when approval expires", async () => {
     const toolRegistry = {
       requiresApproval: vi.fn().mockReturnValue(true),
+      requiresGlobalApproval: vi.fn().mockReturnValue(false),
     };
     const approvalQueue = {
       requestApproval: vi.fn().mockResolvedValue({
@@ -86,6 +89,7 @@ describe("createHooksConfig", () => {
   it("onPreToolUse allows tools when approval is granted", async () => {
     const toolRegistry = {
       requiresApproval: vi.fn().mockReturnValue(true),
+      requiresGlobalApproval: vi.fn().mockReturnValue(false),
     };
     const approvalQueue = {
       requestApproval: vi.fn().mockResolvedValue({
@@ -110,6 +114,7 @@ describe("createHooksConfig", () => {
   it("onPreToolUse resolves channel from sessionManager", async () => {
     const toolRegistry = {
       requiresApproval: vi.fn().mockReturnValue(true),
+      requiresGlobalApproval: vi.fn().mockReturnValue(false),
     };
     const approvalQueue = {
       requestApproval: vi.fn().mockResolvedValue({
@@ -225,6 +230,7 @@ describe("createHooksConfig", () => {
   it("onPreToolUse auto-approves tools in activeAutoApproveTools list", async () => {
     const toolRegistry = {
       requiresApproval: vi.fn().mockReturnValue(true),
+      requiresGlobalApproval: vi.fn().mockReturnValue(false),
     };
     const approvalQueue = {
       requestApproval: vi.fn(),
@@ -255,6 +261,7 @@ describe("createHooksConfig", () => {
   it("onPreToolUse still gates tools NOT in activeAutoApproveTools list", async () => {
     const toolRegistry = {
       requiresApproval: vi.fn().mockReturnValue(true),
+      requiresGlobalApproval: vi.fn().mockReturnValue(false),
     };
     const approvalQueue = {
       requestApproval: vi.fn().mockResolvedValue({
@@ -306,5 +313,36 @@ describe("createHooksConfig", () => {
         }),
       })
     );
+  });
+
+  it("onPreToolUse blocks auto-approved tools when global approval lock is set", async () => {
+    const toolRegistry = {
+      requiresApproval: vi.fn().mockReturnValue(true),
+      requiresGlobalApproval: vi.fn().mockReturnValue(true), // 🔒 locked
+    };
+    const approvalQueue = {
+      requestApproval: vi.fn().mockResolvedValue({
+        approved: false,
+        status: "rejected",
+      }),
+    };
+    const hooks = createHooksConfig({
+      toolRegistry: toolRegistry as unknown as import("../mcp/tool-registry.js").ToolRegistry,
+      approvalQueue: approvalQueue as unknown as import("../approvals/index.js").ApprovalQueue,
+      log: silentLog,
+    });
+
+    // Even though shell-execute is in auto-approve list, global lock should override
+    const result = await runWithAutoApproveContext(["shell-execute"], () =>
+      hooks.onPreToolUse!({
+        toolName: "shell-execute",
+        toolArgs: { command: "echo hello" },
+        context: { sessionId: "test-session" },
+      })
+    );
+
+    expect(result.permissionDecision).toBe("deny");
+    // Should have gone through approval queue despite auto-approve
+    expect(approvalQueue.requestApproval).toHaveBeenCalled();
   });
 });

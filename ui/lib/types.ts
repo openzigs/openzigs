@@ -7,6 +7,8 @@ export type ToolInfo = {
   riskLevel: string;
   enabled: boolean;
   source?: string;
+  /** Whether this tool has a global approval lock (always requires approval). */
+  globalApprovalRequired?: boolean;
 };
 
 export type Approval = {

@@ -52,7 +52,50 @@ export const createHooksConfig = ({
 }: HooksFactoryOptions): HooksConfig => {
   return {
     onPreToolUse: async (input: HookPreToolUseInput): Promise<HookPreToolUseResult> => {
-      // Per-task auto-approve override: skip approval gating entirely.
+      // Priority 1: Global approval lock — tool requires approval regardless of risk level.
+      // This is checked BEFORE auto-approve so that global locks cannot be bypassed.
+      if (toolRegistry?.requiresGlobalApproval(input.toolName) && approvalQueue) {
+        let channelType: ApprovalChannel = "web";
+        if (sessionManager && input.context?.sessionId) {
+          try {
+            const session = await sessionManager.getSession(input.context.sessionId);
+            if (session?.channel) {
+              channelType = session.channel as ApprovalChannel;
+            }
+          } catch {
+            // If session lookup fails, default to web
+          }
+        }
+
+        const preview = formatApprovalContext(
+          input.toolName,
+          input.toolArgs as Record<string, unknown>
+        );
+        log.info(`Global approval lock triggered for tool "${input.toolName}"`);
+        const approval = await approvalQueue.requestApproval({
+          tool: input.toolName,
+          args: input.toolArgs as Record<string, unknown>,
+          riskLevel: "high",
+          explanation: "Global approval lock: this tool always requires human confirmation.",
+          preview: preview?.summary,
+          channelType,
+          sessionId: input.context?.sessionId,
+        });
+
+        if (!approval.approved) {
+          const reason = approval.status === "expired"
+            ? "Approval timed out"
+            : "User denied";
+          return {
+            permissionDecision: "deny",
+            permissionDecisionReason: reason,
+          };
+        }
+
+        return { permissionDecision: "allow" };
+      }
+
+      // Priority 2: Per-task auto-approve override: skip approval gating entirely.
       // Check both AsyncLocalStorage (works within same async chain, e.g. task-worker)
       // and closure-captured context (survives JSON-RPC boundaries, e.g. chat sessions).
       const activeAutoApproveTools =

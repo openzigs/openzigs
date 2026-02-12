@@ -1,9 +1,10 @@
 import { EventEmitter } from "node:events";
 import type { TaskEngine } from "./task-engine.js";
 import type { CopilotWrapper } from "../copilot/copilot-wrapper.js";
-import type { AgentTask } from "./types.js";
+import type { AgentTask, PipelineNode } from "./types.js";
 
 import { executePostAction } from "./post-actions.js";
+import { normalizeLegacyStages } from "./pipeline-schema.js";
 import { waitForTask } from "./wait-for-task.js";
 import { logger } from "../logging/logger.js";
 
@@ -148,7 +149,7 @@ export class TaskWorker extends EventEmitter {
       for await (const chunk of this.copilot.chat(prompt, {
         model: task.model ?? undefined,
         availableTools,
-        autoApproveTools: task.autoApproveTools,
+        autoApproveTools: task.autoApproveTools ?? undefined,
         onToolCall: (toolName, args) => {
           this.log.info(`TaskWorker tool call [${task.id}]: ${toolName}(${JSON.stringify(args).slice(0, 200)})`);
           toolCallLog.push({ tool: toolName, timestamp: Date.now() });
@@ -214,112 +215,55 @@ export class TaskWorker extends EventEmitter {
   }
 
   /**
-   * Execute a multi-stage pipeline. Each stage runs as its own child task
-   * with a fresh SDK session, solving the turn-limit problem for complex prompts.
+   * Execute a multi-stage pipeline. Supports both sequential prompt stages
+   * and parallel groups (branches executed via Promise.all).
    *
    * Stage N's output is passed as context to stage N+1, creating an accumulating
    * context chain. The parent task completes with the final stage's result.
+   *
+   * Backward-compatible: legacy flat PipelineStage[] (without `type` discriminator)
+   * are normalized to PipelineNode[] with `type: "prompt"`.
    */
   private async executePipeline(task: AgentTask): Promise<void> {
-    const { stages } = task.pipeline!;
-    const stageCount = stages.length;
-    this.log.info(`TaskWorker pipeline: ${stageCount} stages for task ${task.id}`);
+    const rawStages = task.pipeline!.stages;
+
+    // Normalize: if nodes lack the `type` discriminator, treat them as prompt stages.
+    const nodes: PipelineNode[] = rawStages.some((s) => (s as Record<string, unknown>).type)
+      ? rawStages
+      : normalizeLegacyStages(rawStages as unknown as Array<Record<string, unknown>>);
+
+    const nodeCount = nodes.length;
+    this.log.info(`TaskWorker pipeline: ${nodeCount} top-level nodes for task ${task.id}`);
 
     const stageResults: Array<{ name: string; status: string; result?: string; error?: string }> = [];
     let accumulatedContext = task.context || "";
 
     try {
-      for (let i = 0; i < stageCount; i++) {
-        const stage = stages[i];
-        const stageLabel = `[${i + 1}/${stageCount}] ${stage.name}`;
-        const timeoutMs = (stage.timeoutSeconds ?? 300) * 1_000;
+      for (let i = 0; i < nodeCount; i++) {
+        const node = nodes[i];
+        const label = `[${i + 1}/${nodeCount}] ${node.name}`;
+        this.log.info(`TaskWorker pipeline node ${label}: starting (type=${node.type ?? "prompt"})`);
 
-        this.log.info(`TaskWorker pipeline stage ${stageLabel}: starting`);
+        const nodeResult = await this.executeNode(node, task, accumulatedContext, nodeCount, i);
+        stageResults.push(...nodeResult.records);
 
-        // Build stage prompt with accumulated context from previous stages
-        const stagePrompt = this.buildStagePrompt(stage.prompt, accumulatedContext, i, stageCount);
-
-        // Merge stage-level autoApproveTools with parent task's autoApproveTools
-        const stageAutoApprove = [
-          ...(task.autoApproveTools ?? []),
-          ...(stage.autoApproveTools ?? []),
-        ];
-
-        // Submit stage as a child task
-        const childTask = this.engine.submit(
-          {
-            trigger: task.trigger,
-            goal: stagePrompt,
-            context: accumulatedContext,
-            model: stage.model ?? task.model ?? undefined,
-            allowedTools: stage.tools ?? task.allowedTools ?? undefined,
-            autoApproveTools: stageAutoApprove.length > 0 ? [...new Set(stageAutoApprove)] : undefined,
-            notifyOnComplete: false, // Parent handles notification
-            parentTaskId: task.id,
-            sessionId: task.sessionId ?? undefined,
-            channelType: task.channelType ?? undefined,
-            chatId: task.chatId ?? undefined,
-          },
-          { mode: "background" }
-        );
-
-        // Wait for stage to complete
-        // Important: use a fresh AbortController per stage.
-        // Re-using a single controller would permanently poison subsequent stages
-        // (once aborted, its signal stays aborted forever).
-        const stageController = new AbortController();
-        const stageTimer = setTimeout(() => stageController.abort(), timeoutMs);
-        let completedStage: AgentTask;
-        try {
-          completedStage = await waitForTask(this.engine, childTask.id, stageController.signal);
-        } finally {
-          clearTimeout(stageTimer);
-        }
-
-        const stageRecord = {
-          name: stage.name,
-          status: completedStage.status,
-          result: completedStage.result ?? undefined,
-          error: completedStage.error ?? undefined,
-        };
-        stageResults.push(stageRecord);
-
-        this.log.info(`TaskWorker pipeline stage ${stageLabel}: ${completedStage.status}`);
-
-        if (completedStage.status === "failed" || completedStage.status === "cancelled") {
-          // Abort pipeline on stage failure
-          const errorMsg = `Pipeline aborted: stage "${stage.name}" ${completedStage.status}: ${completedStage.error ?? "unknown error"}`;
+        if (nodeResult.failed) {
+          const errorMsg = `Pipeline aborted at node "${node.name}": ${nodeResult.error ?? "unknown error"}`;
           this.log.error(errorMsg);
           const failed = this.engine.fail(task.id, errorMsg);
           this.emit("task:error", failed);
           return;
         }
 
-        // Accumulate context: append this stage's result for the next stage
-        if (completedStage.result) {
-          accumulatedContext += `\n\n--- Output from stage "${stage.name}" ---\n${completedStage.result}`;
-        }
-
-        // Run deterministic post-action if configured (e.g. create GitHub issues)
-        if (stage.postAction && completedStage.result) {
-          this.log.info(`TaskWorker pipeline stage ${stageLabel}: running post-action "${stage.postAction.type}"`);
-          try {
-            const actionResult = await executePostAction(stage.postAction, completedStage.result);
-            accumulatedContext += `\n\n--- Post-action "${stage.postAction.type}" result ---\n${actionResult}`;
-            // Update the stage record with the action result
-            stageRecord.result = actionResult;
-          } catch (actionErr) {
-            const msg = actionErr instanceof Error ? actionErr.message : String(actionErr);
-            this.log.error(`TaskWorker pipeline post-action failed: ${msg}`);
-            stageRecord.error = `Post-action error: ${msg}`;
-          }
+        if (nodeResult.context) {
+          accumulatedContext += nodeResult.context;
         }
       }
 
-      // All stages completed — build final result
+      // All nodes completed — build final result
       const finalResult = this.buildPipelineResult(stageResults);
       const completed = this.engine.complete(task.id, finalResult);
-      this.log.info(`TaskWorker pipeline completed task ${task.id}: ${stageCount} stages`);
+      this.log.info(`TaskWorker pipeline completed task ${task.id}: ${nodeCount} nodes`);
       this.emit("task:done", completed);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -327,6 +271,167 @@ export class TaskWorker extends EventEmitter {
       this.log.error(`TaskWorker pipeline failed task ${task.id}: ${message}`);
       this.emit("task:error", failed);
     }
+  }
+
+  /** Result of executing a single pipeline node. */
+  private executeNodeResult(
+    records: Array<{ name: string; status: string; result?: string; error?: string }>,
+    context: string,
+    failed: boolean,
+    error?: string
+  ) {
+    return { records, context, failed, error };
+  }
+
+  /**
+   * Recursively execute a single pipeline node.
+   * - "prompt" nodes: submit as a child task and wait.
+   * - "parallel" nodes: execute all branches concurrently via Promise.all.
+   */
+  private async executeNode(
+    node: PipelineNode,
+    task: AgentTask,
+    accumulatedContext: string,
+    totalNodes: number,
+    nodeIndex: number,
+  ): Promise<{ records: Array<{ name: string; status: string; result?: string; error?: string }>; context: string; failed: boolean; error?: string }> {
+    if (node.type === "parallel") {
+      return this.executeParallelGroup(node, task, accumulatedContext);
+    }
+
+    // Prompt stage (leaf node)
+    return this.executePromptStage(node, task, accumulatedContext, totalNodes, nodeIndex);
+  }
+
+  /**
+   * Execute a single prompt stage as a child task.
+   */
+  private async executePromptStage(
+    stage: PipelineNode & { type?: "prompt" },
+    task: AgentTask,
+    accumulatedContext: string,
+    totalStages: number,
+    stageIndex: number,
+  ): Promise<{ records: Array<{ name: string; status: string; result?: string; error?: string }>; context: string; failed: boolean; error?: string }> {
+    const stageLabel = `[${stageIndex + 1}/${totalStages}] ${stage.name}`;
+    const timeoutMs = ((stage as { timeoutSeconds?: number }).timeoutSeconds ?? 300) * 1_000;
+
+    const stagePrompt = this.buildStagePrompt(
+      (stage as { prompt: string }).prompt,
+      accumulatedContext,
+      stageIndex,
+      totalStages
+    );
+
+    // Merge stage-level autoApproveTools with parent task's autoApproveTools
+    const stageAutoApprove = [
+      ...(task.autoApproveTools ?? []),
+      ...((stage as { autoApproveTools?: string[] }).autoApproveTools ?? []),
+    ];
+
+    // Submit stage as a child task
+    const childTask = this.engine.submit(
+      {
+        trigger: task.trigger,
+        goal: stagePrompt,
+        context: accumulatedContext,
+        model: (stage as { model?: string }).model ?? task.model ?? undefined,
+        allowedTools: (stage as { tools?: string[] | null }).tools ?? task.allowedTools ?? undefined,
+        autoApproveTools: stageAutoApprove.length > 0 ? [...new Set(stageAutoApprove)] : undefined,
+        notifyOnComplete: false,
+        parentTaskId: task.id,
+        sessionId: task.sessionId ?? undefined,
+        channelType: task.channelType ?? undefined,
+        chatId: task.chatId ?? undefined,
+      },
+      { mode: "background" }
+    );
+
+    // Wait for stage to complete
+    const stageController = new AbortController();
+    const stageTimer = setTimeout(() => stageController.abort(), timeoutMs);
+    let completedStage: AgentTask;
+    try {
+      completedStage = await waitForTask(this.engine, childTask.id, stageController.signal);
+    } finally {
+      clearTimeout(stageTimer);
+    }
+
+    const stageRecord = {
+      name: stage.name,
+      status: completedStage.status,
+      result: completedStage.result ?? undefined,
+      error: completedStage.error ?? undefined,
+    };
+
+    this.log.info(`TaskWorker pipeline stage ${stageLabel}: ${completedStage.status}`);
+
+    if (completedStage.status === "failed" || completedStage.status === "cancelled") {
+      return this.executeNodeResult(
+        [stageRecord],
+        "",
+        true,
+        `stage "${stage.name}" ${completedStage.status}: ${completedStage.error ?? "unknown error"}`
+      );
+    }
+
+    let contextDelta = "";
+    if (completedStage.result) {
+      contextDelta += `\n\n--- Output from stage "${stage.name}" ---\n${completedStage.result}`;
+    }
+
+    // Run deterministic post-action if configured
+    const postAction = (stage as { postAction?: { type: string; config?: Record<string, unknown> } }).postAction;
+    if (postAction && completedStage.result) {
+      this.log.info(`TaskWorker pipeline stage ${stageLabel}: running post-action "${postAction.type}"`);
+      try {
+        const actionResult = await executePostAction(postAction, completedStage.result);
+        contextDelta += `\n\n--- Post-action "${postAction.type}" result ---\n${actionResult}`;
+        stageRecord.result = actionResult;
+      } catch (actionErr) {
+        const msg = actionErr instanceof Error ? actionErr.message : String(actionErr);
+        this.log.error(`TaskWorker pipeline post-action failed: ${msg}`);
+        stageRecord.error = `Post-action error: ${msg}`;
+      }
+    }
+
+    return this.executeNodeResult([stageRecord], contextDelta, false);
+  }
+
+  /**
+   * Execute a parallel group: all branches run concurrently via Promise.all.
+   * If any branch fails, the entire group is marked as failed.
+   */
+  private async executeParallelGroup(
+    group: PipelineNode & { type: "parallel"; branches: PipelineNode[] },
+    task: AgentTask,
+    accumulatedContext: string,
+  ): Promise<{ records: Array<{ name: string; status: string; result?: string; error?: string }>; context: string; failed: boolean; error?: string }> {
+    const branchCount = group.branches.length;
+    this.log.info(`TaskWorker parallel group "${group.name}": ${branchCount} branches`);
+
+    const branchResults = await Promise.all(
+      group.branches.map((branch, idx) =>
+        this.executeNode(branch, task, accumulatedContext, branchCount, idx)
+      )
+    );
+
+    // Aggregate results
+    const allRecords: Array<{ name: string; status: string; result?: string; error?: string }> = [];
+    let combinedContext = "";
+    let anyFailed = false;
+    let firstError: string | undefined;
+
+    for (const result of branchResults) {
+      allRecords.push(...result.records);
+      combinedContext += result.context;
+      if (result.failed && !anyFailed) {
+        anyFailed = true;
+        firstError = result.error;
+      }
+    }
+
+    return this.executeNodeResult(allRecords, combinedContext, anyFailed, firstError);
   }
 
   /** Build a prompt for a pipeline stage, injecting context from prior stages. */

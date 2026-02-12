@@ -17,6 +17,7 @@ import type { SessionManager } from "../sessions/session-manager.js";
 import type { TaskWorker } from "../tasks/task-worker.js";
 import type { TaskEngine } from "../tasks/task-engine.js";
 import type { PipelineStage } from "../tasks/types.js";
+import { PipelinePlanner } from "../tasks/pipeline-planner.js";
 import type { WebhookManager } from "../webhooks/webhook-manager.js";
 
 type EnvEntry = {
@@ -306,6 +307,22 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
     try {
       await toolRegistry.setRiskOverride(name, riskLevel as RiskLevel);
       return res.json({ ok: true, tool: name, riskLevel });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return res.status(400).json({ error: message });
+    }
+  });
+
+  // ── Global Approval Lock Toggle ──
+  router.post("/tools/:name/global-approval", async (req, res) => {
+    const { name } = req.params;
+    const { required } = req.body as { required?: boolean };
+    if (typeof required !== "boolean") {
+      return res.status(400).json({ error: "required must be a boolean" });
+    }
+    try {
+      await toolRegistry.setGlobalApprovalOverride(name, required);
+      return res.json({ ok: true, tool: name, globalApprovalRequired: required });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return res.status(400).json({ error: message });
@@ -992,6 +1009,30 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         return res.status(500).json({ error: message });
+      }
+    });
+  }
+
+  // ── Pipeline Planner ──
+  if (copilot) {
+    router.post("/pipeline/plan", async (req, res) => {
+      const body = req.body as Record<string, unknown>;
+      const goal = typeof body.goal === "string" ? body.goal.trim() : "";
+      const model = typeof body.model === "string" ? body.model.trim() : undefined;
+
+      if (!goal) {
+        return res.status(400).json({ error: "goal is required" });
+      }
+
+      const availableTools = toolRegistry.listEnabledTools().map((t) => t.name);
+
+      try {
+        const planner = new PipelinePlanner(copilot);
+        const result = await planner.plan(goal, { availableTools, model: model || undefined });
+        return res.json(result);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return res.status(400).json({ error: message });
       }
     });
   }
