@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import {
   ReactFlow,
   Background,
@@ -18,7 +18,8 @@ import {
   Position,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { Plus, Trash2, GitBranch, Play, Save } from "lucide-react";
+import { Plus, Trash2, GitBranch, Save, ChevronDown, Search } from "lucide-react";
+import { ToolMultiSelect, type ToolOption } from "./tool-multi-select";
 
 /* ── Pipeline node types (matches backend PipelineNode) ── */
 
@@ -224,14 +225,126 @@ const flowToPipeline = (nodes: Node[], edges: Edge[]): BackendPipelineNode[] => 
 
 /* ── Stage Editor Sidebar ── */
 
+export type AvailablePrompt = {
+  id: string;
+  name: string;
+  description?: string;
+  template?: string;
+};
+
+const PromptSelector = ({
+  value,
+  prompts,
+  onChange,
+}: {
+  value: string;
+  prompts: AvailablePrompt[];
+  onChange: (prompt: string) => void;
+}) => {
+  const [showDropdown, setShowDropdown] = useState(false);
+  const [search, setSearch] = useState("");
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  const filteredPrompts = useMemo(() => {
+    if (!search.trim()) return prompts;
+    const q = search.toLowerCase();
+    return prompts.filter(
+      (p) => p.name.toLowerCase().includes(q) || p.description?.toLowerCase().includes(q)
+    );
+  }, [prompts, search]);
+
+  const handleTextChange = (text: string) => {
+    onChange(text);
+    // If user types "/" at the start or after whitespace, show prompt picker
+    if (text.endsWith("/") || text === "/") {
+      setShowDropdown(true);
+      setSearch("");
+    }
+  };
+
+  const selectPrompt = (prompt: AvailablePrompt) => {
+    // Replace any trailing "/" with the prompt template or reference
+    const base = value.replace(/\/\s*$/, "");
+    const insertion = prompt.template || `{{prompt:${prompt.name}}}`;
+    const newValue = base ? `${base}\n${insertion}` : insertion;
+    onChange(newValue);
+    setShowDropdown(false);
+    setSearch("");
+    textareaRef.current?.focus();
+  };
+
+  return (
+    <div className="relative">
+      <div className="flex items-center justify-between mb-1">
+        <span className="text-xs text-muted-foreground">Prompt</span>
+        <button
+          type="button"
+          onClick={() => { setShowDropdown(!showDropdown); setSearch(""); }}
+          className="text-[10px] text-primary hover:underline flex items-center gap-0.5"
+          title="Select from saved prompts"
+        >
+          <Search className="h-2.5 w-2.5" /> Browse prompts
+        </button>
+      </div>
+      <textarea
+        ref={textareaRef}
+        className="w-full rounded-lg border border-border bg-background px-3 py-1.5 text-sm min-h-[80px] resize-y"
+        value={value}
+        onChange={(e) => handleTextChange(e.target.value)}
+        placeholder='Type a prompt or press "/" to select a saved prompt…'
+      />
+      {showDropdown && (
+        <>
+          <div className="absolute z-50 mt-1 w-full max-h-48 overflow-y-auto rounded-lg border border-border bg-card shadow-lg">
+            <div className="sticky top-0 bg-card p-2 border-b border-border">
+              <input
+                type="text"
+                placeholder="Search saved prompts…"
+                className="w-full rounded-md border border-border bg-background px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-primary"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                autoFocus
+              />
+            </div>
+            {filteredPrompts.length === 0 ? (
+              <p className="px-3 py-2 text-xs text-muted-foreground">
+                {prompts.length === 0 ? "No saved prompts. Create one in the Library." : "No matches."}
+              </p>
+            ) : (
+              filteredPrompts.map((p) => (
+                <button
+                  key={p.id}
+                  type="button"
+                  onClick={() => selectPrompt(p)}
+                  className="flex w-full flex-col px-3 py-1.5 text-left hover:bg-muted/50"
+                >
+                  <span className="text-xs font-medium text-primary">{p.name}</span>
+                  {p.description && (
+                    <span className="text-[10px] text-muted-foreground truncate">{p.description}</span>
+                  )}
+                </button>
+              ))
+            )}
+          </div>
+          <div className="fixed inset-0 z-40" onClick={() => { setShowDropdown(false); setSearch(""); }} />
+        </>
+      )}
+    </div>
+  );
+};
+
 const StageEditor = ({
   node,
   onChange,
   onDelete,
+  availableTools,
+  availablePrompts,
 }: {
   node: Node;
   onChange: (id: string, data: Partial<PipelineNodeData>) => void;
   onDelete: (id: string) => void;
+  availableTools: ToolOption[];
+  availablePrompts: AvailablePrompt[];
 }) => {
   const data = node.data as PipelineNodeData;
 
@@ -269,26 +382,19 @@ const StageEditor = ({
           onChange={(e) => onChange(node.id, { ...promptData, name: e.target.value })}
         />
       </label>
-      <label className="block">
-        <span className="text-xs text-muted-foreground">Prompt</span>
-        <textarea
-          className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-1.5 text-sm min-h-[80px] resize-y"
-          value={promptData.prompt}
-          onChange={(e) => onChange(node.id, { ...promptData, prompt: e.target.value })}
-        />
-      </label>
-      <label className="block">
-        <span className="text-xs text-muted-foreground">Tools (comma-separated, empty = all)</span>
-        <input
-          className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-1.5 text-sm"
-          value={promptData.tools?.join(", ") ?? ""}
-          onChange={(e) => {
-            const val = e.target.value.trim();
-            const tools = val ? val.split(",").map((t) => t.trim()).filter(Boolean) : null;
-            onChange(node.id, { ...promptData, tools });
-          }}
-        />
-      </label>
+      <PromptSelector
+        value={promptData.prompt}
+        prompts={availablePrompts}
+        onChange={(prompt) => onChange(node.id, { ...promptData, prompt })}
+      />
+      <ToolMultiSelect
+        label="Tools"
+        tools={availableTools}
+        selected={promptData.tools}
+        onChange={(tools) => onChange(node.id, { ...promptData, tools })}
+        placeholder="All tools (no restriction)"
+        allowAll
+      />
       <label className="block">
         <span className="text-xs text-muted-foreground">Timeout (seconds)</span>
         <input
@@ -321,6 +427,10 @@ export type PipelineEditorProps = {
   height?: string;
   /** Whether the editor is read-only (e.g. during execution). */
   readOnly?: boolean;
+  /** Available tools for the multi-select in stage editor. */
+  availableTools?: ToolOption[];
+  /** Available saved prompts for the prompt selector. */
+  availablePrompts?: AvailablePrompt[];
 };
 
 export const PipelineEditor = ({
@@ -329,6 +439,8 @@ export const PipelineEditor = ({
   onChange,
   height = "500px",
   readOnly = false,
+  availableTools = [],
+  availablePrompts = [],
 }: PipelineEditorProps) => {
   const initial = useMemo(() => pipelineToFlow(initialStages), []);  // eslint-disable-line react-hooks/exhaustive-deps
   const [nodes, setNodes, onNodesChange] = useNodesState(initial.nodes);
@@ -449,9 +561,13 @@ export const PipelineEditor = ({
           className="bg-background"
         >
           <Background gap={16} size={1} />
-          <Controls />
+          <Controls position="bottom-right" />
           <MiniMap
-            className="!bg-card !border-border"
+            position="bottom-left"
+            className="!bg-card/80 !border-border !rounded-lg"
+            style={{ width: 120, height: 80 }}
+            pannable
+            zoomable
             nodeColor={(n) => {
               const d = n.data as PipelineNodeData;
               return d.type === "parallel" ? "#38bdf8" : "#10b981";
@@ -489,6 +605,8 @@ export const PipelineEditor = ({
             node={selectedNode}
             onChange={updateNodeData}
             onDelete={deleteNode}
+            availableTools={availableTools}
+            availablePrompts={availablePrompts}
           />
         </div>
       )}

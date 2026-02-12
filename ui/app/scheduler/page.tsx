@@ -4,10 +4,11 @@ import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSocket } from "@/lib/socket-context";
 import { fetchJson } from "@/lib/api";
-import type { ModelInfo, SavedPrompt, ScheduledJob } from "@/lib/types";
+import type { ModelInfo, SavedPrompt, ScheduledJob, ToolInfo } from "@/lib/types";
 import { SectionCard } from "@/components/section-card";
 import { ToastContainer, showToast } from "@/components/toast";
 import { PipelineEditor } from "@/components/pipeline/pipeline-editor";
+import { ToolMultiSelect, type ToolOption } from "@/components/pipeline/tool-multi-select";
 
 export default function SchedulerPage() {
   const queryClient = useQueryClient();
@@ -252,8 +253,8 @@ const JobForm = ({ existing, onClose }: { existing: ScheduledJob | null; onClose
   const [cronExpression, setCronExpression] = useState(existing?.cronExpression ?? "");
   const [timezone, setTimezone] = useState(existing?.timezone ?? "UTC");
   const [model, setModel] = useState(existing?.model ?? "");
-  const [autoApproveToolsText, setAutoApproveToolsText] = useState(
-    existing?.autoApproveTools ? existing.autoApproveTools.join(", ") : ""
+  const [autoApproveTools, setAutoApproveTools] = useState<string[]>(
+    existing?.autoApproveTools ?? []
   );
 
   // Fetch prompts for the dropdown
@@ -268,6 +269,29 @@ const JobForm = ({ existing, onClose }: { existing: ScheduledJob | null; onClose
     queryFn: () => fetchJson<{ models: ModelInfo[] }>("/api/models"),
   });
   const models = modelsQuery.data?.models ?? [];
+
+  // Fetch tools for multi-select (stage tools + auto-approve tools)
+  const toolsQuery = useQuery({
+    queryKey: ["tools"],
+    queryFn: () => fetchJson<{ tools: Record<string, ToolInfo[]> }>("/api/admin/tools"),
+  });
+  const allTools: ToolOption[] = useMemo(() => {
+    if (!toolsQuery.data?.tools) return [];
+    return Object.entries(toolsQuery.data.tools).flatMap(([category, categoryTools]) =>
+      categoryTools.map((t) => ({
+        name: t.name,
+        description: t.description,
+        category,
+        enabled: t.enabled,
+      }))
+    );
+  }, [toolsQuery.data]);
+
+  // Convert prompts for PipelineEditor
+  const availablePrompts = useMemo(
+    () => prompts.map((p) => ({ id: p.id, name: p.name, description: p.description, template: p.template })),
+    [prompts]
+  );
 
   const assistMutation = useMutation({
     mutationFn: (message: string) =>
@@ -337,10 +361,9 @@ const JobForm = ({ existing, onClose }: { existing: ScheduledJob | null; onClose
       }
     }
 
-    // Auto-approve tools: comma-separated list → string array (or null to clear)
-    const autoApproveRaw = autoApproveToolsText.trim();
-    if (autoApproveRaw) {
-      payload.autoApproveTools = autoApproveRaw.split(",").map((s) => s.trim()).filter(Boolean);
+    // Auto-approve tools
+    if (autoApproveTools.length > 0) {
+      payload.autoApproveTools = autoApproveTools;
     } else if (existing) {
       payload.autoApproveTools = null;
     }
@@ -475,6 +498,8 @@ const JobForm = ({ existing, onClose }: { existing: ScheduledJob | null; onClose
               initialStages={pipelineStages as never[]}
               onSave={(stages) => setPipelineStages(stages as unknown as Array<Record<string, unknown>>)}
               height="350px"
+              availableTools={allTools}
+              availablePrompts={availablePrompts}
             />
             {pipelineStages.length > 0 && (
               <p className="mt-1 text-[11px] text-emerald-600 dark:text-emerald-400">
@@ -553,14 +578,14 @@ const JobForm = ({ existing, onClose }: { existing: ScheduledJob | null; onClose
 
         <Field
           label="Auto-Approve Tools"
-          hint="Comma-separated tool names that skip approval gating for this job. Leave empty for normal approval flow."
+          hint="Tools that skip approval gating for this job. Leave empty for normal approval flow."
         >
-          <input
-            type="text"
-            className="w-full rounded-lg border border-border bg-card text-foreground px-3 py-2 font-mono text-sm"
-            placeholder="e.g., shell_execute, file_write"
-            value={autoApproveToolsText}
-            onChange={(e) => setAutoApproveToolsText(e.target.value)}
+          <ToolMultiSelect
+            tools={allTools}
+            selected={autoApproveTools.length > 0 ? autoApproveTools : null}
+            onChange={(selected) => setAutoApproveTools(selected ?? [])}
+            placeholder="None (normal approval flow)"
+            allowAll={false}
           />
         </Field>
 
