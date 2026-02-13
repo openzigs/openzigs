@@ -126,9 +126,9 @@ export class SREAlerter {
   }
 
   /** Update cooldown durations from config. */
-  updateCooldowns(criticalMinutes: number, warningMinutes: number): void {
-    this.criticalCooldownMs = criticalMinutes * 60_000;
-    this.warningCooldownMs = warningMinutes * 60_000;
+  updateCooldowns(criticalMinutes?: number, warningMinutes?: number): void {
+    this.criticalCooldownMs = (criticalMinutes ?? 5) * 60_000;
+    this.warningCooldownMs = (warningMinutes ?? 30) * 60_000;
   }
 
   /** Clear all cooldowns (useful for testing). */
