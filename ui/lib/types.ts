@@ -295,3 +295,24 @@ export type NativeMcpServerType = "local" | "stdio" | "http" | "sse";
 export type NativeMcpServerDefinition =
   | { type: "local" | "stdio"; command: string; args?: string[]; env?: Record<string, string>; cwd?: string; tools?: string[]; timeout?: number }
   | { type: "http" | "sse"; url: string; headers?: Record<string, string>; tools?: string[]; timeout?: number };
+
+/* ── Token Usage / Observability types (#184) ── */
+
+export type TokenUsage = {
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  turns: number;
+};
+
+export type TokenUsageEvent = {
+  sessionId: string;
+  inputTokens: number;
+  outputTokens: number;
+  cumulative: TokenUsage;
+};
+
+export type CompactionEvent = {
+  sessionId: string;
+  status: "started" | "completed";
+};

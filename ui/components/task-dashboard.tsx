@@ -7,6 +7,8 @@ import { useSocket } from "@/lib/socket-context";
 import { fetchJson } from "@/lib/api";
 import { SectionCard } from "./section-card";
 import { Button } from "@/components/ui/button";
+import { TokenBadge } from "@/components/tasks/token-badge";
+import type { TokenUsage } from "@/lib/types";
 
 const TaskGraph = dynamic(
   () => import("@/components/tasks/task-graph").then((mod) => ({ default: mod.TaskGraph })),
@@ -28,6 +30,7 @@ type TaskData = {
   createdAt: string;
   startedAt: string | null;
   completedAt: string | null;
+  tokenUsage: TokenUsage | null;
 };
 
 type TaskStats = {
@@ -198,6 +201,7 @@ export const TaskDashboard = () => {
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
+                    <TokenBadge usage={task.tokenUsage} />
                     <StatusBadge status={task.status} />
                     {(task.status === "queued" || task.status === "running") && (
                       <Button

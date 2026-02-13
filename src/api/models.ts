@@ -2,6 +2,7 @@ import { Router } from "express";
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { CopilotWrapper } from "../copilot/copilot-wrapper.js";
+import { MODEL_CONTEXT_WINDOWS } from "../copilot/token-tracker.js";
 
 export type ModelsRouterOptions = {
   copilot: CopilotWrapper;
@@ -52,12 +53,20 @@ export const createModelsRouter = ({ copilot, userConfigPath }: ModelsRouterOpti
       const models = await withTimeout(copilot.listModels(), 5000, "listModels");
       const userConfig = await readUserConfig(configPath);
       const selectedModel = typeof userConfig.selectedModel === "string" ? userConfig.selectedModel : null;
-      return res.status(200).json({ models, selectedModel });
+      const modelsWithContext = models.map((m) => ({
+        ...m,
+        contextWindow: MODEL_CONTEXT_WINDOWS[m.id] ?? null,
+      }));
+      return res.status(200).json({ models: modelsWithContext, selectedModel });
     } catch (error) {
       // SDK unavailable — return well-known fallback models so the UI is usable
       const userConfig = await readUserConfig(configPath);
       const selectedModel = typeof userConfig.selectedModel === "string" ? userConfig.selectedModel : null;
-      return res.status(200).json({ models: FALLBACK_MODELS, selectedModel, fallback: true });
+      const modelsWithContext = FALLBACK_MODELS.map((m) => ({
+        ...m,
+        contextWindow: MODEL_CONTEXT_WINDOWS[m.id] ?? null,
+      }));
+      return res.status(200).json({ models: modelsWithContext, selectedModel, fallback: true });
     }
   });
 

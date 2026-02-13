@@ -38,6 +38,8 @@ class FakeCopilot implements CopilotWrapper {
   setCustomAgents(_agents: CustomAgentDefinition[]): void {}
   getNativeMcpServers(): Record<string, NativeMcpServerDefinition> { return {}; }
   setNativeMcpServers(_servers: Record<string, NativeMcpServerDefinition>): void {}
+  getSessionUsage() { return null; }
+  clearSessionUsage() { return null; }
 }
 
 describe("Admin Models Config API", () => {

@@ -1,9 +1,14 @@
+import { EventEmitter } from "node:events";
 import os from "node:os";
 import path from "node:path";
 import fs from "node:fs/promises";
 import { CopilotClient, defineTool } from "@github/copilot-sdk";
 import type { ToolDefinition, ToolRegistry } from "../mcp/tool-registry.js";
 import { ALWAYS_ON_TOOLS } from "../mcp/constants.js";
+import { TokenTracker } from "./token-tracker.js";
+import type { TokenUsage, TokenUsageEvent, CompactionEvent } from "./token-tracker.js";
+
+export type { TokenUsage, TokenUsageEvent, CompactionEvent };
 
 export type DeviceAuthInfo = {
   verificationUri: string;
@@ -94,7 +99,8 @@ type SessionCreateConfig = {
 
 type CopilotSessionLike = {
   readonly sessionId: string;
-  on: (event: string, handler: (event: { data?: { deltaContent?: string } }) => void) => (() => void);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  on: (event: string, handler: (event: any) => void) => (() => void);
   sendAndWait: (input: { prompt: string; attachments?: SdkAttachment[] }, timeout?: number) => Promise<unknown>;
   destroy: () => Promise<void>;
 };
@@ -274,6 +280,10 @@ export interface CopilotWrapper {
   setNativeMcpServers(servers: Record<string, NativeMcpServerDefinition>): void;
   /** Check whether a model supports reasoning effort configuration. */
   modelSupportsReasoning(modelId: string): boolean;
+  /** Get accumulated token usage for a session (non-destructive). */
+  getSessionUsage(sessionId: string): TokenUsage | null;
+  /** Get and remove accumulated usage for a session (used on task completion). */
+  clearSessionUsage(sessionId: string): TokenUsage | null;
 }
 
 export type CopilotWrapperOptions = {
@@ -445,7 +455,7 @@ class AsyncQueue<T> {
   }
 }
 
-export class CopilotWrapperService implements CopilotWrapper {
+export class CopilotWrapperService extends EventEmitter implements CopilotWrapper {
   private client: CopilotClientLike;
   private toolRegistry?: ToolRegistry;
   private authPath: string;
@@ -471,6 +481,7 @@ export class CopilotWrapperService implements CopilotWrapper {
   private sessionCache = new Map<string, CopilotSessionLike>();
   private sessionCreationPromises = new Map<string, Promise<CopilotSessionLike>>();
   private modelCapabilitiesCache = new Map<string, { supportsReasoning: boolean }>();
+  readonly tokenTracker = new TokenTracker();
 
   constructor({
     client,
@@ -492,6 +503,7 @@ export class CopilotWrapperService implements CopilotWrapper {
     customAgents,
     nativeMcpServers
   }: CopilotWrapperOptions = {}) {
+    super();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     this.client = client ?? (new CopilotClient() as any);
     this.toolRegistry = toolRegistry;
@@ -1002,6 +1014,7 @@ export class CopilotWrapperService implements CopilotWrapper {
           );
         }
         this.sessionCache.set(conversationId, session);
+        this.wireSessionEvents(session, conversationId);
         return session;
       } finally {
         // Once the session is created and cached (or failed), remove the promise from the map.
@@ -1026,5 +1039,41 @@ export class CopilotWrapperService implements CopilotWrapper {
     } finally {
       onEnd();
     }
+  }
+
+  /**
+   * Wire SDK session events for token tracking and context compaction.
+   * Called once per session creation — event handlers are long-lived
+   * (unlike the per-call delta/idle handlers which are unsubscribed).
+   */
+  private wireSessionEvents(session: CopilotSessionLike, sessionId: string): void {
+    // Track token usage from the SDK's assistant.usage event
+    session.on("assistant.usage", (event: { data?: { inputTokens?: number; outputTokens?: number } }) => {
+      const inputTokens = event.data?.inputTokens ?? 0;
+      const outputTokens = event.data?.outputTokens ?? 0;
+      const usageEvent = this.tokenTracker.record(sessionId, inputTokens, outputTokens);
+      this.emit("token:usage", usageEvent);
+    });
+
+    // Track context compaction lifecycle events (infinite sessions)
+    session.on("compaction_start", () => {
+      const compactionEvent: CompactionEvent = { sessionId, status: "started" };
+      this.emit("context:compaction", compactionEvent);
+    });
+
+    session.on("compaction_complete", () => {
+      const compactionEvent: CompactionEvent = { sessionId, status: "completed" };
+      this.emit("context:compaction", compactionEvent);
+    });
+  }
+
+  /** Get accumulated token usage for a session (non-destructive). */
+  getSessionUsage(sessionId: string): TokenUsage | null {
+    return this.tokenTracker.getUsage(sessionId);
+  }
+
+  /** Get and remove accumulated usage for a session (used on task completion). */
+  clearSessionUsage(sessionId: string): TokenUsage | null {
+    return this.tokenTracker.clearUsage(sessionId);
   }
 }

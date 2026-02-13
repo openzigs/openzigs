@@ -30,6 +30,8 @@ import { ReasoningEffortSelector, ProviderBadge } from "@/components/reasoning-e
 import { UserInputPrompt } from "@/components/user-input-prompt";
 import { WorkflowPreviewCard } from "@/components/workflow-preview-card";
 import { SessionContextBar } from "@/components/session-context-bar";
+import { ContextFuelGauge } from "@/components/chat/context-fuel-gauge";
+import { useTokenUsage } from "@/lib/hooks/use-token-usage";
 import type {
   ModelInfo,
   ToolInfo,
@@ -79,6 +81,12 @@ export const ChatView = () => {
   const [sessionStatus, setSessionStatus] = useState<SessionStatus | null>(null);
   const [activeInputRequest, setActiveInputRequest] = useState<UserInputRequest | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // Derive context window from the selected model's API response
+  const selectedModelInfo = models.find((m) => m.id === selectedModel);
+  const contextWindowSize = (selectedModelInfo as unknown as { contextWindow?: number })?.contextWindow ?? null;
+  const { usage: tokenUsage, compacting: tokenCompacting, fillRatio, reset: resetTokenUsage } = useTokenUsage(contextWindowSize);
+
   const streamRef = useRef<{ id: string; content: string } | null>(null);
   const inputStuckTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -475,11 +483,12 @@ export const ChatView = () => {
 
   const handleClearChat = useCallback(() => {
     setMessages([]);
+    resetTokenUsage();
     // Clear server-side session history so it doesn't return on refresh
     if (socket) {
       socket.emit("chat:clear");
     }
-  }, [socket]);
+  }, [socket, resetTokenUsage]);
 
   // Allow sending while connected to socket, show connecting state if no chatId yet
   const inputDisabled = sending || !!activeInputRequest;
@@ -516,6 +525,12 @@ export const ChatView = () => {
               ))}
             </SelectContent>
           </Select>
+          <ContextFuelGauge
+            usage={tokenUsage}
+            contextWindow={contextWindowSize}
+            fillRatio={fillRatio}
+            compacting={tokenCompacting}
+          />
           <span
             className={cn(
               "h-2.5 w-2.5 rounded-full transition-colors",

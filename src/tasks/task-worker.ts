@@ -1,6 +1,7 @@
 import { EventEmitter } from "node:events";
 import type { TaskEngine } from "./task-engine.js";
 import type { CopilotWrapper } from "../copilot/copilot-wrapper.js";
+import type { TaskRepository } from "./task-repository.js";
 import type { AgentTask, PipelineNode, PipelineStage, ParallelGroup } from "./types.js";
 
 import { executePostAction } from "./post-actions.js";
@@ -11,6 +12,8 @@ import { logger } from "../logging/logger.js";
 export type TaskWorkerOptions = {
   engine: TaskEngine;
   copilot: CopilotWrapper;
+  /** Task repository for persisting token usage on completion. */
+  taskRepository?: TaskRepository;
   /** Maximum concurrent background tasks. Default 2. */
   maxConcurrent?: number;
   /** Poll interval in milliseconds. Default 2000. */
@@ -29,6 +32,7 @@ export type TaskWorkerOptions = {
 export class TaskWorker extends EventEmitter {
   private engine: TaskEngine;
   private copilot: CopilotWrapper;
+  private taskRepository?: TaskRepository;
   private maxConcurrent: number;
   private pollIntervalMs: number;
   private log: Pick<typeof logger, "info" | "warn" | "error">;
@@ -39,6 +43,7 @@ export class TaskWorker extends EventEmitter {
   constructor({
     engine,
     copilot,
+    taskRepository,
     maxConcurrent = 2,
     pollIntervalMs = 2_000,
     log: logOverride,
@@ -46,6 +51,7 @@ export class TaskWorker extends EventEmitter {
     super();
     this.engine = engine;
     this.copilot = copilot;
+    this.taskRepository = taskRepository;
     this.maxConcurrent = maxConcurrent;
     this.pollIntervalMs = pollIntervalMs;
     this.log = logOverride ?? logger;
@@ -169,10 +175,16 @@ export class TaskWorker extends EventEmitter {
         result += chunk;
       }
 
+      // Persist token usage before marking complete
+      this.persistTokenUsage(task);
+
       const completed = this.engine.complete(task.id, result);
       this.log.info(`TaskWorker completed task ${task.id} (${toolCallLog.length} tool calls: ${[...new Set(toolCallLog.map(t => t.tool))].join(", ") || "none"}, availableTools: ${JSON.stringify(availableTools ?? "all")})`);
       this.emit("task:done", completed);
     } catch (error) {
+      // Persist token usage even on failure
+      this.persistTokenUsage(task);
+
       const message = error instanceof Error ? error.message : String(error);
       const failed = this.engine.fail(task.id, message);
       this.log.error(`TaskWorker failed task ${task.id}: ${message}`);
@@ -213,6 +225,23 @@ export class TaskWorker extends EventEmitter {
     lines.push("Complete this task thoroughly and return your results. Be concise but comprehensive.");
 
     return lines.join("\n");
+  }
+
+  /**
+   * Persist accumulated token usage from the CopilotWrapper to the task record.
+   * Drains the session usage so each task only records its own consumption.
+   */
+  private persistTokenUsage(task: AgentTask): void {
+    if (!this.taskRepository || !task.sessionId) return;
+    try {
+      const usage = this.copilot.clearSessionUsage(task.sessionId);
+      if (usage) {
+        this.taskRepository.updateTokenUsage(task.id, usage);
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.log.warn(`Failed to persist token usage for task ${task.id}: ${msg}`);
+    }
   }
 
   /**

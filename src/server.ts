@@ -242,7 +242,7 @@ registerMcpTools(toolRegistry, {
 
 // ── Task Background Worker ──
 const maxConcurrent = config.tasks?.maxConcurrent ?? 2;
-const taskWorker = new TaskWorker({ engine: taskEngine, copilot, maxConcurrent });
+const taskWorker = new TaskWorker({ engine: taskEngine, copilot, maxConcurrent, taskRepository });
 taskWorker.start();
 
 // ── Webhook Manager ──
@@ -261,7 +261,7 @@ const webhookRouter = createWebhookRouter({ webhookManager, taskEngine, promptMa
 app.use("/api/webhooks/trigger", webhookRouter);
 
 // Tasks API routes
-const tasksRouter = createTasksRouter({ taskEngine });
+const tasksRouter = createTasksRouter({ taskEngine, taskRepository });
 app.use("/api/tasks", tasksRouter);
 
 // Files API routes (Workbench file management)
@@ -331,6 +331,15 @@ for (const event of ["task:queued", "task:running", "task:completed", "task:fail
 
 approvalQueue.on("approval:created", (approval) => {
   io.emit("approval:request", approval);
+});
+
+// Forward real-time token usage and context compaction events to connected clients
+copilot.on("token:usage", (event: import("./copilot/copilot-wrapper.js").TokenUsageEvent) => {
+  io.emit("context:usage", event);
+});
+
+copilot.on("context:compaction", (event: import("./copilot/copilot-wrapper.js").CompactionEvent) => {
+  io.emit("context:compaction", event);
 });
 
 approvalQueue.on("approval:decided", (approval) => {
