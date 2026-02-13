@@ -32,12 +32,34 @@ export type AuditEntry = {
   details: Record<string, unknown>;
 };
 
+/** A single stage in a multi-stage pipeline. */
+export type PipelineStage = {
+  type?: "prompt";
+  name: string;
+  prompt: string;
+  tools?: string[] | null;
+  autoApproveTools?: string[];
+  model?: string;
+  timeoutSeconds?: number;
+  postAction?: PipelinePostAction;
+};
+
+/** Deterministic post-action configuration for a pipeline stage. */
+export type PipelinePostAction = {
+  type: string;
+  config?: Record<string, unknown>;
+};
+
 export type SavedPrompt = {
   id: string;
   name: string;
   template: string;
   description: string;
   tags: string[];
+  /** Optional pipeline stages for multi-stage execution. null = single-stage prompt. */
+  stages: PipelineStage[] | null;
+  /** Optional list of preferred tool names. null = no preference (all tools). */
+  preferredTools: string[] | null;
   createdAt: string;
   updatedAt: string;
 };

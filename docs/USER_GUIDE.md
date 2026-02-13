@@ -269,8 +269,73 @@ The library at `/library` provides a visual interface for managing saved prompt 
 - **Edit** existing prompts inline.
 - **Search** prompts by name, content, or tags.
 - **Variable preview** — `{{variable}}` placeholders are highlighted and listed.
+- **Preferred Tools** — Restrict which tools a prompt can use via a ToolMultiSelect dropdown grouped by category. When set, only the selected tools (plus always-on tools) are available during execution.
+- **Pipeline Stages** — Attach a multi-stage pipeline to any prompt. When the prompt is executed by the scheduler, stages run sequentially (or in parallel groups) with per-stage prompts, tool restrictions, model overrides, timeouts, auto-approve tools, and optional post-actions (e.g., "create GitHub issues from findings").
 - **Use as System Prompt** — Apply any saved prompt as the active system instruction in the AI Personality panel.
 - **Delete** with confirmation.
+
+#### Pipeline Stages on Prompts
+
+Any saved prompt can optionally carry pipeline stages, turning it from a simple template into a full multi-stage workflow. This is configured directly in the Library editor — no need to create a separate scheduler job.
+
+**How to add stages:**
+
+1. Open the Library at **http://localhost:3001/library**.
+2. Click **+ New Prompt** (or **Edit** on an existing prompt).
+3. Scroll to the **Pipeline Stages** section (collapsed by default).
+4. Click to expand. If the prompt already has stages, the section auto-expands with a stage count badge.
+5. Choose a creation mode:
+   - **🧙 Workflow Wizard** — Describe your goal in plain English; AI auto-generates the stages.
+   - **🔧 Manual Editor** — Build the pipeline yourself using the visual React Flow editor.
+6. Each stage supports:
+   - **Name** — Display label for the stage.
+   - **Prompt** — Instructions for the LLM at this stage. Supports `{{variable}}` interpolation.
+   - **Tools** — Multi-select for tools available to this stage (grouped by category).
+   - **Auto-Approve Tools** — Checkbox to bypass approval gating for this stage's tool calls.
+   - **Timeout** — Max execution time in seconds (default: 300).
+   - **Post-Action** — Deterministic action after stage completion (e.g., "Create GitHub Issues" with owner, repo, labels, severity, and max issues config).
+7. Click **Save Prompt** to persist the stages.
+
+**Stage and tool count badges** appear on saved prompt cards in the list, giving you a quick visual indicator of which prompts are simple templates vs. full pipelines.
+
+**MCP tools:** The `save-prompt` and `update-prompt` MCP tools also support `stages` and `preferredTools` parameters, allowing the AI to create pipeline-enabled prompts programmatically.
+
+**REST API:**
+
+```bash
+# Create a prompt with pipeline stages
+curl -X POST -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "code-review-pipeline",
+    "content": "Review code for {{project}}",
+    "stages": [
+      {
+        "name": "clone-and-read",
+        "prompt": "Read the source files for {{project}}",
+        "tools": ["read-file", "list-directory"]
+      },
+      {
+        "name": "review",
+        "prompt": "Review the code for bugs, security issues, and style",
+        "tools": ["read-file", "web-search"],
+        "autoApproveTools": ["read-file"],
+        "postAction": {
+          "type": "create-github-issues",
+          "config": { "owner": "acme", "repo": "app", "minSeverity": "medium" }
+        }
+      }
+    ],
+    "preferredTools": ["read-file", "list-directory", "web-search"]
+  }' \
+  http://localhost:3000/api/prompts
+
+# Update stages (set to null to remove)
+curl -X PUT -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"stages": null}' \
+  http://localhost:3000/api/prompts/<id>
+```
 
 ### Scheduler
 

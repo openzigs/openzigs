@@ -28,8 +28,10 @@ export type PromptStageData = {
   name: string;
   prompt: string;
   tools: string[] | null;
+  autoApproveTools?: boolean;
   model?: string;
   timeoutSeconds?: number;
+  postAction?: PipelinePostAction;
 };
 
 export type ParallelGroupData = {
@@ -97,13 +99,20 @@ const nodeTypes: NodeTypes = {
 
 /* ── Conversion: PipelineNode[] ↔ React Flow nodes/edges ── */
 
+export type PipelinePostAction = {
+  type: string;
+  config?: Record<string, unknown>;
+};
+
 export type BackendPipelineNode = {
   type?: "prompt" | "parallel";
   name: string;
   prompt?: string;
   tools?: string[] | null;
+  autoApproveTools?: boolean;
   model?: string;
   timeoutSeconds?: number;
+  postAction?: PipelinePostAction;
   branches?: BackendPipelineNode[];
 };
 
@@ -149,8 +158,10 @@ const pipelineToFlow = (
           name: stage.name,
           prompt: stage.prompt ?? "",
           tools: stage.tools ?? null,
+          autoApproveTools: stage.autoApproveTools,
           model: stage.model,
           timeoutSeconds: stage.timeoutSeconds ?? 300,
+          postAction: stage.postAction,
         } satisfies PromptStageData,
       });
     }
@@ -217,18 +228,144 @@ const flowToPipeline = (nodes: Node[], edges: Edge[]): BackendPipelineNode[] => 
         branches: pd.branches?.flat() ?? [],
       });
     } else {
+      const pd = d as PromptStageData;
       stages.push({
         type: "prompt",
-        name: d.name,
-        prompt: (d as PromptStageData).prompt,
-        tools: (d as PromptStageData).tools,
-        model: (d as PromptStageData).model,
-        timeoutSeconds: (d as PromptStageData).timeoutSeconds,
+        name: pd.name,
+        prompt: pd.prompt,
+        tools: pd.tools,
+        autoApproveTools: pd.autoApproveTools,
+        model: pd.model,
+        timeoutSeconds: pd.timeoutSeconds,
+        postAction: pd.postAction,
       });
     }
   }
 
   return stages;
+};
+
+/* ── PostAction Config Form ── */
+
+const POST_ACTION_TYPES = [
+  { value: "none", label: "None" },
+  { value: "create-github-issues", label: "Create GitHub Issues" },
+] as const;
+
+const GitHubIssuesConfig = ({
+  config,
+  onChange,
+}: {
+  config: Record<string, unknown>;
+  onChange: (config: Record<string, unknown>) => void;
+}) => (
+  <div className="space-y-2 ml-1 border-l-2 border-primary/20 pl-3 mt-2">
+    <label className="block">
+      <span className="text-[10px] text-muted-foreground">Owner *</span>
+      <input
+        className="mt-0.5 w-full rounded-md border border-border bg-background px-2 py-1 text-xs"
+        value={(config.owner as string) ?? ""}
+        onChange={(e) => onChange({ ...config, owner: e.target.value })}
+        placeholder="e.g., myorg"
+      />
+    </label>
+    <label className="block">
+      <span className="text-[10px] text-muted-foreground">Repo *</span>
+      <input
+        className="mt-0.5 w-full rounded-md border border-border bg-background px-2 py-1 text-xs"
+        value={(config.repo as string) ?? ""}
+        onChange={(e) => onChange({ ...config, repo: e.target.value })}
+        placeholder="e.g., my-project"
+      />
+    </label>
+    <label className="block">
+      <span className="text-[10px] text-muted-foreground">Labels (comma-separated)</span>
+      <input
+        className="mt-0.5 w-full rounded-md border border-border bg-background px-2 py-1 text-xs"
+        value={Array.isArray(config.labels) ? (config.labels as string[]).join(", ") : ""}
+        onChange={(e) =>
+          onChange({
+            ...config,
+            labels: e.target.value
+              .split(",")
+              .map((s) => s.trim())
+              .filter(Boolean),
+          })
+        }
+        placeholder="code-review, automated"
+      />
+    </label>
+    <label className="block">
+      <span className="text-[10px] text-muted-foreground">Min Severity</span>
+      <select
+        className="mt-0.5 w-full rounded-md border border-border bg-background px-2 py-1 text-xs"
+        value={(config.minSeverity as string) ?? "medium"}
+        onChange={(e) => onChange({ ...config, minSeverity: e.target.value })}
+      >
+        <option value="low">Low</option>
+        <option value="medium">Medium</option>
+        <option value="high">High</option>
+        <option value="critical">Critical</option>
+      </select>
+    </label>
+    <label className="block">
+      <span className="text-[10px] text-muted-foreground">Max Issues</span>
+      <input
+        type="number"
+        className="mt-0.5 w-full rounded-md border border-border bg-background px-2 py-1 text-xs"
+        value={(config.maxIssues as number) ?? 8}
+        onChange={(e) => onChange({ ...config, maxIssues: Number(e.target.value) })}
+        min={1}
+        max={50}
+      />
+    </label>
+  </div>
+);
+
+const PostActionEditor = ({
+  postAction,
+  onChange,
+}: {
+  postAction?: PipelinePostAction;
+  onChange: (postAction: PipelinePostAction | undefined) => void;
+}) => {
+  const actionType = postAction?.type ?? "none";
+
+  const handleTypeChange = (newType: string) => {
+    if (newType === "none") {
+      onChange(undefined);
+    } else if (newType === "create-github-issues") {
+      onChange({
+        type: "create-github-issues",
+        config: { owner: "", repo: "", labels: ["code-review", "automated"], minSeverity: "medium", maxIssues: 8 },
+      });
+    } else {
+      onChange({ type: newType, config: {} });
+    }
+  };
+
+  return (
+    <div className="space-y-1">
+      <span className="text-xs text-muted-foreground">Post-Action</span>
+      <select
+        className="mt-0.5 w-full rounded-lg border border-border bg-background px-3 py-1.5 text-sm"
+        value={actionType}
+        onChange={(e) => handleTypeChange(e.target.value)}
+      >
+        {POST_ACTION_TYPES.map((t) => (
+          <option key={t.value} value={t.value}>
+            {t.label}
+          </option>
+        ))}
+      </select>
+      {actionType === "create-github-issues" && postAction?.config && (
+        <GitHubIssuesConfig
+          config={postAction.config}
+          onChange={(config) => onChange({ ...postAction, config })}
+        />
+      )}
+    </div>
+  );
 };
 
 /* ── Stage Editor Sidebar ── */
@@ -403,6 +540,15 @@ const StageEditor = ({
         placeholder="All tools (no restriction)"
         allowAll
       />
+      <label className="flex items-center gap-2 text-sm cursor-pointer">
+        <input
+          type="checkbox"
+          checked={promptData.autoApproveTools ?? false}
+          onChange={(e) => onChange(node.id, { ...promptData, autoApproveTools: e.target.checked })}
+          className="rounded border-border"
+        />
+        <span className="text-xs text-muted-foreground">Auto-approve tool calls</span>
+      </label>
       <label className="block">
         <span className="text-xs text-muted-foreground">Timeout (seconds)</span>
         <input
@@ -412,6 +558,10 @@ const StageEditor = ({
           onChange={(e) => onChange(node.id, { ...promptData, timeoutSeconds: Number(e.target.value) })}
         />
       </label>
+      <PostActionEditor
+        postAction={promptData.postAction}
+        onChange={(postAction) => onChange(node.id, { ...promptData, postAction })}
+      />
       <button
         onClick={() => onDelete(node.id)}
         className="flex items-center gap-1 text-xs text-destructive hover:underline"
@@ -492,6 +642,7 @@ export const PipelineEditor = ({
         name: `stage-${nodes.filter((n) => (n.data as PipelineNodeData).type === "prompt").length + 1}`,
         prompt: "",
         tools: null,
+        autoApproveTools: false,
         timeoutSeconds: 300,
       } satisfies PromptStageData,
     };
