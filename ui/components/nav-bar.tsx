@@ -13,6 +13,7 @@ const NAV_ITEMS = [
   { href: "/scheduler", label: "Scheduler" },
   { href: "/tasks", label: "Tasks" },
   { href: "/admin/webhooks", label: "Webhooks" },
+  { href: "/admin/post-actions", label: "Post-Actions" },
 ];
 
 export const NavBar = () => {

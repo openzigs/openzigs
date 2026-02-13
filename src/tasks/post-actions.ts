@@ -3,8 +3,12 @@
  *
  * Instead of relying on the LLM to call tools (which it often hallucinates),
  * post-actions execute deterministic code after a stage completes.
+ *
+ * Actions are registered with the PostActionRegistry so the UI can render
+ * dynamic config forms and the dropdown is driven by data, not hardcoded.
  */
 
+import { postActionRegistry } from "./post-action-registry.js";
 import type { PipelinePostAction } from "./types.js";
 
 /* ------------------------------------------------------------------ */
@@ -239,7 +243,153 @@ function countBySeverity(findings: CodeFinding[]): Record<string, number> {
 }
 
 /* ------------------------------------------------------------------ */
-/*  Dispatcher                                                        */
+/*  send-webhook action                                               */
+/* ------------------------------------------------------------------ */
+
+interface SendWebhookConfig {
+  url: string;
+  method?: "POST" | "PUT";
+  headers?: Record<string, string>;
+  includeOutput?: boolean;
+}
+
+async function executeSendWebhook(
+  stageOutput: string,
+  config: Record<string, unknown>,
+): Promise<string> {
+  const { url, method, headers: extraHeaders, includeOutput } = config as unknown as SendWebhookConfig;
+  if (!url) {
+    return JSON.stringify({ error: "Webhook URL is required" });
+  }
+
+  const payload: Record<string, unknown> = {
+    event: "pipeline_stage_completed",
+    timestamp: new Date().toISOString(),
+    source: "openzigs",
+  };
+  if (includeOutput !== false) {
+    payload.stageOutput = stageOutput.slice(0, 10_000); // cap at 10KB
+  }
+
+  try {
+    const resp = await fetch(url, {
+      method: method ?? "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "User-Agent": "OpenZigs/0.1",
+        ...(extraHeaders ?? {}),
+      },
+      body: JSON.stringify(payload),
+    });
+    return JSON.stringify({
+      status: resp.status,
+      ok: resp.ok,
+      ...(resp.ok ? {} : { body: (await resp.text()).slice(0, 500) }),
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return JSON.stringify({ error: msg });
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/*  Registration — built-in post-action types                         */
+/* ------------------------------------------------------------------ */
+
+/** Register all built-in post-action types with the registry. */
+export function registerBuiltinPostActions(): void {
+  // Idempotent — skip if already registered.
+  if (postActionRegistry.has("create-github-issues")) return;
+
+  postActionRegistry.register({
+    type: "create-github-issues",
+    label: "Create GitHub Issues",
+    description: "Parse findings from stage output and create GitHub issues, with duplicate detection and severity filtering.",
+    category: "Integrations",
+    icon: "github",
+    configSchema: {
+      type: "object",
+      properties: {
+        owner: {
+          type: "string",
+          title: "Owner",
+          description: "GitHub repository owner (user or org).",
+          placeholder: "e.g., myorg",
+        },
+        repo: {
+          type: "string",
+          title: "Repo",
+          description: "GitHub repository name.",
+          placeholder: "e.g., my-project",
+        },
+        labels: {
+          type: "array",
+          title: "Labels",
+          description: "Labels applied to created issues (comma-separated in UI).",
+          items: { type: "string" },
+          default: ["code-review", "automated"],
+        },
+        minSeverity: {
+          type: "string",
+          title: "Min Severity",
+          description: "Minimum severity threshold for creating issues.",
+          enum: ["low", "medium", "high", "critical"],
+          enumLabels: ["Low", "Medium", "High", "Critical"],
+          default: "medium",
+        },
+        maxIssues: {
+          type: "number",
+          title: "Max Issues",
+          description: "Maximum number of issues to create per run.",
+          default: 8,
+          minimum: 1,
+          maximum: 50,
+        },
+      },
+      required: ["owner", "repo"],
+    },
+    handler: async (stageOutput, config) =>
+      executeCreateGitHubIssues(stageOutput, config as unknown as CreateGitHubIssuesConfig),
+  });
+
+  postActionRegistry.register({
+    type: "send-webhook",
+    label: "Send Webhook",
+    description: "POST stage results to an external webhook URL. Useful for Slack, Discord, PagerDuty, or any HTTP endpoint.",
+    category: "Notifications",
+    icon: "webhook",
+    configSchema: {
+      type: "object",
+      properties: {
+        url: {
+          type: "string",
+          title: "Webhook URL",
+          description: "The HTTP(S) endpoint to send results to.",
+          placeholder: "https://hooks.slack.com/services/...",
+        },
+        method: {
+          type: "string",
+          title: "HTTP Method",
+          description: "HTTP method to use.",
+          enum: ["POST", "PUT"],
+          enumLabels: ["POST", "PUT"],
+          default: "POST",
+        },
+        includeOutput: {
+          type: "boolean",
+          title: "Include Stage Output",
+          description: "Whether to include the full stage output in the webhook payload (capped at 10 KB).",
+          default: true,
+        },
+      },
+      required: ["url"],
+    },
+    handler: executeSendWebhook,
+  });
+}
+
+/* ------------------------------------------------------------------ */
+/*  Dispatcher (delegates to registry)                                */
 /* ------------------------------------------------------------------ */
 
 /**
@@ -250,13 +400,5 @@ export async function executePostAction(
   action: PipelinePostAction,
   stageOutput: string,
 ): Promise<string> {
-  switch (action.type) {
-    case "create-github-issues":
-      return executeCreateGitHubIssues(
-        stageOutput,
-        (action.config ?? {}) as unknown as CreateGitHubIssuesConfig,
-      );
-    default:
-      return JSON.stringify({ error: `Unknown post-action type: ${action.type}` });
-  }
+  return postActionRegistry.execute(action, stageOutput);
 }

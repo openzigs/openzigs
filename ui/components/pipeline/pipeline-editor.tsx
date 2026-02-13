@@ -18,7 +18,7 @@ import {
   Position,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { Plus, Trash2, GitBranch, Save, Search } from "lucide-react";
+import { Plus, Trash2, GitBranch, Search } from "lucide-react";
 import { ToolMultiSelect, type ToolOption } from "./tool-multi-select";
 
 /* ── Pipeline node types (matches backend PipelineNode) ── */
@@ -245,80 +245,164 @@ const flowToPipeline = (nodes: Node[], edges: Edge[]): BackendPipelineNode[] => 
   return stages;
 };
 
-/* ── PostAction Config Form ── */
+/* ── Dynamic PostAction Config Form (driven by registry schema) ── */
 
-const POST_ACTION_TYPES = [
-  { value: "none", label: "None" },
-  { value: "create-github-issues", label: "Create GitHub Issues" },
-] as const;
+/** Shape returned by GET /api/admin/post-actions */
+type ConfigFieldSchema = {
+  type: "string" | "number" | "boolean" | "array";
+  title: string;
+  description?: string;
+  default?: unknown;
+  enum?: string[];
+  enumLabels?: string[];
+  items?: { type: "string" };
+  minimum?: number;
+  maximum?: number;
+  placeholder?: string;
+};
 
-const GitHubIssuesConfig = ({
+type PostActionTypeInfo = {
+  type: string;
+  label: string;
+  description: string;
+  category: string;
+  icon?: string;
+  configSchema: {
+    type: "object";
+    properties: Record<string, ConfigFieldSchema>;
+    required: string[];
+  };
+};
+
+/** Hook to fetch registered post-action types from the backend. */
+function usePostActionTypes(): PostActionTypeInfo[] {
+  const [types, setTypes] = useState<PostActionTypeInfo[]>([]);
+  useEffect(() => {
+    fetch("/api/admin/post-actions")
+      .then((r) => r.json())
+      .then((data: { actions: PostActionTypeInfo[] }) => setTypes(data.actions ?? []))
+      .catch(() => setTypes([]));
+  }, []);
+  return types;
+}
+
+/**
+ * Renders a dynamic config form for any post-action type based on its JSON Schema.
+ * No hardcoded field knowledge — all labels, types, defaults, and constraints
+ * come from the registry's configSchema.
+ */
+const DynamicConfigForm = ({
+  schema,
   config,
   onChange,
 }: {
+  schema: PostActionTypeInfo["configSchema"];
   config: Record<string, unknown>;
   onChange: (config: Record<string, unknown>) => void;
 }) => (
   <div className="space-y-2 ml-1 border-l-2 border-primary/20 pl-3 mt-2">
-    <label className="block">
-      <span className="text-[10px] text-muted-foreground">Owner *</span>
-      <input
-        className="mt-0.5 w-full rounded-md border border-border bg-background px-2 py-1 text-xs"
-        value={(config.owner as string) ?? ""}
-        onChange={(e) => onChange({ ...config, owner: e.target.value })}
-        placeholder="e.g., myorg"
-      />
-    </label>
-    <label className="block">
-      <span className="text-[10px] text-muted-foreground">Repo *</span>
-      <input
-        className="mt-0.5 w-full rounded-md border border-border bg-background px-2 py-1 text-xs"
-        value={(config.repo as string) ?? ""}
-        onChange={(e) => onChange({ ...config, repo: e.target.value })}
-        placeholder="e.g., my-project"
-      />
-    </label>
-    <label className="block">
-      <span className="text-[10px] text-muted-foreground">Labels (comma-separated)</span>
-      <input
-        className="mt-0.5 w-full rounded-md border border-border bg-background px-2 py-1 text-xs"
-        value={Array.isArray(config.labels) ? (config.labels as string[]).join(", ") : ""}
-        onChange={(e) =>
-          onChange({
-            ...config,
-            labels: e.target.value
-              .split(",")
-              .map((s) => s.trim())
-              .filter(Boolean),
-          })
-        }
-        placeholder="code-review, automated"
-      />
-    </label>
-    <label className="block">
-      <span className="text-[10px] text-muted-foreground">Min Severity</span>
-      <select
-        className="mt-0.5 w-full rounded-md border border-border bg-background px-2 py-1 text-xs"
-        value={(config.minSeverity as string) ?? "medium"}
-        onChange={(e) => onChange({ ...config, minSeverity: e.target.value })}
-      >
-        <option value="low">Low</option>
-        <option value="medium">Medium</option>
-        <option value="high">High</option>
-        <option value="critical">Critical</option>
-      </select>
-    </label>
-    <label className="block">
-      <span className="text-[10px] text-muted-foreground">Max Issues</span>
-      <input
-        type="number"
-        className="mt-0.5 w-full rounded-md border border-border bg-background px-2 py-1 text-xs"
-        value={(config.maxIssues as number) ?? 8}
-        onChange={(e) => onChange({ ...config, maxIssues: Number(e.target.value) })}
-        min={1}
-        max={50}
-      />
-    </label>
+    {Object.entries(schema.properties).map(([key, field]) => {
+      const isRequired = schema.required.includes(key);
+      const label = `${field.title}${isRequired ? " *" : ""}`;
+
+      // ── String enum → <select> ──
+      if (field.type === "string" && field.enum) {
+        return (
+          <label key={key} className="block">
+            <span className="text-[10px] text-muted-foreground">{label}</span>
+            <select
+              className="mt-0.5 w-full rounded-md border border-border bg-background px-2 py-1 text-xs"
+              value={(config[key] as string) ?? (field.default as string) ?? ""}
+              onChange={(e) => onChange({ ...config, [key]: e.target.value })}
+            >
+              {field.enum.map((v, i) => (
+                <option key={v} value={v}>
+                  {field.enumLabels?.[i] ?? v}
+                </option>
+              ))}
+            </select>
+            {field.description && <span className="text-[9px] text-muted-foreground/70">{field.description}</span>}
+          </label>
+        );
+      }
+
+      // ── String → <input type="text"> ──
+      if (field.type === "string") {
+        return (
+          <label key={key} className="block">
+            <span className="text-[10px] text-muted-foreground">{label}</span>
+            <input
+              className="mt-0.5 w-full rounded-md border border-border bg-background px-2 py-1 text-xs"
+              value={(config[key] as string) ?? ""}
+              onChange={(e) => onChange({ ...config, [key]: e.target.value })}
+              placeholder={field.placeholder}
+            />
+            {field.description && <span className="text-[9px] text-muted-foreground/70">{field.description}</span>}
+          </label>
+        );
+      }
+
+      // ── Number → <input type="number"> ──
+      if (field.type === "number") {
+        return (
+          <label key={key} className="block">
+            <span className="text-[10px] text-muted-foreground">{label}</span>
+            <input
+              type="number"
+              className="mt-0.5 w-full rounded-md border border-border bg-background px-2 py-1 text-xs"
+              value={(config[key] as number) ?? (field.default as number) ?? ""}
+              onChange={(e) => onChange({ ...config, [key]: Number(e.target.value) })}
+              min={field.minimum}
+              max={field.maximum}
+            />
+            {field.description && <span className="text-[9px] text-muted-foreground/70">{field.description}</span>}
+          </label>
+        );
+      }
+
+      // ── Boolean → checkbox ──
+      if (field.type === "boolean") {
+        const checked = (config[key] as boolean) ?? (field.default as boolean) ?? false;
+        return (
+          <label key={key} className="flex items-center gap-2 py-1">
+            <input
+              type="checkbox"
+              className="rounded border-border"
+              checked={checked}
+              onChange={(e) => onChange({ ...config, [key]: e.target.checked })}
+            />
+            <span className="text-[10px] text-muted-foreground">{label}</span>
+            {field.description && <span className="text-[9px] text-muted-foreground/70 ml-1">— {field.description}</span>}
+          </label>
+        );
+      }
+
+      // ── Array of strings → comma-separated input ──
+      if (field.type === "array" && field.items?.type === "string") {
+        return (
+          <label key={key} className="block">
+            <span className="text-[10px] text-muted-foreground">{label} (comma-separated)</span>
+            <input
+              className="mt-0.5 w-full rounded-md border border-border bg-background px-2 py-1 text-xs"
+              value={Array.isArray(config[key]) ? (config[key] as string[]).join(", ") : ""}
+              onChange={(e) =>
+                onChange({
+                  ...config,
+                  [key]: e.target.value
+                    .split(",")
+                    .map((s) => s.trim())
+                    .filter(Boolean),
+                })
+              }
+              placeholder={field.placeholder ?? (Array.isArray(field.default) ? (field.default as string[]).join(", ") : "")}
+            />
+            {field.description && <span className="text-[9px] text-muted-foreground/70">{field.description}</span>}
+          </label>
+        );
+      }
+
+      return null;
+    })}
   </div>
 );
 
@@ -329,20 +413,30 @@ const PostActionEditor = ({
   postAction?: PipelinePostAction;
   onChange: (postAction: PipelinePostAction | undefined) => void;
 }) => {
+  const registeredTypes = usePostActionTypes();
   const actionType = postAction?.type ?? "none";
 
   const handleTypeChange = (newType: string) => {
     if (newType === "none") {
       onChange(undefined);
-    } else if (newType === "create-github-issues") {
-      onChange({
-        type: "create-github-issues",
-        config: { owner: "", repo: "", labels: ["code-review", "automated"], minSeverity: "medium", maxIssues: 8 },
-      });
-    } else {
-      onChange({ type: newType, config: {} });
+      return;
     }
+    const def = registeredTypes.find((t) => t.type === newType);
+    if (!def) {
+      onChange({ type: newType, config: {} });
+      return;
+    }
+    // Build default config from schema defaults
+    const defaults: Record<string, unknown> = {};
+    for (const [key, field] of Object.entries(def.configSchema.properties)) {
+      if (field.default !== undefined) {
+        defaults[key] = field.default;
+      }
+    }
+    onChange({ type: newType, config: defaults });
   };
+
+  const selectedDef = registeredTypes.find((t) => t.type === actionType);
 
   return (
     <div className="space-y-1">
@@ -352,17 +446,22 @@ const PostActionEditor = ({
         value={actionType}
         onChange={(e) => handleTypeChange(e.target.value)}
       >
-        {POST_ACTION_TYPES.map((t) => (
-          <option key={t.value} value={t.value}>
+        <option value="none">None</option>
+        {registeredTypes.map((t) => (
+          <option key={t.type} value={t.type}>
             {t.label}
           </option>
         ))}
       </select>
-      {actionType === "create-github-issues" && postAction?.config && (
-        <GitHubIssuesConfig
+      {selectedDef && postAction?.config && (
+        <DynamicConfigForm
+          schema={selectedDef.configSchema}
           config={postAction.config}
           onChange={(config) => onChange({ ...postAction, config })}
         />
+      )}
+      {selectedDef && (
+        <p className="text-[9px] text-muted-foreground/60 mt-1">{selectedDef.description}</p>
       )}
     </div>
   );
@@ -593,7 +692,6 @@ export type PipelineEditorProps = {
 
 export const PipelineEditor = ({
   initialStages = [],
-  onSave,
   onChange,
   height = "500px",
   readOnly = false,
@@ -605,10 +703,20 @@ export const PipelineEditor = ({
   const [edges, setEdges, onEdgesChange] = useEdgesState(initial.edges);
   const [selectedNode, setSelectedNode] = useState<Node | null>(null);
 
-  // Re-sync flow state when initialStages changes (e.g. wizard re-generates a plan)
+  // Track the last stages we emitted via onChange so we can distinguish
+  // "parent echoing our own data back" from "wizard generated new stages".
+  const lastEmittedRef = useRef<BackendPipelineNode[] | null>(null);
+
+  // Re-sync flow state when initialStages changes from an EXTERNAL source
+  // (e.g. wizard re-generates a plan). Skip when it's just our own emit echoed back.
   const initialStagesRef = useRef(initialStages);
   useEffect(() => {
     if (initialStages === initialStagesRef.current) return;
+    // If the parent is just echoing back what we emitted, skip the reset
+    if (initialStages === lastEmittedRef.current) {
+      initialStagesRef.current = initialStages;
+      return;
+    }
     initialStagesRef.current = initialStages;
     const flow = pipelineToFlow(initialStages);
     setNodes(flow.nodes);
@@ -689,6 +797,24 @@ export const PipelineEditor = ({
     }
   }, [nodes, setNodes, setEdges]);
 
+  // Auto-sync pipeline state to parent whenever nodes or edges change.
+  // This eliminates the need for a separate "Save" button on the canvas —
+  // the outer "Save Prompt" / "Update Prompt" is the single save action.
+  const syncTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (!onChange) return;
+    // Debounce to avoid thrashing on rapid changes (drag, multiple edits)
+    if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current);
+    syncTimeoutRef.current = setTimeout(() => {
+      const stages = flowToPipeline(nodes, edges);
+      lastEmittedRef.current = stages;
+      onChange(stages);
+    }, 150);
+    return () => {
+      if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current);
+    };
+  }, [nodes, edges, onChange]);
+
   const updateNodeData = useCallback(
     (id: string, data: Partial<PipelineNodeData>) => {
       setNodes((ns) =>
@@ -707,12 +833,6 @@ export const PipelineEditor = ({
     },
     [setNodes, setEdges]
   );
-
-  const handleSave = useCallback(() => {
-    const stages = flowToPipeline(nodes, edges);
-    onSave?.(stages);
-    onChange?.(stages);
-  }, [nodes, edges, onSave, onChange]);
 
   return (
     <div className="flex gap-4" style={{ height }}>
@@ -757,12 +877,6 @@ export const PipelineEditor = ({
                 className="flex items-center gap-1 rounded-lg bg-sky-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-sky-700 transition"
               >
                 <GitBranch className="h-3 w-3" /> Parallel
-              </button>
-              <button
-                onClick={handleSave}
-                className="flex items-center gap-1 rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground shadow-sm hover:bg-primary/90 transition"
-              >
-                <Save className="h-3 w-3" /> Save
               </button>
             </Panel>
           )}

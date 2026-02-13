@@ -36,6 +36,15 @@ import { Scheduler } from "./productivity/scheduler.js";
 import { PersonalityManager } from "./personality/personality-manager.js";
 import { DockerSidecarManager } from "./mcp/docker-sidecar-manager.js";
 import { LocalMcpServerManager } from "./mcp/local-mcp-server-manager.js";
+import { registerBuiltinPostActions } from "./tasks/post-actions.js";
+import { CustomPostActionManager } from "./tasks/custom-post-actions.js";
+
+// Register built-in post-action types (create-github-issues, send-webhook, etc.)
+registerBuiltinPostActions();
+
+// Load user-created custom post-action types from disk and register them
+const customPostActionManager = new CustomPostActionManager();
+await customPostActionManager.initialize();
 
 const config = await loadConfig();
 
@@ -244,7 +253,7 @@ const modelsRouter = createModelsRouter({ copilot });
 app.use("/api/models", modelsRouter);
 
 // Admin API routes (no auth for local dev; gate behind auth in prod)
-const adminRouter = createAdminRouter({ toolRegistry, sidecarManager, localServerManager, promptManager, scheduler, personalityManager, sessionManager, copilot, taskWorker, taskEngine, webhookManager });
+const adminRouter = createAdminRouter({ toolRegistry, sidecarManager, localServerManager, promptManager, scheduler, personalityManager, sessionManager, copilot, taskWorker, taskEngine, webhookManager, customPostActionManager });
 app.use("/api/admin", adminRouter);
 
 // Webhook trigger routes (public-facing)

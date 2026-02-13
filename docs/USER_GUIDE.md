@@ -293,8 +293,60 @@ Any saved prompt can optionally carry pipeline stages, turning it from a simple 
    - **Tools** — Multi-select for tools available to this stage (grouped by category).
    - **Auto-Approve Tools** — Checkbox to bypass approval gating for this stage's tool calls.
    - **Timeout** — Max execution time in seconds (default: 300).
-   - **Post-Action** — Deterministic action after stage completion (e.g., "Create GitHub Issues" with owner, repo, labels, severity, and max issues config).
+   - **Post-Action** — Deterministic action after stage completion. Action types are loaded dynamically from the Post-Action Registry (see below).
 7. Click **Save Prompt** to persist the stages.
+
+#### Post-Action Registry (Plugin System)
+
+Post-actions are deterministic actions that run after a pipeline stage completes (e.g., create GitHub issues, send a webhook). Instead of hardcoding action types in the UI, openzigs uses a **Post-Action Registry** — a plugin system where each action type is registered with a JSON Schema describing its configuration, enabling the UI to render dynamic config forms for any action.
+
+**Built-in post-action types:**
+
+| Type | Category | Description |
+|------|----------|-------------|
+| `create-github-issues` | Integrations | Parse stage output for findings and create GitHub issues. Config: `owner`, `repo`, `labels`, `minSeverity`, `maxIssues`. |
+| `send-webhook` | Notifications | POST/PUT the stage output to a webhook URL. Config: `url`, `method`, `includeOutput`. |
+
+**How it works:**
+
+1. At server startup, `registerBuiltinPostActions()` registers all built-in action types with the global `postActionRegistry`.
+2. The UI fetches available types via `GET /api/admin/post-actions`, which returns each type's label, description, category, icon, and `configSchema`.
+3. The pipeline editor renders a dynamic form based on the `configSchema` — field types (string, number, boolean, array), labels, defaults, enums, and constraints are all driven by the schema.
+4. When a stage executes, the engine calls `postActionRegistry.execute(action, stageOutput)`, which delegates to the registered handler.
+
+**REST API — List registered post-actions:**
+
+```bash
+curl http://localhost:3000/api/admin/post-actions
+# Returns: { "actions": [{ "type": "create-github-issues", "label": "...", "configSchema": {...} }, ...] }
+```
+
+**Registering a custom post-action (code):**
+
+```typescript
+import { postActionRegistry } from "./tasks/post-action-registry.js";
+
+postActionRegistry.register({
+  type: "slack-notify",
+  label: "Slack Notification",
+  description: "Send stage results to a Slack channel via incoming webhook.",
+  category: "Notifications",
+  icon: "slack",
+  configSchema: {
+    type: "object",
+    properties: {
+      webhookUrl: { type: "string", title: "Webhook URL", placeholder: "https://hooks.slack.com/..." },
+      channel: { type: "string", title: "Channel", default: "#general" },
+      mentionOnFailure: { type: "boolean", title: "Mention @here on failure", default: false },
+    },
+    required: ["webhookUrl"],
+  },
+  handler: async (stageOutput, config) => {
+    // Your implementation here
+    return JSON.stringify({ ok: true, channel: config.channel });
+  },
+});
+```
 
 **Stage and tool count badges** appear on saved prompt cards in the list, giving you a quick visual indicator of which prompts are simple templates vs. full pipelines.
 
