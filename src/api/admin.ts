@@ -1795,10 +1795,12 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
     });
 
     router.post("/sentinel/toggle", async (req, res) => {
-      const { enabled } = req.body as { enabled?: boolean };
-      if (typeof enabled !== "boolean") {
+      const toggleSchema = z.object({ enabled: z.boolean() });
+      const parsed = toggleSchema.safeParse(req.body);
+      if (!parsed.success) {
         return res.status(400).json({ error: "enabled must be a boolean" });
       }
+      const { enabled } = parsed.data;
       try {
         await sentinel.toggle(enabled);
         return res.json({ ok: true, enabled: sentinel.isRunning });
@@ -1825,7 +1827,14 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
     });
 
     router.get("/sentinel/digests", async (req, res) => {
-      const limit = typeof req.query.limit === "string" ? Number(req.query.limit) : 20;
+      const limitRaw = req.query.limit;
+      let limit = 20;
+      if (typeof limitRaw === "string") {
+        const parsedLimit = parseInt(limitRaw, 10);
+        if (!isNaN(parsedLimit) && parsedLimit > 0) {
+          limit = parsedLimit;
+        }
+      }
       try {
         const digests = await sentinel.getDigestHistory(limit);
         return res.json({ digests });

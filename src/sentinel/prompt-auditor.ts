@@ -112,13 +112,14 @@ export class PromptAuditor {
               sessionId: session.id,
             });
           }
-        } catch {
-          // Session history unavailable — skip
+        } catch (err) {
+          logger.warn(`Could not get history for session ${session.id}: ${err instanceof Error ? err.message : String(err)}`);
         }
       }
 
       return prompts;
-    } catch {
+    } catch (err) {
+      logger.error(`Failed to sample recent prompts: ${err instanceof Error ? err.message : String(err)}`);
       return [];
     }
   }

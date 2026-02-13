@@ -155,7 +155,7 @@ export const SentinelPanel = () => {
         </div>
         <div className="mt-2 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
           <ConfigItem label="Interval" value={`${status.config.checkIntervalMinutes}min`} />
-          <ConfigItem label="Jitter" value={`±${status.config.jitterMinutes}min`} />
+          <ConfigItem label="Jitter" value={`up to ${status.config.jitterMinutes}min`} />
           <ConfigItem label="Digest Hour" value={`${status.config.digestHour}:00`} />
           <ConfigItem label="Audit Hour" value={`${status.config.auditHour}:00`} />
         </div>
@@ -184,8 +184,8 @@ export const SentinelPanel = () => {
             {digestsQuery.data?.digests.length === 0 && (
               <p className="text-xs text-muted-foreground">No digests generated yet.</p>
             )}
-            {digestsQuery.data?.digests.map((digest) => (
-              <DigestCard key={digest.id} digest={digest} />
+            {digestsQuery.data?.digests.map((digest, idx) => (
+              <DigestCard key={digest.timestamp ?? idx} digest={digest} />
             ))}
           </div>
         )}
@@ -232,25 +232,32 @@ const ConfigItem = ({ label, value }: { label: string; value: string }) => (
   </div>
 );
 
-const DigestCard = ({ digest }: { digest: DigestRecord }) => (
-  <div className="rounded-lg border border-border bg-card p-3 space-y-1.5">
-    <div className="flex items-center justify-between">
-      <span className="text-xs font-medium text-muted-foreground">
-        {new Date(digest.generatedAt).toLocaleString()}
-      </span>
-      <div className="flex items-center gap-2 text-xs">
-        <span className="text-foreground font-semibold">{digest.totalTasks} tasks</span>
-        <span className={digest.successRate >= 0.9 ? "text-emerald-500" : "text-amber-500"}>
-          {(digest.successRate * 100).toFixed(0)}% success
+const DigestCard = ({ digest }: { digest: DigestRecord }) => {
+  const totalTasks = digest.taskSummary.completed + digest.taskSummary.failed + digest.taskSummary.cancelled;
+  return (
+    <div className="rounded-lg border border-border bg-card p-3 space-y-1.5">
+      <div className="flex items-center justify-between">
+        <span className="text-xs font-medium text-muted-foreground">
+          {new Date(digest.timestamp).toLocaleString()}
         </span>
-        {digest.alertCount > 0 && (
-          <span className="text-red-500">{digest.alertCount} alerts</span>
-        )}
+        <div className="flex items-center gap-2 text-xs">
+          <span className="text-foreground font-semibold">{totalTasks} tasks</span>
+          <span className={digest.taskSummary.successRate >= 0.9 ? "text-emerald-500" : "text-amber-500"}>
+            {(digest.taskSummary.successRate * 100).toFixed(0)}% success
+          </span>
+          {digest.alertCount > 0 && (
+            <span className="text-red-500">{digest.alertCount} alerts</span>
+          )}
+        </div>
       </div>
+      <p className="text-xs text-muted-foreground">
+        {digest.taskSummary.completed} completed, {digest.taskSummary.failed} failed, {digest.taskSummary.cancelled} cancelled
+      </p>
+      {digest.promptAudit && (
+        <p className="text-xs text-muted-foreground/80 italic">
+          Prompt audit: {digest.promptAudit.sampledCount} sampled, avg score {digest.promptAudit.avgScore.toFixed(1)}/10
+        </p>
+      )}
     </div>
-    <p className="text-xs text-muted-foreground whitespace-pre-wrap">{digest.summary}</p>
-    {digest.promptAuditSummary && (
-      <p className="text-xs text-muted-foreground/80 italic">{digest.promptAuditSummary}</p>
-    )}
-  </div>
-);
+  );
+};

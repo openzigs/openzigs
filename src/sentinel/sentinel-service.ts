@@ -72,6 +72,11 @@ export class SentinelService extends EventEmitter {
   // Pending results for digest aggregation
   private pendingAuditResult: PromptAuditResult | null = null;
 
+  // Concurrency lock to prevent overlapping check/audit/digest runs
+  private isChecking = false;
+  private isAuditing = false;
+  private isDigesting = false;
+
   constructor(deps: SentinelDependencies) {
     super();
     this.taskRepo = deps.taskRepo;
@@ -143,7 +148,7 @@ export class SentinelService extends EventEmitter {
     });
 
     await writeState(this.state);
-    logger.info(`Sentinel started — check every ${intervalMin}min (±${this.config.jitterMinutes}min jitter), digest at ${this.config.digestHour}:00, audit at ${this.config.auditHour}:00`);
+    logger.info(`Sentinel started — check every ${intervalMin}min (up to ${this.config.jitterMinutes}min jitter), digest at ${this.config.digestHour}:00, audit at ${this.config.auditHour}:00`);
   }
 
   /** Stop all scheduled jobs and flush state. */
@@ -166,6 +171,19 @@ export class SentinelService extends EventEmitter {
 
   /** Execute a single check cycle. Public for testing and "Run Now" API. */
   async runCheck(): Promise<TaskReviewResult> {
+    if (this.isChecking) {
+      logger.warn("Sentinel check is already in progress. Skipping.");
+      throw new Error("Check already in progress");
+    }
+    this.isChecking = true;
+    try {
+      return await this._runCheckInner();
+    } finally {
+      this.isChecking = false;
+    }
+  }
+
+  private async _runCheckInner(): Promise<TaskReviewResult> {
     const now = this.clock();
     logger.info("Sentinel: running task review check...");
 
@@ -203,6 +221,12 @@ export class SentinelService extends EventEmitter {
 
   /** Run the prompt auditor independently. */
   async runPromptAudit(): Promise<PromptAuditResult> {
+    if (this.isAuditing) {
+      logger.warn("Sentinel audit is already in progress. Skipping.");
+      throw new Error("Audit already in progress");
+    }
+    this.isAuditing = true;
+    try {
     logger.info("Sentinel: running prompt audit...");
     const result = await this.promptAuditor.audit();
     this.state.lastPromptAuditAt = this.clock().toISOString();
@@ -210,10 +234,19 @@ export class SentinelService extends EventEmitter {
     await writeState(this.state);
     logger.info(`Sentinel audit complete: ${result.sampledCount} prompts sampled, avg score ${result.averageScore.toFixed(1)}/10`);
     return result;
+    } finally {
+      this.isAuditing = false;
+    }
   }
 
   /** Generate and deliver the daily digest. */
   async generateDigest(): Promise<DigestRecord> {
+    if (this.isDigesting) {
+      logger.warn("Sentinel digest is already in progress. Skipping.");
+      throw new Error("Digest already in progress");
+    }
+    this.isDigesting = true;
+    try {
     logger.info("Sentinel: generating daily digest...");
 
     // Run a check first to get fresh data
@@ -238,6 +271,9 @@ export class SentinelService extends EventEmitter {
     logger.info("Sentinel daily digest generated and delivered");
 
     return digest;
+    } finally {
+      this.isDigesting = false;
+    }
   }
 
   /** Get current status for API/UI. */

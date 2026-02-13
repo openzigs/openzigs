@@ -3134,7 +3134,7 @@ curl -X POST http://localhost:3001/api/admin/sentinel/run-now
 | `enabled` | `false` | Enable/disable Sentinel |
 | `model` | `gpt-4o-mini` | Model used for prompt audits |
 | `checkIntervalMinutes` | `15` | How often to run task health checks |
-| `jitterMinutes` | `15` | Random jitter added to check interval |
+| `jitterMinutes` | `15` | Random delay (up to this many minutes) added after each check interval |
 | `digestHour` | `9` | Hour of day (0-23) for daily digest |
 | `auditHour` | `2` | Hour of day (0-23) for prompt audit |
 | `consecutiveFailureThreshold` | `3` | Failures before critical alert |

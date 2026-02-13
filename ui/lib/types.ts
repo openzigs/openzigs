@@ -395,16 +395,22 @@ export type SentinelAlert = {
 };
 
 export type DigestRecord = {
-  id: string;
-  generatedAt: string;
-  totalTasks: number;
-  successRate: number;
-  alertCount: number;
-  summary: string;
-  promptAuditSummary: string | null;
+  timestamp: string;
+  period: { from: string; to: string };
+  taskSummary: {
+    completed: number;
+    failed: number;
+    cancelled: number;
+    successRate: number;
+  };
   tokenBurn: {
-    inputTokens: number;
-    outputTokens: number;
-    estimatedCost: number;
+    total: number;
+    avgPerTask: number;
+    topConsumer: { goal: string; tokens: number } | null;
   } | null;
+  promptAudit: {
+    sampledCount: number;
+    avgScore: number;
+  } | null;
+  alertCount: number;
 };

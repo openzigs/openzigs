@@ -2099,7 +2099,7 @@ Sentinel is an autonomous background daemon that continuously monitors the healt
 
 ### Scheduling
 
-- **Task health checks**: Every N minutes (configurable, default 15) with random jitter (default ±15min)
+- **Task health checks**: Every N minutes (configurable, default 15) with up to N minutes of random delay (default up to 15min)
 - **Daily digest**: Generated at a configurable hour (default 09:00)
 - **Prompt audit**: Runs at a configurable hour (default 02:00)
 
