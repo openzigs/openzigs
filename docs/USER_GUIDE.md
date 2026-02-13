@@ -1675,6 +1675,7 @@ Native MCP servers are now managed through a step-by-step wizard in **Admin → 
 2. **Step 2:** Fill type-specific fields (command/args/env/cwd or url/headers) and timeout.
 3. **Step 3:** Run **Test Connection** to validate connectivity and preview discovered tools.
 
+![Native MCP wizard — step-by-step server setup and connection test](images/admin-native-mcp-wizard.png)
 You can save without testing via **Skip Test**, but testing is recommended because successful tests populate discovered tool metadata shown in the Tools panel.
 
 ### System Busy Guard (Safe-Swap)

@@ -28,11 +28,11 @@ describe("ToolsPanel", () => {
     expect(screen.getByText("write_file")).toBeInTheDocument();
   });
 
-  it("filters out sidecar tools", () => {
+  it("renders sourced tools in their category", () => {
     render(<ToolsPanel toolGroups={mockGroups} />, { wrapper });
 
-    // brave_search has `source` so it should be filtered out; the "search" category header shouldn't appear
-    expect(screen.queryByText("brave_search")).not.toBeInTheDocument();
+    expect(screen.getByText("search")).toBeInTheDocument();
+    expect(screen.getByText("brave_search")).toBeInTheDocument();
   });
 
   it("shows risk level badges", () => {
