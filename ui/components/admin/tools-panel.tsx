@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { fetchJson } from "@/lib/api";
 import type { ToolInfo } from "@/lib/types";
+import { Plug } from "lucide-react";
 
 type ToolsPanelProps = {
   toolGroups: Record<string, ToolInfo[]>;
@@ -49,19 +50,25 @@ export const ToolsPanel = ({ toolGroups }: ToolsPanelProps) => {
     },
   });
 
+  const categories = [
+    ...CATEGORY_ORDER.filter((category) => toolGroups[category]?.length),
+    ...Object.keys(toolGroups)
+      .filter((category) => !CATEGORY_ORDER.includes(category))
+      .sort((a, b) => a.localeCompare(b)),
+  ];
+
   return (
     <div className="space-y-4">
-      {CATEGORY_ORDER.map((category) => {
-        const allTools = toolGroups[category];
-        if (!allTools || allTools.length === 0) return null;
-        // Filter out tools that belong to an MCP sidecar
-        const tools = allTools.filter((t) => !t.source);
-        if (tools.length === 0) return null;
+      {categories.map((category) => {
+        const tools = toolGroups[category];
+        if (!tools || tools.length === 0) return null;
 
         return (
           <div key={category}>
             <p className="mb-2 text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">
-              {category}
+              {category.startsWith("user mcp:")
+                ? `USER MCP: ${category.slice("user mcp:".length).trim().toUpperCase()}`
+                : category}
             </p>
             <div className="space-y-1">
               {tools.map((tool) => (
@@ -70,7 +77,10 @@ export const ToolsPanel = ({ toolGroups }: ToolsPanelProps) => {
                   className="flex items-center gap-3 rounded-xl border border-border bg-card px-4 py-2.5 transition hover:border-ring/30"
                 >
                   <div className="min-w-0 flex-1">
-                    <p className="font-mono text-[13px] font-semibold text-foreground">{tool.name}</p>
+                    <p className="font-mono text-[13px] font-semibold text-foreground">
+                      {tool.source?.startsWith("mcp:") && <Plug className="mr-1 inline h-3.5 w-3.5 text-primary" />}
+                      {tool.name}
+                    </p>
                     <p className="truncate text-xs text-muted-foreground">{tool.description}</p>
                   </div>
                   <span
@@ -85,7 +95,9 @@ export const ToolsPanel = ({ toolGroups }: ToolsPanelProps) => {
                         ? "bg-ember/15 text-ember dark:bg-ember/20 dark:text-red-400"
                         : "bg-muted/50 text-muted-foreground hover:bg-muted"
                     }`}
+                    disabled={tool.source?.startsWith("mcp:")}
                     onClick={() => {
+                      if (tool.source?.startsWith("mcp:")) return;
                       globalApprovalMutation.mutate({
                         name: tool.name,
                         required: !tool.globalApprovalRequired,
@@ -98,8 +110,9 @@ export const ToolsPanel = ({ toolGroups }: ToolsPanelProps) => {
                     className={`w-16 rounded-full px-3 py-1 text-xs font-semibold transition ${
                       tool.enabled ? "bg-moss text-white" : "bg-muted text-muted-foreground"
                     } disabled:opacity-40`}
-                    disabled={togglingTool === tool.name}
+                    disabled={togglingTool === tool.name || tool.name.endsWith("__disconnected__")}
                     onClick={() => {
+                      if (tool.name.endsWith("__disconnected__")) return;
                       setTogglingTool(tool.name);
                       toggleMutation.mutate({ name: tool.name, enabled: !tool.enabled });
                     }}

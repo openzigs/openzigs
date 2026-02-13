@@ -1,27 +1,21 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { fetchJson } from "@/lib/api";
-import type { NativeMcpServerDefinition, NativeMcpServerType } from "@/lib/types";
+import type { NativeMcpServerDefinition } from "@/lib/types";
 import { showToast } from "@/components/toast";
 import { ConfirmDialog } from "@/components/confirm-dialog";
-import { Plus, Edit, Trash2, Server, Globe, Radio, X, Eye, EyeOff } from "lucide-react";
+import { McpWizard } from "@/components/admin/mcp-wizard";
+import { AlertTriangle, Edit, Plug, Plus, RefreshCw, Server, Trash2 } from "lucide-react";
 
 type ServersRecord = Record<string, NativeMcpServerDefinition>;
-
-const SERVER_TYPES: { value: NativeMcpServerType; label: string; icon: typeof Server }[] = [
-  { value: "local", label: "Local (stdio)", icon: Server },
-  { value: "http", label: "HTTP", icon: Globe },
-  { value: "sse", label: "SSE", icon: Radio },
-];
-
-const TYPE_BADGE_COLORS: Record<string, string> = {
-  local: "bg-sky-500/15 text-sky-600 dark:text-sky-400",
-  stdio: "bg-sky-500/15 text-sky-600 dark:text-sky-400",
-  http: "bg-moss/15 text-moss dark:text-green-400",
-  sse: "bg-purple-500/15 text-purple-600 dark:text-purple-400",
-};
+type ToolCache = Record<string, {
+  tools: Array<{ name: string; description: string }>;
+  connected: boolean;
+  error?: string;
+  updatedAt: string;
+}>;
 
 export const McpEditorPanel = () => {
   const queryClient = useQueryClient();
@@ -31,13 +25,31 @@ export const McpEditorPanel = () => {
     queryFn: () => fetchJson<{ servers: ServersRecord }>("/api/admin/native-mcp-servers"),
   });
 
-  const [dialogOpen, setDialogOpen] = useState(false);
+  const cacheQuery = useQuery({
+    queryKey: ["native-mcp-tool-cache"],
+    queryFn: () => fetchJson<{ cache: ToolCache }>("/api/admin/native-mcp-servers/tool-cache"),
+    refetchInterval: 5_000,
+  });
+
+  const busyQuery = useQuery({
+    queryKey: ["admin-task-stats"],
+    queryFn: () => fetchJson<{ queued: number; running: number; activeCount: number }>("/api/admin/tasks/stats"),
+    refetchInterval: 5_000,
+  });
+
+  const [wizardOpen, setWizardOpen] = useState(false);
   const [editingName, setEditingName] = useState<string | null>(null);
   const [editingDef, setEditingDef] = useState<NativeMcpServerDefinition | null>(null);
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
 
   const servers = query.data?.servers ?? {};
   const entries = Object.entries(servers);
+  const cache = cacheQuery.data?.cache ?? {};
+
+  const running = busyQuery.data?.running ?? 0;
+  const queued = busyQuery.data?.queued ?? 0;
+  const activeCount = running + queued;
+  const isLocked = activeCount > 0;
 
   const createMutation = useMutation({
     mutationFn: ({ name, def }: { name: string; def: NativeMcpServerDefinition }) =>
@@ -46,9 +58,11 @@ export const McpEditorPanel = () => {
         body: JSON.stringify(def),
       }),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["native-mcp-servers"] });
+      void queryClient.invalidateQueries({ queryKey: ["native-mcp-servers"] });
+      void queryClient.invalidateQueries({ queryKey: ["native-mcp-tool-cache"] });
+      void queryClient.invalidateQueries({ queryKey: ["tools"] });
       showToast("Server added", "success");
-      setDialogOpen(false);
+      setWizardOpen(false);
     },
     onError: (err) => showToast(`Error: ${err.message}`, "error"),
   });
@@ -60,9 +74,11 @@ export const McpEditorPanel = () => {
         body: JSON.stringify(def),
       }),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["native-mcp-servers"] });
+      void queryClient.invalidateQueries({ queryKey: ["native-mcp-servers"] });
+      void queryClient.invalidateQueries({ queryKey: ["native-mcp-tool-cache"] });
+      void queryClient.invalidateQueries({ queryKey: ["tools"] });
       showToast("Server updated", "success");
-      setDialogOpen(false);
+      setWizardOpen(false);
     },
     onError: (err) => showToast(`Error: ${err.message}`, "error"),
   });
@@ -71,29 +87,26 @@ export const McpEditorPanel = () => {
     mutationFn: (name: string) =>
       fetchJson(`/api/admin/native-mcp-servers/${encodeURIComponent(name)}`, { method: "DELETE" }),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["native-mcp-servers"] });
+      void queryClient.invalidateQueries({ queryKey: ["native-mcp-servers"] });
+      void queryClient.invalidateQueries({ queryKey: ["native-mcp-tool-cache"] });
+      void queryClient.invalidateQueries({ queryKey: ["tools"] });
       showToast("Server removed", "success");
     },
     onError: (err) => showToast(`Error: ${err.message}`, "error"),
   });
 
-  const handleDelete = (name: string) => {
-    setPendingDelete(name);
-  };
+  const reconnectMutation = useMutation({
+    mutationFn: (name: string) =>
+      fetchJson(`/api/admin/native-mcp-servers/${encodeURIComponent(name)}/reconnect`, { method: "POST" }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["native-mcp-tool-cache"] });
+      void queryClient.invalidateQueries({ queryKey: ["tools"] });
+      showToast("Reconnect test complete", "success");
+    },
+    onError: (err) => showToast(`Reconnect failed: ${err.message}`, "error"),
+  });
 
-  const handleEdit = (name: string, def: NativeMcpServerDefinition) => {
-    setEditingName(name);
-    setEditingDef(def);
-    setDialogOpen(true);
-  };
-
-  const handleCreate = () => {
-    setEditingName(null);
-    setEditingDef(null);
-    setDialogOpen(true);
-  };
-
-  const handleDialogSave = (name: string, def: NativeMcpServerDefinition) => {
+  const handleWizardSave = (name: string, def: NativeMcpServerDefinition) => {
     if (editingName) {
       updateMutation.mutate({ name, def });
     } else {
@@ -107,11 +120,29 @@ export const McpEditorPanel = () => {
 
   return (
     <div className="space-y-4">
+      {isLocked && (
+        <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-amber-500">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="text-sm font-semibold">⚠️ System is busy executing {activeCount} task(s). MCP configuration is locked to prevent disruption.</p>
+              <p className="mt-1 text-xs">Running: {running} | Queued: {queued}</p>
+            </div>
+            <a href="/tasks" className="text-xs font-semibold underline">View Tasks →</a>
+          </div>
+        </div>
+      )}
+
       <div className="flex items-center justify-between">
         <p className="text-xs text-muted-foreground">{entries.length} server{entries.length !== 1 ? "s" : ""} configured</p>
         <button
-          onClick={handleCreate}
-          className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-white hover:bg-primary/90"
+          onClick={() => {
+            setEditingName(null);
+            setEditingDef(null);
+            setWizardOpen(true);
+          }}
+          disabled={isLocked}
+          title={isLocked ? "Cannot add servers while tasks are running" : undefined}
+          className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-white hover:bg-primary/90 disabled:opacity-40"
         >
           <Plus className="h-3.5 w-3.5" />
           Add Server
@@ -119,30 +150,85 @@ export const McpEditorPanel = () => {
       </div>
 
       {entries.length === 0 ? (
-        <p className="py-8 text-center text-sm text-muted-foreground">
-          No native MCP servers configured. Click &ldquo;Add Server&rdquo; to define one.
-        </p>
+        <p className="py-8 text-center text-sm text-muted-foreground">No native MCP servers configured.</p>
       ) : (
         <div className="grid gap-3 sm:grid-cols-2">
-          {entries.map(([name, def]) => (
-            <McpServerCard
-              key={name}
-              name={name}
-              def={def}
-              onEdit={() => handleEdit(name, def)}
-              onDelete={() => handleDelete(name)}
-            />
-          ))}
+          {entries.map(([name, def]) => {
+            const state = cache[name];
+            const disconnected = state?.connected === false;
+            return (
+              <div key={name} className="rounded-2xl border border-border bg-card p-4">
+                <div className="mb-2 flex items-start justify-between">
+                  <div className="flex items-center gap-2">
+                    <Server className="h-4 w-4 text-primary" />
+                    <span className="text-sm font-semibold text-foreground">{name}</span>
+                  </div>
+                  <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold uppercase text-primary">{def.type}</span>
+                </div>
+
+                <p className="mb-2 break-all font-mono text-[11px] text-muted-foreground">
+                  {"command" in def ? `${def.command} ${(def.args ?? []).join(" ")}` : def.url}
+                </p>
+
+                <div className="mb-3 flex items-center gap-2 text-[11px] text-muted-foreground">
+                  <Plug className="h-3.5 w-3.5" />
+                  <span>{state?.tools?.length ?? 0} discovered tool(s)</span>
+                </div>
+
+                {disconnected && (
+                  <div className="mb-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-2 py-1.5 text-[11px] text-amber-500">
+                    <div className="flex items-center gap-1">
+                      <AlertTriangle className="h-3.5 w-3.5" />
+                      Disconnected — tools unavailable
+                    </div>
+                    {state?.error && <p className="mt-1 truncate">{state.error}</p>}
+                  </div>
+                )}
+
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    onClick={() => {
+                      setEditingName(name);
+                      setEditingDef(def);
+                      setWizardOpen(true);
+                    }}
+                    disabled={isLocked}
+                    title={isLocked ? "Cannot edit while tasks are running" : undefined}
+                    className="flex items-center gap-1 rounded-lg border border-border px-2.5 py-1 text-[11px] font-semibold text-muted-foreground hover:border-primary/30 disabled:opacity-40"
+                  >
+                    <Edit className="h-3 w-3" /> Edit
+                  </button>
+                  <button
+                    onClick={() => setPendingDelete(name)}
+                    disabled={isLocked}
+                    title={isLocked ? "Cannot delete while tasks are running" : undefined}
+                    className="flex items-center gap-1 rounded-lg border border-border px-2.5 py-1 text-[11px] font-semibold text-destructive hover:border-destructive/30 disabled:opacity-40"
+                  >
+                    <Trash2 className="h-3 w-3" /> Remove
+                  </button>
+                  {disconnected && (
+                    <button
+                      onClick={() => reconnectMutation.mutate(name)}
+                      className="flex items-center gap-1 rounded-lg border border-border px-2.5 py-1 text-[11px] font-semibold text-foreground hover:border-primary/30"
+                    >
+                      <RefreshCw className="h-3 w-3" /> Reconnect
+                    </button>
+                  )}
+                </div>
+              </div>
+            );
+          })}
         </div>
       )}
 
-      {dialogOpen && (
-        <McpServerEditorDialog
-          name={editingName}
-          def={editingDef}
+      {wizardOpen && (
+        <McpWizard
+          initialName={editingName}
+          initialDef={editingDef}
           existingNames={Object.keys(servers)}
-          onSave={handleDialogSave}
-          onClose={() => setDialogOpen(false)}
+          locked={isLocked}
+          onSave={handleWizardSave}
+          onClose={() => setWizardOpen(false)}
         />
       )}
 
@@ -159,481 +245,6 @@ export const McpEditorPanel = () => {
           onCancel={() => setPendingDelete(null)}
         />
       )}
-    </div>
-  );
-};
-
-/* ── Server Card ── */
-
-const McpServerCard = ({
-  name,
-  def,
-  onEdit,
-  onDelete,
-}: {
-  name: string;
-  def: NativeMcpServerDefinition;
-  onEdit: () => void;
-  onDelete: () => void;
-}) => {
-  const badgeColor = TYPE_BADGE_COLORS[def.type] ?? "bg-muted text-muted-foreground";
-
-  return (
-    <div className="rounded-2xl border border-border bg-card p-4">
-      <div className="mb-2 flex items-start justify-between">
-        <div className="flex items-center gap-2">
-          <Server className="h-4 w-4 text-primary" />
-          <span className="text-sm font-semibold text-foreground">{name}</span>
-        </div>
-        <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase ${badgeColor}`}>
-          {def.type}
-        </span>
-      </div>
-      <p className="mb-2 break-all font-mono text-[11px] text-muted-foreground">
-        {"command" in def ? `${def.command} ${(def.args ?? []).join(" ")}` : ("url" in def ? def.url : "")}
-      </p>
-      {"env" in def && def.env && Object.keys(def.env).length > 0 && (
-        <p className="mb-2 text-[11px] text-muted-foreground">
-          Env: {Object.keys(def.env).join(", ")}
-        </p>
-      )}
-      {def.timeout && (
-        <p className="mb-2 text-[11px] text-muted-foreground">Timeout: {def.timeout}ms</p>
-      )}
-      <div className="flex gap-2">
-        <button
-          onClick={onEdit}
-          className="flex items-center gap-1 rounded-lg border border-border px-2.5 py-1 text-[11px] font-semibold text-muted-foreground hover:border-primary/30"
-        >
-          <Edit className="h-3 w-3" />
-          Edit
-        </button>
-        <button
-          onClick={onDelete}
-          className="flex items-center gap-1 rounded-lg border border-border px-2.5 py-1 text-[11px] font-semibold text-destructive hover:border-destructive/30"
-        >
-          <Trash2 className="h-3 w-3" />
-          Remove
-        </button>
-      </div>
-    </div>
-  );
-};
-
-/* ── Env Var Editor ── */
-
-const SENSITIVE_KEYS = /key|secret|token|password|credential/i;
-
-const EnvVarEditor = ({
-  entries,
-  onChange,
-}: {
-  entries: [string, string][];
-  onChange: (entries: [string, string][]) => void;
-}) => {
-  const [showValues, setShowValues] = useState<Record<number, boolean>>({});
-
-  const add = () => onChange([...entries, ["", ""]]);
-  const remove = (idx: number) => onChange(entries.filter((_, i) => i !== idx));
-  const update = (idx: number, field: 0 | 1, value: string) => {
-    const next = [...entries];
-    next[idx] = [...next[idx]] as [string, string];
-    next[idx][field] = value;
-    onChange(next);
-  };
-
-  return (
-    <div className="space-y-2">
-      <div className="flex items-center justify-between">
-        <label className="text-xs font-medium text-muted-foreground">Environment Variables</label>
-        <button
-          type="button"
-          onClick={add}
-          className="flex items-center gap-1 text-[11px] font-semibold text-primary hover:underline"
-        >
-          <Plus className="h-3 w-3" />
-          Add
-        </button>
-      </div>
-      {entries.map(([key, value], idx) => {
-        const sensitive = SENSITIVE_KEYS.test(key);
-        return (
-          <div key={idx} className="flex items-center gap-1">
-            <input
-              type="text"
-              className="w-1/3 rounded-lg border border-border bg-background px-2 py-1.5 font-mono text-[11px] text-foreground"
-              placeholder="KEY"
-              value={key}
-              onChange={(e) => update(idx, 0, e.target.value)}
-            />
-            <div className="flex flex-1 items-center gap-1">
-              <input
-                type={sensitive && !showValues[idx] ? "password" : "text"}
-                className="flex-1 rounded-lg border border-border bg-background px-2 py-1.5 font-mono text-[11px] text-foreground"
-                placeholder="Value"
-                value={value}
-                onChange={(e) => update(idx, 1, e.target.value)}
-                autoComplete="off"
-              />
-              {sensitive && (
-                <button
-                  type="button"
-                  onClick={() => setShowValues((prev) => ({ ...prev, [idx]: !prev[idx] }))}
-                  className="rounded border border-border p-1 text-muted-foreground hover:border-primary"
-                  aria-label={showValues[idx] ? "Hide value" : "Show value"}
-                >
-                  {showValues[idx] ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
-                </button>
-              )}
-            </div>
-            <button
-              type="button"
-              onClick={() => remove(idx)}
-              className="rounded border border-border p-1 text-destructive hover:border-destructive"
-              aria-label="Remove variable"
-            >
-              <X className="h-3 w-3" />
-            </button>
-          </div>
-        );
-      })}
-    </div>
-  );
-};
-
-/* ── String List Editor ── */
-
-const StringListEditor = ({
-  label,
-  items,
-  onChange,
-  placeholder = "Value",
-}: {
-  label: string;
-  items: string[];
-  onChange: (items: string[]) => void;
-  placeholder?: string;
-}) => {
-  const add = () => onChange([...items, ""]);
-  const remove = (idx: number) => onChange(items.filter((_, i) => i !== idx));
-  const update = (idx: number, value: string) => {
-    const next = [...items];
-    next[idx] = value;
-    onChange(next);
-  };
-
-  return (
-    <div className="space-y-2">
-      <div className="flex items-center justify-between">
-        <label className="text-xs font-medium text-muted-foreground">{label}</label>
-        <button
-          type="button"
-          onClick={add}
-          className="flex items-center gap-1 text-[11px] font-semibold text-primary hover:underline"
-        >
-          <Plus className="h-3 w-3" />
-          Add
-        </button>
-      </div>
-      {items.map((item, idx) => (
-        <div key={idx} className="flex items-center gap-1">
-          <input
-            type="text"
-            className="flex-1 rounded-lg border border-border bg-background px-2 py-1.5 font-mono text-[11px] text-foreground"
-            placeholder={placeholder}
-            value={item}
-            onChange={(e) => update(idx, e.target.value)}
-          />
-          <button
-            type="button"
-            onClick={() => remove(idx)}
-            className="rounded border border-border p-1 text-destructive hover:border-destructive"
-            aria-label="Remove item"
-          >
-            <X className="h-3 w-3" />
-          </button>
-        </div>
-      ))}
-    </div>
-  );
-};
-
-/* ── Server Editor Dialog ── */
-
-const McpServerEditorDialog = ({
-  name: initialName,
-  def,
-  existingNames,
-  onSave,
-  onClose,
-}: {
-  name: string | null;
-  def: NativeMcpServerDefinition | null;
-  existingNames: string[];
-  onSave: (name: string, def: NativeMcpServerDefinition) => void;
-  onClose: () => void;
-}) => {
-  const isEdit = !!initialName;
-  const initialType: NativeMcpServerType = def?.type ?? "local";
-
-  const [serverName, setServerName] = useState(initialName ?? "");
-  const [serverType, setServerType] = useState<NativeMcpServerType>(initialType === "stdio" ? "local" : initialType);
-  const [command, setCommand] = useState("command" in (def ?? {}) ? (def as { command: string }).command : "");
-  const [argEntries, setArgEntries] = useState<string[]>(
-    "args" in (def ?? {}) ? ((def as { args?: string[] }).args ?? []) : []
-  );
-  const [cwd, setCwd] = useState("cwd" in (def ?? {}) ? ((def as { cwd?: string }).cwd ?? "") : "");
-  const [url, setUrl] = useState("url" in (def ?? {}) ? (def as { url: string }).url : "");
-  const [envEntries, setEnvEntries] = useState<[string, string][]>(
-    def && "env" in def && def.env ? Object.entries(def.env) : []
-  );
-  const [headerEntries, setHeaderEntries] = useState<[string, string][]>(
-    def && "headers" in def && def.headers ? Object.entries(def.headers) : []
-  );
-
-  const updateHeader = (idx: number, field: 0 | 1, value: string) => {
-    const next = [...headerEntries];
-    next[idx] = [...next[idx]] as [string, string];
-    next[idx][field] = value;
-    setHeaderEntries(next);
-  };
-
-  const [timeout, setTimeout_] = useState(def?.timeout?.toString() ?? "30000");
-  const [errors, setErrors] = useState<string[]>([]);
-
-  const validate = useCallback((): string[] => {
-    const errs: string[] = [];
-    if (!serverName.trim()) errs.push("Server name is required");
-    else if (!/^[a-z0-9][a-z0-9-]*$/.test(serverName)) errs.push("Name must be lowercase alphanumeric with hyphens");
-    else if (!isEdit && existingNames.includes(serverName)) errs.push("A server with this name already exists");
-
-    if (serverType === "local") {
-      if (!command.trim()) errs.push("Command is required");
-    } else {
-      if (!url.trim()) errs.push("URL is required");
-    }
-    if (timeout && isNaN(Number(timeout))) errs.push("Timeout must be a number");
-    return errs;
-  }, [serverName, serverType, command, url, timeout, isEdit, existingNames]);
-
-  const handleSave = () => {
-    const errs = validate();
-    if (errs.length > 0) {
-      setErrors(errs);
-      return;
-    }
-    setErrors([]);
-
-    const timeoutMs = timeout ? Number(timeout) : undefined;
-    let definition: NativeMcpServerDefinition;
-
-    if (serverType === "local") {
-      const env = envEntries.length > 0
-        ? Object.fromEntries(envEntries.filter(([k, v]) => k.trim() && v.trim()))
-        : undefined;
-      const parsedArgs = argEntries.map(a => a.trim()).filter(Boolean);
-      definition = {
-        type: "local",
-        command: command.trim(),
-        ...(parsedArgs.length > 0 && { args: parsedArgs }),
-        ...(env && Object.keys(env).length > 0 && { env }),
-        ...(cwd.trim() && { cwd: cwd.trim() }),
-        ...(timeoutMs && { timeout: timeoutMs }),
-      };
-    } else {
-      const headers = headerEntries.length > 0
-        ? Object.fromEntries(headerEntries.filter(([k, v]) => k.trim() && v.trim()))
-        : undefined;
-      definition = {
-        type: serverType as "http" | "sse",
-        url: url.trim(),
-        ...(headers && Object.keys(headers).length > 0 && { headers }),
-        ...(timeoutMs && { timeout: timeoutMs }),
-      };
-    }
-
-    onSave(serverName.trim(), definition);
-  };
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={onClose}>
-      <div
-        className="relative max-h-[85vh] w-full max-w-2xl overflow-y-auto rounded-2xl border border-border bg-card p-6 shadow-xl"
-        onClick={(e) => e.stopPropagation()}
-        role="dialog"
-        aria-label={isEdit ? "Edit MCP Server" : "Add MCP Server"}
-      >
-        <button
-          onClick={onClose}
-          className="absolute right-4 top-4 text-muted-foreground hover:text-foreground"
-          aria-label="Close"
-        >
-          <X className="h-5 w-5" />
-        </button>
-
-        <h3 className="mb-4 text-lg font-semibold text-foreground">
-          {isEdit ? "Edit MCP Server" : "Add MCP Server"}
-        </h3>
-
-        {errors.length > 0 && (
-          <div className="mb-4 rounded-lg border border-destructive/30 bg-destructive/10 p-3">
-            {errors.map((e, i) => (
-              <p key={i} className="text-xs text-destructive">{e}</p>
-            ))}
-          </div>
-        )}
-
-        <div className="space-y-4">
-          {/* Name */}
-          <div className="space-y-1">
-            <label className="text-xs font-medium text-muted-foreground">Server Name</label>
-            <input
-              type="text"
-              className="w-full rounded-lg border border-border bg-background px-3 py-2 font-mono text-sm text-foreground disabled:opacity-40"
-              placeholder="my-custom-server"
-              value={serverName}
-              onChange={(e) => setServerName(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ""))}
-              disabled={isEdit}
-            />
-          </div>
-
-          {/* Type */}
-          <div className="space-y-2">
-            <label className="text-xs font-medium text-muted-foreground">Type</label>
-            <div className="flex gap-2" role="radiogroup" aria-label="Server Type">
-              {SERVER_TYPES.map((st) => (
-                <button
-                  key={st.value}
-                  role="radio"
-                  aria-checked={serverType === st.value}
-                  onClick={() => setServerType(st.value)}
-                  className={`flex items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-semibold transition ${
-                    serverType === st.value
-                      ? "border-primary bg-primary/10 text-primary"
-                      : "border-border bg-card text-muted-foreground hover:border-primary/30"
-                  }`}
-                >
-                  <st.icon className="h-3.5 w-3.5" />
-                  {st.label}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Type-specific fields */}
-          {serverType === "local" ? (
-            <>
-              <div className="space-y-1">
-                <label className="text-xs font-medium text-muted-foreground">Command</label>
-                <input
-                  type="text"
-                  className="w-full rounded-lg border border-border bg-background px-3 py-2 font-mono text-sm text-foreground"
-                  placeholder="node"
-                  value={command}
-                  onChange={(e) => setCommand(e.target.value)}
-                />
-              </div>
-              <StringListEditor
-                label="Arguments"
-                items={argEntries}
-                onChange={setArgEntries}
-                placeholder="--flag or value"
-              />
-              <div className="space-y-1">
-                <label className="text-xs font-medium text-muted-foreground">Working Directory</label>
-                <input
-                  type="text"
-                  className="w-full rounded-lg border border-border bg-background px-3 py-2 font-mono text-sm text-foreground"
-                  placeholder="./servers/my-server"
-                  value={cwd}
-                  onChange={(e) => setCwd(e.target.value)}
-                />
-              </div>
-              <EnvVarEditor entries={envEntries} onChange={setEnvEntries} />
-            </>
-          ) : (
-            <>
-              <div className="space-y-1">
-                <label className="text-xs font-medium text-muted-foreground">URL</label>
-                <input
-                  type="url"
-                  className="w-full rounded-lg border border-border bg-background px-3 py-2 font-mono text-sm text-foreground"
-                  placeholder={serverType === "sse" ? "http://localhost:3100/sse" : "https://api.example.com/mcp"}
-                  value={url}
-                  onChange={(e) => setUrl(e.target.value)}
-                />
-              </div>
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <label className="text-xs font-medium text-muted-foreground">Headers</label>
-                  <button
-                    type="button"
-                    onClick={() => setHeaderEntries([...headerEntries, ["", ""]])}
-                    className="flex items-center gap-1 text-[11px] font-semibold text-primary hover:underline"
-                  >
-                    <Plus className="h-3 w-3" />
-                    Add
-                  </button>
-                </div>
-                {headerEntries.map(([key, value], idx) => (
-                  <div key={idx} className="flex items-center gap-1">
-                    <input
-                      type="text"
-                      className="w-1/3 rounded-lg border border-border bg-background px-2 py-1.5 font-mono text-[11px] text-foreground"
-                      placeholder="Header"
-                      value={key}
-                      onChange={(e) => updateHeader(idx, 0, e.target.value)}
-                    />
-                    <input
-                      type="text"
-                      className="flex-1 rounded-lg border border-border bg-background px-2 py-1.5 font-mono text-[11px] text-foreground"
-                      placeholder="Value"
-                      value={value}
-                      onChange={(e) => updateHeader(idx, 1, e.target.value)}
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setHeaderEntries(headerEntries.filter((_, i) => i !== idx))}
-                      className="rounded border border-border p-1 text-destructive hover:border-destructive"
-                      aria-label="Remove header"
-                    >
-                      <X className="h-3 w-3" />
-                    </button>
-                  </div>
-                ))}
-              </div>
-            </>
-          )}
-
-          {/* Timeout */}
-          <div className="space-y-1">
-            <label className="text-xs font-medium text-muted-foreground">Timeout (ms)</label>
-            <input
-              type="text"
-              className="w-48 rounded-lg border border-border bg-background px-3 py-2 font-mono text-sm text-foreground"
-              placeholder="30000"
-              value={timeout}
-              onChange={(e) => setTimeout_(e.target.value)}
-            />
-          </div>
-        </div>
-
-        {/* Dialog Actions */}
-        <div className="mt-6 flex justify-end gap-2 border-t border-border pt-4">
-          <button
-            onClick={onClose}
-            className="rounded-lg border border-border px-4 py-2 text-xs font-semibold text-muted-foreground hover:bg-muted"
-          >
-            Cancel
-          </button>
-          <button
-            onClick={handleSave}
-            className="flex items-center gap-1.5 rounded-lg bg-moss px-4 py-2 text-xs font-semibold text-white disabled:opacity-40"
-          >
-            {isEdit ? "Save Server" : "Add Server"}
-          </button>
-        </div>
-      </div>
     </div>
   );
 };
