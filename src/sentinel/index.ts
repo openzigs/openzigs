@@ -16,4 +16,10 @@ export {
   appendDigestRecord,
   defaultState,
 } from "./sentinel-state.js";
-export type { SentinelConfig, SentinelState, DigestRecord } from "./sentinel-state.js";
+export type { SentinelConfig, SentinelState, DigestRecord, PromptRecommendation } from "./sentinel-state.js";
+export {
+  writeStatusMarkdown,
+  readStatusMarkdown,
+  pruneDigestHistory,
+  getStatusMdPath,
+} from "./sentinel-state.js";

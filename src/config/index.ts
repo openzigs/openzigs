@@ -140,6 +140,18 @@ export type SentinelAppConfig = {
   auditHour?: number;
   consecutiveFailureThreshold?: number;
   queueDepthThreshold?: number;
+  // #195: State & Memory
+  persistMarkdownDigest?: boolean;
+  markdownDigestPath?: string | null;
+  digestRetentionDays?: number;
+  // #196: Multi-channel alerts
+  notifyChannels?: string[];
+  criticalCooldownMinutes?: number;
+  warningCooldownMinutes?: number;
+  // #197: Advanced scheduler
+  timezone?: string;
+  noOverlap?: boolean;
+  maxRandomDelayMs?: number;
 };
 
 export type AppConfig = {
@@ -351,6 +363,15 @@ const appConfigSchema = z.object({
     auditHour: z.number().optional(),
     consecutiveFailureThreshold: z.number().optional(),
     queueDepthThreshold: z.number().optional(),
+    persistMarkdownDigest: z.boolean().optional(),
+    markdownDigestPath: z.string().nullable().optional(),
+    digestRetentionDays: z.number().optional(),
+    notifyChannels: z.array(z.string()).optional(),
+    criticalCooldownMinutes: z.number().optional(),
+    warningCooldownMinutes: z.number().optional(),
+    timezone: z.string().optional(),
+    noOverlap: z.boolean().optional(),
+    maxRandomDelayMs: z.number().optional(),
   }).optional(),
 });
 

@@ -17,7 +17,7 @@ import {
 import { TaskReviewer, type TaskReviewResult } from "./task-reviewer.js";
 import { PromptAuditor, type PromptAuditResult } from "./prompt-auditor.js";
 import { DigestGenerator } from "./digest-generator.js";
-import { SREAlerter } from "./sre-alerter.js";
+import { SREAlerter, type AlertChannelManager } from "./sre-alerter.js";
 
 export interface SentinelStatus {
   enabled: boolean;
@@ -39,6 +39,7 @@ export interface SentinelDependencies {
   config: SentinelConfig;
   clock?: () => Date;
   io?: { emit: (event: string, data: unknown) => void };
+  channelManager?: AlertChannelManager;
 }
 
 /**
@@ -60,7 +61,6 @@ export class SentinelService extends EventEmitter {
   private checkTask: ScheduledTask | null = null;
   private digestTask: ScheduledTask | null = null;
   private auditTask: ScheduledTask | null = null;
-  private checkTimers = new Set<ReturnType<typeof setTimeout>>();
   private running = false;
   private lastCheckScheduledAt: Date | null = null;
 
@@ -101,10 +101,14 @@ export class SentinelService extends EventEmitter {
       model: this.config.model,
     });
 
-    this.digestGenerator = new DigestGenerator();
+    this.digestGenerator = new DigestGenerator(this.config);
 
     this.alerter = new SREAlerter({
       io: this.io,
+      channelManager: deps.channelManager,
+      notifyChannels: this.config.notifyChannels,
+      criticalCooldownMinutes: this.config.criticalCooldownMinutes,
+      warningCooldownMinutes: this.config.warningCooldownMinutes,
       clock: this.clock,
     });
   }
@@ -117,20 +121,38 @@ export class SentinelService extends EventEmitter {
     this.state = await readState(this.clock);
     this.state.enabled = true;
 
-    // ── Periodic check (jittered) ──
+    // Build shared cron options from config (#197)
+    const useNativeJitter = (this.config.maxRandomDelayMs ?? 0) > 0;
+    const cronOptions: Record<string, unknown> = {
+      timezone: this.config.timezone ?? "UTC",
+      noOverlap: this.config.noOverlap ?? true,
+    };
+    if (useNativeJitter) {
+      cronOptions.maxRandomDelay = this.config.maxRandomDelayMs;
+    }
+
+    // ── Periodic check ──
     const intervalMin = this.config.checkIntervalMinutes;
     const cronExpr = `*/${intervalMin} * * * *`;
-    this.checkTask = cron.schedule(cronExpr, () => {
-      // Apply jitter: random delay between 0 and jitterMinutes
-      const jitterMs = Math.floor(Math.random() * this.config.jitterMinutes * 60_000);
-      const timer = setTimeout(() => {
-        this.checkTimers.delete(timer);
+
+    if (useNativeJitter) {
+      // Use native node-cron v4 maxRandomDelay — no manual setTimeout jitter
+      this.checkTask = cron.schedule(cronExpr, () => {
         void this.runCheck().catch((err) => {
           logger.error(`Sentinel check failed: ${err instanceof Error ? err.message : String(err)}`);
         });
-      }, jitterMs);
-      this.checkTimers.add(timer);
-    });
+      }, { ...cronOptions, name: "sentinel:task-check" } as Record<string, unknown>);
+    } else {
+      // Backward-compatible: manual jitter via setTimeout
+      this.checkTask = cron.schedule(cronExpr, () => {
+        const jitterMs = Math.floor(Math.random() * this.config.jitterMinutes * 60_000);
+        setTimeout(() => {
+          void this.runCheck().catch((err) => {
+            logger.error(`Sentinel check failed: ${err instanceof Error ? err.message : String(err)}`);
+          });
+        }, jitterMs);
+      }, { ...cronOptions, name: "sentinel:task-check" } as Record<string, unknown>);
+    }
 
     this.lastCheckScheduledAt = this.clock();
 
@@ -140,7 +162,7 @@ export class SentinelService extends EventEmitter {
       void this.generateDigest().catch((err) => {
         logger.error(`Sentinel digest failed: ${err instanceof Error ? err.message : String(err)}`);
       });
-    });
+    }, { ...cronOptions, name: "sentinel:digest" } as Record<string, unknown>);
 
     // ── Daily prompt audit ──
     const auditCron = `0 ${this.config.auditHour} * * *`;
@@ -148,10 +170,13 @@ export class SentinelService extends EventEmitter {
       void this.runPromptAudit().catch((err) => {
         logger.error(`Sentinel prompt audit failed: ${err instanceof Error ? err.message : String(err)}`);
       });
-    });
+    }, { ...cronOptions, name: "sentinel:prompt-audit" } as Record<string, unknown>);
 
     await writeState(this.state);
-    logger.info(`Sentinel started — check every ${intervalMin}min (up to ${this.config.jitterMinutes}min jitter), digest at ${this.config.digestHour}:00, audit at ${this.config.auditHour}:00`);
+    const jitterDesc = useNativeJitter
+      ? `${this.config.maxRandomDelayMs}ms native jitter`
+      : `up to ${this.config.jitterMinutes}min manual jitter`;
+    logger.info(`Sentinel started — check every ${intervalMin}min (${jitterDesc}), digest at ${this.config.digestHour}:00, audit at ${this.config.auditHour}:00, tz=${this.config.timezone ?? "UTC"}`);
   }
 
   /** Stop all scheduled jobs and flush state. */
@@ -166,10 +191,6 @@ export class SentinelService extends EventEmitter {
     this.checkTask = null;
     this.digestTask = null;
     this.auditTask = null;
-    for (const timer of this.checkTimers) {
-      clearTimeout(timer);
-    }
-    this.checkTimers.clear();
 
     this.state.enabled = false;
     await writeState(this.state);
@@ -178,7 +199,8 @@ export class SentinelService extends EventEmitter {
 
   /** Execute a single check cycle. Public for testing and "Run Now" API. */
   async runCheck(): Promise<TaskReviewResult> {
-    if (this.isChecking) {
+    // When noOverlap is false, use manual lock as fallback
+    if (!this.config.noOverlap && this.isChecking) {
       logger.warn("Sentinel check is already in progress. Skipping.");
       throw new Error("Check already in progress");
     }
@@ -228,7 +250,7 @@ export class SentinelService extends EventEmitter {
 
   /** Run the prompt auditor independently. */
   async runPromptAudit(): Promise<PromptAuditResult> {
-    if (this.isAuditing) {
+    if (!this.config.noOverlap && this.isAuditing) {
       logger.warn("Sentinel audit is already in progress. Skipping.");
       throw new Error("Audit already in progress");
     }
@@ -248,7 +270,7 @@ export class SentinelService extends EventEmitter {
 
   /** Generate and deliver the daily digest. */
   async generateDigest(): Promise<DigestRecord> {
-    if (this.isDigesting) {
+    if (!this.config.noOverlap && this.isDigesting) {
       logger.warn("Sentinel digest is already in progress. Skipping.");
       throw new Error("Digest already in progress");
     }
@@ -314,7 +336,10 @@ export class SentinelService extends EventEmitter {
       update.checkIntervalMinutes !== undefined ||
       update.jitterMinutes !== undefined ||
       update.digestHour !== undefined ||
-      update.auditHour !== undefined
+      update.auditHour !== undefined ||
+      update.timezone !== undefined ||
+      update.noOverlap !== undefined ||
+      update.maxRandomDelayMs !== undefined
     );
 
     Object.assign(this.config, update);
@@ -325,6 +350,18 @@ export class SentinelService extends EventEmitter {
     }
 
     this.taskReviewer.updateConfig(this.config);
+    this.digestGenerator.updateConfig(this.config);
+
+    // Update alerter runtime config (#196)
+    if (update.notifyChannels) {
+      this.alerter.setNotifyChannels(update.notifyChannels);
+    }
+    if (update.criticalCooldownMinutes !== undefined || update.warningCooldownMinutes !== undefined) {
+      this.alerter.updateCooldowns(
+        this.config.criticalCooldownMinutes,
+        this.config.warningCooldownMinutes,
+      );
+    }
 
     if (needsRestart) {
       await this.stop();

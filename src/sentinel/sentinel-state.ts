@@ -29,9 +29,31 @@ export const SentinelConfigSchema = z.object({
   auditHour: z.number().min(0).max(23).default(2),
   consecutiveFailureThreshold: z.number().min(1).default(3),
   queueDepthThreshold: z.number().min(1).default(10),
+  // #195: State & Memory config
+  persistMarkdownDigest: z.boolean().default(true),
+  markdownDigestPath: z.string().nullable().default(null),
+  digestRetentionDays: z.number().min(1).default(30),
+  // #196: Multi-channel alert routing
+  notifyChannels: z.array(z.string()).default(["admin"]),
+  criticalCooldownMinutes: z.number().min(1).default(5),
+  warningCooldownMinutes: z.number().min(1).default(30),
+  // #197: Advanced scheduler (node-cron v4)
+  timezone: z.string().default("UTC"),
+  noOverlap: z.boolean().default(true),
+  maxRandomDelayMs: z.number().min(0).default(0),
 });
 
 export type SentinelConfig = z.infer<typeof SentinelConfigSchema>;
+
+// ── Prompt Recommendation ────────────────────────────────────────────
+
+export interface PromptRecommendation {
+  prompt: string;
+  sessionId: string;
+  score: number;
+  suggestions: string;
+  rewrite: string | null;
+}
 
 // ── Digest Record ────────────────────────────────────────────────────
 
@@ -53,6 +75,8 @@ export interface DigestRecord {
     sampledCount: number;
     avgScore: number;
   } | null;
+  /** Per-prompt improvement suggestions from the prompt auditor (#195). */
+  promptRecommendations: PromptRecommendation[] | null;
   alertCount: number;
 }
 
@@ -61,10 +85,12 @@ export interface DigestRecord {
 const SENTINEL_DIR = path.join(os.homedir(), ".openzigs", "sentinel");
 const STATE_FILE = path.join(SENTINEL_DIR, "state.json");
 const DIGEST_FILE = path.join(SENTINEL_DIR, "digest-history.jsonl");
+const STATUS_MD_FILE = path.join(SENTINEL_DIR, "status.md");
 
 export const getSentinelDir = () => SENTINEL_DIR;
 export const getStateFilePath = () => STATE_FILE;
 export const getDigestFilePath = () => DIGEST_FILE;
+export const getStatusMdPath = () => STATUS_MD_FILE;
 
 // ── State Persistence ────────────────────────────────────────────────
 
@@ -107,11 +133,69 @@ export const writeState = async (state: SentinelState): Promise<void> => {
 
 // ── Digest Persistence ──────────────────────────────────────────────
 
-/** Append a digest record to the JSONL file. */
-export const appendDigestRecord = async (record: DigestRecord): Promise<void> => {
+/** Append a digest record to the JSONL file and prune old entries. */
+export const appendDigestRecord = async (record: DigestRecord, retentionDays = 30): Promise<void> => {
   await ensureSentinelDir();
   const line = JSON.stringify(record) + "\n";
   await fs.appendFile(DIGEST_FILE, line, { encoding: "utf-8" });
+
+  // Prune entries older than retentionDays
+  await pruneDigestHistory(retentionDays);
+};
+
+/** Remove digest entries older than the given retention window.
+ *  Reads the entire JSONL file into memory — acceptable since digest files
+ *  grow by at most one line per day (≈30 lines at default 30-day retention). */
+export const pruneDigestHistory = async (retentionDays: number): Promise<number> => {
+  try {
+    const raw = await fs.readFile(DIGEST_FILE, "utf-8");
+    const lines = raw.trim().split("\n").filter(Boolean);
+    const cutoff = Date.now() - retentionDays * 24 * 60 * 60 * 1000;
+    const kept: string[] = [];
+    let pruned = 0;
+
+    for (const line of lines) {
+      try {
+        const record = JSON.parse(line) as DigestRecord;
+        if (new Date(record.timestamp).getTime() >= cutoff) {
+          kept.push(line);
+        } else {
+          pruned++;
+        }
+      } catch {
+        // Skip malformed lines
+        pruned++;
+      }
+    }
+
+    if (pruned > 0) {
+      const tmp = `${DIGEST_FILE}.tmp`;
+      await fs.writeFile(tmp, kept.join("\n") + (kept.length > 0 ? "\n" : ""), { encoding: "utf-8" });
+      await fs.rename(tmp, DIGEST_FILE);
+    }
+    return pruned;
+  } catch {
+    return 0;
+  }
+};
+
+/** Write the human-readable status.md file. */
+export const writeStatusMarkdown = async (content: string, customPath?: string | null): Promise<void> => {
+  await ensureSentinelDir();
+  const filePath = customPath ?? STATUS_MD_FILE;
+  const dir = path.dirname(filePath);
+  await fs.mkdir(dir, { recursive: true });
+  await fs.writeFile(filePath, content, { encoding: "utf-8" });
+};
+
+/** Read the status.md file content. Returns null if not found. */
+export const readStatusMarkdown = async (customPath?: string | null): Promise<string | null> => {
+  try {
+    const filePath = customPath ?? STATUS_MD_FILE;
+    return await fs.readFile(filePath, "utf-8");
+  } catch {
+    return null;
+  }
 };
 
 /** Read the most recent N digest records. */

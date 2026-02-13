@@ -3106,7 +3106,25 @@ Sentinel generates real-time alerts delivered via Socket.IO to the Admin UI:
 | Orphaned Task | Warning | A task has been running > 30 min |
 | Success Rate Drop | Critical | Success rate below 50% |
 
-Alerts include automatic deduplication — critical alerts have a 5-minute cooldown, warnings 30 minutes.
+Alerts include automatic deduplication — critical alerts have a configurable cooldown (default: 5 minutes for critical, 30 minutes for warnings).
+
+#### Multi-Channel Alert Routing
+
+Alerts can be sent to multiple channels simultaneously. By default, alerts go to the Admin UI (`"admin"` channel). You can add external messaging channels:
+
+```json
+{
+  "sentinel": {
+    "notifyChannels": ["admin", "telegram", "discord"],
+    "criticalCooldownMinutes": 5,
+    "warningCooldownMinutes": 30
+  }
+}
+```
+
+- **`admin`**: Socket.IO to the web dashboard (always recommended)
+- **External channels** (e.g., `telegram`, `discord`): Only **critical** alerts are routed to external channels to avoid notification fatigue
+- Cooldown timers are per-alert-type and configurable at runtime
 
 ### Daily Digest
 
@@ -3114,10 +3132,43 @@ Once per day (default 9:00 AM), Sentinel generates a summary of:
 
 - Tasks completed, failed, and cancelled
 - Overall success rate
+- Token burn analysis (total, average per task, top consumer)
 - Prompt quality scores (if audit ran)
+- **Per-prompt recommendations** with improvement suggestions and rewrites
 - Alert count for the period
 
-View past digests in the **Admin** → **Sentinel Monitor** → **Digest History** section.
+View past digests in the **Admin** → **Sentinel Monitor** → **Digest History** section. Each digest card shows an expandable **Prompt Improvements** section with score badges (🟢 ≥8, 🟡 ≥5, 🔴 <5), specific suggestions, and suggested rewrites for low-scoring prompts.
+
+#### Downloading Digests
+
+Click the **Download** button in the Digest History section to download the latest digest as a Markdown file. This file is also auto-generated at `~/.openzigs/sentinel/status.md` when `persistMarkdownDigest` is enabled (default: `true`).
+
+```bash
+# Or fetch via API
+curl http://localhost:3001/api/admin/sentinel/digest-markdown -o sentinel-digest.md
+```
+
+#### Digest Retention
+
+Old digest entries are automatically pruned. Configure the retention window with `digestRetentionDays` (default: 30 days).
+
+### Scheduler Configuration
+
+Sentinel uses node-cron v4 with support for timezone-aware scheduling and overlap prevention:
+
+```json
+{
+  "sentinel": {
+    "timezone": "America/New_York",
+    "noOverlap": true,
+    "maxRandomDelayMs": 5000
+  }
+}
+```
+
+- **`timezone`**: IANA timezone for cron schedules (default: `"UTC"`)
+- **`noOverlap`**: Prevents a cron job from firing if the previous execution is still running (default: `true`)
+- **`maxRandomDelayMs`**: Native cron jitter in milliseconds (0 disables native jitter; uses manual jitter via `jitterMinutes` instead)
 
 ### Running a Check Manually
 
@@ -3134,11 +3185,20 @@ curl -X POST http://localhost:3001/api/admin/sentinel/run-now
 | `enabled` | `false` | Enable/disable Sentinel |
 | `model` | `gpt-4o-mini` | Model used for prompt audits |
 | `checkIntervalMinutes` | `15` | How often to run task health checks |
-| `jitterMinutes` | `15` | Random delay (up to this many minutes) added after each check interval |
+| `jitterMinutes` | `15` | Random delay (up to N minutes) added after each check interval |
 | `digestHour` | `9` | Hour of day (0-23) for daily digest |
 | `auditHour` | `2` | Hour of day (0-23) for prompt audit |
 | `consecutiveFailureThreshold` | `3` | Failures before critical alert |
 | `queueDepthThreshold` | `10` | Queue depth before warning |
+| `persistMarkdownDigest` | `true` | Write digest to `status.md` file |
+| `markdownDigestPath` | `null` | Custom path for `status.md` (default: `~/.openzigs/sentinel/status.md`) |
+| `digestRetentionDays` | `30` | Days to keep digest history before pruning |
+| `notifyChannels` | `["admin"]` | Channels to send alerts to (`"admin"`, `"telegram"`, `"discord"`, etc.) |
+| `criticalCooldownMinutes` | `5` | Deduplication cooldown for critical alerts |
+| `warningCooldownMinutes` | `30` | Deduplication cooldown for warning alerts |
+| `timezone` | `"UTC"` | IANA timezone for cron schedules |
+| `noOverlap` | `true` | Prevent overlapping cron executions |
+| `maxRandomDelayMs` | `0` | Native cron jitter in milliseconds (0 = use manual jitter) |
 
 ---
 

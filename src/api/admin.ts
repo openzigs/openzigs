@@ -23,7 +23,7 @@ import type { PipelineStage } from "../tasks/types.js";
 import { PipelinePlanner } from "../tasks/pipeline-planner.js";
 import type { WebhookManager } from "../webhooks/webhook-manager.js";
 import type { SentinelService } from "../sentinel/index.js";
-import { SentinelConfigSchema } from "../sentinel/index.js";
+import { SentinelConfigSchema, readStatusMarkdown } from "../sentinel/index.js";
 import { TemplateService } from "../productivity/template-service.js";
 
 type EnvEntry = {
@@ -1834,6 +1834,21 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
       try {
         const digests = await sentinel.getDigestHistory(limit);
         return res.json({ digests });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return res.status(500).json({ error: message });
+      }
+    });
+
+    // #198: Download status.md digest markdown
+    router.get("/sentinel/digest-markdown", async (_req, res) => {
+      try {
+        const markdown = await readStatusMarkdown(sentinel.getStatus().config.markdownDigestPath);
+        if (!markdown) {
+          return res.status(404).json({ error: "No status.md found. Enable persistMarkdownDigest in Sentinel config." });
+        }
+        res.setHeader("Content-Type", "text/markdown; charset=utf-8");
+        return res.send(markdown);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         return res.status(500).json({ error: message });

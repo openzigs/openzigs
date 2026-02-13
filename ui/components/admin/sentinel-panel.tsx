@@ -1,9 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { fetchJson } from "@/lib/api";
-import type { SentinelStatus, SentinelAlert, DigestRecord } from "@/lib/types";
+import type { SentinelStatus, SentinelAlert, DigestRecord, PromptRecommendation, SentinelConfig } from "@/lib/types";
 import { showToast } from "@/components/toast";
 import {
   Shield,
@@ -17,6 +17,9 @@ import {
   RefreshCw,
   ChevronDown,
   ChevronRight,
+  Download,
+  Lightbulb,
+  Star,
 } from "lucide-react";
 
 /* ── Sentinel Admin Panel ── */
@@ -24,6 +27,8 @@ import {
 export const SentinelPanel = () => {
   const queryClient = useQueryClient();
   const [showDigests, setShowDigests] = useState(false);
+  const [draftConfig, setDraftConfig] = useState<SentinelConfig | null>(null);
+  const [configDirty, setConfigDirty] = useState(false);
 
   const statusQuery = useQuery({
     queryKey: ["sentinel-status"],
@@ -69,6 +74,28 @@ export const SentinelPanel = () => {
       showToast(`Check failed: ${err instanceof Error ? err.message : String(err)}`, "error");
     },
   });
+
+  const saveConfigMutation = useMutation({
+    mutationFn: (config: Partial<SentinelConfig>) =>
+      fetchJson<{ ok: boolean; config: SentinelConfig }>("/api/admin/sentinel/config", {
+        method: "PUT",
+        body: JSON.stringify(config),
+      }),
+    onSuccess: () => {
+      setConfigDirty(false);
+      void queryClient.invalidateQueries({ queryKey: ["sentinel-status"] });
+      showToast("Sentinel schedule saved.", "success");
+    },
+    onError: (err) => {
+      showToast(`Failed to save schedule: ${err instanceof Error ? err.message : String(err)}`, "error");
+    },
+  });
+
+  useEffect(() => {
+    if (!configDirty && statusQuery.data?.config) {
+      setDraftConfig(statusQuery.data.config);
+    }
+  }, [statusQuery.data?.config, configDirty]);
 
   if (statusQuery.isLoading) return <p className="text-sm text-muted-foreground">Loading…</p>;
 
@@ -159,22 +186,248 @@ export const SentinelPanel = () => {
           <ConfigItem label="Digest Hour" value={`${status.config.digestHour}:00`} />
           <ConfigItem label="Audit Hour" value={`${status.config.auditHour}:00`} />
         </div>
+        <div className="mt-2 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
+          <ConfigItem label="Timezone" value={status.config.timezone ?? "UTC"} />
+          <ConfigItem label="No Overlap" value={status.config.noOverlap !== false ? "On" : "Off"} />
+          <ConfigItem label="Critical CD" value={`${status.config.criticalCooldownMinutes ?? 5}min`} />
+          <ConfigItem label="Warning CD" value={`${status.config.warningCooldownMinutes ?? 30}min`} />
+        </div>
+        {status.config.notifyChannels && status.config.notifyChannels.length > 0 && (
+          <div className="mt-2 text-xs">
+            <ConfigItem label="Notify Channels" value={status.config.notifyChannels.join(", ")} />
+          </div>
+        )}
       </div>
+
+      {/* Schedule Config Editor */}
+      {draftConfig && (
+        <div className="rounded-xl border border-border bg-muted/30 p-4 space-y-3">
+          <h3 className="text-sm font-semibold text-foreground">Edit Schedule</h3>
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
+            <label className="space-y-1 text-xs text-muted-foreground">
+              <span>Check Interval (min)</span>
+              <input
+                type="number"
+                min={1}
+                className="w-full rounded-md border border-border bg-card px-2 py-1 text-foreground"
+                value={draftConfig.checkIntervalMinutes}
+                onChange={(e) => {
+                  const n = Number.parseInt(e.target.value, 10);
+                  if (Number.isNaN(n)) return;
+                  setConfigDirty(true);
+                  setDraftConfig((prev) => (prev ? { ...prev, checkIntervalMinutes: Math.max(1, n) } : prev));
+                }}
+              />
+            </label>
+            <label className="space-y-1 text-xs text-muted-foreground">
+              <span>Jitter (min)</span>
+              <input
+                type="number"
+                min={0}
+                className="w-full rounded-md border border-border bg-card px-2 py-1 text-foreground"
+                value={draftConfig.jitterMinutes}
+                onChange={(e) => {
+                  const n = Number.parseInt(e.target.value, 10);
+                  if (Number.isNaN(n)) return;
+                  setConfigDirty(true);
+                  setDraftConfig((prev) => (prev ? { ...prev, jitterMinutes: Math.max(0, n) } : prev));
+                }}
+              />
+            </label>
+            <label className="space-y-1 text-xs text-muted-foreground">
+              <span>Digest Hour (0-23)</span>
+              <input
+                type="number"
+                min={0}
+                max={23}
+                className="w-full rounded-md border border-border bg-card px-2 py-1 text-foreground"
+                value={draftConfig.digestHour}
+                onChange={(e) => {
+                  const n = Number.parseInt(e.target.value, 10);
+                  if (Number.isNaN(n)) return;
+                  setConfigDirty(true);
+                  setDraftConfig((prev) => (prev ? { ...prev, digestHour: Math.min(23, Math.max(0, n)) } : prev));
+                }}
+              />
+            </label>
+            <label className="space-y-1 text-xs text-muted-foreground">
+              <span>Audit Hour (0-23)</span>
+              <input
+                type="number"
+                min={0}
+                max={23}
+                className="w-full rounded-md border border-border bg-card px-2 py-1 text-foreground"
+                value={draftConfig.auditHour}
+                onChange={(e) => {
+                  const n = Number.parseInt(e.target.value, 10);
+                  if (Number.isNaN(n)) return;
+                  setConfigDirty(true);
+                  setDraftConfig((prev) => (prev ? { ...prev, auditHour: Math.min(23, Math.max(0, n)) } : prev));
+                }}
+              />
+            </label>
+            <label className="space-y-1 text-xs text-muted-foreground">
+              <span>Timezone</span>
+              <input
+                type="text"
+                className="w-full rounded-md border border-border bg-card px-2 py-1 text-foreground"
+                value={draftConfig.timezone}
+                onChange={(e) => {
+                  setConfigDirty(true);
+                  setDraftConfig((prev) => (prev ? { ...prev, timezone: e.target.value || "UTC" } : prev));
+                }}
+              />
+            </label>
+            <label className="space-y-1 text-xs text-muted-foreground">
+              <span>Max Random Delay (ms)</span>
+              <input
+                type="number"
+                min={0}
+                className="w-full rounded-md border border-border bg-card px-2 py-1 text-foreground"
+                value={draftConfig.maxRandomDelayMs}
+                onChange={(e) => {
+                  const n = Number.parseInt(e.target.value, 10);
+                  if (Number.isNaN(n)) return;
+                  setConfigDirty(true);
+                  setDraftConfig((prev) => (prev ? { ...prev, maxRandomDelayMs: Math.max(0, n) } : prev));
+                }}
+              />
+            </label>
+            <label className="space-y-1 text-xs text-muted-foreground">
+              <span>Critical Cooldown (min)</span>
+              <input
+                type="number"
+                min={1}
+                className="w-full rounded-md border border-border bg-card px-2 py-1 text-foreground"
+                value={draftConfig.criticalCooldownMinutes}
+                onChange={(e) => {
+                  const n = Number.parseInt(e.target.value, 10);
+                  if (Number.isNaN(n)) return;
+                  setConfigDirty(true);
+                  setDraftConfig((prev) => (prev ? { ...prev, criticalCooldownMinutes: Math.max(1, n) } : prev));
+                }}
+              />
+            </label>
+            <label className="space-y-1 text-xs text-muted-foreground">
+              <span>Warning Cooldown (min)</span>
+              <input
+                type="number"
+                min={1}
+                className="w-full rounded-md border border-border bg-card px-2 py-1 text-foreground"
+                value={draftConfig.warningCooldownMinutes}
+                onChange={(e) => {
+                  const n = Number.parseInt(e.target.value, 10);
+                  if (Number.isNaN(n)) return;
+                  setConfigDirty(true);
+                  setDraftConfig((prev) => (prev ? { ...prev, warningCooldownMinutes: Math.max(1, n) } : prev));
+                }}
+              />
+            </label>
+            <label className="space-y-1 text-xs text-muted-foreground sm:col-span-2 lg:col-span-3">
+              <span>Notify Channels (comma-separated)</span>
+              <input
+                type="text"
+                className="w-full rounded-md border border-border bg-card px-2 py-1 text-foreground"
+                value={draftConfig.notifyChannels.join(", ")}
+                onChange={(e) => {
+                  setConfigDirty(true);
+                  setDraftConfig((prev) => (
+                    prev
+                      ? {
+                          ...prev,
+                          notifyChannels: e.target.value
+                            .split(",")
+                            .map((v) => v.trim())
+                            .filter(Boolean),
+                        }
+                      : prev
+                  ));
+                }}
+              />
+            </label>
+          </div>
+          <label className="flex items-center gap-2 text-xs text-muted-foreground">
+            <input
+              type="checkbox"
+              checked={draftConfig.noOverlap}
+              onChange={(e) => {
+                setConfigDirty(true);
+                setDraftConfig((prev) => (prev ? { ...prev, noOverlap: e.target.checked } : prev));
+              }}
+            />
+            Prevent overlapping checks
+          </label>
+
+          <div className="flex justify-end">
+            <button
+              className="rounded-lg border border-border bg-card px-3 py-1.5 text-xs font-semibold text-foreground transition hover:border-primary/30 hover:bg-primary/5 disabled:opacity-40"
+              disabled={!configDirty || saveConfigMutation.isPending}
+              onClick={() => {
+                saveConfigMutation.mutate({
+                  checkIntervalMinutes: draftConfig.checkIntervalMinutes,
+                  jitterMinutes: draftConfig.jitterMinutes,
+                  digestHour: draftConfig.digestHour,
+                  auditHour: draftConfig.auditHour,
+                  timezone: draftConfig.timezone,
+                  noOverlap: draftConfig.noOverlap,
+                  maxRandomDelayMs: draftConfig.maxRandomDelayMs,
+                  criticalCooldownMinutes: draftConfig.criticalCooldownMinutes,
+                  warningCooldownMinutes: draftConfig.warningCooldownMinutes,
+                  notifyChannels: draftConfig.notifyChannels,
+                });
+              }}
+            >
+              {saveConfigMutation.isPending ? "Saving…" : "Save Schedule"}
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Digest History */}
       <div className="rounded-xl border border-border bg-muted/30 p-4 space-y-3">
-        <button
-          className="flex w-full items-center gap-2 text-left"
-          onClick={() => setShowDigests(!showDigests)}
-        >
-          <FileText className="h-4 w-4 text-primary" />
-          <h3 className="text-sm font-semibold text-foreground">Digest History</h3>
-          {showDigests ? (
-            <ChevronDown className="ml-auto h-4 w-4 text-muted-foreground" />
-          ) : (
-            <ChevronRight className="ml-auto h-4 w-4 text-muted-foreground" />
-          )}
-        </button>
+        <div className="flex w-full items-center gap-2">
+          <button
+            className="flex flex-1 items-center gap-2 text-left"
+            onClick={() => setShowDigests(!showDigests)}
+          >
+            <FileText className="h-4 w-4 text-primary" />
+            <h3 className="text-sm font-semibold text-foreground">Digest History</h3>
+            {showDigests ? (
+              <ChevronDown className="ml-auto h-4 w-4 text-muted-foreground" />
+            ) : (
+              <ChevronRight className="ml-auto h-4 w-4 text-muted-foreground" />
+            )}
+          </button>
+          <button
+            className="flex items-center gap-1.5 rounded-lg border border-border bg-card px-3 py-1.5 text-xs font-medium text-foreground transition hover:border-primary/30 hover:bg-primary/5"
+            onClick={async () => {
+              try {
+                const res = await fetch("/api/admin/sentinel/digest-markdown");
+                if (!res.ok) {
+                  const body = await res.json().catch(() => ({ error: "Download failed" }));
+                  throw new Error(body.error ?? `HTTP ${res.status}`);
+                }
+                const text = await res.text();
+                const blob = new Blob([text], { type: "text/markdown" });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement("a");
+                a.href = url;
+                a.download = `sentinel-digest-${new Date().toISOString().slice(0, 10)}.md`;
+                a.click();
+                URL.revokeObjectURL(url);
+              } catch (err) {
+                showToast(
+                  `Download failed: ${err instanceof Error ? err.message : String(err)}`,
+                  "error"
+                );
+              }
+            }}
+            title="Download latest digest as Markdown"
+          >
+            <Download className="h-3.5 w-3.5" />
+            Download
+          </button>
+        </div>
 
         {showDigests && (
           <div className="space-y-2">
@@ -233,7 +486,10 @@ const ConfigItem = ({ label, value }: { label: string; value: string }) => (
 );
 
 const DigestCard = ({ digest }: { digest: DigestRecord }) => {
+  const [showRecs, setShowRecs] = useState(false);
   const totalTasks = digest.taskSummary.completed + digest.taskSummary.failed + digest.taskSummary.cancelled;
+  const recs = digest.promptRecommendations ?? [];
+
   return (
     <div className="rounded-lg border border-border bg-card p-3 space-y-1.5">
       <div className="flex items-center justify-between">
@@ -257,6 +513,112 @@ const DigestCard = ({ digest }: { digest: DigestRecord }) => {
         <p className="text-xs text-muted-foreground/80 italic">
           Prompt audit: {digest.promptAudit.sampledCount} sampled, avg score {digest.promptAudit.avgScore.toFixed(1)}/10
         </p>
+      )}
+
+      {/* Prompt Recommendations */}
+      {recs.length > 0 && (
+        <div className="pt-1">
+          <button
+            className="flex items-center gap-1.5 text-xs font-medium text-primary hover:underline"
+            onClick={() => setShowRecs(!showRecs)}
+          >
+            <Lightbulb className="h-3.5 w-3.5" />
+            Prompt Improvements
+            <span className="rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-bold tabular-nums text-primary">
+              {recs.length}
+            </span>
+            {showRecs ? (
+              <ChevronDown className="h-3 w-3 text-muted-foreground" />
+            ) : (
+              <ChevronRight className="h-3 w-3 text-muted-foreground" />
+            )}
+          </button>
+
+          {showRecs && (
+            <div className="mt-2 space-y-2">
+              {recs.map((rec, i) => (
+                <PromptRecCard key={`${rec.sessionId}-${i}`} rec={rec} />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
+/* ── Prompt Recommendation Card ── */
+
+const SCORE_HIGH = 8;
+const SCORE_LOW = 5;
+const PROMPT_TRUNCATE_LENGTH = 120;
+const REWRITE_SCORE_THRESHOLD = 7;
+
+const scoreColor = (score: number) => {
+  if (score >= SCORE_HIGH) return "text-emerald-500 bg-emerald-500/10";
+  if (score >= SCORE_LOW) return "text-amber-500 bg-amber-500/10";
+  return "text-red-500 bg-red-500/10";
+};
+
+const PromptRecCard = ({ rec }: { rec: PromptRecommendation }) => {
+  const [expanded, setExpanded] = useState(false);
+  const suggestions = rec.suggestions
+    .split(/\r?\n|•/)
+    .map((s) => s.replace(/^[-*\d.)\s]+/, "").trim())
+    .filter(Boolean);
+  const truncatedPrompt =
+    rec.prompt.length > PROMPT_TRUNCATE_LENGTH ? `${rec.prompt.slice(0, PROMPT_TRUNCATE_LENGTH)}…` : rec.prompt;
+
+  return (
+    <div className="rounded-md border border-border bg-muted/20 p-2 space-y-1">
+      <div className="flex items-center gap-2">
+        <span
+          className={`inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] font-bold tabular-nums ${scoreColor(rec.score)}`}
+        >
+          <Star className="h-2.5 w-2.5" />
+          {rec.score}/10
+        </span>
+        <button
+          className="flex-1 text-left text-xs text-muted-foreground truncate hover:text-foreground transition"
+          onClick={() => setExpanded(!expanded)}
+          title={rec.prompt}
+        >
+          {truncatedPrompt}
+        </button>
+        {expanded ? (
+          <ChevronDown className="h-3 w-3 text-muted-foreground shrink-0" />
+        ) : (
+          <ChevronRight className="h-3 w-3 text-muted-foreground shrink-0" />
+        )}
+      </div>
+
+      {expanded && (
+        <div className="space-y-1.5 pt-1">
+          {suggestions.length > 0 && (
+            <div>
+              <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                Suggestions
+              </span>
+              <ul className="mt-0.5 space-y-0.5">
+                {suggestions.map((s, j) => (
+                  <li key={j} className="text-xs text-foreground pl-2 border-l-2 border-primary/30">
+                    {s}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {rec.rewrite && rec.score < REWRITE_SCORE_THRESHOLD && (
+            <div>
+              <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                Suggested Rewrite
+              </span>
+              <pre className="mt-0.5 rounded bg-muted/50 p-2 text-xs text-foreground overflow-x-auto whitespace-pre-wrap">
+                {rec.rewrite}
+              </pre>
+            </div>
+          )}
+        </div>
       )}
     </div>
   );
