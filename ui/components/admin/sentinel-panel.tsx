@@ -562,12 +562,10 @@ const scoreColor = (score: number) => {
 
 const PromptRecCard = ({ rec }: { rec: PromptRecommendation }) => {
   const [expanded, setExpanded] = useState(false);
-  const suggestions = Array.isArray(rec.suggestions)
-    ? rec.suggestions
-    : String(rec.suggestions ?? "")
-        .split(/\r?\n|•/)
-        .map((s) => s.replace(/^[-*\d.)\s]+/, "").trim())
-        .filter(Boolean);
+  const suggestions = rec.suggestions
+    .split(/\r?\n|•/)
+    .map((s) => s.replace(/^[-*\d.)\s]+/, "").trim())
+    .filter(Boolean);
   const truncatedPrompt =
     rec.prompt.length > PROMPT_TRUNCATE_LENGTH ? `${rec.prompt.slice(0, PROMPT_TRUNCATE_LENGTH)}…` : rec.prompt;
 

@@ -432,6 +432,6 @@ export type PromptRecommendation = {
   prompt: string;
   sessionId: string;
   score: number;
-  suggestions: string | string[];
+  suggestions: string;
   rewrite: string | null;
 };

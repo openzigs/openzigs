@@ -169,7 +169,7 @@ export class DigestGenerator {
       "# Sentinel Status Report",
       "",
       `> Generated: ${date}`,
-      `> Period: ${new Date(record.period.from).toLocaleString()} → ${new Date(record.period.to).toLocaleString()}`,
+      `> Period: ${new Date(record.period.from).toLocaleString(undefined, { timeZone: tz })} → ${new Date(record.period.to).toLocaleString(undefined, { timeZone: tz })}`,
       "",
       "## Task Summary",
       "",

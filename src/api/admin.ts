@@ -1843,7 +1843,7 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
     // #198: Download status.md digest markdown
     router.get("/sentinel/digest-markdown", async (_req, res) => {
       try {
-        const markdown = await readStatusMarkdown();
+        const markdown = await readStatusMarkdown(sentinel.getStatus().config.markdownDigestPath);
         if (!markdown) {
           return res.status(404).json({ error: "No status.md found. Enable persistMarkdownDigest in Sentinel config." });
         }

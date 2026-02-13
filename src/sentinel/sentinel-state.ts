@@ -169,7 +169,9 @@ export const pruneDigestHistory = async (retentionDays: number): Promise<number>
     }
 
     if (pruned > 0) {
-      await fs.writeFile(DIGEST_FILE, kept.join("\n") + (kept.length > 0 ? "\n" : ""), { encoding: "utf-8" });
+      const tmp = `${DIGEST_FILE}.tmp`;
+      await fs.writeFile(tmp, kept.join("\n") + (kept.length > 0 ? "\n" : ""), { encoding: "utf-8" });
+      await fs.rename(tmp, DIGEST_FILE);
     }
     return pruned;
   } catch {
