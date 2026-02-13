@@ -38,6 +38,7 @@ import { DockerSidecarManager } from "./mcp/docker-sidecar-manager.js";
 import { LocalMcpServerManager } from "./mcp/local-mcp-server-manager.js";
 import { registerBuiltinPostActions } from "./tasks/post-actions.js";
 import { CustomPostActionManager } from "./tasks/custom-post-actions.js";
+import { SentinelService, SentinelConfigSchema } from "./sentinel/index.js";
 
 // Register built-in post-action types (create-github-issues, send-webhook, etc.)
 registerBuiltinPostActions();
@@ -245,6 +246,16 @@ const maxConcurrent = config.tasks?.maxConcurrent ?? 2;
 const taskWorker = new TaskWorker({ engine: taskEngine, copilot, maxConcurrent, taskRepository });
 taskWorker.start();
 
+// ── Sentinel: Autonomous System Monitor ──
+const sentinelConfigRaw = config.sentinel ?? {};
+const sentinelConfig = SentinelConfigSchema.parse(sentinelConfigRaw);
+const sentinel = new SentinelService({
+  taskRepo: taskRepository,
+  copilot,
+  sessionManager,
+  config: sentinelConfig,
+});
+
 // ── Webhook Manager ──
 const webhookManager = new WebhookManager();
 
@@ -253,7 +264,7 @@ const modelsRouter = createModelsRouter({ copilot });
 app.use("/api/models", modelsRouter);
 
 // Admin API routes (no auth for local dev; gate behind auth in prod)
-const adminRouter = createAdminRouter({ toolRegistry, sidecarManager, localServerManager, promptManager, scheduler, personalityManager, sessionManager, copilot, taskWorker, taskEngine, webhookManager, customPostActionManager });
+const adminRouter = createAdminRouter({ toolRegistry, sidecarManager, localServerManager, promptManager, scheduler, personalityManager, sessionManager, copilot, taskWorker, taskEngine, webhookManager, customPostActionManager, sentinel });
 app.use("/api/admin", adminRouter);
 
 // Webhook trigger routes (public-facing)
@@ -294,6 +305,18 @@ const io = new SocketIOServer(httpServer, {
 io.on("connection", (socket) => {
   socket.emit("status:update", { connected: true });
 });
+
+// Wire Sentinel Socket.IO event forwarding
+sentinel.setIO(io);
+for (const event of ["sentinel:check-complete", "sentinel:alert", "sentinel:digest"] as const) {
+  sentinel.on(event, (payload: unknown) => {
+    io.emit(event, payload);
+  });
+}
+if (sentinelConfig.enabled) {
+  void sentinel.start();
+  logger.info("Sentinel autonomous monitor started");
+}
 
 // Wire NotificationDispatcher now that we have the Socket.IO server
 // (side-effect: registers event listeners on TaskEngine)
@@ -647,6 +670,7 @@ httpServer.listen(port, () => {
 
 // Clean up Chrome + Scheduler + Tasks + Database + Sidecars + Local MCP servers on process exit
 process.on("SIGINT", () => {
+  void sentinel.stop();
   scheduler.stopAll();
   void taskWorker.stop();
   closeDatabase();
@@ -657,6 +681,7 @@ process.on("SIGINT", () => {
   ]).finally(() => process.exit(0));
 });
 process.on("SIGTERM", () => {
+  void sentinel.stop();
   scheduler.stopAll();
   void taskWorker.stop();
   closeDatabase();

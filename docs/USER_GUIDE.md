@@ -3065,6 +3065,81 @@ A custom agent named `documentation-expert` is pre-configured in `config/agents.
 
 ---
 
+## Sentinel — Autonomous System Monitor
+
+Sentinel is a background daemon that continuously monitors the health of your OpenZigs instance. It watches task success rates, detects stuck or slow tasks, audits prompt quality, and delivers daily digest reports — all without manual intervention.
+
+### Enabling Sentinel
+
+Sentinel is disabled by default. Enable it in the Admin panel or in your config:
+
+```json
+{
+  "sentinel": {
+    "enabled": true
+  }
+}
+```
+
+Or toggle it live from the Admin UI:
+
+1. Navigate to **Admin** → **Sentinel Monitor**
+2. Click **Enable**
+
+### What Sentinel Monitors
+
+- **Task health**: Success rates, consecutive failures, queue depth
+- **Orphaned tasks**: Tasks running longer than 30 minutes
+- **Slow tasks**: Tasks that took longer than 5 minutes
+- **Prompt quality**: Samples recent user prompts and scores them for clarity and token efficiency
+
+### Alerts
+
+Sentinel generates real-time alerts delivered via Socket.IO to the Admin UI:
+
+| Alert | Priority | Description |
+|---|---|---|
+| Consecutive Failures | Critical | 3+ tasks failed in a row |
+| Queue Depth | Warning | Task queue exceeds 10 items |
+| Orphaned Task | Warning | A task has been running > 30 min |
+| Success Rate Drop | Critical | Success rate below 50% |
+
+Alerts include automatic deduplication — critical alerts have a 5-minute cooldown, warnings 30 minutes.
+
+### Daily Digest
+
+Once per day (default 9:00 AM), Sentinel generates a summary of:
+
+- Tasks completed, failed, and cancelled
+- Overall success rate
+- Prompt quality scores (if audit ran)
+- Alert count for the period
+
+View past digests in the **Admin** → **Sentinel Monitor** → **Digest History** section.
+
+### Running a Check Manually
+
+Click **Run Check Now** in the Sentinel panel, or use the API:
+
+```bash
+curl -X POST http://localhost:3001/api/admin/sentinel/run-now
+```
+
+### Configuration Options
+
+| Key | Default | Description |
+|---|---|---|
+| `enabled` | `false` | Enable/disable Sentinel |
+| `model` | `gpt-4o-mini` | Model used for prompt audits |
+| `checkIntervalMinutes` | `15` | How often to run task health checks |
+| `jitterMinutes` | `15` | Random jitter added to check interval |
+| `digestHour` | `9` | Hour of day (0-23) for daily digest |
+| `auditHour` | `2` | Hour of day (0-23) for prompt audit |
+| `consecutiveFailureThreshold` | `3` | Failures before critical alert |
+| `queueDepthThreshold` | `10` | Queue depth before warning |
+
+---
+
 ## Troubleshooting
 
 | Symptom | Likely Cause | Fix |

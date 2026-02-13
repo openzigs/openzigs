@@ -129,6 +129,17 @@ export type CopilotConfig = {
   nativeMcpServers?: Record<string, NativeMcpServerConfig>;
 };
 
+export type SentinelAppConfig = {
+  enabled?: boolean;
+  model?: string;
+  checkIntervalMinutes?: number;
+  jitterMinutes?: number;
+  digestHour?: number;
+  auditHour?: number;
+  consecutiveFailureThreshold?: number;
+  queueDepthThreshold?: number;
+};
+
 export type AppConfig = {
   server: {
     port: number;
@@ -144,6 +155,7 @@ export type AppConfig = {
   tasks?: TasksConfig;
   session?: SessionConfig;
   copilot?: CopilotConfig;
+  sentinel?: SentinelAppConfig;
 };
 
 const rateLimitSchema = z.object({
@@ -326,6 +338,16 @@ const appConfigSchema = z.object({
   tasks: tasksSchema,
   session: sessionSchema,
   copilot: copilotSchema,
+  sentinel: z.object({
+    enabled: z.boolean().optional(),
+    model: z.string().optional(),
+    checkIntervalMinutes: z.number().optional(),
+    jitterMinutes: z.number().optional(),
+    digestHour: z.number().optional(),
+    auditHour: z.number().optional(),
+    consecutiveFailureThreshold: z.number().optional(),
+    queueDepthThreshold: z.number().optional(),
+  }).optional(),
 });
 
 export type LoadConfigOptions = {
