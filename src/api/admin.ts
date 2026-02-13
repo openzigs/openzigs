@@ -2,6 +2,7 @@ import { Router } from "express";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { z } from "zod";
 import { loadConfig, customAgentSchema, mcpServerConfigSchema, nativeMcpServersSchema } from "../config/index.js";
 import { logger } from "../logging/logger.js";
 import { ALWAYS_ON_TOOLS } from "../mcp/constants.js";
@@ -806,29 +807,58 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
     return def ? res.json(def) : res.status(404).json({ error: "Not found" });
   });
 
+  /* ── Zod schemas for custom post-action validation ── */
+  const customFieldSchema = z.object({
+    key: z.string().min(1),
+    type: z.enum(["string", "number", "boolean", "array"]),
+    title: z.string().min(1),
+    description: z.string().optional(),
+    required: z.boolean().optional(),
+    default: z.unknown().optional(),
+    enum: z.array(z.string()).optional(),
+    enumLabels: z.array(z.string()).optional(),
+    placeholder: z.string().optional(),
+    minimum: z.number().optional(),
+    maximum: z.number().optional(),
+  });
+
+  const templateConfigSchema = z.record(z.string(), z.unknown());
+
+  const createCustomPostActionSchema = z.object({
+    type: z.string().min(1),
+    label: z.string().min(1),
+    description: z.string().default(""),
+    category: z.string().default("Custom"),
+    icon: z.string().optional(),
+    templateType: z.enum(["webhook", "script"]).optional(),
+    templateConfig: templateConfigSchema.optional(),
+    customFields: z.array(customFieldSchema).optional(),
+    scriptBody: z.string().optional(),
+    scriptTimeout: z.number().int().positive().optional(),
+  });
+
+  const updateCustomPostActionSchema = z.object({
+    label: z.string().min(1).optional(),
+    description: z.string().optional(),
+    category: z.string().optional(),
+    icon: z.string().optional(),
+    templateType: z.enum(["webhook", "script"]).optional(),
+    templateConfig: templateConfigSchema.optional(),
+    customFields: z.array(customFieldSchema).optional(),
+    scriptBody: z.string().optional(),
+    scriptTimeout: z.number().int().positive().optional(),
+  });
+
   router.post("/post-actions/custom", async (req, res) => {
     if (!customPostActionManager) {
       return res.status(503).json({ error: "Custom post-actions not available" });
     }
-    const body = req.body as Record<string, unknown>;
-    const type = typeof body.type === "string" ? body.type.trim() : "";
-    const label = typeof body.label === "string" ? body.label.trim() : "";
-    if (!type || !label) {
-      return res.status(400).json({ error: "type and label are required" });
+    const parsed = createCustomPostActionSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.issues.map((i) => i.message).join("; ") });
     }
     try {
-      const def = await customPostActionManager.create({
-        type,
-        label,
-        description: typeof body.description === "string" ? body.description : "",
-        category: typeof body.category === "string" ? body.category : "Custom",
-        icon: typeof body.icon === "string" ? body.icon : undefined,
-        templateType: (body.templateType === "webhook" || body.templateType === "script") ? body.templateType : undefined,
-        templateConfig: (body.templateConfig && typeof body.templateConfig === "object") ? (body.templateConfig as Record<string, unknown>) : undefined,
-        customFields: Array.isArray(body.customFields) ? (body.customFields as import("../tasks/custom-post-actions.js").CustomFieldDefinition[]) : undefined,
-        scriptBody: typeof body.scriptBody === "string" ? body.scriptBody : undefined,
-        scriptTimeout: typeof body.scriptTimeout === "number" ? body.scriptTimeout : undefined,
-      });
+      const def = await customPostActionManager.create(parsed.data);
       return res.status(201).json(def);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -840,19 +870,12 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
     if (!customPostActionManager) {
       return res.status(503).json({ error: "Custom post-actions not available" });
     }
-    const body = req.body as Record<string, unknown>;
+    const parsed = updateCustomPostActionSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.issues.map((i) => i.message).join("; ") });
+    }
     try {
-      const updated = await customPostActionManager.update(req.params.type, {
-        label: typeof body.label === "string" ? body.label.trim() : undefined,
-        description: typeof body.description === "string" ? body.description : undefined,
-        category: typeof body.category === "string" ? body.category : undefined,
-        icon: typeof body.icon === "string" ? body.icon : undefined,
-        templateType: (body.templateType === "webhook" || body.templateType === "script") ? body.templateType : undefined,
-        templateConfig: (body.templateConfig && typeof body.templateConfig === "object") ? (body.templateConfig as Record<string, unknown>) : undefined,
-        customFields: Array.isArray(body.customFields) ? (body.customFields as import("../tasks/custom-post-actions.js").CustomFieldDefinition[]) : undefined,
-        scriptBody: typeof body.scriptBody === "string" ? body.scriptBody : undefined,
-        scriptTimeout: typeof body.scriptTimeout === "number" ? body.scriptTimeout : undefined,
-      });
+      const updated = await customPostActionManager.update(req.params.type, parsed.data);
       return res.json(updated);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

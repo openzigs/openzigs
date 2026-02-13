@@ -1771,8 +1771,8 @@ Saved prompts in the Library can now carry optional pipeline stages and preferre
 
 | Field | Type | Storage | Description |
 |-------|------|---------|-------------|
-| `stages` | `PipelineStage[] \| null` | SQLite `saved_prompts.stages` (JSON) | Multi-stage pipeline definition. null = single-stage prompt. |
-| `preferredTools` | `string[] \| null` | SQLite `saved_prompts.preferred_tools` (JSON) | Tool allowlist for the prompt. null = all enabled tools. |
+| `stages` | `PipelineStage[] | null` | SQLite `saved_prompts.stages` (JSON) | Multi-stage pipeline definition. null = single-stage prompt. |
+| `preferredTools` | `string[] | null` | SQLite `saved_prompts.preferred_tools` (JSON) | Tool allowlist for the prompt. null = all enabled tools. |
 
 **Pipeline stages on prompts include all fields from the core `PipelineStage` type:**
 
@@ -1802,6 +1802,29 @@ The `save-prompt` and `update-prompt` MCP tools accept optional `stages` and `pr
 | MCP prompt tools | `src/mcp/tools/prompt-tools.ts` | Zod schemas + handler for stages/preferredTools |
 | Pipeline editor | `ui/components/pipeline/pipeline-editor.tsx` | PostActionEditor, autoApproveTools, conversion functions |
 
-### Tracking: [Epic #171](https://github.com/mgcronin/openzigs/issues/171)
+### Custom Post-Actions (User-Created Action Types)
 
-### Tracking: [Epic #163](https://github.com/mgcronin/openzigs/issues/163)
+Users can create custom post-action types via a dedicated settings page (`/admin/post-actions`) without writing code. This extends the plugin-based PostActionRegistry with user-defined actions.
+
+**Architecture:**
+
+```
+CustomPostActionManager (src/tasks/custom-post-actions.ts)
+  ├─ Persistence: ~/.openzigs/custom-post-actions.json
+  ├─ Template handlers: webhook (HTTP fetch), script (child_process.execFile)
+  ├─ Schema builders: convert definitions → ConfigSchema → DynamicConfigForm
+  └─ On initialize(): re-registers all saved definitions with PostActionRegistry
+```
+
+**Components:**
+
+| Component | Path | Purpose |
+|-----------|------|---------|
+| `CustomPostActionManager` | `src/tasks/custom-post-actions.ts` | CRUD + persistence + registry integration |
+| CRUD API routes | `src/api/admin.ts` | `GET/POST/PUT/DELETE /api/admin/post-actions/custom` (Zod-validated) |
+| Settings page | `ui/app/admin/post-actions/page.tsx` | Template + advanced builder UI |
+| Post-action registry | `src/tasks/post-action-registry.ts` | Singleton registry (built-in + custom actions) |
+
+**Data flow:** Create via UI → Zod-validated API → `CustomPostActionManager.create()` → persist to disk → `postActionRegistry.register()` → appears in stage editor dropdown.
+
+### Tracking: [Epic #171](https://github.com/mgcronin/openzigs/issues/171)

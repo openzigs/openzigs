@@ -459,7 +459,6 @@ const PromptForm = ({
               ) : (
                 <PipelineEditor
                   initialStages={pipelineStages}
-                  onSave={handlePipelineChange}
                   onChange={handlePipelineChange}
                   height="400px"
                   availableTools={toolOptions}

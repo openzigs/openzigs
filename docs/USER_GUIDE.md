@@ -159,6 +159,7 @@ The OpenZigs UI is a **Next.js** application with a navigation bar providing acc
 | **Library** | `/library` | Saved prompt templates with `{{variable}}` interpolation |
 | **Scheduler** | `/scheduler` | Cron-based job scheduling with prompt linking and model overrides |
 | **Tasks** | `/tasks` | Monitor background agent tasks, sub-agents, and scheduled work |
+| **Post-Actions** | `/admin/post-actions` | Create and manage custom post-action types for pipeline stages |
 | **Webhooks** | `/admin/webhooks` | Create and manage inbound webhooks for external integrations |
 
 ### Chat
@@ -291,7 +292,7 @@ Any saved prompt can optionally carry pipeline stages, turning it from a simple 
    - **Name** — Display label for the stage.
    - **Prompt** — Instructions for the LLM at this stage. Supports `{{variable}}` interpolation.
    - **Tools** — Multi-select for tools available to this stage (grouped by category).
-   - **Auto-Approve Tools** — Checkbox to bypass approval gating for this stage's tool calls.
+   - **Auto-Approve Tools** — Tool selector (multi-select) specifying which tools bypass approval gating for this stage. Select specific tools from the stage's tool list, or leave empty to require approval for all.
    - **Timeout** — Max execution time in seconds (default: 300).
    - **Post-Action** — Deterministic action after stage completion. Action types are loaded dynamically from the Post-Action Registry (see below).
 7. Click **Save Prompt** to persist the stages.
@@ -320,6 +321,10 @@ Post-actions are deterministic actions that run after a pipeline stage completes
 curl http://localhost:3000/api/admin/post-actions
 # Returns: { "actions": [{ "type": "create-github-issues", "label": "...", "configSchema": {...} }, ...] }
 ```
+
+**Creating custom post-actions (UI):**
+
+Navigate to **http://localhost:3001/admin/post-actions** to create custom post-action types without writing code. See [Custom Post-Actions (Settings Page)](#custom-post-actions-settings-page) below for full details.
 
 **Registering a custom post-action (code):**
 
@@ -388,6 +393,64 @@ curl -X PUT -H "Authorization: Bearer <token>" \
   -d '{"stages": null}' \
   http://localhost:3000/api/prompts/<id>
 ```
+
+#### Custom Post-Actions (Settings Page)
+
+The Post-Actions settings page at `/admin/post-actions` provides a UI for creating custom post-action types without writing code. Custom actions appear automatically in the pipeline stage editor's post-action dropdown alongside built-in types.
+
+**How to create a custom post-action:**
+
+1. Navigate to **http://localhost:3001/admin/post-actions**.
+2. Click **+ New Post-Action**.
+3. Fill in the required fields:
+   - **Type** — Unique slug identifier (e.g., `custom-slack-notify`).
+   - **Label** — Human-readable label shown in dropdowns.
+   - **Description** — What the action does.
+   - **Category** — Grouping category (default: "Custom").
+4. Choose a creation mode:
+   - **Template** — Use a pre-built template:
+     - **Webhook** — Generic HTTP sender. Configure default URL, HTTP method, and whether to include stage output.
+     - **Script** — Shell command. Stage output is piped to stdin; config values are passed as `OPENZIGS_CONFIG_*` environment variables.
+   - **Advanced** — Define custom config fields (string, number, boolean, array) and a script body. The fields appear as a dynamic form in the stage editor.
+5. Click **Create** to save. The action is immediately available in all pipeline editors.
+
+**Managing custom post-actions:**
+
+- **Edit** — Click the **Edit** button on any custom action card to modify its configuration.
+- **Delete** — Click **Delete** and confirm to remove a custom action.
+- **Built-in actions** — Shown as read-only cards; these cannot be edited or deleted.
+
+**REST API — Custom post-action CRUD:**
+
+```bash
+# List custom post-action definitions
+curl http://localhost:3000/api/admin/post-actions/custom
+
+# Create a custom webhook post-action
+curl -X POST -H "Content-Type: application/json" \
+  -d '{
+    "type": "slack-webhook",
+    "label": "Slack Webhook",
+    "description": "Send stage output to a Slack channel",
+    "templateType": "webhook",
+    "templateConfig": {
+      "url": "https://hooks.slack.com/services/...",
+      "method": "POST",
+      "includeOutput": true
+    }
+  }' \
+  http://localhost:3000/api/admin/post-actions/custom
+
+# Update a custom post-action
+curl -X PUT -H "Content-Type: application/json" \
+  -d '{"label": "Slack Webhook (Updated)"}' \
+  http://localhost:3000/api/admin/post-actions/custom/slack-webhook
+
+# Delete a custom post-action
+curl -X DELETE http://localhost:3000/api/admin/post-actions/custom/slack-webhook
+```
+
+**Persistence:** Custom post-action definitions are stored in `~/.openzigs/custom-post-actions.json` and survive server restarts. On startup, all custom actions are automatically re-registered with the global post-action registry.
 
 ### Scheduler
 

@@ -210,7 +210,6 @@ export const WorkflowWizard = ({ onComplete, onCancel, availableTools = [], avai
           )}
           <PipelineEditor
             initialStages={stages}
-            onSave={handleEditorSave}
             onChange={handleEditorSave}
             height="450px"
             availableTools={availableTools}

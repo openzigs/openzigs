@@ -116,14 +116,7 @@ export const createPromptTools = ({ promptManager }: PromptToolsOptions): ToolDe
       riskLevel: "low",
       handler: async (args) => {
         const input = args as z.infer<typeof savePromptSchema>;
-        const prompt = promptManager.create({
-          name: input.name,
-          template: input.template,
-          description: input.description,
-          tags: input.tags,
-          stages: input.stages,
-          preferredTools: input.preferredTools,
-        });
+        const prompt = promptManager.create(input);
         return { text: JSON.stringify(prompt) };
       },
     },
@@ -213,14 +206,7 @@ export const createPromptTools = ({ promptManager }: PromptToolsOptions): ToolDe
       handler: async (args) => {
         const { id, ...rest } = args as z.infer<typeof updatePromptSchema>;
         try {
-          const updated = promptManager.update(id, {
-            name: rest.name,
-            template: rest.template,
-            description: rest.description,
-            tags: rest.tags,
-            stages: rest.stages,
-            preferredTools: rest.preferredTools,
-          });
+          const updated = promptManager.update(id, rest);
           return { text: JSON.stringify(updated) };
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);

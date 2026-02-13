@@ -18,7 +18,9 @@ import {
   Position,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
+import { useQuery } from "@tanstack/react-query";
 import { Plus, Trash2, GitBranch, Search } from "lucide-react";
+import { fetchJson } from "@/lib/api";
 import { ToolMultiSelect, type ToolOption } from "./tool-multi-select";
 
 /* ── Pipeline node types (matches backend PipelineNode) ── */
@@ -28,7 +30,7 @@ export type PromptStageData = {
   name: string;
   prompt: string;
   tools: string[] | null;
-  autoApproveTools?: boolean;
+  autoApproveTools?: string[] | null;
   model?: string;
   timeoutSeconds?: number;
   postAction?: PipelinePostAction;
@@ -109,7 +111,7 @@ export type BackendPipelineNode = {
   name: string;
   prompt?: string;
   tools?: string[] | null;
-  autoApproveTools?: boolean;
+  autoApproveTools?: string[] | null;
   model?: string;
   timeoutSeconds?: number;
   postAction?: PipelinePostAction;
@@ -276,14 +278,11 @@ type PostActionTypeInfo = {
 
 /** Hook to fetch registered post-action types from the backend. */
 function usePostActionTypes(): PostActionTypeInfo[] {
-  const [types, setTypes] = useState<PostActionTypeInfo[]>([]);
-  useEffect(() => {
-    fetch("/api/admin/post-actions")
-      .then((r) => r.json())
-      .then((data: { actions: PostActionTypeInfo[] }) => setTypes(data.actions ?? []))
-      .catch(() => setTypes([]));
-  }, []);
-  return types;
+  const { data } = useQuery({
+    queryKey: ["post-action-types"],
+    queryFn: () => fetchJson<{ actions: PostActionTypeInfo[] }>("/api/admin/post-actions"),
+  });
+  return data?.actions ?? [];
 }
 
 /**
@@ -639,15 +638,14 @@ const StageEditor = ({
         placeholder="All tools (no restriction)"
         allowAll
       />
-      <label className="flex items-center gap-2 text-sm cursor-pointer">
-        <input
-          type="checkbox"
-          checked={promptData.autoApproveTools ?? false}
-          onChange={(e) => onChange(node.id, { ...promptData, autoApproveTools: e.target.checked })}
-          className="rounded border-border"
-        />
-        <span className="text-xs text-muted-foreground">Auto-approve tool calls</span>
-      </label>
+      <ToolMultiSelect
+        label="Auto-approve Tools"
+        tools={availableTools}
+        selected={promptData.autoApproveTools ?? null}
+        onChange={(tools) => onChange(node.id, { ...promptData, autoApproveTools: tools })}
+        placeholder="None (require approval)"
+        allowAll
+      />
       <label className="block">
         <span className="text-xs text-muted-foreground">Timeout (seconds)</span>
         <input
@@ -750,7 +748,7 @@ export const PipelineEditor = ({
         name: `stage-${nodes.filter((n) => (n.data as PipelineNodeData).type === "prompt").length + 1}`,
         prompt: "",
         tools: null,
-        autoApproveTools: false,
+        autoApproveTools: null,
         timeoutSeconds: 300,
       } satisfies PromptStageData,
     };
