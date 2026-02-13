@@ -62,7 +62,7 @@ export const SentinelPanel = () => {
       void queryClient.invalidateQueries({ queryKey: ["sentinel-status"] });
       showToast(
         `Check complete: ${data.totalTasks} tasks, ${(data.successRate * 100).toFixed(0)}% success, ${data.alertCount} alerts.`,
-        data.alertCount > 0 ? "warning" : "success"
+        data.alertCount > 0 ? "info" : "success"
       );
     },
     onError: (err) => {
