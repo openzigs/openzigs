@@ -1,9 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { fetchJson } from "@/lib/api";
-import type { SentinelStatus, SentinelAlert, DigestRecord, PromptRecommendation } from "@/lib/types";
+import type { SentinelStatus, SentinelAlert, DigestRecord, PromptRecommendation, SentinelConfig } from "@/lib/types";
 import { showToast } from "@/components/toast";
 import {
   Shield,
@@ -27,6 +27,8 @@ import {
 export const SentinelPanel = () => {
   const queryClient = useQueryClient();
   const [showDigests, setShowDigests] = useState(false);
+  const [draftConfig, setDraftConfig] = useState<SentinelConfig | null>(null);
+  const [configDirty, setConfigDirty] = useState(false);
 
   const statusQuery = useQuery({
     queryKey: ["sentinel-status"],
@@ -72,6 +74,28 @@ export const SentinelPanel = () => {
       showToast(`Check failed: ${err instanceof Error ? err.message : String(err)}`, "error");
     },
   });
+
+  const saveConfigMutation = useMutation({
+    mutationFn: (config: Partial<SentinelConfig>) =>
+      fetchJson<{ ok: boolean; config: SentinelConfig }>("/api/admin/sentinel/config", {
+        method: "PUT",
+        body: JSON.stringify(config),
+      }),
+    onSuccess: () => {
+      setConfigDirty(false);
+      void queryClient.invalidateQueries({ queryKey: ["sentinel-status"] });
+      showToast("Sentinel schedule saved.", "success");
+    },
+    onError: (err) => {
+      showToast(`Failed to save schedule: ${err instanceof Error ? err.message : String(err)}`, "error");
+    },
+  });
+
+  useEffect(() => {
+    if (!configDirty && statusQuery.data?.config) {
+      setDraftConfig(statusQuery.data.config);
+    }
+  }, [statusQuery.data?.config, configDirty]);
 
   if (statusQuery.isLoading) return <p className="text-sm text-muted-foreground">Loading…</p>;
 
@@ -174,6 +198,190 @@ export const SentinelPanel = () => {
           </div>
         )}
       </div>
+
+      {/* Schedule Config Editor */}
+      {draftConfig && (
+        <div className="rounded-xl border border-border bg-muted/30 p-4 space-y-3">
+          <h3 className="text-sm font-semibold text-foreground">Edit Schedule</h3>
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
+            <label className="space-y-1 text-xs text-muted-foreground">
+              <span>Check Interval (min)</span>
+              <input
+                type="number"
+                min={1}
+                className="w-full rounded-md border border-border bg-card px-2 py-1 text-foreground"
+                value={draftConfig.checkIntervalMinutes}
+                onChange={(e) => {
+                  const n = Number.parseInt(e.target.value, 10);
+                  if (Number.isNaN(n)) return;
+                  setConfigDirty(true);
+                  setDraftConfig((prev) => (prev ? { ...prev, checkIntervalMinutes: Math.max(1, n) } : prev));
+                }}
+              />
+            </label>
+            <label className="space-y-1 text-xs text-muted-foreground">
+              <span>Jitter (min)</span>
+              <input
+                type="number"
+                min={0}
+                className="w-full rounded-md border border-border bg-card px-2 py-1 text-foreground"
+                value={draftConfig.jitterMinutes}
+                onChange={(e) => {
+                  const n = Number.parseInt(e.target.value, 10);
+                  if (Number.isNaN(n)) return;
+                  setConfigDirty(true);
+                  setDraftConfig((prev) => (prev ? { ...prev, jitterMinutes: Math.max(0, n) } : prev));
+                }}
+              />
+            </label>
+            <label className="space-y-1 text-xs text-muted-foreground">
+              <span>Digest Hour (0-23)</span>
+              <input
+                type="number"
+                min={0}
+                max={23}
+                className="w-full rounded-md border border-border bg-card px-2 py-1 text-foreground"
+                value={draftConfig.digestHour}
+                onChange={(e) => {
+                  const n = Number.parseInt(e.target.value, 10);
+                  if (Number.isNaN(n)) return;
+                  setConfigDirty(true);
+                  setDraftConfig((prev) => (prev ? { ...prev, digestHour: Math.min(23, Math.max(0, n)) } : prev));
+                }}
+              />
+            </label>
+            <label className="space-y-1 text-xs text-muted-foreground">
+              <span>Audit Hour (0-23)</span>
+              <input
+                type="number"
+                min={0}
+                max={23}
+                className="w-full rounded-md border border-border bg-card px-2 py-1 text-foreground"
+                value={draftConfig.auditHour}
+                onChange={(e) => {
+                  const n = Number.parseInt(e.target.value, 10);
+                  if (Number.isNaN(n)) return;
+                  setConfigDirty(true);
+                  setDraftConfig((prev) => (prev ? { ...prev, auditHour: Math.min(23, Math.max(0, n)) } : prev));
+                }}
+              />
+            </label>
+            <label className="space-y-1 text-xs text-muted-foreground">
+              <span>Timezone</span>
+              <input
+                type="text"
+                className="w-full rounded-md border border-border bg-card px-2 py-1 text-foreground"
+                value={draftConfig.timezone}
+                onChange={(e) => {
+                  setConfigDirty(true);
+                  setDraftConfig((prev) => (prev ? { ...prev, timezone: e.target.value || "UTC" } : prev));
+                }}
+              />
+            </label>
+            <label className="space-y-1 text-xs text-muted-foreground">
+              <span>Max Random Delay (ms)</span>
+              <input
+                type="number"
+                min={0}
+                className="w-full rounded-md border border-border bg-card px-2 py-1 text-foreground"
+                value={draftConfig.maxRandomDelayMs}
+                onChange={(e) => {
+                  const n = Number.parseInt(e.target.value, 10);
+                  if (Number.isNaN(n)) return;
+                  setConfigDirty(true);
+                  setDraftConfig((prev) => (prev ? { ...prev, maxRandomDelayMs: Math.max(0, n) } : prev));
+                }}
+              />
+            </label>
+            <label className="space-y-1 text-xs text-muted-foreground">
+              <span>Critical Cooldown (min)</span>
+              <input
+                type="number"
+                min={1}
+                className="w-full rounded-md border border-border bg-card px-2 py-1 text-foreground"
+                value={draftConfig.criticalCooldownMinutes}
+                onChange={(e) => {
+                  const n = Number.parseInt(e.target.value, 10);
+                  if (Number.isNaN(n)) return;
+                  setConfigDirty(true);
+                  setDraftConfig((prev) => (prev ? { ...prev, criticalCooldownMinutes: Math.max(1, n) } : prev));
+                }}
+              />
+            </label>
+            <label className="space-y-1 text-xs text-muted-foreground">
+              <span>Warning Cooldown (min)</span>
+              <input
+                type="number"
+                min={1}
+                className="w-full rounded-md border border-border bg-card px-2 py-1 text-foreground"
+                value={draftConfig.warningCooldownMinutes}
+                onChange={(e) => {
+                  const n = Number.parseInt(e.target.value, 10);
+                  if (Number.isNaN(n)) return;
+                  setConfigDirty(true);
+                  setDraftConfig((prev) => (prev ? { ...prev, warningCooldownMinutes: Math.max(1, n) } : prev));
+                }}
+              />
+            </label>
+            <label className="space-y-1 text-xs text-muted-foreground sm:col-span-2 lg:col-span-3">
+              <span>Notify Channels (comma-separated)</span>
+              <input
+                type="text"
+                className="w-full rounded-md border border-border bg-card px-2 py-1 text-foreground"
+                value={draftConfig.notifyChannels.join(", ")}
+                onChange={(e) => {
+                  setConfigDirty(true);
+                  setDraftConfig((prev) => (
+                    prev
+                      ? {
+                          ...prev,
+                          notifyChannels: e.target.value
+                            .split(",")
+                            .map((v) => v.trim())
+                            .filter(Boolean),
+                        }
+                      : prev
+                  ));
+                }}
+              />
+            </label>
+          </div>
+          <label className="flex items-center gap-2 text-xs text-muted-foreground">
+            <input
+              type="checkbox"
+              checked={draftConfig.noOverlap}
+              onChange={(e) => {
+                setConfigDirty(true);
+                setDraftConfig((prev) => (prev ? { ...prev, noOverlap: e.target.checked } : prev));
+              }}
+            />
+            Prevent overlapping checks
+          </label>
+
+          <div className="flex justify-end">
+            <button
+              className="rounded-lg border border-border bg-card px-3 py-1.5 text-xs font-semibold text-foreground transition hover:border-primary/30 hover:bg-primary/5 disabled:opacity-40"
+              disabled={!configDirty || saveConfigMutation.isPending}
+              onClick={() => {
+                saveConfigMutation.mutate({
+                  checkIntervalMinutes: draftConfig.checkIntervalMinutes,
+                  jitterMinutes: draftConfig.jitterMinutes,
+                  digestHour: draftConfig.digestHour,
+                  auditHour: draftConfig.auditHour,
+                  timezone: draftConfig.timezone,
+                  noOverlap: draftConfig.noOverlap,
+                  maxRandomDelayMs: draftConfig.maxRandomDelayMs,
+                  criticalCooldownMinutes: draftConfig.criticalCooldownMinutes,
+                  warningCooldownMinutes: draftConfig.warningCooldownMinutes,
+                  notifyChannels: draftConfig.notifyChannels,
+                });
+              }}
+            >
+              {saveConfigMutation.isPending ? "Saving…" : "Save Schedule"}
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Digest History */}
       <div className="rounded-xl border border-border bg-muted/30 p-4 space-y-3">
@@ -349,6 +557,12 @@ const scoreColor = (score: number) => {
 
 const PromptRecCard = ({ rec }: { rec: PromptRecommendation }) => {
   const [expanded, setExpanded] = useState(false);
+  const suggestions = Array.isArray(rec.suggestions)
+    ? rec.suggestions
+    : String(rec.suggestions ?? "")
+        .split(/\r?\n|•/)
+        .map((s) => s.replace(/^[-*\d.)\s]+/, "").trim())
+        .filter(Boolean);
   const truncatedPrompt =
     rec.prompt.length > 120 ? `${rec.prompt.slice(0, 120)}…` : rec.prompt;
 
@@ -377,13 +591,13 @@ const PromptRecCard = ({ rec }: { rec: PromptRecommendation }) => {
 
       {expanded && (
         <div className="space-y-1.5 pt-1">
-          {rec.suggestions.length > 0 && (
+          {suggestions.length > 0 && (
             <div>
               <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
                 Suggestions
               </span>
               <ul className="mt-0.5 space-y-0.5">
-                {rec.suggestions.map((s, j) => (
+                {suggestions.map((s, j) => (
                   <li key={j} className="text-xs text-foreground pl-2 border-l-2 border-primary/30">
                     {s}
                   </li>
