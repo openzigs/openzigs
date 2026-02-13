@@ -359,3 +359,58 @@ export type TemplateAnalysis = {
   exportedAt?: string;
   exportedFrom?: string;
 };
+
+/* ── Sentinel: Autonomous System Monitor types (#179) ── */
+
+export type SentinelConfig = {
+  enabled: boolean;
+  model: string;
+  checkIntervalMinutes: number;
+  jitterMinutes: number;
+  digestHour: number;
+  auditHour: number;
+  consecutiveFailureThreshold: number;
+  queueDepthThreshold: number;
+};
+
+export type SentinelStatus = {
+  enabled: boolean;
+  lastTaskCheckAt: string | null;
+  lastDigestAt: string | null;
+  lastPromptAuditAt: string | null;
+  consecutiveFailures: number;
+  totalTasksReviewed: number;
+  alertsSent: number;
+  modelOverride: string | null;
+  nextCheckEstimate: string | null;
+  config: SentinelConfig;
+};
+
+export type SentinelAlert = {
+  type: string;
+  priority: "critical" | "warning";
+  message: string;
+  timestamp: string;
+  data?: Record<string, unknown>;
+};
+
+export type DigestRecord = {
+  timestamp: string;
+  period: { from: string; to: string };
+  taskSummary: {
+    completed: number;
+    failed: number;
+    cancelled: number;
+    successRate: number;
+  };
+  tokenBurn: {
+    total: number;
+    avgPerTask: number;
+    topConsumer: { goal: string; tokens: number } | null;
+  } | null;
+  promptAudit: {
+    sampledCount: number;
+    avgScore: number;
+  } | null;
+  alertCount: number;
+};

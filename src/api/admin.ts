@@ -22,6 +22,8 @@ import type { TaskEngine } from "../tasks/task-engine.js";
 import type { PipelineStage } from "../tasks/types.js";
 import { PipelinePlanner } from "../tasks/pipeline-planner.js";
 import type { WebhookManager } from "../webhooks/webhook-manager.js";
+import type { SentinelService } from "../sentinel/index.js";
+import { SentinelConfigSchema } from "../sentinel/index.js";
 import { TemplateService } from "../productivity/template-service.js";
 
 type EnvEntry = {
@@ -197,6 +199,7 @@ export type AdminRouterOptions = {
   taskEngine?: TaskEngine;
   webhookManager?: WebhookManager;
   customPostActionManager?: CustomPostActionManager;
+  sentinel?: SentinelService;
 };
 
 type SchedulerSuggestion = {
@@ -261,7 +264,7 @@ const parseReasoningEffort = (value: unknown): ReasoningEffort | undefined => {
     : undefined;
 };
 
-export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerManager, promptManager, scheduler, personalityManager, sessionManager, copilot, taskWorker, taskEngine, webhookManager, customPostActionManager }: AdminRouterOptions) => {
+export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerManager, promptManager, scheduler, personalityManager, sessionManager, copilot, taskWorker, taskEngine, webhookManager, customPostActionManager, sentinel }: AdminRouterOptions) => {
   const router = Router();
 
   // ── Server Restart ──
@@ -1770,6 +1773,73 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
     logger.info(`Webhook deleted: ${req.params.id}`);
     return res.json({ ok: true });
   });
+
+  // ── Sentinel: Autonomous System Monitor ──
+  if (sentinel) {
+    router.get("/sentinel/status", (_req, res) => {
+      return res.json(sentinel.getStatus());
+    });
+
+    router.put("/sentinel/config", async (req, res) => {
+      const parsed = SentinelConfigSchema.partial().safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: parsed.error.issues.map((i) => i.message).join("; ") });
+      }
+      try {
+        await sentinel.updateConfig(parsed.data);
+        return res.json({ ok: true, config: sentinel.getStatus().config });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return res.status(500).json({ error: message });
+      }
+    });
+
+    router.post("/sentinel/toggle", async (req, res) => {
+      const toggleSchema = z.object({ enabled: z.boolean() });
+      const parsed = toggleSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: "enabled must be a boolean" });
+      }
+      const { enabled } = parsed.data;
+      try {
+        await sentinel.toggle(enabled);
+        return res.json({ ok: true, enabled: sentinel.isRunning });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return res.status(500).json({ error: message });
+      }
+    });
+
+    router.post("/sentinel/run-now", async (_req, res) => {
+      try {
+        const result = await sentinel.runCheck();
+        return res.json({
+          ok: true,
+          totalTasks: result.totalTasks,
+          successRate: result.successRate,
+          alertCount: result.alerts.length,
+          alerts: result.alerts,
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return res.status(500).json({ error: message });
+      }
+    });
+
+    router.get("/sentinel/digests", async (req, res) => {
+      const parsedLimit = typeof req.query.limit === "string"
+        ? Number.parseInt(req.query.limit, 10)
+        : Number.NaN;
+      const limit = Number.isFinite(parsedLimit) && parsedLimit > 0 ? parsedLimit : 20;
+      try {
+        const digests = await sentinel.getDigestHistory(limit);
+        return res.json({ digests });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return res.status(500).json({ error: message });
+      }
+    });
+  }
 
   return router;
 };

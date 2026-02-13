@@ -2060,3 +2060,96 @@ POST /api/admin/templates/import { template, placeholders }
 3. **Success** — Confirmation with checkmark and prompt name.
 
 ### Tracking: [Epic #188](https://github.com/mgcronin/openzigs/issues/188)
+
+## Sentinel — Autonomous System Monitor & SRE Agent (Epic #179)
+
+### Overview
+
+Sentinel is an autonomous background daemon that continuously monitors the health and performance of the OpenZigs platform. It operates on three axes: **task health review**, **prompt quality auditing**, and **daily digest generation**, with an integrated **SRE alerting** pipeline.
+
+### Architecture
+
+```
+┌──────────────────────────────────────────────────┐
+│                 SentinelService                   │
+│           (EventEmitter + node-cron)              │
+│                                                   │
+│  ┌─────────────┐ ┌──────────────┐ ┌────────────┐│
+│  │TaskReviewer  │ │PromptAuditor │ │DigestGen.  ││
+│  │(sync, local) │ │(async, LLM)  │ │(formatter) ││
+│  └──────┬───────┘ └──────┬───────┘ └──────┬─────┘│
+│         │                │                │       │
+│  ┌──────┴────────────────┴────────────────┴─────┐│
+│  │               SREAlerter                      ││
+│  │   (Socket.IO dispatch + cooldown dedup)       ││
+│  └───────────────────────────────────────────────┘│
+└──────────────────────────────────────────────────┘
+```
+
+### Components
+
+| File | Responsibility |
+|---|---|
+| `src/sentinel/sentinel-service.ts` | Core daemon. Orchestrates cron schedules, coordinates sub-components, exposes API for admin UI. |
+| `src/sentinel/task-reviewer.ts` | Synchronous review of recent task outcomes from `TaskRepository`. Calculates success rate, consecutive failures, slow/orphaned tasks, queue depth. |
+| `src/sentinel/prompt-auditor.ts` | Samples recent user prompts from session JSONL files and sends them to a lightweight Copilot model for efficiency analysis. |
+| `src/sentinel/digest-generator.ts` | Aggregates task review + prompt audit into a daily `DigestRecord` and persists to JSONL history. |
+| `src/sentinel/sre-alerter.ts` | Dispatches alerts via Socket.IO with per-type deduplication cooldowns (5min critical, 30min warning). |
+| `src/sentinel/sentinel-state.ts` | Zod schemas, file-based state persistence (`~/.openzigs/sentinel/`), digest JSONL history. |
+
+### Scheduling
+
+- **Task health checks**: Every N minutes (configurable, default 15) with up to N minutes of random delay (default up to 15min)
+- **Daily digest**: Generated at a configurable hour (default 09:00)
+- **Prompt audit**: Runs at a configurable hour (default 02:00)
+
+### Alert Types
+
+| Type | Priority | Trigger |
+|---|---|---|
+| `consecutive-failures` | Critical | N consecutive task failures (default threshold: 3) |
+| `queue-depth` | Warning | Task queue exceeds threshold (default: 10) |
+| `orphaned-task` | Warning | Task running > 30 minutes |
+| `success-rate-drop` | Critical | Success rate drops below 50% (≥3 resolved tasks) |
+
+### Admin API
+
+| Endpoint | Method | Description |
+|---|---|---|
+| `/api/admin/sentinel/status` | GET | Current status, config, and timing info |
+| `/api/admin/sentinel/config` | PUT | Update sentinel configuration |
+| `/api/admin/sentinel/toggle` | POST | Enable/disable sentinel |
+| `/api/admin/sentinel/run-now` | POST | Trigger an immediate check cycle |
+| `/api/admin/sentinel/digests` | GET | Retrieve digest history |
+
+### UI
+
+The Sentinel panel appears on the Admin page (`/admin`) under "Sentinel Monitor". It shows:
+- **Status badges**: Active/Inactive, total tasks reviewed, alerts sent, consecutive failures
+- **Controls**: Enable/disable toggle, "Run Check Now" button
+- **Schedule info**: Last check times, next estimated check, interval/jitter/digest/audit hour
+- **Digest history**: Expandable list of past daily digests with success rates and summaries
+
+### Configuration (`config/default.json`)
+
+```json
+{
+  "sentinel": {
+    "enabled": false,
+    "model": "gpt-4o-mini",
+    "checkIntervalMinutes": 15,
+    "jitterMinutes": 15,
+    "digestHour": 9,
+    "auditHour": 2,
+    "consecutiveFailureThreshold": 3,
+    "queueDepthThreshold": 10
+  }
+}
+```
+
+### State Persistence
+
+- **State**: `~/.openzigs/sentinel/state.json` — tracks last check times, counters, enabled status
+- **Digest history**: `~/.openzigs/sentinel/digest-history.jsonl` — append-only JSONL of daily digests
+
+### Tracking: [Epic #179](https://github.com/mgcronin/openzigs/issues/179)
