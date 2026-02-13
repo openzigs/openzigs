@@ -254,6 +254,7 @@ const sentinel = new SentinelService({
   copilot,
   sessionManager,
   config: sentinelConfig,
+  channelManager,
 });
 
 // ── Webhook Manager ──

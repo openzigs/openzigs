@@ -17,6 +17,15 @@ const defaultConfig: SentinelConfig = {
   auditHour: 2,
   consecutiveFailureThreshold: 3,
   queueDepthThreshold: 10,
+  persistMarkdownDigest: true,
+  markdownDigestPath: null,
+  digestRetentionDays: 30,
+  notifyChannels: ["admin"],
+  criticalCooldownMinutes: 5,
+  warningCooldownMinutes: 30,
+  timezone: "UTC",
+  noOverlap: true,
+  maxRandomDelayMs: 0,
 };
 
 const makeTask = (overrides: Partial<AgentTask>): AgentTask => ({

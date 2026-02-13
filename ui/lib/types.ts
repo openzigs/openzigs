@@ -371,6 +371,18 @@ export type SentinelConfig = {
   auditHour: number;
   consecutiveFailureThreshold: number;
   queueDepthThreshold: number;
+  // #195
+  persistMarkdownDigest: boolean;
+  markdownDigestPath: string | null;
+  digestRetentionDays: number;
+  // #196
+  notifyChannels: string[];
+  criticalCooldownMinutes: number;
+  warningCooldownMinutes: number;
+  // #197
+  timezone: string;
+  noOverlap: boolean;
+  maxRandomDelayMs: number;
 };
 
 export type SentinelStatus = {
@@ -412,5 +424,14 @@ export type DigestRecord = {
     sampledCount: number;
     avgScore: number;
   } | null;
+  promptRecommendations: PromptRecommendation[] | null;
   alertCount: number;
+};
+
+export type PromptRecommendation = {
+  prompt: string;
+  sessionId: string;
+  score: number;
+  suggestions: string;
+  rewrite: string | null;
 };

@@ -2061,47 +2061,53 @@ POST /api/admin/templates/import { template, placeholders }
 
 ### Tracking: [Epic #188](https://github.com/mgcronin/openzigs/issues/188)
 
-## Sentinel — Autonomous System Monitor & SRE Agent (Epic #179)
+## Sentinel — Autonomous System Monitor & SRE Agent (Epic #179 → #194)
 
 ### Overview
 
-Sentinel is an autonomous background daemon that continuously monitors the health and performance of the OpenZigs platform. It operates on three axes: **task health review**, **prompt quality auditing**, and **daily digest generation**, with an integrated **SRE alerting** pipeline.
+Sentinel is an autonomous background daemon that continuously monitors the health and performance of the OpenZigs platform. It operates on three axes: **task health review**, **prompt quality auditing**, and **daily digest generation**, with an integrated **SRE alerting** pipeline that supports multi-channel routing.
 
 ### Architecture
 
 ```
-┌──────────────────────────────────────────────────┐
-│                 SentinelService                   │
-│           (EventEmitter + node-cron)              │
-│                                                   │
-│  ┌─────────────┐ ┌──────────────┐ ┌────────────┐│
-│  │TaskReviewer  │ │PromptAuditor │ │DigestGen.  ││
-│  │(sync, local) │ │(async, LLM)  │ │(formatter) ││
-│  └──────┬───────┘ └──────┬───────┘ └──────┬─────┘│
-│         │                │                │       │
-│  ┌──────┴────────────────┴────────────────┴─────┐│
-│  │               SREAlerter                      ││
-│  │   (Socket.IO dispatch + cooldown dedup)       ││
-│  └───────────────────────────────────────────────┘│
-└──────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│                       SentinelService                         │
+│              (EventEmitter + node-cron v4)                     │
+│         timezone, noOverlap, maxRandomDelay                   │
+│                                                               │
+│  ┌─────────────┐ ┌──────────────┐ ┌────────────────────────┐ │
+│  │TaskReviewer  │ │PromptAuditor │ │DigestGenerator         │ │
+│  │(sync, local) │ │(async, LLM)  │ │+ PromptRecommendations│ │
+│  │              │ │              │ │+ status.md generation  │ │
+│  └──────┬───────┘ └──────┬───────┘ └──────────┬─────────────┘ │
+│         │                │                     │               │
+│  ┌──────┴────────────────┴─────────────────────┴─────────────┐│
+│  │                     SREAlerter                             ││
+│  │   Socket.IO + ChannelManager (multi-channel routing)      ││
+│  │   Configurable cooldowns (critical / warning)             ││
+│  └───────────────────────────────────────────────────────────┘│
+└──────────────────────────────────────────────────────────────┘
 ```
 
 ### Components
 
 | File | Responsibility |
 |---|---|
-| `src/sentinel/sentinel-service.ts` | Core daemon. Orchestrates cron schedules, coordinates sub-components, exposes API for admin UI. |
+| `src/sentinel/sentinel-service.ts` | Core daemon. Orchestrates cron schedules with node-cron v4 (`timezone`, `noOverlap`, `maxRandomDelay`). Coordinates sub-components and exposes API. |
 | `src/sentinel/task-reviewer.ts` | Synchronous review of recent task outcomes from `TaskRepository`. Calculates success rate, consecutive failures, slow/orphaned tasks, queue depth. |
-| `src/sentinel/prompt-auditor.ts` | Samples recent user prompts from session JSONL files and sends them to a lightweight Copilot model for efficiency analysis. |
-| `src/sentinel/digest-generator.ts` | Aggregates task review + prompt audit into a daily `DigestRecord` and persists to JSONL history. |
-| `src/sentinel/sre-alerter.ts` | Dispatches alerts via Socket.IO with per-type deduplication cooldowns (5min critical, 30min warning). |
-| `src/sentinel/sentinel-state.ts` | Zod schemas, file-based state persistence (`~/.openzigs/sentinel/`), digest JSONL history. |
+| `src/sentinel/prompt-auditor.ts` | Samples recent user prompts from session JSONL files and sends them to a lightweight Copilot model for efficiency analysis. Returns per-prompt scores, suggestions, and rewrites. |
+| `src/sentinel/digest-generator.ts` | Aggregates task review + prompt audit into `DigestRecord` with per-prompt `PromptRecommendation[]`. Persists to JSONL with configurable retention. Generates human-readable `status.md`. |
+| `src/sentinel/sre-alerter.ts` | Multi-channel alert dispatch (`admin` via Socket.IO, external channels via `ChannelManager`). Per-type deduplication with configurable cooldowns. Only critical alerts route to external channels. |
+| `src/sentinel/sentinel-state.ts` | Zod schemas, file-based state persistence (`~/.openzigs/sentinel/`), digest JSONL history, `status.md` read/write, digest pruning. |
 
 ### Scheduling
 
-- **Task health checks**: Every N minutes (configurable, default 15) with up to N minutes of random delay (default up to 15min)
+- **Task health checks**: Every N minutes (configurable, default 15) with random jitter
 - **Daily digest**: Generated at a configurable hour (default 09:00)
 - **Prompt audit**: Runs at a configurable hour (default 02:00)
+- **Timezone**: All schedules use a configurable IANA timezone (default: UTC)
+- **Overlap prevention**: `noOverlap: true` (default) prevents a cron job from firing if the previous execution is still running
+- **Native jitter**: `maxRandomDelayMs` provides node-cron v4 native random delay; when 0, falls back to manual jitter via `jitterMinutes`
 
 ### Alert Types
 
@@ -2112,6 +2118,13 @@ Sentinel is an autonomous background daemon that continuously monitors the healt
 | `orphaned-task` | Warning | Task running > 30 minutes |
 | `success-rate-drop` | Critical | Success rate drops below 50% (≥3 resolved tasks) |
 
+### Multi-Channel Alert Routing (#196)
+
+- Alerts are dispatched to channels listed in `notifyChannels` (default: `["admin"]`)
+- `"admin"` channel: Socket.IO events to the web dashboard
+- External channels (e.g., `"telegram"`, `"discord"`): only receive **critical** alerts via `ChannelManager`
+- Cooldowns are configurable: `criticalCooldownMinutes` (default: 5), `warningCooldownMinutes` (default: 30)
+
 ### Admin API
 
 | Endpoint | Method | Description |
@@ -2121,14 +2134,16 @@ Sentinel is an autonomous background daemon that continuously monitors the healt
 | `/api/admin/sentinel/toggle` | POST | Enable/disable sentinel |
 | `/api/admin/sentinel/run-now` | POST | Trigger an immediate check cycle |
 | `/api/admin/sentinel/digests` | GET | Retrieve digest history |
+| `/api/admin/sentinel/digest-markdown` | GET | Download latest `status.md` as Markdown |
 
 ### UI
 
 The Sentinel panel appears on the Admin page (`/admin`) under "Sentinel Monitor". It shows:
 - **Status badges**: Active/Inactive, total tasks reviewed, alerts sent, consecutive failures
 - **Controls**: Enable/disable toggle, "Run Check Now" button
-- **Schedule info**: Last check times, next estimated check, interval/jitter/digest/audit hour
-- **Digest history**: Expandable list of past daily digests with success rates and summaries
+- **Schedule info**: Last check times, next estimated check, interval/jitter/digest/audit hour, timezone, overlap setting, cooldowns, notify channels
+- **Digest history**: Expandable list of past daily digests with success rates, per-prompt recommendations (with score badges), and a **Download** button for Markdown export
+- **Prompt Improvements**: Expandable per-digest section showing individual prompt scores, suggestions, and suggested rewrites for low-scoring prompts
 
 ### Configuration (`config/default.json`)
 
@@ -2142,7 +2157,16 @@ The Sentinel panel appears on the Admin page (`/admin`) under "Sentinel Monitor"
     "digestHour": 9,
     "auditHour": 2,
     "consecutiveFailureThreshold": 3,
-    "queueDepthThreshold": 10
+    "queueDepthThreshold": 10,
+    "persistMarkdownDigest": true,
+    "markdownDigestPath": null,
+    "digestRetentionDays": 30,
+    "notifyChannels": ["admin"],
+    "criticalCooldownMinutes": 5,
+    "warningCooldownMinutes": 30,
+    "timezone": "UTC",
+    "noOverlap": true,
+    "maxRandomDelayMs": 0
   }
 }
 ```
@@ -2150,6 +2174,7 @@ The Sentinel panel appears on the Admin page (`/admin`) under "Sentinel Monitor"
 ### State Persistence
 
 - **State**: `~/.openzigs/sentinel/state.json` — tracks last check times, counters, enabled status
-- **Digest history**: `~/.openzigs/sentinel/digest-history.jsonl` — append-only JSONL of daily digests
+- **Digest history**: `~/.openzigs/sentinel/digest-history.jsonl` — append-only JSONL of daily digests (auto-pruned per `digestRetentionDays`)
+- **Status report**: `~/.openzigs/sentinel/status.md` — human-readable Markdown digest (auto-generated when `persistMarkdownDigest: true`)
 
-### Tracking: [Epic #179](https://github.com/mgcronin/openzigs/issues/179)
+### Tracking: [Epic #179](https://github.com/mgcronin/openzigs/issues/179) → [Epic #194](https://github.com/mgcronin/openzigs/issues/194)
