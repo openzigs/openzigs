@@ -28,7 +28,7 @@ interface TokenUsageAccumulator {
 export interface TokenUsageEvent {
   sessionId: string;
   delta: { inputTokens: number; outputTokens: number };
-  cumulative: { inputTokens: number; outputTokens: number; totalTokens: number };
+  cumulative: TokenUsage;
 }
 
 /** Context compaction lifecycle event. */
@@ -53,6 +53,7 @@ export const MODEL_CONTEXT_WINDOWS: Record<string, number> = {
   "o3-mini": 200_000,
   "o4-mini": 200_000,
   "gemini-2.5-pro": 1_000_000,
+  "gemini-2.5-flash": 1_000_000,
 };
 
 // ── TokenTracker ─────────────────────────────────────────────────────
@@ -83,6 +84,7 @@ export class TokenTracker {
         inputTokens: acc.input,
         outputTokens: acc.output,
         totalTokens: acc.input + acc.output,
+        turns: acc.turns,
       },
     };
   }

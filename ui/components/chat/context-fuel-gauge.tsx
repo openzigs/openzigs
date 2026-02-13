@@ -1,6 +1,6 @@
 "use client";
 
-import { cn } from "@/lib/utils";
+import { cn, formatTokens } from "@/lib/utils";
 import type { TokenUsage } from "@/lib/types";
 
 export type ContextFuelGaugeProps = {
@@ -22,11 +22,7 @@ const fillColor = (ratio: number): string => {
   return "bg-destructive";
 };
 
-const formatTokens = (n: number): string => {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
-  return String(n);
-};
+// formatTokens imported from @/lib/utils
 
 /**
  * A compact fuel-gauge bar showing context window fill level.

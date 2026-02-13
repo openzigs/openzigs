@@ -307,8 +307,10 @@ export type TokenUsage = {
 
 export type TokenUsageEvent = {
   sessionId: string;
-  inputTokens: number;
-  outputTokens: number;
+  delta: {
+    inputTokens: number;
+    outputTokens: number;
+  };
   cumulative: TokenUsage;
 };
 

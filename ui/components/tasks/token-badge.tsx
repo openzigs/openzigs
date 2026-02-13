@@ -1,6 +1,6 @@
 "use client";
 
-import { cn } from "@/lib/utils";
+import { cn, formatTokens } from "@/lib/utils";
 import type { TokenUsage } from "@/lib/types";
 
 export type TokenBadgeProps = {
@@ -10,12 +10,7 @@ export type TokenBadgeProps = {
   compact?: boolean;
 };
 
-/** Format a token count to a human-readable short string. */
-const fmt = (n: number): string => {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
-  return String(n);
-};
+const fmt = formatTokens;
 
 /** Pick a colour based on total token count. */
 const badgeColor = (total: number): { bg: string; text: string } => {

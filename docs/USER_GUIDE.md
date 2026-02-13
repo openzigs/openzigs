@@ -646,6 +646,8 @@ The Tasks page at `/tasks` provides real-time monitoring of background agent tas
 
 #### Token Cost Badges
 
+![Tasks page with token cost badges — green (1.6K), orange (58.1K), and orange (107.5K) badges on task cards](images/tasks-token-badges.png)
+
 Each task card shows a **Token Cost Badge** next to the status badge, indicating how many tokens the task consumed. The badge is color-coded by total token count:
 
 | Token Count | Color | Meaning |
@@ -1310,6 +1312,8 @@ Changes take effect on the next LLM request without restarting the server.
 ---
 
 ## Context Fuel Gauge
+
+![Context Fuel Gauge — progress bar showing real-time context window usage in the chat header](images/chat-context-fuel-gauge.png)
 
 The chat header includes a **Context Fuel Gauge** — a compact progress bar that shows real-time context window usage as the conversation progresses. It sits between the model selector and the connection indicator.
 

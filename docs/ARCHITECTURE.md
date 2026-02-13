@@ -1485,8 +1485,8 @@ CREATE INDEX IF NOT EXISTS idx_tasks_parent ON agent_tasks(parent_task_id);
 | Event | Payload | Direction |
 |-------|---------|-----------|
 | `task:notification` | `{ type: "completed" \| "failed", task: AgentTask }` | Server → Client |
-| `context:usage` | `TokenUsageEvent` (`{ inputTokens, outputTokens, totalTokens, turns, conversationId, model }`) | Server → Client |
-| `context:compaction` | `CompactionEvent` (`{ status: "started" \| "completed", conversationId }`) | Server → Client |
+| `context:usage` | `TokenUsageEvent` (`{ sessionId, delta: { inputTokens, outputTokens }, cumulative: { inputTokens, outputTokens, totalTokens, turns } }`) | Server → Client |
+| `context:compaction` | `CompactionEvent` (`{ sessionId, status: "started" \| "completed" }`) | Server → Client |
 
 ### Background Worker Configuration
 

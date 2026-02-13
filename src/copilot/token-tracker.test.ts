@@ -14,7 +14,7 @@ describe("TokenTracker", () => {
       expect(event).toEqual({
         sessionId: "sess-1",
         delta: { inputTokens: 100, outputTokens: 50 },
-        cumulative: { inputTokens: 100, outputTokens: 50, totalTokens: 150 },
+        cumulative: { inputTokens: 100, outputTokens: 50, totalTokens: 150, turns: 1 },
       });
     });
 
@@ -25,6 +25,7 @@ describe("TokenTracker", () => {
         inputTokens: 300,
         outputTokens: 150,
         totalTokens: 450,
+        turns: 2,
       });
       expect(event.delta).toEqual({ inputTokens: 200, outputTokens: 100 });
     });
