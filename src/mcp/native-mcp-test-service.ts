@@ -1,13 +1,17 @@
-import { CopilotClient } from "@github/copilot-sdk";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
+import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import type { NativeMcpServerDefinition } from "../copilot/copilot-wrapper.js";
+import { logger } from "../logging/logger.js";
 
-type SessionOptions = NonNullable<Parameters<CopilotClient["createSession"]>[0]>;
-type SessionMcpServer = NonNullable<SessionOptions["mcpServers"]>[string];
 type LocalNativeMcpServer = Extract<NativeMcpServerDefinition, { type: "local" | "stdio" }>;
 type RemoteNativeMcpServer = Extract<NativeMcpServerDefinition, { type: "http" | "sse" }>;
 
 const isLocalNativeMcpServer = (server: NativeMcpServerDefinition): server is LocalNativeMcpServer =>
   server.type === "local" || server.type === "stdio";
+
+/** Default timeout for MCP connection + tool discovery (ms). */
+const DEFAULT_CONNECT_TIMEOUT_MS = 30_000;
 
 export type NativeMcpDiscoveredTool = {
   name: string;
@@ -33,92 +37,75 @@ export interface NativeMcpTester {
   testServer(serverName: string, server: NativeMcpServerDefinition): Promise<NativeMcpTestResult>;
 }
 
-const extractJsonBlock = (text: string): string | null => {
-  const fenced = text.match(/```json\s*([\s\S]*?)```/i);
-  if (fenced?.[1]) return fenced[1].trim();
-  const first = text.indexOf("[");
-  const last = text.lastIndexOf("]");
-  if (first !== -1 && last !== -1 && last > first) {
-    return text.slice(first, last + 1).trim();
-  }
-  return null;
-};
-
-const parseToolList = (raw: string): NativeMcpDiscoveredTool[] => {
-  const json = extractJsonBlock(raw);
-  if (!json) return [];
-  try {
-    const parsed = JSON.parse(json) as Array<{ name?: unknown; description?: unknown }>;
-    if (!Array.isArray(parsed)) return [];
-    return parsed
-      .map((tool) => ({
-        name: typeof tool.name === "string" ? tool.name.trim() : "",
-        description: typeof tool.description === "string" ? tool.description.trim() : "",
-      }))
-      .filter((tool) => tool.name.length > 0);
-  } catch {
-    return [];
-  }
-};
-
+/**
+ * Discovers MCP server tools using the MCP protocol directly.
+ *
+ * Instead of routing through the Copilot SDK and asking an LLM to enumerate
+ * tools (which hallucinates built-in tools), this connects directly to the MCP
+ * server process via stdio or SSE and calls the standard `tools/list` method.
+ */
 export class CopilotNativeMcpTester implements NativeMcpTester {
+  private connectTimeout: number;
+
+  constructor(options?: { connectTimeout?: number }) {
+    this.connectTimeout = options?.connectTimeout ?? DEFAULT_CONNECT_TIMEOUT_MS;
+  }
+
   async testServer(serverName: string, server: NativeMcpServerDefinition): Promise<NativeMcpTestResult> {
     const startedAt = Date.now();
-    const client = new CopilotClient();
-    let session: Awaited<ReturnType<CopilotClient["createSession"]>> | null = null;
+    let transport: StdioClientTransport | SSEClientTransport | null = null;
+    let client: Client | null = null;
 
     try {
-      let sessionServer: SessionMcpServer;
+      // Build the appropriate transport
       if (isLocalNativeMcpServer(server)) {
-        sessionServer = {
-          type: server.type,
+        const env: Record<string, string> = {
+          ...Object.fromEntries(
+            Object.entries(process.env).filter(
+              (entry): entry is [string, string] => entry[1] !== undefined
+            )
+          ),
+        };
+        if (server.env) {
+          Object.assign(env, server.env);
+        }
+
+        transport = new StdioClientTransport({
           command: server.command,
           args: server.args ?? [],
-          env: server.env,
-          cwd: server.cwd,
-          tools: server.tools ?? [],
-          timeout: server.timeout,
-        } as SessionMcpServer;
+          env,
+        });
       } else {
         const remoteServer = server as RemoteNativeMcpServer;
-        sessionServer = {
-          type: remoteServer.type,
-          url: remoteServer.url,
-          headers: remoteServer.headers,
-          tools: remoteServer.tools ?? [],
-          timeout: remoteServer.timeout,
-        } as SessionMcpServer;
+        const url = new URL(remoteServer.url);
+        transport = new SSEClientTransport(url);
       }
 
-      session = await client.createSession({
-        model: "gpt-4.1",
-        mcpServers: { test: sessionServer },
-      });
+      client = new Client(
+        { name: `openzigs-test-${serverName}`, version: "0.1.0" },
+      );
 
-      let tools: NativeMcpDiscoveredTool[] = [];
+      // Connect with timeout
+      const connectPromise = client.connect(transport);
+      const timeoutPromise = new Promise<never>((_, reject) =>
+        setTimeout(
+          () => reject(new Error(`Connection to "${serverName}" timed out after ${this.connectTimeout}ms`)),
+          this.connectTimeout,
+        ),
+      );
 
-      const maybeListTools = session as unknown as { listTools?: () => Promise<Array<{ name: string; description?: string }>> };
-      if (typeof maybeListTools.listTools === "function") {
-        const listed = await maybeListTools.listTools();
-        tools = listed.map((tool) => ({
-          name: tool.name,
-          description: tool.description ?? "",
-        }));
-      }
+      await Promise.race([connectPromise, timeoutPromise]);
 
-      if (tools.length === 0) {
-        const result = await session.sendAndWait({
-          prompt: [
-            "Return ONLY valid JSON array.",
-            "List all available MCP tools visible in this session.",
-            "Format: [{\"name\":\"tool-name\",\"description\":\"short description\"}]",
-            "No markdown, no commentary.",
-          ].join("\n"),
-        }, 15_000);
+      // Discover tools via MCP protocol (tools/list)
+      const toolsResult = await client.listTools();
+      const tools: NativeMcpDiscoveredTool[] = (toolsResult.tools ?? []).map((t) => ({
+        name: t.name,
+        description: t.description ?? "",
+      }));
 
-        const content = (result as { data?: { content?: string } })?.data?.content ?? "";
-        tools = parseToolList(content);
-      }
+      logger.info(
+        `Native MCP test "${serverName}" discovered ${tools.length} tools in ${Date.now() - startedAt}ms`,
+      );
 
       return {
         ok: true,
@@ -134,12 +121,7 @@ export class CopilotNativeMcpTester implements NativeMcpTester {
       };
     } finally {
       try {
-        await session?.destroy();
-      } catch {
-        // Best effort cleanup
-      }
-      try {
-        await client.stop();
+        await transport?.close();
       } catch {
         // Best effort cleanup
       }

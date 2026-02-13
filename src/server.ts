@@ -204,17 +204,34 @@ const port = Number(process.env.PORT ?? 3000);
 const uiOrigin = process.env.OPENZIGS_UI_ORIGIN ?? "http://localhost:3001";
 const channelManager = new ChannelManager();
 const sessionManager = new SessionManager();
+
+// Lazy ref for disabled native MCP tools — populated after copilot wrapper is created.
+// The hooks closure reads from this at call-time, not at construction time.
+let copilotRef: CopilotWrapperService | null = null;
+const getDisabledNativeMcpToolNames = (): Set<string> => {
+  if (!copilotRef) return new Set();
+  const servers = copilotRef.getNativeMcpServers();
+  const disabled = new Set<string>();
+  for (const def of Object.values(servers)) {
+    if (def.disabledTools) {
+      for (const t of def.disabledTools) disabled.add(t);
+    }
+  }
+  return disabled;
+};
+
 const copilot = new CopilotWrapperService({
   toolRegistry,
   maxToolsPerRequest: config.session?.maxToolsPerRequest ?? 30,
   infiniteSessions: config.session?.infiniteSessions,
-  hooks: createHooksConfig({ toolRegistry, approvalQueue, auditLogger, sessionManager }),
+  hooks: createHooksConfig({ toolRegistry, approvalQueue, auditLogger, sessionManager, getDisabledNativeMcpToolNames }),
   defaultReasoningEffort: config.copilot?.defaultReasoningEffort ?? undefined,
   provider: config.copilot?.provider ?? undefined,
   defaultWorkingDirectory: config.copilot?.defaultWorkingDirectory ?? undefined,
   customAgents: resolvedCustomAgents,
   nativeMcpServers: resolvedNativeMcpServers,
 });
+copilotRef = copilot;
 
 registerMcpTools(toolRegistry, {
   allowedDirs: allowedDirs.length > 0 ? allowedDirs : [process.cwd(), os.tmpdir(), os.homedir(), "/tmp", "/private/tmp"],

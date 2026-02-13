@@ -49,8 +49,8 @@ export type CustomAgentDefinition = {
 
 // ── Native MCP Server Definition (SDK-level) ──
 export type NativeMcpServerDefinition =
-  | { type: "local" | "stdio"; command: string; args?: string[]; env?: Record<string, string>; cwd?: string; tools?: string[]; timeout?: number }
-  | { type: "http" | "sse"; url: string; headers?: Record<string, string>; tools?: string[]; timeout?: number };
+  | { type: "local" | "stdio"; command: string; args?: string[]; env?: Record<string, string>; cwd?: string; tools?: string[]; disabledTools?: string[]; timeout?: number }
+  | { type: "http" | "sse"; url: string; headers?: Record<string, string>; tools?: string[]; disabledTools?: string[]; timeout?: number };
 
 type DeviceAuthResult = {
   token: string;
@@ -907,6 +907,19 @@ export class CopilotWrapperService extends EventEmitter implements CopilotWrappe
       ...(extra?.mcpServers ?? {}),
     };
 
+    // Strip disabledTools from definitions before passing to SDK.
+    // The SDK doesn't understand disabledTools — it's our own field.
+    // When disabledTools is set but no explicit tools allowlist exists,
+    // we can't compute the effective allowlist without knowing all available
+    // tools (which requires a live connection). Instead, we rely on the
+    // onPreToolUse hook to reject disabled tools at call time.
+    const sdkMcpServers: Record<string, NativeMcpServerDefinition> = {};
+    for (const [key, def] of Object.entries(mergedMcpServers)) {
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const { disabledTools: _dt, ...sdkDef } = def;
+      sdkMcpServers[key] = sdkDef as NativeMcpServerDefinition;
+    }
+
     return {
       ...(sessionId ? { sessionId } : {}),
       model,
@@ -918,7 +931,7 @@ export class CopilotWrapperService extends EventEmitter implements CopilotWrappe
       ...(effectiveReasoningEffort ? { reasoningEffort: effectiveReasoningEffort } : {}),
       ...(this.providerConfig ? { provider: this.providerConfig } : {}),
       ...(mergedAgents.length > 0 ? { customAgents: mergedAgents } : {}),
-      ...(Object.keys(mergedMcpServers).length > 0 ? { mcpServers: mergedMcpServers } : {}),
+      ...(Object.keys(sdkMcpServers).length > 0 ? { mcpServers: sdkMcpServers } : {}),
       ...(effectiveHooks ? {
         hooks: {
           ...effectiveHooks,

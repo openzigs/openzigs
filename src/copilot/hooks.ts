@@ -35,6 +35,8 @@ export type HooksFactoryOptions = {
   approvalQueue?: ApprovalQueue;
   auditLogger?: AuditLogger;
   sessionManager?: SessionManager;
+  /** Callback returning all currently disabled native MCP tool names. */
+  getDisabledNativeMcpToolNames?: () => Set<string>;
   /** For testing: inject a logger. */
   log?: Pick<typeof logger, "info" | "warn" | "error">;
 };
@@ -48,6 +50,7 @@ export const createHooksConfig = ({
   approvalQueue,
   auditLogger,
   sessionManager,
+  getDisabledNativeMcpToolNames,
   log = logger,
 }: HooksFactoryOptions): HooksConfig => {
 
@@ -99,6 +102,15 @@ export const createHooksConfig = ({
 
   return {
     onPreToolUse: async (input: HookPreToolUseInput): Promise<HookPreToolUseResult> => {
+      // Priority 0: Reject disabled native MCP tools before any other checks.
+      if (getDisabledNativeMcpToolNames) {
+        const disabledTools = getDisabledNativeMcpToolNames();
+        if (disabledTools.has(input.toolName)) {
+          log.info(`Blocked disabled native MCP tool "${input.toolName}"`);
+          return { permissionDecision: "deny", permissionDecisionReason: "Tool is disabled by administrator" };
+        }
+      }
+
       // Priority 1: Global approval lock — tool requires approval regardless of risk level.
       // This is checked BEFORE auto-approve so that global locks cannot be bypassed.
       if (toolRegistry?.requiresGlobalApproval(input.toolName)) {

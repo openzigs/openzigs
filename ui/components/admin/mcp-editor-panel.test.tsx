@@ -79,17 +79,28 @@ describe("McpEditorPanel", () => {
   it("shows command for local servers", () => {
     render(<McpEditorPanel />, { wrapper: createWrapper(mockServers) });
 
+    // Expand the local server card
+    fireEvent.click(screen.getByText("my-local-server"));
+
     expect(screen.getByText("node ./server.js")).toBeInTheDocument();
   });
 
   it("shows URL for HTTP servers", () => {
     render(<McpEditorPanel />, { wrapper: createWrapper(mockServers) });
 
+    // Expand the HTTP server card
+    fireEvent.click(screen.getByText("remote-api"));
+
     expect(screen.getByText("https://api.example.com/mcp")).toBeInTheDocument();
   });
 
   it("shows discovered tool count badges on server cards", () => {
     render(<McpEditorPanel />, { wrapper: createWrapper(mockServers) });
+
+    // Expand all three server cards
+    fireEvent.click(screen.getByText("my-local-server"));
+    fireEvent.click(screen.getByText("remote-api"));
+    fireEvent.click(screen.getByText("event-stream"));
 
     expect(screen.getAllByText("0 discovered tool(s)")).toHaveLength(3);
   });
@@ -102,6 +113,11 @@ describe("McpEditorPanel", () => {
 
   it("shows edit and remove buttons on each card", () => {
     render(<McpEditorPanel />, { wrapper: createWrapper(mockServers) });
+
+    // Expand all three server cards to reveal Edit/Remove buttons
+    fireEvent.click(screen.getByText("my-local-server"));
+    fireEvent.click(screen.getByText("remote-api"));
+    fireEvent.click(screen.getByText("event-stream"));
 
     const editButtons = screen.getAllByText("Edit");
     const removeButtons = screen.getAllByText("Remove");
@@ -164,6 +180,9 @@ describe("McpEditorPanel", () => {
 
   it("opens edit dialog when Edit is clicked", () => {
     render(<McpEditorPanel />, { wrapper: createWrapper(mockServers) });
+
+    // Expand the first server card to reveal Edit button
+    fireEvent.click(screen.getByText("my-local-server"));
 
     const editButtons = screen.getAllByText("Edit");
     fireEvent.click(editButtons[0]);
