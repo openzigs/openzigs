@@ -184,7 +184,7 @@ function createScriptHandler(
 
       // Pass config values as OPENZIGS_CONFIG_* environment variables
       for (const [key, val] of Object.entries(config)) {
-        const envKey = `OPENZIGS_CONFIG_${key.toUpperCase().replace(/[^A-Z0-9]/g, "_")}`;
+        const envKey = `OPENZIGS_CONFIG_${key.toUpperCase().replace(/[^A-Z0-9_]/g, "_")}`;
         env[envKey] = String(val);
       }
 
