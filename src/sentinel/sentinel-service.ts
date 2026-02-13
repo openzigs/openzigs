@@ -358,8 +358,8 @@ export class SentinelService extends EventEmitter {
     }
     if (update.criticalCooldownMinutes !== undefined || update.warningCooldownMinutes !== undefined) {
       this.alerter.updateCooldowns(
-        this.config.criticalCooldownMinutes ?? 5,
-        this.config.warningCooldownMinutes ?? 30,
+        this.config.criticalCooldownMinutes,
+        this.config.warningCooldownMinutes,
       );
     }
 

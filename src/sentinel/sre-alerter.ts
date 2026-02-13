@@ -74,12 +74,7 @@ export class SREAlerter {
             const channel = this.channelManager.getChannel(channelType);
             if (channel) {
               const message = this.formatAlertMessage(alert);
-              // For broadcast channels, list all active chat contexts
-              const channels = this.channelManager.listChannels();
-              const targetChannel = channels.find((ch) => ch.type === channelType);
-              if (targetChannel) {
-                await targetChannel.sendMessage("broadcast", { text: message });
-              }
+              await channel.sendMessage("broadcast", { text: message });
             } else {
               logger.warn(`Sentinel: configured notify channel "${channelType}" is not registered — skipping`);
             }

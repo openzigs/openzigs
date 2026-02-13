@@ -143,7 +143,9 @@ export const appendDigestRecord = async (record: DigestRecord, retentionDays = 3
   await pruneDigestHistory(retentionDays);
 };
 
-/** Remove digest entries older than the given retention window. */
+/** Remove digest entries older than the given retention window.
+ *  Reads the entire JSONL file into memory — acceptable since digest files
+ *  grow by at most one line per day (≈30 lines at default 30-day retention). */
 export const pruneDigestHistory = async (retentionDays: number): Promise<number> => {
   try {
     const raw = await fs.readFile(DIGEST_FILE, "utf-8");

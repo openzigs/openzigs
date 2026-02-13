@@ -549,9 +549,14 @@ const DigestCard = ({ digest }: { digest: DigestRecord }) => {
 
 /* ── Prompt Recommendation Card ── */
 
+const SCORE_HIGH = 8;
+const SCORE_LOW = 5;
+const PROMPT_TRUNCATE_LENGTH = 120;
+const REWRITE_SCORE_THRESHOLD = 7;
+
 const scoreColor = (score: number) => {
-  if (score >= 8) return "text-emerald-500 bg-emerald-500/10";
-  if (score >= 5) return "text-amber-500 bg-amber-500/10";
+  if (score >= SCORE_HIGH) return "text-emerald-500 bg-emerald-500/10";
+  if (score >= SCORE_LOW) return "text-amber-500 bg-amber-500/10";
   return "text-red-500 bg-red-500/10";
 };
 
@@ -564,7 +569,7 @@ const PromptRecCard = ({ rec }: { rec: PromptRecommendation }) => {
         .map((s) => s.replace(/^[-*\d.)\s]+/, "").trim())
         .filter(Boolean);
   const truncatedPrompt =
-    rec.prompt.length > 120 ? `${rec.prompt.slice(0, 120)}…` : rec.prompt;
+    rec.prompt.length > PROMPT_TRUNCATE_LENGTH ? `${rec.prompt.slice(0, PROMPT_TRUNCATE_LENGTH)}…` : rec.prompt;
 
   return (
     <div className="rounded-md border border-border bg-muted/20 p-2 space-y-1">
@@ -605,7 +610,7 @@ const PromptRecCard = ({ rec }: { rec: PromptRecommendation }) => {
               </ul>
             </div>
           )}
-          {rec.rewrite && rec.score < 7 && (
+          {rec.rewrite && rec.score < REWRITE_SCORE_THRESHOLD && (
             <div>
               <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
                 Suggested Rewrite

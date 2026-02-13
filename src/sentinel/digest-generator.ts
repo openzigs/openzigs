@@ -20,6 +20,9 @@ export interface TokenBurnSummary {
   topConsumer: { goal: string; tokens: number } | null;
 }
 
+/** Score threshold below which a rewrite is shown. */
+const REWRITE_SCORE_THRESHOLD = 7;
+
 /**
  * Formats task review + prompt audit results into a daily digest
  * and persists to the digest history JSONL file.
@@ -135,7 +138,7 @@ export class DigestGenerator {
         const scoreEmoji = rec.score >= 8 ? "🟢" : rec.score >= 5 ? "🟡" : "🔴";
         lines.push(`  ${scoreEmoji} Score: ${rec.score}/10 — "${rec.prompt.slice(0, 80)}…"`);
         lines.push(`     💡 ${rec.suggestions}`);
-        if (rec.rewrite && rec.score < 7) {
+        if (rec.rewrite && rec.score < REWRITE_SCORE_THRESHOLD) {
           lines.push(`     ✏️ Suggested rewrite: "${rec.rewrite.slice(0, 200)}"`);
         }
       }
@@ -152,12 +155,14 @@ export class DigestGenerator {
 
   /** Generate a human-readable Markdown status file from a digest record. */
   generateStatusMarkdown(record: DigestRecord): string {
+    const tz = this.config.timezone ?? "UTC";
     const date = new Date(record.timestamp).toLocaleDateString("en-US", {
       year: "numeric",
       month: "short",
       day: "numeric",
       hour: "2-digit",
       minute: "2-digit",
+      timeZone: tz,
     });
 
     const lines: string[] = [
@@ -213,7 +218,7 @@ export class DigestGenerator {
         lines.push(`**Prompt**: "${rec.prompt}"`);
         lines.push("");
         lines.push(`**Suggestions**: ${rec.suggestions}`);
-        if (rec.rewrite && rec.score < 7) {
+        if (rec.rewrite && rec.score < REWRITE_SCORE_THRESHOLD) {
           lines.push("");
           lines.push("**Suggested Rewrite**:");
           lines.push("");
