@@ -318,3 +318,44 @@ export type CompactionEvent = {
   sessionId: string;
   status: "started" | "completed";
 };
+
+/* ── Template Portability types (#188) ── */
+
+export type TemplatePlaceholder = {
+  key: string;
+  path: string;
+  description: string;
+  type: "string" | "number" | "boolean";
+  required: boolean;
+  defaultValue?: string;
+};
+
+export type TemplateExport = {
+  $schema: "openzigs-template-v1";
+  version: number;
+  exportedAt: string;
+  exportedFrom: string;
+  prompt: {
+    name: string;
+    description: string;
+    template: string;
+    tags: string[];
+    preferredTools: string[] | null;
+    stages: PipelineStage[] | null;
+  };
+  placeholders: TemplatePlaceholder[];
+};
+
+export type TemplateAnalysis = {
+  valid: boolean;
+  errors: { message: string; path?: string }[];
+  prompt?: {
+    name: string;
+    description: string;
+    stageCount: number;
+    tags: string[];
+  };
+  placeholders: TemplatePlaceholder[];
+  exportedAt?: string;
+  exportedFrom?: string;
+};

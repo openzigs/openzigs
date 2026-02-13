@@ -71,6 +71,11 @@ export interface PostActionDefinition {
   icon?: string;
   /** JSON Schema for the config object — drives dynamic form rendering. */
   configSchema: ConfigSchema;
+  /**
+   * Dot-notation paths to environment-specific config values that should be
+   * tokenized on template export (e.g., `["config.owner", "config.url"]`).
+   */
+  sensitiveFields?: string[];
   /** The handler that executes this action. */
   handler: PostActionHandler;
 }

@@ -307,6 +307,7 @@ export function registerBuiltinPostActions(): void {
     description: "Parse findings from stage output and create GitHub issues, with duplicate detection and severity filtering.",
     category: "Integrations",
     icon: "github",
+    sensitiveFields: ["config.owner", "config.repo"],
     configSchema: {
       type: "object",
       properties: {
@@ -358,6 +359,7 @@ export function registerBuiltinPostActions(): void {
     description: "POST stage results to an external webhook URL. Useful for Slack, Discord, PagerDuty, or any HTTP endpoint.",
     category: "Notifications",
     icon: "webhook",
+    sensitiveFields: ["config.url"],
     configSchema: {
       type: "object",
       properties: {

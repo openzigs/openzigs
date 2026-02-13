@@ -22,6 +22,7 @@ import type { TaskEngine } from "../tasks/task-engine.js";
 import type { PipelineStage } from "../tasks/types.js";
 import { PipelinePlanner } from "../tasks/pipeline-planner.js";
 import type { WebhookManager } from "../webhooks/webhook-manager.js";
+import { TemplateService } from "../productivity/template-service.js";
 
 type EnvEntry = {
   name: string;
@@ -954,6 +955,54 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
       return deleted
         ? res.json({ ok: true })
         : res.status(404).json({ error: "Prompt not found" });
+    });
+
+    // ── Template Export/Import (#188) ──
+    const templateService = new TemplateService({
+      promptManager,
+      postActionRegistry,
+    });
+
+    router.get("/prompts/:id/export", (req, res) => {
+      try {
+        const template = templateService.export(req.params.id);
+        const filename = `${template.prompt.name.toLowerCase().replace(/\s+/g, "-")}.openzigs-template.json`;
+        res.setHeader("Content-Type", "application/json");
+        res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+        return res.json(template);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return res.status(404).json({ error: message });
+      }
+    });
+
+    router.post("/templates/analyze", (req, res) => {
+      const analysis = templateService.analyze(req.body);
+      return res.json(analysis);
+    });
+
+    router.post("/templates/import", (req, res) => {
+      const body = req.body as Record<string, unknown>;
+      const templateData = body.template;
+      const placeholders = (body.placeholders ?? {}) as Record<string, string>;
+
+      if (!templateData) {
+        return res.status(400).json({ error: "template is required" });
+      }
+
+      try {
+        const prompt = templateService.import(templateData, placeholders);
+        return res.status(201).json({ success: true, prompt });
+      } catch (error) {
+        if (error instanceof Error && error.name === "TemplateValidationError") {
+          return res.status(400).json({ error: error.message, issues: (error as { issues?: unknown }).issues });
+        }
+        if (error instanceof Error && error.name === "PlaceholderResolutionError") {
+          return res.status(400).json({ error: error.message, missing: (error as { missing?: unknown }).missing });
+        }
+        const message = error instanceof Error ? error.message : String(error);
+        return res.status(400).json({ error: message });
+      }
     });
   }
 

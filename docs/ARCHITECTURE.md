@@ -1914,3 +1914,149 @@ CustomPostActionManager (src/tasks/custom-post-actions.ts)
 **Data flow:** Create via UI → Zod-validated API → `CustomPostActionManager.create()` → persist to disk → `postActionRegistry.register()` → appears in stage editor dropdown.
 
 ### Tracking: [Epic #171](https://github.com/mgcronin/openzigs/issues/171)
+
+---
+
+## Template Portability & Sharing (Epic #188)
+
+### Overview
+
+Template Portability enables users to **export** prompt templates (including pipeline stages and post-action configurations) as portable `.openzigs-template.json` files and **import** them into other OpenZigs instances. Environment-specific values (API keys, repo URLs, webhook URLs) are automatically tokenized during export and resolved via a guided placeholder form during import.
+
+### Template File Format
+
+Exported templates use the `openzigs-template-v1` schema:
+
+```json
+{
+  "$schema": "openzigs-template-v1",
+  "version": "1.0.0",
+  "exportedAt": "2025-07-15T12:00:00.000Z",
+  "exportedFrom": "instance-abc",
+  "prompt": {
+    "name": "code-review-pipeline",
+    "description": "Multi-stage code review workflow",
+    "template": "Review code for {{project}}",
+    "tags": ["review", "pipeline"],
+    "preferredTools": ["read-file", "list-directory"],
+    "stages": [
+      {
+        "name": "analyze",
+        "prompt": "Read source files for {{project}}",
+        "tools": ["read-file"],
+        "postAction": {
+          "type": "create-github-issues",
+          "config": {
+            "owner": "{{stage_0_config.owner}}",
+            "repo": "{{stage_0_config.repo}}",
+            "labels": ["bug"]
+          }
+        }
+      }
+    ]
+  },
+  "placeholders": [
+    {
+      "key": "stage_0_config.owner",
+      "path": "stages[0].postAction.config.owner",
+      "description": "GitHub repository owner for issue creation",
+      "type": "string",
+      "required": true
+    },
+    {
+      "key": "stage_0_config.repo",
+      "path": "stages[0].postAction.config.repo",
+      "description": "GitHub repository name for issue creation",
+      "type": "string",
+      "required": true
+    }
+  ]
+}
+```
+
+### Sensitive Field Tokenization
+
+The export process uses a **manifest-based tokenization** approach rather than regex pattern matching. Each registered post-action type declares its sensitive fields via `sensitiveFields` on the `PostActionDefinition`:
+
+```
+PostActionDefinition.sensitiveFields: string[]  (dot-notation paths)
+```
+
+**Built-in sensitive fields:**
+
+| Post-Action Type | Sensitive Fields |
+|---|---|
+| `create-github-issues` | `config.owner`, `config.repo` |
+| `send-webhook` | `config.url` |
+
+**Tokenization flow during export:**
+
+```
+TemplateService.export(promptId)
+  → PromptManager.getById(id) → deep clone prompt
+  → For each stage with a postAction:
+      → Look up PostActionDefinition by action.type
+      → For each sensitiveField in definition:
+          → Read value at dot-path within action object
+          → Replace with {{stage_N_fieldName}} placeholder token
+          → Build TemplatePlaceholder manifest entry
+  → Return { prompt (tokenized), placeholders[] }
+```
+
+Non-sensitive configuration (e.g., `labels`, `minSeverity`, `includeOutput`) is preserved verbatim — only fields explicitly declared as sensitive are tokenized.
+
+### Import Flow
+
+```
+Template JSON file
+  ↓
+POST /api/admin/templates/analyze (pre-validation)
+  → Zod schema validation
+  → Extract prompt metadata (name, description, stageCount, tags)
+  → Return TemplateAnalysis { valid, errors[], prompt, placeholders }
+  ↓
+UI renders placeholder form (ImportWizard preview step)
+  ↓
+POST /api/admin/templates/import { template, placeholders }
+  → Validate required placeholders are provided
+  → JSON.stringify template → replaceAll placeholder tokens → JSON.parse
+  → Handle duplicate names ("(imported)" suffix with counter)
+  → Add "imported" tag
+  → PromptManager.create() → saved to SQLite
+  → Return { success: true, prompt }
+```
+
+### TemplateService Architecture
+
+| Component | Path | Purpose |
+|-----------|------|---------|
+| `TemplateExportSchema` | `src/productivity/template-schema.ts` | Zod schema for `.openzigs-template.json` format |
+| `TemplateService` | `src/productivity/template-service.ts` | Export, analyze, and import methods |
+| `PostActionDefinition.sensitiveFields` | `src/tasks/post-action-registry.ts` | Declares which config fields are environment-specific |
+| Export endpoint | `src/api/admin.ts` | `GET /api/admin/prompts/:id/export` |
+| Analyze endpoint | `src/api/admin.ts` | `POST /api/admin/templates/analyze` |
+| Import endpoint | `src/api/admin.ts` | `POST /api/admin/templates/import` |
+
+### API Endpoints
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| `GET` | `/api/admin/prompts/:id/export` | Admin | Export prompt as downloadable `.openzigs-template.json` |
+| `POST` | `/api/admin/templates/analyze` | Admin | Validate and preview a template before importing |
+| `POST` | `/api/admin/templates/import` | Admin | Import a template with resolved placeholder values |
+
+### UI Components
+
+| Component | Path | Purpose |
+|-----------|------|---------|
+| `ImportWizard` | `ui/components/library/import-wizard.tsx` | Multi-step import modal (upload → preview → success) |
+| Export button | `ui/app/library/page.tsx` | Per-card download button triggers `/export` endpoint |
+| Import button | `ui/app/library/page.tsx` | Header button opens ImportWizard modal |
+
+**Import Wizard steps:**
+
+1. **Upload** — Drag & drop or file browse for `.json` files. Validates JSON parse and calls analyze endpoint.
+2. **Preview** — Shows prompt name, description, stage count, tags, and a form for required placeholder values.
+3. **Success** — Confirmation with checkmark and prompt name.
+
+### Tracking: [Epic #188](https://github.com/mgcronin/openzigs/issues/188)
