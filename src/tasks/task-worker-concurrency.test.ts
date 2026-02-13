@@ -39,6 +39,8 @@ const createMockCopilot = () => ({
   setCustomAgents: vi.fn(),
   getNativeMcpServers: vi.fn().mockReturnValue({}),
   setNativeMcpServers: vi.fn(),
+  getSessionUsage: vi.fn().mockReturnValue(null),
+  clearSessionUsage: vi.fn().mockReturnValue(null),
   chat: vi.fn().mockImplementation(async function* () {
     yield "ok";
   }),

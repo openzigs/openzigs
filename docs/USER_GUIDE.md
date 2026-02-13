@@ -172,6 +172,7 @@ The OpenZigs UI is a **Next.js** application with a navigation bar providing acc
    - A **model selector** dropdown in the header.
    - A **reasoning effort selector** (dot-based radio buttons) — visible only when a reasoning-capable model is selected (e.g., `o1`, `o3`, `o4-mini`).
    - A **provider badge** — shows when a non-Copilot BYOK provider is active.
+   - A **context fuel gauge** — compact progress bar showing real-time context window usage (green → yellow → orange → red). Pulses during context compaction. Hover for exact token count.
    - A **connection indicator** (green = connected).
    - A **session context bar** below the header showing session ID, context gauge, turn count, session age, and compaction status.
    - A **message input** area at the bottom with **IntelliSense autocomplete**, **file attachment button**, and **drag-and-drop file zone**.
@@ -640,7 +641,33 @@ The Tasks page at `/tasks` provides real-time monitoring of background agent tas
 - **Results / errors** — view task output or error details inline.
 - **Child tasks** — expand a task to see its spawned sub-tasks (recursive chaining).
 - **Real-time updates** — Socket.IO pushes update the list when tasks complete or fail.
+- **Token cost badges** — each task card displays a color-coded badge showing total token consumption.
 - **Visual workflow graph** — click **◇ View graph** on any task to see a full interactive DAG (directed acyclic graph) of the task tree.
+
+#### Token Cost Badges
+
+![Tasks page with token cost badges — green (1.6K), orange (58.1K), and orange (107.5K) badges on task cards](images/tasks-token-badges.png)
+
+Each task card shows a **Token Cost Badge** next to the status badge, indicating how many tokens the task consumed. The badge is color-coded by total token count:
+
+| Token Count | Color | Meaning |
+|---|---|---|
+| < 10,000 | 🟢 Green | Lightweight task — minimal token usage. |
+| 10,000–50,000 | 🟡 Yellow | Moderate usage. |
+| 50,000–200,000 | 🟠 Orange | Heavy usage — complex task with many tool calls. |
+| > 200,000 | 🔴 Red | Very expensive task — consider optimizing. |
+
+Hover over the badge to see a tooltip with the input/output token breakdown. Token usage is only available for completed or failed tasks; queued and running tasks show no badge until they finish.
+
+**Token usage API:**
+
+```bash
+# Get token usage for a specific task
+curl -H "Authorization: Bearer <token>" http://localhost:3000/api/tasks/<id>/usage
+
+# Get aggregate token summary for recent tasks
+curl -H "Authorization: Bearer <token>" http://localhost:3000/api/tasks/usage/summary?hours=24
+```
 
 ### Visual Workflow Graph
 
@@ -1281,6 +1308,38 @@ curl -X PUT -H "Authorization: Bearer <token>" \
 ```
 
 Changes take effect on the next LLM request without restarting the server.
+
+---
+
+## Context Fuel Gauge
+
+![Context Fuel Gauge — progress bar showing real-time context window usage in the chat header](images/chat-context-fuel-gauge.png)
+
+The chat header includes a **Context Fuel Gauge** — a compact progress bar that shows real-time context window usage as the conversation progresses. It sits between the model selector and the connection indicator.
+
+### Color States
+
+| Context Usage | Color | Meaning |
+|---|---|---|
+| 0–50% | 🟢 Green | Plenty of context remaining. |
+| 50–75% | 🟡 Yellow | Context filling up — consider starting a new chat soon. |
+| 75–90% | 🟠 Orange | Context window nearly full. |
+| 90–100% | 🔴 Red | Context critical — compaction imminent or in progress. |
+
+### Features
+
+- **Percentage display** — Shows the fill ratio as a percentage (e.g., "42%").
+- **Token count tooltip** — Hover over the gauge to see the exact token count (e.g., "53,760 tokens").
+- **Compaction indicator** — The gauge pulses with an amber glow when the SDK is actively compacting context in the background.
+- **Auto-reset** — The gauge resets to 0% when you click "New Chat" to clear the session.
+
+### How It Works
+
+The gauge subscribes to real-time `context:usage` Socket.IO events emitted by the server whenever the Copilot SDK reports token consumption. The fill ratio is calculated as:
+
+$$\text{fillRatio} = \frac{\text{inputTokens}}{\text{contextWindow}}$$
+
+The context window size is determined by the currently selected model (e.g., 128K for GPT-4o, 200K for Claude Sonnet 4, 1M for GPT-4.1).
 
 ---
 

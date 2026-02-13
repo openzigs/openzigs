@@ -1,12 +1,14 @@
 import { Router } from "express";
 import type { TaskEngine } from "../tasks/task-engine.js";
+import type { TaskRepository } from "../tasks/task-repository.js";
 import type { AgentTask, TaskStatus } from "../tasks/types.js";
 
 export type TasksRouterOptions = {
   taskEngine: TaskEngine;
+  taskRepository?: TaskRepository;
 };
 
-export const createTasksRouter = ({ taskEngine }: TasksRouterOptions): Router => {
+export const createTasksRouter = ({ taskEngine, taskRepository }: TasksRouterOptions): Router => {
   const router = Router();
 
   /** GET /api/tasks — List tasks with optional filters. */
@@ -26,6 +28,41 @@ export const createTasksRouter = ({ taskEngine }: TasksRouterOptions): Router =>
   router.get("/stats", (_req, res) => {
     const stats = taskEngine.getStats();
     res.json(stats);
+  });
+
+  /** GET /api/tasks/usage/summary — Aggregate token usage across recent tasks. */
+  router.get("/usage/summary", (req, res) => {
+    const hours = req.query.hours ? Number(req.query.hours) : 24;
+    const since = new Date(Date.now() - hours * 60 * 60 * 1000).toISOString();
+
+    let tasks: AgentTask[];
+    if (taskRepository) {
+      tasks = taskRepository.listSince(since, { limit: 500 });
+    } else {
+      tasks = taskEngine.listTasks({ limit: 500 });
+    }
+
+    let totalInput = 0;
+    let totalOutput = 0;
+    let totalTokens = 0;
+    let taskCount = 0;
+
+    for (const task of tasks) {
+      if (task.tokenUsage) {
+        totalInput += task.tokenUsage.inputTokens;
+        totalOutput += task.tokenUsage.outputTokens;
+        totalTokens += task.tokenUsage.totalTokens;
+        taskCount++;
+      }
+    }
+
+    res.json({
+      hours,
+      taskCount,
+      totalInput,
+      totalOutput,
+      totalTokens,
+    });
   });
 
   /** GET /api/tasks/:id — Get a single task. */
@@ -101,6 +138,16 @@ export const createTasksRouter = ({ taskEngine }: TasksRouterOptions): Router =>
       return;
     }
     res.json(serializeTask(cancelled));
+  });
+
+  /** GET /api/tasks/:id/usage — Token usage for a single task. */
+  router.get("/:id/usage", (req, res) => {
+    const task = taskEngine.getTask(req.params.id);
+    if (!task) {
+      res.status(404).json({ error: "Task not found" });
+      return;
+    }
+    res.json({ taskId: task.id, tokenUsage: task.tokenUsage ?? null });
   });
 
   return router;

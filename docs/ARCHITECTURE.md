@@ -510,6 +510,81 @@ Wraps `@github/copilot-sdk`'s `CopilotClient`. Responsibilities:
 | **Custom Agents** | `getCustomAgents()` / `setCustomAgents()` / `chat({ customAgents })` | Hierarchical sub-agents defined via the SDK's `customAgents` API. Each agent has a name, display name, system prompt, optional tool allowlist, and optional per-agent MCP servers. Default archetypes are loaded from `config/agents.json` and merged with user config. Per-call overrides merge by name. Changing agents clears all cached sessions. |
 | **Native MCP Servers** | `getNativeMcpServers()` / `setNativeMcpServers()` / `chat({ mcpServers })` | SDK-managed MCP server connections via `mcpServers` config. Supports `stdio`/`local` (subprocess) and `http`/`sse` (remote) transports. Replaces the legacy `LocalMcpServerManager`. Per-call overrides merge by key. Changing servers clears all cached sessions. |
 
+### Token Tracker (`src/copilot/token-tracker.ts`)
+
+Captures and accumulates per-session token usage from the Copilot SDK's `assistant.usage` events.
+
+| Capability | Method | Description |
+|---|---|---|
+| **Record Usage** | `record(event)` | Accumulates `inputTokens`, `outputTokens`, and `totalTokens` from each SDK usage event. Increments a per-session `turns` counter. |
+| **Query Usage** | `getUsage()` | Returns the current `TokenUsage` snapshot: `{ inputTokens, outputTokens, totalTokens, turns }`. |
+| **Clear** | `clearUsage()` | Returns the current usage and resets all counters to zero (used after persisting to SQLite). |
+| **Context Window** | `getContextWindow(model)` | Looks up the model's maximum context window from `MODEL_CONTEXT_WINDOWS`. |
+
+**Model Context Windows** (`MODEL_CONTEXT_WINDOWS`):
+
+| Model | Context Window |
+|---|---|
+| `gpt-4.1` | 1,000,000 |
+| `gpt-4.1-mini` | 1,000,000 |
+| `gpt-4o` | 128,000 |
+| `gpt-4o-mini` | 128,000 |
+| `claude-sonnet-4` | 200,000 |
+| `claude-sonnet-3.5` | 200,000 |
+| `o3-mini` | 200,000 |
+| `o4-mini` | 200,000 |
+| `gemini-2.5-pro` | 1,000,000 |
+| `gemini-2.5-flash` | 1,000,000 |
+
+#### Token Tracking Data Flow
+
+```mermaid
+flowchart TB
+    SDK[Copilot SDK Session] -->|assistant.usage event| CW[CopilotWrapper<br/>wireSessionEvents]
+    CW --> TT[TokenTracker.record]
+    TT --> EMIT[EventEmitter<br/>token:usage]
+    EMIT --> SIO[Socket.IO<br/>context:usage]
+    SIO --> UI[Context Fuel Gauge<br/>chat-view.tsx]
+
+    SDK -->|compaction_start / complete| CW
+    CW --> EMIT2[EventEmitter<br/>context:compaction]
+    EMIT2 --> SIO2[Socket.IO<br/>context:compaction]
+    SIO2 --> UI
+
+    TW[TaskWorker<br/>on task complete/fail] -->|clearSessionUsage| TT
+    TW -->|updateTokenUsage| DB[(SQLite<br/>agent_tasks.token_usage_json)]
+    DB --> API[/api/tasks/:id/usage<br/>/api/tasks/usage/summary]
+    API --> DASH[Token Badge<br/>task-dashboard.tsx]
+```
+
+The `CopilotWrapper` extends `EventEmitter` and wires SDK session events in `wireSessionEvents()`:
+
+- **`assistant.usage`** → `tokenTracker.record()` + emit `token:usage` with `TokenUsageEvent`
+- **`compaction_start`** → emit `context:compaction` with `{ status: "started" }`
+- **`compaction_complete`** → emit `context:compaction` with `{ status: "completed" }`
+
+The `server.ts` relays these events to Socket.IO clients:
+
+```typescript
+copilot.on("token:usage", (event) => { io.emit("context:usage", event); });
+copilot.on("context:compaction", (event) => { io.emit("context:compaction", event); });
+```
+
+#### Token Persistence (Tasks)
+
+When a background task completes or fails, the `TaskWorker` calls `copilot.clearSessionUsage()` to atomically read and reset the session's accumulated token usage, then persists it to the `agent_tasks` table via `taskRepository.updateTokenUsage()`.
+
+The `agent_tasks` table has a `token_usage_json TEXT DEFAULT NULL` column storing `{ inputTokens, outputTokens, totalTokens, turns }` as JSON.
+
+#### Token Usage API
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/api/tasks/usage/summary` | Aggregate token usage across tasks in the last N hours (default: 24). Query params: `hours`, `status`, `limit`. |
+| `GET` | `/api/tasks/:id/usage` | Token usage for a single task. |
+
+The Models API (`GET /api/models`) is enriched with `contextWindow` from `MODEL_CONTEXT_WINDOWS` for each model.
+
 ### Tool Registry (`src/mcp/tool-registry.ts`)
 
 Central registry for every tool the agent can invoke. Each tool has:
@@ -847,10 +922,12 @@ The shell executor uses a **command allowlist**. If the allowlist is empty, the 
 | `GET` | `/api/admin/models/config` | Admin | Get current model config (reasoningEffort, provider, workingDirectory). |
 | `PUT` | `/api/admin/models/config` | Admin | Update model config at runtime. Persists to `~/.openzigs/config.json`. |
 | `GET` | `/api/tasks` | Token | List agent tasks (filterable by status, trigger, parent). |
-| `GET` | `/api/tasks/:id` | Token | Get task details including child count. |
+| `GET` | `/api/tasks/:id` | Token | Get task details including child count and token usage. |
 | `POST` | `/api/tasks/:id/cancel` | Token | Cancel a queued or running task. |
 | `GET` | `/api/tasks/:id/children` | Token | List direct child tasks. |
+| `GET` | `/api/tasks/:id/usage` | Token | Get token usage for a specific task. |
 | `GET` | `/api/tasks/stats` | Token | Aggregate task counts by status. |
+| `GET` | `/api/tasks/usage/summary` | Token | Aggregate token usage across recent tasks. |
 
 ---
 
@@ -1251,6 +1328,12 @@ type AgentTask = {
   chatId: string | null;             // Target chat for notification delivery
   model: string | null;              // Model override
   notifyOnComplete: boolean;
+  tokenUsage: {                      // Accumulated token usage (null if not tracked)
+    inputTokens: number;
+    outputTokens: number;
+    totalTokens: number;
+    turns: number;
+  } | null;
   createdAt: Date;
   startedAt: Date | null;
   completedAt: Date | null;
@@ -1355,7 +1438,8 @@ CREATE TABLE IF NOT EXISTS agent_tasks (
   started_at TEXT,
   completed_at TEXT,
   spawned_by TEXT,
-  depth INTEGER NOT NULL DEFAULT 0
+  depth INTEGER NOT NULL DEFAULT 0,
+  token_usage_json TEXT DEFAULT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_tasks_status ON agent_tasks(status);
@@ -1401,6 +1485,8 @@ CREATE INDEX IF NOT EXISTS idx_tasks_parent ON agent_tasks(parent_task_id);
 | Event | Payload | Direction |
 |-------|---------|-----------|
 | `task:notification` | `{ type: "completed" \| "failed", task: AgentTask }` | Server → Client |
+| `context:usage` | `TokenUsageEvent` (`{ sessionId, delta: { inputTokens, outputTokens }, cumulative: { inputTokens, outputTokens, totalTokens, turns } }`) | Server → Client |
+| `context:compaction` | `CompactionEvent` (`{ sessionId, status: "started" \| "completed" }`) | Server → Client |
 
 ### Background Worker Configuration
 

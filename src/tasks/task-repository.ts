@@ -21,6 +21,7 @@ export const toTask = (row: StoredTask): AgentTask => ({
   allowedTools: row.allowed_tools ? (JSON.parse(row.allowed_tools) as string[]) : null,
   autoApproveTools: row.auto_approve_tools ? (JSON.parse(row.auto_approve_tools) as string[]) : null,
   pipeline: row.pipeline ? (JSON.parse(row.pipeline) as PipelineDefinition) : null,
+  tokenUsage: row.token_usage_json ? (JSON.parse(row.token_usage_json) as AgentTask["tokenUsage"]) : null,
   notifyOnComplete: row.notify_on_complete === 1,
   depth: row.depth,
   createdAt: new Date(row.created_at),
@@ -97,6 +98,11 @@ export class TaskRepository {
     // Add 'pipeline' column — JSON pipeline definition for multi-stage tasks
     if (!columns.some((c) => c.name === "pipeline")) {
       this.db.exec("ALTER TABLE agent_tasks ADD COLUMN pipeline TEXT DEFAULT NULL");
+    }
+
+    // Add 'token_usage_json' column — JSON token usage data per task
+    if (!columns.some((c) => c.name === "token_usage_json")) {
+      this.db.exec("ALTER TABLE agent_tasks ADD COLUMN token_usage_json TEXT DEFAULT NULL");
     }
 
     // ── Backfill: link orphaned agent tasks to their parent ──
@@ -317,5 +323,29 @@ export class TaskRepository {
       )
       .get(sessionId, cutoff) as { count: number };
     return row.count;
+  }
+
+  /** Persist token usage data on a task (typically called on completion). */
+  updateTokenUsage(taskId: string, usage: { inputTokens: number; outputTokens: number; totalTokens: number; turns: number }): void {
+    this.db.prepare(
+      "UPDATE agent_tasks SET token_usage_json = ? WHERE id = ?"
+    ).run(JSON.stringify(usage), taskId);
+  }
+
+  /** List tasks created since a given ISO timestamp, newest first. */
+  listSince(since: string, options?: { status?: TaskStatus; limit?: number }): AgentTask[] {
+    const clauses: string[] = ["created_at >= ?"];
+    const params: unknown[] = [since];
+
+    if (options?.status) {
+      clauses.push("status = ?");
+      params.push(options.status);
+    }
+
+    const where = `WHERE ${clauses.join(" AND ")}`;
+    const limit = options?.limit ? `LIMIT ${options.limit}` : "";
+    const sql = `SELECT * FROM agent_tasks ${where} ORDER BY created_at DESC ${limit}`;
+    const rows = this.db.prepare(sql).all(...params) as StoredTask[];
+    return rows.map(toTask);
   }
 }

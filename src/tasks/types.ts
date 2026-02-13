@@ -80,6 +80,8 @@ export type AgentTask = {
   autoApproveTools: string[] | null;
   /** Pipeline definition for multi-stage sequential execution. null = single-stage task. */
   pipeline: PipelineDefinition | null;
+  /** Token usage data (input/output/total tokens and turns). Populated on task completion. */
+  tokenUsage: { inputTokens: number; outputTokens: number; totalTokens: number; turns: number } | null;
   notifyOnComplete: boolean;
   depth: number;
   createdAt: Date;
@@ -127,6 +129,7 @@ export type StoredTask = {
   allowed_tools: string | null;
   auto_approve_tools: string | null;
   pipeline: string | null;
+  token_usage_json: string | null;
   notify_on_complete: number;
   depth: number;
   created_at: string;

@@ -149,6 +149,8 @@ class FakeCopilot implements CopilotWrapper {
   setCustomAgents() {}
   getNativeMcpServers() { return {}; }
   setNativeMcpServers() {}
+  getSessionUsage() { return null; }
+  clearSessionUsage() { return null; }
 }
 
 const baseMessage = (overrides: Partial<IncomingMessage> = {}): IncomingMessage => {
