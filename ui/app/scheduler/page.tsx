@@ -848,7 +848,7 @@ const PipelineSection = ({
       </div>
       <PipelineEditor
         initialStages={pipelineStages}
-        onSave={(stages) => setPipelineStages(stages)}
+        onChange={(stages) => setPipelineStages(stages)}
         height="350px"
         availableTools={availableTools}
         availablePrompts={availablePrompts}

@@ -159,6 +159,7 @@ The OpenZigs UI is a **Next.js** application with a navigation bar providing acc
 | **Library** | `/library` | Saved prompt templates with `{{variable}}` interpolation |
 | **Scheduler** | `/scheduler` | Cron-based job scheduling with prompt linking and model overrides |
 | **Tasks** | `/tasks` | Monitor background agent tasks, sub-agents, and scheduled work |
+| **Post-Actions** | `/admin/post-actions` | Create and manage custom post-action types for pipeline stages |
 | **Webhooks** | `/admin/webhooks` | Create and manage inbound webhooks for external integrations |
 
 ### Chat
@@ -269,8 +270,187 @@ The library at `/library` provides a visual interface for managing saved prompt 
 - **Edit** existing prompts inline.
 - **Search** prompts by name, content, or tags.
 - **Variable preview** — `{{variable}}` placeholders are highlighted and listed.
+- **Preferred Tools** — Restrict which tools a prompt can use via a ToolMultiSelect dropdown grouped by category. When set, only the selected tools (plus always-on tools) are available during execution.
+- **Pipeline Stages** — Attach a multi-stage pipeline to any prompt. When the prompt is executed by the scheduler, stages run sequentially (or in parallel groups) with per-stage prompts, tool restrictions, model overrides, timeouts, auto-approve tools, and optional post-actions (e.g., "create GitHub issues from findings").
 - **Use as System Prompt** — Apply any saved prompt as the active system instruction in the AI Personality panel.
 - **Delete** with confirmation.
+
+#### Pipeline Stages on Prompts
+
+Any saved prompt can optionally carry pipeline stages, turning it from a simple template into a full multi-stage workflow. This is configured directly in the Library editor — no need to create a separate scheduler job.
+
+**How to add stages:**
+
+1. Open the Library at **http://localhost:3001/library**.
+2. Click **+ New Prompt** (or **Edit** on an existing prompt).
+3. Scroll to the **Pipeline Stages** section (collapsed by default).
+4. Click to expand. If the prompt already has stages, the section auto-expands with a stage count badge.
+5. Choose a creation mode:
+   - **🧙 Workflow Wizard** — Describe your goal in plain English; AI auto-generates the stages.
+   - **🔧 Manual Editor** — Build the pipeline yourself using the visual React Flow editor.
+6. Each stage supports:
+   - **Name** — Display label for the stage.
+   - **Prompt** — Instructions for the LLM at this stage. Supports `{{variable}}` interpolation.
+   - **Tools** — Multi-select for tools available to this stage (grouped by category).
+   - **Auto-Approve Tools** — Tool selector (multi-select) specifying which tools bypass approval gating for this stage. Select specific tools from the stage's tool list, or leave empty to require approval for all.
+   - **Timeout** — Max execution time in seconds (default: 300).
+   - **Post-Action** — Deterministic action after stage completion. Action types are loaded dynamically from the Post-Action Registry (see below).
+7. Click **Save Prompt** to persist the stages.
+
+#### Post-Action Registry (Plugin System)
+
+Post-actions are deterministic actions that run after a pipeline stage completes (e.g., create GitHub issues, send a webhook). Instead of hardcoding action types in the UI, openzigs uses a **Post-Action Registry** — a plugin system where each action type is registered with a JSON Schema describing its configuration, enabling the UI to render dynamic config forms for any action.
+
+**Built-in post-action types:**
+
+| Type | Category | Description |
+|------|----------|-------------|
+| `create-github-issues` | Integrations | Parse stage output for findings and create GitHub issues. Config: `owner`, `repo`, `labels`, `minSeverity`, `maxIssues`. |
+| `send-webhook` | Notifications | POST/PUT the stage output to a webhook URL. Config: `url`, `method`, `includeOutput`. |
+
+**How it works:**
+
+1. At server startup, `registerBuiltinPostActions()` registers all built-in action types with the global `postActionRegistry`.
+2. The UI fetches available types via `GET /api/admin/post-actions`, which returns each type's label, description, category, icon, and `configSchema`.
+3. The pipeline editor renders a dynamic form based on the `configSchema` — field types (string, number, boolean, array), labels, defaults, enums, and constraints are all driven by the schema.
+4. When a stage executes, the engine calls `postActionRegistry.execute(action, stageOutput)`, which delegates to the registered handler.
+
+**REST API — List registered post-actions:**
+
+```bash
+curl http://localhost:3000/api/admin/post-actions
+# Returns: { "actions": [{ "type": "create-github-issues", "label": "...", "configSchema": {...} }, ...] }
+```
+
+**Creating custom post-actions (UI):**
+
+Navigate to **http://localhost:3001/admin/post-actions** to create custom post-action types without writing code. See [Custom Post-Actions (Settings Page)](#custom-post-actions-settings-page) below for full details.
+
+**Registering a custom post-action (code):**
+
+```typescript
+import { postActionRegistry } from "./tasks/post-action-registry.js";
+
+postActionRegistry.register({
+  type: "slack-notify",
+  label: "Slack Notification",
+  description: "Send stage results to a Slack channel via incoming webhook.",
+  category: "Notifications",
+  icon: "slack",
+  configSchema: {
+    type: "object",
+    properties: {
+      webhookUrl: { type: "string", title: "Webhook URL", placeholder: "https://hooks.slack.com/..." },
+      channel: { type: "string", title: "Channel", default: "#general" },
+      mentionOnFailure: { type: "boolean", title: "Mention @here on failure", default: false },
+    },
+    required: ["webhookUrl"],
+  },
+  handler: async (stageOutput, config) => {
+    // Your implementation here
+    return JSON.stringify({ ok: true, channel: config.channel });
+  },
+});
+```
+
+**Stage and tool count badges** appear on saved prompt cards in the list, giving you a quick visual indicator of which prompts are simple templates vs. full pipelines.
+
+**MCP tools:** The `save-prompt` and `update-prompt` MCP tools also support `stages` and `preferredTools` parameters, allowing the AI to create pipeline-enabled prompts programmatically.
+
+**REST API:**
+
+```bash
+# Create a prompt with pipeline stages
+curl -X POST -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "code-review-pipeline",
+    "content": "Review code for {{project}}",
+    "stages": [
+      {
+        "name": "clone-and-read",
+        "prompt": "Read the source files for {{project}}",
+        "tools": ["read-file", "list-directory"]
+      },
+      {
+        "name": "review",
+        "prompt": "Review the code for bugs, security issues, and style",
+        "tools": ["read-file", "web-search"],
+        "autoApproveTools": ["read-file"],
+        "postAction": {
+          "type": "create-github-issues",
+          "config": { "owner": "acme", "repo": "app", "minSeverity": "medium" }
+        }
+      }
+    ],
+    "preferredTools": ["read-file", "list-directory", "web-search"]
+  }' \
+  http://localhost:3000/api/prompts
+
+# Update stages (set to null to remove)
+curl -X PUT -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"stages": null}' \
+  http://localhost:3000/api/prompts/<id>
+```
+
+#### Custom Post-Actions (Settings Page)
+
+The Post-Actions settings page at `/admin/post-actions` provides a UI for creating custom post-action types without writing code. Custom actions appear automatically in the pipeline stage editor's post-action dropdown alongside built-in types.
+
+**How to create a custom post-action:**
+
+1. Navigate to **http://localhost:3001/admin/post-actions**.
+2. Click **+ New Post-Action**.
+3. Fill in the required fields:
+   - **Type** — Unique slug identifier (e.g., `custom-slack-notify`).
+   - **Label** — Human-readable label shown in dropdowns.
+   - **Description** — What the action does.
+   - **Category** — Grouping category (default: "Custom").
+4. Choose a creation mode:
+   - **Template** — Use a pre-built template:
+     - **Webhook** — Generic HTTP sender. Configure default URL, HTTP method, and whether to include stage output.
+     - **Script** — Shell command. Stage output is piped to stdin; config values are passed as `OPENZIGS_CONFIG_*` environment variables.
+   - **Advanced** — Define custom config fields (string, number, boolean, array) and a script body. The fields appear as a dynamic form in the stage editor.
+5. Click **Create** to save. The action is immediately available in all pipeline editors.
+
+**Managing custom post-actions:**
+
+- **Edit** — Click the **Edit** button on any custom action card to modify its configuration.
+- **Delete** — Click **Delete** and confirm to remove a custom action.
+- **Built-in actions** — Shown as read-only cards; these cannot be edited or deleted.
+
+**REST API — Custom post-action CRUD:**
+
+```bash
+# List custom post-action definitions
+curl http://localhost:3000/api/admin/post-actions/custom
+
+# Create a custom webhook post-action
+curl -X POST -H "Content-Type: application/json" \
+  -d '{
+    "type": "slack-webhook",
+    "label": "Slack Webhook",
+    "description": "Send stage output to a Slack channel",
+    "templateType": "webhook",
+    "templateConfig": {
+      "url": "https://hooks.slack.com/services/...",
+      "method": "POST",
+      "includeOutput": true
+    }
+  }' \
+  http://localhost:3000/api/admin/post-actions/custom
+
+# Update a custom post-action
+curl -X PUT -H "Content-Type: application/json" \
+  -d '{"label": "Slack Webhook (Updated)"}' \
+  http://localhost:3000/api/admin/post-actions/custom/slack-webhook
+
+# Delete a custom post-action
+curl -X DELETE http://localhost:3000/api/admin/post-actions/custom/slack-webhook
+```
+
+**Persistence:** Custom post-action definitions are stored in `~/.openzigs/custom-post-actions.json` and survive server restarts. On startup, all custom actions are automatically re-registered with the global post-action registry.
 
 ### Scheduler
 

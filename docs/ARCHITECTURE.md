@@ -558,7 +558,7 @@ sequenceDiagram
 Embedded SQLite-backed subsystem for saved prompts and cron scheduling:
 
 - **Database** (`database.ts`) — Shared `better-sqlite3` singleton with WAL mode. Tables: `saved_prompts`, `scheduled_jobs`.
-- **PromptManager** (`prompt-manager.ts`) — CRUD for saved prompts with `{{variable}}` template interpolation.
+- **PromptManager** (`prompt-manager.ts`) — CRUD for saved prompts with `{{variable}}` template interpolation, optional pipeline stages (`stages: PipelineStage[] | null`) for multi-step execution, and preferred tool scoping (`preferredTools: string[] | null`). The `resolveWithStages()` method returns interpolated text, preferred tools, and pipeline stages in a single call — used by the scheduler to execute prompt-as-pipeline workflows.
 - **Scheduler** (`scheduler.ts`) — `node-cron` v4 in-process scheduler with JSONL audit logs and `EventEmitter` hooks for Socket.IO notifications.
 
 ### Message Router (`src/routing/message-router.ts`)
@@ -1763,4 +1763,68 @@ The scheduler job form now supports a `pipeline` action type alongside `prompt`,
 - Pipeline stages are stored in `actionPayload.stages` on the scheduled job.
 - Validation enforces a minimum of 2 stages before saving.
 
-### Tracking: [Epic #163](https://github.com/mgcronin/openzigs/issues/163)
+### Prompt-as-Pipeline (Library-Embedded Stages)
+
+Saved prompts in the Library can now carry optional pipeline stages and preferred tools, making them first-class workflow definitions rather than simple text templates.
+
+**Data model additions to `SavedPrompt`:**
+
+| Field | Type | Storage | Description |
+|-------|------|---------|-------------|
+| `stages` | `PipelineStage[] | null` | SQLite `saved_prompts.stages` (JSON) | Multi-stage pipeline definition. null = single-stage prompt. |
+| `preferredTools` | `string[] | null` | SQLite `saved_prompts.preferred_tools` (JSON) | Tool allowlist for the prompt. null = all enabled tools. |
+
+**Pipeline stages on prompts include all fields from the core `PipelineStage` type:**
+
+- `name`, `prompt`, `tools` (tool allowlist), `autoApproveTools` (bypass approval gating)
+- `model` (per-stage model override), `timeoutSeconds`, `postAction` (deterministic post-actions like `create-github-issues`)
+
+**UI integration (Library editor):**
+
+The Library page embeds the `PipelineEditor` and `WorkflowWizard` via a collapsible accordion with progressive disclosure:
+
+1. Collapsed by default for simple prompts — no visual clutter.
+2. Auto-expands when editing a prompt that already has stages.
+3. Mode chooser: Wizard (AI-generated) or Manual (visual editor).
+4. Stage and tool count badges on prompt cards in the list view.
+
+**MCP tool integration:**
+
+The `save-prompt` and `update-prompt` MCP tools accept optional `stages` and `preferredTools` parameters, allowing the AI to create pipeline-enabled prompts programmatically. Zod schemas (`PipelineStageSchema`, `PipelinePostActionSchema`) validate the input.
+
+**Relevant components:**
+
+| Component | Path | Purpose |
+|-----------|------|---------|
+| `SavedPrompt` type (backend) | `src/productivity/prompt-manager.ts` | Stores stages/preferredTools in SQLite |
+| `SavedPrompt` type (frontend) | `ui/lib/types.ts` | Mirrors backend type with `PipelineStage`, `PipelinePostAction` |
+| Library page | `ui/app/library/page.tsx` | Embeds PipelineEditor, WorkflowWizard, ToolMultiSelect |
+| MCP prompt tools | `src/mcp/tools/prompt-tools.ts` | Zod schemas + handler for stages/preferredTools |
+| Pipeline editor | `ui/components/pipeline/pipeline-editor.tsx` | PostActionEditor, autoApproveTools, conversion functions |
+
+### Custom Post-Actions (User-Created Action Types)
+
+Users can create custom post-action types via a dedicated settings page (`/admin/post-actions`) without writing code. This extends the plugin-based PostActionRegistry with user-defined actions.
+
+**Architecture:**
+
+```
+CustomPostActionManager (src/tasks/custom-post-actions.ts)
+  ├─ Persistence: ~/.openzigs/custom-post-actions.json
+  ├─ Template handlers: webhook (HTTP fetch), script (child_process.execFile)
+  ├─ Schema builders: convert definitions → ConfigSchema → DynamicConfigForm
+  └─ On initialize(): re-registers all saved definitions with PostActionRegistry
+```
+
+**Components:**
+
+| Component | Path | Purpose |
+|-----------|------|---------|
+| `CustomPostActionManager` | `src/tasks/custom-post-actions.ts` | CRUD + persistence + registry integration |
+| CRUD API routes | `src/api/admin.ts` | `GET/POST/PUT/DELETE /api/admin/post-actions/custom` (Zod-validated) |
+| Settings page | `ui/app/admin/post-actions/page.tsx` | Template + advanced builder UI |
+| Post-action registry | `src/tasks/post-action-registry.ts` | Singleton registry (built-in + custom actions) |
+
+**Data flow:** Create via UI → Zod-validated API → `CustomPostActionManager.create()` → persist to disk → `postActionRegistry.register()` → appears in stage editor dropdown.
+
+### Tracking: [Epic #171](https://github.com/mgcronin/openzigs/issues/171)

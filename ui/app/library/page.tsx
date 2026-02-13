@@ -7,6 +7,10 @@ import type { ModelInfo, PersonalityConfig, SavedPrompt, ToolInfo } from "@/lib/
 import { SectionCard } from "@/components/section-card";
 import { ToastContainer, showToast } from "@/components/toast";
 import { SmartTextarea } from "@/components/smart-textarea";
+import { PipelineEditor, type BackendPipelineNode, type AvailablePrompt } from "@/components/pipeline/pipeline-editor";
+import { WorkflowWizard } from "@/components/pipeline/workflow-wizard";
+import { ToolMultiSelect, type ToolOption } from "@/components/pipeline/tool-multi-select";
+import { ChevronDown, ChevronUp, Zap, Wrench } from "lucide-react";
 
 export default function LibraryPage() {
   const queryClient = useQueryClient();
@@ -194,6 +198,20 @@ export default function LibraryPage() {
                     ))}
                   </div>
                 )}
+                <div className="mt-2 flex items-center gap-2">
+                  {prompt.stages && prompt.stages.length > 0 && (
+                    <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-semibold text-emerald-600 dark:text-emerald-400">
+                      <Zap className="h-2.5 w-2.5" />
+                      {prompt.stages.length} stage{prompt.stages.length !== 1 ? "s" : ""}
+                    </span>
+                  )}
+                  {prompt.preferredTools && prompt.preferredTools.length > 0 && (
+                    <span className="inline-flex items-center gap-1 rounded-full bg-sky-500/10 px-2 py-0.5 text-[10px] font-semibold text-sky-600 dark:text-sky-400">
+                      <Wrench className="h-2.5 w-2.5" />
+                      {prompt.preferredTools.length} tool{prompt.preferredTools.length !== 1 ? "s" : ""}
+                    </span>
+                  )}
+                </div>
                 <p className="mt-2 text-[11px] text-muted-foreground">
                   Updated {new Date(prompt.updatedAt).toLocaleDateString()}
                 </p>
@@ -228,6 +246,30 @@ const PromptForm = ({
   const [template, setTemplate] = useState(existing?.template ?? "");
   const [tagsInput, setTagsInput] = useState(existing?.tags.join(", ") ?? "");
 
+  // Pipeline stages state
+  const [showPipeline, setShowPipeline] = useState(
+    () => !!(existing?.stages && existing.stages.length > 0)
+  );
+  const [pipelineStages, setPipelineStages] = useState<BackendPipelineNode[]>(
+    () => (existing?.stages as BackendPipelineNode[] | null) ?? []
+  );
+  const [pipelineMode, setPipelineMode] = useState<"wizard" | "manual">("manual");
+
+  // Preferred tools state
+  const [preferredTools, setPreferredTools] = useState<string[] | null>(
+    existing?.preferredTools ?? null
+  );
+
+  // Build ToolOption[] and AvailablePrompt[] for sub-components
+  const toolOptions: ToolOption[] = useMemo(
+    () => tools.map((t) => ({ name: t.name, description: t.description, category: t.category, enabled: t.enabled })),
+    [tools]
+  );
+  const availablePrompts: AvailablePrompt[] = useMemo(
+    () => prompts.map((p) => ({ id: p.id, name: p.name, description: p.description, template: p.template })),
+    [prompts]
+  );
+
   const saveMutation = useMutation({
     mutationFn: (payload: Record<string, unknown>) => {
       const url = existing ? `/api/admin/prompts/${existing.id}` : "/api/admin/prompts";
@@ -255,7 +297,18 @@ const PromptForm = ({
         .split(",")
         .map((s) => s.trim())
         .filter(Boolean),
+      stages: pipelineStages.length > 0 ? pipelineStages : null,
+      preferredTools: preferredTools,
     });
+  };
+
+  const handlePipelineChange = (stages: BackendPipelineNode[]) => {
+    setPipelineStages(stages);
+  };
+
+  const handleWizardComplete = (pipeline: { stages: BackendPipelineNode[] }) => {
+    setPipelineStages(pipeline.stages);
+    setPipelineMode("manual"); // Switch to manual view to see the result
   };
 
   // Variable preview
@@ -325,6 +378,96 @@ const PromptForm = ({
             onChange={(e) => setTagsInput(e.target.value)}
           />
         </Field>
+
+        {/* Preferred Tools */}
+        <div className="space-y-1">
+          <ToolMultiSelect
+            tools={toolOptions}
+            selected={preferredTools}
+            onChange={setPreferredTools}
+            label="Preferred Tools"
+            placeholder="Default (all tools available)"
+            allowAll
+          />
+          <p className="text-[11px] text-muted-foreground/60">
+            Restrict which tools this prompt can use. Leave empty for all tools.
+          </p>
+        </div>
+
+        {/* Pipeline Stages — collapsible progressive disclosure */}
+        <div className="rounded-xl border border-primary/20 overflow-hidden">
+          <button
+            type="button"
+            onClick={() => setShowPipeline(!showPipeline)}
+            className="w-full flex items-center justify-between px-4 py-3 bg-card hover:bg-muted/50 transition-colors"
+          >
+            <span className="flex items-center gap-2 text-sm font-medium text-foreground">
+              <Zap className="h-4 w-4 text-emerald-500" />
+              Pipeline Stages
+              {pipelineStages.length > 0 && (
+                <span className="px-2 py-0.5 text-[10px] rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-semibold">
+                  {pipelineStages.length} stage{pipelineStages.length !== 1 ? "s" : ""}
+                </span>
+              )}
+            </span>
+            <span className="text-muted-foreground">
+              {showPipeline ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+            </span>
+          </button>
+
+          {showPipeline && (
+            <div className="p-4 border-t border-primary/10 space-y-3">
+              <p className="text-xs text-muted-foreground">
+                When triggered by the scheduler, this prompt executes as a multi-stage pipeline.
+                Each stage runs sequentially with its own instructions, tool access, and optional post-actions.
+              </p>
+
+              {/* Mode chooser */}
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setPipelineMode("wizard")}
+                  className={`flex-1 rounded-lg border px-3 py-2 text-xs font-medium transition ${
+                    pipelineMode === "wizard"
+                      ? "border-primary bg-primary/5 text-primary"
+                      : "border-border text-muted-foreground hover:bg-muted/50"
+                  }`}
+                >
+                  🧙 Workflow Wizard
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPipelineMode("manual")}
+                  className={`flex-1 rounded-lg border px-3 py-2 text-xs font-medium transition ${
+                    pipelineMode === "manual"
+                      ? "border-primary bg-primary/5 text-primary"
+                      : "border-border text-muted-foreground hover:bg-muted/50"
+                  }`}
+                >
+                  🔧 Manual Editor
+                </button>
+              </div>
+
+              {/* Editor content */}
+              {pipelineMode === "wizard" ? (
+                <WorkflowWizard
+                  onComplete={handleWizardComplete}
+                  onCancel={() => setPipelineMode("manual")}
+                  availableTools={toolOptions}
+                  availablePrompts={availablePrompts}
+                />
+              ) : (
+                <PipelineEditor
+                  initialStages={pipelineStages}
+                  onChange={handlePipelineChange}
+                  height="400px"
+                  availableTools={toolOptions}
+                  availablePrompts={availablePrompts}
+                />
+              )}
+            </div>
+          )}
+        </div>
 
         <div className="flex justify-end gap-2 pt-2">
           <button

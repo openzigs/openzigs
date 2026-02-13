@@ -2,6 +2,7 @@ import { Router } from "express";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { z } from "zod";
 import { loadConfig, customAgentSchema, mcpServerConfigSchema, nativeMcpServersSchema } from "../config/index.js";
 import { logger } from "../logging/logger.js";
 import { ALWAYS_ON_TOOLS } from "../mcp/constants.js";
@@ -14,6 +15,8 @@ import type { PromptManager } from "../productivity/prompt-manager.js";
 import type { Scheduler } from "../productivity/scheduler.js";
 import type { PersonalityManager } from "../personality/personality-manager.js";
 import type { SessionManager } from "../sessions/session-manager.js";
+import { postActionRegistry } from "../tasks/post-action-registry.js";
+import type { CustomPostActionManager } from "../tasks/custom-post-actions.js";
 import type { TaskWorker } from "../tasks/task-worker.js";
 import type { TaskEngine } from "../tasks/task-engine.js";
 import type { PipelineStage } from "../tasks/types.js";
@@ -192,6 +195,7 @@ export type AdminRouterOptions = {
   taskWorker?: TaskWorker;
   taskEngine?: TaskEngine;
   webhookManager?: WebhookManager;
+  customPostActionManager?: CustomPostActionManager;
 };
 
 type SchedulerSuggestion = {
@@ -256,7 +260,7 @@ const parseReasoningEffort = (value: unknown): ReasoningEffort | undefined => {
     : undefined;
 };
 
-export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerManager, promptManager, scheduler, personalityManager, sessionManager, copilot, taskWorker, taskEngine, webhookManager }: AdminRouterOptions) => {
+export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerManager, promptManager, scheduler, personalityManager, sessionManager, copilot, taskWorker, taskEngine, webhookManager, customPostActionManager }: AdminRouterOptions) => {
   const router = Router();
 
   // ── Server Restart ──
@@ -780,6 +784,113 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
       const message = error instanceof Error ? error.message : String(error);
       return res.status(500).json({ error: message });
     }
+  });
+
+  // ── Post-Action Registry ──
+  router.get("/post-actions", (_req, res) => {
+    return res.json({ actions: postActionRegistry.list() });
+  });
+
+  // ── Custom Post-Action CRUD ──
+  router.get("/post-actions/custom", (_req, res) => {
+    if (!customPostActionManager) {
+      return res.json({ actions: [] });
+    }
+    return res.json({ actions: customPostActionManager.list() });
+  });
+
+  router.get("/post-actions/custom/:type", (req, res) => {
+    if (!customPostActionManager) {
+      return res.status(404).json({ error: "Custom post-actions not available" });
+    }
+    const def = customPostActionManager.getByType(req.params.type);
+    return def ? res.json(def) : res.status(404).json({ error: "Not found" });
+  });
+
+  /* ── Zod schemas for custom post-action validation ── */
+  const customFieldSchema = z.object({
+    key: z.string().min(1),
+    type: z.enum(["string", "number", "boolean", "array"]),
+    title: z.string().min(1),
+    description: z.string().optional(),
+    required: z.boolean().optional(),
+    default: z.unknown().optional(),
+    enum: z.array(z.string()).optional(),
+    enumLabels: z.array(z.string()).optional(),
+    placeholder: z.string().optional(),
+    minimum: z.number().optional(),
+    maximum: z.number().optional(),
+  });
+
+  const templateConfigSchema = z.record(z.string(), z.unknown());
+
+  const createCustomPostActionSchema = z.object({
+    type: z.string().min(1),
+    label: z.string().min(1),
+    description: z.string().default(""),
+    category: z.string().default("Custom"),
+    icon: z.string().optional(),
+    templateType: z.enum(["webhook", "script"]).optional(),
+    templateConfig: templateConfigSchema.optional(),
+    customFields: z.array(customFieldSchema).optional(),
+    scriptBody: z.string().optional(),
+    scriptTimeout: z.number().int().positive().optional(),
+  });
+
+  const updateCustomPostActionSchema = z.object({
+    label: z.string().min(1).optional(),
+    description: z.string().optional(),
+    category: z.string().optional(),
+    icon: z.string().optional(),
+    templateType: z.enum(["webhook", "script"]).optional(),
+    templateConfig: templateConfigSchema.optional(),
+    customFields: z.array(customFieldSchema).optional(),
+    scriptBody: z.string().optional(),
+    scriptTimeout: z.number().int().positive().optional(),
+  });
+
+  router.post("/post-actions/custom", async (req, res) => {
+    if (!customPostActionManager) {
+      return res.status(503).json({ error: "Custom post-actions not available" });
+    }
+    const parsed = createCustomPostActionSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.issues.map((i) => i.message).join("; ") });
+    }
+    try {
+      const def = await customPostActionManager.create(parsed.data);
+      return res.status(201).json(def);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return res.status(400).json({ error: message });
+    }
+  });
+
+  router.put("/post-actions/custom/:type", async (req, res) => {
+    if (!customPostActionManager) {
+      return res.status(503).json({ error: "Custom post-actions not available" });
+    }
+    const parsed = updateCustomPostActionSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.issues.map((i) => i.message).join("; ") });
+    }
+    try {
+      const updated = await customPostActionManager.update(req.params.type, parsed.data);
+      return res.json(updated);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return res.status(400).json({ error: message });
+    }
+  });
+
+  router.delete("/post-actions/custom/:type", async (req, res) => {
+    if (!customPostActionManager) {
+      return res.status(503).json({ error: "Custom post-actions not available" });
+    }
+    const deleted = await customPostActionManager.delete(req.params.type);
+    return deleted
+      ? res.json({ ok: true })
+      : res.status(404).json({ error: "Not found" });
   });
 
   // ── Saved Prompts (Library) ──

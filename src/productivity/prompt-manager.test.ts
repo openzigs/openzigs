@@ -198,4 +198,190 @@ describe("PromptManager", () => {
   it("resolveWithTools returns null for unknown prompt", () => {
     expect(pm.resolveWithTools("nonexistent")).toBeNull();
   });
+
+  // ── Stages (pipeline) CRUD ──
+
+  it("creates a prompt with stages", () => {
+    const stages = [
+      { name: "research", prompt: "Search for {{topic}}", tools: ["web-search"] },
+      { name: "report", prompt: "Write a report on {{topic}}", timeoutSeconds: 600 },
+    ];
+    const prompt = pm.create({
+      name: "staged-prompt",
+      template: "Pipeline: {{topic}}",
+      stages,
+    });
+
+    expect(prompt.stages).toHaveLength(2);
+    expect(prompt.stages![0].name).toBe("research");
+    expect(prompt.stages![0].tools).toEqual(["web-search"]);
+    expect(prompt.stages![1].timeoutSeconds).toBe(600);
+
+    const found = pm.getById(prompt.id);
+    expect(found!.stages).toEqual(stages);
+  });
+
+  it("creates a prompt without stages (null by default)", () => {
+    const prompt = pm.create({ name: "no-stages", template: "plain" });
+    expect(prompt.stages).toBeNull();
+  });
+
+  it("updates stages on a prompt", () => {
+    const prompt = pm.create({ name: "updatable-stages", template: "text" });
+    const newStages = [
+      { name: "step-1", prompt: "Do step 1" },
+      { name: "step-2", prompt: "Do step 2" },
+    ];
+
+    const updated = pm.update(prompt.id, { stages: newStages });
+    expect(updated.stages).toHaveLength(2);
+    expect(updated.stages![0].name).toBe("step-1");
+  });
+
+  it("clears stages by setting null", () => {
+    const stages = [{ name: "ephemeral", prompt: "Will be removed" }];
+    const prompt = pm.create({
+      name: "clearable-stages",
+      template: "text",
+      stages,
+    });
+    expect(prompt.stages).toHaveLength(1);
+
+    const updated = pm.update(prompt.id, { stages: null });
+    expect(updated.stages).toBeNull();
+  });
+
+  it("creates a prompt with stages containing postAction", () => {
+    const stages = [
+      {
+        name: "review",
+        prompt: "Review code",
+        postAction: {
+          type: "create-github-issues",
+          config: { owner: "acme", repo: "app", minSeverity: "medium" },
+        },
+      },
+    ];
+    const prompt = pm.create({
+      name: "postaction-prompt",
+      template: "Pipeline with post-action",
+      stages,
+    });
+
+    expect(prompt.stages![0].postAction).toEqual({
+      type: "create-github-issues",
+      config: { owner: "acme", repo: "app", minSeverity: "medium" },
+    });
+
+    const found = pm.getById(prompt.id);
+    expect(found!.stages![0].postAction!.type).toBe("create-github-issues");
+  });
+
+  it("creates a prompt with stages containing autoApproveTools", () => {
+    const stages = [
+      {
+        name: "auto-stage",
+        prompt: "Run tasks",
+        autoApproveTools: ["shell-execute", "write-file"],
+      },
+    ];
+    const prompt = pm.create({
+      name: "autoapprove-prompt",
+      template: "Auto approve test",
+      stages,
+    });
+
+    expect(prompt.stages![0].autoApproveTools).toEqual(["shell-execute", "write-file"]);
+  });
+
+  // ── resolveWithStages ──
+
+  it("resolveWithStages returns text, preferredTools, and stages", () => {
+    pm.create({
+      name: "full-resolve",
+      template: "Analyze {{topic}}",
+      preferredTools: ["web-search"],
+      stages: [
+        { name: "research", prompt: "Find info about {{topic}}" },
+        { name: "report", prompt: "Compile findings" },
+      ],
+    });
+
+    const result = pm.resolveWithStages("full-resolve", { topic: "AI" });
+    expect(result).toEqual({
+      text: "Analyze AI",
+      preferredTools: ["web-search"],
+      stages: [
+        { name: "research", prompt: "Find info about AI" },
+        { name: "report", prompt: "Compile findings" },
+      ],
+    });
+  });
+
+  it("resolveWithStages interpolates variables in stage prompts", () => {
+    pm.create({
+      name: "interpolated-stages",
+      template: "Pipeline for {{project}}",
+      stages: [
+        { name: "init", prompt: "Set up {{project}} repo" },
+        { name: "test", prompt: "Test {{project}} code" },
+      ],
+    });
+
+    const result = pm.resolveWithStages("interpolated-stages", { project: "acme" });
+    expect(result!.stages![0].prompt).toBe("Set up acme repo");
+    expect(result!.stages![1].prompt).toBe("Test acme code");
+  });
+
+  it("resolveWithStages returns null stages when not set", () => {
+    pm.create({ name: "stageless", template: "No pipeline" });
+
+    const result = pm.resolveWithStages("stageless");
+    expect(result).toEqual({
+      text: "No pipeline",
+      preferredTools: null,
+      stages: null,
+    });
+  });
+
+  it("resolveWithStages returns null for unknown prompt", () => {
+    expect(pm.resolveWithStages("ghost")).toBeNull();
+  });
+
+  // ── Combined stages + preferredTools ──
+
+  it("creates a prompt with both stages and preferredTools", () => {
+    const prompt = pm.create({
+      name: "combo",
+      template: "Multi-feature prompt",
+      stages: [{ name: "s1", prompt: "Step one" }],
+      preferredTools: ["read-file", "web-search"],
+    });
+
+    expect(prompt.stages).toHaveLength(1);
+    expect(prompt.preferredTools).toEqual(["read-file", "web-search"]);
+  });
+
+  it("updates stages and preferredTools independently", () => {
+    const prompt = pm.create({
+      name: "independent-update",
+      template: "text",
+      stages: [{ name: "original", prompt: "original prompt" }],
+      preferredTools: ["web-search"],
+    });
+
+    // Update only stages
+    const u1 = pm.update(prompt.id, {
+      stages: [{ name: "new-stage", prompt: "new prompt" }],
+    });
+    expect(u1.stages![0].name).toBe("new-stage");
+    expect(u1.preferredTools).toEqual(["web-search"]); // unchanged
+
+    // Update only preferredTools
+    const u2 = pm.update(prompt.id, {
+      preferredTools: ["shell-execute"],
+    });
+    expect(u2.stages![0].name).toBe("new-stage"); // unchanged
+    expect(u2.preferredTools).toEqual(["shell-execute"]);
+  });
 });
