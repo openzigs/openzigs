@@ -4,19 +4,22 @@ import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { fetchJson } from "@/lib/api";
 import type { ModelInfo, PersonalityConfig, SavedPrompt, ToolInfo } from "@/lib/types";
+import { buildUrl } from "@/lib/api";
 import { SectionCard } from "@/components/section-card";
 import { ToastContainer, showToast } from "@/components/toast";
 import { SmartTextarea } from "@/components/smart-textarea";
 import { PipelineEditor, type BackendPipelineNode, type AvailablePrompt } from "@/components/pipeline/pipeline-editor";
 import { WorkflowWizard } from "@/components/pipeline/workflow-wizard";
 import { ToolMultiSelect, type ToolOption } from "@/components/pipeline/tool-multi-select";
-import { ChevronDown, ChevronUp, Zap, Wrench } from "lucide-react";
+import { ImportWizard } from "@/components/library/import-wizard";
+import { ChevronDown, ChevronUp, Download, FileUp, Zap, Wrench } from "lucide-react";
 
 export default function LibraryPage() {
   const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
   const [editingPrompt, setEditingPrompt] = useState<SavedPrompt | null>(null);
   const [showForm, setShowForm] = useState(false);
+  const [showImportWizard, setShowImportWizard] = useState(false);
   const [tools, setTools] = useState<ToolInfo[]>([]);
   const [models, setModels] = useState<ModelInfo[]>([]);
 
@@ -98,6 +101,27 @@ export default function LibraryPage() {
     setShowForm(true);
   };
 
+  const handleExport = async (prompt: SavedPrompt) => {
+    try {
+      const response = await fetch(buildUrl(`/api/admin/prompts/${prompt.id}/export`), {
+        headers: process.env.NEXT_PUBLIC_OPENZIGS_TOKEN
+          ? { Authorization: `Bearer ${process.env.NEXT_PUBLIC_OPENZIGS_TOKEN}` }
+          : {},
+      });
+      if (!response.ok) throw new Error(await response.text());
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${prompt.name.toLowerCase().replace(/\s+/g, "-")}.openzigs-template.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      showToast("Template exported", "success");
+    } catch (err) {
+      showToast(`Export failed: ${err instanceof Error ? err.message : "Unknown error"}`, "error");
+    }
+  };
+
   const handleFormClose = () => {
     setShowForm(false);
     setEditingPrompt(null);
@@ -122,6 +146,15 @@ export default function LibraryPage() {
           onChange={(e) => setSearch(e.target.value)}
           className="flex-1 rounded-xl border border-border bg-card px-4 py-2.5 text-sm text-foreground"
         />
+        <button
+          onClick={() => setShowImportWizard(true)}
+          className="rounded-xl border border-primary px-5 py-2.5 text-sm font-semibold text-primary hover:bg-primary/5"
+        >
+          <span className="flex items-center gap-1.5">
+            <FileUp className="h-4 w-4" />
+            Import
+          </span>
+        </button>
         <button
           onClick={handleNew}
           className="rounded-xl bg-primary px-5 py-2.5 text-sm font-semibold text-primary-foreground"
@@ -176,6 +209,16 @@ export default function LibraryPage() {
                       Use as System Prompt
                     </button>
                     <button
+                      onClick={() => handleExport(prompt)}
+                      title="Export as shareable template file"
+                      className="rounded-lg border border-primary/30 px-3 py-1.5 text-xs font-semibold text-primary hover:bg-primary/5"
+                    >
+                      <span className="flex items-center gap-1">
+                        <Download className="h-3 w-3" />
+                        Export
+                      </span>
+                    </button>
+                    <button
                       onClick={() => handleEdit(prompt)}
                       className="rounded-lg border border-primary px-3 py-1.5 text-xs font-semibold text-primary hover:bg-primary/5"
                     >
@@ -220,6 +263,7 @@ export default function LibraryPage() {
           </div>
         )}
       </SectionCard>
+      {showImportWizard && <ImportWizard onClose={() => setShowImportWizard(false)} />}
       <ToastContainer />
     </main>
   );

@@ -274,6 +274,8 @@ The library at `/library` provides a visual interface for managing saved prompt 
 - **Preferred Tools** — Restrict which tools a prompt can use via a ToolMultiSelect dropdown grouped by category. When set, only the selected tools (plus always-on tools) are available during execution.
 - **Pipeline Stages** — Attach a multi-stage pipeline to any prompt. When the prompt is executed by the scheduler, stages run sequentially (or in parallel groups) with per-stage prompts, tool restrictions, model overrides, timeouts, auto-approve tools, and optional post-actions (e.g., "create GitHub issues from findings").
 - **Use as System Prompt** — Apply any saved prompt as the active system instruction in the AI Personality panel.
+- **Export** — Download any prompt as a portable `.openzigs-template.json` file for sharing across instances.
+- **Import** — Upload a `.openzigs-template.json` file via the Import Wizard to add a shared template to your library.
 - **Delete** with confirmation.
 
 #### Pipeline Stages on Prompts
@@ -452,6 +454,71 @@ curl -X DELETE http://localhost:3000/api/admin/post-actions/custom/slack-webhook
 ```
 
 **Persistence:** Custom post-action definitions are stored in `~/.openzigs/custom-post-actions.json` and survive server restarts. On startup, all custom actions are automatically re-registered with the global post-action registry.
+
+#### Exporting & Importing Templates
+
+![Library page with Export and Import buttons](images/library-export-import.png)
+
+The Library supports exporting and importing prompt templates as portable `.openzigs-template.json` files. This makes it easy to share workflows between OpenZigs instances or distribute curated templates to a team.
+
+##### Exporting a Template
+
+1. Open the Library at **http://localhost:3001/library**.
+2. Find the prompt you want to export.
+3. Click the **⬇ Export** button on the prompt card.
+4. A `.openzigs-template.json` file is downloaded to your browser.
+
+The exported file contains the full prompt definition — name, description, template content, tags, preferred tools, and pipeline stages. Environment-specific values in post-action configurations (e.g., GitHub repo owner/name, webhook URLs) are automatically **tokenized** into `{{placeholder}}` markers so the template is safe to share without leaking credentials.
+
+##### Importing a Template
+
+1. Open the Library at **http://localhost:3001/library**.
+2. Click the **Import** button in the header (next to "+ New Prompt").
+3. The **Import Wizard** opens with three steps:
+
+   ![Import Wizard — drag & drop upload step](images/library-import-wizard.png)
+
+   **Step 1 — Upload:**
+   - Drag and drop a `.openzigs-template.json` file onto the drop zone, or click **Browse** to select a file.
+   - The wizard validates the file format and shows any errors.
+
+   **Step 2 — Preview & Configure:**
+   - Review the prompt name, description, stage count, and tags.
+   - If the template contains placeholders (tokenized environment values), fill in the required values for your instance (e.g., your GitHub org/repo, your webhook URL).
+   - Click **Import Template** to proceed.
+
+   **Step 3 — Success:**
+   - A confirmation screen shows the imported prompt name.
+   - Click **Close** to dismiss the wizard and see the new prompt in your library.
+
+If a prompt with the same name already exists, the imported template is automatically renamed with an "(imported)" suffix.
+
+##### REST API — Template Export & Import
+
+```bash
+# Export a prompt as a template file
+curl -H "Authorization: Bearer <token>" \
+  http://localhost:3000/api/admin/prompts/1/export \
+  -o my-template.openzigs-template.json
+
+# Analyze a template before importing (pre-validation)
+curl -X POST -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d @my-template.openzigs-template.json \
+  http://localhost:3000/api/admin/templates/analyze
+
+# Import a template with placeholder values
+curl -X POST -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "template": { ... },
+    "placeholders": {
+      "stage_0_config.owner": "my-org",
+      "stage_0_config.repo": "my-repo"
+    }
+  }' \
+  http://localhost:3000/api/admin/templates/import
+```
 
 ### Scheduler
 
