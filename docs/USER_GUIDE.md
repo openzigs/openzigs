@@ -3086,6 +3086,8 @@ Or toggle it live from the Admin UI:
 1. Navigate to **Admin** → **Sentinel Monitor**
 2. Click **Enable**
 
+![Sentinel Monitor panel](images/admin-sentinel-monitor.png)
+
 ### What Sentinel Monitors
 
 - **Task health**: Success rates, consecutive failures, queue depth
