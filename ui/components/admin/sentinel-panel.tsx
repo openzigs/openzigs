@@ -184,8 +184,8 @@ export const SentinelPanel = () => {
             {digestsQuery.data?.digests.length === 0 && (
               <p className="text-xs text-muted-foreground">No digests generated yet.</p>
             )}
-            {digestsQuery.data?.digests.map((digest, idx) => (
-              <DigestCard key={digest.timestamp ?? idx} digest={digest} />
+            {digestsQuery.data?.digests.map((digest) => (
+              <DigestCard key={`${digest.timestamp}:${digest.period.from}:${digest.period.to}`} digest={digest} />
             ))}
           </div>
         )}

@@ -11,6 +11,8 @@ const defaultConfig: SentinelConfig = {
   model: "gpt-4o-mini",
   checkIntervalMinutes: 15,
   jitterMinutes: 15,
+  slowTaskThresholdMinutes: 5,
+  orphanTaskThresholdMinutes: 30,
   digestHour: 9,
   auditHour: 2,
   consecutiveFailureThreshold: 3,

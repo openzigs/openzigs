@@ -30,8 +30,8 @@ export interface TaskReviewerDeps {
   clock?: () => Date;
 }
 
-const SLOW_TASK_THRESHOLD_MS = 5 * 60_000; // 5 minutes
-const ORPHAN_THRESHOLD_MS = 30 * 60_000; // 30 minutes
+const DEFAULT_SLOW_TASK_THRESHOLD_MS = 5 * 60_000; // 5 minutes
+const DEFAULT_ORPHAN_THRESHOLD_MS = 30 * 60_000; // 30 minutes
 
 /**
  * Examines recent task outcomes, calculates success rates,
@@ -178,7 +178,7 @@ export class TaskReviewer {
         goal: t.goal,
         durationMs: t.completedAt!.getTime() - t.startedAt!.getTime(),
       }))
-      .filter((t) => t.durationMs > SLOW_TASK_THRESHOLD_MS)
+      .filter((t) => t.durationMs > this.getSlowTaskThresholdMs())
       .sort((a, b) => b.durationMs - a.durationMs);
   }
 
@@ -192,6 +192,22 @@ export class TaskReviewer {
         goal: t.goal,
         runningForMs: now.getTime() - t.startedAt!.getTime(),
       }))
-      .filter((t) => t.runningForMs > ORPHAN_THRESHOLD_MS);
+      .filter((t) => t.runningForMs > this.getOrphanThresholdMs());
+  }
+
+  private getSlowTaskThresholdMs(): number {
+    const minutes = this.config.slowTaskThresholdMinutes;
+    if (typeof minutes === "number" && minutes > 0) {
+      return minutes * 60_000;
+    }
+    return DEFAULT_SLOW_TASK_THRESHOLD_MS;
+  }
+
+  private getOrphanThresholdMs(): number {
+    const minutes = this.config.orphanTaskThresholdMinutes;
+    if (typeof minutes === "number" && minutes > 0) {
+      return minutes * 60_000;
+    }
+    return DEFAULT_ORPHAN_THRESHOLD_MS;
   }
 }

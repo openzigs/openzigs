@@ -23,7 +23,7 @@ export interface TokenBurnSummary {
  */
 export class DigestGenerator {
   /** Generate a digest record from aggregated results. */
-  generate(report: DigestReport): DigestRecord {
+  async generate(report: DigestReport): Promise<DigestRecord> {
     const { taskReview, promptAudit, tokenBurn } = report;
     const now = new Date().toISOString();
 
@@ -53,7 +53,7 @@ export class DigestGenerator {
     };
 
     // Persist to JSONL
-    void appendDigestRecord(record);
+    await appendDigestRecord(record);
 
     return record;
   }

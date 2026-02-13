@@ -308,14 +308,15 @@ io.on("connection", (socket) => {
 
 // Wire Sentinel Socket.IO event forwarding
 sentinel.setIO(io);
-for (const event of ["sentinel:check-complete", "sentinel:alert", "sentinel:digest"] as const) {
-  sentinel.on(event, (payload: unknown) => {
-    io.emit(event, payload);
-  });
-}
 if (sentinelConfig.enabled) {
-  void sentinel.start();
-  logger.info("Sentinel autonomous monitor started");
+  void sentinel.start()
+    .then(() => {
+      logger.info("Sentinel autonomous monitor started");
+    })
+    .catch((error) => {
+      const details = error instanceof Error ? error.message : String(error);
+      logger.error(`Failed to start Sentinel autonomous monitor: ${details}`);
+    });
 }
 
 // Wire NotificationDispatcher now that we have the Socket.IO server
@@ -669,27 +670,19 @@ httpServer.listen(port, () => {
 });
 
 // Clean up Chrome + Scheduler + Tasks + Database + Sidecars + Local MCP servers on process exit
-process.on("SIGINT", () => {
-  void sentinel.stop();
+const gracefulShutdown = () => {
   scheduler.stopAll();
-  void taskWorker.stop();
   closeDatabase();
   killChrome();
   void Promise.all([
+    sentinel.stop(),
+    taskWorker.stop(),
     sidecarManager.stopAll(),
     localServerManager.stopAll(),
   ]).finally(() => process.exit(0));
-});
-process.on("SIGTERM", () => {
-  void sentinel.stop();
-  scheduler.stopAll();
-  void taskWorker.stop();
-  closeDatabase();
-  killChrome();
-  void Promise.all([
-    sidecarManager.stopAll(),
-    localServerManager.stopAll(),
-  ]).finally(() => process.exit(0));
-});
+};
+
+process.on("SIGINT", gracefulShutdown);
+process.on("SIGTERM", gracefulShutdown);
 
 export { app, httpServer };

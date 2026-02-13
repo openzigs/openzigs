@@ -17,7 +17,7 @@ const makeTaskReview = (overrides: Partial<TaskReviewResult> = {}): TaskReviewRe
 });
 
 describe("DigestGenerator", () => {
-  it("generates a digest record from task review data", () => {
+  it("generates a digest record from task review data", async () => {
     const generator = new DigestGenerator();
     const report: DigestReport = {
       taskReview: makeTaskReview(),
@@ -25,7 +25,7 @@ describe("DigestGenerator", () => {
       tokenBurn: null,
     };
 
-    const record = generator.generate(report);
+    const record = await generator.generate(report);
 
     expect(record.timestamp).toBeTruthy();
     expect(record.taskSummary.completed).toBe(8);
@@ -37,7 +37,7 @@ describe("DigestGenerator", () => {
     expect(record.promptAudit).toBeNull();
   });
 
-  it("includes prompt audit data when available", () => {
+  it("includes prompt audit data when available", async () => {
     const generator = new DigestGenerator();
     const report: DigestReport = {
       taskReview: makeTaskReview(),
@@ -49,14 +49,14 @@ describe("DigestGenerator", () => {
       tokenBurn: null,
     };
 
-    const record = generator.generate(report);
+    const record = await generator.generate(report);
 
     expect(record.promptAudit).not.toBeNull();
     expect(record.promptAudit!.sampledCount).toBe(5);
     expect(record.promptAudit!.avgScore).toBeCloseTo(7.5);
   });
 
-  it("includes token burn data when available", () => {
+  it("includes token burn data when available", async () => {
     const generator = new DigestGenerator();
     const report: DigestReport = {
       taskReview: makeTaskReview(),
@@ -68,14 +68,14 @@ describe("DigestGenerator", () => {
       },
     };
 
-    const record = generator.generate(report);
+    const record = await generator.generate(report);
 
     expect(record.tokenBurn).not.toBeNull();
     expect(record.tokenBurn!.total).toBe(50000);
     expect(record.tokenBurn!.topConsumer?.goal).toBe("Research task");
   });
 
-  it("formatDigest produces human-readable text", () => {
+  it("formatDigest produces human-readable text", async () => {
     const generator = new DigestGenerator();
     const report: DigestReport = {
       taskReview: makeTaskReview({ completed: 10, failed: 2, cancelled: 0, successRate: 0.833 }),
@@ -91,7 +91,7 @@ describe("DigestGenerator", () => {
       },
     };
 
-    const record = generator.generate(report);
+    const record = await generator.generate(report);
     const text = generator.formatDigest(record);
 
     expect(text).toContain("Daily Digest");
@@ -103,7 +103,7 @@ describe("DigestGenerator", () => {
     expect(text).toContain("8.0/10");
   });
 
-  it("formatDigest handles record with no optional data gracefully", () => {
+  it("formatDigest handles record with no optional data gracefully", async () => {
     const generator = new DigestGenerator();
     const report: DigestReport = {
       taskReview: makeTaskReview({ completed: 5, failed: 0, cancelled: 0, successRate: 1 }),
@@ -111,7 +111,7 @@ describe("DigestGenerator", () => {
       tokenBurn: null,
     };
 
-    const record = generator.generate(report);
+    const record = await generator.generate(report);
     const text = generator.formatDigest(record);
 
     expect(text).toContain("Daily Digest");

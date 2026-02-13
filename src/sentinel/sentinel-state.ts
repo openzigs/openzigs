@@ -23,6 +23,8 @@ export const SentinelConfigSchema = z.object({
   model: z.string().default("gpt-4o-mini"),
   checkIntervalMinutes: z.number().min(1).default(15),
   jitterMinutes: z.number().min(0).default(15),
+  slowTaskThresholdMinutes: z.number().min(1).default(5),
+  orphanTaskThresholdMinutes: z.number().min(1).default(30),
   digestHour: z.number().min(0).max(23).default(9),
   auditHour: z.number().min(0).max(23).default(2),
   consecutiveFailureThreshold: z.number().min(1).default(3),

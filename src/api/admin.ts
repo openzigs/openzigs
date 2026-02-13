@@ -1827,14 +1827,10 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
     });
 
     router.get("/sentinel/digests", async (req, res) => {
-      const limitRaw = req.query.limit;
-      let limit = 20;
-      if (typeof limitRaw === "string") {
-        const parsedLimit = parseInt(limitRaw, 10);
-        if (!isNaN(parsedLimit) && parsedLimit > 0) {
-          limit = parsedLimit;
-        }
-      }
+      const parsedLimit = typeof req.query.limit === "string"
+        ? Number.parseInt(req.query.limit, 10)
+        : Number.NaN;
+      const limit = Number.isFinite(parsedLimit) && parsedLimit > 0 ? parsedLimit : 20;
       try {
         const digests = await sentinel.getDigestHistory(limit);
         return res.json({ digests });

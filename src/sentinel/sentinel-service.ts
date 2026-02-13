@@ -60,6 +60,7 @@ export class SentinelService extends EventEmitter {
   private checkTask: ScheduledTask | null = null;
   private digestTask: ScheduledTask | null = null;
   private auditTask: ScheduledTask | null = null;
+  private checkTimers = new Set<ReturnType<typeof setTimeout>>();
   private running = false;
   private lastCheckScheduledAt: Date | null = null;
 
@@ -122,11 +123,13 @@ export class SentinelService extends EventEmitter {
     this.checkTask = cron.schedule(cronExpr, () => {
       // Apply jitter: random delay between 0 and jitterMinutes
       const jitterMs = Math.floor(Math.random() * this.config.jitterMinutes * 60_000);
-      setTimeout(() => {
+      const timer = setTimeout(() => {
+        this.checkTimers.delete(timer);
         void this.runCheck().catch((err) => {
           logger.error(`Sentinel check failed: ${err instanceof Error ? err.message : String(err)}`);
         });
       }, jitterMs);
+      this.checkTimers.add(timer);
     });
 
     this.lastCheckScheduledAt = this.clock();
@@ -163,6 +166,10 @@ export class SentinelService extends EventEmitter {
     this.checkTask = null;
     this.digestTask = null;
     this.auditTask = null;
+    for (const timer of this.checkTimers) {
+      clearTimeout(timer);
+    }
+    this.checkTimers.clear();
 
     this.state.enabled = false;
     await writeState(this.state);
@@ -227,13 +234,13 @@ export class SentinelService extends EventEmitter {
     }
     this.isAuditing = true;
     try {
-    logger.info("Sentinel: running prompt audit...");
-    const result = await this.promptAuditor.audit();
-    this.state.lastPromptAuditAt = this.clock().toISOString();
-    this.pendingAuditResult = result;
-    await writeState(this.state);
-    logger.info(`Sentinel audit complete: ${result.sampledCount} prompts sampled, avg score ${result.averageScore.toFixed(1)}/10`);
-    return result;
+      logger.info("Sentinel: running prompt audit...");
+      const result = await this.promptAuditor.audit();
+      this.state.lastPromptAuditAt = this.clock().toISOString();
+      this.pendingAuditResult = result;
+      await writeState(this.state);
+      logger.info(`Sentinel audit complete: ${result.sampledCount} prompts sampled, avg score ${result.averageScore.toFixed(1)}/10`);
+      return result;
     } finally {
       this.isAuditing = false;
     }
@@ -247,30 +254,30 @@ export class SentinelService extends EventEmitter {
     }
     this.isDigesting = true;
     try {
-    logger.info("Sentinel: generating daily digest...");
+      logger.info("Sentinel: generating daily digest...");
 
-    // Run a check first to get fresh data
-    const taskReview = await this.runCheck();
+      // Run a check first to get fresh data
+      const taskReview = await this.runCheck();
 
-    const digest = this.digestGenerator.generate({
-      taskReview,
-      promptAudit: this.pendingAuditResult,
-      tokenBurn: null, // Token burn from observability if available
-    });
+      const digest = await this.digestGenerator.generate({
+        taskReview,
+        promptAudit: this.pendingAuditResult,
+        tokenBurn: null, // Token burn from observability if available
+      });
 
-    this.state.lastDigestAt = this.clock().toISOString();
-    this.pendingAuditResult = null; // Consumed by digest
-    await writeState(this.state);
+      this.state.lastDigestAt = this.clock().toISOString();
+      this.pendingAuditResult = null; // Consumed by digest
+      await writeState(this.state);
 
-    // Emit Socket.IO event
-    if (this.io) {
-      this.io.emit("sentinel:digest", digest);
-    }
+      // Emit Socket.IO event
+      if (this.io) {
+        this.io.emit("sentinel:digest", digest);
+      }
 
-    this.emit("digest:generated", digest);
-    logger.info("Sentinel daily digest generated and delivered");
+      this.emit("digest:generated", digest);
+      logger.info("Sentinel daily digest generated and delivered");
 
-    return digest;
+      return digest;
     } finally {
       this.isDigesting = false;
     }

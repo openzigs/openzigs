@@ -134,6 +134,8 @@ export type SentinelAppConfig = {
   model?: string;
   checkIntervalMinutes?: number;
   jitterMinutes?: number;
+  slowTaskThresholdMinutes?: number;
+  orphanTaskThresholdMinutes?: number;
   digestHour?: number;
   auditHour?: number;
   consecutiveFailureThreshold?: number;
@@ -343,6 +345,8 @@ const appConfigSchema = z.object({
     model: z.string().optional(),
     checkIntervalMinutes: z.number().optional(),
     jitterMinutes: z.number().optional(),
+    slowTaskThresholdMinutes: z.number().optional(),
+    orphanTaskThresholdMinutes: z.number().optional(),
     digestHour: z.number().optional(),
     auditHour: z.number().optional(),
     consecutiveFailureThreshold: z.number().optional(),

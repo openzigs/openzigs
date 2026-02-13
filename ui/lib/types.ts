@@ -391,7 +391,7 @@ export type SentinelAlert = {
   priority: "critical" | "warning";
   message: string;
   timestamp: string;
-  metadata?: Record<string, unknown>;
+  data?: Record<string, unknown>;
 };
 
 export type DigestRecord = {
