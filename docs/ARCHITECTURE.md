@@ -2202,3 +2202,86 @@ The Sentinel panel appears on the Admin page (`/admin`) under "Sentinel Monitor"
 - **Status report**: `~/.openzigs/sentinel/status.md` — human-readable Markdown digest (auto-generated when `persistMarkdownDigest: true`)
 
 ### Tracking: [Epic #179](https://github.com/mgcronin/openzigs/issues/179) → [Epic #194](https://github.com/mgcronin/openzigs/issues/194)
+
+---
+
+## Local Knowledge Base — Markdown-First RAG (Epic #215)
+
+The Knowledge subsystem provides a **local-first Retrieval-Augmented Generation (RAG)** pipeline that indexes files from a user-managed directory into an embedded vector database. The AI can then search this knowledge base via the always-on `search-knowledge` MCP tool, grounding responses in the user's own documentation, notes, and code.
+
+### Architecture
+
+```mermaid
+graph LR
+    subgraph Ingestion["Ingestion Pipeline"]
+        direction TB
+        FS["File Scanner<br/>(chokidar watcher)"]
+        CH["Markdown-Aware<br/>Chunker"]
+        EM["Local Embedder<br/>(FNV-1a + n-grams)"]
+        LDB["LanceDB Store<br/>(384-dim vectors)"]
+        FS --> CH --> EM --> LDB
+    end
+
+    subgraph Query["Query Path"]
+        direction TB
+        MCP["search-knowledge<br/>MCP Tool"]
+        QEM["Query Embedder"]
+        VS["Vector Search<br/>(L2 distance)"]
+        MCP --> QEM --> VS
+    end
+
+    LDB -.-> VS
+    VS --> RES["Ranked Results<br/>(score, text, source)"]
+
+    style Ingestion fill:#1b2d1b,stroke:#3a8b3a,color:#fff
+    style Query fill:#1a1a2e,stroke:#16213e,color:#fff
+```
+
+### Component Design
+
+| Component | File | Responsibility |
+|---|---|---|
+| **Types** | `src/knowledge/types.ts` | `KnowledgeDocument`, `KnowledgeChunk`, `KnowledgeSearchResult`, `KnowledgeConfig` types and defaults |
+| **Chunker** | `src/knowledge/chunker.ts` | Markdown-aware text splitting: headings → paragraphs → sentences, with configurable chunk size and overlap |
+| **Embedder** | `src/knowledge/embedder.ts` | Local deterministic embedding (384-dim): FNV-1a hash for token→position mapping, TF weighting, character 3-gram features, L2 normalization. No external API required. |
+| **LanceDB Store** | `src/knowledge/lancedb-store.ts` | Vector database wrapper: upsert chunks, semantic search (L2 distance → similarity score), delete by document ID |
+| **Ingestion Service** | `src/knowledge/knowledge-service.ts` | Central coordinator (`EventEmitter`): directory scanning, file watching (chokidar), SHA-256 change detection, chunk→embed→store pipeline |
+| **API Router** | `src/api/knowledge.ts` | REST endpoints for stats, documents, search, reindex, delete (mounted at `/api/admin/knowledge`) |
+| **MCP Tool** | `src/mcp/tools/knowledge-tools.ts` | `search-knowledge` tool definition — always-on, risk level `low`, delegates to `KnowledgeIngestionService.search()` |
+| **UI Page** | `ui/app/knowledge/page.tsx` | Knowledge Manager page with Overview, Documents, and Search tabs |
+
+### Embedding Strategy
+
+The embedder uses a **local, deterministic hashing approach** rather than a neural network model:
+
+1. **Tokenization**: Text is lowercased, split on non-alphanumeric characters
+2. **Token Features**: Each token is hashed (FNV-1a) to a position in the 384-dim vector, weighted by term frequency
+3. **Character N-grams**: 3-character sliding windows add sub-word features for fuzzy matching
+4. **L2 Normalization**: Final vector is unit-normalized for cosine-compatible distance computation
+
+This approach trades some semantic accuracy for **zero external dependencies**, **deterministic output**, and **instant computation** — suitable for a local-first knowledge base where exact keyword and n-gram overlap captures most retrieval needs.
+
+### Change Detection
+
+Files are tracked by a deterministic document ID (SHA-256 of the relative path). On each scan:
+
+1. File content is hashed (SHA-256)
+2. If the hash matches the stored hash → skip (no re-index)
+3. If changed → delete old chunks, re-chunk, re-embed, store
+4. If file deleted → remove chunks from the vector store
+
+### Integration Points
+
+- **Server startup** (`src/server.ts`): `KnowledgeIngestionService` is instantiated and started in background after the HTTP server binds
+- **Graceful shutdown**: Service `stop()` is called in the shutdown handler alongside other subsystems
+- **Socket.IO events**: 7 knowledge events (`document:indexed`, `document:failed`, `document:deleted`, `indexing:started`, `indexing:completed`, `watcher:ready`, `watcher:error`) are forwarded to connected clients
+- **MCP registration**: `search-knowledge` is registered with `knowledgeService` reference; added to `ALWAYS_ON_TOOLS` so it's available in every conversation
+- **Tool category**: New `"knowledge"` category in `ToolCategory` union type
+
+### Data Storage
+
+- **Knowledge directory**: `~/.openzigs/knowledge/` (user-managed files)
+- **LanceDB database**: `~/.openzigs/knowledge/.lancedb/` (vector index, auto-created)
+- **Table**: `knowledge_chunks` (columns: `id`, `documentId`, `text`, `heading`, `sourcePath`, `sourceType`, `chunkIndex`, `vector`)
+
+### Tracking: [Epic #215](https://github.com/mgcronin/openzigs/issues/215)

@@ -14,6 +14,7 @@ const NAV_ITEMS = [
   { href: "/tasks", label: "Tasks" },
   { href: "/admin/webhooks", label: "Webhooks" },
   { href: "/admin/post-actions", label: "Post-Actions" },
+  { href: "/knowledge", label: "Knowledge" },
 ];
 
 export const NavBar = () => {

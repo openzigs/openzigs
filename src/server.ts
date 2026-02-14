@@ -39,6 +39,8 @@ import { LocalMcpServerManager } from "./mcp/local-mcp-server-manager.js";
 import { registerBuiltinPostActions } from "./tasks/post-actions.js";
 import { CustomPostActionManager } from "./tasks/custom-post-actions.js";
 import { SentinelService, SentinelConfigSchema } from "./sentinel/index.js";
+import { KnowledgeIngestionService } from "./knowledge/index.js";
+import { createKnowledgeRouter } from "./api/knowledge.js";
 
 // Register built-in post-action types (create-github-issues, send-webhook, etc.)
 registerBuiltinPostActions();
@@ -233,6 +235,19 @@ const copilot = new CopilotWrapperService({
 });
 copilotRef = copilot;
 
+// ── Knowledge Ingestion Service ──
+const knowledgeConfig = (config as Record<string, unknown>).knowledge as Record<string, unknown> | undefined;
+const knowledgeService = new KnowledgeIngestionService({
+  config: {
+    enabled: knowledgeConfig?.enabled !== false,
+    directory: typeof knowledgeConfig?.directory === "string" ? knowledgeConfig.directory : undefined,
+    chunkSize: typeof knowledgeConfig?.chunkSize === "number" ? knowledgeConfig.chunkSize : undefined,
+    chunkOverlap: typeof knowledgeConfig?.chunkOverlap === "number" ? knowledgeConfig.chunkOverlap : undefined,
+    maxResults: typeof knowledgeConfig?.maxResults === "number" ? knowledgeConfig.maxResults : undefined,
+    watchEnabled: knowledgeConfig?.watchEnabled !== false,
+  } as Partial<import("./knowledge/types.js").KnowledgeConfig>,
+});
+
 registerMcpTools(toolRegistry, {
   allowedDirs: allowedDirs.length > 0 ? allowedDirs : [process.cwd(), os.tmpdir(), os.homedir(), "/tmp", "/private/tmp"],
   shellAllowlist: (process.env.OPENZIGS_SHELL_ALLOWLIST ?? "git,find,ls,cat,head,tail,grep,wc,echo,pwd,mkdir,cp,mv,rm,which,date,curl,bash,sh,java,javac,python3,node").split(",").map(s => s.trim()).filter(Boolean),
@@ -256,6 +271,7 @@ registerMcpTools(toolRegistry, {
   githubSidecarUrl: resolveSidecarUrl("github", "MCP_GITHUB_URL", 5304),
   githubToken: process.env.GITHUB_PERSONAL_ACCESS_TOKEN,
   localServerManager,
+  knowledgeService,
 });
 
 // ── Task Background Worker ──
@@ -284,6 +300,20 @@ app.use("/api/models", modelsRouter);
 // Admin API routes (no auth for local dev; gate behind auth in prod)
 const adminRouter = createAdminRouter({ toolRegistry, sidecarManager, localServerManager, promptManager, scheduler, personalityManager, sessionManager, copilot, taskWorker, taskEngine, webhookManager, customPostActionManager, sentinel });
 app.use("/api/admin", adminRouter);
+
+// Knowledge Base API routes
+const knowledgeRouter = createKnowledgeRouter({ knowledgeService });
+app.use("/api/admin/knowledge", knowledgeRouter);
+
+// Start the Knowledge Ingestion Service in the background
+void knowledgeService.start()
+  .then(() => {
+    logger.info("Knowledge Ingestion Service started");
+  })
+  .catch((error) => {
+    const details = error instanceof Error ? error.message : String(error);
+    logger.error(`Failed to start Knowledge Ingestion Service: ${details}`);
+  });
 
 // Webhook trigger routes (public-facing)
 const webhookRouter = createWebhookRouter({ webhookManager, taskEngine, promptManager });
@@ -335,6 +365,21 @@ if (sentinelConfig.enabled) {
       const details = error instanceof Error ? error.message : String(error);
       logger.error(`Failed to start Sentinel autonomous monitor: ${details}`);
     });
+}
+
+// Wire Knowledge Base Socket.IO event forwarding
+for (const event of [
+  "document:indexed",
+  "document:failed",
+  "document:deleted",
+  "indexing:started",
+  "indexing:completed",
+  "watcher:ready",
+  "watcher:error",
+] as const) {
+  knowledgeService.on(event, (data: unknown) => {
+    io.emit(`knowledge:${event}`, data);
+  });
 }
 
 // Wire NotificationDispatcher now that we have the Socket.IO server
@@ -697,6 +742,7 @@ const gracefulShutdown = () => {
     taskWorker.stop(),
     sidecarManager.stopAll(),
     localServerManager.stopAll(),
+    knowledgeService.stop(),
   ]).finally(() => process.exit(0));
 };
 

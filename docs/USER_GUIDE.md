@@ -3235,6 +3235,146 @@ curl -X POST http://localhost:3001/api/admin/sentinel/run-now
 
 ---
 
+## Knowledge Manager — Local Knowledge Base (RAG)
+
+The Knowledge Manager provides a **Retrieval-Augmented Generation (RAG)** pipeline that indexes local files (Markdown, code, text, JSON, etc.) into an embedded vector database and exposes them to the AI via the `search-knowledge` tool. This lets the AI ground its responses in your own documentation, notes, and code — without sending anything to external services.
+
+### How It Works
+
+1. **Ingest**: Files in your knowledge directory (`~/.openzigs/knowledge/` by default) are scanned, chunked, and embedded.
+2. **Watch**: A file watcher (chokidar) detects changes, additions, and deletions in real time.
+3. **Search**: The `search-knowledge` MCP tool performs semantic vector search against the index.
+4. **Dedup**: Content hashing (SHA-256) ensures unchanged files are not re-indexed.
+
+### Setting Up the Knowledge Directory
+
+Create the knowledge directory and drop files into it:
+
+```bash
+mkdir -p ~/.openzigs/knowledge
+# Copy your docs, notes, code snippets, etc.
+cp -r ~/my-project/docs ~/.openzigs/knowledge/
+cp ~/notes/*.md ~/.openzigs/knowledge/
+```
+
+The service automatically indexes all supported files on startup and watches for changes.
+
+### Supported File Types
+
+| Extension | Source Type |
+|---|---|
+| `.md` | Markdown |
+| `.txt` | Text |
+| `.json` | JSON |
+| `.csv` | CSV |
+| `.html` | HTML |
+| `.py` | Code (Python) |
+| `.ts`, `.js` | Code (TypeScript/JavaScript) |
+| `.go` | Code (Go) |
+| `.rs` | Code (Rust) |
+| `.java` | Code (Java) |
+| `.c`, `.cpp`, `.h` | Code (C/C++) |
+| `.rb` | Code (Ruby) |
+| `.sh`, `.bash` | Code (Shell) |
+| `.yaml`, `.yml` | YAML |
+| `.toml` | TOML |
+| `.xml` | XML |
+| `.sql` | SQL |
+| `.r` | Code (R) |
+| `.swift` | Code (Swift) |
+| `.kt` | Code (Kotlin) |
+
+### Using the `search-knowledge` Tool
+
+The `search-knowledge` tool is **always-on** — the AI can use it in any conversation without explicit enabling. It accepts:
+
+- **`query`** (required): Natural language search query
+- **`limit`** (optional): Maximum results to return (default: 10)
+
+Example AI interaction:
+
+> **You**: What does our deployment guide say about rollback procedures?
+>
+> **AI**: *(automatically calls search-knowledge with "deployment rollback procedures")* Based on your knowledge base, the deployment guide at `docs/deployment.md` describes the following rollback procedure…
+
+### Knowledge Manager UI
+
+Navigate to **Knowledge** in the top nav bar to access the Knowledge Manager page.
+
+![Knowledge Manager page](images/knowledge-manager.png)
+
+#### Overview Tab
+
+Displays index statistics:
+
+- **Total Documents**: Number of indexed files
+- **Total Chunks**: Number of text chunks in the vector database
+- **Source Types**: Breakdown of indexed file types
+
+#### Documents Tab
+
+Lists all indexed documents with:
+
+- File path, source type, chunk count, and last-indexed timestamp
+- **Re-index** button per document to force re-ingestion
+- **Remove** button to delete a document from the index
+- **Re-index All** button to rebuild the entire index
+
+#### Search Tab
+
+Interactive semantic search interface:
+
+1. Enter a natural language query
+2. View ranked results with relevance scores (percentage badges)
+3. Each result shows the source file, heading context, and matching text chunk
+
+### API Endpoints
+
+All knowledge endpoints are under `/api/admin/knowledge`:
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/stats` | Index statistics (documents, chunks, source types) |
+| `GET` | `/documents` | List all indexed documents |
+| `POST` | `/search` | Semantic search (`{ "query": "...", "limit": 10 }`) |
+| `POST` | `/reindex` | Re-index all documents |
+| `POST` | `/reindex/:documentId` | Re-index a specific document |
+| `DELETE` | `/documents/:documentId` | Remove a document from the index |
+| `GET` | `/config` | Current knowledge configuration |
+
+### Configuration Options
+
+Configure the knowledge base in your config file (`~/.openzigs/config.json`):
+
+```json
+{
+  "knowledge": {
+    "directory": "~/.openzigs/knowledge",
+    "chunkSize": 1000,
+    "chunkOverlap": 200,
+    "maxResults": 10,
+    "watchEnabled": true
+  }
+}
+```
+
+| Key | Default | Description |
+|---|---|---|
+| `directory` | `~/.openzigs/knowledge` | Directory to watch and index |
+| `chunkSize` | `1000` | Maximum characters per text chunk |
+| `chunkOverlap` | `200` | Character overlap between consecutive chunks |
+| `maxResults` | `10` | Default number of search results |
+| `watchEnabled` | `true` | Enable real-time file watching |
+
+### Architecture Notes
+
+- **Embedding**: Uses a local deterministic hashing-based embedder (384-dimension vectors, FNV-1a + character n-grams). No external API calls required.
+- **Vector Store**: [LanceDB](https://lancedb.com/) embedded database stored at `~/.openzigs/knowledge/.lancedb`.
+- **Chunking**: Markdown-aware splitting that preserves heading context. Headings are extracted and stored as metadata for each chunk.
+- **Change Detection**: SHA-256 content hashing — files are only re-indexed when their content actually changes.
+
+---
+
 ## Troubleshooting
 
 | Symptom | Likely Cause | Fix |

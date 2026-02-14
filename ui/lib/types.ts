@@ -435,3 +435,52 @@ export type PromptRecommendation = {
   suggestions: string;
   rewrite: string | null;
 };
+
+/* ── Knowledge Base types (#215) ── */
+
+export type KnowledgeSourceType = "markdown" | "text" | "pdf" | "docx" | "json" | "csv" | "html" | "code";
+export type DocumentStatus = "pending" | "processing" | "indexed" | "failed";
+
+export type KnowledgeDocument = {
+  id: string;
+  filePath: string;
+  relativePath: string;
+  sourceType: KnowledgeSourceType;
+  sizeBytes: number;
+  contentHash: string;
+  status: DocumentStatus;
+  chunkCount: number;
+  indexedAt: string | null;
+  createdAt: string;
+  error?: string;
+};
+
+export type KnowledgeSearchResult = {
+  text: string;
+  sourcePath: string;
+  score: number;
+  sectionHeading?: string;
+  documentId: string;
+  chunkIndex: number;
+};
+
+export type KnowledgeStats = {
+  totalDocuments: number;
+  totalChunks: number;
+  indexedDocuments: number;
+  failedDocuments: number;
+  pendingDocuments: number;
+  totalSizeBytes: number;
+  lastIndexedAt: string | null;
+};
+
+export type KnowledgeConfig = {
+  enabled: boolean;
+  directory: string;
+  chunkSize: number;
+  chunkOverlap: number;
+  maxResults: number;
+  includeExtensions: string[];
+  excludePatterns: string[];
+  watchEnabled: boolean;
+};

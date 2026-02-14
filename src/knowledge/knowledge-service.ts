@@ -1,0 +1,468 @@
+/**
+ * Knowledge Ingestion Service — the central coordinator for the knowledge base.
+ *
+ * Responsibilities:
+ * - Watch a knowledge directory for file changes (add/modify/delete).
+ * - Read and convert files to plain text.
+ * - Chunk text and generate embeddings.
+ * - Store vectors in LanceDB.
+ * - Track document metadata (status, hashes, chunk counts).
+ * - Expose stats and search functionality.
+ */
+
+import { EventEmitter } from "node:events";
+import fs from "node:fs/promises";
+import path from "node:path";
+import os from "node:os";
+import { createHash } from "node:crypto";
+import { watch, type FSWatcher } from "chokidar";
+import { chunkText } from "./chunker.js";
+import { generateEmbedding } from "./embedder.js";
+import { LanceDBStore } from "./lancedb-store.js";
+import type {
+  KnowledgeDocument,
+  KnowledgeConfig,
+  KnowledgeStats,
+  KnowledgeSearchResult,
+  KnowledgeServiceEvent,
+  KnowledgeSourceType,
+  KnowledgeChunk,
+} from "./types.js";
+import { DEFAULT_KNOWLEDGE_CONFIG } from "./types.js";
+import { logger } from "../logging/logger.js";
+
+export type KnowledgeServiceOptions = {
+  config?: Partial<KnowledgeConfig>;
+};
+
+/** File extension → source type mapping. */
+const EXTENSION_MAP: Record<string, KnowledgeSourceType> = {
+  ".md": "markdown",
+  ".markdown": "markdown",
+  ".txt": "text",
+  ".text": "text",
+  ".json": "json",
+  ".csv": "csv",
+  ".html": "html",
+  ".htm": "html",
+  ".py": "code",
+  ".ts": "code",
+  ".tsx": "code",
+  ".js": "code",
+  ".jsx": "code",
+  ".go": "code",
+  ".rs": "code",
+  ".java": "code",
+  ".c": "code",
+  ".cpp": "code",
+  ".h": "code",
+  ".rb": "code",
+  ".php": "code",
+  ".swift": "code",
+  ".kt": "code",
+  ".sh": "code",
+  ".bash": "code",
+  ".zsh": "code",
+  ".yaml": "text",
+  ".yml": "text",
+  ".toml": "text",
+  ".xml": "text",
+  ".sql": "code",
+  ".r": "code",
+  ".R": "code",
+};
+
+export class KnowledgeIngestionService extends EventEmitter {
+  private config: KnowledgeConfig;
+  private store: LanceDBStore;
+  private watcher: FSWatcher | null = null;
+  private documents = new Map<string, KnowledgeDocument>();
+  private running = false;
+
+  constructor(options: KnowledgeServiceOptions = {}) {
+    super();
+
+    const knowledgeDir = options.config?.directory || path.join(os.homedir(), ".openzigs", "knowledge");
+
+    this.config = {
+      ...DEFAULT_KNOWLEDGE_CONFIG,
+      ...options.config,
+      directory: knowledgeDir,
+    };
+
+    const dbPath = path.join(os.homedir(), ".openzigs", "knowledge-db");
+    this.store = new LanceDBStore({ dbPath });
+  }
+
+  /**
+   * Start the knowledge service: initialize the store, scan existing files,
+   * and start the file watcher.
+   */
+  async start(): Promise<void> {
+    if (this.running) return;
+
+    logger.info(`[Knowledge] Starting Knowledge Ingestion Service...`);
+    logger.info(`[Knowledge] Knowledge directory: ${this.config.directory}`);
+
+    // Ensure the knowledge directory exists
+    await fs.mkdir(this.config.directory, { recursive: true });
+
+    // Initialize LanceDB
+    await this.store.initialize();
+
+    // Perform initial scan
+    await this.scanDirectory();
+
+    // Start file watcher if enabled
+    if (this.config.watchEnabled) {
+      this.startWatcher();
+    }
+
+    this.running = true;
+    logger.info(`[Knowledge] Knowledge Ingestion Service started (${this.documents.size} documents)`);
+  }
+
+  /**
+   * Stop the knowledge service: close the watcher and LanceDB connection.
+   */
+  async stop(): Promise<void> {
+    if (!this.running) return;
+
+    if (this.watcher) {
+      await this.watcher.close();
+      this.watcher = null;
+    }
+
+    await this.store.close();
+    this.running = false;
+    logger.info("[Knowledge] Knowledge Ingestion Service stopped");
+  }
+
+  /**
+   * Search the knowledge base.
+   */
+  async search(query: string, limit?: number): Promise<KnowledgeSearchResult[]> {
+    const maxResults = limit ?? this.config.maxResults;
+    return this.store.search(query, maxResults);
+  }
+
+  /**
+   * Get knowledge base statistics.
+   */
+  async getStats(): Promise<KnowledgeStats> {
+    const docs = Array.from(this.documents.values());
+    const totalChunks = await this.store.countChunks();
+    const indexed = docs.filter((d) => d.status === "indexed");
+    const lastIndexed = indexed
+      .map((d) => d.indexedAt)
+      .filter(Boolean)
+      .sort()
+      .pop() ?? null;
+
+    return {
+      totalDocuments: docs.length,
+      totalChunks,
+      indexedDocuments: indexed.length,
+      failedDocuments: docs.filter((d) => d.status === "failed").length,
+      pendingDocuments: docs.filter((d) => d.status === "pending" || d.status === "processing").length,
+      totalSizeBytes: docs.reduce((sum, d) => sum + d.sizeBytes, 0),
+      lastIndexedAt: lastIndexed,
+    };
+  }
+
+  /**
+   * List all tracked documents.
+   */
+  listDocuments(): KnowledgeDocument[] {
+    return Array.from(this.documents.values()).sort(
+      (a, b) => a.relativePath.localeCompare(b.relativePath)
+    );
+  }
+
+  /**
+   * Force re-index a specific document.
+   */
+  async reindexDocument(documentId: string): Promise<void> {
+    const doc = this.documents.get(documentId);
+    if (!doc) {
+      throw new Error(`Document not found: ${documentId}`);
+    }
+    await this.indexFile(doc.filePath);
+  }
+
+  /**
+   * Force re-index all documents.
+   */
+  async reindexAll(): Promise<void> {
+    await this.scanDirectory();
+  }
+
+  /**
+   * Delete a document from the knowledge base.
+   */
+  async deleteDocument(documentId: string): Promise<void> {
+    const doc = this.documents.get(documentId);
+    if (!doc) return;
+
+    await this.store.deleteByDocumentId(documentId);
+    this.documents.delete(documentId);
+
+    this.emitEvent({
+      type: "document:deleted",
+      documentId,
+      filePath: doc.filePath,
+    });
+  }
+
+  /**
+   * Get the knowledge configuration.
+   */
+  getConfig(): KnowledgeConfig {
+    return { ...this.config };
+  }
+
+  // ── Private methods ──
+
+  /**
+   * Scan the knowledge directory and index all supported files.
+   */
+  private async scanDirectory(): Promise<void> {
+    const startTime = Date.now();
+    const files = await this.collectFiles(this.config.directory);
+
+    this.emitEvent({
+      type: "indexing:started",
+      fileCount: files.length,
+    });
+
+    let indexed = 0;
+    let failed = 0;
+
+    for (const filePath of files) {
+      try {
+        await this.indexFile(filePath);
+        indexed++;
+      } catch (error) {
+        failed++;
+        const msg = error instanceof Error ? error.message : String(error);
+        logger.warn(`[Knowledge] Failed to index ${filePath}: ${msg}`);
+      }
+    }
+
+    // Clean up documents that no longer exist on disk
+    for (const [docId, doc] of this.documents) {
+      const exists = files.includes(doc.filePath);
+      if (!exists) {
+        await this.store.deleteByDocumentId(docId);
+        this.documents.delete(docId);
+      }
+    }
+
+    const duration = Date.now() - startTime;
+    this.emitEvent({
+      type: "indexing:completed",
+      indexed,
+      failed,
+      duration,
+    });
+
+    logger.info(`[Knowledge] Scan complete: ${indexed} indexed, ${failed} failed (${duration}ms)`);
+  }
+
+  /**
+   * Recursively collect all supported files from a directory.
+   */
+  private async collectFiles(dir: string): Promise<string[]> {
+    const files: string[] = [];
+
+    try {
+      const entries = await fs.readdir(dir, { withFileTypes: true });
+
+      for (const entry of entries) {
+        const fullPath = path.join(dir, entry.name);
+
+        // Skip excluded patterns
+        if (this.isExcluded(entry.name)) continue;
+
+        if (entry.isDirectory()) {
+          const nested = await this.collectFiles(fullPath);
+          files.push(...nested);
+        } else if (entry.isFile() && this.isSupportedFile(entry.name)) {
+          files.push(fullPath);
+        }
+      }
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      logger.warn(`[Knowledge] Error scanning directory ${dir}: ${msg}`);
+    }
+
+    return files;
+  }
+
+  /**
+   * Index a single file: read, hash, chunk, embed, store.
+   */
+  private async indexFile(filePath: string): Promise<void> {
+    const relativePath = path.relative(this.config.directory, filePath);
+    const documentId = this.computeDocumentId(filePath);
+    const ext = path.extname(filePath).toLowerCase();
+    const sourceType = EXTENSION_MAP[ext] ?? "text";
+
+    // Read file content
+    const content = await fs.readFile(filePath, "utf-8");
+    const stat = await fs.stat(filePath);
+    const contentHash = this.hashContent(content);
+
+    // Check if already indexed with same hash (skip re-indexing)
+    const existing = this.documents.get(documentId);
+    if (existing && existing.contentHash === contentHash && existing.status === "indexed") {
+      return;
+    }
+
+    // Create/update document record
+    const doc: KnowledgeDocument = {
+      id: documentId,
+      filePath,
+      relativePath,
+      sourceType,
+      sizeBytes: stat.size,
+      contentHash,
+      status: "processing",
+      chunkCount: 0,
+      indexedAt: null,
+      createdAt: existing?.createdAt ?? new Date().toISOString(),
+    };
+    this.documents.set(documentId, doc);
+
+    try {
+      // Chunk the content
+      const chunks = chunkText(content, documentId, relativePath, {
+        chunkSize: this.config.chunkSize,
+        chunkOverlap: this.config.chunkOverlap,
+      });
+
+      // Generate embeddings for each chunk
+      const embeddedChunks: KnowledgeChunk[] = chunks.map((chunk) => ({
+        ...chunk,
+        vector: generateEmbedding(chunk.text),
+      }));
+
+      // Store in LanceDB
+      await this.store.addChunks(embeddedChunks);
+
+      // Update document status
+      doc.status = "indexed";
+      doc.chunkCount = embeddedChunks.length;
+      doc.indexedAt = new Date().toISOString();
+      doc.error = undefined;
+
+      this.emitEvent({ type: "document:indexed", document: doc });
+      logger.debug(`[Knowledge] Indexed ${relativePath} (${embeddedChunks.length} chunks)`);
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      doc.status = "failed";
+      doc.error = msg;
+      this.emitEvent({ type: "document:failed", document: doc, error: msg });
+      throw error;
+    }
+  }
+
+  /**
+   * Start the chokidar file watcher.
+   */
+  private startWatcher(): void {
+    this.watcher = watch(this.config.directory, {
+      persistent: true,
+      ignoreInitial: true,
+      depth: 10,
+      ignored: (filePath: string) => {
+        const name = path.basename(filePath);
+        return this.isExcluded(name);
+      },
+    });
+
+    this.watcher.on("add", (filePath: string) => {
+      if (this.isSupportedFile(filePath)) {
+        void this.indexFile(filePath).catch((err) => {
+          const msg = err instanceof Error ? err.message : String(err);
+          logger.warn(`[Knowledge] Watcher add failed for ${filePath}: ${msg}`);
+        });
+      }
+    });
+
+    this.watcher.on("change", (filePath: string) => {
+      if (this.isSupportedFile(filePath)) {
+        void this.indexFile(filePath).catch((err) => {
+          const msg = err instanceof Error ? err.message : String(err);
+          logger.warn(`[Knowledge] Watcher change failed for ${filePath}: ${msg}`);
+        });
+      }
+    });
+
+    this.watcher.on("unlink", (filePath: string) => {
+      const documentId = this.computeDocumentId(filePath);
+      void this.deleteDocument(documentId).catch((err) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        logger.warn(`[Knowledge] Watcher unlink failed for ${filePath}: ${msg}`);
+      });
+    });
+
+    this.watcher.on("ready", () => {
+      this.emitEvent({ type: "watcher:ready" });
+      logger.info("[Knowledge] File watcher ready");
+    });
+
+    this.watcher.on("error", (error: unknown) => {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      this.emitEvent({ type: "watcher:error", error: errorMsg });
+      logger.error(`[Knowledge] File watcher error: ${errorMsg}`);
+    });
+  }
+
+  /**
+   * Check if a filename/directory should be excluded.
+   */
+  private isExcluded(name: string): boolean {
+    return this.config.excludePatterns.some((pattern) => {
+      if (pattern.includes("*")) {
+        // Simple glob matching
+        const regex = new RegExp("^" + pattern.replace(/\*/g, ".*") + "$");
+        return regex.test(name);
+      }
+      return name === pattern;
+    });
+  }
+
+  /**
+   * Check if a file is a supported content type.
+   */
+  private isSupportedFile(filePath: string): boolean {
+    const ext = path.extname(filePath).toLowerCase();
+    if (this.config.includeExtensions.length > 0) {
+      return this.config.includeExtensions.includes(ext);
+    }
+    return ext in EXTENSION_MAP;
+  }
+
+  /**
+   * Compute a deterministic document ID from a file path.
+   */
+  private computeDocumentId(filePath: string): string {
+    const relativePath = path.relative(this.config.directory, filePath);
+    return createHash("sha256").update(relativePath).digest("hex").slice(0, 16);
+  }
+
+  /**
+   * Compute a content hash for change detection.
+   */
+  private hashContent(content: string): string {
+    return createHash("sha256").update(content).digest("hex");
+  }
+
+  /**
+   * Type-safe event emission.
+   */
+  private emitEvent(event: KnowledgeServiceEvent): void {
+    this.emit(event.type, event);
+  }
+}

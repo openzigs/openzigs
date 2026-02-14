@@ -22,6 +22,7 @@ import { createOrchestrateAgentsTools } from "./tools/orchestrate-agents.js";
 import { createSystemConfigTools } from "./tools/system-config-tools.js";
 import { createDocumentationTools } from "./tools/documentation-tools.js";
 import { createWizardTools } from "./tools/wizard-tools.js";
+import { createKnowledgeTools } from "./tools/knowledge-tools.js";
 import { ToolRegistry, type ToolDefinition } from "./tool-registry.js";
 import type { LocalMcpServerManager } from "./local-mcp-server-manager.js";
 import { AuditLogger } from "../logging/audit-logger.js";
@@ -31,6 +32,7 @@ import type { Scheduler } from "../productivity/scheduler.js";
 import type { PersonalityManager } from "../personality/personality-manager.js";
 import type { TaskEngine } from "../tasks/task-engine.js";
 import type { CopilotWrapper } from "../copilot/copilot-wrapper.js";
+import type { KnowledgeIngestionService } from "../knowledge/index.js";
 
 export type McpServerOptions = {
   allowedDirs: string[];
@@ -62,6 +64,8 @@ export type McpServerOptions = {
   localServerManager?: LocalMcpServerManager;
   /** Per-sidecar disabled tool lists from config */
   disabledTools?: Record<string, string[]>;
+  /** Knowledge Ingestion Service for search-knowledge tool. */
+  knowledgeService?: KnowledgeIngestionService;
 };
 
 export type RegisterMcpToolsOptions = Pick<
@@ -89,6 +93,7 @@ export type RegisterMcpToolsOptions = Pick<
   | "githubToken"
   | "localServerManager"
   | "disabledTools"
+  | "knowledgeService"
 >;
 
 const readFileSchema = z.object({ path: z.string() });
@@ -493,5 +498,13 @@ export const registerMcpTools = (toolRegistry: ToolRegistry, options: RegisterMc
   const wizardTools = createWizardTools();
   for (const tool of wizardTools) {
     registerTool(tool);
+  }
+
+  // ── Knowledge Base (local RAG search) ──
+  if (options.knowledgeService) {
+    const knowledgeTools = createKnowledgeTools({ knowledgeService: options.knowledgeService });
+    for (const tool of knowledgeTools) {
+      registerTool(tool);
+    }
   }
 };

@@ -25,8 +25,10 @@
   },
   "dependencies": {
     "@github/copilot-sdk": "^0.1.20",
+    "@lancedb/lancedb": "^0.26.2",
     "@modelcontextprotocol/sdk": "^0.4.0",
     "better-sqlite3": "^12.6.2",
+    "chokidar": "^5.0.0",
     "cors": "^2.8.5",
     "discord.js": "^14.25.1",
     "dockerode": "^4.0.9",
