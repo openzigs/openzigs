@@ -76,6 +76,8 @@ const EXTENSION_MAP: Record<string, KnowledgeSourceType> = {
   // Documents (require converters)
   ".pdf": "pdf",
   ".docx": "docx",
+  ".xlsx": "xlsx",
+  ".xls": "xlsx",
   // Images (OCR via tesseract.js)
   ".jpg": "image",
   ".jpeg": "image",

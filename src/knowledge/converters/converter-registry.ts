@@ -11,6 +11,7 @@ import type { ConversionResult, ConverterRegistration } from "./types.js";
 import { createTextConverter } from "./text-converter.js";
 import { createPdfConverter } from "./pdf-converter.js";
 import { createDocxConverter } from "./docx-converter.js";
+import { createXlsxConverter } from "./xlsx-converter.js";
 import { createMediaConverter } from "./media-converter.js";
 import { createImageOcrConverter } from "./image-ocr-converter.js";
 import { terminateOcrEngine } from "./ocr-engine.js";
@@ -130,6 +131,15 @@ export async function createDefaultRegistry(): Promise<ConverterRegistry> {
     logger.info("[Knowledge] DOCX converter available (mammoth)");
   } else {
     logger.warn(`[Knowledge] DOCX converter unavailable: ${docxConverter.unavailableReason}`);
+  }
+
+  // XLSX/XLS — available if xlsx can be imported.
+  const xlsxConverter = await createXlsxConverter();
+  registry.register(xlsxConverter);
+  if (xlsxConverter.available) {
+    logger.info("[Knowledge] XLSX converter available (xlsx)");
+  } else {
+    logger.warn(`[Knowledge] XLSX converter unavailable: ${xlsxConverter.unavailableReason}`);
   }
 
   // Image OCR — available if tesseract.js is installed.

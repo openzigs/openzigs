@@ -18,6 +18,15 @@ FROM node:22-slim AS development
 
 WORKDIR /app
 
+RUN apt-get update && apt-get install -y --no-install-recommends \
+  ffmpeg \
+  imagemagick \
+  ghostscript \
+  make \
+  g++ \
+  python3 \
+  && rm -rf /var/lib/apt/lists/*
+
 RUN npm install -g pnpm@10.28.2
 
 COPY package.json pnpm-lock.yaml ./
@@ -32,6 +41,15 @@ CMD ["pnpm", "dev"]
 FROM node:22-slim
 
 WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+  ffmpeg \
+  imagemagick \
+  ghostscript \
+  make \
+  g++ \
+  python3 \
+  && rm -rf /var/lib/apt/lists/*
 
 # Copy artifacts from builder stage (dependencies and build output)
 COPY --from=builder /app/node_modules ./node_modules

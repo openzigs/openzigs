@@ -16,6 +16,43 @@ if ! command -v git >/dev/null 2>&1; then
   exit 1
 fi
 
+# ── Optional converter prerequisites (host/local runtime) ───────────────────
+install_converter_deps_with_brew() {
+  echo ""
+  echo "=== Optional Knowledge Converter Dependencies ==="
+  echo "These are required when running OpenZigs directly on your host (pnpm dev):"
+  echo "  - ffmpeg (media/audio extraction)"
+  echo "  - imagemagick + ghostscript (scanned PDF OCR rendering)"
+  echo ""
+
+  local missing=0
+  command -v ffmpeg >/dev/null 2>&1 || missing=1
+  command -v magick >/dev/null 2>&1 || missing=1
+  command -v gs >/dev/null 2>&1 || missing=1
+
+  if [ "$missing" -eq 0 ]; then
+    echo "Converter host dependencies already installed."
+    return
+  fi
+
+  if command -v brew >/dev/null 2>&1; then
+    printf "Install missing converter dependencies now with Homebrew? [Y/n]: "
+    read -r install_now
+    if [ -z "$install_now" ] || [ "$install_now" = "y" ] || [ "$install_now" = "Y" ]; then
+      brew install ffmpeg imagemagick ghostscript || true
+    else
+      echo "Skipping converter dependency install."
+    fi
+  else
+    echo "Homebrew not found. Install manually for local converter support:"
+    echo "  - ffmpeg"
+    echo "  - imagemagick"
+    echo "  - ghostscript"
+  fi
+}
+
+install_converter_deps_with_brew
+
 install_dir="$HOME/.openzigs"
 
 if [ -d "$install_dir" ]; then
@@ -112,3 +149,8 @@ echo "  docker compose down          # Stop all services"
 echo "  vim .env                     # Update API credentials"
 echo ""
 echo "MCP sidecars are automatically managed — just add credentials to .env and restart."
+echo ""
+echo "Knowledge converter notes:"
+echo "  - Excel (.xlsx/.xls), PDF, and DOCX conversion are bundled."
+echo "  - Media transcription requires whisper model download for local dev:"
+echo "      pnpm exec whisper-node download"

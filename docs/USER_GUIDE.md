@@ -13,6 +13,14 @@ Before you begin, ensure the following are installed and available:
 | **GitHub Copilot Subscription** | Individual or Business | Required for SDK access. The agent authenticates via OAuth device flow using `@github/copilot-sdk`. |
 | **Chrome** | Any recent version | Required only if you use the `browser-read` or `browser-navigate` tools. |
 
+**Knowledge converter prerequisites (Local Knowledge Base):**
+
+| Requirement | Purpose |
+|---|---|
+| **ffmpeg** | Required for media converter (`.mp4`, `.mp3`, etc.) to extract 16kHz WAV audio before transcription. |
+| **ImageMagick** + **Ghostscript** | Required for scanned PDF OCR fallback (render PDF pages to images). |
+| **Whisper model files** (`whisper-node`) | Required for media transcription. Install with `pnpm exec whisper-node download`. |
+
 **Optional API keys:**
 
 | Key | Purpose |
@@ -3265,6 +3273,11 @@ The service automatically indexes all supported files on startup and watches for
 |---|---|
 | `.md` | Markdown |
 | `.txt` | Text |
+| `.pdf` | PDF (text + OCR fallback for scanned PDFs) |
+| `.docx` | Word document (DOCX) |
+| `.xlsx`, `.xls` | Excel spreadsheet |
+| `.jpg`, `.jpeg`, `.png`, `.tiff`, `.tif`, `.bmp`, `.webp`, `.gif` | Image OCR |
+| `.mp4`, `.mp3`, `.wav`, `.m4a`, `.webm`, `.ogg`, `.flac` | Media transcription |
 | `.json` | JSON |
 | `.csv` | CSV |
 | `.html` | HTML |
@@ -3283,6 +3296,17 @@ The service automatically indexes all supported files on startup and watches for
 | `.r` | Code (R) |
 | `.swift` | Code (Swift) |
 | `.kt` | Code (Kotlin) |
+
+If **Media** appears as unavailable in the Converters tab, the usual causes are:
+
+1. `ffmpeg` is not installed or not on `PATH`.
+2. `whisper-node` model files are missing.
+
+For local development, run:
+
+```bash
+pnpm exec whisper-node download
+```
 
 ### Using the `search-knowledge` Tool
 

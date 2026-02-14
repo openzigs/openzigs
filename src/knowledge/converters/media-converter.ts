@@ -58,7 +58,18 @@ export async function createMediaConverter(): Promise<ConverterRegistration> {
     const mod: unknown = await import(moduleName).catch(() => null);
     if (mod) {
       const m = mod as Record<string, unknown>;
-      const fn = (m.default ?? m) as unknown;
+      // whisper-node export shapes seen in the wild:
+      // - default function
+      // - named export: { whisper }
+      // - default object containing .whisper
+      const defaultExport = m.default as unknown;
+      let fn: unknown = m.whisper;
+      if (typeof fn !== "function") {
+        fn =
+          (typeof defaultExport === "function")
+            ? defaultExport
+            : (defaultExport as Record<string, unknown> | null)?.whisper;
+      }
       if (typeof fn === "function") {
         whisperFn = fn as WhisperFn;
       }
@@ -72,12 +83,13 @@ export async function createMediaConverter(): Promise<ConverterRegistration> {
       name: "media",
       extensions: MEDIA_EXTENSIONS,
       available: false,
-      unavailableReason: "whisper-node not installed. Install: pnpm add whisper-node",
+      unavailableReason:
+        "whisper-node not available. Install: pnpm add whisper-node, then run: pnpm exec whisper-node download",
       convert: async () => ({
         text: "",
         success: false,
         converter: "media",
-        error: "whisper-node is not installed",
+        error: "whisper-node is not available",
       }),
     };
   }
@@ -110,6 +122,13 @@ export async function createMediaConverter(): Promise<ConverterRegistration> {
           modelName: "base.en",
           whisperOptions: { language: "en" },
         });
+
+        if (!Array.isArray(segments)) {
+          throw new Error(
+            "whisper-node returned an unexpected response. " +
+            "Run `pnpm exec whisper-node download` to ensure models are installed."
+          );
+        }
 
         const fileName = path.basename(filePath);
         const header = `# Transcript: ${fileName}\n\n`;

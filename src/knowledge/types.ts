@@ -7,7 +7,7 @@
  */
 
 /** Supported source formats for ingestion. */
-export type KnowledgeSourceType = "markdown" | "text" | "pdf" | "docx" | "json" | "csv" | "html" | "code" | "media" | "image";
+export type KnowledgeSourceType = "markdown" | "text" | "pdf" | "docx" | "xlsx" | "json" | "csv" | "html" | "code" | "media" | "image";
 
 /** Status of a document in the knowledge base. */
 export type DocumentStatus = "pending" | "processing" | "indexed" | "failed";

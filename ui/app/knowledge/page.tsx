@@ -290,7 +290,7 @@ export default function KnowledgePage() {
         <>
           <SectionCard title="Available Converters">
             <p className="mb-4 text-xs text-muted-foreground">
-              Converters automatically transform non-text files (PDFs, DOCX, audio/video) into
+                Converters automatically transform non-text files (PDFs, DOCX, XLSX, images, audio/video)
               searchable text when added to the knowledge directory.
             </p>
             {convertersQuery.isLoading ? (
