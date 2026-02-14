@@ -118,8 +118,8 @@ export type CustomAgentConfig = {
 
 // ── Native MCP Server Config (SDK-level) ──
 export type NativeMcpServerConfig =
-  | { type: "local" | "stdio"; command: string; args?: string[]; env?: Record<string, string>; cwd?: string; tools?: string[]; timeout?: number }
-  | { type: "http" | "sse"; url: string; headers?: Record<string, string>; tools?: string[]; timeout?: number };
+  | { type: "local" | "stdio"; command: string; args?: string[]; env?: Record<string, string>; cwd?: string; tools?: string[]; disabledTools?: string[]; timeout?: number }
+  | { type: "http" | "sse"; url: string; headers?: Record<string, string>; tools?: string[]; disabledTools?: string[]; timeout?: number };
 
 export type CopilotConfig = {
   provider?: CopilotProviderConfig | null;
@@ -304,6 +304,7 @@ export const mcpServerConfigSchema = z.union([
     env: z.record(z.string(), z.string()).optional(),
     cwd: z.string().optional(),
     tools: z.array(z.string()).optional(),
+    disabledTools: z.array(z.string()).optional(),
     timeout: z.number().optional(),
   }),
   z.object({
@@ -311,6 +312,7 @@ export const mcpServerConfigSchema = z.union([
     url: z.string(),
     headers: z.record(z.string(), z.string()).optional(),
     tools: z.array(z.string()).optional(),
+    disabledTools: z.array(z.string()).optional(),
     timeout: z.number().optional(),
   }),
 ]);

@@ -79,26 +79,30 @@ describe("McpEditorPanel", () => {
   it("shows command for local servers", () => {
     render(<McpEditorPanel />, { wrapper: createWrapper(mockServers) });
 
+    // Expand the local server card
+    fireEvent.click(screen.getByText("my-local-server"));
+
     expect(screen.getByText("node ./server.js")).toBeInTheDocument();
   });
 
   it("shows URL for HTTP servers", () => {
     render(<McpEditorPanel />, { wrapper: createWrapper(mockServers) });
 
+    // Expand the HTTP server card
+    fireEvent.click(screen.getByText("remote-api"));
+
     expect(screen.getByText("https://api.example.com/mcp")).toBeInTheDocument();
   });
 
-  it("shows env var names for local servers", () => {
+  it("shows discovered tool count badges on server cards", () => {
     render(<McpEditorPanel />, { wrapper: createWrapper(mockServers) });
 
-    expect(screen.getByText("Env: API_KEY")).toBeInTheDocument();
-  });
+    // Expand all three server cards
+    fireEvent.click(screen.getByText("my-local-server"));
+    fireEvent.click(screen.getByText("remote-api"));
+    fireEvent.click(screen.getByText("event-stream"));
 
-  it("shows timeout when configured", () => {
-    render(<McpEditorPanel />, { wrapper: createWrapper(mockServers) });
-
-    expect(screen.getByText("Timeout: 30000ms")).toBeInTheDocument();
-    expect(screen.getByText("Timeout: 60000ms")).toBeInTheDocument();
+    expect(screen.getAllByText("0 discovered tool(s)")).toHaveLength(3);
   });
 
   it("shows Add Server button", () => {
@@ -109,6 +113,11 @@ describe("McpEditorPanel", () => {
 
   it("shows edit and remove buttons on each card", () => {
     render(<McpEditorPanel />, { wrapper: createWrapper(mockServers) });
+
+    // Expand all three server cards to reveal Edit/Remove buttons
+    fireEvent.click(screen.getByText("my-local-server"));
+    fireEvent.click(screen.getByText("remote-api"));
+    fireEvent.click(screen.getByText("event-stream"));
 
     const editButtons = screen.getAllByText("Edit");
     const removeButtons = screen.getAllByText("Remove");
@@ -122,8 +131,8 @@ describe("McpEditorPanel", () => {
 
     fireEvent.click(screen.getByText("Add Server"));
 
-    expect(screen.getByRole("dialog", { name: /Add MCP Server/i })).toBeInTheDocument();
-    expect(screen.getByPlaceholderText("my-custom-server")).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: /Add Native MCP Server/i })).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("my-database")).toBeInTheDocument();
   });
 
   it("shows type selector in dialog with Local, HTTP, SSE", () => {
@@ -131,17 +140,19 @@ describe("McpEditorPanel", () => {
 
     fireEvent.click(screen.getByText("Add Server"));
 
-    expect(screen.getByRole("radio", { name: /Local/i })).toBeInTheDocument();
-    expect(screen.getByRole("radio", { name: /HTTP/i })).toBeInTheDocument();
-    expect(screen.getByRole("radio", { name: /SSE/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Stdio \(Local\)/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^HTTP$/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^SSE$/i })).toBeInTheDocument();
   });
 
-  it("shows command field for local type in dialog", () => {
+  it("shows command field for local type after advancing to step 2", () => {
     render(<McpEditorPanel />, { wrapper: createWrapper() });
 
     fireEvent.click(screen.getByText("Add Server"));
+    fireEvent.change(screen.getByPlaceholderText("my-database"), { target: { value: "my-local" } });
+    fireEvent.click(screen.getByRole("button", { name: /^Next$/i }));
 
-    expect(screen.getByPlaceholderText("node")).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("npx")).toBeInTheDocument();
     expect(screen.getByText("Command")).toBeInTheDocument();
   });
 
@@ -149,16 +160,20 @@ describe("McpEditorPanel", () => {
     render(<McpEditorPanel />, { wrapper: createWrapper() });
 
     fireEvent.click(screen.getByText("Add Server"));
-    fireEvent.click(screen.getByRole("radio", { name: /^HTTP$/i }));
+    fireEvent.change(screen.getByPlaceholderText("my-database"), { target: { value: "my-http" } });
+    fireEvent.click(screen.getByRole("button", { name: /^HTTP$/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^Next$/i }));
 
     expect(screen.getByText("URL")).toBeInTheDocument();
-    expect(screen.getByPlaceholderText("https://api.example.com/mcp")).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("https://my-mcp.example.com/mcp")).toBeInTheDocument();
   });
 
   it("shows timeout field in dialog", () => {
     render(<McpEditorPanel />, { wrapper: createWrapper() });
 
     fireEvent.click(screen.getByText("Add Server"));
+    fireEvent.change(screen.getByPlaceholderText("my-database"), { target: { value: "with-timeout" } });
+    fireEvent.click(screen.getByRole("button", { name: /^Next$/i }));
 
     expect(screen.getByText("Timeout (ms)")).toBeInTheDocument();
   });
@@ -166,10 +181,13 @@ describe("McpEditorPanel", () => {
   it("opens edit dialog when Edit is clicked", () => {
     render(<McpEditorPanel />, { wrapper: createWrapper(mockServers) });
 
+    // Expand the first server card to reveal Edit button
+    fireEvent.click(screen.getByText("my-local-server"));
+
     const editButtons = screen.getAllByText("Edit");
     fireEvent.click(editButtons[0]);
 
-    expect(screen.getByRole("dialog", { name: /Edit MCP Server/i })).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: /Edit Native MCP Server/i })).toBeInTheDocument();
   });
 
   it("closes dialog when Cancel is clicked", () => {

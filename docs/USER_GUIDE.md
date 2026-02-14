@@ -1660,9 +1660,42 @@ curl http://localhost:3000/api/admin/native-mcp-servers
 curl -X PUT http://localhost:3000/api/admin/native-mcp-servers \
   -H "Content-Type: application/json" \
   -d '{"servers":{"my-server":{"type":"stdio","command":"npx","args":["-y","my-mcp-server"]}}}'
+
+# Test a native MCP server config without saving
+curl -X POST http://localhost:3000/api/admin/native-mcp-servers/test \
+  -H "Content-Type: application/json" \
+  -d '{"serverName":"my-server","server":{"type":"stdio","command":"npx","args":["-y","my-mcp-server"]}}'
 ```
 
-> **Note:** Native MCP servers are managed by the Copilot SDK at the session level. Changing the server configuration clears all cached sessions. The `LocalMcpServerManager` (subprocess-based servers defined in `config/default.json` → `mcpServers.sidecars`) is now deprecated in favor of this native approach.
+### MCP Connection Wizard (Admin UI)
+
+Native MCP servers are now managed through a step-by-step wizard in **Admin → Native MCP Servers**:
+
+1. **Step 1:** Choose server type (`Stdio`, `HTTP`, or `SSE`) and enter server name.
+2. **Step 2:** Fill type-specific fields (command/args/env/cwd or url/headers) and timeout.
+3. **Step 3:** Run **Test Connection** to validate connectivity and preview discovered tools.
+
+![Native MCP wizard — step-by-step server setup and connection test](images/admin-native-mcp-wizard.png)
+You can save without testing via **Skip Test**, but testing is recommended because successful tests populate discovered tool metadata shown in the Tools panel.
+
+### System Busy Guard (Safe-Swap)
+
+To avoid interrupting active workloads, MCP server config updates are blocked while tasks are running:
+
+- Backend guard: `PUT/POST/DELETE /api/admin/native-mcp-servers*` returns `409` when `running + queued > 0`.
+- UI guard: Add/Edit/Remove controls are disabled and an amber lock banner appears with running/queued counts.
+
+When unlocked, config changes proceed normally.
+
+### Auto-Discovered MCP Tools
+
+After a successful connection test, discovered MCP tools appear in **Admin → Tools** under categories formatted as:
+
+- `USER MCP: <SERVER-NAME>`
+
+These entries are shown with a plug icon and can be toggled via `mcp:<server>:<tool>` identifiers. If a server is disconnected, the category shows a disconnected marker and the Native MCP card offers a **Reconnect** action.
+
+> **Note:** Native MCP servers are managed by the Copilot SDK at the session level. Changing server configuration clears cached SDK sessions, so OpenZigs applies a busy guard to prevent swaps during active task execution. The `LocalMcpServerManager` path remains available for legacy local servers, but native MCP is the preferred path for new integrations.
 
 ---
 

@@ -25,6 +25,7 @@ import type { WebhookManager } from "../webhooks/webhook-manager.js";
 import type { SentinelService } from "../sentinel/index.js";
 import { SentinelConfigSchema, readStatusMarkdown } from "../sentinel/index.js";
 import { TemplateService } from "../productivity/template-service.js";
+import { CopilotNativeMcpTester, type NativeMcpDiscoveredTool, type NativeMcpTester } from "../mcp/native-mcp-test-service.js";
 
 type EnvEntry = {
   name: string;
@@ -186,6 +187,51 @@ const toStringArray = (value: unknown): string[] => {
     .filter(Boolean);
 };
 
+type NativeMcpToolCache = Record<string, {
+  tools: NativeMcpDiscoveredTool[];
+  connected: boolean;
+  error?: string;
+  updatedAt: string;
+}>;
+
+const getNativeMcpToolCache = (config: Record<string, unknown>): NativeMcpToolCache => {
+  const copilot = (config.copilot && typeof config.copilot === "object")
+    ? (config.copilot as Record<string, unknown>)
+    : {};
+  const raw = (copilot.nativeMcpToolCache && typeof copilot.nativeMcpToolCache === "object")
+    ? (copilot.nativeMcpToolCache as Record<string, unknown>)
+    : {};
+
+  const cache: NativeMcpToolCache = {};
+  for (const [serverName, entry] of Object.entries(raw)) {
+    if (!entry || typeof entry !== "object") continue;
+    const obj = entry as Record<string, unknown>;
+    const toolsRaw = Array.isArray(obj.tools) ? obj.tools : [];
+    const tools = toolsRaw
+      .map((tool) => {
+        if (!tool || typeof tool !== "object") return null;
+        const t = tool as Record<string, unknown>;
+        const name = typeof t.name === "string" ? t.name.trim() : "";
+        if (!name) return null;
+        const description = typeof t.description === "string" ? t.description : "";
+        return { name, description };
+      })
+      .filter((tool): tool is NativeMcpDiscoveredTool => !!tool);
+
+    cache[serverName] = {
+      tools,
+      connected: obj.connected !== false,
+      error: typeof obj.error === "string" ? obj.error : undefined,
+      updatedAt: typeof obj.updatedAt === "string" ? obj.updatedAt : new Date(0).toISOString(),
+    };
+  }
+  return cache;
+};
+
+const setNativeMcpToolCache = async (cache: NativeMcpToolCache) => {
+  await updateCopilotConfig("nativeMcpToolCache", cache);
+};
+
 export type AdminRouterOptions = {
   toolRegistry: ToolRegistry;
   sidecarManager?: DockerSidecarManager;
@@ -200,6 +246,7 @@ export type AdminRouterOptions = {
   webhookManager?: WebhookManager;
   customPostActionManager?: CustomPostActionManager;
   sentinel?: SentinelService;
+  nativeMcpTester?: NativeMcpTester;
 };
 
 type SchedulerSuggestion = {
@@ -264,8 +311,9 @@ const parseReasoningEffort = (value: unknown): ReasoningEffort | undefined => {
     : undefined;
 };
 
-export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerManager, promptManager, scheduler, personalityManager, sessionManager, copilot, taskWorker, taskEngine, webhookManager, customPostActionManager, sentinel }: AdminRouterOptions) => {
+export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerManager, promptManager, scheduler, personalityManager, sessionManager, copilot, taskWorker, taskEngine, webhookManager, customPostActionManager, sentinel, nativeMcpTester }: AdminRouterOptions) => {
   const router = Router();
+  const mcpTester = nativeMcpTester ?? new CopilotNativeMcpTester();
 
   // ── Server Restart ──
   // In dev mode, tsx watch only restarts on file changes — process.exit()
@@ -295,8 +343,57 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
     }, 500);
   });
 
-  router.get("/tools", (_req, res) => {
-    const tools = toolRegistry.getAllTools();
+  router.get("/tools", async (_req, res) => {
+    const tools = toolRegistry.getAllTools() as unknown as Record<string, Array<{
+      name: string;
+      description: string;
+      category: string;
+      riskLevel: string;
+      enabled: boolean;
+      source?: string;
+      globalApprovalRequired?: boolean;
+    }>>;
+
+    try {
+      const configPath = defaultConfigPath();
+      const userConfig = await readUserConfig(configPath);
+      const cache = getNativeMcpToolCache(userConfig);
+      const nativeServers = copilot?.getNativeMcpServers() ?? {};
+
+      for (const [serverName, entry] of Object.entries(cache)) {
+        const groupName = `user mcp: ${serverName}`;
+        const serverDef = nativeServers[serverName];
+        const configuredTools = serverDef?.tools;
+
+        const visibleTools = entry.tools.map((tool) => {
+          const enabled = !configuredTools || configuredTools.includes("*") || configuredTools.includes(tool.name);
+          return {
+            name: `mcp:${serverName}:${tool.name}`,
+            description: tool.description || "MCP-discovered tool",
+            category: groupName,
+            riskLevel: "medium",
+            enabled,
+            source: `mcp:${serverName}`,
+          };
+        });
+
+        const disconnectedMarker = entry.connected
+          ? []
+          : [{
+              name: `mcp:${serverName}:__disconnected__`,
+              description: `⚠️ Disconnected — tools unavailable${entry.error ? ` (${entry.error})` : ""}`,
+              category: groupName,
+              riskLevel: "medium",
+              enabled: false,
+              source: `mcp:${serverName}`,
+            }];
+
+        tools[groupName] = [...visibleTools, ...disconnectedMarker];
+      }
+    } catch {
+      // Non-fatal: return core tool groups even if cache read fails
+    }
+
     res.json({ tools });
   });
 
@@ -306,13 +403,72 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
     if (typeof enabled !== "boolean") {
       return res.status(400).json({ error: "enabled must be a boolean" });
     }
-    try {
-      await toolRegistry.setEnabled(name, enabled);
-      return res.json({ ok: true, tool: name, enabled });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return res.status(400).json({ error: message });
+
+    if (toolRegistry.getToolDefinition(name)) {
+      try {
+        await toolRegistry.setEnabled(name, enabled);
+        return res.json({ ok: true, tool: name, enabled });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return res.status(400).json({ error: message });
+      }
     }
+
+    if (name.startsWith("mcp:")) {
+      const parts = name.split(":");
+      if (parts.length < 3) {
+        return res.status(400).json({ error: "Invalid MCP tool identifier" });
+      }
+      const serverName = parts[1];
+      const toolName = parts.slice(2).join(":");
+      if (toolName === "__disconnected__") {
+        return res.status(400).json({ error: "Cannot toggle disconnected marker" });
+      }
+
+      if (!copilot) {
+        return res.status(503).json({ error: "Copilot service unavailable" });
+      }
+
+      const stats = taskEngine?.getStats() ?? { queued: 0, running: 0 };
+      const activeCount = stats.running + stats.queued;
+      if (activeCount > 0) {
+        return res.status(409).json({
+          error: `Cannot update MCP configuration while ${activeCount} task(s) are active. Please wait for tasks to complete or cancel them.`,
+          activeCount,
+          tasks: { running: stats.running, queued: stats.queued },
+        });
+      }
+
+      const current = copilot.getNativeMcpServers();
+      const server = current[serverName];
+      if (!server) {
+        return res.status(404).json({ error: `Server '${serverName}' not found` });
+      }
+
+      const configPath = defaultConfigPath();
+      const userConfig = await readUserConfig(configPath);
+      const cache = getNativeMcpToolCache(userConfig);
+      const discovered = (cache[serverName]?.tools ?? []).map((tool) => tool.name);
+      if (discovered.length === 0) {
+        return res.status(400).json({ error: `No discovered tools found for server '${serverName}'. Re-test the server first.` });
+      }
+
+      const existingTools = Array.isArray(server.tools) ? [...server.tools] : ["*"];
+      const explicitlyListed = existingTools.includes("*") ? [...discovered] : [...existingTools];
+      const nextSet = new Set(explicitlyListed);
+      if (enabled) nextSet.add(toolName);
+      else nextSet.delete(toolName);
+
+      const nextTools = discovered.filter((t) => nextSet.has(t));
+      const nextServer: NativeMcpServerDefinition = { ...server, tools: nextTools };
+      const updated = { ...current, [serverName]: nextServer };
+
+      copilot.setNativeMcpServers(updated);
+      await updateCopilotConfig("nativeMcpServers", updated);
+      return res.json({ ok: true, tool: name, enabled });
+    }
+
+    return res.status(404).json({ error: `Unknown tool: ${name}` });
   });
 
   // ── Admin Risk Override ──
@@ -1350,6 +1506,15 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
   });
 
   // ── Task Engine Configuration ──
+  router.get("/tasks/stats", (_req, res) => {
+    const stats = taskEngine?.getStats() ?? { queued: 0, running: 0 };
+    return res.json({
+      queued: stats.queued,
+      running: stats.running,
+      activeCount: stats.queued + stats.running,
+    });
+  });
+
   router.get("/tasks/config", (_req, res) => {
     const maxConcurrent = taskWorker?.concurrencyLimit ?? 2;
     const stats = taskEngine?.getStats() ?? { queued: 0, running: 0 };
@@ -1594,9 +1759,56 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
   });
 
   // ── Native MCP Servers Management ──
+
+  /** Background tool discovery: spawn/connect to MCP server, cache discovered tools, then tear down. */
+  const discoverAndCacheTools = async (name: string, def: NativeMcpServerDefinition) => {
+    try {
+      logger.info(`Background tool discovery starting for "${name}"`);
+      const result = await mcpTester.testServer(name, def);
+
+      const configPath = defaultConfigPath();
+      const userConfig = await readUserConfig(configPath);
+      const cache = getNativeMcpToolCache(userConfig);
+
+      if (result.ok) {
+        cache[name] = {
+          tools: result.tools,
+          connected: true,
+          updatedAt: new Date().toISOString(),
+        };
+        logger.info(`Background tool discovery for "${name}" found ${result.tools.length} tools`);
+      } else {
+        cache[name] = {
+          tools: cache[name]?.tools ?? [],
+          connected: false,
+          error: result.error,
+          updatedAt: new Date().toISOString(),
+        };
+        logger.warn(`Background tool discovery for "${name}" failed: ${result.error}`);
+      }
+
+      await setNativeMcpToolCache(cache);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      logger.warn(`Background tool discovery for "${name}" threw: ${message}`);
+    }
+  };
+
   router.get("/native-mcp-servers", (_req, res) => {
     const servers = copilot?.getNativeMcpServers() ?? {};
     return res.json({ servers });
+  });
+
+  router.get("/native-mcp-servers/tool-cache", async (_req, res) => {
+    try {
+      const configPath = defaultConfigPath();
+      const userConfig = await readUserConfig(configPath);
+      const cache = getNativeMcpToolCache(userConfig);
+      return res.json({ cache });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return res.status(500).json({ error: message });
+    }
   });
 
   router.put("/native-mcp-servers", async (req, res) => {
@@ -1610,6 +1822,16 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
     const parsed = nativeMcpServersSchema.safeParse(servers);
     if (!parsed.success) {
       return res.status(400).json({ error: parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join(", ") });
+    }
+
+    const stats = taskEngine?.getStats() ?? { queued: 0, running: 0 };
+    const activeCount = stats.running + stats.queued;
+    if (activeCount > 0) {
+      return res.status(409).json({
+        error: `Cannot update MCP configuration while ${activeCount} task(s) are active. Please wait for tasks to complete or cancel them.`,
+        activeCount,
+        tasks: { running: stats.running, queued: stats.queued },
+      });
     }
 
     try {
@@ -1627,11 +1849,104 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
     }
   });
 
+  router.post("/native-mcp-servers/test", async (req, res) => {
+    const body = req.body as Record<string, unknown>;
+    const serverName = typeof body.serverName === "string" ? body.serverName.trim() : "test";
+
+    const parsed = mcpServerConfigSchema.safeParse(body.server ?? body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.issues.map((i) => i.message).join(", ") });
+    }
+
+    try {
+      const result = await Promise.race([
+        mcpTester.testServer(serverName, parsed.data as NativeMcpServerDefinition),
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error("Connection test timed out after 15s")), 15_000)),
+      ]);
+
+      const configPath = defaultConfigPath();
+      const userConfig = await readUserConfig(configPath);
+      const cache = getNativeMcpToolCache(userConfig);
+      if (result.ok) {
+        cache[serverName] = {
+          tools: result.tools,
+          connected: true,
+          updatedAt: new Date().toISOString(),
+        };
+      } else {
+        cache[serverName] = {
+          tools: cache[serverName]?.tools ?? [],
+          connected: false,
+          error: result.error,
+          updatedAt: new Date().toISOString(),
+        };
+      }
+      await setNativeMcpToolCache(cache);
+
+      return res.json(result);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return res.status(500).json({ ok: false, serverName, error: message });
+    }
+  });
+
+  router.post("/native-mcp-servers/:name/reconnect", async (req, res) => {
+    const { name } = req.params;
+    const current = copilot?.getNativeMcpServers() ?? {};
+    const server = current[name];
+    if (!server) {
+      return res.status(404).json({ error: `Server '${name}' not found` });
+    }
+
+    try {
+      const result = await Promise.race([
+        mcpTester.testServer(name, server),
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error("Connection test timed out after 15s")), 15_000)),
+      ]);
+
+      const configPath = defaultConfigPath();
+      const userConfig = await readUserConfig(configPath);
+      const cache = getNativeMcpToolCache(userConfig);
+      if (result.ok) {
+        cache[name] = {
+          tools: result.tools,
+          connected: true,
+          updatedAt: new Date().toISOString(),
+        };
+      } else {
+        // Clear stale tools on failure — don't keep old potentially-wrong entries.
+        // The server definition's `tools` allowlist serves as the fallback source.
+        cache[name] = {
+          tools: [],
+          connected: false,
+          error: result.error,
+          updatedAt: new Date().toISOString(),
+        };
+      }
+      await setNativeMcpToolCache(cache);
+
+      return res.json(result);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return res.status(500).json({ ok: false, serverName: name, error: message });
+    }
+  });
+
   router.post("/native-mcp-servers/:name", async (req, res) => {
     const { name } = req.params;
     const parsed = mcpServerConfigSchema.safeParse(req.body);
     if (!parsed.success) {
       return res.status(400).json({ error: parsed.error.issues.map((i) => i.message).join(", ") });
+    }
+
+    const stats = taskEngine?.getStats() ?? { queued: 0, running: 0 };
+    const activeCount = stats.running + stats.queued;
+    if (activeCount > 0) {
+      return res.status(409).json({
+        error: `Cannot update MCP configuration while ${activeCount} task(s) are active. Please wait for tasks to complete or cancel them.`,
+        activeCount,
+        tasks: { running: stats.running, queued: stats.queued },
+      });
     }
 
     try {
@@ -1646,6 +1961,10 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
       await updateCopilotConfig("nativeMcpServers", updated);
 
       logger.info(`Native MCP server added: ${name}`);
+
+      // Fire-and-forget: background tool discovery so cache is populated immediately
+      void discoverAndCacheTools(name, parsed.data as NativeMcpServerDefinition);
+
       return res.status(201).json({ ok: true, server: parsed.data });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -1660,6 +1979,16 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
       return res.status(400).json({ error: parsed.error.issues.map((i) => i.message).join(", ") });
     }
 
+    const stats = taskEngine?.getStats() ?? { queued: 0, running: 0 };
+    const activeCount = stats.running + stats.queued;
+    if (activeCount > 0) {
+      return res.status(409).json({
+        error: `Cannot update MCP configuration while ${activeCount} task(s) are active. Please wait for tasks to complete or cancel them.`,
+        activeCount,
+        tasks: { running: stats.running, queued: stats.queued },
+      });
+    }
+
     try {
       const current = copilot?.getNativeMcpServers() ?? {};
       if (!(name in current)) {
@@ -1672,6 +2001,10 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
       await updateCopilotConfig("nativeMcpServers", updated);
 
       logger.info(`Native MCP server updated: ${name}`);
+
+      // Fire-and-forget: background tool discovery so cache is refreshed
+      void discoverAndCacheTools(name, parsed.data as NativeMcpServerDefinition);
+
       return res.json({ ok: true, server: parsed.data });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -1686,6 +2019,16 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
       return res.status(404).json({ error: `Server '${name}' not found` });
     }
 
+    const stats = taskEngine?.getStats() ?? { queued: 0, running: 0 };
+    const activeCount = stats.running + stats.queued;
+    if (activeCount > 0) {
+      return res.status(409).json({
+        error: `Cannot update MCP configuration while ${activeCount} task(s) are active. Please wait for tasks to complete or cancel them.`,
+        activeCount,
+        tasks: { running: stats.running, queued: stats.queued },
+      });
+    }
+
     try {
       const remaining = { ...current };
       delete remaining[name];
@@ -1693,8 +2036,173 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
 
       await updateCopilotConfig("nativeMcpServers", remaining);
 
+      const configPath = defaultConfigPath();
+      const userConfig = await readUserConfig(configPath);
+      const cache = getNativeMcpToolCache(userConfig);
+      delete cache[name];
+      await setNativeMcpToolCache(cache);
+
       logger.info(`Native MCP server removed: ${name}`);
       return res.json({ ok: true });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return res.status(500).json({ error: message });
+    }
+  });
+
+  // ── Per Native MCP Server Tool Listing & Toggle ──
+
+  router.get("/native-mcp-servers/:name/tools", async (req, res) => {
+    const { name } = req.params;
+    const current = copilot?.getNativeMcpServers() ?? {};
+    const server = current[name];
+    if (!server) {
+      return res.status(404).json({ error: `Server '${name}' not found` });
+    }
+
+    try {
+      const configPath = defaultConfigPath();
+      const userConfig = await readUserConfig(configPath);
+      const cache = getNativeMcpToolCache(userConfig);
+      const entry = cache[name];
+      let discoveredTools = entry?.tools ?? [];
+
+      // Fallback: if cache is empty but the server definition has a `tools`
+      // allowlist (plain tool-name strings), synthesise entries so the UI
+      // can still render toggles for known tools even while disconnected.
+      if (discoveredTools.length === 0 && server.tools && server.tools.length > 0) {
+        discoveredTools = server.tools.map((t) => ({ name: t, description: "" }));
+      }
+
+      const disabledSet = new Set(server.disabledTools ?? []);
+
+      const tools = discoveredTools.map((tool) => ({
+        name: tool.name,
+        description: tool.description,
+        enabled: !disabledSet.has(tool.name),
+      }));
+
+      return res.json({ server: name, tools, connected: entry?.connected ?? false });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return res.status(500).json({ error: message });
+    }
+  });
+
+  // Add a known tool name to the server definition's tools array (pre-configure without connecting).
+  // MUST be registered before the `:toolName` param routes to avoid matching "add" as a toolName.
+  router.post("/native-mcp-servers/:name/tools/add", async (req, res) => {
+    const { name } = req.params;
+    const { toolName } = req.body as { toolName?: string };
+    if (!toolName || typeof toolName !== "string" || !toolName.trim()) {
+      return res.status(400).json({ error: "toolName is required" });
+    }
+
+    const current = copilot?.getNativeMcpServers() ?? {};
+    const server = current[name];
+    if (!server) {
+      return res.status(404).json({ error: `Server '${name}' not found` });
+    }
+
+    try {
+      const trimmed = toolName.trim();
+      const existingTools = server.tools ?? [];
+      if (existingTools.includes(trimmed)) {
+        return res.json({ ok: true, tool: trimmed, message: "already exists" });
+      }
+
+      const updatedDef = {
+        ...server,
+        tools: [...existingTools, trimmed],
+      };
+
+      const updated = { ...current, [name]: updatedDef };
+      if (copilot) copilot.setNativeMcpServers(updated as Record<string, NativeMcpServerDefinition>);
+
+      await updateCopilotConfig("nativeMcpServers", updated);
+
+      logger.info(`Known tool "${trimmed}" added to server "${name}"`);
+      return res.json({ ok: true, tool: trimmed });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return res.status(500).json({ error: message });
+    }
+  });
+
+  router.post("/native-mcp-servers/:name/tools/:toolName/toggle", async (req, res) => {
+    const { name, toolName } = req.params;
+    const { enabled } = req.body as { enabled?: boolean };
+    if (typeof enabled !== "boolean") {
+      return res.status(400).json({ error: "enabled must be a boolean" });
+    }
+
+    const current = copilot?.getNativeMcpServers() ?? {};
+    const server = current[name];
+    if (!server) {
+      return res.status(404).json({ error: `Server '${name}' not found` });
+    }
+
+    try {
+      const disabledSet = new Set(server.disabledTools ?? []);
+      if (enabled) {
+        disabledSet.delete(toolName);
+      } else {
+        disabledSet.add(toolName);
+      }
+
+      const updatedDef = {
+        ...server,
+        disabledTools: disabledSet.size > 0 ? Array.from(disabledSet) : undefined,
+      };
+
+      const updated = { ...current, [name]: updatedDef };
+      if (copilot) copilot.setNativeMcpServers(updated as Record<string, NativeMcpServerDefinition>);
+
+      await updateCopilotConfig("nativeMcpServers", updated);
+
+      logger.info(`Native MCP tool "${toolName}" ${enabled ? "enabled" : "disabled"} on server "${name}"`);
+      return res.json({ ok: true, tool: toolName, enabled });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return res.status(500).json({ error: message });
+    }
+  });
+
+  // Remove a tool from the server definition's tools array and disabledTools
+  router.post("/native-mcp-servers/:name/tools/:toolName/remove", async (req, res) => {
+    const { name, toolName } = req.params;
+    const current = copilot?.getNativeMcpServers() ?? {};
+    const server = current[name];
+    if (!server) {
+      return res.status(404).json({ error: `Server '${name}' not found` });
+    }
+
+    try {
+      const existingTools = (server.tools ?? []).filter((t) => t !== toolName);
+      const disabledTools = (server.disabledTools ?? []).filter((t) => t !== toolName);
+
+      const updatedDef = {
+        ...server,
+        tools: existingTools.length > 0 ? existingTools : undefined,
+        disabledTools: disabledTools.length > 0 ? disabledTools : undefined,
+      };
+
+      const updated = { ...current, [name]: updatedDef };
+      if (copilot) copilot.setNativeMcpServers(updated as Record<string, NativeMcpServerDefinition>);
+
+      await updateCopilotConfig("nativeMcpServers", updated);
+
+      // Also remove from cache
+      const configPath = defaultConfigPath();
+      const userConfig = await readUserConfig(configPath);
+      const cache = getNativeMcpToolCache(userConfig);
+      if (cache[name]) {
+        cache[name].tools = cache[name].tools.filter((t) => t.name !== toolName);
+        await setNativeMcpToolCache(cache);
+      }
+
+      logger.info(`Tool "${toolName}" removed from server "${name}"`);
+      return res.json({ ok: true, tool: toolName });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return res.status(500).json({ error: message });

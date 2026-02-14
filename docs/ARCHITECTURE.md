@@ -260,7 +260,7 @@ ui/
 │       ├── personality-panel.tsx  # System instruction + pre/post prompts + mode selector
 │       ├── model-config-panel.tsx # Reasoning effort + BYOK provider configuration
 │       ├── agents-panel.tsx       # Custom agent CRUD with tool multi-select
-│       ├── mcp-editor-panel.tsx   # Native MCP server definition editor (Local/HTTP/SSE)
+│       ├── mcp-editor-panel.tsx   # Native MCP server wizard + busy lock + reconnect
 │       └── env-panel.tsx          # Environment variable status
 └── lib/
     ├── api.ts              # Shared fetchJson utility + API_BASE
@@ -1607,6 +1607,23 @@ SDK manages subprocess/connection lifecycle
 
 **Migration path:** The `LocalMcpServerManager` class is now deprecated. Existing subprocess-based MCP servers (word, calendar, etc.) should migrate to `copilot.nativeMcpServers` configuration. The Docker-based `DockerSidecarManager` remains separate — it manages containerized sidecars with health checks and port mapping.
 
+### Safe-Swap, Test, and Discovery
+
+Native MCP server writes are protected by a **busy guard** to avoid session/tool churn during active work:
+
+- `PUT/POST/DELETE /api/admin/native-mcp-servers*` returns `409` when `running + queued > 0` from `taskEngine.getStats()`.
+
+Connection validation uses a dedicated test service:
+
+- [src/mcp/native-mcp-test-service.ts](src/mcp/native-mcp-test-service.ts) creates a temporary Copilot client/session with only the candidate server, runs a bounded probe, extracts discovered tool names, and always cleans up resources.
+- Discovery/test metadata is cached under `nativeMcpToolCache` and surfaced to Admin UI.
+
+UI wiring:
+
+- Native MCP editor uses a multi-step wizard (type/name → config → test/confirm).
+- While busy, add/edit/remove actions are disabled and a warning banner displays running/queued counts.
+- Discovered tools are rendered in Tools as dynamic categories: `USER MCP: <SERVER>`.
+
 ### Admin API Endpoints
 
 | Method | Path | Description |
@@ -1617,6 +1634,13 @@ SDK manages subprocess/connection lifecycle
 | `DELETE` | `/api/admin/agents/:name` | Remove an agent by name |
 | `GET` | `/api/admin/native-mcp-servers` | List native MCP servers |
 | `PUT` | `/api/admin/native-mcp-servers` | Replace all native MCP servers |
+| `POST` | `/api/admin/native-mcp-servers` | Add/update one native MCP server |
+| `PUT` | `/api/admin/native-mcp-servers/:name` | Update one native MCP server by name |
+| `DELETE` | `/api/admin/native-mcp-servers/:name` | Delete one native MCP server by name |
+| `POST` | `/api/admin/native-mcp-servers/test` | Test a candidate native MCP server config |
+| `POST` | `/api/admin/native-mcp-servers/:name/reconnect` | Re-test a saved native MCP server |
+| `GET` | `/api/admin/native-mcp-servers/tool-cache` | List cached discovery/disconnect metadata |
+| `GET` | `/api/admin/tasks/stats` | Task queue/running stats used for busy guard |
 
 ### Tracking: [Epic #135](https://github.com/mgcronin/openzigs/issues/135)
 
