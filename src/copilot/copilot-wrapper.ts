@@ -479,6 +479,7 @@ export class CopilotWrapperService extends EventEmitter implements CopilotWrappe
   private customAgentsConfig: CustomAgentDefinition[];
   private nativeMcpServersConfig: Record<string, NativeMcpServerDefinition>;
   private sessionCache = new Map<string, CopilotSessionLike>();
+  private sessionConfigSignatures = new Map<string, string>();
   private sessionCreationPromises = new Map<string, Promise<CopilotSessionLike>>();
   private modelCapabilitiesCache = new Map<string, { supportsReasoning: boolean }>();
   readonly tokenTracker = new TokenTracker();
@@ -718,6 +719,7 @@ export class CopilotWrapperService extends EventEmitter implements CopilotWrappe
     const session = this.sessionCache.get(conversationId);
     if (session) {
       this.sessionCache.delete(conversationId);
+      this.sessionConfigSignatures.delete(conversationId);
       await session.destroy();
     }
   }
@@ -732,6 +734,7 @@ export class CopilotWrapperService extends EventEmitter implements CopilotWrappe
       destroyPromises.push(session.destroy());
     }
     this.sessionCache.clear();
+    this.sessionConfigSignatures.clear();
     await Promise.allSettled(destroyPromises);
   }
 
@@ -989,6 +992,8 @@ export class CopilotWrapperService extends EventEmitter implements CopilotWrappe
       autoApproveTools?: string[];
     }
   ): Promise<CopilotSessionLike> {
+    const requestedSignature = this.computeSessionConfigSignature(model, tools, extra);
+
     if (!conversationId) {
       // No conversationId — ephemeral session (backward compatible)
       return this.client.createSession(this.buildSessionConfig(model, tools, undefined, extra));
@@ -996,7 +1001,16 @@ export class CopilotWrapperService extends EventEmitter implements CopilotWrappe
 
     const cached = this.sessionCache.get(conversationId);
     if (cached) {
-      return cached;
+      const existingSignature = this.sessionConfigSignatures.get(conversationId);
+      if (existingSignature === requestedSignature) {
+        return cached;
+      }
+
+      // Session configuration changed (for example a tool was enabled/disabled).
+      // Recreate the cached session so the latest tool list is applied immediately.
+      this.sessionCache.delete(conversationId);
+      this.sessionConfigSignatures.delete(conversationId);
+      await cached.destroy();
     }
 
     const pendingPromise = this.sessionCreationPromises.get(conversationId);
@@ -1027,6 +1041,7 @@ export class CopilotWrapperService extends EventEmitter implements CopilotWrappe
           );
         }
         this.sessionCache.set(conversationId, session);
+        this.sessionConfigSignatures.set(conversationId, requestedSignature);
         this.wireSessionEvents(session, conversationId);
         return session;
       } finally {
@@ -1037,6 +1052,39 @@ export class CopilotWrapperService extends EventEmitter implements CopilotWrappe
 
     this.sessionCreationPromises.set(conversationId, createPromise);
     return createPromise;
+  }
+
+  private computeSessionConfigSignature(
+    model: string,
+    tools: unknown[],
+    extra?: {
+      systemMessage?: SystemMessageConfig;
+      availableTools?: string[];
+      excludedTools?: string[];
+      onUserInputRequest?: UserInputHandler;
+      workingDirectory?: string;
+      reasoningEffort?: ReasoningEffort;
+      customAgents?: CustomAgentDefinition[];
+      mcpServers?: Record<string, NativeMcpServerDefinition>;
+      autoApproveTools?: string[];
+    }
+  ): string {
+    const toolNames = (tools as Array<{ name?: string }>)
+      .map((t) => t.name ?? "")
+      .filter(Boolean)
+      .sort();
+
+    return JSON.stringify({
+      model,
+      toolNames,
+      availableTools: [...(extra?.availableTools ?? [])].sort(),
+      excludedTools: [...(extra?.excludedTools ?? [])].sort(),
+      autoApproveTools: [...(extra?.autoApproveTools ?? [])].sort(),
+      workingDirectory: extra?.workingDirectory,
+      reasoningEffort: extra?.reasoningEffort,
+      systemMode: extra?.systemMessage?.mode,
+      systemContent: extra?.systemMessage?.content,
+    });
   }
 
   private async *streamQueue(queue: AsyncQueue<string>, onEnd: () => void): AsyncGenerator<string> {
