@@ -19,6 +19,7 @@ import { watch, type FSWatcher } from "chokidar";
 import { chunkText } from "./chunker.js";
 import { generateEmbedding } from "./embedder.js";
 import { LanceDBStore } from "./lancedb-store.js";
+import { ConverterRegistry, createDefaultRegistry } from "./converters/index.js";
 import type {
   KnowledgeDocument,
   KnowledgeConfig,
@@ -37,6 +38,7 @@ export type KnowledgeServiceOptions = {
 
 /** File extension → source type mapping. */
 const EXTENSION_MAP: Record<string, KnowledgeSourceType> = {
+  // Text / markup
   ".md": "markdown",
   ".markdown": "markdown",
   ".txt": "text",
@@ -45,6 +47,11 @@ const EXTENSION_MAP: Record<string, KnowledgeSourceType> = {
   ".csv": "csv",
   ".html": "html",
   ".htm": "html",
+  ".yaml": "text",
+  ".yml": "text",
+  ".toml": "text",
+  ".xml": "text",
+  // Code
   ".py": "code",
   ".ts": "code",
   ".tsx": "code",
@@ -63,13 +70,12 @@ const EXTENSION_MAP: Record<string, KnowledgeSourceType> = {
   ".sh": "code",
   ".bash": "code",
   ".zsh": "code",
-  ".yaml": "text",
-  ".yml": "text",
-  ".toml": "text",
-  ".xml": "text",
   ".sql": "code",
   ".r": "code",
   ".R": "code",
+  // Documents (require converters)
+  ".pdf": "pdf",
+  ".docx": "docx",
 };
 
 const resolveKnowledgeDirectory = (input?: string): string => {
@@ -92,6 +98,7 @@ export class KnowledgeIngestionService extends EventEmitter {
   private watcher: FSWatcher | null = null;
   private documents = new Map<string, KnowledgeDocument>();
   private running = false;
+  private converterRegistry: ConverterRegistry | null = null;
 
   constructor(options: KnowledgeServiceOptions = {}) {
     super();
@@ -120,6 +127,9 @@ export class KnowledgeIngestionService extends EventEmitter {
 
     // Ensure the knowledge directory exists
     await fs.mkdir(this.config.directory, { recursive: true });
+
+    // Initialize converter registry (auto-detects available converters)
+    this.converterRegistry = await createDefaultRegistry();
 
     // Initialize LanceDB
     await this.store.initialize();
@@ -233,6 +243,13 @@ export class KnowledgeIngestionService extends EventEmitter {
    */
   getConfig(): KnowledgeConfig {
     return { ...this.config };
+  }
+
+  /**
+   * Get available converter information for the UI.
+   */
+  getConverterInfo(): Array<{ name: string; extensions: string[]; available: boolean; reason?: string }> {
+    return this.converterRegistry?.listConverters() ?? [];
   }
 
   /**
@@ -385,7 +402,7 @@ export class KnowledgeIngestionService extends EventEmitter {
   }
 
   /**
-   * Index a single file: read, hash, chunk, embed, store.
+   * Index a single file: convert (if needed), hash, chunk, embed, store.
    */
   private async indexFile(filePath: string): Promise<void> {
     const relativePath = path.relative(this.config.directory, filePath);
@@ -393,9 +410,22 @@ export class KnowledgeIngestionService extends EventEmitter {
     const ext = path.extname(filePath).toLowerCase();
     const sourceType = EXTENSION_MAP[ext] ?? "text";
 
-    // Read file content
-    const content = await fs.readFile(filePath, "utf-8");
+    // Read or convert file content via the converter registry.
+    let content: string;
     const stat = await fs.stat(filePath);
+
+    if (this.converterRegistry && this.converterRegistry.canConvert(filePath)) {
+      const result = await this.converterRegistry.convert(filePath);
+      if (!result.success) {
+        throw new Error(`Conversion failed (${result.converter}): ${result.error}`);
+      }
+      content = result.text;
+      logger.debug(`[Knowledge] Converted ${relativePath} via ${result.converter}`);
+    } else {
+      // Fallback: read as UTF-8 text (for text-based files or if registry not ready)
+      content = await fs.readFile(filePath, "utf-8");
+    }
+
     const contentHash = this.hashContent(content);
 
     // Check if already indexed with same hash (skip re-indexing)
@@ -520,13 +550,17 @@ export class KnowledgeIngestionService extends EventEmitter {
 
   /**
    * Check if a file is a supported content type.
+   * Checks both the static EXTENSION_MAP and the converter registry.
    */
   private isSupportedFile(filePath: string): boolean {
     const ext = path.extname(filePath).toLowerCase();
     if (this.config.includeExtensions.length > 0) {
       return this.config.includeExtensions.includes(ext);
     }
-    return ext in EXTENSION_MAP;
+    // Accept files in the static map OR files the converter registry can handle.
+    if (ext in EXTENSION_MAP) return true;
+    if (this.converterRegistry?.canConvert(filePath)) return true;
+    return false;
   }
 
   /**

@@ -10,13 +10,15 @@ import {
   useReindexAll,
   useReindexDocument,
   useDeleteDocument,
+  useConverters,
+  useConvertFiles,
 } from "@/lib/hooks/use-knowledge";
 import type { KnowledgeDocument } from "@/lib/types";
 
 export default function KnowledgePage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [activeSearch, setActiveSearch] = useState("");
-  const [activeTab, setActiveTab] = useState<"overview" | "documents" | "search">("overview");
+  const [activeTab, setActiveTab] = useState<"overview" | "documents" | "search" | "converters">("overview");
 
   const statsQuery = useKnowledgeStats();
   const docsQuery = useKnowledgeDocuments();
@@ -24,9 +26,15 @@ export default function KnowledgePage() {
   const reindexAll = useReindexAll();
   const reindexDoc = useReindexDocument();
   const deleteDoc = useDeleteDocument();
+  const convertersQuery = useConverters();
+  const convertFiles = useConvertFiles();
 
   const stats = statsQuery.data;
   const documents = docsQuery.data?.documents ?? [];
+  const converters = convertersQuery.data?.converters ?? [];
+
+  // Conversion file paths
+  const [convertInput, setConvertInput] = useState("");
 
   const handleSearch = () => {
     if (searchQuery.trim()) {
@@ -54,6 +62,32 @@ export default function KnowledgePage() {
     deleteDoc.mutate(doc.id, {
       onSuccess: () => showToast(`Removed ${doc.relativePath}`, "success"),
       onError: (err) => showToast(`Failed: ${err.message}`, "error"),
+    });
+  };
+
+  const handleConvert = () => {
+    const paths = convertInput
+      .split("\n")
+      .map((l) => l.trim())
+      .filter(Boolean);
+
+    if (paths.length === 0) {
+      showToast("Enter at least one file path to convert.", "error");
+      return;
+    }
+
+    convertFiles.mutate(paths, {
+      onSuccess: (data) => {
+        const ok = data.results.filter((r) => r.ok).length;
+        const failed = data.results.filter((r) => !r.ok).length;
+        if (failed > 0) {
+          showToast(`Converted ${ok} file(s), ${failed} failed`, failed > 0 ? "error" : "success");
+        } else {
+          showToast(`Converted and indexed ${ok} file(s)`, "success");
+        }
+        setConvertInput("");
+      },
+      onError: (err) => showToast(`Conversion failed: ${err.message}`, "error"),
     });
   };
 
@@ -110,7 +144,7 @@ export default function KnowledgePage() {
 
       {/* Tabs */}
       <div className="mb-6 flex gap-1 rounded-xl border border-border bg-card p-1">
-        {(["overview", "documents", "search"] as const).map((tab) => (
+        {(["overview", "documents", "search", "converters"] as const).map((tab) => (
           <button
             key={tab}
             onClick={() => setActiveTab(tab)}
@@ -249,6 +283,86 @@ export default function KnowledgePage() {
             </div>
           )}
         </SectionCard>
+      )}
+
+      {/* Converters Tab */}
+      {activeTab === "converters" && (
+        <>
+          <SectionCard title="Available Converters">
+            <p className="mb-4 text-xs text-muted-foreground">
+              Converters automatically transform non-text files (PDFs, DOCX, audio/video) into
+              searchable text when added to the knowledge directory.
+            </p>
+            {convertersQuery.isLoading ? (
+              <p className="text-sm text-muted-foreground">Loading…</p>
+            ) : converters.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No converters registered.</p>
+            ) : (
+              <div className="space-y-2">
+                {converters.map((conv) => (
+                  <div
+                    key={conv.name}
+                    className="flex items-center justify-between rounded-xl border border-border bg-card p-3"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <span
+                          className={`inline-block h-2 w-2 rounded-full ${
+                            conv.available ? "bg-emerald-500" : "bg-red-400"
+                          }`}
+                        />
+                        <p className="text-sm font-semibold capitalize text-foreground">
+                          {conv.name}
+                        </p>
+                      </div>
+                      <p className="mt-1 text-[11px] text-muted-foreground">
+                        Extensions: {conv.extensions.join(", ")}
+                      </p>
+                      {!conv.available && conv.reason && (
+                        <p className="mt-0.5 text-[11px] text-red-500">{conv.reason}</p>
+                      )}
+                    </div>
+                    <span
+                      className={`rounded-full px-2.5 py-0.5 text-[10px] font-bold ${
+                        conv.available
+                          ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                          : "bg-red-500/10 text-red-600 dark:text-red-400"
+                      }`}
+                    >
+                      {conv.available ? "Available" : "Unavailable"}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </SectionCard>
+
+          <div className="mt-6" />
+
+          <SectionCard title="Convert Files">
+            <p className="mb-3 text-xs text-muted-foreground">
+              Enter absolute file paths (one per line) to copy into the knowledge directory and
+              convert automatically. Files are converted using the appropriate converter based on
+              their extension.
+            </p>
+            <textarea
+              className="w-full rounded-lg border border-border bg-card px-3 py-2 font-mono text-sm text-foreground"
+              rows={5}
+              placeholder={"/path/to/document.pdf\n/path/to/report.docx\n~/Documents/notes.pdf"}
+              value={convertInput}
+              onChange={(e) => setConvertInput(e.target.value)}
+            />
+            <div className="mt-3 flex justify-end">
+              <button
+                onClick={handleConvert}
+                disabled={convertFiles.isPending || !convertInput.trim()}
+                className="rounded-xl bg-primary px-5 py-2.5 text-sm font-semibold text-primary-foreground disabled:opacity-40"
+              >
+                {convertFiles.isPending ? "Converting…" : "Convert & Index"}
+              </button>
+            </div>
+          </SectionCard>
+        </>
       )}
 
       <ToastContainer />

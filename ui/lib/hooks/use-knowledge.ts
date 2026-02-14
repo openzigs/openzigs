@@ -6,6 +6,14 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { fetchJson } from "@/lib/api";
 import type { KnowledgeStats, KnowledgeDocument, KnowledgeSearchResult } from "@/lib/types";
 
+/** Converter availability info from the backend. */
+export type ConverterInfo = {
+  name: string;
+  extensions: string[];
+  available: boolean;
+  reason?: string;
+};
+
 /** Fetch knowledge base statistics. */
 export const useKnowledgeStats = () =>
   useQuery({
@@ -66,6 +74,31 @@ export const useDeleteDocument = () => {
   return useMutation({
     mutationFn: (documentId: string) =>
       fetchJson<{ ok: boolean }>(`/api/admin/knowledge/documents/${documentId}`, { method: "DELETE" }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["knowledge"] });
+    },
+  });
+};
+
+/** Fetch available converters and their status. */
+export const useConverters = () =>
+  useQuery({
+    queryKey: ["knowledge", "converters"],
+    queryFn: () => fetchJson<{ converters: ConverterInfo[] }>("/api/admin/knowledge/converters"),
+  });
+
+/** Convert files by path — copies them into the knowledge directory + indexes. */
+export const useConvertFiles = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (filePaths: string[]) =>
+      fetchJson<{ ok: boolean; results: Array<{ file: string; ok: boolean; error?: string }>; stats: KnowledgeStats }>(
+        "/api/admin/knowledge/convert",
+        {
+          method: "POST",
+          body: JSON.stringify({ filePaths }),
+        }
+      ),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["knowledge"] });
     },

@@ -182,5 +182,80 @@ export const createKnowledgeRouter = ({ knowledgeService }: KnowledgeRouterOptio
     }
   });
 
+  // ── GET /converters — List available file converters ──
+  router.get("/converters", (_req, res) => {
+    try {
+      const converters = knowledgeService.getConverterInfo();
+      res.json({ converters });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  // ── POST /convert — Convert a file from an arbitrary path and ingest it ──
+  router.post("/convert", async (req, res) => {
+    try {
+      const body = req.body as { filePath?: string; filePaths?: string[] };
+
+      const paths: string[] = [];
+      if (typeof body.filePath === "string" && body.filePath.trim()) {
+        paths.push(body.filePath.trim());
+      }
+      if (Array.isArray(body.filePaths)) {
+        for (const fp of body.filePaths) {
+          if (typeof fp === "string" && fp.trim()) paths.push(fp.trim());
+        }
+      }
+
+      if (paths.length === 0) {
+        res.status(400).json({
+          error: "Provide filePath (string) or filePaths (string[]) to convert",
+        });
+        return;
+      }
+
+      // Resolve ~ in paths
+      const resolvedPaths = paths.map((p) => {
+        if (p === "~") return os.homedir();
+        if (p.startsWith("~/")) return path.join(os.homedir(), p.slice(2));
+        return path.resolve(p);
+      });
+
+      // Copy each file into the knowledge directory, then let the watcher / scan pick it up
+      const results: Array<{ file: string; ok: boolean; error?: string }> = [];
+
+      const knowledgeDir = knowledgeService.getConfig().directory;
+
+      for (const srcPath of resolvedPaths) {
+        try {
+          // Verify source exists
+          await fs.access(srcPath);
+          const fileName = path.basename(srcPath);
+          const destPath = path.join(knowledgeDir, fileName);
+
+          // Copy file to knowledge directory
+          await fs.copyFile(srcPath, destPath);
+
+          results.push({ file: fileName, ok: true });
+          logger.info(`[Knowledge] Copied ${srcPath} → ${destPath} for conversion`);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          results.push({ file: path.basename(srcPath), ok: false, error: msg });
+          logger.warn(`[Knowledge] Convert copy failed for ${srcPath}: ${msg}`);
+        }
+      }
+
+      // Trigger a re-scan so newly copied files get indexed immediately
+      await knowledgeService.reindexAll();
+
+      const stats = await knowledgeService.getStats();
+      res.json({ ok: true, results, stats });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      res.status(500).json({ error: msg });
+    }
+  });
+
   return router;
 };

@@ -7,7 +7,7 @@
  */
 
 /** Supported source formats for ingestion. */
-export type KnowledgeSourceType = "markdown" | "text" | "pdf" | "docx" | "json" | "csv" | "html" | "code";
+export type KnowledgeSourceType = "markdown" | "text" | "pdf" | "docx" | "json" | "csv" | "html" | "code" | "media";
 
 /** Status of a document in the knowledge base. */
 export type DocumentStatus = "pending" | "processing" | "indexed" | "failed";
@@ -110,7 +110,7 @@ export const DEFAULT_KNOWLEDGE_CONFIG: KnowledgeConfig = {
   chunkSize: 1000,
   chunkOverlap: 200,
   maxResults: 10,
-  includeExtensions: [".md", ".txt", ".json", ".csv", ".html", ".py", ".ts", ".js", ".go", ".rs", ".java"],
+  includeExtensions: [],
   excludePatterns: ["node_modules", ".git", "dist", "build", ".DS_Store"],
   watchEnabled: true,
 };
