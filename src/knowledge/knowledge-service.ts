@@ -72,6 +72,20 @@ const EXTENSION_MAP: Record<string, KnowledgeSourceType> = {
   ".R": "code",
 };
 
+const resolveKnowledgeDirectory = (input?: string): string => {
+  const fallback = path.join(os.homedir(), ".openzigs", "knowledge");
+  if (!input || input.trim().length === 0) {
+    return fallback;
+  }
+
+  const trimmed = input.trim();
+  const expanded = trimmed === "~"
+    ? os.homedir()
+    : (trimmed.startsWith("~/") ? path.join(os.homedir(), trimmed.slice(2)) : trimmed);
+
+  return path.resolve(expanded);
+};
+
 export class KnowledgeIngestionService extends EventEmitter {
   private config: KnowledgeConfig;
   private store: LanceDBStore;
@@ -82,7 +96,7 @@ export class KnowledgeIngestionService extends EventEmitter {
   constructor(options: KnowledgeServiceOptions = {}) {
     super();
 
-    const knowledgeDir = options.config?.directory || path.join(os.homedir(), ".openzigs", "knowledge");
+    const knowledgeDir = resolveKnowledgeDirectory(options.config?.directory);
 
     this.config = {
       ...DEFAULT_KNOWLEDGE_CONFIG,
@@ -232,10 +246,9 @@ export class KnowledgeIngestionService extends EventEmitter {
   async updateConfig(nextConfig: Partial<KnowledgeConfig>): Promise<KnowledgeConfig> {
     const previous = this.config;
 
-    const normalizedDirectory =
-      typeof nextConfig.directory === "string" && nextConfig.directory.trim().length > 0
-        ? nextConfig.directory.trim()
-        : previous.directory;
+    const normalizedDirectory = resolveKnowledgeDirectory(
+      typeof nextConfig.directory === "string" ? nextConfig.directory : previous.directory
+    );
 
     this.config = {
       ...previous,

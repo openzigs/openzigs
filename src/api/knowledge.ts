@@ -168,7 +168,8 @@ export const createKnowledgeRouter = ({ knowledgeService }: KnowledgeRouterOptio
 
       userConfig.knowledge = {
         ...existingKnowledge,
-        ...updates,
+        ...(updates.directory !== undefined ? { directory: appliedConfig.directory } : {}),
+        ...(updates.watchEnabled !== undefined ? { watchEnabled: appliedConfig.watchEnabled } : {}),
       };
 
       await writeUserConfig(configPath, userConfig);
