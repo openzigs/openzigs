@@ -12,6 +12,8 @@ import { createTextConverter } from "./text-converter.js";
 import { createPdfConverter } from "./pdf-converter.js";
 import { createDocxConverter } from "./docx-converter.js";
 import { createMediaConverter } from "./media-converter.js";
+import { createImageOcrConverter } from "./image-ocr-converter.js";
+import { terminateOcrEngine } from "./ocr-engine.js";
 import { logger } from "../../logging/logger.js";
 
 export class ConverterRegistry {
@@ -130,6 +132,15 @@ export async function createDefaultRegistry(): Promise<ConverterRegistry> {
     logger.warn(`[Knowledge] DOCX converter unavailable: ${docxConverter.unavailableReason}`);
   }
 
+  // Image OCR — available if tesseract.js is installed.
+  const imageOcrConverter = await createImageOcrConverter();
+  registry.register(imageOcrConverter);
+  if (imageOcrConverter.available) {
+    logger.info("[Knowledge] Image OCR converter available (tesseract.js)");
+  } else {
+    logger.info(`[Knowledge] Image OCR converter unavailable: ${imageOcrConverter.unavailableReason}`);
+  }
+
   // Media (mp4, mp3, wav, m4a) — available if ffmpeg is on PATH.
   const mediaConverter = await createMediaConverter();
   registry.register(mediaConverter);
@@ -140,4 +151,12 @@ export async function createDefaultRegistry(): Promise<ConverterRegistry> {
   }
 
   return registry;
+}
+
+/**
+ * Shut down any long-lived resources held by converters (e.g. OCR worker).
+ * Call when the KnowledgeIngestionService stops.
+ */
+export async function shutdownConverters(): Promise<void> {
+  await terminateOcrEngine();
 }

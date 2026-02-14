@@ -42,6 +42,7 @@
     "node-cron": "^4.2.1",
     "pdf-parse": "^2.4.5",
     "socket.io": "^4.7.5",
+    "tesseract.js": "^7.0.0",
     "winston": "^3.13.0",
     "zod": "^3.23.8"
   },

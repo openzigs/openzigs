@@ -19,7 +19,7 @@ import { watch, type FSWatcher } from "chokidar";
 import { chunkText } from "./chunker.js";
 import { generateEmbedding } from "./embedder.js";
 import { LanceDBStore } from "./lancedb-store.js";
-import { ConverterRegistry, createDefaultRegistry } from "./converters/index.js";
+import { ConverterRegistry, createDefaultRegistry, shutdownConverters } from "./converters/index.js";
 import type {
   KnowledgeDocument,
   KnowledgeConfig,
@@ -76,6 +76,15 @@ const EXTENSION_MAP: Record<string, KnowledgeSourceType> = {
   // Documents (require converters)
   ".pdf": "pdf",
   ".docx": "docx",
+  // Images (OCR via tesseract.js)
+  ".jpg": "image",
+  ".jpeg": "image",
+  ".png": "image",
+  ".tiff": "image",
+  ".tif": "image",
+  ".bmp": "image",
+  ".webp": "image",
+  ".gif": "image",
 };
 
 const resolveKnowledgeDirectory = (input?: string): string => {
@@ -157,6 +166,7 @@ export class KnowledgeIngestionService extends EventEmitter {
       this.watcher = null;
     }
 
+    await shutdownConverters();
     await this.store.close();
     this.running = false;
     logger.info("[Knowledge] Knowledge Ingestion Service stopped");
