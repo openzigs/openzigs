@@ -3341,8 +3341,17 @@ All knowledge endpoints are under `/api/admin/knowledge`:
 | `POST` | `/reindex/:documentId` | Re-index a specific document |
 | `DELETE` | `/documents/:documentId` | Remove a document from the index |
 | `GET` | `/config` | Current knowledge configuration |
+| `PUT` | `/config` | Update knowledge configuration (`directory`, `watchEnabled`) |
 
 ### Configuration Options
+
+You can change the knowledge directory from the Admin UI:
+
+1. Navigate to **Admin** → **Knowledge Base**
+2. Update **Knowledge Directory**
+3. Click **Save**
+
+Changes apply immediately (no server restart required). When the directory changes, OpenZigs clears the current index and re-scans the new directory.
 
 Configure the knowledge base in your config file (`~/.openzigs/config.json`):
 

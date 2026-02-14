@@ -6,7 +6,11 @@
  */
 
 import { Router } from "express";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import type { KnowledgeIngestionService } from "../knowledge/index.js";
+import { logger } from "../logging/logger.js";
 
 export type KnowledgeRouterOptions = {
   knowledgeService: KnowledgeIngestionService;
@@ -14,6 +18,24 @@ export type KnowledgeRouterOptions = {
 
 export const createKnowledgeRouter = ({ knowledgeService }: KnowledgeRouterOptions): Router => {
   const router = Router();
+
+  const defaultConfigPath = () => process.env.OPENZIGS_CONFIG_PATH
+    ?? path.join(os.homedir(), ".openzigs", "config.json");
+
+  const readUserConfig = async (configPath: string): Promise<Record<string, unknown>> => {
+    try {
+      const raw = await fs.readFile(configPath, "utf-8");
+      return JSON.parse(raw) as Record<string, unknown>;
+    } catch {
+      return {};
+    }
+  };
+
+  const writeUserConfig = async (configPath: string, data: Record<string, unknown>) => {
+    await fs.mkdir(path.dirname(configPath), { recursive: true, mode: 0o700 });
+    await fs.writeFile(configPath, JSON.stringify(data, null, 2), { encoding: "utf-8", mode: 0o600 });
+    await fs.chmod(configPath, 0o600);
+  };
 
   // ── GET /stats — Knowledge base statistics ──
   router.get("/stats", async (_req, res) => {
@@ -99,6 +121,60 @@ export const createKnowledgeRouter = ({ knowledgeService }: KnowledgeRouterOptio
     try {
       const config = knowledgeService.getConfig();
       res.json(config);
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  // ── PUT /config — Update knowledge configuration ──
+  router.put("/config", async (req, res) => {
+    try {
+      const body = req.body as Record<string, unknown>;
+
+      const updates: Record<string, unknown> = {};
+
+      if (body.directory !== undefined) {
+        if (typeof body.directory !== "string" || body.directory.trim().length === 0) {
+          res.status(400).json({ error: "directory must be a non-empty string" });
+          return;
+        }
+        updates.directory = body.directory.trim();
+      }
+
+      if (body.watchEnabled !== undefined) {
+        if (typeof body.watchEnabled !== "boolean") {
+          res.status(400).json({ error: "watchEnabled must be a boolean" });
+          return;
+        }
+        updates.watchEnabled = body.watchEnabled;
+      }
+
+      if (Object.keys(updates).length === 0) {
+        res.status(400).json({ error: "No valid knowledge config fields provided" });
+        return;
+      }
+
+      // Apply live
+      const appliedConfig = await knowledgeService.updateConfig(updates);
+
+      // Persist user override
+      const configPath = defaultConfigPath();
+      const userConfig = await readUserConfig(configPath);
+      const existingKnowledge =
+        userConfig.knowledge && typeof userConfig.knowledge === "object"
+          ? (userConfig.knowledge as Record<string, unknown>)
+          : {};
+
+      userConfig.knowledge = {
+        ...existingKnowledge,
+        ...updates,
+      };
+
+      await writeUserConfig(configPath, userConfig);
+
+      logger.info(`[Knowledge] Config updated via API: ${Object.keys(updates).join(", ")}`);
+      res.json({ ok: true, config: appliedConfig });
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       res.status(500).json({ error: msg });

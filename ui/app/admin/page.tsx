@@ -17,6 +17,7 @@ import { ModelConfigPanel } from "@/components/admin/model-config-panel";
 import { AgentsPanel } from "@/components/admin/agents-panel";
 import { McpEditorPanel } from "@/components/admin/mcp-editor-panel";
 import { SentinelPanel } from "@/components/admin/sentinel-panel";
+import { KnowledgeConfigPanel } from "@/components/admin/knowledge-config-panel";
 import { ToastContainer, showToast } from "@/components/toast";
 import { RotateCw } from "lucide-react";
 
@@ -83,6 +84,10 @@ export default function AdminPage() {
 
         <SectionCard title="Sentinel Monitor">
           <SentinelPanel />
+        </SectionCard>
+
+        <SectionCard title="Knowledge Base">
+          <KnowledgeConfigPanel />
         </SectionCard>
 
         <SectionCard title="Custom Agents">

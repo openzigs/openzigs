@@ -221,6 +221,78 @@ export class KnowledgeIngestionService extends EventEmitter {
     return { ...this.config };
   }
 
+  /**
+   * Update knowledge configuration at runtime.
+   *
+   * Applies changes immediately while the service is running:
+   * - directory change => clears indexed docs, re-scans new directory, restarts watcher
+   * - watchEnabled toggle => starts/stops watcher
+   * - chunk settings change => re-indexes current directory
+   */
+  async updateConfig(nextConfig: Partial<KnowledgeConfig>): Promise<KnowledgeConfig> {
+    const previous = this.config;
+
+    const normalizedDirectory =
+      typeof nextConfig.directory === "string" && nextConfig.directory.trim().length > 0
+        ? nextConfig.directory.trim()
+        : previous.directory;
+
+    this.config = {
+      ...previous,
+      ...nextConfig,
+      directory: normalizedDirectory,
+    };
+
+    if (!this.running) {
+      return this.getConfig();
+    }
+
+    const directoryChanged = this.config.directory !== previous.directory;
+    const watchChanged = this.config.watchEnabled !== previous.watchEnabled;
+    const chunkingChanged =
+      this.config.chunkSize !== previous.chunkSize
+      || this.config.chunkOverlap !== previous.chunkOverlap;
+
+    if (directoryChanged) {
+      if (this.watcher) {
+        await this.watcher.close();
+        this.watcher = null;
+      }
+
+      // Remove old directory documents from the index before re-scanning.
+      const existingDocIds = Array.from(this.documents.keys());
+      for (const docId of existingDocIds) {
+        await this.store.deleteByDocumentId(docId);
+      }
+      this.documents.clear();
+
+      await fs.mkdir(this.config.directory, { recursive: true });
+      await this.scanDirectory();
+    } else if (chunkingChanged) {
+      // Rebuild chunks for the current directory when chunk parameters change.
+      await this.reindexAll();
+    }
+
+    if (this.config.watchEnabled) {
+      if (!this.watcher || directoryChanged || watchChanged) {
+        if (this.watcher) {
+          await this.watcher.close();
+          this.watcher = null;
+        }
+        this.startWatcher();
+      }
+    } else if (this.watcher) {
+      await this.watcher.close();
+      this.watcher = null;
+    }
+
+    logger.info(
+      `[Knowledge] Config updated (directory=${this.config.directory}, watchEnabled=${this.config.watchEnabled})`
+    );
+
+    return this.getConfig();
+  }
+
   // ── Private methods ──
 
   /**
