@@ -585,6 +585,7 @@ const createRouter = (accessControlOverride?: AccessControlConfig, onUserInputRe
     personalityManager,
     taskEngine,
     onUserInputRequest,
+    vaultService,
   });
 };
 

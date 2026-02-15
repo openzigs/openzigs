@@ -28,8 +28,10 @@ export const createSecretTools = ({ vaultService }: SecretToolsOptions): ToolDef
   tools.push({
     name: "get-secret",
     description:
-      "Look up a secret from the local vault by label. Returns a safe reference token " +
-      "like {{SECRET:<uuid>}} that can be passed to browser-navigate type action. " +
+      "Look up a stored credential/secret from the local vault by label. Returns an opaque " +
+      "reference token like {{SECRET:<uuid>}} that you MUST pass to browser-navigate's type action " +
+      "for secure credential entry. ALWAYS use this tool when a user asks to log in, sign in, " +
+      "enter credentials, or use their password for any website — never ask the user for passwords directly. " +
       "The plaintext is NEVER exposed to chat history or logs.",
     inputSchema: {
       type: "object",
@@ -87,7 +89,8 @@ export const createSecretTools = ({ vaultService }: SecretToolsOptions): ToolDef
     name: "list-secrets",
     description:
       "List all secrets stored in the local vault (metadata only — no values). " +
-      "Use this to discover secret labels before calling get-secret.",
+      "Call this FIRST when a user asks to log in to any service, to discover available " +
+      "credentials before using get-secret to retrieve the secure token.",
     inputSchema: {
       type: "object",
       properties: {},

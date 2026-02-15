@@ -341,7 +341,7 @@ export const registerMcpTools = (toolRegistry: ToolRegistry, options: RegisterMc
 
   registerTool({
     name: "browser-navigate",
-    description: "Control Chrome browser: navigate to URLs, click elements, type text, take screenshots, extract text, list tabs, snapshot DOM, or evaluate JavaScript. Requires Chrome with --remote-debugging-port.",
+    description: "Control Chrome browser: navigate to URLs, click elements, type text, take screenshots, extract text, list tabs, snapshot DOM, or evaluate JavaScript. Supports {{SECRET:<uuid>}} tokens in the 'text' parameter — use get-secret to retrieve a token, then pass it to the type action for secure credential injection. Requires Chrome with --remote-debugging-port.",
     inputSchema: {
       type: "object",
       properties: {
