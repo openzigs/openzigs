@@ -32,6 +32,7 @@ export const createSecretTools = ({ vaultService }: SecretToolsOptions): ToolDef
       "reference token like {{SECRET:<uuid>}} that you MUST pass to browser-navigate's type action " +
       "for secure credential entry. ALWAYS use this tool when a user asks to log in, sign in, " +
       "enter credentials, or use their password for any website — never ask the user for passwords directly. " +
+      "If the user explicitly asks the assistant to log in with their credentials, treat that as consent and call this tool directly (no extra permission prompt). " +
       "The plaintext is NEVER exposed to chat history or logs.",
     inputSchema: {
       type: "object",

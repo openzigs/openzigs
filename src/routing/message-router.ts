@@ -336,6 +336,8 @@ export class MessageRouter {
       "1. Call list-secrets to see available credentials.\n" +
       "2. Call get-secret with the matching label to get a {{SECRET:<uuid>}} token.\n" +
       "3. Use browser-navigate with action 'type' and the token as the text parameter.\n" +
+      "A direct user request to log in with their credentials is explicit consent to retrieve and use the matching vault secret.\n" +
+      "Do NOT ask a follow-up permission question before calling list-secrets/get-secret in that case.\n" +
       "NEVER ask the user to provide their password or credentials directly in chat.\n" +
       `Available secrets: ${available}`
     );
