@@ -133,7 +133,7 @@
     "mediaModel": "base.en"
   },
   "voice": {
-    "enabled": true,
+    "enabled": false,
     "provider": "google",
     "voiceName": "en-US-Standard-C",
     "speakingRate": 1.0,

@@ -107,7 +107,7 @@ export class VoiceService {
         name: voice,
       },
       audioConfig: {
-        audioEncoding: this.config.audioEncoding as unknown as number,
+        audioEncoding: this.config.audioEncoding,
         speakingRate: this.config.speakingRate,
         pitch: this.config.pitch,
       },

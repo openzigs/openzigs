@@ -331,7 +331,7 @@ const voiceService = new VoiceService({
   maxTextLength: voiceConfig?.maxTextLength ?? 5000,
 });
 
-if (voiceConfig?.enabled !== false && process.env.GOOGLE_APPLICATION_CREDENTIALS) {
+if (voiceService.getConfig().enabled && process.env.GOOGLE_APPLICATION_CREDENTIALS) {
   void voiceService.initialize().catch((error) => {
     const details = error instanceof Error ? error.message : String(error);
     logger.warn(`Voice service startup skipped: ${details}`);

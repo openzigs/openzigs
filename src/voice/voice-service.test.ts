@@ -73,7 +73,7 @@ describe("VoiceService", () => {
 
     expect(result.cacheDir).toBe(tempDir);
     expect(result.provider).toBe("google");
-    expect(result.voiceName).toBe("en-US-Journey-D");
+    expect(result.voiceName).toBe("en-US-Standard-C");
     expect(result.speakingRate).toBe(1.0);
     expect(result.pitch).toBe(0.0);
   });
