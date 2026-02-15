@@ -45,6 +45,7 @@ import { VoiceService } from "./voice/index.js";
 import { createVoiceRouter } from "./api/voice.js";
 import { SecretVaultService } from "./vault/index.js";
 import { createVaultRouter } from "./api/vault.js";
+import { createDirectorRouter } from "./api/director.js";
 
 // Register built-in post-action types (create-github-issues, send-webhook, etc.)
 registerBuiltinPostActions();
@@ -341,6 +342,36 @@ app.use("/api/admin/knowledge", knowledgeRouter);
 // Vault API routes
 const vaultRouter = createVaultRouter({ vaultService });
 app.use("/api/admin/vault", vaultRouter);
+
+// Director Mode API routes
+const directorConfig = (config as Record<string, unknown>).director as {
+  enabled?: boolean;
+  outputDir?: string;
+  defaultTemplate?: string;
+  assets?: {
+    localLibraryPath?: string;
+    downloadCachePath?: string;
+    pixabayApiKey?: string;
+    freesoundApiKey?: string;
+  };
+} | undefined;
+
+const directorRouter = createDirectorRouter({
+  copilot,
+  voiceService,
+  config: {
+    enabled: directorConfig?.enabled ?? true,
+    outputDir: directorConfig?.outputDir ?? "~/.openzigs/video-output",
+    defaultTemplate: directorConfig?.defaultTemplate ?? "Minimalist",
+    assets: {
+      localLibraryPath: directorConfig?.assets?.localLibraryPath ?? "~/.openzigs/media-library",
+      downloadCachePath: directorConfig?.assets?.downloadCachePath ?? "~/.openzigs/asset-cache",
+      pixabayApiKey: directorConfig?.assets?.pixabayApiKey ?? "",
+      freesoundApiKey: directorConfig?.assets?.freesoundApiKey ?? "",
+    },
+  },
+});
+app.use("/api/admin/director", directorRouter);
 
 // Start the Knowledge Ingestion Service in the background
 void knowledgeService.start()
