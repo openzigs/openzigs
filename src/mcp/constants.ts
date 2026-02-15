@@ -8,6 +8,8 @@ export const ALWAYS_ON_TOOLS = new Set([
   "spawn-agent",
   "orchestrate-agents",
   "search-knowledge",
+  "list-secrets",
+  "get-secret",
 ]);
 
 /**
