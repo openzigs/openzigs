@@ -33,7 +33,7 @@ const PBKDF2_ITERATIONS = 100_000;
 const PBKDF2_KEY_LEN = 32; // 256 bits
 const PBKDF2_DIGEST = "sha512";
 const AES_ALGORITHM = "aes-256-gcm";
-const IV_LENGTH = 16;
+const IV_LENGTH = 12;
 const SALT_LENGTH = 32;
 
 export type SecretVaultServiceOptions = {
