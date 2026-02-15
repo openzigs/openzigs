@@ -31,6 +31,7 @@ import { UserInputPrompt } from "@/components/user-input-prompt";
 import { WorkflowPreviewCard } from "@/components/workflow-preview-card";
 import { SessionContextBar } from "@/components/session-context-bar";
 import { ContextFuelGauge } from "@/components/chat/context-fuel-gauge";
+import { VoiceControls } from "@/components/voice";
 import { useTokenUsage } from "@/lib/hooks/use-token-usage";
 import type {
   ModelInfo,
@@ -494,6 +495,26 @@ export const ChatView = () => {
   const inputDisabled = sending || !!activeInputRequest;
   const showConnecting = connected && !chatId;
 
+  // Voice: derive last assistant message for TTS
+  const lastAssistantMessage = messages.filter((m) => m.role === "assistant").at(-1)?.content;
+
+  // Voice: handle captured voice query (submit as chat message)
+  const handleVoiceQuery = useCallback((query: string) => {
+    const text = query.trim();
+    if (!text || !chatId || !socket || !connected || sending) return;
+
+    setMessages((prev) => [...prev, { id: nextId(), role: "user", content: text }]);
+    socket.emit("chat:message", {
+      content: text,
+      model: selectedModel || undefined,
+      reasoningEffort: reasoningEffort !== "medium" ? reasoningEffort : undefined,
+    });
+    setSending(true);
+    setThinking(true);
+    setHistory((prev) => [...prev.slice(-(MAX_HISTORY - 1)), text]);
+    resetStuckTimer();
+  }, [chatId, socket, connected, sending, selectedModel, reasoningEffort, nextId, resetStuckTimer]);
+
   return (
     <>
       <div className="flex h-full min-h-0 flex-col bg-background">
@@ -530,6 +551,10 @@ export const ChatView = () => {
             contextWindow={contextWindowSize}
             fillRatio={fillRatio}
             compacting={tokenCompacting}
+          />
+          <VoiceControls
+            onQueryCaptured={handleVoiceQuery}
+            speakText={lastAssistantMessage}
           />
           <span
             className={cn(

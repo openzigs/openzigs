@@ -132,6 +132,16 @@
     "watchEnabled": true,
     "mediaModel": "base.en"
   },
+  "voice": {
+    "enabled": false,
+    "provider": "google",
+    "voiceName": "en-US-Journey-D",
+    "speakingRate": 1.0,
+    "pitch": 0.0,
+    "cacheDir": "~/.openzigs/voice-cache",
+    "maxCacheSizeMb": 500,
+    "maxTextLength": 5000
+  },
   "sentinel": {
     "enabled": false,
     "model": "gpt-4o-mini",

@@ -30,6 +30,7 @@ Before you begin, ensure the following are installed and available:
 | `DISCORD_BOT_TOKEN` | Connects the Discord messaging channel. |
 | `GITHUB_CLIENT_ID` | OAuth app client ID for the device-flow authentication. |
 | `TUNNEL_TOKEN` | Cloudflare Tunnel token for the Docker sidecar (production). |
+| `GOOGLE_APPLICATION_CREDENTIALS` | Path to Google Cloud service account JSON key file. Required for voice TTS. |
 
 **MCP Sidecar prerequisites (optional — only needed if using social or document tools):**
 
@@ -79,6 +80,9 @@ CHROME_DEBUG_PORT=9222
 
 # ── Optional: Cloudflare Tunnel (Docker sidecar) ──
 TUNNEL_TOKEN=your-cloudflare-tunnel-token
+
+# ── Optional: Voice Interface (Google Cloud TTS) ──
+GOOGLE_APPLICATION_CREDENTIALS=/path/to/your/service-account-key.json
 
 # ── Optional: MCP Sidecar URLs (set automatically by docker-compose.yml) ──
 # MCP_LINKEDIN_URL=http://linkedin-mcp-server:5101
@@ -1867,6 +1871,178 @@ The `browser-read` tool connects to a running Chrome instance via the Chrome Dev
 
 ---
 
+## Enabling Voice Features
+
+OpenZigs includes an optional voice interface with two capabilities:
+
+- **"Hey Zigs" wake word**: Hands-free voice input via the browser's Web Speech API with fuzzy matching.
+- **Text-to-Speech (TTS)**: AI responses read aloud using Google Cloud Text-to-Speech with file system caching.
+
+### Prerequisites
+
+| Requirement | Purpose |
+|---|---|
+| **Google Cloud Project** | Required for TTS. Free tier includes 1M characters/month for Standard voices, 1M bytes for Neural2/Journey voices. |
+| **Chrome / Edge / Brave** | The wake word feature requires a browser with Web Speech API support. |
+
+### Step 1: Set Up Google Cloud TTS
+
+1. Go to the [Google Cloud Console](https://console.cloud.google.com/).
+2. Create a new project (or use an existing one).
+3. Enable the **Cloud Text-to-Speech API**:
+   ```
+   Navigation menu → APIs & Services → Library → Search "Text-to-Speech" → Enable
+   ```
+4. Create a service account:
+   ```
+   Navigation menu → IAM & Admin → Service Accounts → Create Service Account
+   ```
+   - Name: `openzigs-tts`
+   - Role: None required (TTS API doesn't need IAM roles)
+5. Create a JSON key:
+   - Click the service account → Keys → Add Key → Create new key → JSON
+   - Save the downloaded file to a secure location (e.g., `~/.openzigs/gcp-tts-key.json`)
+6. Set the environment variable:
+   ```bash
+   export GOOGLE_APPLICATION_CREDENTIALS="$HOME/.openzigs/gcp-tts-key.json"
+   ```
+   Or add to your `.env` file:
+   ```dotenv
+   GOOGLE_APPLICATION_CREDENTIALS=/Users/you/.openzigs/gcp-tts-key.json
+   ```
+
+### Step 2: Enable Voice in Configuration
+
+In `config/default.json` or `~/.openzigs/config.json`:
+
+```json
+{
+  "voice": {
+    "enabled": true,
+    "provider": "google",
+    "voiceName": "en-US-Journey-D",
+    "speakingRate": 1.0,
+    "pitch": 0.0,
+    "cacheDir": "~/.openzigs/voice-cache",
+    "maxCacheSizeMb": 500,
+    "maxTextLength": 5000
+  }
+}
+```
+
+### Step 3: Restart the Server
+
+```bash
+pnpm dev
+```
+
+On startup, you should see:
+```
+Voice service initialized (provider: google, voice: en-US-Journey-D)
+```
+
+### Using Voice in the Chat
+
+Once enabled, two new buttons appear in the chat header:
+
+![Voice controls in the chat header](images/voice-controls-chat.png)
+
+| Button | Icon | Action |
+|---|---|---|
+| **Mic toggle** | 🎤 / 🎤✕ | Start/stop wake word listening |
+| **Speaker toggle** | 🔊 / 🔇 | Enable/disable TTS for AI responses |
+
+**Wake word flow:**
+
+1. Click the **mic button** to enter STANDBY mode (blue pulsing indicator).
+2. Say **"Hey Zigs"** followed by your question (e.g., "Hey Zigs, what's the weather?").
+3. The indicator turns green (ACTIVE) while capturing your query.
+4. After 5 seconds of silence, the captured query is submitted as a chat message.
+5. The system returns to STANDBY, listening for the next wake word.
+
+**TTS flow:**
+
+1. Click the **speaker button** to enable TTS output.
+2. When the AI responds, the last assistant message is read aloud via Google Cloud TTS.
+3. Say "Hey Zigs" during playback to interrupt the audio.
+
+### Voice Configuration Reference
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `voice.enabled` | boolean | `false` | Enable/disable voice features globally. |
+| `voice.provider` | string | `"google"` | TTS provider (currently only Google Cloud). |
+| `voice.voiceName` | string | `"en-US-Journey-D"` | Google Cloud voice name. |
+| `voice.speakingRate` | number | `1.0` | Speech rate (0.25–4.0). |
+| `voice.pitch` | number | `0.0` | Pitch adjustment (-20 to 20 semitones). |
+| `voice.cacheDir` | string | `"~/.openzigs/voice-cache"` | Directory for cached audio files. |
+| `voice.maxCacheSizeMb` | number | `500` | Maximum cache size in MB (LRU eviction). |
+| `voice.maxTextLength` | number | `5000` | Maximum characters per TTS request. |
+
+### Available Voices
+
+| Voice ID | Type | Description |
+|---|---|---|
+| `en-US-Journey-D` | Journey | Male, conversational, natural |
+| `en-US-Journey-F` | Journey | Female, conversational, natural |
+| `en-US-Neural2-A` | Neural2 | Male, standard |
+| `en-US-Neural2-C` | Neural2 | Female, standard |
+| `en-US-Neural2-J` | Neural2 | Male, deeper voice |
+
+### Voice REST API
+
+```bash
+# Synthesize text to speech (returns MP3 audio stream)
+curl -X POST -H "Content-Type: application/json" \
+  -d '{"text": "Hello from OpenZigs"}' \
+  http://localhost:3000/api/voice/speak -o hello.mp3
+
+# Get voice configuration and available voices
+curl http://localhost:3000/api/voice/config
+
+# Get cache statistics
+curl http://localhost:3000/api/voice/cache
+
+# Clear the TTS cache
+curl -X DELETE http://localhost:3000/api/voice/cache
+```
+
+### Browser Compatibility (Wake Word)
+
+| Browser | Web Speech API | Notes |
+|---|---|---|
+| Chrome 90+ | ✅ Supported | Full support, recommended |
+| Edge 90+ | ✅ Supported | Uses Chromium engine |
+| Brave | ✅ Supported | Uses Chromium engine |
+| Firefox | ❌ Not supported | Web Speech API not available |
+| Safari | ⚠️ Partial | Recognition available but may require permission |
+
+### Troubleshooting Voice
+
+| Symptom | Likely Cause | Fix |
+|---|---|---|
+| Voice buttons not visible | `voice.enabled` is `false` or browser doesn't support Web Speech API | Set `voice.enabled: true` in config. Use Chrome. |
+| TTS returns 503 | `GOOGLE_APPLICATION_CREDENTIALS` not set | Set the env var pointing to your service account JSON key. |
+| TTS returns 429 | Google Cloud quota exceeded | Check your project's quota dashboard. Free tier allows 1M chars/month. |
+| Mic not working | Browser blocked microphone access | Click the lock icon in the address bar → allow microphone. |
+| Wake word not detected | Background noise or unclear speech | Speak clearly and say "Hey Zigs" distinctly. Try lowering `fuzzyThreshold`. |
+| Audio not playing | Browser autoplay policy | Click the speaker toggle to explicitly enable TTS (user gesture required). |
+
+### Pricing
+
+Google Cloud TTS pricing (as of 2025):
+
+| Voice Type | Free Tier | Paid Tier |
+|---|---|---|
+| Standard | 4M characters/month | $4/1M characters |
+| WaveNet | 1M characters/month | $16/1M characters |
+| Neural2 | 1M bytes/month | $16/1M bytes |
+| Journey | 1M bytes/month | $16/1M bytes |
+
+The cache system significantly reduces API calls — repeated queries hit the local cache instead of calling Google.
+
+---
+
 ## Docker Usage
 
 ### Full Stack (Recommended)
@@ -3448,3 +3624,5 @@ Configure the knowledge base in your config file (`~/.openzigs/config.json`):
 | Agent not using expected tools | `maxToolsPerRequest` too low; tool got excluded. | Increase the tool limit in Admin → Task Engine → Tool Limit slider or via `PUT /api/admin/session/config`. Check if the tool should be added to ALWAYS_ON_TOOLS. |
 | Model hallucinating tool calls | Too many tools sent, or model calling a tool that was excluded. | Reduce `maxToolsPerRequest` or switch to a stronger model (e.g., `gpt-4.1`). |
 | MarkItDown returns empty content | File not accessible inside container. | Ensure the file path is within the mounted volume (`/workdir` inside the container). |
+| Voice TTS not working | Missing Google Cloud credentials. | Set `GOOGLE_APPLICATION_CREDENTIALS` env var to your service account JSON key file path. See [Enabling Voice Features](#enabling-voice-features). |
+| Wake word not responding | Web Speech API not supported in browser. | Use Chrome, Edge, or Brave. Firefox does not support the Web Speech API. |

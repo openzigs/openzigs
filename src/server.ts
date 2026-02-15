@@ -41,6 +41,8 @@ import { CustomPostActionManager } from "./tasks/custom-post-actions.js";
 import { SentinelService, SentinelConfigSchema } from "./sentinel/index.js";
 import { KnowledgeIngestionService } from "./knowledge/index.js";
 import { createKnowledgeRouter } from "./api/knowledge.js";
+import { VoiceService } from "./voice/index.js";
+import { createVoiceRouter } from "./api/voice.js";
 
 // Register built-in post-action types (create-github-issues, send-webhook, etc.)
 registerBuiltinPostActions();
@@ -315,6 +317,29 @@ void knowledgeService.start()
     const details = error instanceof Error ? error.message : String(error);
     logger.error(`Failed to start Knowledge Ingestion Service: ${details}`);
   });
+
+// ── Voice Service (Google Cloud TTS) ──
+const voiceConfig = config.voice;
+const voiceService = new VoiceService({
+  enabled: voiceConfig?.enabled ?? false,
+  provider: voiceConfig?.provider ?? "google",
+  voiceName: voiceConfig?.voiceName ?? "en-US-Journey-D",
+  speakingRate: voiceConfig?.speakingRate ?? 1.0,
+  pitch: voiceConfig?.pitch ?? 0.0,
+  cacheDir: voiceConfig?.cacheDir ?? "~/.openzigs/voice-cache",
+  maxCacheSizeMb: voiceConfig?.maxCacheSizeMb ?? 500,
+  maxTextLength: voiceConfig?.maxTextLength ?? 5000,
+});
+
+if (voiceConfig?.enabled !== false && process.env.GOOGLE_APPLICATION_CREDENTIALS) {
+  void voiceService.initialize().catch((error) => {
+    const details = error instanceof Error ? error.message : String(error);
+    logger.warn(`Voice service startup skipped: ${details}`);
+  });
+}
+
+const voiceRouter = createVoiceRouter({ voiceService });
+app.use("/api/voice", voiceRouter);
 
 // Webhook trigger routes (public-facing)
 const webhookRouter = createWebhookRouter({ webhookManager, taskEngine, promptManager });
@@ -744,6 +769,7 @@ const gracefulShutdown = () => {
     sidecarManager.stopAll(),
     localServerManager.stopAll(),
     knowledgeService.stop(),
+    voiceService.shutdown(),
   ]).finally(() => process.exit(0));
 };
 
