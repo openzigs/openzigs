@@ -236,15 +236,16 @@ const copilot = new CopilotWrapperService({
 copilotRef = copilot;
 
 // ── Knowledge Ingestion Service ──
-const knowledgeConfig = (config as Record<string, unknown>).knowledge as Record<string, unknown> | undefined;
+const knowledgeConfig = config.knowledge;
 const knowledgeService = new KnowledgeIngestionService({
   config: {
     enabled: knowledgeConfig?.enabled !== false,
-    directory: typeof knowledgeConfig?.directory === "string" ? knowledgeConfig.directory : undefined,
-    chunkSize: typeof knowledgeConfig?.chunkSize === "number" ? knowledgeConfig.chunkSize : undefined,
-    chunkOverlap: typeof knowledgeConfig?.chunkOverlap === "number" ? knowledgeConfig.chunkOverlap : undefined,
-    maxResults: typeof knowledgeConfig?.maxResults === "number" ? knowledgeConfig.maxResults : undefined,
+    directory: knowledgeConfig?.directory,
+    chunkSize: knowledgeConfig?.chunkSize,
+    chunkOverlap: knowledgeConfig?.chunkOverlap,
+    maxResults: knowledgeConfig?.maxResults,
     watchEnabled: knowledgeConfig?.watchEnabled !== false,
+    mediaModel: knowledgeConfig?.mediaModel,
   } as Partial<import("./knowledge/types.js").KnowledgeConfig>,
 });
 

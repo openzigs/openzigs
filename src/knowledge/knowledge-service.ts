@@ -17,7 +17,7 @@ import os from "node:os";
 import { createHash } from "node:crypto";
 import { watch, type FSWatcher } from "chokidar";
 import { chunkText } from "./chunker.js";
-import { generateEmbedding } from "./embedder.js";
+import { generateEmbedding, shutdownEmbedder } from "./embedder.js";
 import { LanceDBStore } from "./lancedb-store.js";
 import { ConverterRegistry, createDefaultRegistry, shutdownConverters } from "./converters/index.js";
 import type {
@@ -34,6 +34,10 @@ import { logger } from "../logging/logger.js";
 
 export type KnowledgeServiceOptions = {
   config?: Partial<KnowledgeConfig>;
+};
+
+type IndexFileOptions = {
+  force?: boolean;
 };
 
 /** File extension → source type mapping. */
@@ -110,25 +114,33 @@ export class KnowledgeIngestionService extends EventEmitter {
   private documents = new Map<string, KnowledgeDocument>();
   private running = false;
   private converterRegistry: ConverterRegistry | null = null;
+  private dbPath: string;
+  /** Path to the persisted document metadata sidecar file. */
+  private metadataPath: string;
 
   constructor(options: KnowledgeServiceOptions = {}) {
     super();
 
-    const knowledgeDir = resolveKnowledgeDirectory(options.config?.directory);
+    const sanitizedConfig = Object.fromEntries(
+      Object.entries(options.config ?? {}).filter(([, value]) => value !== undefined)
+    ) as Partial<KnowledgeConfig>;
+
+    const knowledgeDir = resolveKnowledgeDirectory(sanitizedConfig.directory);
 
     this.config = {
       ...DEFAULT_KNOWLEDGE_CONFIG,
-      ...options.config,
+      ...sanitizedConfig,
       directory: knowledgeDir,
     };
 
-    const dbPath = path.join(os.homedir(), ".openzigs", "knowledge-db");
-    this.store = new LanceDBStore({ dbPath });
+    this.dbPath = path.join(os.homedir(), ".openzigs", "knowledge-db");
+    this.metadataPath = path.join(this.dbPath, "documents.json");
+    this.store = new LanceDBStore({ dbPath: this.dbPath });
   }
 
   /**
-   * Start the knowledge service: initialize the store, scan existing files,
-   * and start the file watcher.
+   * Start the knowledge service: initialize the store, load persisted metadata,
+   * scan existing files (skipping unchanged), and start the file watcher.
    */
   async start(): Promise<void> {
     if (this.running) return;
@@ -140,12 +152,15 @@ export class KnowledgeIngestionService extends EventEmitter {
     await fs.mkdir(this.config.directory, { recursive: true });
 
     // Initialize converter registry (auto-detects available converters)
-    this.converterRegistry = await createDefaultRegistry();
+    this.converterRegistry = await createDefaultRegistry({ mediaModel: this.config.mediaModel });
 
     // Initialize LanceDB
     await this.store.initialize();
 
-    // Perform initial scan
+    // Load persisted document metadata so we can skip unchanged files on restart.
+    await this.loadDocumentMetadata();
+
+    // Perform initial scan (skips files whose content hash matches persisted metadata).
     await this.scanDirectory();
 
     // Start file watcher if enabled
@@ -169,17 +184,25 @@ export class KnowledgeIngestionService extends EventEmitter {
     }
 
     await shutdownConverters();
+    await shutdownEmbedder();
     await this.store.close();
     this.running = false;
     logger.info("[Knowledge] Knowledge Ingestion Service stopped");
   }
 
   /**
-   * Search the knowledge base.
+   * Search the knowledge base using the configured search mode and min score.
+   * Callers can override mode/minScore for specific queries.
    */
-  async search(query: string, limit?: number): Promise<KnowledgeSearchResult[]> {
+  async search(
+    query: string,
+    limit?: number,
+    options?: { mode?: import("./types.js").KnowledgeSearchMode; minScore?: number },
+  ): Promise<KnowledgeSearchResult[]> {
     const maxResults = limit ?? this.config.maxResults;
-    return this.store.search(query, maxResults);
+    const mode = options?.mode ?? this.config.searchMode ?? "hybrid";
+    const minScore = options?.minScore ?? this.config.minScore ?? 0;
+    return this.store.searchByMode(query, maxResults, mode, minScore);
   }
 
   /**
@@ -223,14 +246,14 @@ export class KnowledgeIngestionService extends EventEmitter {
     if (!doc) {
       throw new Error(`Document not found: ${documentId}`);
     }
-    await this.indexFile(doc.filePath);
+    await this.indexFile(doc.filePath, { force: true });
   }
 
   /**
    * Force re-index all documents.
    */
   async reindexAll(): Promise<void> {
-    await this.scanDirectory();
+    await this.scanDirectory({ force: true });
   }
 
   /**
@@ -248,6 +271,9 @@ export class KnowledgeIngestionService extends EventEmitter {
       documentId,
       filePath: doc.filePath,
     });
+
+    // Persist metadata after deletion.
+    void this.saveDocumentMetadata();
   }
 
   /**
@@ -294,6 +320,11 @@ export class KnowledgeIngestionService extends EventEmitter {
     const chunkingChanged =
       this.config.chunkSize !== previous.chunkSize
       || this.config.chunkOverlap !== previous.chunkOverlap;
+    const mediaModelChanged = this.config.mediaModel !== previous.mediaModel;
+
+    if (mediaModelChanged) {
+      this.converterRegistry = await createDefaultRegistry({ mediaModel: this.config.mediaModel });
+    }
 
     if (directoryChanged) {
       if (this.watcher) {
@@ -329,7 +360,7 @@ export class KnowledgeIngestionService extends EventEmitter {
     }
 
     logger.info(
-      `[Knowledge] Config updated (directory=${this.config.directory}, watchEnabled=${this.config.watchEnabled})`
+      `[Knowledge] Config updated (directory=${this.config.directory}, watchEnabled=${this.config.watchEnabled}, mediaModel=${this.config.mediaModel})`
     );
 
     return this.getConfig();
@@ -340,7 +371,7 @@ export class KnowledgeIngestionService extends EventEmitter {
   /**
    * Scan the knowledge directory and index all supported files.
    */
-  private async scanDirectory(): Promise<void> {
+  private async scanDirectory(options: IndexFileOptions = {}): Promise<void> {
     const startTime = Date.now();
     const files = await this.collectFiles(this.config.directory);
 
@@ -354,7 +385,7 @@ export class KnowledgeIngestionService extends EventEmitter {
 
     for (const filePath of files) {
       try {
-        await this.indexFile(filePath);
+        await this.indexFile(filePath, options);
         indexed++;
       } catch (error) {
         failed++;
@@ -364,11 +395,13 @@ export class KnowledgeIngestionService extends EventEmitter {
     }
 
     // Clean up documents that no longer exist on disk
+    let staleRemoved = 0;
     for (const [docId, doc] of this.documents) {
       const exists = files.includes(doc.filePath);
       if (!exists) {
         await this.store.deleteByDocumentId(docId);
         this.documents.delete(docId);
+        staleRemoved++;
       }
     }
 
@@ -380,7 +413,12 @@ export class KnowledgeIngestionService extends EventEmitter {
       duration,
     });
 
-    logger.info(`[Knowledge] Scan complete: ${indexed} indexed, ${failed} failed (${duration}ms)`);
+    // Persist metadata after scan completes.
+    if (indexed > 0 || staleRemoved > 0) {
+      void this.saveDocumentMetadata();
+    }
+
+    logger.info(`[Knowledge] Scan complete: ${indexed} indexed, ${failed} failed, ${staleRemoved} stale removed (${duration}ms)`);
   }
 
   /**
@@ -416,7 +454,7 @@ export class KnowledgeIngestionService extends EventEmitter {
   /**
    * Index a single file: convert (if needed), hash, chunk, embed, store.
    */
-  private async indexFile(filePath: string): Promise<void> {
+  private async indexFile(filePath: string, options: IndexFileOptions = {}): Promise<void> {
     const relativePath = path.relative(this.config.directory, filePath);
     const documentId = this.computeDocumentId(filePath);
     const ext = path.extname(filePath).toLowerCase();
@@ -442,7 +480,7 @@ export class KnowledgeIngestionService extends EventEmitter {
 
     // Check if already indexed with same hash (skip re-indexing)
     const existing = this.documents.get(documentId);
-    if (existing && existing.contentHash === contentHash && existing.status === "indexed") {
+    if (!options.force && existing && existing.contentHash === contentHash && existing.status === "indexed") {
       return;
     }
 
@@ -469,10 +507,13 @@ export class KnowledgeIngestionService extends EventEmitter {
       });
 
       // Generate embeddings for each chunk
-      const embeddedChunks: KnowledgeChunk[] = chunks.map((chunk) => ({
-        ...chunk,
-        vector: generateEmbedding(chunk.text),
-      }));
+      const embeddedChunks: KnowledgeChunk[] = [];
+      for (const chunk of chunks) {
+        embeddedChunks.push({
+          ...chunk,
+          vector: await generateEmbedding(chunk.text),
+        });
+      }
 
       // Store in LanceDB
       await this.store.addChunks(embeddedChunks);
@@ -485,6 +526,9 @@ export class KnowledgeIngestionService extends EventEmitter {
 
       this.emitEvent({ type: "document:indexed", document: doc });
       logger.debug(`[Knowledge] Indexed ${relativePath} (${embeddedChunks.length} chunks)`);
+
+      // Persist metadata so restarts can skip unchanged files.
+      void this.saveDocumentMetadata();
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       doc.status = "failed";
@@ -595,5 +639,55 @@ export class KnowledgeIngestionService extends EventEmitter {
    */
   private emitEvent(event: KnowledgeServiceEvent): void {
     this.emit(event.type, event);
+  }
+
+  // ── Document metadata persistence ──
+
+  /**
+   * Load persisted document metadata from the sidecar JSON file.
+   *
+   * This allows the service to skip re-indexing unchanged files across
+   * server restarts. Documents whose content hash still matches are not
+   * re-embedded, saving significant time and compute.
+   */
+  private async loadDocumentMetadata(): Promise<void> {
+    try {
+      const raw = await fs.readFile(this.metadataPath, "utf-8");
+      const entries = JSON.parse(raw) as KnowledgeDocument[];
+      if (!Array.isArray(entries)) return;
+
+      let loaded = 0;
+      for (const doc of entries) {
+        if (doc.id && doc.filePath && doc.contentHash) {
+          this.documents.set(doc.id, doc);
+          loaded++;
+        }
+      }
+
+      if (loaded > 0) {
+        logger.info(`[Knowledge] Loaded ${loaded} persisted document records (will skip unchanged files)`);
+      }
+    } catch {
+      // File doesn't exist yet or is corrupt — start fresh.
+      logger.debug("[Knowledge] No persisted document metadata found (first run or reset)");
+    }
+  }
+
+  /**
+   * Persist the current document metadata to a sidecar JSON file.
+   *
+   * Uses atomic write-to-temp-then-rename to prevent corruption.
+   */
+  private async saveDocumentMetadata(): Promise<void> {
+    try {
+      await fs.mkdir(path.dirname(this.metadataPath), { recursive: true });
+      const entries = Array.from(this.documents.values());
+      const tmpPath = this.metadataPath + ".tmp";
+      await fs.writeFile(tmpPath, JSON.stringify(entries, null, 2), "utf-8");
+      await fs.rename(tmpPath, this.metadataPath);
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      logger.warn(`[Knowledge] Failed to persist document metadata: ${msg}`);
+    }
   }
 }

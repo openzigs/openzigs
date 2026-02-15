@@ -17,6 +17,10 @@ import { createImageOcrConverter } from "./image-ocr-converter.js";
 import { terminateOcrEngine } from "./ocr-engine.js";
 import { logger } from "../../logging/logger.js";
 
+export type ConverterRegistryOptions = {
+  mediaModel?: string;
+};
+
 export class ConverterRegistry {
   private converters = new Map<string, ConverterRegistration>();
 
@@ -109,7 +113,7 @@ export class ConverterRegistry {
  * Create a fully-initialized converter registry with all built-in converters.
  * Auto-detects which converters are available at startup.
  */
-export async function createDefaultRegistry(): Promise<ConverterRegistry> {
+export async function createDefaultRegistry(options: ConverterRegistryOptions = {}): Promise<ConverterRegistry> {
   const registry = new ConverterRegistry();
 
   // Text / code / markup — always available (reads files as UTF-8).
@@ -152,7 +156,7 @@ export async function createDefaultRegistry(): Promise<ConverterRegistry> {
   }
 
   // Media (mp4, mp3, wav, m4a) — available if ffmpeg is on PATH.
-  const mediaConverter = await createMediaConverter();
+  const mediaConverter = await createMediaConverter({ modelName: options.mediaModel });
   registry.register(mediaConverter);
   if (mediaConverter.available) {
     logger.info("[Knowledge] Media converter available (ffmpeg)");

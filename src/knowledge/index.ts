@@ -7,7 +7,7 @@ export { LanceDBStore } from "./lancedb-store.js";
 export type { LanceDBStoreOptions } from "./lancedb-store.js";
 export { chunkText } from "./chunker.js";
 export type { ChunkerOptions } from "./chunker.js";
-export { generateEmbedding, generateEmbeddings, getEmbeddingDim } from "./embedder.js";
+export { generateEmbedding, generateEmbeddings, getEmbeddingDim, isModelReady, shutdownEmbedder } from "./embedder.js";
 export { ConverterRegistry, createDefaultRegistry } from "./converters/index.js";
 export type { ConversionResult, FileConverter, ConverterRegistration } from "./converters/index.js";
 export type {
@@ -15,6 +15,7 @@ export type {
   KnowledgeDocument,
   KnowledgeChunk,
   KnowledgeSearchResult,
+  KnowledgeSearchMode,
   KnowledgeStats,
   KnowledgeServiceEvent,
   KnowledgeSourceType,

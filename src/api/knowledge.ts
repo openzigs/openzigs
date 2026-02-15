@@ -150,6 +150,32 @@ export const createKnowledgeRouter = ({ knowledgeService }: KnowledgeRouterOptio
         updates.watchEnabled = body.watchEnabled;
       }
 
+      if (body.mediaModel !== undefined) {
+        if (typeof body.mediaModel !== "string" || body.mediaModel.trim().length === 0) {
+          res.status(400).json({ error: "mediaModel must be a non-empty string" });
+          return;
+        }
+        updates.mediaModel = body.mediaModel.trim();
+      }
+
+      if (body.minScore !== undefined) {
+        const val = Number(body.minScore);
+        if (Number.isNaN(val) || val < 0 || val > 1) {
+          res.status(400).json({ error: "minScore must be a number between 0 and 1" });
+          return;
+        }
+        updates.minScore = val;
+      }
+
+      if (body.searchMode !== undefined) {
+        const allowed = ["vector", "fts", "hybrid"];
+        if (typeof body.searchMode !== "string" || !allowed.includes(body.searchMode)) {
+          res.status(400).json({ error: `searchMode must be one of: ${allowed.join(", ")}` });
+          return;
+        }
+        updates.searchMode = body.searchMode;
+      }
+
       if (Object.keys(updates).length === 0) {
         res.status(400).json({ error: "No valid knowledge config fields provided" });
         return;
@@ -170,6 +196,9 @@ export const createKnowledgeRouter = ({ knowledgeService }: KnowledgeRouterOptio
         ...existingKnowledge,
         ...(updates.directory !== undefined ? { directory: appliedConfig.directory } : {}),
         ...(updates.watchEnabled !== undefined ? { watchEnabled: appliedConfig.watchEnabled } : {}),
+        ...(updates.mediaModel !== undefined ? { mediaModel: appliedConfig.mediaModel } : {}),
+        ...(updates.minScore !== undefined ? { minScore: appliedConfig.minScore } : {}),
+        ...(updates.searchMode !== undefined ? { searchMode: appliedConfig.searchMode } : {}),
       };
 
       await writeUserConfig(configPath, userConfig);

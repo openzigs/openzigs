@@ -3314,6 +3314,15 @@ The `search-knowledge` tool is **always-on** — the AI can use it in any conver
 
 - **`query`** (required): Natural language search query
 - **`limit`** (optional): Maximum results to return (default: 10)
+- **`mode`** (optional): Search strategy — `"hybrid"` (default), `"vector"` (semantic only), or `"fts"` (keyword only)
+
+**Search modes explained:**
+
+| Mode | When to Use |
+|---|---|
+| **`hybrid`** (default) | Best for most queries. Combines semantic understanding with exact keyword matching via reciprocal rank fusion. Results appearing in both vector and FTS results get a relevance boost. |
+| **`vector`** | Conceptual queries where you want semantically similar content, even if it doesn't share exact keywords. Example: "how does authentication work?" |
+| **`fts`** | Exact keyword searches for specific terms, function names, or error messages. Example: "CORS_ALLOWED_ORIGINS", "handleAuthCallback" |
 
 Example AI interaction:
 
@@ -3365,14 +3374,19 @@ All knowledge endpoints are under `/api/admin/knowledge`:
 | `POST` | `/reindex/:documentId` | Re-index a specific document |
 | `DELETE` | `/documents/:documentId` | Remove a document from the index |
 | `GET` | `/config` | Current knowledge configuration |
-| `PUT` | `/config` | Update knowledge configuration (`directory`, `watchEnabled`) |
+| `PUT` | `/config` | Update knowledge configuration (`directory`, `watchEnabled`, `mediaModel`, `searchMode`, `minScore`) |
 
 ### Configuration Options
 
-You can change the knowledge directory from the Admin UI:
+You can change the knowledge directory, search mode, and other settings from the Admin UI:
 
 1. Navigate to **Admin** → **Knowledge Base**
-2. Update **Knowledge Directory**
+2. Update settings:
+   - **Knowledge Directory** — path to watch for files
+   - **Live File Watching** — enable/disable real-time change detection
+   - **Whisper Model** — audio/video transcription quality (tiny.en → large-v1)
+   - **Search Mode** — hybrid (recommended), vector, or full-text
+   - **Minimum Score Threshold** — filter out low-relevance results (slider, 0–100%)
 3. Click **Save**
 
 Changes apply immediately (no server restart required). When the directory changes, OpenZigs clears the current index and re-scans the new directory.
@@ -3386,7 +3400,10 @@ Configure the knowledge base in your config file (`~/.openzigs/config.json`):
     "chunkSize": 1000,
     "chunkOverlap": 200,
     "maxResults": 10,
-    "watchEnabled": true
+    "watchEnabled": true,
+    "mediaModel": "base.en",
+    "searchMode": "hybrid",
+    "minScore": 0.25
   }
 }
 ```
@@ -3398,13 +3415,17 @@ Configure the knowledge base in your config file (`~/.openzigs/config.json`):
 | `chunkOverlap` | `200` | Character overlap between consecutive chunks |
 | `maxResults` | `10` | Default number of search results |
 | `watchEnabled` | `true` | Enable real-time file watching |
+| `mediaModel` | `"base.en"` | Whisper model for audio/video transcription |
+| `searchMode` | `"hybrid"` | Default search mode: `"vector"`, `"fts"`, or `"hybrid"` |
+| `minScore` | `0.25` | Minimum similarity score (0–1) to include in results. 0 = no threshold. |
 
 ### Architecture Notes
 
-- **Embedding**: Uses a local deterministic hashing-based embedder (384-dimension vectors, FNV-1a + character n-grams). No external API calls required.
-- **Vector Store**: [LanceDB](https://lancedb.com/) embedded database stored at `~/.openzigs/knowledge/.lancedb`.
+- **Embedding**: Uses Hugging Face Transformers.js with the `all-MiniLM-L6-v2` sentence transformer (~23MB, 384-dimensional vectors). Falls back to deterministic FNV-1a hashing if the model fails to load.
+- **Vector Store**: [LanceDB](https://lancedb.com/) embedded database stored at `~/.openzigs/knowledge-db/` with both IVF-PQ vector index and native FTS index.
+- **Hybrid Search**: Default mode combines vector (semantic) and full-text (keyword) search using Reciprocal Rank Fusion (k=60). Results in both lists get a score boost.
 - **Chunking**: Markdown-aware splitting that preserves heading context. Headings are extracted and stored as metadata for each chunk.
-- **Change Detection**: SHA-256 content hashing — files are only re-indexed when their content actually changes.
+- **Change Detection**: SHA-256 content hashing — files are only re-indexed when their content actually changes. Document metadata is persisted to disk so the hash check survives server restarts.
 
 ---
 

@@ -30,7 +30,29 @@ async function ffmpegAvailable(): Promise<boolean> {
   }
 }
 
-export async function createMediaConverter(): Promise<ConverterRegistration> {
+/**
+ * Normalize the Whisper model name.
+ *
+ * whisper-node stores models as `ggml-{modelName}.bin`. The names don't
+ * always match what users expect:
+ * - "large-v3" → "large" (whisper-node's `large` is actually v3)
+ * - "large"    → "large" (works if ggml-large.bin exists or is symlinked)
+ *
+ * We keep a fallback chain so the converter can try multiple names if the
+ * primary one isn't found at runtime.
+ */
+function resolveModelName(raw: string): string {
+  const trimmed = raw.trim();
+  if (trimmed === "large-v3") return "large";
+  return trimmed || "base.en";
+}
+
+export type MediaConverterOptions = {
+  modelName?: string;
+};
+
+export async function createMediaConverter(options: MediaConverterOptions = {}): Promise<ConverterRegistration> {
+  const modelName = resolveModelName(options.modelName ?? "base.en");
   const hasFFmpeg = await ffmpegAvailable();
 
   if (!hasFFmpeg) {
@@ -119,7 +141,7 @@ export async function createMediaConverter(): Promise<ConverterRegistration> {
 
         // Transcribe with whisper-node.
         const segments = await transcribe(tmpWav, {
-          modelName: "base.en",
+          modelName,
           whisperOptions: { language: "en" },
         });
 

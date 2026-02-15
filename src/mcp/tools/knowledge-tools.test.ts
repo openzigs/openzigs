@@ -51,7 +51,7 @@ describe("search-knowledge tool", () => {
 
     expect(result.isError).toBeUndefined();
     expect(result.text).toContain("typescript.md");
-    expect(result.text).toContain("85.0% match");
+    expect(result.text).toContain("85% relevance");
     expect(result.text).toContain("TypeScript is a typed superset");
   });
 
@@ -80,6 +80,15 @@ describe("search-knowledge tool", () => {
     const tools = createKnowledgeTools({ knowledgeService: mockService });
     await tools[0].handler({ query: "test" });
 
-    expect(mockService.search).toHaveBeenCalledWith("test", 10);
+    expect(mockService.search).toHaveBeenCalledWith("test", 10, { mode: undefined });
+  });
+
+  it("passes mode to search when specified", async () => {
+    (mockService.search as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+
+    const tools = createKnowledgeTools({ knowledgeService: mockService });
+    await tools[0].handler({ query: "test", mode: "fts" });
+
+    expect(mockService.search).toHaveBeenCalledWith("test", 10, { mode: "fts" });
   });
 });

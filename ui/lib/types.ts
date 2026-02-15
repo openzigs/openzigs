@@ -438,7 +438,18 @@ export type PromptRecommendation = {
 
 /* ── Knowledge Base types (#215) ── */
 
-export type KnowledgeSourceType = "markdown" | "text" | "pdf" | "docx" | "json" | "csv" | "html" | "code";
+export type KnowledgeSourceType =
+  | "markdown"
+  | "text"
+  | "pdf"
+  | "docx"
+  | "xlsx"
+  | "json"
+  | "csv"
+  | "html"
+  | "code"
+  | "media"
+  | "image";
 export type DocumentStatus = "pending" | "processing" | "indexed" | "failed";
 
 export type KnowledgeDocument = {
@@ -474,6 +485,8 @@ export type KnowledgeStats = {
   lastIndexedAt: string | null;
 };
 
+export type KnowledgeSearchMode = "vector" | "fts" | "hybrid";
+
 export type KnowledgeConfig = {
   enabled: boolean;
   directory: string;
@@ -483,4 +496,7 @@ export type KnowledgeConfig = {
   includeExtensions: string[];
   excludePatterns: string[];
   watchEnabled: boolean;
+  mediaModel: string;
+  minScore: number;
+  searchMode: KnowledgeSearchMode;
 };

@@ -83,6 +83,9 @@ export type KnowledgeStats = {
   lastIndexedAt: string | null;
 };
 
+/** Search mode for knowledge queries. */
+export type KnowledgeSearchMode = "vector" | "fts" | "hybrid";
+
 /** Configuration for the knowledge subsystem. */
 export type KnowledgeConfig = {
   /** Whether the knowledge base is enabled. */
@@ -101,6 +104,12 @@ export type KnowledgeConfig = {
   excludePatterns: string[];
   /** Whether to watch the directory for changes. */
   watchEnabled: boolean;
+  /** Whisper model used by the media converter (e.g. tiny.en, base.en, small.en). */
+  mediaModel: string;
+  /** Minimum similarity score (0–1) to include in results. 0 = no threshold. */
+  minScore: number;
+  /** Default search mode: vector (semantic), fts (keyword), or hybrid (combined). */
+  searchMode: KnowledgeSearchMode;
 };
 
 /** Default knowledge configuration values. */
@@ -113,6 +122,9 @@ export const DEFAULT_KNOWLEDGE_CONFIG: KnowledgeConfig = {
   includeExtensions: [],
   excludePatterns: ["node_modules", ".git", "dist", "build", ".DS_Store"],
   watchEnabled: true,
+  mediaModel: "base.en",
+  minScore: 0.25,
+  searchMode: "hybrid",
 };
 
 /** Events emitted by the KnowledgeIngestionService. */
