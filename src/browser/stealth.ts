@@ -82,4 +82,4 @@ export const STEALTH_SCRIPTS: string[] = [
  * Combined stealth script — all STEALTH_SCRIPTS joined into a single
  * IIFE for efficient injection via `Page.addScriptToEvaluateOnNewDocument`.
  */
-export const COMBINED_STEALTH_SCRIPT = `(function() { try { ${STEALTH_SCRIPTS.join("\n")} } catch(e) {} })();`;
+export const COMBINED_STEALTH_SCRIPT = `(function() { try { ${STEALTH_SCRIPTS.join("\n")} } catch(e) { console.error('Stealth script injection failed:', e); } })();`;
