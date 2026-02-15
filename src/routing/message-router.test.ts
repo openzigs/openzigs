@@ -482,8 +482,10 @@ describe("MessageRouter", () => {
 
     await router.route(baseMessage({ content: "Hello" }));
 
-    // Vault locked + personality disabled = no system message
-    expect(copilot.lastSystemMessage).toBeUndefined();
+    // Vault locked → injects locked-state notice (not the full credential instructions)
+    expect(copilot.lastSystemMessage).toBeDefined();
+    expect(copilot.lastSystemMessage!.content).toContain("currently LOCKED");
+    expect(copilot.lastSystemMessage!.content).not.toContain("Available secrets:");
   });
 
   it("passes SDK-native availableTools when allowedTools provided", async () => {

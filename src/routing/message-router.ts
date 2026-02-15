@@ -312,10 +312,21 @@ export class MessageRouter {
    * Build vault awareness context for the system prompt.
    * When the vault is unlocked and has secrets, injects instructions
    * so the LLM uses get-secret + browser-navigate instead of asking for passwords.
+   * When locked, injects a notice so the model can tell the user to unlock.
    */
   private buildVaultSystemContext(): string | undefined {
     if (!this.vaultService) return undefined;
-    if (!this.vaultService.isUnlocked()) return undefined;
+
+    if (!this.vaultService.isUnlocked()) {
+      // Vault exists but is locked — tell the model so it can instruct the user.
+      return (
+        "[Secret Vault]\n" +
+        "The user has a secret vault but it is currently LOCKED. " +
+        "When the user asks to log in or use stored credentials, tell them to unlock the vault first " +
+        "via the Admin → Vault panel, then retry. Do NOT ask for passwords directly.\n" +
+        "You have list-secrets and get-secret tools available — they will work once the vault is unlocked."
+      );
+    }
 
     const secrets = this.vaultService.listSecrets();
     if (secrets.length === 0) return undefined;
