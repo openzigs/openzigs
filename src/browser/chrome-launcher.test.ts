@@ -96,6 +96,11 @@ describe("chrome-launcher", () => {
     const args = mockSpawn.mock.calls[0][1] as string[];
     expect(args).toContain("--remote-debugging-port=9222");
     expect(args).toContain("--no-first-run");
+    // Anti-automation flags
+    expect(args).toContain("--disable-blink-features=AutomationControlled");
+    expect(args).toContain("--disable-infobars");
+    expect(args).toContain("--disable-features=EnableAutomation");
+    expect(args).toContain("--window-size=1440,900");
     // unref() removed in recent changes
     // expect(fakeProcess.unref).toHaveBeenCalled();
   });

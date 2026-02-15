@@ -60,7 +60,9 @@
     "word-add-table",
     "word-read-doc",
     "word-to-pdf",
-    "write-file"
+    "write-file",
+    "get-secret",
+    "list-secrets"
   ],
   "customRiskOverrides": {},
   "globalApprovalOverrides": {}

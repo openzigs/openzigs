@@ -3,8 +3,17 @@
  *
  * Injects scripts via `Page.addScriptToEvaluateOnNewDocument` to make
  * the automated Chrome instance appear as a regular user browser.
- * Based on common puppeteer-extra-plugin-stealth techniques but implemented
+ * Based on puppeteer-extra-plugin-stealth techniques but implemented
  * directly against CDP (no puppeteer dependency).
+ *
+ * reCAPTCHA Enterprise and similar systems check:
+ *  - navigator.webdriver (C++ flag + JS property)
+ *  - Chrome automation markers (cdc_ properties, $cdc_ in DOM)
+ *  - Missing chrome.app / chrome.csi / chrome.loadTimes APIs
+ *  - Canvas/AudioContext/WebGL fingerprint consistency
+ *  - Stack trace sourceURL from CDP-injected scripts
+ *  - navigator.connection / NetworkInformation shape
+ *  - window dimension anomalies (outerHeight = 0 in headless)
  */
 
 /**
@@ -13,7 +22,12 @@
  */
 export const STEALTH_SCRIPTS: string[] = [
   // 1. Override navigator.webdriver to false
-  `Object.defineProperty(navigator, 'webdriver', { get: () => false });`,
+  // (Belt-and-suspenders: --disable-blink-features=AutomationControlled
+  //  handles the C++ side, this handles the JS reflection side.)
+  `Object.defineProperty(navigator, 'webdriver', {
+    get: () => false,
+    configurable: true,
+  });`,
 
   // 2. Fake chrome.runtime (Headless Chrome doesn't have this)
   `if (!window.chrome) { window.chrome = {}; }
@@ -25,7 +39,51 @@ export const STEALTH_SCRIPTS: string[] = [
      };
    }`,
 
-  // 3. Override navigator.plugins to look realistic
+  // 3. Fake chrome.app (missing in automation = bot fingerprint)
+  `if (!window.chrome.app) {
+     window.chrome.app = {
+       isInstalled: false,
+       InstallState: { DISABLED: 'disabled', INSTALLED: 'installed', NOT_INSTALLED: 'not_installed' },
+       RunningState: { CANNOT_RUN: 'cannot_run', READY_TO_RUN: 'ready_to_run', RUNNING: 'running' },
+       getDetails: function() { return null; },
+       getIsInstalled: function() { return false; },
+       installState: function(cb) { if (cb) cb('not_installed'); },
+       runningState: function() { return 'cannot_run'; },
+     };
+   }`,
+
+  // 4. Fake chrome.csi / chrome.loadTimes (expected by many fingerprinters)
+  `if (!window.chrome.csi) {
+     window.chrome.csi = function() {
+       return {
+         onloadT: Date.now(),
+         startE: Date.now(),
+         pageT: performance.now(),
+         tran: 15
+       };
+     };
+   }
+   if (!window.chrome.loadTimes) {
+     window.chrome.loadTimes = function() {
+       return {
+         commitLoadTime: Date.now() / 1000,
+         connectionInfo: 'http/1.1',
+         finishDocumentLoadTime: Date.now() / 1000,
+         finishLoadTime: Date.now() / 1000,
+         firstPaintAfterLoadTime: 0,
+         firstPaintTime: Date.now() / 1000,
+         navigationType: 'Other',
+         npnNegotiatedProtocol: 'unknown',
+         requestTime: Date.now() / 1000,
+         startLoadTime: Date.now() / 1000,
+         wasAlternateProtocolAvailable: false,
+         wasFetchedViaSpdy: false,
+         wasNpnNegotiated: false,
+       };
+     };
+   }`,
+
+  // 5. Override navigator.plugins to look realistic
   `Object.defineProperty(navigator, 'plugins', {
     get: () => {
       const plugins = [
@@ -38,12 +96,12 @@ export const STEALTH_SCRIPTS: string[] = [
     }
   });`,
 
-  // 4. Override navigator.languages
+  // 6. Override navigator.languages
   `Object.defineProperty(navigator, 'languages', {
     get: () => ['en-US', 'en'],
   });`,
 
-  // 5. Patch permissions API to hide "denied" from notifications
+  // 7. Patch permissions API to hide "denied" from notifications
   `const originalQuery = window.Permissions?.prototype?.query;
    if (originalQuery) {
      window.Permissions.prototype.query = function(parameters) {
@@ -54,20 +112,61 @@ export const STEALTH_SCRIPTS: string[] = [
      };
    }`,
 
-  // 6. Spoof WebGL vendor and renderer strings
-  `const getParameterOrig = WebGLRenderingContext.prototype.getParameter;
-   WebGLRenderingContext.prototype.getParameter = function(parameter) {
-     if (parameter === 37445) return 'Intel Inc.';
-     if (parameter === 37446) return 'Intel Iris OpenGL Engine';
-     return getParameterOrig.call(this, parameter);
-   };`,
+  // 8. Spoof WebGL vendor and renderer strings (WebGL1 + WebGL2)
+  `(function() {
+     const VENDOR = 'Intel Inc.';
+     const RENDERER = 'Intel Iris OpenGL Engine';
+     function patchGetParameter(proto) {
+       if (!proto) return;
+       const orig = proto.getParameter;
+       proto.getParameter = function(p) {
+         if (p === 37445) return VENDOR;
+         if (p === 37446) return RENDERER;
+         return orig.call(this, p);
+       };
+     }
+     patchGetParameter(WebGLRenderingContext.prototype);
+     if (typeof WebGL2RenderingContext !== 'undefined') {
+       patchGetParameter(WebGL2RenderingContext.prototype);
+     }
+     // Also patch the debug extension (used by some fingerprinters)
+     const origGetExtension = WebGLRenderingContext.prototype.getExtension;
+     WebGLRenderingContext.prototype.getExtension = function(name) {
+       const ext = origGetExtension.call(this, name);
+       if (name === 'WEBGL_debug_renderer_info' && ext) {
+         return new Proxy(ext, { get: (target, prop) => target[prop] });
+       }
+       return ext;
+     };
+   })();`,
 
-  // 7. Hide automation-related window properties
-  `delete window.cdc_adoQpoasnfa76pfcZLmcfl_Array;
-   delete window.cdc_adoQpoasnfa76pfcZLmcfl_Promise;
-   delete window.cdc_adoQpoasnfa76pfcZLmcfl_Symbol;`,
+  // 9. Hide automation-related window properties (ChromeDriver markers)
+  `(function() {
+     // Remove cdc_ properties injected by ChromeDriver
+     for (const key of Object.keys(window)) {
+       if (/^cdc_|^[$]cdc_/.test(key)) {
+         try { delete window[key]; } catch(e) {}
+       }
+     }
+     // Also remove known automation markers
+     const markers = [
+       '__webdriver_evaluate', '__selenium_evaluate',
+       '__fxdriver_evaluate', '__driver_evaluate',
+       '__webdriver_unwrap', '__selenium_unwrap',
+       '__fxdriver_unwrap', '__driver_unwrap',
+       '__lastWatirAlert', '__lastWatirConfirm',
+       '__lastWatirPrompt', '_WEBDRIVER_ELEM_CACHE',
+       'ChromeDriverw', '_phantom', '__nightmare',
+       '_selenium', 'callPhantom', 'callSelenium',
+       '_Selenium_IDE_Recorder', 'domAutomation',
+       'domAutomationController',
+     ];
+     for (const m of markers) {
+       try { delete window[m]; } catch(e) {}
+     }
+   })();`,
 
-  // 8. Prevent iframe contentWindow detection
+  // 10. Prevent iframe contentWindow detection
   `const elementDescriptor = Object.getOwnPropertyDescriptor(HTMLIFrameElement.prototype, 'contentWindow');
    if (elementDescriptor) {
      Object.defineProperty(HTMLIFrameElement.prototype, 'contentWindow', {
@@ -76,10 +175,124 @@ export const STEALTH_SCRIPTS: string[] = [
        }
      });
    }`,
+
+  // 11. Spoof navigator.connection (missing in automation profiles)
+  `if (!navigator.connection) {
+     Object.defineProperty(navigator, 'connection', {
+       get: () => ({
+         effectiveType: '4g',
+         rtt: 50,
+         downlink: 10,
+         saveData: false,
+         onchange: null,
+         addEventListener: function() {},
+         removeEventListener: function() {},
+         dispatchEvent: function() { return true; },
+       }),
+       configurable: true,
+     });
+   }`,
+
+  // 12. Fix window.outerHeight / window.outerWidth (zero in some automation)
+  `if (window.outerHeight === 0) {
+     Object.defineProperty(window, 'outerHeight', { get: () => window.innerHeight + 85 });
+   }
+   if (window.outerWidth === 0) {
+     Object.defineProperty(window, 'outerWidth', { get: () => window.innerWidth });
+   }`,
+
+  // 13. Inject subtle canvas noise so fingerprint hashes aren't perfectly
+  //     consistent across automated sessions (a hallmark of bots).
+  `(function() {
+     const origGetContext = HTMLCanvasElement.prototype.getContext;
+     HTMLCanvasElement.prototype.getContext = function(type, attrs) {
+       const ctx = origGetContext.call(this, type, attrs);
+       if (type === '2d' && ctx) {
+         const origGetImageData = ctx.getImageData;
+         ctx.getImageData = function() {
+           const imageData = origGetImageData.apply(this, arguments);
+           // Add imperceptible noise (±1 to a handful of pixels)
+           const d = imageData.data;
+           for (let i = 0; i < Math.min(d.length, 80); i += 4) {
+             d[i] = d[i] ^ (1 & (i * 13 + 7));
+           }
+           return imageData;
+         };
+       }
+       return ctx;
+     };
+     const origToDataURL = HTMLCanvasElement.prototype.toDataURL;
+     HTMLCanvasElement.prototype.toDataURL = function(type) {
+       const ctx = this.getContext('2d');
+       if (ctx) {
+         // Touch one pixel to vary the hash
+         const w = this.width, h = this.height;
+         if (w > 0 && h > 0) {
+           try {
+             const imgData = CanvasRenderingContext2D.prototype.getImageData.call(ctx, 0, 0, 1, 1);
+             imgData.data[3] = imgData.data[3] ^ 1;
+             CanvasRenderingContext2D.prototype.putImageData.call(ctx, imgData, 0, 0);
+           } catch(e) {}
+         }
+       }
+       return origToDataURL.apply(this, arguments);
+     };
+   })();`,
+
+  // 14. Inject AudioContext fingerprint noise
+  `(function() {
+     if (typeof OfflineAudioContext === 'undefined') return;
+     const origGetChannelData = AudioBuffer.prototype.getChannelData;
+     AudioBuffer.prototype.getChannelData = function(channel) {
+       const data = origGetChannelData.call(this, channel);
+       // Only modify once per buffer
+       if (!this._stealthed) {
+         for (let i = 0; i < Math.min(data.length, 10); i++) {
+           data[i] += 1e-7 * ((i * 31 + 17) % 7 - 3);
+         }
+         this._stealthed = true;
+       }
+       return data;
+     };
+   })();`,
+
+  // 15. Clean up Error stack traces to remove CDP sourceURL markers
+  //     that reveal scripts were injected via Page.addScriptToEvaluateOnNewDocument
+  `(function() {
+     const origPrepare = Error.prepareStackTrace;
+     Error.prepareStackTrace = function(error, stack) {
+       const filtered = stack.filter(frame => {
+         const fn = frame.getFileName() || '';
+         return !fn.includes('pptr:') && !fn.includes('__puppeteer');
+       });
+       if (origPrepare) return origPrepare(error, filtered);
+       return error.toString() + '\n' + filtered.map(f =>
+         '    at ' + f.toString()
+       ).join('\n');
+     };
+   })();`,
+
+  // 16. Override navigator.hardwareConcurrency to a common value
+  `Object.defineProperty(navigator, 'hardwareConcurrency', {
+    get: () => 8,
+    configurable: true,
+  });`,
+
+  // 17. Spoof navigator.deviceMemory to a common value
+  `if ('deviceMemory' in navigator) {
+     Object.defineProperty(navigator, 'deviceMemory', {
+       get: () => 8,
+       configurable: true,
+     });
+   }`,
 ];
 
 /**
  * Combined stealth script — all STEALTH_SCRIPTS joined into a single
  * IIFE for efficient injection via `Page.addScriptToEvaluateOnNewDocument`.
+ *
+ * The sourceURL is set to a generic Chrome extension-like path to avoid
+ * detection of CDP-injected script origins.
  */
-export const COMBINED_STEALTH_SCRIPT = `(function() { try { ${STEALTH_SCRIPTS.join("\n")} } catch(e) { console.error('Stealth script injection failed:', e); } })();`;
+export const COMBINED_STEALTH_SCRIPT = `(function() { try { ${STEALTH_SCRIPTS.join("\n")} } catch(e) {} })();
+//# sourceURL=chrome-extension://internal/content.js`;

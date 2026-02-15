@@ -154,6 +154,16 @@ export const launchChrome = async (
     `--user-data-dir=${getAutomationProfileDir()}`,
     "--no-first-run",
     "--no-default-browser-check",
+    // ── Anti-automation detection flags ──
+    // Prevent Chrome from setting navigator.webdriver = true at the C++ level.
+    // Without this, the webdriver flag is set before any injected JS can override it.
+    "--disable-blink-features=AutomationControlled",
+    // Suppress the "Chrome is being controlled by automated test software" infobar
+    "--disable-infobars",
+    // Exclude the "enable-automation" switch that marks the session as automated
+    "--disable-features=EnableAutomation",
+    // Realistic window size so outerWidth/outerHeight are non-zero
+    "--window-size=1440,900",
     ...extraFlags
   ];
 

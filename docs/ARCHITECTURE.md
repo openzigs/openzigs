@@ -2462,14 +2462,28 @@ CDP Input.dispatchKeyEvent per character  ← plaintext only here
 
 ### Browser Stealth
 
-Anti-bot detection evasion is injected via `Page.addScriptToEvaluateOnNewDocument` on every `navigate` action:
+Two layers of anti-bot evasion work together to defeat reCAPTCHA Enterprise, Cloudflare, and similar bot-detection systems:
 
-- `navigator.webdriver` → `false`
-- `chrome.runtime` shim
-- Realistic `navigator.plugins` and `navigator.languages`
-- WebGL vendor/renderer spoofing
+**Chrome Launch Flags** (applied at process spawn):
+- `--disable-blink-features=AutomationControlled` — prevents `navigator.webdriver` being set at the C++ level
+- `--disable-infobars` — hides the "controlled by automated test software" banner
+- `--disable-features=EnableAutomation` — removes the `enable-automation` switch
+- `--window-size=1440,900` — realistic viewport so `outerWidth`/`outerHeight` aren't zero
+
+**CDP Script Injection** (17 scripts via `Page.addScriptToEvaluateOnNewDocument` on every `navigate` action):
+- `navigator.webdriver` → `false` (JS-level belt-and-suspenders)
+- `chrome.runtime` / `chrome.app` / `chrome.csi` / `chrome.loadTimes` shims
+- Realistic `navigator.plugins`, `navigator.languages`, `navigator.connection`
+- `navigator.hardwareConcurrency` and `navigator.deviceMemory` normalisation
+- WebGL1 + WebGL2 vendor/renderer spoofing (including `WEBGL_debug_renderer_info`)
 - Permissions API notifications bypass
-- Chrome DevTools Protocol automation markers removed
+- Canvas fingerprint noise injection (imperceptible ±1 pixel variation)
+- AudioContext fingerprint noise injection
+- ChromeDriver marker removal (`cdc_`, `$cdc_`, `__webdriver_evaluate`, etc.)
+- `window.outerHeight` / `window.outerWidth` normalisation
+- `Error.prepareStackTrace` patching to hide CDP sourceURL markers
+- iframe `contentWindow` detection prevention
+- Concealed `//# sourceURL` pointing to a generic Chrome extension path
 
 ### Chrome Profile
 
