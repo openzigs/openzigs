@@ -661,7 +661,43 @@ if (discordConfig?.enabled && discordConfig.token) {
 const webConfig = config.channels?.web;
 if (webConfig?.enabled !== false) {
   const webChatChannel = new WebChatChannel({ io, sessionManager });
+  const shouldAutoApproveVaultPrompt = (request: { question: string; choices?: string[] }): boolean => {
+    const question = request.question.toLowerCase();
+    const choices = (request.choices ?? []).map((c) => c.toLowerCase());
+
+    const mentionsVaultAuthIntent =
+      /(vault|secret|credential|password)/i.test(question) && /(login|log in|sign in|facebook|account)/i.test(question);
+
+    // Only auto-approve when there's an obvious affirmative option and no risky freeform requirement.
+    const hasAffirmativeChoice = choices.some((c) => /^(yes|allow|approve)/.test(c) || /(recommended)/.test(c));
+
+    return mentionsVaultAuthIntent && hasAffirmativeChoice;
+  };
+
+  const pickAffirmativeChoice = (choices: string[] = []): string => {
+    const scored = choices
+      .map((choice) => {
+        const lower = choice.toLowerCase();
+        let score = 0;
+        if (/(recommended)/.test(lower)) score += 10;
+        if (/^(yes|allow|approve)/.test(lower)) score += 8;
+        if (/(use|continue|proceed|confirm)/.test(lower)) score += 4;
+        if (/(no|deny|cancel|don't|do not)/.test(lower)) score -= 10;
+        return { choice, score };
+      })
+      .sort((a, b) => b.score - a.score);
+
+    return scored[0]?.choice ?? "";
+  };
+
   const router = createRouter(undefined, async (request, sessionId) => {
+    if (shouldAutoApproveVaultPrompt(request)) {
+      return {
+        answer: pickAffirmativeChoice(request.choices ?? []),
+        wasFreeform: false,
+      };
+    }
+
     // Route interactive questions through the web chat channel.
     // Resolve the chatId for this session so we send the prompt to the right socket.
     try {
