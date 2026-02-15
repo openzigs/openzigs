@@ -743,6 +743,63 @@ interface MessageChannel {
 
 ---
 
+## Voice Interface Layer
+
+The voice subsystem adds hands-free input (wake word) and audio output (TTS) capabilities to the web chat.
+
+### Architecture
+
+```mermaid
+graph TB
+    subgraph Frontend["Browser (Next.js)"]
+        WW[useWakeWord Hook<br/>Web Speech API] -->|query text| VC[VoiceControls]
+        VC -->|submit message| CV[ChatView]
+        CV -->|assistant response| AP[VoiceAudioPlayer]
+        AP -->|fetch MP3| API
+    end
+
+    subgraph Backend["Express Server"]
+        API[POST /api/voice/speak] --> VS[VoiceService]
+        VS -->|cache miss| GCP[Google Cloud TTS]
+        VS -->|cache hit| CACHE[File Cache<br/>~/.openzigs/voice-cache/]
+        GCP -->|audio buffer| VS
+        VS -->|atomic write| CACHE
+    end
+```
+
+### Components
+
+| Component | Location | Purpose |
+|---|---|---|
+| `VoiceService` | `src/voice/voice-service.ts` | Google Cloud TTS client with MD5-keyed file cache and LRU eviction |
+| `VoiceService types` | `src/voice/types.ts` | Config, result, and cache stat type definitions |
+| Voice API router | `src/api/voice.ts` | Express routes: `POST /speak`, `GET /config`, `GET /cache`, `DELETE /cache` |
+| `useWakeWord` hook | `ui/lib/hooks/use-wake-word.ts` | State machine (IDLE→STANDBY→ACTIVE) with Levenshtein fuzzy matching and Chrome keep-alive |
+| `VoiceControls` | `ui/components/voice/voice-controls.tsx` | Mic/speaker toggle buttons integrated into the chat header |
+| `VoiceIndicator` | `ui/components/voice/voice-indicator.tsx` | Colored dot: gray (IDLE), blue-pulse (STANDBY), green-glow (ACTIVE) |
+| `VoiceAudioPlayer` | `ui/components/voice/voice-audio-player.tsx` | Hidden `<audio>` element for TTS playback with interrupt support |
+
+### Wake Word State Machine
+
+```
+IDLE ──[startListening()]──► STANDBY ──[wake word]──► ACTIVE
+  ▲                              ▲                       │
+  └──[stopListening()]───────────┴──[silence timeout]────┘
+```
+
+- **STANDBY**: Listening via Web Speech API continuous mode with keep-alive (restarts on Chrome auto-stop)
+- **ACTIVE**: Capturing query text after wake word, with configurable silence timeout (default: 5s)
+- **Fuzzy matching**: Levenshtein similarity ≥ 0.7 against variants: "hey zigs", "hey zig", "hey sig", "hey sigs"
+
+### TTS Caching Strategy
+
+- **Cache key**: MD5 hash of `{text, voice, speakingRate, pitch}` → `{hash}.mp3`
+- **Writes**: Atomic (write `.tmp` → rename) to prevent corruption
+- **Reads**: Touch `mtime` on hit for LRU tracking
+- **Eviction**: Background LRU sweep when total size exceeds `maxCacheSizeMb`
+
+---
+
 ## Security Model
 
 ### Risk Classification

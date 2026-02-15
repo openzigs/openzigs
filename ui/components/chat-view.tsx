@@ -31,6 +31,7 @@ import { UserInputPrompt } from "@/components/user-input-prompt";
 import { WorkflowPreviewCard } from "@/components/workflow-preview-card";
 import { SessionContextBar } from "@/components/session-context-bar";
 import { ContextFuelGauge } from "@/components/chat/context-fuel-gauge";
+import { VoiceControls } from "@/components/voice";
 import { useTokenUsage } from "@/lib/hooks/use-token-usage";
 import type {
   ModelInfo,
@@ -76,6 +77,7 @@ export const ChatView = () => {
   const [historyIndex, setHistoryIndex] = useState(-1);
   const [draftInput, setDraftInput] = useState("");
   const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
+  const [speakText, setSpeakText] = useState<string | undefined>(undefined);
   const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort>("medium");
   const [provider, setProvider] = useState<ProviderInfo | null>(null);
   const [sessionStatus, setSessionStatus] = useState<SessionStatus | null>(null);
@@ -242,6 +244,7 @@ export const ChatView = () => {
       finalizeStream();
       if (data.content) {
         setMessages((prev) => [...prev, { id: `msg-${Date.now()}`, role: "assistant", content: data.content! }]);
+        setSpeakText(data.content);
       }
     };
 
@@ -265,6 +268,10 @@ export const ChatView = () => {
     };
 
     const onStreamEnd = () => {
+      const completed = streamRef.current?.content?.trim();
+      if (completed) {
+        setSpeakText(completed);
+      }
       finalizeStream();
     };
 
@@ -494,6 +501,24 @@ export const ChatView = () => {
   const inputDisabled = sending || !!activeInputRequest;
   const showConnecting = connected && !chatId;
 
+  // Voice: handle captured voice query (submit as chat message)
+  const handleVoiceQuery = useCallback((query: string) => {
+    const text = query.trim();
+    console.log("[voice] handleVoiceQuery:", JSON.stringify(text), { chatId: !!chatId, socket: !!socket, connected, sending });
+    if (!text || !chatId || !socket || !connected || sending) return;
+
+    setMessages((prev) => [...prev, { id: nextId(), role: "user", content: text }]);
+    socket.emit("chat:message", {
+      content: text,
+      model: selectedModel || undefined,
+      reasoningEffort: reasoningEffort !== "medium" ? reasoningEffort : undefined,
+    });
+    setSending(true);
+    setThinking(true);
+    setHistory((prev) => [...prev.slice(-(MAX_HISTORY - 1)), text]);
+    resetStuckTimer();
+  }, [chatId, socket, connected, sending, selectedModel, reasoningEffort, nextId, resetStuckTimer]);
+
   return (
     <>
       <div className="flex h-full min-h-0 flex-col bg-background">
@@ -530,6 +555,10 @@ export const ChatView = () => {
             contextWindow={contextWindowSize}
             fillRatio={fillRatio}
             compacting={tokenCompacting}
+          />
+          <VoiceControls
+            onQueryCaptured={handleVoiceQuery}
+            speakText={speakText}
           />
           <span
             className={cn(

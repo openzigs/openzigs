@@ -166,6 +166,17 @@ export type KnowledgeAppConfig = {
   mediaModel?: string;
 };
 
+export type VoiceAppConfig = {
+  enabled?: boolean;
+  provider?: "google";
+  voiceName?: string;
+  speakingRate?: number;
+  pitch?: number;
+  cacheDir?: string;
+  maxCacheSizeMb?: number;
+  maxTextLength?: number;
+};
+
 export type AppConfig = {
   server: {
     port: number;
@@ -183,6 +194,7 @@ export type AppConfig = {
   copilot?: CopilotConfig;
   sentinel?: SentinelAppConfig;
   knowledge?: KnowledgeAppConfig;
+  voice?: VoiceAppConfig;
 };
 
 const rateLimitSchema = z.object({
@@ -398,6 +410,16 @@ const appConfigSchema = z.object({
     excludePatterns: z.array(z.string()).optional(),
     watchEnabled: z.boolean().optional(),
     mediaModel: z.string().optional(),
+  }).optional(),
+  voice: z.object({
+    enabled: z.boolean().optional(),
+    provider: z.literal("google").optional(),
+    voiceName: z.string().optional(),
+    speakingRate: z.number().min(0.25).max(4.0).optional(),
+    pitch: z.number().min(-20).max(20).optional(),
+    cacheDir: z.string().optional(),
+    maxCacheSizeMb: z.number().min(1).optional(),
+    maxTextLength: z.number().min(1).optional(),
   }).optional(),
 });
 
