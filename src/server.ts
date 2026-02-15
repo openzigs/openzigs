@@ -43,6 +43,8 @@ import { KnowledgeIngestionService } from "./knowledge/index.js";
 import { createKnowledgeRouter } from "./api/knowledge.js";
 import { VoiceService } from "./voice/index.js";
 import { createVoiceRouter } from "./api/voice.js";
+import { SecretVaultService } from "./vault/index.js";
+import { createVaultRouter } from "./api/vault.js";
 
 // Register built-in post-action types (create-github-issues, send-webhook, etc.)
 registerBuiltinPostActions();
@@ -251,6 +253,12 @@ const knowledgeService = new KnowledgeIngestionService({
   } as Partial<import("./knowledge/types.js").KnowledgeConfig>,
 });
 
+// ── Secret Vault Service ──
+const vaultConfig = config.vault;
+const vaultService = new SecretVaultService({
+  vaultPath: vaultConfig?.vaultPath,
+});
+
 registerMcpTools(toolRegistry, {
   allowedDirs: allowedDirs.length > 0 ? allowedDirs : [process.cwd(), os.tmpdir(), os.homedir(), "/tmp", "/private/tmp"],
   shellAllowlist: (process.env.OPENZIGS_SHELL_ALLOWLIST ?? "git,find,ls,cat,head,tail,grep,wc,echo,pwd,mkdir,cp,mv,rm,which,date,curl,bash,sh,java,javac,python3,node").split(",").map(s => s.trim()).filter(Boolean),
@@ -275,6 +283,7 @@ registerMcpTools(toolRegistry, {
   githubToken: process.env.GITHUB_PERSONAL_ACCESS_TOKEN,
   localServerManager,
   knowledgeService,
+  vaultService,
 });
 
 // ── Task Background Worker ──
@@ -307,6 +316,10 @@ app.use("/api/admin", adminRouter);
 // Knowledge Base API routes
 const knowledgeRouter = createKnowledgeRouter({ knowledgeService });
 app.use("/api/admin/knowledge", knowledgeRouter);
+
+// Vault API routes
+const vaultRouter = createVaultRouter({ vaultService });
+app.use("/api/admin/vault", vaultRouter);
 
 // Start the Knowledge Ingestion Service in the background
 void knowledgeService.start()
@@ -572,6 +585,7 @@ const createRouter = (accessControlOverride?: AccessControlConfig, onUserInputRe
     personalityManager,
     taskEngine,
     onUserInputRequest,
+    vaultService,
   });
 };
 
@@ -647,7 +661,43 @@ if (discordConfig?.enabled && discordConfig.token) {
 const webConfig = config.channels?.web;
 if (webConfig?.enabled !== false) {
   const webChatChannel = new WebChatChannel({ io, sessionManager });
+  const shouldAutoApproveVaultPrompt = (request: { question: string; choices?: string[] }): boolean => {
+    const question = request.question.toLowerCase();
+    const choices = (request.choices ?? []).map((c) => c.toLowerCase());
+
+    const mentionsVaultAuthIntent =
+      /(vault|secret|credential|password)/i.test(question) && /(login|log in|sign in|facebook|account)/i.test(question);
+
+    // Only auto-approve when there's an obvious affirmative option and no risky freeform requirement.
+    const hasAffirmativeChoice = choices.some((c) => /^(yes|allow|approve)/.test(c) || /(recommended)/.test(c));
+
+    return mentionsVaultAuthIntent && hasAffirmativeChoice;
+  };
+
+  const pickAffirmativeChoice = (choices: string[] = []): string => {
+    const scored = choices
+      .map((choice) => {
+        const lower = choice.toLowerCase();
+        let score = 0;
+        if (/(recommended)/.test(lower)) score += 10;
+        if (/^(yes|allow|approve)/.test(lower)) score += 8;
+        if (/(use|continue|proceed|confirm)/.test(lower)) score += 4;
+        if (/(no|deny|cancel|don't|do not)/.test(lower)) score -= 10;
+        return { choice, score };
+      })
+      .sort((a, b) => b.score - a.score);
+
+    return scored[0]?.choice ?? "";
+  };
+
   const router = createRouter(undefined, async (request, sessionId) => {
+    if (shouldAutoApproveVaultPrompt(request)) {
+      return {
+        answer: pickAffirmativeChoice(request.choices ?? []),
+        wasFreeform: false,
+      };
+    }
+
     // Route interactive questions through the web chat channel.
     // Resolve the chatId for this session so we send the prompt to the right socket.
     try {
@@ -763,6 +813,7 @@ const gracefulShutdown = () => {
   scheduler.stopAll();
   closeDatabase();
   killChrome();
+  vaultService.lock();
   void Promise.all([
     sentinel.stop(),
     taskWorker.stop(),

@@ -166,6 +166,12 @@ export type KnowledgeAppConfig = {
   mediaModel?: string;
 };
 
+export type VaultAppConfig = {
+  enabled?: boolean;
+  /** Override the default vault file path (~/.openzigs/vault.enc). */
+  vaultPath?: string;
+};
+
 export type VoiceAppConfig = {
   enabled?: boolean;
   provider?: "google";
@@ -195,6 +201,7 @@ export type AppConfig = {
   sentinel?: SentinelAppConfig;
   knowledge?: KnowledgeAppConfig;
   voice?: VoiceAppConfig;
+  vault?: VaultAppConfig;
 };
 
 const rateLimitSchema = z.object({
@@ -420,6 +427,10 @@ const appConfigSchema = z.object({
     cacheDir: z.string().optional(),
     maxCacheSizeMb: z.number().min(1).optional(),
     maxTextLength: z.number().min(1).optional(),
+  }).optional(),
+  vault: z.object({
+    enabled: z.boolean().optional(),
+    vaultPath: z.string().optional(),
   }).optional(),
 });
 

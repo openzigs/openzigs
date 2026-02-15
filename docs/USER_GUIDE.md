@@ -3637,3 +3637,85 @@ Configure the knowledge base in your config file (`~/.openzigs/config.json`):
 | MarkItDown returns empty content | File not accessible inside container. | Ensure the file path is within the mounted volume (`/workdir` inside the container). |
 | Voice TTS not working | Missing Google Cloud credentials. | Set `GOOGLE_APPLICATION_CREDENTIALS` env var to your service account JSON key file path. See [Enabling Voice Features](#enabling-voice-features). |
 | Wake word not responding | Web Speech API not supported in browser. | Use Chrome, Edge, or Brave. Firefox does not support the Web Speech API. |
+
+## Secret Vault — Zero-Trust Credential Storage
+
+The Secret Vault provides AES-256-GCM encrypted local storage for passwords, API keys, and other credentials. Secrets are stored at `~/.openzigs/vault.enc` with `0600` permissions (owner-read/write only).
+
+### Security Architecture
+
+The vault implements a **reference-token pattern** that ensures plaintext secrets never appear in:
+
+- Chat history or session JSONL files
+- Audit logs
+- Socket.IO events
+- Tool call arguments visible to the LLM
+
+Instead, the AI sees only opaque reference tokens like `{{SECRET:a1b2c3d4-...}}`. The actual plaintext is resolved at the **last possible moment** inside the `browser-navigate` handler, right before simulating keyboard input.
+
+### Getting Started
+
+1. **Open Admin → Secret Vault** panel in the UI
+2. **Create** a new vault by entering a master password (min 8 characters)
+3. **Add secrets** — each secret has a label, value, and optional service/username metadata
+4. The vault **auto-locks** on server shutdown; unlock it each session
+
+### Using Secrets in Chat
+
+Ask the agent to fill in a login form:
+
+```
+Log into github.com with my GitHub credentials
+```
+
+The agent will:
+1. Call `list-secrets` to discover available credentials
+2. Call `get-secret` with the matching label → receives `{{SECRET:uuid}}`
+3. Call `browser-navigate` with `action: "type"` and `text: "{{SECRET:uuid}}"`
+4. The browser handler resolves the token to plaintext and types it character-by-character
+
+### MCP Tools
+
+| Tool | Risk Level | Description |
+|---|---|---|
+| `get-secret` | medium | Look up a secret by label, returns `{{SECRET:uuid}}` reference token |
+| `list-secrets` | low | List all stored secret labels (no values exposed) |
+
+### Configuration
+
+Add to `~/.openzigs/config.json`:
+
+```json
+{
+  "vault": {
+    "enabled": true,
+    "vaultPath": "~/.openzigs/vault.enc"
+  }
+}
+```
+
+### API Reference
+
+| Method | Endpoint | Description |
+|---|---|---|
+| GET | `/api/admin/vault/status` | Check if vault exists and is unlocked |
+| POST | `/api/admin/vault/initialize` | Create a new vault (body: `{ masterPassword }`) |
+| POST | `/api/admin/vault/unlock` | Unlock with master password |
+| POST | `/api/admin/vault/lock` | Lock the vault |
+| POST | `/api/admin/vault/change-password` | Change master password |
+| GET | `/api/admin/vault/secrets` | List all secrets (metadata only) |
+| POST | `/api/admin/vault/secrets` | Add a secret (body: `{ label, value, service?, username? }`) |
+| PATCH | `/api/admin/vault/secrets/:id` | Update a secret |
+| DELETE | `/api/admin/vault/secrets/:id` | Delete a secret |
+
+### Browser Stealth Mode
+
+The browser automation includes anti-bot detection evasion that runs automatically on every page navigation. This patches common fingerprint leaks:
+
+- `navigator.webdriver` set to `false`
+- `chrome.runtime` shim injected
+- Realistic `navigator.plugins` and `navigator.languages`
+- WebGL vendor/renderer spoofing
+- Permissions API notifications bypass
+
+The Chrome profile is now persistent at `~/.openzigs/chrome-profile/` (previously used a temp directory), preserving cookies and session state across server restarts.

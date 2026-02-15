@@ -416,6 +416,78 @@ describe("MessageRouter", () => {
     expect(copilot.lastSystemMessage).toBeUndefined();
   });
 
+  it("injects vault context into system message when vault is unlocked", async () => {
+    const baseDir = await createTempDir();
+    cleanupDirs.push(baseDir);
+
+    const db = new Database(":memory:");
+    db.pragma("journal_mode = WAL");
+    const personalityManager = new PersonalityManager({ db });
+    personalityManager.update({ enabled: false });
+
+    const channelManager = new ChannelManager();
+    const telegram = new RecordingChannel("telegram");
+    await telegram.connect();
+    channelManager.register(telegram);
+
+    const sessionManager = new SessionManager({ baseDir });
+    const copilot = new FakeCopilot("ok");
+
+    // Create a mock vault service
+    const vaultService = {
+      isUnlocked: () => true,
+      listSecrets: () => [
+        { id: "abc-123", label: "Facebook", service: "facebook.com", username: "user@test.com" },
+      ],
+    } as unknown as import("../vault/index.js").SecretVaultService;
+
+    const router = new MessageRouter({
+      channelManager, sessionManager, copilot, personalityManager, vaultService,
+    });
+
+    await router.route(baseMessage({ content: "Log into Facebook" }));
+
+    expect(copilot.lastSystemMessage).toBeDefined();
+    expect(copilot.lastSystemMessage!.content).toContain("[Secret Vault]");
+    expect(copilot.lastSystemMessage!.content).toContain("get-secret");
+    expect(copilot.lastSystemMessage!.content).toContain("Facebook");
+    expect(copilot.lastSystemMessage!.content).toContain("facebook.com");
+  });
+
+  it("omits vault context when vault is locked", async () => {
+    const baseDir = await createTempDir();
+    cleanupDirs.push(baseDir);
+
+    const db = new Database(":memory:");
+    db.pragma("journal_mode = WAL");
+    const personalityManager = new PersonalityManager({ db });
+    personalityManager.update({ enabled: false });
+
+    const channelManager = new ChannelManager();
+    const telegram = new RecordingChannel("telegram");
+    await telegram.connect();
+    channelManager.register(telegram);
+
+    const sessionManager = new SessionManager({ baseDir });
+    const copilot = new FakeCopilot("ok");
+
+    const vaultService = {
+      isUnlocked: () => false,
+      listSecrets: () => [],
+    } as unknown as import("../vault/index.js").SecretVaultService;
+
+    const router = new MessageRouter({
+      channelManager, sessionManager, copilot, personalityManager, vaultService,
+    });
+
+    await router.route(baseMessage({ content: "Hello" }));
+
+    // Vault locked → injects locked-state notice (not the full credential instructions)
+    expect(copilot.lastSystemMessage).toBeDefined();
+    expect(copilot.lastSystemMessage!.content).toContain("currently LOCKED");
+    expect(copilot.lastSystemMessage!.content).not.toContain("Available secrets:");
+  });
+
   it("passes SDK-native availableTools when allowedTools provided", async () => {
     const baseDir = await createTempDir();
     cleanupDirs.push(baseDir);

@@ -4,6 +4,7 @@ import type { CopilotWrapper } from "../copilot/copilot-wrapper.js";
 import type { SystemMessageConfig, UserInputHandler, SdkAttachment, ReasoningEffort } from "../copilot/copilot-wrapper.js";
 import type { AccessControlConfig } from "../config/index.js";
 import type { SessionManager } from "../sessions/session-manager.js";
+import type { SecretVaultService } from "../vault/index.js";
 import type { PersonalityManager } from "../personality/personality-manager.js";
 import type { TaskEngine } from "../tasks/task-engine.js";
 import { ALWAYS_ON_TOOLS, INTERACTIVE_CHAT_AUTO_APPROVE_TOOLS } from "../mcp/constants.js";
@@ -41,6 +42,8 @@ export type MessageRouterOptions = {
   taskEngine?: TaskEngine;
   /** Handler for interactive user input requests during agent execution. */
   onUserInputRequest?: UserInputHandler;
+  /** When provided, vault status is injected into the system prompt so the LLM knows to use get-secret. */
+  vaultService?: SecretVaultService;
 };
 
 const defaultAccessControl: AccessControlConfig = {
@@ -63,6 +66,7 @@ export class MessageRouter {
   private personalityManager?: PersonalityManager;
   private taskEngine?: TaskEngine;
   private userInputHandler?: UserInputHandler;
+  private vaultService?: SecretVaultService;
 
   constructor({
     channelManager,
@@ -74,11 +78,13 @@ export class MessageRouter {
     clock,
     personalityManager,
     taskEngine,
-    onUserInputRequest
+    onUserInputRequest,
+    vaultService,
   }: MessageRouterOptions) {
     this.channelManager = channelManager;
     this.sessionManager = sessionManager;
     this.copilot = copilot;
+    this.vaultService = vaultService;
     this.accessControl = accessControl ?? defaultAccessControl;
     this.historyLimit = historyLimit;
     this.maxToolsPerRequest = maxToolsPerRequest;
@@ -278,19 +284,18 @@ export class MessageRouter {
   }
 
   /**
-   * Build the SDK-level system message from personality config.
-   * Returns undefined when personality is disabled — omitting systemMessage entirely.
+   * Build the SDK-level system message from personality config + vault context.
+   * Returns undefined only when there is nothing to inject.
    */
   private buildSystemMessage(): SystemMessageConfig | undefined {
     const personality = this.personalityManager?.getConfig();
-    if (!personality?.enabled) {
-      return undefined;
-    }
+    const vaultContext = this.buildVaultSystemContext();
 
     const parts = [
-      personality.systemInstruction,
-      personality.prePrompt,
-      personality.postPrompt,
+      ...(personality?.enabled
+        ? [personality.systemInstruction, personality.prePrompt, personality.postPrompt]
+        : []),
+      vaultContext,
     ].filter(Boolean);
 
     if (parts.length === 0) {
@@ -298,9 +303,55 @@ export class MessageRouter {
     }
 
     return {
-      mode: personality.mode ?? "append",
+      mode: personality?.mode ?? "append",
       content: parts.join("\n\n"),
     };
+  }
+
+  /**
+   * Build vault awareness context for the system prompt.
+   * When the vault is unlocked and has secrets, injects instructions
+   * so the LLM uses get-secret + browser-navigate instead of asking for passwords.
+   * When locked, injects a notice so the model can tell the user to unlock.
+   */
+  private buildVaultSystemContext(): string | undefined {
+    if (!this.vaultService) return undefined;
+
+    if (!this.vaultService.isUnlocked()) {
+      // Vault exists but is locked — tell the model so it can instruct the user.
+      return (
+        "[Secret Vault]\n" +
+        "The user has a secret vault but it is currently LOCKED. " +
+        "When the user asks to log in or use stored credentials, tell them to unlock the vault first " +
+        "via the Admin → Vault panel, then retry. Do NOT ask for passwords directly.\n" +
+        "You have list-secrets and get-secret tools available — they will work once the vault is unlocked."
+      );
+    }
+
+    const secrets = this.vaultService.listSecrets();
+    if (secrets.length === 0) return undefined;
+
+    const available = secrets
+      .map((s) => {
+        const parts = [s.label];
+        if (s.service) parts.push(`(${s.service})`);
+        if (s.username) parts.push(`[${s.username}]`);
+        return parts.join(" ");
+      })
+      .join(", ");
+
+    return (
+      "[Secret Vault]\n" +
+      "The user has a secret vault with stored credentials. When the user asks to log in, sign in, " +
+      "enter a password, or use credentials for any website or service, you MUST:\n" +
+      "1. Call list-secrets to see available credentials.\n" +
+      "2. Call get-secret with the matching label to get a {{SECRET:<uuid>}} token.\n" +
+      "3. Use browser-navigate with action 'type' and the token as the text parameter.\n" +
+      "A direct user request to log in with their credentials is explicit consent to retrieve and use the matching vault secret.\n" +
+      "Do NOT ask a follow-up permission question before calling list-secrets/get-secret in that case.\n" +
+      "NEVER ask the user to provide their password or credentials directly in chat.\n" +
+      `Available secrets: ${available}`
+    );
   }
 
   private buildPrompt(message: string): string {

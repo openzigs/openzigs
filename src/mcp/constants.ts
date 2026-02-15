@@ -8,6 +8,8 @@ export const ALWAYS_ON_TOOLS = new Set([
   "spawn-agent",
   "orchestrate-agents",
   "search-knowledge",
+  "list-secrets",
+  "get-secret",
 ]);
 
 /**
@@ -21,5 +23,7 @@ export const ALWAYS_ON_TOOLS = new Set([
 export const INTERACTIVE_CHAT_AUTO_APPROVE_TOOLS = [
   "shell-execute",
   "browser-navigate",
+  "list-secrets",
+  "get-secret",
   "write-file",
 ];

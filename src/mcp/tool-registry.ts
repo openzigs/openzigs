@@ -3,6 +3,7 @@ import fs from "node:fs";
 import fsPromises from "node:fs/promises";
 import path from "node:path";
 import type * as z from "zod";
+import { ALWAYS_ON_TOOLS } from "./constants.js";
 
 export type RiskLevel = "low" | "medium" | "high";
 export type ToolCategory = "filesystem" | "search" | "browser" | "shell" | "productivity" | "social" | "documents" | "personal" | "data" | "developer" | "knowledge";
@@ -200,14 +201,16 @@ export class ToolRegistry extends EventEmitter {
     if (this.enabledTools === null) {
       return Array.from(this.tools.values());
     }
-    return Array.from(this.tools.values()).filter((tool) => this.enabledTools?.has(tool.name));
+    return Array.from(this.tools.values()).filter(
+      (tool) => this.enabledTools?.has(tool.name) || ALWAYS_ON_TOOLS.has(tool.name),
+    );
   }
 
   isEnabled(name: string): boolean {
     if (this.enabledTools === null) {
       return true;
     }
-    return this.enabledTools.has(name);
+    return this.enabledTools.has(name) || ALWAYS_ON_TOOLS.has(name);
   }
 
   async setEnabled(name: string, enabled: boolean) {

@@ -49,6 +49,8 @@ export const McpEditorPanel = () => {
   const running = busyQuery.data?.running ?? 0;
   const queued = busyQuery.data?.queued ?? 0;
   const activeCount = running + queued;
+  // Only lock destructive operations (edit/delete) while tasks run.
+  // Adding a new server is always safe — it can't affect in-flight tasks.
   const isLocked = activeCount > 0;
 
   const createMutation = useMutation({
@@ -143,9 +145,7 @@ export const McpEditorPanel = () => {
             setEditingDef(null);
             setWizardOpen(true);
           }}
-          disabled={isLocked}
-          title={isLocked ? "Cannot add servers while tasks are running" : undefined}
-          className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-white hover:bg-primary/90 disabled:opacity-40"
+          className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-white hover:bg-primary/90"
         >
           <Plus className="h-3.5 w-3.5" />
           Add Server
