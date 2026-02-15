@@ -12,8 +12,7 @@ export type BrowserNavigateAction =
   | "get-text"
   | "list-tabs"
   | "evaluate"
-  | "snapshot-dom"
-  | "wait-for-navigation";
+  | "snapshot-dom";
 
 export type BrowserNavigateOutput = {
   success: boolean;
@@ -22,7 +21,6 @@ export type BrowserNavigateOutput = {
   text?: string;
   tabs?: Array<{ title: string; url: string }>;
   screenshot?: string;
-  captcha?: boolean;
 };
 
 export type BrowserNavigateInput = {
@@ -233,37 +231,6 @@ export const createBrowserNavigateHandler = ({ host, port, vaultService }: Brows
           });
           const titleValue = extractValue(titleResult);
           const pageInfo = typeof titleValue === "string" ? JSON.parse(titleValue) as { title: string; url: string } : { title: "", url: input.url };
-
-          // Detect CAPTCHA / reCAPTCHA on the loaded page
-          const captchaResult = await cdp.send("Runtime.evaluate", {
-            expression: `(() => {
-              const html = document.documentElement.innerHTML;
-              const hasCaptcha = !!(
-                document.querySelector('iframe[src*="recaptcha"]') ||
-                document.querySelector('iframe[src*="hcaptcha"]') ||
-                document.querySelector('.g-recaptcha') ||
-                document.querySelector('[data-sitekey]') ||
-                document.querySelector('#captcha') ||
-                document.querySelector('[class*="captcha"]') ||
-                html.includes('recaptcha') ||
-                html.includes("I'm not a robot")
-              );
-              return hasCaptcha;
-            })()`,
-            returnByValue: true
-          });
-          const hasCaptcha = extractValue(captchaResult) === true;
-
-          if (hasCaptcha) {
-            return {
-              success: true,
-              title: pageInfo.title,
-              url: pageInfo.url,
-              captcha: true,
-              text: "CAPTCHA detected on this page. The Chrome window is open on your desktop — please solve the CAPTCHA manually by clicking \"I'm not a robot\" in the browser window. Once solved, use browser-navigate with action 'wait-for-navigation' to continue. The session cookies will be saved so future visits won't trigger CAPTCHA again.",
-            };
-          }
-
           return { success: true, title: pageInfo.title, url: pageInfo.url };
         }
 
@@ -376,20 +343,6 @@ export const createBrowserNavigateHandler = ({ host, port, vaultService }: Brows
           });
           const evalValue = extractValue(evalResult);
           return { success: true, text: typeof evalValue === "string" ? evalValue : JSON.stringify(evalValue) };
-        }
-
-        case "wait-for-navigation": {
-          // Wait for the page to navigate (e.g. after user solves a CAPTCHA).
-          // Listens for the next Page.loadEventFired within a generous timeout.
-          await cdp.send("Page.enable");
-          await cdp.waitForEvent("Page.loadEventFired", 120_000);
-          const navResult = await cdp.send("Runtime.evaluate", {
-            expression: "JSON.stringify({ title: document.title, url: location.href })",
-            returnByValue: true
-          });
-          const navValue = extractValue(navResult);
-          const navInfo = typeof navValue === "string" ? JSON.parse(navValue) as { title: string; url: string } : { title: "", url: "" };
-          return { success: true, title: navInfo.title, url: navInfo.url, text: "Page navigation detected after manual intervention." };
         }
 
         case "snapshot-dom": {

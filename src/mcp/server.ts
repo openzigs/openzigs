@@ -341,11 +341,11 @@ export const registerMcpTools = (toolRegistry: ToolRegistry, options: RegisterMc
 
   registerTool({
     name: "browser-navigate",
-    description: "Control Chrome browser: navigate to URLs, click elements, type text, take screenshots, extract text, list tabs, snapshot DOM, evaluate JavaScript, or wait for manual navigation. The navigate action auto-detects CAPTCHA pages (reCAPTCHA, hCaptcha) and returns captcha:true — when this happens, instruct the user to solve the CAPTCHA manually in the open Chrome window, then use action 'wait-for-navigation' to resume. Supports {{SECRET:<uuid>}} tokens in the 'text' parameter — use get-secret to retrieve a token, then pass it to the type action for secure credential injection. Requires Chrome with --remote-debugging-port.",
+    description: "Control Chrome browser: navigate to URLs, click elements, type text, take screenshots, extract text, list tabs, snapshot DOM, or evaluate JavaScript. Supports {{SECRET:<uuid>}} tokens in the 'text' parameter — use get-secret to retrieve a token, then pass it to the type action for secure credential injection. Requires Chrome with --remote-debugging-port.",
     inputSchema: {
       type: "object",
       properties: {
-        action: { type: "string", enum: ["navigate", "click", "type", "screenshot", "get-text", "list-tabs", "evaluate", "snapshot-dom", "wait-for-navigation"] },
+        action: { type: "string", enum: ["navigate", "click", "type", "screenshot", "get-text", "list-tabs", "evaluate", "snapshot-dom"] },
         url: { type: "string" },
         selector: { type: "string" },
         text: { type: "string" },
