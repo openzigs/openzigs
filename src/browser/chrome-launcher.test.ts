@@ -97,10 +97,10 @@ describe("chrome-launcher", () => {
     expect(args).toContain("--remote-debugging-port=9222");
     expect(args).toContain("--no-first-run");
     // Anti-automation flags
-    expect(args).toContain("--disable-blink-features=AutomationControlled");
-    expect(args).toContain("--disable-infobars");
-    expect(args).toContain("--disable-features=EnableAutomation");
+    expect(args).toContain("--disable-features=AutomationControlled");
     expect(args).toContain("--window-size=1440,900");
+    // Must NOT use --disable-blink-features=AutomationControlled (triggers warning banner)
+    expect(args.some(a => a.includes("disable-blink-features"))).toBe(false);
     // unref() removed in recent changes
     // expect(fakeProcess.unref).toHaveBeenCalled();
   });

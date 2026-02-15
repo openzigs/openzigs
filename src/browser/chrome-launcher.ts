@@ -155,13 +155,12 @@ export const launchChrome = async (
     "--no-first-run",
     "--no-default-browser-check",
     // ── Anti-automation detection flags ──
-    // Prevent Chrome from setting navigator.webdriver = true at the C++ level.
-    // Without this, the webdriver flag is set before any injected JS can override it.
-    "--disable-blink-features=AutomationControlled",
-    // Suppress the "Chrome is being controlled by automated test software" infobar
-    "--disable-infobars",
-    // Exclude the "enable-automation" switch that marks the session as automated
-    "--disable-features=EnableAutomation",
+    // Exclude the enable-automation switch that Chrome adds for CDP sessions.
+    // This prevents navigator.webdriver from being set at the C++ level
+    // and removes the "Chrome is being controlled" infobar.
+    // Unlike --disable-blink-features=AutomationControlled, this flag does
+    // NOT trigger a warning banner.
+    "--disable-features=AutomationControlled",
     // Realistic window size so outerWidth/outerHeight are non-zero
     "--window-size=1440,900",
     ...extraFlags
