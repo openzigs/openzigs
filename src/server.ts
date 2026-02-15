@@ -43,6 +43,8 @@ import { KnowledgeIngestionService } from "./knowledge/index.js";
 import { createKnowledgeRouter } from "./api/knowledge.js";
 import { VoiceService } from "./voice/index.js";
 import { createVoiceRouter } from "./api/voice.js";
+import { SecretVaultService } from "./vault/index.js";
+import { createVaultRouter } from "./api/vault.js";
 
 // Register built-in post-action types (create-github-issues, send-webhook, etc.)
 registerBuiltinPostActions();
@@ -251,6 +253,12 @@ const knowledgeService = new KnowledgeIngestionService({
   } as Partial<import("./knowledge/types.js").KnowledgeConfig>,
 });
 
+// ── Secret Vault Service ──
+const vaultConfig = config.vault;
+const vaultService = new SecretVaultService({
+  vaultPath: vaultConfig?.vaultPath,
+});
+
 registerMcpTools(toolRegistry, {
   allowedDirs: allowedDirs.length > 0 ? allowedDirs : [process.cwd(), os.tmpdir(), os.homedir(), "/tmp", "/private/tmp"],
   shellAllowlist: (process.env.OPENZIGS_SHELL_ALLOWLIST ?? "git,find,ls,cat,head,tail,grep,wc,echo,pwd,mkdir,cp,mv,rm,which,date,curl,bash,sh,java,javac,python3,node").split(",").map(s => s.trim()).filter(Boolean),
@@ -275,6 +283,7 @@ registerMcpTools(toolRegistry, {
   githubToken: process.env.GITHUB_PERSONAL_ACCESS_TOKEN,
   localServerManager,
   knowledgeService,
+  vaultService,
 });
 
 // ── Task Background Worker ──
@@ -307,6 +316,10 @@ app.use("/api/admin", adminRouter);
 // Knowledge Base API routes
 const knowledgeRouter = createKnowledgeRouter({ knowledgeService });
 app.use("/api/admin/knowledge", knowledgeRouter);
+
+// Vault API routes
+const vaultRouter = createVaultRouter({ vaultService });
+app.use("/api/admin/vault", vaultRouter);
 
 // Start the Knowledge Ingestion Service in the background
 void knowledgeService.start()
@@ -763,6 +776,7 @@ const gracefulShutdown = () => {
   scheduler.stopAll();
   closeDatabase();
   killChrome();
+  vaultService.lock();
   void Promise.all([
     sentinel.stop(),
     taskWorker.stop(),

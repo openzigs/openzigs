@@ -2413,3 +2413,77 @@ The `resolveModelName()` function handles model name normalization:
 - **Table**: `knowledge_chunks` (columns: `id`, `documentId`, `text`, `sectionHeading`, `sourcePath`, `chunkIndex`, `vector`)
 
 ### Tracking: [Epic #215](https://github.com/mgcronin/openzigs/issues/215)
+
+---
+
+## Secret Vault & Browser Hardening
+
+### Overview
+
+The Zero-Trust Secret Vault provides AES-256-GCM encrypted local credential storage with a reference-token architecture that prevents plaintext secrets from entering any observable system surface (chat history, audit logs, Socket.IO, session files).
+
+### Components
+
+| Component | Path | Purpose |
+|---|---|---|
+| `SecretVaultService` | `src/vault/secret-vault-service.ts` | Core encryption/decryption, CRUD, PBKDF2 key derivation |
+| `vault-types.ts` | `src/vault/vault-types.ts` | Shared types, `SECRET_TOKEN_PATTERN` regex, `buildSecretToken()` |
+| `secret-tools.ts` | `src/mcp/tools/secret-tools.ts` | `get-secret` and `list-secrets` MCP tools |
+| `vault.ts` | `src/api/vault.ts` | Admin API routes (init, unlock, lock, CRUD) |
+| `vault-panel.tsx` | `ui/components/admin/vault-panel.tsx` | React admin panel (unlock, add/delete secrets) |
+| `stealth.ts` | `src/browser/stealth.ts` | Anti-bot CDP injection scripts |
+| `browser-navigate.ts` | `src/mcp/tools/browser-navigate.ts` | Modified to resolve `{{SECRET:uuid}}` tokens + inject stealth |
+
+### Reference Token Flow
+
+```
+User: "Log into GitHub"
+  ↓
+AI calls get-secret(label="GitHub") → returns {{SECRET:abc-123}}
+  ↓
+AI calls browser-navigate(action="type", text="{{SECRET:abc-123}}")
+  ↓
+Hooks log: text="{{SECRET:abc-123}}"  ← safe, opaque token
+  ↓
+browser-navigate handler resolves token → "ghp_actual_secret"
+  ↓
+CDP Input.dispatchKeyEvent per character  ← plaintext only here
+```
+
+### Encryption
+
+- **Algorithm**: AES-256-GCM
+- **Key derivation**: PBKDF2 with SHA-512, 100,000 iterations, 32-byte key
+- **Salt**: 32 random bytes per vault creation / password change
+- **IV**: 16 random bytes per write operation
+- **File format**: JSON with `{ version, salt, iv, tag, data }` (all hex-encoded)
+- **File permissions**: `0o600` (owner read/write only)
+- **Location**: `~/.openzigs/vault.enc`
+
+### Browser Stealth
+
+Anti-bot detection evasion is injected via `Page.addScriptToEvaluateOnNewDocument` on every `navigate` action:
+
+- `navigator.webdriver` → `false`
+- `chrome.runtime` shim
+- Realistic `navigator.plugins` and `navigator.languages`
+- WebGL vendor/renderer spoofing
+- Permissions API notifications bypass
+- Chrome DevTools Protocol automation markers removed
+
+### Chrome Profile
+
+Changed from temporary `/tmp/openzigs-chrome-profile` to persistent `~/.openzigs/chrome-profile/` to preserve cookies, localStorage, and session state across server restarts.
+
+### Configuration
+
+```json
+{
+  "vault": {
+    "enabled": true,
+    "vaultPath": "~/.openzigs/vault.enc"
+  }
+}
+```
+
+### Tracking: [Epic #216](https://github.com/mgcronin/openzigs/issues/216)

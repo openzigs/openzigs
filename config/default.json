@@ -142,6 +142,9 @@
     "maxCacheSizeMb": 500,
     "maxTextLength": 5000
   },
+  "vault": {
+    "enabled": true
+  },
   "sentinel": {
     "enabled": false,
     "model": "gpt-4o-mini",

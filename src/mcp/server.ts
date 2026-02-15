@@ -23,6 +23,7 @@ import { createSystemConfigTools } from "./tools/system-config-tools.js";
 import { createDocumentationTools } from "./tools/documentation-tools.js";
 import { createWizardTools } from "./tools/wizard-tools.js";
 import { createKnowledgeTools } from "./tools/knowledge-tools.js";
+import { createSecretTools } from "./tools/secret-tools.js";
 import { ToolRegistry, type ToolDefinition } from "./tool-registry.js";
 import type { LocalMcpServerManager } from "./local-mcp-server-manager.js";
 import { AuditLogger } from "../logging/audit-logger.js";
@@ -33,6 +34,7 @@ import type { PersonalityManager } from "../personality/personality-manager.js";
 import type { TaskEngine } from "../tasks/task-engine.js";
 import type { CopilotWrapper } from "../copilot/copilot-wrapper.js";
 import type { KnowledgeIngestionService } from "../knowledge/index.js";
+import type { SecretVaultService } from "../vault/index.js";
 
 export type McpServerOptions = {
   allowedDirs: string[];
@@ -66,6 +68,8 @@ export type McpServerOptions = {
   disabledTools?: Record<string, string[]>;
   /** Knowledge Ingestion Service for search-knowledge tool. */
   knowledgeService?: KnowledgeIngestionService;
+  /** Secret Vault Service for get-secret / browser-navigate token resolution. */
+  vaultService?: SecretVaultService;
 };
 
 export type RegisterMcpToolsOptions = Pick<
@@ -94,6 +98,7 @@ export type RegisterMcpToolsOptions = Pick<
   | "localServerManager"
   | "disabledTools"
   | "knowledgeService"
+  | "vaultService"
 >;
 
 const readFileSchema = z.object({ path: z.string() });
@@ -222,7 +227,8 @@ export const registerMcpTools = (toolRegistry: ToolRegistry, options: RegisterMc
 
   const browserNavigateHandler = createBrowserNavigateHandler({
     host: options.chromeDebugHost ?? "",
-    port: options.chromeDebugPort ?? 9222
+    port: options.chromeDebugPort ?? 9222,
+    vaultService: options.vaultService,
   });
 
   const shellExecuteHandler = createShellExecuteHandler({
@@ -504,6 +510,14 @@ export const registerMcpTools = (toolRegistry: ToolRegistry, options: RegisterMc
   if (options.knowledgeService) {
     const knowledgeTools = createKnowledgeTools({ knowledgeService: options.knowledgeService });
     for (const tool of knowledgeTools) {
+      registerTool(tool);
+    }
+  }
+
+  // ── Secret Vault Tools (get-secret, list-secrets) ──
+  if (options.vaultService) {
+    const secretTools = createSecretTools({ vaultService: options.vaultService });
+    for (const tool of secretTools) {
       registerTool(tool);
     }
   }

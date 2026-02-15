@@ -1,5 +1,8 @@
 import * as z from "zod";
 import { ensureChromeRunning } from "../../browser/chrome-launcher.js";
+import { COMBINED_STEALTH_SCRIPT } from "../../browser/stealth.js";
+import { SECRET_TOKEN_PATTERN } from "../../vault/vault-types.js";
+import type { SecretVaultService } from "../../vault/index.js";
 
 export type BrowserNavigateAction =
   | "navigate"
@@ -31,6 +34,8 @@ export type BrowserNavigateInput = {
 type BrowserNavigateOptions = {
   host: string;
   port: number;
+  /** Optional vault service for resolving {{SECRET:uuid}} tokens in type actions. */
+  vaultService?: SecretVaultService;
 };
 
 const ChromeTargetSchema = z.object({
@@ -167,7 +172,7 @@ const getFirstTarget = async (baseUrl: string) => {
   return target;
 };
 
-export const createBrowserNavigateHandler = ({ host, port }: BrowserNavigateOptions) => {
+export const createBrowserNavigateHandler = ({ host, port, vaultService }: BrowserNavigateOptions) => {
   return async (input: BrowserNavigateInput): Promise<BrowserNavigateOutput> => {
     const baseUrl = buildBaseUrl(host, port);
 
@@ -212,6 +217,10 @@ export const createBrowserNavigateHandler = ({ host, port }: BrowserNavigateOpti
       switch (input.action) {
         case "navigate": {
           await cdp.send("Page.enable");
+          // Inject anti-bot stealth scripts into every new document context
+          await cdp.send("Page.addScriptToEvaluateOnNewDocument", {
+            source: COMBINED_STEALTH_SCRIPT,
+          });
           const loadPromise = cdp.waitForEvent("Page.loadEventFired", 30000);
           await cdp.send("Page.navigate", { url: input.url });
           await loadPromise;
@@ -260,8 +269,24 @@ export const createBrowserNavigateHandler = ({ host, port }: BrowserNavigateOpti
           if (focusValue && typeof focusValue === "object" && (focusValue as Record<string, unknown>).error) {
             throw new Error(String((focusValue as Record<string, unknown>).error));
           }
+
+          // Resolve {{SECRET:uuid}} tokens to plaintext at the last possible moment.
+          // The tokenised text flows through hooks/audit safely; plaintext only
+          // materialises here, inside the browser handler, right before key dispatch.
+          let resolvedText = input.text || "";
+          if (vaultService && SECRET_TOKEN_PATTERN.test(resolvedText)) {
+            SECRET_TOKEN_PATTERN.lastIndex = 0;
+            resolvedText = resolvedText.replace(SECRET_TOKEN_PATTERN, (_match, uuid: string) => {
+              const plaintext = vaultService.resolveToken(uuid);
+              if (!plaintext) {
+                throw new Error(`Secret ${uuid} not found in vault (is the vault unlocked?)`);
+              }
+              return plaintext;
+            });
+          }
+
           // Type each character via Input.dispatchKeyEvent
-          for (const char of (input.text || "")) {
+          for (const char of resolvedText) {
             await cdp.send("Input.dispatchKeyEvent", {
               type: "keyDown",
               text: char,

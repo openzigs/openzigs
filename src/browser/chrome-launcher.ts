@@ -1,6 +1,6 @@
 import { spawn, exec, type ChildProcess } from "node:child_process";
 import { promisify } from "node:util";
-import { platform, tmpdir } from "node:os";
+import { platform, homedir } from "node:os";
 import { existsSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { logger } from "../logging/logger.js";
@@ -49,9 +49,12 @@ const findChromeBinary = (): string | undefined => {
  * Returns a dedicated Chrome user-data directory for OpenZigs automation.
  * Using a separate profile ensures we can launch a new Chrome instance
  * with --remote-debugging-port even when the user's regular Chrome is open.
+ *
+ * Persistent profile at ~/.openzigs/chrome-profile preserves cookies,
+ * localStorage, and session state across server restarts.
  */
 const getAutomationProfileDir = (): string => {
-  const dir = path.join(tmpdir(), "openzigs-chrome-profile");
+  const dir = path.join(homedir(), ".openzigs", "chrome-profile");
   if (!existsSync(dir)) {
     mkdirSync(dir, { recursive: true });
   }
