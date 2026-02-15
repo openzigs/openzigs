@@ -1,5 +1,7 @@
 packages:
-  - "ui"
+  - ui
+
+approveBuilds: onnxruntime-node
 
 onlyBuiltDependencies:
   - better-sqlite3

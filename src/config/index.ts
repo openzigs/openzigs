@@ -154,6 +154,18 @@ export type SentinelAppConfig = {
   maxRandomDelayMs?: number;
 };
 
+export type KnowledgeAppConfig = {
+  enabled?: boolean;
+  directory?: string;
+  chunkSize?: number;
+  chunkOverlap?: number;
+  maxResults?: number;
+  includeExtensions?: string[];
+  excludePatterns?: string[];
+  watchEnabled?: boolean;
+  mediaModel?: string;
+};
+
 export type AppConfig = {
   server: {
     port: number;
@@ -170,6 +182,7 @@ export type AppConfig = {
   session?: SessionConfig;
   copilot?: CopilotConfig;
   sentinel?: SentinelAppConfig;
+  knowledge?: KnowledgeAppConfig;
 };
 
 const rateLimitSchema = z.object({
@@ -374,6 +387,17 @@ const appConfigSchema = z.object({
     timezone: z.string().optional(),
     noOverlap: z.boolean().optional(),
     maxRandomDelayMs: z.number().optional(),
+  }).optional(),
+  knowledge: z.object({
+    enabled: z.boolean().optional(),
+    directory: z.string().optional(),
+    chunkSize: z.number().optional(),
+    chunkOverlap: z.number().optional(),
+    maxResults: z.number().optional(),
+    includeExtensions: z.array(z.string()).optional(),
+    excludePatterns: z.array(z.string()).optional(),
+    watchEnabled: z.boolean().optional(),
+    mediaModel: z.string().optional(),
   }).optional(),
 });
 

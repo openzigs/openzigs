@@ -48,6 +48,7 @@
     "run-prompt",
     "save-prompt",
     "schedule-job",
+    "search-knowledge",
     "shell-execute",
     "spawn-agent",
     "toggle-job",

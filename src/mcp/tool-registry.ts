@@ -5,7 +5,7 @@ import path from "node:path";
 import type * as z from "zod";
 
 export type RiskLevel = "low" | "medium" | "high";
-export type ToolCategory = "filesystem" | "search" | "browser" | "shell" | "productivity" | "social" | "documents" | "personal" | "data" | "developer";
+export type ToolCategory = "filesystem" | "search" | "browser" | "shell" | "productivity" | "social" | "documents" | "personal" | "data" | "developer" | "knowledge";
 
 export type ToolDefinition = {
   name: string;
@@ -98,7 +98,7 @@ const saveState = async (statePath: string, state: ToolRegistryState) => {
   await fsPromises.writeFile(statePath, JSON.stringify(state, null, 2), "utf-8");
 };
 
-const toolCategories: ToolCategory[] = ["filesystem", "search", "browser", "shell", "productivity", "social", "documents", "personal", "data", "developer"];
+const toolCategories: ToolCategory[] = ["filesystem", "search", "browser", "shell", "productivity", "social", "documents", "personal", "data", "developer", "knowledge"];
 
 export type ToolRegistryOptions = {
   statePath: string;

@@ -7,6 +7,7 @@ export const ALWAYS_ON_TOOLS = new Set([
   "shell-execute",
   "spawn-agent",
   "orchestrate-agents",
+  "search-knowledge",
 ]);
 
 /**

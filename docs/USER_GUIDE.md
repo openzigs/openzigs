@@ -13,6 +13,14 @@ Before you begin, ensure the following are installed and available:
 | **GitHub Copilot Subscription** | Individual or Business | Required for SDK access. The agent authenticates via OAuth device flow using `@github/copilot-sdk`. |
 | **Chrome** | Any recent version | Required only if you use the `browser-read` or `browser-navigate` tools. |
 
+**Knowledge converter prerequisites (Local Knowledge Base):**
+
+| Requirement | Purpose |
+|---|---|
+| **ffmpeg** | Required for media converter (`.mp4`, `.mp3`, etc.) to extract 16kHz WAV audio before transcription. |
+| **ImageMagick** + **Ghostscript** | Required for scanned PDF OCR fallback (render PDF pages to images). |
+| **Whisper model files** (`whisper-node`) | Required for media transcription. Install with `pnpm exec whisper-node download`. |
+
 **Optional API keys:**
 
 | Key | Purpose |
@@ -3232,6 +3240,192 @@ curl -X POST http://localhost:3001/api/admin/sentinel/run-now
 | `timezone` | `"UTC"` | IANA timezone for cron schedules |
 | `noOverlap` | `true` | Prevent overlapping cron executions |
 | `maxRandomDelayMs` | `0` | Native cron jitter in milliseconds (0 = use manual jitter) |
+
+---
+
+## Knowledge Manager — Local Knowledge Base (RAG)
+
+The Knowledge Manager provides a **Retrieval-Augmented Generation (RAG)** pipeline that indexes local files (Markdown, code, text, JSON, etc.) into an embedded vector database and exposes them to the AI via the `search-knowledge` tool. This lets the AI ground its responses in your own documentation, notes, and code — without sending anything to external services.
+
+### How It Works
+
+1. **Ingest**: Files in your knowledge directory (`~/.openzigs/knowledge/` by default) are scanned, chunked, and embedded.
+2. **Watch**: A file watcher (chokidar) detects changes, additions, and deletions in real time.
+3. **Search**: The `search-knowledge` MCP tool performs semantic vector search against the index.
+4. **Dedup**: Content hashing (SHA-256) ensures unchanged files are not re-indexed.
+
+### Setting Up the Knowledge Directory
+
+Create the knowledge directory and drop files into it:
+
+```bash
+mkdir -p ~/.openzigs/knowledge
+# Copy your docs, notes, code snippets, etc.
+cp -r ~/my-project/docs ~/.openzigs/knowledge/
+cp ~/notes/*.md ~/.openzigs/knowledge/
+```
+
+The service automatically indexes all supported files on startup and watches for changes.
+
+### Supported File Types
+
+| Extension | Source Type |
+|---|---|
+| `.md` | Markdown |
+| `.txt` | Text |
+| `.pdf` | PDF (text + OCR fallback for scanned PDFs) |
+| `.docx` | Word document (DOCX) |
+| `.xlsx`, `.xls` | Excel spreadsheet |
+| `.jpg`, `.jpeg`, `.png`, `.tiff`, `.tif`, `.bmp`, `.webp`, `.gif` | Image OCR |
+| `.mp4`, `.mp3`, `.wav`, `.m4a`, `.webm`, `.ogg`, `.flac` | Media transcription |
+| `.json` | JSON |
+| `.csv` | CSV |
+| `.html` | HTML |
+| `.py` | Code (Python) |
+| `.ts`, `.js` | Code (TypeScript/JavaScript) |
+| `.go` | Code (Go) |
+| `.rs` | Code (Rust) |
+| `.java` | Code (Java) |
+| `.c`, `.cpp`, `.h` | Code (C/C++) |
+| `.rb` | Code (Ruby) |
+| `.sh`, `.bash` | Code (Shell) |
+| `.yaml`, `.yml` | YAML |
+| `.toml` | TOML |
+| `.xml` | XML |
+| `.sql` | SQL |
+| `.r` | Code (R) |
+| `.swift` | Code (Swift) |
+| `.kt` | Code (Kotlin) |
+
+If **Media** appears as unavailable in the Converters tab, the usual causes are:
+
+1. `ffmpeg` is not installed or not on `PATH`.
+2. `whisper-node` model files are missing.
+
+For local development, run:
+
+```bash
+pnpm exec whisper-node download
+```
+
+### Using the `search-knowledge` Tool
+
+The `search-knowledge` tool is **always-on** — the AI can use it in any conversation without explicit enabling. It accepts:
+
+- **`query`** (required): Natural language search query
+- **`limit`** (optional): Maximum results to return (default: 10)
+- **`mode`** (optional): Search strategy — `"hybrid"` (default), `"vector"` (semantic only), or `"fts"` (keyword only)
+
+**Search modes explained:**
+
+| Mode | When to Use |
+|---|---|
+| **`hybrid`** (default) | Best for most queries. Combines semantic understanding with exact keyword matching via reciprocal rank fusion. Results appearing in both vector and FTS results get a relevance boost. |
+| **`vector`** | Conceptual queries where you want semantically similar content, even if it doesn't share exact keywords. Example: "how does authentication work?" |
+| **`fts`** | Exact keyword searches for specific terms, function names, or error messages. Example: "CORS_ALLOWED_ORIGINS", "handleAuthCallback" |
+
+Example AI interaction:
+
+> **You**: What does our deployment guide say about rollback procedures?
+>
+> **AI**: *(automatically calls search-knowledge with "deployment rollback procedures")* Based on your knowledge base, the deployment guide at `docs/deployment.md` describes the following rollback procedure…
+
+### Knowledge Manager UI
+
+Navigate to **Knowledge** in the top nav bar to access the Knowledge Manager page.
+
+![Knowledge Manager page](images/knowledge-manager.png)
+
+#### Overview Tab
+
+Displays index statistics:
+
+- **Total Documents**: Number of indexed files
+- **Total Chunks**: Number of text chunks in the vector database
+- **Source Types**: Breakdown of indexed file types
+
+#### Documents Tab
+
+Lists all indexed documents with:
+
+- File path, source type, chunk count, and last-indexed timestamp
+- **Re-index** button per document to force re-ingestion
+- **Remove** button to delete a document from the index
+- **Re-index All** button to rebuild the entire index
+
+#### Search Tab
+
+Interactive semantic search interface:
+
+1. Enter a natural language query
+2. View ranked results with relevance scores (percentage badges)
+3. Each result shows the source file, heading context, and matching text chunk
+
+### API Endpoints
+
+All knowledge endpoints are under `/api/admin/knowledge`:
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/stats` | Index statistics (documents, chunks, source types) |
+| `GET` | `/documents` | List all indexed documents |
+| `POST` | `/search` | Semantic search (`{ "query": "...", "limit": 10 }`) |
+| `POST` | `/reindex` | Re-index all documents |
+| `POST` | `/reindex/:documentId` | Re-index a specific document |
+| `DELETE` | `/documents/:documentId` | Remove a document from the index |
+| `GET` | `/config` | Current knowledge configuration |
+| `PUT` | `/config` | Update knowledge configuration (`directory`, `watchEnabled`, `mediaModel`, `searchMode`, `minScore`) |
+
+### Configuration Options
+
+You can change the knowledge directory, search mode, and other settings from the Admin UI:
+
+1. Navigate to **Admin** → **Knowledge Base**
+2. Update settings:
+   - **Knowledge Directory** — path to watch for files
+   - **Live File Watching** — enable/disable real-time change detection
+   - **Whisper Model** — audio/video transcription quality (tiny.en → large-v1)
+   - **Search Mode** — hybrid (recommended), vector, or full-text
+   - **Minimum Score Threshold** — filter out low-relevance results (slider, 0–100%)
+3. Click **Save**
+
+Changes apply immediately (no server restart required). When the directory changes, OpenZigs clears the current index and re-scans the new directory.
+
+Configure the knowledge base in your config file (`~/.openzigs/config.json`):
+
+```json
+{
+  "knowledge": {
+    "directory": "~/.openzigs/knowledge",
+    "chunkSize": 1000,
+    "chunkOverlap": 200,
+    "maxResults": 10,
+    "watchEnabled": true,
+    "mediaModel": "base.en",
+    "searchMode": "hybrid",
+    "minScore": 0.25
+  }
+}
+```
+
+| Key | Default | Description |
+|---|---|---|
+| `directory` | `~/.openzigs/knowledge` | Directory to watch and index |
+| `chunkSize` | `1000` | Maximum characters per text chunk |
+| `chunkOverlap` | `200` | Character overlap between consecutive chunks |
+| `maxResults` | `10` | Default number of search results |
+| `watchEnabled` | `true` | Enable real-time file watching |
+| `mediaModel` | `"base.en"` | Whisper model for audio/video transcription |
+| `searchMode` | `"hybrid"` | Default search mode: `"vector"`, `"fts"`, or `"hybrid"` |
+| `minScore` | `0.25` | Minimum similarity score (0–1) to include in results. 0 = no threshold. |
+
+### Architecture Notes
+
+- **Embedding**: Uses Hugging Face Transformers.js with the `all-MiniLM-L6-v2` sentence transformer (~23MB, 384-dimensional vectors). Falls back to deterministic FNV-1a hashing if the model fails to load.
+- **Vector Store**: [LanceDB](https://lancedb.com/) embedded database stored at `~/.openzigs/knowledge-db/` with both IVF-PQ vector index and native FTS index.
+- **Hybrid Search**: Default mode combines vector (semantic) and full-text (keyword) search using Reciprocal Rank Fusion (k=60). Results in both lists get a score boost.
+- **Chunking**: Markdown-aware splitting that preserves heading context. Headings are extracted and stored as metadata for each chunk.
+- **Change Detection**: SHA-256 content hashing — files are only re-indexed when their content actually changes. Document metadata is persisted to disk so the hash check survives server restarts.
 
 ---
 

@@ -2202,3 +2202,157 @@ The Sentinel panel appears on the Admin page (`/admin`) under "Sentinel Monitor"
 - **Status report**: `~/.openzigs/sentinel/status.md` — human-readable Markdown digest (auto-generated when `persistMarkdownDigest: true`)
 
 ### Tracking: [Epic #179](https://github.com/mgcronin/openzigs/issues/179) → [Epic #194](https://github.com/mgcronin/openzigs/issues/194)
+
+---
+
+## Local Knowledge Base — Markdown-First RAG (Epic #215)
+
+The Knowledge subsystem provides a **local-first Retrieval-Augmented Generation (RAG)** pipeline that indexes files from a user-managed directory into an embedded vector database. The AI can then search this knowledge base via the always-on `search-knowledge` MCP tool, grounding responses in the user's own documentation, notes, and code.
+
+### Architecture
+
+```mermaid
+graph LR
+    subgraph Ingestion["Ingestion Pipeline"]
+        direction TB
+        FS["File Scanner<br/>(chokidar watcher)"]
+        CR["Converter Registry<br/>(pdf · docx · xlsx · media · image)"]
+        CH["Markdown-Aware<br/>Chunker"]
+        EM["Local Embedder<br/>(all-MiniLM-L6-v2 · 384-dim)"]
+        LDB["LanceDB Store<br/>(cosine vectors + FTS index)"]
+        FS --> CR --> CH --> EM --> LDB
+    end
+
+    subgraph Query["Query Path"]
+        direction TB
+        MCP["search-knowledge<br/>MCP Tool"]
+        QEM["Query Embedder"]
+        HYB{"Search Mode"}
+        VS["Vector Search<br/>(cosine distance)"]
+        FTS["Full-Text Search<br/>(LanceDB FTS index)"]
+        RRF["Reciprocal Rank<br/>Fusion (k=60)"]
+        MCP --> QEM --> HYB
+        HYB -->|vector| VS
+        HYB -->|fts| FTS
+        HYB -->|hybrid| VS & FTS --> RRF
+    end
+
+    LDB -.-> VS
+    LDB -.-> FTS
+    VS --> RES["Ranked Results<br/>(score ≥ minScore)"]
+    FTS --> RES
+    RRF --> RES
+
+    style Ingestion fill:#1b2d1b,stroke:#3a8b3a,color:#fff
+    style Query fill:#1a1a2e,stroke:#16213e,color:#fff
+```
+
+### Component Design
+
+| Component | File | Responsibility |
+|---|---|---|
+| **Types** | `src/knowledge/types.ts` | `KnowledgeDocument`, `KnowledgeChunk`, `KnowledgeSearchResult`, `KnowledgeConfig`, `KnowledgeSearchMode` types and defaults |
+| **Chunker** | `src/knowledge/chunker.ts` | Markdown-aware text splitting: headings → paragraphs → sentences, with configurable chunk size and overlap |
+| **Embedder** | `src/knowledge/embedder.ts` | Hugging Face Transformers.js embedding (`Xenova/all-MiniLM-L6-v2`, 384-dim). Lazy-loaded singleton with hash-based fallback. |
+| **LanceDB Store** | `src/knowledge/lancedb-store.ts` | Vector database wrapper: upsert chunks, vector search (cosine), full-text search (FTS index), hybrid search (RRF merging), delete by document ID, score threshold filtering |
+| **Converter Registry** | `src/knowledge/converters/` | Auto-detects available converters: text, PDF (pdf-parse), DOCX (mammoth), XLSX, image OCR (tesseract.js), media (ffmpeg + whisper-node) |
+| **Media Converter** | `src/knowledge/converters/media-converter.ts` | Audio/video transcription via ffmpeg → whisper-node with configurable model (tiny.en through large-v1) |
+| **Ingestion Service** | `src/knowledge/knowledge-service.ts` | Central coordinator (`EventEmitter`): directory scanning, file watching (chokidar), SHA-256 change detection, document metadata persistence (JSON file), chunk→embed→store pipeline |
+| **API Router** | `src/api/knowledge.ts` | REST endpoints for stats, documents, search, reindex, config (including `searchMode`, `minScore`), delete (mounted at `/api/admin/knowledge`) |
+| **MCP Tool** | `src/mcp/tools/knowledge-tools.ts` | `search-knowledge` tool definition — always-on, risk level `low`, supports `mode` parameter (vector/fts/hybrid) |
+| **UI Config** | `ui/components/admin/knowledge-config-panel.tsx` | Knowledge config panel: directory, watch toggle, Whisper model, search mode, min score threshold slider |
+
+### Search Modes
+
+The knowledge base supports three search strategies, configurable globally via `searchMode` in `KnowledgeConfig` or per-query via the `mode` parameter on `search-knowledge`:
+
+| Mode | Strategy | Best For |
+|---|---|---|
+| **`hybrid`** (default) | Runs both vector and FTS searches in parallel, merges results via Reciprocal Rank Fusion (RRF, k=60). Results appearing in both lists get a score boost. | General queries — combines semantic understanding with exact keyword matching |
+| **`vector`** | Pure cosine similarity against the embedding model | Conceptual/semantic queries ("how does authentication work?") |
+| **`fts`** | LanceDB native full-text search index with stemming and stop-word removal | Exact keyword queries ("CORS headers", specific function names) |
+
+**Hybrid search algorithm:**
+1. Execute vector search and FTS search in parallel (3× the requested limit for candidate pool)
+2. Assign each result a Reciprocal Rank score: `1 / (k + rank + 1)` where `k = 60`
+3. Results appearing in both lists have their scores summed (boosted)
+4. Final list is sorted by combined score, normalized to 0–1, and truncated to the requested limit
+5. Results below `minScore` threshold are filtered out
+
+### Score Threshold Filtering
+
+All search modes support a `minScore` threshold (default: 0.25, range: 0–1). Results with a similarity/relevance score below this threshold are excluded. Set to 0 to return all results regardless of relevance. Configurable via the Admin UI slider or `PUT /api/admin/knowledge/config`.
+
+### Embedding Strategy
+
+The embedder uses **Hugging Face Transformers.js** with the `Xenova/all-MiniLM-L6-v2` model (~23MB ONNX):
+
+- **384-dimensional** dense embeddings via a sentence transformer
+- **Lazy-loaded singleton** — model downloads on first use, cached for subsequent calls
+- **Hash-based fallback** — if the model fails to load, falls back to a deterministic FNV-1a hash + n-gram embedding (zero external dependencies, lower quality)
+- **Batch embedding** — supports bulk embedding via `generateEmbeddings()` for efficient document ingestion
+
+### FTS Index
+
+LanceDB's built-in full-text search index is created on the `text` column with:
+- **Stemming** enabled — matches morphological variants (e.g., "running" matches "run")
+- **Stop-word removal** — filters common words for better precision
+- **Positional indexing** — supports phrase queries
+- The FTS index is rebuilt after each `addChunks()` call via `replace: true`
+
+### Document Metadata Persistence
+
+Document tracking metadata (file paths, content hashes, indexing status) is persisted to `~/.openzigs/knowledge-db/documents.json` using atomic write-to-temp-then-rename. This prevents full re-indexing on server restart — only new or changed files are processed.
+
+### Change Detection
+
+Files are tracked by a deterministic document ID (SHA-256 of the relative path). On each scan:
+
+1. File content is hashed (SHA-256)
+2. If the hash matches the stored hash → skip (no re-index)
+3. If changed → delete old chunks, re-chunk, re-embed, store
+4. If file deleted → remove chunks from the vector store
+
+### Media Transcription (Whisper)
+
+Audio and video files are transcribed via the `media-converter`:
+
+1. **ffmpeg** extracts audio as 16kHz mono WAV
+2. **whisper-node** (whisper.cpp) transcribes using the configured model
+3. Output is wrapped in Markdown with `## Transcript` heading
+
+The `resolveModelName()` function handles model name normalization:
+- `"large-v3"` → `"large"` (whisper.cpp compatibility)
+- `"large"` → symlinked to `ggml-large-v1.bin` when available
+- Models: `tiny.en`, `base.en`, `small.en`, `medium.en`, `large-v1`, `large`
+
+### Configuration
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `knowledge.enabled` | boolean | `true` | Enable/disable the knowledge subsystem |
+| `knowledge.directory` | string | `~/.openzigs/knowledge` | Directory to watch for knowledge files |
+| `knowledge.chunkSize` | number | `1000` | Maximum chunk size in characters |
+| `knowledge.chunkOverlap` | number | `200` | Overlap between consecutive chunks |
+| `knowledge.maxResults` | number | `10` | Default search result limit |
+| `knowledge.watchEnabled` | boolean | `true` | Enable real-time file watching |
+| `knowledge.mediaModel` | string | `"base.en"` | Whisper model for audio/video transcription |
+| `knowledge.minScore` | number | `0.25` | Minimum similarity score threshold (0–1) |
+| `knowledge.searchMode` | string | `"hybrid"` | Default search mode: `"vector"`, `"fts"`, or `"hybrid"` |
+
+### Integration Points
+
+- **Server startup** (`src/server.ts`): `KnowledgeIngestionService` is instantiated and started in background after the HTTP server binds
+- **Graceful shutdown**: Service `stop()` is called in the shutdown handler alongside other subsystems
+- **Socket.IO events**: 7 knowledge events (`document:indexed`, `document:failed`, `document:deleted`, `indexing:started`, `indexing:completed`, `watcher:ready`, `watcher:error`) are forwarded to connected clients
+- **MCP registration**: `search-knowledge` is registered with `knowledgeService` reference; added to `ALWAYS_ON_TOOLS` so it's available in every conversation
+- **Tool category**: New `"knowledge"` category in `ToolCategory` union type
+
+### Data Storage
+
+- **Knowledge directory**: `~/.openzigs/knowledge/` (user-managed files)
+- **LanceDB database**: `~/.openzigs/knowledge-db/` (vector + FTS indexes, auto-created)
+- **Document metadata**: `~/.openzigs/knowledge-db/documents.json` (persisted across restarts)
+- **Table**: `knowledge_chunks` (columns: `id`, `documentId`, `text`, `sectionHeading`, `sourcePath`, `chunkIndex`, `vector`)
+
+### Tracking: [Epic #215](https://github.com/mgcronin/openzigs/issues/215)

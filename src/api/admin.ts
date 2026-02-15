@@ -23,6 +23,7 @@ import type { PipelineStage } from "../tasks/types.js";
 import { PipelinePlanner } from "../tasks/pipeline-planner.js";
 import type { WebhookManager } from "../webhooks/webhook-manager.js";
 import type { SentinelService } from "../sentinel/index.js";
+import type { KnowledgeIngestionService } from "../knowledge/index.js";
 import { SentinelConfigSchema, readStatusMarkdown } from "../sentinel/index.js";
 import { TemplateService } from "../productivity/template-service.js";
 import { CopilotNativeMcpTester, type NativeMcpDiscoveredTool, type NativeMcpTester } from "../mcp/native-mcp-test-service.js";
@@ -246,6 +247,7 @@ export type AdminRouterOptions = {
   webhookManager?: WebhookManager;
   customPostActionManager?: CustomPostActionManager;
   sentinel?: SentinelService;
+  knowledgeService?: KnowledgeIngestionService;
   nativeMcpTester?: NativeMcpTester;
 };
 

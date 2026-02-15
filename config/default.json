@@ -121,6 +121,17 @@
     "customAgents": [],
     "nativeMcpServers": {}
   },
+  "knowledge": {
+    "enabled": true,
+    "directory": "",
+    "chunkSize": 1000,
+    "chunkOverlap": 200,
+    "maxResults": 10,
+    "includeExtensions": [],
+    "excludePatterns": ["node_modules", ".git", "dist", "build", ".DS_Store"],
+    "watchEnabled": true,
+    "mediaModel": "base.en"
+  },
   "sentinel": {
     "enabled": false,
     "model": "gpt-4o-mini",
