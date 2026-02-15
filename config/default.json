@@ -145,6 +145,27 @@
   "vault": {
     "enabled": true
   },
+  "director": {
+    "enabled": true,
+    "outputDir": "~/.openzigs/video-output",
+    "maxConcurrentRenders": 1,
+    "defaultTemplate": "Minimalist",
+    "assets": {
+      "localLibraryPath": "~/.openzigs/media-library",
+      "downloadCachePath": "~/.openzigs/asset-cache",
+      "pixabayApiKey": "${PIXABAY_API_KEY}",
+      "freesoundApiKey": "${FREESOUND_API_KEY}"
+    },
+    "ingestion": {
+      "sceneThreshold": 0.4,
+      "keyframeInterval": 5,
+      "whisperModel": "base.en"
+    },
+    "render": {
+      "compositionName": "DirectorVideo",
+      "timeoutMs": 300000
+    }
+  },
   "sentinel": {
     "enabled": false,
     "model": "gpt-4o-mini",

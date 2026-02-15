@@ -259,6 +259,26 @@ const vaultService = new SecretVaultService({
   vaultPath: vaultConfig?.vaultPath,
 });
 
+// ── Voice Service (Google Cloud TTS) ──
+const voiceConfig = config.voice;
+const voiceService = new VoiceService({
+  enabled: voiceConfig?.enabled ?? false,
+  provider: voiceConfig?.provider ?? "google",
+  voiceName: voiceConfig?.voiceName ?? "en-US-Standard-C",
+  speakingRate: voiceConfig?.speakingRate ?? 1.0,
+  pitch: voiceConfig?.pitch ?? 0.0,
+  cacheDir: voiceConfig?.cacheDir ?? "~/.openzigs/voice-cache",
+  maxCacheSizeMb: voiceConfig?.maxCacheSizeMb ?? 500,
+  maxTextLength: voiceConfig?.maxTextLength ?? 5000,
+});
+
+if (voiceService.getConfig().enabled && process.env.GOOGLE_APPLICATION_CREDENTIALS) {
+  void voiceService.initialize().catch((error) => {
+    const details = error instanceof Error ? error.message : String(error);
+    logger.warn(`Voice service startup skipped: ${details}`);
+  });
+}
+
 registerMcpTools(toolRegistry, {
   allowedDirs: allowedDirs.length > 0 ? allowedDirs : [process.cwd(), os.tmpdir(), os.homedir(), "/tmp", "/private/tmp"],
   shellAllowlist: (process.env.OPENZIGS_SHELL_ALLOWLIST ?? "git,find,ls,cat,head,tail,grep,wc,echo,pwd,mkdir,cp,mv,rm,which,date,curl,bash,sh,java,javac,python3,node").split(",").map(s => s.trim()).filter(Boolean),
@@ -284,6 +304,7 @@ registerMcpTools(toolRegistry, {
   localServerManager,
   knowledgeService,
   vaultService,
+  voiceService,
 });
 
 // ── Task Background Worker ──
@@ -331,26 +352,7 @@ void knowledgeService.start()
     logger.error(`Failed to start Knowledge Ingestion Service: ${details}`);
   });
 
-// ── Voice Service (Google Cloud TTS) ──
-const voiceConfig = config.voice;
-const voiceService = new VoiceService({
-  enabled: voiceConfig?.enabled ?? false,
-  provider: voiceConfig?.provider ?? "google",
-  voiceName: voiceConfig?.voiceName ?? "en-US-Standard-C",
-  speakingRate: voiceConfig?.speakingRate ?? 1.0,
-  pitch: voiceConfig?.pitch ?? 0.0,
-  cacheDir: voiceConfig?.cacheDir ?? "~/.openzigs/voice-cache",
-  maxCacheSizeMb: voiceConfig?.maxCacheSizeMb ?? 500,
-  maxTextLength: voiceConfig?.maxTextLength ?? 5000,
-});
-
-if (voiceService.getConfig().enabled && process.env.GOOGLE_APPLICATION_CREDENTIALS) {
-  void voiceService.initialize().catch((error) => {
-    const details = error instanceof Error ? error.message : String(error);
-    logger.warn(`Voice service startup skipped: ${details}`);
-  });
-}
-
+// ── Voice Router (Google Cloud TTS) ──
 const voiceRouter = createVoiceRouter({ voiceService });
 app.use("/api/voice", voiceRouter);
 

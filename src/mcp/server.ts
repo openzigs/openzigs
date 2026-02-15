@@ -24,6 +24,7 @@ import { createDocumentationTools } from "./tools/documentation-tools.js";
 import { createWizardTools } from "./tools/wizard-tools.js";
 import { createKnowledgeTools } from "./tools/knowledge-tools.js";
 import { createSecretTools } from "./tools/secret-tools.js";
+import { createVideoTools } from "./tools/video-tools.js";
 import { ToolRegistry, type ToolDefinition } from "./tool-registry.js";
 import type { LocalMcpServerManager } from "./local-mcp-server-manager.js";
 import { AuditLogger } from "../logging/audit-logger.js";
@@ -35,6 +36,7 @@ import type { TaskEngine } from "../tasks/task-engine.js";
 import type { CopilotWrapper } from "../copilot/copilot-wrapper.js";
 import type { KnowledgeIngestionService } from "../knowledge/index.js";
 import type { SecretVaultService } from "../vault/index.js";
+import type { VoiceService } from "../voice/voice-service.js";
 
 export type McpServerOptions = {
   allowedDirs: string[];
@@ -70,6 +72,8 @@ export type McpServerOptions = {
   knowledgeService?: KnowledgeIngestionService;
   /** Secret Vault Service for get-secret / browser-navigate token resolution. */
   vaultService?: SecretVaultService;
+  /** Voice Service for TTS voiceover generation (Director Mode). */
+  voiceService?: VoiceService;
 };
 
 export type RegisterMcpToolsOptions = Pick<
@@ -99,6 +103,7 @@ export type RegisterMcpToolsOptions = Pick<
   | "disabledTools"
   | "knowledgeService"
   | "vaultService"
+  | "voiceService"
 >;
 
 const readFileSchema = z.object({ path: z.string() });
@@ -518,6 +523,17 @@ export const registerMcpTools = (toolRegistry: ToolRegistry, options: RegisterMc
   if (options.vaultService) {
     const secretTools = createSecretTools({ vaultService: options.vaultService });
     for (const tool of secretTools) {
+      registerTool(tool);
+    }
+  }
+
+  // ── Director Mode / Video Production Tools ──
+  if (options.copilot) {
+    const videoTools = createVideoTools({
+      copilot: options.copilot,
+      voiceService: options.voiceService,
+    });
+    for (const tool of videoTools) {
       registerTool(tool);
     }
   }

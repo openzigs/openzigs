@@ -2477,6 +2477,78 @@ Disabled tools are never sent to the LLM — the model cannot call them. Use the
 
 ---
 
+## Director Mode (Video Production)
+
+Director Mode transforms raw video clips into polished edits using a single LLM call. It supports two production modes:
+
+### Quick Start
+
+1. **Highlight Reel** — Let the AI choose the best moments:
+   ```
+   "Create a 60-second highlight reel from these conference recordings"
+   ```
+   The `produce-video` tool will ingest clips, extract audio transcripts and visual scene changes, then produce an edit decision list (Director Manifest).
+
+2. **Script-Driven** — Provide a narration script:
+   ```
+   "Produce a video following this script: [paste your narration], using my presentation recordings"
+   ```
+   The system generates a TTS voiceover (if Voice is enabled) and aligns the timeline to your script.
+
+### Video Tools
+
+| Tool | Description |
+|---|---|
+| `produce-video` | Full pipeline: ingest clips → LLM analysis → Director Manifest. Parameters: `clips` (file paths), `mode` (`highlight` or `script`), optional `scriptPath`, `musicTrackPath`, `template`. |
+| `list-templates` | Show available video templates. Filter by `tag` (e.g., `social`, `professional`, `tech`). |
+| `search-assets` | Search for royalty-free music and sound effects. Sources: local library, Pixabay, Freesound. |
+
+### Templates
+
+| Template | Aspect | Best For |
+|---|---|---|
+| **Minimalist** | 16:9 | Conference talks, tutorials, screencasts |
+| **Content Creator** | 9:16 | TikTok, Reels, Shorts |
+| **Corporate** | 16:9 | Quarterly updates, investor pitches |
+| **Tech Demo** | 16:9 | Developer tutorials, code walkthroughs |
+
+### Sound Browser
+
+The **Admin** panel includes a **Sound Browser** tab for searching and previewing royalty-free audio:
+- Search across **Local Library**, **Pixabay**, and **Freesound**
+- Preview tracks directly in the browser
+- Download remote assets to your local library with proper attribution
+
+### Configuration
+
+Add API keys for cloud asset sources in your config:
+
+```json
+{
+  "director": {
+    "enabled": true,
+    "defaultTemplate": "Minimalist",
+    "assets": {
+      "pixabayApiKey": "your-pixabay-key",
+      "freesoundApiKey": "your-freesound-key"
+    },
+    "ingestion": {
+      "sceneThreshold": 0.4,
+      "whisperModel": "base.en"
+    }
+  }
+}
+```
+
+### Prerequisites
+
+- **ffmpeg** installed and on PATH (for audio extraction & scene detection)
+- **whisper-node** (bundled) for speech-to-text transcription
+- **Pixabay/Freesound API keys** (optional, for cloud asset search)
+- **Google Cloud TTS** (optional, for script-driven voiceover generation)
+
+---
+
 ## Configuration Reference
 
 All configuration lives in `config/default.json`. Environment variables are interpolated using `${VAR_NAME}` syntax.

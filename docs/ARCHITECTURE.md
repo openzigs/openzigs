@@ -800,6 +800,76 @@ IDLE ──[startListening()]──► STANDBY ──[wake word]──► ACTIVE
 
 ---
 
+## Director Mode (Video Production)
+
+Director Mode is a **full-stack video production pipeline** that transforms raw video clips into polished edits via a single-shot LLM call. The system ingests media, extracts visual/audio context, and produces a deterministic **Director Manifest** — a JSON edit decision list that a render engine compiles into the final video.
+
+### Architecture
+
+```
+┌──────────────┐     ┌───────────────┐     ┌──────────────┐     ┌────────────┐
+│  Input Clips │────▶│  Ingestion    │────▶│  Producer    │────▶│  Renderer  │
+│  (video/     │     │  Pipeline     │     │  (LLM call)  │     │  (Worker   │
+│   audio)     │     │  (#237)       │     │  (#239)      │     │   Thread)  │
+└──────────────┘     └───────────────┘     └──────────────┘     └────────────┘
+                            │                     │                    │
+                     ┌──────┴──────┐        ┌─────┴─────┐       ┌─────┴──────┐
+                     │ Audio       │        │ System    │       │ Remotion   │
+                     │ Extraction  │        │ Prompts   │       │ (or        │
+                     │ Scene Det.  │        │ Templates │       │  fallback) │
+                     │ Whisper STT │        │ Manifest  │       └────────────┘
+                     └─────────────┘        │ Schema    │
+                                            └───────────┘
+```
+
+### Sub-modules
+
+| Module | Path | Purpose |
+|---|---|---|
+| **Manifest Schema** (#240) | `src/video/manifest/` | Zod-validated `DirectorManifest` data contract with semantic validator |
+| **Render Core** (#235) | `src/video/render-orchestrator.ts`, `render-worker.ts` | Worker Thread render jobs with concurrency control and EventEmitter progress |
+| **Template Library** (#236) | `src/video/templates/` | 4 built-in templates (Minimalist, ContentCreator, Corporate, TechDemo) with registry |
+| **Ingestion Pipeline** (#237) | `src/video/ingestion/` | Audio extraction (ffmpeg), scene detection, Whisper transcription, context assembly |
+| **Asset Management** (#238) | `src/video/assets/` | Local library scanner + Pixabay/Freesound API downloaders with attribution tracking |
+| **Producer Service** (#239) | `src/video/producer/` | Single-shot CopilotWrapper.chat() call → JSON manifest with markdown-stripping parser |
+
+### Production Modes
+
+1. **Highlight Reel** (Mode A) — Auto-selects best moments from ingested clips based on visual scene scores and speech content
+2. **Script-Driven** (Mode B) — Aligns timeline to a user-provided script; optionally generates TTS voiceover via VoiceService
+
+### MCP Tools
+
+| Tool | Risk | Description |
+|---|---|---|
+| `produce-video` | 🔴 high | Full pipeline: ingest → LLM → manifest. Returns edit decision list. |
+| `list-templates` | 🟢 low | List available video templates with configurations. |
+| `search-assets` | 🟢 low | Search royalty-free music/SFX across local + cloud sources. |
+
+### Configuration (`config/default.json`)
+
+```json
+{
+  "director": {
+    "enabled": true,
+    "outputDir": "~/.openzigs/video-output",
+    "maxConcurrentRenders": 1,
+    "defaultTemplate": "Minimalist",
+    "assets": {
+      "localLibraryPath": "~/.openzigs/media-library",
+      "downloadCachePath": "~/.openzigs/asset-cache"
+    },
+    "ingestion": {
+      "sceneThreshold": 0.4,
+      "keyframeInterval": 5,
+      "whisperModel": "base.en"
+    }
+  }
+}
+```
+
+---
+
 ## Security Model
 
 ### Risk Classification
@@ -930,6 +1000,14 @@ Logs are queryable via `GET /api/logs` with filters for `category`, `level`, `si
 | `github-list-issues` | developer | 🟢 low | List issues in a GitHub repository. |
 | `github-create-issue` | developer | 🟡 medium | Create a new issue in a GitHub repository. |
 | `github-create-pr` | developer | 🔴 high | Create a pull request. Requires human approval. |
+
+### Director Mode Tools (Built-in)
+
+| Tool | Category | Risk | Description |
+|---|---|---|---|
+| `produce-video` | productivity | 🔴 high | Ingest clips, run single-shot LLM, and produce a Director Manifest (edit decision list). |
+| `list-templates` | productivity | 🟢 low | List available video templates with default compositions and features. |
+| `search-assets` | productivity | 🟢 low | Search royalty-free music and SFX from local library, Pixabay, and Freesound. |
 
 ### Path Restrictions
 
