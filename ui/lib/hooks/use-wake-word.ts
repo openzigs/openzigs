@@ -51,7 +51,69 @@ export interface UseWakeWordReturn {
 
 // ── Wake Word Detection ──
 
-const WAKE_VARIANTS = ["hey zigs", "hey zig", "hey sig", "hey sigs"];
+const WAKE_PHRASE = "hey zigs";
+const WAKE_FIRST_TOKEN = "hey";
+const WAKE_SECOND_TOKEN = "zigs";
+const WAKE_SECOND_TOKEN_MIN_SIMILARITY = 0.7;
+const WAKE_SECOND_TOKEN_VARIANTS = new Set(["zigs", "ziggs", "zeegs", "zegs", "zeggs", "zigz"]);
+
+function normalizeWakeToken(token: string): string {
+  return token.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function isLikelyZigsToken(token: string): boolean {
+  const normalized = normalizeWakeToken(token);
+
+  // Require a complete second word so partial interim fragments like
+  // "zi" or "zig" do not activate.
+  if (normalized.length < 4 || normalized.length > 7) return false;
+
+  // Keep the "z + g + s" shape to avoid broad false positives.
+  if (!normalized.startsWith("z")) return false;
+  if (!normalized.includes("g")) return false;
+  if (!normalized.endsWith("s") && !normalized.endsWith("z")) return false;
+
+  // Common ASR spellings for "zigs".
+  if (WAKE_SECOND_TOKEN_VARIANTS.has(normalized)) {
+    return true;
+  }
+
+  return levenshteinSimilarity(normalized, WAKE_SECOND_TOKEN) >= WAKE_SECOND_TOKEN_MIN_SIMILARITY;
+}
+
+/**
+ * Returns the word-pair index where a fuzzy wake phrase was detected,
+ * or -1 when no sufficiently confident match is found.
+ *
+ * We require the first token to be close to "hey" to avoid accidental
+ * activation on arbitrary speech.
+ */
+function findFuzzyWakeWordPairIndex(transcript: string): number {
+  const words = transcript
+    .toLowerCase()
+    .split(/\s+/)
+    .map(normalizeWakeToken)
+    .filter(Boolean);
+
+  for (let i = 0; i < words.length - 1; i++) {
+    const first = words[i];
+    const second = words[i + 1];
+    // Ignore partial token fragments from interim recognition such as "hey z" / "hey zi".
+    if (second.length < 4) continue;
+
+    // Keep first token strict (must be effectively "hey").
+    const firstSimilarity = levenshteinSimilarity(first, WAKE_FIRST_TOKEN);
+    if (firstSimilarity < 0.9) continue;
+
+    // Keep second token strict enough to reject unrelated words while allowing
+    // common ASR misspellings for "zigs".
+    if (isLikelyZigsToken(second)) {
+      return i;
+    }
+  }
+
+  return -1;
+}
 
 /**
  * Levenshtein distance between two strings.
@@ -90,41 +152,38 @@ export function levenshteinSimilarity(a: string, b: string): number {
 /**
  * Detect wake word in a transcript using exact + fuzzy matching.
  */
-export function detectWakeWord(transcript: string, threshold: number = 0.7): boolean {
+export function detectWakeWord(transcript: string, _threshold: number = 0.7): boolean {
   const normalized = transcript.toLowerCase().trim();
 
   // Fast path: exact substring match
-  for (const variant of WAKE_VARIANTS) {
-    if (normalized.includes(variant)) {
-      return true;
-    }
+  if (normalized.includes(WAKE_PHRASE)) {
+    return true;
   }
 
-  // Fuzzy match: check consecutive word pairs
-  const words = normalized.split(/\s+/);
-  for (let i = 0; i < words.length - 1; i++) {
-    const phrase = `${words[i]} ${words[i + 1]}`;
-    for (const variant of WAKE_VARIANTS) {
-      if (levenshteinSimilarity(phrase, variant) >= threshold) {
-        return true;
-      }
-    }
-  }
-
-  return false;
+  return findFuzzyWakeWordPairIndex(normalized) !== -1;
 }
 
 /**
  * Extract the query portion after the wake word.
+ * Supports both exact and fuzzy matching so extraction succeeds
+ * even when the wake word was detected via Levenshtein similarity
+ * (e.g. Chrome recognises "hey six" instead of "hey zigs").
  */
-export function extractQueryAfterWakeWord(transcript: string): string {
+export function extractQueryAfterWakeWord(transcript: string, _threshold: number = 0.7): string {
   const normalized = transcript.toLowerCase();
 
-  for (const variant of WAKE_VARIANTS) {
-    const index = normalized.indexOf(variant);
-    if (index !== -1) {
-      return transcript.slice(index + variant.length).trim();
-    }
+  // Fast path: exact substring match
+  const exactIndex = normalized.indexOf(WAKE_PHRASE);
+  if (exactIndex !== -1) {
+    return transcript.slice(exactIndex + WAKE_PHRASE.length).trim();
+  }
+
+  // Fuzzy path: find the wake-word position via guarded fuzzy matching
+  const pairIndex = findFuzzyWakeWordPairIndex(normalized);
+  if (pairIndex !== -1) {
+    // Return everything after the matched word pair from the original transcript
+    const originalWords = transcript.trim().split(/\s+/);
+    return originalWords.slice(pairIndex + 2).join(" ");
   }
 
   return "";
@@ -191,15 +250,21 @@ export function useWakeWord(options: UseWakeWordOptions = {}): UseWakeWordReturn
   const [state, setState] = useState<WakeWordState>("IDLE");
   const [transcript, setTranscript] = useState("");
   const [isListening, setIsListening] = useState(false);
+  const [isSupported, setIsSupported] = useState(false);
 
   const stateRef = useRef<WakeWordState>("IDLE");
   const recognitionRef = useRef<SpeechRecognitionInstance | null>(null);
+  const recognitionCtorRef = useRef<SpeechRecognitionConstructor | null>(null);
   const silenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const activeTranscriptRef = useRef("");
   const keepAliveRef = useRef(false);
 
-  const SpeechRecognitionClass = getSpeechRecognition();
-  const isSupported = SpeechRecognitionClass !== null;
+  // Hydration-safe capability detection: SSR and first client render both start as unsupported.
+  useEffect(() => {
+    const ctor = getSpeechRecognition();
+    recognitionCtorRef.current = ctor;
+    setIsSupported(ctor !== null);
+  }, []);
 
   // Callbacks via refs to avoid stale closures
   const onWakeDetectedRef = useRef(onWakeDetected);
@@ -228,6 +293,7 @@ export function useWakeWord(options: UseWakeWordOptions = {}): UseWakeWordReturn
     silenceTimerRef.current = setTimeout(() => {
       if (stateRef.current === "ACTIVE") {
         const query = activeTranscriptRef.current.trim();
+        console.log("[voice] Silence timeout — captured query:", JSON.stringify(query));
         if (query) {
           onQueryCapturedRef.current?.(query);
         }
@@ -239,6 +305,7 @@ export function useWakeWord(options: UseWakeWordOptions = {}): UseWakeWordReturn
   }, [silenceTimeout, clearSilenceTimer, transitionTo]);
 
   const createRecognition = useCallback(() => {
+    const SpeechRecognitionClass = recognitionCtorRef.current;
     if (!SpeechRecognitionClass) return null;
 
     const recognition = new SpeechRecognitionClass();
@@ -257,17 +324,21 @@ export function useWakeWord(options: UseWakeWordOptions = {}): UseWakeWordReturn
       if (stateRef.current === "STANDBY") {
         if (detectWakeWord(fullTranscript, fuzzyThreshold)) {
           onWakeDetectedRef.current?.();
-          const remainder = extractQueryAfterWakeWord(fullTranscript);
+          const remainder = extractQueryAfterWakeWord(fullTranscript, fuzzyThreshold);
+          console.log("[voice] Wake detected:", JSON.stringify(fullTranscript), "→ query:", JSON.stringify(remainder));
           activeTranscriptRef.current = remainder;
           transitionTo("ACTIVE");
-          if (remainder) {
-            startSilenceTimer();
-          }
+          startSilenceTimer();
         }
       } else if (stateRef.current === "ACTIVE") {
-        // Accumulate the query after wake word
-        const remainder = extractQueryAfterWakeWord(fullTranscript);
-        activeTranscriptRef.current = remainder;
+        // Accumulate the query after wake word.
+        // Only overwrite if the new transcript still contains the wake word;
+        // recognition restarts can produce short noise-only transcripts that
+        // would otherwise wipe the previously captured query.
+        const remainder = extractQueryAfterWakeWord(fullTranscript, fuzzyThreshold);
+        if (remainder) {
+          activeTranscriptRef.current = remainder;
+        }
         startSilenceTimer();
       }
     };
@@ -297,7 +368,7 @@ export function useWakeWord(options: UseWakeWordOptions = {}): UseWakeWordReturn
     };
 
     return recognition;
-  }, [SpeechRecognitionClass, fuzzyThreshold, transitionTo, startSilenceTimer]);
+  }, [fuzzyThreshold, transitionTo, startSilenceTimer]);
 
   const startListening = useCallback(() => {
     if (!isSupported || stateRef.current !== "IDLE") return;

@@ -133,9 +133,9 @@
     "mediaModel": "base.en"
   },
   "voice": {
-    "enabled": false,
+    "enabled": true,
     "provider": "google",
-    "voiceName": "en-US-Journey-D",
+    "voiceName": "en-US-Standard-C",
     "speakingRate": 1.0,
     "pitch": 0.0,
     "cacheDir": "~/.openzigs/voice-cache",

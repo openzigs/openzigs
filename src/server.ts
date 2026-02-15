@@ -323,7 +323,7 @@ const voiceConfig = config.voice;
 const voiceService = new VoiceService({
   enabled: voiceConfig?.enabled ?? false,
   provider: voiceConfig?.provider ?? "google",
-  voiceName: voiceConfig?.voiceName ?? "en-US-Journey-D",
+  voiceName: voiceConfig?.voiceName ?? "en-US-Standard-C",
   speakingRate: voiceConfig?.speakingRate ?? 1.0,
   pitch: voiceConfig?.pitch ?? 0.0,
   cacheDir: voiceConfig?.cacheDir ?? "~/.openzigs/voice-cache",

@@ -75,10 +75,15 @@ describe("detectWakeWord", () => {
     expect(detectWakeWord("HEY ZIGS")).toBe(true);
   });
 
-  it("should detect wake word variants", () => {
-    expect(detectWakeWord("hey zig")).toBe(true);
-    expect(detectWakeWord("hey sig")).toBe(true);
-    expect(detectWakeWord("hey sigs")).toBe(true);
+  it("should not detect incomplete or variant wake word", () => {
+    expect(detectWakeWord("hey zig")).toBe(false);
+    expect(detectWakeWord("hey sig")).toBe(false);
+    expect(detectWakeWord("hey sigs")).toBe(false);
+  });
+
+  it("should detect common ASR spellings of zigs", () => {
+    expect(detectWakeWord("hey zeegs")).toBe(true);
+    expect(detectWakeWord("hey ziggs")).toBe(true);
   });
 
   it("should detect wake word within a sentence", () => {
@@ -94,20 +99,22 @@ describe("detectWakeWord", () => {
     expect(detectWakeWord("")).toBe(false);
   });
 
-  it("should detect fuzzy matches above threshold", () => {
-    // "hey zigs" variants that are close
-    expect(detectWakeWord("hey ziggs", 0.7)).toBe(true);
+  it("should detect exact wake phrase followed by punctuation", () => {
+    expect(detectWakeWord("hey zigs, what time is it", 0.7)).toBe(true);
   });
 
   it("should reject poor fuzzy matches", () => {
     expect(detectWakeWord("something completely different", 0.9)).toBe(false);
   });
 
+  it("should not trigger on partial wake fragments", () => {
+    expect(detectWakeWord("hey z", 0.7)).toBe(false);
+  });
+
   it("should respect custom threshold", () => {
-    // With very low threshold, even loose matches pass
-    expect(detectWakeWord("hey dogs", 0.4)).toBe(true);
-    // With very high threshold, non-exact matches fail fuzzy
-    // Note: "hey ziggs" contains "hey zig" substring so exact match still triggers
+    // Even with a low threshold we keep strict wake-word recognition
+    expect(detectWakeWord("hey dogs", 0.4)).toBe(false);
+    // With very high threshold, non-exact matches still fail
     expect(detectWakeWord("hay zeeks", 0.99)).toBe(false);
   });
 });
@@ -121,8 +128,8 @@ describe("extractQueryAfterWakeWord", () => {
     expect(extractQueryAfterWakeWord("Hey Zigs What Time Is It")).toBe("What Time Is It");
   });
 
-  it("should handle 'hey zig' variant", () => {
-    expect(extractQueryAfterWakeWord("hey zig what is the weather")).toBe("what is the weather");
+  it("should reject extraction for incomplete wake phrase", () => {
+    expect(extractQueryAfterWakeWord("hey zig what is the weather")).toBe("");
   });
 
   it("should return empty string if no wake word", () => {
@@ -135,5 +142,21 @@ describe("extractQueryAfterWakeWord", () => {
 
   it("should handle leading text before wake word", () => {
     expect(extractQueryAfterWakeWord("okay hey zigs tell me a joke")).toBe("tell me a joke");
+  });
+
+  it("should reject fuzzy extraction for non-wake phrase", () => {
+    expect(extractQueryAfterWakeWord("hey six what is 2 plus 2", 0.7)).toBe("");
+  });
+
+  it("should extract query for common ASR spelling of zigs", () => {
+    expect(extractQueryAfterWakeWord("hey zeegs what is 2 plus 2", 0.7)).toBe("what is 2 plus 2");
+  });
+
+  it("should return empty for incomplete wake phrase only", () => {
+    expect(extractQueryAfterWakeWord("hey zi", 0.7)).toBe("");
+  });
+
+  it("should prefer exact match over fuzzy match", () => {
+    expect(extractQueryAfterWakeWord("hey zigs tell me the time", 0.7)).toBe("tell me the time");
   });
 });

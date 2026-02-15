@@ -29,6 +29,8 @@ type PendingInputRequest = {
   timer: ReturnType<typeof setTimeout>;
 };
 
+const MAX_CHAT_MESSAGE_CHARS = 10_000;
+
 export class WebChatChannel implements MessageChannel {
   readonly id = "web-chat";
   readonly type = "web" as const;
@@ -174,6 +176,12 @@ export class WebChatChannel implements MessageChannel {
     socket.on("chat:message", (data: { content?: string; model?: string; tools?: string[]; files?: SdkAttachment[]; workingDirectory?: string }) => {
       const content = typeof data?.content === "string" ? data.content.trim() : "";
       if (!content) {
+        return;
+      }
+      if (content.length > MAX_CHAT_MESSAGE_CHARS) {
+        socket.emit("chat:error", {
+          error: `Message too long (${content.length} chars). Max allowed is ${MAX_CHAT_MESSAGE_CHARS}.`,
+        });
         return;
       }
       const message: IncomingMessage = {

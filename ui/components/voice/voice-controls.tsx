@@ -26,6 +26,7 @@ export function VoiceControls({ onQueryCaptured, speakText, className }: VoiceCo
   const [isAudioPlaying, setIsAudioPlaying] = useState(false);
   const audioRef = useRef<VoiceAudioPlayerHandle>(null);
   const lastSpokenRef = useRef<string | null>(null);
+  const resumeMicAfterPlaybackRef = useRef(false);
 
   const { state, isSupported, isListening, startListening, stopListening } = useWakeWord({
     silenceTimeout: 5000,
@@ -35,6 +36,7 @@ export function VoiceControls({ onQueryCaptured, speakText, className }: VoiceCo
       audioRef.current?.stop();
     },
     onQueryCaptured: (query) => {
+      console.log("[voice] VoiceControls received query:", JSON.stringify(query));
       onQueryCaptured?.(query);
     },
   });
@@ -63,11 +65,32 @@ export function VoiceControls({ onQueryCaptured, speakText, className }: VoiceCo
   const toggleTts = useCallback(() => {
     if (ttsEnabled) {
       audioRef.current?.stop();
+    } else {
+      // Mark current text as already spoken so enabling TTS
+      // doesn't immediately replay the last assistant message
+      lastSpokenRef.current = speakText ?? null;
     }
     setTtsEnabled((prev) => !prev);
-  }, [ttsEnabled]);
+  }, [ttsEnabled, speakText]);
 
   if (!isSupported) return null;
+
+  const handlePlayStart = () => {
+    setIsAudioPlaying(true);
+    // Prevent the microphone from hearing the app's own TTS output.
+    if (isListening) {
+      resumeMicAfterPlaybackRef.current = true;
+      stopListening();
+    }
+  };
+
+  const handlePlayEnd = () => {
+    setIsAudioPlaying(false);
+    if (resumeMicAfterPlaybackRef.current) {
+      resumeMicAfterPlaybackRef.current = false;
+      startListening();
+    }
+  };
 
   return (
     <div className={cn("flex items-center gap-1.5", className)}>
@@ -105,8 +128,8 @@ export function VoiceControls({ onQueryCaptured, speakText, className }: VoiceCo
 
       <VoiceAudioPlayer
         ref={audioRef}
-        onPlayStart={() => setIsAudioPlaying(true)}
-        onPlayEnd={() => setIsAudioPlaying(false)}
+        onPlayStart={handlePlayStart}
+        onPlayEnd={handlePlayEnd}
       />
     </div>
   );

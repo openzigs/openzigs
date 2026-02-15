@@ -77,6 +77,7 @@ export const ChatView = () => {
   const [historyIndex, setHistoryIndex] = useState(-1);
   const [draftInput, setDraftInput] = useState("");
   const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
+  const [speakText, setSpeakText] = useState<string | undefined>(undefined);
   const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort>("medium");
   const [provider, setProvider] = useState<ProviderInfo | null>(null);
   const [sessionStatus, setSessionStatus] = useState<SessionStatus | null>(null);
@@ -243,6 +244,7 @@ export const ChatView = () => {
       finalizeStream();
       if (data.content) {
         setMessages((prev) => [...prev, { id: `msg-${Date.now()}`, role: "assistant", content: data.content! }]);
+        setSpeakText(data.content);
       }
     };
 
@@ -266,6 +268,10 @@ export const ChatView = () => {
     };
 
     const onStreamEnd = () => {
+      const completed = streamRef.current?.content?.trim();
+      if (completed) {
+        setSpeakText(completed);
+      }
       finalizeStream();
     };
 
@@ -495,12 +501,10 @@ export const ChatView = () => {
   const inputDisabled = sending || !!activeInputRequest;
   const showConnecting = connected && !chatId;
 
-  // Voice: derive last assistant message for TTS
-  const lastAssistantMessage = messages.filter((m) => m.role === "assistant").at(-1)?.content;
-
   // Voice: handle captured voice query (submit as chat message)
   const handleVoiceQuery = useCallback((query: string) => {
     const text = query.trim();
+    console.log("[voice] handleVoiceQuery:", JSON.stringify(text), { chatId: !!chatId, socket: !!socket, connected, sending });
     if (!text || !chatId || !socket || !connected || sending) return;
 
     setMessages((prev) => [...prev, { id: nextId(), role: "user", content: text }]);
@@ -554,7 +558,7 @@ export const ChatView = () => {
           />
           <VoiceControls
             onQueryCaptured={handleVoiceQuery}
-            speakText={lastAssistantMessage}
+            speakText={speakText}
           />
           <span
             className={cn(

@@ -89,6 +89,11 @@ export const VoiceAudioPlayer = forwardRef<VoiceAudioPlayerHandle, VoiceAudioPla
           onPlayStart?.();
         }
       } catch (err) {
+        // Benign in rapid-update scenarios: a new audio source interrupts play().
+        // Avoid noisy logs for expected AbortError churn.
+        if (err instanceof DOMException && err.name === "AbortError") {
+          return;
+        }
         console.warn("Voice TTS error:", err);
         setIsPlaying(false);
       }

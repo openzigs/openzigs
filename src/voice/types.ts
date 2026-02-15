@@ -24,6 +24,13 @@ export interface VoiceServiceConfig {
   maxTextLength: number;
 }
 
+export interface VoiceOption {
+  id: string;
+  type: "Standard" | "Neural2" | "Journey";
+  description: string;
+  pricingTier: "free-tier-preferred" | "paid-tier";
+}
+
 export interface SynthesizeResult {
   /** Raw MP3 audio buffer */
   audio: Buffer;
@@ -43,7 +50,7 @@ export interface CacheStats {
 export const DEFAULT_VOICE_CONFIG: VoiceServiceConfig = {
   enabled: true,
   provider: "google",
-  voiceName: "en-US-Journey-D",
+  voiceName: "en-US-Standard-C",
   audioEncoding: "MP3",
   speakingRate: 1.0,
   pitch: 0.0,
@@ -53,10 +60,15 @@ export const DEFAULT_VOICE_CONFIG: VoiceServiceConfig = {
 };
 
 /** Available voice options for user selection */
-export const AVAILABLE_VOICES = [
-  { id: "en-US-Journey-D", type: "Journey", description: "Male, conversational, natural" },
-  { id: "en-US-Journey-F", type: "Journey", description: "Female, conversational, natural" },
-  { id: "en-US-Neural2-A", type: "Neural2", description: "Male, standard" },
-  { id: "en-US-Neural2-C", type: "Neural2", description: "Female, standard" },
-  { id: "en-US-Neural2-J", type: "Neural2", description: "Male, deeper voice" },
-] as const;
+export const AVAILABLE_VOICES: VoiceOption[] = [
+  { id: "en-US-Standard-A", type: "Standard", description: "Male, generic American", pricingTier: "free-tier-preferred" },
+  { id: "en-US-Standard-B", type: "Standard", description: "Male, slightly deeper", pricingTier: "free-tier-preferred" },
+  { id: "en-US-Standard-C", type: "Standard", description: "Female, clear assistant style", pricingTier: "free-tier-preferred" },
+  { id: "en-US-Standard-D", type: "Standard", description: "Male, news anchor style", pricingTier: "free-tier-preferred" },
+  { id: "en-US-Standard-E", type: "Standard", description: "Female, slightly higher pitch", pricingTier: "free-tier-preferred" },
+  { id: "en-US-Neural2-A", type: "Neural2", description: "Male, natural", pricingTier: "paid-tier" },
+  { id: "en-US-Neural2-C", type: "Neural2", description: "Female, natural", pricingTier: "paid-tier" },
+  { id: "en-US-Neural2-J", type: "Neural2", description: "Male, deeper voice", pricingTier: "paid-tier" },
+  { id: "en-US-Journey-D", type: "Journey", description: "Male, conversational", pricingTier: "paid-tier" },
+  { id: "en-US-Journey-F", type: "Journey", description: "Female, conversational", pricingTier: "paid-tier" },
+];

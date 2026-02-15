@@ -1910,6 +1910,7 @@ OpenZigs includes an optional voice interface with two capabilities:
    ```dotenv
    GOOGLE_APPLICATION_CREDENTIALS=/Users/you/.openzigs/gcp-tts-key.json
    ```
+  You can also set this path from **Admin → Environment → Voice TTS credentials** in the web UI.
 
 ### Step 2: Enable Voice in Configuration
 
@@ -1920,7 +1921,7 @@ In `config/default.json` or `~/.openzigs/config.json`:
   "voice": {
     "enabled": true,
     "provider": "google",
-    "voiceName": "en-US-Journey-D",
+    "voiceName": "en-US-Standard-C",
     "speakingRate": 1.0,
     "pitch": 0.0,
     "cacheDir": "~/.openzigs/voice-cache",
@@ -1938,7 +1939,7 @@ pnpm dev
 
 On startup, you should see:
 ```
-Voice service initialized (provider: google, voice: en-US-Journey-D)
+Voice service initialized (provider: google, voice: en-US-Standard-C)
 ```
 
 ### Using Voice in the Chat
@@ -1966,13 +1967,18 @@ Once enabled, two new buttons appear in the chat header:
 2. When the AI responds, the last assistant message is read aloud via Google Cloud TTS.
 3. Say "Hey Zigs" during playback to interrupt the audio.
 
+**Cost control (free tier):**
+
+- To stay in the largest free tier, use a **Standard** voice (recommended: `en-US-Standard-C`).
+- You can change this in **Admin → Environment → Voice TTS voice**.
+
 ### Voice Configuration Reference
 
 | Key | Type | Default | Description |
 |---|---|---|---|
 | `voice.enabled` | boolean | `false` | Enable/disable voice features globally. |
 | `voice.provider` | string | `"google"` | TTS provider (currently only Google Cloud). |
-| `voice.voiceName` | string | `"en-US-Journey-D"` | Google Cloud voice name. |
+| `voice.voiceName` | string | `"en-US-Standard-C"` | Google Cloud voice name. Use Standard voices for free-tier-preferred usage. |
 | `voice.speakingRate` | number | `1.0` | Speech rate (0.25–4.0). |
 | `voice.pitch` | number | `0.0` | Pitch adjustment (-20 to 20 semitones). |
 | `voice.cacheDir` | string | `"~/.openzigs/voice-cache"` | Directory for cached audio files. |
@@ -1981,13 +1987,18 @@ Once enabled, two new buttons appear in the chat header:
 
 ### Available Voices
 
-| Voice ID | Type | Description |
-|---|---|---|
-| `en-US-Journey-D` | Journey | Male, conversational, natural |
-| `en-US-Journey-F` | Journey | Female, conversational, natural |
-| `en-US-Neural2-A` | Neural2 | Male, standard |
-| `en-US-Neural2-C` | Neural2 | Female, standard |
-| `en-US-Neural2-J` | Neural2 | Male, deeper voice |
+| Voice ID | Type | Pricing Tier | Description |
+|---|---|---|---|
+| `en-US-Standard-A` | Standard | Free-tier preferred | Male, generic American |
+| `en-US-Standard-B` | Standard | Free-tier preferred | Male, slightly deeper |
+| `en-US-Standard-C` | Standard | Free-tier preferred | Female, clear assistant style |
+| `en-US-Standard-D` | Standard | Free-tier preferred | Male, news anchor style |
+| `en-US-Standard-E` | Standard | Free-tier preferred | Female, slightly higher pitch |
+| `en-US-Neural2-A` | Neural2 | Paid tier | Male, natural |
+| `en-US-Neural2-C` | Neural2 | Paid tier | Female, natural |
+| `en-US-Neural2-J` | Neural2 | Paid tier | Male, deeper voice |
+| `en-US-Journey-D` | Journey | Paid tier | Male, conversational |
+| `en-US-Journey-F` | Journey | Paid tier | Female, conversational |
 
 ### Voice REST API
 

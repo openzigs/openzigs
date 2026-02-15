@@ -27,6 +27,7 @@ import type { KnowledgeIngestionService } from "../knowledge/index.js";
 import { SentinelConfigSchema, readStatusMarkdown } from "../sentinel/index.js";
 import { TemplateService } from "../productivity/template-service.js";
 import { CopilotNativeMcpTester, type NativeMcpDiscoveredTool, type NativeMcpTester } from "../mcp/native-mcp-test-service.js";
+import { AVAILABLE_VOICES } from "../voice/types.js";
 
 type EnvEntry = {
   name: string;
@@ -38,6 +39,7 @@ const ENV_CHECKS = [
   "CHROME_DEBUG_HOST",
   "CHROME_DEBUG_PORT",
   "OPENZIGS_ALLOWED_DIRS",
+  "GOOGLE_APPLICATION_CREDENTIALS",
   "GITHUB_CLIENT_ID",
   "TELEGRAM_BOT_TOKEN",
   "DISCORD_BOT_TOKEN",
@@ -176,6 +178,17 @@ const updateCopilotConfig = async (key: string, value: unknown) => {
     : {};
   existingCopilot[key] = value;
   userConfig.copilot = existingCopilot;
+  await writeUserConfig(configPath, userConfig);
+};
+
+/** Read user config, update keys under `voice`, and write back. */
+const updateVoiceConfig = async (updates: Record<string, unknown>) => {
+  const configPath = defaultConfigPath();
+  const userConfig = await readUserConfig(configPath);
+  const existingVoice = (userConfig.voice && typeof userConfig.voice === "object")
+    ? (userConfig.voice as Record<string, unknown>)
+    : {};
+  userConfig.voice = { ...existingVoice, ...updates };
   await writeUserConfig(configPath, userConfig);
 };
 
@@ -598,6 +611,76 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
 
       logger.info("Updated OPENZIGS_ALLOWED_DIRS via admin UI");
       return res.json({ ok: true, value: normalized, restartRequired: true });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return res.status(500).json({ error: message });
+    }
+  });
+
+  router.get("/voice-tts-credentials", (_req, res) => {
+    const value = (process.env.GOOGLE_APPLICATION_CREDENTIALS ?? "").trim();
+    res.json({ value });
+  });
+
+  router.post("/voice-tts-credentials", async (req, res) => {
+    const body = req.body as Record<string, unknown>;
+    const rawValue = typeof body.value === "string" ? body.value : "";
+    const normalized = rawValue.trim();
+
+    try {
+      const envPath = defaultEnvPath();
+      await upsertEnvFile(envPath, { GOOGLE_APPLICATION_CREDENTIALS: normalized });
+
+      if (normalized) {
+        process.env.GOOGLE_APPLICATION_CREDENTIALS = normalized;
+      } else {
+        delete process.env.GOOGLE_APPLICATION_CREDENTIALS;
+      }
+
+      logger.info("Updated GOOGLE_APPLICATION_CREDENTIALS via admin UI");
+      return res.json({ ok: true, value: normalized, restartRequired: true });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return res.status(500).json({ error: message });
+    }
+  });
+
+  router.get("/voice-settings", async (_req, res) => {
+    try {
+      const userConfig = await readUserConfig(defaultConfigPath());
+      const voiceConfig = (userConfig.voice && typeof userConfig.voice === "object")
+        ? (userConfig.voice as Record<string, unknown>)
+        : {};
+      const configuredVoice = typeof voiceConfig.voiceName === "string" ? voiceConfig.voiceName.trim() : "";
+      const currentVoiceName = configuredVoice || "en-US-Standard-C";
+      return res.json({
+        voiceName: currentVoiceName,
+        recommendedFreeTierVoice: "en-US-Standard-C",
+        availableVoices: AVAILABLE_VOICES,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return res.status(500).json({ error: message });
+    }
+  });
+
+  router.post("/voice-settings", async (req, res) => {
+    const body = req.body as Record<string, unknown>;
+    const voiceName = typeof body.voiceName === "string" ? body.voiceName.trim() : "";
+
+    if (!voiceName) {
+      return res.status(400).json({ error: "voiceName is required" });
+    }
+
+    const validVoice = AVAILABLE_VOICES.some((voice) => voice.id === voiceName);
+    if (!validVoice) {
+      return res.status(400).json({ error: `Unsupported voice: ${voiceName}` });
+    }
+
+    try {
+      await updateVoiceConfig({ voiceName });
+      logger.info(`Updated voice.voiceName via admin UI: ${voiceName}`);
+      return res.json({ ok: true, voiceName, restartRequired: true });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return res.status(500).json({ error: message });
