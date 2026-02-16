@@ -135,7 +135,7 @@ export const ManifestMetadataSchema = z.object({
   generatedAt: z.string().datetime(),
   llmModel: z.string().min(1),
   llmTokensUsed: z.number().int().min(0),
-  productionMode: z.enum(["highlight", "script"]),
+  productionMode: z.enum(["highlight", "script", "presentation"]),
   sourceClips: z.array(z.string()),
   estimatedRenderTime: z.number().positive().optional(),
 });

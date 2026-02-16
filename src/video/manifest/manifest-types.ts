@@ -124,7 +124,7 @@ export interface ManifestMetadata {
   generatedAt: string;
   llmModel: string;
   llmTokensUsed: number;
-  productionMode: "highlight" | "script";
+  productionMode: "highlight" | "script" | "presentation";
   sourceClips: string[];
   estimatedRenderTime?: number;
 }

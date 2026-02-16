@@ -14,12 +14,15 @@ export interface VideoToolsOptions {
 }
 
 const produceVideoSchema = z.object({
-  clips: z.array(z.string()).min(1).describe("Paths to input video clips"),
-  mode: z.enum(["highlight", "script"]).describe("Production mode: 'highlight' for auto-edit, 'script' for narration-driven"),
+  clips: z.array(z.string()).optional().describe("Paths to input video clips (required for highlight/script modes)"),
+  mode: z.enum(["highlight", "script", "presentation"]).describe("Production mode: 'highlight' for auto-edit, 'script' for narration-driven, 'presentation' for text-to-video"),
   scriptPath: z.string().optional().describe("Path to script file (required for 'script' mode)"),
   musicTrackPath: z.string().optional().describe("Path to background music track"),
   template: z.string().optional().describe("Template ID: 'Minimalist', 'ContentCreator', 'Corporate', 'TechDemo'"),
   voiceoverPath: z.string().optional().describe("Pre-generated voiceover path (skip TTS)"),
+  inputFile: z.string().optional().describe("Path to .md or .txt file (required for 'presentation' mode)"),
+  sourceType: z.enum(["text", "markdown"]).optional().describe("Type of input document for presentation mode"),
+  imageProvider: z.enum(["cloud", "local", "auto"]).optional().describe("Image generation provider: 'cloud' (Vertex AI), 'local' (sidecar), 'auto' (failover)"),
 });
 
 const listTemplatesSchema = z.object({
@@ -41,28 +44,122 @@ export const createVideoTools = ({ copilot, voiceService }: VideoToolsOptions): 
     name: "produce-video",
     description:
       "Analyze input video clips and produce a Director Manifest (edit decision list) using a single-shot LLM call. " +
-      "Supports two modes: 'highlight' (auto-select best moments) and 'script' (narration-driven with TTS voiceover). " +
+      "Supports three modes: 'highlight' (auto-select best moments), 'script' (narration-driven with TTS voiceover), " +
+      "and 'presentation' (transform text documents into narrated video presentations with AI-generated visuals). " +
       "Returns a JSON manifest that can be rendered into a final video.",
     inputSchema: {
       type: "object",
       properties: {
-        clips: { type: "array", items: { type: "string" }, description: "Paths to input video clips" },
-        mode: { type: "string", enum: ["highlight", "script"], description: "Production mode" },
+        clips: { type: "array", items: { type: "string" }, description: "Paths to input video clips (highlight/script modes)" },
+        mode: { type: "string", enum: ["highlight", "script", "presentation"], description: "Production mode" },
         scriptPath: { type: "string", description: "Path to script file (script mode)" },
         musicTrackPath: { type: "string", description: "Path to background music" },
         template: { type: "string", description: "Template ID" },
         voiceoverPath: { type: "string", description: "Pre-generated voiceover path" },
+        inputFile: { type: "string", description: "Path to .md or .txt file (presentation mode)" },
+        sourceType: { type: "string", enum: ["text", "markdown"], description: "Input document type" },
+        imageProvider: { type: "string", enum: ["cloud", "local", "auto"], description: "Image generation provider" },
       },
-      required: ["clips", "mode"],
+      required: ["mode"],
     },
     zodSchema: produceVideoSchema,
     category: "productivity",
     riskLevel: "high",
     handler: async (args) => {
-      const { clips, mode, scriptPath, musicTrackPath, template, voiceoverPath } =
+      const { clips, mode, scriptPath, musicTrackPath, template, voiceoverPath, inputFile, sourceType, imageProvider } =
         args as z.infer<typeof produceVideoSchema>;
 
       try {
+        // Mode C: Presentation — text-to-video pipeline
+        if (mode === "presentation") {
+          if (!inputFile) {
+            return { text: "Error: 'inputFile' is required for presentation mode", isError: true };
+          }
+
+          const fs = await import("node:fs/promises");
+          const { StoryboardEngine } = await import("../../video/generators/storyboard-engine.js");
+          const { ImageGenService } = await import("../../video/generators/image-gen-service.js");
+
+          // Step A: Ingest the text document
+          let rawText = await fs.readFile(inputFile, "utf-8");
+          if (sourceType === "markdown" || inputFile.endsWith(".md")) {
+            // Strip code blocks but keep headers for structure
+            rawText = rawText.replace(/```[\s\S]*?```/g, "[code block removed]");
+          }
+
+          // Step B: Generate storyboard via LLM
+          const storyboardEngine = new StoryboardEngine(copilot);
+          const storyboard = await storyboardEngine.generate(rawText);
+
+          // Step C: Generate images for each scene
+          const imageService = new ImageGenService();
+          await imageService.initialize();
+
+          const sceneAssets: Array<{ imagePath: string; voiceoverPath?: string; duration: number }> = [];
+
+          for (const scene of storyboard.scenes) {
+            const imageResult = await imageService.generateImage(scene.imagePrompt, {
+              provider: imageProvider ?? "auto",
+              width: 1920,
+              height: 1080,
+            });
+
+            // Generate voiceover for this scene if VoiceService is available
+            let sceneVoiceoverPath: string | undefined;
+            if (voiceService && scene.voiceover) {
+              try {
+                if (!voiceService.isReady() && process.env.GOOGLE_APPLICATION_CREDENTIALS) {
+                  await voiceService.initialize();
+                }
+                if (voiceService.isReady()) {
+                  const ttsResult = await voiceService.synthesize(scene.voiceover);
+                  const os = await import("node:os");
+                  const path = await import("node:path");
+                  const { nanoid } = await import("nanoid");
+                  const voPath = path.join(os.tmpdir(), `openzigs-vo-${nanoid(8)}.mp3`);
+                  await fs.writeFile(voPath, ttsResult.audio);
+                  sceneVoiceoverPath = voPath;
+                }
+              } catch {
+                // TTS failure is non-fatal for scene processing
+              }
+            }
+
+            sceneAssets.push({
+              imagePath: imageResult.filePath,
+              voiceoverPath: sceneVoiceoverPath,
+              duration: scene.durationEstimate,
+            });
+          }
+
+          return {
+            text: JSON.stringify({
+              mode: "presentation",
+              storyboard: {
+                title: storyboard.title,
+                styleAnchor: storyboard.styleAnchor,
+                analysis: storyboard.analysis,
+                sceneCount: storyboard.scenes.length,
+              },
+              scenes: storyboard.scenes.map((scene, i) => ({
+                index: i,
+                voiceover: scene.voiceover,
+                imagePrompt: scene.imagePrompt,
+                durationEstimate: scene.durationEstimate,
+                imagePath: sceneAssets[i]?.imagePath,
+                voiceoverPath: sceneAssets[i]?.voiceoverPath,
+              })),
+              tokensUsed: storyboard.tokensUsed,
+              totalDuration: storyboard.scenes.reduce((sum, s) => sum + s.durationEstimate, 0),
+            }, null, 2),
+          };
+        }
+
+        // Mode A/B: Highlight / Script — existing pipeline
+        if (!clips || clips.length === 0) {
+          return { text: "Error: 'clips' is required for highlight/script modes", isError: true };
+        }
+
         // Lazy-load heavy modules
         const { ingest } = await import("../../video/ingestion/index.js");
         const { ProducerService } = await import("../../video/producer/producer-service.js");
