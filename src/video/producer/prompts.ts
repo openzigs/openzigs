@@ -26,19 +26,26 @@ export function buildHighlightReelPrompt(
 
 Your task: Produce a JSON editing manifest that creates a professional highlight reel.
 
-CRITICAL RULES — MULTI-CLIP EDITING:
+CRITICAL RULES — DURATION AND COVERAGE:
+- The output video MUST use at least 70% of the combined source material duration.
+- For example: if you have 80 seconds of source footage, the output video should be at least 56 seconds long.
 - You MUST include video_clip entries from EVERY source clip provided. Do NOT ignore any input clips.
-- Break each source clip into MULTIPLE timeline segments showing different parts of the clip. Use different trimStart values to select different sections.
+- Each source clip MUST be split into at least 5-8 segments (more if the clip is longer).
+- Spread trimStart values EVENLY across the ENTIRE duration of each source clip (beginning, middle, and end — not just the first 30 seconds).
+- Use shot lengths of 3-8 seconds (4-6 second average). Do NOT make all clips 2-3 seconds — that creates a jarring, choppy video.
 - Interleave segments from different source clips for variety — do NOT play one entire clip before the next.
-- Vary shot lengths between 2-8 seconds for dynamic pacing.
-- Use trimStart to skip to the most interesting parts of each clip (scenes with speech, visual transitions, or action).
 - Every video_clip entry must reference an ACTUAL source path from the clip context. Never hallucinate file paths.
+
+DURATION CALCULATION RULE:
+- Count total source duration from the clip context (sum of all clip durations).
+- Your output timeline's total frame span (last clip's startAtFrame + duration) should be at least 70% of that, converted to frames at the composition's FPS.
+- If you have 2 clips each ~40 seconds (80s total), your output should be at least 56 seconds (1680 frames at 30fps).
 
 EDITING RULES:
 - Reorder clips for logical narrative flow (intro → body → conclusion)
-- Remove dead air: trim segments with >2s silence AND no visual change
+- Remove dead air: trim segments with >2s silence AND no visual change — but do NOT over-trim; keep most of the interesting content
 - Remove filler words: "um", "uh", "like" clusters (trim surrounding 0.5s)
-- Target 3-5 second average shot length for pacing
+- Target 4-6 second average shot length for smooth, professional pacing
 - Use crossfade transitions between clips (20 frames default)
 - Select the most appropriate template based on content type
 
@@ -127,10 +134,12 @@ export function buildScriptDrivenPrompt(
   const hasVoiceover = voiceoverDuration > 0;
 
   const durationGuidance = hasVoiceover
-    ? `- The total video duration MUST match the voiceover duration (${voiceoverDuration.toFixed(1)}s)
-- Each video_clip entry should have volume: 0 (voiceover replaces original audio)`
-    : `- Determine total video duration from the combined source clip durations (aim for a tight, punchy edit)
-- Each video_clip entry should have volume: 0.8 (script provides narrative context but there is no voiceover audio)`;
+    ? `- The total video duration MUST EXACTLY match the voiceover duration (${voiceoverDuration.toFixed(1)}s / ${Math.round(voiceoverDuration * 30)} frames at 30fps). Fill the entire duration with video clips.
+- Each video_clip entry should have volume: 0 (voiceover replaces original audio)
+- Calculate: you need enough video_clip segments to fill ${voiceoverDuration.toFixed(1)} seconds. At 4-6 seconds per clip, that is roughly ${Math.ceil(voiceoverDuration / 5)} clips minimum.`
+    : `- Determine total video duration from the combined source clip durations — use at least 70% of the total source footage.
+- Each video_clip entry should have volume: 0.8 (script provides narrative context but there is no voiceover audio)
+- If the script text is provided, estimate its spoken duration (roughly 150 words per minute) and match the video length to it.`;
 
   const voiceoverInputLine = hasVoiceover
     ? `1. A voiceover audio file (duration: ${voiceoverDuration.toFixed(1)}s) — this is the PRIMARY audio`
@@ -153,11 +162,14 @@ ${voiceoverTaskLine}
 - Loops or stretches clips if total B-Roll < desired duration
 - Adds background music at volume ${hasVoiceover ? "0.15" : "0.3"} with ducking ${hasVoiceover ? "enabled" : "disabled"} (if a music track is available)
 
-CRITICAL — MULTI-CLIP RULES:
+CRITICAL — MULTI-CLIP AND DURATION RULES:
 - You MUST include video_clip entries from EVERY source clip provided. Do NOT ignore any input clips.
-- Break each source clip into MULTIPLE timeline segments at different trim points.
+- Break each source clip into at least 5-8 segments at different trim points spread evenly across the clip's full duration.
 - Interleave clips from different sources for variety.
 - Every video_clip entry must reference an ACTUAL source path from the clip context. Never hallucinate file paths.
+- The output video MUST use at least 70% of the combined source material.
+- Use shot lengths of 3-8 seconds (4-6 second average). Do NOT make all clips 2-3 seconds.
+- Spread trimStart values across the ENTIRE duration of each clip.
 
 MUSIC RULES:
 - If a background music track is provided, you MUST include it in audioLayer.music
@@ -234,12 +246,35 @@ export function buildUserPrompt(
     voiceoverPath?: string;
     musicTrackPath?: string;
     musicMetadata?: MusicMetadata;
+    /** Total duration of all source clips in seconds */
+    totalSourceDuration?: number;
+    /** Clip durations in seconds, keyed by source path */
+    clipDurations?: Record<string, number>;
   },
 ): string {
   const parts: string[] = [];
 
   parts.push("=== VIDEO CLIP CONTEXT ===");
   parts.push(contextText);
+
+  // Add explicit duration targets so the LLM knows how long to make the video
+  if (options.totalSourceDuration && options.totalSourceDuration > 0) {
+    const targetDuration = Math.round(options.totalSourceDuration * 0.75);
+    const targetFrames = targetDuration * 30;
+    parts.push(`\n=== DURATION TARGET ===`);
+    parts.push(`Total source footage: ${options.totalSourceDuration.toFixed(1)} seconds`);
+    parts.push(`MINIMUM output video duration: ${targetDuration} seconds (${targetFrames} frames at 30fps)`);
+    parts.push(`You need approximately ${Math.ceil(targetDuration / 5)} video_clip segments (at ~5s avg each) to fill this.`);
+
+    if (options.clipDurations) {
+      parts.push(`\nPer-clip guidance:`);
+      for (const [source, duration] of Object.entries(options.clipDurations)) {
+        const basename = source.split("/").pop() ?? source;
+        const minSegments = Math.max(5, Math.ceil(duration / 8));
+        parts.push(`  ${basename} (${duration.toFixed(1)}s): create at least ${minSegments} segments, spread trimStart from 0 to ${Math.floor(duration * 30)} frames`);
+      }
+    }
+  }
 
   if (options.mode === "script" && options.scriptText) {
     parts.push("\n=== SCRIPT TEXT ===");

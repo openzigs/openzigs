@@ -1,11 +1,11 @@
 /**
  * Director Mode — Manifest Enhancer
- * Deterministic post-processing that guarantees effects, transitions, and
- * multi-clip coverage in LLM-generated manifests.
+ * Deterministic post-processing that guarantees effects, transitions,
+ * multi-clip coverage, AND adequate duration in LLM-generated manifests.
  *
- * The LLM is instructed to add effects and transitions but often doesn't.
- * This module applies smart defaults AFTER repair/validation so the final
- * video always has professional-quality production values.
+ * The LLM is instructed to create long, well-covered timelines but often
+ * produces short, sparse output. This module applies smart defaults AFTER
+ * repair/validation so the final video always has professional quality.
  */
 
 import { logger } from "../../logging/logger.js";
@@ -26,47 +26,72 @@ const DEFAULT_ZOOM_TO = 1.12;
 /** Default fadeIn/fadeOut duration in frames. */
 const DEFAULT_FADE_DURATION = 20;
 
+/** Default segment duration in seconds when injecting fill clips. */
+const DEFAULT_SEGMENT_SEC = 5;
+
+/**
+ * Minimum ratio of output duration to source duration.
+ * If the LLM produces a 20s video from 80s of source, that's 25% — way too low.
+ * We require at least 65% coverage.
+ */
+const MIN_DURATION_RATIO = 0.65;
+
+export interface EnhancementOptions {
+  /** Per-clip durations in seconds keyed by source path */
+  clipDurations?: Record<string, number>;
+  /** Total source duration in seconds */
+  totalSourceDuration?: number;
+}
+
 export interface EnhancementStats {
   transitionsAdded: number;
   effectsAdded: number;
   clipsInjected: number;
   warnings: string[];
+  /** Duration extension info (null if not extended) */
+  durationExtended: { fromSec: number; toSec: number } | null;
 }
 
 /**
- * Enhance a manifest with smart defaults for transitions, effects, and
- * multi-clip coverage. Mutates the manifest in-place.
+ * Enhance a manifest with smart defaults for transitions, effects,
+ * multi-clip coverage, and adequate duration. Mutates the manifest in-place.
  *
  * @param manifest - The LLM-generated (and already repaired) manifest
  * @param sourceClips - Array of source clip file paths that were ingested
+ * @param options - Duration and clip metadata for coverage enforcement
  * @returns Statistics about what was enhanced
  */
 export function enhanceManifest(
   manifest: DirectorManifest,
   sourceClips: string[],
+  options: EnhancementOptions = {},
 ): EnhancementStats {
   const stats: EnhancementStats = {
     transitionsAdded: 0,
     effectsAdded: 0,
     clipsInjected: 0,
     warnings: [],
+    durationExtended: null,
   };
 
   // 1. Ensure all source clips are represented
-  ensureMultiClipCoverage(manifest, sourceClips, stats);
+  ensureMultiClipCoverage(manifest, sourceClips, stats, options);
 
-  // 2. Ensure transitions between adjacent video clips
+  // 2. Ensure adequate duration (fill timeline to use enough source material)
+  ensureAdequateDuration(manifest, sourceClips, stats, options);
+
+  // 3. Ensure transitions between adjacent video clips
   ensureTransitions(manifest, stats);
 
-  // 3. Ensure effects on video clips (slowZoom, fadeIn, fadeOut)
+  // 4. Ensure effects on video clips (slowZoom, fadeIn, fadeOut)
   ensureEffects(manifest, stats);
 
   if (stats.transitionsAdded + stats.effectsAdded + stats.clipsInjected > 0) {
     logger.info(
       `[ManifestEnhancer] Enhanced manifest: ` +
-      `+${stats.transitionsAdded} transitions, ` +
-      `+${stats.effectsAdded} effects, ` +
-      `+${stats.clipsInjected} clips injected`,
+        `+${stats.transitionsAdded} transitions, ` +
+        `+${stats.effectsAdded} effects, ` +
+        `+${stats.clipsInjected} clips injected`,
     );
   }
 
@@ -83,12 +108,14 @@ export function enhanceManifest(
 
 /**
  * Verify that every source clip appears in the timeline.
- * If a clip is missing, inject segments from it.
+ * If a clip is missing, inject segments from it (using actual clip
+ * durations to spread trim points evenly across the source).
  */
 function ensureMultiClipCoverage(
   manifest: DirectorManifest,
   sourceClips: string[],
   stats: EnhancementStats,
+  options: EnhancementOptions,
 ): void {
   if (sourceClips.length <= 1) return;
 
@@ -96,10 +123,7 @@ function ensureMultiClipCoverage(
     (e): e is VideoClipEntry => e.type === "video_clip",
   );
 
-  // Normalize paths for comparison (strip trailing slash, case-insensitive on macOS)
-  const usedSources = new Set(
-    videoClips.map((c) => normalizePath(c.source)),
-  );
+  const usedSources = new Set(videoClips.map((c) => normalizePath(c.source)));
 
   const missingClips = sourceClips.filter(
     (src) => !usedSources.has(normalizePath(src)),
@@ -108,21 +132,186 @@ function ensureMultiClipCoverage(
   if (missingClips.length === 0) return;
 
   stats.warnings.push(
-    `LLM ignored ${missingClips.length} of ${sourceClips.length} source clips: ${missingClips.map(p => pathBasename(p)).join(", ")}`,
+    `LLM ignored ${missingClips.length} of ${sourceClips.length} source clips: ${missingClips.map((p) => pathBasename(p)).join(", ")}`,
   );
-
-  // Find the last frame in the current timeline
-  let lastFrame = 0;
-  for (const entry of manifest.timeline) {
-    const end = entry.startAtFrame + ("duration" in entry ? (entry.duration ?? 0) : 0);
-    if (end > lastFrame) lastFrame = end;
-  }
 
   const fps = manifest.composition.fps || 30;
 
-  // Inject segments from each missing clip
   for (const missingPath of missingClips) {
-    // Add a crossfade transition before the injected clip
+    const clipDur = options.clipDurations?.[missingPath] ?? 30;
+    const clipDurFrames = Math.floor(clipDur * fps);
+
+    // More segments for longer clips — at least 3, up to 8
+    const segmentCount = Math.max(3, Math.min(8, Math.ceil(clipDur / 8)));
+    const segmentDuration = Math.floor(fps * DEFAULT_SEGMENT_SEC);
+
+    // Spread trim points evenly across the source clip's full duration
+    const trimStep = Math.max(1, Math.floor(clipDurFrames / segmentCount));
+
+    injectSegments(manifest, missingPath, segmentCount, segmentDuration, trimStep, fps, stats);
+  }
+
+  // Update metadata.sourceClips
+  if (manifest.metadata) {
+    const metaSources = new Set(manifest.metadata.sourceClips.map(normalizePath));
+    for (const src of sourceClips) {
+      if (!metaSources.has(normalizePath(src))) {
+        manifest.metadata.sourceClips.push(src);
+      }
+    }
+  }
+}
+
+// ── Duration Enforcement ──────────────────────────────────────
+
+/**
+ * Ensure that the output video duration is at least MIN_DURATION_RATIO of the
+ * total source material. If the LLM produced a short timeline, inject
+ * additional segments from source clips to fill the gap, picking from
+ * unused regions of each clip.
+ */
+function ensureAdequateDuration(
+  manifest: DirectorManifest,
+  sourceClips: string[],
+  stats: EnhancementStats,
+  options: EnhancementOptions,
+): void {
+  const totalSourceSec = options.totalSourceDuration ?? 0;
+  if (totalSourceSec <= 0) return;
+
+  const fps = manifest.composition.fps || 30;
+  const currentDurationFrames = getTimelineDuration(manifest);
+  const currentDurationSec = currentDurationFrames / fps;
+  const targetDurationSec = totalSourceSec * MIN_DURATION_RATIO;
+
+  if (currentDurationSec >= targetDurationSec) {
+    logger.info(
+      `[ManifestEnhancer] Duration OK: ${currentDurationSec.toFixed(1)}s >= ${targetDurationSec.toFixed(1)}s target ` +
+        `(${((currentDurationSec / totalSourceSec) * 100).toFixed(0)}% of source)`,
+    );
+    return;
+  }
+
+  const deficitSec = targetDurationSec - currentDurationSec;
+  stats.warnings.push(
+    `Output too short: ${currentDurationSec.toFixed(1)}s ` +
+      `(${((currentDurationSec / totalSourceSec) * 100).toFixed(0)}% of ${totalSourceSec.toFixed(1)}s source). ` +
+      `Adding ~${deficitSec.toFixed(1)}s of content.`,
+  );
+
+  // Build a map of regions that are already covered per source clip
+  const videoClips = manifest.timeline.filter(
+    (e): e is VideoClipEntry => e.type === "video_clip",
+  );
+  const usedRegions: Map<string, Array<{ start: number; end: number }>> = new Map();
+  for (const clip of videoClips) {
+    const key = normalizePath(clip.source);
+    if (!usedRegions.has(key)) usedRegions.set(key, []);
+    usedRegions.get(key)!.push({ start: clip.trimStart, end: clip.trimStart + clip.duration });
+  }
+
+  // Round-robin through source clips, filling from their largest unused gaps
+  const segmentDurationFrames = Math.floor(fps * DEFAULT_SEGMENT_SEC);
+  let remainingDeficitFrames = Math.ceil(deficitSec * fps);
+  let clipIndex = 0;
+  const maxIterations = sourceClips.length * 10; // safety valve
+
+  while (remainingDeficitFrames > segmentDurationFrames / 2 && clipIndex < maxIterations) {
+    const sourcePath = sourceClips[clipIndex % sourceClips.length];
+    const sourceKey = normalizePath(sourcePath);
+    const clipDurSec = options.clipDurations?.[sourcePath] ?? 30;
+    const clipDurFrames = Math.floor(clipDurSec * fps);
+
+    const used = usedRegions.get(sourceKey) ?? [];
+    used.sort((a, b) => a.start - b.start);
+
+    const gaps = findUnusedGaps(used, clipDurFrames, segmentDurationFrames);
+
+    if (gaps.length === 0) {
+      clipIndex++;
+      continue;
+    }
+
+    // Pick the largest gap
+    const gap = gaps[0];
+    const trimCenter = gap.start + Math.floor((gap.end - gap.start) / 2);
+    const actualTrim = Math.max(0, Math.min(trimCenter - segmentDurationFrames / 2, clipDurFrames - segmentDurationFrames));
+    const actualDuration = Math.min(segmentDurationFrames, remainingDeficitFrames, clipDurFrames - actualTrim);
+
+    if (actualDuration < fps) {
+      // Less than 1 second — skip
+      clipIndex++;
+      continue;
+    }
+
+    injectSingleSegment(manifest, sourcePath, actualTrim, actualDuration, fps, stats);
+
+    // Mark this region as used
+    if (!usedRegions.has(sourceKey)) usedRegions.set(sourceKey, []);
+    usedRegions.get(sourceKey)!.push({ start: actualTrim, end: actualTrim + actualDuration });
+
+    remainingDeficitFrames -= actualDuration;
+    clipIndex++;
+  }
+
+  const newDurationSec = getTimelineDuration(manifest) / fps;
+  stats.durationExtended = {
+    fromSec: currentDurationSec,
+    toSec: newDurationSec,
+  };
+
+  logger.info(
+    `[ManifestEnhancer] Extended duration: ${currentDurationSec.toFixed(1)}s → ${newDurationSec.toFixed(1)}s ` +
+      `(target: ${targetDurationSec.toFixed(1)}s)`,
+  );
+}
+
+/**
+ * Find continuous gaps in the used regions large enough for a segment.
+ * Returns gaps sorted by size descending (fill largest first).
+ */
+function findUnusedGaps(
+  usedRegions: Array<{ start: number; end: number }>,
+  totalFrames: number,
+  minGapSize: number,
+): Array<{ start: number; end: number }> {
+  const sorted = [...usedRegions].sort((a, b) => a.start - b.start);
+  const gaps: Array<{ start: number; end: number }> = [];
+
+  let cursor = 0;
+  for (const region of sorted) {
+    if (region.start - cursor >= minGapSize) {
+      gaps.push({ start: cursor, end: region.start });
+    }
+    cursor = Math.max(cursor, region.end);
+  }
+  // Gap after the last used region until end of clip
+  if (totalFrames - cursor >= minGapSize) {
+    gaps.push({ start: cursor, end: totalFrames });
+  }
+
+  gaps.sort((a, b) => (b.end - b.start) - (a.end - a.start));
+  return gaps;
+}
+
+// ── Segment Injection Helpers ─────────────────────────────────
+
+/**
+ * Inject multiple segments from a source clip, spread evenly via trimStep.
+ */
+function injectSegments(
+  manifest: DirectorManifest,
+  sourcePath: string,
+  segmentCount: number,
+  segmentDuration: number,
+  trimStep: number,
+  _fps: number,
+  stats: EnhancementStats,
+): void {
+  let lastFrame = getTimelineDuration(manifest);
+
+  for (let i = 0; i < segmentCount; i++) {
+    // Crossfade before each segment
     const transition: TransitionEntry = {
       type: "transition",
       style: "crossfade",
@@ -132,55 +321,73 @@ function ensureMultiClipCoverage(
     manifest.timeline.push(transition);
     stats.transitionsAdded++;
 
-    // Insert 3 segments from the missing clip at different trim points
-    const segmentDuration = fps * 4; // 4 seconds each
-    const segmentCount = 3;
+    const trimStart = i * trimStep;
+    const clipEntry: VideoClipEntry = {
+      type: "video_clip",
+      source: sourcePath,
+      startAtFrame: lastFrame,
+      trimStart,
+      duration: segmentDuration,
+      volume: 0.8,
+      effects: [
+        {
+          type: "slowZoom",
+          from: i % 2 === 0 ? DEFAULT_ZOOM_FROM : DEFAULT_ZOOM_TO,
+          to: i % 2 === 0 ? DEFAULT_ZOOM_TO : DEFAULT_ZOOM_FROM,
+        },
+      ],
+    };
 
-    for (let i = 0; i < segmentCount; i++) {
-      const clipEntry: VideoClipEntry = {
-        type: "video_clip",
-        source: missingPath,
-        startAtFrame: lastFrame,
-        trimStart: i * segmentDuration * 2, // Skip around the clip
-        duration: segmentDuration,
-        volume: 0.8,
-        effects: [
-          { type: "slowZoom", from: DEFAULT_ZOOM_FROM, to: DEFAULT_ZOOM_TO },
-        ],
-      };
-
-      // Add fadeIn to first injected segment
-      if (i === 0) {
-        clipEntry.effects!.push({ type: "fadeIn", durationFrames: DEFAULT_FADE_DURATION });
-      }
-
-      manifest.timeline.push(clipEntry);
-      lastFrame += segmentDuration;
-      stats.clipsInjected++;
-
-      // Add transition between injected segments
-      if (i < segmentCount - 1) {
-        const innerTransition: TransitionEntry = {
-          type: "transition",
-          style: "crossfade",
-          duration: DEFAULT_TRANSITION_DURATION,
-          startAtFrame: lastFrame,
-        };
-        manifest.timeline.push(innerTransition);
-        stats.transitionsAdded++;
-      }
+    if (i === 0) {
+      clipEntry.effects!.push({ type: "fadeIn", durationFrames: DEFAULT_FADE_DURATION });
     }
-  }
 
-  // Update metadata.sourceClips to include all clips
-  if (manifest.metadata) {
-    const metaSources = new Set(manifest.metadata.sourceClips.map(normalizePath));
-    for (const src of sourceClips) {
-      if (!metaSources.has(normalizePath(src))) {
-        manifest.metadata.sourceClips.push(src);
-      }
-    }
+    manifest.timeline.push(clipEntry);
+    lastFrame += segmentDuration;
+    stats.clipsInjected++;
   }
+}
+
+/**
+ * Inject a single segment from a source clip at a specific trim point.
+ */
+function injectSingleSegment(
+  manifest: DirectorManifest,
+  sourcePath: string,
+  trimStart: number,
+  duration: number,
+  _fps: number,
+  stats: EnhancementStats,
+): void {
+  const lastFrame = getTimelineDuration(manifest);
+
+  const transition: TransitionEntry = {
+    type: "transition",
+    style: "crossfade",
+    duration: DEFAULT_TRANSITION_DURATION,
+    startAtFrame: lastFrame,
+  };
+  manifest.timeline.push(transition);
+  stats.transitionsAdded++;
+
+  const clipEntry: VideoClipEntry = {
+    type: "video_clip",
+    source: sourcePath,
+    startAtFrame: lastFrame,
+    trimStart,
+    duration,
+    volume: 0.8,
+    effects: [
+      {
+        type: "slowZoom",
+        from: DEFAULT_ZOOM_FROM,
+        to: DEFAULT_ZOOM_TO,
+      },
+    ],
+  };
+
+  manifest.timeline.push(clipEntry);
+  stats.clipsInjected++;
 }
 
 // ── Transitions ───────────────────────────────────────────────
@@ -323,6 +530,18 @@ function ensureEffects(
 }
 
 // ── Helpers ───────────────────────────────────────────────────
+
+/** Get the total duration of the timeline in frames. */
+function getTimelineDuration(manifest: DirectorManifest): number {
+  let maxFrame = 0;
+  for (const entry of manifest.timeline) {
+    const end =
+      entry.startAtFrame +
+      ("duration" in entry ? (entry.duration ?? 0) : 0);
+    if (end > maxFrame) maxFrame = end;
+  }
+  return maxFrame;
+}
 
 function normalizePath(p: string): string {
   return p.toLowerCase().replace(/\/+$/, "");

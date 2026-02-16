@@ -118,12 +118,21 @@ export class ProducerService {
 
     // Build the user prompt with the full context
     const contextText = formatContextForPrompt(input.contextPayload);
+
+    // Build per-clip duration map for the prompt
+    const clipDurations: Record<string, number> = {};
+    for (const clip of input.contextPayload.clips) {
+      clipDurations[clip.source] = clip.duration;
+    }
+
     const userPrompt = buildUserPrompt(contextText, {
       mode: input.mode,
       scriptText,
       voiceoverPath,
       musicTrackPath: input.musicTrackPath,
       musicMetadata,
+      totalSourceDuration: input.contextPayload.totalDuration,
+      clipDurations,
     });
 
     logger.info(`[Producer] Sending single-shot LLM request (mode: ${input.mode})`);
@@ -153,11 +162,21 @@ export class ProducerService {
     repairManifest(manifest as unknown as Record<string, unknown>);
 
     // Enhance manifest with smart defaults: ensure transitions between clips,
-    // effects on video segments, and multi-clip coverage.
+    // effects on video segments, multi-clip coverage, and adequate duration.
     const sourceClips = input.sourceClips ?? input.contextPayload.clips.map((c) => c.source);
-    const enhancementStats = enhanceManifest(manifest, sourceClips);
+    const clipDurationsMap: Record<string, number> = {};
+    for (const clip of input.contextPayload.clips) {
+      clipDurationsMap[clip.source] = clip.duration;
+    }
+    const enhancementStats = enhanceManifest(manifest, sourceClips, {
+      clipDurations: clipDurationsMap,
+      totalSourceDuration: input.contextPayload.totalDuration,
+    });
     if (enhancementStats.clipsInjected > 0) {
       logger.info(`[Producer] Injected ${enhancementStats.clipsInjected} missing clip segment(s) from ignored sources`);
+    }
+    if (enhancementStats.durationExtended) {
+      logger.info(`[Producer] Extended video duration: ${enhancementStats.durationExtended.fromSec.toFixed(1)}s → ${enhancementStats.durationExtended.toSec.toFixed(1)}s`);
     }
 
     // Inject voiceover into audioLayer if generated

@@ -45,6 +45,17 @@ const VALID_ANIMATION_STYLES = new Set(["fade", "slide-up", "typewriter"]);
 export function repairManifest(raw: Record<string, unknown>): number {
   let repairs = 0;
 
+  // ── Strip nulls from optional string fields ────────────
+  // LLMs often set optional fields to null instead of omitting them.
+  // Zod's `.optional()` rejects null — delete the key entirely.
+  repairs += stripNullFields(raw, ["projectTitle"]);
+
+  // Branding sub-object
+  const branding = raw.branding as Record<string, unknown> | undefined;
+  if (branding && typeof branding === "object") {
+    repairs += stripNullFields(branding, ["logoUrl", "accentColor", "watermarkPosition"]);
+  }
+
   // Repair timeline entries
   const timeline = raw.timeline;
   if (Array.isArray(timeline)) {
@@ -94,14 +105,19 @@ export function repairManifest(raw: Record<string, unknown>): number {
       }
 
       // ── Title card animation normalization ───────────
-      if (type === "title_card" && typeof entry.animation === "string") {
-        const anim = entry.animation.toLowerCase().trim();
-        if (!VALID_ANIMATION_STYLES.has(anim)) {
-          // Common aliases
-          if (anim.includes("slide")) entry.animation = "slide-up";
-          else if (anim.includes("type")) entry.animation = "typewriter";
-          else entry.animation = "fade";
-          repairs++;
+      if (type === "title_card") {
+        // Strip null optional string fields (background, subtitle)
+        repairs += stripNullFields(entry, ["background", "subtitle"]);
+
+        if (typeof entry.animation === "string") {
+          const anim = entry.animation.toLowerCase().trim();
+          if (!VALID_ANIMATION_STYLES.has(anim)) {
+            // Common aliases
+            if (anim.includes("slide")) entry.animation = "slide-up";
+            else if (anim.includes("type")) entry.animation = "typewriter";
+            else entry.animation = "fade";
+            repairs++;
+          }
         }
       }
 
@@ -184,4 +200,20 @@ export function repairManifest(raw: Record<string, unknown>): number {
   }
 
   return repairs;
+}
+
+/**
+ * Delete keys from an object where the value is null.
+ * Zod's `.optional()` only accepts `undefined`, not `null`.
+ * LLMs frequently set optional fields to null instead of omitting them.
+ */
+function stripNullFields(obj: Record<string, unknown>, keys: string[]): number {
+  let count = 0;
+  for (const key of keys) {
+    if (key in obj && obj[key] === null) {
+      delete obj[key];
+      count++;
+    }
+  }
+  return count;
 }
