@@ -433,17 +433,22 @@ export const createDirectorRouter = ({
 
   /**
    * POST /produce — trigger the single-shot production pipeline.
-   * Body: { clips: string[], mode: "highlight" | "script", scriptPath?, musicTrackPath?, template?, model? }
+   * Body: { clips: string[], mode: "highlight" | "script", scriptPath?, musicTrackPath?, template?, model?, enableVisionAnalysis? }
+   *
+   * When enableVisionAnalysis is true (default), keyframe images are sent to a
+   * vision model for rich scene descriptions. This significantly improves editing
+   * quality but adds 1-5 minutes depending on the number of keyframes.
    */
   router.post("/produce", async (req, res) => {
     try {
-      const { clips, mode, scriptPath, musicTrackPath, template, model } = req.body as {
+      const { clips, mode, scriptPath, musicTrackPath, template, model, enableVisionAnalysis } = req.body as {
         clips: string[];
         mode: "highlight" | "script";
         scriptPath?: string;
         musicTrackPath?: string;
         template?: string;
         model?: string;
+        enableVisionAnalysis?: boolean;
       };
 
       if (!clips || !Array.isArray(clips) || clips.length === 0) {
@@ -455,9 +460,30 @@ export const createDirectorRouter = ({
         return;
       }
 
-      // Ingest clips
+      const startTime = Date.now();
+      const progressLog: Array<{ phase: string; message: string; timestamp: number }> = [];
+
+      // Vision analysis is enabled by default
+      const useVision = enableVisionAnalysis !== false;
+
+      // Ingest clips (with optional vision analysis)
       const { ingest } = await import("../video/ingestion/index.js");
-      const ingestionResult = await ingest({ clips, mode }, {});
+      const ingestionResult = await ingest({ clips, mode }, {
+        copilot: useVision ? copilot : undefined,
+        visionAnalysis: useVision ? {
+          maxKeyframes: 30,
+          delayMs: 2000,
+          model: model || runtimeConfig.defaultModel || undefined,
+        } : undefined,
+        onProgress: (event) => {
+          progressLog.push({
+            phase: event.phase,
+            message: event.message,
+            timestamp: Date.now() - startTime,
+          });
+          logger.info(`[Director API] ${event.phase}: ${event.message}`);
+        },
+      });
 
       // Produce manifest
       const { ProducerService } = await import("../video/producer/producer-service.js");
@@ -472,11 +498,16 @@ export const createDirectorRouter = ({
         model: model || runtimeConfig.defaultModel || undefined,
       });
 
+      const elapsedMs = Date.now() - startTime;
+
       res.json({
         manifest: result.manifest,
         tokensUsed: result.tokensUsed,
         clipsProcessed: ingestionResult.clips.length,
         totalDuration: ingestionResult.clips.reduce((sum, c) => sum + c.duration, 0),
+        visionAnalysisEnabled: useVision,
+        processingTimeMs: elapsedMs,
+        progressLog,
       });
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);

@@ -13,7 +13,24 @@ import { extractAudio } from "./audio-extractor.js";
 import { extractKeyframes } from "./scene-detector.js";
 import { transcribe } from "./transcriber.js";
 import { assembleContext } from "./context-assembler.js";
+import { analyzeKeyframes } from "./keyframe-analyzer.js";
+import type { KeyframeAnalysisOptions } from "./keyframe-analyzer.js";
 import type { IngestionInput, IngestionResult, ClipAnalysis } from "./types.js";
+import type { CopilotWrapper } from "../../copilot/copilot-wrapper.js";
+
+/** Progress phases reported to the caller during ingestion. */
+export type IngestionPhase =
+  | "extracting"       // Audio + keyframe extraction
+  | "transcribing"     // Whisper transcription
+  | "analyzing-vision" // Vision-model keyframe analysis
+  | "assembling";      // Context assembly for LLM
+
+export interface IngestionProgressEvent {
+  phase: IngestionPhase;
+  message: string;
+  /** 0–1 progress within the current phase */
+  progress?: number;
+}
 
 export interface IngestionOptions {
   /** Scene change threshold for keyframe detection (default: 0.3) */
@@ -24,6 +41,12 @@ export interface IngestionOptions {
   whisperModel?: string;
   /** Increase threshold for long videos (default: true) */
   adaptiveThreshold?: boolean;
+  /** CopilotWrapper for vision-based keyframe analysis (optional — skipped if omitted) */
+  copilot?: CopilotWrapper;
+  /** Vision analysis options (requires copilot to be set) */
+  visionAnalysis?: KeyframeAnalysisOptions;
+  /** Progress callback for UI feedback */
+  onProgress?: (event: IngestionProgressEvent) => void;
 }
 
 /**
@@ -39,6 +62,9 @@ export async function ingest(
     keyframeInterval = 5,
     whisperModel = "base.en",
     adaptiveThreshold = true,
+    copilot,
+    visionAnalysis,
+    onProgress,
   } = options;
 
   // Create a temporary working directory for extracted assets
@@ -46,6 +72,12 @@ export async function ingest(
   await fs.mkdir(workingDir, { recursive: true });
 
   logger.info(`[Ingestion] Starting pipeline for ${input.clips.length} clip(s) in ${workingDir}`);
+
+  onProgress?.({
+    phase: "extracting",
+    message: `Extracting keyframes and audio from ${input.clips.length} clip(s)…`,
+    progress: 0,
+  });
 
   // Process all clips in parallel
   const clipPromises = input.clips.map(async (clipPath, index) => {
@@ -73,9 +105,65 @@ export async function ingest(
     throw new Error("All clips failed during ingestion — check file paths and formats");
   }
 
+  onProgress?.({
+    phase: "extracting",
+    message: `Extracted keyframes from ${successfulClips.length} clip(s)`,
+    progress: 1,
+  });
+
+  // ── Vision-Model Keyframe Analysis (optional) ──────────────
+  // Sends extracted keyframe JPEGs to a vision LLM for rich descriptions.
+  // This is intentionally sequential with delays to avoid rate limiting.
+  if (copilot) {
+    const allKeyframes = successfulClips.flatMap((c) => c.keyframes);
+    const totalKeyframes = allKeyframes.length;
+
+    if (totalKeyframes > 0) {
+      const maxToAnalyze = visionAnalysis?.maxKeyframes ?? 30;
+      const effectiveCount = Math.min(totalKeyframes, maxToAnalyze);
+      const estimatedSeconds = effectiveCount * ((visionAnalysis?.delayMs ?? 2000) / 1000 + 3);
+
+      onProgress?.({
+        phase: "analyzing-vision",
+        message: `Analyzing ${effectiveCount} keyframes with AI vision (est. ${Math.ceil(estimatedSeconds / 60)} min)… This provides rich scene descriptions for smarter editing.`,
+        progress: 0,
+      });
+
+      const analysisResult = await analyzeKeyframes(allKeyframes, copilot, {
+        ...visionAnalysis,
+        onProgress: (analyzed, total, lastDescription) => {
+          onProgress?.({
+            phase: "analyzing-vision",
+            message: lastDescription
+              ? `Analyzed keyframe ${analyzed}/${total}: "${lastDescription.slice(0, 60)}…"`
+              : `Analyzing keyframe ${analyzed}/${total}…`,
+            progress: analyzed / total,
+          });
+        },
+      });
+
+      logger.info(
+        `[Ingestion] Vision analysis: ${analysisResult.analyzed} described, ` +
+        `${analysisResult.skipped} skipped, ${analysisResult.failed} failed`,
+      );
+    }
+  }
+
+  onProgress?.({
+    phase: "assembling",
+    message: "Assembling context for the editing AI…",
+    progress: 0,
+  });
+
   // Assemble the context payload for the LLM
   const contextPayload = assembleContext(successfulClips);
   const totalDuration = successfulClips.reduce((sum, c) => sum + c.duration, 0);
+
+  onProgress?.({
+    phase: "assembling",
+    message: "Context assembly complete",
+    progress: 1,
+  });
 
   logger.info(
     `[Ingestion] Pipeline complete: ${successfulClips.length}/${input.clips.length} clips, ` +
