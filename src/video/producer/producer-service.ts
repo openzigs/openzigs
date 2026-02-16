@@ -70,12 +70,31 @@ export class ProducerService {
         scriptText = await fs.readFile(input.scriptPath, "utf-8");
       }
 
-      if (!voiceoverPath && scriptText && this.voiceService?.isReady()) {
-        voiceoverPath = await this.generateVoiceover(scriptText);
+      // Try Google Cloud TTS first (may need on-demand initialization if voice.enabled was false at startup)
+      if (!voiceoverPath && scriptText && this.voiceService) {
+        if (!this.voiceService.isReady() && process.env.GOOGLE_APPLICATION_CREDENTIALS) {
+          try {
+            logger.info("[Producer] Initializing VoiceService on-demand for voiceover generation");
+            await this.voiceService.initialize();
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            logger.warn(`[Producer] VoiceService on-demand init failed: ${msg}`);
+          }
+        }
+        if (this.voiceService.isReady()) {
+          voiceoverPath = await this.generateVoiceover(scriptText);
+        }
       }
 
+      // Fallback: use macOS built-in TTS when Google Cloud TTS isn't available
       if (!voiceoverPath && scriptText) {
-        logger.warn("[Producer] VoiceService not available — proceeding without voiceover (script text will still inform the timeline)");
+        const macTTS = await import("./macos-tts.js");
+        if (await macTTS.isAvailable()) {
+          logger.info("[Producer] Google Cloud TTS not available — using macOS TTS fallback");
+          voiceoverPath = await macTTS.synthesize(scriptText);
+        } else {
+          logger.warn("[Producer] No TTS provider available — proceeding without voiceover (script text will still inform the timeline)");
+        }
       }
 
       if (voiceoverPath) {
