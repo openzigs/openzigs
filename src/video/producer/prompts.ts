@@ -41,6 +41,18 @@ DURATION CALCULATION RULE:
 - Your output timeline's total frame span (last clip's startAtFrame + duration) should be at least 70% of that, converted to frames at the composition's FPS.
 - If you have 2 clips each ~40 seconds (80s total), your output should be at least 56 seconds (1680 frames at 30fps).
 
+INTRO AND OUTRO TITLE CARDS (REQUIRED):
+- You MUST include a title_card entry as the FIRST item in the timeline (startAtFrame: 0). This is the intro card.
+  - Use the project title as the "title" field.
+  - Add a relevant subtitle (e.g. a tagline, date, or topic summary).
+  - Set duration to 90-120 frames (3-4 seconds).
+  - Set animation to "fade" or "slide-up".
+- You MUST include a title_card entry as the LAST item in the timeline (after all video clips). This is the outro/exit card.
+  - Use a closing phrase as the title (e.g. "Thanks for watching", the brand name, or a call-to-action).
+  - Set duration to 60-90 frames (2-3 seconds).
+  - Set animation to "fade".
+- Place a crossfade transition AFTER the intro title card and BEFORE the outro title card.
+
 EDITING RULES:
 - Reorder clips for logical narrative flow (intro → body → conclusion)
 - Remove dead air: trim segments with >2s silence AND no visual change — but do NOT over-trim; keep most of the interesting content
@@ -161,6 +173,18 @@ ${voiceoverTaskLine}
 - Matches B-Roll clips to script sections semantically
 - Loops or stretches clips if total B-Roll < desired duration
 - Adds background music at volume ${hasVoiceover ? "0.15" : "0.3"} with ducking ${hasVoiceover ? "enabled" : "disabled"} (if a music track is available)
+
+INTRO AND OUTRO TITLE CARDS (REQUIRED):
+- You MUST include a title_card entry as the FIRST item in the timeline (startAtFrame: 0). This is the intro card.
+  - Use the project title as the "title" field.
+  - Add a relevant subtitle (e.g. a tagline, topic summary, or episode info).
+  - Set duration to 90-120 frames (3-4 seconds).
+  - Set animation to "fade" or "slide-up".
+- You MUST include a title_card entry as the LAST item in the timeline (after all video clips). This is the outro/exit card.
+  - Use a closing phrase as the title (e.g. "Thanks for watching", the brand name, or a call-to-action).
+  - Set duration to 60-90 frames (2-3 seconds).
+  - Set animation to "fade".
+- Place a crossfade transition AFTER the intro title card and BEFORE the outro title card.
 
 CRITICAL — MULTI-CLIP AND DURATION RULES:
 - You MUST include video_clip entries from EVERY source clip provided. Do NOT ignore any input clips.

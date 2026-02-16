@@ -9,7 +9,7 @@
  */
 
 import { logger } from "../../logging/logger.js";
-import type { DirectorManifest, VideoClipEntry, TransitionEntry } from "./manifest-types.js";
+import type { DirectorManifest, VideoClipEntry, TransitionEntry, TitleCardEntry } from "./manifest-types.js";
 
 // ── Configuration ─────────────────────────────────────────────
 
@@ -74,7 +74,10 @@ export function enhanceManifest(
     durationExtended: null,
   };
 
-  // 1. Ensure all source clips are represented
+  // 1. Ensure intro and outro title cards exist
+  ensureTitleCards(manifest, stats);
+
+  // 2. Ensure all source clips are represented
   ensureMultiClipCoverage(manifest, sourceClips, stats, options);
 
   // 2. Ensure adequate duration (fill timeline to use enough source material)
@@ -102,6 +105,95 @@ export function enhanceManifest(
   }
 
   return stats;
+}
+
+// ── Title Cards ───────────────────────────────────────────────
+
+/** Default intro title card duration in frames (~3s at 30fps). */
+const INTRO_CARD_DURATION = 90;
+/** Default outro title card duration in frames (~2.5s at 30fps). */
+const OUTRO_CARD_DURATION = 75;
+
+/**
+ * Ensure the timeline has an intro title_card (first entry) and an outro
+ * title_card (last visual entry). Injects defaults when the LLM omits them.
+ */
+function ensureTitleCards(
+  manifest: DirectorManifest,
+  stats: EnhancementStats,
+): void {
+  // Check for existing title cards
+  const titleCards = manifest.timeline.filter(
+    (e): e is TitleCardEntry => e.type === "title_card",
+  );
+
+  const hasIntro = titleCards.some((c) => c.startAtFrame === 0);
+
+  // Derive an intro/outro title from the manifest
+  const projectTitle = manifest.projectTitle || "Untitled";
+
+  if (!hasIntro) {
+    // Insert intro title card at the very beginning
+    const introCard: TitleCardEntry = {
+      type: "title_card",
+      title: projectTitle,
+      subtitle: "",
+      startAtFrame: 0,
+      duration: INTRO_CARD_DURATION,
+      animation: "fade",
+    };
+
+    // Shift all existing entries forward to make room
+    const shiftAmount = INTRO_CARD_DURATION;
+    for (const entry of manifest.timeline) {
+      entry.startAtFrame += shiftAmount;
+    }
+
+    // Insert the intro card and a transition after it
+    manifest.timeline.unshift(introCard);
+    manifest.timeline.splice(1, 0, {
+      type: "transition",
+      style: "crossfade",
+      duration: DEFAULT_TRANSITION_DURATION,
+      startAtFrame: INTRO_CARD_DURATION,
+    } as TransitionEntry);
+
+    stats.transitionsAdded++;
+    stats.warnings.push("Injected missing intro title card");
+    logger.info("[ManifestEnhancer] Injected intro title card");
+  }
+
+  // Check for outro: a title_card near the end of the timeline
+  const timelineDuration = getTimelineDuration(manifest);
+  const hasOutro = titleCards.some(
+    (c) => c.startAtFrame + c.duration >= timelineDuration - 30, // within ~1s of end
+  );
+
+  if (!hasOutro) {
+    const outroStart = timelineDuration;
+
+    // Insert transition before outro
+    manifest.timeline.push({
+      type: "transition",
+      style: "crossfade",
+      duration: DEFAULT_TRANSITION_DURATION,
+      startAtFrame: outroStart,
+    } as TransitionEntry);
+    stats.transitionsAdded++;
+
+    // Insert outro title card
+    const outroCard: TitleCardEntry = {
+      type: "title_card",
+      title: "Thanks for watching",
+      startAtFrame: outroStart,
+      duration: OUTRO_CARD_DURATION,
+      animation: "fade",
+    };
+    manifest.timeline.push(outroCard);
+
+    stats.warnings.push("Injected missing outro title card");
+    logger.info("[ManifestEnhancer] Injected outro title card");
+  }
 }
 
 // ── Multi-Clip Coverage ───────────────────────────────────────
