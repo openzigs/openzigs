@@ -7,6 +7,8 @@
 import fs from "node:fs/promises";
 import { logger } from "../../logging/logger.js";
 import { validateManifest } from "../manifest/manifest-validator.js";
+import { repairManifest } from "../manifest/manifest-repair.js";
+import { enhanceManifest } from "../manifest/manifest-enhancer.js";
 import { TEMPLATE_IDS } from "../templates/template-registry.js";
 import { formatContextForPrompt } from "../ingestion/context-assembler.js";
 import { buildHighlightReelPrompt, buildScriptDrivenPrompt, buildUserPrompt } from "./prompts.js";
@@ -15,6 +17,13 @@ import type { DirectorManifest } from "../manifest/manifest-types.js";
 import type { ContextPayload } from "../ingestion/types.js";
 import type { CopilotWrapper } from "../../copilot/copilot-wrapper.js";
 import type { VoiceService } from "../../voice/voice-service.js";
+
+/** Metadata extracted from the music track via ffprobe. */
+export interface MusicMetadata {
+  path: string;
+  durationSec: number;
+  codec?: string;
+}
 
 export interface ProducerInput {
   mode: "highlight" | "script";
@@ -29,6 +38,8 @@ export interface ProducerInput {
   voiceoverPath?: string;
   /** Model override for the LLM call (e.g. "gpt-4.1", "claude-sonnet-4") */
   model?: string;
+  /** Source clip paths (for multi-clip validation by the enhancer) */
+  sourceClips?: string[];
 }
 
 export interface ProducerResult {
@@ -62,8 +73,31 @@ export class ProducerService {
         scriptText = await fs.readFile(input.scriptPath, "utf-8");
       }
 
+      // Try Google Cloud TTS first (may need on-demand initialization if voice.enabled was false at startup)
       if (!voiceoverPath && scriptText && this.voiceService) {
-        voiceoverPath = await this.generateVoiceover(scriptText);
+        if (!this.voiceService.isReady() && process.env.GOOGLE_APPLICATION_CREDENTIALS) {
+          try {
+            logger.info("[Producer] Initializing VoiceService on-demand for voiceover generation");
+            await this.voiceService.initialize();
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            logger.warn(`[Producer] VoiceService on-demand init failed: ${msg}`);
+          }
+        }
+        if (this.voiceService.isReady()) {
+          voiceoverPath = await this.generateVoiceover(scriptText);
+        }
+      }
+
+      // Fallback: use macOS built-in TTS when Google Cloud TTS isn't available
+      if (!voiceoverPath && scriptText) {
+        const macTTS = await import("./macos-tts.js");
+        if (await macTTS.isAvailable()) {
+          logger.info("[Producer] Google Cloud TTS not available — using macOS TTS fallback");
+          voiceoverPath = await macTTS.synthesize(scriptText);
+        } else {
+          logger.warn("[Producer] No TTS provider available — proceeding without voiceover (script text will still inform the timeline)");
+        }
       }
 
       if (voiceoverPath) {
@@ -71,18 +105,34 @@ export class ProducerService {
       }
     }
 
+    // Probe music file for metadata (duration, codec) so the LLM can plan around it
+    let musicMetadata: MusicMetadata | undefined;
+    if (input.musicTrackPath) {
+      musicMetadata = await this.probeMusicTrack(input.musicTrackPath);
+    }
+
     // Build the system prompt based on mode
     const systemPrompt = input.mode === "highlight"
-      ? buildHighlightReelPrompt(TEMPLATE_IDS)
-      : buildScriptDrivenPrompt(voiceoverDuration, TEMPLATE_IDS);
+      ? buildHighlightReelPrompt(TEMPLATE_IDS, input.preferredTemplate)
+      : buildScriptDrivenPrompt(voiceoverDuration, TEMPLATE_IDS, input.preferredTemplate);
 
     // Build the user prompt with the full context
     const contextText = formatContextForPrompt(input.contextPayload);
+
+    // Build per-clip duration map for the prompt
+    const clipDurations: Record<string, number> = {};
+    for (const clip of input.contextPayload.clips) {
+      clipDurations[clip.source] = clip.duration;
+    }
+
     const userPrompt = buildUserPrompt(contextText, {
       mode: input.mode,
       scriptText,
       voiceoverPath,
       musicTrackPath: input.musicTrackPath,
+      musicMetadata,
+      totalSourceDuration: input.contextPayload.totalDuration,
+      clipDurations,
     });
 
     logger.info(`[Producer] Sending single-shot LLM request (mode: ${input.mode})`);
@@ -108,6 +158,33 @@ export class ProducerService {
     // Parse the JSON manifest from the response
     const manifest = this.parseManifestFromResponse(responseText);
 
+    try {
+      // Repair common LLM deviations (invalid enum values, fractional frames, etc.)
+      repairManifest(manifest as unknown as Record<string, unknown>);
+
+      // Enhance manifest with smart defaults: ensure transitions between clips,
+      // effects on video segments, multi-clip coverage, and adequate duration.
+      const sourceClips = input.sourceClips ?? input.contextPayload.clips.map((c) => c.source);
+      const clipDurationsMap: Record<string, number> = {};
+      for (const clip of input.contextPayload.clips) {
+        clipDurationsMap[clip.source] = clip.duration;
+      }
+      const enhancementStats = enhanceManifest(manifest, sourceClips, {
+        clipDurations: clipDurationsMap,
+        totalSourceDuration: input.contextPayload.totalDuration,
+      });
+      if (enhancementStats.clipsInjected > 0) {
+        logger.info(`[Producer] Injected ${enhancementStats.clipsInjected} missing clip segment(s) from ignored sources`);
+      }
+      if (enhancementStats.durationExtended) {
+        logger.info(`[Producer] Extended video duration: ${enhancementStats.durationExtended.fromSec.toFixed(1)}s → ${enhancementStats.durationExtended.toSec.toFixed(1)}s`);
+      }
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      logger.warn(`[Producer] Manifest post-processing failed: ${msg}`);
+      throw new Error(`LLM produced invalid manifest: ${msg}`);
+    }
+
     // Inject voiceover into audioLayer if generated
     if (input.mode === "script" && voiceoverPath && manifest.audioLayer) {
       manifest.audioLayer.voiceover = {
@@ -115,6 +192,26 @@ export class ProducerService {
         volume: 1.0,
         startAtFrame: 0,
       };
+    }
+
+    // Post-process: ensure LLM's music track path matches the actual input
+    // (LLMs sometimes hallucinate or rename the path)
+    if (input.musicTrackPath && manifest.audioLayer) {
+      if (!manifest.audioLayer.music) {
+        // LLM forgot to include music — inject it with sensible defaults
+        logger.warn("[Producer] LLM omitted music from manifest; injecting provided track");
+        manifest.audioLayer.music = {
+          track: input.musicTrackPath,
+          volume: 0.3,
+          ducking: !!voiceoverPath,
+          fadeInFrames: 30,
+          fadeOutFrames: 60,
+          loop: true,
+        };
+      } else if (manifest.audioLayer.music.track !== input.musicTrackPath) {
+        logger.info(`[Producer] Correcting music path: "${manifest.audioLayer.music.track}" → "${input.musicTrackPath}"`);
+        manifest.audioLayer.music.track = input.musicTrackPath;
+      }
     }
 
     // Validate the manifest
@@ -134,6 +231,35 @@ export class ProducerService {
     logger.info(`[Producer] Manifest generated — "${manifest.projectTitle}" (${manifest.timeline.length} entries)`);
 
     return { manifest, tokensUsed };
+  }
+
+  /**
+   * Probe a music track file for metadata using ffprobe.
+   */
+  private async probeMusicTrack(musicPath: string): Promise<MusicMetadata> {
+    try {
+      const ffmpeg = (await import("fluent-ffmpeg")).default;
+      return new Promise<MusicMetadata>((resolve) => {
+        ffmpeg.ffprobe(musicPath, (err: Error | null, metadata: {
+          format?: { duration?: number };
+          streams?: Array<{ codec_name?: string; codec_type?: string }>;
+        }) => {
+          if (err) {
+            logger.warn(`[Producer] Failed to probe music track: ${err.message}`);
+            resolve({ path: musicPath, durationSec: 0 });
+            return;
+          }
+          const durationSec = metadata?.format?.duration ?? 0;
+          const audioStream = metadata?.streams?.find((s) => s.codec_type === "audio");
+          const codec = audioStream?.codec_name;
+          logger.info(`[Producer] Music track: ${musicPath} (${durationSec.toFixed(1)}s, codec: ${codec ?? "unknown"})`);
+          resolve({ path: musicPath, durationSec, codec });
+        });
+      });
+    } catch {
+      logger.warn("[Producer] ffprobe not available for music analysis");
+      return { path: musicPath, durationSec: 0 };
+    }
   }
 
   /**

@@ -20,8 +20,10 @@ import {
   Clock,
   HardDrive,
   Ban,
+  Settings2,
 } from "lucide-react";
-import type { WizardState, RenderJobStatus, DirectorManifestSummary } from "./types";
+import type { WizardState, RenderJobStatus, DirectorManifestSummary, RenderSettings, RenderQuality } from "./types";
+import { QUALITY_PRESETS } from "./types";
 import type { ModelInfo } from "@/lib/types";
 
 interface ReviewProduceStepProps {
@@ -29,6 +31,7 @@ interface ReviewProduceStepProps {
   onManifestGenerated: (manifest: DirectorManifestSummary) => void;
   onRenderStarted: (jobId: string) => void;
   onModelChange: (model: string) => void;
+  onRenderSettingsChange: (settings: RenderSettings) => void;
 }
 
 type ProduceResponse = {
@@ -36,6 +39,9 @@ type ProduceResponse = {
   tokensUsed: number;
   clipsProcessed: number;
   totalDuration: number;
+  visionAnalysisEnabled?: boolean;
+  processingTimeMs?: number;
+  progressLog?: Array<{ phase: string; message: string; timestamp: number }>;
 };
 
 type RenderResponse = {
@@ -56,12 +62,15 @@ export const ReviewProduceStep = ({
   onManifestGenerated,
   onRenderStarted,
   onModelChange,
+  onRenderSettingsChange,
 }: ReviewProduceStepProps) => {
   const { socket } = useSocket();
   const [phase, setPhase] = useState<"review" | "producing" | "produced" | "rendering">("review");
   const [renderProgress, setRenderProgress] = useState(0);
   const [renderStatus, setRenderStatus] = useState<string | null>(null);
   const [framesInfo, setFramesInfo] = useState<string | null>(null);
+  const [enableVisionAnalysis, setEnableVisionAnalysis] = useState(true);
+  const [produceElapsedSec, setProduceElapsedSec] = useState(0);
 
   // Fetch available models for the model picker
   const modelsQuery = useQuery({
@@ -113,6 +122,16 @@ export const ReviewProduceStep = ({
     };
   }, [socket, state.renderJobId]);
 
+  // Elapsed seconds timer during production
+  useEffect(() => {
+    if (phase !== "producing") {
+      setProduceElapsedSec(0);
+      return;
+    }
+    const interval = setInterval(() => setProduceElapsedSec((s) => s + 1), 1000);
+    return () => clearInterval(interval);
+  }, [phase]);
+
   // Produce mutation — ingests clips → LLM → manifest
   const produceMutation = useMutation({
     mutationFn: () =>
@@ -125,6 +144,7 @@ export const ReviewProduceStep = ({
           musicTrackPath: state.musicTrack?.filePath,
           template: state.templateId,
           model: state.model || undefined,
+          enableVisionAnalysis,
         }),
       }),
     onSuccess: (data) => {
@@ -152,6 +172,9 @@ export const ReviewProduceStep = ({
         method: "POST",
         body: JSON.stringify({
           manifest: produceMutation.data?.manifest,
+          codec: state.renderSettings.codec,
+          crf: state.renderSettings.crf,
+          quality: state.renderSettings.quality,
         }),
       }),
     onSuccess: (data) => {
@@ -197,6 +220,8 @@ export const ReviewProduceStep = ({
         return <Loader2 className="h-4 w-4 animate-spin text-blue-400" />;
       case "encoding":
         return <Loader2 className="h-4 w-4 animate-spin text-violet-400" />;
+      case "finalizing":
+        return <Loader2 className="h-4 w-4 animate-spin text-teal-400" />;
       case "complete":
         return <CheckCircle2 className="h-4 w-4 text-emerald-400" />;
       case "failed":
@@ -297,6 +322,76 @@ export const ReviewProduceStep = ({
         </div>
       )}
 
+      {/* Render Quality Settings */}
+      {phase === "review" && (
+        <div className="space-y-3">
+          {/* Vision Analysis Toggle */}
+          <div className="flex items-center justify-between rounded-xl border border-border bg-card px-4 py-3">
+            <div className="flex items-center gap-3">
+              <div className="flex items-center justify-center h-8 w-8 rounded-lg bg-violet-500/10 text-violet-400">
+                <Film className="h-4 w-4" />
+              </div>
+              <div>
+                <p className="text-sm text-foreground font-medium">AI Vision Analysis</p>
+                <p className="text-[11px] text-muted-foreground">
+                  Analyzes keyframes with AI for richer scene descriptions. Adds 2–5 min but
+                  produces smarter edits with better effects.
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={() => setEnableVisionAnalysis(!enableVisionAnalysis)}
+              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors shrink-0 ml-3 ${
+                enableVisionAnalysis ? "bg-primary" : "bg-muted"
+              }`}
+            >
+              <span
+                className={`inline-block h-4 w-4 rounded-full bg-white transition-transform ${
+                  enableVisionAnalysis ? "translate-x-6" : "translate-x-1"
+                }`}
+              />
+            </button>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <Settings2 className="h-4 w-4 text-muted-foreground" />
+            <label className="text-xs font-medium text-muted-foreground">Render Quality</label>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            {(Object.entries(QUALITY_PRESETS) as [RenderQuality, typeof QUALITY_PRESETS[RenderQuality]][]).map(
+              ([key, preset]) => {
+                const isActive = state.renderSettings.quality === key;
+                return (
+                  <button
+                    key={key}
+                    onClick={() =>
+                      onRenderSettingsChange({
+                        ...state.renderSettings,
+                        quality: key,
+                        crf: preset.crf,
+                      })
+                    }
+                    className={`rounded-xl border px-4 py-3 text-left transition-colors ${
+                      isActive
+                        ? "border-primary/50 bg-primary/5"
+                        : "border-border hover:border-muted-foreground/30"
+                    }`}
+                  >
+                    <p className={`text-sm font-medium ${isActive ? "text-primary" : "text-foreground"}`}>
+                      {preset.label}
+                    </p>
+                    <p className="text-[11px] text-muted-foreground mt-0.5">{preset.description}</p>
+                  </button>
+                );
+              },
+            )}
+          </div>
+          <p className="text-[11px] text-muted-foreground/60">
+            CRF {state.renderSettings.crf} • Codec: {state.renderSettings.codec}
+          </p>
+        </div>
+      )}
+
       {/* Validation Warnings */}
       {phase === "review" && (
         <>
@@ -305,6 +400,9 @@ export const ReviewProduceStep = ({
           )}
           {state.clips.length === 0 && (
             <Warning text="No video clips added. Go back to Step 2." />
+          )}
+          {state.musicTrack && !state.musicTrack.filePath && (
+            <Warning text="Music track selected but not downloaded. Go back to Step 4 and re-select the track." />
           )}
         </>
       )}
@@ -326,6 +424,18 @@ export const ReviewProduceStep = ({
           <p className="text-sm text-foreground font-medium">Analyzing clips &amp; building timeline…</p>
           <p className="text-xs text-muted-foreground mt-1">
             This uses AI to detect scenes, transcribe audio, and assemble the timeline.
+          </p>
+          {enableVisionAnalysis && (
+            <div className="mt-3 rounded-lg bg-amber-500/5 border border-amber-500/20 px-4 py-2">
+              <p className="text-xs text-amber-300">
+                <strong>Vision analysis enabled</strong> — each keyframe is being analyzed by AI for
+                rich scene descriptions. This typically takes 2–5 minutes but produces
+                significantly better edits.
+              </p>
+            </div>
+          )}
+          <p className="text-xs text-muted-foreground/60 mt-3 font-mono">
+            {Math.floor(produceElapsedSec / 60)}:{String(produceElapsedSec % 60).padStart(2, "0")} elapsed
           </p>
         </div>
       )}

@@ -34,6 +34,13 @@ function buildValidManifestJson(): string {
         volume: 0.8,
       },
     ],
+    metadata: {
+      generatedAt: "2026-02-15T10:00:00Z",
+      llmModel: "gpt-4o",
+      llmTokensUsed: 1500,
+      productionMode: "highlight",
+      sourceClips: ["clip1.mp4", "clip2.mp4"],
+    },
   };
   return JSON.stringify(manifest);
 }
@@ -68,10 +75,12 @@ function buildTestContext(): ContextPayload {
 function createMockCopilot(responseOverride?: string) {
   const response = responseOverride ?? buildValidManifestJson();
 
+  const chatFn = vi.fn().mockImplementation(async function* () {
+    yield response;
+  });
+
   return {
-    chat: vi.fn().mockImplementation(function* () {
-      yield response;
-    }),
+    chat: chatFn,
     // Stub remaining interface methods
     authenticate: vi.fn(),
     waitForAuth: vi.fn(),
@@ -116,7 +125,8 @@ describe("ProducerService", () => {
 
     expect(result.manifest).toBeDefined();
     expect(result.manifest.projectTitle).toBe("Test Highlight");
-    expect(result.manifest.timeline).toHaveLength(2);
+    expect(result.manifest.timeline.length).toBeGreaterThanOrEqual(2);
+    expect(result.manifest.timeline.some((e) => e.type === "video_clip")).toBe(true);
     expect(result.tokensUsed).toBeGreaterThan(0);
   });
 
@@ -126,7 +136,8 @@ describe("ProducerService", () => {
       contextPayload: buildTestContext(),
     });
 
-    expect(copilot.chat).toHaveBeenCalledTimes(1);
+    const chatFn = copilot.chat as unknown as ReturnType<typeof vi.fn>;
+    expect(chatFn).toHaveBeenCalledTimes(1);
   });
 
   it("passes no tools to copilot.chat", async () => {
@@ -135,7 +146,8 @@ describe("ProducerService", () => {
       contextPayload: buildTestContext(),
     });
 
-    const callArgs = copilot.chat.mock.calls[0];
+    const chatFn = copilot.chat as unknown as ReturnType<typeof vi.fn>;
+    const callArgs = chatFn.mock.calls[0];
     expect(callArgs[1]).toEqual(expect.objectContaining({ tools: [] }));
   });
 

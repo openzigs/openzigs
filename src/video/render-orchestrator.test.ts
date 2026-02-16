@@ -23,6 +23,13 @@ function buildTestManifest(): DirectorManifest {
         volume: 1.0,
       },
     ],
+    metadata: {
+      generatedAt: "2026-02-15T10:00:00Z",
+      llmModel: "gpt-4o",
+      llmTokensUsed: 1000,
+      productionMode: "highlight",
+      sourceClips: ["clip.mp4"],
+    },
   };
 }
 

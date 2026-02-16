@@ -42,12 +42,23 @@ export function assembleContext(clips: ClipAnalysis[]): ContextPayload {
 function interleaveTimeline(clip: ClipAnalysis): TimelineContextEntry[] {
   const entries: TimelineContextEntry[] = [];
 
-  // Convert keyframes to visual entries
+  // Convert keyframes to visual entries with enriched descriptions
   for (const kf of clip.keyframes) {
+    // Build a meaningful description from scene detection metadata
+    let description = kf.description;
+    if (!description) {
+      if (kf.sceneScore > 0.5) {
+        description = `Major visual transition (confidence: ${(kf.sceneScore * 100).toFixed(0)}%) at ${formatTimestamp(kf.timestamp)}`;
+      } else if (kf.sceneScore > 0) {
+        description = `Scene change (confidence: ${(kf.sceneScore * 100).toFixed(0)}%) at ${formatTimestamp(kf.timestamp)}`;
+      } else {
+        description = `Visual sample at ${formatTimestamp(kf.timestamp)}`;
+      }
+    }
     entries.push({
       type: "visual",
       timestamp: kf.timestamp,
-      description: kf.description ?? `Scene at ${formatTimestamp(kf.timestamp)}`,
+      description,
       framePath: kf.framePath,
     });
   }
@@ -105,12 +116,18 @@ function parseTimestamp(ts: string): number {
  */
 export function formatContextForPrompt(payload: ContextPayload): string {
   const lines: string[] = [];
-  lines.push(`Total Duration: ${payload.totalDuration.toFixed(1)}s`);
+  lines.push(`Total Source Clips: ${payload.clips.length}`);
+  lines.push(`Combined Duration: ${payload.totalDuration.toFixed(1)}s`);
   lines.push(`Resolution: ${payload.resolution.width}x${payload.resolution.height}`);
   lines.push("");
 
   for (const clip of payload.clips) {
-    lines.push(`CLIP ${clip.index}: ${clip.source} (duration: ${clip.duration.toFixed(1)}s)`);
+    const basename = clip.source.split("/").pop() ?? clip.source;
+    lines.push(`CLIP ${clip.index}: "${basename}" (source: ${clip.source}, duration: ${clip.duration.toFixed(1)}s)`);
+
+    const visualEntries = clip.timeline.filter((e) => e.type === "visual");
+    const audioEntries = clip.timeline.filter((e) => e.type === "audio");
+    lines.push(`  Visual keyframes: ${visualEntries.length}, Audio segments: ${audioEntries.length}`);
 
     for (const entry of clip.timeline) {
       if (entry.type === "visual") {

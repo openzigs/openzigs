@@ -232,18 +232,30 @@ export class RenderOrchestrator extends EventEmitter {
 
     const outputDir = path.join(this.rendersDir, jobId);
 
-    // Resolve the worker script path relative to this file's location
+    // Resolve the worker script path relative to this file's location.
+    // In dev mode (.ts source) Worker Threads can't load TypeScript directly,
+    // so we use a thin .mjs bootstrap that registers tsx before importing the
+    // real worker module.  In production (compiled .js) no loader is needed.
+    const baseDir = import.meta.dirname ?? path.dirname(new URL(import.meta.url).pathname);
+    const isDevMode = import.meta.url.endsWith(".ts");
     const workerPath = path.join(
-      import.meta.dirname ?? path.dirname(new URL(import.meta.url).pathname),
-      "render-worker.ts",
+      baseDir,
+      isDevMode ? "render-worker-loader.mjs" : "render-worker.js",
     );
 
-    const worker = new Worker(workerPath, {
-      // Node 22+ native TypeScript support for Worker Threads
-      execArgv: ["--experimental-strip-types", "--experimental-transform-types"],
-    });
+    const worker = new Worker(workerPath, { stderr: true });
 
     this.activeWorkers.set(jobId, worker);
+
+    // Capture worker stderr for debugging (worker exit code 1 needs diagnosis)
+    const stderrChunks: string[] = [];
+    if (worker.stderr) {
+      worker.stderr.on("data", (chunk: Buffer) => {
+        const text = chunk.toString();
+        stderrChunks.push(text);
+        logger.error(`[RenderWorker:${jobId}] ${text.trimEnd()}`);
+      });
+    }
 
     worker.on("message", (msg: WorkerMessage) => {
       this.handleWorkerMessage(msg);
@@ -256,8 +268,12 @@ export class RenderOrchestrator extends EventEmitter {
     worker.on("exit", (code) => {
       if (code !== 0) {
         const job = this.jobs.get(jobId);
-        if (job && job.status !== "complete" && job.status !== "aborted") {
-          this.handleWorkerError(jobId, new Error(`Worker exited with code ${code}`));
+        if (job && job.status !== "complete" && job.status !== "aborted" && job.status !== "failed") {
+          const stderr = stderrChunks.join("").trim();
+          const errorMsg = stderr
+            ? `Worker exited with code ${code}: ${stderr.slice(-500)}`
+            : `Worker exited with code ${code}`;
+          this.handleWorkerError(jobId, new Error(errorMsg));
         }
       }
     });
@@ -280,7 +296,16 @@ export class RenderOrchestrator extends EventEmitter {
     switch (msg.type) {
       case "progress": {
         job.progress = msg.progress;
-        job.status = msg.progress < 0.6 ? "rendering" : msg.progress < 0.95 ? "encoding" : "encoding";
+        // Map progress ranges to Remotion SSR phases
+        if (msg.progress < 0.20) {
+          job.status = "bundling";
+        } else if (msg.progress < 0.30) {
+          job.status = "rendering";
+        } else if (msg.progress < 0.95) {
+          job.status = "encoding";
+        } else {
+          job.status = "finalizing";
+        }
         job.updatedAt = new Date();
 
         const progressEvent: RenderProgress = {

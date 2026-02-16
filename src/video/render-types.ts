@@ -5,7 +5,7 @@
 
 import type { DirectorManifest } from "./manifest/manifest-types.js";
 
-export type RenderStatus = "queued" | "bundling" | "rendering" | "encoding" | "complete" | "failed" | "aborted";
+export type RenderStatus = "queued" | "bundling" | "rendering" | "encoding" | "finalizing" | "complete" | "failed" | "aborted";
 
 export interface RenderJob {
   id: string;
