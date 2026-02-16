@@ -160,10 +160,53 @@ function renderOverlay(
 
 /**
  * Audio layer — renders background music and voiceover tracks.
+ * Supports ducking: when enabled and voiceover is present, music volume
+ * is reduced to 20% of its configured level after the voiceover starts.
  */
 const AudioLayer: React.FC<{ audio: CompositionInputProps["audio"] }> = ({ audio }) => {
   const { durationInFrames } = useVideoConfig();
   const frame = useCurrentFrame();
+
+  // Calculate effective music volume with ducking and fade support
+  const getMusicVolume = () => {
+    if (!audio.music) return 0;
+
+    let vol = audio.music.volume;
+
+    // Ducking: reduce volume when voiceover is playing
+    if (audio.music.ducking && audio.voiceover) {
+      const voiceoverStart = audio.voiceover.startAtFrame;
+      const duckRampFrames = 10; // 10-frame ramp for smooth ducking
+      if (frame >= voiceoverStart) {
+        const duckFactor = interpolate(
+          frame,
+          [voiceoverStart, voiceoverStart + duckRampFrames],
+          [1, 0.2],
+          { extrapolateLeft: "clamp", extrapolateRight: "clamp" },
+        );
+        vol *= duckFactor;
+      }
+    }
+
+    // Fade in
+    const fadeIn = audio.music.fadeInFrames;
+    if (fadeIn > 0) {
+      vol *= interpolate(frame, [0, fadeIn], [0, 1], { extrapolateRight: "clamp" });
+    }
+
+    // Fade out
+    const fadeOut = audio.music.fadeOutFrames;
+    if (fadeOut > 0) {
+      vol *= interpolate(
+        frame,
+        [durationInFrames - fadeOut, durationInFrames],
+        [1, 0],
+        { extrapolateLeft: "clamp", extrapolateRight: "clamp" },
+      );
+    }
+
+    return vol;
+  };
 
   return (
     <>
@@ -172,31 +215,13 @@ const AudioLayer: React.FC<{ audio: CompositionInputProps["audio"] }> = ({ audio
           <Loop durationInFrames={durationInFrames}>
             <Audio
               src={audio.music.src}
-              volume={() => {
-                const vol = audio.music!.volume;
-                const fadeIn = audio.music!.fadeInFrames;
-                const fadeOut = audio.music!.fadeOutFrames;
-
-                let v = vol;
-                if (fadeIn > 0) {
-                  v *= interpolate(frame, [0, fadeIn], [0, 1], { extrapolateRight: "clamp" });
-                }
-                if (fadeOut > 0) {
-                  v *= interpolate(
-                    frame,
-                    [durationInFrames - fadeOut, durationInFrames],
-                    [1, 0],
-                    { extrapolateLeft: "clamp", extrapolateRight: "clamp" },
-                  );
-                }
-                return v;
-              }}
+              volume={getMusicVolume}
             />
           </Loop>
         ) : (
           <Audio
             src={audio.music.src}
-            volume={audio.music.volume}
+            volume={getMusicVolume}
           />
         )
       )}

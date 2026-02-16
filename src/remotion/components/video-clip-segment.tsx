@@ -43,6 +43,7 @@ export const VideoClipSegment: React.FC<VideoClipSegmentProps> = ({
   let opacity = 1;
   let blur = 0;
   let grayscale = 0;
+  let playbackRate = 1;
 
   for (const effect of effects) {
     switch (effect.type) {
@@ -85,7 +86,9 @@ export const VideoClipSegment: React.FC<VideoClipSegmentProps> = ({
         break;
       }
       case "speedRamp": {
-        // Speed ramp is handled at the playback level, not visual
+        const factor = (effect.params?.factor as number) ?? 1;
+        // Clamp to Remotion's supported range (0.0625 to 16)
+        playbackRate = Math.max(0.0625, Math.min(16, factor));
         break;
       }
     }
@@ -107,6 +110,7 @@ export const VideoClipSegment: React.FC<VideoClipSegmentProps> = ({
           src={src}
           startFrom={startFrom}
           volume={volume}
+          playbackRate={playbackRate}
           style={{
             width: "100%",
             height: "100%",

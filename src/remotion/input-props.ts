@@ -59,6 +59,7 @@ export const AudioPropsSchema = z.object({
     loop: z.boolean().default(true),
     fadeInFrames: z.number().int().min(0).default(0),
     fadeOutFrames: z.number().int().min(0).default(0),
+    ducking: z.boolean().default(false),
   }).nullable().default(null),
   voiceover: z.object({
     src: z.string(),

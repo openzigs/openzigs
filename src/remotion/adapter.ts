@@ -85,6 +85,7 @@ function adaptAudio(manifest: DirectorManifest, outputDir: string): AudioProps {
           loop: music.loop ?? true,
           fadeInFrames: music.fadeInFrames ?? 0,
           fadeOutFrames: music.fadeOutFrames ?? 0,
+          ducking: music.ducking ?? false,
         }
       : null,
     voiceover: voiceover

@@ -68,10 +68,12 @@ function buildTestContext(): ContextPayload {
 function createMockCopilot(responseOverride?: string) {
   const response = responseOverride ?? buildValidManifestJson();
 
+  const chatFn = vi.fn().mockImplementation(async function* () {
+    yield response;
+  });
+
   return {
-    chat: vi.fn().mockImplementation(function* () {
-      yield response;
-    }),
+    chat: chatFn,
     // Stub remaining interface methods
     authenticate: vi.fn(),
     waitForAuth: vi.fn(),
@@ -126,7 +128,8 @@ describe("ProducerService", () => {
       contextPayload: buildTestContext(),
     });
 
-    expect(copilot.chat).toHaveBeenCalledTimes(1);
+    const chatFn = copilot.chat as unknown as ReturnType<typeof vi.fn>;
+    expect(chatFn).toHaveBeenCalledTimes(1);
   });
 
   it("passes no tools to copilot.chat", async () => {
@@ -135,7 +138,8 @@ describe("ProducerService", () => {
       contextPayload: buildTestContext(),
     });
 
-    const callArgs = copilot.chat.mock.calls[0];
+    const chatFn = copilot.chat as unknown as ReturnType<typeof vi.fn>;
+    const callArgs = chatFn.mock.calls[0];
     expect(callArgs[1]).toEqual(expect.objectContaining({ tools: [] }));
   });
 

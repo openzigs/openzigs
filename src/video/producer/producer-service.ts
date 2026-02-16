@@ -16,6 +16,13 @@ import type { ContextPayload } from "../ingestion/types.js";
 import type { CopilotWrapper } from "../../copilot/copilot-wrapper.js";
 import type { VoiceService } from "../../voice/voice-service.js";
 
+/** Metadata extracted from the music track via ffprobe. */
+export interface MusicMetadata {
+  path: string;
+  durationSec: number;
+  codec?: string;
+}
+
 export interface ProducerInput {
   mode: "highlight" | "script";
   contextPayload: ContextPayload;
@@ -71,10 +78,16 @@ export class ProducerService {
       }
     }
 
+    // Probe music file for metadata (duration, codec) so the LLM can plan around it
+    let musicMetadata: MusicMetadata | undefined;
+    if (input.musicTrackPath) {
+      musicMetadata = await this.probeMusicTrack(input.musicTrackPath);
+    }
+
     // Build the system prompt based on mode
     const systemPrompt = input.mode === "highlight"
-      ? buildHighlightReelPrompt(TEMPLATE_IDS)
-      : buildScriptDrivenPrompt(voiceoverDuration, TEMPLATE_IDS);
+      ? buildHighlightReelPrompt(TEMPLATE_IDS, input.preferredTemplate)
+      : buildScriptDrivenPrompt(voiceoverDuration, TEMPLATE_IDS, input.preferredTemplate);
 
     // Build the user prompt with the full context
     const contextText = formatContextForPrompt(input.contextPayload);
@@ -83,6 +96,7 @@ export class ProducerService {
       scriptText,
       voiceoverPath,
       musicTrackPath: input.musicTrackPath,
+      musicMetadata,
     });
 
     logger.info(`[Producer] Sending single-shot LLM request (mode: ${input.mode})`);
@@ -117,6 +131,26 @@ export class ProducerService {
       };
     }
 
+    // Post-process: ensure LLM's music track path matches the actual input
+    // (LLMs sometimes hallucinate or rename the path)
+    if (input.musicTrackPath && manifest.audioLayer) {
+      if (!manifest.audioLayer.music) {
+        // LLM forgot to include music — inject it with sensible defaults
+        logger.warn("[Producer] LLM omitted music from manifest; injecting provided track");
+        manifest.audioLayer.music = {
+          track: input.musicTrackPath,
+          volume: 0.3,
+          ducking: !!voiceoverPath,
+          fadeInFrames: 30,
+          fadeOutFrames: 60,
+          loop: true,
+        };
+      } else if (manifest.audioLayer.music.track !== input.musicTrackPath) {
+        logger.info(`[Producer] Correcting music path: "${manifest.audioLayer.music.track}" → "${input.musicTrackPath}"`);
+        manifest.audioLayer.music.track = input.musicTrackPath;
+      }
+    }
+
     // Validate the manifest
     const validation = validateManifest(manifest);
     if (!validation.valid) {
@@ -134,6 +168,35 @@ export class ProducerService {
     logger.info(`[Producer] Manifest generated — "${manifest.projectTitle}" (${manifest.timeline.length} entries)`);
 
     return { manifest, tokensUsed };
+  }
+
+  /**
+   * Probe a music track file for metadata using ffprobe.
+   */
+  private async probeMusicTrack(musicPath: string): Promise<MusicMetadata> {
+    try {
+      const ffmpeg = (await import("fluent-ffmpeg")).default;
+      return new Promise<MusicMetadata>((resolve) => {
+        ffmpeg.ffprobe(musicPath, (err: Error | null, metadata: {
+          format?: { duration?: number };
+          streams?: Array<{ codec_name?: string; codec_type?: string }>;
+        }) => {
+          if (err) {
+            logger.warn(`[Producer] Failed to probe music track: ${err.message}`);
+            resolve({ path: musicPath, durationSec: 0 });
+            return;
+          }
+          const durationSec = metadata?.format?.duration ?? 0;
+          const audioStream = metadata?.streams?.find((s) => s.codec_type === "audio");
+          const codec = audioStream?.codec_name;
+          logger.info(`[Producer] Music track: ${musicPath} (${durationSec.toFixed(1)}s, codec: ${codec ?? "unknown"})`);
+          resolve({ path: musicPath, durationSec, codec });
+        });
+      });
+    } catch {
+      logger.warn("[Producer] ffprobe not available for music analysis");
+      return { path: musicPath, durationSec: 0 };
+    }
   }
 
   /**
