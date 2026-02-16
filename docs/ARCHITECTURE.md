@@ -815,12 +815,71 @@ Director Mode is a **full-stack video production pipeline** that transforms raw 
                             │                     │                    │
                      ┌──────┴──────┐        ┌─────┴─────┐       ┌─────┴──────┐
                      │ Audio       │        │ System    │       │ Remotion   │
-                     │ Extraction  │        │ Prompts   │       │ (or        │
-                     │ Scene Det.  │        │ Templates │       │  fallback) │
+                     │ Extraction  │        │ Prompts   │       │ SSR Engine │
+                     │ Scene Det.  │        │ Templates │       │ (#243)     │
                      │ Whisper STT │        │ Manifest  │       └────────────┘
                      └─────────────┘        │ Schema    │
                                             └───────────┘
 ```
+
+### Remotion Render Engine (#243)
+
+The render pipeline uses **Remotion v4** for server-side React video rendering, replacing the previous FFmpeg-based pipeline. This enables smooth transitions, animated title cards, smart captions, lower thirds, logo watermarks, and Ken Burns effects — all as composable React components.
+
+#### Render Pipeline (SSR)
+
+```
+Manifest ──▶ Adapter ──▶ bundle() ──▶ selectComposition() ──▶ renderMedia() ──▶ MP4
+              │            │              │                       │
+              │            │              ▼                       ▼
+              │            │         TemplateComposition     h264/jpeg
+              │            ▼         TransitionSeries        onProgress
+              │       cachedServeUrl   AudioLayer             callbacks
+              ▼       (reused)         Branding
+         CompositionInputProps
+         (Zod-validated)
+```
+
+**5 Render Phases:**
+
+| Phase | Progress | Description |
+|---|---|---|
+| **Bundle** | 0–20% | Compiles Remotion entry point with esbuild. Cached via `cachedServeUrl` for subsequent renders. |
+| **Adapt** | 20–25% | Transforms `DirectorManifest` → `CompositionInputProps` via `adaptManifest()`. |
+| **Select** | 25–30% | `selectComposition()` resolves the target composition + dynamic metadata. |
+| **Render** | 30–95% | `renderMedia()` renders each frame as React → JPEG, then encodes to H.264 MP4. |
+| **Finalize** | 95–100% | Stat output file, compute duration, report completion. |
+
+#### Remotion Module Structure
+
+| Module | Path | Purpose |
+|---|---|---|
+| **Input Props** | `src/remotion/input-props.ts` | Zod schemas for `CompositionInputProps` — timeline items, audio, branding |
+| **Root Entry** | `src/remotion/index.tsx` | `RemotionRoot` registering 4 compositions with `calculateMetadata` |
+| **Adapter** | `src/remotion/adapter.ts` | `adaptManifest()` — DirectorManifest → CompositionInputProps transformer |
+| **Media Resolver** | `src/remotion/media-resolver.ts` | Resolves relative/tilde/file:// paths to absolute paths |
+| **Template Comp** | `src/remotion/compositions/template-composition.tsx` | Main `TemplateComposition` with `TransitionSeries`, audio layers, branding |
+| **Transition Map** | `src/remotion/util/transition-mapper.ts` | Maps crossfade/wipe/dissolve/cut → Remotion presentations |
+
+#### Visual Components (`src/remotion/components/`)
+
+| Component | Description |
+|---|---|
+| `TitleCard` | Animated title/subtitle with fade, slide-up, or typewriter animation |
+| `SmartCaptions` | Word-by-word captions with pill, underline, boxed, or karaoke styles |
+| `LowerThird` | Animated name/title overlay with spring slide-in |
+| `LogoWatermark` | Persistent logo overlay using Remotion's `Img`, 4 positions |
+| `ProgressBar` | Frame-based progress indicator, top or bottom positioning |
+| `VideoClipSegment` | `OffthreadVideo` with effects: slowZoom, fadeIn/fadeOut, blur, grayscale |
+
+#### Quality Presets (#251)
+
+| Preset | CRF | Use Case |
+|---|---|---|
+| `draft` | 32 | Fast preview, smaller files |
+| `standard` | 23 | Balanced quality and file size (default) |
+| `high` | 18 | High quality, larger files |
+| `lossless` | 0 | Maximum quality, very large files |
 
 ### Sub-modules
 
@@ -828,6 +887,7 @@ Director Mode is a **full-stack video production pipeline** that transforms raw 
 |---|---|---|
 | **Manifest Schema** (#240) | `src/video/manifest/` | Zod-validated `DirectorManifest` data contract with semantic validator |
 | **Render Core** (#235) | `src/video/render-orchestrator.ts`, `render-worker.ts` | Worker Thread render jobs with concurrency control and EventEmitter progress |
+| **Remotion Engine** (#243) | `src/remotion/` | React SSR compositions, visual components, transitions, adapter, media resolver |
 | **Template Library** (#236) | `src/video/templates/` | 4 built-in templates (Minimalist, ContentCreator, Corporate, TechDemo) with registry |
 | **Ingestion Pipeline** (#237) | `src/video/ingestion/` | Audio extraction (ffmpeg), scene detection, Whisper transcription, context assembly |
 | **Asset Management** (#238) | `src/video/assets/` | Local library scanner + Pixabay/Jamendo/Pexels API downloaders with attribution tracking |

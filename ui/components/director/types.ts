@@ -16,6 +16,8 @@ export interface WizardState {
   musicTrack: SelectedAsset | null;
   /** Step 5 — model override (empty = use director default or system default) */
   model: string;
+  /** Step 5 — render quality/codec settings */
+  renderSettings: RenderSettings;
   /** Step 5 (populated after production) */
   manifest: DirectorManifestSummary | null;
   renderJobId: string | null;
@@ -31,7 +33,7 @@ export interface MediaFile {
 export interface SelectedAsset {
   id: string;
   name: string;
-  source: "local" | "pixabay" | "jamendo" | "pexels";
+  source: "local" | "pixabay" | "jamendo" | "pexels" | "upload";
   type: "music" | "sfx" | "image" | "video";
   filePath?: string;
   duration?: number;
@@ -40,6 +42,21 @@ export interface SelectedAsset {
   license: string;
   attribution?: string;
 }
+
+export type RenderQuality = "draft" | "standard" | "high" | "lossless";
+
+export interface RenderSettings {
+  quality: RenderQuality;
+  codec: string;
+  crf: number;
+}
+
+export const QUALITY_PRESETS: Record<RenderQuality, { crf: number; label: string; description: string }> = {
+  draft: { crf: 32, label: "Draft", description: "Fast preview, lower quality" },
+  standard: { crf: 23, label: "Standard", description: "Balanced quality & size" },
+  high: { crf: 18, label: "High", description: "High quality, larger files" },
+  lossless: { crf: 0, label: "Lossless", description: "Maximum quality, very large files" },
+};
 
 export interface TemplateInfo {
   id: string;
@@ -94,6 +111,7 @@ export function createInitialState(): WizardState {
     templateId: null,
     musicTrack: null,
     model: "",
+    renderSettings: { quality: "standard", codec: "h264", crf: 23 },
     manifest: null,
     renderJobId: null,
   };

@@ -2519,6 +2519,44 @@ The **Admin** panel includes a **Sound Browser** tab for searching and previewin
 - Preview tracks directly in the browser
 - Download remote assets to your local library with proper attribution
 
+#### File Upload
+
+The Sound Browser includes an **Upload** tab for adding local audio files to your asset library:
+
+1. Switch to the **Upload** tab in the Sound Browser step
+2. Enter the absolute path (or `~/` path) to your audio file
+3. Optionally specify a custom name and file type (Music, SFX, or Voiceover)
+4. Click **Upload to Library** — the file is copied into the managed asset library
+
+Uploaded files are immediately available for use in productions.
+
+### Render Quality
+
+The **Produce** step includes render quality controls that affect the final video output:
+
+| Preset | CRF | Best For |
+|---|---|---|
+| **Draft** | 32 | Quick preview, fast encode, small files |
+| **Standard** | 23 | Balanced quality and file size (default) |
+| **High** | 18 | High quality output, larger files |
+| **Lossless** | 0 | Maximum quality, very large files |
+
+Select a quality preset before starting the render. The codec is H.264 by default.
+
+### Render Engine
+
+OpenZigs uses **Remotion v4** for server-side video rendering. The render engine supports:
+
+- **Smooth transitions** — crossfade, dissolve, wipe (left/right), and hard cut
+- **Animated title cards** — fade, slide-up, and typewriter text animations
+- **Smart captions** — word-by-word captions with pill, underline, boxed, or karaoke styles
+- **Lower thirds** — animated name/title overlays with spring physics
+- **Logo watermarks** — persistent branding in any corner with configurable opacity
+- **Video effects** — slow zoom (Ken Burns), fade in/out, blur, grayscale
+- **Audio layers** — background music with looping and fade, voiceover with timeline sync
+
+The render pipeline runs in a Worker Thread with real-time progress streaming via Socket.IO.
+
 ### Configuration
 
 Add API keys for cloud asset sources in your config:
@@ -2545,6 +2583,7 @@ Add API keys for cloud asset sources in your config:
 
 - **ffmpeg** installed and on PATH (for audio extraction & scene detection)
 - **whisper-node** (bundled) for speech-to-text transcription
+- **Remotion v4** and **React 18** (bundled) for server-side video rendering
 - **Pixabay/Jamendo/Pexels API keys** (optional, for cloud asset search)
 - **Google Cloud TTS** (optional, for script-driven voiceover generation)
 

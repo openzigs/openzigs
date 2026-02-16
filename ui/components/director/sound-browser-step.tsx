@@ -16,6 +16,8 @@ import {
   Check,
   Loader2,
   Plus,
+  Upload,
+  FolderOpen,
 } from "lucide-react";
 import type { SelectedAsset } from "./types";
 
@@ -50,6 +52,10 @@ export const SoundBrowserStep = ({ selected, onSelect }: SoundBrowserStepProps) 
   const [source, setSource] = useState<"all" | "local" | "pixabay" | "jamendo">("all");
   const [type, setType] = useState<"" | "music" | "sfx">("");
   const [playing, setPlaying] = useState<string | null>(null);
+  const [tab, setTab] = useState<"search" | "upload">("search");
+  const [uploadPath, setUploadPath] = useState("");
+  const [uploadName, setUploadName] = useState("");
+  const [uploadType, setUploadType] = useState<"music" | "sfx" | "voiceover">("music");
 
   const searchQuery = useQuery({
     queryKey: ["director-assets-search", query, source, type],
@@ -82,6 +88,40 @@ export const SoundBrowserStep = ({ selected, onSelect }: SoundBrowserStepProps) 
     onSuccess: () => showToast("Asset downloaded to library", "success"),
     onError: () => showToast("Download failed", "error"),
   });
+
+  const uploadMutation = useMutation({
+    mutationFn: (params: { filePath: string; name?: string; type?: "music" | "sfx" | "voiceover" }) =>
+      fetchJson<{ success: boolean; filePath: string; asset: { id: string; name: string; source: string; type: string; filePath: string } }>(
+        "/api/admin/director/assets/upload",
+        {
+          method: "POST",
+          body: JSON.stringify(params),
+        },
+      ),
+    onSuccess: (data) => {
+      showToast(`Uploaded: ${data.asset.name}`, "success");
+      onSelect({
+        id: data.asset.id,
+        name: data.asset.name,
+        source: "upload",
+        type: (data.asset.type as SelectedAsset["type"]) || "music",
+        filePath: data.filePath,
+        license: "Local Upload",
+      });
+      setUploadPath("");
+      setUploadName("");
+    },
+    onError: () => showToast("Upload failed", "error"),
+  });
+
+  const handleUpload = () => {
+    if (!uploadPath.trim()) return;
+    uploadMutation.mutate({
+      filePath: uploadPath.trim(),
+      name: uploadName.trim() || undefined,
+      type: uploadType,
+    });
+  };
 
   const togglePlay = (id: string, previewUrl?: string) => {
     if (!previewUrl) return;
@@ -137,7 +177,7 @@ export const SoundBrowserStep = ({ selected, onSelect }: SoundBrowserStepProps) 
         </h2>
         <p className="text-sm text-muted-foreground max-w-lg mx-auto">
           Search for royalty-free music and sound effects from your local library,
-          Pixabay, or Jamendo. This step is optional — skip if you don&apos;t want music.
+          Pixabay, or Jamendo — or upload a local file. This step is optional.
         </p>
       </div>
 
@@ -159,6 +199,36 @@ export const SoundBrowserStep = ({ selected, onSelect }: SoundBrowserStepProps) 
           </button>
         </div>
       )}
+
+      {/* Tab Switcher */}
+      <div className="flex gap-1 rounded-xl bg-muted p-1">
+        <button
+          onClick={() => setTab("search")}
+          className={`flex-1 flex items-center justify-center gap-1.5 rounded-lg py-2 text-sm font-medium transition-colors ${
+            tab === "search"
+              ? "bg-background text-foreground shadow-sm"
+              : "text-muted-foreground hover:text-foreground"
+          }`}
+        >
+          <Search className="h-3.5 w-3.5" />
+          Search
+        </button>
+        <button
+          onClick={() => setTab("upload")}
+          className={`flex-1 flex items-center justify-center gap-1.5 rounded-lg py-2 text-sm font-medium transition-colors ${
+            tab === "upload"
+              ? "bg-background text-foreground shadow-sm"
+              : "text-muted-foreground hover:text-foreground"
+          }`}
+        >
+          <Upload className="h-3.5 w-3.5" />
+          Upload
+        </button>
+      </div>
+
+      {/* Search Tab */}
+      {tab === "search" && (
+        <>
 
       {/* Search Form */}
       <div className="flex gap-2">
@@ -310,6 +380,76 @@ export const SoundBrowserStep = ({ selected, onSelect }: SoundBrowserStepProps) 
           </p>
           <p className="text-xs text-muted-foreground/60 mt-1">
             Sources: Local Library • Pixabay • Jamendo
+          </p>
+        </div>
+      )}
+        </>
+      )}
+
+      {/* Upload Tab */}
+      {tab === "upload" && (
+        <div className="space-y-4">
+          <div className="rounded-xl border border-border bg-card p-5 space-y-4">
+            <div className="flex items-center gap-2 text-sm font-medium text-foreground">
+              <FolderOpen className="h-4 w-4 text-muted-foreground" />
+              Upload Local File
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-muted-foreground">File Path</label>
+              <input
+                type="text"
+                value={uploadPath}
+                onChange={(e) => setUploadPath(e.target.value)}
+                placeholder="/path/to/your/audio-file.mp3"
+                className="w-full px-3 py-2.5 rounded-xl border border-border bg-background text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
+              />
+              <p className="text-[11px] text-muted-foreground/60">
+                Absolute path or ~/ path to a local audio file
+              </p>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-muted-foreground">Name (optional)</label>
+                <input
+                  type="text"
+                  value={uploadName}
+                  onChange={(e) => setUploadName(e.target.value)}
+                  placeholder="Auto-detected from filename"
+                  className="w-full px-3 py-2.5 rounded-xl border border-border bg-background text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-muted-foreground">Type</label>
+                <select
+                  value={uploadType}
+                  onChange={(e) => setUploadType(e.target.value as typeof uploadType)}
+                  className="w-full rounded-xl border border-border bg-background text-sm text-foreground px-3 py-2.5"
+                >
+                  <option value="music">Music</option>
+                  <option value="sfx">Sound Effect</option>
+                  <option value="voiceover">Voiceover</option>
+                </select>
+              </div>
+            </div>
+
+            <button
+              onClick={handleUpload}
+              disabled={!uploadPath.trim() || uploadMutation.isPending}
+              className="w-full flex items-center justify-center gap-2 rounded-xl bg-primary text-primary-foreground py-2.5 text-sm font-medium hover:opacity-90 transition disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {uploadMutation.isPending ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Upload className="h-4 w-4" />
+              )}
+              Upload to Library
+            </button>
+          </div>
+
+          <p className="text-xs text-muted-foreground text-center">
+            Files are copied into the managed asset library for use in productions.
           </p>
         </div>
       )}

@@ -20,8 +20,10 @@ import {
   Clock,
   HardDrive,
   Ban,
+  Settings2,
 } from "lucide-react";
-import type { WizardState, RenderJobStatus, DirectorManifestSummary } from "./types";
+import type { WizardState, RenderJobStatus, DirectorManifestSummary, RenderSettings, RenderQuality } from "./types";
+import { QUALITY_PRESETS } from "./types";
 import type { ModelInfo } from "@/lib/types";
 
 interface ReviewProduceStepProps {
@@ -29,6 +31,7 @@ interface ReviewProduceStepProps {
   onManifestGenerated: (manifest: DirectorManifestSummary) => void;
   onRenderStarted: (jobId: string) => void;
   onModelChange: (model: string) => void;
+  onRenderSettingsChange: (settings: RenderSettings) => void;
 }
 
 type ProduceResponse = {
@@ -56,6 +59,7 @@ export const ReviewProduceStep = ({
   onManifestGenerated,
   onRenderStarted,
   onModelChange,
+  onRenderSettingsChange,
 }: ReviewProduceStepProps) => {
   const { socket } = useSocket();
   const [phase, setPhase] = useState<"review" | "producing" | "produced" | "rendering">("review");
@@ -152,6 +156,9 @@ export const ReviewProduceStep = ({
         method: "POST",
         body: JSON.stringify({
           manifest: produceMutation.data?.manifest,
+          codec: state.renderSettings.codec,
+          crf: state.renderSettings.crf,
+          quality: state.renderSettings.quality,
         }),
       }),
     onSuccess: (data) => {
@@ -293,6 +300,48 @@ export const ReviewProduceStep = ({
           </select>
           <p className="text-[11px] text-muted-foreground/60">
             High-capability models (GPT-4.1, Claude Sonnet 4) produce better video timelines.
+          </p>
+        </div>
+      )}
+
+      {/* Render Quality Settings */}
+      {phase === "review" && (
+        <div className="space-y-3">
+          <div className="flex items-center gap-2">
+            <Settings2 className="h-4 w-4 text-muted-foreground" />
+            <label className="text-xs font-medium text-muted-foreground">Render Quality</label>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            {(Object.entries(QUALITY_PRESETS) as [RenderQuality, typeof QUALITY_PRESETS[RenderQuality]][]).map(
+              ([key, preset]) => {
+                const isActive = state.renderSettings.quality === key;
+                return (
+                  <button
+                    key={key}
+                    onClick={() =>
+                      onRenderSettingsChange({
+                        ...state.renderSettings,
+                        quality: key,
+                        crf: preset.crf,
+                      })
+                    }
+                    className={`rounded-xl border px-4 py-3 text-left transition-colors ${
+                      isActive
+                        ? "border-primary/50 bg-primary/5"
+                        : "border-border hover:border-muted-foreground/30"
+                    }`}
+                  >
+                    <p className={`text-sm font-medium ${isActive ? "text-primary" : "text-foreground"}`}>
+                      {preset.label}
+                    </p>
+                    <p className="text-[11px] text-muted-foreground mt-0.5">{preset.description}</p>
+                  </button>
+                );
+              },
+            )}
+          </div>
+          <p className="text-[11px] text-muted-foreground/60">
+            CRF {state.renderSettings.crf} • Codec: {state.renderSettings.codec}
           </p>
         </div>
       )}

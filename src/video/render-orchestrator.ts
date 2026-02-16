@@ -280,7 +280,16 @@ export class RenderOrchestrator extends EventEmitter {
     switch (msg.type) {
       case "progress": {
         job.progress = msg.progress;
-        job.status = msg.progress < 0.6 ? "rendering" : msg.progress < 0.95 ? "encoding" : "encoding";
+        // Map progress ranges to Remotion SSR phases
+        if (msg.progress < 0.20) {
+          job.status = "bundling";
+        } else if (msg.progress < 0.30) {
+          job.status = "rendering";
+        } else if (msg.progress < 0.95) {
+          job.status = "encoding";
+        } else {
+          job.status = "encoding";
+        }
         job.updatedAt = new Date();
 
         const progressEvent: RenderProgress = {

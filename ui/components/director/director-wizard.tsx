@@ -10,6 +10,7 @@ import {
   type MediaFile,
   type SelectedAsset,
   type DirectorManifestSummary,
+  type RenderSettings,
 } from "./types";
 import { ModeSelectionStep } from "./mode-selection-step";
 import { MediaUploadStep } from "./media-upload-step";
@@ -62,6 +63,10 @@ export const DirectorWizard = () => {
 
   const setModel = useCallback((model: string) => {
     setState((s) => ({ ...s, model }));
+  }, []);
+
+  const setRenderSettings = useCallback((renderSettings: RenderSettings) => {
+    setState((s) => ({ ...s, renderSettings }));
   }, []);
 
   const setManifest = useCallback((manifest: DirectorManifestSummary) => {
@@ -151,6 +156,7 @@ export const DirectorWizard = () => {
             onManifestGenerated={setManifest}
             onRenderStarted={setRenderJobId}
             onModelChange={setModel}
+            onRenderSettingsChange={setRenderSettings}
           />
         )}
       </div>

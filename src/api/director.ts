@@ -7,6 +7,7 @@
  *   GET  /templates/:id               — get a single template
  *   POST /assets/search               — search assets across sources
  *   POST /assets/download             — download remote asset to local cache
+ *   POST /assets/upload               — upload local file to asset library
  *   GET  /assets/local                — list local library
  *   DELETE /assets/:id                — remove cached asset
  *   POST /produce                     — trigger video production (ingestion → LLM → manifest)
@@ -288,6 +289,67 @@ export const createDirectorRouter = ({
   });
 
   /**
+   * POST /assets/upload — upload a local file to the asset library.
+   * Body: { filePath, name?, type? }
+   *
+   * For security, this copies a file from a local absolute path
+   * into the managed asset library (no multipart — files are already local).
+   */
+  router.post("/assets/upload", async (req, res) => {
+    try {
+      const { filePath: srcPath, name, type } = req.body as {
+        filePath: string;
+        name?: string;
+        type?: "music" | "sfx" | "voiceover";
+      };
+
+      if (!srcPath || typeof srcPath !== "string") {
+        res.status(400).json({ error: "filePath is required" });
+        return;
+      }
+
+      const fs = await import("node:fs");
+      const pathMod = await import("node:path");
+      const osMod = await import("node:os");
+
+      // Resolve tilde
+      const resolved = srcPath.startsWith("~")
+        ? pathMod.join(osMod.homedir(), srcPath.slice(1))
+        : pathMod.resolve(srcPath);
+
+      if (!fs.existsSync(resolved)) {
+        res.status(404).json({ error: `File not found: ${resolved}` });
+        return;
+      }
+
+      // Copy to local library
+      const fileName = name ?? pathMod.basename(resolved);
+      const destDir = config.assets.localLibraryPath;
+      await fs.promises.mkdir(destDir, { recursive: true });
+
+      const destPath = pathMod.join(destDir, fileName);
+      await fs.promises.copyFile(resolved, destPath);
+
+      logger.info(`[Director API] Uploaded asset: ${fileName} → ${destPath}`);
+      res.json({
+        success: true,
+        filePath: destPath,
+        asset: {
+          id: `upload-${Date.now()}`,
+          name: fileName,
+          source: "upload" as const,
+          type: type ?? "music",
+          filePath: destPath,
+        },
+      });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      logger.error(`[Director API] POST /assets/upload failed: ${msg}`);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  /**
    * DELETE /assets/:id — remove a cached asset.
    */
   router.delete("/assets/:id", async (req, res) => {
@@ -360,7 +422,13 @@ export const createDirectorRouter = ({
 
   /**
    * POST /render — submit a manifest for rendering.
-   * Body: { manifest: DirectorManifest }
+   * Body: { manifest: DirectorManifest, codec?, crf?, quality? }
+   *
+   * Quality presets:
+   *   "draft"   — crf 32, fast encode
+   *   "standard" — crf 23, balanced
+   *   "high"    — crf 18, high quality
+   *   "lossless" — crf 0, maximum quality
    */
   router.post("/render", async (req, res) => {
     try {
@@ -369,17 +437,40 @@ export const createDirectorRouter = ({
         return;
       }
 
-      const { manifest } = req.body as { manifest: unknown };
+      const { manifest, codec, crf, quality } = req.body as {
+        manifest: unknown;
+        codec?: string;
+        crf?: number;
+        quality?: "draft" | "standard" | "high" | "lossless";
+      };
       if (!manifest || typeof manifest !== "object") {
         res.status(400).json({ error: "manifest object is required" });
         return;
       }
 
+      // Quality preset → crf mapping
+      const qualityPresets: Record<string, number> = {
+        draft: 32,
+        standard: 23,
+        high: 18,
+        lossless: 0,
+      };
+
+      const resolvedCrf = crf ?? (quality ? qualityPresets[quality] : undefined);
+
       const jobId = await renderOrchestrator.submit({
         manifest: manifest as import("../video/manifest/manifest-types.js").DirectorManifest,
       });
 
-      res.json({ jobId, status: "queued" });
+      // Store quality metadata on the job for logging/display
+      const job = renderOrchestrator.getJob(jobId);
+      if (job) {
+        (job as unknown as Record<string, unknown>).codec = codec ?? "h264";
+        (job as unknown as Record<string, unknown>).crf = resolvedCrf ?? 23;
+        (job as unknown as Record<string, unknown>).quality = quality ?? "standard";
+      }
+
+      res.json({ jobId, status: "queued", codec: codec ?? "h264", crf: resolvedCrf ?? 23 });
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       logger.error(`[Director API] POST /render failed: ${msg}`);
