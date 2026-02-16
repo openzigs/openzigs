@@ -247,8 +247,8 @@ export class RenderOrchestrator extends EventEmitter {
     );
 
     const worker = new Worker(workerPath, {
-      // Use tsx loader for TypeScript worker threads
-      execArgv: ["--import", "tsx"],
+      // Node 22+ native TypeScript support for Worker Threads
+      execArgv: ["--experimental-strip-types", "--experimental-transform-types"],
     });
 
     this.activeWorkers.set(jobId, worker);
