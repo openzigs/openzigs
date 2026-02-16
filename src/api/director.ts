@@ -8,6 +8,7 @@
  *   POST /assets/search               — search assets across sources
  *   POST /assets/download             — download remote asset to local cache
  *   POST /assets/upload               — upload local file to asset library
+ *   POST /files/upload                — upload browser-selected local file bytes
  *   GET  /assets/local                — list local library
  *   DELETE /assets/:id                — remove cached asset
  *   POST /produce                     — trigger video production (ingestion → LLM → manifest)
@@ -17,7 +18,7 @@
  *   POST /jobs/:id/abort              — abort a render job
  */
 
-import { Router } from "express";
+import { Router, raw } from "express";
 import { logger } from "../logging/logger.js";
 import type { CopilotWrapper } from "../copilot/copilot-wrapper.js";
 import type { VoiceService } from "../voice/voice-service.js";
@@ -345,6 +346,71 @@ export const createDirectorRouter = ({
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       logger.error(`[Director API] POST /assets/upload failed: ${msg}`);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  /**
+   * POST /files/upload?kind=video|audio|script — upload raw file bytes.
+   *
+   * Headers:
+   *   x-file-name: original filename (URL-encoded)
+   *   x-file-type: mime type (optional)
+   * Body:
+   *   raw binary bytes
+   */
+  router.post("/files/upload", raw({ type: "*/*", limit: "2gb" }), async (req, res) => {
+    try {
+      const kind = String(req.query.kind ?? "video");
+      if (kind !== "video" && kind !== "audio" && kind !== "script") {
+        res.status(400).json({ error: "kind must be one of: video, audio, script" });
+        return;
+      }
+
+      const body = req.body;
+      if (!Buffer.isBuffer(body) || body.length === 0) {
+        res.status(400).json({ error: "request body must contain file bytes" });
+        return;
+      }
+
+      const fs = await import("node:fs/promises");
+      const pathMod = await import("node:path");
+
+      const rawNameHeader = req.header("x-file-name") ?? "upload.bin";
+      const decodedName = (() => {
+        try {
+          return decodeURIComponent(rawNameHeader);
+        } catch {
+          return rawNameHeader;
+        }
+      })();
+
+      const safeName = pathMod.basename(decodedName).replace(/[^a-zA-Z0-9._-]/g, "_");
+      const fileName = safeName.length > 0 ? safeName : "upload.bin";
+      const targetDir = kind === "audio"
+        ? config.assets.localLibraryPath
+        : pathMod.join(config.outputDir, "uploads", kind === "video" ? "videos" : "scripts");
+
+      await fs.mkdir(targetDir, { recursive: true });
+
+      const uniqueName = `${Date.now()}-${fileName}`;
+      const filePath = pathMod.join(targetDir, uniqueName);
+      await fs.writeFile(filePath, body);
+
+      const mimeType = req.header("x-file-type") || "application/octet-stream";
+      logger.info(`[Director API] Uploaded ${kind} file: ${filePath} (${body.length} bytes)`);
+
+      res.json({
+        success: true,
+        kind,
+        filePath,
+        fileName: uniqueName,
+        size: body.length,
+        mimeType,
+      });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      logger.error(`[Director API] POST /files/upload failed: ${msg}`);
       res.status(500).json({ error: msg });
     }
   });

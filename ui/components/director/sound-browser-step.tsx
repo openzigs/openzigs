@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef, type ChangeEvent } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { fetchJson } from "@/lib/api";
 import { showToast } from "@/components/toast";
@@ -57,6 +57,7 @@ export const SoundBrowserStep = ({ selected, onSelect }: SoundBrowserStepProps) 
   const [uploadName, setUploadName] = useState("");
   const [uploadType, setUploadType] = useState<"music" | "sfx" | "voiceover">("music");
   const [downloading, setDownloading] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const searchQuery = useQuery({
     queryKey: ["director-assets-search", query, source, type],
@@ -118,6 +119,37 @@ export const SoundBrowserStep = ({ selected, onSelect }: SoundBrowserStepProps) 
     onError: () => showToast("Upload failed", "error"),
   });
 
+  const browserUploadMutation = useMutation({
+    mutationFn: (file: File) =>
+      fetchJson<{
+        success: boolean;
+        filePath: string;
+        fileName: string;
+        size: number;
+        mimeType: string;
+      }>("/api/admin/director/files/upload?kind=audio", {
+        method: "POST",
+        headers: {
+          "Content-Type": file.type || "application/octet-stream",
+          "x-file-name": encodeURIComponent(file.name),
+          "x-file-type": file.type || "application/octet-stream",
+        },
+        body: file,
+      }),
+    onSuccess: (data) => {
+      showToast("Audio file uploaded", "success");
+      onSelect({
+        id: `upload-${Date.now()}`,
+        name: data.fileName,
+        source: "upload",
+        type: uploadType === "sfx" ? "sfx" : "music",
+        filePath: data.filePath,
+        license: "Local Upload",
+      });
+    },
+    onError: () => showToast("File chooser upload failed", "error"),
+  });
+
   const handleUpload = () => {
     if (!uploadPath.trim()) return;
     uploadMutation.mutate({
@@ -125,6 +157,13 @@ export const SoundBrowserStep = ({ selected, onSelect }: SoundBrowserStepProps) 
       name: uploadName.trim() || undefined,
       type: uploadType,
     });
+  };
+
+  const handleFilePicked = (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    browserUploadMutation.mutate(file);
+    if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
   const togglePlay = (id: string, previewUrl?: string) => {
@@ -430,6 +469,37 @@ export const SoundBrowserStep = ({ selected, onSelect }: SoundBrowserStepProps) 
             <div className="flex items-center gap-2 text-sm font-medium text-foreground">
               <FolderOpen className="h-4 w-4 text-muted-foreground" />
               Upload Local File
+            </div>
+
+            <div className="space-y-2">
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                disabled={browserUploadMutation.isPending}
+                className="w-full flex items-center justify-center gap-2 rounded-xl border border-border bg-background py-2.5 text-sm font-medium text-foreground hover:bg-muted transition disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {browserUploadMutation.isPending ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <FolderOpen className="h-4 w-4" />
+                )}
+                Choose Audio File
+              </button>
+              <p className="text-[11px] text-muted-foreground/60 text-center">
+                Select a local audio file directly from a file chooser
+              </p>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="audio/*,.mp3,.wav,.aac,.m4a,.ogg,.flac"
+                onChange={handleFilePicked}
+                className="hidden"
+              />
+            </div>
+
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <span className="h-px flex-1 bg-border" />
+              or paste a path
+              <span className="h-px flex-1 bg-border" />
             </div>
 
             <div className="space-y-1.5">
