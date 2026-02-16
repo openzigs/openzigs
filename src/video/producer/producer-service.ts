@@ -69,8 +69,12 @@ export class ProducerService {
         scriptText = await fs.readFile(input.scriptPath, "utf-8");
       }
 
-      if (!voiceoverPath && scriptText && this.voiceService) {
+      if (!voiceoverPath && scriptText && this.voiceService?.isReady()) {
         voiceoverPath = await this.generateVoiceover(scriptText);
+      }
+
+      if (!voiceoverPath && scriptText) {
+        logger.warn("[Producer] VoiceService not available — proceeding without voiceover (script text will still inform the timeline)");
       }
 
       if (voiceoverPath) {
