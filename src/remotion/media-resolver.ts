@@ -61,10 +61,17 @@ export function resolveMediaPath(mediaPath: string, baseDir: string): string {
  * @param bundleDir - The Remotion bundle serve directory
  * @returns A path usable as a video/audio src within the Remotion bundle
  */
-export function stageMediaFile(resolvedPath: string, bundleDir: string): string {
+export function stageMediaFile(resolvedPath: string, bundleDir: string): string | null {
   // Remote URLs don't need staging
   if (resolvedPath.startsWith("http://") || resolvedPath.startsWith("https://")) {
     return resolvedPath;
+  }
+
+  // If the source file doesn't exist, return null.
+  // The LLM may generate references to music tracks or other media that
+  // don't actually exist on disk — this is expected and non-fatal.
+  if (!fs.existsSync(resolvedPath)) {
+    return null;
   }
 
   const basename = path.basename(resolvedPath);

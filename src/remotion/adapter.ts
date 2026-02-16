@@ -151,19 +151,33 @@ export function stageInputPropsMedia(
 ): CompositionInputProps {
   const stagedTimeline = props.timeline.map((item) => {
     if (item.type === "video_clip") {
-      return { ...item, src: stageMediaFile(item.src, bundleDir) };
+      const staged = stageMediaFile(item.src, bundleDir);
+      if (!staged) {
+        // Source file missing — skip this clip (shouldn't happen for real clips)
+        return item;
+      }
+      return { ...item, src: staged };
     }
     return item;
   });
 
-  const stagedAudio = {
-    music: props.audio.music
-      ? { ...props.audio.music, src: stageMediaFile(props.audio.music.src, bundleDir) }
-      : null,
-    voiceover: props.audio.voiceover
-      ? { ...props.audio.voiceover, src: stageMediaFile(props.audio.voiceover.src, bundleDir) }
-      : null,
-  };
+  // Music and voiceover may reference files that don't exist (LLM-generated
+  // track names like "uplifting_background.mp3").  Drop them gracefully.
+  const stagedMusic = props.audio.music
+    ? (() => {
+        const staged = stageMediaFile(props.audio.music!.src, bundleDir);
+        return staged ? { ...props.audio.music!, src: staged } : null;
+      })()
+    : null;
+
+  const stagedVoiceover = props.audio.voiceover
+    ? (() => {
+        const staged = stageMediaFile(props.audio.voiceover!.src, bundleDir);
+        return staged ? { ...props.audio.voiceover!, src: staged } : null;
+      })()
+    : null;
+
+  const stagedAudio = { music: stagedMusic, voiceover: stagedVoiceover };
 
   return { ...props, timeline: stagedTimeline, audio: stagedAudio };
 }

@@ -243,9 +243,19 @@ export class RenderOrchestrator extends EventEmitter {
       isDevMode ? "render-worker-loader.mjs" : "render-worker.js",
     );
 
-    const worker = new Worker(workerPath);
+    const worker = new Worker(workerPath, { stderr: true });
 
     this.activeWorkers.set(jobId, worker);
+
+    // Capture worker stderr for debugging (worker exit code 1 needs diagnosis)
+    let stderrChunks: string[] = [];
+    if (worker.stderr) {
+      worker.stderr.on("data", (chunk: Buffer) => {
+        const text = chunk.toString();
+        stderrChunks.push(text);
+        logger.error(`[RenderWorker:${jobId}] ${text.trimEnd()}`);
+      });
+    }
 
     worker.on("message", (msg: WorkerMessage) => {
       this.handleWorkerMessage(msg);
@@ -258,8 +268,12 @@ export class RenderOrchestrator extends EventEmitter {
     worker.on("exit", (code) => {
       if (code !== 0) {
         const job = this.jobs.get(jobId);
-        if (job && job.status !== "complete" && job.status !== "aborted") {
-          this.handleWorkerError(jobId, new Error(`Worker exited with code ${code}`));
+        if (job && job.status !== "complete" && job.status !== "aborted" && job.status !== "failed") {
+          const stderr = stderrChunks.join("").trim();
+          const errorMsg = stderr
+            ? `Worker exited with code ${code}: ${stderr.slice(-500)}`
+            : `Worker exited with code ${code}`;
+          this.handleWorkerError(jobId, new Error(errorMsg));
         }
       }
     });

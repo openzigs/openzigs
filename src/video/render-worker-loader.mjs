@@ -10,4 +10,10 @@ import { register } from "tsx/esm/api";
 
 register();
 
-await import("./render-worker.ts");
+try {
+  await import("./render-worker.ts");
+} catch (err) {
+  // Log the real crash reason to stderr so the orchestrator can capture it
+  console.error("[render-worker-loader] FATAL: failed to import render-worker.ts:", err);
+  process.exit(1);
+}

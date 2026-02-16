@@ -22,6 +22,24 @@ if (!parentPort) {
 
 const port = parentPort;
 
+// ── Global crash safety net ──────────────────────────────────
+// If anything escapes the try-catch in the message handler, report it
+// via parentPort so the orchestrator gets a real error message rather
+// than a bare "exit code 1".
+process.on("uncaughtException", (err) => {
+  console.error("[render-worker] uncaughtException:", err);
+  try {
+    port.postMessage({ type: "error", jobId: "unknown", error: `Uncaught: ${err.message}\n${err.stack}` });
+  } catch { /* port may be closed */ }
+});
+process.on("unhandledRejection", (reason) => {
+  console.error("[render-worker] unhandledRejection:", reason);
+  try {
+    const msg = reason instanceof Error ? `${reason.message}\n${reason.stack}` : String(reason);
+    port.postMessage({ type: "error", jobId: "unknown", error: `Unhandled rejection: ${msg}` });
+  } catch { /* port may be closed */ }
+});
+
 // ── Cached bundle URL (expensive to create, reuse across renders) ────
 let cachedServeUrl: string | null = null;
 
