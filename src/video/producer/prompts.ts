@@ -105,19 +105,37 @@ export function buildScriptDrivenPrompt(
     ? `PREFERRED TEMPLATE: "${preferredTemplate}" — use this template unless the content clearly demands another.\n`
     : "";
 
+  // When voiceover was generated, the video must match its duration.
+  // When no voiceover (TTS unavailable), the script still guides content
+  // selection but clip durations determine total length.
+  const hasVoiceover = voiceoverDuration > 0;
+
+  const durationGuidance = hasVoiceover
+    ? `- The total video duration MUST match the voiceover duration (${voiceoverDuration.toFixed(1)}s)
+- Each video_clip entry should have volume: 0 (voiceover replaces original audio)`
+    : `- Determine total video duration from the combined source clip durations (aim for a tight, punchy edit)
+- Each video_clip entry should have volume: 0.8 (script provides narrative context but there is no voiceover audio)`;
+
+  const voiceoverInputLine = hasVoiceover
+    ? `1. A voiceover audio file (duration: ${voiceoverDuration.toFixed(1)}s) — this is the PRIMARY audio`
+    : `1. A script text — this guides which clips to show and in what order (NO voiceover audio is available)`;
+
+  const voiceoverTaskLine = hasVoiceover
+    ? `- Uses the voiceover as the main audio track`
+    : `- Uses the script text to determine clip selection and ordering (no voiceover audio)`;
+
   return `You are a professional video editor working in script-driven mode.
 
 INPUTS:
-1. A voiceover audio file (duration: ${voiceoverDuration.toFixed(1)}s) — this is the PRIMARY audio
+${voiceoverInputLine}
 2. B-Roll video clips with descriptions and durations
 3. The original script text
 
 YOUR TASK: Create a JSON manifest that:
-- Uses the voiceover as the main audio track
+${voiceoverTaskLine}
 - Matches B-Roll clips to script sections semantically
-- Loops or stretches clips if total B-Roll < voiceover duration
-- Mutes all original video audio (volume: 0)
-- Adds background music at volume 0.15 with ducking enabled (if a music track is available)
+- Loops or stretches clips if total B-Roll < desired duration
+- Adds background music at volume ${hasVoiceover ? "0.15" : "0.3"} with ducking ${hasVoiceover ? "enabled" : "disabled"} (if a music track is available)
 
 CRITICAL — MULTI-CLIP RULES:
 - You MUST include video_clip entries from EVERY source clip provided. Do NOT ignore any input clips.
@@ -128,14 +146,13 @@ CRITICAL — MULTI-CLIP RULES:
 MUSIC RULES:
 - If a background music track is provided, you MUST include it in audioLayer.music
 - Use the EXACT file path provided — do not rename or modify it
-- Set ducking: true so music ducks during voiceover
+- Set ducking: ${hasVoiceover ? "true" : "false"} ${hasVoiceover ? "so music ducks during voiceover" : "(no voiceover to duck for)"}
 - Set loop: true, fadeInFrames: 30, fadeOutFrames: 60
 
 ${templateLine}AVAILABLE TEMPLATES: ${validTemplates.join(", ")}
 
 RULES:
-- The total video duration MUST match the voiceover duration (${voiceoverDuration.toFixed(1)}s)
-- Each video_clip entry should have volume: 0 (voiceover replaces original audio)
+${durationGuidance}
 - Choose visual clips that semantically match the script text being spoken at that point
 - Apply slowZoom effect ({ "type": "slowZoom", "from": 1.0, "to": 1.3 }) to any clip that appears for >10 seconds
 
@@ -143,10 +160,35 @@ OUTPUT: A single valid JSON object matching the DirectorManifest schema.
 Do NOT include any text outside the JSON object.
 Do NOT wrap in markdown code blocks.
 
-Use the same schema as described for the highlight mode, but set:
-- metadata.productionMode: "script"
-- audioLayer.voiceover.source: the voiceover file path
-- All video_clip entries: volume: 0`;
+SCHEMA SUMMARY:
+{
+  "projectTitle": string,
+  "templateId": "${validTemplates.join('" | "')}",
+  "composition": { "width": number, "height": number, "fps": number },
+  "audioLayer": {
+    "music": { "track": string, "volume": 0-1, "ducking": boolean, "fadeInFrames?": number, "fadeOutFrames?": number, "loop?": boolean } | null,
+    "voiceover": { "source": string, "volume?": 0-1, "startAtFrame?": number } | null
+  },
+  "timeline": [
+    { "type": "title_card", "title": string, "subtitle?": string, "background?": string, "startAtFrame": number, "duration": number, "animation?": "fade"|"slide-up"|"typewriter" },
+    { "type": "transition", "style": "crossfade"|"wipe-left"|"wipe-right"|"dissolve"|"cut", "duration": number, "startAtFrame": number },
+    { "type": "video_clip", "source": string, "startAtFrame": number, "trimStart": number, "duration": number, "volume?": 0-1, "effects?": [<VideoEffect>, ...] },
+    { "type": "overlay", "component": "SmartCaptions"|"LowerThird"|"LogoWatermark"|"ProgressBar", "props": {...}, "startAtFrame": number, "duration?": number }
+  ],
+  "branding?": { "logoUrl?": string, "accentColor?": "#hex", "watermarkOpacity?": 0-1, "watermarkPosition?": string },
+  "metadata": { "generatedAt": ISO8601, "llmModel": string, "llmTokensUsed": number, "productionMode": "script", "sourceClips": string[] }
+}
+
+VIDEO EFFECT TYPES (for use in video_clip "effects" array):
+- { "type": "slowZoom", "from": number, "to": number }
+- { "type": "fadeIn", "durationFrames": number }
+- { "type": "fadeOut", "durationFrames": number }
+- { "type": "blur", "amount": number, "startFrame": number, "endFrame": number }
+- { "type": "grayscale" }
+- { "type": "speedRamp", "factor": number, "startFrame": number, "endFrame": number }
+
+REQUIRED fields: projectTitle, templateId, composition, audioLayer, timeline, metadata.
+${hasVoiceover ? "Set audioLayer.voiceover.source to the voiceover file path.\nSet all video_clip entries: volume: 0" : "Set audioLayer.voiceover to null (no voiceover audio available)."}`;
 }
 
 /**

@@ -151,7 +151,7 @@ export const DirectorManifestSchema = z.object({
   audioLayer: AudioLayerConfigSchema,
   timeline: z.array(TimelineEntrySchema).min(1),
   branding: BrandingConfigSchema.optional(),
-  metadata: ManifestMetadataSchema.optional(),
+  metadata: ManifestMetadataSchema,
 });
 
 export type DirectorManifestParsed = z.infer<typeof DirectorManifestSchema>;
