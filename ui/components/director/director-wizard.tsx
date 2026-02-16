@@ -28,7 +28,7 @@ export const DirectorWizard = () => {
       case 1:
         return state.mode !== null;
       case 2:
-        return state.clips.length > 0;
+        return state.mode === "presentation" ? state.topic.trim().length > 0 : state.clips.length > 0;
       case 3:
         return true; // template selection is optional (uses default)
       case 4:
@@ -38,7 +38,7 @@ export const DirectorWizard = () => {
       default:
         return false;
     }
-  }, [step, state.mode, state.clips.length]);
+  }, [step, state.mode, state.clips.length, state.topic]);
 
   // ── State updaters ────────────────────────────────────────
   const setMode = useCallback((mode: ProductionMode) => {
@@ -51,6 +51,10 @@ export const DirectorWizard = () => {
 
   const setScriptFile = useCallback((scriptFile: MediaFile | null) => {
     setState((s) => ({ ...s, scriptFile }));
+  }, []);
+
+  const setTopic = useCallback((topic: string) => {
+    setState((s) => ({ ...s, topic }));
   }, []);
 
   const setTemplateId = useCallback((templateId: string | null) => {
@@ -134,8 +138,10 @@ export const DirectorWizard = () => {
             mode={state.mode!}
             clips={state.clips}
             scriptFile={state.scriptFile}
+            topic={state.topic}
             onClipsChange={setClips}
             onScriptChange={setScriptFile}
+            onTopicChange={setTopic}
           />
         )}
         {step === 3 && (

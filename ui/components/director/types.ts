@@ -2,7 +2,7 @@
  * Director Mode — Shared types for the wizard UI.
  */
 
-export type ProductionMode = "highlight" | "script";
+export type ProductionMode = "highlight" | "script" | "presentation";
 
 export interface WizardState {
   /** Step 1 */
@@ -10,6 +10,7 @@ export interface WizardState {
   /** Step 2 */
   clips: MediaFile[];
   scriptFile: MediaFile | null;
+  topic: string;
   /** Step 3 */
   templateId: string | null;
   /** Step 4 */
@@ -108,6 +109,7 @@ export function createInitialState(): WizardState {
     mode: null,
     clips: [],
     scriptFile: null,
+    topic: "",
     templateId: null,
     musicTrack: null,
     model: "",

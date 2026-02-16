@@ -10,16 +10,20 @@ interface MediaUploadStepProps {
   mode: ProductionMode;
   clips: MediaFile[];
   scriptFile: MediaFile | null;
+  topic: string;
   onClipsChange: (clips: MediaFile[]) => void;
   onScriptChange: (file: MediaFile | null) => void;
+  onTopicChange: (topic: string) => void;
 }
 
 export const MediaUploadStep = ({
   mode,
   clips,
   scriptFile,
+  topic,
   onClipsChange,
   onScriptChange,
+  onTopicChange,
 }: MediaUploadStepProps) => {
   const [pathInput, setPathInput] = useState("");
   const [uploadingVideo, setUploadingVideo] = useState(false);
@@ -131,16 +135,40 @@ export const MediaUploadStep = ({
       {/* Header */}
       <div className="text-center">
         <h2 className="text-xl font-semibold text-foreground mb-1">
-          {mode === "highlight" ? "Add Video Clips" : "Add B-Roll & Script"}
+          {mode === "presentation" ? "Enter a Topic" : mode === "highlight" ? "Add Video Clips" : "Add B-Roll & Script"}
         </h2>
         <p className="text-sm text-muted-foreground">
-          {mode === "highlight"
-            ? "Add your raw video clips. The AI will analyze, reorder, and edit them into a highlight reel."
-            : "Add B-Roll footage and your script file. A voiceover will be generated and visuals aligned to narration."}
+          {mode === "presentation"
+            ? "Describe the topic for your presentation. The AI will generate a storyboard, images, narration, and animations."
+            : mode === "highlight"
+              ? "Add your raw video clips. The AI will analyze, reorder, and edit them into a highlight reel."
+              : "Add B-Roll footage and your script file. A voiceover will be generated and visuals aligned to narration."}
         </p>
       </div>
 
-      {/* Path Input */}
+      {mode === "presentation" ? (
+        /* ── Presentation Mode: Topic Input ─────────────────── */
+        <div className="space-y-4">
+          <textarea
+            value={topic}
+            onChange={(e) => onTopicChange(e.target.value)}
+            placeholder="e.g., The history of distributed systems, from mainframes to microservices..."
+            rows={4}
+            className="w-full rounded-xl border border-border bg-card px-4 py-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 resize-none"
+          />
+          <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 px-4 py-3">
+            <p className="text-xs text-amber-400 font-medium mb-1">What happens next</p>
+            <ul className="text-xs text-muted-foreground space-y-1">
+              <li>• The LLM creates a structured storyboard with scenes, narration, and visual descriptions</li>
+              <li>• Stable Diffusion generates an image for each scene</li>
+              <li>• Text-to-Speech synthesizes per-scene voiceover</li>
+              <li>• Ken Burns animations and crossfade transitions are applied automatically</li>
+            </ul>
+          </div>
+        </div>
+      ) : (
+        /* ── Highlight / Script Mode: File Inputs ───────────── */
+        <>
       <div className="flex gap-2">
         <div className="relative flex-1">
           <FolderOpen className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
@@ -284,6 +312,8 @@ export const MediaUploadStep = ({
             </div>
           )}
         </div>
+      )}
+      </>
       )}
     </div>
   );

@@ -77,8 +77,11 @@ export const createVideoTools = ({ copilot, voiceService }: VideoToolsOptions): 
           }
 
           const fs = await import("node:fs/promises");
+          const path = await import("node:path");
+          const os = await import("node:os");
           const { StoryboardEngine } = await import("../../video/generators/storyboard-engine.js");
           const { ImageGenService } = await import("../../video/generators/image-gen-service.js");
+          const { nanoid } = await import("nanoid");
 
           // Step A: Ingest the text document
           let rawText = await fs.readFile(inputFile, "utf-8");
@@ -95,7 +98,12 @@ export const createVideoTools = ({ copilot, voiceService }: VideoToolsOptions): 
           const imageService = new ImageGenService();
           await imageService.initialize();
 
-          const sceneAssets: Array<{ imagePath: string; voiceoverPath?: string; duration: number }> = [];
+          const fps = 30;
+          const templateId = (template as "Minimalist" | "ContentCreator" | "Corporate" | "TechDemo") ?? "Minimalist";
+
+          // Build timeline entries for the DirectorManifest
+          const timeline: Array<import("../../video/manifest/manifest-types.js").ImageSceneEntry | import("../../video/manifest/manifest-types.js").TransitionEntry> = [];
+          let currentFrame = 0;
 
           for (const scene of storyboard.scenes) {
             const imageResult = await imageService.generateImage(scene.imagePrompt, {
@@ -104,7 +112,7 @@ export const createVideoTools = ({ copilot, voiceService }: VideoToolsOptions): 
               height: 1080,
             });
 
-            // Generate voiceover for this scene if VoiceService is available
+            // Generate per-scene voiceover if VoiceService is available
             let sceneVoiceoverPath: string | undefined;
             if (voiceService && scene.voiceover) {
               try {
@@ -113,9 +121,6 @@ export const createVideoTools = ({ copilot, voiceService }: VideoToolsOptions): 
                 }
                 if (voiceService.isReady()) {
                   const ttsResult = await voiceService.synthesize(scene.voiceover);
-                  const os = await import("node:os");
-                  const path = await import("node:path");
-                  const { nanoid } = await import("nanoid");
                   const voPath = path.join(os.tmpdir(), `openzigs-vo-${nanoid(8)}.mp3`);
                   await fs.writeFile(voPath, ttsResult.audio);
                   sceneVoiceoverPath = voPath;
@@ -125,16 +130,75 @@ export const createVideoTools = ({ copilot, voiceService }: VideoToolsOptions): 
               }
             }
 
-            sceneAssets.push({
-              imagePath: imageResult.filePath,
-              voiceoverPath: sceneVoiceoverPath,
-              duration: scene.durationEstimate,
+            const durationInFrames = Math.round(scene.durationEstimate * fps);
+
+            // Add crossfade transition between scenes (not before the first)
+            if (timeline.length > 0) {
+              const transitionDuration = Math.min(15, durationInFrames);
+              timeline.push({
+                type: "transition",
+                style: "crossfade",
+                duration: transitionDuration,
+                startAtFrame: currentFrame,
+              });
+              // Transitions overlap, so don't advance currentFrame
+            }
+
+            timeline.push({
+              type: "image_scene",
+              src: imageResult.filePath,
+              startAtFrame: currentFrame,
+              duration: durationInFrames,
+              voiceover: sceneVoiceoverPath,
+              voiceoverVolume: 1.0,
+              kenBurns: {
+                scaleFrom: 1.0,
+                scaleTo: 1.15,
+                translateXFrom: 0,
+                translateXTo: scene.index % 2 === 0 ? -10 : 10, // Alternate pan direction
+                translateYFrom: 0,
+                translateYTo: -5,
+              },
             });
+
+            currentFrame += durationInFrames;
           }
+
+          // Step D: Construct the DirectorManifest
+          const manifest: import("../../video/manifest/manifest-types.js").DirectorManifest = {
+            projectTitle: storyboard.title,
+            templateId,
+            composition: { width: 1920, height: 1080, fps },
+            audioLayer: {
+              music: musicTrackPath ? {
+                track: musicTrackPath,
+                volume: 0.3,
+                ducking: true,
+                fadeInFrames: 30,
+                fadeOutFrames: 30,
+                loop: true,
+              } : null,
+              voiceover: voiceoverPath ? {
+                source: voiceoverPath,
+                volume: 1.0,
+                startAtFrame: 0,
+              } : null,
+            },
+            timeline,
+            metadata: {
+              generatedAt: new Date().toISOString(),
+              llmModel: "copilot",
+              llmTokensUsed: storyboard.tokensUsed,
+              productionMode: "presentation",
+              sourceClips: [],
+              estimatedRenderTime: currentFrame / fps,
+            },
+          };
 
           return {
             text: JSON.stringify({
               mode: "presentation",
+              manifest,
               storyboard: {
                 title: storyboard.title,
                 styleAnchor: storyboard.styleAnchor,
@@ -146,11 +210,13 @@ export const createVideoTools = ({ copilot, voiceService }: VideoToolsOptions): 
                 voiceover: scene.voiceover,
                 imagePrompt: scene.imagePrompt,
                 durationEstimate: scene.durationEstimate,
-                imagePath: sceneAssets[i]?.imagePath,
-                voiceoverPath: sceneAssets[i]?.voiceoverPath,
+                imagePath: timeline.find(
+                  (t): t is import("../../video/manifest/manifest-types.js").ImageSceneEntry =>
+                    t.type === "image_scene" && (t as import("../../video/manifest/manifest-types.js").ImageSceneEntry).src !== undefined,
+                )?.src,
               })),
               tokensUsed: storyboard.tokensUsed,
-              totalDuration: storyboard.scenes.reduce((sum, s) => sum + s.durationEstimate, 0),
+              totalDuration: currentFrame / fps,
             }, null, 2),
           };
         }

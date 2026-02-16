@@ -263,7 +263,7 @@ export const ReviewProduceStep = ({
         <SummaryCard
           icon={<Clapperboard className="h-4 w-4" />}
           label="Mode"
-          value={state.mode === "highlight" ? "Highlight Reel" : state.mode === "script" ? "Script-Driven" : "Not set"}
+          value={state.mode === "highlight" ? "Highlight Reel" : state.mode === "script" ? "Script-Driven" : state.mode === "presentation" ? "Presentation" : "Not set"}
         />
         <SummaryCard
           icon={<Film className="h-4 w-4" />}

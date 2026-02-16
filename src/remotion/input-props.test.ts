@@ -13,6 +13,7 @@ import {
   AudioPropsSchema,
   BrandingPropsSchema,
   TimelineItemSchema,
+  ImageScenePropsSchema,
 } from "./input-props.js";
 
 describe("VideoClipPropsSchema", () => {
@@ -185,6 +186,79 @@ describe("TimelineItemSchema (discriminated union)", () => {
     const result = TimelineItemSchema.safeParse({
       type: "unknown",
       startAtFrame: 0,
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("parses image_scene items", () => {
+    const result = TimelineItemSchema.safeParse({
+      type: "image_scene",
+      src: "/images/scene-001.png",
+      startAtFrame: 0,
+      durationInFrames: 450,
+      voiceover: "/audio/scene-001.mp3",
+      voiceoverVolume: 0.9,
+      kenBurns: {
+        scaleFrom: 1.0,
+        scaleTo: 1.2,
+      },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("parses image_scene with defaults", () => {
+    const result = TimelineItemSchema.safeParse({
+      type: "image_scene",
+      src: "/images/scene.png",
+      startAtFrame: 0,
+      durationInFrames: 300,
+    });
+    expect(result.success).toBe(true);
+    if (result.success && result.data.type === "image_scene") {
+      expect(result.data.voiceoverVolume).toBe(1);
+      expect(result.data.kenBurns.scaleFrom).toBe(1.0);
+      expect(result.data.kenBurns.scaleTo).toBe(1.15);
+    }
+  });
+});
+
+describe("ImageScenePropsSchema", () => {
+  it("validates a full image scene", () => {
+    const result = ImageScenePropsSchema.safeParse({
+      src: "/images/scene.png",
+      startAtFrame: 0,
+      durationInFrames: 450,
+      voiceover: "/audio/narration.mp3",
+      voiceoverVolume: 0.8,
+      kenBurns: {
+        scaleFrom: 1.0,
+        scaleTo: 1.2,
+        translateXFrom: 0,
+        translateXTo: -15,
+        translateYFrom: 0,
+        translateYTo: -5,
+      },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("applies Ken Burns defaults", () => {
+    const result = ImageScenePropsSchema.parse({
+      src: "/images/scene.png",
+      startAtFrame: 0,
+      durationInFrames: 300,
+    });
+    expect(result.kenBurns.scaleFrom).toBe(1.0);
+    expect(result.kenBurns.scaleTo).toBe(1.15);
+    expect(result.kenBurns.translateXFrom).toBe(0);
+    expect(result.kenBurns.translateXTo).toBe(-10);
+  });
+
+  it("rejects zero duration", () => {
+    const result = ImageScenePropsSchema.safeParse({
+      src: "/images/scene.png",
+      startAtFrame: 0,
+      durationInFrames: 0,
     });
     expect(result.success).toBe(false);
   });

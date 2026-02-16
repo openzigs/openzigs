@@ -68,6 +68,23 @@ function adaptTimelineEntry(entry: TimelineEntry, outputDir: string): TimelineIt
         durationInFrames: entry.duration,
         startAtFrame: entry.startAtFrame,
       };
+    case "image_scene":
+      return {
+        type: "image_scene",
+        src: resolveMediaPath(entry.src, outputDir),
+        startAtFrame: entry.startAtFrame,
+        durationInFrames: entry.duration,
+        voiceover: entry.voiceover ? resolveMediaPath(entry.voiceover, outputDir) : undefined,
+        voiceoverVolume: entry.voiceoverVolume ?? 1,
+        kenBurns: {
+          scaleFrom: entry.kenBurns?.scaleFrom ?? 1.0,
+          scaleTo: entry.kenBurns?.scaleTo ?? 1.15,
+          translateXFrom: entry.kenBurns?.translateXFrom ?? 0,
+          translateXTo: entry.kenBurns?.translateXTo ?? -10,
+          translateYFrom: entry.kenBurns?.translateYFrom ?? 0,
+          translateYTo: entry.kenBurns?.translateYTo ?? -5,
+        },
+      };
     default:
       throw new Error(`Unknown timeline entry type: ${(entry as { type: string }).type}`);
   }
@@ -161,6 +178,21 @@ export function stageInputPropsMedia(
         return item;
       }
       return { ...item, src: staged };
+    }
+    if (item.type === "image_scene") {
+      const stagedSrc = stageMediaFile(item.src, bundleDir);
+      if (!stagedSrc) {
+        logger.warn(`[Adapter] Image scene file not found on disk — src will be unusable: "${item.src}"`);
+        return item;
+      }
+      let stagedVo: string | undefined;
+      if (item.voiceover) {
+        stagedVo = stageMediaFile(item.voiceover, bundleDir) ?? undefined;
+        if (!stagedVo) {
+          logger.warn(`[Adapter] Image scene voiceover not found on disk — dropping: "${item.voiceover}"`);
+        }
+      }
+      return { ...item, src: stagedSrc, voiceover: stagedVo };
     }
     return item;
   });

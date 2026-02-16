@@ -51,6 +51,28 @@ export const TransitionPropsSchema = z.object({
 });
 export type TransitionProps = z.infer<typeof TransitionPropsSchema>;
 
+// ── Image Scene Props ─────────────────────────────────────────
+export const ImageScenePropsSchema = z.object({
+  /** Path to the generated image */
+  src: z.string(),
+  startAtFrame: z.number().int().min(0),
+  durationInFrames: z.number().int().min(1),
+  /** Per-scene voiceover audio path */
+  voiceover: z.string().optional(),
+  /** Volume for per-scene voiceover (default: 1.0) */
+  voiceoverVolume: z.number().min(0).max(1).default(1),
+  /** Ken Burns animation parameters */
+  kenBurns: z.object({
+    scaleFrom: z.number().default(1.0),
+    scaleTo: z.number().default(1.15),
+    translateXFrom: z.number().default(0),
+    translateXTo: z.number().default(-10),
+    translateYFrom: z.number().default(0),
+    translateYTo: z.number().default(-5),
+  }).default({}),
+});
+export type ImageSceneProps = z.infer<typeof ImageScenePropsSchema>;
+
 // ── Audio Props ───────────────────────────────────────────────
 export const AudioPropsSchema = z.object({
   music: z.object({
@@ -85,6 +107,7 @@ export const TimelineItemSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("title_card"), ...TitleCardPropsSchema.shape }),
   z.object({ type: z.literal("overlay"), ...OverlayPropsSchema.shape }),
   z.object({ type: z.literal("transition"), ...TransitionPropsSchema.shape }),
+  z.object({ type: z.literal("image_scene"), ...ImageScenePropsSchema.shape }),
 ]);
 export type TimelineItem = z.infer<typeof TimelineItemSchema>;
 

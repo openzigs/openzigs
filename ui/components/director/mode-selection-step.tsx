@@ -1,6 +1,6 @@
 "use client";
 
-import { Film, Sparkles, Mic } from "lucide-react";
+import { Film, Sparkles, Mic, ImageIcon } from "lucide-react";
 import type { ProductionMode } from "./types";
 
 interface ModeSelectionStepProps {
@@ -45,6 +45,24 @@ const MODES = [
     border: "border-emerald-500/50",
     bgHover: "hover:border-emerald-400",
   },
+  {
+    id: "presentation" as const,
+    title: "Presentation",
+    subtitle: "Zero-Input",
+    description:
+      "Just provide a topic. The AI generates a storyboard, creates images via Stable Diffusion, adds narration, Ken Burns animations, transitions, and background music.",
+    features: [
+      "AI storyboard generation",
+      "Stable Diffusion imagery",
+      "Per-scene TTS narration",
+      "Ken Burns pan & zoom",
+    ],
+    icon: ImageIcon,
+    gradient: "from-amber-500/20 to-orange-600/20",
+    accent: "text-amber-400",
+    border: "border-amber-500/50",
+    bgHover: "hover:border-amber-400",
+  },
 ];
 
 export const ModeSelectionStep = ({ selected, onSelect }: ModeSelectionStepProps) => {
@@ -61,7 +79,7 @@ export const ModeSelectionStep = ({ selected, onSelect }: ModeSelectionStepProps
         </p>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 max-w-3xl mx-auto">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 max-w-4xl mx-auto">
         {MODES.map((mode) => {
           const Icon = mode.icon;
           const isSelected = selected === mode.id;
