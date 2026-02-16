@@ -19,6 +19,7 @@ import { McpEditorPanel } from "@/components/admin/mcp-editor-panel";
 import { SentinelPanel } from "@/components/admin/sentinel-panel";
 import { KnowledgeConfigPanel } from "@/components/admin/knowledge-config-panel";
 import { VaultPanel } from "@/components/admin/vault-panel";
+import { DirectorPanel } from "@/components/admin/director-panel";
 import { ToastContainer, showToast } from "@/components/toast";
 import { RotateCw } from "lucide-react";
 
@@ -93,6 +94,10 @@ export default function AdminPage() {
 
         <SectionCard title="Secret Vault">
           <VaultPanel />
+        </SectionCard>
+
+        <SectionCard title="Director Mode">
+          <DirectorPanel />
         </SectionCard>
 
         <SectionCard title="Custom Agents">

@@ -45,6 +45,8 @@ import { VoiceService } from "./voice/index.js";
 import { createVoiceRouter } from "./api/voice.js";
 import { SecretVaultService } from "./vault/index.js";
 import { createVaultRouter } from "./api/vault.js";
+import { createDirectorRouter } from "./api/director.js";
+import { RenderOrchestrator } from "./video/render-orchestrator.js";
 
 // Register built-in post-action types (create-github-issues, send-webhook, etc.)
 registerBuiltinPostActions();
@@ -259,6 +261,26 @@ const vaultService = new SecretVaultService({
   vaultPath: vaultConfig?.vaultPath,
 });
 
+// ── Voice Service (Google Cloud TTS) ──
+const voiceConfig = config.voice;
+const voiceService = new VoiceService({
+  enabled: voiceConfig?.enabled ?? false,
+  provider: voiceConfig?.provider ?? "google",
+  voiceName: voiceConfig?.voiceName ?? "en-US-Standard-C",
+  speakingRate: voiceConfig?.speakingRate ?? 1.0,
+  pitch: voiceConfig?.pitch ?? 0.0,
+  cacheDir: voiceConfig?.cacheDir ?? "~/.openzigs/voice-cache",
+  maxCacheSizeMb: voiceConfig?.maxCacheSizeMb ?? 500,
+  maxTextLength: voiceConfig?.maxTextLength ?? 5000,
+});
+
+if (voiceService.getConfig().enabled && process.env.GOOGLE_APPLICATION_CREDENTIALS) {
+  void voiceService.initialize().catch((error) => {
+    const details = error instanceof Error ? error.message : String(error);
+    logger.warn(`Voice service startup skipped: ${details}`);
+  });
+}
+
 registerMcpTools(toolRegistry, {
   allowedDirs: allowedDirs.length > 0 ? allowedDirs : [process.cwd(), os.tmpdir(), os.homedir(), "/tmp", "/private/tmp"],
   shellAllowlist: (process.env.OPENZIGS_SHELL_ALLOWLIST ?? "git,find,ls,cat,head,tail,grep,wc,echo,pwd,mkdir,cp,mv,rm,which,date,curl,bash,sh,java,javac,python3,node").split(",").map(s => s.trim()).filter(Boolean),
@@ -284,6 +306,7 @@ registerMcpTools(toolRegistry, {
   localServerManager,
   knowledgeService,
   vaultService,
+  voiceService,
 });
 
 // ── Task Background Worker ──
@@ -321,6 +344,44 @@ app.use("/api/admin/knowledge", knowledgeRouter);
 const vaultRouter = createVaultRouter({ vaultService });
 app.use("/api/admin/vault", vaultRouter);
 
+// Director Mode API routes
+const directorConfig = (config as Record<string, unknown>).director as {
+  enabled?: boolean;
+  outputDir?: string;
+  defaultTemplate?: string;
+  assets?: {
+    localLibraryPath?: string;
+    downloadCachePath?: string;
+    pixabayApiKey?: string;
+    jamendoClientId?: string;
+    pexelsApiKey?: string;
+  };
+} | undefined;
+
+const renderOrchestrator = new RenderOrchestrator({
+  rendersDir: directorConfig?.outputDir ?? "~/.openzigs/renders",
+  maxConcurrent: 1,
+});
+
+const directorRouter = createDirectorRouter({
+  copilot,
+  voiceService,
+  renderOrchestrator,
+  config: {
+    enabled: directorConfig?.enabled ?? true,
+    outputDir: directorConfig?.outputDir ?? "~/.openzigs/video-output",
+    defaultTemplate: directorConfig?.defaultTemplate ?? "Minimalist",
+    assets: {
+      localLibraryPath: directorConfig?.assets?.localLibraryPath ?? "~/.openzigs/media-library",
+      downloadCachePath: directorConfig?.assets?.downloadCachePath ?? "~/.openzigs/asset-cache",
+      pixabayApiKey: directorConfig?.assets?.pixabayApiKey ?? "",
+      jamendoClientId: directorConfig?.assets?.jamendoClientId ?? "",
+      pexelsApiKey: directorConfig?.assets?.pexelsApiKey ?? "",
+    },
+  },
+});
+app.use("/api/admin/director", directorRouter);
+
 // Start the Knowledge Ingestion Service in the background
 void knowledgeService.start()
   .then(() => {
@@ -331,26 +392,7 @@ void knowledgeService.start()
     logger.error(`Failed to start Knowledge Ingestion Service: ${details}`);
   });
 
-// ── Voice Service (Google Cloud TTS) ──
-const voiceConfig = config.voice;
-const voiceService = new VoiceService({
-  enabled: voiceConfig?.enabled ?? false,
-  provider: voiceConfig?.provider ?? "google",
-  voiceName: voiceConfig?.voiceName ?? "en-US-Standard-C",
-  speakingRate: voiceConfig?.speakingRate ?? 1.0,
-  pitch: voiceConfig?.pitch ?? 0.0,
-  cacheDir: voiceConfig?.cacheDir ?? "~/.openzigs/voice-cache",
-  maxCacheSizeMb: voiceConfig?.maxCacheSizeMb ?? 500,
-  maxTextLength: voiceConfig?.maxTextLength ?? 5000,
-});
-
-if (voiceService.getConfig().enabled && process.env.GOOGLE_APPLICATION_CREDENTIALS) {
-  void voiceService.initialize().catch((error) => {
-    const details = error instanceof Error ? error.message : String(error);
-    logger.warn(`Voice service startup skipped: ${details}`);
-  });
-}
-
+// ── Voice Router (Google Cloud TTS) ──
 const voiceRouter = createVoiceRouter({ voiceService });
 app.use("/api/voice", voiceRouter);
 
