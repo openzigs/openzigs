@@ -47,6 +47,64 @@ export const createDirectorRouter = ({
 }: DirectorRouterOptions): Router => {
   const router = Router();
 
+  // Mutable runtime config (overlaid on top of file-based config)
+  const runtimeConfig = {
+    pixabayApiKey: config.assets.pixabayApiKey,
+    freesoundApiKey: config.assets.freesoundApiKey,
+    defaultModel: "", // empty = use system default
+  };
+
+  /** Lazy singleton asset manager (hoisted so config PUT can reset it). */
+  let assetManagerInstance: import("../video/assets/asset-manager.js").AssetManager | null = null;
+
+  // ── Config ─────────────────────────────────────────────────
+
+  /**
+   * GET /config — return Director Mode configuration (safe subset).
+   */
+  router.get("/config", (_req, res) => {
+    res.json({
+      enabled: config.enabled,
+      outputDir: config.outputDir,
+      defaultTemplate: config.defaultTemplate,
+      defaultModel: runtimeConfig.defaultModel,
+      pixabayApiKey: runtimeConfig.pixabayApiKey ? "••••" + runtimeConfig.pixabayApiKey.slice(-4) : "",
+      freesoundApiKey: runtimeConfig.freesoundApiKey ? "••••" + runtimeConfig.freesoundApiKey.slice(-4) : "",
+      pixabayConfigured: !!runtimeConfig.pixabayApiKey && !runtimeConfig.pixabayApiKey.startsWith("${"),
+      freesoundConfigured: !!runtimeConfig.freesoundApiKey && !runtimeConfig.freesoundApiKey.startsWith("${"),
+    });
+  });
+
+  /**
+   * PUT /config — update Director Mode configuration.
+   * Body: { pixabayApiKey?, freesoundApiKey?, defaultModel? }
+   */
+  router.put("/config", (req, res) => {
+    const { pixabayApiKey, freesoundApiKey, defaultModel } = req.body as {
+      pixabayApiKey?: string;
+      freesoundApiKey?: string;
+      defaultModel?: string;
+    };
+
+    if (pixabayApiKey !== undefined) {
+      runtimeConfig.pixabayApiKey = pixabayApiKey;
+      config.assets.pixabayApiKey = pixabayApiKey;
+      // Reset asset manager so it picks up the new key
+      assetManagerInstance = null;
+    }
+    if (freesoundApiKey !== undefined) {
+      runtimeConfig.freesoundApiKey = freesoundApiKey;
+      config.assets.freesoundApiKey = freesoundApiKey;
+      assetManagerInstance = null;
+    }
+    if (defaultModel !== undefined) {
+      runtimeConfig.defaultModel = defaultModel;
+    }
+
+    logger.info("[Director API] Config updated");
+    res.json({ success: true });
+  });
+
   // ── Templates ──────────────────────────────────────────────
 
   /**
@@ -99,9 +157,6 @@ export const createDirectorRouter = ({
 
   // ── Assets ─────────────────────────────────────────────────
 
-  /** Lazy singleton asset manager. */
-  let assetManagerInstance: import("../video/assets/asset-manager.js").AssetManager | null = null;
-
   async function getAssetManager() {
     if (!assetManagerInstance) {
       const { AssetManager } = await import("../video/assets/asset-manager.js");
@@ -109,12 +164,12 @@ export const createDirectorRouter = ({
         localLibraryPath: config.assets.localLibraryPath,
         downloadCachePath: config.assets.downloadCachePath,
         pixabay: {
-          enabled: !!config.assets.pixabayApiKey,
-          apiKey: config.assets.pixabayApiKey,
+          enabled: !!runtimeConfig.pixabayApiKey && !runtimeConfig.pixabayApiKey.startsWith("${"),
+          apiKey: runtimeConfig.pixabayApiKey,
         },
         freesound: {
-          enabled: !!config.assets.freesoundApiKey,
-          apiKey: config.assets.freesoundApiKey,
+          enabled: !!runtimeConfig.freesoundApiKey && !runtimeConfig.freesoundApiKey.startsWith("${"),
+          apiKey: runtimeConfig.freesoundApiKey,
         },
       });
       await assetManagerInstance.initialize();
@@ -235,16 +290,17 @@ export const createDirectorRouter = ({
 
   /**
    * POST /produce — trigger the single-shot production pipeline.
-   * Body: { clips: string[], mode: "highlight" | "script", scriptPath?, musicTrackPath?, template? }
+   * Body: { clips: string[], mode: "highlight" | "script", scriptPath?, musicTrackPath?, template?, model? }
    */
   router.post("/produce", async (req, res) => {
     try {
-      const { clips, mode, scriptPath, musicTrackPath, template } = req.body as {
+      const { clips, mode, scriptPath, musicTrackPath, template, model } = req.body as {
         clips: string[];
         mode: "highlight" | "script";
         scriptPath?: string;
         musicTrackPath?: string;
         template?: string;
+        model?: string;
       };
 
       if (!clips || !Array.isArray(clips) || clips.length === 0) {
@@ -269,6 +325,7 @@ export const createDirectorRouter = ({
         scriptPath,
         musicTrackPath,
         preferredTemplate: template,
+        model: model || runtimeConfig.defaultModel || undefined,
       });
 
       res.json({

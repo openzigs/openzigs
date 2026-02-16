@@ -60,6 +60,10 @@ export const DirectorWizard = () => {
     setState((s) => ({ ...s, musicTrack }));
   }, []);
 
+  const setModel = useCallback((model: string) => {
+    setState((s) => ({ ...s, model }));
+  }, []);
+
   const setManifest = useCallback((manifest: DirectorManifestSummary) => {
     setState((s) => ({ ...s, manifest }));
   }, []);
@@ -146,6 +150,7 @@ export const DirectorWizard = () => {
             state={state}
             onManifestGenerated={setManifest}
             onRenderStarted={setRenderJobId}
+            onModelChange={setModel}
           />
         )}
       </div>

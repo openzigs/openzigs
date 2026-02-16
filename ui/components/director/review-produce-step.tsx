@@ -22,11 +22,13 @@ import {
   Ban,
 } from "lucide-react";
 import type { WizardState, RenderJobStatus, DirectorManifestSummary } from "./types";
+import type { ModelInfo } from "@/lib/types";
 
 interface ReviewProduceStepProps {
   state: WizardState;
   onManifestGenerated: (manifest: DirectorManifestSummary) => void;
   onRenderStarted: (jobId: string) => void;
+  onModelChange: (model: string) => void;
 }
 
 type ProduceResponse = {
@@ -53,12 +55,27 @@ export const ReviewProduceStep = ({
   state,
   onManifestGenerated,
   onRenderStarted,
+  onModelChange,
 }: ReviewProduceStepProps) => {
   const { socket } = useSocket();
   const [phase, setPhase] = useState<"review" | "producing" | "produced" | "rendering">("review");
   const [renderProgress, setRenderProgress] = useState(0);
   const [renderStatus, setRenderStatus] = useState<string | null>(null);
   const [framesInfo, setFramesInfo] = useState<string | null>(null);
+
+  // Fetch available models for the model picker
+  const modelsQuery = useQuery({
+    queryKey: ["models"],
+    queryFn: () => fetchJson<{ models: ModelInfo[]; selectedModel?: string | null }>("/api/models"),
+  });
+
+  // Fetch director config for the default model
+  const directorConfigQuery = useQuery({
+    queryKey: ["director-config"],
+    queryFn: () => fetchJson<{ defaultModel: string }>("/api/admin/director/config"),
+  });
+
+  const models = modelsQuery.data?.models ?? [];
 
   // Poll render job status
   const jobQuery = useQuery({
@@ -107,6 +124,7 @@ export const ReviewProduceStep = ({
           scriptPath: state.scriptFile?.path,
           musicTrackPath: state.musicTrack?.filePath,
           template: state.templateId,
+          model: state.model || undefined,
         }),
       }),
     onSuccess: (data) => {
@@ -252,6 +270,32 @@ export const ReviewProduceStep = ({
           />
         )}
       </div>
+
+      {/* Model Selection */}
+      {phase === "review" && (
+        <div className="space-y-1.5">
+          <label className="text-xs font-medium text-muted-foreground">LLM for Production</label>
+          <select
+            value={state.model}
+            onChange={(e) => onModelChange(e.target.value)}
+            className="w-full rounded-xl border border-border bg-card text-sm text-foreground px-3 py-2.5"
+          >
+            <option value="">
+              {directorConfigQuery.data?.defaultModel
+                ? `Director Default (${directorConfigQuery.data.defaultModel})`
+                : "System Default"}
+            </option>
+            {models.map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.id}
+              </option>
+            ))}
+          </select>
+          <p className="text-[11px] text-muted-foreground/60">
+            High-capability models (GPT-4.1, Claude Sonnet 4) produce better video timelines.
+          </p>
+        </div>
+      )}
 
       {/* Validation Warnings */}
       {phase === "review" && (

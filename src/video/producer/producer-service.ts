@@ -27,6 +27,8 @@ export interface ProducerInput {
   preferredTemplate?: string;
   /** Pre-generated voiceover path (skip TTS if provided) */
   voiceoverPath?: string;
+  /** Model override for the LLM call (e.g. "gpt-4.1", "claude-sonnet-4") */
+  model?: string;
 }
 
 export interface ProducerResult {
@@ -92,6 +94,8 @@ export class ProducerService {
       {
         // No tools — we just want the JSON manifest output
         tools: [],
+        // Allow model override for Director-specific LLM selection
+        ...(input.model ? { model: input.model } : {}),
       },
     );
 

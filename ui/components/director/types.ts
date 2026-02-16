@@ -14,6 +14,8 @@ export interface WizardState {
   templateId: string | null;
   /** Step 4 */
   musicTrack: SelectedAsset | null;
+  /** Step 5 — model override (empty = use director default or system default) */
+  model: string;
   /** Step 5 (populated after production) */
   manifest: DirectorManifestSummary | null;
   renderJobId: string | null;
@@ -90,6 +92,7 @@ export function createInitialState(): WizardState {
     scriptFile: null,
     templateId: null,
     musicTrack: null,
+    model: "",
     manifest: null,
     renderJobId: null,
   };
