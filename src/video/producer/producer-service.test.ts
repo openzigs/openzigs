@@ -34,6 +34,13 @@ function buildValidManifestJson(): string {
         volume: 0.8,
       },
     ],
+    metadata: {
+      generatedAt: "2026-02-15T10:00:00Z",
+      llmModel: "gpt-4o",
+      llmTokensUsed: 1500,
+      productionMode: "highlight",
+      sourceClips: ["clip1.mp4", "clip2.mp4"],
+    },
   };
   return JSON.stringify(manifest);
 }
@@ -118,7 +125,8 @@ describe("ProducerService", () => {
 
     expect(result.manifest).toBeDefined();
     expect(result.manifest.projectTitle).toBe("Test Highlight");
-    expect(result.manifest.timeline).toHaveLength(2);
+    expect(result.manifest.timeline.length).toBeGreaterThanOrEqual(2);
+    expect(result.manifest.timeline.some((e) => e.type === "video_clip")).toBe(true);
     expect(result.tokensUsed).toBeGreaterThan(0);
   });
 

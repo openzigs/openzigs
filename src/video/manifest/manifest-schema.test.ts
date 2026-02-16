@@ -28,6 +28,13 @@ function buildValidManifest(overrides: Partial<DirectorManifest> = {}): Director
         volume: 0.8,
       },
     ],
+    metadata: {
+      generatedAt: "2026-02-15T10:00:00Z",
+      llmModel: "gpt-4o",
+      llmTokensUsed: 1200,
+      productionMode: "highlight",
+      sourceClips: ["intro.mp4"],
+    },
     ...overrides,
   };
 }

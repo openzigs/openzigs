@@ -158,25 +158,31 @@ export class ProducerService {
     // Parse the JSON manifest from the response
     const manifest = this.parseManifestFromResponse(responseText);
 
-    // Repair common LLM deviations (invalid enum values, fractional frames, etc.)
-    repairManifest(manifest as unknown as Record<string, unknown>);
+    try {
+      // Repair common LLM deviations (invalid enum values, fractional frames, etc.)
+      repairManifest(manifest as unknown as Record<string, unknown>);
 
-    // Enhance manifest with smart defaults: ensure transitions between clips,
-    // effects on video segments, multi-clip coverage, and adequate duration.
-    const sourceClips = input.sourceClips ?? input.contextPayload.clips.map((c) => c.source);
-    const clipDurationsMap: Record<string, number> = {};
-    for (const clip of input.contextPayload.clips) {
-      clipDurationsMap[clip.source] = clip.duration;
-    }
-    const enhancementStats = enhanceManifest(manifest, sourceClips, {
-      clipDurations: clipDurationsMap,
-      totalSourceDuration: input.contextPayload.totalDuration,
-    });
-    if (enhancementStats.clipsInjected > 0) {
-      logger.info(`[Producer] Injected ${enhancementStats.clipsInjected} missing clip segment(s) from ignored sources`);
-    }
-    if (enhancementStats.durationExtended) {
-      logger.info(`[Producer] Extended video duration: ${enhancementStats.durationExtended.fromSec.toFixed(1)}s → ${enhancementStats.durationExtended.toSec.toFixed(1)}s`);
+      // Enhance manifest with smart defaults: ensure transitions between clips,
+      // effects on video segments, multi-clip coverage, and adequate duration.
+      const sourceClips = input.sourceClips ?? input.contextPayload.clips.map((c) => c.source);
+      const clipDurationsMap: Record<string, number> = {};
+      for (const clip of input.contextPayload.clips) {
+        clipDurationsMap[clip.source] = clip.duration;
+      }
+      const enhancementStats = enhanceManifest(manifest, sourceClips, {
+        clipDurations: clipDurationsMap,
+        totalSourceDuration: input.contextPayload.totalDuration,
+      });
+      if (enhancementStats.clipsInjected > 0) {
+        logger.info(`[Producer] Injected ${enhancementStats.clipsInjected} missing clip segment(s) from ignored sources`);
+      }
+      if (enhancementStats.durationExtended) {
+        logger.info(`[Producer] Extended video duration: ${enhancementStats.durationExtended.fromSec.toFixed(1)}s → ${enhancementStats.durationExtended.toSec.toFixed(1)}s`);
+      }
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      logger.warn(`[Producer] Manifest post-processing failed: ${msg}`);
+      throw new Error(`LLM produced invalid manifest: ${msg}`);
     }
 
     // Inject voiceover into audioLayer if generated
