@@ -46,6 +46,7 @@ import { createVoiceRouter } from "./api/voice.js";
 import { SecretVaultService } from "./vault/index.js";
 import { createVaultRouter } from "./api/vault.js";
 import { createDirectorRouter } from "./api/director.js";
+import { RenderOrchestrator } from "./video/render-orchestrator.js";
 
 // Register built-in post-action types (create-github-issues, send-webhook, etc.)
 registerBuiltinPostActions();
@@ -357,9 +358,15 @@ const directorConfig = (config as Record<string, unknown>).director as {
   };
 } | undefined;
 
+const renderOrchestrator = new RenderOrchestrator({
+  rendersDir: directorConfig?.outputDir ?? "~/.openzigs/renders",
+  maxConcurrent: 1,
+});
+
 const directorRouter = createDirectorRouter({
   copilot,
   voiceService,
+  renderOrchestrator,
   config: {
     enabled: directorConfig?.enabled ?? true,
     outputDir: directorConfig?.outputDir ?? "~/.openzigs/video-output",
