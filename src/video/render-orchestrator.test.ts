@@ -45,11 +45,11 @@ describe("RenderOrchestrator", () => {
     expect(id1).not.toBe(id2);
   });
 
-  it("initial job status is queued or bundling", async () => {
+  it("initial job status is queued or rendering", async () => {
     const id = await orchestrator.submit({ manifest: buildTestManifest() });
     const job = orchestrator.getJob(id);
-    // May be queued or already started bundling depending on timing
-    expect(["queued", "bundling"]).toContain(job!.status);
+    // May be queued or already started rendering depending on timing
+    expect(["queued", "rendering"]).toContain(job!.status);
   });
 
   it("retrieves a job by ID", async () => {

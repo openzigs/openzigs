@@ -68,6 +68,9 @@ importers:
       pdf-parse:
         specifier: ^2.4.5
         version: 2.4.5
+      sharp:
+        specifier: ^0.34.5
+        version: 0.34.5
       socket.io:
         specifier: ^4.7.5
         version: 4.8.3
@@ -108,6 +111,9 @@ importers:
       '@types/pdf-parse':
         specifier: ^1.1.5
         version: 1.1.5
+      '@types/sharp':
+        specifier: ^0.32.0
+        version: 0.32.0
       '@types/supertest':
         specifier: ^6.0.3
         version: 6.0.3
@@ -2494,6 +2500,10 @@ packages:
 
   '@types/serve-static@1.15.10':
     resolution: {integrity: sha512-tRs1dB+g8Itk72rlSI2ZrW6vZg0YrLI81iQSTkMmOqnqCaNr/8Ek4VwWcN5vZgCYWbg/JJSGBlUaYGAOP73qBw==}
+
+  '@types/sharp@0.32.0':
+    resolution: {integrity: sha512-OOi3kL+FZDnPhVzsfD37J88FNeZh6gQsGcLc95NbeURRGvmSjeXiDcyWzF2o3yh/gQAUn2uhh/e+CPCa5nwAxw==}
+    deprecated: This is a stub types definition. sharp provides its own type definitions, so you do not need this installed.
 
   '@types/ssh2@1.15.5':
     resolution: {integrity: sha512-N1ASjp/nXH3ovBHddRJpli4ozpk6UdDYIX4RJWFa9L1YKnzdhTlVmiGHm4DZnj/jLbqZpes4aeR30EFGQtvhQQ==}
@@ -8866,6 +8876,10 @@ snapshots:
       '@types/http-errors': 2.0.5
       '@types/node': 22.19.9
       '@types/send': 0.17.6
+
+  '@types/sharp@0.32.0':
+    dependencies:
+      sharp: 0.34.5
 
   '@types/ssh2@1.15.5':
     dependencies:

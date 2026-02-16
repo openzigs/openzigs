@@ -48,7 +48,7 @@ export interface RenderResult {
 
 /** Messages sent between the main thread and the render worker. */
 export type WorkerMessage =
-  | { type: "start"; jobId: string; manifest: DirectorManifest; outputDir: string; entryPoint: string }
+  | { type: "start"; jobId: string; manifest: DirectorManifest; outputDir: string; entryPoint?: string }
   | { type: "progress"; jobId: string; progress: number; framesRendered: number; totalFrames: number }
   | { type: "complete"; jobId: string; outputPath: string; durationSec: number; fileSizeBytes: number }
   | { type: "error"; jobId: string; error: string }

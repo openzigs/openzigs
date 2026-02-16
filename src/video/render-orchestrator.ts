@@ -27,14 +27,11 @@ export interface RenderOrchestratorOptions {
   rendersDir?: string;
   /** Maximum concurrent render jobs (default: 1) */
   maxConcurrent?: number;
-  /** Path to the Remotion project entry point (default: src/video/remotion-project/index.ts) */
-  entryPoint?: string;
 }
 
 export class RenderOrchestrator extends EventEmitter {
   private readonly rendersDir: string;
   private readonly maxConcurrent: number;
-  private readonly entryPoint: string;
   private readonly jobs = new Map<string, RenderJob>();
   private readonly activeWorkers = new Map<string, Worker>();
   private readonly queue: string[] = [];
@@ -44,11 +41,6 @@ export class RenderOrchestrator extends EventEmitter {
     super();
     this.rendersDir = resolvePath(options.rendersDir ?? "~/.openzigs/renders");
     this.maxConcurrent = options.maxConcurrent ?? 1;
-    this.entryPoint = options.entryPoint ?? path.join(
-      import.meta.dirname ?? path.dirname(new URL(import.meta.url).pathname),
-      "remotion-project",
-      "index.ts",
-    );
   }
 
   /**
@@ -235,7 +227,7 @@ export class RenderOrchestrator extends EventEmitter {
     if (!job) return;
 
     this.concurrentCount++;
-    job.status = "bundling";
+    job.status = "rendering";
     job.updatedAt = new Date();
 
     const outputDir = path.join(this.rendersDir, jobId);
@@ -276,7 +268,6 @@ export class RenderOrchestrator extends EventEmitter {
       jobId,
       manifest: job.manifest,
       outputDir,
-      entryPoint: this.entryPoint,
     } satisfies WorkerMessage);
 
     logger.info(`[RenderOrchestrator] Job ${jobId} started worker`);
@@ -289,7 +280,7 @@ export class RenderOrchestrator extends EventEmitter {
     switch (msg.type) {
       case "progress": {
         job.progress = msg.progress;
-        job.status = msg.progress < 0.2 ? "bundling" : msg.progress < 0.95 ? "rendering" : "encoding";
+        job.status = msg.progress < 0.6 ? "rendering" : msg.progress < 0.95 ? "encoding" : "encoding";
         job.updatedAt = new Date();
 
         const progressEvent: RenderProgress = {
