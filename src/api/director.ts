@@ -496,9 +496,25 @@ export const createDirectorRouter = ({
         musicTrackPath: resolvedMusicPath,
         preferredTemplate: template,
         model: model || runtimeConfig.defaultModel || undefined,
+        sourceClips: clips,
       });
 
       const elapsedMs = Date.now() - startTime;
+
+      // Count effects and transitions for diagnostics
+      const videoClipsInManifest = result.manifest.timeline.filter((e) => e.type === "video_clip");
+      const transitionsInManifest = result.manifest.timeline.filter((e) => e.type === "transition");
+      const clipsWithEffects = videoClipsInManifest.filter(
+        (e) => e.type === "video_clip" && "effects" in e && Array.isArray(e.effects) && e.effects.length > 0,
+      );
+      const uniqueSources = new Set(
+        videoClipsInManifest.map((e) => e.type === "video_clip" ? e.source : ""),
+      );
+
+      logger.info(
+        `[Director API] Manifest stats: ${videoClipsInManifest.length} video clips from ${uniqueSources.size} source(s), ` +
+        `${transitionsInManifest.length} transitions, ${clipsWithEffects.length} clips with effects`,
+      );
 
       res.json({
         manifest: result.manifest,
@@ -508,6 +524,13 @@ export const createDirectorRouter = ({
         visionAnalysisEnabled: useVision,
         processingTimeMs: elapsedMs,
         progressLog,
+        diagnostics: {
+          videoClipCount: videoClipsInManifest.length,
+          transitionCount: transitionsInManifest.length,
+          clipsWithEffects: clipsWithEffects.length,
+          uniqueSourcesUsed: uniqueSources.size,
+          totalSourcesProvided: clips.length,
+        },
       });
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);

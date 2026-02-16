@@ -60,16 +60,54 @@ function partitionTimeline(timeline: TimelineItem[]) {
 }
 
 /**
- * Find the transition that occurs between two segments (based on frame overlap).
+ * Find the transition that should occur between two adjacent segments.
+ *
+ * Strategy (ordered by priority):
+ *   1. Transition whose startAtFrame is near segA's end (±30 frames)
+ *   2. Transition whose startAtFrame is near segB's start (±30 frames)
+ *   3. Transition whose startAtFrame falls anywhere between segA start and segB end
+ *
+ * This is deliberately generous because LLMs place transitions inconsistently —
+ * sometimes at the end of the outgoing clip, sometimes at the start of the
+ * incoming clip, sometimes at an arbitrary frame in between.
  */
 function findTransitionBetween(
   transitions: TimelineItem[],
-  _segA: TimelineItem,
+  segA: TimelineItem,
   segB: TimelineItem,
 ): TimelineItem | undefined {
-  return transitions.find(
-    (t) => t.type === "transition" && Math.abs(t.startAtFrame - segB.startAtFrame) < 5,
+  const segAEnd =
+    segA.startAtFrame +
+    ("durationInFrames" in segA ? (segA.durationInFrames ?? 0) : 0);
+  const segBStart = segB.startAtFrame;
+
+  // Tolerance: 30 frames (~1 second at 30fps) — generous enough for LLM jitter
+  const TOLERANCE = 30;
+
+  // Priority 1: near the end of segment A
+  const nearEnd = transitions.find(
+    (t) =>
+      t.type === "transition" &&
+      Math.abs(t.startAtFrame - segAEnd) <= TOLERANCE,
   );
+  if (nearEnd) return nearEnd;
+
+  // Priority 2: near the start of segment B
+  const nearStart = transitions.find(
+    (t) =>
+      t.type === "transition" &&
+      Math.abs(t.startAtFrame - segBStart) <= TOLERANCE,
+  );
+  if (nearStart) return nearStart;
+
+  // Priority 3: anywhere between the two segments (expanded range)
+  const inBetween = transitions.find(
+    (t) =>
+      t.type === "transition" &&
+      t.startAtFrame >= segA.startAtFrame &&
+      t.startAtFrame <= segBStart + TOLERANCE,
+  );
+  return inBetween;
 }
 
 /**
@@ -284,6 +322,19 @@ export const TemplateComposition: React.FC<CompositionInputProps> = (props) => {
                       key={`trans-${i}`}
                       presentation={mapped.presentation}
                       timing={mapped.timing}
+                    />,
+                  );
+                }
+              } else {
+                // No explicit transition found — apply a default crossfade
+                // so the video never has jarring hard cuts between clips.
+                const defaultMapped = mapTransition("crossfade", 15);
+                if (defaultMapped) {
+                  elements.push(
+                    <TransitionSeries.Transition
+                      key={`trans-default-${i}`}
+                      presentation={defaultMapped.presentation}
+                      timing={defaultMapped.timing}
                     />,
                   );
                 }

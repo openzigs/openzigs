@@ -8,6 +8,7 @@ import fs from "node:fs/promises";
 import { logger } from "../../logging/logger.js";
 import { validateManifest } from "../manifest/manifest-validator.js";
 import { repairManifest } from "../manifest/manifest-repair.js";
+import { enhanceManifest } from "../manifest/manifest-enhancer.js";
 import { TEMPLATE_IDS } from "../templates/template-registry.js";
 import { formatContextForPrompt } from "../ingestion/context-assembler.js";
 import { buildHighlightReelPrompt, buildScriptDrivenPrompt, buildUserPrompt } from "./prompts.js";
@@ -37,6 +38,8 @@ export interface ProducerInput {
   voiceoverPath?: string;
   /** Model override for the LLM call (e.g. "gpt-4.1", "claude-sonnet-4") */
   model?: string;
+  /** Source clip paths (for multi-clip validation by the enhancer) */
+  sourceClips?: string[];
 }
 
 export interface ProducerResult {
@@ -148,6 +151,14 @@ export class ProducerService {
 
     // Repair common LLM deviations (invalid enum values, fractional frames, etc.)
     repairManifest(manifest as unknown as Record<string, unknown>);
+
+    // Enhance manifest with smart defaults: ensure transitions between clips,
+    // effects on video segments, and multi-clip coverage.
+    const sourceClips = input.sourceClips ?? input.contextPayload.clips.map((c) => c.source);
+    const enhancementStats = enhanceManifest(manifest, sourceClips);
+    if (enhancementStats.clipsInjected > 0) {
+      logger.info(`[Producer] Injected ${enhancementStats.clipsInjected} missing clip segment(s) from ignored sources`);
+    }
 
     // Inject voiceover into audioLayer if generated
     if (input.mode === "script" && voiceoverPath && manifest.audioLayer) {
