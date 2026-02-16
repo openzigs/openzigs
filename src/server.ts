@@ -358,8 +358,14 @@ const directorConfig = (config as Record<string, unknown>).director as {
   };
 } | undefined;
 
+/** Expand leading ~ to the user's home directory (Node fs APIs don't do this). */
+function expandTilde(p: string): string {
+  if (p.startsWith("~")) return path.join(os.homedir(), p.slice(1));
+  return path.resolve(p);
+}
+
 const renderOrchestrator = new RenderOrchestrator({
-  rendersDir: directorConfig?.outputDir ?? "~/.openzigs/renders",
+  rendersDir: expandTilde(directorConfig?.outputDir ?? "~/.openzigs/renders"),
   maxConcurrent: 1,
 });
 
@@ -369,11 +375,11 @@ const directorRouter = createDirectorRouter({
   renderOrchestrator,
   config: {
     enabled: directorConfig?.enabled ?? true,
-    outputDir: directorConfig?.outputDir ?? "~/.openzigs/video-output",
+    outputDir: expandTilde(directorConfig?.outputDir ?? "~/.openzigs/video-output"),
     defaultTemplate: directorConfig?.defaultTemplate ?? "Minimalist",
     assets: {
-      localLibraryPath: directorConfig?.assets?.localLibraryPath ?? "~/.openzigs/media-library",
-      downloadCachePath: directorConfig?.assets?.downloadCachePath ?? "~/.openzigs/asset-cache",
+      localLibraryPath: expandTilde(directorConfig?.assets?.localLibraryPath ?? "~/.openzigs/media-library"),
+      downloadCachePath: expandTilde(directorConfig?.assets?.downloadCachePath ?? "~/.openzigs/asset-cache"),
       pixabayApiKey: directorConfig?.assets?.pixabayApiKey ?? "",
       jamendoClientId: directorConfig?.assets?.jamendoClientId ?? "",
       pexelsApiKey: directorConfig?.assets?.pexelsApiKey ?? "",

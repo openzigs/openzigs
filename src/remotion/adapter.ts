@@ -155,7 +155,7 @@ export function stageInputPropsMedia(
     if (item.type === "video_clip") {
       const staged = stageMediaFile(item.src, bundleDir);
       if (!staged) {
-        // Source file missing — skip this clip (shouldn't happen for real clips)
+        logger.warn(`[Adapter] Video clip file not found on disk — src will be unusable: "${item.src}"`);
         return item;
       }
       return { ...item, src: staged };
