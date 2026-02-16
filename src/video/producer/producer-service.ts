@@ -7,6 +7,7 @@
 import fs from "node:fs/promises";
 import { logger } from "../../logging/logger.js";
 import { validateManifest } from "../manifest/manifest-validator.js";
+import { repairManifest } from "../manifest/manifest-repair.js";
 import { TEMPLATE_IDS } from "../templates/template-registry.js";
 import { formatContextForPrompt } from "../ingestion/context-assembler.js";
 import { buildHighlightReelPrompt, buildScriptDrivenPrompt, buildUserPrompt } from "./prompts.js";
@@ -125,6 +126,9 @@ export class ProducerService {
 
     // Parse the JSON manifest from the response
     const manifest = this.parseManifestFromResponse(responseText);
+
+    // Repair common LLM deviations (invalid enum values, fractional frames, etc.)
+    repairManifest(manifest as unknown as Record<string, unknown>);
 
     // Inject voiceover into audioLayer if generated
     if (input.mode === "script" && voiceoverPath && manifest.audioLayer) {
