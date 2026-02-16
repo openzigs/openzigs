@@ -34,7 +34,8 @@ export interface DirectorRouterOptions {
       localLibraryPath: string;
       downloadCachePath: string;
       pixabayApiKey: string;
-      freesoundApiKey: string;
+      jamendoClientId: string;
+      pexelsApiKey: string;
     };
   };
 }
@@ -50,7 +51,8 @@ export const createDirectorRouter = ({
   // Mutable runtime config (overlaid on top of file-based config)
   const runtimeConfig = {
     pixabayApiKey: config.assets.pixabayApiKey,
-    freesoundApiKey: config.assets.freesoundApiKey,
+    jamendoClientId: config.assets.jamendoClientId,
+    pexelsApiKey: config.assets.pexelsApiKey,
     defaultModel: "", // empty = use system default
   };
 
@@ -69,20 +71,23 @@ export const createDirectorRouter = ({
       defaultTemplate: config.defaultTemplate,
       defaultModel: runtimeConfig.defaultModel,
       pixabayApiKey: runtimeConfig.pixabayApiKey ? "••••" + runtimeConfig.pixabayApiKey.slice(-4) : "",
-      freesoundApiKey: runtimeConfig.freesoundApiKey ? "••••" + runtimeConfig.freesoundApiKey.slice(-4) : "",
+      jamendoClientId: runtimeConfig.jamendoClientId ? "••••" + runtimeConfig.jamendoClientId.slice(-4) : "",
+      pexelsApiKey: runtimeConfig.pexelsApiKey ? "••••" + runtimeConfig.pexelsApiKey.slice(-4) : "",
       pixabayConfigured: !!runtimeConfig.pixabayApiKey && !runtimeConfig.pixabayApiKey.startsWith("${"),
-      freesoundConfigured: !!runtimeConfig.freesoundApiKey && !runtimeConfig.freesoundApiKey.startsWith("${"),
+      jamendoConfigured: !!runtimeConfig.jamendoClientId && !runtimeConfig.jamendoClientId.startsWith("${"),
+      pexelsConfigured: !!runtimeConfig.pexelsApiKey && !runtimeConfig.pexelsApiKey.startsWith("${"),
     });
   });
 
   /**
    * PUT /config — update Director Mode configuration.
-   * Body: { pixabayApiKey?, freesoundApiKey?, defaultModel? }
+   * Body: { pixabayApiKey?, jamendoClientId?, pexelsApiKey?, defaultModel? }
    */
   router.put("/config", (req, res) => {
-    const { pixabayApiKey, freesoundApiKey, defaultModel } = req.body as {
+    const { pixabayApiKey, jamendoClientId, pexelsApiKey, defaultModel } = req.body as {
       pixabayApiKey?: string;
-      freesoundApiKey?: string;
+      jamendoClientId?: string;
+      pexelsApiKey?: string;
       defaultModel?: string;
     };
 
@@ -92,9 +97,14 @@ export const createDirectorRouter = ({
       // Reset asset manager so it picks up the new key
       assetManagerInstance = null;
     }
-    if (freesoundApiKey !== undefined) {
-      runtimeConfig.freesoundApiKey = freesoundApiKey;
-      config.assets.freesoundApiKey = freesoundApiKey;
+    if (jamendoClientId !== undefined) {
+      runtimeConfig.jamendoClientId = jamendoClientId;
+      config.assets.jamendoClientId = jamendoClientId;
+      assetManagerInstance = null;
+    }
+    if (pexelsApiKey !== undefined) {
+      runtimeConfig.pexelsApiKey = pexelsApiKey;
+      config.assets.pexelsApiKey = pexelsApiKey;
       assetManagerInstance = null;
     }
     if (defaultModel !== undefined) {
@@ -167,9 +177,13 @@ export const createDirectorRouter = ({
           enabled: !!runtimeConfig.pixabayApiKey && !runtimeConfig.pixabayApiKey.startsWith("${"),
           apiKey: runtimeConfig.pixabayApiKey,
         },
-        freesound: {
-          enabled: !!runtimeConfig.freesoundApiKey && !runtimeConfig.freesoundApiKey.startsWith("${"),
-          apiKey: runtimeConfig.freesoundApiKey,
+        jamendo: {
+          enabled: !!runtimeConfig.jamendoClientId && !runtimeConfig.jamendoClientId.startsWith("${"),
+          clientId: runtimeConfig.jamendoClientId,
+        },
+        pexels: {
+          enabled: !!runtimeConfig.pexelsApiKey && !runtimeConfig.pexelsApiKey.startsWith("${"),
+          apiKey: runtimeConfig.pexelsApiKey,
         },
       });
       await assetManagerInstance.initialize();
@@ -185,8 +199,8 @@ export const createDirectorRouter = ({
     try {
       const { query, source, type, minDuration, maxDuration, page, perPage } = req.body as {
         query: string;
-        source?: "local" | "pixabay" | "freesound" | "all";
-        type?: "music" | "sfx";
+        source?: "local" | "pixabay" | "jamendo" | "pexels" | "all";
+        type?: "music" | "sfx" | "image" | "video";
         minDuration?: number;
         maxDuration?: number;
         page?: number;
@@ -226,7 +240,7 @@ export const createDirectorRouter = ({
       const { id, name, source, previewUrl, attribution } = req.body as {
         id: string;
         name: string;
-        source: "pixabay" | "freesound";
+        source: "pixabay" | "jamendo" | "pexels";
         previewUrl: string;
         attribution?: string;
       };
@@ -237,17 +251,18 @@ export const createDirectorRouter = ({
       }
 
       const manager = await getAssetManager();
+      const assetType = source === "pexels" ? "image" as const : "music" as const;
       const result = await manager.download({
         id: id ?? name,
         name,
         source,
         previewUrl,
         attribution,
-        type: "music",
+        type: assetType,
         filePath: "",
         duration: 0,
         tags: [],
-        license: source === "pixabay" ? "Pixabay License" : "CC-BY",
+        license: source === "pixabay" ? "Pixabay License" : source === "pexels" ? "Pexels License" : "Creative Commons",
       });
 
       res.json({ success: true, filePath: result.filePath, asset: result.asset });

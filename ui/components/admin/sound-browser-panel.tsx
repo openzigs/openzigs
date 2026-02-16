@@ -9,8 +9,8 @@ import { Music, Search, Download, Play, Pause, Library, Globe, Tag } from "lucid
 type AssetResult = {
   id: string;
   name: string;
-  source: "local" | "pixabay" | "freesound";
-  type: "music" | "sfx";
+  source: "local" | "pixabay" | "jamendo" | "pexels";
+  type: "music" | "sfx" | "image" | "video";
   filePath?: string;
   duration?: number;
   tags: string[];
@@ -21,7 +21,7 @@ type AssetResult = {
 
 export const SoundBrowserPanel = () => {
   const [query, setQuery] = useState("");
-  const [source, setSource] = useState<"all" | "local" | "pixabay" | "freesound">("all");
+  const [source, setSource] = useState<"all" | "local" | "pixabay" | "jamendo">("all");
   const [type, setType] = useState<"" | "music" | "sfx">("");
   const [playing, setPlaying] = useState<string | null>(null);
 
@@ -77,7 +77,8 @@ export const SoundBrowserPanel = () => {
     switch (src) {
       case "local": return <Library className="w-3 h-3" />;
       case "pixabay":
-      case "freesound": return <Globe className="w-3 h-3" />;
+      case "jamendo":
+      case "pexels": return <Globe className="w-3 h-3" />;
       default: return <Music className="w-3 h-3" />;
     }
   };
@@ -111,7 +112,7 @@ export const SoundBrowserPanel = () => {
           <option value="all">All Sources</option>
           <option value="local">Local Library</option>
           <option value="pixabay">Pixabay</option>
-          <option value="freesound">Freesound</option>
+          <option value="jamendo">Jamendo</option>
         </select>
         <select
           value={type}
@@ -205,7 +206,7 @@ export const SoundBrowserPanel = () => {
           <Music className="w-10 h-10 text-zinc-600 mx-auto mb-2" />
           <p className="text-zinc-500 text-sm">Search for royalty-free music and sound effects</p>
           <p className="text-zinc-600 text-xs mt-1">
-            Sources: Local Library • Pixabay • Freesound
+            Sources: Local Library • Pixabay • Jamendo
           </p>
         </div>
       )}

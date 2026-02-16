@@ -1,25 +1,28 @@
 /**
  * Director Mode — Asset Manager (Central Registry)
- * Issue #238: Unified search across local library, Pixabay, and Freesound.
+ * Issue #238: Unified search across local library, Pixabay, Jamendo, and Pexels.
  */
 
 import { logger } from "../../logging/logger.js";
 import type { AssetMetadata, AssetSearchParams, AssetSearchResult, AssetDownloadResult } from "./asset-types.js";
 import { scanLocalLibrary } from "./local-library.js";
 import { PixabayDownloader } from "./downloaders/pixabay-downloader.js";
-import { FreesoundDownloader } from "./downloaders/freesound-downloader.js";
+import { JamendoDownloader } from "./downloaders/jamendo-downloader.js";
+import { PexelsDownloader } from "./downloaders/pexels-downloader.js";
 
 export interface AssetManagerConfig {
   localLibraryPath: string;
   downloadCachePath: string;
   pixabay: { enabled: boolean; apiKey: string };
-  freesound: { enabled: boolean; apiKey: string };
+  jamendo: { enabled: boolean; clientId: string };
+  pexels: { enabled: boolean; apiKey: string };
 }
 
 export class AssetManager {
   private readonly config: AssetManagerConfig;
   private readonly pixabay: PixabayDownloader;
-  private readonly freesound: FreesoundDownloader;
+  private readonly jamendo: JamendoDownloader;
+  private readonly pexels: PexelsDownloader;
   private localAssets: AssetMetadata[] = [];
   private initialized = false;
 
@@ -29,8 +32,12 @@ export class AssetManager {
       config.pixabay.enabled ? config.pixabay.apiKey : "",
       config.downloadCachePath,
     );
-    this.freesound = new FreesoundDownloader(
-      config.freesound.enabled ? config.freesound.apiKey : "",
+    this.jamendo = new JamendoDownloader(
+      config.jamendo.enabled ? config.jamendo.clientId : "",
+      config.downloadCachePath,
+    );
+    this.pexels = new PexelsDownloader(
+      config.pexels.enabled ? config.pexels.apiKey : "",
       config.downloadCachePath,
     );
   }
@@ -71,10 +78,16 @@ export class AssetManager {
       allResults.push(...pixabayResults);
     }
 
-    // Search Freesound (if enabled and requested)
-    if ((source === "all" || source === "freesound") && this.freesound.isConfigured()) {
-      const freesoundResults = await this.freesound.search(params);
-      allResults.push(...freesoundResults);
+    // Search Jamendo (if enabled and requested)
+    if ((source === "all" || source === "jamendo") && this.jamendo.isConfigured()) {
+      const jamendoResults = await this.jamendo.search(params);
+      allResults.push(...jamendoResults);
+    }
+
+    // Search Pexels (if enabled and requested)
+    if ((source === "all" || source === "pexels") && this.pexels.isConfigured()) {
+      const pexelsResults = await this.pexels.search(params);
+      allResults.push(...pexelsResults);
     }
 
     // Apply type filter
@@ -113,8 +126,10 @@ export class AssetManager {
 
     if (asset.source === "pixabay") {
       filePath = await this.pixabay.download(asset.previewUrl, asset.name);
-    } else if (asset.source === "freesound") {
-      filePath = await this.freesound.download(asset.previewUrl, asset.name, asset.attribution);
+    } else if (asset.source === "jamendo") {
+      filePath = await this.jamendo.download(asset.previewUrl, asset.name, asset.attribution);
+    } else if (asset.source === "pexels") {
+      filePath = await this.pexels.download(asset.previewUrl, asset.name);
     } else {
       throw new Error(`Cannot download local asset ${asset.id} — it's already on disk`);
     }

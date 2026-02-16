@@ -352,7 +352,8 @@ const directorConfig = (config as Record<string, unknown>).director as {
     localLibraryPath?: string;
     downloadCachePath?: string;
     pixabayApiKey?: string;
-    freesoundApiKey?: string;
+    jamendoClientId?: string;
+    pexelsApiKey?: string;
   };
 } | undefined;
 
@@ -367,7 +368,8 @@ const directorRouter = createDirectorRouter({
       localLibraryPath: directorConfig?.assets?.localLibraryPath ?? "~/.openzigs/media-library",
       downloadCachePath: directorConfig?.assets?.downloadCachePath ?? "~/.openzigs/asset-cache",
       pixabayApiKey: directorConfig?.assets?.pixabayApiKey ?? "",
-      freesoundApiKey: directorConfig?.assets?.freesoundApiKey ?? "",
+      jamendoClientId: directorConfig?.assets?.jamendoClientId ?? "",
+      pexelsApiKey: directorConfig?.assets?.pexelsApiKey ?? "",
     },
   },
 });

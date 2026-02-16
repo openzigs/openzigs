@@ -154,7 +154,8 @@
       "localLibraryPath": "~/.openzigs/media-library",
       "downloadCachePath": "~/.openzigs/asset-cache",
       "pixabayApiKey": "${PIXABAY_API_KEY}",
-      "freesoundApiKey": "${FREESOUND_API_KEY}"
+      "jamendoClientId": "${JAMENDO_CLIENT_ID}",
+      "pexelsApiKey": "${PEXELS_API_KEY}"
     },
     "ingestion": {
       "sceneThreshold": 0.4,

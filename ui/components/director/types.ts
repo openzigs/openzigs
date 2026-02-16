@@ -31,11 +31,12 @@ export interface MediaFile {
 export interface SelectedAsset {
   id: string;
   name: string;
-  source: "local" | "pixabay" | "freesound";
-  type: "music" | "sfx";
+  source: "local" | "pixabay" | "jamendo" | "pexels";
+  type: "music" | "sfx" | "image" | "video";
   filePath?: string;
   duration?: number;
   previewUrl?: string;
+  thumbnailUrl?: string;
   license: string;
   attribution?: string;
 }

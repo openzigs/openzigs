@@ -830,7 +830,7 @@ Director Mode is a **full-stack video production pipeline** that transforms raw 
 | **Render Core** (#235) | `src/video/render-orchestrator.ts`, `render-worker.ts` | Worker Thread render jobs with concurrency control and EventEmitter progress |
 | **Template Library** (#236) | `src/video/templates/` | 4 built-in templates (Minimalist, ContentCreator, Corporate, TechDemo) with registry |
 | **Ingestion Pipeline** (#237) | `src/video/ingestion/` | Audio extraction (ffmpeg), scene detection, Whisper transcription, context assembly |
-| **Asset Management** (#238) | `src/video/assets/` | Local library scanner + Pixabay/Freesound API downloaders with attribution tracking |
+| **Asset Management** (#238) | `src/video/assets/` | Local library scanner + Pixabay/Jamendo/Pexels API downloaders with attribution tracking |
 | **Producer Service** (#239) | `src/video/producer/` | Single-shot CopilotWrapper.chat() call → JSON manifest with markdown-stripping parser |
 
 ### Production Modes
@@ -1007,7 +1007,7 @@ Logs are queryable via `GET /api/logs` with filters for `category`, `level`, `si
 |---|---|---|---|
 | `produce-video` | productivity | 🔴 high | Ingest clips, run single-shot LLM, and produce a Director Manifest (edit decision list). |
 | `list-templates` | productivity | 🟢 low | List available video templates with default compositions and features. |
-| `search-assets` | productivity | 🟢 low | Search royalty-free music and SFX from local library, Pixabay, and Freesound. |
+| `search-assets` | productivity | 🟢 low | Search royalty-free music, SFX, and images from local library, Pixabay, Jamendo, and Pexels. |
 
 ### Path Restrictions
 

@@ -13,9 +13,11 @@ type DirectorConfig = {
   defaultTemplate: string;
   defaultModel: string;
   pixabayApiKey: string;
-  freesoundApiKey: string;
+  jamendoClientId: string;
+  pexelsApiKey: string;
   pixabayConfigured: boolean;
-  freesoundConfigured: boolean;
+  jamendoConfigured: boolean;
+  pexelsConfigured: boolean;
 };
 
 export const DirectorPanel = () => {
@@ -32,10 +34,12 @@ export const DirectorPanel = () => {
   });
 
   const [pixabayKey, setPixabayKey] = useState("");
-  const [freesoundKey, setFreesoundKey] = useState("");
+  const [jamendoId, setJamendoId] = useState("");
+  const [pexelsKey, setPexelsKey] = useState("");
   const [defaultModel, setDefaultModel] = useState("");
   const [showPixabay, setShowPixabay] = useState(false);
-  const [showFreesound, setShowFreesound] = useState(false);
+  const [showJamendo, setShowJamendo] = useState(false);
+  const [showPexels, setShowPexels] = useState(false);
   const [initialized, setInitialized] = useState(false);
 
   // Sync form state once config loads
@@ -60,14 +64,16 @@ export const DirectorPanel = () => {
   const handleSaveKeys = () => {
     const body: Record<string, string | undefined> = {};
     if (pixabayKey.trim()) body.pixabayApiKey = pixabayKey.trim();
-    if (freesoundKey.trim()) body.freesoundApiKey = freesoundKey.trim();
+    if (jamendoId.trim()) body.jamendoClientId = jamendoId.trim();
+    if (pexelsKey.trim()) body.pexelsApiKey = pexelsKey.trim();
     if (Object.keys(body).length === 0) {
       showToast("Enter at least one key to save", "error");
       return;
     }
     saveMutation.mutate(body);
     setPixabayKey("");
-    setFreesoundKey("");
+    setJamendoId("");
+    setPexelsKey("");
   };
 
   const handleSaveModel = () => {
@@ -88,10 +94,11 @@ export const DirectorPanel = () => {
   return (
     <div className="space-y-5">
       {/* Status */}
-      <div className="flex items-center gap-4">
+      <div className="flex items-center gap-4 flex-wrap">
         <StatusBadge label="Enabled" ok={config.enabled} />
         <StatusBadge label="Pixabay" ok={config.pixabayConfigured} />
-        <StatusBadge label="Freesound" ok={config.freesoundConfigured} />
+        <StatusBadge label="Jamendo" ok={config.jamendoConfigured} />
+        <StatusBadge label="Pexels" ok={config.pexelsConfigured} />
       </div>
 
       <p className="text-xs text-muted-foreground">
@@ -131,16 +138,17 @@ export const DirectorPanel = () => {
 
       {/* API Keys */}
       <div className="space-y-3">
-        <label className="text-xs font-medium text-muted-foreground">Music API Keys</label>
+        <label className="text-xs font-medium text-muted-foreground">Media API Keys</label>
 
         <div className="space-y-2">
           <div className="flex items-center gap-2">
+            <span className="text-xs text-muted-foreground w-16 shrink-0">Pixabay</span>
             <div className="relative flex-1">
               <input
                 type={showPixabay ? "text" : "password"}
                 value={pixabayKey}
                 onChange={(e) => setPixabayKey(e.target.value)}
-                placeholder={config.pixabayConfigured ? `Pixabay (configured ${config.pixabayApiKey})` : "Pixabay API Key"}
+                placeholder={config.pixabayConfigured ? `Configured ${config.pixabayApiKey}` : "Pixabay API Key"}
                 className="w-full rounded-lg border border-border bg-card text-sm text-foreground px-3 py-2 pr-8"
               />
               <button
@@ -153,32 +161,55 @@ export const DirectorPanel = () => {
           </div>
 
           <div className="flex items-center gap-2">
+            <span className="text-xs text-muted-foreground w-16 shrink-0">Jamendo</span>
             <div className="relative flex-1">
               <input
-                type={showFreesound ? "text" : "password"}
-                value={freesoundKey}
-                onChange={(e) => setFreesoundKey(e.target.value)}
-                placeholder={config.freesoundConfigured ? `Freesound (configured ${config.freesoundApiKey})` : "Freesound API Key"}
+                type={showJamendo ? "text" : "password"}
+                value={jamendoId}
+                onChange={(e) => setJamendoId(e.target.value)}
+                placeholder={config.jamendoConfigured ? `Configured ${config.jamendoClientId}` : "Jamendo Client ID"}
                 className="w-full rounded-lg border border-border bg-card text-sm text-foreground px-3 py-2 pr-8"
               />
               <button
-                onClick={() => setShowFreesound(!showFreesound)}
+                onClick={() => setShowJamendo(!showJamendo)}
                 className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
               >
-                {showFreesound ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                {showJamendo ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+              </button>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-muted-foreground w-16 shrink-0">Pexels</span>
+            <div className="relative flex-1">
+              <input
+                type={showPexels ? "text" : "password"}
+                value={pexelsKey}
+                onChange={(e) => setPexelsKey(e.target.value)}
+                placeholder={config.pexelsConfigured ? `Configured ${config.pexelsApiKey}` : "Pexels API Key"}
+                className="w-full rounded-lg border border-border bg-card text-sm text-foreground px-3 py-2 pr-8"
+              />
+              <button
+                onClick={() => setShowPexels(!showPexels)}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+              >
+                {showPexels ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
               </button>
             </div>
           </div>
 
           <div className="flex items-center justify-between">
             <p className="text-[11px] text-muted-foreground/60">
-              Get keys: <a href="https://pixabay.com/api/docs/" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">Pixabay</a>
+              Get keys:{" "}
+              <a href="https://pixabay.com/api/docs/" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">Pixabay</a>
               {" · "}
-              <a href="https://freesound.org/apiv2/apply/" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">Freesound</a>
+              <a href="https://developer.jamendo.com/v3.0" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">Jamendo</a>
+              {" · "}
+              <a href="https://www.pexels.com/api/" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">Pexels</a>
             </p>
             <button
               onClick={handleSaveKeys}
-              disabled={saveMutation.isPending || (!pixabayKey.trim() && !freesoundKey.trim())}
+              disabled={saveMutation.isPending || (!pixabayKey.trim() && !jamendoId.trim() && !pexelsKey.trim())}
               className="rounded-lg bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground disabled:opacity-40"
             >
               Save Keys

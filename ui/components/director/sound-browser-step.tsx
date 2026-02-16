@@ -27,14 +27,15 @@ interface SoundBrowserStepProps {
 type AssetResult = {
   id: string;
   name: string;
-  source: "local" | "pixabay" | "freesound";
-  type: "music" | "sfx";
+  source: "local" | "pixabay" | "jamendo" | "pexels";
+  type: "music" | "sfx" | "image" | "video";
   filePath?: string;
   duration?: number;
   tags: string[];
   license: string;
   attribution?: string;
   previewUrl?: string;
+  thumbnailUrl?: string;
 };
 
 type SearchResult = {
@@ -46,7 +47,7 @@ type SearchResult = {
 
 export const SoundBrowserStep = ({ selected, onSelect }: SoundBrowserStepProps) => {
   const [query, setQuery] = useState("");
-  const [source, setSource] = useState<"all" | "local" | "pixabay" | "freesound">("all");
+  const [source, setSource] = useState<"all" | "local" | "pixabay" | "jamendo">("all");
   const [type, setType] = useState<"" | "music" | "sfx">("");
   const [playing, setPlaying] = useState<string | null>(null);
 
@@ -136,7 +137,7 @@ export const SoundBrowserStep = ({ selected, onSelect }: SoundBrowserStepProps) 
         </h2>
         <p className="text-sm text-muted-foreground max-w-lg mx-auto">
           Search for royalty-free music and sound effects from your local library,
-          Pixabay, or Freesound. This step is optional — skip if you don&apos;t want music.
+          Pixabay, or Jamendo. This step is optional — skip if you don&apos;t want music.
         </p>
       </div>
 
@@ -179,7 +180,7 @@ export const SoundBrowserStep = ({ selected, onSelect }: SoundBrowserStepProps) 
           <option value="all">All</option>
           <option value="local">Local</option>
           <option value="pixabay">Pixabay</option>
-          <option value="freesound">Freesound</option>
+          <option value="jamendo">Jamendo</option>
         </select>
         <select
           value={type}
@@ -308,7 +309,7 @@ export const SoundBrowserStep = ({ selected, onSelect }: SoundBrowserStepProps) 
             Search for royalty-free music and sound effects
           </p>
           <p className="text-xs text-muted-foreground/60 mt-1">
-            Sources: Local Library • Pixabay • Freesound
+            Sources: Local Library • Pixabay • Jamendo
           </p>
         </div>
       )}

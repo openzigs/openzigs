@@ -28,8 +28,8 @@ const listTemplatesSchema = z.object({
 
 const searchAssetsSchema = z.object({
   query: z.string().describe("Search query for music/sound effects"),
-  source: z.enum(["local", "pixabay", "freesound", "all"]).optional().describe("Asset source to search (default: 'all')"),
-  type: z.enum(["music", "sfx"]).optional().describe("Asset type filter"),
+  source: z.enum(["local", "pixabay", "jamendo", "pexels", "all"]).optional().describe("Asset source to search (default: 'all')"),
+  type: z.enum(["music", "sfx", "image", "video"]).optional().describe("Asset type filter"),
   maxResults: z.number().optional().describe("Maximum results to return (default: 10)"),
 });
 
@@ -138,14 +138,14 @@ export const createVideoTools = ({ copilot, voiceService }: VideoToolsOptions): 
   tools.push({
     name: "search-assets",
     description:
-      "Search for royalty-free music and sound effects from local library, Pixabay, and Freesound. " +
+      "Search for royalty-free music, sound effects, and images from local library, Pixabay, Jamendo, and Pexels. " +
       "Returns metadata including license, duration, and preview URLs.",
     inputSchema: {
       type: "object",
       properties: {
         query: { type: "string", description: "Search query" },
-        source: { type: "string", enum: ["local", "pixabay", "freesound", "all"], description: "Source" },
-        type: { type: "string", enum: ["music", "sfx"], description: "Asset type" },
+        source: { type: "string", enum: ["local", "pixabay", "jamendo", "pexels", "all"], description: "Source" },
+        type: { type: "string", enum: ["music", "sfx", "image", "video"], description: "Asset type" },
         maxResults: { type: "number", description: "Max results" },
       },
       required: ["query"],
@@ -162,7 +162,8 @@ export const createVideoTools = ({ copilot, voiceService }: VideoToolsOptions): 
           localLibraryPath: "~/.openzigs/director/library",
           downloadCachePath: "~/.openzigs/director/cache",
           pixabay: { enabled: false, apiKey: "" },
-          freesound: { enabled: false, apiKey: "" },
+          jamendo: { enabled: false, clientId: "" },
+          pexels: { enabled: false, apiKey: "" },
         });
         await manager.initialize();
 
