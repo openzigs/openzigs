@@ -36,7 +36,7 @@ export const VideoClipSegment: React.FC<VideoClipSegmentProps> = ({
   const { fps } = useVideoConfig();
 
   // Compute the start time in seconds for the source video
-  const startFrom = Math.round(trimStartFrame / fps * fps);
+  const startFrom = trimStartFrame / fps;
 
   // Build transform/filter values from effects
   let scale = 1;

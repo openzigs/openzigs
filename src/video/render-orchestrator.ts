@@ -248,7 +248,7 @@ export class RenderOrchestrator extends EventEmitter {
     this.activeWorkers.set(jobId, worker);
 
     // Capture worker stderr for debugging (worker exit code 1 needs diagnosis)
-    let stderrChunks: string[] = [];
+    const stderrChunks: string[] = [];
     if (worker.stderr) {
       worker.stderr.on("data", (chunk: Buffer) => {
         const text = chunk.toString();
@@ -304,7 +304,7 @@ export class RenderOrchestrator extends EventEmitter {
         } else if (msg.progress < 0.95) {
           job.status = "encoding";
         } else {
-          job.status = "encoding";
+          job.status = "finalizing";
         }
         job.updatedAt = new Date();
 

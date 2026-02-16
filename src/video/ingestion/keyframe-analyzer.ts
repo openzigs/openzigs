@@ -260,7 +260,7 @@ function parseBatchResponse(raw: string, expectedCount: number): string[] {
   const results: string[] = new Array(expectedCount).fill("");
 
   // Split by numbered prefixes: "1. " or "1: " or "1 - " etc.
-  const linePattern = /^(\d+)[.):\-]\s*/;
+  const linePattern = /^(\d+)[.):-]\s*/;
   const lines = raw.split("\n");
 
   let currentIndex = -1;

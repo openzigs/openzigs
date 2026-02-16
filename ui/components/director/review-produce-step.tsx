@@ -220,6 +220,8 @@ export const ReviewProduceStep = ({
         return <Loader2 className="h-4 w-4 animate-spin text-blue-400" />;
       case "encoding":
         return <Loader2 className="h-4 w-4 animate-spin text-violet-400" />;
+      case "finalizing":
+        return <Loader2 className="h-4 w-4 animate-spin text-teal-400" />;
       case "complete":
         return <CheckCircle2 className="h-4 w-4 text-emerald-400" />;
       case "failed":

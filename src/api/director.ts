@@ -19,6 +19,7 @@
  */
 
 import { Router, raw } from "express";
+import { nanoid } from "nanoid";
 import { logger } from "../logging/logger.js";
 import type { CopilotWrapper } from "../copilot/copilot-wrapper.js";
 import type { VoiceService } from "../voice/voice-service.js";
@@ -318,6 +319,15 @@ export const createDirectorRouter = ({
         ? pathMod.join(osMod.homedir(), srcPath.slice(1))
         : pathMod.resolve(srcPath);
 
+      // Path traversal guard: only allow files under home directory or outputDir
+      const homeDir = osMod.homedir();
+      const allowedRoots = [homeDir, pathMod.resolve(config.outputDir)];
+      const normalizedResolved = pathMod.resolve(resolved);
+      if (!allowedRoots.some((root) => normalizedResolved.startsWith(root + pathMod.sep) || normalizedResolved === root)) {
+        res.status(403).json({ error: "Access denied: file path is outside allowed directories" });
+        return;
+      }
+
       if (!fs.existsSync(resolved)) {
         res.status(404).json({ error: `File not found: ${resolved}` });
         return;
@@ -336,7 +346,7 @@ export const createDirectorRouter = ({
         success: true,
         filePath: destPath,
         asset: {
-          id: `upload-${Date.now()}`,
+          id: `upload-${nanoid()}`,
           name: fileName,
           source: "upload" as const,
           type: type ?? "music",
@@ -586,9 +596,10 @@ export const createDirectorRouter = ({
       // Store quality metadata on the job for logging/display
       const job = renderOrchestrator.getJob(jobId);
       if (job) {
-        (job as unknown as Record<string, unknown>).codec = codec ?? "h264";
-        (job as unknown as Record<string, unknown>).crf = resolvedCrf ?? 23;
-        (job as unknown as Record<string, unknown>).quality = quality ?? "standard";
+        const jobMeta = job as typeof job & { codec?: string; crf?: number; quality?: string };
+        jobMeta.codec = codec ?? "h264";
+        jobMeta.crf = resolvedCrf ?? 23;
+        jobMeta.quality = quality ?? "standard";
       }
 
       res.json({ jobId, status: "queued", codec: codec ?? "h264", crf: resolvedCrf ?? 23 });

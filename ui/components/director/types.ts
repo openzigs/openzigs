@@ -83,7 +83,7 @@ export interface DirectorManifestSummary {
 
 export interface RenderJobStatus {
   id: string;
-  status: "queued" | "bundling" | "rendering" | "encoding" | "complete" | "failed" | "aborted";
+  status: "queued" | "bundling" | "rendering" | "encoding" | "finalizing" | "complete" | "failed" | "aborted";
   progress: number;
   projectTitle: string;
   templateId: string;

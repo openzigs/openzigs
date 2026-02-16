@@ -68,6 +68,8 @@ function adaptTimelineEntry(entry: TimelineEntry, outputDir: string): TimelineIt
         durationInFrames: entry.duration,
         startAtFrame: entry.startAtFrame,
       };
+    default:
+      throw new Error(`Unknown timeline entry type: ${(entry as { type: string }).type}`);
   }
 }
 
