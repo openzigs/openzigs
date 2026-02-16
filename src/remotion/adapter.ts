@@ -9,6 +9,7 @@
 import type { DirectorManifest, TimelineEntry } from "../video/manifest/manifest-types.js";
 import type { CompositionInputProps, TimelineItem, AudioProps, BrandingProps } from "./input-props.js";
 import { resolveMediaPath, stageMediaFile } from "./media-resolver.js";
+import { logger } from "../logging/logger.js";
 
 /**
  * Calculate the total composition duration in frames from the timeline.
@@ -167,6 +168,9 @@ export function stageInputPropsMedia(
   const stagedMusic = props.audio.music
     ? (() => {
         const staged = stageMediaFile(props.audio.music!.src, bundleDir);
+        if (!staged) {
+          logger.warn(`[Adapter] Music file not found on disk — dropping music track: "${props.audio.music!.src}"`);
+        }
         return staged ? { ...props.audio.music!, src: staged } : null;
       })()
     : null;
@@ -174,6 +178,9 @@ export function stageInputPropsMedia(
   const stagedVoiceover = props.audio.voiceover
     ? (() => {
         const staged = stageMediaFile(props.audio.voiceover!.src, bundleDir);
+        if (!staged) {
+          logger.warn(`[Adapter] Voiceover file not found on disk — dropping voiceover: "${props.audio.voiceover!.src}"`);
+        }
         return staged ? { ...props.audio.voiceover!, src: staged } : null;
       })()
     : null;

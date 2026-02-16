@@ -396,11 +396,12 @@ export const createDirectorRouter = ({
       // Produce manifest
       const { ProducerService } = await import("../video/producer/producer-service.js");
       const producer = new ProducerService(copilot, voiceService);
+      const resolvedMusicPath = musicTrackPath?.trim() || undefined;
       const result = await producer.produce({
         mode,
         contextPayload: ingestionResult.contextPayload,
         scriptPath,
-        musicTrackPath,
+        musicTrackPath: resolvedMusicPath,
         preferredTemplate: template,
         model: model || runtimeConfig.defaultModel || undefined,
       });

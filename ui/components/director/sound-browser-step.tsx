@@ -56,6 +56,7 @@ export const SoundBrowserStep = ({ selected, onSelect }: SoundBrowserStepProps) 
   const [uploadPath, setUploadPath] = useState("");
   const [uploadName, setUploadName] = useState("");
   const [uploadType, setUploadType] = useState<"music" | "sfx" | "voiceover">("music");
+  const [downloading, setDownloading] = useState<string | null>(null);
 
   const searchQuery = useQuery({
     queryKey: ["director-assets-search", query, source, type],
@@ -75,16 +76,19 @@ export const SoundBrowserStep = ({ selected, onSelect }: SoundBrowserStepProps) 
 
   const downloadMutation = useMutation({
     mutationFn: (asset: AssetResult) =>
-      fetchJson("/api/admin/director/assets/download", {
-        method: "POST",
-        body: JSON.stringify({
-          id: asset.id,
-          name: asset.name,
-          source: asset.source,
-          previewUrl: asset.previewUrl,
-          attribution: asset.attribution,
-        }),
-      }),
+      fetchJson<{ success: boolean; filePath: string; asset: { id: string; name: string; source: string; type: string; filePath: string } }>(
+        "/api/admin/director/assets/download",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            id: asset.id,
+            name: asset.name,
+            source: asset.source,
+            previewUrl: asset.previewUrl,
+            attribution: asset.attribution,
+          }),
+        },
+      ),
     onSuccess: () => showToast("Asset downloaded to library", "success"),
     onError: () => showToast("Download failed", "error"),
   });
@@ -150,9 +154,37 @@ export const SoundBrowserStep = ({ selected, onSelect }: SoundBrowserStepProps) 
     }
   };
 
-  const selectAsset = (asset: AssetResult) => {
+  const selectAsset = async (asset: AssetResult) => {
     if (selected?.id === asset.id) {
       onSelect(null);
+      return;
+    }
+
+    const isRemote = asset.source !== "local" && !asset.filePath;
+
+    if (isRemote && asset.previewUrl) {
+      // Remote asset without a local file — download it first so
+      // the produce pipeline gets a real filePath, not an empty string.
+      setDownloading(asset.id);
+      try {
+        const result = await downloadMutation.mutateAsync(asset);
+        onSelect({
+          id: asset.id,
+          name: asset.name,
+          source: asset.source,
+          type: asset.type,
+          filePath: result.filePath,
+          duration: asset.duration,
+          previewUrl: asset.previewUrl,
+          license: asset.license,
+          attribution: asset.attribution,
+        });
+        showToast("Track downloaded & selected", "success");
+      } catch {
+        showToast("Failed to download track", "error");
+      } finally {
+        setDownloading(null);
+      }
     } else {
       onSelect({
         id: asset.id,
@@ -278,15 +310,18 @@ export const SoundBrowserStep = ({ selected, onSelect }: SoundBrowserStepProps) 
 
         {searchQuery.data?.assets.map((asset) => {
           const isSelected = selected?.id === asset.id;
+          const isDownloading = downloading === asset.id;
           return (
             <div
               key={asset.id}
               className={`flex items-center gap-3 px-4 py-2.5 rounded-xl border transition-colors cursor-pointer ${
                 isSelected
                   ? "border-primary/50 bg-primary/5"
-                  : "border-transparent hover:bg-muted/50"
+                  : isDownloading
+                    ? "border-amber-500/30 bg-amber-500/5"
+                    : "border-transparent hover:bg-muted/50"
               }`}
-              onClick={() => selectAsset(asset)}
+              onClick={() => !isDownloading && selectAsset(asset)}
             >
               {/* Play/Pause */}
               <button
@@ -339,8 +374,10 @@ export const SoundBrowserStep = ({ selected, onSelect }: SoundBrowserStepProps) 
                 </div>
               </div>
 
-              {/* Select indicator or Download */}
-              {isSelected ? (
+              {/* Select indicator, downloading spinner, or Download button */}
+              {isDownloading ? (
+                <Loader2 className="h-4 w-4 animate-spin text-amber-400 shrink-0" />
+              ) : isSelected ? (
                 <Check className="h-4 w-4 text-primary shrink-0" />
               ) : asset.source !== "local" && asset.previewUrl ? (
                 <button

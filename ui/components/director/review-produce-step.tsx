@@ -355,6 +355,9 @@ export const ReviewProduceStep = ({
           {state.clips.length === 0 && (
             <Warning text="No video clips added. Go back to Step 2." />
           )}
+          {state.musicTrack && !state.musicTrack.filePath && (
+            <Warning text="Music track selected but not downloaded. Go back to Step 4 and re-select the track." />
+          )}
         </>
       )}
 
