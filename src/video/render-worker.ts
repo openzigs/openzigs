@@ -79,7 +79,8 @@ async function renderManifest(
     cachedServeUrl = await bundle({
       entryPoint: remotionEntry,
       onProgress: (progress: number) => {
-        const pct = 0.05 + progress * 0.15;
+        // Remotion's bundle() reports progress as 0–100 (percentage).
+        const pct = 0.05 + (progress / 100) * 0.15;
         emitProgress(jobId, pct, 0, totalFrames);
       },
     });
@@ -88,8 +89,12 @@ async function renderManifest(
   emitProgress(jobId, 0.20, 0, totalFrames);
 
   // ── Phase 2: Adapt manifest to input props (20–25%) ─────
-  const { adaptManifest } = await import("../remotion/adapter.js");
-  const inputProps = adaptManifest(manifest, outputDir);
+  const { adaptManifest, stageInputPropsMedia } = await import("../remotion/adapter.js");
+  const rawInputProps = adaptManifest(manifest, outputDir);
+
+  // Stage local media files into the Remotion bundle directory so the
+  // headless browser can load them via the bundle's HTTP server.
+  const inputProps = stageInputPropsMedia(rawInputProps, cachedServeUrl!);
 
   emitProgress(jobId, 0.25, Math.round(0.25 * totalFrames), totalFrames);
 

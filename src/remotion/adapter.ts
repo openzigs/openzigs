@@ -8,7 +8,7 @@
 
 import type { DirectorManifest, TimelineEntry } from "../video/manifest/manifest-types.js";
 import type { CompositionInputProps, TimelineItem, AudioProps, BrandingProps } from "./input-props.js";
-import { resolveMediaPath } from "./media-resolver.js";
+import { resolveMediaPath, stageMediaFile } from "./media-resolver.js";
 
 /**
  * Calculate the total composition duration in frames from the timeline.
@@ -133,4 +133,37 @@ export function adaptManifest(manifest: DirectorManifest, outputDir: string): Co
     audio: adaptAudio(manifest, outputDir),
     branding: adaptBranding(manifest),
   };
+}
+
+/**
+ * Stage all local media files referenced in the input props into the
+ * Remotion bundle directory so they can be served via HTTP.
+ *
+ * Returns a shallow copy of the input props with updated media paths.
+ * Remote URLs (http/https) are left unchanged.
+ *
+ * @param props - The adapted composition input props
+ * @param bundleDir - The Remotion bundle serve directory
+ */
+export function stageInputPropsMedia(
+  props: CompositionInputProps,
+  bundleDir: string,
+): CompositionInputProps {
+  const stagedTimeline = props.timeline.map((item) => {
+    if (item.type === "video_clip") {
+      return { ...item, src: stageMediaFile(item.src, bundleDir) };
+    }
+    return item;
+  });
+
+  const stagedAudio = {
+    music: props.audio.music
+      ? { ...props.audio.music, src: stageMediaFile(props.audio.music.src, bundleDir) }
+      : null,
+    voiceover: props.audio.voiceover
+      ? { ...props.audio.voiceover, src: stageMediaFile(props.audio.voiceover.src, bundleDir) }
+      : null,
+  };
+
+  return { ...props, timeline: stagedTimeline, audio: stagedAudio };
 }

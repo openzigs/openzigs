@@ -232,16 +232,18 @@ export class RenderOrchestrator extends EventEmitter {
 
     const outputDir = path.join(this.rendersDir, jobId);
 
-    // Resolve the worker script path relative to this file's location
+    // Resolve the worker script path relative to this file's location.
+    // In dev mode (.ts source) Worker Threads can't load TypeScript directly,
+    // so we use a thin .mjs bootstrap that registers tsx before importing the
+    // real worker module.  In production (compiled .js) no loader is needed.
+    const baseDir = import.meta.dirname ?? path.dirname(new URL(import.meta.url).pathname);
+    const isDevMode = import.meta.url.endsWith(".ts");
     const workerPath = path.join(
-      import.meta.dirname ?? path.dirname(new URL(import.meta.url).pathname),
-      "render-worker.ts",
+      baseDir,
+      isDevMode ? "render-worker-loader.mjs" : "render-worker.js",
     );
 
-    const worker = new Worker(workerPath, {
-      // Node 22+ native TypeScript support for Worker Threads
-      execArgv: ["--experimental-strip-types", "--experimental-transform-types"],
-    });
+    const worker = new Worker(workerPath);
 
     this.activeWorkers.set(jobId, worker);
 

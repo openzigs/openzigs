@@ -7,10 +7,10 @@
  * TemplateComposition component with different defaultProps.
  */
 
-import { Composition } from "remotion";
-import { TemplateComposition } from "./compositions/template-composition.js";
-import { CompositionInputPropsSchema } from "./input-props.js";
-import type { CompositionInputProps } from "./input-props.js";
+import { Composition, registerRoot } from "remotion";
+import { TemplateComposition } from "./compositions/template-composition";
+import { CompositionInputPropsSchema } from "./input-props";
+import type { CompositionInputProps } from "./input-props";
 
 const defaultProps: CompositionInputProps = {
   templateId: "Minimalist",
@@ -99,3 +99,5 @@ export const RemotionRoot: React.FC = () => {
     </>
   );
 };
+
+registerRoot(RemotionRoot);

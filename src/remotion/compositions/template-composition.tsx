@@ -19,14 +19,14 @@ import {
   useCurrentFrame,
 } from "remotion";
 import { TransitionSeries } from "@remotion/transitions";
-import type { CompositionInputProps, TimelineItem } from "../input-props.js";
-import { TitleCard } from "../components/title-card.js";
-import { SmartCaptions } from "../components/smart-captions.js";
-import { LowerThird } from "../components/lower-third.js";
-import { LogoWatermark } from "../components/logo-watermark.js";
-import { ProgressBar } from "../components/progress-bar.js";
-import { VideoClipSegment } from "../components/video-clip-segment.js";
-import { mapTransition } from "../util/transition-mapper.js";
+import type { CompositionInputProps, TimelineItem } from "../input-props";
+import { TitleCard } from "../components/title-card";
+import { SmartCaptions } from "../components/smart-captions";
+import { LowerThird } from "../components/lower-third";
+import { LogoWatermark } from "../components/logo-watermark";
+import { ProgressBar } from "../components/progress-bar";
+import { VideoClipSegment } from "../components/video-clip-segment";
+import { mapTransition } from "../util/transition-mapper";
 
 /**
  * Separate the timeline into visual segments (clips/titles) and overlays.
@@ -38,6 +38,7 @@ function partitionTimeline(timeline: TimelineItem[]) {
   const transitions: TimelineItem[] = [];
 
   for (const item of timeline) {
+    if (!item || !item.type) continue;
     switch (item.type) {
       case "video_clip":
       case "title_card":
