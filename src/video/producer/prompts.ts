@@ -52,12 +52,20 @@ SCHEMA SUMMARY:
   "timeline": [
     { "type": "title_card", "title": string, "subtitle?": string, "background?": string, "startAtFrame": number, "duration": number, "animation?": "fade"|"slide-up"|"typewriter" },
     { "type": "transition", "style": "crossfade"|"wipe-left"|"wipe-right"|"dissolve"|"cut", "duration": number, "startAtFrame": number },
-    { "type": "video_clip", "source": string, "startAtFrame": number, "trimStart": number, "duration": number, "volume?": 0-1, "effects?": [...] },
+    { "type": "video_clip", "source": string, "startAtFrame": number, "trimStart": number, "duration": number, "volume?": 0-1, "effects?": [<VideoEffect>, ...] },
     { "type": "overlay", "component": "SmartCaptions"|"LowerThird"|"LogoWatermark"|"ProgressBar", "props": {...}, "startAtFrame": number, "duration?": number }
   ],
   "branding?": { "logoUrl?": string, "accentColor?": "#hex", "watermarkOpacity?": 0-1, "watermarkPosition?": string },
   "metadata": { "generatedAt": ISO8601, "llmModel": string, "llmTokensUsed": number, "productionMode": "highlight", "sourceClips": string[] }
-}`;
+}
+
+VIDEO EFFECT TYPES (for use in video_clip "effects" array):
+- { "type": "slowZoom", "from": number, "to": number }  — from/to are scale factors (e.g. from: 1.0, to: 1.3 zooms in 30%)
+- { "type": "fadeIn", "durationFrames": number }  — fade in from black over N frames
+- { "type": "fadeOut", "durationFrames": number }  — fade out to black over N frames
+- { "type": "blur", "amount": number, "startFrame": number, "endFrame": number }
+- { "type": "grayscale" }  — no additional fields
+- { "type": "speedRamp", "factor": number, "startFrame": number, "endFrame": number }  — factor > 1 speeds up`;
 }
 
 /**
@@ -88,7 +96,7 @@ RULES:
 - The total video duration MUST match the voiceover duration (${voiceoverDuration.toFixed(1)}s)
 - Each video_clip entry should have volume: 0 (voiceover replaces original audio)
 - Choose visual clips that semantically match the script text being spoken at that point
-- Apply slowZoom effect to any clip that appears for >10 seconds
+- Apply slowZoom effect ({ "type": "slowZoom", "from": 1.0, "to": 1.3 }) to any clip that appears for >10 seconds
 
 OUTPUT: A single valid JSON object matching the DirectorManifest schema.
 Do NOT include any text outside the JSON object.
