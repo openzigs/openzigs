@@ -96,10 +96,24 @@ export function repairManifest(raw: Record<string, unknown>): number {
         repairs++;
       }
 
-      // ── Zero-duration clips ──────────────────────────
-      if (type === "video_clip" || type === "title_card" || type === "transition") {
-        if (typeof entry.duration === "number" && entry.duration < 1) {
+      // ── Zero / too-short duration clips ──────────────────
+      // Remotion's TransitionSeries requires every Sequence's duration
+      // to be >= the adjacent Transition's duration.  Default crossfade
+      // is 15 frames, so any segment shorter than that crashes the
+      // render.  Enforce a floor of 30 frames (1s at 30fps).
+      if (type === "video_clip" || type === "title_card") {
+        if (typeof entry.duration === "number" && entry.duration < 30) {
+          logger.info(
+            `[ManifestRepair] timeline[${i}]: ${type} duration ${entry.duration} → 30 (minimum 1s)`,
+          );
           entry.duration = 30; // 1 second at 30fps
+          repairs++;
+        }
+      }
+      // Transitions can be shorter but must be at least 1 frame
+      if (type === "transition") {
+        if (typeof entry.duration === "number" && entry.duration < 1) {
+          entry.duration = 15;
           repairs++;
         }
       }

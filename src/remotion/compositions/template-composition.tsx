@@ -308,33 +308,39 @@ export const TemplateComposition: React.FC<CompositionInputProps> = (props) => {
             // Check if there's a transition to the next segment
             if (i < segments.length - 1) {
               const nextSegment = segments[i + 1];
+              const nextDuration = "durationInFrames" in nextSegment
+                ? (nextSegment.durationInFrames ?? 90)
+                : 90;
               const transitionItem = findTransitionBetween(transitions, segment, nextSegment);
 
+              // Determine the desired transition duration
+              let transFrames: number;
+              let transStyle: string;
               if (transitionItem && transitionItem.type === "transition") {
-                const mapped = mapTransition(
-                  transitionItem.style,
-                  transitionItem.durationInFrames,
-                );
+                transFrames = transitionItem.durationInFrames ?? 15;
+                transStyle = transitionItem.style ?? "crossfade";
+              } else {
+                transFrames = 15;
+                transStyle = "crossfade";
+              }
 
+              // Remotion requires: sequence duration >= transition duration.
+              // Clamp the transition to the smaller of the two adjacent segments
+              // so the render never crashes.
+              const effectiveTransDuration = Math.min(
+                transFrames,
+                durationInFrames,
+                nextDuration,
+              );
+
+              if (effectiveTransDuration > 0) {
+                const mapped = mapTransition(transStyle, effectiveTransDuration);
                 if (mapped) {
                   elements.push(
                     <TransitionSeries.Transition
                       key={`trans-${i}`}
                       presentation={mapped.presentation}
                       timing={mapped.timing}
-                    />,
-                  );
-                }
-              } else {
-                // No explicit transition found — apply a default crossfade
-                // so the video never has jarring hard cuts between clips.
-                const defaultMapped = mapTransition("crossfade", 15);
-                if (defaultMapped) {
-                  elements.push(
-                    <TransitionSeries.Transition
-                      key={`trans-default-${i}`}
-                      presentation={defaultMapped.presentation}
-                      timing={defaultMapped.timing}
                     />,
                   );
                 }
