@@ -4,6 +4,9 @@
 
 export type ProductionMode = "highlight" | "script" | "presentation";
 
+export type ImageProvider = "auto" | "local" | "cloud";
+export type ImageModel = "sdxl-turbo" | "flux";
+
 export interface WizardState {
   /** Step 1 */
   mode: ProductionMode | null;
@@ -11,12 +14,18 @@ export interface WizardState {
   clips: MediaFile[];
   scriptFile: MediaFile | null;
   topic: string;
+  /** Step 2 — presentation mode source documents (.txt / .md) */
+  sourceFiles: MediaFile[];
   /** Step 3 */
   templateId: string | null;
   /** Step 4 */
   musicTrack: SelectedAsset | null;
   /** Step 5 — model override (empty = use director default or system default) */
   model: string;
+  /** Step 5 — image generation provider (auto | local | cloud) */
+  imageProvider: ImageProvider;
+  /** Step 5 — local sidecar model for image generation */
+  imageModel: ImageModel;
   /** Step 5 — render quality/codec settings */
   renderSettings: RenderSettings;
   /** Step 5 (populated after production) */
@@ -98,7 +107,7 @@ export interface RenderJobStatus {
 
 export const WIZARD_STEPS = [
   { id: 1, label: "Mode", description: "Choose production mode" },
-  { id: 2, label: "Media", description: "Add video clips" },
+  { id: 2, label: "Media", description: "Add source media" },
   { id: 3, label: "Template", description: "Pick a visual style" },
   { id: 4, label: "Music", description: "Select background music" },
   { id: 5, label: "Produce", description: "Review & render" },
@@ -110,9 +119,12 @@ export function createInitialState(): WizardState {
     clips: [],
     scriptFile: null,
     topic: "",
+    sourceFiles: [],
     templateId: null,
     musicTrack: null,
     model: "",
+    imageProvider: "auto",
+    imageModel: "sdxl-turbo",
     renderSettings: { quality: "standard", codec: "h264", crf: 23 },
     manifest: null,
     renderJobId: null,

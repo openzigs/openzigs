@@ -23,6 +23,7 @@ const produceVideoSchema = z.object({
   inputFile: z.string().optional().describe("Path to .md or .txt file (required for 'presentation' mode)"),
   sourceType: z.enum(["text", "markdown"]).optional().describe("Type of input document for presentation mode"),
   imageProvider: z.enum(["cloud", "local", "auto"]).optional().describe("Image generation provider: 'cloud' (Vertex AI), 'local' (sidecar), 'auto' (failover)"),
+  imageModel: z.enum(["flux", "sdxl-turbo"]).optional().describe("Local sidecar model to use: 'flux' (higher quality, slower) or 'sdxl-turbo' (faster, smaller). Only used when imageProvider is 'local' or 'auto'."),
 });
 
 const listTemplatesSchema = z.object({
@@ -59,6 +60,7 @@ export const createVideoTools = ({ copilot, voiceService }: VideoToolsOptions): 
         inputFile: { type: "string", description: "Path to .md or .txt file (presentation mode)" },
         sourceType: { type: "string", enum: ["text", "markdown"], description: "Input document type" },
         imageProvider: { type: "string", enum: ["cloud", "local", "auto"], description: "Image generation provider" },
+        imageModel: { type: "string", enum: ["flux", "sdxl-turbo"], description: "Local sidecar model (only for local/auto)" },
       },
       required: ["mode"],
     },
@@ -66,7 +68,7 @@ export const createVideoTools = ({ copilot, voiceService }: VideoToolsOptions): 
     category: "productivity",
     riskLevel: "high",
     handler: async (args) => {
-      const { clips, mode, scriptPath, musicTrackPath, template, voiceoverPath, inputFile, sourceType, imageProvider } =
+      const { clips, mode, scriptPath, musicTrackPath, template, voiceoverPath, inputFile, sourceType, imageProvider, imageModel } =
         args as z.infer<typeof produceVideoSchema>;
 
       try {
@@ -95,11 +97,27 @@ export const createVideoTools = ({ copilot, voiceService }: VideoToolsOptions): 
           const storyboard = await storyboardEngine.generate(rawText);
 
           // Step C: Generate images for each scene
-          const imageService = new ImageGenService();
+          // Use persistent dir so macOS /tmp/ cleanup doesn't nuke images before render
+          const imageOutputDir = path.join(os.homedir(), ".openzigs", "director", "images");
+          await fs.mkdir(imageOutputDir, { recursive: true });
+          const imageService = new ImageGenService({ outputDir: imageOutputDir });
           await imageService.initialize();
 
           const fps = 30;
           const templateId = (template as "Minimalist" | "ContentCreator" | "Corporate" | "TechDemo") ?? "Minimalist";
+
+          // Query sidecar for recommended resolution (falls back to 1024x576)
+          let imageWidth = 1024;
+          let imageHeight = 576;
+          try {
+            const sidecarHealth = await imageService.getRecommendedResolution();
+            if (sidecarHealth) {
+              imageWidth = sidecarHealth.width;
+              imageHeight = sidecarHealth.height;
+            }
+          } catch {
+            // Use defaults if sidecar health check fails
+          }
 
           // Build timeline entries for the DirectorManifest
           const timeline: Array<import("../../video/manifest/manifest-types.js").ImageSceneEntry | import("../../video/manifest/manifest-types.js").TransitionEntry> = [];
@@ -108,8 +126,9 @@ export const createVideoTools = ({ copilot, voiceService }: VideoToolsOptions): 
           for (const scene of storyboard.scenes) {
             const imageResult = await imageService.generateImage(scene.imagePrompt, {
               provider: imageProvider ?? "auto",
-              width: 1920,
-              height: 1080,
+              localModel: imageModel,
+              width: imageWidth,
+              height: imageHeight,
             });
 
             // Generate per-scene voiceover if VoiceService is available
@@ -172,7 +191,7 @@ export const createVideoTools = ({ copilot, voiceService }: VideoToolsOptions): 
             audioLayer: {
               music: musicTrackPath ? {
                 track: musicTrackPath,
-                volume: 0.3,
+                volume: 0.12,
                 ducking: true,
                 fadeInFrames: 30,
                 fadeOutFrames: 30,

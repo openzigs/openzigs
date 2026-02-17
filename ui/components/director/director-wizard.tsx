@@ -11,6 +11,8 @@ import {
   type SelectedAsset,
   type DirectorManifestSummary,
   type RenderSettings,
+  type ImageProvider,
+  type ImageModel,
 } from "./types";
 import { ModeSelectionStep } from "./mode-selection-step";
 import { MediaUploadStep } from "./media-upload-step";
@@ -28,7 +30,7 @@ export const DirectorWizard = () => {
       case 1:
         return state.mode !== null;
       case 2:
-        return state.mode === "presentation" ? state.topic.trim().length > 0 : state.clips.length > 0;
+        return state.mode === "presentation" ? state.sourceFiles.length > 0 : state.clips.length > 0;
       case 3:
         return true; // template selection is optional (uses default)
       case 4:
@@ -38,7 +40,7 @@ export const DirectorWizard = () => {
       default:
         return false;
     }
-  }, [step, state.mode, state.clips.length, state.topic]);
+  }, [step, state.mode, state.clips.length, state.sourceFiles.length]);
 
   // ── State updaters ────────────────────────────────────────
   const setMode = useCallback((mode: ProductionMode) => {
@@ -57,6 +59,10 @@ export const DirectorWizard = () => {
     setState((s) => ({ ...s, topic }));
   }, []);
 
+  const setSourceFiles = useCallback((sourceFiles: MediaFile[]) => {
+    setState((s) => ({ ...s, sourceFiles }));
+  }, []);
+
   const setTemplateId = useCallback((templateId: string | null) => {
     setState((s) => ({ ...s, templateId }));
   }, []);
@@ -71,6 +77,14 @@ export const DirectorWizard = () => {
 
   const setRenderSettings = useCallback((renderSettings: RenderSettings) => {
     setState((s) => ({ ...s, renderSettings }));
+  }, []);
+
+  const setImageProvider = useCallback((imageProvider: ImageProvider) => {
+    setState((s) => ({ ...s, imageProvider }));
+  }, []);
+
+  const setImageModel = useCallback((imageModel: ImageModel) => {
+    setState((s) => ({ ...s, imageModel }));
   }, []);
 
   const setManifest = useCallback((manifest: DirectorManifestSummary) => {
@@ -139,9 +153,11 @@ export const DirectorWizard = () => {
             clips={state.clips}
             scriptFile={state.scriptFile}
             topic={state.topic}
+            sourceFiles={state.sourceFiles}
             onClipsChange={setClips}
             onScriptChange={setScriptFile}
             onTopicChange={setTopic}
+            onSourceFilesChange={setSourceFiles}
           />
         )}
         {step === 3 && (
@@ -163,6 +179,8 @@ export const DirectorWizard = () => {
             onRenderStarted={setRenderJobId}
             onModelChange={setModel}
             onRenderSettingsChange={setRenderSettings}
+            onImageProviderChange={setImageProvider}
+            onImageModelChange={setImageModel}
           />
         )}
       </div>

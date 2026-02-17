@@ -17,12 +17,13 @@ import {
   XCircle,
   AlertTriangle,
   FileVideo,
+  FileText,
   Clock,
   HardDrive,
   Ban,
   Settings2,
 } from "lucide-react";
-import type { WizardState, RenderJobStatus, DirectorManifestSummary, RenderSettings, RenderQuality } from "./types";
+import type { WizardState, RenderJobStatus, DirectorManifestSummary, RenderSettings, RenderQuality, ImageProvider, ImageModel } from "./types";
 import { QUALITY_PRESETS } from "./types";
 import type { ModelInfo } from "@/lib/types";
 
@@ -32,6 +33,8 @@ interface ReviewProduceStepProps {
   onRenderStarted: (jobId: string) => void;
   onModelChange: (model: string) => void;
   onRenderSettingsChange: (settings: RenderSettings) => void;
+  onImageProviderChange: (provider: ImageProvider) => void;
+  onImageModelChange: (model: ImageModel) => void;
 }
 
 type ProduceResponse = {
@@ -63,6 +66,8 @@ export const ReviewProduceStep = ({
   onRenderStarted,
   onModelChange,
   onRenderSettingsChange,
+  onImageProviderChange,
+  onImageModelChange,
 }: ReviewProduceStepProps) => {
   const { socket } = useSocket();
   const [phase, setPhase] = useState<"review" | "producing" | "produced" | "rendering">("review");
@@ -132,10 +137,30 @@ export const ReviewProduceStep = ({
     return () => clearInterval(interval);
   }, [phase]);
 
-  // Produce mutation — ingests clips → LLM → manifest
+  // Produce mutation — ingests clips → LLM → manifest (or presentation pipeline)
   const produceMutation = useMutation({
-    mutationFn: () =>
-      fetchJson<ProduceResponse>("/api/admin/director/produce", {
+    mutationFn: () => {
+      if (state.mode === "presentation") {
+        // Presentation mode: source document → storyboard → images → TTS → manifest
+        const sourceFile = state.sourceFiles[0];
+        const ext = sourceFile?.name.split(".").pop()?.toLowerCase() ?? "";
+        return fetchJson<ProduceResponse>("/api/admin/director/produce", {
+          method: "POST",
+          body: JSON.stringify({
+            mode: "presentation",
+            inputFile: sourceFile?.path,
+            sourceType: ext === "md" || ext === "markdown" ? "markdown" : "text",
+            topic: state.topic || undefined,
+            musicTrackPath: state.musicTrack?.filePath,
+            template: state.templateId,
+            model: state.model || undefined,
+            imageProvider: state.imageProvider,
+            imageModel: state.imageModel,
+          }),
+        });
+      }
+      // Highlight / Script mode
+      return fetchJson<ProduceResponse>("/api/admin/director/produce", {
         method: "POST",
         body: JSON.stringify({
           clips: state.clips.map((c) => c.path),
@@ -146,7 +171,8 @@ export const ReviewProduceStep = ({
           model: state.model || undefined,
           enableVisionAnalysis,
         }),
-      }),
+      });
+    },
     onSuccess: (data) => {
       const manifest = data.manifest as Record<string, unknown>;
       const summary: DirectorManifestSummary = {
@@ -267,8 +293,14 @@ export const ReviewProduceStep = ({
         />
         <SummaryCard
           icon={<Film className="h-4 w-4" />}
-          label="Clips"
-          value={`${state.clips.length} file${state.clips.length !== 1 ? "s" : ""}`}
+          label={state.mode === "presentation" ? "Source" : "Clips"}
+          value={
+            state.mode === "presentation"
+              ? state.sourceFiles.length > 0
+                ? state.sourceFiles[0].name
+                : "None"
+              : `${state.clips.length} file${state.clips.length !== 1 ? "s" : ""}`
+          }
         />
         <SummaryCard
           icon={<Layout className="h-4 w-4" />}
@@ -285,6 +317,13 @@ export const ReviewProduceStep = ({
             icon={<Mic className="h-4 w-4" />}
             label="Script"
             value={state.scriptFile.name}
+          />
+        )}
+        {state.mode === "presentation" && state.topic.trim() && (
+          <SummaryCard
+            icon={<FileText className="h-4 w-4" />}
+            label="Preamble"
+            value={state.topic.length > 40 ? state.topic.slice(0, 37) + "…" : state.topic}
           />
         )}
         {state.manifest && (
@@ -319,6 +358,55 @@ export const ReviewProduceStep = ({
           <p className="text-[11px] text-muted-foreground/60">
             High-capability models (GPT-4.1, Claude Sonnet 4) produce better video timelines.
           </p>
+        </div>
+      )}
+
+      {/* Image Generation Model — only shown for presentation mode */}
+      {phase === "review" && state.mode === "presentation" && (
+        <div className="space-y-3">
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium text-muted-foreground">Image Provider</label>
+            <select
+              value={state.imageProvider}
+              onChange={(e) => onImageProviderChange(e.target.value as ImageProvider)}
+              className="w-full rounded-xl border border-border bg-card text-sm text-foreground px-3 py-2.5"
+            >
+              <option value="auto">Auto (try cloud, fall back to local)</option>
+              <option value="local">Local Sidecar</option>
+              <option value="cloud">Cloud (Vertex AI Imagen 3)</option>
+            </select>
+          </div>
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium text-muted-foreground">Image Model (Local Sidecar)</label>
+            <div className="grid grid-cols-2 gap-2">
+              {([
+                { id: "sdxl-turbo" as const, name: "SDXL Turbo", desc: "Fast, ~1s/image, 512×512" },
+                { id: "flux" as const, name: "FLUX.1 Schnell", desc: "High quality, ~8s/image, 1024×1024" },
+              ]).map((m) => {
+                const isActive = state.imageModel === m.id;
+                return (
+                  <button
+                    key={m.id}
+                    onClick={() => onImageModelChange(m.id)}
+                    className={`rounded-xl border px-4 py-3 text-left transition-colors ${
+                      isActive
+                        ? "border-primary/50 bg-primary/5"
+                        : "border-border hover:border-muted-foreground/30"
+                    }`}
+                  >
+                    <p className={`text-sm font-medium ${isActive ? "text-primary" : "text-foreground"}`}>
+                      {m.name}
+                    </p>
+                    <p className="text-[11px] text-muted-foreground mt-0.5">{m.desc}</p>
+                  </button>
+                );
+              })}
+            </div>
+            <p className="text-[11px] text-muted-foreground/60">
+              Only used when provider is &ldquo;Local Sidecar&rdquo; or &ldquo;Auto&rdquo; falls back to local.
+              Requires the image generation sidecar to be running.
+            </p>
+          </div>
         </div>
       )}
 
@@ -398,7 +486,10 @@ export const ReviewProduceStep = ({
           {!state.mode && (
             <Warning text="No production mode selected. Go back to Step 1." />
           )}
-          {state.clips.length === 0 && (
+          {state.mode === "presentation" && state.sourceFiles.length === 0 && (
+            <Warning text="No source document added. Go back to Step 2 and add a .txt or .md file." />
+          )}
+          {state.mode !== "presentation" && state.clips.length === 0 && (
             <Warning text="No video clips added. Go back to Step 2." />
           )}
           {state.musicTrack && !state.musicTrack.filePath && (
@@ -408,7 +499,7 @@ export const ReviewProduceStep = ({
       )}
 
       {/* Produce Phase */}
-      {phase === "review" && state.mode && state.clips.length > 0 && (
+      {phase === "review" && state.mode && (state.mode === "presentation" ? state.sourceFiles.length > 0 : state.clips.length > 0) && (
         <button
           onClick={handleProduce}
           className="w-full flex items-center justify-center gap-2 rounded-xl bg-primary text-primary-foreground py-3 text-sm font-medium hover:opacity-90 transition"
@@ -421,9 +512,15 @@ export const ReviewProduceStep = ({
       {phase === "producing" && (
         <div className="rounded-xl border border-border bg-card px-6 py-8 text-center">
           <Loader2 className="h-8 w-8 animate-spin text-primary mx-auto mb-3" />
-          <p className="text-sm text-foreground font-medium">Analyzing clips &amp; building timeline…</p>
+          <p className="text-sm text-foreground font-medium">
+            {state.mode === "presentation"
+              ? "Reading document & generating storyboard…"
+              : "Analyzing clips & building timeline…"}
+          </p>
           <p className="text-xs text-muted-foreground mt-1">
-            This uses AI to detect scenes, transcribe audio, and assemble the timeline.
+            {state.mode === "presentation"
+              ? "The AI is reading your document, creating a storyboard, generating images, and synthesizing voiceover."
+              : "This uses AI to detect scenes, transcribe audio, and assemble the timeline."}
           </p>
           {enableVisionAnalysis && (
             <div className="mt-3 rounded-lg bg-amber-500/5 border border-amber-500/20 px-4 py-2">

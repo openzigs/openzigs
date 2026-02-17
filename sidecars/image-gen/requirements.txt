@@ -1,5 +1,5 @@
 # Image Generation Sidecar — Python Dependencies
-# Optimized for Apple Silicon (MPS) with float16 precision
+# Optimized for Apple Silicon (MPS) with 4-bit quantization (optimum-quanto)
 # Issue #257
 
 fastapi==0.115.6
@@ -10,4 +10,5 @@ torch>=2.2.0
 accelerate==1.3.0
 safetensors==0.5.2
 sentencepiece==0.2.0
+optimum-quanto>=0.2.7
 Pillow>=10.0.0

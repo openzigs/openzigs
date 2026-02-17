@@ -443,7 +443,8 @@ export const createDirectorRouter = ({
 
   /**
    * POST /produce — trigger the single-shot production pipeline.
-   * Body: { clips: string[], mode: "highlight" | "script", scriptPath?, musicTrackPath?, template?, model?, enableVisionAnalysis? }
+   * Body (highlight/script): { clips: string[], mode: "highlight" | "script", scriptPath?, musicTrackPath?, template?, model?, enableVisionAnalysis? }
+   * Body (presentation):     { mode: "presentation", inputFile: string, sourceType?: "text"|"markdown", topic?: string, musicTrackPath?, template?, model?, imageProvider?, imageModel? }
    *
    * When enableVisionAnalysis is true (default), keyframe images are sent to a
    * vision model for rich scene descriptions. This significantly improves editing
@@ -451,22 +452,266 @@ export const createDirectorRouter = ({
    */
   router.post("/produce", async (req, res) => {
     try {
-      const { clips, mode, scriptPath, musicTrackPath, template, model, enableVisionAnalysis } = req.body as {
-        clips: string[];
-        mode: "highlight" | "script";
+      const { clips, mode, scriptPath, musicTrackPath, template, model, enableVisionAnalysis, inputFile, sourceType, topic, imageProvider, imageModel } = req.body as {
+        clips?: string[];
+        mode: "highlight" | "script" | "presentation";
         scriptPath?: string;
         musicTrackPath?: string;
         template?: string;
         model?: string;
         enableVisionAnalysis?: boolean;
+        inputFile?: string;
+        sourceType?: "text" | "markdown";
+        topic?: string;
+        imageProvider?: "cloud" | "local" | "auto";
+        imageModel?: "flux" | "sdxl-turbo";
       };
 
-      if (!clips || !Array.isArray(clips) || clips.length === 0) {
-        res.status(400).json({ error: "clips array is required and must not be empty" });
+      if (!mode || !["highlight", "script", "presentation"].includes(mode)) {
+        res.status(400).json({ error: "mode must be 'highlight', 'script', or 'presentation'" });
         return;
       }
-      if (!mode || (mode !== "highlight" && mode !== "script")) {
-        res.status(400).json({ error: "mode must be 'highlight' or 'script'" });
+
+      // ── Presentation mode: document → storyboard → images → TTS → manifest ──
+      if (mode === "presentation") {
+        if (!inputFile) {
+          res.status(400).json({ error: "'inputFile' is required for presentation mode" });
+          return;
+        }
+
+        const startTime = Date.now();
+
+        const fs = await import("node:fs/promises");
+        const path = await import("node:path");
+        const os = await import("node:os");
+        const { StoryboardEngine } = await import("../video/generators/storyboard-engine.js");
+        const { ImageGenService } = await import("../video/generators/image-gen-service.js");
+        const { nanoid } = await import("nanoid");
+
+        // Step A: Ingest the text document
+        let rawText: string;
+        try {
+          rawText = await fs.readFile(inputFile, "utf-8");
+        } catch (readErr) {
+          const readMsg = readErr instanceof Error ? readErr.message : String(readErr);
+          res.status(400).json({ error: `Failed to read input file: ${readMsg}` });
+          return;
+        }
+
+        if (sourceType === "markdown" || inputFile.endsWith(".md")) {
+          rawText = rawText.replace(/```[\s\S]*?```/g, "[code block removed]");
+        }
+
+        logger.info(`[Director API] Presentation mode: read ${rawText.length} chars from ${inputFile}`);
+
+        // Step B: Generate storyboard via LLM
+        const storyboardEngine = new StoryboardEngine(copilot);
+        const storyboardOptions: import("../video/generators/storyboard-engine.js").StoryboardOptions = {};
+        if (topic) {
+          storyboardOptions.styleHint = topic;
+        }
+        const resolvedModel = model || runtimeConfig.defaultModel || undefined;
+        if (resolvedModel) {
+          storyboardOptions.model = resolvedModel;
+        }
+        const storyboard = await storyboardEngine.generate(rawText, storyboardOptions);
+
+        logger.info(`[Director API] Storyboard generated: "${storyboard.title}" with ${storyboard.scenes.length} scenes`);
+
+        // Step C: Generate images for each scene
+        // Generate at ~model-native resolution (NOT output resolution).
+        // Diffusion models (SDXL Turbo, Flux, etc.) are trained on specific
+        // resolutions; requesting 1920x1080 produces degenerate outputs where
+        // the model can't differentiate prompts. The Remotion KenBurns component
+        // uses object-fit:cover to scale any source image to fill the frame.
+        //
+        // Images are stored in ~/.openzigs/director/images/ (persistent) rather
+        // than /tmp/ — macOS aggressively purges /tmp/ which caused images to
+        // vanish between the produce and render steps.
+        const imageOutputDir = path.join(os.homedir(), ".openzigs", "director", "images");
+        const imageService = new ImageGenService({ outputDir: imageOutputDir });
+        await imageService.initialize();
+
+        const resolvedImageProvider = imageProvider ?? "auto";
+        logger.info(`[Director API] Image provider: ${resolvedImageProvider}${imageModel ? `, model: ${imageModel}` : ""}`);
+
+        // Query sidecar for recommended resolution (falls back to 1024x576)
+        let imageWidth = 1024;
+        let imageHeight = 576;
+        try {
+          const sidecarHealth = await imageService.getRecommendedResolution();
+          if (sidecarHealth) {
+            imageWidth = sidecarHealth.width;
+            imageHeight = sidecarHealth.height;
+          }
+        } catch {
+          // Use defaults if sidecar health check fails
+        }
+        logger.info(`[Director API] Image generation resolution: ${imageWidth}x${imageHeight}`);
+
+        const fps = 30;
+        const templateId = (template as "Minimalist" | "ContentCreator" | "Corporate" | "TechDemo") ?? "Minimalist";
+
+        const timeline: Array<import("../video/manifest/manifest-types.js").ImageSceneEntry | import("../video/manifest/manifest-types.js").TransitionEntry> = [];
+        let currentFrame = 0;
+        let skippedScenes = 0;
+        // Base seed for per-scene variation — ensures each scene produces a
+        // visually distinct image even when style anchors are shared.
+        const baseSeed = Date.now() % 100_000;
+
+        for (const scene of storyboard.scenes) {
+          // Throttle cloud image requests to stay within Vertex AI QPM limits.
+          // Imagen free-tier allows ~5 RPM (1 request per 12s). With ~10-12s
+          // processing time per image, a 15s inter-request delay ensures the 6th
+          // request never falls within the same 60s sliding window as the 1st.
+          if (resolvedImageProvider !== "local" && scene.index > 0) {
+            await new Promise(r => setTimeout(r, 15_000));
+          }
+
+          logger.info(
+            `[Director API] Generating image ${scene.index + 1}/${storyboard.scenes.length}: ` +
+            `"${scene.rawImageDescription.substring(0, 60)}..."`,
+          );
+
+          let imageResult: import("../video/generators/image-gen-service.js").ImageGenResult;
+          try {
+            imageResult = await imageService.generateImage(scene.imagePrompt, {
+              provider: resolvedImageProvider,
+              localModel: imageModel,
+              width: imageWidth,
+              height: imageHeight,
+              seed: baseSeed + scene.index * 1000,
+            });
+          } catch (imgErr) {
+            const imgMsg = imgErr instanceof Error ? imgErr.message : String(imgErr);
+            logger.error(`[Director API] Image generation failed for scene ${scene.index}: ${imgMsg}`);
+            skippedScenes++;
+            // Skip this scene entirely — better than crashing the full pipeline
+            continue;
+          }
+
+          // Generate per-scene voiceover if VoiceService is available
+          let sceneVoiceoverPath: string | undefined;
+          if (voiceService && scene.voiceover) {
+            try {
+              if (!voiceService.isReady() && process.env.GOOGLE_APPLICATION_CREDENTIALS) {
+                await voiceService.initialize();
+              }
+              if (voiceService.isReady()) {
+                const ttsResult = await voiceService.synthesize(scene.voiceover);
+                const voPath = path.join(os.tmpdir(), `openzigs-vo-${nanoid(8)}.mp3`);
+                await fs.writeFile(voPath, ttsResult.audio);
+                sceneVoiceoverPath = voPath;
+              }
+            } catch {
+              // TTS failure is non-fatal for scene processing
+            }
+          }
+
+          const durationInFrames = Math.round(scene.durationEstimate * fps);
+
+          // Add crossfade transition between scenes (not before the first)
+          if (timeline.length > 0) {
+            const transitionDuration = Math.min(15, durationInFrames);
+            timeline.push({
+              type: "transition",
+              style: "crossfade",
+              duration: transitionDuration,
+              startAtFrame: currentFrame,
+            });
+          }
+
+          timeline.push({
+            type: "image_scene",
+            src: imageResult.filePath,
+            startAtFrame: currentFrame,
+            duration: durationInFrames,
+            voiceover: sceneVoiceoverPath,
+            voiceoverVolume: 1.0,
+            kenBurns: {
+              scaleFrom: 1.0,
+              scaleTo: 1.15,
+              translateXFrom: 0,
+              translateXTo: scene.index % 2 === 0 ? -10 : 10,
+              translateYFrom: 0,
+              translateYTo: -5,
+            },
+          });
+
+          currentFrame += durationInFrames;
+        }
+
+        // Step D: Construct the DirectorManifest
+        const resolvedMusicPath = musicTrackPath?.trim() || undefined;
+        const manifest: import("../video/manifest/manifest-types.js").DirectorManifest = {
+          projectTitle: storyboard.title,
+          templateId,
+          composition: { width: 1920, height: 1080, fps },
+          audioLayer: {
+            music: resolvedMusicPath ? {
+              track: resolvedMusicPath,
+              volume: 0.12,
+              ducking: true,
+              fadeInFrames: 30,
+              fadeOutFrames: 30,
+              loop: true,
+            } : null,
+            voiceover: null,
+          },
+          timeline,
+          metadata: {
+            generatedAt: new Date().toISOString(),
+            llmModel: resolvedModel ?? "copilot",
+            llmTokensUsed: storyboard.tokensUsed,
+            productionMode: "presentation",
+            sourceClips: [],
+            estimatedRenderTime: currentFrame / fps,
+          },
+        };
+
+        const elapsedMs = Date.now() - startTime;
+
+        const imageSceneCount = timeline.filter((t) => t.type === "image_scene").length;
+        logger.info(
+          `[Director API] Presentation manifest: ${storyboard.scenes.length} scenes ` +
+          `(${imageSceneCount} with images, ${skippedScenes} skipped), ` +
+          `${timeline.filter((t) => t.type === "transition").length} transitions, ` +
+          `${(currentFrame / fps).toFixed(1)}s total, ${elapsedMs}ms elapsed`,
+        );
+
+        if (skippedScenes > 0) {
+          logger.warn(
+            `[Director API] ${skippedScenes}/${storyboard.scenes.length} scenes skipped due to image generation failures. ` +
+            `Check that the image sidecar is running (http://127.0.0.1:5005/health) or configure GCP_PROJECT_ID for cloud images.`,
+          );
+        }
+
+        if (imageSceneCount === 0) {
+          logger.error(`[Director API] No images were generated — the presentation will be blank. Check image generation provider availability.`);
+        }
+
+        res.json({
+          manifest,
+          tokensUsed: storyboard.tokensUsed,
+          clipsProcessed: 0,
+          totalDuration: currentFrame / fps,
+          processingTimeMs: elapsedMs,
+          skippedScenes,
+          imageProvider: resolvedImageProvider,
+          imageModel: imageModel ?? "default",
+          storyboard: {
+            title: storyboard.title,
+            styleAnchor: storyboard.styleAnchor,
+            analysis: storyboard.analysis,
+            sceneCount: storyboard.scenes.length,
+          },
+        });
+        return;
+      }
+
+      // ── Highlight / Script modes ──────────────────────────────
+      if (!clips || !Array.isArray(clips) || clips.length === 0) {
+        res.status(400).json({ error: "clips array is required and must not be empty" });
         return;
       }
 

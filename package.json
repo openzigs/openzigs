@@ -25,6 +25,7 @@
   },
   "dependencies": {
     "@github/copilot-sdk": "^0.1.20",
+    "@google-cloud/aiplatform": "^6.4.0",
     "@google-cloud/text-to-speech": "^6.4.0",
     "@huggingface/transformers": "^3.8.1",
     "@lancedb/lancedb": "^0.26.2",
