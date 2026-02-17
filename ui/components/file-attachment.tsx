@@ -11,6 +11,32 @@ const MAX_ATTACHMENTS = 10;
 const API_BASE = process.env.NEXT_PUBLIC_OPENZIGS_API_BASE ?? "http://localhost:3000";
 const AUTH_TOKEN = process.env.NEXT_PUBLIC_OPENZIGS_TOKEN ?? "";
 
+async function uploadForChat(files: File[]): Promise<ChatAttachment[]> {
+  const formData = new FormData();
+  for (const file of files) {
+    formData.append("files", file, file.name);
+  }
+
+  const headers: Record<string, string> = {};
+  if (AUTH_TOKEN) {
+    headers.Authorization = `Bearer ${AUTH_TOKEN}`;
+  }
+
+  const response = await fetch(`${API_BASE}/api/chat/upload`, {
+    method: "POST",
+    headers,
+    body: formData,
+  });
+
+  if (!response.ok) {
+    const details = await response.text().catch(() => "");
+    throw new Error(`Upload failed (${response.status}): ${details}`);
+  }
+
+  const payload = (await response.json()) as { files?: ChatAttachment[] };
+  return Array.isArray(payload.files) ? payload.files : [];
+}
+
 /* ── Attachment Chip ── */
 
 export const AttachmentChip = ({
@@ -51,32 +77,6 @@ export const FileAttachmentButton = ({
 }) => {
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const uploadForChat = useCallback(async (files: File[]): Promise<ChatAttachment[]> => {
-    const formData = new FormData();
-    for (const file of files) {
-      formData.append("files", file, file.name);
-    }
-
-    const headers: Record<string, string> = {};
-    if (AUTH_TOKEN) {
-      headers.Authorization = `Bearer ${AUTH_TOKEN}`;
-    }
-
-    const response = await fetch(`${API_BASE}/api/chat/upload`, {
-      method: "POST",
-      headers,
-      body: formData,
-    });
-
-    if (!response.ok) {
-      const details = await response.text().catch(() => "");
-      throw new Error(`Upload failed (${response.status}): ${details}`);
-    }
-
-    const payload = (await response.json()) as { files?: ChatAttachment[] };
-    return Array.isArray(payload.files) ? payload.files : [];
-  }, []);
-
   const handleChange = useCallback(
     async (e: React.ChangeEvent<HTMLInputElement>) => {
       const fileList = e.target.files;
@@ -103,7 +103,7 @@ export const FileAttachmentButton = ({
       // Reset so the same file can be re-picked
       if (inputRef.current) inputRef.current.value = "";
     },
-    [onAttach, attachmentCount, uploadForChat]
+    [onAttach, attachmentCount]
   );
 
   return (
@@ -215,7 +215,7 @@ export const FileDropZone = ({
         if (fallback.length > 0) onDrop(fallback);
       }
     },
-    [onDrop, attachmentCount, disabled, uploadForChat]
+    [onDrop, attachmentCount, disabled]
   );
 
   return (
