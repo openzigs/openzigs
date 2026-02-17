@@ -687,6 +687,69 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
     }
   });
 
+  // ── Full voice configuration (all fields) ──
+
+  router.get("/voice-config", async (_req, res) => {
+    try {
+      const userConfig = await readUserConfig(defaultConfigPath());
+      const voiceConfig = (userConfig.voice && typeof userConfig.voice === "object")
+        ? (userConfig.voice as Record<string, unknown>)
+        : {};
+      return res.json({
+        enabled: voiceConfig.enabled ?? false,
+        provider: voiceConfig.provider ?? "google",
+        voiceName: voiceConfig.voiceName ?? "en-US-Standard-C",
+        speakingRate: voiceConfig.speakingRate ?? 1.0,
+        pitch: voiceConfig.pitch ?? 0.0,
+        sidecarUrl: voiceConfig.sidecarUrl ?? "http://localhost:5006",
+        maxTextLength: voiceConfig.maxTextLength ?? 5000,
+        maxCacheSizeMb: voiceConfig.maxCacheSizeMb ?? 500,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return res.status(500).json({ error: message });
+    }
+  });
+
+  router.post("/voice-config", async (req, res) => {
+    const body = req.body as Record<string, unknown>;
+
+    const updates: Record<string, unknown> = {};
+
+    if (typeof body.enabled === "boolean") updates.enabled = body.enabled;
+    if (body.provider === "google" || body.provider === "local") updates.provider = body.provider;
+    if (typeof body.voiceName === "string" && body.voiceName.trim()) updates.voiceName = body.voiceName.trim();
+    if (typeof body.sidecarUrl === "string") updates.sidecarUrl = body.sidecarUrl.trim();
+
+    if (typeof body.speakingRate === "number") {
+      const rate = Math.max(0.25, Math.min(4.0, body.speakingRate));
+      updates.speakingRate = rate;
+    }
+    if (typeof body.pitch === "number") {
+      const pitch = Math.max(-20, Math.min(20, body.pitch));
+      updates.pitch = pitch;
+    }
+    if (typeof body.maxTextLength === "number" && body.maxTextLength >= 1) {
+      updates.maxTextLength = Math.floor(body.maxTextLength);
+    }
+    if (typeof body.maxCacheSizeMb === "number" && body.maxCacheSizeMb >= 1) {
+      updates.maxCacheSizeMb = Math.floor(body.maxCacheSizeMb);
+    }
+
+    if (Object.keys(updates).length === 0) {
+      return res.status(400).json({ error: "No valid fields to update" });
+    }
+
+    try {
+      await updateVoiceConfig(updates);
+      logger.info(`Updated voice config via admin UI: ${JSON.stringify(updates)}`);
+      return res.json({ ok: true, updated: updates, restartRequired: true });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return res.status(500).json({ error: message });
+    }
+  });
+
   router.get("/channels", async (_req, res) => {
     try {
       const config = await loadConfig();
