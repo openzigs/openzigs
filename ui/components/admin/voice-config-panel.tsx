@@ -30,10 +30,10 @@ import { cn } from "@/lib/utils";
 
 type SidecarHealth = {
   status: string;
-  tts_loaded: boolean;
-  stt_loaded: boolean;
-  tts_model: string | null;
-  stt_model: string | null;
+  ttsLoaded: boolean;
+  sttLoaded: boolean;
+  ttsModel: string | null;
+  sttModel: string | null;
 };
 
 type LocalVoice = {
@@ -48,6 +48,11 @@ type VoiceHealthResponse = {
   provider: string;
   sidecar?: SidecarHealth;
   sidecarUrl?: string;
+};
+
+type VoiceListResponse = {
+  provider: string;
+  voices: LocalVoice[];
 };
 
 type VoiceConfigResponse = {
@@ -111,7 +116,7 @@ export function VoiceConfigPanel() {
 
   const voicesQuery = useQuery({
     queryKey: ["voice-local-voices"],
-    queryFn: () => fetchJson<LocalVoice[]>("/api/voice/voices"),
+    queryFn: () => fetchJson<VoiceListResponse>("/api/voice/voices"),
   });
 
   const googleVoicesQuery = useQuery({
@@ -127,7 +132,7 @@ export function VoiceConfigPanel() {
   const config = configQuery.data;
   const health = healthQuery.data;
   const sidecar = health?.sidecar;
-  const voices = voicesQuery.data ?? [];
+  const voices = voicesQuery.data?.voices ?? [];
   const sidecarUp = sidecar?.status === "ok";
   const googleVoices = googleVoicesQuery.data?.availableVoices ?? [];
 
@@ -518,11 +523,11 @@ export function VoiceConfigPanel() {
                 <div>
                   <span className="text-xs font-medium text-foreground">TTS</span>
                   <p className="text-[10px] text-muted-foreground">
-                    {sidecar?.tts_loaded ? sidecar.tts_model ?? "Kokoro" : "Not loaded"}
+                    {sidecar?.ttsLoaded ? sidecar.ttsModel ?? "Kokoro" : "Not loaded"}
                   </p>
                 </div>
               </div>
-              <span className={cn("h-2 w-2 rounded-full", sidecar?.tts_loaded ? "bg-moss" : "bg-muted-foreground/30")} />
+              <span className={cn("h-2 w-2 rounded-full", sidecar?.ttsLoaded ? "bg-moss" : "bg-muted-foreground/30")} />
             </div>
 
             {/* STT */}
@@ -532,11 +537,11 @@ export function VoiceConfigPanel() {
                 <div>
                   <span className="text-xs font-medium text-foreground">STT</span>
                   <p className="text-[10px] text-muted-foreground">
-                    {sidecar?.stt_loaded ? sidecar.stt_model ?? "Whisper" : "Not loaded"}
+                    {sidecar?.sttLoaded ? sidecar.sttModel ?? "Whisper" : "Not loaded"}
                   </p>
                 </div>
               </div>
-              <span className={cn("h-2 w-2 rounded-full", sidecar?.stt_loaded ? "bg-moss" : "bg-muted-foreground/30")} />
+              <span className={cn("h-2 w-2 rounded-full", sidecar?.sttLoaded ? "bg-moss" : "bg-muted-foreground/30")} />
             </div>
           </div>
 
@@ -546,18 +551,18 @@ export function VoiceConfigPanel() {
               variant="outline"
               size="sm"
               className="text-xs"
-              disabled={isUnloading || (!sidecar?.tts_loaded && !sidecar?.stt_loaded)}
+              disabled={isUnloading || (!sidecar?.ttsLoaded && !sidecar?.sttLoaded)}
               onClick={() => handleUnload("all")}
             >
               <Trash2 className="mr-1.5 h-3 w-3" />
               {isUnloading ? "Unloading…" : "Unload All"}
             </Button>
-            {sidecar?.tts_loaded && (
+            {sidecar?.ttsLoaded && (
               <Button variant="outline" size="sm" className="text-xs" disabled={isUnloading} onClick={() => handleUnload("tts")}>
                 Unload TTS
               </Button>
             )}
-            {sidecar?.stt_loaded && (
+            {sidecar?.sttLoaded && (
               <Button variant="outline" size="sm" className="text-xs" disabled={isUnloading} onClick={() => handleUnload("stt")}>
                 Unload STT
               </Button>

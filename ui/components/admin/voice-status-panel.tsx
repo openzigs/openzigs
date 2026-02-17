@@ -23,10 +23,10 @@ import { cn } from "@/lib/utils";
 
 type SidecarHealth = {
   status: string;
-  tts_loaded: boolean;
-  stt_loaded: boolean;
-  tts_model: string | null;
-  stt_model: string | null;
+  ttsLoaded: boolean;
+  sttLoaded: boolean;
+  ttsModel: string | null;
+  sttModel: string | null;
 };
 
 type LocalVoice = {
@@ -43,7 +43,10 @@ type VoiceHealthResponse = {
   sidecarUrl?: string;
 };
 
-type VoiceListResponse = LocalVoice[];
+type VoiceListResponse = {
+  provider: string;
+  voices: LocalVoice[];
+};
 
 export function VoiceStatusPanel() {
   const queryClient = useQueryClient();
@@ -63,7 +66,7 @@ export function VoiceStatusPanel() {
 
   const health = healthQuery.data;
   const sidecar = health?.sidecar;
-  const voices = voicesQuery.data ?? [];
+  const voices = voicesQuery.data?.voices ?? [];
   const provider = health?.provider ?? "unknown";
   const sidecarUp = sidecar?.status === "ok";
 
@@ -193,14 +196,14 @@ export function VoiceStatusPanel() {
                 <div>
                   <span className="text-xs font-medium text-foreground">TTS</span>
                   <p className="text-[10px] text-muted-foreground">
-                    {sidecar?.tts_loaded ? sidecar.tts_model ?? "Kokoro" : "Not loaded"}
+                    {sidecar?.ttsLoaded ? sidecar.ttsModel ?? "Kokoro" : "Not loaded"}
                   </p>
                 </div>
               </div>
               <span
                 className={cn(
                   "h-2 w-2 rounded-full",
-                  sidecar?.tts_loaded ? "bg-moss" : "bg-muted-foreground/30",
+                  sidecar?.ttsLoaded ? "bg-moss" : "bg-muted-foreground/30",
                 )}
               />
             </div>
@@ -212,14 +215,14 @@ export function VoiceStatusPanel() {
                 <div>
                   <span className="text-xs font-medium text-foreground">STT</span>
                   <p className="text-[10px] text-muted-foreground">
-                    {sidecar?.stt_loaded ? sidecar.stt_model ?? "Whisper" : "Not loaded"}
+                    {sidecar?.sttLoaded ? sidecar.sttModel ?? "Whisper" : "Not loaded"}
                   </p>
                 </div>
               </div>
               <span
                 className={cn(
                   "h-2 w-2 rounded-full",
-                  sidecar?.stt_loaded ? "bg-moss" : "bg-muted-foreground/30",
+                  sidecar?.sttLoaded ? "bg-moss" : "bg-muted-foreground/30",
                 )}
               />
             </div>
@@ -231,13 +234,13 @@ export function VoiceStatusPanel() {
               variant="outline"
               size="sm"
               className="text-xs"
-              disabled={isUnloading || (!sidecar?.tts_loaded && !sidecar?.stt_loaded)}
+              disabled={isUnloading || (!sidecar?.ttsLoaded && !sidecar?.sttLoaded)}
               onClick={() => handleUnload("all")}
             >
               <Trash2 className="mr-1.5 h-3 w-3" />
               {isUnloading ? "Unloading…" : "Unload All"}
             </Button>
-            {sidecar?.tts_loaded && (
+            {sidecar?.ttsLoaded && (
               <Button
                 variant="outline"
                 size="sm"
@@ -248,7 +251,7 @@ export function VoiceStatusPanel() {
                 Unload TTS
               </Button>
             )}
-            {sidecar?.stt_loaded && (
+            {sidecar?.sttLoaded && (
               <Button
                 variant="outline"
                 size="sm"
