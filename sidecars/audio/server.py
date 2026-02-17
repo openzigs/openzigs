@@ -506,24 +506,38 @@ async def transcribe(audio: UploadFile = File(...)):
 
         text = result.get("text", "").strip()
         language = result.get("language", "")
-        segments = result.get("segments", [])
+        raw_segments = result.get("segments", [])
 
-        # Calculate approximate audio duration from segments
+        # lightning_whisper_mlx returns segments as [start_frames, end_frames, text]
+        # lists, not dicts. Convert to dict format with seconds.
+        # Frame-to-seconds: frames * HOP_LENGTH(160) / SAMPLE_RATE(16000) = frames * 0.01
+        FRAMES_TO_SEC = 0.01
+        parsed_segments: list[dict] = []
+        for seg in raw_segments:
+            if isinstance(seg, (list, tuple)) and len(seg) >= 3:
+                parsed_segments.append({
+                    "start": round(float(seg[0]) * FRAMES_TO_SEC, 2),
+                    "end": round(float(seg[1]) * FRAMES_TO_SEC, 2),
+                    "text": str(seg[2]).strip(),
+                })
+            elif isinstance(seg, dict):
+                parsed_segments.append(seg)
+
+        # Calculate approximate audio duration from last segment
         duration = 0.0
-        if segments:
-            last_seg = segments[-1]
-            duration = last_seg.get("end", 0.0)
+        if parsed_segments:
+            duration = parsed_segments[-1].get("end", 0.0)
 
         log.info(
             f"Transcribed in {elapsed:.1f}s — "
-            f"{len(text)} chars, {len(segments)} segments, "
+            f"{len(text)} chars, {len(parsed_segments)} segments, "
             f"lang={language}, duration={duration:.1f}s"
         )
 
         return TranscribeResponse(
             text=text,
             language=language,
-            segments=segments,
+            segments=parsed_segments,
             duration_seconds=round(duration, 2),
         )
     except HTTPException:
