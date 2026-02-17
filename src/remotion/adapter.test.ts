@@ -187,4 +187,79 @@ describe("adaptManifest", () => {
     expect(result.branding.accentColor).toBe("#ff0000");
     expect(result.branding.watermarkPosition).toBe("top-left");
   });
+
+  it("transforms image_scene entries", () => {
+    const manifest = buildMinimalManifest();
+    manifest.timeline = [
+      {
+        type: "image_scene",
+        src: "/images/scene-001.png",
+        startAtFrame: 0,
+        duration: 450,
+        voiceover: "/audio/vo-001.mp3",
+        voiceoverVolume: 0.9,
+        kenBurns: {
+          scaleFrom: 1.0,
+          scaleTo: 1.2,
+          translateXFrom: 0,
+          translateXTo: -15,
+        },
+      },
+    ];
+    const result = adaptManifest(manifest, outputDir);
+    const scene = result.timeline[0];
+    expect(scene.type).toBe("image_scene");
+    if (scene.type === "image_scene") {
+      expect(scene.src).toBe("/images/scene-001.png");
+      expect(scene.startAtFrame).toBe(0);
+      expect(scene.durationInFrames).toBe(450);
+      expect(scene.voiceover).toBe("/audio/vo-001.mp3");
+      expect(scene.voiceoverVolume).toBe(0.9);
+      expect(scene.kenBurns).toEqual({
+        scaleFrom: 1.0,
+        scaleTo: 1.2,
+        translateXFrom: 0,
+        translateXTo: -15,
+        translateYFrom: 0,
+        translateYTo: -5,
+      });
+    }
+  });
+
+  it("handles image_scene without optional voiceover", () => {
+    const manifest = buildMinimalManifest();
+    manifest.timeline = [
+      {
+        type: "image_scene",
+        src: "/images/scene.png",
+        startAtFrame: 0,
+        duration: 300,
+      },
+    ];
+    const result = adaptManifest(manifest, outputDir);
+    const scene = result.timeline[0];
+    if (scene.type === "image_scene") {
+      expect(scene.voiceover).toBeUndefined();
+      expect(scene.voiceoverVolume).toBe(1);
+      expect(scene.kenBurns).toEqual({
+        scaleFrom: 1,
+        scaleTo: 1.15,
+        translateXFrom: 0,
+        translateXTo: -10,
+        translateYFrom: 0,
+        translateYTo: -5,
+      });
+    }
+  });
+
+  it("calculates duration correctly with image_scene entries", () => {
+    const manifest = buildMinimalManifest();
+    manifest.timeline = [
+      { type: "image_scene", src: "/a.png", startAtFrame: 0, duration: 300 },
+      { type: "image_scene", src: "/b.png", startAtFrame: 300, duration: 450 },
+    ];
+    const result = adaptManifest(manifest, outputDir);
+    // Last entry ends at 300 + 450 = 750
+    expect(result.durationInFrames).toBe(750);
+  });
 });

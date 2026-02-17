@@ -897,6 +897,85 @@ Manifest ──▶ Adapter ──▶ bundle() ──▶ selectComposition() ─�
 
 1. **Highlight Reel** (Mode A) — Auto-selects best moments from ingested clips based on visual scene scores and speech content
 2. **Script-Driven** (Mode B) — Aligns timeline to a user-provided script; optionally generates TTS voiceover via VoiceService
+3. **Presentation** (Mode C) — Generates a full video from a text topic with no input media required. The pipeline: `StoryboardEngine` (LLM) → scene plan → `ImageGenService` (Stable Diffusion / cloud fallback) → AI-generated images → per-scene TTS voiceover → Ken Burns animations → assembled `DirectorManifest` with `image_scene` timeline entries
+
+### Mode C Architecture (Presentation Pipeline)
+
+Mode C ("Presentation Mode") is a **zero-input video production pipeline** — the user provides only a topic string, and the system generates a complete video with AI-generated imagery, narration, transitions, and background music.
+
+```
+┌────────────┐     ┌──────────────────┐     ┌──────────────────┐     ┌──────────────┐
+│  Text      │────▶│  Storyboard      │────▶│  Image Gen       │────▶│  Manifest    │
+│  Topic     │     │  Engine (LLM)    │     │  Service         │     │  Builder     │
+│            │     │  (#254)          │     │  (#255)          │     │  (#256-257)  │
+└────────────┘     └──────────────────┘     └──────────────────┘     └──────────────┘
+                          │                        │                        │
+                   ┌──────┴──────┐          ┌──────┴──────┐         ┌──────┴──────┐
+                   │ Scene Plan  │          │ Stable Diff │         │ image_scene │
+                   │ title,      │          │ (local) or  │         │ timeline    │
+                   │ narration,  │          │ Cloud API   │         │ entries +   │
+                   │ visual desc │          │ (fallback)  │         │ Ken Burns + │
+                   │ styleAnchor │          │             │         │ TTS + music │
+                   └─────────────┘          └─────────────┘         └─────────────┘
+```
+
+#### Sub-modules (Mode C)
+
+| Module | Path | Purpose |
+|---|---|---|
+| **StoryboardEngine** (#254) | `src/video/generators/storyboard-engine.ts` | LLM-powered scene planner. Takes a topic + optional style/audience hints, returns a structured storyboard with title, `styleAnchor`, and ordered scenes (each with `title`, `narration`, `visualDescription`, `duration`, `rawImageDescription`). |
+| **ImageGenService** (#255) | `src/video/generators/image-gen-service.ts` | Multi-provider image generation (local Stable Diffusion via FastAPI sidecar, cloud GCP Imagen fallback). Supports configurable dimensions, guidance scale, inference steps. Health-checks providers at startup. |
+| **Image Gen Sidecar** (#255) | `sidecars/image-gen/server.py` | FastAPI Python server wrapping `diffusers` + `torch` for local Stable Diffusion inference on Apple Silicon (MPS) or CUDA. Endpoints: `POST /generate`, `GET /health`. |
+| **ImageSceneSegment** (#256) | `src/remotion/components/image-scene-segment.tsx` | Remotion component rendering a single Mode C scene: AI image with Ken Burns pan/zoom + optional per-scene `Audio` voiceover in a `Sequence`. |
+| **KenBurns** (#256) | `src/remotion/components/KenBurns.tsx` | Animated Ken Burns effect using Remotion `interpolate()` — configurable `scaleFrom`/`scaleTo`, `translateX`/`translateY` ranges over the clip's duration. |
+
+#### `image_scene` Timeline Entry
+
+Mode C introduces a new discriminated union variant in the `DirectorManifest` timeline:
+
+```typescript
+interface ImageSceneEntry {
+  type: "image_scene";
+  src: string;              // absolute path to generated image
+  startAtFrame: number;
+  duration: number;         // frames
+  voiceover?: string;       // path to per-scene TTS audio
+  voiceoverVolume?: number; // 0–1, default 1
+  kenBurns?: {
+    scaleFrom: number;      // default 1.0
+    scaleTo: number;        // default 1.15
+    translateXFrom: number; // default 0
+    translateXTo: number;   // default -10
+    translateYFrom: number; // default 0
+    translateYTo: number;   // default -5
+  };
+}
+```
+
+The `TimelineEntry` union becomes: `VideoClipEntry | OverlayEntry | TitleCardEntry | TransitionEntry | ImageSceneEntry`.
+
+#### Rendering Pipeline (Mode C)
+
+The `image_scene` entry flows through the standard Remotion pipeline:
+
+1. **Adapter** (`src/remotion/adapter.ts`) maps `image_scene` manifest entries → `ImageScenePropsSchema` input props with media path resolution and bundle staging.
+2. **TemplateComposition** (`src/remotion/compositions/template-composition.tsx`) dispatches `image_scene` items to `ImageSceneSegment` within the `TransitionSeries`.
+3. **ImageSceneSegment** renders the `KenBurns` component + optional per-scene `Audio` in a `Sequence`.
+4. Crossfade `TransitionEntry` items between scenes provide smooth visual flow.
+
+#### Manifest Construction (video-tools.ts)
+
+When `mode === "presentation"`, the `produce-video` tool handler:
+
+1. Calls `StoryboardEngine.generate(topic)` → structured scene plan
+2. Calls `ImageGenService.generate(description)` for each scene → image files
+3. Calls `VoiceService.synthesize(narration)` for each scene → TTS audio files
+4. Builds a `DirectorManifest` with:
+   - `image_scene` entries (one per scene, with Ken Burns params alternating pan direction)
+   - `transition` entries (crossfade between scenes)
+   - Background music via `audioLayers` (with volume ducking for voiceover)
+   - Metadata including `styleAnchor`, `totalDuration`, `mode: "presentation"`
+5. Returns the manifest for rendering via the standard Remotion pipeline
 
 ### MCP Tools
 

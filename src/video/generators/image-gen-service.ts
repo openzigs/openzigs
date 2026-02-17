@@ -22,6 +22,8 @@ export type ImageProvider = "cloud" | "local" | "auto";
 export interface ImageGenOptions {
   /** Which provider to use (default: "auto" — try cloud, fallback to local) */
   provider?: ImageProvider;
+  /** Which local sidecar model to use (e.g. "flux", "sdxl-turbo"). Ignored for cloud provider. */
+  localModel?: string;
   /** Image width in pixels (default: 1024) */
   width?: number;
   /** Image height in pixels (default: 1024) */
@@ -65,15 +67,20 @@ export interface ImageGenServiceConfig {
 
 // ── Constants ─────────────────────────────────────────────────
 
-const DEFAULT_CONFIG: Required<ImageGenServiceConfig> = {
-  gcpProjectId: process.env.GCP_PROJECT_ID ?? process.env.GOOGLE_CLOUD_PROJECT ?? "",
-  gcpRegion: process.env.GCP_REGION ?? "us-central1",
-  imagenModel: "imagen-3.0-generate-001",
-  localSidecarUrl: process.env.IMAGE_GEN_SIDECAR_URL ?? "http://127.0.0.1:5005",
-  cloudTimeoutMs: 60_000,
-  localTimeoutMs: 120_000,
-  outputDir: path.join(os.tmpdir(), "openzigs-image-gen"),
-};
+// Lazy factory — process.env must be read at construction time, not at
+// module load time; ESM evaluates top-level constants before dotenv/config
+// side-effects run when the import graph is resolved in certain orders.
+function getDefaultConfig(): Required<ImageGenServiceConfig> {
+  return {
+    gcpProjectId: process.env.GCP_PROJECT_ID ?? process.env.GOOGLE_CLOUD_PROJECT ?? "",
+    gcpRegion: process.env.GCP_REGION ?? "us-central1",
+    imagenModel: "imagen-3.0-generate-001",
+    localSidecarUrl: process.env.IMAGE_GEN_SIDECAR_URL ?? "http://127.0.0.1:5005",
+    cloudTimeoutMs: 60_000,
+    localTimeoutMs: 120_000,
+    outputDir: path.join(os.tmpdir(), "openzigs-image-gen"),
+  };
+}
 
 // ── Service ───────────────────────────────────────────────────
 
@@ -88,7 +95,7 @@ export class ImageGenService {
   get localAvailable(): boolean | null { return this._localAvailable; }
 
   constructor(config?: ImageGenServiceConfig) {
-    this.config = { ...DEFAULT_CONFIG, ...config };
+    this.config = { ...getDefaultConfig(), ...config };
   }
 
   /**
@@ -150,6 +157,33 @@ export class ImageGenService {
     return { cloud, local };
   }
 
+  /**
+   * Query the local sidecar for its recommended image resolution.
+   * Returns null if the sidecar is unavailable or doesn't support this.
+   *
+   * Diffusion models have native training resolutions (e.g. 512x512 for
+   * SDXL Turbo, 1024x1024 for Flux). Generating at much higher resolutions
+   * produces degenerate outputs where the model can't differentiate prompts.
+   */
+  async getRecommendedResolution(): Promise<{ width: number; height: number } | null> {
+    try {
+      const response = await fetch(`${this.config.localSidecarUrl}/health`, {
+        signal: AbortSignal.timeout(5000),
+      });
+      const data = await response.json() as {
+        ready?: boolean;
+        recommended_width?: number;
+        recommended_height?: number;
+      };
+      if (data.ready && data.recommended_width && data.recommended_height) {
+        return { width: data.recommended_width, height: data.recommended_height };
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
   // ── Cloud Provider (Google Vertex AI Imagen) ────────────────
 
   private async generateCloud(
@@ -167,63 +201,83 @@ export class ImageGenService {
     // Determine aspect ratio from dimensions
     const aspectRatio = this.resolveAspectRatio(width, height);
 
+    let client: { close?: () => Promise<void> } | null = null;
+
     try {
-      // Use the Vertex AI REST prediction endpoint via @google-cloud/aiplatform
-      // Dynamic import — package is optional and may not be installed
+      // Use the Vertex AI prediction endpoint via @google-cloud/aiplatform
+      // Dynamic import — package is optional and may not be installed.
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const aiplatform: any = await import(AIPLATFORM_PKG).catch(() => null);
       if (!aiplatform) {
         throw new Error("@google-cloud/aiplatform is not installed — run: pnpm add @google-cloud/aiplatform");
       }
 
-      const { PredictionServiceClient } = aiplatform;
+      const { PredictionServiceClient, helpers } = aiplatform;
 
-      const client = new PredictionServiceClient({
+      client = new PredictionServiceClient({
         apiEndpoint: `${this.config.gcpRegion}-aiplatform.googleapis.com`,
       });
 
       const endpoint = `projects/${this.config.gcpProjectId}/locations/${this.config.gcpRegion}/publishers/google/models/${this.config.imagenModel}`;
 
-      // Build the prediction request following Imagen API spec
-      const instance = {
-        structValue: {
-          fields: {
-            prompt: { stringValue: prompt },
-          },
-        },
+      // Build instance & parameters using SDK helpers for correct
+      // protobuf Value encoding (avoids manual structValue wiring).
+      const instanceValue = helpers.toValue({ prompt });
+
+      const paramObj: Record<string, unknown> = {
+        sampleCount: 1,
+        aspectRatio,
       };
+      if (options.negativePrompt) {
+        paramObj.negativePrompt = options.negativePrompt;
+      }
+      // NOTE: Vertex AI Imagen rejects `seed` when watermarking is enabled
+      // (the default). Omit seed for cloud provider — images are non-deterministic
+      // unless the caller explicitly disables watermarks.
+      const parametersValue = helpers.toValue(paramObj);
 
-      const parameters = {
-        structValue: {
-          fields: {
-            sampleCount: { numberValue: 1 },
-            aspectRatio: { stringValue: aspectRatio },
-            ...(options.negativePrompt
-              ? { negativePrompt: { stringValue: options.negativePrompt } }
-              : {}),
-            ...(options.seed !== undefined
-              ? { seed: { numberValue: options.seed } }
-              : {}),
-          },
-        },
-      };
+      logger.info(`[ImageGenService] Calling Vertex AI Imagen: project=${this.config.gcpProjectId}, region=${this.config.gcpRegion}, model=${this.config.imagenModel}, aspectRatio=${aspectRatio}`);
 
+      // Retry with exponential backoff for RESOURCE_EXHAUSTED (quota) errors.
+      // Imagen quota limits are per-minute; short backoffs allow recovery.
+      const MAX_RETRIES = 3;
+      let lastError: Error | null = null;
+      let response: unknown = null;
+      for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+        try {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const [res] = await (client as any).predict({
+            endpoint,
+            instances: [instanceValue],
+            parameters: parametersValue,
+          });
+          response = res;
+          break;
+        } catch (retryErr: unknown) {
+          lastError = retryErr instanceof Error ? retryErr : new Error(String(retryErr));
+          const isQuota = lastError.message.includes("RESOURCE_EXHAUSTED");
+          if (!isQuota || attempt === MAX_RETRIES) {
+            throw lastError;
+          }
+          const backoffMs = 30_000 * Math.pow(2, attempt); // 30s, 60s, 120s
+          logger.warn(`[ImageGenService] Quota exceeded — retrying in ${backoffMs}ms (attempt ${attempt + 1}/${MAX_RETRIES})`);
+          await new Promise(resolve => setTimeout(resolve, backoffMs));
+        }
+      }
+
+      // Extract the base64-encoded image from the response.
+      // predictions is an array of protobuf Values — convert back to JS.
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const [response] = await (client as any).predict({
-        endpoint,
-        instances: [instance],
-        parameters,
-      });
-
-      // Extract the base64-encoded image from the response
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const predictions = (response as any).predictions;
-      if (!predictions || predictions.length === 0) {
+      const rawPredictions = (response as any).predictions;
+      if (!rawPredictions || rawPredictions.length === 0) {
         throw new Error("Imagen returned empty predictions");
       }
 
-      const imageB64 = predictions[0]?.structValue?.fields?.bytesBase64Encoded?.stringValue;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const prediction = helpers.fromValue(rawPredictions[0] as any) as Record<string, unknown>;
+      const imageB64 = prediction.bytesBase64Encoded as string | undefined;
       if (!imageB64) {
+        logger.error(`[ImageGenService] Imagen prediction keys: ${Object.keys(prediction).join(", ")}`);
         throw new Error("Imagen response missing base64 image data");
       }
 
@@ -238,6 +292,12 @@ export class ImageGenService {
     } catch (error) {
       this._cloudAvailable = false;
       throw error;
+    } finally {
+      if (client?.close) {
+        await client.close().catch(() => {
+          // Non-fatal: client cleanup best-effort only.
+        });
+      }
     }
   }
 
@@ -257,6 +317,7 @@ export class ImageGenService {
         prompt,
         width,
         height,
+        ...(options.localModel ? { model: options.localModel } : {}),
         ...(options.steps !== undefined ? { steps: options.steps } : {}),
         ...(options.seed !== undefined ? { seed: options.seed } : {}),
         ...(options.negativePrompt ? { negative_prompt: options.negativePrompt } : {}),
@@ -309,11 +370,15 @@ export class ImageGenService {
   }
 
   private async checkCloudHealth(): Promise<boolean> {
-    if (!this.config.gcpProjectId) return false;
+    if (!this.config.gcpProjectId) {
+      logger.debug("[ImageGenService] Cloud health: GCP_PROJECT_ID not set");
+      return false;
+    }
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const aiplatform: any = await import(AIPLATFORM_PKG).catch(() => null);
       if (!aiplatform) {
+        logger.debug("[ImageGenService] Cloud health: @google-cloud/aiplatform not installed");
         this._cloudAvailable = false;
         return false;
       }
@@ -321,11 +386,13 @@ export class ImageGenService {
       const client = new PredictionServiceClient({
         apiEndpoint: `${this.config.gcpRegion}-aiplatform.googleapis.com`,
       });
-      // Just check that the client can be instantiated
+      // Verify the client can initialize (credential resolution happens here)
       void client;
       this._cloudAvailable = true;
       return true;
-    } catch {
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.debug(`[ImageGenService] Cloud health failed: ${msg}`);
       this._cloudAvailable = false;
       return false;
     }

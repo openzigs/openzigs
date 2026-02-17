@@ -245,12 +245,14 @@ function ensureMultiClipCoverage(
 
   // Update metadata.sourceClips
   if (manifest.metadata) {
-    const metaSources = new Set(manifest.metadata.sourceClips.map(normalizePath));
+    const existingClips = manifest.metadata.sourceClips ?? [];
+    const metaSources = new Set(existingClips.map(normalizePath));
     for (const src of sourceClips) {
       if (!metaSources.has(normalizePath(src))) {
-        manifest.metadata.sourceClips.push(src);
+        existingClips.push(src);
       }
     }
+    manifest.metadata.sourceClips = existingClips;
   }
 }
 

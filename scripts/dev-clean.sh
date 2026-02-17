@@ -14,6 +14,7 @@ pkill -f "tsx.*src/server.ts" || true
 pkill -f "node.*dist/server.js" || true
 pkill -f "next.*dev" || true
 pkill -f "pnpm.*dev" || true
+pkill -f "sidecars/image-gen/server.py" || true
 
 # Kill processes on port 3000 (default port)
 PID=$(lsof -ti:3000 2>/dev/null || true)
@@ -26,6 +27,13 @@ fi
 PID=$(lsof -ti:3001 2>/dev/null || true)
 if [ -n "$PID" ]; then
   echo "[clean-start] Killing process on port 3001 (PID $PID)"
+  kill -9 $PID || true
+fi
+
+# Kill processes on port 5005 (image-gen sidecar)
+PID=$(lsof -ti:5005 2>/dev/null || true)
+if [ -n "$PID" ]; then
+  echo "[clean-start] Killing process on port 5005 (PID $PID)"
   kill -9 $PID || true
 fi
 
@@ -47,6 +55,53 @@ if [ -f "$CONFIG_FILE" ]; then
   fi
 fi
 
+# Optional: start local image-gen sidecar (default enabled)
+# The sidecar starts in lazy mode — no model loaded until first /generate request.
+# This makes startup instant (~1s) and costs no GPU RAM until actually used.
+SIDECAR_PID=""
+if [ "${OPENZIGS_START_SIDECAR:-1}" != "0" ]; then
+  SIDECAR_DIR="$PROJECT_ROOT/sidecars/image-gen"
+  SIDECAR_LOG="$PROJECT_ROOT/.openzigs-image-sidecar.log"
+  SIDECAR_MODEL="${OPENZIGS_IMAGE_MODEL:-sdxl-turbo}"
+  SIDECAR_IDLE_TIMEOUT="${OPENZIGS_SIDECAR_IDLE_TIMEOUT:-300}"
+
+  if [ -x "$SIDECAR_DIR/.venv/bin/python" ]; then
+    SIDECAR_PY="$SIDECAR_DIR/.venv/bin/python"
+  elif command -v python3.12 >/dev/null 2>&1; then
+    SIDECAR_PY="python3.12"
+  else
+    SIDECAR_PY="python3"
+  fi
+
+  if [ -f "$SIDECAR_DIR/server.py" ]; then
+    echo "[clean-start] Starting image-gen sidecar (lazy mode, default-model=$SIDECAR_MODEL, idle-timeout=${SIDECAR_IDLE_TIMEOUT}s, port=5005)"
+    (
+      cd "$SIDECAR_DIR"
+      "$SIDECAR_PY" server.py --port 5005 --default-model "$SIDECAR_MODEL" --idle-timeout "$SIDECAR_IDLE_TIMEOUT" > "$SIDECAR_LOG" 2>&1
+    ) &
+    SIDECAR_PID=$!
+
+    echo "[clean-start] Sidecar logs: $SIDECAR_LOG"
+    echo "[clean-start] Waiting for sidecar health on port 5005..."
+    SIDECAR_READY=0
+    for _ in {1..15}; do
+      if curl -fsS "http://127.0.0.1:5005/health" >/dev/null 2>&1; then
+        SIDECAR_READY=1
+        echo "[clean-start] Sidecar is healthy (lazy mode — no model loaded yet)"
+        break
+      fi
+      sleep 1
+    done
+
+    if [ "$SIDECAR_READY" -ne 1 ]; then
+      echo "[clean-start] WARNING: Sidecar failed to become healthy. Continuing startup."
+      echo "[clean-start] Check logs: $SIDECAR_LOG"
+    fi
+  else
+    echo "[clean-start] WARNING: sidecar server not found at $SIDECAR_DIR/server.py"
+  fi
+fi
+
 cd "$PROJECT_ROOT"
 DEV_LOG="$PROJECT_ROOT/.openzigs-dev.log"
 pnpm dev > "$DEV_LOG" 2>&1 &
@@ -59,10 +114,14 @@ TAIL_PID=$!
 cleanup() {
   echo "[clean-start] Stopping OpenZigs dev servers..."
   kill -9 "$BACKEND_PID" 2>/dev/null || true
+  if [ -n "${SIDECAR_PID:-}" ]; then
+    kill -9 "$SIDECAR_PID" 2>/dev/null || true
+  fi
   if [ -n "${TAIL_PID:-}" ]; then
     kill -9 "$TAIL_PID" 2>/dev/null || true
   fi
   pkill -f "next.*dev" || true
+  pkill -f "sidecars/image-gen/server.py" || true
 }
 
 trap cleanup EXIT

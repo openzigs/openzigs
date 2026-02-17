@@ -86,11 +86,29 @@ export const TransitionEntrySchema = z.object({
   startAtFrame: z.number().int().min(0),
 });
 
+export const ImageSceneEntrySchema = z.object({
+  type: z.literal("image_scene"),
+  src: z.string().min(1),
+  startAtFrame: z.number().int().min(0),
+  duration: z.number().int().min(1),
+  voiceover: z.string().optional(),
+  voiceoverVolume: z.number().min(0).max(1).optional(),
+  kenBurns: z.object({
+    scaleFrom: z.number().optional(),
+    scaleTo: z.number().optional(),
+    translateXFrom: z.number().optional(),
+    translateXTo: z.number().optional(),
+    translateYFrom: z.number().optional(),
+    translateYTo: z.number().optional(),
+  }).optional(),
+});
+
 export const TimelineEntrySchema = z.discriminatedUnion("type", [
   VideoClipEntrySchema,
   OverlayEntrySchema,
   TitleCardEntrySchema,
   TransitionEntrySchema,
+  ImageSceneEntrySchema,
 ]);
 
 // ── Audio ─────────────────────────────────────────────────────
@@ -136,7 +154,7 @@ export const ManifestMetadataSchema = z.object({
   llmModel: z.string().min(1),
   llmTokensUsed: z.number().int().min(0),
   productionMode: z.enum(["highlight", "script", "presentation"]),
-  sourceClips: z.array(z.string()),
+  sourceClips: z.array(z.string()).optional(),
   estimatedRenderTime: z.number().positive().optional(),
 });
 

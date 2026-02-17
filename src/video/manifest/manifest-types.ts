@@ -108,7 +108,30 @@ export interface TransitionEntry {
   startAtFrame: number;
 }
 
-export type TimelineEntry = VideoClipEntry | OverlayEntry | TitleCardEntry | TransitionEntry;
+export interface ImageSceneEntry {
+  type: "image_scene";
+  /** Path to the generated image file */
+  src: string;
+  /** Frame number where this scene starts in the composition */
+  startAtFrame: number;
+  /** Duration of this scene in frames */
+  duration: number;
+  /** Optional per-scene voiceover audio path */
+  voiceover?: string;
+  /** Volume for the per-scene voiceover (default: 1.0) */
+  voiceoverVolume?: number;
+  /** Ken Burns effect parameters */
+  kenBurns?: {
+    scaleFrom?: number;
+    scaleTo?: number;
+    translateXFrom?: number;
+    translateXTo?: number;
+    translateYFrom?: number;
+    translateYTo?: number;
+  };
+}
+
+export type TimelineEntry = VideoClipEntry | OverlayEntry | TitleCardEntry | TransitionEntry | ImageSceneEntry;
 
 // ── Branding ──────────────────────────────────────────────────
 export interface BrandingConfig {
@@ -125,7 +148,8 @@ export interface ManifestMetadata {
   llmModel: string;
   llmTokensUsed: number;
   productionMode: "highlight" | "script" | "presentation";
-  sourceClips: string[];
+  /** Source clips used (empty array for presentation mode) */
+  sourceClips?: string[];
   estimatedRenderTime?: number;
 }
 

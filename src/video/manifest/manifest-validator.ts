@@ -204,5 +204,13 @@ function validateSourceFiles(
         errors.push(`[source] Entry ${i}: video source not found: ${entry.source}`);
       }
     }
+    if (entry.type === "image_scene") {
+      if (!fs.existsSync(entry.src)) {
+        errors.push(`[source] Entry ${i}: image source not found: ${entry.src}`);
+      }
+      if (entry.voiceover && !fs.existsSync(entry.voiceover)) {
+        errors.push(`[source] Entry ${i}: scene voiceover not found: ${entry.voiceover}`);
+      }
+    }
   }
 }

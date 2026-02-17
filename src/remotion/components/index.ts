@@ -10,3 +10,4 @@ export { LogoWatermark } from "./logo-watermark";
 export { ProgressBar } from "./progress-bar";
 export { VideoClipSegment } from "./video-clip-segment";
 export { KenBurns } from "./KenBurns";
+export { ImageSceneSegment } from "./image-scene-segment";

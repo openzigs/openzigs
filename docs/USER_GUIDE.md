@@ -2479,7 +2479,7 @@ Disabled tools are never sent to the LLM — the model cannot call them. Use the
 
 ## Director Mode (Video Production)
 
-Director Mode transforms raw video clips into polished edits using a single LLM call. It supports two production modes:
+Director Mode transforms raw video clips into polished edits using a single LLM call, or generates entire videos from scratch using AI imagery. It supports three production modes:
 
 ### Quick Start
 
@@ -2495,11 +2495,17 @@ Director Mode transforms raw video clips into polished edits using a single LLM 
    ```
    The system generates a TTS voiceover (if Voice is enabled) and aligns the timeline to your script.
 
+3. **Presentation** — Generate a full video from a text topic (no input media needed):
+   ```
+   "Create a presentation video about the history of distributed systems"
+   ```
+   The pipeline generates a storyboard (scenes + narration), AI images for each scene via Stable Diffusion, per-scene TTS voiceover, Ken Burns animations, crossfade transitions, and optional background music — all fully automated.
+
 ### Video Tools
 
 | Tool | Description |
 |---|---|
-| `produce-video` | Full pipeline: ingest clips → LLM analysis → Director Manifest. Parameters: `clips` (file paths), `mode` (`highlight` or `script`), optional `scriptPath`, `musicTrackPath`, `template`. |
+| `produce-video` | Full pipeline: ingest clips → LLM analysis → Director Manifest, or generate from topic (presentation mode). Parameters: `clips` (file paths, not needed for presentation), `mode` (`highlight`, `script`, or `presentation`), optional `topic` (for presentation), `scriptPath`, `musicTrackPath`, `template`. |
 | `list-templates` | Show available video templates. Filter by `tag` (e.g., `social`, `professional`, `tech`). |
 | `search-assets` | Search for royalty-free music, sound effects, and images. Sources: local library, Pixabay, Jamendo, Pexels. |
 
@@ -2547,6 +2553,7 @@ Select a quality preset before starting the render. The codec is H.264 by defaul
 
 OpenZigs uses **Remotion v4** for server-side video rendering. The render engine supports:
 
+- **AI image scenes** — Ken Burns pan/zoom on AI-generated images with per-scene voiceover
 - **Smooth transitions** — crossfade, dissolve, wipe (left/right), and hard cut
 - **Animated title cards** — fade, slide-up, and typewriter text animations
 - **Smart captions** — word-by-word captions with pill, underline, boxed, or karaoke styles
@@ -2579,13 +2586,37 @@ Add API keys for cloud asset sources in your config:
 }
 ```
 
+### Presentation Mode
+
+Presentation Mode (Mode C) produces complete videos from a text topic with zero input media. The pipeline:
+
+1. **Storyboard Generation** — The LLM creates a structured scene plan with title, style anchor, narration, and visual descriptions for each scene
+2. **Image Generation** — Each scene's visual description is sent to Stable Diffusion (local FastAPI sidecar on Apple Silicon / CUDA) with the style anchor prepended for consistency. Falls back to Google Cloud Imagen if local generation is unavailable
+3. **Voiceover Synthesis** — Per-scene narration is converted to speech via Google Cloud TTS
+4. **Assembly** — Images, voiceover audio, Ken Burns animations, crossfade transitions, and background music are assembled into a Director Manifest and rendered via Remotion
+
+#### Presentation Mode Prerequisites
+
+- **Python 3.10+** with `torch`, `diffusers`, `transformers`, `accelerate`, `safetensors`, `fastapi`, `uvicorn`, `Pillow` — install via `pip install -r sidecars/image-gen/requirements.txt`
+- **Apple Silicon Mac** (MPS backend) or **NVIDIA GPU** (CUDA) for local image generation
+- **Google Cloud Vertex AI** (optional fallback) — set `GOOGLE_CLOUD_PROJECT` env var and authenticate via `gcloud auth application-default login`
+- The image gen sidecar starts automatically when needed, or run manually: `cd sidecars/image-gen && python server.py`
+
+#### Ken Burns Animation
+
+Each generated image is animated with a Ken Burns pan/zoom effect:
+- **Scale**: Subtle zoom from 1.0× to 1.15× over the scene duration
+- **Pan**: Alternating left-to-right and right-to-left horizontal pan between scenes for visual variety
+- All parameters are configurable per scene in the manifest
+
 ### Prerequisites
 
 - **ffmpeg** installed and on PATH (for audio extraction & scene detection)
 - **whisper-node** (bundled) for speech-to-text transcription
 - **Remotion v4** and **React 18** (bundled) for server-side video rendering
+- **Python 3.10+** with ML dependencies (optional, for Presentation Mode image generation — see above)
 - **Pixabay/Jamendo/Pexels API keys** (optional, for cloud asset search)
-- **Google Cloud TTS** (optional, for script-driven voiceover generation)
+- **Google Cloud TTS** (optional, for script-driven and presentation voiceover generation)
 
 ---
 

@@ -26,6 +26,7 @@ import { LowerThird } from "../components/lower-third";
 import { LogoWatermark } from "../components/logo-watermark";
 import { ProgressBar } from "../components/progress-bar";
 import { VideoClipSegment } from "../components/video-clip-segment";
+import { ImageSceneSegment } from "../components/image-scene-segment";
 import { mapTransition } from "../util/transition-mapper";
 
 /**
@@ -42,6 +43,7 @@ function partitionTimeline(timeline: TimelineItem[]) {
     switch (item.type) {
       case "video_clip":
       case "title_card":
+      case "image_scene":
         segments.push(item);
         break;
       case "overlay":
@@ -137,6 +139,16 @@ function renderSegment(
           animation={item.animation}
           fontFamily={branding.fontFamily}
           accentColor={branding.accentColor}
+        />
+      );
+    case "image_scene":
+      return (
+        <ImageSceneSegment
+          src={item.src}
+          durationInFrames={item.durationInFrames}
+          voiceover={item.voiceover}
+          voiceoverVolume={item.voiceoverVolume}
+          kenBurns={item.kenBurns}
         />
       );
     default:

@@ -11,6 +11,9 @@ importers:
       '@github/copilot-sdk':
         specifier: ^0.1.20
         version: 0.1.22
+      '@google-cloud/aiplatform':
+        specifier: ^6.4.0
+        version: 6.4.0
       '@google-cloud/text-to-speech':
         specifier: ^6.4.0
         version: 6.4.0
@@ -1161,6 +1164,10 @@ packages:
   '@github/copilot@0.0.403':
     resolution: {integrity: sha512-v5jUdtGJReLmE1rmff/LZf+50nzmYQYAaSRNtVNr9g0j0GkCd/noQExe31i1+PudvWU0ZJjltR0B8pUfDRdA9Q==}
     hasBin: true
+
+  '@google-cloud/aiplatform@6.4.0':
+    resolution: {integrity: sha512-lNcYOnHfzedewgjTRxQs2/mLk+TYcq4qhdDx+0jG/h0dgQvXCQvnxofOUhpoyTunk2SawlwRZqQOxHHVVENhCA==}
+    engines: {node: '>=18'}
 
   '@google-cloud/text-to-speech@6.4.0':
     resolution: {integrity: sha512-KUnK+mBYz9aegxHrBbwEignOkGRqXvqOXs/EGY7CAJhMFKuNSieW02/PV/ipVRsJM11MP69qgTgEetoyAN0HAg==}
@@ -8141,6 +8148,12 @@ snapshots:
       '@github/copilot-linux-x64': 0.0.403
       '@github/copilot-win32-arm64': 0.0.403
       '@github/copilot-win32-x64': 0.0.403
+
+  '@google-cloud/aiplatform@6.4.0':
+    dependencies:
+      google-gax: 5.0.6
+    transitivePeerDependencies:
+      - supports-color
 
   '@google-cloud/text-to-speech@6.4.0':
     dependencies:

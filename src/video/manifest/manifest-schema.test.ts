@@ -190,6 +190,80 @@ describe("DirectorManifestSchema (Zod)", () => {
     const result = DirectorManifestSchema.safeParse(manifest);
     expect(result.success).toBe(true);
   });
+
+  it("accepts a manifest with image_scene timeline entries", () => {
+    const manifest = buildValidManifest({
+      timeline: [
+        {
+          type: "image_scene",
+          src: "/images/scene-001.png",
+          startAtFrame: 0,
+          duration: 450,
+          voiceover: "/audio/scene-001.mp3",
+          voiceoverVolume: 0.9,
+          kenBurns: {
+            scaleFrom: 1.0,
+            scaleTo: 1.2,
+            translateXFrom: 0,
+            translateXTo: -15,
+            translateYFrom: 0,
+            translateYTo: -5,
+          },
+        },
+      ],
+      metadata: {
+        generatedAt: "2026-02-15T10:00:00Z",
+        llmModel: "gpt-4o",
+        llmTokensUsed: 2000,
+        productionMode: "presentation",
+      },
+    });
+    const result = DirectorManifestSchema.safeParse(manifest);
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts image_scene with minimal fields", () => {
+    const manifest = buildValidManifest({
+      timeline: [
+        {
+          type: "image_scene",
+          src: "/images/scene.png",
+          startAtFrame: 0,
+          duration: 300,
+        },
+      ],
+    });
+    const result = DirectorManifestSchema.safeParse(manifest);
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects image_scene with empty src", () => {
+    const manifest = buildValidManifest({
+      timeline: [
+        {
+          type: "image_scene",
+          src: "",
+          startAtFrame: 0,
+          duration: 300,
+        },
+      ],
+    });
+    const result = DirectorManifestSchema.safeParse(manifest);
+    expect(result.success).toBe(false);
+  });
+
+  it("accepts manifest with presentation mode and no sourceClips", () => {
+    const manifest = buildValidManifest({
+      metadata: {
+        generatedAt: "2026-02-15T10:00:00Z",
+        llmModel: "gpt-4o",
+        llmTokensUsed: 2000,
+        productionMode: "presentation",
+      },
+    });
+    const result = DirectorManifestSchema.safeParse(manifest);
+    expect(result.success).toBe(true);
+  });
 });
 
 describe("validateManifest (semantic)", () => {
