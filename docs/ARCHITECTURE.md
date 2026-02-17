@@ -842,27 +842,48 @@ The audio sidecar is a FastAPI Python server that provides **local** speech synt
 
 ### Multimodal Knowledge (Audio/Video RAG)
 
-The knowledge base supports **audio and video ingestion** via the audio sidecar's STT capabilities, enabling RAG over spoken content.
+The knowledge base supports **audio and video ingestion** via the audio sidecar's STT capabilities and **Copilot SDK vision** for keyframe description, enabling RAG over both spoken and visual content.
 
 #### Ingestion Pipeline
 
+**Audio-only files** (.mp3, .wav, .m4a, .ogg, .flac):
 ```
-Media file (.mp4/.mp3/.wav/...)
-        ↓
+Audio file
+    ↓
 ffmpeg extract audio track
-        ↓
-POST /transcribe → sidecar
-        ↓
+    ↓
+POST /transcribe → sidecar (Whisper MLX)
+    ↓
 Transcript with timestamps
-        ↓
-Chunked with timestamp metadata
-        ↓
-Embedded + stored in LanceDB
+    ↓
+Chunked + embedded in LanceDB
 ```
 
+**Video files** (.mp4, .webm):
+```
+Video file
+    ├──── ffmpeg extract audio ──────▶ POST /transcribe → sidecar
+    │                                          ↓
+    └──── ffmpeg extract keyframes ──▶ Copilot SDK vision (GPT-5 mini)
+              (1 frame / 10s,                  ↓
+               max 20 frames)          Frame descriptions
+                                               ↓
+                                  Interleaved transcript + visual descriptions
+                                               ↓
+                                  Chunked with timestamp metadata
+                                               ↓
+                                  Embedded + stored in LanceDB
+```
+
+#### Key Design Decisions
+
+- **No Ollama/VLM required**: Keyframe descriptions use the Copilot SDK's built-in vision support via `CopilotWrapper.chat()` with `SdkAttachment` image files. GPT-5 mini supports vision natively and doesn't consume premium requests — eliminating the need for a separate ~8-10GB VLM model.
+- **Batched vision requests**: Frames are sent in batches (up to 10 per request) using numbered prompts to minimize API calls, following the same pattern as Director Mode's `keyframe-analyzer.ts`.
+- **Graceful degradation**: If CopilotWrapper is unavailable or vision fails, the converter falls back to transcript-only output (audio-only behavior).
 - **Sidecar priority**: If the audio sidecar is available, it takes priority over the bundled whisper-node converter for media files.
 - **Timestamp preservation**: Each chunk retains `timestampStart` and `timestampEnd` for citation formatting.
 - **Document type tracking**: Chunks include `documentType` for type-aware retrieval boosting.
+- **Visual markers**: Frame descriptions are tagged with `[Visual @ MM:SS]` markers and interleaved chronologically with transcript segments.
 
 #### Multimodal Retrieval
 

@@ -17,11 +17,14 @@ import { createSidecarMediaConverter } from "./sidecar-media-converter.js";
 import { createImageOcrConverter } from "./image-ocr-converter.js";
 import { terminateOcrEngine } from "./ocr-engine.js";
 import { logger } from "../../logging/logger.js";
+import type { CopilotWrapper } from "../../copilot/copilot-wrapper.js";
 
 export type ConverterRegistryOptions = {
   mediaModel?: string;
   /** Audio sidecar URL for sidecar-based media transcription */
   audioSidecarUrl?: string;
+  /** CopilotWrapper for vision-based keyframe description (video files). */
+  copilot?: CopilotWrapper;
 };
 
 export class ConverterRegistry {
@@ -162,6 +165,7 @@ export async function createDefaultRegistry(options: ConverterRegistryOptions = 
   if (options.audioSidecarUrl) {
     const sidecarMediaConverter = await createSidecarMediaConverter({
       sidecarUrl: options.audioSidecarUrl,
+      copilot: options.copilot,
     });
     if (sidecarMediaConverter.available) {
       registry.register(sidecarMediaConverter);

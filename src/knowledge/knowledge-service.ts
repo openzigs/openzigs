@@ -33,11 +33,14 @@ import { DEFAULT_KNOWLEDGE_CONFIG } from "./types.js";
 import { multimodalSearch, type MultimodalSearchResult, type MultimodalSearchOptions } from "./multimodal-retriever.js";
 import type { QueryClassification } from "./query-classifier.js";
 import { logger } from "../logging/logger.js";
+import type { CopilotWrapper } from "../copilot/copilot-wrapper.js";
 
 export type KnowledgeServiceOptions = {
   config?: Partial<KnowledgeConfig>;
   /** Audio sidecar URL for sidecar-based media transcription. */
   audioSidecarUrl?: string;
+  /** CopilotWrapper for vision-based keyframe description (video files). */
+  copilot?: CopilotWrapper;
 };
 
 type IndexFileOptions = {
@@ -123,11 +126,14 @@ export class KnowledgeIngestionService extends EventEmitter {
   private metadataPath: string;
   /** Audio sidecar URL for sidecar-based STT. */
   private audioSidecarUrl?: string;
+  /** CopilotWrapper for vision-based keyframe description. */
+  private copilot?: CopilotWrapper;
 
   constructor(options: KnowledgeServiceOptions = {}) {
     super();
 
     this.audioSidecarUrl = options.audioSidecarUrl;
+    this.copilot = options.copilot;
 
     const sanitizedConfig = Object.fromEntries(
       Object.entries(options.config ?? {}).filter(([, value]) => value !== undefined)
@@ -163,6 +169,7 @@ export class KnowledgeIngestionService extends EventEmitter {
     this.converterRegistry = await createDefaultRegistry({
       mediaModel: this.config.mediaModel,
       audioSidecarUrl: this.audioSidecarUrl,
+      copilot: this.copilot,
     });
 
     // Initialize LanceDB
@@ -354,6 +361,7 @@ export class KnowledgeIngestionService extends EventEmitter {
       this.converterRegistry = await createDefaultRegistry({
         mediaModel: this.config.mediaModel,
         audioSidecarUrl: this.audioSidecarUrl,
+        copilot: this.copilot,
       });
     }
 

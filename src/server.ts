@@ -254,6 +254,7 @@ const knowledgeService = new KnowledgeIngestionService({
     mediaModel: knowledgeConfig?.mediaModel,
   } as Partial<import("./knowledge/types.js").KnowledgeConfig>,
   audioSidecarUrl: resolveSidecarUrl("audio", "AUDIO_SIDECAR_URL", 5006),
+  copilot,
 });
 
 // ── Secret Vault Service ──
