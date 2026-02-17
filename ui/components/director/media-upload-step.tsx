@@ -101,17 +101,17 @@ export const MediaUploadStep = ({
   const addSourceByPath = useCallback(() => {
     const trimmed = sourcePathInput.trim();
     if (!trimmed) return;
-    if (sourceFiles.some((f) => f.path === trimmed)) return;
 
     const name = trimmed.split("/").pop() ?? trimmed;
     const ext = name.split(".").pop()?.toLowerCase() ?? "";
     const mimeType = ext === "md" || ext === "markdown" ? "text/markdown" : "text/plain";
-    onSourceFilesChange([
-      ...sourceFiles,
-      { name, path: trimmed, size: 0, type: mimeType },
-    ]);
+    const nextFile = { name, path: trimmed, size: 0, type: mimeType };
+    if (sourceFiles.length > 0 && sourceFiles[0]?.path !== trimmed) {
+      showToast("Replaced existing source document", "success");
+    }
+    onSourceFilesChange([nextFile]);
     setSourcePathInput("");
-  }, [sourcePathInput, sourceFiles, onSourceFilesChange]);
+  }, [sourcePathInput, sourceFiles, onSourceFilesChange, showToast]);
 
   const handleSourceKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter") {
@@ -126,22 +126,19 @@ export const MediaUploadStep = ({
 
     setUploadingSource(true);
     try {
-      const next = [...sourceFiles];
-      for (const file of Array.from(files)) {
-        const uploaded = await uploadFile(file, "script"); // reuse script upload kind for text files
-        if (!next.some((f) => f.path === uploaded.path)) {
-          next.push({ ...uploaded, type: file.name.endsWith(".md") ? "text/markdown" : "text/plain" });
-        }
-      }
-      onSourceFilesChange(next);
-      showToast(`Added ${files.length} source file${files.length === 1 ? "" : "s"}`, "success");
+      const file = files[0];
+      const uploaded = await uploadFile(file, "script"); // reuse script upload kind for text files
+      onSourceFilesChange([
+        { ...uploaded, type: file.name.endsWith(".md") ? "text/markdown" : "text/plain" },
+      ]);
+      showToast("Source file uploaded", "success");
     } catch {
       showToast("Failed to upload source file(s)", "error");
     } finally {
       setUploadingSource(false);
       if (sourceInputRef.current) sourceInputRef.current.value = "";
     }
-  }, [sourceFiles, onSourceFilesChange, uploadFile]);
+  }, [onSourceFilesChange, uploadFile, showToast]);
 
   const removeSourceFile = useCallback(
     (index: number) => {

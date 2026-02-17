@@ -141,6 +141,9 @@ export const ReviewProduceStep = ({
   const produceMutation = useMutation({
     mutationFn: () => {
       if (state.mode === "presentation") {
+        if (state.sourceFiles.length > 1) {
+          throw new Error("Presentation mode supports one source document. Remove extra files and try again.");
+        }
         // Presentation mode: source document → storyboard → images → TTS → manifest
         const sourceFile = state.sourceFiles[0];
         const ext = sourceFile?.name.split(".").pop()?.toLowerCase() ?? "";

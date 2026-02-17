@@ -229,10 +229,12 @@ export const createVideoTools = ({ copilot, voiceService }: VideoToolsOptions): 
                 voiceover: scene.voiceover,
                 imagePrompt: scene.imagePrompt,
                 durationEstimate: scene.durationEstimate,
-                imagePath: timeline.find(
-                  (t): t is import("../../video/manifest/manifest-types.js").ImageSceneEntry =>
-                    t.type === "image_scene" && (t as import("../../video/manifest/manifest-types.js").ImageSceneEntry).src !== undefined,
-                )?.src,
+                imagePath: timeline
+                  .filter(
+                    (t): t is import("../../video/manifest/manifest-types.js").ImageSceneEntry =>
+                      t.type === "image_scene" &&
+                      (t as import("../../video/manifest/manifest-types.js").ImageSceneEntry).src !== undefined,
+                  )[i]?.src,
               })),
               tokensUsed: storyboard.tokensUsed,
               totalDuration: currentFrame / fps,

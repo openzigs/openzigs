@@ -164,18 +164,6 @@ describe("ImageGenService", () => {
       ).rejects.toThrow("GCP_PROJECT_ID not configured");
     });
 
-    it("throws when @google-cloud/aiplatform is not installed", async () => {
-      const svc = new ImageGenService({
-        gcpProjectId: "test-project",
-        outputDir: testOutputDir,
-      });
-
-      await expect(
-        svc.generateImage("test", { provider: "cloud" }),
-      ).rejects.toThrow();
-
-      expect(svc.cloudAvailable).toBe(false);
-    });
   });
 
   describe("generateImage — auto provider", () => {

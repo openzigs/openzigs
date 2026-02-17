@@ -599,7 +599,7 @@ export const createDirectorRouter = ({
               }
               if (voiceService.isReady()) {
                 const ttsResult = await voiceService.synthesize(scene.voiceover);
-                const voPath = path.join(os.tmpdir(), `openzigs-vo-${nanoid(8)}.mp3`);
+                const voPath = path.join(imageOutputDir, `openzigs-vo-${nanoid(8)}.mp3`);
                 await fs.writeFile(voPath, ttsResult.audio);
                 sceneVoiceoverPath = voPath;
               }

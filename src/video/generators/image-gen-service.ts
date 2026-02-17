@@ -201,6 +201,8 @@ export class ImageGenService {
     // Determine aspect ratio from dimensions
     const aspectRatio = this.resolveAspectRatio(width, height);
 
+    let client: { close?: () => Promise<void> } | null = null;
+
     try {
       // Use the Vertex AI prediction endpoint via @google-cloud/aiplatform
       // Dynamic import — package is optional and may not be installed.
@@ -212,7 +214,7 @@ export class ImageGenService {
 
       const { PredictionServiceClient, helpers } = aiplatform;
 
-      const client = new PredictionServiceClient({
+      client = new PredictionServiceClient({
         apiEndpoint: `${this.config.gcpRegion}-aiplatform.googleapis.com`,
       });
 
@@ -290,6 +292,12 @@ export class ImageGenService {
     } catch (error) {
       this._cloudAvailable = false;
       throw error;
+    } finally {
+      if (client?.close) {
+        await client.close().catch(() => {
+          // Non-fatal: client cleanup best-effort only.
+        });
+      }
     }
   }
 

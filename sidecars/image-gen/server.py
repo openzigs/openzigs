@@ -566,7 +566,7 @@ async def generate(req: GenerateRequest):
     width = (req.width // 8) * 8
     height = (req.height // 8) * 8
 
-    spec = MODEL_REGISTRY[_model_name]  # type: ignore[arg-type]
+    spec = MODEL_REGISTRY[requested_model]
     steps = req.steps or spec["default_steps"]
     guidance = (
         req.guidance_scale
