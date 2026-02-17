@@ -151,6 +151,20 @@ services:
     networks:
       - openzigs-network
 
+  # ── Audio Sidecar (Local STT + TTS via MLX) ──
+  audio-sidecar:
+    build: ./sidecars/audio
+    container_name: openzigs-audio-sidecar
+    restart: unless-stopped
+    ports:
+      - "5006:5006"
+    environment:
+      - AUDIO_PORT=5006
+      - AUDIO_HOST=0.0.0.0
+      - AUDIO_IDLE_TIMEOUT=${AUDIO_IDLE_TIMEOUT:-300}
+    networks:
+      - openzigs-network
+
 volumes:
   openzigs-data:
   pinterest-tokens:

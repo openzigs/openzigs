@@ -174,13 +174,14 @@ export type VaultAppConfig = {
 
 export type VoiceAppConfig = {
   enabled?: boolean;
-  provider?: "google";
+  provider?: "google" | "local";
   voiceName?: string;
   speakingRate?: number;
   pitch?: number;
   cacheDir?: string;
   maxCacheSizeMb?: number;
   maxTextLength?: number;
+  sidecarUrl?: string;
 };
 
 export type AppConfig = {

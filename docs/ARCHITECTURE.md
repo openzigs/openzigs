@@ -793,10 +793,92 @@ IDLE ──[startListening()]──► STANDBY ──[wake word]──► ACTIVE
 
 ### TTS Caching Strategy
 
-- **Cache key**: MD5 hash of `{text, voice, speakingRate, pitch}` → `{hash}.mp3`
+- **Cache key**: MD5 hash of `{text, voice, speakingRate, pitch}` → `{hash}.mp3` or `{hash}.wav`
 - **Writes**: Atomic (write `.tmp` → rename) to prevent corruption
 - **Reads**: Touch `mtime` on hit for LRU tracking
 - **Eviction**: Background LRU sweep when total size exceeds `maxCacheSizeMb`
+
+### Audio Sidecar (Local TTS + STT)
+
+The audio sidecar is a FastAPI Python server that provides **local** speech synthesis (TTS) via [mlx-audio](https://github.com/lucasnewman/mlx-audio) and speech-to-text (STT) via [lightning-whisper-mlx](https://github.com/mustafaaljadery/lightning-whisper-mlx). It runs on Apple Silicon (MPS) or CUDA, avoiding cloud API costs for voice operations.
+
+#### Architecture
+
+```
+┌──────────────┐     ┌───────────────────┐     ┌──────────────┐
+│  Voice       │────▶│  Audio Sidecar    │────▶│  MLX Models  │
+│  Service     │     │  (FastAPI :5006)  │     │  (lazy load) │
+│  (Node.js)   │     │                   │     │              │
+└──────────────┘     └───────────────────┘     └──────────────┘
+   POST /tts              │         │              │
+   POST /transcribe       │         │         Kokoro-82M-bf16
+   GET /health            │         │         distil-large-v3
+   GET /voices            │         │
+                          │         │
+                     TTS Model   STT Model
+                     (~330MB)    (~1.5GB)
+```
+
+#### Endpoints
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/tts` | Text-to-speech synthesis → 24kHz WAV |
+| `POST` | `/transcribe` | Audio file → transcript with segments/timestamps |
+| `GET` | `/voices` | List 19 Kokoro voice presets |
+| `GET` | `/health` | Model load status and memory info |
+| `POST` | `/unload` | Unload TTS/STT models to free VRAM |
+
+#### Key Design Decisions
+
+- **Lazy model loading**: Models load on first use, not at startup, reducing cold-start time.
+- **Independent lifecycle**: TTS and STT models can be loaded/unloaded independently.
+- **Auto-unload**: Idle models are automatically unloaded after a configurable timeout (default: 300s) to free VRAM.
+- **Dual provider**: `VoiceService` routes to local sidecar or Google Cloud TTS based on configuration, with the same API surface.
+
+#### Voice Presets
+
+19 Kokoro voices across 4 languages (American English, British English, Japanese, Chinese) with varied genders and styles (calm, cheerful, professional, expressive, etc.).
+
+### Multimodal Knowledge (Audio/Video RAG)
+
+The knowledge base supports **audio and video ingestion** via the audio sidecar's STT capabilities, enabling RAG over spoken content.
+
+#### Ingestion Pipeline
+
+```
+Media file (.mp4/.mp3/.wav/...)
+        ↓
+ffmpeg extract audio track
+        ↓
+POST /transcribe → sidecar
+        ↓
+Transcript with timestamps
+        ↓
+Chunked with timestamp metadata
+        ↓
+Embedded + stored in LanceDB
+```
+
+- **Sidecar priority**: If the audio sidecar is available, it takes priority over the bundled whisper-node converter for media files.
+- **Timestamp preservation**: Each chunk retains `timestampStart` and `timestampEnd` for citation formatting.
+- **Document type tracking**: Chunks include `documentType` for type-aware retrieval boosting.
+
+#### Multimodal Retrieval
+
+The `multimodalSearch()` function wraps standard vector/FTS/hybrid search with:
+
+1. **Query classification** — Detects media intent keywords ("video", "recording", "podcast") and temporal hints ("at 2:30", "minute 5").
+2. **Score boosting** — Media-sourced chunks get a 1.1–1.5× score multiplier for media-intent queries.
+3. **Citation formatting** — Results include timestamp citations like `[interview.mp4 @ 2:30 → 3:15]` for audio/video sources.
+
+### Voice UI Components
+
+| Component | Location | Purpose |
+|---|---|---|
+| `VoiceMicButton` | `ui/components/voice/voice-mic-button.tsx` | Push-to-talk recording button with local sidecar transcription |
+| `useVoiceInput` hook | `ui/lib/hooks/use-voice-input.ts` | MediaRecorder + sidecar `/transcribe` integration |
+| `VoiceStatusPanel` | `ui/components/admin/voice-status-panel.tsx` | Sidecar health, model status, voice browser with preview |
 
 ---
 

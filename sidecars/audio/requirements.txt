@@ -1,0 +1,20 @@
+# Audio Sidecar — Python dependencies
+# Requires Python 3.10+ and Apple Silicon (MPS) for GPU inference
+
+# Web framework
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+python-multipart>=0.0.12
+
+# Request/response models
+pydantic>=2.0
+
+# Speech-to-Text (Apple Silicon optimized via MLX)
+lightning-whisper-mlx>=0.0.10
+
+# Text-to-Speech (MLX-native Kokoro model)
+mlx-audio>=0.2.0
+
+# Audio processing
+soundfile>=0.12.1
+numpy>=1.26.0

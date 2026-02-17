@@ -30,10 +30,14 @@ import type {
   KnowledgeChunk,
 } from "./types.js";
 import { DEFAULT_KNOWLEDGE_CONFIG } from "./types.js";
+import { multimodalSearch, type MultimodalSearchResult, type MultimodalSearchOptions } from "./multimodal-retriever.js";
+import type { QueryClassification } from "./query-classifier.js";
 import { logger } from "../logging/logger.js";
 
 export type KnowledgeServiceOptions = {
   config?: Partial<KnowledgeConfig>;
+  /** Audio sidecar URL for sidecar-based media transcription. */
+  audioSidecarUrl?: string;
 };
 
 type IndexFileOptions = {
@@ -117,9 +121,13 @@ export class KnowledgeIngestionService extends EventEmitter {
   private dbPath: string;
   /** Path to the persisted document metadata sidecar file. */
   private metadataPath: string;
+  /** Audio sidecar URL for sidecar-based STT. */
+  private audioSidecarUrl?: string;
 
   constructor(options: KnowledgeServiceOptions = {}) {
     super();
+
+    this.audioSidecarUrl = options.audioSidecarUrl;
 
     const sanitizedConfig = Object.fromEntries(
       Object.entries(options.config ?? {}).filter(([, value]) => value !== undefined)
@@ -152,7 +160,10 @@ export class KnowledgeIngestionService extends EventEmitter {
     await fs.mkdir(this.config.directory, { recursive: true });
 
     // Initialize converter registry (auto-detects available converters)
-    this.converterRegistry = await createDefaultRegistry({ mediaModel: this.config.mediaModel });
+    this.converterRegistry = await createDefaultRegistry({
+      mediaModel: this.config.mediaModel,
+      audioSidecarUrl: this.audioSidecarUrl,
+    });
 
     // Initialize LanceDB
     await this.store.initialize();
@@ -203,6 +214,23 @@ export class KnowledgeIngestionService extends EventEmitter {
     const mode = options?.mode ?? this.config.searchMode ?? "hybrid";
     const minScore = options?.minScore ?? this.config.minScore ?? 0;
     return this.store.searchByMode(query, maxResults, mode, minScore);
+  }
+
+  /**
+   * Multimodal-aware search: classifies the query for media intent, applies
+   * type-aware re-ranking, and returns results with timestamp citations.
+   */
+  async searchMultimodal(
+    query: string,
+    options: MultimodalSearchOptions = {},
+  ): Promise<{ results: MultimodalSearchResult[]; classification: QueryClassification }> {
+    const boundSearch = this.search.bind(this);
+    return multimodalSearch(query, boundSearch, {
+      limit: options.limit ?? this.config.maxResults,
+      minScore: options.minScore ?? this.config.minScore ?? 0,
+      mode: options.mode ?? this.config.searchMode ?? "hybrid",
+      ...options,
+    });
   }
 
   /**
@@ -323,7 +351,10 @@ export class KnowledgeIngestionService extends EventEmitter {
     const mediaModelChanged = this.config.mediaModel !== previous.mediaModel;
 
     if (mediaModelChanged) {
-      this.converterRegistry = await createDefaultRegistry({ mediaModel: this.config.mediaModel });
+      this.converterRegistry = await createDefaultRegistry({
+        mediaModel: this.config.mediaModel,
+        audioSidecarUrl: this.audioSidecarUrl,
+      });
     }
 
     if (directoryChanged) {

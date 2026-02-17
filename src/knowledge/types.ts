@@ -54,6 +54,12 @@ export type KnowledgeChunk = {
   sectionHeading?: string;
   /** Embedding vector (populated by the embedder). */
   vector?: number[];
+  /** Timestamp start in seconds (for audio/video transcript chunks). */
+  timestampStart?: number;
+  /** Timestamp end in seconds (for audio/video transcript chunks). */
+  timestampEnd?: number;
+  /** Document content type hint for multimodal retrieval. */
+  documentType?: KnowledgeSourceType;
 };
 
 /** A search result returned from the vector store. */
@@ -70,6 +76,12 @@ export type KnowledgeSearchResult = {
   documentId: string;
   /** Chunk index within the document. */
   chunkIndex: number;
+  /** Timestamp start in seconds (for audio/video transcript chunks). */
+  timestampStart?: number;
+  /** Timestamp end in seconds (for audio/video transcript chunks). */
+  timestampEnd?: number;
+  /** Document content type hint. */
+  documentType?: KnowledgeSourceType;
 };
 
 /** Statistics for the knowledge base. */
