@@ -3,9 +3,10 @@ import { generateEmbedding, generateEmbeddings, getEmbeddingDim } from "./embedd
 
 describe("embedder", () => {
   it("returns a vector of the correct dimensionality", async () => {
+    // First call loads the ONNX model — allow extra time for CI runners
     const vec = await generateEmbedding("Hello world");
     expect(vec).toHaveLength(getEmbeddingDim());
-  });
+  }, 15_000);
 
   it("returns zero vector for empty text", async () => {
     const vec = await generateEmbedding("");

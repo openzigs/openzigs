@@ -94,6 +94,7 @@ _loading: bool = False              # True while a model load is underway
 _last_used: float = 0.0            # monotonic time of last generation
 _idle_timeout: float = 0.0         # seconds before auto-unload (0 = disabled)
 _default_model: str = "sdxl-turbo"  # model to use on first request if none specified
+_preload_at_startup: bool = False     # True when --preload flag is used
 
 
 def resolve_device() -> str:
@@ -408,8 +409,16 @@ async def lifespan(app: FastAPI):
 
     _device = resolve_device()
     _ready = True  # Server accepts requests immediately; model loads on demand
+
+    # If --preload was specified, load the model eagerly at startup
+    if _preload_at_startup:
+        log.info(f"Preloading model '{_default_model}' at startup ...")
+        elapsed = _load_model(_default_model)
+        log.info(f"Model '{_default_model}' preloaded in {elapsed:.1f}s")
+
     log.info(
-        f"Sidecar ready — lazy mode (no model loaded, device={_device}, "
+        f"Sidecar ready — {'preloaded' if _preload_at_startup else 'lazy'} mode "
+        f"({'model loaded' if _model_loaded else 'no model loaded'}, device={_device}, "
         f"default_model={_default_model}, "
         f"idle_timeout={'disabled' if _idle_timeout <= 0 else f'{_idle_timeout:.0f}s'})"
     )
@@ -687,6 +696,7 @@ Examples:
 
     if args.preload:
         _default_model = args.preload
+        _preload_at_startup = True
 
     log.info(
         f"Starting sidecar: default_model={_default_model}, "
