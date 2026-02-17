@@ -414,7 +414,14 @@ export const ChatView = () => {
     socket.emit("chat:message", {
       content: text,
       model: selectedModel || undefined,
-      attachments: attachments.length > 0 ? attachments : undefined,
+      files:
+        attachments.length > 0
+          ? attachments.map((attachment) => ({
+              type: attachment.type,
+              path: attachment.path,
+              displayName: attachment.name,
+            }))
+          : undefined,
       reasoningEffort: reasoningEffort !== "medium" ? reasoningEffort : undefined,
     });
     setInput("");

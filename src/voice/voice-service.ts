@@ -19,7 +19,10 @@ import type {
   AudioSidecarHealth,
   LocalVoicePreset,
 } from "./types.js";
-import { DEFAULT_VOICE_CONFIG } from "./types.js";
+import { DEFAULT_VOICE_CONFIG, AVAILABLE_LOCAL_VOICES } from "./types.js";
+
+const DEFAULT_LOCAL_VOICE = "af_heart";
+const LOCAL_VOICE_IDS = new Set(AVAILABLE_LOCAL_VOICES.map((voice) => voice.id));
 
 /**
  * Resolves a path that may contain `~` to an absolute path.
@@ -212,7 +215,13 @@ export class VoiceService {
       throw new Error(`Text exceeds maximum length of ${this.config.maxTextLength} characters`);
     }
 
-    const voice = voiceOverride ?? this.config.voiceName;
+    const requestedVoice = voiceOverride ?? this.config.voiceName;
+    const voice = LOCAL_VOICE_IDS.has(requestedVoice) ? requestedVoice : DEFAULT_LOCAL_VOICE;
+    if (voice !== requestedVoice) {
+      logger.warn(
+        `Invalid local voice '${requestedVoice}' for sidecar provider; falling back to '${voice}'.`
+      );
+    }
     const cacheKey = this.computeCacheKey(text, voice);
     const cachePath = path.join(this.cacheDir, `${cacheKey}.wav`);
 
