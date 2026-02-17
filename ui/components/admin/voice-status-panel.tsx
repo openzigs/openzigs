@@ -107,7 +107,7 @@ export function VoiceStatusPanel() {
             "Content-Type": "application/json",
             ...(token ? { Authorization: `Bearer ${token}` } : {}),
           },
-          body: JSON.stringify({ text: "Hello, this is a voice preview.", voiceName: voiceId }),
+          body: JSON.stringify({ text: "Hello, this is a voice preview.", voice: voiceId }),
         });
 
         if (!res.ok) {

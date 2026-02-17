@@ -235,7 +235,7 @@ export function VoiceConfigPanel() {
           "Content-Type": "application/json",
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
-        body: JSON.stringify({ text: "Hello, this is a voice preview.", voiceName: voiceId }),
+        body: JSON.stringify({ text: "Hello, this is a voice preview.", voice: voiceId }),
       });
       if (!res.ok) throw new Error(`Preview failed: ${res.status}`);
       const blob = await res.blob();

@@ -213,7 +213,8 @@ export function createVoiceRouter({ voiceService }: VoiceRouterDeps): Router {
         return;
       }
 
-      const { text, voice } = req.body as { text?: string; voice?: string };
+      const { text, voice, voiceName } = req.body as { text?: string; voice?: string; voiceName?: string };
+      const resolvedVoice = voice ?? voiceName;
       const previewText = text?.trim() || "Hello! This is a voice preview.";
 
       if (previewText.length > 200) {
@@ -221,7 +222,7 @@ export function createVoiceRouter({ voiceService }: VoiceRouterDeps): Router {
         return;
       }
 
-      const result = await voiceService.synthesize(previewText, voice);
+      const result = await voiceService.synthesize(previewText, resolvedVoice);
       const contentType = result.contentType ?? "audio/mpeg";
 
       res.set({
