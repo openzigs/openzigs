@@ -134,7 +134,7 @@ export default function AdminPage() {
           <VoiceConfigPanel />
         </SectionCard>
 
-        <SectionCard title="Voice Lab" defaultOpen={false}>
+        <SectionCard title="Voice Lab" defaultOpen={true}>
           <VoiceLabPanel />
         </SectionCard>
 

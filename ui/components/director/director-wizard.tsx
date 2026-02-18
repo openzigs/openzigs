@@ -19,6 +19,8 @@ import { MediaUploadStep } from "./media-upload-step";
 import { TemplatePickerStep } from "./template-picker-step";
 import { SoundBrowserStep } from "./sound-browser-step";
 import { ReviewProduceStep } from "./review-produce-step";
+import { VisualAssetsStep } from "./visual-assets-step";
+import type { VisualAsset } from "./types";
 
 export const DirectorWizard = () => {
   const [step, setStep] = useState(1);
@@ -36,6 +38,8 @@ export const DirectorWizard = () => {
       case 4:
         return true; // music is optional
       case 5:
+        return true; // visual assets are optional
+      case 6:
         return false; // no "next" from final step
       default:
         return false;
@@ -93,6 +97,10 @@ export const DirectorWizard = () => {
 
   const setRenderJobId = useCallback((renderJobId: string) => {
     setState((s) => ({ ...s, renderJobId }));
+  }, []);
+
+  const setVisualAssets = useCallback((visualAssets: VisualAsset[]) => {
+    setState((s) => ({ ...s, visualAssets }));
   }, []);
 
   const goNext = useCallback(() => {
@@ -173,6 +181,9 @@ export const DirectorWizard = () => {
           />
         )}
         {step === 5 && (
+          <VisualAssetsStep assets={state.visualAssets} onChange={setVisualAssets} />
+        )}
+        {step === 6 && (
           <ReviewProduceStep
             state={state}
             onManifestGenerated={setManifest}

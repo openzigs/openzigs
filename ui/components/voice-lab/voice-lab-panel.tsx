@@ -408,7 +408,7 @@ function ProfileCard({ profile, onDeleted }: { profile: VoiceProfile; onDeleted:
       </div>
       <div className="flex items-center gap-1.5 shrink-0">
         <button
-          onClick={void handleTest}
+          onClick={() => void handleTest()}
           title={testing ? "Stop preview" : "Preview voice"}
           className={cn(
             "rounded-lg border border-border p-1.5 transition-all hover:border-primary/30",

@@ -7,6 +7,24 @@ export type ProductionMode = "highlight" | "script" | "presentation";
 export type ImageProvider = "auto" | "local" | "cloud";
 export type ImageModel = "sdxl-turbo" | "flux";
 
+export interface VisualAsset {
+  name: string;
+  /** Server-side path after upload */
+  path: string;
+  description: string;
+  type: "image" | "video";
+  size: number;
+  /** Object URL for thumbnail preview (browser-only, ephemeral) */
+  previewUrl?: string;
+  /** AI-suggested placement, set after calling /assets/placement */
+  placement?: {
+    startTimeSec: number;
+    endTimeSec: number;
+    position: string;
+    scale: number;
+  } | null;
+}
+
 export interface WizardState {
   /** Step 1 */
   mode: ProductionMode | null;
@@ -20,15 +38,17 @@ export interface WizardState {
   templateId: string | null;
   /** Step 4 */
   musicTrack: SelectedAsset | null;
-  /** Step 5 — model override (empty = use director default or system default) */
+  /** Step 5 — overlay images / video clips */
+  visualAssets: VisualAsset[];
+  /** Step 6 — model override (empty = use director default or system default) */
   model: string;
-  /** Step 5 — image generation provider (auto | local | cloud) */
+  /** Step 6 — image generation provider (auto | local | cloud) */
   imageProvider: ImageProvider;
-  /** Step 5 — local sidecar model for image generation */
+  /** Step 6 — local sidecar model for image generation */
   imageModel: ImageModel;
-  /** Step 5 — render quality/codec settings */
+  /** Step 6 — render quality/codec settings */
   renderSettings: RenderSettings;
-  /** Step 5 (populated after production) */
+  /** Step 6 (populated after production) */
   manifest: DirectorManifestSummary | null;
   renderJobId: string | null;
 }
@@ -110,7 +130,8 @@ export const WIZARD_STEPS = [
   { id: 2, label: "Media", description: "Add source media" },
   { id: 3, label: "Template", description: "Pick a visual style" },
   { id: 4, label: "Music", description: "Select background music" },
-  { id: 5, label: "Produce", description: "Review & render" },
+  { id: 5, label: "Visual Assets", description: "Add overlay images & clips" },
+  { id: 6, label: "Produce", description: "Review & render" },
 ] as const;
 
 export function createInitialState(): WizardState {
@@ -122,6 +143,7 @@ export function createInitialState(): WizardState {
     sourceFiles: [],
     templateId: null,
     musicTrack: null,
+    visualAssets: [],
     model: "",
     imageProvider: "auto",
     imageModel: "sdxl-turbo",

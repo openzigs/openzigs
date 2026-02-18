@@ -131,13 +131,19 @@ export function EngineToggle() {
                   {isActive && (
                     <span className="absolute right-2 top-2 flex h-1.5 w-1.5 rounded-full bg-emerald-400" />
                   )}
+                  {/* Proactive unreachability indicator on Engine B when Engine A is active */}
+                  {!isKokoro && !isActive && !status.sovits_reachable && (
+                    <span className="absolute right-2 top-2 flex h-1.5 w-1.5 rounded-full bg-amber-400" title={`GPT-SoVITS not reachable at ${status.sovits_url}`} />
+                  )}
                   <span className="font-semibold text-foreground">
                     {isKokoro ? "Kokoro (Engine A)" : "GPT-SoVITS (Engine B)"}
                   </span>
                   <span className="text-xs text-muted-foreground">
                     {isKokoro
                       ? `${status.voice_count} voice presets · MLX`
-                      : "Voice cloning · requires ref audio"}
+                      : status.sovits_reachable
+                        ? "Voice cloning · ready"
+                        : `Offline · start GPT-SoVITS on ${status.sovits_url}`}
                   </span>
                 </button>
               );
@@ -156,18 +162,17 @@ export function EngineToggle() {
                 {status.tts_loaded ? "yes" : "lazy (loads on first use)"}
               </span>
             </div>
-            {status.active_engine === "sovits" && (
-              <div className="flex justify-between">
-                <span>GPT-SoVITS</span>
-                <span className="flex items-center gap-1">
-                  {status.sovits_reachable ? (
-                    <><CheckCircle2 className="h-3 w-3 text-emerald-500" />reachable</>
-                  ) : (
-                    <><AlertCircle className="h-3 w-3 text-amber-500" />unreachable · {status.sovits_url}</>
-                  )}
-                </span>
-              </div>
-            )}
+            {/* Always show GPT-SoVITS reachability so users know what to start */}
+            <div className="flex justify-between">
+              <span>GPT-SoVITS</span>
+              <span className="flex items-center gap-1">
+                {status.sovits_reachable ? (
+                  <><CheckCircle2 className="h-3 w-3 text-emerald-500" />reachable</>
+                ) : (
+                  <><AlertCircle className="h-3 w-3 text-amber-500" />offline · {status.sovits_url}</>
+                )}
+              </span>
+            </div>
           </div>
 
           {/* Sidecar ready indicator */}

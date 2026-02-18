@@ -167,11 +167,11 @@ export function sanitizeNarrationScript(raw: string): SanitizationResult {
   // 6. Shell meta-characters (escape, do not strip)
   // Only flag backtick spans that contain whitespace AND a shell-special character
   // (e.g. `rm -rf /`). Simple spans like `Enter` or `Ctrl+C` are idiomatic narration.
-  if (/\$[({]/.test(text) || /`[^`]*\s[^`]*[\/\\$><|;&*!][^`]*`/.test(text)) {
+  if (/\$[({]/.test(text) || /`[^`]*\s[^`]*[/\\$><|;&*!][^`]*`/.test(text)) {
     threats.push("shell_metachar");
     // Escape only backtick spans with internal whitespace + shell chars; preserve clean spans
     text = text.replace(/`([^`]+)`/g, (match, inner) =>
-      /\s/.test(inner) && /[\/\\$><|;&*!]/.test(inner) ? `'${inner}'` : match
+      /\s/.test(inner) && /[/\\$><|;&*!]/.test(inner) ? `'${inner}'` : match
     );
     text = text
       .replace(/\$\(([^)]*)\)/g, "($1)") // $() → ()
