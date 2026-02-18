@@ -19,7 +19,7 @@ Before you begin, ensure the following are installed and available:
 |---|---|
 | **ffmpeg** | Required for media converter (`.mp4`, `.mp3`, etc.) to extract 16kHz WAV audio before transcription. |
 | **ImageMagick** + **Ghostscript** | Required for scanned PDF OCR fallback (render PDF pages to images). |
-| **Whisper model files** (`whisper-node`) | Required for media transcription. Install with `pnpm exec whisper-node download`. |
+| **Whisper model files** (`whisper-node`) | Required for the Node-side fallback media converter (when not using the local audio sidecar). Install with `pnpm exec whisper-node download`. |
 
 **Optional API keys:**
 
@@ -2093,6 +2093,21 @@ As an alternative to Google Cloud TTS, OpenZigs supports a **local audio sidecar
    ```
    Voice service initialized (provider: local, sidecar: http://localhost:5006)
    ```
+
+#### Local Model Downloads & Git
+
+- `pip install -r requirements.txt` installs Python packages only — it does **not** download ML weight files.
+- Model weights are fetched automatically on first use:
+  - First `POST /tts` downloads Kokoro (`mlx-community/Kokoro-82M-bf16`)
+  - First `POST /transcribe` downloads Whisper (`distil-large-v3`)
+- OpenZigs ignores these artifacts in git. They are runtime-generated and should not be committed.
+
+**Default local cache locations (repo-local):**
+
+- `sidecars/audio/mlx_models/` (Whisper MLX model files)
+- `sidecars/audio/.cache/huggingface/` (Hugging Face cache)
+
+You can prefetch models after startup by calling `/tts` and `/transcribe` once, then check `GET /health` to confirm both models are loaded.
 
 #### Available Local Voices
 

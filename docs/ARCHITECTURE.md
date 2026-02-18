@@ -835,6 +835,7 @@ The audio sidecar is a FastAPI Python server that provides **local** speech synt
 - **Independent lifecycle**: TTS and STT models can be loaded/unloaded independently.
 - **Auto-unload**: Idle models are automatically unloaded after a configurable timeout (default: 300s) to free VRAM.
 - **Dual provider**: `VoiceService` routes to local sidecar or Google Cloud TTS based on configuration, with the same API surface.
+- **Runtime weight download**: `pip install -r requirements.txt` installs Python packages only. Model weights are downloaded on first `POST /tts` and `POST /transcribe`, then cached locally (default locations: `sidecars/audio/mlx_models/` and `sidecars/audio/.cache/huggingface/`). These artifacts are git-ignored.
 
 #### Voice Presets
 
@@ -1031,6 +1032,8 @@ Mode C ("Presentation Mode") is a **zero-input video production pipeline** — t
 | **Image Gen Sidecar** (#255) | `sidecars/image-gen/server.py` | FastAPI Python server wrapping `diffusers` + `torch` for local Stable Diffusion inference on Apple Silicon (MPS) or CUDA. Endpoints: `POST /generate`, `GET /health`. |
 | **ImageSceneSegment** (#256) | `src/remotion/components/image-scene-segment.tsx` | Remotion component rendering a single Mode C scene: AI image with Ken Burns pan/zoom + optional per-scene `Audio` voiceover in a `Sequence`. |
 | **KenBurns** (#256) | `src/remotion/components/KenBurns.tsx` | Animated Ken Burns effect using Remotion `interpolate()` — configurable `scaleFrom`/`scaleTo`, `translateX`/`translateY` ranges over the clip's duration. |
+
+Model download behavior for Mode C image generation mirrors the audio sidecar: Python dependencies are installed via `pip`, but diffusion model weights are fetched lazily on first generation/model load and cached under sidecar cache/model directories (git-ignored by default).
 
 #### `image_scene` Timeline Entry
 

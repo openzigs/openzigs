@@ -30,7 +30,7 @@ export function VoiceControls({ onQueryCaptured, speakText, className }: VoiceCo
 
   const { state, isSupported, isListening, startListening, stopListening } = useWakeWord({
     silenceTimeout: 5000,
-    fuzzyThreshold: 0.7,
+    fuzzyThreshold: 0.62,
     onWakeDetected: () => {
       // Interrupt any playing audio when wake word detected
       audioRef.current?.stop();

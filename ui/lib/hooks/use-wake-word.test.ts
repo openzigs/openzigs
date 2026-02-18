@@ -75,10 +75,11 @@ describe("detectWakeWord", () => {
     expect(detectWakeWord("HEY ZIGS")).toBe(true);
   });
 
-  it("should not detect incomplete or variant wake word", () => {
-    expect(detectWakeWord("hey zig")).toBe(false);
-    expect(detectWakeWord("hey sig")).toBe(false);
-    expect(detectWakeWord("hey sigs")).toBe(false);
+  it("should detect common short/variant wake words from ASR", () => {
+    expect(detectWakeWord("hey zig")).toBe(true);
+    expect(detectWakeWord("hey sig")).toBe(true);
+    expect(detectWakeWord("hey sigs")).toBe(true);
+    expect(detectWakeWord("hey six")).toBe(true);
   });
 
   it("should detect common ASR spellings of zigs", () => {
@@ -128,8 +129,8 @@ describe("extractQueryAfterWakeWord", () => {
     expect(extractQueryAfterWakeWord("Hey Zigs What Time Is It")).toBe("What Time Is It");
   });
 
-  it("should reject extraction for incomplete wake phrase", () => {
-    expect(extractQueryAfterWakeWord("hey zig what is the weather")).toBe("");
+  it("should extract query for short wake phrase variant", () => {
+    expect(extractQueryAfterWakeWord("hey zig what is the weather")).toBe("what is the weather");
   });
 
   it("should return empty string if no wake word", () => {
@@ -144,12 +145,17 @@ describe("extractQueryAfterWakeWord", () => {
     expect(extractQueryAfterWakeWord("okay hey zigs tell me a joke")).toBe("tell me a joke");
   });
 
-  it("should reject fuzzy extraction for non-wake phrase", () => {
-    expect(extractQueryAfterWakeWord("hey six what is 2 plus 2", 0.7)).toBe("");
+  it("should extract query for homophone wake phrase", () => {
+    expect(extractQueryAfterWakeWord("hey six what is 2 plus 2", 0.7)).toBe("what is 2 plus 2");
   });
 
   it("should extract query for common ASR spelling of zigs", () => {
     expect(extractQueryAfterWakeWord("hey zeegs what is 2 plus 2", 0.7)).toBe("what is 2 plus 2");
+  });
+
+  it("should extract query for common homophone wake words", () => {
+    expect(extractQueryAfterWakeWord("hey six what is 2 plus 2", 0.7)).toBe("what is 2 plus 2");
+    expect(extractQueryAfterWakeWord("hey zig what is 2 plus 2", 0.7)).toBe("what is 2 plus 2");
   });
 
   it("should return empty for incomplete wake phrase only", () => {

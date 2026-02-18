@@ -432,22 +432,29 @@ export async function createSidecarMediaConverter(
             segments: result.segments,
             isVideo,
             keyframeDescriptions: frameDescriptions.length > 0 ? frameDescriptions : undefined,
+            /** Temp directory containing extracted keyframe JPEGs — caller must persist or clean up. */
+            keyframeTempDir: keyframeTempDir,
+            /** Individual keyframe file paths with timestamps (for persistence by caller). */
+            keyframeFiles: keyframeTempDir
+              ? frameDescriptions.map((fd, i) => ({
+                  filename: `frame_${String(i + 1).padStart(4, "0")}.jpg`,
+                  timestamp: fd.timestamp,
+                  description: fd.description,
+                }))
+              : undefined,
           },
         };
       } finally {
-        // Clean up temp files
+        // Clean up temp WAV file only — keyframe temp dir is returned via
+        // metadata so the knowledge service can persist images before cleanup.
         try {
           await fs.unlink(tmpWav);
         } catch {
           // Ignore cleanup errors
         }
-        if (keyframeTempDir) {
-          try {
-            await fs.rm(keyframeTempDir, { recursive: true, force: true });
-          } catch {
-            // Ignore cleanup errors
-          }
-        }
+        // NOTE: keyframeTempDir is NOT cleaned up here. The caller
+        // (KnowledgeIngestionService.indexFile) is responsible for either
+        // persisting the keyframes or cleaning up the temp dir.
       }
     },
   };

@@ -5,6 +5,7 @@ import remarkGfm from "remark-gfm";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 import { MermaidDiagram } from "./mermaid-diagram";
+import { ChatImageBlock } from "./chat-image-block";
 import type { ComponentPropsWithoutRef, ReactElement } from "react";
 import { isValidElement } from "react";
 
@@ -101,6 +102,11 @@ export const ChatMarkdown = ({ content, isStreaming }: ChatMarkdownProps) => {
                 </table>
               </div>
             );
+          },
+
+          // Images with lightbox, download, and proper sizing
+          img({ src, alt }) {
+            return <ChatImageBlock src={src} alt={alt} />;
           },
         }}
       >

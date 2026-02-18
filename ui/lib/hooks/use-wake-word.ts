@@ -54,31 +54,39 @@ export interface UseWakeWordReturn {
 const WAKE_PHRASE = "hey zigs";
 const WAKE_FIRST_TOKEN = "hey";
 const WAKE_SECOND_TOKEN = "zigs";
+const WAKE_FIRST_TOKEN_MIN_SIMILARITY = 0.67;
 const WAKE_SECOND_TOKEN_MIN_SIMILARITY = 0.7;
-const WAKE_SECOND_TOKEN_VARIANTS = new Set(["zigs", "ziggs", "zeegs", "zegs", "zeggs", "zigz"]);
+const WAKE_SECOND_TOKEN_VARIANTS = new Set([
+  "zigs",
+  "zig",
+  "ziggs",
+  "zigz",
+  "sigs",
+  "sig",
+  "six",
+  "seegs",
+  "zeegs",
+  "zegs",
+  "zeggs",
+]);
 
 function normalizeWakeToken(token: string): string {
   return token.toLowerCase().replace(/[^a-z0-9]/g, "");
 }
 
-function isLikelyZigsToken(token: string): boolean {
+function isLikelyZigsToken(token: string, threshold: number): boolean {
   const normalized = normalizeWakeToken(token);
 
-  // Require a complete second word so partial interim fragments like
-  // "zi" or "zig" do not activate.
-  if (normalized.length < 4 || normalized.length > 7) return false;
+  // Ignore tiny fragments from interim recognition.
+  if (normalized.length < 3 || normalized.length > 8) return false;
 
-  // Keep the "z + g + s" shape to avoid broad false positives.
-  if (!normalized.startsWith("z")) return false;
-  if (!normalized.includes("g")) return false;
-  if (!normalized.endsWith("s") && !normalized.endsWith("z")) return false;
-
-  // Common ASR spellings for "zigs".
+  // Common ASR spellings for "zigs", including "six"-style homophones.
   if (WAKE_SECOND_TOKEN_VARIANTS.has(normalized)) {
     return true;
   }
 
-  return levenshteinSimilarity(normalized, WAKE_SECOND_TOKEN) >= WAKE_SECOND_TOKEN_MIN_SIMILARITY;
+  const safeThreshold = Math.max(0.55, Math.min(0.95, threshold));
+  return levenshteinSimilarity(normalized, WAKE_SECOND_TOKEN) >= Math.max(safeThreshold, WAKE_SECOND_TOKEN_MIN_SIMILARITY);
 }
 
 /**
@@ -88,7 +96,7 @@ function isLikelyZigsToken(token: string): boolean {
  * We require the first token to be close to "hey" to avoid accidental
  * activation on arbitrary speech.
  */
-function findFuzzyWakeWordPairIndex(transcript: string): number {
+function findFuzzyWakeWordPairIndex(transcript: string, threshold: number): number {
   const words = transcript
     .toLowerCase()
     .split(/\s+/)
@@ -99,15 +107,15 @@ function findFuzzyWakeWordPairIndex(transcript: string): number {
     const first = words[i];
     const second = words[i + 1];
     // Ignore partial token fragments from interim recognition such as "hey z" / "hey zi".
-    if (second.length < 4) continue;
+    if (second.length < 3) continue;
 
-    // Keep first token strict (must be effectively "hey").
+    // Keep first token close to "hey" while allowing common ASR drift (e.g. "hay").
     const firstSimilarity = levenshteinSimilarity(first, WAKE_FIRST_TOKEN);
-    if (firstSimilarity < 0.9) continue;
+    if (firstSimilarity < WAKE_FIRST_TOKEN_MIN_SIMILARITY) continue;
 
     // Keep second token strict enough to reject unrelated words while allowing
     // common ASR misspellings for "zigs".
-    if (isLikelyZigsToken(second)) {
+    if (isLikelyZigsToken(second, threshold)) {
       return i;
     }
   }
@@ -154,13 +162,14 @@ export function levenshteinSimilarity(a: string, b: string): number {
  */
 export function detectWakeWord(transcript: string, _threshold: number = 0.7): boolean {
   const normalized = transcript.toLowerCase().trim();
+  const threshold = Math.max(0, Math.min(1, _threshold));
 
   // Fast path: exact substring match
   if (normalized.includes(WAKE_PHRASE)) {
     return true;
   }
 
-  return findFuzzyWakeWordPairIndex(normalized) !== -1;
+  return findFuzzyWakeWordPairIndex(normalized, threshold) !== -1;
 }
 
 /**
@@ -171,6 +180,7 @@ export function detectWakeWord(transcript: string, _threshold: number = 0.7): bo
  */
 export function extractQueryAfterWakeWord(transcript: string, _threshold: number = 0.7): string {
   const normalized = transcript.toLowerCase();
+  const threshold = Math.max(0, Math.min(1, _threshold));
 
   // Fast path: exact substring match
   const exactIndex = normalized.indexOf(WAKE_PHRASE);
@@ -179,7 +189,7 @@ export function extractQueryAfterWakeWord(transcript: string, _threshold: number
   }
 
   // Fuzzy path: find the wake-word position via guarded fuzzy matching
-  const pairIndex = findFuzzyWakeWordPairIndex(normalized);
+  const pairIndex = findFuzzyWakeWordPairIndex(normalized, threshold);
   if (pairIndex !== -1) {
     // Return everything after the matched word pair from the original transcript
     const originalWords = transcript.trim().split(/\s+/);

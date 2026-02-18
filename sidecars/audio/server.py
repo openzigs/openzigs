@@ -394,21 +394,25 @@ async def synthesize(req: TTSRequest):
     start = time.monotonic()
 
     try:
-        # Generate audio using mlx-audio Kokoro model
-        audio_data = None
+        # Generate audio using mlx-audio Kokoro model.
+        # The generator can yield multiple chunks (often sentence-sized).
+        # Concatenate all chunks so we return the full utterance, not just the last chunk.
+        audio_chunks: list[np.ndarray] = []
         for result in _tts_model.generate(
             text=req.text,
             voice=req.voice,
             speed=req.speed,
             lang_code=lang_code,
         ):
-            audio_data = result.audio
+            chunk = np.array(result.audio, dtype=np.float32)
+            if chunk.size > 0:
+                audio_chunks.append(chunk)
 
-        if audio_data is None:
+        if not audio_chunks:
             raise HTTPException(status_code=500, detail="TTS generation returned no audio")
 
-        # Convert MLX array to numpy, then to WAV bytes
-        audio_np = np.array(audio_data, dtype=np.float32)
+        # Merge all generated chunks into a single waveform.
+        audio_np = np.concatenate(audio_chunks)
 
         buf = io.BytesIO()
         sf.write(buf, audio_np, TTS_SAMPLE_RATE, format="WAV", subtype="FLOAT")

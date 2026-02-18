@@ -72,13 +72,35 @@ export const createKnowledgeTools = (options: KnowledgeToolsOptions): ToolDefini
           };
         }
 
+        // Check which documents have keyframe images available
+        const docIds = [...new Set(results.map((r) => r.documentId))];
+        const keyframeAvailability = new Map<string, boolean>();
+        if (typeof knowledgeService.getKeyframeManifest === "function") {
+          for (const docId of docIds) {
+            try {
+              const manifest = await knowledgeService.getKeyframeManifest(docId);
+              keyframeAvailability.set(docId, manifest !== null);
+            } catch {
+              keyframeAvailability.set(docId, false);
+            }
+          }
+        }
+
         const modeLabel = mode ?? "hybrid";
         const formatted = results.map((result, i) => {
           const heading = result.sectionHeading ? ` (${result.sectionHeading})` : "";
           const score = Math.round(result.score * 100);
+          const hasKeyframes = keyframeAvailability.get(result.documentId);
+          const keyframeNote = hasKeyframes
+            ? `\nKeyframe images available for this video. ` +
+              `To show images to the user, use markdown image syntax: ` +
+              `![description](/api/admin/knowledge/keyframes/${result.documentId}/{frameIndex}) ` +
+              `where frameIndex is 0-based. List frames via GET /api/admin/knowledge/keyframes/${result.documentId}`
+            : "";
           return [
             `--- Result ${i + 1} [${score}% relevance] ---`,
             `Source: ${result.sourcePath}${heading}`,
+            ...(keyframeNote ? [keyframeNote] : []),
             "",
             result.text,
           ].join("\n");

@@ -69,6 +69,15 @@ build/
 out/
 .next/
 
+# Sidecar model + cache artifacts (generated at runtime)
+sidecars/audio/mlx_models/
+sidecars/audio/.cache/
+sidecars/image-gen/.cache/
+sidecars/image-gen/models/
+sidecars/**/mlx_models/
+sidecars/**/.cache/
+sidecars/**/models/
+
 # System files
 npm-debug.log
 yarn-debug.log
