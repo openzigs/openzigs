@@ -21,6 +21,7 @@ import { KnowledgeConfigPanel } from "@/components/admin/knowledge-config-panel"
 import { VaultPanel } from "@/components/admin/vault-panel";
 import { DirectorPanel } from "@/components/admin/director-panel";
 import { VoiceConfigPanel } from "@/components/admin/voice-config-panel";
+import { VoiceLabPanel } from "@/components/voice-lab/voice-lab-panel";
 import { ToastContainer, showToast } from "@/components/toast";
 import { RotateCw } from "lucide-react";
 
@@ -131,6 +132,10 @@ export default function AdminPage() {
 
         <SectionCard title="Voice & Audio">
           <VoiceConfigPanel />
+        </SectionCard>
+
+        <SectionCard title="Voice Lab" defaultOpen={false}>
+          <VoiceLabPanel />
         </SectionCard>
 
         <SectionCard title="Environment" defaultOpen={false}>

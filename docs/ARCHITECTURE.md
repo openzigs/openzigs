@@ -1115,6 +1115,278 @@ When `mode === "presentation"`, the `produce-video` tool handler:
 
 ---
 
+## Advanced Director Mode (Voice Cloning & Visual Injection)
+
+> **Epic #268** adds two major capabilities to Director Mode: a **swappable TTS engine system** (Kokoro Engine A + GPT-SoVITS Engine B) and an **LLM-guided visual asset injection pipeline**. Both features include dedicated security controls.
+
+### Swappable TTS Engine Architecture (SI-1)
+
+#### Engine Registry
+
+The audio sidecar (`sidecars/audio/server.py`) manages two mutually exclusive TTS engines behind a shared `POST /tts` endpoint:
+
+| Engine | Identifier | Technology | VRAM | Notes |
+|---|---|---|---|---|
+| **Engine A** | `kokoro` | mlx-audio (on-device) | ~1 GB | Default; always available on Apple Silicon |
+| **Engine B** | `sovits` | GPT-SoVITS (HTTP proxy) | 6–10 GB | External process at `http://127.0.0.1:9880` |
+
+#### Engine Switch Mutex
+
+Engine switching is protected by an `asyncio.Lock` (`_engine_switch_lock`) initialized in FastAPI's `lifespan()` context manager. This prevents concurrent switch requests from causing double-load race conditions:
+
+```python
+@app.post("/switch_engine")
+async def switch_engine(req: SwitchEngineRequest):
+    async with _engine_switch_lock:
+        # 1. Probe sovits reachability (if switching to B)
+        # 2. Call _unload_tts() → mlx.core.metal.clear_cache()
+        # 3. Update _active_engine and _sovits_url globals
+```
+
+#### VRAM Lifecycle
+
+When switching from Engine A (Kokoro) to Engine B:
+1. `_unload_tts()` is called — Kokoro model is released
+2. `mlx.core.metal.clear_cache()` flushes the Apple Silicon Metal GPU cache
+3. Engine B activates immediately (no model load — it proxies to external GPT-SoVITS process)
+
+When switching back to Engine A:
+- `_load_tts()` is called — Kokoro model loads from disk (~1–3 s)
+- Engine B proxy is deactivated
+
+#### TTS Routing
+
+The `POST /tts` endpoint dispatches to the appropriate helper based on `_active_engine`:
+
+```
+POST /tts
+    │
+    ├─ _active_engine == "kokoro" → _synthesize_kokoro(req)
+    │     └─ mlx-audio local inference → WAV bytes
+    │
+    └─ _active_engine == "sovits" → _synthesize_sovits(req)
+          └─ httpx.AsyncClient POST → {_sovits_url}/tts
+                └─ GPT-SoVITS process → WAV bytes
+```
+
+#### Health Endpoint
+
+`GET /health` probes both engines asynchronously and reports combined status:
+
+```json
+{
+  "status": "ok",
+  "active_engine": "kokoro",
+  "sovits_url": "http://127.0.0.1:9880",
+  "sovits_reachable": false
+}
+```
+
+The `sovits_reachable` flag is checked with a 2-second timeout to avoid blocking the health check.
+
+#### Voice Profiles (Engine B)
+
+Voice profiles are persisted in the `voice_profiles` SQLite table (managed by `src/productivity/database.ts`). A profile captures all GPT-SoVITS synthesis parameters:
+
+| Column | Type | Description |
+|---|---|---|
+| `id` | TEXT (nanoid) | Primary key |
+| `name` | TEXT UNIQUE | Human-readable profile name |
+| `ref_audio_path` | TEXT | Path to reference WAV/MP3 clip |
+| `ref_text` | TEXT | Optional transcript of reference clip |
+| `language` | TEXT | `"en"`, `"zh"`, `"ja"`, `"ko"`, `"auto"` |
+| `top_p` | REAL | Top-P sampling (default 0.8) |
+| `temperature` | REAL | Sampling temperature (default 1.0) |
+| `text_split_method` | TEXT | `"cut5"`, `"cut3"`, `"cut2"`, etc. |
+| `speed_factor` | REAL | Speech rate multiplier (default 1.0) |
+| `repetition_penalty` | REAL | Repetition penalty (default 1.35) |
+| `top_k` | INTEGER | Top-K sampling (default 15) |
+
+The `src/api/audio.ts` Express router exposes full profile CRUD at `/api/admin/audio/profiles`.
+
+#### Data Flow
+
+```
+Voice Lab UI
+    │
+    ├─ GET /api/admin/audio/engine/status ──▶ sidecar /health
+    ├─ POST /api/admin/audio/engine/switch ──▶ sidecar /switch_engine
+    │
+    ├─ POST /api/admin/audio/upload/ref-audio
+    │     └─ Stores to ~/.openzigs/director/ref-audio/
+    │
+    ├─ CRUD /api/admin/audio/profiles ──▶ SQLite voice_profiles
+    │
+    └─ POST /api/admin/audio/profiles/:id/test
+          └─ Reads profile → sidecar POST /tts (engine B params) → WAV
+```
+
+---
+
+### Visual Asset Injection (SI-2)
+
+#### Pipeline Overview
+
+```
+┌────────────────┐   ┌──────────────────┐   ┌──────────────────┐   ┌─────────────┐
+│  Upload Asset  │──▶│  LLM Placement   │──▶│  Overlay         │──▶│  Output     │
+│  (image/video) │   │  Suggestion      │   │  Compositor      │   │  Video      │
+│  /upload-asset │   │  /assets/        │   │  /assets/overlay │   │  (MP4)      │
+└────────────────┘   │  placement       │   └──────────────────┘   └─────────────┘
+                     └──────────────────┘
+                              │
+                       CopilotWrapper.chat()
+                       → AssetPlacement[]
+```
+
+#### Asset Upload
+
+`POST /api/admin/director/files/upload-asset?kind=image|video` (in `src/api/director.ts`) uses `multer` to receive the file and stores it at:
+
+```
+~/.openzigs/director/uploads/visual/<nanoid>_<originalname>
+```
+
+Assets are served back via `GET /api/admin/director/files/:fileName` which validates the path against known upload directories before calling `res.sendFile()`.
+
+#### LLM-Guided Placement (`POST /assets/placement`)
+
+The placement endpoint prompts the LLM with video context + asset labels and extracts a structured `AssetPlacement[]` JSON array:
+
+```typescript
+interface AssetPlacement {
+  assetId: string;
+  assetPath: string;
+  startSeconds: number;
+  endSeconds: number;
+  x: number;          // pixels from left
+  y: number;          // pixels from top
+  width: number;
+  height: number;
+  opacity: number;    // 0–1
+}
+```
+
+The LLM response is collected via the `AsyncGenerator` pattern:
+
+```typescript
+const stream = copilot.chat(prompt, { tools: [] });
+const chunks: string[] = [];
+for await (const chunk of stream) chunks.push(chunk);
+const responseText = chunks.join("");
+```
+
+A JSON extraction regex strips any markdown fences before `JSON.parse()`.
+
+#### ffmpeg Overlay Compositor (`src/video/asset-overlay.ts`)
+
+`overlayAssets()` builds an ffmpeg filter graph and spawns the process safely:
+
+**Security guarantees:**
+- `spawn("ffmpeg", args)` is used — no shell string interpolation, no injection surface
+- All file paths are validated against `ALLOWED_ROOTS = [os.homedir(), os.tmpdir(), "/tmp", "/private/tmp"]` via `assertAllowedPath()` before being passed as arguments
+- Audio is passed through unchanged (`-c:a copy`)
+
+**Filter graph construction** (for N overlays):
+
+```
+[0:v] → [base]
+[1:v] scale=W:H → [layer1:v]  overlay=x=X:y=Y:enable='between(t,S,E)' → [pass1]
+[2:v] scale=W:H → [layer2:v]  overlay=x=X:y=Y:enable='between(t,S,E)' → [pass2]
+...
+[passN] → final output
+```
+
+Each overlay uses `ffmpeg`'s `enable` expression to activate only during `[startSeconds, endSeconds]`.
+
+---
+
+### Script Sanitization (SI-3)
+
+#### Threat Model
+
+Narration scripts are user-supplied text that flows through:
+1. `ProducerService` → `POST /tts` → TTS engine synthesis
+
+If a script contains injected LLM directives, those could manipulate the TTS system prompt or fool a downstream LLM into executing unintended actions.
+
+#### Sanitization Pipeline
+
+`sanitizeNarrationScript(raw: string): SanitizationResult` in `src/video/producer/script-sanitizer.ts` is a pure function (zero external imports) that applies 9 regex-based passes:
+
+| Pass | Category | Pattern Examples |
+|---|---|---|
+| 1 | `system_header` | Lines starting with `SYSTEM:`, `[SYSTEM]`, `<<SYS>>` |
+| 2 | `ignore_instruction` | Phrases like "ignore all previous instructions" |
+| 3 | `tool_call_injection` | `<invoke>`, `<tool_call>`, XML-style tool tags |
+| 4 | `code_fence` | Triple-backtick blocks + their content |
+| 5 | `inline_code` | Single-backtick spans |
+| 6 | `shell_metachar` | `$()`, `` `...` ``, `&&`, `||`, `;` in context |
+| 7 | `shell_operator` | `>`, `>>`, `<`, `2>` (as word boundary operators) |
+| 8 | `html_tag` | All `<...>` tags |
+| 9 | `llm_scaffold_token` | `<\|im_start\|>`, `<\|endoftext\|>`, `[INST]`, `<<HUMAN>>` etc. |
+
+Sanitization produces a `{ text, flagged, threats }` result. If `flagged`, the ProducerService logs a `warn`-level message listing the detected threat categories, then continues synthesis with the cleaned `text`.
+
+#### Data Flow
+
+```
+ProducerService.produce()
+    │
+    ├─ fs.readFile(scriptPath)  →  rawScript
+    │
+    ├─ sanitizeNarrationScript(rawScript)
+    │     ├─ flagged=true  → logger.warn("threats: ...")
+    │     └─ returns { text: cleanedScript, ... }
+    │
+    └─ cleanedScript → TTS synthesis
+```
+
+---
+
+### Voice Lab UI Architecture (SI-4)
+
+The Voice Lab is implemented as two React components in `ui/components/voice-lab/`:
+
+#### `EngineToggle` (`engine-toggle.tsx`)
+
+- Polls `GET /api/admin/audio/engine/status` every 15 seconds via `useQuery`
+- Renders a status badge (Engine A / Engine B) with green/yellow health indicator
+- `POST /api/admin/audio/engine/switch` via `useMutation`; invalidates the status query on success
+
+#### `VoiceLabPanel` (`voice-lab-panel.tsx`)
+
+Three sub-sections:
+
+1. **Engine Toggle** — Embeds `<EngineToggle />` with real-time health display
+2. **Kokoro Presets** (`KokoroPresetGrid`) — Grid of preset voice cards; clicking a card calls `POST /api/voice/synthesize` to generate a preview WAV and plays it via `new Audio(url).play()`
+3. **Voice Profiles** (`ProfileForm` + `ProfileCard`) — Full Engine B CRUD:
+   - `ProfileForm` — name, ref audio path, language, and sliders for all 9 synthesis parameters
+   - `ProfileCard` — displays profile params; **Test** button calls `POST /api/admin/audio/profiles/:id/test`, receives a WAV blob URL and plays it; **Delete** button with optimistic invalidation
+
+The panel is registered in `ui/app/admin/page.tsx` as:
+
+```tsx
+<SectionCard title="Voice Lab" defaultOpen={false}>
+  <VoiceLabPanel />
+</SectionCard>
+```
+
+#### Component Tree
+
+```
+admin/page.tsx
+└─ SectionCard[Voice Lab]
+   └─ VoiceLabPanel
+      ├─ EngineToggle          ← engine status + switch mutation
+      ├─ KokoroPresetGrid      ← preset browser + audio preview
+      └─ [ProfileForm | ProfileCard[]]
+             ├─ ProfileForm    ← create/edit Engine B profile
+             └─ ProfileCard[]  ← test + delete existing profiles
+```
+
+---
+
 ## Security Model
 
 ### Risk Classification

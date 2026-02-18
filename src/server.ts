@@ -46,6 +46,7 @@ import { createVoiceRouter } from "./api/voice.js";
 import { SecretVaultService } from "./vault/index.js";
 import { createVaultRouter } from "./api/vault.js";
 import { createDirectorRouter } from "./api/director.js";
+import { createAudioRouter } from "./api/audio.js";
 import { RenderOrchestrator } from "./video/render-orchestrator.js";
 
 // Register built-in post-action types (create-github-issues, send-webhook, etc.)
@@ -399,6 +400,13 @@ const directorRouter = createDirectorRouter({
   },
 });
 app.use("/api/admin/director", directorRouter);
+
+// ── Audio / Voice Lab Router (Issue #269, #272) ──
+const audioRouterInstance = createAudioRouter({
+  db: getDatabase(),
+  sidecarUrl: config.voice?.sidecarUrl ?? "http://127.0.0.1:5006",
+});
+app.use("/api/admin/audio", audioRouterInstance);
 
 // Start the Knowledge Ingestion Service in the background
 void knowledgeService.start()

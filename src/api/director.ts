@@ -18,6 +18,7 @@
  *   POST /jobs/:id/abort              — abort a render job
  */
 
+import path from "node:path";
 import { Router, raw } from "express";
 import { nanoid } from "nanoid";
 import { logger } from "../logging/logger.js";
@@ -421,6 +422,237 @@ export const createDirectorRouter = ({
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       logger.error(`[Director API] POST /files/upload failed: ${msg}`);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  // ── Visual Injection (Issue #270 / SI-2) ──────────────────────────────────
+
+  /**
+   * POST /files/upload-asset?kind=image|video — upload a visual asset for overlay.
+   *
+   * Headers:
+   *   x-file-name: <filename> (URL-encoded)
+   * Body: raw binary bytes
+   *
+   * Stores the asset in ~/.openzigs/director/uploads/visual/ and returns the path.
+   */
+  router.post("/files/upload-asset", raw({ type: "*/*", limit: "500mb" }), async (req, res) => {
+    try {
+      const kind = String(req.query.kind ?? "image");
+      if (kind !== "image" && kind !== "video") {
+        res.status(400).json({ error: "kind must be 'image' or 'video'" });
+        return;
+      }
+
+      const body = req.body as Buffer;
+      if (!Buffer.isBuffer(body) || body.length === 0) {
+        res.status(400).json({ error: "request body must contain file bytes" });
+        return;
+      }
+
+      const fs = await import("node:fs/promises");
+      const pathMod = await import("node:path");
+      const osMod = await import("node:os");
+
+      const rawName = req.header("x-file-name") ?? "asset.bin";
+      let decodedName: string;
+      try { decodedName = decodeURIComponent(rawName); } catch { decodedName = rawName; }
+      const safeName = pathMod.basename(decodedName).replace(/[^a-zA-Z0-9._-]/g, "_");
+      const fileName = safeName || "asset.bin";
+      const uniqueName = `${Date.now()}-${fileName}`;
+
+      const targetDir = pathMod.join(osMod.homedir(), ".openzigs", "director", "uploads", "visual");
+      await fs.mkdir(targetDir, { recursive: true });
+      const filePath = pathMod.join(targetDir, uniqueName);
+      await fs.writeFile(filePath, body);
+
+      logger.info(`[Director API] Uploaded ${kind} overlay asset: ${filePath} (${body.length} bytes)`);
+      res.json({ success: true, kind, filePath, fileName: uniqueName, size: body.length });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      logger.error(`[Director API] POST /files/upload-asset failed: ${msg}`);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  /**
+   * POST /assets/placement — use the LLM to determine optimal overlay timestamps
+   * for a given set of visual assets given a narration script.
+   *
+   * Body: {
+   *   script: string,                         — narration text
+   *   assets: Array<{ id, path, description }>, — visual assets to place
+   *   videoDurationSec: number,               — total video duration
+   *   model?: string                          — LLM model override
+   * }
+   *
+   * Returns: Array<AssetPlacement> — timestamp-annotated placement instructions
+   */
+  router.post("/assets/placement", async (req, res) => {
+    try {
+      const { script, assets, videoDurationSec, model } = req.body as {
+        script?: string;
+        assets?: Array<{ id: string; path: string; description?: string }>;
+        videoDurationSec?: number;
+        model?: string;
+      };
+
+      if (!script || typeof script !== "string" || script.trim().length === 0) {
+        res.status(400).json({ error: "script is required" });
+        return;
+      }
+      if (!assets || !Array.isArray(assets) || assets.length === 0) {
+        res.status(400).json({ error: "assets array is required and must not be empty" });
+        return;
+      }
+      if (typeof videoDurationSec !== "number" || videoDurationSec <= 0) {
+        res.status(400).json({ error: "videoDurationSec must be a positive number" });
+        return;
+      }
+      if (assets.length > 20) {
+        res.status(400).json({ error: "Maximum 20 assets per placement request" });
+        return;
+      }
+
+      const assetList = assets
+        .map((a, i) => `  ${i + 1}. ID: ${a.id} | Description: ${a.description ?? path.basename(a.path)}`)
+        .join("\n");
+
+      const placementPrompt = `You are a video editor's assistant. Given the narration script and list of visual assets below, determine the optimal timestamps at which each asset should appear as an overlay in the video.
+
+VIDEO DURATION: ${videoDurationSec} seconds
+
+NARRATION SCRIPT:
+${script.slice(0, 3000)}
+
+VISUAL ASSETS:
+${assetList}
+
+For each asset, provide:
+- startTimeSec: when it should appear (seconds from start)
+- endTimeSec: when it should disappear (must be ≤ ${videoDurationSec})
+- position: one of: top-left, top-center, top-right, center, bottom-left, bottom-center, bottom-right
+- scale: 0.1–1.0 (as fraction of video width)
+
+Respond with ONLY a valid JSON array. No explanation. Example:
+[{"id":"asset1","startTimeSec":2,"endTimeSec":8,"position":"top-right","scale":0.25}]`;
+
+      const resolvedModel = model || runtimeConfig.defaultModel || undefined;
+      const stream = copilot.chat(placementPrompt, {
+        tools: [],
+        ...(resolvedModel ? { model: resolvedModel } : {}),
+      });
+      const chunks: string[] = [];
+      for await (const chunk of stream) {
+        chunks.push(chunk);
+      }
+      const responseText = chunks.join("");
+      let placements: unknown[];
+      try {
+        // Strip any markdown code fences from the LLM response
+        const rawJson = responseText.replace(/```(?:json)?\s*/gi, "").replace(/```\s*/g, "").trim();
+        const parsed: unknown = JSON.parse(rawJson);
+        if (!Array.isArray(parsed)) throw new Error("expected array");
+        placements = parsed;
+      } catch {
+        logger.warn("[Director API] LLM placement response was not valid JSON — returning raw");
+        res.json({ raw: responseText, placements: [] });
+        return;
+      }
+
+      logger.info(`[Director API] Generated ${placements.length} asset placements via LLM`);
+      res.json({ placements });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      logger.error(`[Director API] POST /assets/placement failed: ${msg}`);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  /**
+   * POST /assets/overlay — composite visual assets onto a background video.
+   *
+   * Body: {
+   *   backgroundPath: string,    — absolute path to the source video
+   *   outputPath: string,        — absolute path for the output video
+   *   placements: AssetPlacement[]
+   * }
+   */
+  router.post("/assets/overlay", async (req, res) => {
+    try {
+      const { backgroundPath, outputPath: requestedOutput, placements } = req.body as {
+        backgroundPath?: string;
+        outputPath?: string;
+        placements?: unknown[];
+      };
+
+      if (!backgroundPath || typeof backgroundPath !== "string") {
+        res.status(400).json({ error: "backgroundPath is required" });
+        return;
+      }
+      if (!placements || !Array.isArray(placements) || placements.length === 0) {
+        res.status(400).json({ error: "placements array is required and must not be empty" });
+        return;
+      }
+
+      const pathMod = await import("node:path");
+      const osMod = await import("node:os");
+
+      // Default output path if not specified
+      const outputPath = requestedOutput
+        || pathMod.join(osMod.homedir(), ".openzigs", "director", "uploads", "overlay", `${Date.now()}-overlay.mp4`);
+
+      const { overlayAssets } = await import("../video/asset-overlay.js");
+      const result = await overlayAssets({
+        backgroundPath,
+        placements: placements as import("../video/asset-overlay.js").AssetPlacement[],
+        outputPath,
+      });
+
+      res.json({ success: true, ...result });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      logger.error(`[Director API] POST /assets/overlay failed: ${msg}`);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  /**
+   * GET /files/:id — serve a previously uploaded file by filename basename.
+   * Only serves files from the known upload directories.
+   */
+  router.get("/files/:fileName", async (req, res) => {
+    try {
+      const osMod = await import("node:os");
+      const pathMod = await import("node:path");
+      const fsMod = await import("node:fs");
+
+      const fileName = pathMod.basename(req.params.fileName); // strip traversal
+      const searchDirs = [
+        pathMod.join(osMod.homedir(), ".openzigs", "director", "uploads", "visual"),
+        pathMod.join(osMod.homedir(), ".openzigs", "director", "uploads", "videos"),
+        pathMod.join(osMod.homedir(), ".openzigs", "director", "uploads", "overlay"),
+        pathMod.join(osMod.homedir(), ".openzigs", "director", "ref-audio"),
+      ];
+
+      let found: string | null = null;
+      for (const dir of searchDirs) {
+        const candidate = pathMod.join(dir, fileName);
+        if (fsMod.existsSync(candidate)) {
+          found = candidate;
+          break;
+        }
+      }
+
+      if (!found) {
+        res.status(404).json({ error: `File not found: ${fileName}` });
+        return;
+      }
+
+      res.sendFile(found);
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
       res.status(500).json({ error: msg });
     }
   });

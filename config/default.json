@@ -141,7 +141,11 @@
     "cacheDir": "~/.openzigs/voice-cache",
     "maxCacheSizeMb": 500,
     "maxTextLength": 5000,
-    "sidecarUrl": "http://localhost:5006"
+    "sidecarUrl": "http://localhost:5006",
+    "audio": {
+      "ttsEngine": "kokoro",
+      "sovitsUrl": "http://127.0.0.1:9880"
+    }
   },
   "vault": {
     "enabled": true

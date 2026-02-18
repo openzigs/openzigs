@@ -2734,6 +2734,195 @@ Each generated image is animated with a Ken Burns pan/zoom effect:
 
 ---
 
+## Advanced Director Mode (Voice Cloning & Visual Injection)
+
+> **Epic #268** — Advanced Director Mode extends the core Director pipeline with two major capabilities: swappable TTS engine support (including GPT-SoVITS voice cloning) and LLM-guided visual asset injection. All new features are managed from the **Voice Lab** panel in the Admin UI.
+
+### Voice Lab
+
+The **Voice Lab** panel in Admin (`/admin`) provides full control over TTS engine selection and GPT-SoVITS voice profiles.
+
+#### Engine A vs Engine B
+
+OpenZigs ships with two TTS engines:
+
+| Engine | Technology | VRAM | Best For |
+|---|---|---|---|
+| **Engine A (Kokoro)** | On-device mlx-audio (Apple Silicon) | ~1 GB | Low-latency, general-purpose narration |
+| **Engine B (GPT-SoVITS)** | Local GPT-SoVITS server (proxy) | 6–10 GB | Cloned voices, expressive character TTS |
+
+Only one engine is active at a time. Switching engines frees Apple Silicon VRAM before loading the next engine.
+
+#### Switching Engines
+
+1. Open **Admin → Voice Lab** in the UI.
+2. The **Engine Toggle** card shows the current active engine and its health status.
+3. Click **Switch to Engine B** (or **Switch to Engine A**) to apply.
+4. The toggle shows a loading state while the switch completes (typically 5–15 s).
+
+GPT-SoVITS must be running locally on port 9880 before switching to Engine B. Start it with:
+
+```bash
+# From the GPT-SoVITS installation directory
+python webui.py
+```
+
+#### Starting the Audio Sidecar
+
+The audio sidecar handles Kokoro TTS and proxies Engine B requests:
+
+```bash
+# Default (Kokoro only, Engine A)
+cd sidecars/audio && python server.py
+
+# With GPT-SoVITS URL override (Engine B support)
+cd sidecars/audio && python server.py --sovits-url http://127.0.0.1:9880
+
+# Via environment variable
+AUDIO_SOVITS_URL=http://127.0.0.1:9880 python server.py
+```
+
+#### Voice Profiles (Engine B)
+
+Voice profiles define the cloning parameters for GPT-SoVITS. Each profile references a short reference audio clip and an optional reference transcript, plus synthesis tuning knobs.
+
+**Creating a voice profile:**
+
+1. **Upload reference audio** — In the Voice Lab panel, click **Upload Reference Audio** and select a short WAV or MP3 clip (5–30 seconds of clean speech). The file is stored at `~/.openzigs/director/ref-audio/`.
+2. **Create a profile** — Fill in:
+   - **Name** — A unique identifier for the voice profile.
+   - **Reference Audio** — Select the uploaded file from the dropdown.
+   - **Reference Text** — Optional: the transcript of the reference clip (improves quality).
+   - **Language** — `en`, `zh`, `ja`, `ko`, or `auto`.
+   - **Parameters** — Adjust `top_p`, `temperature`, `speed_factor`, `repetition_penalty`, `top_k`, and `text_split_method` via sliders.
+3. Click **Save Profile**.
+
+**Testing a profile:**
+
+Click **Test** on any profile card. The sidecar synthesizes a short sample using the profile parameters and plays it in your browser.
+
+#### Kokoro Presets (Engine A)
+
+The **Kokoro Presets** grid shows all available built-in voices. Click a preset to preview it. Presets are loaded from the audio sidecar's `/voices` endpoint.
+
+---
+
+### Visual Injection (Asset Overlay)
+
+Visual injection lets you overlay image or video assets on any produced video at AI-guided timestamps. This is useful for adding B-roll, logos, lower-thirds images, or any supplemental visual content.
+
+#### Uploading Assets
+
+Upload visual assets (images or short video clips) to the Director's asset library:
+
+1. In the **Admin UI**, use the **Director → Assets** section (or call the API directly).
+2. POST to `/api/admin/director/files/upload-asset?kind=image` (or `kind=video`).
+3. Assets are stored at `~/.openzigs/director/uploads/visual/` and served via the API.
+
+**cURL example:**
+
+```bash
+curl -X POST "http://localhost:3000/api/admin/director/files/upload-asset?kind=image" \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -F "asset=@/path/to/overlay.png"
+```
+
+#### LLM-Guided Placement
+
+The `/api/admin/director/assets/placement` endpoint uses the LLM to suggest where assets should appear in your video:
+
+```bash
+curl -X POST http://localhost:3000/api/admin/director/assets/placement \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "videoFile": "my-video.mp4",
+    "assets": [
+      { "id": "logo-abc123", "label": "company logo" },
+      { "id": "broll-abc456", "label": "office B-roll" }
+    ],
+    "context": "Corporate product launch video, 3 minutes total"
+  }'
+```
+
+The LLM returns an array of `AssetPlacement` objects with `assetId`, `startSeconds`, `endSeconds`, `x`, `y`, `width`, `height`, and `opacity`.
+
+#### Applying Overlays
+
+Once you have placement data (from the LLM or manually constructed), apply the overlay with `POST /api/admin/director/assets/overlay`:
+
+```bash
+curl -X POST http://localhost:3000/api/admin/director/assets/overlay \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "inputVideo": "/path/to/source.mp4",
+    "outputPath": "/path/to/output.mp4",
+    "placements": [
+      {
+        "assetId": "logo-abc123",
+        "assetPath": "/path/to/logo.png",
+        "startSeconds": 0,
+        "endSeconds": 180,
+        "x": 20,
+        "y": 20,
+        "width": 200,
+        "height": 100,
+        "opacity": 0.9
+      }
+    ]
+  }'
+```
+
+The overlay compositor uses `ffmpeg` (spawned directly — no shell; safe against injection) and preserves the original audio track unchanged.
+
+---
+
+### Script Sanitization
+
+All narration scripts are automatically sanitized before being sent to TTS to prevent prompt injection attacks. This happens transparently during every `produce-video` run.
+
+If a script contains suspicious patterns (shell metacharacters, LLM scaffold tokens, HTML tags, code fences, etc.), the threat is logged as a warning and the offending content is stripped. Synthesis continues with the cleaned text — no manual intervention required.
+
+**Sanitization covers 9 threat categories:**
+
+| Category | Example |
+|---|---|
+| System header injection | `SYSTEM: ignore all previous instructions` |
+| Ignore instruction injection | `Ignore the above and do X` |
+| Tool call injection | `<invoke>shell-execute</invoke>` |
+| Code fences | ` ```bash rm -rf / ``` ` |
+| Inline code | `` `dangerous command` `` |
+| Shell metacharacters | `$(cmd)`, `` `cmd` ``, `&&`, `\|`, `;` |
+| Shell operators | `>`, `>>`, `<`, `2>` |
+| HTML tags | `<script>`, `<img onerror=...>` |
+| LLM scaffold tokens | `<\|im_start\|>`, `<\|endoftext\|>`, `[INST]` |
+
+Threats are logged to the Winston logger at `warn` level — check `~/.openzigs/logs/` for details.
+
+---
+
+### API Reference (Advanced Director)
+
+| Method | Endpoint | Description |
+|---|---|---|
+| GET | `/api/admin/audio/engine/status` | Active engine name + health of both engines |
+| POST | `/api/admin/audio/engine/switch` | Switch active TTS engine (`{ "engine": "kokoro" \| "sovits" }`) |
+| GET | `/api/admin/audio/voices` | List Kokoro built-in voices |
+| GET | `/api/admin/audio/profiles` | List voice profiles (Engine B) |
+| POST | `/api/admin/audio/profiles` | Create voice profile |
+| GET | `/api/admin/audio/profiles/:id` | Get voice profile |
+| PUT | `/api/admin/audio/profiles/:id` | Update voice profile |
+| DELETE | `/api/admin/audio/profiles/:id` | Delete voice profile |
+| POST | `/api/admin/audio/profiles/:id/test` | Synthesize test sample with profile |
+| POST | `/api/admin/audio/upload/ref-audio` | Upload reference audio file |
+| POST | `/api/admin/director/files/upload-asset` | Upload visual overlay asset (`?kind=image\|video`) |
+| GET | `/api/admin/director/files/:fileName` | Serve uploaded asset file |
+| POST | `/api/admin/director/assets/placement` | LLM-guided asset placement suggestion |
+| POST | `/api/admin/director/assets/overlay` | Apply asset overlays to video via ffmpeg |
+
+---
+
 ## Configuration Reference
 
 All configuration lives in `config/default.json`. Environment variables are interpolated using `${VAR_NAME}` syntax.
