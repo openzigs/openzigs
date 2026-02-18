@@ -155,6 +155,69 @@ pip install pytest httpx
 pytest test_pipeline.py -v
 ```
 
+## Engine B: GPT-SoVITS (Voice Cloning)
+
+Engine B replaces Kokoro with [GPT-SoVITS](https://github.com/RVC-Boss/GPT-SoVITS) — a high-fidelity voice cloning model that can mimic a speaker from a short reference audio clip.
+
+### Requirements
+
+- Python 3.9–3.11
+- ~4 GB free disk space (pretrained models)
+- ~8 GB RAM at inference time
+- Apple Silicon (MPS) or CUDA GPU recommended; CPU-only works but is slow
+
+### Quick Install
+
+From the **repository root**, run the one-shot installer:
+
+```bash
+bash scripts/setup-gptsovits.sh
+```
+
+This will:
+1. Clone [RVC-Boss/GPT-SoVITS](https://github.com/RVC-Boss/GPT-SoVITS) into `~/.openzigs/sidecars/gptsovits/`
+2. Create a Python virtual environment and install all dependencies
+3. Download the required pretrained models from Hugging Face (~2 GB)
+4. Write a `start.sh` convenience launcher
+
+### Starting the Server
+
+```bash
+~/.openzigs/sidecars/gptsovits/start.sh
+```
+
+Keep this terminal open. The server binds to `http://127.0.0.1:9880` by default.
+
+To use a different port, pass `SOVITS_PORT=xxxx bash scripts/setup-gptsovits.sh` and update the audio sidecar's `--sovits-url` flag to match.
+
+### Switching Engines
+
+Once GPT-SoVITS is running:
+
+1. Open **Admin → Voice Lab**
+2. Click **Refresh** (↺ icon) — the "GPT-SoVITS" card should show green
+3. Click **GPT-SoVITS (Engine B)** to activate
+
+All subsequent `/tts` requests are proxied to GPT-SoVITS until you switch back to Engine A (Kokoro).
+
+### Using Voice Cloning
+
+GPT-SoVITS performs voice cloning by passing a `reference_audio` path and `prompt_text` in the `/tts` request body. Upload a reference audio file via **Voice Lab → Voice Profiles**, then select a profile in the Director wizard or via the API.
+
+### Manual Start (without the installer)
+
+```bash
+cd ~/.openzigs/sidecars/gptsovits
+source .venv/bin/activate
+python api_v2.py --host 127.0.0.1 --port 9880
+```
+
+Or pass a custom URL when starting the audio sidecar:
+
+```bash
+python sidecars/audio/server.py --sovits-url http://127.0.0.1:9880
+```
+
 ## Docker Support
 
 The audio sidecar can run via Docker Compose (requires Apple Silicon host for MPS):

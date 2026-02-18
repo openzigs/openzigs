@@ -12,7 +12,7 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { fetchJson } from "@/lib/api";
 import { showToast } from "@/components/toast";
-import { Cpu, RefreshCw, AlertCircle, CheckCircle2, Radio } from "lucide-react";
+import { Cpu, RefreshCw, AlertCircle, CheckCircle2, Radio, ChevronDown, ChevronUp, ExternalLink, Terminal } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -38,9 +38,48 @@ type SwitchResult = {
 
 // ── EngineToggle Component ───────────────────────────────────────────────────
 
+// ── GPT-SoVITS Setup Steps ────────────────────────────────────────────────
+const SETUP_STEPS = [
+  {
+    label: "Run the one-shot installer",
+    cmd: "bash scripts/setup-gptsovits.sh",
+    desc: "Clones GPT-SoVITS and downloads pretrained models (~4 GB). Takes a few minutes.",
+  },
+  {
+    label: "Start the GPT-SoVITS server",
+    cmd: "~/.openzigs/sidecars/gptsovits/start.sh",
+    desc: "Binds to http://127.0.0.1:9880. Keep this terminal open while using Engine B.",
+  },
+  {
+    label: "Refresh and switch to Engine B",
+    cmd: null,
+    desc: "Hit the refresh icon above, then click the GPT-SoVITS card to activate.",
+  },
+];
+
+// ── CopyButton ────────────────────────────────────────────────────────────
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  const handleCopy = () => {
+    void navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    });
+  };
+  return (
+    <button
+      onClick={handleCopy}
+      className="ml-2 shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium border border-border hover:border-primary/40 text-muted-foreground hover:text-foreground transition-colors"
+    >
+      {copied ? "copied!" : "copy"}
+    </button>
+  );
+}
+
 export function EngineToggle() {
   const queryClient = useQueryClient();
   const [switching, setSwitching] = useState(false);
+  const [showSetup, setShowSetup] = useState(false);
 
   const engineQuery = useQuery({
     queryKey: ["audio-engine-status"],
@@ -180,6 +219,65 @@ export function EngineToggle() {
             <Radio className={cn("h-3 w-3", status.ready ? "text-emerald-500" : "text-amber-500")} />
             Sidecar {status.ready ? "ready" : status.status}
           </div>
+
+          {/* Engine B setup guide — shown when GPT-SoVITS is not yet running */}
+          {!status.sovits_reachable && (
+            <div className="rounded-lg border border-amber-500/20 bg-amber-950/10">
+              <button
+                onClick={() => setShowSetup((v) => !v)}
+                className="flex w-full items-center justify-between px-3 py-2 text-xs font-medium text-amber-400 hover:text-amber-300 transition-colors"
+              >
+                <span className="flex items-center gap-1.5">
+                  <Terminal className="h-3.5 w-3.5" />
+                  Set up Engine B (GPT-SoVITS)
+                </span>
+                {showSetup ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+              </button>
+
+              {showSetup && (
+                <div className="border-t border-amber-500/10 px-3 pb-3 pt-2 space-y-3 text-xs text-muted-foreground">
+                  <p>
+                    GPT-SoVITS is a voice cloning engine that runs locally. It&apos;s a separate
+                    process — use the steps below to install and start it.
+                  </p>
+                  <p className="text-[11px] text-muted-foreground/70">
+                    Requirements: Python 3.9+, ~4 GB disk, ~8 GB RAM, Apple Silicon or CUDA GPU.
+                  </p>
+
+                  <ol className="space-y-2">
+                    {SETUP_STEPS.map((step, i) => (
+                      <li key={i} className="space-y-1">
+                        <div className="flex items-center gap-1.5 font-medium text-foreground/80">
+                          <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-amber-500/20 text-amber-400 text-[10px] font-bold">
+                            {i + 1}
+                          </span>
+                          {step.label}
+                        </div>
+                        {step.cmd && (
+                          <div className="ml-5.5 flex items-center rounded-md bg-muted/60 px-2 py-1 font-mono text-[11px] text-foreground">
+                            <span className="mr-1 select-none text-muted-foreground">$</span>
+                            <span className="flex-1 overflow-x-auto">{step.cmd}</span>
+                            <CopyButton text={step.cmd} />
+                          </div>
+                        )}
+                        <p className="ml-5.5 text-[11px] text-muted-foreground/80">{step.desc}</p>
+                      </li>
+                    ))}
+                  </ol>
+
+                  <a
+                    href="https://github.com/RVC-Boss/GPT-SoVITS"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1 text-primary hover:underline"
+                  >
+                    GPT-SoVITS on GitHub
+                    <ExternalLink className="h-3 w-3" />
+                  </a>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>
