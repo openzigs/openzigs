@@ -20,6 +20,7 @@ import { SentinelPanel } from "@/components/admin/sentinel-panel";
 import { KnowledgeConfigPanel } from "@/components/admin/knowledge-config-panel";
 import { VaultPanel } from "@/components/admin/vault-panel";
 import { DirectorPanel } from "@/components/admin/director-panel";
+import { VoiceConfigPanel } from "@/components/admin/voice-config-panel";
 import { ToastContainer, showToast } from "@/components/toast";
 import { RotateCw } from "lucide-react";
 
@@ -80,19 +81,19 @@ export default function AdminPage() {
           <ModelConfigPanel />
         </SectionCard>
 
-        <SectionCard title="Task Engine">
+        <SectionCard title="Task Engine" defaultOpen={false}>
           <TaskEnginePanel />
         </SectionCard>
 
-        <SectionCard title="Sentinel Monitor">
+        <SectionCard title="Sentinel Monitor" defaultOpen={false}>
           <SentinelPanel />
         </SectionCard>
 
-        <SectionCard title="Knowledge Base">
+        <SectionCard title="Knowledge Base" defaultOpen={false}>
           <KnowledgeConfigPanel />
         </SectionCard>
 
-        <SectionCard title="Secret Vault">
+        <SectionCard title="Secret Vault" defaultOpen={false}>
           <VaultPanel />
         </SectionCard>
 
@@ -100,27 +101,27 @@ export default function AdminPage() {
           <DirectorPanel />
         </SectionCard>
 
-        <SectionCard title="Custom Agents">
+        <SectionCard title="Custom Agents" defaultOpen={false}>
           <AgentsPanel />
         </SectionCard>
 
-        <SectionCard title="Sessions">
+        <SectionCard title="Sessions" defaultOpen={false}>
           <SessionsPanel />
         </SectionCard>
 
-        <SectionCard title="MCP Sidecars (Docker)">
+        <SectionCard title="MCP Sidecars (Docker)" defaultOpen={false}>
           <SidecarsPanel />
         </SectionCard>
 
-        <SectionCard title="Local MCP Servers">
+        <SectionCard title="Local MCP Servers" defaultOpen={false}>
           <LocalServersPanel />
         </SectionCard>
 
-        <SectionCard title="Native MCP Servers">
+        <SectionCard title="Native MCP Servers" defaultOpen={false}>
           <McpEditorPanel />
         </SectionCard>
 
-        <SectionCard title="Tools">
+        <SectionCard title="Tools" defaultOpen={false}>
           {toolsQuery.isLoading ? (
             <p className="text-sm text-ink/50">Loading…</p>
           ) : (
@@ -128,7 +129,11 @@ export default function AdminPage() {
           )}
         </SectionCard>
 
-        <SectionCard title="Environment">
+        <SectionCard title="Voice & Audio">
+          <VoiceConfigPanel />
+        </SectionCard>
+
+        <SectionCard title="Environment" defaultOpen={false}>
           <EnvPanel />
         </SectionCard>
       </div>

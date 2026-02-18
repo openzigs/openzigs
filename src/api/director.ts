@@ -594,7 +594,8 @@ export const createDirectorRouter = ({
           let sceneVoiceoverPath: string | undefined;
           if (voiceService && scene.voiceover) {
             try {
-              if (!voiceService.isReady() && process.env.GOOGLE_APPLICATION_CREDENTIALS) {
+              // Lazy-init: attempt initialization if not ready (works for both google and local providers)
+              if (!voiceService.isReady()) {
                 await voiceService.initialize();
               }
               if (voiceService.isReady()) {

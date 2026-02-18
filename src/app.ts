@@ -1,7 +1,11 @@
 import express from "express";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import helmet from "helmet";
 // @ts-expect-error -- cors has no bundled types
 import cors from "cors";
+import multer from "multer";
 import * as z from "zod";
 import { getHealth } from "./health.js";
 import { createAuthMiddleware, checkRole } from "./auth/auth.js";
@@ -91,6 +95,18 @@ export const createApp = (config: AppConfig, options: CreateAppOptions = {}) => 
   app.use(express.json());
 
   const authMiddleware = createAuthMiddleware(config.auth);
+  const chatUpload = multer({
+    storage: multer.memoryStorage(),
+    limits: {
+      fileSize: 25 * 1024 * 1024,
+      files: 10,
+    },
+  });
+
+  const sanitizeUploadName = (name: string): string => {
+    const sanitized = name.replace(/[^a-zA-Z0-9._-]/g, "_").replace(/_+/g, "_");
+    return sanitized || "upload.bin";
+  };
 
   app.get("/health", (_req, res) => {
     res.status(200).json(getHealth());
@@ -98,6 +114,42 @@ export const createApp = (config: AppConfig, options: CreateAppOptions = {}) => 
 
   app.get("/api/health", authMiddleware, (_req, res) => {
     res.status(200).json(getHealth());
+  });
+
+  /**
+   * POST /api/chat/upload
+   * Upload browser-selected files to a server-local temp area for chat attachments.
+   * Returns SDK attachment descriptors with absolute server paths.
+   */
+  app.post("/api/chat/upload", chatUpload.array("files", 10), async (req, res) => {
+    const files = Array.isArray(req.files) ? req.files : [];
+    if (files.length === 0) {
+      return res.status(400).json({ error: "No files uploaded. Use multipart form field 'files'." });
+    }
+
+    try {
+      const uploadDir = path.join(os.homedir(), ".openzigs", "uploads", "chat");
+      await fs.mkdir(uploadDir, { recursive: true });
+
+      const uploaded = await Promise.all(
+        files.map(async (file) => {
+          const safeName = sanitizeUploadName(file.originalname || file.fieldname || "upload.bin");
+          const uniqueName = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}-${safeName}`;
+          const savedPath = path.join(uploadDir, uniqueName);
+          await fs.writeFile(savedPath, file.buffer);
+          return {
+            type: "file" as const,
+            path: savedPath,
+            name: file.originalname || safeName,
+          };
+        })
+      );
+
+      return res.status(200).json({ files: uploaded });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return res.status(500).json({ error: message });
+    }
   });
 
   app.post("/api/tools/:name/toggle", authMiddleware, checkRole("admin"), async (req, res) => {

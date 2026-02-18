@@ -174,13 +174,14 @@ export type VaultAppConfig = {
 
 export type VoiceAppConfig = {
   enabled?: boolean;
-  provider?: "google";
+  provider?: "google" | "local";
   voiceName?: string;
   speakingRate?: number;
   pitch?: number;
   cacheDir?: string;
   maxCacheSizeMb?: number;
   maxTextLength?: number;
+  sidecarUrl?: string;
 };
 
 export type AppConfig = {
@@ -420,13 +421,14 @@ const appConfigSchema = z.object({
   }).optional(),
   voice: z.object({
     enabled: z.boolean().optional(),
-    provider: z.literal("google").optional(),
+    provider: z.enum(["google", "local"]).optional(),
     voiceName: z.string().optional(),
     speakingRate: z.number().min(0.25).max(4.0).optional(),
     pitch: z.number().min(-20).max(20).optional(),
     cacheDir: z.string().optional(),
     maxCacheSizeMb: z.number().min(1).optional(),
     maxTextLength: z.number().min(1).optional(),
+    sidecarUrl: z.string().optional(),
   }).optional(),
   vault: z.object({
     enabled: z.boolean().optional(),

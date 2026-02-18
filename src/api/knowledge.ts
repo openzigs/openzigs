@@ -1,8 +1,8 @@
 /**
  * Knowledge Base admin API routes.
  *
- * Mounted at /api/admin/knowledge — provides CRUD and search endpoints
- * for the local knowledge base (RAG) subsystem.
+ * Mounted at /api/admin/knowledge — provides CRUD, search, and keyframe
+ * endpoints for the local knowledge base (RAG) subsystem.
  */
 
 import { Router } from "express";
@@ -216,6 +216,71 @@ export const createKnowledgeRouter = ({ knowledgeService }: KnowledgeRouterOptio
     try {
       const converters = knowledgeService.getConverterInfo();
       res.json({ converters });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  // ── GET /keyframes/:documentId — List keyframe images for a video document ──
+  router.get("/keyframes/:documentId", async (req, res) => {
+    try {
+      const { documentId } = req.params;
+      const manifest = await knowledgeService.getKeyframeManifest(documentId);
+
+      if (!manifest) {
+        res.status(404).json({
+          error: "No keyframes found for this document",
+          documentId,
+        });
+        return;
+      }
+
+      res.json({
+        documentId: manifest.documentId,
+        sourceFile: manifest.sourceFile,
+        frameCount: manifest.frames.length,
+        extractedAt: manifest.extractedAt,
+        frames: manifest.frames.map((f) => ({
+          index: f.index,
+          timestamp: f.timestamp,
+          description: f.description,
+          imageUrl: `/api/admin/knowledge/keyframes/${documentId}/${f.index}`,
+        })),
+      });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  // ── GET /keyframes/:documentId/:frameIndex — Serve a keyframe JPEG image ──
+  router.get("/keyframes/:documentId/:frameIndex", async (req, res) => {
+    try {
+      const { documentId, frameIndex } = req.params;
+      const index = parseInt(frameIndex, 10);
+
+      if (Number.isNaN(index) || index < 0) {
+        res.status(400).json({ error: "frameIndex must be a non-negative integer" });
+        return;
+      }
+
+      const imagePath = await knowledgeService.getKeyframeImagePath(documentId, index);
+
+      if (!imagePath) {
+        res.status(404).json({
+          error: "Keyframe not found",
+          documentId,
+          frameIndex: index,
+        });
+        return;
+      }
+
+      res.setHeader("Content-Type", "image/jpeg");
+      res.setHeader("Cache-Control", "public, max-age=86400");
+      res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
+      const imageData = await fs.readFile(imagePath);
+      res.send(imageData);
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       res.status(500).json({ error: msg });

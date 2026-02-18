@@ -26,6 +26,7 @@ import { Send, Loader2, Bot, User, AlertCircle, Trash2 } from "lucide-react";
 import { ChatMarkdown } from "@/components/chat-markdown";
 import { SmartTextarea } from "@/components/smart-textarea";
 import { FileAttachmentButton, FileDropZone, AttachmentBar } from "@/components/file-attachment";
+import { VoiceMicButton } from "@/components/voice/voice-mic-button";
 import { ReasoningEffortSelector, ProviderBadge } from "@/components/reasoning-effort-selector";
 import { UserInputPrompt } from "@/components/user-input-prompt";
 import { WorkflowPreviewCard } from "@/components/workflow-preview-card";
@@ -413,7 +414,14 @@ export const ChatView = () => {
     socket.emit("chat:message", {
       content: text,
       model: selectedModel || undefined,
-      attachments: attachments.length > 0 ? attachments : undefined,
+      files:
+        attachments.length > 0
+          ? attachments.map((attachment) => ({
+              type: attachment.type,
+              path: attachment.path,
+              displayName: attachment.name,
+            }))
+          : undefined,
       reasoningEffort: reasoningEffort !== "medium" ? reasoningEffort : undefined,
     });
     setInput("");
@@ -713,6 +721,13 @@ export const ChatView = () => {
             onAttach={handleAddAttachments}
             disabled={inputDisabled}
             attachmentCount={attachments.length}
+          />
+          <VoiceMicButton
+            onTranscript={(text) => {
+              setInput((prev) => (prev ? `${prev} ${text}` : text));
+              autoResize();
+            }}
+            disabled={inputDisabled}
           />
           <div className="relative flex-1">
             <FileDropZone

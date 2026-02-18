@@ -253,6 +253,8 @@ const knowledgeService = new KnowledgeIngestionService({
     watchEnabled: knowledgeConfig?.watchEnabled !== false,
     mediaModel: knowledgeConfig?.mediaModel,
   } as Partial<import("./knowledge/types.js").KnowledgeConfig>,
+  audioSidecarUrl: resolveSidecarUrl("audio", "AUDIO_SIDECAR_URL", 5006),
+  copilot,
 });
 
 // ── Secret Vault Service ──
@@ -261,7 +263,7 @@ const vaultService = new SecretVaultService({
   vaultPath: vaultConfig?.vaultPath,
 });
 
-// ── Voice Service (Google Cloud TTS) ──
+// ── Voice Service (Google Cloud TTS or Local Audio Sidecar) ──
 const voiceConfig = config.voice;
 const voiceService = new VoiceService({
   enabled: voiceConfig?.enabled ?? false,
@@ -272,13 +274,23 @@ const voiceService = new VoiceService({
   cacheDir: voiceConfig?.cacheDir ?? "~/.openzigs/voice-cache",
   maxCacheSizeMb: voiceConfig?.maxCacheSizeMb ?? 500,
   maxTextLength: voiceConfig?.maxTextLength ?? 5000,
+  sidecarUrl: voiceConfig?.sidecarUrl ?? resolveSidecarUrl("audio", "AUDIO_SIDECAR_URL", 5006),
 });
 
-if (voiceService.getConfig().enabled && process.env.GOOGLE_APPLICATION_CREDENTIALS) {
-  void voiceService.initialize().catch((error) => {
-    const details = error instanceof Error ? error.message : String(error);
-    logger.warn(`Voice service startup skipped: ${details}`);
-  });
+if (voiceService.getConfig().enabled) {
+  const provider = voiceService.getConfig().provider;
+  if (provider === "local") {
+    // Local provider: initialize immediately (sidecar may start later)
+    void voiceService.initialize().catch((error) => {
+      const details = error instanceof Error ? error.message : String(error);
+      logger.warn(`Voice service startup skipped: ${details}`);
+    });
+  } else if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
+    void voiceService.initialize().catch((error) => {
+      const details = error instanceof Error ? error.message : String(error);
+      logger.warn(`Voice service startup skipped: ${details}`);
+    });
+  }
 }
 
 registerMcpTools(toolRegistry, {
@@ -398,7 +410,7 @@ void knowledgeService.start()
     logger.error(`Failed to start Knowledge Ingestion Service: ${details}`);
   });
 
-// ── Voice Router (Google Cloud TTS) ──
+// ── Voice Router (Google Cloud TTS + Local Audio Sidecar) ──
 const voiceRouter = createVoiceRouter({ voiceService });
 app.use("/api/voice", voiceRouter);
 

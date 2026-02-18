@@ -140,7 +140,8 @@
     "pitch": 0.0,
     "cacheDir": "~/.openzigs/voice-cache",
     "maxCacheSizeMb": 500,
-    "maxTextLength": 5000
+    "maxTextLength": 5000,
+    "sidecarUrl": "http://localhost:5006"
   },
   "vault": {
     "enabled": true

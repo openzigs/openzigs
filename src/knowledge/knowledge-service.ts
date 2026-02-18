@@ -28,12 +28,20 @@ import type {
   KnowledgeServiceEvent,
   KnowledgeSourceType,
   KnowledgeChunk,
+  KeyframeManifest,
 } from "./types.js";
 import { DEFAULT_KNOWLEDGE_CONFIG } from "./types.js";
+import { multimodalSearch, type MultimodalSearchResult, type MultimodalSearchOptions } from "./multimodal-retriever.js";
+import type { QueryClassification } from "./query-classifier.js";
 import { logger } from "../logging/logger.js";
+import type { CopilotWrapper } from "../copilot/copilot-wrapper.js";
 
 export type KnowledgeServiceOptions = {
   config?: Partial<KnowledgeConfig>;
+  /** Audio sidecar URL for sidecar-based media transcription. */
+  audioSidecarUrl?: string;
+  /** CopilotWrapper for vision-based keyframe description (video files). */
+  copilot?: CopilotWrapper;
 };
 
 type IndexFileOptions = {
@@ -117,9 +125,18 @@ export class KnowledgeIngestionService extends EventEmitter {
   private dbPath: string;
   /** Path to the persisted document metadata sidecar file. */
   private metadataPath: string;
+  /** Directory for persisted keyframe images. */
+  private keyframesDir: string;
+  /** Audio sidecar URL for sidecar-based STT. */
+  private audioSidecarUrl?: string;
+  /** CopilotWrapper for vision-based keyframe description. */
+  private copilot?: CopilotWrapper;
 
   constructor(options: KnowledgeServiceOptions = {}) {
     super();
+
+    this.audioSidecarUrl = options.audioSidecarUrl;
+    this.copilot = options.copilot;
 
     const sanitizedConfig = Object.fromEntries(
       Object.entries(options.config ?? {}).filter(([, value]) => value !== undefined)
@@ -135,6 +152,7 @@ export class KnowledgeIngestionService extends EventEmitter {
 
     this.dbPath = path.join(os.homedir(), ".openzigs", "knowledge-db");
     this.metadataPath = path.join(this.dbPath, "documents.json");
+    this.keyframesDir = path.join(this.dbPath, "keyframes");
     this.store = new LanceDBStore({ dbPath: this.dbPath });
   }
 
@@ -152,7 +170,11 @@ export class KnowledgeIngestionService extends EventEmitter {
     await fs.mkdir(this.config.directory, { recursive: true });
 
     // Initialize converter registry (auto-detects available converters)
-    this.converterRegistry = await createDefaultRegistry({ mediaModel: this.config.mediaModel });
+    this.converterRegistry = await createDefaultRegistry({
+      mediaModel: this.config.mediaModel,
+      audioSidecarUrl: this.audioSidecarUrl,
+      copilot: this.copilot,
+    });
 
     // Initialize LanceDB
     await this.store.initialize();
@@ -203,6 +225,23 @@ export class KnowledgeIngestionService extends EventEmitter {
     const mode = options?.mode ?? this.config.searchMode ?? "hybrid";
     const minScore = options?.minScore ?? this.config.minScore ?? 0;
     return this.store.searchByMode(query, maxResults, mode, minScore);
+  }
+
+  /**
+   * Multimodal-aware search: classifies the query for media intent, applies
+   * type-aware re-ranking, and returns results with timestamp citations.
+   */
+  async searchMultimodal(
+    query: string,
+    options: MultimodalSearchOptions = {},
+  ): Promise<{ results: MultimodalSearchResult[]; classification: QueryClassification }> {
+    const boundSearch = this.search.bind(this);
+    return multimodalSearch(query, boundSearch, {
+      limit: options.limit ?? this.config.maxResults,
+      minScore: options.minScore ?? this.config.minScore ?? 0,
+      mode: options.mode ?? this.config.searchMode ?? "hybrid",
+      ...options,
+    });
   }
 
   /**
@@ -323,7 +362,11 @@ export class KnowledgeIngestionService extends EventEmitter {
     const mediaModelChanged = this.config.mediaModel !== previous.mediaModel;
 
     if (mediaModelChanged) {
-      this.converterRegistry = await createDefaultRegistry({ mediaModel: this.config.mediaModel });
+      this.converterRegistry = await createDefaultRegistry({
+        mediaModel: this.config.mediaModel,
+        audioSidecarUrl: this.audioSidecarUrl,
+        copilot: this.copilot,
+      });
     }
 
     if (directoryChanged) {
@@ -462,6 +505,7 @@ export class KnowledgeIngestionService extends EventEmitter {
 
     // Read or convert file content via the converter registry.
     let content: string;
+    let conversionMetadata: Record<string, unknown> | undefined;
     const stat = await fs.stat(filePath);
 
     if (this.converterRegistry && this.converterRegistry.canConvert(filePath)) {
@@ -470,6 +514,7 @@ export class KnowledgeIngestionService extends EventEmitter {
         throw new Error(`Conversion failed (${result.converter}): ${result.error}`);
       }
       content = result.text;
+      conversionMetadata = result.metadata;
       logger.debug(`[Knowledge] Converted ${relativePath} via ${result.converter}`);
     } else {
       // Fallback: read as UTF-8 text (for text-based files or if registry not ready)
@@ -518,6 +563,9 @@ export class KnowledgeIngestionService extends EventEmitter {
       // Store in LanceDB
       await this.store.addChunks(embeddedChunks);
 
+      // Persist keyframe images from media converter if available
+      await this.persistKeyframes(documentId, relativePath, conversionMetadata);
+
       // Update document status
       doc.status = "indexed";
       doc.chunkCount = embeddedChunks.length;
@@ -534,6 +582,10 @@ export class KnowledgeIngestionService extends EventEmitter {
       doc.status = "failed";
       doc.error = msg;
       this.emitEvent({ type: "document:failed", document: doc, error: msg });
+
+      // Clean up keyframe temp dir on failure
+      await this.cleanupKeyframeTempDir(conversionMetadata);
+
       throw error;
     }
   }
@@ -639,6 +691,148 @@ export class KnowledgeIngestionService extends EventEmitter {
    */
   private emitEvent(event: KnowledgeServiceEvent): void {
     this.emit(event.type, event);
+  }
+
+  // ── Keyframe persistence ──
+
+  /**
+   * Persist extracted keyframe images from a media conversion to a permanent directory.
+   *
+   * Moves images from the converter's temp dir to `~/.openzigs/knowledge-db/keyframes/<documentId>/`
+   * and writes a manifest.json with metadata (timestamps, descriptions, filenames).
+   */
+  private async persistKeyframes(
+    documentId: string,
+    sourceRelativePath: string,
+    metadata?: Record<string, unknown>,
+  ): Promise<void> {
+    if (!metadata) return;
+
+    const keyframeTempDir = metadata.keyframeTempDir as string | undefined;
+    const keyframeFiles = metadata.keyframeFiles as
+      | Array<{ filename: string; timestamp: number; description: string }>
+      | undefined;
+
+    if (!keyframeTempDir || !keyframeFiles || keyframeFiles.length === 0) return;
+
+    const destDir = path.join(this.keyframesDir, documentId);
+
+    try {
+      await fs.mkdir(destDir, { recursive: true });
+
+      // Copy each keyframe JPEG to the persistent directory
+      for (const kf of keyframeFiles) {
+        const srcPath = path.join(keyframeTempDir, kf.filename);
+        const destPath = path.join(destDir, kf.filename);
+        try {
+          await fs.copyFile(srcPath, destPath);
+        } catch {
+          logger.debug(`[Knowledge] Keyframe copy skipped (missing): ${kf.filename}`);
+        }
+      }
+
+      // Write manifest
+      const manifest: KeyframeManifest = {
+        documentId,
+        sourceFile: path.basename(sourceRelativePath),
+        directory: destDir,
+        frames: keyframeFiles.map((kf, i) => ({
+          index: i,
+          filename: kf.filename,
+          timestamp: kf.timestamp,
+          description: kf.description,
+        })),
+        extractedAt: new Date().toISOString(),
+      };
+
+      const manifestPath = path.join(destDir, "manifest.json");
+      await fs.writeFile(manifestPath, JSON.stringify(manifest, null, 2), "utf-8");
+
+      logger.info(
+        `[Knowledge] Persisted ${keyframeFiles.length} keyframes for ${sourceRelativePath} → ${destDir}`,
+      );
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      logger.warn(`[Knowledge] Keyframe persistence failed: ${msg}`);
+    } finally {
+      // Always clean up the temp dir after copying
+      await this.cleanupKeyframeTempDir(metadata);
+    }
+  }
+
+  /**
+   * Clean up a keyframe temp directory from conversion metadata.
+   */
+  private async cleanupKeyframeTempDir(metadata?: Record<string, unknown>): Promise<void> {
+    const tempDir = metadata?.keyframeTempDir as string | undefined;
+    if (!tempDir) return;
+    try {
+      await fs.rm(tempDir, { recursive: true, force: true });
+    } catch {
+      // Ignore cleanup errors
+    }
+  }
+
+  /**
+   * Get the keyframe manifest for a document, if available.
+   *
+   * Returns null if the document has no persisted keyframes.
+   */
+  async getKeyframeManifest(documentId: string): Promise<KeyframeManifest | null> {
+    const manifestPath = path.join(this.keyframesDir, documentId, "manifest.json");
+    try {
+      const raw = await fs.readFile(manifestPath, "utf-8");
+      return JSON.parse(raw) as KeyframeManifest;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Get the absolute file path for a specific keyframe image.
+   *
+   * @returns The JPEG path, or null if the keyframe doesn't exist.
+   */
+  async getKeyframeImagePath(documentId: string, frameIndex: number): Promise<string | null> {
+    const manifest = await this.getKeyframeManifest(documentId);
+    if (!manifest) return null;
+
+    const entry = manifest.frames.find((f) => f.index === frameIndex);
+    if (!entry) return null;
+
+    const imagePath = path.join(this.keyframesDir, documentId, entry.filename);
+    try {
+      await fs.access(imagePath);
+      return imagePath;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Check which document IDs have persisted keyframes available.
+   *
+   * @returns Set of document IDs that have keyframe manifests.
+   */
+  async getDocumentIdsWithKeyframes(): Promise<Set<string>> {
+    const ids = new Set<string>();
+    try {
+      const entries = await fs.readdir(this.keyframesDir, { withFileTypes: true });
+      for (const entry of entries) {
+        if (entry.isDirectory()) {
+          const manifestPath = path.join(this.keyframesDir, entry.name, "manifest.json");
+          try {
+            await fs.access(manifestPath);
+            ids.add(entry.name);
+          } catch {
+            // No manifest — skip
+          }
+        }
+      }
+    } catch {
+      // Keyframes directory doesn't exist yet
+    }
+    return ids;
   }
 
   // ── Document metadata persistence ──

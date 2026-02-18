@@ -20,5 +20,11 @@ export type {
   KnowledgeServiceEvent,
   KnowledgeSourceType,
   DocumentStatus,
+  KeyframeManifest,
+  KeyframeEntry,
 } from "./types.js";
 export { DEFAULT_KNOWLEDGE_CONFIG } from "./types.js";
+export { classifyQuery } from "./query-classifier.js";
+export type { QueryClassification } from "./query-classifier.js";
+export { multimodalSearch, applyMultimodalReranking, formatCitation } from "./multimodal-retriever.js";
+export type { MultimodalSearchOptions, MultimodalSearchResult } from "./multimodal-retriever.js";

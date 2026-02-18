@@ -13,12 +13,18 @@ import { createPdfConverter } from "./pdf-converter.js";
 import { createDocxConverter } from "./docx-converter.js";
 import { createXlsxConverter } from "./xlsx-converter.js";
 import { createMediaConverter } from "./media-converter.js";
+import { createSidecarMediaConverter } from "./sidecar-media-converter.js";
 import { createImageOcrConverter } from "./image-ocr-converter.js";
 import { terminateOcrEngine } from "./ocr-engine.js";
 import { logger } from "../../logging/logger.js";
+import type { CopilotWrapper } from "../../copilot/copilot-wrapper.js";
 
 export type ConverterRegistryOptions = {
   mediaModel?: string;
+  /** Audio sidecar URL for sidecar-based media transcription */
+  audioSidecarUrl?: string;
+  /** CopilotWrapper for vision-based keyframe description (video files). */
+  copilot?: CopilotWrapper;
 };
 
 export class ConverterRegistry {
@@ -155,13 +161,30 @@ export async function createDefaultRegistry(options: ConverterRegistryOptions = 
     logger.info(`[Knowledge] Image OCR converter unavailable: ${imageOcrConverter.unavailableReason}`);
   }
 
-  // Media (mp4, mp3, wav, m4a) — available if ffmpeg is on PATH.
-  const mediaConverter = await createMediaConverter({ modelName: options.mediaModel });
-  registry.register(mediaConverter);
-  if (mediaConverter.available) {
-    logger.info("[Knowledge] Media converter available (ffmpeg)");
-  } else {
-    logger.info(`[Knowledge] Media converter unavailable: ${mediaConverter.unavailableReason}`);
+  // Media (sidecar-based) — preferred. Uses audio sidecar (MLX Whisper) if available.
+  if (options.audioSidecarUrl) {
+    const sidecarMediaConverter = await createSidecarMediaConverter({
+      sidecarUrl: options.audioSidecarUrl,
+      copilot: options.copilot,
+    });
+    if (sidecarMediaConverter.available) {
+      registry.register(sidecarMediaConverter);
+      logger.info("[Knowledge] Media converter available (audio sidecar — Whisper MLX)");
+    } else {
+      logger.info(`[Knowledge] Audio sidecar media converter unavailable: ${sidecarMediaConverter.unavailableReason}`);
+    }
+  }
+
+  // Media (whisper-node fallback) — used if sidecar is unavailable.
+  // Only register if sidecar converter wasn't registered.
+  if (!registry.canConvert("test.mp4")) {
+    const mediaConverter = await createMediaConverter({ modelName: options.mediaModel });
+    registry.register(mediaConverter);
+    if (mediaConverter.available) {
+      logger.info("[Knowledge] Media converter available (ffmpeg + whisper-node)");
+    } else {
+      logger.info(`[Knowledge] Media converter unavailable: ${mediaConverter.unavailableReason}`);
+    }
   }
 
   return registry;

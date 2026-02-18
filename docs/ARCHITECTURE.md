@@ -793,10 +793,114 @@ IDLE ──[startListening()]──► STANDBY ──[wake word]──► ACTIVE
 
 ### TTS Caching Strategy
 
-- **Cache key**: MD5 hash of `{text, voice, speakingRate, pitch}` → `{hash}.mp3`
+- **Cache key**: MD5 hash of `{text, voice, speakingRate, pitch}` → `{hash}.mp3` or `{hash}.wav`
 - **Writes**: Atomic (write `.tmp` → rename) to prevent corruption
 - **Reads**: Touch `mtime` on hit for LRU tracking
 - **Eviction**: Background LRU sweep when total size exceeds `maxCacheSizeMb`
+
+### Audio Sidecar (Local TTS + STT)
+
+The audio sidecar is a FastAPI Python server that provides **local** speech synthesis (TTS) via [mlx-audio](https://github.com/lucasnewman/mlx-audio) and speech-to-text (STT) via [lightning-whisper-mlx](https://github.com/mustafaaljadery/lightning-whisper-mlx). It runs on Apple Silicon (MPS) or CUDA, avoiding cloud API costs for voice operations.
+
+#### Architecture
+
+```
+┌──────────────┐     ┌───────────────────┐     ┌──────────────┐
+│  Voice       │────▶│  Audio Sidecar    │────▶│  MLX Models  │
+│  Service     │     │  (FastAPI :5006)  │     │  (lazy load) │
+│  (Node.js)   │     │                   │     │              │
+└──────────────┘     └───────────────────┘     └──────────────┘
+   POST /tts              │         │              │
+   POST /transcribe       │         │         Kokoro-82M-bf16
+   GET /health            │         │         distil-large-v3
+   GET /voices            │         │
+                          │         │
+                     TTS Model   STT Model
+                     (~330MB)    (~1.5GB)
+```
+
+#### Endpoints
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/tts` | Text-to-speech synthesis → 24kHz WAV |
+| `POST` | `/transcribe` | Audio file → transcript with segments/timestamps |
+| `GET` | `/voices` | List 19 Kokoro voice presets |
+| `GET` | `/health` | Model load status and memory info |
+| `POST` | `/unload` | Unload TTS/STT models to free VRAM |
+
+#### Key Design Decisions
+
+- **Lazy model loading**: Models load on first use, not at startup, reducing cold-start time.
+- **Independent lifecycle**: TTS and STT models can be loaded/unloaded independently.
+- **Auto-unload**: Idle models are automatically unloaded after a configurable timeout (default: 300s) to free VRAM.
+- **Dual provider**: `VoiceService` routes to local sidecar or Google Cloud TTS based on configuration, with the same API surface.
+- **Runtime weight download**: `pip install -r requirements.txt` installs Python packages only. Model weights are downloaded on first `POST /tts` and `POST /transcribe`, then cached locally (default locations: `sidecars/audio/mlx_models/` and `sidecars/audio/.cache/huggingface/`). These artifacts are git-ignored.
+
+#### Voice Presets
+
+19 Kokoro voices across 4 languages (American English, British English, Japanese, Chinese) with varied genders and styles (calm, cheerful, professional, expressive, etc.).
+
+### Multimodal Knowledge (Audio/Video RAG)
+
+The knowledge base supports **audio and video ingestion** via the audio sidecar's STT capabilities and **Copilot SDK vision** for keyframe description, enabling RAG over both spoken and visual content.
+
+#### Ingestion Pipeline
+
+**Audio-only files** (.mp3, .wav, .m4a, .ogg, .flac):
+```
+Audio file
+    ↓
+ffmpeg extract audio track
+    ↓
+POST /transcribe → sidecar (Whisper MLX)
+    ↓
+Transcript with timestamps
+    ↓
+Chunked + embedded in LanceDB
+```
+
+**Video files** (.mp4, .webm):
+```
+Video file
+    ├──── ffmpeg extract audio ──────▶ POST /transcribe → sidecar
+    │                                          ↓
+    └──── ffmpeg extract keyframes ──▶ Copilot SDK vision (GPT-5 mini)
+              (1 frame / 10s,                  ↓
+               max 20 frames)          Frame descriptions
+                                               ↓
+                                  Interleaved transcript + visual descriptions
+                                               ↓
+                                  Chunked with timestamp metadata
+                                               ↓
+                                  Embedded + stored in LanceDB
+```
+
+#### Key Design Decisions
+
+- **No Ollama/VLM required**: Keyframe descriptions use the Copilot SDK's built-in vision support via `CopilotWrapper.chat()` with `SdkAttachment` image files. GPT-5 mini supports vision natively and doesn't consume premium requests — eliminating the need for a separate ~8-10GB VLM model.
+- **Batched vision requests**: Frames are sent in batches (up to 10 per request) using numbered prompts to minimize API calls, following the same pattern as Director Mode's `keyframe-analyzer.ts`.
+- **Graceful degradation**: If CopilotWrapper is unavailable or vision fails, the converter falls back to transcript-only output (audio-only behavior).
+- **Sidecar priority**: If the audio sidecar is available, it takes priority over the bundled whisper-node converter for media files.
+- **Timestamp preservation**: Each chunk retains `timestampStart` and `timestampEnd` for citation formatting.
+- **Document type tracking**: Chunks include `documentType` for type-aware retrieval boosting.
+- **Visual markers**: Frame descriptions are tagged with `[Visual @ MM:SS]` markers and interleaved chronologically with transcript segments.
+
+#### Multimodal Retrieval
+
+The `multimodalSearch()` function wraps standard vector/FTS/hybrid search with:
+
+1. **Query classification** — Detects media intent keywords ("video", "recording", "podcast") and temporal hints ("at 2:30", "minute 5").
+2. **Score boosting** — Media-sourced chunks get a 1.1–1.5× score multiplier for media-intent queries.
+3. **Citation formatting** — Results include timestamp citations like `[interview.mp4 @ 2:30 → 3:15]` for audio/video sources.
+
+### Voice UI Components
+
+| Component | Location | Purpose |
+|---|---|---|
+| `VoiceMicButton` | `ui/components/voice/voice-mic-button.tsx` | Push-to-talk recording button with local sidecar transcription |
+| `useVoiceInput` hook | `ui/lib/hooks/use-voice-input.ts` | MediaRecorder + sidecar `/transcribe` integration |
+| `VoiceStatusPanel` | `ui/components/admin/voice-status-panel.tsx` | Sidecar health, model status, voice browser with preview |
 
 ---
 
@@ -928,6 +1032,8 @@ Mode C ("Presentation Mode") is a **zero-input video production pipeline** — t
 | **Image Gen Sidecar** (#255) | `sidecars/image-gen/server.py` | FastAPI Python server wrapping `diffusers` + `torch` for local Stable Diffusion inference on Apple Silicon (MPS) or CUDA. Endpoints: `POST /generate`, `GET /health`. |
 | **ImageSceneSegment** (#256) | `src/remotion/components/image-scene-segment.tsx` | Remotion component rendering a single Mode C scene: AI image with Ken Burns pan/zoom + optional per-scene `Audio` voiceover in a `Sequence`. |
 | **KenBurns** (#256) | `src/remotion/components/KenBurns.tsx` | Animated Ken Burns effect using Remotion `interpolate()` — configurable `scaleFrom`/`scaleTo`, `translateX`/`translateY` ranges over the clip's duration. |
+
+Model download behavior for Mode C image generation mirrors the audio sidecar: Python dependencies are installed via `pip`, but diffusion model weights are fetched lazily on first generation/model load and cached under sidecar cache/model directories (git-ignored by default).
 
 #### `image_scene` Timeline Entry
 

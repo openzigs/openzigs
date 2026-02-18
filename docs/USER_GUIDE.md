@@ -19,7 +19,7 @@ Before you begin, ensure the following are installed and available:
 |---|---|
 | **ffmpeg** | Required for media converter (`.mp4`, `.mp3`, etc.) to extract 16kHz WAV audio before transcription. |
 | **ImageMagick** + **Ghostscript** | Required for scanned PDF OCR fallback (render PDF pages to images). |
-| **Whisper model files** (`whisper-node`) | Required for media transcription. Install with `pnpm exec whisper-node download`. |
+| **Whisper model files** (`whisper-node`) | Required for the Node-side fallback media converter (when not using the local audio sidecar). Install with `pnpm exec whisper-node download`. |
 
 **Optional API keys:**
 
@@ -2052,6 +2052,119 @@ Google Cloud TTS pricing (as of 2025):
 
 The cache system significantly reduces API calls — repeated queries hit the local cache instead of calling Google.
 
+### Local Voice Provider (Audio Sidecar)
+
+As an alternative to Google Cloud TTS, OpenZigs supports a **local audio sidecar** that runs speech synthesis (TTS) and speech-to-text (STT) entirely on your machine using Apple Silicon (MPS) or CUDA acceleration — no cloud API keys, no per-character costs.
+
+#### Prerequisites
+
+| Requirement | Purpose |
+|---|---|
+| **Python 3.12+** | Runs the audio sidecar server. |
+| **Apple Silicon Mac** (or CUDA GPU) | MLX models require Metal Performance Shaders or CUDA. |
+| **ffmpeg** | Required for audio format conversion during transcription. |
+
+#### Setup
+
+1. Start the audio sidecar:
+   ```bash
+   cd sidecars/audio
+   pip install -r requirements.txt
+   python server.py --port 5006
+   ```
+
+   Or via Docker Compose:
+   ```bash
+   docker compose up -d audio-sidecar
+   ```
+
+2. Configure the voice provider in `~/.openzigs/config.json`:
+   ```json
+   {
+     "voice": {
+       "enabled": true,
+       "provider": "local",
+       "sidecarUrl": "http://localhost:5006"
+     }
+   }
+   ```
+
+3. Restart the server. You should see:
+   ```
+   Voice service initialized (provider: local, sidecar: http://localhost:5006)
+   ```
+
+#### Local Model Downloads & Git
+
+- `pip install -r requirements.txt` installs Python packages only — it does **not** download ML weight files.
+- Model weights are fetched automatically on first use:
+  - First `POST /tts` downloads Kokoro (`mlx-community/Kokoro-82M-bf16`)
+  - First `POST /transcribe` downloads Whisper (`distil-large-v3`)
+- OpenZigs ignores these artifacts in git. They are runtime-generated and should not be committed.
+
+**Default local cache locations (repo-local):**
+
+- `sidecars/audio/mlx_models/` (Whisper MLX model files)
+- `sidecars/audio/.cache/huggingface/` (Hugging Face cache)
+
+You can prefetch models after startup by calling `/tts` and `/transcribe` once, then check `GET /health` to confirm both models are loaded.
+
+#### Available Local Voices
+
+The sidecar provides 19 Kokoro voice presets across 4 languages:
+
+| Language | Voices |
+|---|---|
+| **American English** | Heart (F), Bella (F), Nicole (F), Sarah (F), Sky (F), Adam (M), Michael (M) |
+| **British English** | Emma (F), Isabella (F), George (M), Lewis (M) |
+| **Japanese** | Alpha (F), Beta (M), Gamma (F) |
+| **Chinese** | Xiaobei (F), Xiaoniu (F), Yunjian (M), Yunxi (M), Yunyang (M) |
+
+Preview voices from **Admin → Voice & Audio** in the web UI.
+
+#### Push-to-Talk Voice Input
+
+With the audio sidecar running, a **microphone button** (🎤) appears in the chat input area, next to the file attachment button. This provides push-to-talk voice transcription:
+
+1. **Click** the mic button to start recording (or hold to record, release to stop).
+2. Speak your message.
+3. **Click again** (or release) to stop recording.
+4. The audio is transcribed via the local sidecar and inserted into the text input.
+5. Press Enter to send (or edit the transcribed text first).
+
+This uses the browser's `MediaRecorder` API and sends audio to the sidecar's `/transcribe` endpoint — no Google Cloud or browser Speech API required.
+
+#### Admin Voice Panel
+
+The **Admin → Voice & Audio** panel shows:
+
+- **Provider status**: Local or Google Cloud, with health indicator.
+- **Sidecar health**: Online/offline status with URL display.
+- **Loaded models**: TTS (Kokoro, ~330MB) and STT (Whisper, ~1.5GB) with independent load/unload controls.
+- **Voice browser**: All 19 local voices with preview playback.
+
+#### Memory Usage
+
+| Model | Approximate VRAM |
+|---|---|
+| Kokoro TTS (Kokoro-82M-bf16) | ~330 MB |
+| Whisper STT (distil-large-v3) | ~1.5 GB |
+| Both loaded | ~1.8 GB |
+
+Models load lazily on first use and auto-unload after 5 minutes of inactivity (configurable via `AUDIO_IDLE_TIMEOUT` environment variable).
+
+#### Ingesting Audio/Video into the Knowledge Base
+
+When the audio sidecar is running, audio and video files dropped into the knowledge directory are automatically transcribed and indexed:
+
+1. Place `.mp4`, `.mp3`, `.wav`, or other media files in your knowledge directory (default: `~/.openzigs/knowledge/`).
+2. The knowledge ingestion service detects the file and routes it to the sidecar media converter.
+3. The audio track is extracted via ffmpeg and sent to the sidecar for transcription.
+4. The transcript (with timestamps) is chunked, embedded, and stored in the vector database.
+5. You can now search spoken content via natural language queries.
+
+**Media-aware search**: Queries containing media keywords ("video", "recording", "podcast") automatically boost results from media transcripts. Timestamp citations (e.g., `[meeting.mp4 @ 2:30 → 3:15]`) are included in search results.
+
 ---
 
 ## Docker Usage
@@ -2077,6 +2190,7 @@ This starts the complete stack:
 | `gmail-mcp-server` | Gmail MCP sidecar | 5302 |
 | `database-mcp-server` | JDBC Database MCP sidecar | 5303 |
 | `github-mcp-server` | GitHub MCP sidecar | 5304 |
+| `audio-sidecar` | Local TTS + STT (MLX) | 5006 |
 
 All containers share the `openzigs-network` Docker bridge. The agent communicates with MCP sidecars via HTTP on their internal ports.
 

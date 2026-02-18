@@ -8,6 +8,34 @@ import { Paperclip, X, File, Folder } from "lucide-react";
 import type { ChatAttachment } from "@/lib/types";
 
 const MAX_ATTACHMENTS = 10;
+const API_BASE = process.env.NEXT_PUBLIC_OPENZIGS_API_BASE ?? "http://localhost:3000";
+const AUTH_TOKEN = process.env.NEXT_PUBLIC_OPENZIGS_TOKEN ?? "";
+
+async function uploadForChat(files: File[]): Promise<ChatAttachment[]> {
+  const formData = new FormData();
+  for (const file of files) {
+    formData.append("files", file, file.name);
+  }
+
+  const headers: Record<string, string> = {};
+  if (AUTH_TOKEN) {
+    headers.Authorization = `Bearer ${AUTH_TOKEN}`;
+  }
+
+  const response = await fetch(`${API_BASE}/api/chat/upload`, {
+    method: "POST",
+    headers,
+    body: formData,
+  });
+
+  if (!response.ok) {
+    const details = await response.text().catch(() => "");
+    throw new Error(`Upload failed (${response.status}): ${details}`);
+  }
+
+  const payload = (await response.json()) as { files?: ChatAttachment[] };
+  return Array.isArray(payload.files) ? payload.files : [];
+}
 
 /* ── Attachment Chip ── */
 
@@ -50,20 +78,28 @@ export const FileAttachmentButton = ({
   const inputRef = useRef<HTMLInputElement>(null);
 
   const handleChange = useCallback(
-    (e: React.ChangeEvent<HTMLInputElement>) => {
+    async (e: React.ChangeEvent<HTMLInputElement>) => {
       const fileList = e.target.files;
       if (!fileList) return;
       const remaining = MAX_ATTACHMENTS - attachmentCount;
-      const newAttachments: ChatAttachment[] = [];
+      const selectedFiles: File[] = [];
       for (let i = 0; i < Math.min(fileList.length, remaining); i++) {
-        const file = fileList[i];
-        newAttachments.push({
-          type: "file",
+        selectedFiles.push(fileList[i]);
+      }
+
+      try {
+        const uploadedAttachments = await uploadForChat(selectedFiles);
+        if (uploadedAttachments.length > 0) onAttach(uploadedAttachments);
+      } catch (error) {
+        console.warn("[attachments] Upload failed, falling back to filename-only attachment", error);
+        const fallback = selectedFiles.map((file) => ({
+          type: "file" as const,
           path: file.name,
           name: file.name,
-        });
+        }));
+        if (fallback.length > 0) onAttach(fallback);
       }
-      if (newAttachments.length > 0) onAttach(newAttachments);
+
       // Reset so the same file can be re-picked
       if (inputRef.current) inputRef.current.value = "";
     },
@@ -149,7 +185,7 @@ export const FileDropZone = ({
   }, []);
 
   const handleDrop = useCallback(
-    (e: DragEvent) => {
+    async (e: DragEvent) => {
       e.preventDefault();
       e.stopPropagation();
       setDragActive(false);
@@ -161,16 +197,23 @@ export const FileDropZone = ({
       if (!items) return;
 
       const remaining = MAX_ATTACHMENTS - attachmentCount;
-      const newAttachments: ChatAttachment[] = [];
+      const selectedFiles: File[] = [];
       for (let i = 0; i < Math.min(items.length, remaining); i++) {
-        const file = items[i];
-        newAttachments.push({
-          type: "file",
+        selectedFiles.push(items[i]);
+      }
+
+      try {
+        const uploadedAttachments = await uploadForChat(selectedFiles);
+        if (uploadedAttachments.length > 0) onDrop(uploadedAttachments);
+      } catch (error) {
+        console.warn("[attachments] Upload failed for dropped files, using filename-only fallback", error);
+        const fallback = selectedFiles.map((file) => ({
+          type: "file" as const,
           path: file.name,
           name: file.name,
-        });
+        }));
+        if (fallback.length > 0) onDrop(fallback);
       }
-      if (newAttachments.length > 0) onDrop(newAttachments);
     },
     [onDrop, attachmentCount, disabled]
   );
