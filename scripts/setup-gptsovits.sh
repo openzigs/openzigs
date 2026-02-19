@@ -128,16 +128,39 @@ info "(This may take several minutes depending on your connection.)"
 command -v curl >/dev/null 2>&1 || err "curl not found. Install curl first."
 command -v unzip >/dev/null 2>&1 || err "unzip not found. Install unzip first."
 
-PRETRAINED_MODELS_ZIP_URL="https://huggingface.co/XXXXRT/GPT-SoVITS-Pretrained/resolve/main/pretrained_models.zip"
-G2PW_MODEL_ZIP_URL="https://huggingface.co/XXXXRT/GPT-SoVITS-Pretrained/resolve/main/G2PWModel.zip"
+PRETRAINED_MODELS_URLS=(
+  "https://huggingface.co/XXXXRT/GPT-SoVITS-Pretrained/resolve/main/pretrained_models.zip"
+  "https://www.modelscope.cn/models/XXXXRT/GPT-SoVITS-Pretrained/resolve/master/pretrained_models.zip"
+)
+G2PW_MODEL_URLS=(
+  "https://huggingface.co/XXXXRT/GPT-SoVITS-Pretrained/resolve/main/G2PWModel.zip"
+  "https://www.modelscope.cn/models/XXXXRT/GPT-SoVITS-Pretrained/resolve/master/G2PWModel.zip"
+)
 PRETRAINED_ZIP_PATH="$INSTALL_DIR/pretrained_models.zip"
 G2PW_ZIP_PATH="$INSTALL_DIR/G2PWModel.zip"
 
 mkdir -p "$INSTALL_DIR/GPT_SoVITS/pretrained_models"
 
+download_first_available() {
+  local out_path="$1"
+  shift
+  local urls=("$@")
+
+  for url in "${urls[@]}"; do
+    info "Attempting download: $url"
+    if curl -L --fail --retry 5 --retry-delay 3 "$url" -o "$out_path"; then
+      ok "Downloaded from: $url"
+      return 0
+    fi
+    info "Download failed at: $url"
+  done
+
+  return 1
+}
+
 if [[ ! -f "$INSTALL_DIR/GPT_SoVITS/pretrained_models/gsv-v2final-pretrained/s1bert25hz-5kh-longer-epoch=12-step=369668.ckpt" ]] || [[ ! -f "$INSTALL_DIR/GPT_SoVITS/pretrained_models/gsv-v2final-pretrained/s2G2333k.pth" ]]; then
   info "Downloading pretrained_models.zip…"
-  curl -L --fail --retry 5 --retry-delay 3 "$PRETRAINED_MODELS_ZIP_URL" -o "$PRETRAINED_ZIP_PATH"
+  download_first_available "$PRETRAINED_ZIP_PATH" "${PRETRAINED_MODELS_URLS[@]}" || err "Failed to download pretrained_models.zip from all known sources."
   info "Extracting pretrained_models.zip…"
   unzip -q -o "$PRETRAINED_ZIP_PATH" -d "$INSTALL_DIR/GPT_SoVITS"
   rm -f "$PRETRAINED_ZIP_PATH"
@@ -147,7 +170,7 @@ fi
 
 if [[ ! -d "$INSTALL_DIR/GPT_SoVITS/text/G2PWModel" ]]; then
   info "Downloading G2PWModel.zip…"
-  curl -L --fail --retry 5 --retry-delay 3 "$G2PW_MODEL_ZIP_URL" -o "$G2PW_ZIP_PATH"
+  download_first_available "$G2PW_ZIP_PATH" "${G2PW_MODEL_URLS[@]}" || err "Failed to download G2PWModel.zip from all known sources."
   info "Extracting G2PWModel.zip…"
   unzip -q -o "$G2PW_ZIP_PATH" -d "$INSTALL_DIR/GPT_SoVITS/text"
   rm -f "$G2PW_ZIP_PATH"
