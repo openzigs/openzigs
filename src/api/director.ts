@@ -774,7 +774,7 @@ Respond with ONLY a valid JSON array. No explanation. Example:
    */
   router.post("/produce", async (req, res) => {
     try {
-      const { clips, mode, scriptPath, musicTrackPath, template, model, enableVisionAnalysis, inputFile, sourceType, topic, imageProvider, imageModel, slideStyle, assetsOnlyMode, visualAssets } = req.body as {
+      const { clips, mode, scriptPath, musicTrackPath, template, model, enableVisionAnalysis, inputFile, sourceType, topic, imageProvider, imageModel, slideStyle, assetsOnlyMode, quizEnabled, visualAssets } = req.body as {
         clips?: string[];
         mode: "highlight" | "script" | "presentation";
         scriptPath?: string;
@@ -789,6 +789,7 @@ Respond with ONLY a valid JSON array. No explanation. Example:
         imageModel?: "flux" | "sdxl-turbo";
         slideStyle?: boolean;
         assetsOnlyMode?: boolean;
+        quizEnabled?: boolean;
         visualAssets?: Array<{
           path: string;
           description: string;
@@ -907,7 +908,7 @@ Respond with ONLY a valid JSON array. No explanation. Example:
         const fps = 30;
         const templateId = (template as "Minimalist" | "ContentCreator" | "Corporate" | "TechDemo") ?? "Minimalist";
 
-        const timeline: Array<import("../video/manifest/manifest-types.js").ImageSceneEntry | import("../video/manifest/manifest-types.js").TransitionEntry | import("../video/manifest/manifest-types.js").OverlayEntry> = [];
+        const timeline: Array<import("../video/manifest/manifest-types.js").ImageSceneEntry | import("../video/manifest/manifest-types.js").TitleCardEntry | import("../video/manifest/manifest-types.js").TransitionEntry | import("../video/manifest/manifest-types.js").OverlayEntry> = [];
         const sceneTiming: Array<{ index: number; startTimeSec: number; endTimeSec: number; voiceover: string }> = [];
         let currentFrame = 0;
         let skippedScenes = 0;
@@ -1092,6 +1093,52 @@ Respond with ONLY a valid JSON array. No explanation. Example:
           }
 
           const durationInFrames = Math.max(Math.round(sceneDurationSec * fps), fps);
+          // ── Chapter title card: inject before the scene's image when a new chapter starts ──
+          if (scene.chapterTitle) {
+            const CHAPTER_CARD_DURATION = 90; // 3 seconds at 30fps
+
+            // Crossfade into the chapter title card (if not the very first timeline entry)
+            if (timeline.length > 0) {
+              timeline.push({
+                type: "transition",
+                style: "crossfade",
+                duration: 15,
+                startAtFrame: currentFrame,
+              });
+            }
+
+            // Try to generate a background image for the separator card.
+            // A thematic abstract image makes the chapter break visually compelling.
+            // Non-fatal: falls back to a solid colour if generation fails.
+            let separatorBackground: string | undefined;
+            try {
+              const separatorPrompt =
+                `${storyboard.styleAnchor}. Abstract background for chapter separator card, ` +
+                `no text, atmospheric, thematic, high quality, cinematic`;
+              const separatorResult = await imageService.generateImage(separatorPrompt, {
+                provider: resolvedImageProvider,
+                localModel: imageModel,
+                width: imageWidth,
+                height: imageHeight,
+                seed: baseSeed + scene.index * 1000 + 500,
+              });
+              separatorBackground = separatorResult.filePath;
+            } catch {
+              // Fallback: solid dark background (rendered by TitleCard component)
+            }
+
+            timeline.push({
+              type: "title_card",
+              title: scene.chapterTitle,
+              background: separatorBackground,
+              startAtFrame: currentFrame,
+              duration: CHAPTER_CARD_DURATION,
+              animation: "fade",
+            });
+            currentFrame += CHAPTER_CARD_DURATION;
+          }
+
+          // sceneStartFrame marks where the image_scene begins (after any title card)
           const sceneStartFrame = currentFrame;
 
           // Add crossfade transition between scenes (not before the first)
@@ -1154,6 +1201,7 @@ Respond with ONLY a valid JSON array. No explanation. Example:
             llmModel: resolvedModel ?? "copilot",
             llmTokensUsed: storyboard.tokensUsed,
             productionMode: "presentation",
+            presenterQuizEnabled: !!quizEnabled,
             sourceClips: [],
             estimatedRenderTime: currentFrame / fps,
           },

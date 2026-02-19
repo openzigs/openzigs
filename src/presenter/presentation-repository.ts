@@ -84,6 +84,43 @@ export interface InsertQuizInput {
   explanation: string;
 }
 
+export interface NoteRow {
+  id: string;
+  presentation_id: string;
+  question: string;
+  answer: string;
+  chapter_index: number;
+  timestamp_seconds: number;
+  created_at: string;
+}
+
+export interface InsertNoteInput {
+  presentation_id: string;
+  question: string;
+  answer: string;
+  chapter_index: number;
+  timestamp_seconds: number;
+}
+
+export interface UserChapterRow {
+  id: string;
+  presentation_id: string;
+  title: string;
+  description: string;
+  start_seconds: number;
+  end_seconds: number;
+  order_index: number;
+  created_at: string;
+}
+
+export interface UpsertUserChapterInput {
+  title: string;
+  description: string;
+  start_seconds: number;
+  end_seconds: number;
+  order_index: number;
+}
+
 // ── Repository ────────────────────────────────────────────────
 
 export class PresentationRepository {
@@ -127,6 +164,33 @@ export class PresentationRepository {
 
       CREATE INDEX IF NOT EXISTS idx_quiz_cache_presentation
         ON quiz_cache(presentation_id);
+
+      CREATE TABLE IF NOT EXISTS presenter_notes (
+        id                TEXT PRIMARY KEY,
+        presentation_id   TEXT NOT NULL REFERENCES presentations(id) ON DELETE CASCADE,
+        question          TEXT NOT NULL,
+        answer            TEXT NOT NULL,
+        chapter_index     INTEGER NOT NULL DEFAULT 0,
+        timestamp_seconds REAL NOT NULL DEFAULT 0,
+        created_at        TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_presenter_notes_presentation
+        ON presenter_notes(presentation_id);
+
+      CREATE TABLE IF NOT EXISTS user_chapters (
+        id               TEXT PRIMARY KEY,
+        presentation_id  TEXT NOT NULL REFERENCES presentations(id) ON DELETE CASCADE,
+        title            TEXT NOT NULL,
+        description      TEXT NOT NULL DEFAULT '',
+        start_seconds    REAL NOT NULL DEFAULT 0,
+        end_seconds      REAL NOT NULL DEFAULT 0,
+        order_index      INTEGER NOT NULL DEFAULT 0,
+        created_at       TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_user_chapters_presentation
+        ON user_chapters(presentation_id);
     `);
   }
 
@@ -266,5 +330,84 @@ export class PresentationRepository {
       .prepare("DELETE FROM quiz_cache WHERE presentation_id = ?")
       .run(presentationId);
     return result.changes;
+  }
+
+  // ── Presenter Notes ─────────────────────────────────────────
+
+  insertNote(input: InsertNoteInput): NoteRow {
+    const id = nanoid(12);
+    const now = new Date().toISOString();
+
+    this.db
+      .prepare(
+        `INSERT INTO presenter_notes
+          (id, presentation_id, question, answer, chapter_index, timestamp_seconds, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(id, input.presentation_id, input.question, input.answer, input.chapter_index, input.timestamp_seconds, now);
+
+    return this.db
+      .prepare("SELECT * FROM presenter_notes WHERE id = ?")
+      .get(id) as NoteRow;
+  }
+
+  getNotes(presentationId: string): NoteRow[] {
+    return this.db
+      .prepare(
+        "SELECT * FROM presenter_notes WHERE presentation_id = ? ORDER BY timestamp_seconds ASC"
+      )
+      .all(presentationId) as NoteRow[];
+  }
+
+  deleteNotes(presentationId: string): number {
+    const result = this.db
+      .prepare("DELETE FROM presenter_notes WHERE presentation_id = ?")
+      .run(presentationId);
+    return result.changes;
+  }
+
+  // ── User-Defined Chapters ────────────────────────────────────
+
+  getUserChapters(presentationId: string): UserChapterRow[] {
+    return this.db
+      .prepare(
+        "SELECT * FROM user_chapters WHERE presentation_id = ? ORDER BY order_index ASC"
+      )
+      .all(presentationId) as UserChapterRow[];
+  }
+
+  /**
+   * Replace all user-defined chapters for a presentation in a single transaction.
+   * Pass an empty array to clear user chapters (revert to auto-detection).
+   */
+  replaceUserChapters(presentationId: string, chapters: UpsertUserChapterInput[]): UserChapterRow[] {
+    const deleteStmt = this.db.prepare(
+      "DELETE FROM user_chapters WHERE presentation_id = ?"
+    );
+    const insertStmt = this.db.prepare(
+      `INSERT INTO user_chapters
+        (id, presentation_id, title, description, start_seconds, end_seconds, order_index, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+    );
+    const now = new Date().toISOString();
+
+    const transaction = this.db.transaction(() => {
+      deleteStmt.run(presentationId);
+      for (const ch of chapters) {
+        insertStmt.run(
+          nanoid(12),
+          presentationId,
+          ch.title,
+          ch.description,
+          ch.start_seconds,
+          ch.end_seconds,
+          ch.order_index,
+          now,
+        );
+      }
+    });
+    transaction();
+
+    return this.getUserChapters(presentationId);
   }
 }

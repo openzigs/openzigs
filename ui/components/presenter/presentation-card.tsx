@@ -1,7 +1,6 @@
 "use client";
 
 import Link from "next/link";
-import { buildUrl } from "@/lib/api";
 import { Clock, Trash2, Brain } from "lucide-react";
 
 interface PresentationSummary {
@@ -37,7 +36,7 @@ export function PresentationCard({
         <div className="relative aspect-video w-full bg-muted">
           {thumbnail_path ? (
             <img
-              src={buildUrl(`/api/presentations/${id}/thumbnail`)}
+              src={`/api/presentations/${id}/thumbnail`}
               alt={title}
               className="h-full w-full object-cover"
             />

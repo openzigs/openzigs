@@ -176,6 +176,7 @@ export const ReviewProduceStep = ({
             imageModel: state.imageModel,
             slideStyle: state.slideStyle || undefined,
             assetsOnlyMode: state.assetsOnlyMode || undefined,
+            quizEnabled: state.quizEnabled,
             visualAssets: visualAssets.length > 0 ? visualAssets : undefined,
           }),
         });
@@ -345,6 +346,13 @@ export const ReviewProduceStep = ({
             icon={<FileText className="h-4 w-4" />}
             label="Preamble"
             value={state.topic.length > 40 ? state.topic.slice(0, 37) + "…" : state.topic}
+          />
+        )}
+        {state.mode === "presentation" && (
+          <SummaryCard
+            icon={<Settings2 className="h-4 w-4" />}
+            label="Presenter Quizzes"
+            value={state.quizEnabled ? "Enabled" : "Disabled"}
           />
         )}
         {state.manifest && (
@@ -664,6 +672,12 @@ export const ReviewProduceStep = ({
               <dd className="text-foreground">{state.manifest.totalDuration.toFixed(1)}s</dd>
               <dt className="text-muted-foreground">Tokens Used</dt>
               <dd className="text-foreground">{state.manifest.tokensUsed.toLocaleString()}</dd>
+              {state.mode === "presentation" && (
+                <>
+                  <dt className="text-muted-foreground">Presenter Quizzes</dt>
+                  <dd className="text-foreground">{state.quizEnabled ? "Enabled" : "Disabled"}</dd>
+                </>
+              )}
             </dl>
           </div>
 

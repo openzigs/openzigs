@@ -416,9 +416,9 @@ app.use("/api/admin/audio", audioRouterInstance);
 
 // ── Presenter Mode Router (Issue #275) ──
 const presentationRepo = new PresentationRepository(db);
-const teacherAgent = new TeacherAgent({ copilotWrapper: copilot, presentationRepo });
+const teacherAgent = new TeacherAgent({ copilotWrapper: copilot, presentationRepo, knowledgeService });
 const quizGenerator = new QuizGenerator({ copilotWrapper: copilot, presentationRepo });
-const presenterRouter = createPresenterRouter({ presentationRepo, teacherAgent, quizGenerator });
+const presenterRouter = createPresenterRouter({ presentationRepo, teacherAgent, quizGenerator, voiceService, db, copilotWrapper: copilot, knowledgeService });
 app.use("/api/presentations", presenterRouter);
 
 // ── Post-Render Ingestion Hook (Presenter Mode) ──
@@ -432,6 +432,7 @@ renderOrchestrator.on("render:complete", (result: { jobId: string; outputPath: s
       const manifest = job.manifest;
       const chapters = detectChapters(manifest);
       const mode = manifest.metadata?.productionMode ?? "presentation";
+      const quizEnabled = !!manifest.metadata?.presenterQuizEnabled;
       const fps = manifest.composition.fps || 30;
       const durationSec = result.durationSec ?? 0;
 
@@ -443,14 +444,14 @@ renderOrchestrator.on("render:complete", (result: { jobId: string; outputPath: s
         .filter((e) => e.type === "image_scene" || e.type === "title_card")
         .map((e) => ({
           text: e.type === "title_card" ? e.title : "",
-          startSeconds: e.startAtFrame / fps,
-          endSeconds: (e.startAtFrame + e.duration) / fps,
+          startTime: e.startAtFrame / fps,
+          endTime: (e.startAtFrame + e.duration) / fps,
         }));
 
       // Compute quiz config if applicable
       const quizConfig = chapters.length > 1 ? computeQuizTimestamps(chapters) : null;
 
-      presentationRepo.insert({
+      const inserted = presentationRepo.insert({
         title: manifest.projectTitle || "Untitled Presentation",
         video_path: result.outputPath!,
         thumbnail_path: thumbnailPath,
@@ -459,11 +460,31 @@ renderOrchestrator.on("render:complete", (result: { jobId: string; outputPath: s
         script_json: JSON.stringify(scriptSegments),
         chapters: JSON.stringify(chapters),
         voice_id: null,
-        quiz_enabled: false,
+        quiz_enabled: quizEnabled,
         quiz_config: quizConfig,
         director_manifest_path: null,
         mode,
       });
+
+      if (quizEnabled) {
+        void quizGenerator.generate(inserted.id).catch((error) => {
+          const msg = error instanceof Error ? error.message : String(error);
+          logger.warn(`[PresenterIngestion] Quiz pre-generation failed for ${inserted.id}: ${msg}`);
+        });
+      }
+
+      // Index the transcript into the RAG knowledge base so the teacher agent
+      // can retrieve precise passage text via the knowledge tool.
+      const transcriptText = scriptSegments
+        .map((s) => s.text)
+        .filter(Boolean)
+        .join(" ");
+      if (transcriptText.trim()) {
+        void knowledgeService.ingestText(inserted.id, inserted.title, transcriptText).catch((error) => {
+          const msg = error instanceof Error ? error.message : String(error);
+          logger.warn(`[PresenterIngestion] Knowledge ingest failed for ${inserted.id}: ${msg}`);
+        });
+      }
 
       logger.info(`[PresenterIngestion] Indexed presentation "${manifest.projectTitle}" (${result.jobId})`);
     } catch (error) {
@@ -496,9 +517,18 @@ const tasksRouter = createTasksRouter({ taskEngine, taskRepository });
 app.use("/api/tasks", tasksRouter);
 
 // Files API routes (Workbench file management)
-const effectiveAllowedDirs = allowedDirs.length > 0
+const filesBaseAllowedDirs = allowedDirs.length > 0
   ? allowedDirs
   : [process.cwd(), os.tmpdir(), os.homedir(), "/tmp", "/private/tmp"];
+
+// Always include OpenZigs render/output roots so Presenter video playback can
+// stream rendered assets, even when OPENZIGS_ALLOWED_DIRS is narrowed.
+const effectiveAllowedDirs = Array.from(new Set([
+  ...filesBaseAllowedDirs,
+  expandTilde("~/.openzigs"),
+  expandTilde(directorConfig?.outputDir ?? "~/.openzigs/video-output"),
+  expandTilde("~/.openzigs/renders"),
+]));
 const filesRouter = createFilesRouter({
   allowedDirs: effectiveAllowedDirs,
   markitdownUrl: process.env.MCP_MARKITDOWN_URL,
@@ -532,13 +562,28 @@ io.on("connection", (socket) => {
     void (async () => {
       try {
         socket.emit("presenter:answer:start", { presentationId: data.presentationId });
+        let fullAnswer = "";
         for await (const token of teacherAgent.ask({
           presentationId: data.presentationId!,
           question: data.question!,
           chapterIndex: data.chapterIndex ?? 0,
           timestamp: data.timestamp ?? 0,
         })) {
+          fullAnswer += token;
           socket.emit("presenter:answer:token", { token });
+        }
+        // Auto-save note when answer is complete
+        try {
+          presentationRepo.insertNote({
+            presentation_id: data.presentationId!,
+            question: data.question!,
+            answer: fullAnswer,
+            chapter_index: data.chapterIndex ?? 0,
+            timestamp_seconds: data.timestamp ?? 0,
+          });
+          socket.emit("presenter:note:saved", { presentationId: data.presentationId });
+        } catch (noteErr) {
+          logger.warn(`Failed to save presenter note: ${noteErr instanceof Error ? noteErr.message : String(noteErr)}`);
         }
         socket.emit("presenter:answer:done", { presentationId: data.presentationId });
       } catch (err) {

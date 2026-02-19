@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo } from "react";
-import { RotateCcw, Download, CheckCircle2, XCircle, MessageSquare } from "lucide-react";
+import { RotateCcw, Download, CheckCircle2, XCircle, MessageSquare, FileText } from "lucide-react";
 import type { QuizResult, QAEntry } from "@/hooks/use-presenter-state";
 import { ScoreRing } from "./score-ring";
 import { generateRecapPdf } from "./pdf-generator";
@@ -95,9 +95,15 @@ export function RecapScreen({
       {/* Q&A transcript */}
       {qaHistory.length > 0 && (
         <section className="mb-8">
-          <h2 className="mb-3 text-lg font-semibold text-foreground">
-            Questions Asked
-          </h2>
+          <div className="mb-3 flex items-center justify-between">
+            <h2 className="text-lg font-semibold text-foreground">
+              Questions Asked
+            </h2>
+            <span className="flex items-center gap-1.5 rounded-full bg-amber-500/10 px-3 py-1 text-xs text-amber-400">
+              <FileText className="h-3 w-3" />
+              Notes saved
+            </span>
+          </div>
           <div className="space-y-3">
             {qaHistory.map((qa, i) => (
               <div

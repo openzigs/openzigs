@@ -148,6 +148,8 @@ export interface ManifestMetadata {
   llmModel: string;
   llmTokensUsed: number;
   productionMode: "highlight" | "script" | "presentation";
+  /** Whether Presenter Mode pop quizzes should be enabled for this render. */
+  presenterQuizEnabled?: boolean;
   /** Source clips used (empty array for presentation mode) */
   sourceClips?: string[];
   estimatedRenderTime?: number;

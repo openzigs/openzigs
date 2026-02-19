@@ -154,6 +154,31 @@ export const createFilesRouter = ({ allowedDirs, markitdownUrl }: FilesRouterOpt
     }
   });
 
+  /** GET /api/files/serve?path=/file — Stream/serve a file (video/audio/image). */
+  router.get("/serve", async (req, res) => {
+    const result = guardPath(req.query.path as string | undefined);
+    if ("error" in result) { sendGuardError(res, result.error); return; }
+
+    try {
+      await fs.access(result.resolved);
+    } catch {
+      res.status(404).json({ error: `File not found: ${result.resolved}` });
+      return;
+    }
+
+    res.sendFile(result.resolved, (err) => {
+      if (!err) return;
+      if (!res.headersSent) {
+        const code = (err as NodeJS.ErrnoException).code;
+        if (code === "ENOENT") {
+          res.status(404).json({ error: `File not found: ${result.resolved}` });
+          return;
+        }
+        res.status(500).json({ error: err.message });
+      }
+    });
+  });
+
   /** POST /api/files/save — Write content to a file. */
   router.post("/save", async (req, res) => {
     const body = req.body as Record<string, unknown>;
