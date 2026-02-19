@@ -132,8 +132,9 @@ export const MediaUploadStep = ({
         { ...uploaded, type: file.name.endsWith(".md") ? "text/markdown" : "text/plain" },
       ]);
       showToast("Source file uploaded", "success");
-    } catch {
-      showToast("Failed to upload source file(s)", "error");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Unknown error";
+      showToast(`Failed to upload source file(s): ${msg}`, "error");
     } finally {
       setUploadingSource(false);
       if (sourceInputRef.current) sourceInputRef.current.value = "";

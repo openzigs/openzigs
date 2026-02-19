@@ -23,6 +23,11 @@ export interface StoryboardScene {
   durationEstimate: number;
   /** The raw image description before Style Anchor was prepended */
   rawImageDescription: string;
+  /**
+   * If set, this scene begins a new chapter. The value is the chapter title
+   * (2–5 words) and will be rendered as a visual title card before this scene.
+   */
+  chapterTitle?: string;
 }
 
 /** Full storyboard output from the engine. */
@@ -243,6 +248,14 @@ ${styleHint}
 ${audienceHint}
 ${slideStyleBlock}
 ${assetsOnlyBlock}
+CHAPTER STRUCTURE (REQUIRED):
+Identify the major sections of the document (aim for 3–7 chapters for a typical document).
+- On the FIRST scene of EACH major section/chapter, set "chapterTitle" to a concise 2–5 word chapter name.
+- On ALL other scenes, set "chapterTitle" to null.
+- The very first scene (index 0) MUST have a "chapterTitle" (use "Introduction" or a relevant title for the opening section).
+- Do NOT set chapterTitle on the final outro/closing scene — leave it null.
+- These chapter titles appear as visual separator cards between sections in the final video.
+
 OUTPUT FORMAT (strict JSON):
 {
   "title": "string — video title derived from the document",
@@ -256,7 +269,8 @@ OUTPUT FORMAT (strict JSON):
     {
       "voiceover": "string — narration script for this scene",
       "imageDescription": "string — scene-specific visual description (WITHOUT the style anchor prefix)",
-      "durationEstimate": number — scene duration in seconds (${minDur}-${maxDur})
+      "durationEstimate": number — scene duration in seconds (${minDur}-${maxDur}),
+      "chapterTitle": "string | null — chapter title for chapter-starting scenes; null for all others"
     }
   ]
 }
@@ -388,6 +402,9 @@ Output a single JSON object.`;
         imagePrompt,
         durationEstimate: Math.max(5, Math.min(60, duration)),
         rawImageDescription: rawDesc,
+        chapterTitle: typeof scene.chapterTitle === "string" && scene.chapterTitle.trim()
+          ? scene.chapterTitle.trim()
+          : undefined,
       };
     });
 
@@ -424,5 +441,6 @@ interface RawStoryboardOutput {
     voiceover?: string;
     imageDescription?: string;
     durationEstimate?: number;
+    chapterTitle?: string | null;
   }>;
 }

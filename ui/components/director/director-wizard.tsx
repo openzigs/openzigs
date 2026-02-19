@@ -99,6 +99,10 @@ export const DirectorWizard = () => {
     setState((s) => ({ ...s, assetsOnlyMode }));
   }, []);
 
+  const setQuizEnabled = useCallback((quizEnabled: boolean) => {
+    setState((s) => ({ ...s, quizEnabled }));
+  }, []);
+
   const setManifest = useCallback((manifest: DirectorManifestSummary) => {
     setState((s) => ({ ...s, manifest }));
   }, []);
@@ -128,7 +132,7 @@ export const DirectorWizard = () => {
   );
 
   return (
-    <div className="flex flex-col min-h-0 h-full">
+    <div className="relative flex h-full min-h-0 flex-col">
       {/* ── Step indicator ──────────────────────────────────── */}
       <nav className="flex items-center justify-center gap-1 px-4 py-4 shrink-0">
         {WIZARD_STEPS.map((ws) => {
@@ -159,7 +163,7 @@ export const DirectorWizard = () => {
       </nav>
 
       {/* ── Step content ────────────────────────────────────── */}
-      <div className="flex-1 overflow-y-auto px-4 pb-24">
+      <div className="flex-1 overflow-y-auto px-4 pb-6">
         {step === 1 && (
           <ModeSelectionStep selected={state.mode} onSelect={setMode} />
         )}
@@ -202,12 +206,13 @@ export const DirectorWizard = () => {
             onImageModelChange={setImageModel}
             onSlideStyleChange={setSlideStyle}
             onAssetsOnlyModeChange={setAssetsOnlyMode}
+            onQuizEnabledChange={setQuizEnabled}
           />
         )}
       </div>
 
       {/* ── Bottom navigation ───────────────────────────────── */}
-      <div className="absolute bottom-0 left-0 right-0 flex items-center justify-between border-t border-border bg-background/80 backdrop-blur-sm px-6 py-3">
+      <div className="sticky bottom-0 z-10 flex shrink-0 items-center justify-between border-t border-border bg-background/90 px-6 py-3 backdrop-blur supports-[padding:max(0px)]:pb-[max(0.75rem,env(safe-area-inset-bottom))]">
         <button
           onClick={goBack}
           disabled={step === 1}

@@ -3,6 +3,7 @@ import path from "node:path";
 import os from "node:os";
 import fs from "node:fs";
 import { TaskRepository } from "../tasks/task-repository.js";
+import { PresentationRepository } from "../presenter/presentation-repository.js";
 
 export type DatabaseOptions = {
   dbPath?: string;
@@ -29,6 +30,10 @@ export const getDatabase = (options: DatabaseOptions = {}): Database.Database =>
   // Run task-engine migration (agent_tasks table)
   const taskRepo = new TaskRepository(db);
   taskRepo.migrate();
+
+  // Run presenter migration (presentations + quiz_cache tables)
+  const presentationRepo = new PresentationRepository(db);
+  presentationRepo.migrate();
 
   sharedDb = db;
   return db;
@@ -109,6 +114,9 @@ export const createTestDatabase = (): Database.Database => {
 
   const taskRepo = new TaskRepository(db);
   taskRepo.migrate();
+
+  const presentationRepo = new PresentationRepository(db);
+  presentationRepo.migrate();
 
   return db;
 };

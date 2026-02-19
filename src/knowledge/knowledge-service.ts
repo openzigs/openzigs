@@ -316,6 +316,74 @@ export class KnowledgeIngestionService extends EventEmitter {
   }
 
   /**
+   * Ingest raw text directly into the knowledge base without needing a file on disk.
+   * Used for virtual documents like presentation transcripts.
+   */
+  async ingestText(documentId: string, title: string, text: string): Promise<void> {
+    const virtualPath = `[virtual:${documentId}]`;
+    const contentHash = this.hashContent(text);
+
+    // Skip if already indexed with the same content.
+    const existing = this.documents.get(documentId);
+    if (existing && existing.contentHash === contentHash && existing.status === "indexed") {
+      return;
+    }
+
+    // Remove stale chunks if re-indexing.
+    if (existing) {
+      await this.store.deleteByDocumentId(documentId);
+    }
+
+    const doc: KnowledgeDocument = {
+      id: documentId,
+      filePath: virtualPath,
+      relativePath: title,
+      sourceType: "text",
+      sizeBytes: Buffer.byteLength(text, "utf-8"),
+      contentHash,
+      status: "processing",
+      chunkCount: 0,
+      indexedAt: null,
+      createdAt: existing?.createdAt ?? new Date().toISOString(),
+    };
+    this.documents.set(documentId, doc);
+
+    try {
+      const chunks = chunkText(text, documentId, title, {
+        chunkSize: this.config.chunkSize,
+        chunkOverlap: this.config.chunkOverlap,
+      });
+
+      const embeddedChunks: KnowledgeChunk[] = [];
+      for (const chunk of chunks) {
+        embeddedChunks.push({
+          ...chunk,
+          vector: await generateEmbedding(chunk.text),
+        });
+      }
+
+      await this.store.addChunks(embeddedChunks);
+
+      doc.status = "indexed";
+      doc.chunkCount = embeddedChunks.length;
+      doc.indexedAt = new Date().toISOString();
+      doc.error = undefined;
+
+      this.emitEvent({ type: "document:indexed", document: doc });
+      logger.debug(`[Knowledge] Ingested text "${title}" as virtual doc (${embeddedChunks.length} chunks)`);
+
+      void this.saveDocumentMetadata();
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      doc.status = "failed";
+      doc.error = msg;
+      this.emitEvent({ type: "document:failed", document: doc, error: msg });
+      logger.error(`[Knowledge] Failed to ingest text "${title}": ${msg}`);
+      throw error;
+    }
+  }
+
+  /**
    * Get the knowledge configuration.
    */
   getConfig(): KnowledgeConfig {

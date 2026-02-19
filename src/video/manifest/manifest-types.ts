@@ -120,6 +120,8 @@ export interface ImageSceneEntry {
   voiceover?: string;
   /** Volume for the per-scene voiceover (default: 1.0) */
   voiceoverVolume?: number;
+  /** Original narration script text for this scene (used by Presenter Mode transcript) */
+  scriptText?: string;
   /** Ken Burns effect parameters */
   kenBurns?: {
     scaleFrom?: number;
@@ -148,6 +150,8 @@ export interface ManifestMetadata {
   llmModel: string;
   llmTokensUsed: number;
   productionMode: "highlight" | "script" | "presentation";
+  /** Whether Presenter Mode pop quizzes should be enabled for this render. */
+  presenterQuizEnabled?: boolean;
   /** Source clips used (empty array for presentation mode) */
   sourceClips?: string[];
   estimatedRenderTime?: number;

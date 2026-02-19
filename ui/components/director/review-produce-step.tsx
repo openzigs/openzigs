@@ -37,6 +37,7 @@ interface ReviewProduceStepProps {
   onImageModelChange: (model: ImageModel) => void;
   onSlideStyleChange: (enabled: boolean) => void;
   onAssetsOnlyModeChange: (enabled: boolean) => void;
+  onQuizEnabledChange?: (enabled: boolean) => void;
 }
 
 type ProduceResponse = {
@@ -72,6 +73,7 @@ export const ReviewProduceStep = ({
   onImageModelChange,
   onSlideStyleChange,
   onAssetsOnlyModeChange,
+  onQuizEnabledChange,
 }: ReviewProduceStepProps) => {
   const { socket } = useSocket();
   const [phase, setPhase] = useState<"review" | "producing" | "produced" | "rendering">("review");
@@ -174,6 +176,7 @@ export const ReviewProduceStep = ({
             imageModel: state.imageModel,
             slideStyle: state.slideStyle || undefined,
             assetsOnlyMode: state.assetsOnlyMode || undefined,
+            quizEnabled: state.quizEnabled,
             visualAssets: visualAssets.length > 0 ? visualAssets : undefined,
           }),
         });
@@ -345,6 +348,13 @@ export const ReviewProduceStep = ({
             value={state.topic.length > 40 ? state.topic.slice(0, 37) + "…" : state.topic}
           />
         )}
+        {state.mode === "presentation" && (
+          <SummaryCard
+            icon={<Settings2 className="h-4 w-4" />}
+            label="Presenter Quizzes"
+            value={state.quizEnabled ? "Enabled" : "Disabled"}
+          />
+        )}
         {state.manifest && (
           <SummaryCard
             icon={<FileVideo className="h-4 w-4" />}
@@ -449,6 +459,36 @@ export const ReviewProduceStep = ({
                 <span
                   className={`inline-block h-4 w-4 rounded-full bg-white transition-transform ${
                     state.slideStyle ? "translate-x-6" : "translate-x-1"
+                  }`}
+                />
+              </button>
+            </div>
+          )}
+
+          {/* Quiz-enabled toggle — Presenter Mode (SI-1 #276) */}
+          {state.mode === "presentation" && (
+            <div className="flex items-center justify-between rounded-xl border border-border bg-card px-4 py-3">
+              <div className="flex items-center gap-3">
+                <div className="flex items-center justify-center h-8 w-8 rounded-lg bg-emerald-500/10 text-emerald-400">
+                  <Settings2 className="h-4 w-4" />
+                </div>
+                <div>
+                  <p className="text-sm text-foreground font-medium">Enable Pop Quizzes</p>
+                  <p className="text-[11px] text-muted-foreground">
+                    Auto-generate quiz questions between chapters in Presenter Mode.
+                    Questions are powered by the Teacher Agent.
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => onQuizEnabledChange?.(!state.quizEnabled)}
+                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors shrink-0 ml-3 ${
+                  state.quizEnabled ? "bg-primary" : "bg-muted"
+                }`}
+              >
+                <span
+                  className={`inline-block h-4 w-4 rounded-full bg-white transition-transform ${
+                    state.quizEnabled ? "translate-x-6" : "translate-x-1"
                   }`}
                 />
               </button>
@@ -632,6 +672,12 @@ export const ReviewProduceStep = ({
               <dd className="text-foreground">{state.manifest.totalDuration.toFixed(1)}s</dd>
               <dt className="text-muted-foreground">Tokens Used</dt>
               <dd className="text-foreground">{state.manifest.tokensUsed.toLocaleString()}</dd>
+              {state.mode === "presentation" && (
+                <>
+                  <dt className="text-muted-foreground">Presenter Quizzes</dt>
+                  <dd className="text-foreground">{state.quizEnabled ? "Enabled" : "Disabled"}</dd>
+                </>
+              )}
             </dl>
           </div>
 

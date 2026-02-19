@@ -47,6 +47,12 @@ import { SecretVaultService } from "./vault/index.js";
 import { createVaultRouter } from "./api/vault.js";
 import { createDirectorRouter } from "./api/director.js";
 import { createAudioRouter } from "./api/audio.js";
+import { createPresenterRouter } from "./api/presenter.js";
+import { PresentationRepository } from "./presenter/presentation-repository.js";
+import { detectChapters, computeQuizTimestamps } from "./presenter/chapter-detector.js";
+import { generateThumbnail } from "./presenter/thumbnail-generator.js";
+import { TeacherAgent } from "./presenter/teacher-agent.js";
+import { QuizGenerator } from "./presenter/quiz-generator.js";
 import { RenderOrchestrator } from "./video/render-orchestrator.js";
 
 // Register built-in post-action types (create-github-issues, send-webhook, etc.)
@@ -408,6 +414,86 @@ const audioRouterInstance = createAudioRouter({
 });
 app.use("/api/admin/audio", audioRouterInstance);
 
+// ── Presenter Mode Router (Issue #275) ──
+const presentationRepo = new PresentationRepository(db);
+const teacherAgent = new TeacherAgent({ copilotWrapper: copilot, presentationRepo, knowledgeService });
+const quizGenerator = new QuizGenerator({ copilotWrapper: copilot, presentationRepo });
+const presenterRouter = createPresenterRouter({ presentationRepo, teacherAgent, quizGenerator, voiceService, db, copilotWrapper: copilot, knowledgeService });
+app.use("/api/presentations", presenterRouter);
+
+// ── Post-Render Ingestion Hook (Presenter Mode) ──
+// When Director Mode finishes rendering, auto-index the presentation into SQLite.
+renderOrchestrator.on("render:complete", (result: { jobId: string; outputPath: string | null; durationSec: number | null }) => {
+  const job = renderOrchestrator.getJob(result.jobId);
+  if (!job || !result.outputPath) return;
+
+  void (async () => {
+    try {
+      const manifest = job.manifest;
+      const chapters = detectChapters(manifest);
+      const mode = manifest.metadata?.productionMode ?? "presentation";
+      const quizEnabled = !!manifest.metadata?.presenterQuizEnabled;
+      const fps = manifest.composition.fps || 30;
+      const durationSec = result.durationSec ?? 0;
+
+      // Generate thumbnail
+      const thumbnailPath = await generateThumbnail(result.outputPath!, result.jobId, durationSec);
+
+      // Build script segments from image_scene voiceovers in the timeline
+      const scriptSegments = manifest.timeline
+        .filter((e) => e.type === "image_scene" || e.type === "title_card")
+        .map((e) => ({
+          text: e.type === "title_card" ? e.title : ((e as { scriptText?: string }).scriptText ?? ""),
+          startTime: e.startAtFrame / fps,
+          endTime: (e.startAtFrame + e.duration) / fps,
+        }));
+
+      // Compute quiz config if applicable
+      const quizConfig = chapters.length > 1 ? computeQuizTimestamps(chapters) : null;
+
+      const inserted = presentationRepo.insert({
+        title: manifest.projectTitle || "Untitled Presentation",
+        video_path: result.outputPath!,
+        thumbnail_path: thumbnailPath,
+        duration_seconds: durationSec,
+        fps,
+        script_json: JSON.stringify(scriptSegments),
+        chapters: JSON.stringify(chapters),
+        voice_id: null,
+        quiz_enabled: quizEnabled,
+        quiz_config: quizConfig,
+        director_manifest_path: null,
+        mode,
+      });
+
+      if (quizEnabled) {
+        void quizGenerator.generate(inserted.id).catch((error) => {
+          const msg = error instanceof Error ? error.message : String(error);
+          logger.warn(`[PresenterIngestion] Quiz pre-generation failed for ${inserted.id}: ${msg}`);
+        });
+      }
+
+      // Index the transcript into the RAG knowledge base so the teacher agent
+      // can retrieve precise passage text via the knowledge tool.
+      const transcriptText = scriptSegments
+        .map((s) => s.text)
+        .filter(Boolean)
+        .join(" ");
+      if (transcriptText.trim()) {
+        void knowledgeService.ingestText(inserted.id, inserted.title, transcriptText).catch((error) => {
+          const msg = error instanceof Error ? error.message : String(error);
+          logger.warn(`[PresenterIngestion] Knowledge ingest failed for ${inserted.id}: ${msg}`);
+        });
+      }
+
+      logger.info(`[PresenterIngestion] Indexed presentation "${manifest.projectTitle}" (${result.jobId})`);
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      logger.error(`[PresenterIngestion] Failed to index presentation: ${msg}`);
+    }
+  })();
+});
+
 // Start the Knowledge Ingestion Service in the background
 void knowledgeService.start()
   .then(() => {
@@ -431,9 +517,18 @@ const tasksRouter = createTasksRouter({ taskEngine, taskRepository });
 app.use("/api/tasks", tasksRouter);
 
 // Files API routes (Workbench file management)
-const effectiveAllowedDirs = allowedDirs.length > 0
+const filesBaseAllowedDirs = allowedDirs.length > 0
   ? allowedDirs
   : [process.cwd(), os.tmpdir(), os.homedir(), "/tmp", "/private/tmp"];
+
+// Always include OpenZigs render/output roots so Presenter video playback can
+// stream rendered assets, even when OPENZIGS_ALLOWED_DIRS is narrowed.
+const effectiveAllowedDirs = Array.from(new Set([
+  ...filesBaseAllowedDirs,
+  expandTilde("~/.openzigs"),
+  expandTilde(directorConfig?.outputDir ?? "~/.openzigs/video-output"),
+  expandTilde("~/.openzigs/renders"),
+]));
 const filesRouter = createFilesRouter({
   allowedDirs: effectiveAllowedDirs,
   markitdownUrl: process.env.MCP_MARKITDOWN_URL,
@@ -459,6 +554,44 @@ const io = new SocketIOServer(httpServer, {
 
 io.on("connection", (socket) => {
   socket.emit("status:update", { connected: true });
+
+  // ── Presenter Mode: Teacher Agent Q&A (Issue #279) ──
+  socket.on("presenter:ask", (data: { presentationId?: string; question?: string; chapterIndex?: number; timestamp?: number }) => {
+    if (!data.presentationId || !data.question || typeof data.question !== "string") return;
+
+    void (async () => {
+      try {
+        socket.emit("presenter:answer:start", { presentationId: data.presentationId });
+        let fullAnswer = "";
+        for await (const token of teacherAgent.ask({
+          presentationId: data.presentationId!,
+          question: data.question!,
+          chapterIndex: data.chapterIndex ?? 0,
+          timestamp: data.timestamp ?? 0,
+        })) {
+          fullAnswer += token;
+          socket.emit("presenter:answer:token", { token });
+        }
+        // Auto-save note when answer is complete
+        try {
+          presentationRepo.insertNote({
+            presentation_id: data.presentationId!,
+            question: data.question!,
+            answer: fullAnswer,
+            chapter_index: data.chapterIndex ?? 0,
+            timestamp_seconds: data.timestamp ?? 0,
+          });
+          socket.emit("presenter:note:saved", { presentationId: data.presentationId });
+        } catch (noteErr) {
+          logger.warn(`Failed to save presenter note: ${noteErr instanceof Error ? noteErr.message : String(noteErr)}`);
+        }
+        socket.emit("presenter:answer:done", { presentationId: data.presentationId });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : "Unknown error";
+        socket.emit("presenter:answer:error", { error: msg });
+      }
+    })();
+  });
 });
 
 // Wire Sentinel Socket.IO event forwarding

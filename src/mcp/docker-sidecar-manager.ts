@@ -256,10 +256,14 @@ export class DockerSidecarManager extends EventEmitter {
     return this.statuses.get(name);
   }
 
-  /** Check if Docker daemon is reachable. */
+  /** Check if Docker daemon is reachable (with 5s timeout to avoid blocking startup). */
   async isDockerAvailable(): Promise<boolean> {
     try {
-      await this.docker.ping();
+      const ping = this.docker.ping();
+      const timeout = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("Docker ping timed out")), 5000)
+      );
+      await Promise.race([ping, timeout]);
       return true;
     } catch {
       return false;

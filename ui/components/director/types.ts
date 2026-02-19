@@ -50,6 +50,8 @@ export interface WizardState {
   slideStyle: boolean;
   /** Step 6 — use uploaded visual assets for all middle scenes; only AI-generate intro + outro images */
   assetsOnlyMode: boolean;
+  /** Step 6 — enable pop quizzes in Presenter Mode (SI-1 #276) */
+  quizEnabled: boolean;
   /** Step 6 — render quality/codec settings */
   renderSettings: RenderSettings;
   /** Step 6 (populated after production) */
@@ -153,6 +155,7 @@ export function createInitialState(): WizardState {
     imageModel: "sdxl-turbo",
     slideStyle: false,
     assetsOnlyMode: false,
+    quizEnabled: false,
     renderSettings: { quality: "standard", codec: "h264", crf: 23 },
     manifest: null,
     renderJobId: null,

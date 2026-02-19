@@ -93,6 +93,7 @@ export const ImageSceneEntrySchema = z.object({
   duration: z.number().int().min(1),
   voiceover: z.string().optional(),
   voiceoverVolume: z.number().min(0).max(1).optional(),
+  scriptText: z.string().optional(),
   kenBurns: z.object({
     scaleFrom: z.number().optional(),
     scaleTo: z.number().optional(),
@@ -154,6 +155,7 @@ export const ManifestMetadataSchema = z.object({
   llmModel: z.string().min(1),
   llmTokensUsed: z.number().int().min(0),
   productionMode: z.enum(["highlight", "script", "presentation"]),
+  presenterQuizEnabled: z.boolean().optional(),
   sourceClips: z.array(z.string()).optional(),
   estimatedRenderTime: z.number().positive().optional(),
 });

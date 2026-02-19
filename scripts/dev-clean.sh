@@ -7,16 +7,25 @@ PROJECT_ROOT="$(dirname "$DIR")"
 
 echo "[clean-start] Killing existing OpenZigs processes..."
 
-# Kill Node processes (tsx or node running server.ts/js inside openzigs) where name involves server
-# Using -f to match full argument list
-pkill -f "node.*src/server.ts" || true
-pkill -f "tsx.*src/server.ts" || true
-pkill -f "node.*dist/server.js" || true
-pkill -f "next.*dev" || true
-pkill -f "pnpm.*dev" || true
-pkill -f "sidecars/image-gen/server.py" || true
-pkill -f "sidecars/audio/server.py" || true
-pkill -f "api_v2.py" || true
+# Kill common OpenZigs dev/watch processes by full command path
+pkill -f "$PROJECT_ROOT.*src/server.ts" || true
+pkill -f "$PROJECT_ROOT.*dist/server.js" || true
+pkill -f "$PROJECT_ROOT.*tsx" || true
+pkill -f "$PROJECT_ROOT.*pnpm.*dev" || true
+pkill -f "$PROJECT_ROOT/ui.*next.*dev" || true
+pkill -f "$PROJECT_ROOT/sidecars/image-gen/server.py" || true
+pkill -f "$PROJECT_ROOT/sidecars/audio/server.py" || true
+pkill -f "$PROJECT_ROOT.*api_v2.py" || true
+
+# Final deterministic sweep: kill any OpenZigs-rooted node/tsx/pnpm/next/python
+# process that may have escaped the explicit patterns above.
+for PID in $(pgrep -f "$PROJECT_ROOT" 2>/dev/null || true); do
+  [ "$PID" = "$$" ] && continue
+  CMD=$(ps -p "$PID" -o command= 2>/dev/null || true)
+  if echo "$CMD" | grep -Eq "(node|tsx|pnpm|next|python)"; then
+    kill -9 "$PID" 2>/dev/null || true
+  fi
+done
 
 # Kill processes on port 3000 (default port)
 PID=$(lsof -ti:3000 2>/dev/null || true)
