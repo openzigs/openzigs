@@ -20,3 +20,6 @@ num2words>=0.5.14
 # Audio processing
 soundfile>=0.12.1
 numpy>=1.26.0
+
+# HTTP client — used by Engine B (GPT-SoVITS proxy) for async forwarding
+httpx>=0.27.0

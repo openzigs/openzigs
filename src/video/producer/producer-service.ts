@@ -13,6 +13,7 @@ import { TEMPLATE_IDS } from "../templates/template-registry.js";
 import { formatContextForPrompt } from "../ingestion/context-assembler.js";
 import { buildHighlightReelPrompt, buildScriptDrivenPrompt, buildUserPrompt } from "./prompts.js";
 import { getAudioDuration } from "../ingestion/audio-extractor.js";
+import { sanitizeNarrationScript } from "./script-sanitizer.js";
 import type { DirectorManifest } from "../manifest/manifest-types.js";
 import type { ContextPayload } from "../ingestion/types.js";
 import type { CopilotWrapper } from "../../copilot/copilot-wrapper.js";
@@ -70,7 +71,15 @@ export class ProducerService {
       }
 
       if (input.scriptPath) {
-        scriptText = await fs.readFile(input.scriptPath, "utf-8");
+        const rawScript = await fs.readFile(input.scriptPath, "utf-8");
+        // SI-3: Sanitize for prompt-injection before the script reaches TTS
+        const sanitized = sanitizeNarrationScript(rawScript);
+        if (sanitized.flagged) {
+          logger.warn(
+            `[Producer] Script sanitizer flagged '${input.scriptPath}' — threats: ${sanitized.threats.join(", ")}`,
+          );
+        }
+        scriptText = sanitized.text;
       }
 
       // Try Google Cloud TTS first (may need on-demand initialization if voice.enabled was false at startup)

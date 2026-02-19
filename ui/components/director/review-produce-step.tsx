@@ -35,6 +35,8 @@ interface ReviewProduceStepProps {
   onRenderSettingsChange: (settings: RenderSettings) => void;
   onImageProviderChange: (provider: ImageProvider) => void;
   onImageModelChange: (model: ImageModel) => void;
+  onSlideStyleChange: (enabled: boolean) => void;
+  onAssetsOnlyModeChange: (enabled: boolean) => void;
 }
 
 type ProduceResponse = {
@@ -68,6 +70,8 @@ export const ReviewProduceStep = ({
   onRenderSettingsChange,
   onImageProviderChange,
   onImageModelChange,
+  onSlideStyleChange,
+  onAssetsOnlyModeChange,
 }: ReviewProduceStepProps) => {
   const { socket } = useSocket();
   const [phase, setPhase] = useState<"review" | "producing" | "produced" | "rendering">("review");
@@ -147,6 +151,15 @@ export const ReviewProduceStep = ({
         // Presentation mode: source document → storyboard → images → TTS → manifest
         const sourceFile = state.sourceFiles[0];
         const ext = sourceFile?.name.split(".").pop()?.toLowerCase() ?? "";
+        // Include all uploaded visual assets; backend will compute final
+        // speech-aligned placements from the finalized narration.
+        const visualAssets = state.visualAssets
+          .map((a) => ({
+            path: a.path,
+            description: a.description,
+            type: a.type,
+            placement: a.placement,
+          }));
         return fetchJson<ProduceResponse>("/api/admin/director/produce", {
           method: "POST",
           body: JSON.stringify({
@@ -159,6 +172,9 @@ export const ReviewProduceStep = ({
             model: state.model || undefined,
             imageProvider: state.imageProvider,
             imageModel: state.imageModel,
+            slideStyle: state.slideStyle || undefined,
+            assetsOnlyMode: state.assetsOnlyMode || undefined,
+            visualAssets: visualAssets.length > 0 ? visualAssets : undefined,
           }),
         });
       }
@@ -379,6 +395,66 @@ export const ReviewProduceStep = ({
               <option value="cloud">Cloud (Vertex AI Imagen 3)</option>
             </select>
           </div>
+          {/* Assets-Only Mode — shown when user has uploaded visual assets */}
+          {state.visualAssets.length > 0 && (
+            <div className="flex items-center justify-between rounded-xl border border-border bg-card px-4 py-3">
+              <div className="flex items-center gap-3">
+                <div className="flex items-center justify-center h-8 w-8 rounded-lg bg-emerald-500/10 text-emerald-400">
+                  <Film className="h-4 w-4" />
+                </div>
+                <div>
+                  <p className="text-sm text-foreground font-medium">Use My Images</p>
+                  <p className="text-[11px] text-muted-foreground">
+                    Your uploaded assets become the slides. AI only generates an intro and outro image.
+                    Great for presentations built entirely around your own visuals.
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => onAssetsOnlyModeChange(!state.assetsOnlyMode)}
+                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors shrink-0 ml-3 ${
+                  state.assetsOnlyMode ? "bg-primary" : "bg-muted"
+                }`}
+              >
+                <span
+                  className={`inline-block h-4 w-4 rounded-full bg-white transition-transform ${
+                    state.assetsOnlyMode ? "translate-x-6" : "translate-x-1"
+                  }`}
+                />
+              </button>
+            </div>
+          )}
+
+          {/* Slide Style Toggle — only for cloud provider */}
+          {state.imageProvider === "cloud" && (
+            <div className="flex items-center justify-between rounded-xl border border-border bg-card px-4 py-3">
+              <div className="flex items-center gap-3">
+                <div className="flex items-center justify-center h-8 w-8 rounded-lg bg-blue-500/10 text-blue-400">
+                  <Layout className="h-4 w-4" />
+                </div>
+                <div>
+                  <p className="text-sm text-foreground font-medium">Slide-Style Images</p>
+                  <p className="text-[11px] text-muted-foreground">
+                    Render short text phrases directly into generated images for a PowerPoint-style look.
+                    Best for title slides and key takeaways.
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => onSlideStyleChange(!state.slideStyle)}
+                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors shrink-0 ml-3 ${
+                  state.slideStyle ? "bg-primary" : "bg-muted"
+                }`}
+              >
+                <span
+                  className={`inline-block h-4 w-4 rounded-full bg-white transition-transform ${
+                    state.slideStyle ? "translate-x-6" : "translate-x-1"
+                  }`}
+                />
+              </button>
+            </div>
+          )}
+
           <div className="space-y-1.5">
             <label className="text-xs font-medium text-muted-foreground">Image Model (Local Sidecar)</label>
             <div className="grid grid-cols-2 gap-2">

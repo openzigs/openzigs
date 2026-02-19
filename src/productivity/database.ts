@@ -71,7 +71,33 @@ const initSchema = (db: Database.Database) => {
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS voice_profiles (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL UNIQUE,
+      ref_audio_path TEXT NOT NULL DEFAULT '',
+      ref_text TEXT NOT NULL DEFAULT '',
+      language TEXT NOT NULL DEFAULT 'en',
+      top_p REAL NOT NULL DEFAULT 0.8,
+      temperature REAL NOT NULL DEFAULT 1.0,
+      text_split_method TEXT NOT NULL DEFAULT 'cut5',
+      speed_factor REAL NOT NULL DEFAULT 1.0,
+      repetition_penalty REAL NOT NULL DEFAULT 1.35,
+      top_k INTEGER NOT NULL DEFAULT 15,
+      sample_steps INTEGER NOT NULL DEFAULT 32,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
   `);
+
+  const voiceProfileColumns = db
+    .prepare("PRAGMA table_info(voice_profiles)")
+    .all() as Array<{ name: string }>;
+
+  const hasSampleSteps = voiceProfileColumns.some((col) => col.name === "sample_steps");
+  if (!hasSampleSteps) {
+    db.exec("ALTER TABLE voice_profiles ADD COLUMN sample_steps INTEGER NOT NULL DEFAULT 32");
+  }
 };
 
 /** Create a fresh in-memory database for testing. */

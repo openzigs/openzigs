@@ -34,7 +34,7 @@ const TRANSITION_STYLE_ALIASES: Record<string, string> = {
 
 const VALID_TRANSITION_STYLES = new Set(["crossfade", "wipe-left", "wipe-right", "dissolve", "cut"]);
 
-const VALID_OVERLAY_COMPONENTS = new Set(["SmartCaptions", "LowerThird", "LogoWatermark", "ProgressBar"]);
+const VALID_OVERLAY_COMPONENTS = new Set(["SmartCaptions", "LowerThird", "LogoWatermark", "ProgressBar", "ImageOverlay"]);
 
 const VALID_ANIMATION_STYLES = new Set(["fade", "slide-up", "typewriter"]);
 

@@ -53,6 +53,36 @@ install_converter_deps_with_brew() {
 
 install_converter_deps_with_brew
 
+# ── Optional GPT-SoVITS runtime dependencies ────────────────────────────────
+install_gptsovits_deps() {
+  local SOVITS_DIR="$HOME/.openzigs/sidecars/gptsovits"
+  local SOVITS_VENV="$SOVITS_DIR/.venv"
+
+  if [ ! -d "$SOVITS_VENV" ]; then
+    return  # GPT-SoVITS not installed yet — skip
+  fi
+
+  echo ""
+  echo "=== GPT-SoVITS Runtime Dependencies ==="
+  echo "Ensuring torchcodec and NLTK data are installed in the GPT-SoVITS venv."
+  echo ""
+
+  local SOVITS_PY="$SOVITS_VENV/bin/python"
+  if [ -x "$SOVITS_PY" ]; then
+    # Install torchcodec (required for audio decoding)
+    "$SOVITS_PY" -m pip install --quiet torchcodec 2>/dev/null || true
+
+    # Download NLTK averaged_perceptron_tagger_eng data (required for English text processing)
+    "$SOVITS_PY" -c "import nltk; nltk.download('averaged_perceptron_tagger_eng', quiet=True)" 2>/dev/null || true
+
+    echo "  ✓ GPT-SoVITS runtime dependencies installed"
+  else
+    echo "  ⚠ GPT-SoVITS venv Python not found at $SOVITS_PY — skipping"
+  fi
+}
+
+install_gptsovits_deps
+
 install_dir="$HOME/.openzigs"
 
 if [ -d "$install_dir" ]; then
@@ -154,3 +184,9 @@ echo "Knowledge converter notes:"
 echo "  - Excel (.xlsx/.xls), PDF, and DOCX conversion are bundled."
 echo "  - Media transcription requires whisper model download for local dev:"
 echo "      pnpm exec whisper-node download"
+echo ""
+echo "Voice cloning (GPT-SoVITS Engine B):"
+echo "  - Install with: bash scripts/setup-gptsovits.sh"
+echo "  - After install, runtime deps are auto-provisioned on next install.sh run."
+echo "  - Start manually: ~/.openzigs/sidecars/gptsovits/start.sh"
+echo "  - Or use: bash scripts/dev-clean.sh (auto-starts all sidecars)"

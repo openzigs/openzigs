@@ -194,6 +194,17 @@ export function stageInputPropsMedia(
       }
       return { ...item, src: stagedSrc, voiceover: stagedVo };
     }
+    // Stage media referenced in overlay props (e.g. ImageOverlay.src)
+    if (item.type === "overlay" && item.props && typeof item.props === "object") {
+      const overlayProps = item.props as Record<string, unknown>;
+      if (typeof overlayProps.src === "string" && overlayProps.src.length > 0) {
+        const staged = stageMediaFile(overlayProps.src, bundleDir);
+        if (staged) {
+          return { ...item, props: { ...overlayProps, src: staged } };
+        }
+        logger.warn(`[Adapter] Overlay media file not found on disk — src will be unusable: "${overlayProps.src}"`);
+      }
+    }
     return item;
   });
 

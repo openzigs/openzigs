@@ -16,6 +16,7 @@ pkill -f "next.*dev" || true
 pkill -f "pnpm.*dev" || true
 pkill -f "sidecars/image-gen/server.py" || true
 pkill -f "sidecars/audio/server.py" || true
+pkill -f "api_v2.py" || true
 
 # Kill processes on port 3000 (default port)
 PID=$(lsof -ti:3000 2>/dev/null || true)
@@ -45,6 +46,13 @@ if [ -n "$PID" ]; then
   kill -9 $PID || true
 fi
 
+# Kill processes on port 9880 (GPT-SoVITS Engine B)
+PID=$(lsof -ti:9880 2>/dev/null || true)
+if [ -n "$PID" ]; then
+  echo "[clean-start] Killing process on port 9880 (PID $PID)"
+  kill -9 $PID || true
+fi
+
 # Kill zombie Chrome instances associated with OpenZigs
 # This matches the profile path used in chrome-launcher.ts
 pkill -f "openzigs-chrome-profile" || true
@@ -62,6 +70,74 @@ if [ -f "$CONFIG_FILE" ]; then
     echo "[clean-start] Wrote auth token to ui/.env.local"
   fi
 fi
+
+cd "$PROJECT_ROOT"
+DEV_LOG="$PROJECT_ROOT/.openzigs-dev.log"
+UI_LOG="$PROJECT_ROOT/.openzigs-ui.log"
+PROBE_PIDS=()
+
+start_health_probe() {
+  local name="$1"
+  local url="$2"
+  local attempts="$3"
+  local interval="$4"
+  local force_ipv4="${5:-0}"
+
+  (
+    local ready=0
+    for _ in $(seq 1 "$attempts"); do
+      if [ "$force_ipv4" = "1" ]; then
+        if curl -4 -fsS "$url" >/dev/null 2>&1; then
+          ready=1
+          break
+        fi
+      else
+        if curl -fsS "$url" >/dev/null 2>&1; then
+          ready=1
+          break
+        fi
+      fi
+      sleep "$interval"
+    done
+
+    if [ "$ready" -eq 1 ]; then
+      echo "[clean-start] ${name} is healthy"
+    else
+      echo "[clean-start] WARNING: ${name} health check timed out. Check logs."
+    fi
+  ) &
+
+  PROBE_PIDS+=("$!")
+}
+
+echo "[clean-start] Starting backend first..."
+pnpm dev > "$DEV_LOG" 2>&1 &
+BACKEND_PID=$!
+echo "[clean-start] Backend logs: $DEV_LOG"
+
+echo "[clean-start] Waiting for backend on port 3000..."
+for _ in {1..30}; do
+  if lsof -ti:3000 >/dev/null 2>&1; then
+    break
+  fi
+  sleep 1
+done
+
+echo "[clean-start] Starting UI..."
+(
+  cd "$PROJECT_ROOT/ui"
+  PORT=3001 pnpm dev > "$UI_LOG" 2>&1
+) &
+UI_PID=$!
+echo "[clean-start] UI logs: $UI_LOG"
+
+echo "[clean-start] Waiting for UI on port 3001..."
+for _ in {1..30}; do
+  if lsof -ti:3001 >/dev/null 2>&1; then
+    break
+  fi
+  sleep 1
+done
 
 # Optional: start local image-gen sidecar (default enabled)
 # The sidecar starts in lazy mode — no model loaded until first /generate request.
@@ -90,23 +166,34 @@ if [ "${OPENZIGS_START_SIDECAR:-1}" != "0" ]; then
     SIDECAR_PID=$!
 
     echo "[clean-start] Sidecar logs: $SIDECAR_LOG"
-    echo "[clean-start] Waiting for sidecar health on port 5005..."
-    SIDECAR_READY=0
-    for _ in {1..15}; do
-      if curl -fsS "http://127.0.0.1:5005/health" >/dev/null 2>&1; then
-        SIDECAR_READY=1
-        echo "[clean-start] Sidecar is healthy (lazy mode — no model loaded yet)"
-        break
-      fi
-      sleep 1
-    done
-
-    if [ "$SIDECAR_READY" -ne 1 ]; then
-      echo "[clean-start] WARNING: Sidecar failed to become healthy. Continuing startup."
-      echo "[clean-start] Check logs: $SIDECAR_LOG"
-    fi
+    echo "[clean-start] Probing image-gen sidecar health in background..."
+    start_health_probe "Image-gen sidecar (port 5005)" "http://127.0.0.1:5005/health" 15 1
   else
     echo "[clean-start] WARNING: sidecar server not found at $SIDECAR_DIR/server.py"
+  fi
+fi
+
+# Optional: start GPT-SoVITS (Engine B) if installed (default enabled)
+# GPT-SoVITS must be started BEFORE the audio sidecar so the --sovits-url probe succeeds.
+SOVITS_PID=""
+SOVITS_URL=""
+SOVITS_DIR="${HOME}/.openzigs/sidecars/gptsovits"
+if [ "${OPENZIGS_START_SOVITS:-1}" != "0" ] && [ -x "$SOVITS_DIR/start.sh" ]; then
+  SOVITS_URL="http://127.0.0.1:9880"
+  SOVITS_LOG="$PROJECT_ROOT/.openzigs-sovits.log"
+  echo "[clean-start] Starting GPT-SoVITS (Engine B, port=9880)"
+  (
+    bash "$SOVITS_DIR/start.sh" > "$SOVITS_LOG" 2>&1
+  ) &
+  SOVITS_PID=$!
+
+  echo "[clean-start] GPT-SoVITS logs: $SOVITS_LOG"
+  echo "[clean-start] Probing GPT-SoVITS health in background..."
+  start_health_probe "GPT-SoVITS (port 9880)" "http://127.0.0.1:9880/" 60 2 1
+else
+  if [ "${OPENZIGS_START_SOVITS:-1}" != "0" ]; then
+    echo "[clean-start] GPT-SoVITS not installed at $SOVITS_DIR — skipping Engine B."
+    echo "[clean-start] Install with: bash scripts/setup-gptsovits.sh"
   fi
 fi
 
@@ -130,69 +217,60 @@ if [ "${OPENZIGS_START_AUDIO_SIDECAR:-1}" != "0" ]; then
   fi
 
   if [ -f "$AUDIO_DIR/server.py" ]; then
-    echo "[clean-start] Starting audio sidecar (lazy mode, tts=$AUDIO_TTS_MODEL, stt=$AUDIO_STT_MODEL, idle-timeout=${AUDIO_IDLE_TIMEOUT}s, port=5006)"
+    AUDIO_SOVITS_FLAG=""
+    if [ -n "$SOVITS_URL" ]; then
+      AUDIO_SOVITS_FLAG="--sovits-url $SOVITS_URL"
+      echo "[clean-start] Starting audio sidecar (lazy mode, tts=$AUDIO_TTS_MODEL, stt=$AUDIO_STT_MODEL, sovits=$SOVITS_URL, idle-timeout=${AUDIO_IDLE_TIMEOUT}s, port=5006)"
+    else
+      echo "[clean-start] Starting audio sidecar (lazy mode, tts=$AUDIO_TTS_MODEL, stt=$AUDIO_STT_MODEL, idle-timeout=${AUDIO_IDLE_TIMEOUT}s, port=5006)"
+    fi
     (
       cd "$AUDIO_DIR"
-      "$AUDIO_PY" server.py --port 5006 --tts-model "$AUDIO_TTS_MODEL" --stt-model "$AUDIO_STT_MODEL" --idle-timeout "$AUDIO_IDLE_TIMEOUT" > "$AUDIO_LOG" 2>&1
+      # shellcheck disable=SC2086
+      "$AUDIO_PY" server.py --port 5006 --tts-model "$AUDIO_TTS_MODEL" --stt-model "$AUDIO_STT_MODEL" --idle-timeout "$AUDIO_IDLE_TIMEOUT" $AUDIO_SOVITS_FLAG > "$AUDIO_LOG" 2>&1
     ) &
     AUDIO_SIDECAR_PID=$!
 
     echo "[clean-start] Audio sidecar logs: $AUDIO_LOG"
-    echo "[clean-start] Waiting for audio sidecar health on port 5006..."
-    AUDIO_READY=0
-    for _ in {1..15}; do
-      if curl -fsS "http://127.0.0.1:5006/health" >/dev/null 2>&1; then
-        AUDIO_READY=1
-        echo "[clean-start] Audio sidecar is healthy (lazy mode — no models loaded yet)"
-        break
-      fi
-      sleep 1
-    done
-
-    if [ "$AUDIO_READY" -ne 1 ]; then
-      echo "[clean-start] WARNING: Audio sidecar failed to become healthy. Continuing startup."
-      echo "[clean-start] Check logs: $AUDIO_LOG"
-    fi
+    echo "[clean-start] Probing audio sidecar health in background..."
+    start_health_probe "Audio sidecar (port 5006)" "http://127.0.0.1:5006/health" 15 1
   else
     echo "[clean-start] WARNING: audio sidecar server not found at $AUDIO_DIR/server.py"
   fi
 fi
 
-cd "$PROJECT_ROOT"
-DEV_LOG="$PROJECT_ROOT/.openzigs-dev.log"
-pnpm dev > "$DEV_LOG" 2>&1 &
-BACKEND_PID=$!
-
-echo "[clean-start] Backend logs: $DEV_LOG"
-tail -f "$DEV_LOG" &
+tail -f "$DEV_LOG" "$UI_LOG" &
 TAIL_PID=$!
 
 cleanup() {
   echo "[clean-start] Stopping OpenZigs dev servers..."
   kill -9 "$BACKEND_PID" 2>/dev/null || true
+  if [ -n "${UI_PID:-}" ]; then
+    kill -9 "$UI_PID" 2>/dev/null || true
+  fi
   if [ -n "${SIDECAR_PID:-}" ]; then
     kill -9 "$SIDECAR_PID" 2>/dev/null || true
   fi
   if [ -n "${AUDIO_SIDECAR_PID:-}" ]; then
     kill -9 "$AUDIO_SIDECAR_PID" 2>/dev/null || true
   fi
+  if [ -n "${SOVITS_PID:-}" ]; then
+    kill -9 "$SOVITS_PID" 2>/dev/null || true
+  fi
   if [ -n "${TAIL_PID:-}" ]; then
     kill -9 "$TAIL_PID" 2>/dev/null || true
+  fi
+  if [ "${#PROBE_PIDS[@]}" -gt 0 ]; then
+    for probe_pid in "${PROBE_PIDS[@]}"; do
+      kill -9 "$probe_pid" 2>/dev/null || true
+    done
   fi
   pkill -f "next.*dev" || true
   pkill -f "sidecars/image-gen/server.py" || true
   pkill -f "sidecars/audio/server.py" || true
+  pkill -f "api_v2.py" || true
 }
 
 trap cleanup EXIT
 
-echo "[clean-start] Waiting for backend on port 3000..."
-for _ in {1..30}; do
-  if lsof -ti:3000 >/dev/null 2>&1; then
-    break
-  fi
-  sleep 1
-done
-
-cd "$PROJECT_ROOT/ui"
-PORT=3001 pnpm dev
+wait "$UI_PID"

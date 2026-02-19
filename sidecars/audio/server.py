@@ -1,39 +1,64 @@
 """
 Audio Sidecar — Local Speech-to-Text & Text-to-Speech Server
 Issue #261: FastAPI wrapper around lightning-whisper-mlx (STT) and mlx-audio (TTS).
+Issue #269: Swappable TTS Engines — Kokoro (Engine A) and GPT-SoVITS (Engine B).
 Optimized for Apple Silicon (MPS) with lazy model loading and idle auto-unload.
+
+ISOLATION CONTRACT (Issue #271):
+    This sidecar is a strict "text-in / audio-out" endpoint.
+    It MUST NOT import or connect to:
+      - Task engine / agent_tasks table
+      - MCP tool registry or tool execution loop
+      - SQLite or any database (no: import sqlite3, no DB connections)
+      - Node.js IPC channels or agent orchestration layers
+    It accepts only: { text: str, ...TTS params } → returns audio/wav
+    It is deployable as a completely standalone process with zero
+    knowledge of the OpenZigs Agent system.
+
+    CI ENFORCEMENT: grep -r "import sqlite3\|import agent_tasks" sidecars/audio/
+    must return no matches. Any addition must be code-reviewed.
 
 Features:
     - Lazy loading: No models loaded at startup — loads on first request
     - Independent STT/TTS lifecycle: Each model loads/unloads independently
     - Auto-unload: Models unloaded after configurable idle timeout to reclaim RAM
-    - 24kHz WAV output for TTS (Kokoro model, 54 voice presets)
+    - 24kHz WAV output for TTS (Kokoro model, 54 voice presets) — Engine A
+    - Engine B: GPT-SoVITS via HTTP proxy for high-fidelity voice cloning
+    - POST /switch_engine — swap engines with mutex (prevents double-load)
     - Segment-level timestamps from STT (Whisper distil-large-v3)
 
 Usage:
     cd sidecars/audio
     pip install -r requirements.txt
     python server.py [--port 5006] [--host 127.0.0.1]
+    # For Engine B (GPT-SoVITS), start the GPT-SoVITS server separately
+    # then pass --sovits-url http://127.0.0.1:9880
 
 Endpoints:
-    POST /tts         — Synthesize speech from text (returns WAV audio)
-    POST /transcribe  — Transcribe audio file to text (accepts multipart upload)
-    GET  /voices      — List available TTS voice presets
-    GET  /health      — Readiness probe (returns model status)
-    POST /unload      — Unload one or all models to free RAM
+    POST /tts              — Synthesize speech (Kokoro or GPT-SoVITS based on active engine)
+    POST /transcribe       — Transcribe audio file to text (accepts multipart upload)
+    GET  /voices           — List available TTS voice presets
+    GET  /health           — Readiness probe (returns model + engine status)
+    POST /unload           — Unload one or all models to free RAM
+    POST /switch_engine    — Switch active TTS engine ("kokoro" | "sovits")
 """
 
 from __future__ import annotations
 
 import argparse
+import asyncio
 import gc
 import io
 import logging
 import os
 import time
 from contextlib import asynccontextmanager
-from typing import Optional
+from typing import Literal, Optional
 
+import subprocess
+import tempfile
+
+import httpx
 import numpy as np
 import soundfile as sf
 from fastapi import FastAPI, File, HTTPException, UploadFile
@@ -80,6 +105,7 @@ VOICE_PRESETS: dict[str, dict] = {
 DEFAULT_VOICE = "af_heart"
 DEFAULT_TTS_MODEL = "mlx-community/Kokoro-82M-bf16"
 DEFAULT_STT_MODEL = "distil-large-v3"
+DEFAULT_SOVITS_URL = "http://127.0.0.1:9880"
 TTS_SAMPLE_RATE = 24000
 
 # ── Language code mapping ──────────────────────────────────────
@@ -103,6 +129,13 @@ _idle_timeout: float = 0.0  # seconds before auto-unload (0 = disabled)
 _ready: bool = False
 _tts_model_name: str = DEFAULT_TTS_MODEL
 _stt_model_name: str = DEFAULT_STT_MODEL
+
+# ── Engine State (Issue #269) ──────────────────────────────────
+# "kokoro" = Engine A (MLX Kokoro, always-on, ~1 GB RAM)
+# "sovits" = Engine B (GPT-SoVITS HTTP proxy, on-demand, 6-10 GB RAM)
+_active_engine: Literal["kokoro", "sovits"] = "kokoro"
+_sovits_url: str = DEFAULT_SOVITS_URL
+_engine_switch_lock: asyncio.Lock | None = None  # Initialized in lifespan
 
 
 # ── Model Lifecycle ─────────────────────────────────────────────
@@ -174,6 +207,13 @@ def _unload_tts() -> None:
         del _tts_model
         _tts_model = None
         gc.collect()
+        # Clear Apple Silicon MLX metal cache to fully reclaim VRAM
+        try:
+            import mlx.core
+            mlx.core.metal.clear_cache()
+            log.info("MLX Metal cache cleared")
+        except Exception:
+            pass  # Not on Apple Silicon or MLX not available
         log.info("TTS model unloaded")
     _tts_loaded = False
 
@@ -234,7 +274,11 @@ async def _idle_unload_loop() -> None:
 # ── Request / Response Models ──────────────────────────────────
 
 class TTSRequest(BaseModel):
-    """Request body for text-to-speech synthesis."""
+    """Request body for text-to-speech synthesis.
+
+    Engine A (Kokoro): uses voice, speed fields.
+    Engine B (GPT-SoVITS): uses ref_audio_path, ref_text, ref_language + tuning params.
+    """
 
     text: str = Field(
         ...,
@@ -242,15 +286,52 @@ class TTSRequest(BaseModel):
         max_length=10000,
         description="Text to synthesize into speech",
     )
+    # ── Engine A (Kokoro) parameters ──
     voice: str = Field(
         default=DEFAULT_VOICE,
-        description="Voice preset ID (e.g. 'af_heart', 'bm_daniel')",
+        description="Voice preset ID (e.g. 'af_heart', 'bm_daniel') — Engine A only",
     )
     speed: float = Field(
         default=1.0,
         ge=0.5,
         le=2.0,
-        description="Speaking speed multiplier (0.5–2.0)",
+        description="Speaking speed multiplier (0.5–2.0) — Engine A",
+    )
+    # ── Engine B (GPT-SoVITS) parameters ──
+    ref_audio_path: Optional[str] = Field(
+        default=None,
+        description="Absolute path to the reference audio WAV — Engine B only",
+    )
+    ref_text: Optional[str] = Field(
+        default=None,
+        description="Verbatim transcript of the reference audio — Engine B only",
+    )
+    ref_language: str = Field(
+        default="en",
+        description="Language code for ref audio and synthesis text — Engine B",
+    )
+    top_p: float = Field(default=0.8, ge=0.1, le=1.0)
+    temperature: float = Field(default=0.8, ge=0.1, le=2.0)
+    text_split_method: str = Field(default="cut5")
+    speed_factor: float = Field(default=1.0, ge=0.5, le=2.0)
+    repetition_penalty: float = Field(default=1.35, ge=1.0, le=2.0)
+    top_k: int = Field(default=12, ge=1, le=50)
+    sample_steps: int = Field(default=32, ge=1, le=200)
+    # Quality-enhancing parameters forwarded to GPT-SoVITS
+    fragment_interval: float = Field(default=0.25, ge=0.01, le=1.0)
+    parallel_infer: bool = Field(default=True)
+    split_bucket: bool = Field(default=True)
+    batch_threshold: float = Field(default=0.75, ge=0.1, le=1.0)
+    seed: int = Field(default=-1)
+    super_sampling: bool = Field(default=False)
+
+
+class SwitchEngineRequest(BaseModel):
+    """Request body for POST /switch_engine."""
+
+    engine: Literal["kokoro", "sovits"] = Field(
+        ...,
+        description="Target TTS engine to activate ('kokoro' or 'sovits')",
     )
 
 
@@ -266,6 +347,11 @@ class HealthResponse(BaseModel):
     tts_model: str = ""
     stt_model: str = ""
     voice_count: int = 0
+    # Engine state (Issue #269)
+    active_engine: str = "kokoro"
+    engines_available: list[str] = ["kokoro", "sovits"]
+    sovits_url: str = ""
+    sovits_reachable: bool = False
 
 
 class TranscribeResponse(BaseModel):
@@ -282,16 +368,16 @@ class TranscribeResponse(BaseModel):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Start server in lazy mode — no models loaded until first request."""
-    import asyncio
-
-    global _ready
+    global _ready, _engine_switch_lock
 
     _ready = True
+    _engine_switch_lock = asyncio.Lock()
 
     log.info(
         f"Audio sidecar ready — lazy mode "
         f"(TTS={_tts_model_name}, STT={_stt_model_name}, "
-        f"idle_timeout={'disabled' if _idle_timeout <= 0 else f'{_idle_timeout:.0f}s'})"
+        f"idle_timeout={'disabled' if _idle_timeout <= 0 else f'{_idle_timeout:.0f}s'}, "
+        f"active_engine={_active_engine}, sovits_url={_sovits_url})"
     )
 
     idle_task = asyncio.create_task(_idle_unload_loop())
@@ -318,11 +404,28 @@ app = FastAPI(
 )
 
 
+async def _probe_sovits(url: str, timeout_seconds: float = 2.0) -> bool:
+    """Return True when GPT-SoVITS is reachable over HTTP.
+
+    Probe /docs because api_v2.py does not expose /health.
+    """
+    try:
+        async with httpx.AsyncClient(timeout=timeout_seconds) as client:
+            response = await client.get(f"{url}/docs")
+            return response.status_code < 500
+    except Exception:
+        return False
+
+
 @app.get("/health", response_model=HealthResponse)
 async def health():
-    """Readiness probe. Returns model load states."""
+    """Readiness probe. Returns model load states and active engine status."""
     is_loading = _tts_loading or _stt_loading
     status = "loading" if is_loading else ("ok" if _ready else "starting")
+
+    # Async probe of GPT-SoVITS reachability (non-blocking, 2s timeout)
+    sovits_reachable = await _probe_sovits(_sovits_url, timeout_seconds=2.0)
+
     return HealthResponse(
         status=status,
         ready=_ready and not is_loading,
@@ -333,6 +436,9 @@ async def health():
         tts_model=_tts_model_name,
         stt_model=_stt_model_name,
         voice_count=len(VOICE_PRESETS),
+        active_engine=_active_engine,
+        sovits_url=_sovits_url,
+        sovits_reachable=sovits_reachable,
     )
 
 
@@ -355,88 +461,277 @@ async def list_voices():
     }
 
 
-@app.post("/tts", response_class=Response)
-async def synthesize(req: TTSRequest):
-    """Synthesize text to speech. Returns 24kHz WAV audio.
+@app.post("/switch_engine")
+async def switch_engine(req: SwitchEngineRequest):
+    """Switch the active TTS engine atomically.
 
-    The TTS model (Kokoro-82M) is loaded lazily on first request.
-    Subsequent requests reuse the loaded model for fast inference.
+    Acquires a mutex so only one engine is ever in VRAM at a time.
+    Switching to 'sovits' unloads the Kokoro MLX model (clears Metal cache).
+    Switching back to 'kokoro' marks Engine A as active; it lazy-loads on the
+    next /tts request.
+
+    Returns:
+        {"engine": str, "status": "already_loaded" | "switched"}
     """
+    global _active_engine
+
+    if _engine_switch_lock is None:
+        raise HTTPException(status_code=503, detail="Server not fully initialized")
+
+    async with _engine_switch_lock:
+        if req.engine == _active_engine:
+            return {"engine": _active_engine, "status": "already_loaded"}
+
+        log.info(f"Switching TTS engine: {_active_engine} → {req.engine}")
+
+        if req.engine == "sovits":
+            # Unload Kokoro to free ~1 GB VRAM before GPT-SoVITS tries to load
+            if _tts_loaded:
+                log.info("Unloading Kokoro (Engine A) before activating Engine B ...")
+                _unload_tts()
+            # Verify GPT-SoVITS is reachable before committing the switch
+            if not await _probe_sovits(_sovits_url, timeout_seconds=5.0):
+                raise HTTPException(
+                    status_code=502,
+                    detail=(
+                        f"Cannot reach GPT-SoVITS at {_sovits_url}. "
+                        "Start the GPT-SoVITS server before switching engines."
+                    ),
+                )
+        # else: switching to kokoro — Kokoro lazy-loads on the next /tts request
+
+        _active_engine = req.engine
+        log.info(f"Active TTS engine is now: {_active_engine}")
+        return {"engine": _active_engine, "status": "switched"}
+
+
+async def _synthesize_kokoro(req: TTSRequest) -> Response:
+    """Synthesize with Engine A (Kokoro MLX). Internal helper."""
     global _tts_last_used
 
-    if not _ready:
-        raise HTTPException(status_code=503, detail="Server not ready")
     if _tts_loading:
         raise HTTPException(status_code=409, detail="TTS model is currently loading")
 
-    # Validate voice
     if req.voice not in VOICE_PRESETS:
         raise HTTPException(
             status_code=400,
             detail=f"Unknown voice: {req.voice}. Use GET /voices for available presets.",
         )
 
-    # Lazy load TTS model
     if not _tts_loaded:
-        log.info("Lazy-loading TTS model for first synthesis request ...")
+        log.info("Lazy-loading Kokoro (Engine A) ...")
         _load_tts()
 
     assert _tts_model is not None
 
-    # Determine language code from voice preset
     voice_meta = VOICE_PRESETS[req.voice]
     lang_code = VOICE_LANG_CODES.get(voice_meta["language"], "a")
 
     log.info(
-        f"Synthesizing: text='{req.text[:80]}...' "
+        f"[Engine A] Synthesizing: text='{req.text[:80]}...' "
         f"voice={req.voice} speed={req.speed} lang={lang_code}"
     )
     start = time.monotonic()
 
+    audio_chunks: list[np.ndarray] = []
+    for result in _tts_model.generate(
+        text=req.text,
+        voice=req.voice,
+        speed=req.speed,
+        lang_code=lang_code,
+    ):
+        chunk = np.array(result.audio, dtype=np.float32)
+        if chunk.size > 0:
+            audio_chunks.append(chunk)
+
+    if not audio_chunks:
+        raise HTTPException(status_code=500, detail="TTS generation returned no audio")
+
+    audio_np = np.concatenate(audio_chunks)
+    buf = io.BytesIO()
+    sf.write(buf, audio_np, TTS_SAMPLE_RATE, format="WAV", subtype="FLOAT")
+    wav_bytes = buf.getvalue()
+
+    elapsed = time.monotonic() - start
+    _tts_last_used = time.monotonic()
+    duration_s = len(audio_np) / TTS_SAMPLE_RATE
+
+    log.info(f"[Engine A] Synthesized in {elapsed:.1f}s — {len(wav_bytes)} bytes, {duration_s:.1f}s")
+
+    return Response(
+        content=wav_bytes,
+        media_type="audio/wav",
+        headers={
+            "X-Synthesis-Time": f"{elapsed:.2f}s",
+            "X-Audio-Duration": f"{duration_s:.2f}s",
+            "X-Voice": req.voice,
+            "X-Engine": "kokoro",
+            "X-Sample-Rate": str(TTS_SAMPLE_RATE),
+        },
+    )
+
+
+# GPT-SoVITS hard constraint: reference audio must be 3-10 seconds.
+# Trim to 9s (not 10) because GPT-SoVITS uses an exclusive upper bound.
+_SOVITS_REF_MAX_SECONDS = 9
+
+
+def _probe_audio_duration(file_path: str) -> float | None:
+    """Return audio duration in seconds using ffprobe, or None on failure."""
     try:
-        # Generate audio using mlx-audio Kokoro model.
-        # The generator can yield multiple chunks (often sentence-sized).
-        # Concatenate all chunks so we return the full utterance, not just the last chunk.
-        audio_chunks: list[np.ndarray] = []
-        for result in _tts_model.generate(
-            text=req.text,
-            voice=req.voice,
-            speed=req.speed,
-            lang_code=lang_code,
-        ):
-            chunk = np.array(result.audio, dtype=np.float32)
-            if chunk.size > 0:
-                audio_chunks.append(chunk)
+        result = subprocess.run(
+            [
+                "ffprobe", "-v", "error",
+                "-show_entries", "format=duration",
+                "-of", "default=noprint_wrappers=1:nokey=1",
+                file_path,
+            ],
+            capture_output=True, text=True, timeout=10,
+        )
+        if result.returncode != 0:
+            return None
+        duration = float(result.stdout.strip())
+        return duration if duration > 0 else None
+    except Exception:
+        return None
 
-        if not audio_chunks:
-            raise HTTPException(status_code=500, detail="TTS generation returned no audio")
 
-        # Merge all generated chunks into a single waveform.
-        audio_np = np.concatenate(audio_chunks)
+def _trim_audio_to_max(file_path: str, max_seconds: float) -> tuple[str, bool]:
+    """Ensure reference audio is WAV format and within max_seconds.
 
-        buf = io.BytesIO()
-        sf.write(buf, audio_np, TTS_SAMPLE_RATE, format="WAV", subtype="FLOAT")
-        wav_bytes = buf.getvalue()
+    Non-WAV files (webm, ogg, mp3, etc.) are always converted to WAV via ffmpeg.
+    Files exceeding max_seconds are trimmed to the first max_seconds.
 
-        elapsed = time.monotonic() - start
-        _tts_last_used = time.monotonic()
-        duration_s = len(audio_np) / TTS_SAMPLE_RATE
+    Returns (path_to_use, is_temp). If is_temp is True the caller must
+    delete the file after use.
+    """
+    is_wav = file_path.lower().endswith(".wav")
+    duration = _probe_audio_duration(file_path)
+    needs_trim = duration is not None and duration > max_seconds
 
-        log.info(
-            f"Synthesized in {elapsed:.1f}s — "
-            f"{len(wav_bytes)} bytes, {duration_s:.1f}s audio"
+    # WAV files within the limit can be used directly
+    if is_wav and not needs_trim:
+        return file_path, False
+
+    action = []
+    if not is_wav:
+        action.append("converting to WAV")
+    if needs_trim:
+        action.append(f"trimming {duration:.1f}s → {max_seconds}s")
+    log.info(f"[Engine B] Preparing ref audio: {', '.join(action)}")
+
+    fd, tmp_path = tempfile.mkstemp(suffix=".wav")
+    os.close(fd)
+    try:
+        cmd = ["ffmpeg", "-y", "-i", file_path]
+        if needs_trim:
+            cmd += ["-t", str(max_seconds)]
+        cmd += ["-c:a", "pcm_s16le", "-ar", "44100", "-ac", "1", tmp_path]
+        subprocess.run(cmd, capture_output=True, timeout=30, check=True)
+        return tmp_path, True
+    except Exception as e:
+        log.warning(f"[Engine B] Audio preparation failed ({e}), using original file")
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        return file_path, False
+
+
+async def _synthesize_sovits(req: TTSRequest) -> Response:
+    """Synthesize with Engine B (GPT-SoVITS via HTTP proxy). Internal helper."""
+    if not req.ref_audio_path:
+        raise HTTPException(
+            status_code=400,
+            detail="ref_audio_path is required when using GPT-SoVITS (Engine B).",
         )
 
+    # Auto-trim long reference audio to satisfy GPT-SoVITS 3-10s constraint
+    ref_path, is_temp = _trim_audio_to_max(req.ref_audio_path, _SOVITS_REF_MAX_SECONDS)
+
+    payload = {
+        "text": req.text,
+        "text_lang": req.ref_language,
+        "ref_audio_path": ref_path,
+        "prompt_text": req.ref_text or "",
+        "prompt_lang": req.ref_language,
+        "top_k": req.top_k,
+        "top_p": req.top_p,
+        "temperature": req.temperature,
+        "text_split_method": req.text_split_method,
+        "batch_size": 1,
+        "speed_factor": req.speed_factor,
+        "repetition_penalty": req.repetition_penalty,
+        "sample_steps": req.sample_steps,
+        "fragment_interval": req.fragment_interval,
+        "parallel_infer": req.parallel_infer,
+        "split_bucket": req.split_bucket,
+        "batch_threshold": req.batch_threshold,
+        "seed": req.seed,
+        "super_sampling": req.super_sampling,
+        "media_type": "wav",
+        "streaming_mode": 0,
+    }
+    log.info(
+        f"[Engine B] Proxying TTS to GPT-SoVITS @ {_sovits_url}: "
+        f"text='{req.text[:80]}...' ref={ref_path}"
+        f"{' (trimmed)' if is_temp else ''}"
+    )
+    start = time.monotonic()
+    try:
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            r = await client.post(f"{_sovits_url}/tts", json=payload)
+            r.raise_for_status()
+
+        elapsed = time.monotonic() - start
+        log.info(f"[Engine B] GPT-SoVITS responded in {elapsed:.1f}s — {len(r.content)} bytes")
+
         return Response(
-            content=wav_bytes,
+            content=r.content,
             media_type="audio/wav",
             headers={
                 "X-Synthesis-Time": f"{elapsed:.2f}s",
-                "X-Audio-Duration": f"{duration_s:.2f}s",
-                "X-Voice": req.voice,
-                "X-Sample-Rate": str(TTS_SAMPLE_RATE),
+                "X-Engine": "sovits",
             },
         )
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(
+            status_code=502,
+            detail=f"GPT-SoVITS returned HTTP {e.response.status_code}: {e.response.text[:200]}",
+        )
+    except httpx.ConnectError:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Cannot reach GPT-SoVITS at {_sovits_url}. Is the server running?",
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Engine B synthesis failed: {str(e)}")
+    finally:
+        if is_temp:
+            try:
+                os.unlink(ref_path)
+            except OSError:
+                pass
+
+
+@app.post("/tts", response_class=Response)
+async def synthesize(req: TTSRequest):
+    """Synthesize text to speech. Returns WAV audio.
+
+    Routes to the active TTS engine:
+    - Engine A (Kokoro): lazy-loaded MLX model, 54 voice presets, 24kHz output
+    - Engine B (GPT-SoVITS): HTTP proxy to running GPT-SoVITS instance for voice cloning
+
+    Switch engines via POST /switch_engine.
+    """
+    if not _ready:
+        raise HTTPException(status_code=503, detail="Server not ready")
+
+    try:
+        if _active_engine == "sovits":
+            return await _synthesize_sovits(req)
+        else:
+            return await _synthesize_kokoro(req)
     except HTTPException:
         raise
     except Exception as e:
@@ -641,11 +936,20 @@ Examples:
             "(0 = disabled, env: AUDIO_IDLE_TIMEOUT)"
         ),
     )
+    parser.add_argument(
+        "--sovits-url",
+        default=os.environ.get("AUDIO_SOVITS_URL", DEFAULT_SOVITS_URL),
+        help=(
+            f"Base URL of the GPT-SoVITS server — Engine B (default: {DEFAULT_SOVITS_URL}, "
+            "env: AUDIO_SOVITS_URL)"
+        ),
+    )
 
     args = parser.parse_args()
     _tts_model_name = args.tts_model
     _stt_model_name = args.stt_model
     _idle_timeout = args.idle_timeout
+    _sovits_url = args.sovits_url.rstrip("/")
 
     log.info(
         f"Starting audio sidecar: TTS={_tts_model_name}, STT={_stt_model_name}, "
