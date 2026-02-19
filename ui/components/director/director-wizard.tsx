@@ -99,6 +99,10 @@ export const DirectorWizard = () => {
     setState((s) => ({ ...s, assetsOnlyMode }));
   }, []);
 
+  const setQuizEnabled = useCallback((quizEnabled: boolean) => {
+    setState((s) => ({ ...s, quizEnabled }));
+  }, []);
+
   const setManifest = useCallback((manifest: DirectorManifestSummary) => {
     setState((s) => ({ ...s, manifest }));
   }, []);
@@ -202,6 +206,7 @@ export const DirectorWizard = () => {
             onImageModelChange={setImageModel}
             onSlideStyleChange={setSlideStyle}
             onAssetsOnlyModeChange={setAssetsOnlyMode}
+            onQuizEnabledChange={setQuizEnabled}
           />
         )}
       </div>

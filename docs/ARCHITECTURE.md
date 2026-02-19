@@ -220,6 +220,8 @@ The frontend is a **Next.js 14 App Router** application in the `ui/` directory. 
 | `/chat` | `chat-view.tsx` | Full chat with streaming, model selector, reasoning effort, file attachments, session context bar, interactive clarification prompts, approval overlay |
 | `/admin` | `admin/page.tsx` | Channel config, personality settings with mode selector, model & provider configuration, custom agent management, sidecar management, native MCP server editor, tool toggles, env status |
 | `/library` | `library/page.tsx` | Saved prompt CRUD with `{{variable}}` template preview and system prompt apply |
+| `/presenter` | `presenter/page.tsx` | Presentation catalog — grid of rendered videos with thumbnails, search, delete |
+| `/presenter/[id]` | `presenter/[id]/page.tsx` | Interactive player with FSM (Play/Pause/Quiz/Recap), chapter sidebar, Raise Hand Q&A, blackboard with Mermaid, quiz overlays, PDF recap |
 | `/scheduler` | `scheduler/page.tsx` | Cron job CRUD with action types, prompt linking, model overrides, AI assist, live execution events |
 | `/tasks` | `task-dashboard.tsx` | Background task queue, status filters, cancel, recursive child expansion, real-time updates |
 | `/workbench` | `workbench/page.tsx` | Rich Markdown editor (MDXEditor) with file sidebar, live file system CRUD, Cmd/Ctrl+S save |
@@ -235,6 +237,8 @@ ui/
 │   ├── chat/page.tsx       # Chat route
 │   ├── admin/page.tsx      # Admin route
 │   ├── library/page.tsx    # Library route
+│   ├── presenter/page.tsx  # Presenter catalog route
+│   ├── presenter/[id]/page.tsx  # Interactive player route
 │   ├── scheduler/page.tsx  # Scheduler route
 │   ├── tasks/page.tsx      # Tasks route
 │   └── workbench/page.tsx  # Workbench route (MDXEditor + file sidebar)
@@ -252,6 +256,17 @@ ui/
 │   │   ├── initialized-mdx-editor.tsx  # MDXEditor with full plugin config
 │   │   ├── forward-ref-editor.tsx      # Dynamic SSR-safe import wrapper
 │   │   └── file-sidebar.tsx            # Recursive file tree browser
+│   ├── presenter/
+│   │   ├── presentation-card.tsx       # Catalog grid card with thumbnail
+│   │   ├── interactive-player.tsx      # HTML5 video wrapper
+│   │   ├── raise-hand-button.tsx       # Floating Q&A button
+│   │   ├── quiz-overlay.tsx            # Pop quiz multiple-choice overlay
+│   │   ├── blackboard-overlay.tsx      # Streaming markdown + Mermaid Q&A panel
+│   │   ├── mermaid-block.tsx           # Mermaid.js diagram renderer
+│   │   ├── chapter-list.tsx            # Sidebar chapter navigation
+│   │   ├── recap-screen.tsx            # Session recap with score ring
+│   │   ├── score-ring.tsx              # SVG circular score indicator
+│   │   └── pdf-generator.ts           # jsPDF recap export
 │   └── admin/
 │       ├── tools-panel.tsx        # Tool list with risk badges + toggles
 │       ├── channels-panel.tsx     # Telegram + Discord config forms
@@ -266,6 +281,8 @@ ui/
     ├── api.ts              # Shared fetchJson utility + API_BASE
     ├── types.ts            # All shared TypeScript types
     └── socket-context.tsx  # SocketProvider + useSocket hook
+├── hooks/
+│   └── use-presenter-state.ts  # Presenter FSM (useReducer) with 4 states
 ```
 
 ### API Proxying
@@ -3151,3 +3168,81 @@ Changed from temporary `/tmp/openzigs-chrome-profile` to persistent `~/.openzigs
 ```
 
 ### Tracking: [Epic #216](https://github.com/mgcronin/openzigs/issues/216)
+
+---
+
+## Presenter Mode (Interactive Playback, Blackboard & Quizzes)
+
+Issue: [Epic #275](https://github.com/mgcronin/openzigs/issues/275)
+
+Presenter Mode transforms rendered Director Mode videos into interactive learning experiences. After a video is rendered, it is auto-indexed into a presentation catalog. Users can play presentations with AI-powered Q&A, pop quizzes, and live blackboard overlays.
+
+### Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  UI (Next.js)                                                   │
+│  ┌─────────────┐  ┌──────────────┐  ┌───────────────────────┐  │
+│  │ Catalog Page │  │ Player Page  │  │ Recap Screen          │  │
+│  │ /presenter   │  │ /presenter/  │  │ Score ring + PDF      │  │
+│  │              │  │   [id]       │  │ download (jsPDF)      │  │
+│  └──────┬───────┘  └──────┬───────┘  └───────────────────────┘  │
+│         │                 │                                      │
+│         ▼                 ▼                                      │
+│  ┌─────────────────────────────────────────────────────────────┐│
+│  │ usePresenterState (FSM via useReducer)                      ││
+│  │ States: PLAYING → PAUSED_USER_Q → PAUSED_AI_QUIZ → RECAP   ││
+│  └──────────────────────────┬──────────────────────────────────┘│
+│                             │ Socket.IO (presenter:ask/answer)  │
+└─────────────────────────────┼───────────────────────────────────┘
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  Backend (Express + Socket.IO)                                  │
+│  ┌──────────────┐  ┌───────────────┐  ┌──────────────────────┐ │
+│  │ REST Router   │  │ Teacher Agent │  │ Quiz Generator       │ │
+│  │ /api/         │  │ RAG Q&A via   │  │ Chapter-level MCQ    │ │
+│  │ presentations │  │ CopilotWrapper│  │ generation + caching │ │
+│  └──────┬────────┘  └───────────────┘  └──────────────────────┘ │
+│         │                                                       │
+│         ▼                                                       │
+│  ┌─────────────────────────────────────────────────────────────┐│
+│  │ PresentationRepository (SQLite)                             ││
+│  │ Tables: presentations, quiz_cache                           ││
+│  └─────────────────────────────────────────────────────────────┘│
+│                                                                 │
+│  ┌─────────────────────────────────────────────────────────────┐│
+│  │ Post-Render Hook (render:complete event)                    ││
+│  │ Auto-indexes: detectChapters → generateThumbnail → insert   ││
+│  └─────────────────────────────────────────────────────────────┘│
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Key Modules
+
+| Module | Path | Purpose |
+|---|---|---|
+| PresentationRepository | `src/presenter/presentation-repository.ts` | SQLite CRUD for presentations + quiz_cache |
+| ChapterDetector | `src/presenter/chapter-detector.ts` | Parse Director Manifest → Chapter[] |
+| ThumbnailGenerator | `src/presenter/thumbnail-generator.ts` | ffmpeg frame extraction |
+| TeacherAgent | `src/presenter/teacher-agent.ts` | RAG Q&A powered by CopilotWrapper |
+| QuizGenerator | `src/presenter/quiz-generator.ts` | MCQ generation per chapter |
+| Presenter Router | `src/api/presenter.ts` | REST API for catalog + Q&A + quiz |
+
+### FSM States
+
+1. **PLAYING** — Video playing normally. Raise Hand button visible.
+2. **PAUSED_USER_Q** — User raised hand. Blackboard overlay with streaming answer (Mermaid diagrams supported).
+3. **PAUSED_AI_QUIZ** — Pop quiz overlay with multiple choice + explanation.
+4. **RECAP** — Session complete. Score ring, quiz results, Q&A transcript, PDF download.
+
+### Socket.IO Events
+
+| Event | Direction | Purpose |
+|---|---|---|
+| `presenter:ask` | client → server | Submit Q&A question with chapter context |
+| `presenter:answer:start` | server → client | Signal answer streaming has begun |
+| `presenter:answer:token` | server → client | Individual token for streaming display |
+| `presenter:answer:done` | server → client | Answer complete |
+| `presenter:answer:error` | server → client | Error during answer generation |
+
+### Tracking: [Epic #275](https://github.com/mgcronin/openzigs/issues/275)

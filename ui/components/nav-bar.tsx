@@ -16,6 +16,7 @@ const NAV_ITEMS = [
   { href: "/admin/post-actions", label: "Post-Actions" },
   { href: "/knowledge", label: "Knowledge" },
   { href: "/director", label: "Director" },
+  { href: "/presenter", label: "Presenter" },
 ];
 
 export const NavBar = () => {
