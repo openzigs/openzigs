@@ -43,6 +43,14 @@ export interface Storyboard {
   tokensUsed: number;
 }
 
+/** A visual asset the user uploaded with a description to weave into the script. */
+export interface StoryboardVisualAsset {
+  /** User-provided description of the asset (e.g. "product demo screenshot") */
+  description: string;
+  /** Asset type */
+  type: "image" | "video";
+}
+
 /** Options for storyboard generation. */
 export interface StoryboardOptions {
   /** Override the LLM model (e.g. "gpt-4.1", "claude-sonnet-4") */
@@ -57,7 +65,11 @@ export interface StoryboardOptions {
   maxSceneDuration?: number;
   /** Target audience hint (e.g. "developers", "executives", "general") */
   audienceHint?: string;
-}
+  /** Visual assets the user uploaded — their descriptions should be woven into the narration */
+  visualAssets?: StoryboardVisualAsset[];
+  /** When true, generate PowerPoint-style slide images with short text phrases rendered into the image */
+  slideStyle?: boolean;  /** When true, user-provided visual assets cover all middle scenes — only generate AI images for intro (index 0) and outro (last scene) */
+  assetsOnlyMode?: boolean;}
 
 // ── Constants ─────────────────────────────────────────────────
 
@@ -100,7 +112,7 @@ export class StoryboardEngine {
     );
 
     const systemPrompt = this.buildSystemPrompt(options, estimatedSceneCount, minDur, maxDur);
-    const userPrompt = this.buildUserPrompt(text, targetDuration);
+    const userPrompt = this.buildUserPrompt(text, targetDuration, options.visualAssets);
 
     // Single-shot LLM call
     const chunks: string[] = [];
@@ -123,7 +135,7 @@ export class StoryboardEngine {
     const rawOutput = this.parseResponse(responseText);
 
     // Validate and build the final storyboard
-    const storyboard = this.buildStoryboard(rawOutput, tokensUsed);
+    const storyboard = this.buildStoryboard(rawOutput, tokensUsed, options.slideStyle, options.assetsOnlyMode);
 
     logger.info(
       `[StoryboardEngine] Storyboard complete: "${storyboard.title}" ` +
@@ -148,6 +160,50 @@ export class StoryboardEngine {
 
     const audienceHint = options.audienceHint
       ? `\nTARGET AUDIENCE: ${options.audienceHint}`
+      : "";
+
+    const slideStyleBlock = options.slideStyle
+      ? `
+
+SLIDE-STYLE MODE (ACTIVE):
+The imageDescription you write is fed DIRECTLY as a prompt to an image model — it must be a bare, directive prompt fragment, not a sentence or prose description.
+
+STRICT FORMAT for imageDescription:
+  "<phrase>" [placement], [background]
+
+RULES (no exceptions):
+- 1–2 quoted text phrases MAX, each MUST be 25 characters or fewer (hard model limit)
+- Placement: one short word/phrase — "centered", "bold centered", "large centered title", "bottom subtitle"
+- Background: one short phrase — "dark navy gradient", "white minimal", "charcoal flat", "slate blue"
+- NO narrative. NO sentences. NO "showing", "depicting", "illustrating", "featuring", "with background"
+- NO filler. The description must read like a prompt directive, not a slide description
+
+GOOD examples:
+  "Cloud Migration" large centered title, deep navy background
+  "Revenue +40%", "Q4 Results" stacked center, charcoal flat background
+  "Next Steps" bold centered, slate blue gradient
+  "Step 1: Setup" top-left, white minimal background
+
+BAD examples (will produce garbage output):
+  A clean slide showing cloud migration with blue gradient and readable text
+  Professional presentation with key points displayed in centered layout
+  The slide presents the main theme with dark background
+
+The styleAnchor MUST describe a presentation slide aesthetic (clean, minimal, readable).`
+      : "";
+
+    const assetsOnlyBlock = options.assetsOnlyMode
+      ? `
+
+ASSETS-ONLY MODE (ACTIVE):
+The user has provided their own images and videos as the main visual content. Your primary job is writing compelling voiceover narration — NOT generating image descriptions for most scenes.
+
+RULES for imageDescription in this mode:
+- FIRST scene (index 0): write a brief imageDescription for an AI-generated intro/title card (e.g. '"${options.styleHint || "Title"}" centered title, dark professional background')
+- LAST scene (final entry in the scenes array): write a brief imageDescription for an AI-generated closing card (e.g. '"Thank You" centered, matching style')
+- ALL other scenes: set imageDescription to "" (empty string) — uploaded assets will be used
+
+Focus entirely on rich, engaging voiceover narration for every scene.`
       : "";
 
     return `You are a professional Video Director and Visual Storyteller. Your task is to transform a text document into a compelling video storyboard.
@@ -185,6 +241,8 @@ ${styleHint}
    - Include composition direction (close-up, wide shot, centered, etc.)
    - Reference concepts from the text but translate them into visual descriptions
 ${audienceHint}
+${slideStyleBlock}
+${assetsOnlyBlock}
 OUTPUT FORMAT (strict JSON):
 {
   "title": "string — video title derived from the document",
@@ -209,24 +267,36 @@ RULES:
 - Voiceover text should be engaging, conversational, and suitable for text-to-speech.
 - Duration estimates should reflect the voiceover length (roughly ${WORDS_PER_SECOND} words per second).
 - Scenes must follow the document's logical flow — do not rearrange arbitrarily.
-- Each scene's imageDescription should be specific and visually descriptive, not vague.`;
+- Each scene's imageDescription should be specific and visually descriptive, not vague.
+- If the user has provided VISUAL ASSETS (images or videos) with descriptions, naturally reference what those assets depict within the voiceover narration at appropriate moments. Treat the asset descriptions as additional context about the topic — weave their content into the script so the narration acknowledges what the viewer will see on screen.`;
   }
 
   /**
    * Build the user prompt containing the source text.
    */
-  private buildUserPrompt(text: string, targetDuration: number): string {
+  private buildUserPrompt(text: string, targetDuration: number, visualAssets?: StoryboardVisualAsset[]): string {
     // Truncate very long texts to avoid token limits
     const maxChars = 30_000;
     const truncatedText = text.length > maxChars
       ? text.substring(0, maxChars) + "\n\n[... document truncated for length ...]"
       : text;
 
+    // Build visual asset context block if assets with descriptions exist
+    let assetBlock = "";
+    if (visualAssets && visualAssets.length > 0) {
+      const assetLines = visualAssets
+        .filter((a) => a.description.trim())
+        .map((a, i) => `  ${i + 1}. [${a.type}] ${a.description.trim()}`);
+      if (assetLines.length > 0) {
+        assetBlock = `\n\n=== USER-PROVIDED VISUAL ASSETS ===\nThe user has uploaded the following images/videos that will be overlaid on the final video.\nTheir descriptions provide additional context about the topic. Naturally weave references to what\nthese assets depict into the voiceover narration at appropriate moments — do NOT simply list them,\nbut incorporate their content as supporting visuals the narrator acknowledges.\n\n${assetLines.join("\n")}\n\n=== END OF VISUAL ASSETS ===`;
+      }
+    }
+
     return `=== SOURCE DOCUMENT ===
 
 ${truncatedText}
 
-=== END OF DOCUMENT ===
+=== END OF DOCUMENT ===${assetBlock}
 
 Target video duration: approximately ${targetDuration.toFixed(0)} seconds.
 Transform this document into a video storyboard following the process described above.
@@ -271,7 +341,7 @@ Output a single JSON object.`;
   /**
    * Validate and transform the raw LLM output into the final Storyboard structure.
    */
-  private buildStoryboard(raw: RawStoryboardOutput, tokensUsed: number): Storyboard {
+  private buildStoryboard(raw: RawStoryboardOutput, tokensUsed: number, slideStyle?: boolean, assetsOnlyMode?: boolean): Storyboard {
     if (!raw.title || typeof raw.title !== "string") {
       throw new Error("Storyboard response missing 'title'");
     }
@@ -296,10 +366,21 @@ Output a single JSON object.`;
         logger.warn(`[StoryboardEngine] Scene ${index} has empty image description`);
       }
 
-      // Prepend the Visual Style Anchor to create the full image prompt
-      const imagePrompt = rawDesc
-        ? `${styleAnchor}. ${rawDesc}`
-        : styleAnchor;
+      // Prepend the Visual Style Anchor to create the full image prompt.
+      // In slide-style mode rawDesc is already a bare directive prompt fragment;
+      // prepend style anchor only — no filler prefix that would dilute the text directive.
+      // In assets-only mode middle scenes have empty rawDesc; leave imagePrompt empty so
+      // the generation loop knows to skip AI generation for those scenes.
+      let imagePrompt: string;
+      if (!rawDesc && assetsOnlyMode) {
+        imagePrompt = "";
+      } else if (slideStyle && rawDesc) {
+        imagePrompt = `${styleAnchor}. ${rawDesc}`;
+      } else {
+        imagePrompt = rawDesc
+          ? `${styleAnchor}. ${rawDesc}`
+          : styleAnchor;
+      }
 
       return {
         index,

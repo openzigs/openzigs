@@ -46,6 +46,10 @@ export interface WizardState {
   imageProvider: ImageProvider;
   /** Step 6 — local sidecar model for image generation */
   imageModel: ImageModel;
+  /** Step 6 — generate PowerPoint-style slides with text rendered into images (cloud only) */
+  slideStyle: boolean;
+  /** Step 6 — use uploaded visual assets for all middle scenes; only AI-generate intro + outro images */
+  assetsOnlyMode: boolean;
   /** Step 6 — render quality/codec settings */
   renderSettings: RenderSettings;
   /** Step 6 (populated after production) */
@@ -147,6 +151,8 @@ export function createInitialState(): WizardState {
     model: "",
     imageProvider: "auto",
     imageModel: "sdxl-turbo",
+    slideStyle: false,
+    assetsOnlyMode: false,
     renderSettings: { quality: "standard", codec: "h264", crf: 23 },
     manifest: null,
     renderJobId: null,

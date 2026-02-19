@@ -4,15 +4,16 @@
  * Displays the active TTS engine and provides a one-click switch between
  * Engine A (Kokoro MLX) and Engine B (GPT-SoVITS voice cloning).
  * Shows sidecar health and GPT-SoVITS reachability status.
+ * Includes push-button install and start for GPT-SoVITS (Engine B).
  */
 
 "use client";
 
-import { useState } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { fetchJson } from "@/lib/api";
+import { fetchJson, buildUrl } from "@/lib/api";
 import { showToast } from "@/components/toast";
-import { Cpu, RefreshCw, AlertCircle, CheckCircle2, Radio, ChevronDown, ChevronUp, ExternalLink, Terminal } from "lucide-react";
+import { Cpu, RefreshCw, AlertCircle, CheckCircle2, Radio, ChevronDown, ChevronUp, ExternalLink, Terminal, Download, Play, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -36,43 +37,113 @@ type SwitchResult = {
   status: "already_loaded" | "switched";
 };
 
-// ── EngineToggle Component ───────────────────────────────────────────────────
+type SovitsInstallStatus = {
+  installed: boolean;
+  installing: boolean;
+};
 
-// ── GPT-SoVITS Setup Steps ────────────────────────────────────────────────
-const SETUP_STEPS = [
-  {
-    label: "Run the one-shot installer",
-    cmd: "bash scripts/setup-gptsovits.sh",
-    desc: "Clones GPT-SoVITS and downloads pretrained models (~4 GB). Takes a few minutes.",
-  },
-  {
-    label: "Start the GPT-SoVITS server",
-    cmd: "~/.openzigs/sidecars/gptsovits/start.sh",
-    desc: "Binds to http://127.0.0.1:9880. Keep this terminal open while using Engine B.",
-  },
-  {
-    label: "Refresh and switch to Engine B",
-    cmd: null,
-    desc: "Hit the refresh icon above, then click the GPT-SoVITS card to activate.",
-  },
-];
+// ── SSE log streaming hook ───────────────────────────────────────────────────
 
-// ── CopyButton ────────────────────────────────────────────────────────────
-function CopyButton({ text }: { text: string }) {
-  const [copied, setCopied] = useState(false);
-  const handleCopy = () => {
-    void navigator.clipboard.writeText(text).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    });
-  };
+function useSSEAction(url: string) {
+  const [running, setRunning] = useState(false);
+  const [lines, setLines] = useState<{ line: string; stream: string }[]>([]);
+  const [exitCode, setExitCode] = useState<number | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
+
+  const start = useCallback(() => {
+    setRunning(true);
+    setLines([]);
+    setExitCode(null);
+
+    const controller = new AbortController();
+    abortRef.current = controller;
+
+    fetch(buildUrl(url), {
+      method: "POST",
+      signal: controller.signal,
+    })
+      .then(async (res) => {
+        if (!res.ok) {
+          const txt = await res.text();
+          setLines([{ line: `Error: ${txt}`, stream: "stderr" }]);
+          setRunning(false);
+          return;
+        }
+        const reader = res.body?.getReader();
+        if (!reader) return;
+
+        const decoder = new TextDecoder();
+        let buf = "";
+        let currentEvent = "";
+
+        let done = false;
+        while (!done) {
+          const result = await reader.read();
+          done = result.done;
+          const value = result.value;
+          if (done) break;
+          buf += decoder.decode(value, { stream: true });
+
+          const parts = buf.split("\n");
+          buf = parts.pop() ?? "";
+
+          for (const part of parts) {
+            if (part.startsWith("event: ")) {
+              currentEvent = part.slice(7).trim();
+            } else if (part.startsWith("data: ")) {
+              try {
+                const data = JSON.parse(part.slice(6));
+                if (currentEvent === "done") {
+                  setExitCode(data.code ?? 1);
+                  setRunning(false);
+                } else if (currentEvent === "ready") {
+                  setExitCode(0);
+                  setRunning(false);
+                } else if (data.line) {
+                  setLines((prev) => [...prev, { line: data.line, stream: data.stream }]);
+                }
+              } catch { /* skip invalid JSON */ }
+              currentEvent = "";
+            }
+          }
+        }
+        setRunning(false);
+      })
+      .catch((err) => {
+        if (err instanceof DOMException && err.name === "AbortError") return;
+        setLines((prev) => [...prev, { line: `Connection error: ${String(err)}`, stream: "stderr" }]);
+        setRunning(false);
+      });
+  }, [url]);
+
+  const cancel = useCallback(() => {
+    abortRef.current?.abort();
+    setRunning(false);
+  }, []);
+
+  return { running, lines, exitCode, start, cancel };
+}
+
+// ── LogOutput ─────────────────────────────────────────────────────────────────
+
+function LogOutput({ lines }: { lines: { line: string; stream: string }[] }) {
+  const scrollRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
+  }, [lines.length]);
+
+  if (lines.length === 0) return null;
   return (
-    <button
-      onClick={handleCopy}
-      className="ml-2 shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium border border-border hover:border-primary/40 text-muted-foreground hover:text-foreground transition-colors"
+    <div
+      ref={scrollRef}
+      className="mt-2 max-h-48 overflow-y-auto rounded-md bg-black/60 px-2 py-1.5 font-mono text-[11px] leading-relaxed"
     >
-      {copied ? "copied!" : "copy"}
-    </button>
+      {lines.map((l, i) => (
+        <div key={i} className={l.stream === "stderr" ? "text-red-400" : l.stream === "system" ? "text-amber-400" : "text-zinc-300"}>
+          {l.line}
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -87,6 +158,29 @@ export function EngineToggle() {
     refetchInterval: 15_000,
     retry: false,
   });
+
+  const installStatusQuery = useQuery({
+    queryKey: ["sovits-install-status"],
+    queryFn: () => fetchJson<SovitsInstallStatus>("/api/admin/audio/engine/sovits-install-status"),
+    refetchInterval: 10_000,
+    retry: false,
+  });
+
+  const installer = useSSEAction("/api/admin/audio/engine/install-sovits");
+  const starter = useSSEAction("/api/admin/audio/engine/start-sovits");
+
+  // Auto-refresh engine status + install status when installer/starter completes
+  useEffect(() => {
+    if (installer.exitCode === 0) {
+      void queryClient.invalidateQueries({ queryKey: ["sovits-install-status"] });
+    }
+  }, [installer.exitCode, queryClient]);
+
+  useEffect(() => {
+    if (starter.exitCode === 0) {
+      void queryClient.invalidateQueries({ queryKey: ["audio-engine-status"] });
+    }
+  }, [starter.exitCode, queryClient]);
 
   const switchMutation = useMutation({
     mutationFn: (engine: "kokoro" | "sovits") =>
@@ -220,7 +314,7 @@ export function EngineToggle() {
             Sidecar {status.ready ? "ready" : status.status}
           </div>
 
-          {/* Engine B setup guide — shown when GPT-SoVITS is not yet running */}
+          {/* Engine B push-button setup — shown when GPT-SoVITS is not yet running */}
           {!status.sovits_reachable && (
             <div className="rounded-lg border border-amber-500/20 bg-amber-950/10">
               <button
@@ -237,33 +331,101 @@ export function EngineToggle() {
               {showSetup && (
                 <div className="border-t border-amber-500/10 px-3 pb-3 pt-2 space-y-3 text-xs text-muted-foreground">
                   <p>
-                    GPT-SoVITS is a voice cloning engine that runs locally. It&apos;s a separate
-                    process — use the steps below to install and start it.
+                    GPT-SoVITS is a voice cloning engine that runs locally. Click below to
+                    install and start it automatically.
                   </p>
                   <p className="text-[11px] text-muted-foreground/70">
                     Requirements: Python 3.9+, ~4 GB disk, ~8 GB RAM, Apple Silicon or CUDA GPU.
                   </p>
 
-                  <ol className="space-y-2">
-                    {SETUP_STEPS.map((step, i) => (
-                      <li key={i} className="space-y-1">
-                        <div className="flex items-center gap-1.5 font-medium text-foreground/80">
-                          <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-amber-500/20 text-amber-400 text-[10px] font-bold">
-                            {i + 1}
-                          </span>
-                          {step.label}
-                        </div>
-                        {step.cmd && (
-                          <div className="ml-5.5 flex items-center rounded-md bg-muted/60 px-2 py-1 font-mono text-[11px] text-foreground">
-                            <span className="mr-1 select-none text-muted-foreground">$</span>
-                            <span className="flex-1 overflow-x-auto">{step.cmd}</span>
-                            <CopyButton text={step.cmd} />
-                          </div>
+                  {/* Step 1: Install */}
+                  <div className="space-y-1.5">
+                    <div className="flex items-center gap-1.5 font-medium text-foreground/80">
+                      <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-amber-500/20 text-amber-400 text-[10px] font-bold">
+                        1
+                      </span>
+                      Install GPT-SoVITS
+                    </div>
+                    {installStatusQuery.data?.installed && !installer.running ? (
+                      <div className="ml-5.5 flex items-center gap-1.5 text-emerald-500 text-[11px]">
+                        <CheckCircle2 className="h-3 w-3" />
+                        Installed
+                      </div>
+                    ) : (
+                      <button
+                        onClick={() => {
+                          installer.start();
+                        }}
+                        disabled={installer.running}
+                        className={cn(
+                          "ml-5.5 flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-[11px] font-medium transition-all",
+                          installer.running
+                            ? "border-amber-500/30 bg-amber-500/10 text-amber-300 cursor-wait"
+                            : "border-amber-500/30 bg-amber-500/10 text-amber-400 hover:bg-amber-500/20 hover:text-amber-300",
                         )}
-                        <p className="ml-5.5 text-[11px] text-muted-foreground/80">{step.desc}</p>
-                      </li>
-                    ))}
-                  </ol>
+                      >
+                        {installer.running ? (
+                          <><Loader2 className="h-3 w-3 animate-spin" />Installing… (this takes a few minutes)</>
+                        ) : installer.exitCode === 0 ? (
+                          <><CheckCircle2 className="h-3 w-3 text-emerald-500" />Installed</>
+                        ) : (
+                          <><Download className="h-3 w-3" />Install GPT-SoVITS (~4 GB)</>
+                        )}
+                      </button>
+                    )}
+                    <LogOutput lines={installer.lines} />
+                  </div>
+
+                  {/* Step 2: Start */}
+                  <div className="space-y-1.5">
+                    <div className="flex items-center gap-1.5 font-medium text-foreground/80">
+                      <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-amber-500/20 text-amber-400 text-[10px] font-bold">
+                        2
+                      </span>
+                      Start GPT-SoVITS server
+                    </div>
+                    <button
+                      onClick={() => {
+                        starter.start();
+                      }}
+                      disabled={starter.running || (!installStatusQuery.data?.installed && installer.exitCode !== 0)}
+                      className={cn(
+                        "ml-5.5 flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-[11px] font-medium transition-all",
+                        starter.running
+                          ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300 cursor-wait"
+                          : (!installStatusQuery.data?.installed && installer.exitCode !== 0)
+                            ? "border-border bg-muted/30 text-muted-foreground/40 cursor-not-allowed"
+                            : "border-emerald-500/30 bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 hover:text-emerald-300",
+                      )}
+                    >
+                      {starter.running ? (
+                        <><Loader2 className="h-3 w-3 animate-spin" />Starting…</>
+                      ) : starter.exitCode === 0 ? (
+                        <><CheckCircle2 className="h-3 w-3 text-emerald-500" />Server ready</>
+                      ) : (
+                        <><Play className="h-3 w-3" />Start server</>
+                      )}
+                    </button>
+                    <LogOutput lines={starter.lines} />
+                    {starter.exitCode === 0 && (
+                      <p className="ml-5.5 text-[11px] text-emerald-500/80">
+                        Server is running! Click the GPT-SoVITS card above to switch.
+                      </p>
+                    )}
+                  </div>
+
+                  {/* Step 3: Switch */}
+                  <div className="space-y-1.5">
+                    <div className="flex items-center gap-1.5 font-medium text-foreground/80">
+                      <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-amber-500/20 text-amber-400 text-[10px] font-bold">
+                        3
+                      </span>
+                      Switch to Engine B
+                    </div>
+                    <p className="ml-5.5 text-[11px] text-muted-foreground/80">
+                      Once the server is ready, click the GPT-SoVITS card above to activate Engine B.
+                    </p>
+                  </div>
 
                   <a
                     href="https://github.com/RVC-Boss/GPT-SoVITS"

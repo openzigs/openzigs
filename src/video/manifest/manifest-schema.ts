@@ -63,7 +63,7 @@ export const VideoClipEntrySchema = z.object({
 
 export const OverlayEntrySchema = z.object({
   type: z.literal("overlay"),
-  component: z.enum(["SmartCaptions", "LowerThird", "LogoWatermark", "ProgressBar"]),
+  component: z.enum(["SmartCaptions", "LowerThird", "LogoWatermark", "ProgressBar", "ImageOverlay"]),
   props: z.record(z.unknown()),
   startAtFrame: z.number().int().min(0),
   duration: z.number().int().min(1).optional(),

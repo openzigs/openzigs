@@ -40,26 +40,33 @@ sep
 echo "  GPT-SoVITS installer for OpenZigs Engine B"
 sep
 
-command -v python3 >/dev/null 2>&1 || err "python3 not found. Install Python 3.9–3.11."
 command -v git     >/dev/null 2>&1 || err "git not found."
 
-PYTHON_VERSION=$(python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
-info "Python version: $PYTHON_VERSION"
+# Find a compatible Python (3.9–3.12). GPT-SoVITS deps don't have wheels for 3.13+.
+PYTHON=""
+for candidate in python3.12 python3.11 python3.10 python3.9 python3; do
+  if command -v "$candidate" >/dev/null 2>&1; then
+    _major=$("$candidate" -c "import sys; print(sys.version_info.major)")
+    _minor=$("$candidate" -c "import sys; print(sys.version_info.minor)")
+    if [[ "$_major" -eq 3 && "$_minor" -ge 9 && "$_minor" -le 12 ]]; then
+      PYTHON="$(command -v "$candidate")"
+      break
+    fi
+  fi
+done
+[[ -z "$PYTHON" ]] && err "No compatible Python 3.9–3.12 found. Install one with: brew install python@3.12"
 
-PY_MAJOR=$(python3 -c "import sys; print(sys.version_info.major)")
-PY_MINOR=$(python3 -c "import sys; print(sys.version_info.minor)")
-if [[ "$PY_MAJOR" -lt 3 ]] || [[ "$PY_MAJOR" -eq 3 && "$PY_MINOR" -lt 9 ]]; then
-  err "Python 3.9+ required (found $PYTHON_VERSION)."
-fi
+PYTHON_VERSION=$("$PYTHON" -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
+info "Using Python $PYTHON_VERSION ($PYTHON)"
 
 # ── Clone repo ───────────────────────────────────────────────────────────────
 
 sep
 if [[ -d "$INSTALL_DIR/.git" ]]; then
-  info "Repo already cloned at $INSTALL_DIR — pulling latest…"
+  info "Repo already cloned at ${INSTALL_DIR} — pulling latest…"
   git -C "$INSTALL_DIR" pull --ff-only
 else
-  info "Cloning GPT-SoVITS into $INSTALL_DIR…"
+  info "Cloning GPT-SoVITS into ${INSTALL_DIR}…"
   mkdir -p "$(dirname "$INSTALL_DIR")"
   git clone --depth 1 "$REPO_URL" "$INSTALL_DIR"
 fi
@@ -69,9 +76,17 @@ ok "Repo ready at $INSTALL_DIR"
 
 sep
 VENV_DIR="$INSTALL_DIR/.venv"
+# If existing venv was created with an incompatible Python, remove it
+if [[ -d "$VENV_DIR" ]]; then
+  EXISTING_PY=$("$VENV_DIR/bin/python" -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')" 2>/dev/null || echo "unknown")
+  if [[ "$EXISTING_PY" != "$PYTHON_VERSION" ]]; then
+    info "Existing venv uses Python $EXISTING_PY (need $PYTHON_VERSION) — recreating…"
+    rm -rf "$VENV_DIR"
+  fi
+fi
 if [[ ! -d "$VENV_DIR" ]]; then
-  info "Creating Python virtual environment…"
-  python3 -m venv "$VENV_DIR"
+  info "Creating Python $PYTHON_VERSION virtual environment…"
+  "$PYTHON" -m venv "$VENV_DIR"
 fi
 ok "Virtual environment ready"
 
@@ -107,28 +122,42 @@ ok "Dependencies installed"
 # ── Download pretrained models ───────────────────────────────────────────────
 
 sep
-info "Downloading pretrained models from Hugging Face (~2 GB)…"
-info "(If this fails due to network restrictions, see README for manual download)"
+info "Downloading pretrained models from Hugging Face (~4.35 GB)…"
+info "(This may take several minutes depending on your connection.)"
 
-# GPT-SoVITS v2 base models
-python3 - <<'PYEOF'
-import os, sys
-try:
-    from huggingface_hub import snapshot_download
-    repo_id = "lj1995/GPT-SoVITS"
-    local_dir = os.path.expanduser("~/.openzigs/sidecars/gptsovits/GPT_SoVITS/pretrained_models")
-    os.makedirs(local_dir, exist_ok=True)
-    snapshot_download(
-        repo_id=repo_id,
-        local_dir=local_dir,
-        ignore_patterns=["*.bin.index.json"],  # skip large unused index files
-    )
-    print("  ✓ Pretrained models downloaded")
-except ImportError:
-    print("  ℹ huggingface_hub not available — models will be downloaded on first TTS request")
-except Exception as e:
-    print(f"  ℹ Model download skipped ({e}) — models will be downloaded on first use")
-PYEOF
+command -v curl >/dev/null 2>&1 || err "curl not found. Install curl first."
+command -v unzip >/dev/null 2>&1 || err "unzip not found. Install unzip first."
+
+PRETRAINED_MODELS_ZIP_URL="https://huggingface.co/XXXXRT/GPT-SoVITS-Pretrained/resolve/main/pretrained_models.zip"
+G2PW_MODEL_ZIP_URL="https://huggingface.co/XXXXRT/GPT-SoVITS-Pretrained/resolve/main/G2PWModel.zip"
+PRETRAINED_ZIP_PATH="$INSTALL_DIR/pretrained_models.zip"
+G2PW_ZIP_PATH="$INSTALL_DIR/G2PWModel.zip"
+
+mkdir -p "$INSTALL_DIR/GPT_SoVITS/pretrained_models"
+
+if [[ ! -f "$INSTALL_DIR/GPT_SoVITS/pretrained_models/gsv-v2final-pretrained/s1bert25hz-5kh-longer-epoch=12-step=369668.ckpt" ]] || [[ ! -f "$INSTALL_DIR/GPT_SoVITS/pretrained_models/gsv-v2final-pretrained/s2G2333k.pth" ]]; then
+  info "Downloading pretrained_models.zip…"
+  curl -L --fail --retry 5 --retry-delay 3 "$PRETRAINED_MODELS_ZIP_URL" -o "$PRETRAINED_ZIP_PATH"
+  info "Extracting pretrained_models.zip…"
+  unzip -q -o "$PRETRAINED_ZIP_PATH" -d "$INSTALL_DIR/GPT_SoVITS"
+  rm -f "$PRETRAINED_ZIP_PATH"
+else
+  info "Core pretrained model files already present — skipping zip download."
+fi
+
+if [[ ! -d "$INSTALL_DIR/GPT_SoVITS/text/G2PWModel" ]]; then
+  info "Downloading G2PWModel.zip…"
+  curl -L --fail --retry 5 --retry-delay 3 "$G2PW_MODEL_ZIP_URL" -o "$G2PW_ZIP_PATH"
+  info "Extracting G2PWModel.zip…"
+  unzip -q -o "$G2PW_ZIP_PATH" -d "$INSTALL_DIR/GPT_SoVITS/text"
+  rm -f "$G2PW_ZIP_PATH"
+else
+  info "G2PWModel already present — skipping."
+fi
+
+[[ -f "$INSTALL_DIR/GPT_SoVITS/pretrained_models/gsv-v2final-pretrained/s1bert25hz-5kh-longer-epoch=12-step=369668.ckpt" ]] || err "Missing GPT-SoVITS checkpoint after download."
+[[ -f "$INSTALL_DIR/GPT_SoVITS/pretrained_models/gsv-v2final-pretrained/s2G2333k.pth" ]] || err "Missing SoVITS checkpoint after download."
+ok "Pretrained models ready"
 
 # ── Write start script ───────────────────────────────────────────────────────
 
@@ -154,8 +183,8 @@ echo "  Press Ctrl-C to stop."
 echo ""
 
 python api_v2.py \
-  --host ${SOVITS_HOST} \
-  --port ${SOVITS_PORT}
+  -a ${SOVITS_HOST} \
+  -p ${SOVITS_PORT}
 STARTEOF
 chmod +x "$START_SCRIPT"
 ok "Start script written: $START_SCRIPT"

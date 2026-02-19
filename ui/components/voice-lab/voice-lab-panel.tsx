@@ -11,7 +11,7 @@
 
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { fetchJson } from "@/lib/api";
 import { showToast } from "@/components/toast";
@@ -28,6 +28,7 @@ import {
   ChevronDown,
   ChevronUp,
   RefreshCw,
+  Square,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -52,6 +53,7 @@ type VoiceProfile = {
   speed_factor: number;
   repetition_penalty: number;
   top_k: number;
+  sample_steps: number;
   created_at: string;
 };
 
@@ -80,6 +82,85 @@ const DEFAULT_FORM: ProfileFormState = {
   top_k: 15,
   sample_steps: 32,
 };
+
+const SOVITS_REF_AUDIO_MIN_SECONDS = 3;
+const SOVITS_REF_AUDIO_MAX_SECONDS = 8;
+
+function parseApiErrorText(raw: string): string {
+  const fallback = raw.trim() || "Request failed.";
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== "object") {
+      return fallback;
+    }
+    const rec = parsed as Record<string, unknown>;
+    const first = rec.error ?? rec.detail ?? rec.message;
+    if (typeof first === "string") {
+      const nested = parseApiErrorText(first);
+      if (nested) {
+        return nested;
+      }
+    }
+    return fallback;
+  } catch {
+    if (fallback.includes("3-10 second range")) {
+      return `Reference audio must be ${SOVITS_REF_AUDIO_MIN_SECONDS}-${SOVITS_REF_AUDIO_MAX_SECONDS} seconds for GPT-SoVITS.`;
+    }
+    return fallback;
+  }
+}
+
+async function getAudioDurationSeconds(file: File): Promise<number> {
+  return await new Promise<number>((resolve, reject) => {
+    const objectUrl = URL.createObjectURL(file);
+    const audio = document.createElement("audio");
+    audio.preload = "metadata";
+
+    audio.onloadedmetadata = () => {
+      const duration = audio.duration;
+      URL.revokeObjectURL(objectUrl);
+      if (!Number.isFinite(duration) || duration <= 0) {
+        reject(new Error("Could not read audio duration."));
+        return;
+      }
+      resolve(duration);
+    };
+
+    audio.onerror = () => {
+      URL.revokeObjectURL(objectUrl);
+      reject(new Error("Could not read audio metadata."));
+    };
+
+    audio.src = objectUrl;
+  });
+}
+
+type ScriptLength = "5s" | "8s";
+
+const RECOMMENDED_REF_SCRIPT: Record<string, Record<ScriptLength, string>> = {
+  en: {
+    "5s": "This is my voice sample. I speak clearly and naturally.",
+    "8s": "This is my voice sample. I speak clearly, naturally, and with steady volume and pace.",
+  },
+  zh: {
+    "5s": "你好，这是我的语音样本。我会清晰自然地说话。",
+    "8s": "你好，这是我的语音样本。我会清晰自然地说话，并保持稳定的音量和语速。",
+  },
+  ja: {
+    "5s": "こんにちは。これは私の音声サンプルです。明瞭に自然に話します。",
+    "8s": "こんにちは。これは私の音声サンプルです。明瞭に自然に話し、音量と速さを安定させます。",
+  },
+  ko: {
+    "5s": "안녕하세요. 이것은 제 음성 샘플입니다. 또렷하고 자연스럽게 말합니다.",
+    "8s": "안녕하세요. 이것은 제 음성 샘플입니다. 또렷하고 자연스럽게 말하며 음량과 속도를 일정하게 유지합니다.",
+  },
+};
+
+const ALL_SAMPLE_SCRIPTS = new Set(
+  Object.values(RECOMMENDED_REF_SCRIPT).flatMap((scriptByLength) =>
+    Object.values(scriptByLength),
+  ),
+);
 
 // ── Sub-components ───────────────────────────────────────────────────────────
 
@@ -226,6 +307,21 @@ function ProfileForm({
     createMutation.mutate({ ...form, ref_audio_path: uploadedPath });
   };
 
+  const scriptByLanguage = RECOMMENDED_REF_SCRIPT[form.language] ?? RECOMMENDED_REF_SCRIPT.en;
+  const [scriptLength, setScriptLength] = useState<ScriptLength>("8s");
+  const recommendedScript = scriptByLanguage[scriptLength];
+
+  useEffect(() => {
+    setForm((prev) => {
+      const isEmpty = prev.ref_text.trim().length === 0;
+      const wasSample = ALL_SAMPLE_SCRIPTS.has(prev.ref_text);
+      if (!isEmpty && !wasSample) {
+        return prev;
+      }
+      return { ...prev, ref_text: recommendedScript };
+    });
+  }, [recommendedScript]);
+
   const SliderField = ({
     label,
     field,
@@ -278,12 +374,59 @@ function ProfileForm({
         <label className="block text-xs text-muted-foreground mb-1">
           Reference Transcript <span className="text-muted-foreground/60">(optional but improves quality)</span>
         </label>
+        <div className="mb-2 rounded-lg border border-border/60 bg-muted/20 p-2.5">
+          <div className="mb-1.5 flex items-center justify-between">
+            <p className="text-[11px] text-muted-foreground">
+              Recommended script (5–8s works best for GPT-SoVITS)
+            </p>
+            <div className="flex items-center gap-1.5">
+              {(["5s", "8s"] as const).map((len) => (
+                <button
+                  key={len}
+                  type="button"
+                  onClick={() => setScriptLength(len)}
+                  className={cn(
+                    "rounded-md border px-2 py-0.5 text-[11px] transition-colors",
+                    scriptLength === len
+                      ? "border-primary/40 bg-primary/10 text-primary font-medium"
+                      : "border-border text-muted-foreground hover:border-primary/30 hover:bg-primary/5",
+                  )}
+                >
+                  {len}
+                </button>
+              ))}
+              <button
+                type="button"
+                onClick={() => setForm((f) => ({ ...f, ref_text: recommendedScript }))}
+                className="rounded-md border border-border px-2 py-0.5 text-[11px] text-foreground hover:border-primary/30 hover:bg-primary/5"
+              >
+                Use script
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  void navigator.clipboard.writeText(recommendedScript);
+                  showToast("Sample script copied.", "success");
+                }}
+                className="rounded-md border border-border px-2 py-0.5 text-[11px] text-foreground hover:border-primary/30 hover:bg-primary/5"
+              >
+                Copy
+              </button>
+            </div>
+          </div>
+          <p className="max-h-44 overflow-y-auto text-[12px] leading-relaxed text-muted-foreground/85">
+            {recommendedScript}
+          </p>
+          <p className="mt-1 text-[10px] text-muted-foreground/60">
+            Tips: record in a quiet room, keep a steady mic distance, and read naturally with consistent pace and volume.
+          </p>
+        </div>
         <textarea
           placeholder="Exact words spoken in the reference audio…"
           value={form.ref_text}
           onChange={(e) => setForm((f) => ({ ...f, ref_text: e.target.value }))}
-          rows={2}
-          className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground resize-none focus:outline-none focus:ring-1 focus:ring-primary"
+          rows={6}
+          className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm leading-relaxed text-foreground placeholder:text-muted-foreground resize-y min-h-[132px] focus:outline-none focus:ring-1 focus:ring-primary"
         />
       </div>
 
@@ -374,8 +517,8 @@ function ProfileCard({ profile, onDeleted }: { profile: VoiceProfile; onDeleted:
         body: JSON.stringify({ text: "Hello, this is a voice cloning test." }),
       });
       if (!res.ok) {
-        const err = await res.text();
-        showToast(err || "Test failed.", "error");
+        const errText = await res.text();
+        showToast(parseApiErrorText(errText), "error");
         setTesting(false);
         return;
       }
@@ -390,7 +533,7 @@ function ProfileCard({ profile, onDeleted }: { profile: VoiceProfile; onDeleted:
       };
       void a.play();
     } catch (err) {
-      showToast(String(err), "error");
+      showToast(err instanceof Error ? err.message : "Playback test failed.", "error");
       setTesting(false);
     }
   };
@@ -442,6 +585,14 @@ export function VoiceLabPanel() {
   const [uploadedPath, setUploadedPath] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
+  const [recordingSupported, setRecordingSupported] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordingSeconds, setRecordingSeconds] = useState(0);
+
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const mediaStreamRef = useRef<MediaStream | null>(null);
+  const recordingChunksRef = useRef<BlobPart[]>([]);
+  const recordingTimerRef = useRef<number | null>(null);
 
   const profilesQuery = useQuery({
     queryKey: ["voice-profiles"],
@@ -451,9 +602,32 @@ export function VoiceLabPanel() {
 
   const profiles = profilesQuery.data?.profiles ?? [];
 
+  useEffect(() => {
+    setRecordingSupported(typeof window !== "undefined" && typeof MediaRecorder !== "undefined");
+    return () => {
+      if (recordingTimerRef.current) {
+        window.clearInterval(recordingTimerRef.current);
+      }
+      mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
+    };
+  }, []);
+
   const handleFileUpload = async (file: File) => {
     setUploading(true);
     try {
+      const durationSeconds = await getAudioDurationSeconds(file);
+      if (
+        durationSeconds < SOVITS_REF_AUDIO_MIN_SECONDS
+        || durationSeconds > SOVITS_REF_AUDIO_MAX_SECONDS
+      ) {
+        const rounded = Math.round(durationSeconds * 10) / 10;
+        showToast(
+          `Reference audio is ${rounded}s. GPT-SoVITS requires ${SOVITS_REF_AUDIO_MIN_SECONDS}-${SOVITS_REF_AUDIO_MAX_SECONDS}s.`,
+          "error",
+        );
+        return;
+      }
+
       const arrayBuffer = await file.arrayBuffer();
       const res = await fetch("/api/admin/audio/upload/ref-audio", {
         method: "POST",
@@ -464,16 +638,92 @@ export function VoiceLabPanel() {
         body: arrayBuffer,
       });
       if (!res.ok) {
-        const err = await res.text();
-        throw new Error(err);
+        const errText = await res.text();
+        throw new Error(parseApiErrorText(errText));
       }
       const data = (await res.json()) as { filePath: string };
       setUploadedPath(data.filePath);
       showToast("Reference audio uploaded!", "success");
     } catch (err) {
-      showToast(String(err), "error");
+      showToast(err instanceof Error ? err.message : "Upload failed.", "error");
     } finally {
       setUploading(false);
+    }
+  };
+
+  const startRecording = async () => {
+    if (!recordingSupported || uploading || isRecording) return;
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      mediaStreamRef.current = stream;
+
+      const preferredMimeTypes = [
+        "audio/webm;codecs=opus",
+        "audio/webm",
+        "audio/mp4",
+        "audio/ogg;codecs=opus",
+      ];
+      const mimeType = preferredMimeTypes.find((candidate) => MediaRecorder.isTypeSupported(candidate));
+      const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+
+      recordingChunksRef.current = [];
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          recordingChunksRef.current.push(event.data);
+        }
+      };
+      recorder.onstop = () => {
+        const blob = new Blob(recordingChunksRef.current, { type: recorder.mimeType || "audio/webm" });
+        if (blob.size === 0) {
+          showToast("Recording is empty. Try again.", "error");
+          setIsRecording(false);
+          setRecordingSeconds(0);
+          mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
+          mediaStreamRef.current = null;
+          return;
+        }
+
+        const ext = blob.type.includes("mp4")
+          ? "m4a"
+          : blob.type.includes("ogg")
+            ? "ogg"
+            : "webm";
+        const file = new File([blob], `reference-recording-${Date.now()}.${ext}`, {
+          type: blob.type || "application/octet-stream",
+        });
+        void handleFileUpload(file);
+
+        mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
+        mediaStreamRef.current = null;
+        setIsRecording(false);
+        setRecordingSeconds(0);
+      };
+
+      mediaRecorderRef.current = recorder;
+      recorder.start();
+      setIsRecording(true);
+      setRecordingSeconds(0);
+      recordingTimerRef.current = window.setInterval(() => {
+        setRecordingSeconds((seconds) => {
+          const next = seconds + 1;
+          if (next >= SOVITS_REF_AUDIO_MAX_SECONDS) {
+            showToast(`Auto-stopped at ${SOVITS_REF_AUDIO_MAX_SECONDS}s — that's plenty for a great voice clone!`, "success");
+            stopRecording();
+          }
+          return next;
+        });
+      }, 1000);
+    } catch (error) {
+      showToast(`Mic access failed: ${String(error)}`, "error");
+    }
+  };
+
+  const stopRecording = () => {
+    if (!mediaRecorderRef.current || mediaRecorderRef.current.state !== "recording") return;
+    mediaRecorderRef.current.stop();
+    if (recordingTimerRef.current) {
+      window.clearInterval(recordingTimerRef.current);
+      recordingTimerRef.current = null;
     }
   };
 
@@ -527,7 +777,7 @@ export function VoiceLabPanel() {
             </p>
 
             {/* Reference audio upload */}
-            <div>
+            <div className="space-y-2">
               <input
                 ref={fileInputRef}
                 type="file"
@@ -542,7 +792,7 @@ export function VoiceLabPanel() {
               <button
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
-                disabled={uploading}
+                disabled={uploading || isRecording}
                 className={cn(
                   "flex w-full items-center justify-center gap-2 rounded-xl border-2 border-dashed border-border py-4 text-sm text-muted-foreground transition-all hover:border-primary/40 hover:bg-primary/4",
                   uploading && "opacity-50",
@@ -556,6 +806,28 @@ export function VoiceLabPanel() {
                   ? "Replace reference audio"
                   : "Upload reference audio (.wav / .mp3)"}
               </button>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => (isRecording ? stopRecording() : void startRecording())}
+                  disabled={!recordingSupported || uploading}
+                  className={cn(
+                    "flex flex-1 items-center justify-center gap-2 rounded-lg border px-3 py-2 text-xs font-medium transition-all",
+                    isRecording
+                      ? "border-primary/40 bg-primary/10 text-primary"
+                      : "border-border text-foreground hover:border-primary/30 hover:bg-primary/5",
+                    (!recordingSupported || uploading) && "cursor-not-allowed opacity-50",
+                  )}
+                >
+                  {isRecording ? <Square className="h-3.5 w-3.5" /> : <Mic className="h-3.5 w-3.5" />}
+                  {isRecording ? `Stop recording (${recordingSeconds}s)` : "Record reference audio"}
+                </button>
+              </div>
+
+              <p className="text-[11px] text-muted-foreground/70">
+                Tip: record 5–8 seconds in a quiet room for the most stable GPT-SoVITS clone.
+              </p>
             </div>
 
             <ProfileForm

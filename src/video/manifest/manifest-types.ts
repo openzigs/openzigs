@@ -73,7 +73,7 @@ export interface VideoClipEntry {
 export interface OverlayEntry {
   type: "overlay";
   /** Which shared component to render */
-  component: "SmartCaptions" | "LowerThird" | "LogoWatermark" | "ProgressBar";
+  component: "SmartCaptions" | "LowerThird" | "LogoWatermark" | "ProgressBar" | "ImageOverlay";
   /** Props passed to the component */
   props: Record<string, unknown>;
   /** Frame number where this overlay starts */

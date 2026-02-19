@@ -84,10 +84,20 @@ const initSchema = (db: Database.Database) => {
       speed_factor REAL NOT NULL DEFAULT 1.0,
       repetition_penalty REAL NOT NULL DEFAULT 1.35,
       top_k INTEGER NOT NULL DEFAULT 15,
+      sample_steps INTEGER NOT NULL DEFAULT 32,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
   `);
+
+  const voiceProfileColumns = db
+    .prepare("PRAGMA table_info(voice_profiles)")
+    .all() as Array<{ name: string }>;
+
+  const hasSampleSteps = voiceProfileColumns.some((col) => col.name === "sample_steps");
+  if (!hasSampleSteps) {
+    db.exec("ALTER TABLE voice_profiles ADD COLUMN sample_steps INTEGER NOT NULL DEFAULT 32");
+  }
 };
 
 /** Create a fresh in-memory database for testing. */

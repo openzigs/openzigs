@@ -36,7 +36,7 @@ export type TitleCardProps = z.infer<typeof TitleCardPropsSchema>;
 
 // ── Overlay Props ─────────────────────────────────────────────
 export const OverlayPropsSchema = z.object({
-  component: z.enum(["SmartCaptions", "LowerThird", "LogoWatermark", "ProgressBar"]),
+  component: z.enum(["SmartCaptions", "LowerThird", "LogoWatermark", "ProgressBar", "ImageOverlay"]),
   props: z.record(z.unknown()),
   startAtFrame: z.number().int().min(0),
   durationInFrames: z.number().int().min(1).optional(),

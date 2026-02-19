@@ -91,6 +91,14 @@ export const DirectorWizard = () => {
     setState((s) => ({ ...s, imageModel }));
   }, []);
 
+  const setSlideStyle = useCallback((slideStyle: boolean) => {
+    setState((s) => ({ ...s, slideStyle }));
+  }, []);
+
+  const setAssetsOnlyMode = useCallback((assetsOnlyMode: boolean) => {
+    setState((s) => ({ ...s, assetsOnlyMode }));
+  }, []);
+
   const setManifest = useCallback((manifest: DirectorManifestSummary) => {
     setState((s) => ({ ...s, manifest }));
   }, []);
@@ -192,6 +200,8 @@ export const DirectorWizard = () => {
             onRenderSettingsChange={setRenderSettings}
             onImageProviderChange={setImageProvider}
             onImageModelChange={setImageModel}
+            onSlideStyleChange={setSlideStyle}
+            onAssetsOnlyModeChange={setAssetsOnlyMode}
           />
         )}
       </div>

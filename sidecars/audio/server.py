@@ -55,6 +55,9 @@ import time
 from contextlib import asynccontextmanager
 from typing import Literal, Optional
 
+import subprocess
+import tempfile
+
 import httpx
 import numpy as np
 import soundfile as sf
@@ -308,12 +311,19 @@ class TTSRequest(BaseModel):
         description="Language code for ref audio and synthesis text — Engine B",
     )
     top_p: float = Field(default=0.8, ge=0.1, le=1.0)
-    temperature: float = Field(default=1.0, ge=0.1, le=2.0)
+    temperature: float = Field(default=0.8, ge=0.1, le=2.0)
     text_split_method: str = Field(default="cut5")
     speed_factor: float = Field(default=1.0, ge=0.5, le=2.0)
     repetition_penalty: float = Field(default=1.35, ge=1.0, le=2.0)
-    top_k: int = Field(default=15, ge=1, le=50)
+    top_k: int = Field(default=12, ge=1, le=50)
     sample_steps: int = Field(default=32, ge=1, le=200)
+    # Quality-enhancing parameters forwarded to GPT-SoVITS
+    fragment_interval: float = Field(default=0.25, ge=0.01, le=1.0)
+    parallel_infer: bool = Field(default=True)
+    split_bucket: bool = Field(default=True)
+    batch_threshold: float = Field(default=0.75, ge=0.1, le=1.0)
+    seed: int = Field(default=-1)
+    super_sampling: bool = Field(default=False)
 
 
 class SwitchEngineRequest(BaseModel):
@@ -394,6 +404,19 @@ app = FastAPI(
 )
 
 
+async def _probe_sovits(url: str, timeout_seconds: float = 2.0) -> bool:
+    """Return True when GPT-SoVITS is reachable over HTTP.
+
+    Probe /docs because api_v2.py does not expose /health.
+    """
+    try:
+        async with httpx.AsyncClient(timeout=timeout_seconds) as client:
+            response = await client.get(f"{url}/docs")
+            return response.status_code < 500
+    except Exception:
+        return False
+
+
 @app.get("/health", response_model=HealthResponse)
 async def health():
     """Readiness probe. Returns model load states and active engine status."""
@@ -401,13 +424,7 @@ async def health():
     status = "loading" if is_loading else ("ok" if _ready else "starting")
 
     # Async probe of GPT-SoVITS reachability (non-blocking, 2s timeout)
-    sovits_reachable = False
-    try:
-        async with httpx.AsyncClient(timeout=2.0) as client:
-            r = await client.get(f"{_sovits_url}/health")
-            sovits_reachable = r.status_code < 400
-    except Exception:
-        pass
+    sovits_reachable = await _probe_sovits(_sovits_url, timeout_seconds=2.0)
 
     return HealthResponse(
         status=status,
@@ -473,18 +490,7 @@ async def switch_engine(req: SwitchEngineRequest):
                 log.info("Unloading Kokoro (Engine A) before activating Engine B ...")
                 _unload_tts()
             # Verify GPT-SoVITS is reachable before committing the switch
-            try:
-                async with httpx.AsyncClient(timeout=5.0) as client:
-                    r = await client.get(f"{_sovits_url}/health")
-                    if r.status_code >= 400:
-                        raise HTTPException(
-                            status_code=502,
-                            detail=(
-                                f"GPT-SoVITS at {_sovits_url} returned HTTP {r.status_code}. "
-                                "Start the GPT-SoVITS server before switching engines."
-                            ),
-                        )
-            except httpx.ConnectError:
+            if not await _probe_sovits(_sovits_url, timeout_seconds=5.0):
                 raise HTTPException(
                     status_code=502,
                     detail=(
@@ -565,6 +571,73 @@ async def _synthesize_kokoro(req: TTSRequest) -> Response:
     )
 
 
+# GPT-SoVITS hard constraint: reference audio must be 3-10 seconds.
+# Trim to 9s (not 10) because GPT-SoVITS uses an exclusive upper bound.
+_SOVITS_REF_MAX_SECONDS = 9
+
+
+def _probe_audio_duration(file_path: str) -> float | None:
+    """Return audio duration in seconds using ffprobe, or None on failure."""
+    try:
+        result = subprocess.run(
+            [
+                "ffprobe", "-v", "error",
+                "-show_entries", "format=duration",
+                "-of", "default=noprint_wrappers=1:nokey=1",
+                file_path,
+            ],
+            capture_output=True, text=True, timeout=10,
+        )
+        if result.returncode != 0:
+            return None
+        duration = float(result.stdout.strip())
+        return duration if duration > 0 else None
+    except Exception:
+        return None
+
+
+def _trim_audio_to_max(file_path: str, max_seconds: float) -> tuple[str, bool]:
+    """Ensure reference audio is WAV format and within max_seconds.
+
+    Non-WAV files (webm, ogg, mp3, etc.) are always converted to WAV via ffmpeg.
+    Files exceeding max_seconds are trimmed to the first max_seconds.
+
+    Returns (path_to_use, is_temp). If is_temp is True the caller must
+    delete the file after use.
+    """
+    is_wav = file_path.lower().endswith(".wav")
+    duration = _probe_audio_duration(file_path)
+    needs_trim = duration is not None and duration > max_seconds
+
+    # WAV files within the limit can be used directly
+    if is_wav and not needs_trim:
+        return file_path, False
+
+    action = []
+    if not is_wav:
+        action.append("converting to WAV")
+    if needs_trim:
+        action.append(f"trimming {duration:.1f}s → {max_seconds}s")
+    log.info(f"[Engine B] Preparing ref audio: {', '.join(action)}")
+
+    fd, tmp_path = tempfile.mkstemp(suffix=".wav")
+    os.close(fd)
+    try:
+        cmd = ["ffmpeg", "-y", "-i", file_path]
+        if needs_trim:
+            cmd += ["-t", str(max_seconds)]
+        cmd += ["-c:a", "pcm_s16le", "-ar", "44100", "-ac", "1", tmp_path]
+        subprocess.run(cmd, capture_output=True, timeout=30, check=True)
+        return tmp_path, True
+    except Exception as e:
+        log.warning(f"[Engine B] Audio preparation failed ({e}), using original file")
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        return file_path, False
+
+
 async def _synthesize_sovits(req: TTSRequest) -> Response:
     """Synthesize with Engine B (GPT-SoVITS via HTTP proxy). Internal helper."""
     if not req.ref_audio_path:
@@ -573,10 +646,13 @@ async def _synthesize_sovits(req: TTSRequest) -> Response:
             detail="ref_audio_path is required when using GPT-SoVITS (Engine B).",
         )
 
+    # Auto-trim long reference audio to satisfy GPT-SoVITS 3-10s constraint
+    ref_path, is_temp = _trim_audio_to_max(req.ref_audio_path, _SOVITS_REF_MAX_SECONDS)
+
     payload = {
         "text": req.text,
         "text_lang": req.ref_language,
-        "ref_audio_path": req.ref_audio_path,
+        "ref_audio_path": ref_path,
         "prompt_text": req.ref_text or "",
         "prompt_lang": req.ref_language,
         "top_k": req.top_k,
@@ -587,12 +663,19 @@ async def _synthesize_sovits(req: TTSRequest) -> Response:
         "speed_factor": req.speed_factor,
         "repetition_penalty": req.repetition_penalty,
         "sample_steps": req.sample_steps,
+        "fragment_interval": req.fragment_interval,
+        "parallel_infer": req.parallel_infer,
+        "split_bucket": req.split_bucket,
+        "batch_threshold": req.batch_threshold,
+        "seed": req.seed,
+        "super_sampling": req.super_sampling,
         "media_type": "wav",
         "streaming_mode": 0,
     }
     log.info(
         f"[Engine B] Proxying TTS to GPT-SoVITS @ {_sovits_url}: "
-        f"text='{req.text[:80]}...' ref={req.ref_audio_path}"
+        f"text='{req.text[:80]}...' ref={ref_path}"
+        f"{' (trimmed)' if is_temp else ''}"
     )
     start = time.monotonic()
     try:
@@ -623,6 +706,12 @@ async def _synthesize_sovits(req: TTSRequest) -> Response:
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Engine B synthesis failed: {str(e)}")
+    finally:
+        if is_temp:
+            try:
+                os.unlink(ref_path)
+            except OSError:
+                pass
 
 
 @app.post("/tts", response_class=Response)

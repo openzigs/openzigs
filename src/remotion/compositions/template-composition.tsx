@@ -27,6 +27,7 @@ import { LogoWatermark } from "../components/logo-watermark";
 import { ProgressBar } from "../components/progress-bar";
 import { VideoClipSegment } from "../components/video-clip-segment";
 import { ImageSceneSegment } from "../components/image-scene-segment";
+import { ImageOverlay } from "../components/image-overlay";
 import { mapTransition } from "../util/transition-mapper";
 
 /**
@@ -203,6 +204,17 @@ function renderOverlay(
           position={(props.position as "top" | "bottom") ?? "bottom"}
         />
       );
+    case "ImageOverlay":
+      return (
+        <ImageOverlay
+          src={props.src as string}
+          position={props.position as import("../components/image-overlay").OverlayPosition | undefined}
+          scale={props.scale as number | undefined}
+          isVideo={props.isVideo as boolean | undefined}
+          fadeFrames={props.fadeFrames as number | undefined}
+          durationInFrames={item.durationInFrames}
+        />
+      );
     default:
       return null;
   }
@@ -213,9 +225,18 @@ function renderOverlay(
  * Supports ducking: when enabled and voiceover is present, music volume
  * is reduced to 20% of its configured level after the voiceover starts.
  */
-const AudioLayer: React.FC<{ audio: CompositionInputProps["audio"] }> = ({ audio }) => {
+const AudioLayer: React.FC<{ audio: CompositionInputProps["audio"]; timeline: CompositionInputProps["timeline"] }> = ({ audio, timeline }) => {
   const { durationInFrames } = useVideoConfig();
   const frame = useCurrentFrame();
+
+  const isNarrationActiveAtFrame = () => {
+    return timeline.some((item) => (
+      item.type === "image_scene"
+      && Boolean(item.voiceover)
+      && frame >= item.startAtFrame
+      && frame < item.startAtFrame + item.durationInFrames
+    ));
+  };
 
   // Calculate effective music volume with ducking and fade support
   const getMusicVolume = () => {
@@ -223,18 +244,13 @@ const AudioLayer: React.FC<{ audio: CompositionInputProps["audio"] }> = ({ audio
 
     let vol = audio.music.volume;
 
-    // Ducking: reduce volume when voiceover is playing
-    if (audio.music.ducking && audio.voiceover) {
-      const voiceoverStart = audio.voiceover.startAtFrame;
-      const duckRampFrames = 10; // 10-frame ramp for smooth ducking
-      if (frame >= voiceoverStart) {
-        const duckFactor = interpolate(
-          frame,
-          [voiceoverStart, voiceoverStart + duckRampFrames],
-          [1, 0.2],
-          { extrapolateLeft: "clamp", extrapolateRight: "clamp" },
-        );
-        vol *= duckFactor;
+    // Ducking: reduce volume when narration is playing.
+    // Supports both global voiceover track and per-scene image narration.
+    if (audio.music.ducking) {
+      const narrationActive = (audio.voiceover && frame >= audio.voiceover.startAtFrame) || isNarrationActiveAtFrame();
+      if (narrationActive) {
+        const DUCK_FACTOR = 0.12;
+        vol *= DUCK_FACTOR;
       }
     }
 
@@ -387,7 +403,7 @@ export const TemplateComposition: React.FC<CompositionInputProps> = (props) => {
       )}
 
       {/* Audio layer */}
-      <AudioLayer audio={audio} />
+      <AudioLayer audio={audio} timeline={timeline} />
     </AbsoluteFill>
   );
 };

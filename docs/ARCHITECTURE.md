@@ -841,6 +841,44 @@ The audio sidecar is a FastAPI Python server that provides **local** speech synt
 
 19 Kokoro voices across 4 languages (American English, British English, Japanese, Chinese) with varied genders and styles (calm, cheerful, professional, expressive, etc.).
 
+#### Reference Audio Processing (Engine B)
+
+When GPT-SoVITS (Engine B) receives a voice cloning request, the audio sidecar applies an automatic preprocessing pipeline to the reference audio before forwarding it to the GPT-SoVITS process. The UI/API now enforce a stricter 3–8s reference audio window (with 5–8s recommended) for more consistent cloning quality.
+
+**Pipeline (`_trim_audio_to_max()` in `sidecars/audio/server.py`):**
+
+```
+Browser recording (.webm, up to 8s)
+    ↓
+POST /tts (engine=sovits, ref_audio_path=...)
+    ↓
+_trim_audio_to_max(file_path, max_seconds=9)
+    ├─ ffprobe: measure duration
+    ├─ ffmpeg: ALWAYS convert non-WAV → PCM WAV (16-bit, 44.1kHz, mono)
+    ├─ ffmpeg -t 9: trim to max seconds if needed
+    └─ Returns (temp_wav_path, is_temp=True)
+    ↓
+_synthesize_sovits(trimmed_wav, text, params)
+    ├─ httpx POST → http://127.0.0.1:9880/tts
+    └─ Returns WAV audio bytes
+    ↓
+finally: delete temp file
+```
+
+**Key constants:**
+
+| Constant | Value | Location | Description |
+|---|---|---|---|
+| `_SOVITS_REF_MAX_SECONDS` | `9` | `sidecars/audio/server.py` | Max reference audio duration. Set to 9 (not 10) because GPT-SoVITS uses an exclusive upper bound on its 10s limit. |
+| `SOVITS_REF_AUDIO_MAX_SECONDS` | `8` | `src/api/audio.ts` | Max recording duration accepted by the Node API (UI-facing limit). |
+
+**GPT-SoVITS runtime dependencies** (installed by `install.sh` or manually):
+
+| Package | Purpose |
+|---|---|
+| `torchcodec` | Audio decoding required by GPT-SoVITS internals |
+| `averaged_perceptron_tagger_eng` (NLTK) | English part-of-speech tagging for text processing |
+
 ### Multimodal Knowledge (Audio/Video RAG)
 
 The knowledge base supports **audio and video ingestion** via the audio sidecar's STT capabilities and **Copilot SDK vision** for keyframe description, enabling RAG over both spoken and visual content.
@@ -1165,8 +1203,10 @@ POST /tts
     │     └─ mlx-audio local inference → WAV bytes
     │
     └─ _active_engine == "sovits" → _synthesize_sovits(req)
-          └─ httpx.AsyncClient POST → {_sovits_url}/tts
-                └─ GPT-SoVITS process → WAV bytes
+          ├─ _trim_audio_to_max(ref_audio, 9s) → convert webm→WAV + trim
+          ├─ httpx.AsyncClient POST → {_sovits_url}/tts
+          │     └─ GPT-SoVITS process → WAV bytes
+          └─ finally: delete temp trimmed file
 ```
 
 #### Health Endpoint
@@ -1218,8 +1258,23 @@ Voice Lab UI
     ├─ CRUD /api/admin/audio/profiles ──▶ SQLite voice_profiles
     │
     └─ POST /api/admin/audio/profiles/:id/test
-          └─ Reads profile → sidecar POST /tts (engine B params) → WAV
+          └─ Reads profile → Node API (no pre-flight duration check)
+                → sidecar POST /tts (engine B params)
+                    → _trim_audio_to_max(ref_audio, 9s)
+                        → webm→WAV conversion + trim
+                    → httpx POST → GPT-SoVITS :9880/tts
+                    → WAV response
 ```
+
+**Process ports (local dev):**
+
+| Process | Port | Started By |
+|---|---|---|
+| Node.js backend | 3000 | `pnpm dev` |
+| Next.js UI | 3001 | `cd ui && pnpm dev` |
+| Image-gen sidecar | 5005 | `scripts/dev-clean.sh` |
+| Audio sidecar | 5006 | `scripts/dev-clean.sh` |
+| GPT-SoVITS (Engine B) | 9880 | `scripts/dev-clean.sh` or `~/.openzigs/sidecars/gptsovits/start.sh` |
 
 ---
 

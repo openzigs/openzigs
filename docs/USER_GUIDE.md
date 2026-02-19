@@ -2760,22 +2760,34 @@ Only one engine is active at a time. Switching engines frees Apple Silicon VRAM 
 3. Click **Switch to Engine B** (or **Switch to Engine A**) to apply.
 4. The toggle shows a loading state while the switch completes (typically 5–15 s).
 
-GPT-SoVITS must be running locally on port 9880 before switching to Engine B. Start it with:
+GPT-SoVITS must be running locally on port 9880 before switching to Engine B. Install and start it with:
 
 ```bash
-# From the GPT-SoVITS installation directory
-python webui.py
+# One-time install (~4 GB download)
+bash scripts/setup-gptsovits.sh
+
+# Install runtime dependencies (torchcodec + NLTK data)
+# This is also run automatically by install.sh if GPT-SoVITS is already installed.
+~/.openzigs/sidecars/gptsovits/.venv/bin/pip install torchcodec
+~/.openzigs/sidecars/gptsovits/.venv/bin/python -c "import nltk; nltk.download('averaged_perceptron_tagger_eng')"
+
+# Start GPT-SoVITS
+~/.openzigs/sidecars/gptsovits/start.sh
 ```
+
+> **Tip:** `scripts/dev-clean.sh` automatically starts GPT-SoVITS alongside the other sidecars if it's installed.
 
 #### Starting the Audio Sidecar
 
-The audio sidecar handles Kokoro TTS and proxies Engine B requests:
+The audio sidecar handles Kokoro TTS and proxies Engine B requests. In most cases, `scripts/dev-clean.sh` starts all sidecars automatically (including passing `--sovits-url` when GPT-SoVITS is detected).
+
+If you need to start it manually:
 
 ```bash
 # Default (Kokoro only, Engine A)
 cd sidecars/audio && python server.py
 
-# With GPT-SoVITS URL override (Engine B support)
+# With GPT-SoVITS URL override (Engine B support — required for voice cloning)
 cd sidecars/audio && python server.py --sovits-url http://127.0.0.1:9880
 
 # Via environment variable
@@ -2788,7 +2800,7 @@ Voice profiles define the cloning parameters for GPT-SoVITS. Each profile refere
 
 **Creating a voice profile:**
 
-1. **Upload reference audio** — In the Voice Lab panel, click **Upload Reference Audio** and select a short WAV or MP3 clip (5–30 seconds of clean speech). The file is stored at `~/.openzigs/director/ref-audio/`.
+1. **Upload reference audio** — In the Voice Lab panel, click **Upload Reference Audio** and select a short WAV or MP3 clip (**3–8 seconds** of clean speech; **5–8 seconds is recommended** for the most stable clone quality). The file is stored at `~/.openzigs/director/ref-audio/`. The audio sidecar automatically converts non-WAV formats (e.g., `.webm` browser recordings) to WAV. You can also record directly in the Voice Lab using the built-in recorder (5s or 8s scripts available).
 2. **Create a profile** — Fill in:
    - **Name** — A unique identifier for the voice profile.
    - **Reference Audio** — Select the uploaded file from the dropdown.
@@ -2800,6 +2812,12 @@ Voice profiles define the cloning parameters for GPT-SoVITS. Each profile refere
 **Testing a profile:**
 
 Click **Test** on any profile card. The sidecar synthesizes a short sample using the profile parameters and plays it in your browser.
+
+**Speech quality tips (Engine B):**
+
+- GPT-SoVITS works best with short, clear sentences.
+- It can struggle with abbreviations, acronyms, and compacted terms (for example: `SRE`, `k8s`, `CI/CD`, `Q4FY26`).
+- For best results, spell out shorthand in the narration text before synthesis.
 
 #### Kokoro Presets (Engine A)
 

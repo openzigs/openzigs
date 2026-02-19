@@ -70,6 +70,7 @@ out/
 .next/
 
 # Sidecar model + cache artifacts (generated at runtime)
+mlx_models/
 sidecars/audio/mlx_models/
 sidecars/audio/.cache/
 sidecars/image-gen/.cache/

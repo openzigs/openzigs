@@ -20,6 +20,7 @@
 import path from "node:path";
 import os from "node:os";
 import fs from "node:fs/promises";
+import { spawn, type ChildProcess } from "node:child_process";
 import { Router, raw } from "express";
 import { nanoid } from "nanoid";
 import Database from "better-sqlite3";
@@ -39,6 +40,7 @@ export interface VoiceProfile {
   speed_factor: number;
   repetition_penalty: number;
   top_k: number;
+  sample_steps: number;
   created_at: string;
   updated_at: string;
 }
@@ -51,6 +53,101 @@ export interface AudioRouterOptions {
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
 const DEFAULT_SIDECAR_URL = "http://127.0.0.1:5006";
+const SOVITS_REF_AUDIO_MIN_SECONDS = 3;
+const SOVITS_REF_AUDIO_MAX_SECONDS = 8;
+
+function parseJsonIfPossible(value: string): unknown {
+  try {
+    return JSON.parse(value);
+  } catch {
+    return value;
+  }
+}
+
+function extractErrorMessage(value: unknown): string | null {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    const parsed = parseJsonIfPossible(trimmed);
+    if (parsed !== value) {
+      return extractErrorMessage(parsed);
+    }
+    return trimmed;
+  }
+
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const record = value as Record<string, unknown>;
+  const keys = ["error", "detail", "message", "Exception", "exception"];
+  for (const key of keys) {
+    const nested = extractErrorMessage(record[key]);
+    if (nested) {
+      return nested;
+    }
+  }
+
+  return null;
+}
+
+function formatSidecarErrorMessage(rawBody: string): string {
+  const parsed = parseJsonIfPossible(rawBody);
+  const extracted = extractErrorMessage(parsed);
+  if (!extracted) {
+    return rawBody.trim() || "Unknown sidecar error";
+  }
+
+  if (extracted.includes("3-10 second range")) {
+    return "Reference audio was auto-trimmed but still rejected by GPT-SoVITS. Try a shorter clip.";
+  }
+
+  return extracted;
+}
+
+async function probeAudioDurationSeconds(filePath: string): Promise<number | null> {
+  return await new Promise<number | null>((resolve) => {
+    const proc = spawn("ffprobe", [
+      "-v",
+      "error",
+      "-show_entries",
+      "format=duration",
+      "-of",
+      "default=noprint_wrappers=1:nokey=1",
+      filePath,
+    ]);
+
+    let stdout = "";
+    let stderr = "";
+
+    proc.stdout?.on("data", (chunk: Buffer) => {
+      stdout += chunk.toString("utf-8");
+    });
+
+    proc.stderr?.on("data", (chunk: Buffer) => {
+      stderr += chunk.toString("utf-8");
+    });
+
+    proc.on("error", (err) => {
+      logger.warn(`[Audio API] ffprobe unavailable for duration check: ${err.message}`);
+      resolve(null);
+    });
+
+    proc.on("close", (code) => {
+      if (code !== 0) {
+        logger.warn(`[Audio API] ffprobe failed for ${filePath}: ${stderr.trim() || `exit code ${code}`}`);
+        resolve(null);
+        return;
+      }
+      const duration = Number.parseFloat(stdout.trim());
+      if (!Number.isFinite(duration) || duration <= 0) {
+        resolve(null);
+        return;
+      }
+      resolve(duration);
+    });
+  });
+}
 
 /**
  * Make a JSON request to the audio sidecar.
@@ -139,6 +236,237 @@ export const createAudioRouter = ({ db, sidecarUrl }: AudioRouterOptions): Route
     }
   });
 
+  // ── GPT-SoVITS Install (push-button from UI) ─────────────────────────────
+
+  /** Singleton guard — only one install process at a time. */
+  let sovitsInstallProc: ChildProcess | null = null;
+
+  /**
+   * GET /engine/sovits-install-status — check whether GPT-SoVITS is installed.
+   * Returns: { installed: boolean }
+   */
+  router.get("/engine/sovits-install-status", async (_req, res) => {
+    const installDir = path.join(os.homedir(), ".openzigs", "sidecars", "gptsovits");
+    try {
+      const requiredPaths = [
+        path.join(installDir, ".git"),
+        path.join(
+          installDir,
+          "GPT_SoVITS",
+          "pretrained_models",
+          "gsv-v2final-pretrained",
+          "s1bert25hz-5kh-longer-epoch=12-step=369668.ckpt",
+        ),
+        path.join(
+          installDir,
+          "GPT_SoVITS",
+          "pretrained_models",
+          "gsv-v2final-pretrained",
+          "s2G2333k.pth",
+        ),
+      ];
+      await Promise.all(requiredPaths.map((pathToCheck) => fs.access(pathToCheck)));
+      res.json({ installed: true, installing: sovitsInstallProc !== null });
+    } catch {
+      res.json({ installed: false, installing: sovitsInstallProc !== null });
+    }
+  });
+
+  /**
+   * POST /engine/install-sovits — run the GPT-SoVITS setup script and stream
+   * output via Server-Sent Events so the UI can show real-time progress.
+   *
+   * The response is `text/event-stream`. Each line of stdout/stderr is sent as
+   * a `data:` event with JSON `{ line, stream }`. A final `event: done` carries
+   * `{ code }` (0 = success).
+   */
+  router.post("/engine/install-sovits", (req, res) => {
+    if (sovitsInstallProc) {
+      res.status(409).json({ error: "Install already in progress." });
+      return;
+    }
+
+    const scriptPath = path.resolve(process.cwd(), "scripts", "setup-gptsovits.sh");
+
+    // SSE headers
+    res.writeHead(200, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      Connection: "keep-alive",
+    });
+
+    const send = (obj: Record<string, unknown>) => {
+      res.write(`data: ${JSON.stringify(obj)}\n\n`);
+    };
+
+    send({ line: "Starting GPT-SoVITS installer…", stream: "system" });
+
+    sovitsInstallProc = spawn("bash", [scriptPath], {
+      cwd: process.cwd(),
+      env: { ...process.env, TERM: "dumb" },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    const handleLine = (stream: "stdout" | "stderr") => (chunk: Buffer) => {
+      const lines = chunk.toString("utf-8").split("\n");
+      for (const line of lines) {
+        if (line.length > 0) send({ line, stream });
+      }
+    };
+
+    sovitsInstallProc.stdout?.on("data", handleLine("stdout"));
+    sovitsInstallProc.stderr?.on("data", handleLine("stderr"));
+
+    sovitsInstallProc.on("close", (code) => {
+      sovitsInstallProc = null;
+      const success = code === 0;
+      logger.info(`[Audio API] GPT-SoVITS install exited with code ${code}`);
+      send({ line: success ? "Installation complete!" : `Install exited with code ${code}`, stream: "system" });
+      res.write(`event: done\ndata: ${JSON.stringify({ code })}\n\n`);
+      res.end();
+    });
+
+    sovitsInstallProc.on("error", (err) => {
+      sovitsInstallProc = null;
+      logger.error(`[Audio API] GPT-SoVITS install spawn error: ${err.message}`);
+      send({ line: `Spawn error: ${err.message}`, stream: "stderr" });
+      res.write(`event: done\ndata: ${JSON.stringify({ code: 1 })}\n\n`);
+      res.end();
+    });
+
+    // If the client disconnects, kill the install process
+    req.on("close", () => {
+      if (sovitsInstallProc) {
+        sovitsInstallProc.kill("SIGTERM");
+        sovitsInstallProc = null;
+      }
+    });
+  });
+
+  // ── GPT-SoVITS Server Lifecycle ───────────────────────────────────────────
+
+  /** Singleton — managed GPT-SoVITS server process. */
+  let sovitsServerProc: ChildProcess | null = null;
+
+  /**
+   * POST /engine/start-sovits — start the GPT-SoVITS API server as a managed
+   * background process. Streams output via SSE until the server is reachable,
+   * then sends `event: ready`.
+   */
+  router.post("/engine/start-sovits", async (_req, res) => {
+    if (sovitsServerProc) {
+      res.status(409).json({ error: "GPT-SoVITS server is already running." });
+      return;
+    }
+
+    const startScript = path.join(os.homedir(), ".openzigs", "sidecars", "gptsovits", "start.sh");
+    try {
+      await fs.access(startScript);
+    } catch {
+      res.status(400).json({ error: "GPT-SoVITS is not installed. Run the installer first." });
+      return;
+    }
+
+    res.writeHead(200, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      Connection: "keep-alive",
+    });
+
+    const send = (obj: Record<string, unknown>) => {
+      res.write(`data: ${JSON.stringify(obj)}\n\n`);
+    };
+
+    send({ line: "Starting GPT-SoVITS server…", stream: "system" });
+
+    sovitsServerProc = spawn("bash", [startScript], {
+      cwd: path.join(os.homedir(), ".openzigs", "sidecars", "gptsovits"),
+      env: { ...process.env, TERM: "dumb" },
+      stdio: ["ignore", "pipe", "pipe"],
+      detached: true,
+    });
+
+    const handleLine = (stream: "stdout" | "stderr") => (chunk: Buffer) => {
+      const lines = chunk.toString("utf-8").split("\n");
+      for (const line of lines) {
+        if (line.length > 0) send({ line, stream });
+      }
+    };
+
+    sovitsServerProc.stdout?.on("data", handleLine("stdout"));
+    sovitsServerProc.stderr?.on("data", handleLine("stderr"));
+
+    // Poll for readiness for up to 120 s.
+    // GPT-SoVITS api_v2.py does not expose /health; probe /docs instead.
+    const sovitsUrl = "http://127.0.0.1:9880";
+    let ready = false;
+    const pollStart = Date.now();
+    const pollInterval = setInterval(async () => {
+      if (ready || Date.now() - pollStart > 120_000) {
+        clearInterval(pollInterval);
+        if (!ready) {
+          send({ line: "Timed out waiting for GPT-SoVITS server to respond.", stream: "stderr" });
+          res.write(`event: done\ndata: ${JSON.stringify({ code: 1 })}\n\n`);
+          res.end();
+        }
+        return;
+      }
+      try {
+        const r = await fetch(`${sovitsUrl}/docs`, { signal: AbortSignal.timeout(2000) });
+        if (r.status < 500) {
+          ready = true;
+          clearInterval(pollInterval);
+          send({ line: `GPT-SoVITS server is ready at ${sovitsUrl}`, stream: "system" });
+          res.write(`event: ready\ndata: ${JSON.stringify({ url: sovitsUrl })}\n\n`);
+          res.end();
+        }
+      } catch {
+        /* not ready yet */
+      }
+    }, 3000);
+
+    sovitsServerProc.on("close", (code) => {
+      sovitsServerProc = null;
+      clearInterval(pollInterval);
+      if (!ready) {
+        send({ line: `GPT-SoVITS server exited with code ${code}`, stream: "stderr" });
+        res.write(`event: done\ndata: ${JSON.stringify({ code: code ?? 1 })}\n\n`);
+        res.end();
+      }
+    });
+
+    sovitsServerProc.on("error", (err) => {
+      sovitsServerProc = null;
+      clearInterval(pollInterval);
+      send({ line: `Spawn error: ${err.message}`, stream: "stderr" });
+      res.write(`event: done\ndata: ${JSON.stringify({ code: 1 })}\n\n`);
+      res.end();
+    });
+
+    // Don't kill the GPT-SoVITS server when the SSE connection closes —
+    // it should keep running. Just unref so Node can exit cleanly.
+    sovitsServerProc.unref();
+  });
+
+  /**
+   * POST /engine/stop-sovits — stop the managed GPT-SoVITS server.
+   */
+  router.post("/engine/stop-sovits", (_req, res) => {
+    if (!sovitsServerProc) {
+      res.json({ stopped: false, message: "No managed GPT-SoVITS process running." });
+      return;
+    }
+    try {
+      sovitsServerProc.kill("SIGTERM");
+      sovitsServerProc = null;
+      logger.info("[Audio API] GPT-SoVITS server stopped by user.");
+      res.json({ stopped: true });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      res.status(500).json({ error: msg });
+    }
+  });
+
   // ── Voice Presets (Engine A / Kokoro) ─────────────────────────────────────
 
   /**
@@ -178,7 +506,7 @@ export const createAudioRouter = ({ db, sidecarUrl }: AudioRouterOptions): Route
   /**
    * POST /profiles — create a new voice profile.
    * Body: { name, ref_audio_path, ref_text?, language?, top_p?, temperature?,
-   *          text_split_method?, speed_factor?, repetition_penalty?, top_k? }
+    *          text_split_method?, speed_factor?, repetition_penalty?, top_k?, sample_steps? }
    */
   router.post("/profiles", (req, res) => {
     const {
@@ -192,6 +520,7 @@ export const createAudioRouter = ({ db, sidecarUrl }: AudioRouterOptions): Route
       speed_factor = 1.0,
       repetition_penalty = 1.35,
       top_k = 15,
+      sample_steps = 32,
     } = req.body as {
       name?: string;
       ref_audio_path?: string;
@@ -203,6 +532,7 @@ export const createAudioRouter = ({ db, sidecarUrl }: AudioRouterOptions): Route
       speed_factor?: number;
       repetition_penalty?: number;
       top_k?: number;
+      sample_steps?: number;
     };
 
     if (!name || typeof name !== "string" || !name.trim()) {
@@ -222,15 +552,15 @@ export const createAudioRouter = ({ db, sidecarUrl }: AudioRouterOptions): Route
         `INSERT INTO voice_profiles
            (id, name, ref_audio_path, ref_text, language,
             top_p, temperature, text_split_method, speed_factor,
-            repetition_penalty, top_k, created_at, updated_at)
+            repetition_penalty, top_k, sample_steps, created_at, updated_at)
          VALUES
            (@id, @name, @ref_audio_path, @ref_text, @language,
             @top_p, @temperature, @text_split_method, @speed_factor,
-            @repetition_penalty, @top_k, @created_at, @updated_at)`,
+            @repetition_penalty, @top_k, @sample_steps, @created_at, @updated_at)`,
       ).run({
         id, name: name.trim(), ref_audio_path, ref_text, language,
         top_p, temperature, text_split_method, speed_factor,
-        repetition_penalty, top_k,
+        repetition_penalty, top_k, sample_steps,
         created_at: now, updated_at: now,
       });
 
@@ -304,7 +634,8 @@ export const createAudioRouter = ({ db, sidecarUrl }: AudioRouterOptions): Route
            name=@name, ref_audio_path=@ref_audio_path, ref_text=@ref_text,
            language=@language, top_p=@top_p, temperature=@temperature,
            text_split_method=@text_split_method, speed_factor=@speed_factor,
-           repetition_penalty=@repetition_penalty, top_k=@top_k, updated_at=@updated_at
+            repetition_penalty=@repetition_penalty, top_k=@top_k,
+            sample_steps=@sample_steps, updated_at=@updated_at
          WHERE id=@id`,
       ).run(merged);
 
@@ -358,6 +689,8 @@ export const createAudioRouter = ({ db, sidecarUrl }: AudioRouterOptions): Route
       const testText: string = (req.body as { text?: string }).text?.trim()
         || "Hello, this is a voice cloning test.";
 
+      // Duration validation removed — sidecar auto-trims long clips for GPT-SoVITS
+
       const payload = {
         text: testText,
         ref_audio_path: profile.ref_audio_path,
@@ -369,7 +702,7 @@ export const createAudioRouter = ({ db, sidecarUrl }: AudioRouterOptions): Route
         speed_factor: profile.speed_factor,
         repetition_penalty: profile.repetition_penalty,
         top_k: profile.top_k,
-        sample_steps: 32,
+        sample_steps: profile.sample_steps,
       };
 
       const url = `${baseUrl}/tts`;
@@ -381,7 +714,9 @@ export const createAudioRouter = ({ db, sidecarUrl }: AudioRouterOptions): Route
 
       if (!audioRes.ok) {
         const errBody = await audioRes.text();
-        res.status(502).json({ error: `Sidecar TTS returned HTTP ${audioRes.status}: ${errBody}` });
+        const sidecarMessage = formatSidecarErrorMessage(errBody);
+        const mappedStatus = audioRes.status >= 400 && audioRes.status < 500 ? 400 : 502;
+        res.status(mappedStatus).json({ error: sidecarMessage });
         return;
       }
 
@@ -432,8 +767,27 @@ export const createAudioRouter = ({ db, sidecarUrl }: AudioRouterOptions): Route
         const filePath = path.join(uploadDir, uniqueName);
         await fs.writeFile(filePath, body);
 
+        const durationSeconds = await probeAudioDurationSeconds(filePath);
+        if (
+          durationSeconds !== null
+          && (durationSeconds < SOVITS_REF_AUDIO_MIN_SECONDS || durationSeconds > SOVITS_REF_AUDIO_MAX_SECONDS)
+        ) {
+          await fs.unlink(filePath).catch(() => undefined);
+          const rounded = Math.round(durationSeconds * 10) / 10;
+          res.status(400).json({
+            error: `Reference audio is ${rounded}s. GPT-SoVITS requires ${SOVITS_REF_AUDIO_MIN_SECONDS}–${SOVITS_REF_AUDIO_MAX_SECONDS}s.`,
+          });
+          return;
+        }
+
         logger.info(`[Audio API] Uploaded ref audio: ${filePath} (${body.length} bytes)`);
-        res.json({ success: true, filePath, fileName: uniqueName, size: body.length });
+        res.json({
+          success: true,
+          filePath,
+          fileName: uniqueName,
+          size: body.length,
+          duration_seconds: durationSeconds,
+        });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         logger.error(`[Audio API] POST /upload/ref-audio failed: ${msg}`);
