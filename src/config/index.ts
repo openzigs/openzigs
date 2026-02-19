@@ -184,6 +184,10 @@ export type VoiceAppConfig = {
   sidecarUrl?: string;
 };
 
+export type PresenterAppConfig = {
+  inviteSecret?: string;
+};
+
 export type AppConfig = {
   server: {
     port: number;
@@ -199,6 +203,7 @@ export type AppConfig = {
   tasks?: TasksConfig;
   session?: SessionConfig;
   copilot?: CopilotConfig;
+  presenter?: PresenterAppConfig;
   sentinel?: SentinelAppConfig;
   knowledge?: KnowledgeAppConfig;
   voice?: VoiceAppConfig;
@@ -387,6 +392,9 @@ const appConfigSchema = z.object({
   tasks: tasksSchema,
   session: sessionSchema,
   copilot: copilotSchema,
+  presenter: z.object({
+    inviteSecret: z.string().optional().default(""),
+  }).optional(),
   sentinel: z.object({
     enabled: z.boolean().optional(),
     model: z.string().optional(),

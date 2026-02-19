@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useEffect, useState } from "react";
 import { ModeToggle } from "@/components/mode-toggle";
 
 const NAV_ITEMS = [
@@ -19,8 +20,17 @@ const NAV_ITEMS = [
   { href: "/presenter", label: "Presenter" },
 ];
 
+const useIsGuest = () => {
+  const [isGuest, setIsGuest] = useState(false);
+  useEffect(() => {
+    setIsGuest(document.cookie.split("; ").some((c) => c === "is_guest=true"));
+  }, []);
+  return isGuest;
+};
+
 export const NavBar = () => {
   const pathname = usePathname();
+  const isGuest = useIsGuest();
 
   return (
     <nav className="sticky top-0 z-40 border-b border-border bg-background/80 backdrop-blur">
@@ -29,22 +39,28 @@ export const NavBar = () => {
           OpenZigs
         </Link>
         <div className="flex items-center gap-1">
-          {NAV_ITEMS.map(({ href, label }) => {
-            const active = href === "/" ? pathname === "/" : pathname.startsWith(href);
-            return (
-              <Link
-                key={href}
-                href={href}
-                className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
-                  active
-                    ? "bg-primary text-primary-foreground"
-                    : "text-muted-foreground hover:bg-accent/10 hover:text-foreground"
-                }`}
-              >
-                {label}
-              </Link>
-            );
-          })}
+          {isGuest ? (
+            <span className="rounded-lg bg-muted px-3 py-1.5 text-xs font-semibold text-muted-foreground">
+              Guest
+            </span>
+          ) : (
+            NAV_ITEMS.map(({ href, label }) => {
+              const active = href === "/" ? pathname === "/" : pathname.startsWith(href);
+              return (
+                <Link
+                  key={href}
+                  href={href}
+                  className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
+                    active
+                      ? "bg-primary text-primary-foreground"
+                      : "text-muted-foreground hover:bg-accent/10 hover:text-foreground"
+                  }`}
+                >
+                  {label}
+                </Link>
+              );
+            })
+          )}
           <ModeToggle />
         </div>
       </div>

@@ -1,10 +1,12 @@
 import "dotenv/config";
 import { createServer } from "node:http";
+import { randomBytes } from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { Server as SocketIOServer } from "socket.io";
 import { nanoid } from "nanoid";
+import { jwtVerify } from "jose";
 import { createApp } from "./app.js";
 import { ChannelManager, DiscordChannel, TelegramChannel, WebChatChannel } from "./channels/index.js";
 import type { MessageChannel } from "./channels/index.js";
@@ -54,6 +56,8 @@ import { generateThumbnail } from "./presenter/thumbnail-generator.js";
 import { TeacherAgent } from "./presenter/teacher-agent.js";
 import { QuizGenerator } from "./presenter/quiz-generator.js";
 import { RenderOrchestrator } from "./video/render-orchestrator.js";
+import { RoomManager } from "./presenter/room-manager.js";
+import { ExpressPeerServer } from "peer";
 
 // Register built-in post-action types (create-github-issues, send-webhook, etc.)
 registerBuiltinPostActions();
@@ -418,8 +422,75 @@ app.use("/api/admin/audio", audioRouterInstance);
 const presentationRepo = new PresentationRepository(db);
 const teacherAgent = new TeacherAgent({ copilotWrapper: copilot, presentationRepo, knowledgeService });
 const quizGenerator = new QuizGenerator({ copilotWrapper: copilot, presentationRepo });
-const presenterRouter = createPresenterRouter({ presentationRepo, teacherAgent, quizGenerator, voiceService, db, copilotWrapper: copilot, knowledgeService });
+
+// Resolve invite secret: use config value, or auto-generate one if empty
+let presenterInviteSecret = (config as Record<string, unknown> & { presenter?: { inviteSecret?: string } }).presenter?.inviteSecret ?? "";
+if (!presenterInviteSecret) {
+  presenterInviteSecret = randomBytes(32).toString("hex");
+  logger.info("Auto-generated presenter invite secret (not persisted — set presenter.inviteSecret in config for stable invites)");
+}
+
+const presenterRouter = createPresenterRouter({
+  presentationRepo,
+  teacherAgent,
+  quizGenerator,
+  voiceService,
+  db,
+  copilotWrapper: copilot,
+  knowledgeService,
+  inviteSecret: presenterInviteSecret,
+  baseUrl: uiOrigin,
+});
 app.use("/api/presentations", presenterRouter);
+
+// ── Public Invite Redeem Route (no auth required) — Issue #283 ──
+app.get("/api/invite/redeem", async (req, res) => {
+  const token = req.query.token;
+  if (!token || typeof token !== "string") {
+    res.status(400).json({ error: "Missing token parameter" });
+    return;
+  }
+
+  try {
+    const secretKey = new TextEncoder().encode(presenterInviteSecret);
+    const { payload } = await jwtVerify(token, secretKey, { algorithms: ["HS256"] });
+
+    const presentationId = payload.presentationId as string | undefined;
+    if (!presentationId || payload.role !== "guest") {
+      res.status(401).json({ error: "Invalid invite token" });
+      return;
+    }
+
+    // Compute max-age from JWT exp
+    const exp = payload.exp ?? 0;
+    const maxAge = Math.max(exp - Math.floor(Date.now() / 1000), 0);
+
+    // Set HttpOnly cookie for auth
+    res.cookie("guest_token", token, {
+      httpOnly: true,
+      sameSite: "strict",
+      path: "/",
+      maxAge: maxAge * 1000,
+      secure: req.protocol === "https",
+    });
+
+    // Set non-HttpOnly cookie for client-side guest detection
+    res.cookie("is_guest", "true", {
+      httpOnly: false,
+      sameSite: "strict",
+      path: "/",
+      maxAge: maxAge * 1000,
+      secure: req.protocol === "https",
+    });
+
+    res.json({ presentationId });
+  } catch (err) {
+    // Clear stale cookies on verification failure
+    res.clearCookie("guest_token", { path: "/" });
+    res.clearCookie("is_guest", { path: "/" });
+    res.status(401).json({ error: "Invalid or expired invite link" });
+  }
+});
 
 // ── Post-Render Ingestion Hook (Presenter Mode) ──
 // When Director Mode finishes rendering, auto-index the presentation into SQLite.
@@ -544,6 +615,9 @@ const tunnel = tunnelConfig?.enabled
     })
   : null;
 
+// ── Multiplayer Room Manager (Issue #284) ──
+const roomManager = new RoomManager();
+
 const httpServer = createServer(app);
 const io = new SocketIOServer(httpServer, {
   cors: {
@@ -552,45 +626,270 @@ const io = new SocketIOServer(httpServer, {
   }
 });
 
+// ── PeerJS Signaling Server (Issue #286) ──
+// Mount PeerJS at /peerjs — path option controls both WS upgrade filtering
+// and HTTP route prefix, so we use app.use() without a mount path to avoid
+// double-prefixing.
+const peerServer = ExpressPeerServer(httpServer, {
+  path: "/peerjs",
+  proxied: true,
+  alive_timeout: 60000,
+  key: "openzigs",
+  allow_discovery: false,
+});
+app.use(peerServer);
+
 io.on("connection", (socket) => {
   socket.emit("status:update", { connected: true });
 
-  // ── Presenter Mode: Teacher Agent Q&A (Issue #279) ──
+  // ── Presenter Mode: Teacher Agent Q&A (Issue #279, #285) ──
+  // Refactored into a named function so it can be called from both
+  // the Socket.IO event handler and the audio-chunk STT handler (#287).
+  const handlePresenterAsk = async (
+    emitter: import("socket.io").Socket,
+    ioServer: SocketIOServer,
+    data: { presentationId: string; question: string; chapterIndex?: number; timestamp?: number },
+  ) => {
+    const roomId = data.presentationId;
+    const room = roomManager.getRoom(roomId);
+    const broadcast = room && room.members.has(emitter.id);
+
+    // Determine emit target: room broadcast or single socket
+    const emit = (event: string, payload: unknown) => {
+      if (broadcast) {
+        ioServer.to(roomId).emit(event, payload);
+      } else {
+        emitter.emit(event, payload);
+      }
+    };
+
+    try {
+      if (broadcast) {
+        roomManager.setFsmState(roomId, "PAUSED_USER_Q");
+        ioServer.to(roomId).emit("room:fsm_state", { fsmState: "PAUSED_USER_Q" });
+      }
+
+      emit("presenter:answer:start", {
+        presentationId: roomId,
+        askedBy: emitter.id,
+        question: data.question,
+      });
+
+      let fullAnswer = "";
+      for await (const token of teacherAgent.ask({
+        presentationId: roomId,
+        question: data.question,
+        chapterIndex: data.chapterIndex ?? 0,
+        timestamp: data.timestamp ?? 0,
+      })) {
+        fullAnswer += token;
+        emit("presenter:answer:token", { token });
+      }
+
+      // Auto-save note
+      try {
+        presentationRepo.insertNote({
+          presentation_id: roomId,
+          question: data.question,
+          answer: fullAnswer,
+          chapter_index: data.chapterIndex ?? 0,
+          timestamp_seconds: data.timestamp ?? 0,
+        });
+        emit("presenter:note:saved", { presentationId: roomId });
+      } catch (noteErr) {
+        logger.warn(`Failed to save presenter note: ${noteErr instanceof Error ? noteErr.message : String(noteErr)}`);
+      }
+
+      emit("presenter:answer:done", { presentationId: roomId });
+
+      if (broadcast) {
+        roomManager.setFsmState(roomId, "PLAYING");
+        ioServer.to(roomId).emit("room:fsm_state", { fsmState: "PLAYING" });
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Unknown error";
+      emit("presenter:answer:error", { error: msg });
+
+      if (broadcast) {
+        roomManager.setFsmState(roomId, "PLAYING");
+        ioServer.to(roomId).emit("room:fsm_state", { fsmState: "PLAYING" });
+      }
+    }
+  };
+
   socket.on("presenter:ask", (data: { presentationId?: string; question?: string; chapterIndex?: number; timestamp?: number }) => {
     if (!data.presentationId || !data.question || typeof data.question !== "string") return;
+    void handlePresenterAsk(socket, io, {
+      presentationId: data.presentationId,
+      question: data.question,
+      chapterIndex: data.chapterIndex ?? 0,
+      timestamp: data.timestamp ?? 0,
+    });
+  });
 
-    void (async () => {
-      try {
-        socket.emit("presenter:answer:start", { presentationId: data.presentationId });
-        let fullAnswer = "";
-        for await (const token of teacherAgent.ask({
-          presentationId: data.presentationId!,
-          question: data.question!,
-          chapterIndex: data.chapterIndex ?? 0,
-          timestamp: data.timestamp ?? 0,
-        })) {
-          fullAnswer += token;
-          socket.emit("presenter:answer:token", { token });
-        }
-        // Auto-save note when answer is complete
-        try {
-          presentationRepo.insertNote({
-            presentation_id: data.presentationId!,
-            question: data.question!,
-            answer: fullAnswer,
-            chapter_index: data.chapterIndex ?? 0,
-            timestamp_seconds: data.timestamp ?? 0,
-          });
-          socket.emit("presenter:note:saved", { presentationId: data.presentationId });
-        } catch (noteErr) {
-          logger.warn(`Failed to save presenter note: ${noteErr instanceof Error ? noteErr.message : String(noteErr)}`);
-        }
-        socket.emit("presenter:answer:done", { presentationId: data.presentationId });
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : "Unknown error";
-        socket.emit("presenter:answer:error", { error: msg });
+  // ── Room Management (Issue #284) ──
+  socket.on("room:join", (data: { presentationId?: string; role?: "host" | "guest" }) => {
+    if (!data.presentationId || !data.role) return;
+    const room = roomManager.createOrJoin(data.presentationId, socket.id, data.role);
+    socket.join(data.presentationId);
+
+    // Notify all room members
+    io.to(data.presentationId).emit("room:member_joined", {
+      socketId: socket.id,
+      role: data.role,
+      memberCount: room.members.size,
+    });
+
+    // Send current room state to the joining socket
+    socket.emit("room:state", {
+      currentTimeSeconds: room.currentTimeSeconds,
+      isPlaying: room.isPlaying,
+      fsmState: room.fsmState,
+    });
+  });
+
+  socket.on("room:leave", (data: { presentationId?: string }) => {
+    if (!data.presentationId) return;
+    const pid = roomManager.leave(socket.id);
+    if (pid) {
+      socket.leave(pid);
+      io.to(pid).emit("room:member_left", {
+        socketId: socket.id,
+        memberCount: roomManager.getMemberCount(pid),
+      });
+      // Broadcast updated peer list
+      io.to(pid).emit("room:peers_updated", { peerIds: roomManager.getPeerIds(pid) });
+    }
+  });
+
+  // ── Playback Sync — host-only writes (Issue #284) ──
+  socket.on("host:play", (data: { presentationId?: string; currentTimeSeconds?: number }) => {
+    if (!data.presentationId || !roomManager.isHost(socket.id)) {
+      if (data.presentationId && !roomManager.isHost(socket.id)) {
+        logger.warn(`Non-host socket ${socket.id} attempted host:play`);
       }
-    })();
+      return;
+    }
+    roomManager.updatePlayback(data.presentationId, {
+      isPlaying: true,
+      currentTimeSeconds: data.currentTimeSeconds ?? 0,
+    });
+    io.to(data.presentationId).emit("room:sync_playback", {
+      isPlaying: true,
+      currentTimeSeconds: data.currentTimeSeconds ?? 0,
+      originSocketId: socket.id,
+    });
+  });
+
+  socket.on("host:pause", (data: { presentationId?: string; currentTimeSeconds?: number }) => {
+    if (!data.presentationId || !roomManager.isHost(socket.id)) {
+      if (data.presentationId && !roomManager.isHost(socket.id)) {
+        logger.warn(`Non-host socket ${socket.id} attempted host:pause`);
+      }
+      return;
+    }
+    roomManager.updatePlayback(data.presentationId, {
+      isPlaying: false,
+      currentTimeSeconds: data.currentTimeSeconds ?? 0,
+    });
+    io.to(data.presentationId).emit("room:sync_playback", {
+      isPlaying: false,
+      currentTimeSeconds: data.currentTimeSeconds ?? 0,
+      originSocketId: socket.id,
+    });
+  });
+
+  socket.on("host:seek", (data: { presentationId?: string; currentTimeSeconds?: number }) => {
+    if (!data.presentationId || !roomManager.isHost(socket.id)) {
+      if (data.presentationId && !roomManager.isHost(socket.id)) {
+        logger.warn(`Non-host socket ${socket.id} attempted host:seek`);
+      }
+      return;
+    }
+    roomManager.updatePlayback(data.presentationId, {
+      currentTimeSeconds: data.currentTimeSeconds ?? 0,
+    });
+    io.to(data.presentationId).emit("room:sync_playback", {
+      isPlaying: roomManager.getRoom(data.presentationId)?.isPlaying ?? false,
+      currentTimeSeconds: data.currentTimeSeconds ?? 0,
+      originSocketId: socket.id,
+    });
+  });
+
+  // ── Peer Discovery (Issue #286) ──
+  socket.on("room:announce_peer", (data: { presentationId?: string; peerId?: string }) => {
+    if (!data.presentationId || !data.peerId) return;
+    roomManager.setPeerId(socket.id, data.peerId);
+    io.to(data.presentationId).emit("room:peers_updated", {
+      peerIds: roomManager.getPeerIds(data.presentationId),
+    });
+  });
+
+  // ── P2P Audio STT Relay (Issue #287) ──
+  const pendingTranscriptions = new Set<string>();
+
+  socket.on("room:audio_chunk", async (data: { presentationId?: string; blob?: ArrayBuffer }) => {
+    if (!data.presentationId || !data.blob) return;
+
+    const room = roomManager.getRoom(data.presentationId);
+    if (!room || !room.members.has(socket.id)) return;
+
+    // Size guard: max 2MB
+    if (data.blob.byteLength > 2 * 1024 * 1024) {
+      logger.warn(`Audio chunk from ${socket.id} exceeds 2MB limit (${data.blob.byteLength} bytes)`);
+      return;
+    }
+
+    // Rate limit: one transcription in-flight per socket
+    if (pendingTranscriptions.has(socket.id)) return;
+    pendingTranscriptions.add(socket.id);
+
+    try {
+      const audioSidecarUrl = config.voice?.sidecarUrl ?? "http://127.0.0.1:5006";
+      const formData = new FormData();
+      formData.append("audio", new Blob([data.blob], { type: "audio/webm" }), "chunk.webm");
+
+      const response = await fetch(`${audioSidecarUrl}/transcribe`, {
+        method: "POST",
+        body: formData,
+      });
+
+      if (!response.ok) {
+        logger.warn(`STT transcription failed: ${response.status}`);
+        return;
+      }
+
+      const { text } = (await response.json()) as { text: string };
+      if (!text?.trim()) return;
+
+      // Show the speaker what was transcribed
+      socket.emit("room:transcription_preview", { text });
+
+      // Feed into the teacher agent Q&A pipeline
+      void handlePresenterAsk(socket, io, {
+        presentationId: data.presentationId,
+        question: text,
+        chapterIndex: 0,
+        timestamp: room.currentTimeSeconds,
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.warn(`Audio chunk transcription error: ${msg}`);
+    } finally {
+      pendingTranscriptions.delete(socket.id);
+    }
+  });
+
+  // ── Disconnect Cleanup ──
+  socket.on("disconnect", () => {
+    const pid = roomManager.leave(socket.id);
+    if (pid) {
+      io.to(pid).emit("room:member_left", {
+        socketId: socket.id,
+        memberCount: roomManager.getMemberCount(pid),
+      });
+      io.to(pid).emit("room:peers_updated", { peerIds: roomManager.getPeerIds(pid) });
+    }
   });
 });
 

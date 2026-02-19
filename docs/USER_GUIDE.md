@@ -3047,6 +3047,126 @@ Real-time streaming for Q&A answers:
 | `presenter:answer:done` | server → client | `{ fullAnswer }` |
 | `presenter:answer:error` | server → client | `{ error }` |
 
+### Multiplayer Watch Parties (P2P)
+
+Issue: [Epic #282](https://github.com/mgcronin/openzigs/issues/282)
+
+Multiplayer extends the solo Presenter experience into a real-time collaborative watch party. A host creates a room backed by a presentation, invites guests via secure JWT links, and all participants watch in sync with P2P voice chat.
+
+#### Screenshots
+
+| View | Screenshot |
+|---|---|
+| Presenter Catalog | ![Presenter list](images/multiplayer-01-presenter-list.png) |
+| Room (Host View) | ![Room host view](images/multiplayer-02-room-host.png) |
+| Invite Expired | ![Invite expired page](images/multiplayer-03-invite-expired.png) |
+| Access Denied (403) | ![403 forbidden page](images/multiplayer-04-403-forbidden.png) |
+
+#### Generating an Invite Link
+
+Hosts generate invite links via the REST API:
+
+```bash
+curl -X POST http://localhost:3000/api/presentations/<id>/invite \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"displayName": "Alice"}'
+```
+
+Response:
+
+```json
+{
+  "inviteUrl": "http://localhost:3001/invite/<jwt>",
+  "expiresAt": "2025-07-19T12:00:00.000Z"
+}
+```
+
+Share the `inviteUrl` with guests. The link is valid for 24 hours.
+
+#### Guest Invite Flow
+
+1. Guest opens the invite URL (`/invite/<token>`)
+2. The invite page calls `GET /api/invite/redeem?token=<jwt>`
+3. The backend verifies the JWT, sets `guest_token` and `is_guest` HttpOnly cookies
+4. Guest is redirected to `/room/<presentationId>`
+5. RBAC middleware restricts guests to `/room/*`, `/invite/*`, `/403`, and `/invite-expired` routes
+
+If the token is expired or invalid, the guest is redirected to `/invite-expired` or `/403`.
+
+#### Room Page
+
+The room page (`/room/[id]`) provides:
+
+- **Synchronized video player** — Host play/pause/seek actions sync all guests within a 1.5s drift tolerance
+- **Member count pill** — Shows number of participants in the room
+- **Voice peers indicator** — Shows connected P2P voice peers count
+- **Push-to-Talk button** — Floating button for voice input (hold-to-talk or click-toggle)
+- **Blackboard overlay** — Q&A answers broadcast to all participants with "Asked by …" attribution
+- **Transcription preview** — Live speech-to-text preview during voice input
+
+#### Host vs Guest Controls
+
+| Action | Host | Guest |
+|---|---|---|
+| Play / Pause / Seek | ✅ Controls synced to room | ❌ Read-only (synced from host) |
+| Raise Hand (Q&A) | ✅ | ✅ |
+| Push-to-Talk (Voice) | ✅ | ✅ |
+| Generate Invite Links | ✅ | ❌ |
+
+#### Push-to-Talk
+
+The PTT button supports two interaction modes:
+
+1. **Hold-to-talk** — Press and hold; release to stop recording
+2. **Click-toggle** — Click once to start, click again to stop
+
+Audio is chunked every 3 seconds and sent via `room:audio_chunk` binary Socket.IO events. The server forwards chunks to the STT sidecar and streams transcription previews back.
+
+#### Multiplayer REST API
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| `POST` | `/api/presentations/:id/invite` | Admin | Generate a 24h invite JWT link |
+| `GET` | `/api/invite/redeem` | Public | Redeem invite token, sets guest cookies |
+
+#### Multiplayer Socket.IO Events
+
+| Event | Direction | Payload | Description |
+|---|---|---|---|
+| `room:join` | client → server | `{ roomId, displayName }` | Join a room |
+| `room:leave` | client → server | — | Leave current room |
+| `room:announce_peer` | client → server | `{ peerId }` | Announce PeerJS peer ID to room |
+| `room:peers_updated` | server → client | `{ peerIds: string[] }` | Updated list of peer IDs in room |
+| `host:play` | client → server | `{ currentTime }` | Host play (host-only) |
+| `host:pause` | client → server | `{ currentTime }` | Host pause (host-only) |
+| `host:seek` | client → server | `{ currentTime }` | Host seek (host-only) |
+| `room:playback_sync` | server → client | `{ action, currentTime }` | Broadcast playback state to guests |
+| `room:audio_chunk` | client → server | `Binary (≤2MB)` | Audio chunk for STT processing |
+| `room:transcription_preview` | server → client | `{ text, speakerName }` | Live transcription text |
+
+#### PeerJS Signaling
+
+The PeerJS signaling server is embedded in the Express backend at `/peerjs` (key: `openzigs`). Client config:
+
+```javascript
+new Peer({ path: "/peerjs", key: "openzigs" })
+```
+
+For remote access (e.g., Cloudflare Tunnel), see [Cloudflare Tunnel for Multiplayer](cloudflare-tunnel-multiplayer.md).
+
+#### Multiplayer Configuration
+
+```json
+{
+  "presenter": {
+    "inviteSecret": ""
+  }
+}
+```
+
+If `inviteSecret` is empty, a random 64-byte hex secret is auto-generated at startup for JWT signing.
+
 ---
 
 ## Configuration Reference

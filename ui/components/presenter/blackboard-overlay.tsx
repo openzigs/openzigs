@@ -14,6 +14,10 @@ interface BlackboardOverlayProps {
   onAsk: (question: string) => void;
   onResume: () => void;
   onTranscribe: (audioBlob: Blob) => Promise<string | null>;
+  /** Socket ID of the person who asked (room mode only) */
+  askedBy?: string;
+  /** The question text asked by another participant (room mode only) */
+  askedQuestion?: string;
 }
 
 export function BlackboardOverlay({
@@ -25,6 +29,8 @@ export function BlackboardOverlay({
   onAsk,
   onResume,
   onTranscribe,
+  askedBy,
+  askedQuestion,
 }: BlackboardOverlayProps) {
   const [input, setInput] = useState("");
   const [isRecording, setIsRecording] = useState(false);
@@ -113,7 +119,19 @@ export function BlackboardOverlay({
 
         {/* Content area */}
         <div className="flex-1 overflow-y-auto px-5 py-4" style={{ maxHeight: "50vh" }}>
-          {!question && !answerTokens && !isTranscribing && (
+          {/* Question attribution banner (room mode) */}
+          {askedBy && askedQuestion && (
+            <div className="mb-3 rounded-lg border border-white/10 bg-indigo-500/10 px-4 py-2">
+              <p className="text-sm text-white/90">
+                💬 &ldquo;{askedQuestion}&rdquo;
+              </p>
+              <p className="mt-0.5 text-[10px] text-white/40">
+                Asked by Guest
+              </p>
+            </div>
+          )}
+
+          {!question && !answerTokens && !isTranscribing && !askedQuestion && (
             <p className="text-sm text-white/50">
               Type your question below, or tap the microphone to speak.
             </p>

@@ -172,6 +172,9 @@
       "timeoutMs": 300000
     }
   },
+  "presenter": {
+    "inviteSecret": ""
+  },
   "sentinel": {
     "enabled": false,
     "model": "gpt-4o-mini",

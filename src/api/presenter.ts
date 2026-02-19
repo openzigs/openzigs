@@ -6,6 +6,7 @@
 import { Router } from "express";
 import fs from "node:fs";
 import path from "node:path";
+import { SignJWT } from "jose";
 import type Database from "better-sqlite3";
 import type { PresentationRepository } from "../presenter/presentation-repository.js";
 import type { TeacherAgent } from "../presenter/teacher-agent.js";
@@ -24,6 +25,8 @@ export interface PresenterRouterDeps {
   db?: Database.Database;
   copilotWrapper?: CopilotWrapper;
   knowledgeService?: KnowledgeIngestionService;
+  inviteSecret?: string;
+  baseUrl?: string;
 }
 
 type VoiceProfileRow = {
@@ -40,7 +43,7 @@ type VoiceProfileRow = {
   sample_steps: number;
 };
 
-export function createPresenterRouter({ presentationRepo, teacherAgent, quizGenerator, voiceService, db, copilotWrapper, knowledgeService }: PresenterRouterDeps): Router {
+export function createPresenterRouter({ presentationRepo, teacherAgent, quizGenerator, voiceService, db, copilotWrapper, knowledgeService, inviteSecret, baseUrl }: PresenterRouterDeps): Router {
   const transcriptClassifier = copilotWrapper ? new TranscriptClassifier(copilotWrapper) : null;
   const router = Router();
 
@@ -453,6 +456,47 @@ export function createPresenterRouter({ presentationRepo, teacherAgent, quizGene
     }
     const count = presentationRepo.deleteNotes(req.params.id);
     res.json({ success: true, deleted: count });
+  });
+
+  // POST /api/presentations/:id/invite — Generate JWT invite link
+  router.post("/:id/invite", async (req, res) => {
+    const presentation = presentationRepo.findById(req.params.id);
+    if (!presentation) {
+      res.status(404).json({ error: "Presentation not found" });
+      return;
+    }
+
+    const secret = inviteSecret || "";
+    if (!secret) {
+      res.status(503).json({ error: "Invite secret not configured. Set presenter.inviteSecret in config." });
+      return;
+    }
+
+    const { ttlHours } = req.body as { ttlHours?: number };
+    const ttl = Math.min(Math.max(ttlHours ?? 24, 1), 168);
+    const expiresAt = new Date(Date.now() + ttl * 60 * 60 * 1000);
+
+    try {
+      const secretKey = new TextEncoder().encode(secret);
+      const token = await new SignJWT({
+        sub: "guest",
+        presentationId: req.params.id,
+        role: "guest",
+      })
+        .setProtectedHeader({ alg: "HS256" })
+        .setIssuedAt()
+        .setExpirationTime(expiresAt)
+        .sign(secretKey);
+
+      const origin = baseUrl || `${req.protocol}://${req.get("host")}`;
+      const inviteUrl = `${origin}/invite/${token}`;
+
+      res.json({ inviteUrl, expiresAt: expiresAt.toISOString() });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Unknown error";
+      logger.error(`Failed to generate invite token: ${msg}`);
+      res.status(500).json({ error: "Failed to generate invite link" });
+    }
   });
 
   return router;
