@@ -9,6 +9,9 @@
 import type { DirectorManifest, TimelineEntry, TitleCardEntry } from "../video/manifest/manifest-types.js";
 import type { Chapter, QuizConfig } from "./presentation-repository.js";
 
+const MIN_CHAPTER_DURATION_FOR_QUIZ_SECONDS = 15;
+const QUIZ_TIMESTAMP_OFFSET_SECONDS = 2;
+
 /**
  * Extract chapters from a Director Manifest's timeline.
  *
@@ -70,10 +73,10 @@ export function computeQuizTimestamps(
 
   for (const chapter of chapters) {
     const duration = chapter.endSeconds - chapter.startSeconds;
-    // Skip chapters shorter than 15 seconds
-    if (duration >= 15) {
-      // Place quiz 2 seconds before chapter end to avoid overlap with title card
-      timestamps.push(Math.max(chapter.startSeconds, chapter.endSeconds - 2));
+    // Skip chapters shorter than the minimum duration
+    if (duration >= MIN_CHAPTER_DURATION_FOR_QUIZ_SECONDS) {
+      // Place quiz slightly before chapter end to avoid overlap with title card
+      timestamps.push(Math.max(chapter.startSeconds, chapter.endSeconds - QUIZ_TIMESTAMP_OFFSET_SECONDS));
     }
   }
 
@@ -120,6 +123,7 @@ function getEntryEndFrame(entry: TimelineEntry): number {
     case "transition":
       return entry.startAtFrame + entry.duration;
     default:
+      console.warn(`[ChapterDetector] Unhandled timeline entry type: ${(entry as { type: string }).type}`);
       return 0;
   }
 }

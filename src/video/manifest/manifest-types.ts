@@ -120,6 +120,8 @@ export interface ImageSceneEntry {
   voiceover?: string;
   /** Volume for the per-scene voiceover (default: 1.0) */
   voiceoverVolume?: number;
+  /** Original narration script text for this scene (used by Presenter Mode transcript) */
+  scriptText?: string;
   /** Ken Burns effect parameters */
   kenBurns?: {
     scaleFrom?: number;

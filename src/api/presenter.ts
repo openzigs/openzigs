@@ -152,11 +152,11 @@ export function createPresenterRouter({ presentationRepo, teacherAgent, quizGene
 
     // Parse JSON fields for the response
     let chapters = [];
-    try { chapters = JSON.parse(presentation.chapters); } catch { /* empty */ }
+    try { chapters = JSON.parse(presentation.chapters); } catch (e) { logger.warn(`[PresenterRouter] Failed to parse chapters for ${req.params.id}:`, e); }
     let scriptJson = [];
-    try { scriptJson = JSON.parse(presentation.script_json); } catch { /* empty */ }
+    try { scriptJson = JSON.parse(presentation.script_json); } catch (e) { logger.warn(`[PresenterRouter] Failed to parse script_json for ${req.params.id}:`, e); }
     let quizConfig = null;
-    try { quizConfig = presentation.quiz_config ? JSON.parse(presentation.quiz_config) : null; } catch { /* empty */ }
+    try { quizConfig = presentation.quiz_config ? JSON.parse(presentation.quiz_config) : null; } catch (e) { logger.warn(`[PresenterRouter] Failed to parse quiz_config for ${req.params.id}:`, e); }
 
     const userChapters = presentationRepo.getUserChapters(req.params.id);
 
@@ -199,6 +199,21 @@ export function createPresenterRouter({ presentationRepo, teacherAgent, quizGene
       quiz_enabled?: boolean;
       quiz_config?: { timestamps: number[]; difficulty: string } | null;
     };
+
+    if (title !== undefined && typeof title !== "string") {
+      res.status(400).json({ error: "title must be a string" });
+      return;
+    }
+    if (quiz_config != null) {
+      if (!Array.isArray(quiz_config.timestamps) || quiz_config.timestamps.some((t) => typeof t !== "number")) {
+        res.status(400).json({ error: "quiz_config.timestamps must be an array of numbers" });
+        return;
+      }
+      if (typeof quiz_config.difficulty !== "string") {
+        res.status(400).json({ error: "quiz_config.difficulty must be a string" });
+        return;
+      }
+    }
 
     presentationRepo.update(req.params.id, {
       title,

@@ -93,6 +93,7 @@ export const ImageSceneEntrySchema = z.object({
   duration: z.number().int().min(1),
   voiceover: z.string().optional(),
   voiceoverVolume: z.number().min(0).max(1).optional(),
+  scriptText: z.string().optional(),
   kenBurns: z.object({
     scaleFrom: z.number().optional(),
     scaleTo: z.number().optional(),

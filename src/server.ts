@@ -443,7 +443,7 @@ renderOrchestrator.on("render:complete", (result: { jobId: string; outputPath: s
       const scriptSegments = manifest.timeline
         .filter((e) => e.type === "image_scene" || e.type === "title_card")
         .map((e) => ({
-          text: e.type === "title_card" ? e.title : "",
+          text: e.type === "title_card" ? e.title : ((e as { scriptText?: string }).scriptText ?? ""),
           startTime: e.startAtFrame / fps,
           endTime: (e.startAtFrame + e.duration) / fps,
         }));

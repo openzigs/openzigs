@@ -3,14 +3,14 @@
  * Issue #276 (SI-1): Extract a frame from a video via ffmpeg for catalog thumbnails.
  */
 
-import { exec } from "node:child_process";
+import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import path from "node:path";
 import os from "node:os";
 import fs from "node:fs";
 import { logger } from "../logging/logger.js";
 
-const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 
 const THUMBNAIL_DIR = path.join(os.homedir(), ".openzigs", "video-output", "thumbnails");
 
@@ -29,8 +29,16 @@ export async function generateThumbnail(
     const seekTime = Math.max(0, durationSeconds * 0.25);
     const outputPath = path.join(THUMBNAIL_DIR, `${presentationId}.jpg`);
 
-    await execAsync(
-      `ffmpeg -ss ${seekTime.toFixed(2)} -i ${JSON.stringify(videoPath)} -vframes 1 -q:v 2 ${JSON.stringify(outputPath)} -y`,
+    await execFileAsync(
+      "ffmpeg",
+      [
+        "-ss", seekTime.toFixed(2),
+        "-i", videoPath,
+        "-vframes", "1",
+        "-q:v", "2",
+        outputPath,
+        "-y",
+      ],
       { timeout: 30_000 },
     );
 

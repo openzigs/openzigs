@@ -1159,6 +1159,8 @@ Respond with ONLY a valid JSON array. No explanation. Example:
             duration: durationInFrames,
             voiceover: sceneVoiceoverPath,
             voiceoverVolume: 1.0,
+            // Preserve the original narration text so Presenter Mode can build transcripts.
+            scriptText: typeof scene.voiceover === "string" ? scene.voiceover : undefined,
             kenBurns: {
               scaleFrom: 1.0,
               scaleTo: 1.15,

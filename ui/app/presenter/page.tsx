@@ -5,6 +5,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { fetchJson } from "@/lib/api";
 import { ToastContainer, showToast } from "@/components/toast";
 import { PresentationCard } from "@/components/presenter/presentation-card";
+import { ConfirmDialog } from "@/components/confirm-dialog";
 
 interface PresentationSummary {
   id: string;
@@ -19,6 +20,7 @@ interface PresentationSummary {
 export default function PresenterPage() {
   const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; title: string } | null>(null);
 
   const presentationsQuery = useQuery({
     queryKey: ["presentations"],
@@ -44,9 +46,7 @@ export default function PresenterPage() {
     : presentations;
 
   const handleDelete = (id: string, title: string) => {
-    if (!confirm(`Remove "${title}" from the catalog? The video file will not be deleted.`))
-      return;
-    deleteMutation.mutate(id);
+    setDeleteTarget({ id, title });
   };
 
   return (
@@ -96,6 +96,19 @@ export default function PresenterPage() {
         </div>
       )}
       <ToastContainer />
+      {deleteTarget && (
+        <ConfirmDialog
+          title="Remove Presentation"
+          message={`Remove "${deleteTarget.title}" from the catalog? The video file will not be deleted.`}
+          confirmLabel="Remove"
+          variant="danger"
+          onConfirm={() => {
+            deleteMutation.mutate(deleteTarget.id);
+            setDeleteTarget(null);
+          }}
+          onCancel={() => setDeleteTarget(null)}
+        />
+      )}
     </main>
   );
 }
