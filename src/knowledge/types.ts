@@ -24,6 +24,8 @@ export type KnowledgeDocument = {
   sourceType: KnowledgeSourceType;
   /** File size in bytes. */
   sizeBytes: number;
+  /** File mtime (ISO-8601) at last successful index — used as a fast pre-conversion change check. */
+  fileMtime?: string;
   /** SHA-256 content hash for change detection. */
   contentHash: string;
   /** Current indexing status. */

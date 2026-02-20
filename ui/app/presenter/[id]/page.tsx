@@ -7,6 +7,7 @@ import { fetchJson, buildUrl } from "@/lib/api";
 import { useSocket } from "@/lib/socket-context";
 import { usePresenterState } from "@/hooks/use-presenter-state";
 import type { QuizQuestion } from "@/hooks/use-presenter-state";
+import { useRoomSync } from "@/hooks/useRoomSync";
 import { InteractivePlayer } from "@/components/presenter/interactive-player";
 import { ChapterList } from "@/components/presenter/chapter-list";
 import { ChapterEditor } from "@/components/presenter/chapter-editor";
@@ -16,6 +17,7 @@ import { QuizOverlay } from "@/components/presenter/quiz-overlay";
 import { BlackboardOverlay } from "@/components/presenter/blackboard-overlay";
 import { RecapScreen } from "@/components/presenter/recap-screen";
 import { ToastContainer } from "@/components/toast";
+import { Check, Users } from "lucide-react";
 
 interface PresentationDetail {
   id: string;
@@ -74,10 +76,34 @@ export default function PresenterPlayerPage() {
     reset,
   } = usePresenterState();
 
+  // Host joins the multiplayer room so playback syncs to guests
+  const { roomState, sendPlay, sendPause, sendSeek } = useRoomSync(id, "host", videoRef);
+
   const [noteSaved, setNoteSaved] = useState(false);
   const ttsPromptPlayedRef = useRef(false);
   const [showChapterEditor, setShowChapterEditor] = useState(false);
   const [userChapters, setUserChapters] = useState<UserChapter[] | null>(null);
+  const [inviting, setInviting] = useState(false);
+  const [inviteCopied, setInviteCopied] = useState(false);
+
+  const handleInvite = useCallback(async () => {
+    if (inviting) return;
+    setInviting(true);
+    try {
+      const data = await fetchJson<{ token: string; inviteUrl: string }>(
+        `/api/presentations/${id}/invite`,
+        { method: "POST" },
+      );
+      const url = `${window.location.origin}/invite/${data.token}`;
+      await navigator.clipboard.writeText(url);
+      setInviteCopied(true);
+      setTimeout(() => setInviteCopied(false), 2500);
+    } catch {
+      // silently ignore
+    } finally {
+      setInviting(false);
+    }
+  }, [id, inviting]);
 
   // Sync userChapters from fetched presentation data (first load only)
   const presentationUserChapters = presentation?.user_chapters ?? [];
@@ -235,6 +261,23 @@ export default function PresenterPlayerPage() {
     enterRecap();
   }, [enterRecap]);
 
+  // Handle host play/pause/seek with room sync
+  const handleVideoPlay = useCallback(() => {
+    play();
+    const video = videoRef.current;
+    if (video) sendPlay(video.currentTime);
+  }, [play, videoRef, sendPlay]);
+
+  const handleVideoPause = useCallback(() => {
+    const video = videoRef.current;
+    if (video) sendPause(video.currentTime);
+  }, [videoRef, sendPause]);
+
+  const handleVideoSeeked = useCallback(() => {
+    const video = videoRef.current;
+    if (video) sendSeek(video.currentTime);
+  }, [videoRef, sendSeek]);
+
   // Seek to chapter
   const handleSeekToChapter = useCallback(
     (chapterIndex: number) => {
@@ -242,8 +285,9 @@ export default function PresenterPlayerPage() {
       if (!video || !chapters[chapterIndex]) return;
       video.currentTime = chapters[chapterIndex].startSeconds;
       if (state.phase === "PLAYING") video.play();
+      sendSeek(chapters[chapterIndex].startSeconds);
     },
-    [videoRef, chapters, state.phase],
+    [videoRef, chapters, state.phase, sendSeek],
   );
 
   if (presentationQuery.isLoading) {
@@ -290,8 +334,18 @@ export default function PresenterPlayerPage() {
             videoUrl={`/api/files/serve?path=${encodeURIComponent(presentation.video_path)}`}
             onTimeUpdate={handleTimeUpdate}
             onEnded={handleVideoEnd}
-            onPlay={play}
+            onPlay={handleVideoPlay}
+            onPause={handleVideoPause}
+            onSeeked={handleVideoSeeked}
           />
+
+          {/* Member count pill (visible when guests join) */}
+          {roomState.memberCount > 1 && (
+            <div className="absolute right-3 top-3 flex items-center gap-1.5 rounded-full bg-black/60 px-3 py-1 text-xs text-white backdrop-blur">
+              <span className="inline-block h-2 w-2 rounded-full bg-green-400" />
+              {roomState.memberCount} watching
+            </div>
+          )}
 
           {/* Raise Hand button */}
           {state.phase === "PLAYING" && (
@@ -327,14 +381,36 @@ export default function PresenterPlayerPage() {
           )}
         </div>
 
-        <h1 className="mt-3 text-lg font-semibold text-foreground">
-          {presentation.title}
-        </h1>
-        <p className="text-xs text-muted-foreground">
-          {Math.round(presentation.duration_seconds)}s &middot;{" "}
-          {new Date(presentation.created_at).toLocaleDateString()}
-          {presentation.quiz_enabled && " · Quizzes enabled"}
-        </p>
+        <div className="mt-3 flex items-start justify-between gap-2">
+          <div>
+            <h1 className="text-lg font-semibold text-foreground">
+              {presentation.title}
+            </h1>
+            <p className="text-xs text-muted-foreground">
+              {Math.round(presentation.duration_seconds)}s &middot;{" "}
+              {new Date(presentation.created_at).toLocaleDateString()}
+              {presentation.quiz_enabled && " · Quizzes enabled"}
+            </p>
+          </div>
+          <button
+            onClick={handleInvite}
+            disabled={inviting}
+            title="Copy invite link for watch party"
+            className="flex shrink-0 items-center gap-1.5 rounded-xl border border-border bg-card px-3 py-1.5 text-xs font-medium text-foreground transition hover:border-primary/50 hover:text-primary disabled:opacity-50"
+          >
+            {inviteCopied ? (
+              <>
+                <Check className="h-3.5 w-3.5 text-emerald-500" />
+                <span className="text-emerald-500">Copied!</span>
+              </>
+            ) : (
+              <>
+                <Users className="h-3.5 w-3.5" />
+                Invite to Watch
+              </>
+            )}
+          </button>
+        </div>
       </div>
 
       {/* Sidebar — chapters */}

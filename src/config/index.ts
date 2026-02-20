@@ -186,6 +186,7 @@ export type VoiceAppConfig = {
 
 export type PresenterAppConfig = {
   inviteSecret?: string;
+  baseUrl?: string;
 };
 
 export type AppConfig = {
@@ -394,6 +395,7 @@ const appConfigSchema = z.object({
   copilot: copilotSchema,
   presenter: z.object({
     inviteSecret: z.string().optional().default(""),
+    baseUrl: z.string().optional().default(""),
   }).optional(),
   sentinel: z.object({
     enabled: z.boolean().optional(),

@@ -11,6 +11,8 @@ export interface RoomSyncState {
   isPlaying: boolean;
   fsmState: FsmState;
   memberCount: number;
+  /** Role assigned by the server (may differ from what client requested). */
+  assignedRole: RoomRole | null;
 }
 
 /** Drift threshold in seconds — only snap when remote/local differ by more than this */
@@ -27,6 +29,7 @@ export function useRoomSync(
     isPlaying: false,
     fsmState: "PLAYING",
     memberCount: 0,
+    assignedRole: null,
   });
   const joinedRef = useRef(false);
 
@@ -36,8 +39,17 @@ export function useRoomSync(
     socket.emit("room:join", { presentationId, role });
     joinedRef.current = true;
 
-    const onRoomState = (data: { currentTimeSeconds: number; isPlaying: boolean; fsmState: FsmState }) => {
-      setRoomState((prev) => ({ ...prev, ...data }));
+    const onRoomState = (data: {
+      currentTimeSeconds: number;
+      isPlaying: boolean;
+      fsmState: FsmState;
+      assignedRole?: RoomRole;
+    }) => {
+      setRoomState((prev) => ({
+        ...prev,
+        ...data,
+        assignedRole: data.assignedRole ?? prev.assignedRole,
+      }));
       // Sync video to room state on join
       const video = videoRef.current;
       if (video) {
@@ -98,28 +110,29 @@ export function useRoomSync(
     };
   }, [socket, presentationId, role, videoRef]);
 
+  // Any room member can play/pause/seek — server validates membership
   const sendPlay = useCallback(
     (currentTimeSeconds: number) => {
-      if (role !== "host" || !socket) return;
-      socket.emit("host:play", { presentationId, currentTimeSeconds });
+      if (!socket) return;
+      socket.emit("member:play", { presentationId, currentTimeSeconds });
     },
-    [socket, presentationId, role],
+    [socket, presentationId],
   );
 
   const sendPause = useCallback(
     (currentTimeSeconds: number) => {
-      if (role !== "host" || !socket) return;
-      socket.emit("host:pause", { presentationId, currentTimeSeconds });
+      if (!socket) return;
+      socket.emit("member:pause", { presentationId, currentTimeSeconds });
     },
-    [socket, presentationId, role],
+    [socket, presentationId],
   );
 
   const sendSeek = useCallback(
     (currentTimeSeconds: number) => {
-      if (role !== "host" || !socket) return;
-      socket.emit("host:seek", { presentationId, currentTimeSeconds });
+      if (!socket) return;
+      socket.emit("member:seek", { presentationId, currentTimeSeconds });
     },
-    [socket, presentationId, role],
+    [socket, presentationId],
   );
 
   return {

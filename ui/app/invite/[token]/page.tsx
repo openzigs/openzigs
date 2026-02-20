@@ -3,8 +3,6 @@
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 
-const API_BASE = process.env.NEXT_PUBLIC_OPENZIGS_API_BASE ?? "http://localhost:3000";
-
 export default function InviteRedeemPage() {
   const params = useParams<{ token: string }>();
   const router = useRouter();
@@ -15,9 +13,8 @@ export default function InviteRedeemPage() {
 
     const redeem = async () => {
       try {
-        const res = await fetch(`${API_BASE}/api/invite/redeem?token=${encodeURIComponent(params.token)}`, {
-          credentials: "include",
-        });
+        // Use same-origin Next.js API route so the cookie is set on the correct origin
+        const res = await fetch(`/api/invite/redeem?token=${encodeURIComponent(params.token)}`);
 
         if (!res.ok) {
           const body = await res.json().catch(() => ({ error: "Invalid or expired invite link" }));

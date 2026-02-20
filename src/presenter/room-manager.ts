@@ -114,4 +114,14 @@ export class RoomManager {
   getMemberCount(presentationId: string): number {
     return this.rooms.get(presentationId)?.members.size ?? 0;
   }
+
+  /** Check whether a socket is a member of any room. */
+  isMember(socketId: string): boolean {
+    return this.socketToRoom.has(socketId);
+  }
+
+  /** Check whether a socket is a member of a specific room. */
+  isMemberOf(socketId: string, presentationId: string): boolean {
+    return this.socketToRoom.get(socketId) === presentationId;
+  }
 }

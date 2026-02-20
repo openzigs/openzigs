@@ -32,6 +32,9 @@ export const NavBar = () => {
   const pathname = usePathname();
   const isGuest = useIsGuest();
 
+  // Room pages are full-screen presenter views — no nav chrome
+  if (pathname.startsWith("/room/")) return null;
+
   return (
     <nav className="sticky top-0 z-40 border-b border-border bg-background/80 backdrop-blur">
       <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-3">

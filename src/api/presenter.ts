@@ -491,7 +491,7 @@ export function createPresenterRouter({ presentationRepo, teacherAgent, quizGene
       const origin = baseUrl || `${req.protocol}://${req.get("host")}`;
       const inviteUrl = `${origin}/invite/${token}`;
 
-      res.json({ inviteUrl, expiresAt: expiresAt.toISOString() });
+      res.json({ token, inviteUrl, expiresAt: expiresAt.toISOString() });
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Unknown error";
       logger.error(`Failed to generate invite token: ${msg}`);

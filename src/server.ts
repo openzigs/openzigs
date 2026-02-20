@@ -423,13 +423,31 @@ const presentationRepo = new PresentationRepository(db);
 const teacherAgent = new TeacherAgent({ copilotWrapper: copilot, presentationRepo, knowledgeService });
 const quizGenerator = new QuizGenerator({ copilotWrapper: copilot, presentationRepo });
 
-// Resolve invite secret: use config value, or auto-generate one if empty
+// Resolve invite secret: use config value, or auto-generate and persist
 let presenterInviteSecret = (config as Record<string, unknown> & { presenter?: { inviteSecret?: string } }).presenter?.inviteSecret ?? "";
 if (!presenterInviteSecret) {
   presenterInviteSecret = randomBytes(32).toString("hex");
-  logger.info("Auto-generated presenter invite secret (not persisted — set presenter.inviteSecret in config for stable invites)");
+  logger.info("Auto-generated presenter invite secret — persisting to config");
+  // Persist so the secret survives restarts and can be shared with the UI
+  const cfgPath = process.env.OPENZIGS_CONFIG_PATH ?? path.join(os.homedir(), ".openzigs", "config.json");
+  (async () => {
+    try {
+      await fs.mkdir(path.dirname(cfgPath), { recursive: true, mode: 0o700 });
+      let userCfg: Record<string, unknown> = {};
+      try { userCfg = JSON.parse(await fs.readFile(cfgPath, "utf-8")); } catch { /* new file */ }
+      const presenter = (userCfg.presenter && typeof userCfg.presenter === "object")
+        ? (userCfg.presenter as Record<string, unknown>) : {};
+      presenter.inviteSecret = presenterInviteSecret;
+      userCfg.presenter = presenter;
+      await fs.writeFile(cfgPath, JSON.stringify(userCfg, null, 2), { encoding: "utf-8", mode: 0o600 });
+      logger.info("Persisted presenter invite secret to config");
+    } catch (err) {
+      logger.warn(`Failed to persist invite secret: ${err instanceof Error ? err.message : err}`);
+    }
+  })();
 }
 
+const presenterBaseUrl = (config as Record<string, unknown> & { presenter?: { baseUrl?: string } }).presenter?.baseUrl || uiOrigin;
 const presenterRouter = createPresenterRouter({
   presentationRepo,
   teacherAgent,
@@ -439,7 +457,7 @@ const presenterRouter = createPresenterRouter({
   copilotWrapper: copilot,
   knowledgeService,
   inviteSecret: presenterInviteSecret,
-  baseUrl: uiOrigin,
+  baseUrl: presenterBaseUrl,
 });
 app.use("/api/presentations", presenterRouter);
 
@@ -728,23 +746,75 @@ io.on("connection", (socket) => {
   });
 
   // ── Room Management (Issue #284) ──
+  // ── Server-side role enforcement for room:join ──
+  // Parse guest JWT from cookies to determine actual role.
+  // If guest_token cookie exists → force guest role, validate presentationId matches JWT claim.
+  // No guest_token → admin user, allow host role.
+  const resolveRoomRole = (
+    rawCookie: string | undefined,
+    requestedPresentationId: string,
+  ): { role: "host" | "guest"; allowed: boolean } => {
+    if (!rawCookie) return { role: "host", allowed: true };
+
+    // Parse cookies from raw header
+    const cookies: Record<string, string> = {};
+    for (const pair of rawCookie.split(";")) {
+      const [k, ...v] = pair.split("=");
+      if (k) cookies[k.trim()] = v.join("=").trim();
+    }
+    const guestToken = cookies["guest_token"];
+    if (!guestToken) return { role: "host", allowed: true };
+
+    // Decode JWT payload (no crypto — verified at redeem time)
+    try {
+      const parts = guestToken.split(".");
+      if (parts.length !== 3) return { role: "guest", allowed: false };
+      const payload = JSON.parse(Buffer.from(parts[1], "base64url").toString()) as {
+        presentationId?: string;
+        role?: string;
+        exp?: number;
+      };
+      // Check expiry
+      if (payload.exp && payload.exp < Math.floor(Date.now() / 1000)) {
+        return { role: "guest", allowed: false };
+      }
+      // Guest can ONLY join the room for their specific presentation
+      if (payload.presentationId && payload.presentationId !== requestedPresentationId) {
+        logger.warn(`Guest socket tried to join room ${requestedPresentationId} but JWT scoped to ${payload.presentationId}`);
+        return { role: "guest", allowed: false };
+      }
+      return { role: "guest", allowed: true };
+    } catch {
+      return { role: "guest", allowed: false };
+    }
+  };
+
   socket.on("room:join", (data: { presentationId?: string; role?: "host" | "guest" }) => {
-    if (!data.presentationId || !data.role) return;
-    const room = roomManager.createOrJoin(data.presentationId, socket.id, data.role);
+    if (!data.presentationId) return;
+
+    const rawCookie = socket.handshake.headers.cookie;
+    const { role, allowed } = resolveRoomRole(rawCookie, data.presentationId);
+    if (!allowed) {
+      socket.emit("room:error", { error: "Not authorized to join this room" });
+      return;
+    }
+
+    const room = roomManager.createOrJoin(data.presentationId, socket.id, role);
     socket.join(data.presentationId);
 
     // Notify all room members
     io.to(data.presentationId).emit("room:member_joined", {
       socketId: socket.id,
-      role: data.role,
+      role,
       memberCount: room.members.size,
     });
 
-    // Send current room state to the joining socket
+    // Send current room state + server-assigned role to the joining socket
     socket.emit("room:state", {
       currentTimeSeconds: room.currentTimeSeconds,
       isPlaying: room.isPlaying,
       fsmState: room.fsmState,
+      assignedRole: role,
     });
   });
 
@@ -762,58 +832,53 @@ io.on("connection", (socket) => {
     }
   });
 
-  // ── Playback Sync — host-only writes (Issue #284) ──
+  // ── Playback Sync — any room member can play/pause/seek ──
+  // Validates room membership, not host-only. Any participant can control playback.
+  const handleMemberPlayback = (
+    eventName: string,
+    data: { presentationId?: string; currentTimeSeconds?: number },
+    isPlayingOverride?: boolean,
+  ) => {
+    if (!data.presentationId || !roomManager.isMemberOf(socket.id, data.presentationId)) {
+      if (data.presentationId && !roomManager.isMember(socket.id)) {
+        logger.warn(`Non-member socket ${socket.id} attempted ${eventName}`);
+      }
+      return;
+    }
+    const patch: Partial<{ currentTimeSeconds: number; isPlaying: boolean }> = {
+      currentTimeSeconds: data.currentTimeSeconds ?? 0,
+    };
+    if (isPlayingOverride !== undefined) patch.isPlaying = isPlayingOverride;
+    roomManager.updatePlayback(data.presentationId, patch);
+
+    io.to(data.presentationId).emit("room:sync_playback", {
+      isPlaying: isPlayingOverride ?? (roomManager.getRoom(data.presentationId)?.isPlaying ?? false),
+      currentTimeSeconds: data.currentTimeSeconds ?? 0,
+      originSocketId: socket.id,
+    });
+  };
+
+  socket.on("member:play", (data: { presentationId?: string; currentTimeSeconds?: number }) => {
+    handleMemberPlayback("member:play", data, true);
+  });
+
+  socket.on("member:pause", (data: { presentationId?: string; currentTimeSeconds?: number }) => {
+    handleMemberPlayback("member:pause", data, false);
+  });
+
+  socket.on("member:seek", (data: { presentationId?: string; currentTimeSeconds?: number }) => {
+    handleMemberPlayback("member:seek", data);
+  });
+
+  // Legacy aliases for backward compat — same logic as member events
   socket.on("host:play", (data: { presentationId?: string; currentTimeSeconds?: number }) => {
-    if (!data.presentationId || !roomManager.isHost(socket.id)) {
-      if (data.presentationId && !roomManager.isHost(socket.id)) {
-        logger.warn(`Non-host socket ${socket.id} attempted host:play`);
-      }
-      return;
-    }
-    roomManager.updatePlayback(data.presentationId, {
-      isPlaying: true,
-      currentTimeSeconds: data.currentTimeSeconds ?? 0,
-    });
-    io.to(data.presentationId).emit("room:sync_playback", {
-      isPlaying: true,
-      currentTimeSeconds: data.currentTimeSeconds ?? 0,
-      originSocketId: socket.id,
-    });
+    handleMemberPlayback("host:play", data, true);
   });
-
   socket.on("host:pause", (data: { presentationId?: string; currentTimeSeconds?: number }) => {
-    if (!data.presentationId || !roomManager.isHost(socket.id)) {
-      if (data.presentationId && !roomManager.isHost(socket.id)) {
-        logger.warn(`Non-host socket ${socket.id} attempted host:pause`);
-      }
-      return;
-    }
-    roomManager.updatePlayback(data.presentationId, {
-      isPlaying: false,
-      currentTimeSeconds: data.currentTimeSeconds ?? 0,
-    });
-    io.to(data.presentationId).emit("room:sync_playback", {
-      isPlaying: false,
-      currentTimeSeconds: data.currentTimeSeconds ?? 0,
-      originSocketId: socket.id,
-    });
+    handleMemberPlayback("host:pause", data, false);
   });
-
   socket.on("host:seek", (data: { presentationId?: string; currentTimeSeconds?: number }) => {
-    if (!data.presentationId || !roomManager.isHost(socket.id)) {
-      if (data.presentationId && !roomManager.isHost(socket.id)) {
-        logger.warn(`Non-host socket ${socket.id} attempted host:seek`);
-      }
-      return;
-    }
-    roomManager.updatePlayback(data.presentationId, {
-      currentTimeSeconds: data.currentTimeSeconds ?? 0,
-    });
-    io.to(data.presentationId).emit("room:sync_playback", {
-      isPlaying: roomManager.getRoom(data.presentationId)?.isPlaying ?? false,
-      currentTimeSeconds: data.currentTimeSeconds ?? 0,
-      originSocketId: socket.id,
-    });
+    handleMemberPlayback("host:seek", data);
   });
 
   // ── Peer Discovery (Issue #286) ──

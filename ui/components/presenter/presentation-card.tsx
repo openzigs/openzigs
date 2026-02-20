@@ -1,7 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { Clock, Trash2, Brain } from "lucide-react";
+import { Clock, Trash2, Brain, Link2, Check } from "lucide-react";
+import { useState } from "react";
+import { fetchJson } from "@/lib/api";
 
 interface PresentationSummary {
   id: string;
@@ -28,6 +30,27 @@ export function PresentationCard({
 }) {
   const { id, title, thumbnail_path, duration_seconds, quiz_enabled, created_at } =
     presentation;
+  const [inviting, setInviting] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  const handleInvite = async () => {
+    if (inviting) return;
+    setInviting(true);
+    try {
+      const data = await fetchJson<{ token: string; inviteUrl: string }>(
+        `/api/presentations/${id}/invite`,
+        { method: "POST" },
+      );
+      const url = `${window.location.origin}/invite/${data.token}`;
+      await navigator.clipboard.writeText(url);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // silently ignore
+    } finally {
+      setInviting(false);
+    }
+  };
 
   return (
     <div className="group relative overflow-hidden rounded-2xl border border-border bg-card shadow-sm transition hover:border-primary/30 hover:shadow-md">
@@ -73,13 +96,27 @@ export function PresentationCard({
             )}
           </div>
 
-          <button
-            onClick={onDelete}
-            title="Remove from catalog"
-            className="rounded-lg p-1.5 text-muted-foreground opacity-0 transition hover:bg-destructive/10 hover:text-destructive group-hover:opacity-100"
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-          </button>
+          <div className="flex items-center gap-1">
+            <button
+              onClick={handleInvite}
+              title="Copy invite link"
+              disabled={inviting}
+              className="rounded-lg p-1.5 text-muted-foreground opacity-0 transition hover:bg-primary/10 hover:text-primary group-hover:opacity-100 disabled:opacity-40"
+            >
+              {copied ? (
+                <Check className="h-3.5 w-3.5 text-emerald-500" />
+              ) : (
+                <Link2 className="h-3.5 w-3.5" />
+              )}
+            </button>
+            <button
+              onClick={onDelete}
+              title="Remove from catalog"
+              className="rounded-lg p-1.5 text-muted-foreground opacity-0 transition hover:bg-destructive/10 hover:text-destructive group-hover:opacity-100"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </button>
+          </div>
         </div>
       </div>
     </div>

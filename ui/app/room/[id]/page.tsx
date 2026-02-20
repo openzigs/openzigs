@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useCallback, useMemo, useState } from "react";
-import { useParams, useSearchParams } from "next/navigation";
+import { useParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { Mic } from "lucide-react";
 import { fetchJson, buildUrl } from "@/lib/api";
@@ -38,11 +38,15 @@ interface PresentationDetail {
 
 export default function RoomPage() {
   const { id } = useParams<{ id: string }>();
-  const searchParams = useSearchParams();
   const { socket } = useSocket();
 
-  // Determine role: host if ?role=host, else guest (default for invite links)
-  const role: RoomRole = (searchParams.get("role") === "host" ? "host" : "guest");
+  // Guests always get "guest" role — server enforces this via JWT validation.
+  // The ?role query param is intentionally NOT used to prevent role spoofing.
+  const role: RoomRole = "guest";
+
+  // Tap-to-join gate: the guest must click before we load the video.
+  // This provides the user gesture needed for browser autoplay policy.
+  const [hasJoined, setHasJoined] = useState(false);
 
   const presentationQuery = useQuery({
     queryKey: ["presentation", id],
@@ -168,28 +172,22 @@ export default function RoomPage() {
   // Open blackboard when room FSM transitions to PAUSED_USER_Q
   const showBlackboard = state.phase === "PAUSED_USER_Q" || roomState.fsmState === "PAUSED_USER_Q";
 
-  // Handle host play/pause/seek with room sync
+  // Handle play/pause/seek with room sync — any participant can control
   const handleVideoPlay = useCallback(() => {
     play();
-    if (role === "host") {
-      const video = videoRef.current;
-      if (video) sendPlay(video.currentTime);
-    }
-  }, [play, role, videoRef, sendPlay]);
+    const video = videoRef.current;
+    if (video) sendPlay(video.currentTime);
+  }, [play, videoRef, sendPlay]);
 
   const handleVideoPause = useCallback(() => {
-    if (role === "host") {
-      const video = videoRef.current;
-      if (video) sendPause(video.currentTime);
-    }
-  }, [role, videoRef, sendPause]);
+    const video = videoRef.current;
+    if (video) sendPause(video.currentTime);
+  }, [videoRef, sendPause]);
 
   const handleVideoSeeked = useCallback(() => {
-    if (role === "host") {
-      const video = videoRef.current;
-      if (video) sendSeek(video.currentTime);
-    }
-  }, [role, videoRef, sendSeek]);
+    const video = videoRef.current;
+    if (video) sendSeek(video.currentTime);
+  }, [videoRef, sendSeek]);
 
   // Transcribe audio blob via the voice API
   const handleTranscribe = useCallback(async (audioBlob: Blob): Promise<string | null> => {
@@ -235,9 +233,9 @@ export default function RoomPage() {
       if (!video || !chapters[chapterIndex]) return;
       video.currentTime = chapters[chapterIndex].startSeconds;
       if (state.phase === "PLAYING") video.play();
-      if (role === "host") sendSeek(chapters[chapterIndex].startSeconds);
+      sendSeek(chapters[chapterIndex].startSeconds);
     },
-    [videoRef, chapters, state.phase, role, sendSeek],
+    [videoRef, chapters, state.phase, sendSeek],
   );
 
   if (presentationQuery.isLoading) {
@@ -252,6 +250,30 @@ export default function RoomPage() {
     return (
       <main className="flex h-[calc(100vh-4rem)] items-center justify-center">
         <p className="text-sm text-muted-foreground">Presentation not found.</p>
+      </main>
+    );
+  }
+
+  // Tap-to-join interstitial — provides user gesture for autoplay policy
+  if (!hasJoined) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-background">
+        <div className="text-center space-y-6 max-w-md px-6">
+          <h1 className="text-xl font-bold text-foreground">{presentation.title}</h1>
+          <p className="text-sm text-muted-foreground">
+            {Math.round(presentation.duration_seconds)}s &middot;{" "}
+            {presentation.chapters?.length ?? 0} chapters
+          </p>
+          <button
+            onClick={() => setHasJoined(true)}
+            className="rounded-xl bg-primary px-8 py-3 text-sm font-semibold text-primary-foreground transition hover:bg-primary/90"
+          >
+            Tap to Join
+          </button>
+          <p className="text-xs text-muted-foreground">
+            Joining as <span className="capitalize font-medium">Guest</span>
+          </p>
+        </div>
       </main>
     );
   }

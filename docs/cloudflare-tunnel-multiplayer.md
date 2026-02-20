@@ -100,8 +100,28 @@ A successful response (or `101 Switching Protocols` before curl fails to complet
 
 | Symptom | Cause | Fix |
 |---------|-------|-----|
+| Invite URL says `localhost:3000` | `presenter.baseUrl` not set | Set `presenter.baseUrl` in `~/.openzigs/config.json` to your public domain |
+| "Invite Link Invalid" | Secret mismatch after redeploy | Delete `presenter.inviteSecret` from config, restart server |
 | Peers can't connect, all have same ID | `proxied: true` not set | Ensure PeerJS config has `proxied: true` |
 | WebSocket upgrade fails through tunnel | Cloudflare WebSocket not enabled | Enable WebSocket in Cloudflare dashboard (Network → WebSockets) |
 | Audio works locally but not remotely | ICE candidates blocked by NAT | Add a TURN server to `iceServers` config |
 | PeerJS connection times out | `alive_timeout` too low | Increase `alive_timeout` (default: 60000ms) |
 | Stale peers listed after disconnect | Room cleanup not triggering | Check Socket.IO `disconnect` handler calls `roomManager.leave()` |
+
+## Invite Link Configuration
+
+When running behind a Cloudflare Tunnel, set `presenter.baseUrl` in `~/.openzigs/config.json` so invite links use your public domain:
+
+```json
+{
+  "presenter": {
+    "baseUrl": "https://openzigs.example.com"
+  }
+}
+```
+
+Without this, invite URLs will contain `http://localhost:3000` which guests cannot access.
+
+The invite secret (`presenter.inviteSecret`) is auto-generated and persisted to `~/.openzigs/config.json` on first startup. It survives restarts — no manual configuration required.
+
+For the full tunnel setup walkthrough including DNS and Docker Compose, see [USER_GUIDE.md — Cloudflare Tunnel Setup for Invite Links](USER_GUIDE.md#cloudflare-tunnel-setup-for-invite-links).

@@ -3153,7 +3153,7 @@ The PeerJS signaling server is embedded in the Express backend at `/peerjs` (key
 new Peer({ path: "/peerjs", key: "openzigs" })
 ```
 
-For remote access (e.g., Cloudflare Tunnel), see [Cloudflare Tunnel for Multiplayer](cloudflare-tunnel-multiplayer.md).
+For PeerJS signaling and WebSocket details behind a reverse proxy, see [Cloudflare Tunnel for Multiplayer](cloudflare-tunnel-multiplayer.md).
 
 #### Multiplayer Configuration
 
@@ -3165,7 +3165,123 @@ For remote access (e.g., Cloudflare Tunnel), see [Cloudflare Tunnel for Multipla
 }
 ```
 
-If `inviteSecret` is empty, a random 64-byte hex secret is auto-generated at startup for JWT signing.
+If `inviteSecret` is empty, a random 64-byte hex secret is **auto-generated on first startup and persisted** to `~/.openzigs/config.json`. This means:
+
+- You do **not** need to manually configure a secret — one is created automatically
+- The secret survives server restarts (it's saved to the config file)
+- Invite links generated before a restart remain valid
+- If you need to rotate the secret (invalidating all outstanding invite links), delete the `presenter.inviteSecret` key from `~/.openzigs/config.json` and restart
+
+Invite links are JWT tokens signed with HS256 using this secret. Each link includes an expiration claim (default: 24 hours, configurable via `ttlHours` when generating the invite). The link becomes invalid after expiry — guests must request a new invite from the host.
+
+#### Cloudflare Tunnel Setup for Invite Links
+
+When running OpenZigs behind a **Cloudflare Tunnel**, invite links need to point to your public domain instead of `localhost`. This section covers the full setup from zero.
+
+##### Prerequisites
+
+| Requirement | Purpose |
+|---|---|
+| **Cloudflare account** | Free tier is sufficient |
+| **Domain name** | Added to Cloudflare DNS (e.g., `openzigs.example.com`) |
+| **`cloudflared`** | Cloudflare Tunnel daemon ([install guide](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/)) |
+
+##### Step 1 — Create a Cloudflare Tunnel
+
+```bash
+# Authenticate with Cloudflare (opens browser)
+cloudflared tunnel login
+
+# Create a named tunnel
+cloudflared tunnel create openzigs
+
+# Note the tunnel ID printed (e.g., a1b2c3d4-e5f6-...)
+```
+
+##### Step 2 — Configure DNS
+
+```bash
+# Point your subdomain to the tunnel
+cloudflared tunnel route dns openzigs openzigs.example.com
+```
+
+This creates a CNAME record `openzigs.example.com → <tunnel-id>.cfargotunnel.com`.
+
+##### Step 3 — Write the Tunnel Config
+
+Create `~/.cloudflared/config.yml`:
+
+```yaml
+tunnel: <your-tunnel-id>
+credentials-file: ~/.cloudflared/<your-tunnel-id>.json
+
+ingress:
+  - hostname: openzigs.example.com
+    service: http://localhost:3000
+  - service: http_status:404
+```
+
+All traffic — REST API, Socket.IO, PeerJS signaling — goes through the same port. No path-level rules are needed.
+
+##### Step 4 — Configure OpenZigs for the Tunnel
+
+Update `~/.openzigs/config.json` to set the public base URL for invite links:
+
+```json
+{
+  "presenter": {
+    "baseUrl": "https://openzigs.example.com"
+  }
+}
+```
+
+> **Why?** By default the backend uses `req.protocol + req.get("host")` to build invite URLs, which resolves to `http://localhost:3000` behind a reverse proxy. Setting `baseUrl` overrides this so invite links point to your public domain.
+
+##### Step 5 — Start the Tunnel
+
+```bash
+# Run in the foreground (for testing)
+cloudflared tunnel run openzigs
+
+# Or run as a systemd service (Linux, persistent)
+sudo cloudflared service install
+sudo systemctl start cloudflared
+```
+
+##### Step 6 — Verify
+
+1. Start OpenZigs: `pnpm dev`
+2. Generate an invite from the Presenter page (click **Invite to Watch**)
+3. The clipboard should contain a URL like:
+   ```
+   https://openzigs.example.com/invite/<jwt>
+   ```
+4. Open this URL in a different browser / incognito window
+5. You should be redirected to `https://openzigs.example.com/room/<id>` with no navigation bar
+
+##### Docker Compose (Production)
+
+If you use Docker Compose, the tunnel sidecar is already defined in `docker-compose.yml`. Set the `TUNNEL_TOKEN` environment variable:
+
+```bash
+# .env
+TUNNEL_TOKEN=your-cloudflare-tunnel-token
+```
+
+```bash
+docker compose up -d agent tunnel
+```
+
+The tunnel sidecar automatically proxies to the `agent` container on port 3000.
+
+##### Troubleshooting Invite Links Behind Tunnel
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| Invite URL says `localhost:3000` | `baseUrl` not set in config | Add `presenter.baseUrl` to `~/.openzigs/config.json` |
+| "Invite Link Invalid" error | Secret mismatch (redeploy) | Delete `presenter.inviteSecret` from config, restart both backend and frontend |
+| Link works once then fails | Cookie `sameSite` issue | Ensure tunnel uses HTTPS (cookies set `Secure` flag automatically) |
+| Invite link expired | JWT TTL exceeded (default 24h) | Generate a new invite; use `ttlHours` for longer-lived links (max 168h / 7 days) |
 
 ---
 
