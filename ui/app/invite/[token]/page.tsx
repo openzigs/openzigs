@@ -23,7 +23,7 @@ export default function InviteRedeemPage() {
         }
 
         const { presentationId } = await res.json();
-        router.replace(`/room/${presentationId}`);
+        router.replace(`/presenter/${presentationId}`);
       } catch {
         setError("Failed to redeem invite link. Please try again.");
       }

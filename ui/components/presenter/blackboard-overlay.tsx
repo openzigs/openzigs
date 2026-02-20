@@ -14,6 +14,10 @@ interface BlackboardOverlayProps {
   onAsk: (question: string) => void;
   onResume: () => void;
   onTranscribe: (audioBlob: Blob) => Promise<string | null>;
+  /** Called when user wants to ask a follow-up after getting an answer */
+  onFollowUp?: () => void;
+  /** Live transcription from the voice pipe — populates input for user review */
+  voiceTranscription?: string | null;
   /** Socket ID of the person who asked (room mode only) */
   askedBy?: string;
   /** The question text asked by another participant (room mode only) */
@@ -29,6 +33,8 @@ export function BlackboardOverlay({
   onAsk,
   onResume,
   onTranscribe,
+  onFollowUp,
+  voiceTranscription,
   askedBy,
   askedQuestion,
 }: BlackboardOverlayProps) {
@@ -37,6 +43,13 @@ export function BlackboardOverlay({
   const [isTranscribing, setIsTranscribing] = useState(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
+  const prevTranscriptionRef = useRef<string | null>(null);
+
+  // When voice pipe produces a new transcription, populate the input for user review
+  if (voiceTranscription && voiceTranscription !== prevTranscriptionRef.current) {
+    prevTranscriptionRef.current = voiceTranscription;
+    setInput(voiceTranscription);
+  }
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -91,8 +104,8 @@ export function BlackboardOverlay({
   const showInput = !question && !isTranscribing;
 
   return (
-    <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/80 backdrop-blur-sm">
-      <div className="mx-4 flex w-full max-w-2xl flex-col rounded-2xl border border-border bg-[#1a1a2e] shadow-xl">
+    <div className="absolute inset-0 z-20 flex items-end justify-center bg-black/80 backdrop-blur-sm sm:items-center">
+      <div className="flex w-full max-h-[85dvh] flex-col rounded-t-2xl border border-white/10 bg-[#1a1a2e] shadow-xl sm:mx-4 sm:max-w-2xl sm:rounded-2xl">
         {/* Header */}
         <div className="flex items-center justify-between border-b border-white/10 px-5 py-3">
           <h3 className="text-sm font-semibold text-white">
@@ -118,7 +131,7 @@ export function BlackboardOverlay({
         </div>
 
         {/* Content area */}
-        <div className="flex-1 overflow-y-auto px-5 py-4" style={{ maxHeight: "50vh" }}>
+        <div className="flex-1 overflow-y-auto px-4 py-3 sm:px-5 sm:py-4" style={{ maxHeight: "50dvh" }}>
           {/* Question attribution banner (room mode) */}
           {askedBy && askedQuestion && (
             <div className="mb-3 rounded-lg border border-white/10 bg-indigo-500/10 px-4 py-2">
@@ -173,13 +186,24 @@ export function BlackboardOverlay({
         {/* Input / Resume */}
         <div className="border-t border-white/10 px-5 py-3">
           {isDone ? (
-            <button
-              onClick={onResume}
-              className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-semibold text-primary-foreground hover:bg-primary/90"
-            >
-              <Play className="h-4 w-4" />
-              Resume Video
-            </button>
+            <div className="flex flex-col gap-2">
+              <div className="flex gap-2">
+                <button
+                  onClick={() => onFollowUp?.()}
+                  className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-white/20 bg-white/5 px-4 py-2.5 text-sm font-medium text-white hover:bg-white/10"
+                >
+                  <Send className="h-4 w-4" />
+                  Ask Another Question
+                </button>
+                <button
+                  onClick={onResume}
+                  className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-semibold text-primary-foreground hover:bg-primary/90"
+                >
+                  <Play className="h-4 w-4" />
+                  Resume
+                </button>
+              </div>
+            </div>
           ) : showInput ? (
             <div className="flex flex-col gap-2">
               <div className="flex gap-2">

@@ -50,13 +50,14 @@ export class TeacherAgent {
       return;
     }
 
-    const chapterContext = this.buildContext(presentation, payload.chapterIndex);
+    const currentChapterContext = this.buildContext(presentation, payload.chapterIndex);
+    const fullTranscript = this.getFullTranscript(presentation);
 
     // Search knowledge base for additional context (RAG)
     let ragContext = "";
     if (this.knowledge) {
       try {
-        const results = await this.knowledge.search(payload.question, 5);
+        const results = await this.knowledge.search(payload.question, 8);
         if (results.length > 0) {
           ragContext = results
             .map((r, i) => `[${i + 1}] ${r.text}`)
@@ -68,33 +69,54 @@ export class TeacherAgent {
     }
 
     const systemPrompt = [
-      "You are a teacher explaining concepts from a specific video presentation.",
-      "Your ONLY sources of information are:",
-      "1. The presentation transcript/script provided below — this is your PRIMARY and authoritative source.",
-      "2. Knowledge base references (if provided) — only use these if they are clearly relevant to the same topic as the presentation.",
+      "You are a knowledgeable, approachable teacher answering questions during a video presentation.",
       "",
-      "STRICT GUIDELINES:",
-      "- ONLY answer using the provided presentation content and knowledge base references.",
-      "- Do NOT use your general training knowledge about topics not covered in the provided context.",
-      "- If the question asks about something not in the provided context, say: \"That topic isn't covered in this presentation's content.\"",
-      "- Never substitute unrelated content from the knowledge base if it doesn't match the presentation topic.",
-      "- Use Mermaid diagrams (```mermaid\n...\n```) when a visual would help explain something FROM the presentation.",
+      "You have these sources of information:",
+      "1. The presentation transcript (current chapter + full transcript).",
+      "2. Knowledge base references retrieved from the system.",
+      "3. Your own general knowledge.",
+      "",
+      "ANSWERING STRATEGY (in priority order):",
+      "1. First, check the presentation transcript and knowledge base. If they contain the answer, use them.",
+      "2. If the question goes DEEPER into the presentation's subject matter — a follow-up, a related concept,",
+      "   how it connects to other topics in the same domain — use your general knowledge to give a helpful answer.",
+      "   A good teacher doesn't stop at the textbook. Students naturally want to explore beyond the slides.",
+      "3. When using general knowledge, briefly note that you're going beyond the presentation material",
+      "   so students understand the distinction.",
+      "",
+      "TOPIC GUARDRAILS:",
+      "- The presentation's subject matter defines the domain. Questions that reasonably relate to that domain are fair game.",
+      "- Politely decline questions that are clearly off-topic (unrelated to the presentation's domain),",
+      "  inappropriate, or harmful. A brief redirect like \"That's outside the scope of today's topic\" is fine.",
+      "- Do NOT answer questions about violence, hate speech, illegal activities, or other harmful content.",
+      "",
+      "FORMAT:",
+      "- Use Mermaid diagrams (```mermaid\\n...\\n```) when a visual would help explain a concept.",
       "- When generating Mermaid diagrams, quote any node labels that contain parentheses or special characters, e.g. [\"Label (with parens)\"].",
-      "- Keep answers concise and grounded in the provided material.",
+      "- Keep answers concise but thorough. Aim for clarity over brevity.",
     ].join("\n");
 
     const sections = [
       `## Presentation Title: ${presentation.title}`,
       "",
-      "## Presentation Script (PRIMARY SOURCE — answer ONLY from this content)",
-      `Chapter ${payload.chapterIndex + 1} context:`,
-      chapterContext,
+      "## Current Chapter Context",
+      `Chapter ${payload.chapterIndex + 1}:`,
+      currentChapterContext,
     ];
+
+    // Include full transcript if it differs from the chapter context
+    if (fullTranscript && fullTranscript !== currentChapterContext) {
+      sections.push(
+        "",
+        "## Full Presentation Transcript",
+        fullTranscript,
+      );
+    }
 
     if (ragContext) {
       sections.push(
         "",
-        "## Supplementary Knowledge Base References (only use if directly relevant to the presentation topic above)",
+        "## Knowledge Base References",
         ragContext,
       );
     }
@@ -159,5 +181,16 @@ export class TeacherAgent {
   ): string {
     const full = scripts.map((s) => s.text).join(" ");
     return full.length > 4000 ? full.slice(0, 4000) + "…" : full;
+  }
+
+  private getFullTranscript(presentation: PresentationRow): string {
+    try {
+      const scripts = JSON.parse(presentation.script_json) as Array<{ text: string }>;
+      const full = scripts.map((s) => s.text).filter(Boolean).join(" ");
+      // Cap at 8000 chars to stay within context limits
+      return full.length > 8000 ? full.slice(0, 8000) + "…" : full;
+    } catch {
+      return "";
+    }
   }
 }

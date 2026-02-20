@@ -77,6 +77,7 @@ export default function RoomPage() {
     submitQuestion,
     appendToken,
     finishAnswer,
+    readyForFollowup,
     resume,
     triggerQuiz,
     answerQuiz,
@@ -168,16 +169,23 @@ export default function RoomPage() {
       setQuestionAttribution(null);
     };
     const handleNoteSaved = () => setNoteSaved(true);
+    const handleError = (data: { error: string }) => {
+      appendToken(`\n\n⚠️ Error: ${data.error}`);
+      finishAnswer();
+      setQuestionAttribution(null);
+    };
 
     socket.on("presenter:answer:start", handleStart);
     socket.on("presenter:answer:token", handleToken);
     socket.on("presenter:answer:done", handleDone);
+    socket.on("presenter:answer:error", handleError);
     socket.on("presenter:note:saved", handleNoteSaved);
 
     return () => {
       socket.off("presenter:answer:start", handleStart);
       socket.off("presenter:answer:token", handleToken);
       socket.off("presenter:answer:done", handleDone);
+      socket.off("presenter:answer:error", handleError);
       socket.off("presenter:note:saved", handleNoteSaved);
     };
   }, [socket, appendToken, finishAnswer]);
@@ -367,6 +375,8 @@ export default function RoomPage() {
               onAsk={handleAskQuestion}
               onResume={resume}
               onTranscribe={handleTranscribe}
+              onFollowUp={readyForFollowup}
+              voiceTranscription={voice.transcriptionPreview}
               askedBy={questionAttribution?.askedBy}
               askedQuestion={questionAttribution?.question}
             />

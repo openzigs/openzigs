@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useCallback, useMemo, useState, useRef } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { fetchJson, buildUrl } from "@/lib/api";
 import { useSocket } from "@/lib/socket-context";
@@ -15,13 +15,14 @@ import { InteractivePlayer } from "@/components/presenter/interactive-player";
 import { ChapterList } from "@/components/presenter/chapter-list";
 import { ChapterEditor } from "@/components/presenter/chapter-editor";
 import type { UserChapter } from "@/components/presenter/chapter-editor";
-import { VideoGrid } from "@/components/presenter/video-grid";
-import { RaiseHandButton } from "@/components/presenter/raise-hand-button";
+import { CameraTile } from "@/components/presenter/camera-tile";
+import { PresenterToolbar } from "@/components/presenter/presenter-toolbar";
+import { SlideDrawer } from "@/components/presenter/slide-drawer";
+import { ParticipantPanel } from "@/components/presenter/participant-panel";
 import { QuizOverlay } from "@/components/presenter/quiz-overlay";
 import { BlackboardOverlay } from "@/components/presenter/blackboard-overlay";
 import { RecapScreen } from "@/components/presenter/recap-screen";
 import { ToastContainer } from "@/components/toast";
-import { Check, Mic, Users } from "lucide-react";
 
 interface PresentationDetail {
   id: string;
@@ -42,6 +43,7 @@ interface PresentationDetail {
 
 export default function PresenterPlayerPage() {
   const { id } = useParams<{ id: string }>();
+  const router = useRouter();
   const { socket } = useSocket();
 
   const presentationQuery = useQuery({
@@ -71,6 +73,7 @@ export default function PresenterPlayerPage() {
     submitQuestion,
     appendToken,
     finishAnswer,
+    readyForFollowup,
     resume,
     triggerQuiz,
     answerQuiz,
@@ -91,17 +94,14 @@ export default function PresenterPlayerPage() {
   const voicePipeActive = state.phase === "PAUSED_USER_Q";
   useVoicePipe(id, true, voicePipeActive, media.stream, voice.remoteStreams);
 
-  const [showVideoGrid, setShowVideoGrid] = useState(false);
+  const [showChapters, setShowChapters] = useState(false);
+  const [showParticipants, setShowParticipants] = useState(false);
   const [noteSaved, setNoteSaved] = useState(false);
   const ttsPromptPlayedRef = useRef(false);
   const [showChapterEditor, setShowChapterEditor] = useState(false);
   const [userChapters, setUserChapters] = useState<UserChapter[] | null>(null);
-  const [inviting, setInviting] = useState(false);
-  const [inviteCopied, setInviteCopied] = useState(false);
 
   const handleInvite = useCallback(async () => {
-    if (inviting) return;
-    setInviting(true);
     try {
       const data = await fetchJson<{ token: string; inviteUrl: string }>(
         `/api/presentations/${id}/invite`,
@@ -109,14 +109,14 @@ export default function PresenterPlayerPage() {
       );
       const url = `${window.location.origin}/invite/${data.token}`;
       await navigator.clipboard.writeText(url);
-      setInviteCopied(true);
-      setTimeout(() => setInviteCopied(false), 2500);
     } catch {
       // silently ignore
-    } finally {
-      setInviting(false);
     }
-  }, [id, inviting]);
+  }, [id]);
+
+  const handleLeave = useCallback(() => {
+    router.push("/presenter");
+  }, [router]);
 
   // Sync userChapters from fetched presentation data (first load only)
   const presentationUserChapters = presentation?.user_chapters ?? [];
@@ -241,14 +241,20 @@ export default function PresenterPlayerPage() {
     const handleToken = (data: { token: string }) => appendToken(data.token);
     const handleDone = () => finishAnswer();
     const handleNoteSaved = () => setNoteSaved(true);
+    const handleError = (data: { error: string }) => {
+      appendToken(`\n\n⚠️ Error: ${data.error}`);
+      finishAnswer();
+    };
 
     socket.on("presenter:answer:token", handleToken);
     socket.on("presenter:answer:done", handleDone);
+    socket.on("presenter:answer:error", handleError);
     socket.on("presenter:note:saved", handleNoteSaved);
 
     return () => {
       socket.off("presenter:answer:token", handleToken);
       socket.off("presenter:answer:done", handleDone);
+      socket.off("presenter:answer:error", handleError);
       socket.off("presenter:note:saved", handleNoteSaved);
     };
   }, [socket, appendToken, finishAnswer]);
@@ -305,16 +311,16 @@ export default function PresenterPlayerPage() {
 
   if (presentationQuery.isLoading) {
     return (
-      <main className="flex h-[calc(100vh-4rem)] items-center justify-center">
-        <p className="text-sm text-muted-foreground">Loading presentation…</p>
+      <main className="flex h-full items-center justify-center bg-zinc-950">
+        <p className="text-sm text-white/50">Loading presentation…</p>
       </main>
     );
   }
 
   if (!presentation) {
     return (
-      <main className="flex h-[calc(100vh-4rem)] items-center justify-center">
-        <p className="text-sm text-muted-foreground">Presentation not found.</p>
+      <main className="flex h-full items-center justify-center bg-zinc-950">
+        <p className="text-sm text-white/50">Presentation not found.</p>
       </main>
     );
   }
@@ -338,148 +344,158 @@ export default function PresenterPlayerPage() {
   }
 
   return (
-    <main className="mx-auto flex max-w-6xl flex-col gap-4 px-4 py-6 lg:flex-row lg:px-8">
-      {/* Video + overlays */}
-      <div className="flex-1">
-        <div className="relative">
-          <InteractivePlayer
-            videoRef={videoRef}
-            videoUrl={`/api/files/serve?path=${encodeURIComponent(presentation.video_path)}`}
-            onTimeUpdate={handleTimeUpdate}
-            onEnded={handleVideoEnd}
-            onPlay={handleVideoPlay}
-            onPause={handleVideoPause}
-            onSeeked={handleVideoSeeked}
-          />
+    <main className="flex flex-1 min-h-0 flex-col overflow-hidden bg-zinc-950">
+      {/* ── Top bar (title + metadata) ── */}
+      <header className="flex shrink-0 items-center gap-3 border-b border-white/5 bg-zinc-950/90 px-3 py-2 backdrop-blur sm:px-5">
+        <div className="min-w-0 flex-1">
+          <h1 className="truncate text-sm font-semibold text-white sm:text-base">
+            {presentation.title}
+          </h1>
+          <p className="truncate text-[10px] text-white/40 sm:text-xs">
+            {Math.round(presentation.duration_seconds)}s &middot;{" "}
+            {new Date(presentation.created_at).toLocaleDateString()}
+            {presentation.quiz_enabled && " · Quizzes enabled"}
+          </p>
+        </div>
+        {roomState.memberCount > 1 && (
+          <div className="flex items-center gap-1.5 rounded-full bg-white/10 px-2.5 py-1 text-[10px] text-white/70">
+            <span className="inline-block h-1.5 w-1.5 rounded-full bg-green-400" />
+            {roomState.memberCount} watching
+          </div>
+        )}
+      </header>
 
-          {/* Member count pill + video call toggle */}
-          {roomState.memberCount > 1 && (
-            <div className="absolute right-3 top-3 flex items-center gap-3">
-              <div className="flex items-center gap-1.5 rounded-full bg-black/60 px-3 py-1 text-xs text-white backdrop-blur">
-                <span className="inline-block h-2 w-2 rounded-full bg-green-400" />
-                {roomState.memberCount} watching
-              </div>
-              <button
-                onClick={() => setShowVideoGrid((v) => !v)}
-                className="flex items-center gap-1.5 rounded-full bg-black/60 px-3 py-1 text-xs text-white backdrop-blur hover:bg-black/80 transition"
-              >
-                <Mic className="h-3 w-3" />
-                {voice.peerIds.length + 1} in call
-              </button>
-            </div>
-          )}
-
-          {/* Raise Hand button */}
-          {state.phase === "PLAYING" && (
-            <RaiseHandButton onClick={raiseHand} />
-          )}
-
-          {/* Blackboard overlay (Q&A) */}
-          {state.phase === "PAUSED_USER_Q" && (
-            <BlackboardOverlay
-              question={state.pendingQuestion}
-              answerTokens={state.answerTokens}
-              isAnswering={state.pendingQuestion !== null && state.answerTokens === ""}
-              isDone={state.pendingQuestion !== null && state.answerTokens !== "" && state.qaHistory.length > 0 && state.qaHistory[state.qaHistory.length - 1].question === state.pendingQuestion}
-              noteSaved={noteSaved}
-              onAsk={handleAskQuestion}
-              onResume={resume}
-              onTranscribe={handleTranscribe}
+      {/* ── Main content area ── */}
+      <div className="relative flex min-h-0 flex-1">
+        {/* Video area — fills available space */}
+        <div className="relative flex-1 overflow-hidden bg-black">
+          <div className="flex h-full w-full items-center justify-center">
+            <InteractivePlayer
+              videoRef={videoRef}
+              videoUrl={`/api/files/serve?path=${encodeURIComponent(presentation.video_path)}`}
+              onTimeUpdate={handleTimeUpdate}
+              onEnded={handleVideoEnd}
+              onPlay={handleVideoPlay}
+              onPause={handleVideoPause}
+              onSeeked={handleVideoSeeked}
             />
-          )}
 
-          {/* Quiz overlay */}
-          {state.phase === "PAUSED_AI_QUIZ" && state.activeQuiz && (
-            <QuizOverlay
-              quiz={state.activeQuiz}
-              lastResult={
-                state.quizResults.length > 0
-                  ? state.quizResults[state.quizResults.length - 1]
-                  : null
-              }
-              onAnswer={answerQuiz}
-              onDismiss={dismissQuiz}
+            {/* PiP Camera Tile (Teams-style self-view) */}
+            <CameraTile
+              stream={media.stream}
+              isVideoMuted={media.isVideoMuted}
+              label="You"
             />
-          )}
+
+            {/* Blackboard overlay (Q&A) */}
+            {state.phase === "PAUSED_USER_Q" && (
+              <BlackboardOverlay
+                question={state.pendingQuestion}
+                answerTokens={state.answerTokens}
+                isAnswering={state.pendingQuestion !== null && state.answerTokens === ""}
+                isDone={state.pendingQuestion !== null && state.answerTokens !== "" && state.qaHistory.length > 0 && state.qaHistory[state.qaHistory.length - 1].question === state.pendingQuestion}
+                noteSaved={noteSaved}
+                onAsk={handleAskQuestion}
+                onResume={resume}
+                onTranscribe={handleTranscribe}
+                onFollowUp={readyForFollowup}
+                voiceTranscription={voice.transcriptionPreview}
+              />
+            )}
+
+            {/* Quiz overlay */}
+            {state.phase === "PAUSED_AI_QUIZ" && state.activeQuiz && (
+              <QuizOverlay
+                quiz={state.activeQuiz}
+                lastResult={
+                  state.quizResults.length > 0
+                    ? state.quizResults[state.quizResults.length - 1]
+                    : null
+                }
+                onAnswer={answerQuiz}
+                onDismiss={dismissQuiz}
+              />
+            )}
+          </div>
         </div>
 
-        <div className="mt-3 flex items-start justify-between gap-2">
-          <div>
-            <h1 className="text-lg font-semibold text-foreground">
-              {presentation.title}
-            </h1>
-            <p className="text-xs text-muted-foreground">
-              {Math.round(presentation.duration_seconds)}s &middot;{" "}
-              {new Date(presentation.created_at).toLocaleDateString()}
-              {presentation.quiz_enabled && " · Quizzes enabled"}
-            </p>
-          </div>
-          <button
-            onClick={handleInvite}
-            disabled={inviting}
-            title="Copy invite link for watch party"
-            className="flex shrink-0 items-center gap-1.5 rounded-xl border border-border bg-card px-3 py-1.5 text-xs font-medium text-foreground transition hover:border-primary/50 hover:text-primary disabled:opacity-50"
-          >
-            {inviteCopied ? (
-              <>
-                <Check className="h-3.5 w-3.5 text-emerald-500" />
-                <span className="text-emerald-500">Copied!</span>
-              </>
+        {/* ── Chapter Drawer ── */}
+        <SlideDrawer
+          open={showChapters}
+          onClose={() => setShowChapters(false)}
+          title="Chapters"
+          side="right"
+        >
+          <div className="p-3">
+            {showChapterEditor && presentation ? (
+              <ChapterEditor
+                presentationId={presentation.id}
+                durationSeconds={presentation.duration_seconds}
+                initialChapters={effectiveUserChapters}
+                onClose={() => setShowChapterEditor(false)}
+                onSaved={(saved) => {
+                  setUserChapters(saved);
+                  setShowChapterEditor(false);
+                }}
+              />
             ) : (
               <>
-                <Users className="h-3.5 w-3.5" />
-                Invite to Watch
+                <ChapterList
+                  chapters={effectiveChapters}
+                  currentChapter={state.currentChapter}
+                  onSeek={handleSeekToChapter}
+                />
+                <button
+                  onClick={() => setShowChapterEditor(true)}
+                  className="mt-2 w-full rounded-xl border border-dashed border-white/20 px-3 py-2 text-xs text-white/40 transition-colors hover:border-primary hover:text-primary"
+                >
+                  {effectiveUserChapters.length > 0
+                    ? "Edit chapters"
+                    : "+ Define chapters"}
+                </button>
               </>
             )}
-          </button>
-        </div>
+          </div>
+        </SlideDrawer>
+
+        {/* ── Participant Drawer ── */}
+        <SlideDrawer
+          open={showParticipants}
+          onClose={() => setShowParticipants(false)}
+          title="Participants"
+          side="right"
+        >
+          <ParticipantPanel
+            localStream={media.stream}
+            remoteStreams={voice.remoteStreams}
+            isAudioMuted={media.isAudioMuted}
+            isVideoMuted={media.isVideoMuted}
+          />
+        </SlideDrawer>
       </div>
 
-      {/* Sidebar — chapters + A/V */}
-      <aside className="w-full shrink-0 lg:w-64">
-        {/* A/V Chat Grid (collapsible) */}
-        {showVideoGrid && media.stream && (
-          <div className="mb-4">
-            <VideoGrid
-              localStream={media.stream}
-              remoteStreams={voice.remoteStreams}
-              isAudioMuted={media.isAudioMuted}
-              isVideoMuted={media.isVideoMuted}
-              onToggleAudio={media.toggleAudio}
-              onToggleVideo={media.toggleVideo}
-            />
-          </div>
-        )}
-
-        {showChapterEditor && presentation ? (
-          <ChapterEditor
-            presentationId={presentation.id}
-            durationSeconds={presentation.duration_seconds}
-            initialChapters={effectiveUserChapters}
-            onClose={() => setShowChapterEditor(false)}
-            onSaved={(saved) => {
-              setUserChapters(saved);
-              setShowChapterEditor(false);
-            }}
-          />
-        ) : (
-          <>
-            <ChapterList
-              chapters={effectiveChapters}
-              currentChapter={state.currentChapter}
-              onSeek={handleSeekToChapter}
-            />
-            <button
-              onClick={() => setShowChapterEditor(true)}
-              className="mt-2 w-full rounded-xl border border-dashed border-border px-3 py-2 text-xs text-muted-foreground hover:border-primary hover:text-primary transition-colors"
-            >
-              {effectiveUserChapters.length > 0
-                ? "Edit chapters"
-                : "+ Define chapters"}
-            </button>
-          </>
-        )}
-      </aside>
+      {/* ── Teams-style Toolbar ── */}
+      <PresenterToolbar
+        isAudioMuted={media.isAudioMuted}
+        isVideoMuted={media.isVideoMuted}
+        onToggleAudio={media.toggleAudio}
+        onToggleVideo={media.toggleVideo}
+        onRaiseHand={raiseHand}
+        onToggleParticipants={() => {
+          setShowParticipants((v) => !v);
+          if (!showParticipants) setShowChapters(false);
+        }}
+        onToggleChapters={() => {
+          setShowChapters((v) => !v);
+          if (!showChapters) setShowParticipants(false);
+        }}
+        onLeave={handleLeave}
+        onInvite={handleInvite}
+        participantCount={roomState.memberCount}
+        showParticipants={showParticipants}
+        showChapters={showChapters}
+        canRaiseHand={state.phase === "PLAYING"}
+      />
 
       <ToastContainer />
     </main>

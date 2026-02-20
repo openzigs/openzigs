@@ -927,16 +927,8 @@ io.on("connection", (socket) => {
       const { text } = (await response.json()) as { text: string };
       if (!text?.trim()) return;
 
-      // Show the speaker what was transcribed
+      // Show the speaker what was transcribed so they can review & confirm
       socket.emit("room:transcription_preview", { text });
-
-      // Feed into the teacher agent Q&A pipeline
-      void handlePresenterAsk(socket, io, {
-        presentationId: data.presentationId,
-        question: text,
-        chapterIndex: 0,
-        timestamp: room.currentTimeSeconds,
-      });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       logger.warn(`Audio chunk transcription error: ${msg}`);

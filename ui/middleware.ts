@@ -4,6 +4,7 @@ import type { NextRequest } from "next/server";
 /** Paths that guests ARE allowed to access (without presentation scoping). */
 const GUEST_ALLOWED_PREFIXES = [
   "/room/",
+  "/presenter/",
   "/invite/",
   "/invite-expired",
   "/403",

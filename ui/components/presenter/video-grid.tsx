@@ -23,6 +23,7 @@ const VideoTile = memo(function VideoTile({
     const el = videoRef.current;
     if (!el) return;
     el.srcObject = stream;
+    el.play()?.catch(() => {/* autoplay may be blocked */});
     return () => {
       el.srcObject = null;
     };
