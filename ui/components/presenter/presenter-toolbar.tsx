@@ -24,7 +24,7 @@ interface PresenterToolbarProps {
   onToggleParticipants: () => void;
   onToggleChapters: () => void;
   onLeave: () => void;
-  onInvite: () => Promise<void>;
+  onInvite?: () => Promise<void>;
   participantCount: number;
   showParticipants: boolean;
   showChapters: boolean;
@@ -55,6 +55,7 @@ export function PresenterToolbar({
   const [inviteCopied, setInviteCopied] = useState(false);
 
   const handleInvite = useCallback(async () => {
+    if (!onInvite) return;
     await onInvite();
     setInviteCopied(true);
     setTimeout(() => setInviteCopied(false), 2500);
@@ -143,8 +144,8 @@ export function PresenterToolbar({
           )}
         </div>
 
-        {/* ── Invite (always visible, text label) ── */}
-        <button
+        {/* ── Invite (host only) ── */}
+        {onInvite && <button
           onClick={handleInvite}
           title="Copy invite link"
           className={`flex items-center gap-1.5 rounded-xl border px-2.5 py-2 text-xs font-medium transition sm:px-3 ${
@@ -159,7 +160,7 @@ export function PresenterToolbar({
             <Copy className="h-4 w-4 shrink-0" />
           )}
           <span>{inviteCopied ? "Copied!" : "Invite"}</span>
-        </button>
+        </button>}
 
         <Divider />
 

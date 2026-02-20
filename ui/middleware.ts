@@ -11,6 +11,7 @@ const GUEST_ALLOWED_PREFIXES = [
   "/403",
   "/api/invite/",
   "/socket.io",
+  "/peerjs",
   "/_next/",
   "/favicon.ico",
 ];

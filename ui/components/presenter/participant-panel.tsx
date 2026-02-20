@@ -9,6 +9,10 @@ interface ParticipantPanelProps {
   remoteStreams: RemotePeer[];
   isAudioMuted: boolean;
   isVideoMuted: boolean;
+  /** Socket.IO room member count (authoritative; may exceed PeerJS peers). */
+  memberCount?: number;
+  /** Role of the local user (host or guest). */
+  role?: "host" | "guest";
 }
 
 /**
@@ -20,8 +24,15 @@ export function ParticipantPanel({
   remoteStreams,
   isAudioMuted,
   isVideoMuted,
+  memberCount,
+  role = "host",
 }: ParticipantPanelProps) {
-  const total = 1 + remoteStreams.length;
+  // Use Socket.IO member count when available (authoritative), fall back to PeerJS count
+  const total = memberCount ?? (1 + remoteStreams.length);
+  const localLabel = role === "host" ? "You (Host)" : "You (Guest)";
+
+  // Number of remote members without a PeerJS stream yet
+  const unconnectedRemotes = Math.max(0, total - 1 - remoteStreams.length);
 
   return (
     <div className="flex flex-col gap-1 p-3">
@@ -33,22 +44,32 @@ export function ParticipantPanel({
       {localStream && (
         <ParticipantRow
           stream={localStream}
-          label="You (Host)"
+          label={localLabel}
           isLocal
           audioMuted={isAudioMuted}
           videoMuted={isVideoMuted}
         />
       )}
 
-      {/* Remote participants */}
+      {/* Remote participants with PeerJS stream */}
       {remoteStreams.map((rp) => (
         <ParticipantRow
           key={rp.peerId}
           stream={rp.stream}
-          label={`Guest ${rp.peerId.slice(0, 4)}`}
+          label={`Participant ${rp.peerId.slice(0, 4)}`}
           audioMuted={false}
           videoMuted={false}
         />
+      ))}
+
+      {/* Placeholder rows for members connected via Socket.IO but not yet via PeerJS */}
+      {Array.from({ length: unconnectedRemotes }, (_, i) => (
+        <div key={`pending-${i}`} className="flex items-center gap-3 rounded-lg px-3 py-2">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-zinc-800">
+            <span className="text-xs font-bold text-white/40">?</span>
+          </div>
+          <span className="min-w-0 flex-1 truncate text-sm text-white/40">Connecting…</span>
+        </div>
       ))}
     </div>
   );

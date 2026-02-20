@@ -1,5 +1,6 @@
 import "dotenv/config";
 import { createServer } from "node:http";
+import { createRequire } from "node:module";
 import { randomBytes } from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -483,22 +484,26 @@ app.get("/api/invite/redeem", async (req, res) => {
     const exp = payload.exp ?? 0;
     const maxAge = Math.max(exp - Math.floor(Date.now() / 1000), 0);
 
+    // Detect if request arrived over HTTPS (directly or via reverse proxy)
+    const isSecure = req.protocol === "https"
+      || req.get("x-forwarded-proto") === "https";
+
     // Set HttpOnly cookie for auth
     res.cookie("guest_token", token, {
       httpOnly: true,
-      sameSite: "strict",
+      sameSite: "lax",
       path: "/",
       maxAge: maxAge * 1000,
-      secure: req.protocol === "https",
+      secure: isSecure,
     });
 
     // Set non-HttpOnly cookie for client-side guest detection
     res.cookie("is_guest", "true", {
       httpOnly: false,
-      sameSite: "strict",
+      sameSite: "lax",
       path: "/",
       maxAge: maxAge * 1000,
-      secure: req.protocol === "https",
+      secure: isSecure,
     });
 
     res.json({ presentationId });
@@ -654,12 +659,31 @@ const io = new SocketIOServer(httpServer, {
 // Mount PeerJS at /peerjs — path option controls both WS upgrade filtering
 // and HTTP route prefix, so we use app.use() without a mount path to avoid
 // double-prefixing.
+// Use createWebSocketServer with noServer mode to prevent PeerJS's ws.Server
+// from aborting Socket.IO WebSocket upgrades (the default {server, path} mode
+// calls abortHandshake on ALL non-matching upgrade requests, corrupting
+// Socket.IO's WebSocket connection with "Invalid frame header").
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const WsServer = createRequire(import.meta.url)("ws").Server;
 const peerServer = ExpressPeerServer(httpServer, {
   path: "/peerjs",
   proxied: true,
   alive_timeout: 60000,
   key: "openzigs",
   allow_discovery: false,
+  createWebSocketServer: () => {
+    const wss = new WsServer({ noServer: true });
+    httpServer.on("upgrade", (req: { url?: string }, socket: unknown, head: unknown) => {
+      const pathname = (req.url ?? "").split("?")[0];
+      if (pathname === "/peerjs/peerjs" || pathname.startsWith("/peerjs/peerjs/")) {
+        wss.handleUpgrade(req, socket, head, (ws: unknown) => {
+          wss.emit("connection", ws, req);
+        });
+      }
+      // Non-matching paths are left alone for Socket.IO to handle
+    });
+    return wss;
+  },
 });
 app.use(peerServer);
 

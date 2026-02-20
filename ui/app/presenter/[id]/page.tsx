@@ -22,6 +22,7 @@ import { ParticipantPanel } from "@/components/presenter/participant-panel";
 import { QuizOverlay } from "@/components/presenter/quiz-overlay";
 import { BlackboardOverlay } from "@/components/presenter/blackboard-overlay";
 import { RecapScreen } from "@/components/presenter/recap-screen";
+import { RemotePeerTiles } from "@/components/presenter/remote-peer-tiles";
 import { ToastContainer } from "@/components/toast";
 
 interface PresentationDetail {
@@ -100,6 +101,18 @@ export default function PresenterPlayerPage() {
   const ttsPromptPlayedRef = useRef(false);
   const [showChapterEditor, setShowChapterEditor] = useState(false);
   const [userChapters, setUserChapters] = useState<UserChapter[] | null>(null);
+  const [questionAttribution, setQuestionAttribution] = useState<{
+    askedBy: string;
+    question: string;
+  } | null>(null);
+  const [blackboardActive, setBlackboardActive] = useState(false);
+
+  // Latch blackboard open when any Q&A round begins (local or remote)
+  useEffect(() => {
+    if (state.phase === "PAUSED_USER_Q" || roomState.fsmState === "PAUSED_USER_Q") {
+      setBlackboardActive(true);
+    }
+  }, [state.phase, roomState.fsmState]);
 
   const handleInvite = useCallback(async () => {
     try {
@@ -107,13 +120,18 @@ export default function PresenterPlayerPage() {
         `/api/presentations/${id}/invite`,
         { method: "POST" },
       );
+      // Use the server-provided inviteUrl which uses the configured
+      // presenter.baseUrl (public tunnel domain) — guests are remote
+      // and can't reach localhost.
       await navigator.clipboard.writeText(data.inviteUrl);
     } catch {
       // silently ignore
     }
   }, [id]);
 
-  const handleLeave = useCallback(() => {
+  const handleLeave = useCallback(async () => {
+    // Clear any stale guest cookies before navigating back
+    await fetch("/api/invite/logout", { method: "POST" }).catch(() => {});
     router.push("/presenter");
   }, [router]);
 
@@ -238,19 +256,30 @@ export default function PresenterPlayerPage() {
     if (!socket) return;
 
     const handleToken = (data: { token: string }) => appendToken(data.token);
-    const handleDone = () => finishAnswer();
+    const handleDone = () => {
+      finishAnswer();
+      setQuestionAttribution(null);
+    };
     const handleNoteSaved = () => setNoteSaved(true);
     const handleError = (data: { error: string }) => {
       appendToken(`\n\n⚠️ Error: ${data.error}`);
       finishAnswer();
+      setQuestionAttribution(null);
+    };
+    const handleStart = (data: { askedBy?: string; question?: string }) => {
+      if (data.askedBy && data.question) {
+        setQuestionAttribution({ askedBy: data.askedBy, question: data.question });
+      }
     };
 
+    socket.on("presenter:answer:start", handleStart);
     socket.on("presenter:answer:token", handleToken);
     socket.on("presenter:answer:done", handleDone);
     socket.on("presenter:answer:error", handleError);
     socket.on("presenter:note:saved", handleNoteSaved);
 
     return () => {
+      socket.off("presenter:answer:start", handleStart);
       socket.off("presenter:answer:token", handleToken);
       socket.off("presenter:answer:done", handleDone);
       socket.off("presenter:answer:error", handleError);
@@ -273,6 +302,11 @@ export default function PresenterPlayerPage() {
     },
     [socket, id, state.currentChapter, state.currentTime, submitQuestion],
   );
+
+  const handleResume = useCallback(() => {
+    resume();
+    setBlackboardActive(false);
+  }, [resume]);
 
   // Handle video end
   const handleVideoEnd = useCallback(() => {
@@ -386,8 +420,11 @@ export default function PresenterPlayerPage() {
               label="You"
             />
 
-            {/* Blackboard overlay (Q&A) */}
-            {state.phase === "PAUSED_USER_Q" && (
+            {/* Remote participant tiles */}
+            <RemotePeerTiles peerIds={voice.peerIds} remoteStreams={voice.remoteStreams} />
+
+            {/* Blackboard overlay (Q&A) — latches open until user dismisses */}
+            {blackboardActive && (
               <BlackboardOverlay
                 question={state.pendingQuestion}
                 answerTokens={state.answerTokens}
@@ -395,10 +432,12 @@ export default function PresenterPlayerPage() {
                 isDone={state.pendingQuestion !== null && state.answerTokens !== "" && state.qaHistory.length > 0 && state.qaHistory[state.qaHistory.length - 1].question === state.pendingQuestion}
                 noteSaved={noteSaved}
                 onAsk={handleAskQuestion}
-                onResume={resume}
+                onResume={handleResume}
                 onTranscribe={handleTranscribe}
                 onFollowUp={readyForFollowup}
                 voiceTranscription={voice.transcriptionPreview}
+                askedBy={questionAttribution?.askedBy}
+                askedQuestion={questionAttribution?.question}
               />
             )}
 
@@ -469,6 +508,8 @@ export default function PresenterPlayerPage() {
             remoteStreams={voice.remoteStreams}
             isAudioMuted={media.isAudioMuted}
             isVideoMuted={media.isVideoMuted}
+            memberCount={roomState.memberCount}
+            role="host"
           />
         </SlideDrawer>
       </div>
@@ -493,7 +534,7 @@ export default function PresenterPlayerPage() {
         participantCount={roomState.memberCount}
         showParticipants={showParticipants}
         showChapters={showChapters}
-        canRaiseHand={state.phase === "PLAYING"}
+        canRaiseHand={state.phase === "PLAYING" && roomState.fsmState !== "PAUSED_USER_Q"}
       />
 
       <ToastContainer />

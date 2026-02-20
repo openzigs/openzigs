@@ -4,7 +4,29 @@ import { createContext, useContext, useEffect, useRef, useState, type ReactNode 
 import { io, type Socket } from "socket.io-client";
 import { showToast } from "@/components/toast";
 
-const SOCKET_URL = process.env.NEXT_PUBLIC_OPENZIGS_SOCKET_URL ?? process.env.NEXT_PUBLIC_OPENZIGS_API_BASE ?? "http://localhost:3000";
+const RAW_SOCKET_URL = process.env.NEXT_PUBLIC_OPENZIGS_SOCKET_URL ?? process.env.NEXT_PUBLIC_OPENZIGS_API_BASE ?? "";
+
+/**
+ * Resolve Socket.IO server URL at runtime.
+ * When configured URL points at localhost but browser is on a remote origin
+ * (e.g. Cloudflare tunnel), return empty string so socket.io-client connects
+ * to same-origin and Next.js rewrites proxy to the backend.
+ */
+function resolveSocketUrl(): string {
+  if (!RAW_SOCKET_URL) return "";
+  if (typeof window === "undefined") return RAW_SOCKET_URL;
+  try {
+    const host = new URL(RAW_SOCKET_URL).hostname;
+    if (
+      (host === "localhost" || host === "127.0.0.1") &&
+      window.location.hostname !== "localhost" &&
+      window.location.hostname !== "127.0.0.1"
+    ) {
+      return "";
+    }
+  } catch { /* malformed URL, use as-is */ }
+  return RAW_SOCKET_URL;
+}
 const CLIENT_ID_KEY = "openzigs:client-id";
 
 /** Get or generate a stable client identity that persists across page navigations. */
@@ -39,7 +61,8 @@ export const SocketProvider = ({ children }: { children: ReactNode }) => {
 
   useEffect(() => {
     const clientId = getStableClientId();
-    const socket = io(SOCKET_URL || undefined, {
+    const socketUrl = resolveSocketUrl();
+    const socket = io(socketUrl || undefined, {
       query: { clientId },
       transports: ["polling", "websocket"],
       reconnection: true,

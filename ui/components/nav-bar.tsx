@@ -49,9 +49,16 @@ export const NavBar = () => {
         </Link>
         <div className="flex items-center gap-1">
           {isGuest ? (
-            <span className="rounded-lg bg-muted px-3 py-1.5 text-xs font-semibold text-muted-foreground">
-              Guest
-            </span>
+            <button
+              onClick={async () => {
+                await fetch("/api/invite/logout", { method: "POST" }).catch(() => {});
+                window.location.href = "/";
+              }}
+              className="rounded-lg bg-muted px-3 py-1.5 text-xs font-semibold text-muted-foreground hover:bg-destructive/20 hover:text-destructive transition"
+              title="Click to exit guest mode"
+            >
+              Guest ✕
+            </button>
           ) : (
             NAV_ITEMS.map(({ href, label }) => {
               const active = href === "/" ? pathname === "/" : pathname.startsWith(href);
