@@ -8,8 +8,19 @@ import { useSocket } from "@/lib/socket-context";
 const API_BASE =
   process.env.NEXT_PUBLIC_OPENZIGS_API_BASE ?? "http://localhost:3000";
 
+/** Max participants in the mesh (including self). */
+const MAX_PEERS = 5;
+
+export interface RemotePeer {
+  peerId: string;
+  stream: MediaStream;
+}
+
 export interface UseVoiceRoomReturn {
-  peers: string[];
+  /** Remote peer IDs currently connected. */
+  peerIds: string[];
+  /** Remote streams for rendering in VideoGrid. */
+  remoteStreams: RemotePeer[];
   isMuted: boolean;
   isRaisingHand: boolean;
   isTranscribing: boolean;
@@ -20,16 +31,27 @@ export interface UseVoiceRoomReturn {
   cleanup: () => void;
 }
 
-export function useVoiceRoom(presentationId: string): UseVoiceRoomReturn {
+/**
+ * PeerJS mesh network hook for full-duplex video + audio.
+ *
+ * Accepts an external localStream from useMediaDevices so media lifecycle
+ * is separated from mesh networking. Connects to every other peer in the
+ * room (up to MAX_PEERS) and exposes remote MediaStreams for VideoGrid.
+ *
+ * Also handles push-to-talk STT relay via Socket.IO room:audio_chunk.
+ */
+export function useVoiceRoom(
+  presentationId: string,
+  localStream: MediaStream | null,
+): UseVoiceRoomReturn {
   const { socket } = useSocket();
 
   const peerRef = useRef<Peer | null>(null);
-  const localStreamRef = useRef<MediaStream | null>(null);
   const callsRef = useRef<Map<string, MediaConnection>>(new Map());
   const recorderRef = useRef<MediaRecorder | null>(null);
-  const audioElementsRef = useRef<Map<string, HTMLAudioElement>>(new Map());
 
-  const [peers, setPeers] = useState<string[]>([]);
+  const [peerIds, setPeerIds] = useState<string[]>([]);
+  const [remoteStreams, setRemoteStreams] = useState<RemotePeer[]>([]);
   const [isMuted, setIsMuted] = useState(true);
   const [isRaisingHand, setIsRaisingHand] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
@@ -37,76 +59,59 @@ export function useVoiceRoom(presentationId: string): UseVoiceRoomReturn {
 
   const myPeerIdRef = useRef<string | null>(null);
   const knownPeersRef = useRef<Set<string>>(new Set());
+  const localStreamRef = useRef<MediaStream | null>(null);
 
-  // Acquire mic once on mount — start muted
+  // Keep ref in sync with the prop
   useEffect(() => {
-    let cancelled = false;
-    navigator.mediaDevices
-      .getUserMedia({ audio: true, video: false })
-      .then((stream) => {
-        if (cancelled) {
-          stream.getTracks().forEach((t) => t.stop());
-          return;
-        }
-        // Start muted
-        stream.getAudioTracks().forEach((t) => {
-          t.enabled = false;
-        });
-        localStreamRef.current = stream;
-      })
-      .catch(() => {
-        // Mic permission denied — voice features unavailable
-      });
+    localStreamRef.current = localStream;
+  }, [localStream]);
 
-    return () => {
-      cancelled = true;
-    };
+  // ── Remote stream helpers ──
+  const addRemoteStream = useCallback((peerId: string, stream: MediaStream) => {
+    setRemoteStreams((prev) => {
+      if (prev.some((p) => p.peerId === peerId)) {
+        return prev.map((p) => (p.peerId === peerId ? { peerId, stream } : p));
+      }
+      return [...prev, { peerId, stream }];
+    });
   }, []);
 
-  // Helper: play a remote audio stream
-  const playRemoteStream = useCallback((peerId: string, remoteStream: MediaStream) => {
-    // Reuse or create an <audio> element
-    let audio = audioElementsRef.current.get(peerId);
-    if (!audio) {
-      audio = document.createElement("audio");
-      audio.autoplay = true;
-      audioElementsRef.current.set(peerId, audio);
-    }
-    audio.srcObject = remoteStream;
-    audio.play().catch(() => {});
+  const removeRemoteStream = useCallback((peerId: string) => {
+    setRemoteStreams((prev) => prev.filter((p) => p.peerId !== peerId));
   }, []);
 
-  // Helper: call a remote peer
+  // ── Call a remote peer with our local A/V stream ──
   const callPeer = useCallback(
     (remotePeerId: string) => {
       const peer = peerRef.current;
       const stream = localStreamRef.current;
       if (!peer || !stream || callsRef.current.has(remotePeerId)) return;
+      if (callsRef.current.size >= MAX_PEERS - 1) return;
 
       const call = peer.call(remotePeerId, stream);
       callsRef.current.set(remotePeerId, call);
 
       call.on("stream", (remoteStream) => {
-        playRemoteStream(remotePeerId, remoteStream);
+        addRemoteStream(remotePeerId, remoteStream);
       });
 
       call.on("close", () => {
         callsRef.current.delete(remotePeerId);
-        const audio = audioElementsRef.current.get(remotePeerId);
-        if (audio) {
-          audio.srcObject = null;
-          audioElementsRef.current.delete(remotePeerId);
-        }
+        removeRemoteStream(remotePeerId);
+      });
+
+      call.on("error", () => {
+        callsRef.current.delete(remotePeerId);
+        removeRemoteStream(remotePeerId);
       });
     },
-    [playRemoteStream],
+    [addRemoteStream, removeRemoteStream],
   );
 
-  // Initialize PeerJS client + Socket.IO peer discovery
+  // ── Initialize PeerJS + Socket.IO peer discovery ──
   useEffect(() => {
-    if (!socket || !presentationId) return;
+    if (!socket || !presentationId || !localStream) return;
 
-    // Parse server URL for PeerJS
     let peerHost: string;
     let peerPort: number;
     let peerSecure: boolean;
@@ -144,26 +149,22 @@ export function useVoiceRoom(presentationId: string): UseVoiceRoomReturn {
     // Accept incoming calls
     peer.on("call", (call) => {
       const stream = localStreamRef.current;
-      if (stream) {
-        call.answer(stream);
-      } else {
-        // Answer with empty stream to receive audio
-        call.answer(new MediaStream());
-      }
+      call.answer(stream ?? new MediaStream());
 
       callsRef.current.set(call.peer, call);
 
       call.on("stream", (remoteStream) => {
-        playRemoteStream(call.peer, remoteStream);
+        addRemoteStream(call.peer, remoteStream);
       });
 
       call.on("close", () => {
         callsRef.current.delete(call.peer);
-        const audio = audioElementsRef.current.get(call.peer);
-        if (audio) {
-          audio.srcObject = null;
-          audioElementsRef.current.delete(call.peer);
-        }
+        removeRemoteStream(call.peer);
+      });
+
+      call.on("error", () => {
+        callsRef.current.delete(call.peer);
+        removeRemoteStream(call.peer);
       });
     });
 
@@ -171,9 +172,8 @@ export function useVoiceRoom(presentationId: string): UseVoiceRoomReturn {
     const onPeersUpdated = (data: { peerIds: string[] }) => {
       const myId = myPeerIdRef.current;
       const remotePeers = data.peerIds.filter((pid) => pid !== myId);
-      setPeers(remotePeers);
+      setPeerIds(remotePeers);
 
-      // Call any new peers we haven't connected to yet
       for (const pid of remotePeers) {
         if (!knownPeersRef.current.has(pid)) {
           knownPeersRef.current.add(pid);
@@ -181,7 +181,6 @@ export function useVoiceRoom(presentationId: string): UseVoiceRoomReturn {
         }
       }
 
-      // Remove stale peers from known set
       const currentSet = new Set(remotePeers);
       for (const known of knownPeersRef.current) {
         if (!currentSet.has(known)) {
@@ -191,6 +190,7 @@ export function useVoiceRoom(presentationId: string): UseVoiceRoomReturn {
             call.close();
             callsRef.current.delete(known);
           }
+          removeRemoteStream(known);
         }
       }
     };
@@ -207,25 +207,19 @@ export function useVoiceRoom(presentationId: string): UseVoiceRoomReturn {
       socket.off("room:peers_updated", onPeersUpdated);
       socket.off("room:transcription_preview", onTranscriptionPreview);
 
-      // Clean up all calls
       for (const call of callsRef.current.values()) {
         call.close();
       }
       callsRef.current.clear();
-
-      // Clean up audio elements
-      for (const audio of audioElementsRef.current.values()) {
-        audio.srcObject = null;
-      }
-      audioElementsRef.current.clear();
-
       knownPeersRef.current.clear();
+      setRemoteStreams([]);
+      setPeerIds([]);
 
       peer.destroy();
       peerRef.current = null;
       myPeerIdRef.current = null;
     };
-  }, [socket, presentationId, callPeer, playRemoteStream]);
+  }, [socket, presentationId, localStream, callPeer, addRemoteStream, removeRemoteStream]);
 
   const toggleMic = useCallback(() => {
     const stream = localStreamRef.current;
@@ -240,17 +234,15 @@ export function useVoiceRoom(presentationId: string): UseVoiceRoomReturn {
     const stream = localStreamRef.current;
     if (!stream || !socket) return;
 
-    // Unmute
-    stream.getAudioTracks().forEach((t) => {
-      t.enabled = true;
-    });
+    stream.getAudioTracks().forEach((t) => { t.enabled = true; });
     setIsMuted(false);
     setIsRaisingHand(true);
     setTranscriptionPreview(null);
 
-    // Start MediaRecorder for STT chunks
     try {
-      const recorder = new MediaRecorder(stream, {
+      // Record only audio for STT — create an audio-only stream from the local stream's audio tracks
+      const audioOnly = new MediaStream(stream.getAudioTracks());
+      const recorder = new MediaRecorder(audioOnly, {
         mimeType: "audio/webm;codecs=opus",
       });
       recorderRef.current = recorder;
@@ -267,75 +259,56 @@ export function useVoiceRoom(presentationId: string): UseVoiceRoomReturn {
         }
       };
 
-      recorder.start(3000); // Chunk every 3 seconds
+      recorder.start(3000);
     } catch {
-      // MediaRecorder not supported or mimeType not available
+      // MediaRecorder not supported
     }
   }, [socket, presentationId]);
 
   const lowerHand = useCallback(() => {
-    // Stop MediaRecorder
     const recorder = recorderRef.current;
     if (recorder && recorder.state !== "inactive") {
       recorder.stop();
     }
     recorderRef.current = null;
 
-    // Mute
     const stream = localStreamRef.current;
     if (stream) {
-      stream.getAudioTracks().forEach((t) => {
-        t.enabled = false;
-      });
+      stream.getAudioTracks().forEach((t) => { t.enabled = false; });
     }
     setIsMuted(true);
     setIsRaisingHand(false);
   }, []);
 
   const cleanup = useCallback(() => {
-    // Stop recorder
     const recorder = recorderRef.current;
     if (recorder && recorder.state !== "inactive") {
       recorder.stop();
     }
     recorderRef.current = null;
 
-    // Stop local stream
-    const stream = localStreamRef.current;
-    if (stream) {
-      stream.getTracks().forEach((t) => t.stop());
-      localStreamRef.current = null;
-    }
-
-    // Close all calls
     for (const call of callsRef.current.values()) {
       call.close();
     }
     callsRef.current.clear();
 
-    // Clean up audio elements
-    for (const audio of audioElementsRef.current.values()) {
-      audio.srcObject = null;
-    }
-    audioElementsRef.current.clear();
-
-    // Destroy peer
     const peer = peerRef.current;
     if (peer) {
       peer.destroy();
       peerRef.current = null;
     }
+
+    setRemoteStreams([]);
+    setPeerIds([]);
   }, []);
 
-  // Cleanup on unmount
   useEffect(() => {
-    return () => {
-      cleanup();
-    };
+    return () => { cleanup(); };
   }, [cleanup]);
 
   return {
-    peers,
+    peerIds,
+    remoteStreams,
     isMuted,
     isRaisingHand,
     isTranscribing,

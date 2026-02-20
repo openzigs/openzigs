@@ -9,11 +9,13 @@ import { useSocket } from "@/lib/socket-context";
 import { usePresenterState } from "@/hooks/use-presenter-state";
 import { useRoomSync } from "@/hooks/useRoomSync";
 import type { RoomRole } from "@/hooks/useRoomSync";
+import { useMediaDevices } from "@/hooks/useMediaDevices";
 import { useVoiceRoom } from "@/hooks/useVoiceRoom";
 import type { PushToTalkState } from "@/components/presenter/push-to-talk-button";
 import type { QuizQuestion } from "@/hooks/use-presenter-state";
 import { InteractivePlayer } from "@/components/presenter/interactive-player";
 import { ChapterList } from "@/components/presenter/chapter-list";
+import { VideoGrid } from "@/components/presenter/video-grid";
 import { PushToTalkButton } from "@/components/presenter/push-to-talk-button";
 import { QuizOverlay } from "@/components/presenter/quiz-overlay";
 import { BlackboardOverlay } from "@/components/presenter/blackboard-overlay";
@@ -85,7 +87,13 @@ export default function RoomPage() {
   } = usePresenterState();
 
   const { roomState, sendPlay, sendPause, sendSeek } = useRoomSync(id, role, videoRef);
-  const voice = useVoiceRoom(id);
+
+  // A/V mesh: acquire local camera + mic, then join PeerJS mesh
+  const media = useMediaDevices({ video: true, audio: true });
+  const voice = useVoiceRoom(id, media.stream);
+
+  // Show video grid when the user has joined and their stream is ready
+  const [showVideoGrid, setShowVideoGrid] = useState(false);
 
   // Derive Push-to-Talk button state
   const pttState: PushToTalkState = voice.isTranscribing
@@ -93,6 +101,11 @@ export default function RoomPage() {
     : voice.isRaisingHand
       ? "raised"
       : "idle";
+
+  // Toggle video grid visibility
+  const toggleVideoGrid = useCallback(() => {
+    setShowVideoGrid((v) => !v);
+  }, []);
 
   const [noteSaved, setNoteSaved] = useState(false);
   const [questionAttribution, setQuestionAttribution] = useState<{
@@ -311,17 +324,20 @@ export default function RoomPage() {
             onSeeked={handleVideoSeeked}
           />
 
-          {/* Member count pill */}
+          {/* Member count pill + video call toggle */}
           <div className="absolute right-3 top-3 flex items-center gap-3">
             <div className="flex items-center gap-1.5 rounded-full bg-black/60 px-3 py-1 text-xs text-white backdrop-blur">
               <span className="inline-block h-2 w-2 rounded-full bg-green-400" />
               {roomState.memberCount} watching
             </div>
-            {voice.peers.length > 0 && (
-              <div className="flex items-center gap-1.5 rounded-full bg-black/60 px-3 py-1 text-xs text-white backdrop-blur">
+            {(voice.peerIds.length > 0 || media.stream) && (
+              <button
+                onClick={toggleVideoGrid}
+                className="flex items-center gap-1.5 rounded-full bg-black/60 px-3 py-1 text-xs text-white backdrop-blur hover:bg-black/80 transition"
+              >
                 <Mic className="h-3 w-3" />
-                {voice.peers.length} on voice
-              </div>
+                {voice.peerIds.length + 1} in call
+              </button>
             )}
           </div>
 
@@ -383,8 +399,22 @@ export default function RoomPage() {
         </p>
       </div>
 
-      {/* Sidebar — chapters */}
+      {/* Sidebar — chapters + video grid */}
       <aside className="w-full shrink-0 lg:w-64">
+        {/* A/V Chat Grid (collapsible) */}
+        {showVideoGrid && media.stream && (
+          <div className="mb-4">
+            <VideoGrid
+              localStream={media.stream}
+              remoteStreams={voice.remoteStreams}
+              isAudioMuted={media.isAudioMuted}
+              isVideoMuted={media.isVideoMuted}
+              onToggleAudio={media.toggleAudio}
+              onToggleVideo={media.toggleVideo}
+            />
+          </div>
+        )}
+
         <ChapterList
           chapters={chapters}
           currentChapter={state.currentChapter}

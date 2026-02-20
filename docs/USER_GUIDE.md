@@ -3283,6 +3283,51 @@ The tunnel sidecar automatically proxies to the `agent` container on port 3000.
 | Link works once then fails | Cookie `sameSite` issue | Ensure tunnel uses HTTPS (cookies set `Secure` flag automatically) |
 | Invite link expired | JWT TTL exceeded (default 24h) | Generate a new invite; use `ttlHours` for longer-lived links (max 168h / 7 days) |
 
+### A/V Chat (Full Duplex Camera & Mic)
+
+> **Epic #12** — Adds full-duplex video and audio chat to multiplayer watch parties. Participants see each other's webcam feeds in a video grid while the host's Voice Pipe mixes all audio for real-time AI transcription.
+
+#### Overview
+
+A/V Chat extends the multiplayer room with three capabilities:
+
+1. **Camera & Mic Toggle** — Each participant captures their local camera and microphone via `useMediaDevices`. Tracks start muted; toggle buttons in the video grid control visibility/audio independently.
+2. **Mesh Video Network** — `useVoiceRoom` establishes a PeerJS WebRTC mesh connecting up to **5 participants** (including the host). Peer discovery happens via Socket.IO (`room:announce_peer` → `room:peers_updated`).
+3. **Voice Pipe (Host Only)** — When a guest raises their hand (Q&A mode), the host's `useVoicePipe` hook mixes all audio sources (local mic + remote peers) through a Web Audio API `AudioContext`, records the mix via `MediaRecorder` in 3-second chunks, and emits `room:audio_chunk` events for STT processing.
+
+#### Video Grid
+
+The `<VideoGrid />` component renders participant tiles in a responsive layout:
+
+| Participants | Layout |
+|---|---|
+| 1 | Full width |
+| 2 | Side-by-side |
+| 3–4 | 2×2 grid |
+| 5 | 3+2 rows |
+
+Each tile shows:
+- Video feed (via `srcObject` on `<video>`)
+- "You" label for the local tile
+- Remote peer ID for others
+- Muted mic indicator when audio is off
+
+The grid appears in a collapsible sidebar panel on both host and guest pages. Click the member count pill to show/hide it.
+
+#### Bandwidth & Limitations
+
+- **Max 5 participants** — The WebRTC mesh topology sends N-1 streams per participant. Beyond 5, upstream bandwidth becomes prohibitive.
+- **Cloudflare Tunnel** — WebRTC data channels and TURN fallbacks may have limited throughput through Cloudflare Tunnels. STUN servers (`stun.l.google.com`) handle NAT traversal for direct peer connections.
+- **Media defaults** — Video captures at 320×240 (ideal) to minimize bandwidth. Audio uses the browser's default codec.
+
+#### Hooks Reference
+
+| Hook | Purpose |
+|---|---|
+| `useMediaDevices(options?)` | Captures local camera/mic stream. Returns `stream`, `isAudioMuted`, `isVideoMuted`, `toggleAudio()`, `toggleVideo()`, `releaseStream()`. |
+| `useVoiceRoom(presentationId, localStream)` | PeerJS mesh network. Returns `peerIds`, `remoteStreams`, `isMuted`, `toggleMic()`, `raiseHand()`, `lowerHand()`, `cleanup()`. |
+| `useVoicePipe(presentationId, isHost, isRecording, localStream, remoteStreams)` | Host-only audio mixer. Connects all sources to a `MediaStreamDestination`, records chunks, emits `room:audio_chunk`. Returns `isActive`, `stopPipe()`. |
+
 ---
 
 ## Configuration Reference
