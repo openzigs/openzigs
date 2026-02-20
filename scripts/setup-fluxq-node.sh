@@ -127,7 +127,46 @@ select_python() {
 # ── Preflight Checks ─────────────────────────────────────────
 info "Checking prerequisites..."
 
-# Ensure Xcode command-line tools are present (needed for any compilation)
+# ── HuggingFace token check ──────────────────────────────
+# Flux.1 models on HuggingFace are gated (require auth + license acceptance).
+# SDXL-Turbo does not require auth. We check for the token now so the user
+# can be reminded early rather than discovering the error mid-install.
+HF_TOKEN_FOUND=""
+if [[ -n "${HF_TOKEN:-}" ]]; then
+  HF_TOKEN_FOUND="env"
+elif [[ -f "$INSTALL_DIR/.env" ]] && grep -q 'HF_TOKEN=' "$INSTALL_DIR/.env" 2>/dev/null; then
+  HF_TOKEN_FOUND=".env"
+fi
+
+if [[ -n "$HF_TOKEN_FOUND" ]]; then
+  ok "HuggingFace token found (source: $HF_TOKEN_FOUND) — Flux.1 models will be available"
+else
+  echo ""
+  warn "┌────────────────────────────────────────────────────────────┐"
+  warn "│  HuggingFace token NOT found                                      │"
+  warn "│                                                                  │"
+  warn "│  Flux.1 models are gated and require authentication.             │"
+  warn "│  You WILL get a GatedRepoError 401 if you try to use them.       │"
+  warn "│                                                                  │"
+  warn "│  To fix this BEFORE generating images:                           │"
+  warn "│  1. Create an account at https://huggingface.co                  │"
+  warn "│  2. Accept the license: https://hf.co/black-forest-labs/FLUX.1-schnell │"
+  warn "│  3. Create a token:     https://huggingface.co/settings/tokens   │"
+  warn "│  4. Add to $INSTALL_DIR/.env:│"
+  warn "│       HF_TOKEN=hf_…                                              │"
+  warn "│                                                                  │"
+  warn "│  Alternatively, use sdxl-turbo which needs NO auth.              │"
+  warn "└────────────────────────────────────────────────────────────┘"
+  echo ""
+fi
+
+# If HF_TOKEN was passed as an env var and the .env file already exists, write it in
+# so subsequent starts (launchd, start.sh) also have access to it.
+if [[ -n "${HF_TOKEN:-}" && -f "$INSTALL_DIR/.env" ]] && ! grep -q 'HF_TOKEN=' "$INSTALL_DIR/.env" 2>/dev/null; then
+  echo "HF_TOKEN=$HF_TOKEN" >> "$INSTALL_DIR/.env"
+  ok "HF_TOKEN persisted to $INSTALL_DIR/.env"
+fi
+
 if ! xcode-select -p >/dev/null 2>&1; then
   info "Xcode Command Line Tools not found — installing (a dialog may appear)..."
   xcode-select --install 2>/dev/null || true
@@ -265,7 +304,17 @@ IMAGE_GEN_HOST=0.0.0.0
 IMAGE_GEN_PORT=5005
 IMAGE_GEN_MODEL=sdxl-turbo
 # IMAGE_GEN_IDLE_TIMEOUT=600
+#
+# HuggingFace token — required for Flux.1 models (gated).
+# Get yours at https://huggingface.co/settings/tokens
+# Uncomment and fill in, then restart the sidecar.
+# HF_TOKEN=hf_...
 EOF
+  # If already provided as an env variable, write it in immediately
+  if [[ -n "${HF_TOKEN:-}" ]]; then
+    echo "HF_TOKEN=$HF_TOKEN" >> "$ENV_FILE"
+    ok "HF_TOKEN written to .env"
+  fi
   chmod 600 "$ENV_FILE"
   ok "Created .env file"
 fi

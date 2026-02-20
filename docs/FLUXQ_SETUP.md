@@ -13,6 +13,7 @@ models on Apple Silicon MPS.
 | **macOS** | 13 Ventura or later |
 | **Python** | 3.11 or 3.12 recommended (`python3 --version`). Python 3.13+ may require compiling packages from source; the setup script installs `cmake` and `pkg-config` automatically via Homebrew if needed. |
 | **Network** | Both Macs on the same LAN/subnet |
+| **HuggingFace account** | Required to download Flux.1 models (gated). Create a free account at https://huggingface.co, accept the [FLUX.1-schnell license](https://huggingface.co/black-forest-labs/FLUX.1-schnell), then generate a read token at https://huggingface.co/settings/tokens. Add `HF_TOKEN=hf_…` to `~/fluxq-node/.env` before generating images. **Skip if using `sdxl-turbo` only** (no auth required). |
 
 ## Quick Start
 
