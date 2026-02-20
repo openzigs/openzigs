@@ -52,45 +52,119 @@ fetch_file() {
   fi
 }
 
+# Fix Homebrew directory ownership when it is not writable by the current user.
+# This is a common state on shared or migrated Macs.
+ensure_brew_writable() {
+  command -v brew >/dev/null 2>&1 || return 1
+  local brew_prefix
+  brew_prefix="$(brew --prefix 2>/dev/null)" || return 1
+  [[ -w "$brew_prefix" ]] && return 0   # already writable — nothing to do
+
+  warn "Homebrew directory is not writable by your user — fixing permissions now."
+  warn "(sudo password may be required)"
+  sudo chown -R "$(whoami)" "$brew_prefix" || fail "Could not fix Homebrew permissions. Run manually:\n  sudo chown -R $(whoami) $brew_prefix"
+  # Fix common locked subdirectories
+  for d in "$brew_prefix/share/zsh" "$brew_prefix/share/zsh/site-functions" "$brew_prefix/var/homebrew/locks"; do
+    [[ -d "$d" ]] && sudo chown -R "$(whoami)" "$d" 2>/dev/null || true
+  done
+  chmod u+w "$brew_prefix" 2>/dev/null || true
+  ok "Homebrew permissions fixed"
+}
+
+# Install a Homebrew formula if it is not already present, fixing permissions first.
+brew_ensure() {
+  local pkg="$1"
+  local check_cmd="${2:-$1}"   # optional: command to probe instead of the package name
+  command -v brew >/dev/null 2>&1 || return 1
+  if command -v "$check_cmd" >/dev/null 2>&1; then
+    ok "$pkg already available"
+    return 0
+  fi
+  ensure_brew_writable
+  info "Installing $pkg via Homebrew..."
+  brew install "$pkg"
+  ok "$pkg installed"
+}
+
+# Return the path of the best available Python interpreter (3.10–3.12 preferred).
+# If only 3.13+ is found, installs python@3.12 via Homebrew automatically.
+select_python() {
+  # Honour explicit override
+  if [[ -n "${FLUXQ_PYTHON:-}" ]]; then
+    command -v "$FLUXQ_PYTHON" >/dev/null 2>&1 || fail "FLUXQ_PYTHON='$FLUXQ_PYTHON' not found."
+    echo "$FLUXQ_PYTHON"; return
+  fi
+
+  # Check candidates in preference order
+  for candidate in python3.12 python3.11 python3.10; do
+    if command -v "$candidate" >/dev/null 2>&1; then
+      echo "$candidate"; return
+    fi
+  done
+
+  # Check if the system python3 is in a good range (3.10–3.12)
+  if command -v python3 >/dev/null 2>&1; then
+    local major minor
+    major=$(python3 -c 'import sys; print(sys.version_info.major)')
+    minor=$(python3 -c 'import sys; print(sys.version_info.minor)')
+    if [[ "$major" -eq 3 && "$minor" -ge 10 && "$minor" -le 12 ]]; then
+      echo "python3"; return
+    fi
+  fi
+
+  # Nothing suitable — install python@3.12 via Homebrew
+  if command -v brew >/dev/null 2>&1; then
+    ensure_brew_writable
+    info "No Python 3.10–3.12 found — installing python@3.12 via Homebrew..."
+    brew install python@3.12
+    ok "python@3.12 installed"
+    echo "python3.12"
+  else
+    fail "Python 3.10–3.12 is required.\nInstall Homebrew (https://brew.sh), then run: brew install python@3.12"
+  fi
+}
+
 # ── Preflight Checks ─────────────────────────────────────────
 info "Checking prerequisites..."
 
-command -v "$PYTHON" >/dev/null 2>&1 || fail "Python 3 not found. Install it via: brew install python@3.11"
+# Ensure Xcode command-line tools are present (needed for any compilation)
+if ! xcode-select -p >/dev/null 2>&1; then
+  info "Xcode Command Line Tools not found — installing (a dialog may appear)..."
+  xcode-select --install 2>/dev/null || true
+  # Wait for CLT install to complete (up to 5 min)
+  until xcode-select -p >/dev/null 2>&1; do
+    sleep 10
+    info "Waiting for Xcode Command Line Tools installation to complete..."
+  done
+  ok "Xcode Command Line Tools installed"
+fi
 
-PY_VERSION=$("$PYTHON" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
+# Ensure Homebrew is installed
+if ! command -v brew >/dev/null 2>&1; then
+  info "Homebrew not found — installing..."
+  /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+  # Add brew to PATH for the remainder of this script
+  eval "$(/opt/homebrew/bin/brew shellenv 2>/dev/null || /usr/local/bin/brew shellenv 2>/dev/null)"
+  ok "Homebrew installed"
+fi
+
+# Select Python interpreter (auto-installs python@3.12 if only 3.13+ is available)
+PYTHON="$(select_python)"
+ok "Using Python interpreter: $PYTHON ($(${PYTHON} --version 2>&1))"
+
 PY_MAJOR=$("$PYTHON" -c 'import sys; print(sys.version_info.major)')
 PY_MINOR=$("$PYTHON" -c 'import sys; print(sys.version_info.minor)')
 
 if [[ "$PY_MAJOR" -lt 3 ]] || [[ "$PY_MAJOR" -eq 3 && "$PY_MINOR" -lt 10 ]]; then
-  fail "Python 3.10+ required, found $PY_VERSION"
-fi
-ok "Python $PY_VERSION found"
-
-# Warn when running on a Python version newer than what has pre-built wheels (3.12 is the safe ceiling today)
-if [[ "$PY_MAJOR" -eq 3 && "$PY_MINOR" -ge 13 ]]; then
-  warn "Python $PY_VERSION detected. Some packages (e.g. sentencepiece, torch) may not yet have"
-  warn "pre-built wheels for this version and must compile from source."
-  warn "If this fails, consider: brew install python@3.12 && FLUXQ_PYTHON=python3.12 ./setup-fluxq-node.sh"
+  fail "Python 3.10+ required, found $("$PYTHON" --version 2>&1)"
 fi
 
-# Ensure build tools required to compile packages from source (sentencepiece needs cmake) are present
-if ! command -v cmake >/dev/null 2>&1; then
-  if command -v brew >/dev/null 2>&1; then
-    info "cmake not found — installing via Homebrew (required to build sentencepiece)..."
-    brew install cmake pkg-config -q
-    ok "cmake and pkg-config installed"
-  else
-    fail "cmake is required to build Python packages from source but was not found.\n       Install Homebrew first: https://brew.sh  then re-run this script."
-  fi
-fi
+# Ensure build tools needed to compile Python extensions from source
+brew_ensure cmake cmake
+brew_ensure pkg-config pkg-config
 
-if ! command -v pkg-config >/dev/null 2>&1; then
-  if command -v brew >/dev/null 2>&1; then
-    info "pkg-config not found — installing via Homebrew..."
-    brew install pkg-config -q
-    ok "pkg-config installed"
-  fi
-fi
+# Install sentencepiece system library if available (avoids building from source entirely)
+brew_ensure sentencepiece sentencepiece_trainer 2>/dev/null || true
 
 # Check for Apple Silicon (MPS)
 ARCH=$(uname -m)
@@ -121,7 +195,9 @@ fetch_file "requirements.txt" "requirements.txt"
 
 info "Installing Python dependencies (this may take several minutes on first run)..."
 pip install --upgrade pip wheel setuptools -q
-pip install -r requirements.txt -q
+# --prefer-binary: use pre-built wheels whenever available (avoids source compilation for packages
+# like sentencepiece that don't yet have wheels for newer Python versions).
+pip install --prefer-binary -r requirements.txt
 
 ok "Dependencies installed"
 
