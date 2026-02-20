@@ -637,9 +637,14 @@ const tunnel = tunnelConfig?.enabled
 const roomManager = new RoomManager();
 
 const httpServer = createServer(app);
+// Allow both local UI and optional presenter subdomain (for Cloudflare tunnel guests)
+const presenterOrigin = config.presenter?.baseUrl;
+const allowedOrigins = presenterOrigin
+  ? [uiOrigin, presenterOrigin]
+  : uiOrigin;
 const io = new SocketIOServer(httpServer, {
   cors: {
-    origin: uiOrigin,
+    origin: allowedOrigins,
     credentials: true
   }
 });
