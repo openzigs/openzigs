@@ -637,8 +637,9 @@ const tunnel = tunnelConfig?.enabled
 const roomManager = new RoomManager();
 
 const httpServer = createServer(app);
-// Allow both local UI and optional presenter subdomain (for Cloudflare tunnel guests)
-const presenterOrigin = config.presenter?.baseUrl;
+// Allow both local UI and presenter subdomain (for Cloudflare tunnel guests).
+// OPENZIGS_PRESENTER_ORIGIN env var takes precedence; falls back to config.presenter.baseUrl.
+const presenterOrigin = process.env.OPENZIGS_PRESENTER_ORIGIN || config.presenter?.baseUrl;
 const allowedOrigins = presenterOrigin
   ? [uiOrigin, presenterOrigin]
   : uiOrigin;
