@@ -180,12 +180,22 @@ mkdir -p "$INSTALL_DIR"
 cd "$INSTALL_DIR"
 
 # ── Create Virtual Environment ────────────────────────────────
+# If a venv exists but was built with a different Python (e.g., a previous
+# failed run used Python 3.14 and we now want 3.12), delete and recreate it.
+if [[ -d ".venv" ]]; then
+  VENV_PY_VER=$(.venv/bin/python --version 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+  WANT_PY_VER=$("$PYTHON" -c 'import sys; print("{}.{}.{}".format(*sys.version_info[:3]))')
+  if [[ "$VENV_PY_VER" != "$WANT_PY_VER" ]]; then
+    warn "Existing venv uses Python $VENV_PY_VER but selected interpreter is $WANT_PY_VER — recreating..."
+    rm -rf .venv
+  else
+    ok "Virtual environment already exists (Python $VENV_PY_VER)"
+  fi
+fi
 if [[ ! -d ".venv" ]]; then
-  info "Creating Python virtual environment..."
+  info "Creating Python virtual environment with $PYTHON..."
   "$PYTHON" -m venv .venv
   ok "Virtual environment created"
-else
-  ok "Virtual environment already exists"
 fi
 
 source .venv/bin/activate
@@ -197,7 +207,11 @@ info "Installing Python dependencies (this may take several minutes on first run
 pip install --upgrade pip wheel setuptools -q
 # --prefer-binary: use pre-built wheels whenever available (avoids source compilation for packages
 # like sentencepiece that don't yet have wheels for newer Python versions).
-pip install --prefer-binary -r requirements.txt
+#
+# CMAKE_POLICY_VERSION_MINIMUM=3.5: CMake 4.x dropped support for cmake_minimum_required < 3.5.
+# This env var tells CMake 4 to allow old CMakeLists.txt files (like sentencepiece 0.2.0) to
+# configure without failing. Inherited by any cmake subprocess spawned during the pip build.
+CMAKE_POLICY_VERSION_MINIMUM=3.5 pip install --prefer-binary -r requirements.txt
 
 ok "Dependencies installed"
 
