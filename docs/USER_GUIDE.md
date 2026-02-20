@@ -3184,90 +3184,131 @@ If `inviteSecret` is empty, a random 64-byte hex secret is **auto-generated on f
 
 Invite links are JWT tokens signed with HS256 using this secret. Each link includes an expiration claim (default: 24 hours, configurable via `ttlHours` when generating the invite). The link becomes invalid after expiry — guests must request a new invite from the host.
 
-#### Cloudflare Tunnel Setup for Invite Links
+#### Cloudflare Tunnel Setup for Presenter Mode
 
-When running OpenZigs behind a **Cloudflare Tunnel**, invite links need to point to your public domain instead of `localhost`. This section covers the full setup from zero.
+When running OpenZigs behind a Cloudflare Tunnel, invite links need to point to a public domain instead of `localhost`. The recommended setup uses **two routes on a single tunnel**: one for the backend (Telegram / API) and one for the Next.js UI (guests). Both run through the same `cloudflared` connector — no extra daemon needed.
+
+```
+Guest browser
+  │
+  ├─ /invite/..., /room/...  ──► presenter.example.com ──► localhost:3001 (Next.js)
+  │                                    │
+  │                             Next.js rewrites proxy:
+  │                             /api/*       → localhost:3000
+  │                             /socket.io/* → localhost:3000
+  │
+  └─ Telegram webhook (unchanged) ── openzigs.example.com ──► localhost:3000 (Express)
+```
+
+All guest traffic flows through the **same origin** (`presenter.example.com`). The Next.js rewrite layer proxies API and Socket.IO internally — no cross-origin cookie issues, no CORS problems.
 
 ##### Prerequisites
 
 | Requirement | Purpose |
 |---|---|
 | **Cloudflare account** | Free tier is sufficient |
-| **Domain name** | Added to Cloudflare DNS (e.g., `openzigs.example.com`) |
-| **`cloudflared`** | Cloudflare Tunnel daemon ([install guide](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/)) |
+| **Domain added to Cloudflare** | e.g. `example.com` managed via Cloudflare DNS |
+| **Existing tunnel running** | At least one `cloudflared` service already connected (e.g. `openzigs.example.com → localhost:3000`) |
 
-##### Step 1 — Create a Cloudflare Tunnel
+##### Step 1 — Add a second published application to your existing tunnel
 
-```bash
-# Authenticate with Cloudflare (opens browser)
-cloudflared tunnel login
+> If you are setting up a brand-new tunnel, first follow the [Create a tunnel (dashboard)](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/get-started/create-remote-tunnel/) guide to get your initial route running before continuing here.
 
-# Create a named tunnel
-cloudflared tunnel create openzigs
+1. Log in to [Cloudflare One](https://one.dash.cloudflare.com/)
+2. Navigate to **Networks → Connectors → Cloudflare Tunnels**
+3. Find your tunnel and click **Edit**
+4. Open the **Published application routes** tab — your existing route (e.g. `openzigs.example.com → localhost:3000`) will be listed
+5. Click **Add a published application**
+6. Fill in the new route:
+   - **Subdomain:** `presenter`
+   - **Domain:** select your domain from the dropdown
+   - **Service Type:** `HTTP`
+   - **URL:** `localhost:3001`
+7. Click **Save**
 
-# Note the tunnel ID printed (e.g., a1b2c3d4-e5f6-...)
-```
+Your tunnel now has two routes:
 
-##### Step 2 — Configure DNS
+| Public Hostname | Service | Purpose |
+|---|---|---|
+| `openzigs.example.com` | `http://localhost:3000` | Backend API + Telegram webhook (unchanged) |
+| `presenter.example.com` | `http://localhost:3001` | Guest presenter UI (new) |
 
-```bash
-# Point your subdomain to the tunnel
-cloudflared tunnel route dns openzigs openzigs.example.com
-```
+##### Step 2 — Configure environment variables
 
-This creates a CNAME record `openzigs.example.com → <tunnel-id>.cfargotunnel.com`.
+Both the backend `.env` and the UI's `.env` (or `.env.local`) need to be updated.
 
-##### Step 3 — Write the Tunnel Config
-
-Create `~/.cloudflared/config.yml`:
-
-```yaml
-tunnel: <your-tunnel-id>
-credentials-file: ~/.cloudflared/<your-tunnel-id>.json
-
-ingress:
-  - hostname: openzigs.example.com
-    service: http://localhost:3000
-  - service: http_status:404
-```
-
-All traffic — REST API, Socket.IO, PeerJS signaling — goes through the same port. No path-level rules are needed.
-
-##### Step 4 — Configure OpenZigs for the Tunnel
-
-Update `~/.openzigs/config.json` to set the public base URL for invite links:
-
-```json
-{
-  "presenter": {
-    "baseUrl": "https://openzigs.example.com"
-  }
-}
-```
-
-> **Why?** By default the backend uses `req.protocol + req.get("host")` to build invite URLs, which resolves to `http://localhost:3000` behind a reverse proxy. Setting `baseUrl` overrides this so invite links point to your public domain.
-
-##### Step 5 — Start the Tunnel
+**Backend (`.env` in project root):**
 
 ```bash
-# Run in the foreground (for testing)
-cloudflared tunnel run openzigs
+# Leave NEXT_PUBLIC_OPENZIGS_API_BASE empty = same-origin mode.
+# Guest API and Socket.IO calls use relative paths (/api/...) which
+# Next.js rewrites proxy to localhost:3000 internally.
+NEXT_PUBLIC_OPENZIGS_API_BASE=
 
-# Or run as a systemd service (Linux, persistent)
-sudo cloudflared service install
-sudo systemctl start cloudflared
+# Copy your token from ~/.openzigs/config.json → auth.token
+NEXT_PUBLIC_OPENZIGS_TOKEN=<your-token>
+
+# Copy from ~/.openzigs/config.json → presenter.inviteSecret
+PRESENTER_INVITE_SECRET=<your-invite-secret>
+
+# Tell the backend the public URL of the presenter UI (used in invite link generation)
+OPENZIGS_UI_ORIGIN=https://presenter.example.com
 ```
 
-##### Step 6 — Verify
+> **Where do these values come from?**
+> - `NEXT_PUBLIC_OPENZIGS_TOKEN` — auto-generated on first run and saved to `~/.openzigs/config.json` under `auth.token`. Read it with: `cat ~/.openzigs/config.json | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['auth']['token'])"`
+> - `PRESENTER_INVITE_SECRET` — auto-generated on first run and saved to `~/.openzigs/config.json` under `presenter.inviteSecret`. Read it with the same approach under `d['presenter']['inviteSecret']`.
+> - Both are created automatically if missing — you never need to generate them manually.
 
-1. Start OpenZigs: `pnpm dev`
-2. Generate an invite from the Presenter page (click **Invite to Watch**)
-3. The clipboard should contain a URL like:
-   ```
-   https://openzigs.example.com/invite/<jwt>
-   ```
-4. Open this URL in a different browser / incognito window
-5. You should be redirected to `https://openzigs.example.com/room/<id>` with no navigation bar
+##### Step 3 — Set the Base URL in Admin panel
+
+1. Open `http://localhost:3001/admin`
+2. Scroll to the **Presenter Mode** section
+3. Set **Base URL** to: `https://presenter.example.com`
+4. Save — restart the backend to apply
+
+This tells the backend what public URL to embed in generated invite links.
+
+##### Step 4 — Rebuild the UI
+
+```bash
+cd ui && npx next build
+```
+
+Then restart both services:
+```bash
+# Terminal 1 — backend
+pnpm dev
+
+# Terminal 2 — UI
+cd ui && pnpm dev       # development
+# OR: cd ui && npx next start   # production
+```
+
+##### Step 5 — Verify
+
+1. Create a presentation and generate an invite link from the Presenter page (**Invite to Watch**)
+2. The invite URL should be: `https://presenter.example.com/invite/<jwt>`
+3. Open the link in incognito or on a different device
+4. You should see "Joining presentation…" then land in the room at `https://presenter.example.com/room/<id>`
+
+##### Preventing Unauthenticated Traffic
+
+By default, anyone who can reach `presenter.example.com` can attempt to load the UI. OpenZigs has built-in protection at two layers:
+
+| Layer | What it does |
+|---|---|
+| **Next.js middleware** | Guests are restricted to `/invite/*`, `/room/*`, `/403`, and `/invite-expired`. All other routes (admin, chat, scheduler, workbench) return a 403 page. |
+| **Socket.IO `room:join`** | Cryptographically verifies the guest JWT cookie (HS256). A guest can only join the specific room their invite was scoped to. |
+
+If you want to add a Cloudflare-level gate in front of `presenter.example.com` to block all unauthenticated requests before they reach your Mac:
+
+1. In **Cloudflare One → Access controls → Applications**, click **Add an application → Self-hosted**
+2. Set the application domain to `presenter.example.com`
+3. Add an **Allow** policy — for example, allow **Everyone** (to keep it open) or restrict to specific email domains / IP ranges if you want tighter control
+4. Save — Cloudflare Access will now issue application tokens to approved users. Users without a valid token are blocked at the Cloudflare edge and never reach `localhost:3001`
+
+> **Note:** Cloudflare Access sits in front of everything on `presenter.example.com`, including the `/invite/*` pages. If you use Access, you need to add a **Bypass** or **Service Auth** policy for the `/invite/*` path so guests can redeem their invite link without needing a Cloudflare login.
 
 ##### Docker Compose (Production)
 
@@ -3282,16 +3323,17 @@ TUNNEL_TOKEN=your-cloudflare-tunnel-token
 docker compose up -d agent tunnel
 ```
 
-The tunnel sidecar automatically proxies to the `agent` container on port 3000.
+The tunnel sidecar automatically proxies to the `agent` container. The second hostname (`presenter.example.com → localhost:3001`) is configured in the Cloudflare dashboard — no changes to `docker-compose.yml` are needed.
 
 ##### Troubleshooting Invite Links Behind Tunnel
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| Invite URL says `localhost:3000` | `baseUrl` not set in config | Add `presenter.baseUrl` to `~/.openzigs/config.json` |
-| "Invite Link Invalid" error | Secret mismatch (redeploy) | Delete `presenter.inviteSecret` from config, restart both backend and frontend |
-| Link works once then fails | Cookie `sameSite` issue | Ensure tunnel uses HTTPS (cookies set `Secure` flag automatically) |
+| Invite URL says `localhost:3001` | `baseUrl` not set in Admin → Presenter Mode | Set **Base URL** to `https://presenter.example.com` and restart backend |
+| "Invite Link Invalid" error | `PRESENTER_INVITE_SECRET` in `.env` doesn't match `~/.openzigs/config.json` | Copy the value from `~/.openzigs/config.json → presenter.inviteSecret` into `.env` |
+| Link works once then fails | Cookie `sameSite` issue | Ensure tunnel uses HTTPS — cookies set the `Secure` flag automatically on HTTPS origins |
 | Invite link expired | JWT TTL exceeded (default 24h) | Generate a new invite; use `ttlHours` for longer-lived links (max 168h / 7 days) |
+| 403 on `/room/...` | `NEXT_PUBLIC_OPENZIGS_API_BASE` set to a value | Leave it **empty** in `.env` so API calls use relative paths proxied by Next.js rewrites |
 
 ### A/V Chat (Full Duplex Camera & Mic)
 
