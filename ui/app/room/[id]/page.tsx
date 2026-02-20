@@ -349,7 +349,19 @@ export default function RoomPage() {
             )}
           </div>
 
-          {/* Push-to-Talk button (replaces RaiseHand in voice rooms) */}
+          {/* Raise Hand button — opens Q&A blackboard overlay */}
+          {(state.phase === "PLAYING" || roomState.fsmState === "PLAYING") && (
+            <button
+              onClick={raiseHand}
+              aria-label="Raise Hand to ask a question"
+              className="absolute bottom-4 left-4 z-10 flex items-center gap-2 rounded-full bg-primary px-4 py-2.5 text-sm font-semibold text-primary-foreground shadow-lg transition hover:scale-105 hover:bg-primary/90"
+            >
+              <span className="text-base leading-none">✋</span>
+              Ask a Question
+            </button>
+          )}
+
+          {/* Push-to-Talk button — voice chat mic */}
           {(state.phase === "PLAYING" || roomState.fsmState === "PLAYING") && (
             <PushToTalkButton
               state={pttState}
