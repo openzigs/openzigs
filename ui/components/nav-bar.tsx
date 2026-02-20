@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useEffect, useState } from "react";
 import { ModeToggle } from "@/components/mode-toggle";
 
 const NAV_ITEMS = [
@@ -19,32 +20,56 @@ const NAV_ITEMS = [
   { href: "/presenter", label: "Presenter" },
 ];
 
+const useIsGuest = () => {
+  const [isGuest, setIsGuest] = useState(false);
+  useEffect(() => {
+    setIsGuest(document.cookie.split("; ").some((c) => c === "is_guest=true"));
+  }, []);
+  return isGuest;
+};
+
 export const NavBar = () => {
   const pathname = usePathname();
+  const isGuest = useIsGuest();
+
+  // Room pages are full-screen presenter views — no nav chrome
+  if (pathname.startsWith("/room/")) return null;
 
   return (
     <nav className="sticky top-0 z-40 border-b border-border bg-background/80 backdrop-blur">
       <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-3">
-        <Link href="/" className="text-sm font-bold tracking-[0.2em] uppercase text-foreground">
-          OpenZigs
+        <Link href="/" className="flex items-center">
+          {/* wordmark logo */}
+          <img
+            src="/openzigs-logo-light.png"
+            alt="OpenZigs"
+            className="h-6"
+            draggable="false"
+          />
         </Link>
         <div className="flex items-center gap-1">
-          {NAV_ITEMS.map(({ href, label }) => {
-            const active = href === "/" ? pathname === "/" : pathname.startsWith(href);
-            return (
-              <Link
-                key={href}
-                href={href}
-                className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
-                  active
-                    ? "bg-primary text-primary-foreground"
-                    : "text-muted-foreground hover:bg-accent/10 hover:text-foreground"
-                }`}
-              >
-                {label}
-              </Link>
-            );
-          })}
+          {isGuest ? (
+            <span className="rounded-lg bg-muted px-3 py-1.5 text-xs font-semibold text-muted-foreground">
+              Guest
+            </span>
+          ) : (
+            NAV_ITEMS.map(({ href, label }) => {
+              const active = href === "/" ? pathname === "/" : pathname.startsWith(href);
+              return (
+                <Link
+                  key={href}
+                  href={href}
+                  className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
+                    active
+                      ? "bg-primary text-primary-foreground"
+                      : "text-muted-foreground hover:bg-accent/10 hover:text-foreground"
+                  }`}
+                >
+                  {label}
+                </Link>
+              );
+            })
+          )}
           <ModeToggle />
         </div>
       </div>

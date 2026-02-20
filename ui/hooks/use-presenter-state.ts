@@ -66,6 +66,7 @@ type PresenterAction =
   | { type: "SUBMIT_QUESTION"; question: string }
   | { type: "ANSWER_TOKEN"; token: string }
   | { type: "ANSWER_DONE" }
+  | { type: "READY_FOR_FOLLOWUP" }
   | { type: "TRIGGER_QUIZ"; quiz: QuizQuestion }
   | { type: "ANSWER_QUIZ"; selectedIndex: number }
   | { type: "DISMISS_QUIZ" }
@@ -114,6 +115,13 @@ function presenterReducer(
         qaHistory: [...state.qaHistory, entry],
       };
     }
+
+    case "READY_FOR_FOLLOWUP":
+      return {
+        ...state,
+        pendingQuestion: null,
+        answerTokens: "",
+      };
 
     case "TRIGGER_QUIZ": {
       const newShown = new Set(state.shownQuizTimestamps);
@@ -208,6 +216,10 @@ export function usePresenterState() {
     dispatch({ type: "ANSWER_DONE" });
   }, []);
 
+  const readyForFollowup = useCallback(() => {
+    dispatch({ type: "READY_FOR_FOLLOWUP" });
+  }, []);
+
   const resume = useCallback(() => {
     dispatch({ type: "RESUME" });
     videoRef.current?.play();
@@ -247,6 +259,7 @@ export function usePresenterState() {
     submitQuestion,
     appendToken,
     finishAnswer,
+    readyForFollowup,
     resume,
     triggerQuiz,
     answerQuiz,

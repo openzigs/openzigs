@@ -75,7 +75,7 @@ export const createApp = (config: AppConfig, options: CreateAppOptions = {}) => 
 
   app.set("trust proxy", true);
 
-  const uiOrigin = process.env.OPENZIGS_UI_ORIGIN ?? "http://localhost:3000";
+  const uiOrigin = process.env.OPENZIGS_UI_ORIGIN ?? "http://localhost:3001";
   app.use(helmet({
     contentSecurityPolicy: {
       directives: {

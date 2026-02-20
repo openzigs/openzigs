@@ -27,8 +27,8 @@ export function QuizOverlay({
   };
 
   return (
-    <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/80 backdrop-blur-sm">
-      <div className="mx-4 w-full max-w-lg rounded-2xl border border-border bg-card p-6 shadow-xl">
+    <div className="absolute inset-0 z-20 flex items-end justify-center bg-black/80 backdrop-blur-sm sm:items-center">
+      <div className="w-full max-h-[85dvh] overflow-y-auto rounded-t-2xl border border-white/10 bg-card p-4 shadow-xl sm:mx-4 sm:max-w-lg sm:rounded-2xl sm:p-6">
         <p className="mb-1 text-[10px] font-bold uppercase tracking-widest text-primary">
           Pop Quiz
         </p>

@@ -222,6 +222,10 @@ The frontend is a **Next.js 14 App Router** application in the `ui/` directory. 
 | `/library` | `library/page.tsx` | Saved prompt CRUD with `{{variable}}` template preview and system prompt apply |
 | `/presenter` | `presenter/page.tsx` | Presentation catalog — grid of rendered videos with thumbnails, search, delete |
 | `/presenter/[id]` | `presenter/[id]/page.tsx` | Interactive player with FSM (Play/Pause/Quiz/Recap), chapter sidebar, Raise Hand Q&A, blackboard with Mermaid, quiz overlays, PDF recap |
+| `/room/[id]` | `room/[id]/page.tsx` | Multiplayer watch party room with synced video, voice peers, Push-to-Talk, shared blackboard |
+| `/invite/[token]` | `invite/[token]/page.tsx` | Guest invite redemption — verifies JWT, sets cookies, redirects to room |
+| `/403` | `403/page.tsx` | Access denied page for unauthorized guests |
+| `/invite-expired` | `invite-expired/page.tsx` | Expired invite link page |
 | `/scheduler` | `scheduler/page.tsx` | Cron job CRUD with action types, prompt linking, model overrides, AI assist, live execution events |
 | `/tasks` | `task-dashboard.tsx` | Background task queue, status filters, cancel, recursive child expansion, real-time updates |
 | `/workbench` | `workbench/page.tsx` | Rich Markdown editor (MDXEditor) with file sidebar, live file system CRUD, Cmd/Ctrl+S save |
@@ -239,6 +243,10 @@ ui/
 │   ├── library/page.tsx    # Library route
 │   ├── presenter/page.tsx  # Presenter catalog route
 │   ├── presenter/[id]/page.tsx  # Interactive player route
+│   ├── room/[id]/page.tsx       # Multiplayer watch party room
+│   ├── invite/[token]/page.tsx  # Guest invite redemption
+│   ├── 403/page.tsx             # Access denied (guest RBAC)
+│   ├── invite-expired/page.tsx  # Expired invite page
 │   ├── scheduler/page.tsx  # Scheduler route
 │   ├── tasks/page.tsx      # Tasks route
 │   └── workbench/page.tsx  # Workbench route (MDXEditor + file sidebar)
@@ -266,7 +274,8 @@ ui/
 │   │   ├── chapter-list.tsx            # Sidebar chapter navigation
 │   │   ├── recap-screen.tsx            # Session recap with score ring
 │   │   ├── score-ring.tsx              # SVG circular score indicator
-│   │   └── pdf-generator.ts           # jsPDF recap export
+│   │   ├── pdf-generator.ts           # jsPDF recap export
+│   │   └── push-to-talk-button.tsx   # Floating PTT button (hold/click toggle)
 │   └── admin/
 │       ├── tools-panel.tsx        # Tool list with risk badges + toggles
 │       ├── channels-panel.tsx     # Telegram + Discord config forms
@@ -281,8 +290,11 @@ ui/
     ├── api.ts              # Shared fetchJson utility + API_BASE
     ├── types.ts            # All shared TypeScript types
     └── socket-context.tsx  # SocketProvider + useSocket hook
+├── middleware.ts            # Guest RBAC — JWT cookie verification, route gating
 ├── hooks/
-│   └── use-presenter-state.ts  # Presenter FSM (useReducer) with 4 states
+│   ├── use-presenter-state.ts  # Presenter FSM (useReducer) with 4 states
+│   ├── useRoomSync.ts          # Socket.IO room protocol (join/leave/playback sync)
+│   └── useVoiceRoom.ts         # PeerJS audio mesh + Push-to-Talk + transcription
 ```
 
 ### API Proxying
@@ -3246,3 +3258,88 @@ Presenter Mode transforms rendered Director Mode videos into interactive learnin
 | `presenter:answer:error` | server → client | Error during answer generation |
 
 ### Tracking: [Epic #275](https://github.com/mgcronin/openzigs/issues/275)
+
+---
+
+## Multiplayer Presenter Mode — P2P Watch Party & Guest Invite
+
+Issue: [Epic #282](https://github.com/mgcronin/openzigs/issues/282)
+
+Multiplayer extends Presenter Mode into a real-time collaborative watch party using Socket.IO rooms, JWT-based guest invites, and a PeerJS WebRTC audio mesh.
+
+### Architecture
+
+```
+┌───────────────────────────────────────────────────────────────────┐
+│  UI (Next.js)                                                     │
+│  ┌──────────────┐  ┌──────────────┐  ┌────────────────────────┐  │
+│  │ Invite Page   │  │ Room Page    │  │ Push-to-Talk Button    │  │
+│  │ /invite/[tok] │  │ /room/[id]   │  │ (hold / click-toggle)  │  │
+│  └──────┬────────┘  └──────┬───────┘  └────────────────────────┘  │
+│         │                  │                                       │
+│         ▼                  ▼                                       │
+│  ┌────────────────────────────────────────────────────────────┐   │
+│  │ useRoomSync (Socket.IO room protocol)                      │   │
+│  │ useVoiceRoom (PeerJS mesh + mic + MediaRecorder)           │   │
+│  └────────────────────────┬───────────────────────────────────┘   │
+└───────────────────────────┼───────────────────────────────────────┘
+                            │ Socket.IO + PeerJS WebSocket
+                            ▼
+┌───────────────────────────────────────────────────────────────────┐
+│  Backend (Express + Socket.IO)                                    │
+│  ┌──────────────┐  ┌───────────────┐  ┌───────────────────────┐  │
+│  │ RoomManager   │  │ PeerJS Server │  │ Invite JWT (jose)     │  │
+│  │ (in-memory    │  │ ExpressPeer   │  │ HS256, 24h expiry     │  │
+│  │  room state)  │  │ Server        │  │ cookie-based RBAC     │  │
+│  └──────┬────────┘  └───────────────┘  └───────────────────────┘  │
+│         │                                                         │
+│         ▼                                                         │
+│  Socket.IO rooms: room:join, host:play/pause/seek,                │
+│  room:audio_chunk (binary), room:transcription_preview            │
+└───────────────────────────────────────────────────────────────────┘
+```
+
+### Key Modules
+
+| Module | Path | Purpose |
+|---|---|---|
+| RoomManager | `src/presenter/room-manager.ts` | In-memory room state: members, host tracking, playback position, peer IDs, socket-to-room reverse index |
+| Invite endpoint | `src/api/presenter.ts` | `POST /:id/invite` — generates HS256 JWT with 24h TTL |
+| Invite redeem | `src/server.ts` | `GET /api/invite/redeem` — verifies JWT, sets HttpOnly cookies |
+| PeerJS signaling | `src/server.ts` | `ExpressPeerServer` embedded at `/peerjs` (key: `openzigs`) |
+| Guest RBAC | `ui/middleware.ts` | Next.js middleware verifying `guest_token` cookie, restricting routes |
+| useRoomSync | `ui/hooks/useRoomSync.ts` | Socket.IO room join/leave, playback sync with 1.5s drift threshold |
+| useVoiceRoom | `ui/hooks/useVoiceRoom.ts` | PeerJS client, full-mesh audio calls, Push-to-Talk MediaRecorder, hand raise |
+| PushToTalkButton | `ui/components/presenter/push-to-talk-button.tsx` | Floating PTT UI with hold/click modes, transcription preview |
+
+### PeerJS Integration
+
+The PeerJS signaling server is mounted on the same Express HTTP server:
+
+```typescript
+const peerServer = ExpressPeerServer(httpServer, {
+  path: "/peerjs",
+  key: "openzigs",
+  proxied: true,
+});
+app.use(peerServer);
+```
+
+- HTTP API: `/peerjs/openzigs/id`, `/peerjs/openzigs/peers`
+- WebSocket upgrade: filtered by path prefix `/peerjs` in the `httpServer.on("upgrade")` handler to avoid conflicts with Socket.IO upgrades
+- Client connects with matching `path` and `key`, then announces its peer ID via `room:announce_peer`
+
+### Socket.IO Room Events
+
+| Event | Direction | Purpose |
+|---|---|---|
+| `room:join` | C→S | Join room, RoomManager tracks member |
+| `room:leave` | C→S | Leave room, cleanup |
+| `room:announce_peer` | C→S | Register PeerJS peer ID with room |
+| `room:peers_updated` | S→C | Broadcast updated peer ID list |
+| `host:play` / `host:pause` / `host:seek` | C→S | Host-only playback control |
+| `room:playback_sync` | S→C | Broadcast playback state to all room members |
+| `room:audio_chunk` | C→S | Binary audio for STT (≤2MB, rate-limited) |
+| `room:transcription_preview` | S→C | Live transcription text with speaker name |
+
+### Tracking: [Epic #282](https://github.com/mgcronin/openzigs/issues/282)

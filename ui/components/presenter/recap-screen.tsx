@@ -41,12 +41,12 @@ export function RecapScreen({
   };
 
   return (
-    <main className="mx-auto max-w-3xl px-6 py-10 lg:px-12">
+    <main className="mx-auto max-w-3xl overflow-y-auto px-4 py-6 sm:px-6 sm:py-10 lg:px-12" style={{ maxHeight: "100dvh" }}>
       <header className="mb-8 text-center">
         <p className="text-sm uppercase tracking-[0.3em] text-muted-foreground">
           Session Complete
         </p>
-        <h1 className="mt-2 text-3xl font-semibold text-foreground">
+        <h1 className="mt-2 text-xl font-semibold text-foreground sm:text-3xl">
           {presentation.title}
         </h1>
       </header>
@@ -128,7 +128,7 @@ export function RecapScreen({
       )}
 
       {/* Actions */}
-      <div className="flex items-center justify-center gap-3">
+      <div className="flex flex-col items-center justify-center gap-3 sm:flex-row">
         <button
           onClick={onRestart}
           className="flex items-center gap-2 rounded-xl border border-border px-5 py-2.5 text-sm font-semibold text-foreground hover:bg-muted"

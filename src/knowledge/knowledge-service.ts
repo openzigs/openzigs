@@ -576,6 +576,20 @@ export class KnowledgeIngestionService extends EventEmitter {
     let conversionMetadata: Record<string, unknown> | undefined;
     const stat = await fs.stat(filePath);
 
+    // Fast pre-conversion check: if mtime + size match and the document is
+    // already indexed, skip immediately without running any converter.
+    // This avoids expensive OCR/transcription on every restart for unchanged files.
+    const existingFast = this.documents.get(documentId);
+    if (
+      !options.force &&
+      existingFast &&
+      existingFast.status === "indexed" &&
+      existingFast.sizeBytes === stat.size &&
+      existingFast.fileMtime === stat.mtime.toISOString()
+    ) {
+      return;
+    }
+
     if (this.converterRegistry && this.converterRegistry.canConvert(filePath)) {
       const result = await this.converterRegistry.convert(filePath);
       if (!result.success) {
@@ -604,11 +618,12 @@ export class KnowledgeIngestionService extends EventEmitter {
       relativePath,
       sourceType,
       sizeBytes: stat.size,
+      fileMtime: stat.mtime.toISOString(),
       contentHash,
       status: "processing",
       chunkCount: 0,
       indexedAt: null,
-      createdAt: existing?.createdAt ?? new Date().toISOString(),
+      createdAt: existingFast?.createdAt ?? new Date().toISOString(),
     };
     this.documents.set(documentId, doc);
 

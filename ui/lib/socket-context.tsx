@@ -41,7 +41,7 @@ export const SocketProvider = ({ children }: { children: ReactNode }) => {
     const clientId = getStableClientId();
     const socket = io(SOCKET_URL || undefined, {
       query: { clientId },
-      transports: ["websocket", "polling"],
+      transports: ["polling", "websocket"],
       reconnection: true,
       reconnectionAttempts: Infinity,
       reconnectionDelay: 500,

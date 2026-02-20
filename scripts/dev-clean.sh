@@ -73,9 +73,13 @@ CONFIG_FILE="$HOME/.openzigs/config.json"
 UI_ENV="$PROJECT_ROOT/ui/.env.local"
 if [ -f "$CONFIG_FILE" ]; then
   TOKEN=$(python3 -c "import json; print(json.load(open('$CONFIG_FILE'))['auth']['token'])" 2>/dev/null || true)
+  INVITE_SECRET=$(python3 -c "import json; d=json.load(open('$CONFIG_FILE')); print(d.get('presenter',{}).get('inviteSecret',''))" 2>/dev/null || true)
   if [ -n "$TOKEN" ]; then
     echo "NEXT_PUBLIC_OPENZIGS_API_BASE=http://localhost:3000" > "$UI_ENV"
     echo "NEXT_PUBLIC_OPENZIGS_TOKEN=$TOKEN" >> "$UI_ENV"
+    if [ -n "$INVITE_SECRET" ]; then
+      echo "PRESENTER_INVITE_SECRET=$INVITE_SECRET" >> "$UI_ENV"
+    fi
     echo "[clean-start] Wrote auth token to ui/.env.local"
   fi
 fi

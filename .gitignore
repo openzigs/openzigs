@@ -68,6 +68,7 @@ coverage/
 build/
 out/
 .next/
+ui/tsconfig.tsbuildinfo
 
 # Sidecar model + cache artifacts (generated at runtime)
 mlx_models/

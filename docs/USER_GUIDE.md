@@ -3047,6 +3047,287 @@ Real-time streaming for Q&A answers:
 | `presenter:answer:done` | server → client | `{ fullAnswer }` |
 | `presenter:answer:error` | server → client | `{ error }` |
 
+### Multiplayer Watch Parties (P2P)
+
+Issue: [Epic #282](https://github.com/mgcronin/openzigs/issues/282)
+
+Multiplayer extends the solo Presenter experience into a real-time collaborative watch party. A host creates a room backed by a presentation, invites guests via secure JWT links, and all participants watch in sync with P2P voice chat.
+
+#### Screenshots
+
+| View | Screenshot |
+|---|---|
+| Presenter Catalog | ![Presenter list](images/multiplayer-01-presenter-list.png) |
+| Room (Host View) | ![Room host view](images/multiplayer-02-room-host.png) |
+| Invite Expired | ![Invite expired page](images/multiplayer-03-invite-expired.png) |
+| Access Denied (403) | ![403 forbidden page](images/multiplayer-04-403-forbidden.png) |
+
+#### Generating an Invite Link
+
+Hosts generate invite links via the REST API:
+
+```bash
+curl -X POST http://localhost:3000/api/presentations/<id>/invite \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"displayName": "Alice"}'
+```
+
+Response:
+
+```json
+{
+  "inviteUrl": "http://localhost:3001/invite/<jwt>",
+  "expiresAt": "2025-07-19T12:00:00.000Z"
+}
+```
+
+Share the `inviteUrl` with guests. The link is valid for 24 hours.
+
+#### Guest Invite Flow
+
+1. Guest opens the invite URL (`/invite/<token>`)
+2. The invite page calls `GET /api/invite/redeem?token=<jwt>`
+3. The backend verifies the JWT, sets `guest_token` and `is_guest` HttpOnly cookies
+4. Guest is redirected to `/room/<presentationId>`
+5. RBAC middleware restricts guests to `/room/*`, `/invite/*`, `/403`, and `/invite-expired` routes
+
+If the token is expired or invalid, the guest is redirected to `/invite-expired` or `/403`.
+
+#### Room Page
+
+The room page (`/room/[id]`) provides:
+
+- **Synchronized video player** — Host play/pause/seek actions sync all guests within a 1.5s drift tolerance
+- **Member count pill** — Shows number of participants in the room
+- **Voice peers indicator** — Shows connected P2P voice peers count
+- **Push-to-Talk button** — Floating button for voice input (hold-to-talk or click-toggle)
+- **Blackboard overlay** — Q&A answers broadcast to all participants with "Asked by …" attribution
+- **Transcription preview** — Live speech-to-text preview during voice input
+
+#### Host vs Guest Controls
+
+| Action | Host | Guest |
+|---|---|---|
+| Play / Pause / Seek | ✅ Controls synced to room | ❌ Read-only (synced from host) |
+| Raise Hand (Q&A) | ✅ | ✅ |
+| Push-to-Talk (Voice) | ✅ | ✅ |
+| Generate Invite Links | ✅ | ❌ |
+
+#### Push-to-Talk
+
+The PTT button supports two interaction modes:
+
+1. **Hold-to-talk** — Press and hold; release to stop recording
+2. **Click-toggle** — Click once to start, click again to stop
+
+Audio is chunked every 3 seconds and sent via `room:audio_chunk` binary Socket.IO events. The server forwards chunks to the STT sidecar and streams transcription previews back.
+
+#### Multiplayer REST API
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| `POST` | `/api/presentations/:id/invite` | Admin | Generate a 24h invite JWT link |
+| `GET` | `/api/invite/redeem` | Public | Redeem invite token, sets guest cookies |
+
+#### Multiplayer Socket.IO Events
+
+| Event | Direction | Payload | Description |
+|---|---|---|---|
+| `room:join` | client → server | `{ roomId, displayName }` | Join a room |
+| `room:leave` | client → server | — | Leave current room |
+| `room:announce_peer` | client → server | `{ peerId }` | Announce PeerJS peer ID to room |
+| `room:peers_updated` | server → client | `{ peerIds: string[] }` | Updated list of peer IDs in room |
+| `host:play` | client → server | `{ currentTime }` | Host play (host-only) |
+| `host:pause` | client → server | `{ currentTime }` | Host pause (host-only) |
+| `host:seek` | client → server | `{ currentTime }` | Host seek (host-only) |
+| `room:playback_sync` | server → client | `{ action, currentTime }` | Broadcast playback state to guests |
+| `room:audio_chunk` | client → server | `Binary (≤2MB)` | Audio chunk for STT processing |
+| `room:transcription_preview` | server → client | `{ text, speakerName }` | Live transcription text |
+
+#### PeerJS Signaling
+
+The PeerJS signaling server is embedded in the Express backend at `/peerjs` (key: `openzigs`). Client config:
+
+```javascript
+new Peer({ path: "/peerjs", key: "openzigs" })
+```
+
+For PeerJS signaling and WebSocket details behind a reverse proxy, see [Cloudflare Tunnel for Multiplayer](cloudflare-tunnel-multiplayer.md).
+
+#### Multiplayer Configuration
+
+```json
+{
+  "presenter": {
+    "inviteSecret": ""
+  }
+}
+```
+
+If `inviteSecret` is empty, a random 64-byte hex secret is **auto-generated on first startup and persisted** to `~/.openzigs/config.json`. This means:
+
+- You do **not** need to manually configure a secret — one is created automatically
+- The secret survives server restarts (it's saved to the config file)
+- Invite links generated before a restart remain valid
+- If you need to rotate the secret (invalidating all outstanding invite links), delete the `presenter.inviteSecret` key from `~/.openzigs/config.json` and restart
+
+Invite links are JWT tokens signed with HS256 using this secret. Each link includes an expiration claim (default: 24 hours, configurable via `ttlHours` when generating the invite). The link becomes invalid after expiry — guests must request a new invite from the host.
+
+#### Cloudflare Tunnel Setup for Invite Links
+
+When running OpenZigs behind a **Cloudflare Tunnel**, invite links need to point to your public domain instead of `localhost`. This section covers the full setup from zero.
+
+##### Prerequisites
+
+| Requirement | Purpose |
+|---|---|
+| **Cloudflare account** | Free tier is sufficient |
+| **Domain name** | Added to Cloudflare DNS (e.g., `openzigs.example.com`) |
+| **`cloudflared`** | Cloudflare Tunnel daemon ([install guide](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/)) |
+
+##### Step 1 — Create a Cloudflare Tunnel
+
+```bash
+# Authenticate with Cloudflare (opens browser)
+cloudflared tunnel login
+
+# Create a named tunnel
+cloudflared tunnel create openzigs
+
+# Note the tunnel ID printed (e.g., a1b2c3d4-e5f6-...)
+```
+
+##### Step 2 — Configure DNS
+
+```bash
+# Point your subdomain to the tunnel
+cloudflared tunnel route dns openzigs openzigs.example.com
+```
+
+This creates a CNAME record `openzigs.example.com → <tunnel-id>.cfargotunnel.com`.
+
+##### Step 3 — Write the Tunnel Config
+
+Create `~/.cloudflared/config.yml`:
+
+```yaml
+tunnel: <your-tunnel-id>
+credentials-file: ~/.cloudflared/<your-tunnel-id>.json
+
+ingress:
+  - hostname: openzigs.example.com
+    service: http://localhost:3000
+  - service: http_status:404
+```
+
+All traffic — REST API, Socket.IO, PeerJS signaling — goes through the same port. No path-level rules are needed.
+
+##### Step 4 — Configure OpenZigs for the Tunnel
+
+Update `~/.openzigs/config.json` to set the public base URL for invite links:
+
+```json
+{
+  "presenter": {
+    "baseUrl": "https://openzigs.example.com"
+  }
+}
+```
+
+> **Why?** By default the backend uses `req.protocol + req.get("host")` to build invite URLs, which resolves to `http://localhost:3000` behind a reverse proxy. Setting `baseUrl` overrides this so invite links point to your public domain.
+
+##### Step 5 — Start the Tunnel
+
+```bash
+# Run in the foreground (for testing)
+cloudflared tunnel run openzigs
+
+# Or run as a systemd service (Linux, persistent)
+sudo cloudflared service install
+sudo systemctl start cloudflared
+```
+
+##### Step 6 — Verify
+
+1. Start OpenZigs: `pnpm dev`
+2. Generate an invite from the Presenter page (click **Invite to Watch**)
+3. The clipboard should contain a URL like:
+   ```
+   https://openzigs.example.com/invite/<jwt>
+   ```
+4. Open this URL in a different browser / incognito window
+5. You should be redirected to `https://openzigs.example.com/room/<id>` with no navigation bar
+
+##### Docker Compose (Production)
+
+If you use Docker Compose, the tunnel sidecar is already defined in `docker-compose.yml`. Set the `TUNNEL_TOKEN` environment variable:
+
+```bash
+# .env
+TUNNEL_TOKEN=your-cloudflare-tunnel-token
+```
+
+```bash
+docker compose up -d agent tunnel
+```
+
+The tunnel sidecar automatically proxies to the `agent` container on port 3000.
+
+##### Troubleshooting Invite Links Behind Tunnel
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| Invite URL says `localhost:3000` | `baseUrl` not set in config | Add `presenter.baseUrl` to `~/.openzigs/config.json` |
+| "Invite Link Invalid" error | Secret mismatch (redeploy) | Delete `presenter.inviteSecret` from config, restart both backend and frontend |
+| Link works once then fails | Cookie `sameSite` issue | Ensure tunnel uses HTTPS (cookies set `Secure` flag automatically) |
+| Invite link expired | JWT TTL exceeded (default 24h) | Generate a new invite; use `ttlHours` for longer-lived links (max 168h / 7 days) |
+
+### A/V Chat (Full Duplex Camera & Mic)
+
+> **Epic #12** — Adds full-duplex video and audio chat to multiplayer watch parties. Participants see each other's webcam feeds in a video grid while the host's Voice Pipe mixes all audio for real-time AI transcription.
+
+#### Overview
+
+A/V Chat extends the multiplayer room with three capabilities:
+
+1. **Camera & Mic Toggle** — Each participant captures their local camera and microphone via `useMediaDevices`. Tracks start muted; toggle buttons in the video grid control visibility/audio independently.
+2. **Mesh Video Network** — `useVoiceRoom` establishes a PeerJS WebRTC mesh connecting up to **5 participants** (including the host). Peer discovery happens via Socket.IO (`room:announce_peer` → `room:peers_updated`).
+3. **Voice Pipe (Host Only)** — When a guest raises their hand (Q&A mode), the host's `useVoicePipe` hook mixes all audio sources (local mic + remote peers) through a Web Audio API `AudioContext`, records the mix via `MediaRecorder` in 3-second chunks, and emits `room:audio_chunk` events for STT processing.
+
+#### Video Grid
+
+The `<VideoGrid />` component renders participant tiles in a responsive layout:
+
+| Participants | Layout |
+|---|---|
+| 1 | Full width |
+| 2 | Side-by-side |
+| 3–4 | 2×2 grid |
+| 5 | 3+2 rows |
+
+Each tile shows:
+- Video feed (via `srcObject` on `<video>`)
+- "You" label for the local tile
+- Remote peer ID for others
+- Muted mic indicator when audio is off
+
+The grid appears in a collapsible sidebar panel on both host and guest pages. Click the member count pill to show/hide it.
+
+#### Bandwidth & Limitations
+
+- **Max 5 participants** — The WebRTC mesh topology sends N-1 streams per participant. Beyond 5, upstream bandwidth becomes prohibitive.
+- **Cloudflare Tunnel** — WebRTC data channels and TURN fallbacks may have limited throughput through Cloudflare Tunnels. STUN servers (`stun.l.google.com`) handle NAT traversal for direct peer connections.
+- **Media defaults** — Video captures at 320×240 (ideal) to minimize bandwidth. Audio uses the browser's default codec.
+
+#### Hooks Reference
+
+| Hook | Purpose |
+|---|---|
+| `useMediaDevices(options?)` | Captures local camera/mic stream. Returns `stream`, `isAudioMuted`, `isVideoMuted`, `toggleAudio()`, `toggleVideo()`, `releaseStream()`. |
+| `useVoiceRoom(presentationId, localStream)` | PeerJS mesh network. Returns `peerIds`, `remoteStreams`, `isMuted`, `toggleMic()`, `raiseHand()`, `lowerHand()`, `cleanup()`. |
+| `useVoicePipe(presentationId, isHost, isRecording, localStream, remoteStreams)` | Host-only audio mixer. Connects all sources to a `MediaStreamDestination`, records chunks, emits `room:audio_chunk`. Returns `isActive`, `stopPipe()`. |
+
 ---
 
 ## Configuration Reference

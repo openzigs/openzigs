@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Space_Grotesk, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 import { Providers } from "./providers";
@@ -18,16 +18,30 @@ const jetBrains = JetBrains_Mono({
 
 export const metadata: Metadata = {
   title: "OpenZigs Control Panel",
-  description: "Monitor tools, approvals, and activity in OpenZigs."
+  description: "Monitor tools, approvals, and activity in OpenZigs.",
+  icons: {
+    icon: "/openzigs-icon.png",
+    apple: "/openzigs-icon.png"
+  }
+};
+
+export const viewport: Viewport = {
+  viewportFit: "cover",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" suppressHydrationWarning>
-      <body className={`${spaceGrotesk.variable} ${jetBrains.variable} flex h-dvh flex-col overflow-hidden antialiased`}>
+      <body
+        className={`${spaceGrotesk.variable} ${jetBrains.variable} grid h-dvh overflow-hidden antialiased`}
+        style={{ gridTemplateRows: "auto 1fr" }}
+      >
         <Providers>
           <NavBar />
-          <div className="min-h-0 flex-1 overflow-y-auto">{children}</div>
+          <div className="flex min-h-0 flex-col overflow-y-auto">{children}</div>
+          <footer className="border-t border-border bg-background/80 text-center text-xs py-2 text-muted-foreground">
+            © Zylos Labs LLC
+          </footer>
         </Providers>
       </body>
     </html>
