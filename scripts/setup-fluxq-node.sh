@@ -228,6 +228,21 @@ sed -i '' "s|__USER__|$(whoami)|g" com.openzigs.fluxq.plist
 
 ok "launchd plist template downloaded"
 
+# Copy to user's LaunchAgents folder so it can be loaded later.  We don't
+# automatically load unless requested, because the user might be in the
+# middle of a setup where they prefer to review the file first.  However, a
+# convenience variable makes unattended installs easier.
+cp com.openzigs.fluxq.plist "$HOME/Library/LaunchAgents/com.openzigs.fluxq.plist"
+ok "Plist copied to ~/Library/LaunchAgents/"
+
+if [[ "${FLUXQ_INSTALL_SERVICE:-}" == "1" ]]; then
+  info "Loading launchd agent now (FLUXQ_INSTALL_SERVICE=1)..."
+  launchctl unload "$HOME/Library/LaunchAgents/com.openzigs.fluxq.plist" 2>/dev/null || true
+  launchctl load "$HOME/Library/LaunchAgents/com.openzigs.fluxq.plist"
+  ok "Launchd service loaded -- will auto-start on boot"
+  warn "To disable: launchctl unload ~/Library/LaunchAgents/com.openzigs.fluxq.plist"
+fi
+
 # ── Generate Secret Token ─────────────────────────────────────
 TOKEN_FILE="$INSTALL_DIR/.fluxq-token"
 if [[ ! -f "$TOKEN_FILE" ]]; then

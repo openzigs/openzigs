@@ -48,6 +48,12 @@ The server binds to `0.0.0.0:5005` by default.
 
 ### 3. Note the IP address and token
 
+> **Tip:** you can automatically register the launchd service by setting
+> `FLUXQ_INSTALL_SERVICE=1` before running the setup script.  The script will
+> copy the plist into `~/Library/LaunchAgents` and `launchctl load` it for
+> you.  Use `launchctl unload …` later to stop it.
+
+
 The setup script prints the local IP at the end. You can re‑check with one of the
 following; the correct interface name depends on your hardware and whether you
 are on Wi‑Fi or wired Ethernet.
