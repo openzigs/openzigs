@@ -185,7 +185,12 @@ Available models: `flux-schnell`, `flux-dev`, `sdxl-turbo`.
 | `Connection refused` | Check the sidecar is running (`curl http://<ip>:5005/health`) and firewall allows port 5005. |
 | `401 Unauthorized` | Token mismatch. Compare `~/fluxq-node/.fluxq-token` on the remote with the value in OpenZigs config. |
 | `CUDA/MPS not available` | Ensure the remote Mac has Apple Silicon and macOS ≥13. Check `python3 -c "import torch; print(torch.backends.mps.is_available())"`. |
-| `GatedRepoError: 401 Client Error` / `Cannot access gated repo` | Flux.1 models are gated on HuggingFace. Either switch to `sdxl-turbo` (no auth needed) or: 1) accept the license at https://huggingface.co/black-forest-labs/FLUX.1-schnell, 2) create a token at https://huggingface.co/settings/tokens, 3) add `HF_TOKEN=hf_…` to `~/fluxq-node/.env`, and restart the sidecar. |
+| `GatedRepoError: 401 Client Error` / `Cannot access gated repo` | Flux.1 models are gated on HuggingFace. Either switch to `sdxl-turbo` (no auth needed) or perform all of the following:
+<br>• accept the license at https://huggingface.co/black-forest-labs/FLUX.1-schnell (must be done per account even if you use the same token elsewhere)
+<br>• create a read token at https://huggingface.co/settings/tokens or reuse an existing one
+<br>• run `grep HF_TOKEN ~/.env` to make sure it’s set correctly (no stray quotes/newlines)
+<br>• verify the token can access the repo: `curl -H "Authorization: Bearer $HF_TOKEN" https://huggingface.co/api/models/black-forest-labs/FLUX.1-schnell` (should return JSON, not 401)
+<br>• restart the sidecar (`launchctl unload ... && launchctl load ...`) so the token is read from `.env` or `~/.cache/huggingface/token` (the setup script now copies it there automatically). |
 | `Failed building wheel for sentencepiece` (cmake not found) | The setup script now auto-installs `cmake` via Homebrew. If you see this, run `brew install cmake pkg-config` then re-run the script. Alternatively, use Python 3.12: `FLUXQ_PYTHON=python3.12 ./setup-fluxq-node.sh`. |
 | `ipconfig getifaddr en0` prints nothing | The interface name may not be `en0` on your machine. Try `en1` or `en2`, or run `ifconfig` to discover the active adapter's `inet` address. |
 | `cp … Not a directory` when installing plist | You accidentally combined the copy and launchctl commands on one line. Run the `cp`/`sed` step and `launchctl load` as separate commands (or join with `&&`). |

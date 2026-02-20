@@ -73,6 +73,15 @@ logging.basicConfig(
 )
 log = logging.getLogger("image-gen-sidecar")
 
+# report whether HuggingFace token is available (useful for debugging gated-repo errors)
+_hf_token = os.environ.get("HF_TOKEN")
+if _hf_token:
+    # mask all but first/last 4 chars
+    masked = f"{_hf_token[:4]}...{_hf_token[-4:]}"
+    log.info(f"HF_TOKEN present: {masked}")
+else:
+    log.info("HF_TOKEN not set")
+
 # ── MPS Memory Config ─────────────────────────────────────────
 # On Apple Silicon the MPS backend defaults to a high-watermark ratio
 # that caps allocations well below physical+swap capacity.  Disabling

@@ -140,6 +140,13 @@ fi
 
 if [[ -n "$HF_TOKEN_FOUND" ]]; then
   ok "HuggingFace token found (source: $HF_TOKEN_FOUND) — Flux.1 models will be available"
+  # also mirror into ~/.cache/huggingface/token to guard against missing
+  # variables when start.sh runs under launchd.
+  if [[ -n "${HF_TOKEN:-}" ]]; then
+    mkdir -p "$HOME/.cache/huggingface"
+    printf "%s" "$HF_TOKEN" > "$HOME/.cache/huggingface/token"
+    chmod 600 "$HOME/.cache/huggingface/token"
+  fi
 else
   echo ""
   warn "┌────────────────────────────────────────────────────────────┐"
@@ -314,6 +321,13 @@ EOF
   if [[ -n "${HF_TOKEN:-}" ]]; then
     echo "HF_TOKEN=$HF_TOKEN" >> "$ENV_FILE"
     ok "HF_TOKEN written to .env"
+    # also cache the token in the HuggingFace credentials file so
+    # the Python sidecar will pick it up even if environment
+    # variables somehow vanish (launchd tends to scrub envs).
+    mkdir -p "$HOME/.cache/huggingface"
+    printf "%s" "$HF_TOKEN" > "$HOME/.cache/huggingface/token"
+    chmod 600 "$HOME/.cache/huggingface/token"
+    ok "HF_TOKEN cached in ~/.cache/huggingface/token"
   fi
   chmod 600 "$ENV_FILE"
   ok "Created .env file"
