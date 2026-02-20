@@ -118,7 +118,11 @@ To have FluxQ start automatically on boot:
 ```bash
 cd ~/fluxq-node
 
-# Edit the plist template (replace placeholders)
+# Edit the plist template (replace placeholders) and copy it to your
+# LaunchAgents directory. Run these as two separate commands (or join with
+# `&&`); do **not** try to paste them on one line or you'll get a “Not a
+# directory” error as in the example above.
+
 sed "s|__FLUXQ_DIR__|$HOME/fluxq-node|g; s|__USER__|$USER|g" \
   com.openzigs.fluxq.plist > ~/Library/LaunchAgents/com.openzigs.fluxq.plist
 
@@ -176,6 +180,7 @@ Available models: `flux-schnell`, `flux-dev`, `sdxl-turbo`.
 | `CUDA/MPS not available` | Ensure the remote Mac has Apple Silicon and macOS ≥13. Check `python3 -c "import torch; print(torch.backends.mps.is_available())"`. |
 | `Failed building wheel for sentencepiece` (cmake not found) | The setup script now auto-installs `cmake` via Homebrew. If you see this, run `brew install cmake pkg-config` then re-run the script. Alternatively, use Python 3.12: `FLUXQ_PYTHON=python3.12 ./setup-fluxq-node.sh`. |
 | `ipconfig getifaddr en0` prints nothing | The interface name may not be `en0` on your machine. Try `en1` or `en2`, or run `ifconfig` to discover the active adapter's `inet` address. |
+| `cp … Not a directory` when installing plist | You accidentally combined the copy and launchctl commands on one line. Run the `cp`/`sed` step and `launchctl load` as separate commands (or join with `&&`). |
 | Slow first generation | Normal. The model downloads weights from HuggingFace on first use (~2-5 GB). Subsequent runs use the cache. |
 | Images look bad at 1920×1080 | Diffusion models produce best results at their native resolution (512×512 for SDXL-Turbo, 1024×1024 for Flux). The Director Mode compositor scales images to fill the frame. |
 
