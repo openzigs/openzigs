@@ -1102,6 +1102,25 @@ Mode C ("Presentation Mode") is a **zero-input video production pipeline** — t
 
 Model download behavior for Mode C image generation mirrors the audio sidecar: Python dependencies are installed via `pip`, but diffusion model weights are fetched lazily on first generation/model load and cached under sidecar cache/model directories (git-ignored by default).
 
+#### Remote Image Generation — FluxQ Network Node (#290)
+
+`ImageGenService` supports a **network mode** that offloads image generation to a second Mac on the local network. This is useful when the primary machine lacks GPU resources or when you want to dedicate a separate Apple Silicon Mac to diffusion workloads.
+
+```
+┌────────────────────┐      HTTP + Bearer Token       ┌────────────────────┐
+│  Primary Mac       │ ─────────────────────────────▶ │  Remote Mac        │
+│  OpenZigs Server   │    POST /generate              │  FluxQ Sidecar     │
+│  ImageGenService   │    GET  /health                │  (FastAPI + MPS)   │
+│  mode: "network"   │◀── JSON + PNG bytes ────────── │  Flux.1 / SDXL     │
+└────────────────────┘                                └────────────────────┘
+```
+
+**Configuration:** `imageGen.mode` in `~/.openzigs/config.json` (or via Admin UI panel):
+- `"local"` (default): uses `localSidecarUrl` (typically `http://127.0.0.1:5005`)
+- `"network"`: routes to `networkNodeUrl` with `Authorization: Bearer <networkNodeToken>` header
+
+**Security:** Bearer token auth via `hmac.compare_digest` on the sidecar side. Health and model-list endpoints remain unauthenticated for LAN discovery. See [FLUXQ_SETUP.md](FLUXQ_SETUP.md) for setup instructions.
+
 #### `image_scene` Timeline Entry
 
 Mode C introduces a new discriminated union variant in the `DirectorManifest` timeline:

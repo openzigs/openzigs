@@ -20,6 +20,7 @@ import { SentinelPanel } from "@/components/admin/sentinel-panel";
 import { KnowledgeConfigPanel } from "@/components/admin/knowledge-config-panel";
 import { VaultPanel } from "@/components/admin/vault-panel";
 import { DirectorPanel } from "@/components/admin/director-panel";
+import { ImageGenPanel } from "@/components/admin/image-gen-panel";
 import { VoiceConfigPanel } from "@/components/admin/voice-config-panel";
 import { VoiceLabPanel } from "@/components/voice-lab/voice-lab-panel";
 import { ToastContainer, showToast } from "@/components/toast";
@@ -100,6 +101,10 @@ export default function AdminPage() {
 
         <SectionCard title="Director Mode">
           <DirectorPanel />
+        </SectionCard>
+
+        <SectionCard title="Image Generation Node" defaultOpen={false}>
+          <ImageGenPanel />
         </SectionCard>
 
         <SectionCard title="Custom Agents" defaultOpen={false}>

@@ -880,7 +880,8 @@ Respond with ONLY a valid JSON array. No explanation. Example:
         // than /tmp/ — macOS aggressively purges /tmp/ which caused images to
         // vanish between the produce and render steps.
         const imageOutputDir = path.join(os.homedir(), ".openzigs", "director", "images");
-        const imageService = new ImageGenService({ outputDir: imageOutputDir });
+        const imageGenUserConfig = await ImageGenService.loadUserImageGenConfig();
+        const imageService = new ImageGenService({ outputDir: imageOutputDir, ...imageGenUserConfig });
         await imageService.initialize();
 
         const resolvedImageProvider = imageProvider ?? "auto";

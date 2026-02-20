@@ -189,6 +189,12 @@ export type PresenterAppConfig = {
   baseUrl?: string;
 };
 
+export type ImageGenAppConfig = {
+  mode?: "local" | "network";
+  networkNodeUrl?: string;
+  networkNodeToken?: string;
+};
+
 export type AppConfig = {
   server: {
     port: number;
@@ -205,6 +211,7 @@ export type AppConfig = {
   session?: SessionConfig;
   copilot?: CopilotConfig;
   presenter?: PresenterAppConfig;
+  imageGen?: ImageGenAppConfig;
   sentinel?: SentinelAppConfig;
   knowledge?: KnowledgeAppConfig;
   voice?: VoiceAppConfig;

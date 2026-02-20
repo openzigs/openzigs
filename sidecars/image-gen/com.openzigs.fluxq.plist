@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  FluxQ Node — macOS launchd Service Template
+  Issue #290: Remote Image Generation (FluxQ Local Network Node)
+
+  Install:
+    cp com.openzigs.fluxq.plist ~/Library/LaunchAgents/
+    launchctl load ~/Library/LaunchAgents/com.openzigs.fluxq.plist
+
+  Uninstall:
+    launchctl unload ~/Library/LaunchAgents/com.openzigs.fluxq.plist
+    rm ~/Library/LaunchAgents/com.openzigs.fluxq.plist
+
+  Logs:
+    tail -f /tmp/fluxq-stdout.log
+    tail -f /tmp/fluxq-stderr.log
+
+  NOTE: Replace __FLUXQ_DIR__ and __USER__ with your actual values,
+  or use setup-fluxq-node.sh which does this automatically.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.openzigs.fluxq</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>__FLUXQ_DIR__/.venv/bin/python</string>
+        <string>__FLUXQ_DIR__/server.py</string>
+        <string>--host</string>
+        <string>0.0.0.0</string>
+        <string>--port</string>
+        <string>5005</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>__FLUXQ_DIR__</string>
+
+    <key>UserName</key>
+    <string>__USER__</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <!-- Read token from .fluxq-token file via start.sh, or set explicitly here -->
+        <key>FLUXQ_SECRET_TOKEN</key>
+        <string></string>
+        <key>PYTORCH_MPS_HIGH_WATERMARK_RATIO</key>
+        <string>0.0</string>
+        <key>IMAGE_GEN_MODEL</key>
+        <string>sdxl-turbo</string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+
+    <key>StandardOutPath</key>
+    <string>/tmp/fluxq-stdout.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/tmp/fluxq-stderr.log</string>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+</dict>
+</plist>

@@ -175,6 +175,11 @@
   "presenter": {
     "inviteSecret": ""
   },
+  "imageGen": {
+    "mode": "local",
+    "networkNodeUrl": "",
+    "networkNodeToken": ""
+  },
   "sentinel": {
     "enabled": false,
     "model": "gpt-4o-mini",

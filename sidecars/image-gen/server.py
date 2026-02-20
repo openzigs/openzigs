@@ -40,11 +40,30 @@ from diffusers import (
     FluxPipeline,
     StableDiffusionXLPipeline,
 )
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends, Header
 from fastapi.responses import Response
 from optimum.quanto import freeze, quantize, qint4, qint8
 from PIL import Image
 from pydantic import BaseModel, Field
+
+# ── Token Authentication ───────────────────────────────────────
+# When FLUXQ_SECRET_TOKEN is set, all mutating endpoints require
+# Authorization: Bearer <token>.  Health/models remain public.
+_secret_token: Optional[str] = os.environ.get("FLUXQ_SECRET_TOKEN") or None
+
+
+def verify_token(authorization: Optional[str] = Header(None)) -> None:
+    """Dependency that checks the Bearer token if a secret is configured."""
+    if _secret_token is None:
+        return  # No token configured — open access (local-only mode)
+    if not authorization:
+        raise HTTPException(status_code=401, detail="Authorization header required")
+    parts = authorization.split(" ", 1)
+    if len(parts) != 2 or parts[0].lower() != "bearer":
+        raise HTTPException(status_code=401, detail="Expected 'Bearer <token>' format")
+    import hmac
+    if not hmac.compare_digest(parts[1], _secret_token):
+        raise HTTPException(status_code=403, detail="Invalid token")
 
 # ── Logging ────────────────────────────────────────────────────
 logging.basicConfig(
@@ -484,7 +503,7 @@ async def list_models():
     return {"models": models, "active": _model_name, "device": _device}
 
 
-@app.post("/model", response_model=ModelResponse)
+@app.post("/model", response_model=ModelResponse, dependencies=[Depends(verify_token)])
 async def switch_model(req: ModelRequest):
     """Load or switch to a different model at runtime.
 
@@ -522,7 +541,7 @@ async def switch_model(req: ModelRequest):
     )
 
 
-@app.post("/unload")
+@app.post("/unload", dependencies=[Depends(verify_token)])
 async def unload_model():
     """Unload the current model to free RAM."""
     if not _model_loaded:
@@ -532,7 +551,7 @@ async def unload_model():
     return {"status": "unloaded", "model": model}
 
 
-@app.post("/generate", response_class=Response)
+@app.post("/generate", response_class=Response, dependencies=[Depends(verify_token)])
 async def generate(req: GenerateRequest):
     """Generate an image from a text prompt.
 
@@ -665,8 +684,8 @@ Examples:
     )
     parser.add_argument(
         "--host",
-        default=os.environ.get("IMAGE_GEN_HOST", "127.0.0.1"),
-        help="Host to bind to (default: 127.0.0.1, env: IMAGE_GEN_HOST)",
+        default=os.environ.get("IMAGE_GEN_HOST", "0.0.0.0"),
+        help="Host to bind to (default: 0.0.0.0, env: IMAGE_GEN_HOST)",
     )
     parser.add_argument(
         "--default-model",
@@ -698,9 +717,14 @@ Examples:
         _default_model = args.preload
         _preload_at_startup = True
 
+    # Reload token from env (may have been set after module import)
+    global _secret_token
+    _secret_token = os.environ.get("FLUXQ_SECRET_TOKEN") or None
+
     log.info(
         f"Starting sidecar: default_model={_default_model}, "
-        f"host={args.host}, port={args.port}"
+        f"host={args.host}, port={args.port}, "
+        f"auth={'enabled' if _secret_token else 'disabled'}"
     )
     log.info(f"PyTorch version: {torch.__version__}")
     log.info(f"MPS available: {torch.backends.mps.is_available()}")

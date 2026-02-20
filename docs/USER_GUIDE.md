@@ -2716,6 +2716,16 @@ Presentation Mode (Mode C) produces complete videos from a text topic with zero 
 - **Google Cloud Vertex AI** (optional fallback) — set `GOOGLE_CLOUD_PROJECT` env var and authenticate via `gcloud auth application-default login`
 - The image gen sidecar starts automatically when needed, or run manually: `cd sidecars/image-gen && python server.py`
 
+#### Remote Image Generation (FluxQ Network Node)
+
+You can offload image generation to a second Mac on your local network. This is useful when your primary machine is busy running the Express server and UI, or when you have a dedicated Apple Silicon machine with more GPU memory.
+
+**Quick setup:**
+1. On the remote Mac, run: `bash scripts/setup-fluxq-node.sh`
+2. In the OpenZigs Admin UI, go to **Image Generation Node**, switch to **Network Node**, enter the remote IP and token, then click **Test Connection** and **Save**.
+
+For detailed instructions, see [FLUXQ_SETUP.md](FLUXQ_SETUP.md).
+
 #### Ken Burns Animation
 
 Each generated image is animated with a Ken Burns pan/zoom effect:

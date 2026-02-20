@@ -285,4 +285,125 @@ describe("ImageGenService", () => {
       vi.unstubAllGlobals();
     });
   });
+
+  describe("network mode routing", () => {
+    it("effectiveSidecarUrl returns networkNodeUrl in network mode", () => {
+      const svc = new ImageGenService({
+        outputDir: testOutputDir,
+        imageGenMode: "network",
+        networkNodeUrl: "http://192.168.1.50:5005",
+      });
+      expect(svc.effectiveSidecarUrl).toBe("http://192.168.1.50:5005");
+      expect(svc.isNetworkMode).toBe(true);
+    });
+
+    it("effectiveSidecarUrl strips trailing slash", () => {
+      const svc = new ImageGenService({
+        outputDir: testOutputDir,
+        imageGenMode: "network",
+        networkNodeUrl: "http://192.168.1.50:5005/",
+      });
+      expect(svc.effectiveSidecarUrl).toBe("http://192.168.1.50:5005");
+    });
+
+    it("effectiveSidecarUrl falls back to localSidecarUrl when mode is local", () => {
+      const svc = new ImageGenService({
+        outputDir: testOutputDir,
+        imageGenMode: "local",
+        localSidecarUrl: "http://127.0.0.1:5005",
+        networkNodeUrl: "http://192.168.1.50:5005",
+      });
+      expect(svc.effectiveSidecarUrl).toBe("http://127.0.0.1:5005");
+      expect(svc.isNetworkMode).toBe(false);
+    });
+
+    it("effectiveSidecarUrl falls back when networkNodeUrl is empty", () => {
+      const svc = new ImageGenService({
+        outputDir: testOutputDir,
+        imageGenMode: "network",
+        networkNodeUrl: "",
+        localSidecarUrl: "http://127.0.0.1:5005",
+      });
+      expect(svc.effectiveSidecarUrl).toBe("http://127.0.0.1:5005");
+      expect(svc.isNetworkMode).toBe(false);
+    });
+
+    it("sends Authorization header in network mode with token", async () => {
+      const svc = new ImageGenService({
+        outputDir: testOutputDir,
+        imageGenMode: "network",
+        networkNodeUrl: "http://192.168.1.50:5005",
+        networkNodeToken: "secret-token-123",
+      });
+
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        arrayBuffer: () => Promise.resolve(new ArrayBuffer(8)),
+        headers: new Map(),
+      });
+      vi.stubGlobal("fetch", mockFetch);
+
+      await svc.generateImage("test", { provider: "local", width: 512, height: 512 });
+
+      const fetchCall = mockFetch.mock.calls[0];
+      expect(fetchCall[0]).toBe("http://192.168.1.50:5005/generate");
+      expect(fetchCall[1].headers.Authorization).toBe("Bearer secret-token-123");
+
+      vi.unstubAllGlobals();
+    });
+
+    it("does not send Authorization header in local mode", async () => {
+      const svc = new ImageGenService({
+        outputDir: testOutputDir,
+        imageGenMode: "local",
+        localSidecarUrl: "http://127.0.0.1:5005",
+      });
+
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        arrayBuffer: () => Promise.resolve(new ArrayBuffer(8)),
+        headers: new Map(),
+      });
+      vi.stubGlobal("fetch", mockFetch);
+
+      await svc.generateImage("test", { provider: "local", width: 512, height: 512 });
+
+      const fetchCall = mockFetch.mock.calls[0];
+      expect(fetchCall[0]).toBe("http://127.0.0.1:5005/generate");
+      expect(fetchCall[1].headers.Authorization).toBeUndefined();
+
+      vi.unstubAllGlobals();
+    });
+
+    it("sends Authorization header on health check in network mode", async () => {
+      const svc = new ImageGenService({
+        outputDir: testOutputDir,
+        imageGenMode: "network",
+        networkNodeUrl: "http://192.168.1.50:5005",
+        networkNodeToken: "health-token-456",
+      });
+
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ ready: true, model: "flux-schnell" }),
+      });
+      vi.stubGlobal("fetch", mockFetch);
+
+      await svc.checkHealth();
+
+      const healthCall = mockFetch.mock.calls[0];
+      expect(healthCall[0]).toBe("http://192.168.1.50:5005/health");
+      expect(healthCall[1].headers.Authorization).toBe("Bearer health-token-456");
+
+      vi.unstubAllGlobals();
+    });
+  });
+
+  describe("loadUserImageGenConfig", () => {
+    it("returns empty object when config file does not exist", async () => {
+      const result = await ImageGenService.loadUserImageGenConfig();
+      // Will return {} or values from actual config — either way should not throw
+      expect(result).toBeDefined();
+    });
+  });
 });

@@ -2512,5 +2512,102 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
     });
   }
 
+  // ── Image Generation Node Configuration ──
+  router.get("/image-gen/config", async (_req, res) => {
+    try {
+      const userConfig = await readUserConfig(defaultConfigPath());
+      const imageGen = (userConfig.imageGen ?? {}) as Record<string, unknown>;
+      return res.json({
+        mode: imageGen.mode ?? "local",
+        networkNodeUrl: imageGen.networkNodeUrl ?? "",
+        networkNodeToken: imageGen.networkNodeToken ? "••••••••" : "",
+        hasToken: !!imageGen.networkNodeToken,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return res.status(500).json({ error: message });
+    }
+  });
+
+  router.put("/image-gen/config", async (req, res) => {
+    const body = req.body as Record<string, unknown>;
+    const mode = body.mode as string | undefined;
+    const networkNodeUrl = body.networkNodeUrl as string | undefined;
+    const networkNodeToken = body.networkNodeToken as string | undefined;
+
+    if (mode !== undefined && mode !== "local" && mode !== "network") {
+      return res.status(400).json({ error: "mode must be 'local' or 'network'" });
+    }
+    if (networkNodeUrl !== undefined && typeof networkNodeUrl !== "string") {
+      return res.status(400).json({ error: "networkNodeUrl must be a string" });
+    }
+    if (networkNodeUrl && !/^https?:\/\/.+/.test(networkNodeUrl)) {
+      return res.status(400).json({ error: "networkNodeUrl must be a valid HTTP(S) URL" });
+    }
+
+    try {
+      const configPath = defaultConfigPath();
+      const userConfig = await readUserConfig(configPath);
+      const existing = (userConfig.imageGen ?? {}) as Record<string, unknown>;
+      const updated: Record<string, unknown> = { ...existing };
+      if (mode !== undefined) updated.mode = mode;
+      if (networkNodeUrl !== undefined) updated.networkNodeUrl = networkNodeUrl;
+      if (networkNodeToken !== undefined) updated.networkNodeToken = networkNodeToken;
+      userConfig.imageGen = updated;
+      await writeUserConfig(configPath, userConfig);
+
+      logger.info(`[Admin] Image-gen config updated: mode=${updated.mode}`);
+      return res.json({
+        ok: true,
+        mode: updated.mode,
+        networkNodeUrl: updated.networkNodeUrl,
+        hasToken: !!updated.networkNodeToken,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return res.status(500).json({ error: message });
+    }
+  });
+
+  router.get("/image-gen/health", async (req, res) => {
+    const url = typeof req.query.url === "string" ? req.query.url : undefined;
+    const token = typeof req.query.token === "string" ? req.query.token : undefined;
+
+    // Determine target: explicit query params or saved config
+    let targetUrl: string;
+    let targetToken: string | undefined;
+    if (url) {
+      if (!/^https?:\/\/.+/.test(url)) {
+        return res.status(400).json({ error: "url must be a valid HTTP(S) URL" });
+      }
+      targetUrl = url.replace(/\/$/, "");
+      targetToken = token;
+    } else {
+      const userConfig = await readUserConfig(defaultConfigPath());
+      const imageGen = (userConfig.imageGen ?? {}) as Record<string, unknown>;
+      targetUrl = ((imageGen.networkNodeUrl as string) || "http://127.0.0.1:5005").replace(/\/$/, "");
+      targetToken = imageGen.networkNodeToken as string | undefined;
+    }
+
+    try {
+      const headers: Record<string, string> = {};
+      if (targetToken) {
+        headers["Authorization"] = `Bearer ${targetToken}`;
+      }
+      const response = await fetch(`${targetUrl}/health`, {
+        headers,
+        signal: AbortSignal.timeout(5000),
+      });
+      if (!response.ok) {
+        return res.json({ ok: false, status: response.status, error: `HTTP ${response.status}` });
+      }
+      const data = await response.json() as Record<string, unknown>;
+      return res.json({ ok: true, ...data });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return res.json({ ok: false, error: message });
+    }
+  });
+
   return router;
 };

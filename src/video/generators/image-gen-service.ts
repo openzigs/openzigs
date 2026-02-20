@@ -63,6 +63,12 @@ export interface ImageGenServiceConfig {
   localTimeoutMs?: number;
   /** Directory to save generated images (default: os.tmpdir()) */
   outputDir?: string;
+  /** Image-gen mode: "local" (same machine sidecar) or "network" (remote FluxQ node) */
+  imageGenMode?: "local" | "network";
+  /** URL of the remote FluxQ network node (e.g. "http://192.168.1.50:5005") */
+  networkNodeUrl?: string;
+  /** Bearer token for authenticating with the remote FluxQ node */
+  networkNodeToken?: string;
 }
 
 // ── Constants ─────────────────────────────────────────────────
@@ -79,6 +85,9 @@ function getDefaultConfig(): Required<ImageGenServiceConfig> {
     cloudTimeoutMs: 60_000,
     localTimeoutMs: 120_000,
     outputDir: path.join(os.tmpdir(), "openzigs-image-gen"),
+    imageGenMode: (process.env.IMAGE_GEN_MODE as "local" | "network" | undefined) ?? "local",
+    networkNodeUrl: process.env.IMAGE_GEN_NETWORK_URL ?? "",
+    networkNodeToken: process.env.IMAGE_GEN_NETWORK_TOKEN ?? "",
   };
 }
 
@@ -94,8 +103,43 @@ export class ImageGenService {
   /** Whether the local sidecar is known to be available. */
   get localAvailable(): boolean | null { return this._localAvailable; }
 
+  /** The effective sidecar URL: network node URL if in network mode, else local. */
+  get effectiveSidecarUrl(): string {
+    if (this.config.imageGenMode === "network" && this.config.networkNodeUrl) {
+      return this.config.networkNodeUrl.replace(/\/$/, "");
+    }
+    return this.config.localSidecarUrl;
+  }
+
+  /** Whether network mode is active. */
+  get isNetworkMode(): boolean {
+    return this.config.imageGenMode === "network" && !!this.config.networkNodeUrl;
+  }
+
   constructor(config?: ImageGenServiceConfig) {
     this.config = { ...getDefaultConfig(), ...config };
+  }
+
+  /**
+   * Load imageGen config from the user config file (~/.openzigs/config.json).
+   * Returns partial config suitable for spreading into the constructor.
+   */
+  static async loadUserImageGenConfig(): Promise<Partial<ImageGenServiceConfig>> {
+    try {
+      const configPath = process.env.OPENZIGS_CONFIG_PATH
+        ?? path.join(os.homedir(), ".openzigs", "config.json");
+      const raw = await fs.readFile(configPath, "utf-8");
+      const parsed = JSON.parse(raw) as Record<string, unknown>;
+      const ig = parsed.imageGen as Record<string, unknown> | undefined;
+      if (!ig) return {};
+      const result: Partial<ImageGenServiceConfig> = {};
+      if (ig.mode === "local" || ig.mode === "network") result.imageGenMode = ig.mode;
+      if (typeof ig.networkNodeUrl === "string" && ig.networkNodeUrl) result.networkNodeUrl = ig.networkNodeUrl;
+      if (typeof ig.networkNodeToken === "string" && ig.networkNodeToken) result.networkNodeToken = ig.networkNodeToken;
+      return result;
+    } catch {
+      return {};
+    }
   }
 
   /**
@@ -167,7 +211,12 @@ export class ImageGenService {
    */
   async getRecommendedResolution(): Promise<{ width: number; height: number } | null> {
     try {
-      const response = await fetch(`${this.config.localSidecarUrl}/health`, {
+      const headers: Record<string, string> = {};
+      if (this.isNetworkMode && this.config.networkNodeToken) {
+        headers["Authorization"] = `Bearer ${this.config.networkNodeToken}`;
+      }
+      const response = await fetch(`${this.effectiveSidecarUrl}/health`, {
+        headers,
         signal: AbortSignal.timeout(5000),
       });
       const data = await response.json() as {
@@ -310,7 +359,7 @@ export class ImageGenService {
     options: ImageGenOptions,
   ): Promise<ImageGenResult> {
     const start = Date.now();
-    const url = `${this.config.localSidecarUrl}/generate`;
+    const url = `${this.effectiveSidecarUrl}/generate`;
 
     try {
       const body = JSON.stringify({
@@ -323,9 +372,14 @@ export class ImageGenService {
         ...(options.negativePrompt ? { negative_prompt: options.negativePrompt } : {}),
       });
 
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (this.isNetworkMode && this.config.networkNodeToken) {
+        headers["Authorization"] = `Bearer ${this.config.networkNodeToken}`;
+      }
+
       const response = await fetch(url, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers,
         body,
         signal: AbortSignal.timeout(this.config.localTimeoutMs),
       });
@@ -400,7 +454,12 @@ export class ImageGenService {
 
   private async checkLocalHealth(): Promise<boolean> {
     try {
-      const response = await fetch(`${this.config.localSidecarUrl}/health`, {
+      const headers: Record<string, string> = {};
+      if (this.isNetworkMode && this.config.networkNodeToken) {
+        headers["Authorization"] = `Bearer ${this.config.networkNodeToken}`;
+      }
+      const response = await fetch(`${this.effectiveSidecarUrl}/health`, {
+        headers,
         signal: AbortSignal.timeout(5000),
       });
       const data = await response.json() as { ready?: boolean };

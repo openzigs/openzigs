@@ -100,7 +100,8 @@ export const createVideoTools = ({ copilot, voiceService }: VideoToolsOptions): 
           // Use persistent dir so macOS /tmp/ cleanup doesn't nuke images before render
           const imageOutputDir = path.join(os.homedir(), ".openzigs", "director", "images");
           await fs.mkdir(imageOutputDir, { recursive: true });
-          const imageService = new ImageGenService({ outputDir: imageOutputDir });
+          const imageGenUserConfig = await ImageGenService.loadUserImageGenConfig();
+          const imageService = new ImageGenService({ outputDir: imageOutputDir, ...imageGenUserConfig });
           await imageService.initialize();
 
           const fps = 30;
