@@ -2512,6 +2512,49 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
     });
   }
 
+  // ── Presenter Mode Configuration ──
+  router.get("/presenter/config", async (_req, res) => {
+    try {
+      const userConfig = await readUserConfig(defaultConfigPath());
+      const presenter = (userConfig.presenter ?? {}) as Record<string, unknown>;
+      return res.json({
+        baseUrl: presenter.baseUrl ?? "",
+        hasInviteSecret: !!presenter.inviteSecret,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return res.status(500).json({ error: message });
+    }
+  });
+
+  router.put("/presenter/config", async (req, res) => {
+    const body = req.body as Record<string, unknown>;
+    const baseUrl = body.baseUrl as string | undefined;
+
+    if (baseUrl !== undefined && typeof baseUrl !== "string") {
+      return res.status(400).json({ error: "baseUrl must be a string" });
+    }
+    if (baseUrl && !/^https?:\/\/.+/.test(baseUrl)) {
+      return res.status(400).json({ error: "baseUrl must be a valid HTTP(S) URL" });
+    }
+
+    try {
+      const configPath = defaultConfigPath();
+      const userConfig = await readUserConfig(configPath);
+      const existing = (userConfig.presenter ?? {}) as Record<string, unknown>;
+      userConfig.presenter = {
+        ...existing,
+        ...(baseUrl !== undefined ? { baseUrl: baseUrl.replace(/\/$/, "") } : {}),
+      };
+      await writeUserConfig(configPath, userConfig);
+      logger.info(`[Admin] Presenter baseUrl updated: ${baseUrl}`);
+      return res.json({ ok: true, baseUrl: (userConfig.presenter as Record<string, unknown>).baseUrl ?? "" });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return res.status(500).json({ error: message });
+    }
+  });
+
   // ── Image Generation Node Configuration ──
   router.get("/image-gen/config", async (_req, res) => {
     try {
