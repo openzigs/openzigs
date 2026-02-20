@@ -11,7 +11,7 @@ models on Apple Silicon MPS.
 |-------------|---------|
 | **Second Mac** | Apple Silicon (M1/M2/M3/M4) with ≥16 GB RAM |
 | **macOS** | 13 Ventura or later |
-| **Python** | 3.11+ (`python3 --version`) |
+| **Python** | 3.11 or 3.12 recommended (`python3 --version`). Python 3.13+ may require compiling packages from source; the setup script installs `cmake` and `pkg-config` automatically via Homebrew if needed. |
 | **Network** | Both Macs on the same LAN/subnet |
 
 ## Quick Start
@@ -161,6 +161,7 @@ Available models: `flux-schnell`, `flux-dev`, `sdxl-turbo`.
 | `Connection refused` | Check the sidecar is running (`curl http://<ip>:5005/health`) and firewall allows port 5005. |
 | `401 Unauthorized` | Token mismatch. Compare `~/fluxq-node/.fluxq-token` on the remote with the value in OpenZigs config. |
 | `CUDA/MPS not available` | Ensure the remote Mac has Apple Silicon and macOS ≥13. Check `python3 -c "import torch; print(torch.backends.mps.is_available())"`. |
+| `Failed building wheel for sentencepiece` (cmake not found) | The setup script now auto-installs `cmake` via Homebrew. If you see this, run `brew install cmake pkg-config` then re-run the script. Alternatively, use Python 3.12: `FLUXQ_PYTHON=python3.12 ./setup-fluxq-node.sh`. |
 | Slow first generation | Normal. The model downloads weights from HuggingFace on first use (~2-5 GB). Subsequent runs use the cache. |
 | Images look bad at 1920×1080 | Diffusion models produce best results at their native resolution (512×512 for SDXL-Turbo, 1024×1024 for Flux). The Director Mode compositor scales images to fill the frame. |
 

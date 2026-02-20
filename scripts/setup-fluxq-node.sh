@@ -66,6 +66,32 @@ if [[ "$PY_MAJOR" -lt 3 ]] || [[ "$PY_MAJOR" -eq 3 && "$PY_MINOR" -lt 10 ]]; the
 fi
 ok "Python $PY_VERSION found"
 
+# Warn when running on a Python version newer than what has pre-built wheels (3.12 is the safe ceiling today)
+if [[ "$PY_MAJOR" -eq 3 && "$PY_MINOR" -ge 13 ]]; then
+  warn "Python $PY_VERSION detected. Some packages (e.g. sentencepiece, torch) may not yet have"
+  warn "pre-built wheels for this version and must compile from source."
+  warn "If this fails, consider: brew install python@3.12 && FLUXQ_PYTHON=python3.12 ./setup-fluxq-node.sh"
+fi
+
+# Ensure build tools required to compile packages from source (sentencepiece needs cmake) are present
+if ! command -v cmake >/dev/null 2>&1; then
+  if command -v brew >/dev/null 2>&1; then
+    info "cmake not found — installing via Homebrew (required to build sentencepiece)..."
+    brew install cmake pkg-config -q
+    ok "cmake and pkg-config installed"
+  else
+    fail "cmake is required to build Python packages from source but was not found.\n       Install Homebrew first: https://brew.sh  then re-run this script."
+  fi
+fi
+
+if ! command -v pkg-config >/dev/null 2>&1; then
+  if command -v brew >/dev/null 2>&1; then
+    info "pkg-config not found — installing via Homebrew..."
+    brew install pkg-config -q
+    ok "pkg-config installed"
+  fi
+fi
+
 # Check for Apple Silicon (MPS)
 ARCH=$(uname -m)
 if [[ "$ARCH" == "arm64" ]]; then
