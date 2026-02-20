@@ -46,7 +46,7 @@ const peerServer = ExpressPeerServer(httpServer, {
   alive_timeout: 60000,
   key: "openzigs",
 });
-app.use("/peerjs", peerServer);
+app.use(peerServer);
 ```
 
 **Why:** Without `proxied: true`, PeerJS uses the raw TCP socket's remote IP as the client identifier. Behind Cloudflare, all connections originate from Cloudflare's edge IPs, causing **peer ID collisions**. With `proxied: true`, PeerJS reads `X-Forwarded-For` headers instead.

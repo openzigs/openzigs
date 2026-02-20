@@ -27,7 +27,7 @@ describe("NavBar", () => {
 
   it("renders the OpenZigs logo", () => {
     render(<NavBar />);
-    expect(screen.getByText("OpenZigs")).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: "OpenZigs" })).toBeInTheDocument();
   });
 
   it("highlights the active link", () => {

@@ -424,7 +424,7 @@ const teacherAgent = new TeacherAgent({ copilotWrapper: copilot, presentationRep
 const quizGenerator = new QuizGenerator({ copilotWrapper: copilot, presentationRepo });
 
 // Resolve invite secret: use config value, or auto-generate and persist
-let presenterInviteSecret = (config as Record<string, unknown> & { presenter?: { inviteSecret?: string } }).presenter?.inviteSecret ?? "";
+let presenterInviteSecret = config.presenter?.inviteSecret ?? "";
 if (!presenterInviteSecret) {
   presenterInviteSecret = randomBytes(32).toString("hex");
   logger.info("Auto-generated presenter invite secret — persisting to config");
@@ -447,7 +447,7 @@ if (!presenterInviteSecret) {
   })();
 }
 
-const presenterBaseUrl = (config as Record<string, unknown> & { presenter?: { baseUrl?: string } }).presenter?.baseUrl || uiOrigin;
+const presenterBaseUrl = config.presenter?.baseUrl ?? uiOrigin;
 const presenterRouter = createPresenterRouter({
   presentationRepo,
   teacherAgent,
@@ -750,10 +750,10 @@ io.on("connection", (socket) => {
   // Parse guest JWT from cookies to determine actual role.
   // If guest_token cookie exists → force guest role, validate presentationId matches JWT claim.
   // No guest_token → admin user, allow host role.
-  const resolveRoomRole = (
+  const resolveRoomRole = async (
     rawCookie: string | undefined,
     requestedPresentationId: string,
-  ): { role: "host" | "guest"; allowed: boolean } => {
+  ): Promise<{ role: "host" | "guest"; allowed: boolean }> => {
     if (!rawCookie) return { role: "host", allowed: true };
 
     // Parse cookies from raw header
@@ -765,19 +765,10 @@ io.on("connection", (socket) => {
     const guestToken = cookies["guest_token"];
     if (!guestToken) return { role: "host", allowed: true };
 
-    // Decode JWT payload (no crypto — verified at redeem time)
+    // Cryptographically verify the JWT signature and expiry
     try {
-      const parts = guestToken.split(".");
-      if (parts.length !== 3) return { role: "guest", allowed: false };
-      const payload = JSON.parse(Buffer.from(parts[1], "base64url").toString()) as {
-        presentationId?: string;
-        role?: string;
-        exp?: number;
-      };
-      // Check expiry
-      if (payload.exp && payload.exp < Math.floor(Date.now() / 1000)) {
-        return { role: "guest", allowed: false };
-      }
+      const secretKey = new TextEncoder().encode(presenterInviteSecret);
+      const { payload } = await jwtVerify(guestToken, secretKey, { algorithms: ["HS256"] });
       // Guest can ONLY join the room for their specific presentation
       if (payload.presentationId && payload.presentationId !== requestedPresentationId) {
         logger.warn(`Guest socket tried to join room ${requestedPresentationId} but JWT scoped to ${payload.presentationId}`);
@@ -789,11 +780,11 @@ io.on("connection", (socket) => {
     }
   };
 
-  socket.on("room:join", (data: { presentationId?: string; role?: "host" | "guest" }) => {
+  socket.on("room:join", async (data: { presentationId?: string; role?: "host" | "guest" }) => {
     if (!data.presentationId) return;
 
     const rawCookie = socket.handshake.headers.cookie;
-    const { role, allowed } = resolveRoomRole(rawCookie, data.presentationId);
+    const { role, allowed } = await resolveRoomRole(rawCookie, data.presentationId);
     if (!allowed) {
       socket.emit("room:error", { error: "Not authorized to join this room" });
       return;

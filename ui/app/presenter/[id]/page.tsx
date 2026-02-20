@@ -107,8 +107,7 @@ export default function PresenterPlayerPage() {
         `/api/presentations/${id}/invite`,
         { method: "POST" },
       );
-      const url = `${window.location.origin}/invite/${data.token}`;
-      await navigator.clipboard.writeText(url);
+      await navigator.clipboard.writeText(data.inviteUrl);
     } catch {
       // silently ignore
     }

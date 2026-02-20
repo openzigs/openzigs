@@ -3,7 +3,7 @@
  * Issue #276 (SI-1): Express router mounted at /api/presentations.
  */
 
-import { Router } from "express";
+import { Router, type Request, type Response, type NextFunction } from "express";
 import fs from "node:fs";
 import path from "node:path";
 import { SignJWT } from "jose";
@@ -46,6 +46,16 @@ type VoiceProfileRow = {
 export function createPresenterRouter({ presentationRepo, teacherAgent, quizGenerator, voiceService, db, copilotWrapper, knowledgeService, inviteSecret, baseUrl }: PresenterRouterDeps): Router {
   const transcriptClassifier = copilotWrapper ? new TranscriptClassifier(copilotWrapper) : null;
   const router = Router();
+
+  // Reject requests that carry a guest_token cookie — guests may not write/delete presentations.
+  const requireAdmin = (_req: Request, res: Response, next: NextFunction) => {
+    const rawCookie = _req.headers.cookie ?? "";
+    if (rawCookie.split(";").some((c) => c.trim().startsWith("guest_token="))) {
+      res.status(403).json({ error: "Guests cannot perform this action" });
+      return;
+    }
+    next();
+  };
 
   // GET /api/presentations — List all presentations (catalog)
   router.get("/", (_req, res) => {
@@ -174,7 +184,7 @@ export function createPresenterRouter({ presentationRepo, teacherAgent, quizGene
   });
 
   // DELETE /api/presentations/:id — Remove from catalog (doesn't delete video file)
-  router.delete("/:id", (req, res) => {
+  router.delete("/:id", requireAdmin, (req, res) => {
     const deleted = presentationRepo.delete(req.params.id);
     if (!deleted) {
       res.status(404).json({ error: "Presentation not found" });
@@ -190,7 +200,7 @@ export function createPresenterRouter({ presentationRepo, teacherAgent, quizGene
   });
 
   // PATCH /api/presentations/:id — Update quiz_enabled, quiz_config, or title
-  router.patch("/:id", (req, res) => {
+  router.patch("/:id", requireAdmin, (req, res) => {
     const presentation = presentationRepo.findById(req.params.id);
     if (!presentation) {
       res.status(404).json({ error: "Presentation not found" });
@@ -459,7 +469,7 @@ export function createPresenterRouter({ presentationRepo, teacherAgent, quizGene
   });
 
   // POST /api/presentations/:id/invite — Generate JWT invite link
-  router.post("/:id/invite", async (req, res) => {
+  router.post("/:id/invite", requireAdmin, async (req, res) => {
     const presentation = presentationRepo.findById(req.params.id);
     if (!presentation) {
       res.status(404).json({ error: "Presentation not found" });
@@ -472,7 +482,12 @@ export function createPresenterRouter({ presentationRepo, teacherAgent, quizGene
       return;
     }
 
-    const { ttlHours } = req.body as { ttlHours?: number };
+    const requestedTtlHours = (req.body as Record<string, unknown>)?.ttlHours;
+    if (requestedTtlHours !== undefined && typeof requestedTtlHours !== "number") {
+      res.status(400).json({ error: "ttlHours must be a number" });
+      return;
+    }
+    const ttlHours = requestedTtlHours as number | undefined;
     const ttl = Math.min(Math.max(ttlHours ?? 24, 1), 168);
     const expiresAt = new Date(Date.now() + ttl * 60 * 60 * 1000);
 

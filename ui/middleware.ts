@@ -1,3 +1,4 @@
+import { jwtVerify } from "jose";
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
@@ -21,26 +22,24 @@ const GUEST_SCOPED_PREFIXES = [
 ];
 
 /**
- * Decode JWT payload (base64url) and return claims.
- * No cryptographic verification — the token was verified at redeem time
- * and cookies expire on the same schedule.
+ * Verify a guest JWT using the shared PRESENTER_INVITE_SECRET.
+ * Returns the decoded payload on success, or null if the token is invalid or expired.
  */
-function decodeGuestToken(token: string): { presentationId?: string; exp?: number } | null {
+async function verifyGuestToken(
+  token: string,
+): Promise<{ presentationId?: string; exp?: number } | null> {
+  const secret = process.env.PRESENTER_INVITE_SECRET;
+  if (!secret) return null;
   try {
-    const parts = token.split(".");
-    if (parts.length !== 3) return null;
-    return JSON.parse(Buffer.from(parts[1], "base64url").toString()) as {
-      presentationId?: string;
-      exp?: number;
-    };
+    const { payload } = await jwtVerify(
+      token,
+      new TextEncoder().encode(secret),
+      { algorithms: ["HS256"] },
+    );
+    return payload as { presentationId?: string; exp?: number };
   } catch {
     return null;
   }
-}
-
-function isTokenExpired(payload: { exp?: number }): boolean {
-  if (!payload.exp) return false;
-  return payload.exp < Math.floor(Date.now() / 1000);
 }
 
 export async function middleware(request: NextRequest) {
@@ -51,16 +50,8 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
-  const payload = decodeGuestToken(guestToken);
+  const payload = await verifyGuestToken(guestToken);
   if (!payload) {
-    const response = NextResponse.redirect(new URL("/invite-expired", request.url));
-    response.cookies.delete("guest_token");
-    response.cookies.delete("is_guest");
-    return response;
-  }
-
-  // Guest cookie present → check expiry
-  if (isTokenExpired(payload)) {
     const response = NextResponse.redirect(new URL("/invite-expired", request.url));
     response.cookies.delete("guest_token");
     response.cookies.delete("is_guest");
