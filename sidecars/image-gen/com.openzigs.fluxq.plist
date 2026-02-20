@@ -26,12 +26,8 @@
 
     <key>ProgramArguments</key>
     <array>
-        <string>__FLUXQ_DIR__/.venv/bin/python</string>
-        <string>__FLUXQ_DIR__/server.py</string>
-        <string>--host</string>
-        <string>0.0.0.0</string>
-        <string>--port</string>
-        <string>5005</string>
+        <string>/bin/bash</string>
+        <string>__FLUXQ_DIR__/start.sh</string>
     </array>
 
     <key>WorkingDirectory</key>
@@ -42,13 +38,9 @@
 
     <key>EnvironmentVariables</key>
     <dict>
-        <!-- Read token from .fluxq-token file via start.sh, or set explicitly here -->
-        <key>FLUXQ_SECRET_TOKEN</key>
-        <string></string>
+        <!-- All secrets/tokens are loaded from .env by start.sh -->
         <key>PYTORCH_MPS_HIGH_WATERMARK_RATIO</key>
         <string>0.0</string>
-        <key>IMAGE_GEN_MODEL</key>
-        <string>sdxl-turbo</string>
     </dict>
 
     <key>RunAtLoad</key>
