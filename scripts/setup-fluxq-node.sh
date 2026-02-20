@@ -274,7 +274,12 @@ STARTEOF
 chmod +x "$INSTALL_DIR/start.sh"
 
 # ── Print Summary ─────────────────────────────────────────────
-LOCAL_IP=$(ipconfig getifaddr en0 2>/dev/null || echo "<your-local-ip>")
+# Try common macOS interface names until one returns a non-empty result. Wi‑Fi is usually en0,
+# ethernet en1 (or en2 on some models). If none are active fall back to a placeholder.
+LOCAL_IP=$(ipconfig getifaddr en0 2>/dev/null || \
+         ipconfig getifaddr en1 2>/dev/null || \
+         ipconfig getifaddr en2 2>/dev/null || \
+         echo "<your-local-ip>")
 
 echo ""
 echo -e "${GREEN}╔═══════════════════════════════════════════════════════════╗${NC}"
