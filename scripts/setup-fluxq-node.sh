@@ -22,6 +22,10 @@ INSTALL_DIR="${FLUXQ_INSTALL_DIR:-$HOME/fluxq-node}"
 PYTHON="${FLUXQ_PYTHON:-python3}"
 REPO_RAW="https://raw.githubusercontent.com/mgcronin/openzigs/main"
 
+# Resolve local sidecar directory relative to this script (works when run from within the repo)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LOCAL_SIDECAR_DIR="$SCRIPT_DIR/../sidecars/image-gen"
+
 # ── Colors ────────────────────────────────────────────────────
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -33,6 +37,20 @@ info()  { echo -e "${CYAN}[FluxQ]${NC} $*"; }
 ok()    { echo -e "${GREEN}[FluxQ]${NC} $*"; }
 warn()  { echo -e "${YELLOW}[FluxQ]${NC} $*"; }
 fail()  { echo -e "${RED}[FluxQ]${NC} $*" >&2; exit 1; }
+
+# Copy a file from local repo if available, otherwise download from GitHub
+fetch_file() {
+  local filename="$1"
+  local dest="$2"
+  local local_path="$LOCAL_SIDECAR_DIR/$filename"
+  if [[ -f "$local_path" ]]; then
+    cp "$local_path" "$dest"
+    info "Copied $filename from local repo"
+  else
+    curl -fsSL "$REPO_RAW/sidecars/image-gen/$filename" -o "$dest"
+    info "Downloaded $filename from GitHub"
+  fi
+}
 
 # ── Preflight Checks ─────────────────────────────────────────
 info "Checking prerequisites..."
@@ -73,8 +91,7 @@ fi
 source .venv/bin/activate
 
 # ── Install Dependencies ──────────────────────────────────────
-info "Downloading requirements.txt..."
-curl -fsSL "$REPO_RAW/sidecars/image-gen/requirements.txt" -o requirements.txt
+fetch_file "requirements.txt" "requirements.txt"
 
 info "Installing Python dependencies (this may take several minutes on first run)..."
 pip install --upgrade pip wheel setuptools -q
@@ -83,14 +100,11 @@ pip install -r requirements.txt -q
 ok "Dependencies installed"
 
 # ── Download Server ───────────────────────────────────────────
-info "Downloading server.py..."
-curl -fsSL "$REPO_RAW/sidecars/image-gen/server.py" -o server.py
-
-ok "Server downloaded"
+fetch_file "server.py" "server.py"
+ok "Server ready"
 
 # ── Download launchd Plist Template ───────────────────────────
-info "Downloading launchd plist template..."
-curl -fsSL "$REPO_RAW/sidecars/image-gen/com.openzigs.fluxq.plist" -o com.openzigs.fluxq.plist
+fetch_file "com.openzigs.fluxq.plist" "com.openzigs.fluxq.plist"
 
 # Substitute the current user's home directory into the plist
 sed -i '' "s|__FLUXQ_DIR__|$INSTALL_DIR|g" com.openzigs.fluxq.plist
