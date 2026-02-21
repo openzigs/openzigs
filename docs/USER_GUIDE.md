@@ -171,6 +171,7 @@ The OpenZigs UI is a **Next.js** application with a navigation bar providing acc
 | **Library** | `/library` | Saved prompt templates with `{{variable}}` interpolation |
 | **Scheduler** | `/scheduler` | Cron-based job scheduling with prompt linking and model overrides |
 | **Tasks** | `/tasks` | Monitor background agent tasks, sub-agents, and scheduled work |
+| **Social Brain** | `/social` | Unified social inbox, CRM, automation rules, and AI-powered auto-replies |
 | **Post-Actions** | `/admin/post-actions` | Create and manage custom post-action types for pipeline stages |
 | **Webhooks** | `/admin/webhooks` | Create and manage inbound webhooks for external integrations |
 
@@ -4518,6 +4519,130 @@ Configure the knowledge base in your config file (`~/.openzigs/config.json`):
 - **Hybrid Search**: Default mode combines vector (semantic) and full-text (keyword) search using Reciprocal Rank Fusion (k=60). Results in both lists get a score boost.
 - **Chunking**: Markdown-aware splitting that preserves heading context. Headings are extracted and stored as metadata for each chunk.
 - **Change Detection**: SHA-256 content hashing — files are only re-indexed when their content actually changes. Document metadata is persisted to disk so the hash check survives server restarts.
+
+---
+
+## Social Brain — Unified Social Inbox & CRM
+
+The Social Brain at `/social` provides a unified inbox for managing DMs and comments across social platforms (Instagram, Facebook, Twitter/X, LinkedIn, TikTok, YouTube, Threads) with AI-powered auto-replies, a built-in CRM, and comment-to-DM automation.
+
+### Dashboard Tab
+
+The dashboard shows key metrics at a glance:
+
+| Stat | Description |
+|---|---|
+| **Total Contacts** | All contacts across connected platforms |
+| **Messages (24h)** | Inbound and outbound messages in the last 24 hours |
+| **Active Handoffs** | Conversations escalated to a human operator |
+| **Automation Triggers** | Total times automation rules have fired |
+
+Below the stats, a **Connected Platforms** section shows the status of each integrated platform.
+
+### CRM Tab
+
+The CRM provides a paginated contact database with:
+
+- **Search** — Filter contacts by username, display name, or platform.
+- **Platform filter** — Show contacts from a specific platform only.
+- **Contact detail drawer** — Click a contact to view their full profile: tags, notes, message history, and handoff controls.
+- **Tag management** — Add or remove tags on any contact for segmentation.
+- **Notes** — Update a contact's notes inline.
+- **Export** — Download all contacts as a CSV file.
+
+### Automations Tab
+
+Create keyword-based and regex-based automation rules that trigger DM responses when users comment on your posts:
+
+| Field | Description |
+|---|---|
+| **Name** | Rule display name |
+| **Platform** | Target platform (e.g., `instagram`) |
+| **Keywords** | Comma-separated trigger words (word-boundary, case-insensitive match) |
+| **DM Template** | Message template with `{{username}}`, `{{keyword}}`, `{{post_id}}`, `{{comment_text}}` interpolation |
+| **DM Delay** | Seconds to wait before sending the DM (0 = immediate) |
+| **Max Triggers/User** | Rate limit per user per rule |
+| **Auto-Tag** | Automatically tag contacts who trigger the rule |
+
+The **Automation Log** shows a live feed of every rule trigger with timestamp, contact, and action taken.
+
+### Activity Tab
+
+A real-time feed of all inbound and outbound messages across platforms, with direction badges and platform icons.
+
+### AI-Powered Auto-Reply (Brain Engine)
+
+When a DM arrives, the Social Brain engine:
+
+1. Searches the knowledge base (hybrid RAG) for relevant context.
+2. Loads the last 5 messages of conversation history.
+3. Sends the context + message to the LLM with a social-media-specific system prompt.
+4. Parses the JSON response for `reply`, `confidence`, and `escalate` fields.
+5. If confidence > 0.7, auto-sends the reply. Otherwise, escalates to a human operator.
+
+### Human Handoff
+
+When the AI cannot confidently respond (or the user requests human help), the conversation is escalated:
+
+- A handoff thread is created in the configured channel.
+- The contact's CRM record is updated with `handoff_status: active`.
+- Admin replies in the thread are forwarded back to the user.
+- Close the handoff from the CRM contact detail drawer when resolved.
+
+### MCP Tools
+
+5 Social Brain MCP tools are available in chat:
+
+| Tool | Risk | Description |
+|---|---|---|
+| `social-crm-lookup` | 🟢 low | Search CRM contacts by username, platform, or tags |
+| `social-crm-history` | 🟢 low | Get message history for a specific contact |
+| `social-crm-tag` | 🟢 low | Add or remove a tag on a CRM contact |
+| `social-close-handoff` | 🟡 medium | Close an active human handoff for a contact |
+| `social-brain-stats` | 🟢 low | Get Social Brain dashboard statistics |
+
+### REST API
+
+```bash
+# Get dashboard stats
+curl http://localhost:3000/api/social/stats
+
+# List contacts (paginated)
+curl "http://localhost:3000/api/social/contacts?page=1&pageSize=25"
+
+# Export contacts as CSV
+curl http://localhost:3000/api/social/contacts/export -o contacts.csv
+
+# Create an automation rule
+curl -X POST http://localhost:3000/api/social/rules \
+  -H "Content-Type: application/json" \
+  -d '{"name":"Welcome DM","platform":"instagram","enabled":true,"keywords":"[\"hello\",\"hi\"]","dm_template":"Hey {{username}}! How can I help?"}'
+
+# List all rules
+curl http://localhost:3000/api/social/rules
+
+# Get recent activity
+curl http://localhost:3000/api/social/activity
+
+# Close a handoff
+curl -X POST http://localhost:3000/api/social/handoff/<contactId>/close \
+  -H "Content-Type: application/json" \
+  -d '{"resolution":"Issue resolved"}'
+```
+
+### Webhook Integration
+
+Platform webhooks are received at `POST /api/social/webhooks/:platform`. For Instagram, the endpoint handles Meta's webhook verification (`GET` with `hub.verify_token`) and incoming message/comment events (`POST`).
+
+### Socket.IO Events
+
+| Event | Direction | Description |
+|---|---|---|
+| `social:reply` | Server → Client | AI auto-reply sent to a contact |
+| `social:escalate` | Server → Client | Conversation escalated to human |
+| `social:handoff:created` | Server → Client | New handoff thread created |
+| `social:handoff:resolved` | Server → Client | Handoff closed |
+| `social:rule:triggered` | Server → Client | Automation rule fired |
 
 ---
 

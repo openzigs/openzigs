@@ -4,6 +4,7 @@ import os from "node:os";
 import fs from "node:fs";
 import { TaskRepository } from "../tasks/task-repository.js";
 import { PresentationRepository } from "../presenter/presentation-repository.js";
+import { SocialRepository } from "../channels/social/social-repository.js";
 
 export type DatabaseOptions = {
   dbPath?: string;
@@ -34,6 +35,10 @@ export const getDatabase = (options: DatabaseOptions = {}): Database.Database =>
   // Run presenter migration (presentations + quiz_cache tables)
   const presentationRepo = new PresentationRepository(db);
   presentationRepo.migrate();
+
+  // Run Social Brain migration (contacts, social_messages, comment_automation tables)
+  const socialRepo = new SocialRepository(db);
+  socialRepo.migrate();
 
   sharedDb = db;
   return db;
@@ -117,6 +122,9 @@ export const createTestDatabase = (): Database.Database => {
 
   const presentationRepo = new PresentationRepository(db);
   presentationRepo.migrate();
+
+  const socialRepo = new SocialRepository(db);
+  socialRepo.migrate();
 
   return db;
 };

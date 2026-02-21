@@ -51,6 +51,12 @@ import { createVaultRouter } from "./api/vault.js";
 import { createDirectorRouter } from "./api/director.js";
 import { createAudioRouter } from "./api/audio.js";
 import { createPresenterRouter } from "./api/presenter.js";
+import { createSocialRouter } from "./api/social.js";
+import { SocialRepository } from "./channels/social/social-repository.js";
+import { SocialIngestionService, InstagramAdapter } from "./channels/social/social-ingestion.js";
+import { SocialBrain } from "./channels/social/social-brain.js";
+import { HandoffManager } from "./channels/social/handoff-manager.js";
+import { CommentRuleEngine } from "./channels/social/comment-rule-engine.js";
 import { PresentationRepository } from "./presenter/presentation-repository.js";
 import { detectChapters, computeQuizTimestamps } from "./presenter/chapter-detector.js";
 import { generateThumbnail } from "./presenter/thumbnail-generator.js";
@@ -305,6 +311,58 @@ if (voiceService.getConfig().enabled) {
   }
 }
 
+// ── Social Brain: CRM, Ingestion, Auto-Reply, Handoff, Comment Automation ──
+const socialRepository = new SocialRepository(db);
+socialRepository.migrate();
+
+const socialIngestion = new SocialIngestionService({
+  repository: socialRepository,
+  adapters: [new InstagramAdapter()],
+});
+
+const socialBrain = new SocialBrain({
+  repository: socialRepository,
+  copilot,
+  knowledgeService,
+  confidenceThreshold: (config as Record<string, unknown>).socialBrain
+    ? ((config as Record<string, unknown>).socialBrain as Record<string, unknown>).confidenceThreshold as "high" | "medium" | "low" | undefined
+    : undefined,
+});
+
+const socialHandoff = new HandoffManager({
+  repository: socialRepository,
+  preferredChannel: (config as Record<string, unknown>).socialBrain
+    ? (((config as Record<string, unknown>).socialBrain as Record<string, unknown>).handoff as Record<string, unknown> | undefined)?.preferredChannel as "discord" | "telegram" | undefined
+    : undefined,
+});
+
+const commentRuleEngine = new CommentRuleEngine({
+  repository: socialRepository,
+});
+
+// Wire ingestion → brain → handoff pipeline
+socialIngestion.on("message", async ({ message, contact, raw }) => {
+  const result = await socialBrain.process(contact, message, raw);
+  if (result?.shouldEscalate) {
+    await socialHandoff.escalate(contact, {
+      brainConfidence: result.confidence,
+      brainIntent: result.intent,
+      ragChunksUsed: result.ragChunksUsed,
+      conversationHistory: socialRepository.getMessages(contact.id, 5),
+      triggerReason: "low_confidence",
+    }, raw);
+  }
+});
+
+socialIngestion.on("comment", async (comment) => {
+  await commentRuleEngine.evaluate(comment);
+});
+
+// Forward new user messages to active handoff threads
+socialBrain.on("escalated_message", async ({ contact, raw }) => {
+  await socialHandoff.forwardToThread(contact, raw.text);
+});
+
 registerMcpTools(toolRegistry, {
   allowedDirs: allowedDirs.length > 0 ? allowedDirs : [process.cwd(), os.tmpdir(), os.homedir(), "/tmp", "/private/tmp"],
   shellAllowlist: (process.env.OPENZIGS_SHELL_ALLOWLIST ?? "git,find,ls,cat,head,tail,grep,wc,echo,pwd,mkdir,cp,mv,rm,which,date,curl,bash,sh,java,javac,python3,node").split(",").map(s => s.trim()).filter(Boolean),
@@ -331,6 +389,8 @@ registerMcpTools(toolRegistry, {
   knowledgeService,
   vaultService,
   voiceService,
+  socialRepository,
+  socialHandoffManager: socialHandoff,
 });
 
 // ── Task Background Worker ──
@@ -363,6 +423,16 @@ app.use("/api/admin", adminRouter);
 // Knowledge Base API routes
 const knowledgeRouter = createKnowledgeRouter({ knowledgeService });
 app.use("/api/admin/knowledge", knowledgeRouter);
+
+// Social Brain API routes
+const socialRouter = createSocialRouter({
+  repository: socialRepository,
+  ingestion: socialIngestion,
+  brain: socialBrain,
+  handoff: socialHandoff,
+  ruleEngine: commentRuleEngine,
+});
+app.use("/api/social", socialRouter);
 
 // Vault API routes
 const vaultRouter = createVaultRouter({ vaultService });
@@ -999,6 +1069,13 @@ for (const event of [
   });
 }
 
+// Wire Social Brain Socket.IO event forwarding
+socialBrain.on("reply", (data: unknown) => io.emit("social:reply", data));
+socialBrain.on("escalate", (data: unknown) => io.emit("social:escalate", data));
+socialHandoff.on("escalated", (data: unknown) => io.emit("social:handoff:created", data));
+socialHandoff.on("resolved", (data: unknown) => io.emit("social:handoff:resolved", data));
+commentRuleEngine.on("rule_triggered", (data: unknown) => io.emit("social:rule:triggered", data));
+
 // Wire NotificationDispatcher now that we have the Socket.IO server
 // (side-effect: registers event listeners on TaskEngine)
 new NotificationDispatcher({
@@ -1389,6 +1466,7 @@ httpServer.listen(port, () => {
 // Clean up Chrome + Scheduler + Tasks + Database + Sidecars + Local MCP servers on process exit
 const gracefulShutdown = () => {
   scheduler.stopAll();
+  socialIngestion.stopAllPolling();
   closeDatabase();
   killChrome();
   vaultService.lock();

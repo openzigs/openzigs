@@ -228,6 +228,7 @@ The frontend is a **Next.js 14 App Router** application in the `ui/` directory. 
 | `/invite-expired` | `invite-expired/page.tsx` | Expired invite link page |
 | `/scheduler` | `scheduler/page.tsx` | Cron job CRUD with action types, prompt linking, model overrides, AI assist, live execution events |
 | `/tasks` | `task-dashboard.tsx` | Background task queue, status filters, cancel, recursive child expansion, real-time updates |
+| `/social` | `social/page.tsx` | Social Brain — unified inbox, CRM, automation rules, AI auto-reply |
 | `/workbench` | `workbench/page.tsx` | Rich Markdown editor (MDXEditor) with file sidebar, live file system CRUD, Cmd/Ctrl+S save |
 
 ### Component Structure
@@ -249,6 +250,7 @@ ui/
 │   ├── invite-expired/page.tsx  # Expired invite page
 │   ├── scheduler/page.tsx  # Scheduler route
 │   ├── tasks/page.tsx      # Tasks route
+│   ├── social/page.tsx     # Social Brain route
 │   └── workbench/page.tsx  # Workbench route (MDXEditor + file sidebar)
 ├── components/
 │   ├── nav-bar.tsx         # Sticky top navigation
@@ -293,6 +295,7 @@ ui/
 ├── middleware.ts            # Guest RBAC — JWT cookie verification, route gating
 ├── hooks/
 │   ├── use-presenter-state.ts  # Presenter FSM (useReducer) with 4 states
+│   ├── use-social.ts           # React Query hooks for Social Brain API
 │   ├── useRoomSync.ts          # Socket.IO room protocol (join/leave/playback sync)
 │   └── useVoiceRoom.ts         # PeerJS audio mesh + Push-to-Talk + transcription
 ```
@@ -1629,6 +1632,16 @@ Logs are queryable via `GET /api/logs` with filters for `category`, `level`, `si
 | `list-templates` | productivity | 🟢 low | List available video templates with default compositions and features. |
 | `search-assets` | productivity | 🟢 low | Search royalty-free music, SFX, and images from local library, Pixabay, Jamendo, and Pexels. |
 
+### Social Brain Tools (Built-in)
+
+| Tool | Category | Risk | Description |
+|---|---|---|---|
+| `social-crm-lookup` | social | 🟢 low | Search CRM contacts by query, platform, or tags. |
+| `social-crm-history` | social | 🟢 low | Get message history for a specific CRM contact. |
+| `social-crm-tag` | social | 🟢 low | Add or remove a tag on a CRM contact. |
+| `social-close-handoff` | social | 🟡 medium | Close an active human handoff for a contact. |
+| `social-brain-stats` | social | 🟢 low | Get Social Brain dashboard statistics. |
+
 ### Path Restrictions
 
 Filesystem tools, shell tools, and the File System REST API (`/api/files/*`) all enforce the same `allowedDirs` sandbox via `isPathAllowed()` from `src/mcp/tools/path-utils.ts`. Any path outside these directories is rejected with a 403 `Access denied`.
@@ -1683,6 +1696,20 @@ The shell executor uses a **command allowlist**. If the allowlist is empty, the 
 | `GET` | `/api/tasks/:id/usage` | Token | Get token usage for a specific task. |
 | `GET` | `/api/tasks/stats` | Token | Aggregate task counts by status. |
 | `GET` | `/api/tasks/usage/summary` | Token | Aggregate token usage across recent tasks. |
+| `GET` | `/api/social/stats` | Token | Social Brain dashboard stats (contacts, messages, handoffs, connections). |
+| `GET` | `/api/social/contacts` | Token | Paginated CRM contact list with search/filter. |
+| `GET` | `/api/social/contacts/export` | Token | CSV export of all CRM contacts. |
+| `GET/PATCH` | `/api/social/contacts/:id` | Token | Get or update a CRM contact. |
+| `POST` | `/api/social/contacts/:id/tags` | Token | Add a tag to a CRM contact. |
+| `DELETE` | `/api/social/contacts/:id/tags/:tag` | Token | Remove a tag from a CRM contact. |
+| `GET` | `/api/social/contacts/:id/messages` | Token | Message history for a contact. |
+| `GET` | `/api/social/activity` | Token | Recent messages across all contacts. |
+| `GET/POST` | `/api/social/rules` | Token | List or create comment automation rules. |
+| `GET/PATCH/DELETE` | `/api/social/rules/:id` | Token | Get, update, or delete an automation rule. |
+| `GET` | `/api/social/rules/log` | Token | Automation trigger log. |
+| `POST` | `/api/social/handoff/:contactId/close` | Token | Close an active human handoff. |
+| `POST` | `/api/social/webhooks/:platform` | None | Incoming platform webhook events. |
+| `GET` | `/api/social/connections` | Token | List connected platform statuses. |
 
 ---
 
@@ -3362,3 +3389,110 @@ app.use(peerServer);
 | `room:transcription_preview` | S→C | Live transcription text with speaker name |
 
 ### Tracking: [Epic #282](https://github.com/mgcronin/openzigs/issues/282)
+
+---
+
+## Social Brain — Unified Social Inbox, CRM & AI Automation (Epic #291)
+
+The Social Brain subsystem provides a unified DM/comment ingestion pipeline, AI-powered auto-reply engine, contact CRM, human handoff management, and comment-to-DM automation — all wired together via EventEmitter patterns and exposed through a dedicated REST API and UI page.
+
+### Architecture
+
+```
+┌───────────────┐     ┌───────────────────┐     ┌──────────────────┐
+│  Platform      │────▶│  Ingestion        │────▶│  Social Brain    │
+│  Webhooks      │     │  Service          │     │  (RAG + LLM)     │
+│  (IG, FB, etc) │     │  (EventEmitter)   │     │  (EventEmitter)  │
+└───────────────┘     └───────────────────┘     └──────────────────┘
+                              │                        │       │
+                              │                        │       ▼
+                              ▼                        │  ┌──────────────┐
+                      ┌──────────────────┐             │  │  Handoff     │
+                      │  Comment Rule    │             │  │  Manager     │
+                      │  Engine          │             │  │  (threads)   │
+                      │  (keyword/regex) │             │  └──────────────┘
+                      └──────────────────┘             │
+                              │                        ▼
+                              ▼                  ┌──────────────────┐
+                      ┌──────────────────┐       │  Social          │
+                      │  DM Scheduling   │       │  Repository      │
+                      │  + Auto-Tagging  │       │  (SQLite CRM)    │
+                      └──────────────────┘       └──────────────────┘
+```
+
+### Module Structure (`src/channels/social/`)
+
+| Module | Purpose |
+|---|---|
+| `types.ts` | Shared types: `SocialPlatform`, `Contact`, `SocialMessage`, `IncomingSocialMessage`, `IncomingComment`, `CommentRule`, `AutomationLogEntry`, `BrainResult`, `EscalationContext`, `SocialBrainConfig` |
+| `social-repository.ts` | SQLite CRM — 4 tables (`contacts`, `social_messages`, `comment_automation_rules`, `comment_automation_log`). Pagination, tag management, CSV export, stats. 19 unit tests. |
+| `social-ingestion.ts` | `SocialIngestionService` (EventEmitter) — platform adapter pattern: `handleWebhook()`, `processMessage()`, `startPolling()`/`stopPolling()`. Ships with `InstagramAdapter` (Meta webhook format) and `GenericPollAdapter`. |
+| `social-brain.ts` | `SocialBrain` (EventEmitter) — RAG pipeline: handoff check → `knowledgeService.search(query, 5, { mode: "hybrid" })` → conversation history (last 5) → `copilot.chat()` with `{ mode: "replace" }` system prompt → JSON parse → confidence routing. Emits `reply`, `escalate`, `escalated_message`. |
+| `handoff-manager.ts` | `HandoffManager` (EventEmitter) — `HandoffChannel` interface with `createThread`/`postToThread`/`archiveThread`. Escalate, forward messages, handle admin replies via thread→contact reverse map, close handoffs. Emits `handoff:created`, `handoff:resolved`. |
+| `comment-rule-engine.ts` | `CommentRuleEngine` (EventEmitter) — Keyword matching (word-boundary regex), regex fallback, template interpolation (`{{username}}`, `{{keyword}}`, `{{post_id}}`, `{{comment_text}}`), DM delay scheduling, auto-tagging, per-user rate limiting. Emits `rule:triggered`. |
+
+### Event Flow (Server Wiring)
+
+```
+Ingestion "message" ──────▶ Brain.process()
+                                │
+                                ├─ confidence > 0.7 ──▶ emit "reply" ──▶ Socket.IO "social:reply"
+                                │
+                                └─ confidence ≤ 0.7 ──▶ emit "escalate" ──▶ Handoff.escalate()
+                                                                               │
+                                                                               ├─ emit "handoff:created"
+                                                                               └─ Socket.IO "social:handoff:created"
+
+Ingestion "comment" ──────▶ CommentRuleEngine.evaluate()
+                                │
+                                └─ match ──▶ executeRule() ──▶ emit "rule:triggered"
+                                                                  │
+                                                                  └─ Socket.IO "social:rule:triggered"
+
+Brain "escalated_message" ──▶ Handoff.forwardToThread()
+```
+
+### Database Tables (SQLite)
+
+| Table | Key Columns |
+|---|---|
+| `contacts` | `id`, `platform`, `platform_user_id`, `username`, `display_name`, `tags` (JSON), `notes`, `handoff_status`, `first_seen_at`, `last_seen_at` |
+| `social_messages` | `id`, `contact_id` (FK), `platform`, `direction`, `content`, `message_type`, `status`, `metadata` (JSON), `created_at` |
+| `comment_automation_rules` | `id`, `name`, `platform`, `enabled`, `keywords` (JSON), `regex`, `dm_template`, `dm_delay_seconds`, `max_triggers_per_user`, `auto_tag`, `trigger_count` |
+| `comment_automation_log` | `id`, `rule_id` (FK), `contact_id` (FK), `comment_text`, `action_taken`, `dm_sent`, `created_at` |
+
+### API Router (`/api/social`)
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/stats` | Dashboard stats (contacts, messages, handoffs, automation triggers, connections) |
+| `GET` | `/contacts` | Paginated contact list with search, platform, and tag filters |
+| `GET` | `/contacts/export` | CSV export of all contacts |
+| `GET/PATCH` | `/contacts/:id` | Get or update a contact |
+| `POST` | `/contacts/:id/tags` | Add a tag to a contact |
+| `DELETE` | `/contacts/:id/tags/:tag` | Remove a tag |
+| `GET` | `/contacts/:id/messages` | Message history for a contact |
+| `GET` | `/activity` | Recent messages across all contacts |
+| `GET/POST` | `/rules` | List or create automation rules |
+| `GET/PATCH/DELETE` | `/rules/:id` | Get, update, or delete a rule |
+| `GET` | `/rules/log` | Automation trigger log |
+| `POST` | `/handoff/:contactId/close` | Close an active human handoff |
+| `GET` | `/webhooks/:platform` | Meta webhook verification |
+| `POST` | `/webhooks/:platform` | Incoming platform webhook events |
+| `GET` | `/connections` | List connected platform statuses |
+
+### MCP Tools (`src/mcp/tools/social-brain-tools.ts`)
+
+| Tool | Risk | Description |
+|---|---|---|
+| `social-crm-lookup` | 🟢 low | Search CRM contacts by query, platform, or tags |
+| `social-crm-history` | 🟢 low | Get message history for a contact |
+| `social-crm-tag` | 🟢 low | Add or remove a tag on a CRM contact |
+| `social-close-handoff` | 🟡 medium | Close an active human handoff |
+| `social-brain-stats` | 🟢 low | Get Social Brain dashboard statistics |
+
+### UI (`/social`)
+
+4-tab page: Dashboard (stat cards + connections), CRM (paginated table + detail drawer), Automations (rules CRUD + log), Activity (message feed). React Query hooks in `ui/lib/hooks/use-social.ts`.
+
+### Tracking: [Epic #291](https://github.com/mgcronin/openzigs/issues/291)
