@@ -83,7 +83,7 @@ function getDefaultConfig(): Required<ImageGenServiceConfig> {
     imagenModel: "imagen-3.0-generate-001",
     localSidecarUrl: process.env.IMAGE_GEN_SIDECAR_URL ?? "http://127.0.0.1:5005",
     cloudTimeoutMs: 60_000,
-    localTimeoutMs: 120_000,
+    localTimeoutMs: 300_000,
     outputDir: path.join(os.tmpdir(), "openzigs-image-gen"),
     imageGenMode: (process.env.IMAGE_GEN_MODE as "local" | "network" | undefined) ?? "local",
     networkNodeUrl: process.env.IMAGE_GEN_NETWORK_URL ?? "",
@@ -136,6 +136,7 @@ export class ImageGenService {
       if (ig.mode === "local" || ig.mode === "network") result.imageGenMode = ig.mode;
       if (typeof ig.networkNodeUrl === "string" && ig.networkNodeUrl) result.networkNodeUrl = ig.networkNodeUrl;
       if (typeof ig.networkNodeToken === "string" && ig.networkNodeToken) result.networkNodeToken = ig.networkNodeToken;
+      if (typeof ig.localTimeoutMs === "number" && ig.localTimeoutMs > 0) result.localTimeoutMs = ig.localTimeoutMs;
       return result;
     } catch {
       return {};
