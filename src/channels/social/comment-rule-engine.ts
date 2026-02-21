@@ -22,6 +22,8 @@ type TemplateVars = {
   keyword: string;
   post_id: string;
   comment_text: string;
+  post_caption: string;
+  post_url: string;
 };
 
 /**
@@ -64,6 +66,21 @@ export class CommentRuleEngine extends EventEmitter {
     }
 
     return matched;
+  }
+
+  /** Log an outbound DM in the social_messages table with post context metadata. */
+  private logOutboundDm(comment: IncomingComment, dmText: string, metadata: Record<string, unknown>): void {
+    const contact = this.repository.getContactByPlatformUser(comment.platform, comment.userId);
+    if (contact) {
+      this.repository.insertMessage({
+        contactId: contact.id,
+        platform: comment.platform,
+        direction: "outbound",
+        status: "auto_replied",
+        content: dmText,
+        metadata: { source: "comment-rule-engine", ...metadata },
+      });
+    }
   }
 
   /** Check if a rule matches the given comment. */
@@ -136,6 +153,8 @@ export class CommentRuleEngine extends EventEmitter {
       keyword: matchedKeyword,
       post_id: comment.postId,
       comment_text: comment.text,
+      post_caption: comment.postContext?.caption ?? "",
+      post_url: comment.postContext?.permalink ?? "",
     };
 
     let commentReplied = false;
@@ -156,12 +175,17 @@ export class CommentRuleEngine extends EventEmitter {
 
     // 2. Send DM (with optional delay)
     if (this.sendDm) {
+      const postMeta = comment.postContext
+        ? { postCaption: comment.postContext.caption, postUrl: comment.postContext.permalink, postMediaType: comment.postContext.mediaType, triggeringComment: comment.text }
+        : { triggeringComment: comment.text };
+
       if (rule.dm_delay_seconds > 0) {
         // Schedule DM after delay
         setTimeout(async () => {
           try {
             const dmText = interpolateTemplate(rule.dm_template, vars);
             await this.sendDm!(comment.platform, comment.userId, dmText);
+            this.logOutboundDm(comment, dmText, postMeta);
             this.emit("dm_sent", { ruleId: rule.id, username: comment.username });
           } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
@@ -173,6 +197,7 @@ export class CommentRuleEngine extends EventEmitter {
         try {
           const dmText = interpolateTemplate(rule.dm_template, vars);
           await this.sendDm(comment.platform, comment.userId, dmText);
+          this.logOutboundDm(comment, dmText, postMeta);
           dmSent = true;
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
@@ -213,6 +238,7 @@ export class CommentRuleEngine extends EventEmitter {
       username: comment.username,
       commentReplied,
       dmSent,
+      postContext: comment.postContext ?? null,
     });
 
     logger.info(

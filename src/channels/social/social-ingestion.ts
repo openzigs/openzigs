@@ -1,6 +1,7 @@
 import { EventEmitter } from "node:events";
 import { logger } from "../../logging/logger.js";
 import { SocialRepository } from "./social-repository.js";
+import type { PostContextService } from "./platform-api-client.js";
 import type { IncomingSocialMessage, IncomingComment, SocialPlatform } from "./types.js";
 
 /** Platform adapter interface — each platform implements this. */
@@ -15,6 +16,7 @@ export interface SocialPlatformAdapter {
 export type SocialIngestionOptions = {
   repository: SocialRepository;
   adapters?: SocialPlatformAdapter[];
+  postContextService?: PostContextService;
 };
 
 /**
@@ -26,10 +28,12 @@ export class SocialIngestionService extends EventEmitter {
   private repository: SocialRepository;
   private adapters = new Map<SocialPlatform, SocialPlatformAdapter>();
   private pollTimers = new Map<string, ReturnType<typeof setInterval>>();
+  private postContextService?: PostContextService;
 
   constructor(opts: SocialIngestionOptions) {
     super();
     this.repository = opts.repository;
+    this.postContextService = opts.postContextService;
     for (const adapter of opts.adapters ?? []) {
       this.adapters.set(adapter.platform, adapter);
     }
@@ -41,7 +45,7 @@ export class SocialIngestionService extends EventEmitter {
   }
 
   /** Handle a raw webhook payload — delegates to the platform adapter. */
-  handleWebhook(platform: SocialPlatform, body: unknown, headers: Record<string, string>): void {
+  async handleWebhook(platform: SocialPlatform, body: unknown, headers: Record<string, string>): Promise<void> {
     const adapter = this.adapters.get(platform);
     if (!adapter) {
       logger.warn(`[SocialIngestion] No adapter registered for platform: ${platform}`);
@@ -53,7 +57,18 @@ export class SocialIngestionService extends EventEmitter {
       if (!parsed) return;
 
       if ("commentId" in parsed) {
-        this.emit("comment", parsed as IncomingComment);
+        const comment = parsed as IncomingComment;
+        // Enrich comment with post context (non-blocking on failure)
+        if (this.postContextService && comment.postId) {
+          try {
+            const ctx = await this.postContextService.getPostContext(comment.platform, comment.postId);
+            if (ctx) comment.postContext = ctx;
+          } catch (err) {
+            const ctxMsg = err instanceof Error ? err.message : String(err);
+            logger.warn(`[SocialIngestion] Post context enrichment failed: ${ctxMsg}`);
+          }
+        }
+        this.emit("comment", comment);
       } else {
         this.processMessage(parsed as IncomingSocialMessage);
       }
@@ -107,7 +122,14 @@ export class SocialIngestionService extends EventEmitter {
         lastPoll = new Date().toISOString();
         for (const item of items) {
           if ("commentId" in item) {
-            this.emit("comment", item);
+            const comment = item as IncomingComment;
+            if (this.postContextService && comment.postId) {
+              try {
+                const ctx = await this.postContextService.getPostContext(comment.platform, comment.postId);
+                if (ctx) comment.postContext = ctx;
+              } catch { /* best-effort enrichment */ }
+            }
+            this.emit("comment", comment);
           } else {
             this.processMessage(item);
           }
@@ -176,15 +198,17 @@ export class InstagramAdapter implements SocialPlatformAdapter {
     // Comment webhook
     const changes = (entry.changes as Array<Record<string, unknown>>)?.[0];
     if (changes?.field === "comments") {
-      const value = changes.value as Record<string, string>;
+      const value = changes.value as Record<string, unknown>;
       if (!value) return null;
+      const from = value.from as Record<string, string> | undefined;
+      const media = value.media as Record<string, string> | undefined;
       return {
         platform: "instagram",
-        postId: value.media_id ?? "",
-        commentId: value.id ?? "",
-        userId: value.from?.toString() ?? "",
-        username: value.from?.toString() ?? "",
-        text: value.text ?? "",
+        postId: media?.id ?? (value.media_id as string) ?? "",
+        commentId: (value.comment_id as string) ?? (value.id as string) ?? "",
+        userId: from?.id ?? "",
+        username: from?.username ?? from?.id ?? "",
+        text: (value.text as string) ?? "",
         timestamp: new Date().toISOString(),
       };
     }

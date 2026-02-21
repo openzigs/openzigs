@@ -276,9 +276,9 @@ export const createSocialRouter = (opts: SocialRouterOptions): Router => {
     const mode = req.query["hub.mode"];
     const token = req.query["hub.verify_token"];
     const challenge = req.query["hub.challenge"];
+    const verifyToken = process.env.SOCIAL_WEBHOOK_VERIFY_TOKEN;
 
-    if (mode === "subscribe" && token && challenge) {
-      // In production, validate token against stored verify token
+    if (mode === "subscribe" && token && challenge && verifyToken && token === verifyToken) {
       logger.info(`[Social] Webhook verification for ${req.params.platform}`);
       res.status(200).send(challenge);
       return;
@@ -290,7 +290,7 @@ export const createSocialRouter = (opts: SocialRouterOptions): Router => {
   router.post("/webhooks/:platform", (req, res) => {
     const platform = req.params.platform as SocialPlatform;
     try {
-      ingestion.handleWebhook(
+      void ingestion.handleWebhook(
         platform,
         req.body,
         req.headers as Record<string, string>,

@@ -8,6 +8,7 @@ import type {
   MessageStatus,
   CommentRule,
   AutomationLogEntry,
+  PostContext,
 } from "./types.js";
 
 export type ContactFilter = {
@@ -118,6 +119,18 @@ export class SocialRepository {
       );
 
       CREATE INDEX IF NOT EXISTS idx_automation_log_rule ON comment_automation_log(rule_id);
+
+      CREATE TABLE IF NOT EXISTS post_context_cache (
+        post_id          TEXT PRIMARY KEY,
+        platform         TEXT NOT NULL,
+        caption          TEXT NOT NULL DEFAULT '',
+        permalink        TEXT NOT NULL DEFAULT '',
+        media_type       TEXT NOT NULL DEFAULT '',
+        media_url        TEXT NOT NULL DEFAULT '',
+        author_username  TEXT NOT NULL DEFAULT '',
+        published_at     TEXT NOT NULL DEFAULT '',
+        cached_at        TEXT NOT NULL
+      );
     `);
   }
 
@@ -385,6 +398,36 @@ export class SocialRepository {
       .prepare("SELECT COUNT(*) as count FROM comment_automation_log WHERE rule_id = ? AND username = ?")
       .get(ruleId, username) as { count: number };
     return row.count;
+  }
+
+  // ── Post Context Cache ───────────────────────────────────────────────
+
+  cachePostContext(ctx: PostContext): void {
+    this.db
+      .prepare(
+        `INSERT OR REPLACE INTO post_context_cache
+         (post_id, platform, caption, permalink, media_type, media_url, author_username, published_at, cached_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(ctx.postId, ctx.platform, ctx.caption, ctx.permalink, ctx.mediaType, ctx.mediaUrl, ctx.authorUsername, ctx.publishedAt, ctx.cachedAt);
+  }
+
+  getPostContext(postId: string): PostContext | null {
+    const row = this.db
+      .prepare("SELECT * FROM post_context_cache WHERE post_id = ?")
+      .get(postId) as Record<string, string> | undefined;
+    if (!row) return null;
+    return {
+      postId: row.post_id,
+      platform: row.platform as SocialPlatform,
+      caption: row.caption,
+      permalink: row.permalink,
+      mediaType: row.media_type,
+      mediaUrl: row.media_url,
+      authorUsername: row.author_username,
+      publishedAt: row.published_at,
+      cachedAt: row.cached_at,
+    };
   }
 
   // ── Stats ───────────────────────────────────────────────────────────

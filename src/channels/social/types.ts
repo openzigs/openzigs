@@ -19,6 +19,19 @@ export type IncomingSocialMessage = {
   metadata?: Record<string, unknown>;
 };
 
+/** Cached post/media context fetched from the platform API. */
+export type PostContext = {
+  postId: string;
+  platform: SocialPlatform;
+  caption: string;
+  permalink: string;
+  mediaType: string; // IMAGE, VIDEO, CAROUSEL_ALBUM, etc.
+  mediaUrl: string;
+  authorUsername: string;
+  publishedAt: string; // ISO-8601
+  cachedAt: string; // ISO-8601
+};
+
 /** Normalised inbound comment (for Comment-to-DM automation). */
 export type IncomingComment = {
   platform: SocialPlatform;
@@ -28,6 +41,7 @@ export type IncomingComment = {
   username: string;
   text: string;
   timestamp: string;
+  postContext?: PostContext;
 };
 
 /** CRM contact row. */

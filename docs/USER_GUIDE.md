@@ -31,6 +31,8 @@ Before you begin, ensure the following are installed and available:
 | `GITHUB_CLIENT_ID` | OAuth app client ID for the device-flow authentication. |
 | `TUNNEL_TOKEN` | Cloudflare Tunnel token for the Docker sidecar (production). |
 | `GOOGLE_APPLICATION_CREDENTIALS` | Path to Google Cloud service account JSON key file. Required for voice TTS. |
+| `SOCIAL_WEBHOOK_VERIFY_TOKEN` | Verify token for Social Brain webhook subscriptions (Instagram, TikTok, etc.). |
+| `INSTAGRAM_ACCESS_TOKEN` | Instagram User Access Token for post context lookup (captions, media type in comment automation). |
 
 **MCP Sidecar prerequisites (optional — only needed if using social or document tools):**
 
@@ -96,6 +98,10 @@ GOOGLE_APPLICATION_CREDENTIALS=/path/to/your/service-account-key.json
 # GITHUB_PERSONAL_ACCESS_TOKEN=ghp_your_token_here
 # JDBC_URL=jdbc:postgresql://localhost:5432/mydb
 # DB_PASSWORD=your-db-password
+
+# ── Optional: Social Brain ──
+# SOCIAL_WEBHOOK_VERIFY_TOKEN=your-random-verify-token
+# INSTAGRAM_ACCESS_TOKEN=your-instagram-user-access-token
 
 # ── Server ──
 PORT=3000
@@ -4643,6 +4649,115 @@ Platform webhooks are received at `POST /api/social/webhooks/:platform`. For Ins
 | `social:handoff:created` | Server → Client | New handoff thread created |
 | `social:handoff:resolved` | Server → Client | Handoff closed |
 | `social:rule:triggered` | Server → Client | Automation rule fired |
+
+### Platform Webhook Setup
+
+Each social platform requires webhook registration so OpenZigs can receive comments and DMs in real time. You need a **publicly reachable URL** — either via a Cloudflare Tunnel (production) or ngrok (development).
+
+**Your webhook endpoint:** `https://<your-domain>/api/social/webhooks/:platform`
+
+#### Environment Variables
+
+Add these to your `.env` file:
+
+```dotenv
+# ── Social Brain ──
+SOCIAL_WEBHOOK_VERIFY_TOKEN=your-random-secret-string  # Used to verify webhook subscriptions
+INSTAGRAM_ACCESS_TOKEN=your-instagram-user-access-token # Required for post context lookup (captions, media type)
+```
+
+> **Tip:** Generate a random verify token with `openssl rand -hex 32`.
+
+#### Instagram / Facebook (Meta Graph API)
+
+1. Go to the [Meta Developer Console](https://developers.facebook.com/apps/).
+2. Open your app (or create one: **Business** type → add **Instagram** product).
+3. Navigate to **Instagram → Webhooks** in the left sidebar.
+4. Click **Subscribe to events** and enable:
+   - `messages` — receives DMs
+   - `comments` — receives comment events (required for comment-to-DM automation)
+5. Set the **Callback URL** to:
+   ```
+   https://<your-domain>/api/social/webhooks/instagram
+   ```
+6. Set the **Verify Token** to the same value as `SOCIAL_WEBHOOK_VERIFY_TOKEN` in your `.env`.
+7. Click **Verify and Save** — Meta will send a `GET` request with `hub.verify_token` and `hub.challenge`; OpenZigs responds automatically.
+8. Under **Instagram → Basic Display** or **Instagram → API Setup**, generate a **User Access Token** with these permissions:
+   - `instagram_basic`
+   - `instagram_manage_comments`
+   - `instagram_manage_messages`
+   - `pages_show_list`, `pages_read_engagement` (for the business account)
+9. Copy the token and set it as `INSTAGRAM_ACCESS_TOKEN` in your `.env`.
+
+> **Post context enrichment:** When a comment arrives, OpenZigs uses the `INSTAGRAM_ACCESS_TOKEN` to fetch the post's caption, permalink, and media type via `GET /{media_id}?fields=caption,permalink,media_type,media_url,username,timestamp`. This is cached in SQLite for 24 hours to avoid redundant API calls. Without this token, comment-to-DM automation still works, but the Brain and DM templates won't have post context (e.g., `{{post_caption}}` will be empty).
+
+#### Twitter / X
+
+1. Go to the [X Developer Portal](https://developer.x.com/en/portal/dashboard).
+2. Create or open a project with **OAuth 2.0** enabled.
+3. Navigate to **Products → Premium → Account Activity API** (or the free webhook tier if eligible).
+4. Register a webhook URL:
+   ```
+   https://<your-domain>/api/social/webhooks/twitter
+   ```
+5. Subscribe to your user's activity events (DMs, mentions).
+6. Authentication credentials should be set in environment variables for the Twitter MCP sidecar.
+
+#### TikTok
+
+1. Register at the [TikTok Developer Portal](https://developers.tiktok.com/).
+2. Create an app and request the **Comment** and **Direct Message** scopes.
+3. Under **Webhooks**, add:
+   ```
+   https://<your-domain>/api/social/webhooks/tiktok
+   ```
+4. TikTok sends a verification challenge similar to Meta.
+
+#### Generic / Other Platforms
+
+For platforms without native webhook support (Reddit, YouTube), use the **polling adapter**:
+
+```typescript
+import { GenericPollAdapter } from "./channels/social/social-ingestion.js";
+
+const redditAdapter = new GenericPollAdapter("reddit", async (since) => {
+  // Fetch new comments/messages from Reddit API since the given timestamp
+  return [];
+});
+socialIngestion.registerAdapter(redditAdapter);
+socialIngestion.startPolling("reddit", 60); // poll every 60 seconds
+```
+
+#### Local Development (ngrok)
+
+For local testing without a tunnel:
+
+```bash
+# Start ngrok tunnel to your dev server
+ngrok http 3000
+
+# Copy the HTTPS URL (e.g., https://abc123.ngrok.io)
+# Use it as the webhook callback URL in the platform developer console
+```
+
+### DM Template Variables
+
+The following variables are available in comment-to-DM automation templates:
+
+| Variable | Description |
+|---|---|
+| `{{username}}` | The commenter's username |
+| `{{keyword}}` | The keyword that triggered the rule |
+| `{{post_id}}` | The platform media/post ID |
+| `{{comment_text}}` | The full comment text |
+| `{{post_caption}}` | The post's caption text (requires platform access token) |
+| `{{post_url}}` | The post's permalink URL (requires platform access token) |
+
+**Example template:**
+
+```
+Hey {{username}}! Saw your comment on our post about "{{post_caption}}". Check your DMs for more details!
+```
 
 ---
 

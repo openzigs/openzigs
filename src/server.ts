@@ -57,6 +57,7 @@ import { SocialIngestionService, InstagramAdapter } from "./channels/social/soci
 import { SocialBrain } from "./channels/social/social-brain.js";
 import { HandoffManager } from "./channels/social/handoff-manager.js";
 import { CommentRuleEngine } from "./channels/social/comment-rule-engine.js";
+import { PostContextService, InstagramApiClient } from "./channels/social/platform-api-client.js";
 import { PresentationRepository } from "./presenter/presentation-repository.js";
 import { detectChapters, computeQuizTimestamps } from "./presenter/chapter-detector.js";
 import { generateThumbnail } from "./presenter/thumbnail-generator.js";
@@ -315,9 +316,15 @@ if (voiceService.getConfig().enabled) {
 const socialRepository = new SocialRepository(db);
 socialRepository.migrate();
 
+const postContextService = new PostContextService(socialRepository);
+if (process.env.INSTAGRAM_ACCESS_TOKEN) {
+  postContextService.registerClient(new InstagramApiClient(process.env.INSTAGRAM_ACCESS_TOKEN));
+}
+
 const socialIngestion = new SocialIngestionService({
   repository: socialRepository,
   adapters: [new InstagramAdapter()],
+  postContextService,
 });
 
 const socialBrain = new SocialBrain({

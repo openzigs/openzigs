@@ -15,11 +15,13 @@ export type SocialBrainOptions = {
 
 const DEFAULT_SYSTEM_PROMPT = `You are a helpful social media assistant. You respond to direct messages from users.
 Use the provided context from the knowledge base to answer questions accurately.
+If post context is provided, use it to understand what the user is referring to.
 If you are not confident in your answer, say so honestly.
 
 Instructions:
 - Be concise and friendly
 - Match the platform's communication style (informal for Instagram/TikTok, slightly more formal for LinkedIn)
+- If the user is asking about a specific post, use the post caption and details to inform your reply
 - If you cannot answer the question from the available context, set confidence to "low"
 - Always respond in the same language the user writes in
 
@@ -79,6 +81,24 @@ export class SocialBrain extends EventEmitter {
         .map((m) => `${m.direction === "inbound" ? "User" : "Assistant"}: ${m.content}`)
         .join("\n");
 
+      // 3b. Extract post context from recent outbound DMs (comment-rule-engine stores it in metadata)
+      let postContextBlock = "";
+      for (const m of history) {
+        try {
+          const meta = JSON.parse(m.metadata) as Record<string, unknown>;
+          if (meta.postCaption || meta.postUrl) {
+            postContextBlock = [
+              "Related post context (the user interacted with this post):",
+              meta.postCaption ? `  Caption: ${meta.postCaption}` : "",
+              meta.postUrl ? `  URL: ${meta.postUrl}` : "",
+              meta.postMediaType ? `  Media type: ${meta.postMediaType}` : "",
+              meta.triggeringComment ? `  Their comment: ${meta.triggeringComment}` : "",
+            ].filter(Boolean).join("\n");
+            break; // use most recent post context
+          }
+        } catch { /* not JSON, skip */ }
+      }
+
       // 4. Compose prompt
       const userPrompt = [
         `Platform: ${raw.platform}`,
@@ -87,6 +107,8 @@ export class SocialBrain extends EventEmitter {
         "",
         "Recent conversation:",
         conversationContext || "(first message)",
+        "",
+        postContextBlock || "(no post context)",
         "",
         "Knowledge base context:",
         ragContext,
