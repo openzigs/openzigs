@@ -193,40 +193,93 @@ def load_pipeline(model_key: str, device: str) -> DiffusionPipeline:
     if model_key == "sdxl-turbo":
         pretrained_kwargs["variant"] = "fp16"
 
-    # ── Load and move to device ─────────────────────────────────
-    # Load directly to the target device.  On Apple Silicon the MPS
-    # watermark is already disabled so loading bf16 to MPS succeeds
-    # even for large models like FLUX (~24 GB).  We then quantize
-    # in-place on-device so the bf16 weights are replaced by int4
-    # packed tensors without a separate CPU→MPS move step (which
-    # hangs for quanto QTensor types).
-    pipe = loader_cls.from_pretrained(repo_id, **pretrained_kwargs)
-    pipe = pipe.to(device)
-    load_elapsed = time.monotonic() - start
-    log.info(f"Pipeline loaded to {device} in {load_elapsed:.1f}s (dtype={dtype})")
+    # Pass HF token explicitly for gated repos (e.g. FLUX.1-schnell)
+    hf_token = os.environ.get("HF_TOKEN") or None
+    if hf_token:
+        pretrained_kwargs["token"] = hf_token
 
-    # ── 4-bit quantization (FLUX only) ─────────────────────────
-    if model_key == "flux" and device in ("mps", "cuda"):
+    # ── Load and quantize strategy ─────────────────────────────
+    # For FLUX on MPS: load to CPU, quantize there (bf16→int4/int8),
+    # then move each component to MPS individually.  This avoids:
+    #   1. The 33 GB MPS allocator bloat from loading bf16 to MPS first
+    #   2. The slow pipe.to("mps") on the entire quantized pipeline
+    # Peak MPS ≈ 10 GB (quantized weights only).  Per-component move
+    # takes ~2s per quantized layer but we log progress.
+    needs_quantization = model_key == "flux" and device in ("mps", "cuda")
+
+    if needs_quantization:
+        log.info("Loading to CPU for quantization ...")
+        pipe = loader_cls.from_pretrained(repo_id, **pretrained_kwargs)
+        load_elapsed = time.monotonic() - start
+        log.info(f"Pipeline loaded to CPU in {load_elapsed:.1f}s (dtype={dtype})")
+
+        # ── Quantize on CPU ────────────────────────────────────
         quant_start = time.monotonic()
         log.info("Quantizing transformer to int4 (excluding proj_out) ...")
         quantize(pipe.transformer, weights=qint4, exclude="proj_out")
         freeze(pipe.transformer)
         gc.collect()
-        if device == "mps":
-            torch.mps.empty_cache()
         log.info(f"Transformer quantized in {time.monotonic() - quant_start:.1f}s")
 
-        # T5 text encoder is also large (~4.7 GB bf16); int8 preserves
-        # text understanding quality while saving ~50% memory.
         if hasattr(pipe, "text_encoder_2") and pipe.text_encoder_2 is not None:
             te_start = time.monotonic()
             log.info("Quantizing T5 text encoder to int8 ...")
             quantize(pipe.text_encoder_2, weights=qint8)
             freeze(pipe.text_encoder_2)
             gc.collect()
-            if device == "mps":
-                torch.mps.empty_cache()
             log.info(f"Text encoder quantized in {time.monotonic() - te_start:.1f}s")
+
+        # ── Move components to device one by one ───────────────
+        # For quantized components (transformer, text_encoder_2), move
+        # each direct child submodule individually.  Calling .to() on the
+        # whole quantized module triggers an extremely slow recursive path
+        # in quanto's QTensor (~37 min for the transformer).  Moving
+        # children individually is ~2s per large layer and gives progress.
+        move_start = time.monotonic()
+
+        def _move_submodules(module, label: str) -> None:
+            """Move a quantized module to *device* child-by-child."""
+            children = list(module.named_children())
+            total = len(children)
+            for idx, (name, child) in enumerate(children, 1):
+                child.to(device)
+            # Move any remaining direct parameters / buffers that
+            # aren't nested inside a child submodule.
+            for key, p in module._parameters.items():
+                if p is not None and p.device.type != device:
+                    module._parameters[key] = p.to(device)
+            for key, b in module._buffers.items():
+                if b is not None and b.device.type != device:
+                    module._buffers[key] = b.to(device)
+            log.info(f"  {label}: moved {total} children to {device}")
+
+        components = [
+            ("text_encoder", "CLIP text encoder", False),
+            ("vae", "VAE", False),
+            ("transformer", "Transformer (quantized int4)", True),
+            ("text_encoder_2", "T5 text encoder (quantized int8)", True),
+        ]
+        for attr, label, quantized in components:
+            comp = getattr(pipe, attr, None)
+            if comp is not None and hasattr(comp, "to"):
+                comp_start = time.monotonic()
+                log.info(f"Moving {label} to {device} ...")
+                if quantized:
+                    _move_submodules(comp, label)
+                else:
+                    comp.to(device)
+                gc.collect()
+                log.info(f"  {label} moved in {time.monotonic() - comp_start:.1f}s")
+
+        gc.collect()
+        if device == "mps":
+            torch.mps.empty_cache()
+        log.info(f"All components moved to {device} in {time.monotonic() - move_start:.1f}s")
+    else:
+        pipe = loader_cls.from_pretrained(repo_id, **pretrained_kwargs)
+        pipe = pipe.to(device)
+        load_elapsed = time.monotonic() - start
+        log.info(f"Pipeline loaded to {device} in {load_elapsed:.1f}s (dtype={dtype})")
 
     # ── Memory optimizations ───────────────────────────────────
     # Attention slicing splits the QKV computation into chunks,
