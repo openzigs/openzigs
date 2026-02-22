@@ -1652,6 +1652,87 @@ Respond with ONLY a valid JSON array. No markdown, no explanation.`;
   // ── Draft Persistence (CRUD) ─────────────────────────────
 
   /**
+   * POST /assets/ingest — ingest a user-uploaded video through the ingestion pipeline.
+   * Body: { filePath: string, enableVision?: boolean, model?: string }
+   *
+   * Runs: ffprobe → audio extraction → keyframe analysis → (optional) vision → transcript.
+   * Returns: ClipAnalysis with keyframes, transcript, and descriptions.
+   */
+  router.post("/assets/ingest", async (req, res) => {
+    try {
+      const { filePath: srcPath, enableVision, model: visionModel } = req.body as {
+        filePath?: string;
+        enableVision?: boolean;
+        model?: string;
+      };
+
+      if (!srcPath || typeof srcPath !== "string") {
+        res.status(400).json({ error: "filePath is required" });
+        return;
+      }
+
+      const fsMod = await import("node:fs");
+      if (!fsMod.existsSync(srcPath)) {
+        res.status(404).json({ error: `File not found: ${srcPath}` });
+        return;
+      }
+
+      const { ingest } = await import("../video/ingestion/index.js");
+      const resolvedModel = visionModel || runtimeConfig.defaultModel || undefined;
+      const useVision = enableVision !== false;
+
+      const progressLog: Array<{ phase: string; message: string }> = [];
+      const result = await ingest(
+        { clips: [srcPath], mode: "highlight" },
+        {
+          copilot: useVision ? copilot : undefined,
+          visionAnalysis: useVision
+            ? { maxKeyframes: 10, delayMs: 1000, model: resolvedModel }
+            : undefined,
+          onProgress: (event) => {
+            progressLog.push({ phase: event.phase, message: event.message });
+            logger.info(`[Director API] Ingest: ${event.phase}: ${event.message}`);
+          },
+        },
+      );
+
+      const clip = result.clips[0];
+      if (!clip) {
+        res.status(500).json({ error: "Ingestion produced no clip analysis" });
+        return;
+      }
+
+      logger.info(
+        `[Director API] Asset ingested: ${srcPath} — ${clip.keyframes.length} keyframes, ${clip.transcript.length} transcript segments`,
+      );
+
+      res.json({
+        analysis: {
+          sourcePath: clip.sourcePath,
+          duration: clip.duration,
+          resolution: clip.resolution,
+          fps: clip.fps,
+          keyframes: clip.keyframes.map((kf) => ({
+            timestamp: kf.timestamp,
+            framePath: kf.framePath,
+            sceneScore: kf.sceneScore,
+            description: kf.description,
+          })),
+          transcriptSegments: clip.transcript.length,
+          transcript: clip.transcript.slice(0, 50),
+        },
+        progressLog,
+      });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      logger.error(`[Director API] POST /assets/ingest failed: ${msg}`);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  // ── Draft Persistence (CRUD) ─────────────────────────────
+
+  /**
    * POST /drafts — create a new draft from a manifest.
    * Body: { title, manifest, productionMode, thumbnail? }
    */
