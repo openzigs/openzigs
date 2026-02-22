@@ -98,6 +98,17 @@ const initSchema = (db: Database.Database) => {
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS director_drafts (
+      id TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
+      manifest TEXT NOT NULL,
+      thumbnail TEXT,
+      production_mode TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'draft'
+    );
   `);
 
   const voiceProfileColumns = db

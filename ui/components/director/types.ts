@@ -161,3 +161,85 @@ export function createInitialState(): WizardState {
     renderJobId: null,
   };
 }
+
+// ── Studio Types ──────────────────────────────────────────────
+
+export interface DraftSummary {
+  id: string;
+  title: string;
+  thumbnail: string | null;
+  productionMode: string;
+  createdAt: string;
+  updatedAt: string;
+  status: string;
+}
+
+export interface DraftFull extends DraftSummary {
+  manifest: DirectorManifest | null;
+}
+
+/** Minimal typed subset of the DirectorManifest used by Studio UI. */
+export interface DirectorManifest {
+  projectTitle: string;
+  templateId: string;
+  composition: { width: number; height: number; fps: number };
+  audioLayer: {
+    music: { track: string; volume: number; loop: boolean } | null;
+    voiceover: { src: string; volume: number } | null;
+  };
+  timeline: TimelineEntry[];
+  metadata?: Record<string, unknown>;
+}
+
+export type TimelineEntryType =
+  | "video_clip"
+  | "title_card"
+  | "image_scene"
+  | "transition"
+  | "overlay"
+  | "intro_card"
+  | "outro_card";
+
+export interface TimelineEntry {
+  type: TimelineEntryType;
+  startAtFrame?: number;
+  duration?: number;
+  durationInFrames?: number;
+  src?: string;
+  title?: string;
+  voiceover?: string;
+  scriptText?: string;
+  [key: string]: unknown;
+}
+
+export interface TimelineTrack {
+  id: string;
+  label: string;
+  type: "scenes" | "audio" | "voiceover" | "overlay";
+  entries: TimelineTrackEntry[];
+}
+
+export interface TimelineTrackEntry {
+  /** Index in the manifest timeline array */
+  timelineIndex: number;
+  startFrame: number;
+  durationFrames: number;
+  label: string;
+  color: string;
+}
+
+export interface InspectorState {
+  /** Index in the visual scenes array (not manifest timeline) */
+  sceneIndex: number | null;
+  /** The timeline entry being inspected */
+  entry: TimelineEntry | null;
+}
+
+export interface StudioState {
+  draftId: string;
+  draft: DraftFull | null;
+  currentFrame: number;
+  isPlaying: boolean;
+  inspector: InspectorState;
+  tracks: TimelineTrack[];
+}

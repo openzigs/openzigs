@@ -12,6 +12,14 @@
  *   GET  /assets/local                — list local library
  *   DELETE /assets/:id                — remove cached asset
  *   POST /produce                     — trigger video production (ingestion → LLM → manifest)
+ *   POST /enhance                     — enhance a scene image via Flux img2img
+ *   POST /thumbnail                   — generate an AI thumbnail
+ *   POST /drafts                      — create a new draft
+ *   GET  /drafts                      — list all drafts
+ *   GET  /drafts/:id                  — get a single draft with manifest
+ *   PUT  /drafts/:id                  — update a draft
+ *   DELETE /drafts/:id                — delete a draft
+ *   POST /scenes/:idx/regenerate      — regenerate a single scene image
  *   POST /render                      — submit manifest to render queue
  *   GET  /jobs                        — list render jobs
  *   GET  /jobs/:id                    — get render job status
@@ -1637,6 +1645,303 @@ Respond with ONLY a valid JSON array. No markdown, no explanation.`;
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       logger.error(`[Director API] POST /thumbnail failed: ${msg}`);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  // ── Draft Persistence (CRUD) ─────────────────────────────
+
+  /**
+   * POST /drafts — create a new draft from a manifest.
+   * Body: { title, manifest, productionMode, thumbnail? }
+   */
+  router.post("/drafts", (req, res) => {
+    try {
+      const { title, manifest, productionMode, thumbnail } = req.body as {
+        title?: string;
+        manifest?: unknown;
+        productionMode?: string;
+        thumbnail?: string;
+      };
+
+      if (!manifest || typeof manifest !== "object") {
+        res.status(400).json({ error: "manifest object is required" });
+        return;
+      }
+      if (!productionMode || typeof productionMode !== "string") {
+        res.status(400).json({ error: "productionMode is required" });
+        return;
+      }
+
+      const { getDatabase } = require("../productivity/database.js") as typeof import("../productivity/database.js");
+      const db = getDatabase();
+      const id = nanoid();
+      const now = new Date().toISOString();
+      const manifestJson = JSON.stringify(manifest);
+      const resolvedTitle = (title && typeof title === "string" && title.trim()) || "Untitled Draft";
+
+      db.prepare(
+        `INSERT INTO director_drafts (id, title, manifest, thumbnail, production_mode, created_at, updated_at, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 'draft')`,
+      ).run(id, resolvedTitle, manifestJson, thumbnail ?? null, productionMode, now, now);
+
+      logger.info(`[Director API] Draft created: ${id} "${resolvedTitle}"`);
+      res.json({ id, title: resolvedTitle, status: "draft", createdAt: now, updatedAt: now });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      logger.error(`[Director API] POST /drafts failed: ${msg}`);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  /**
+   * GET /drafts — list all drafts.
+   */
+  router.get("/drafts", (_req, res) => {
+    try {
+      const { getDatabase } = require("../productivity/database.js") as typeof import("../productivity/database.js");
+      const db = getDatabase();
+      const rows = db.prepare(
+        `SELECT id, title, thumbnail, production_mode, created_at, updated_at, status
+         FROM director_drafts ORDER BY updated_at DESC`,
+      ).all() as Array<{
+        id: string;
+        title: string;
+        thumbnail: string | null;
+        production_mode: string;
+        created_at: string;
+        updated_at: string;
+        status: string;
+      }>;
+
+      res.json({
+        drafts: rows.map((r) => ({
+          id: r.id,
+          title: r.title,
+          thumbnail: r.thumbnail,
+          productionMode: r.production_mode,
+          createdAt: r.created_at,
+          updatedAt: r.updated_at,
+          status: r.status,
+        })),
+      });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      logger.error(`[Director API] GET /drafts failed: ${msg}`);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  /**
+   * GET /drafts/:id — get a single draft with full manifest.
+   */
+  router.get("/drafts/:id", (req, res) => {
+    try {
+      const { getDatabase } = require("../productivity/database.js") as typeof import("../productivity/database.js");
+      const db = getDatabase();
+      const row = db.prepare(
+        `SELECT id, title, manifest, thumbnail, production_mode, created_at, updated_at, status
+         FROM director_drafts WHERE id = ?`,
+      ).get(req.params.id) as {
+        id: string;
+        title: string;
+        manifest: string;
+        thumbnail: string | null;
+        production_mode: string;
+        created_at: string;
+        updated_at: string;
+        status: string;
+      } | undefined;
+
+      if (!row) {
+        res.status(404).json({ error: `Draft not found: ${req.params.id}` });
+        return;
+      }
+
+      let manifest: unknown;
+      try {
+        manifest = JSON.parse(row.manifest);
+      } catch {
+        manifest = null;
+      }
+
+      res.json({
+        id: row.id,
+        title: row.title,
+        manifest,
+        thumbnail: row.thumbnail,
+        productionMode: row.production_mode,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+        status: row.status,
+      });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      logger.error(`[Director API] GET /drafts/:id failed: ${msg}`);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  /**
+   * PUT /drafts/:id — update a draft's manifest and/or title.
+   * Body: { title?, manifest?, status?, thumbnail? }
+   */
+  router.put("/drafts/:id", (req, res) => {
+    try {
+      const { title, manifest, status, thumbnail } = req.body as {
+        title?: string;
+        manifest?: unknown;
+        status?: string;
+        thumbnail?: string;
+      };
+
+      const { getDatabase } = require("../productivity/database.js") as typeof import("../productivity/database.js");
+      const db = getDatabase();
+
+      const existing = db.prepare(`SELECT id FROM director_drafts WHERE id = ?`)
+        .get(req.params.id) as { id: string } | undefined;
+
+      if (!existing) {
+        res.status(404).json({ error: `Draft not found: ${req.params.id}` });
+        return;
+      }
+
+      const updates: string[] = [];
+      const values: unknown[] = [];
+
+      if (title !== undefined) {
+        updates.push("title = ?");
+        values.push(title);
+      }
+      if (manifest !== undefined) {
+        updates.push("manifest = ?");
+        values.push(JSON.stringify(manifest));
+      }
+      if (status !== undefined) {
+        updates.push("status = ?");
+        values.push(status);
+      }
+      if (thumbnail !== undefined) {
+        updates.push("thumbnail = ?");
+        values.push(thumbnail);
+      }
+
+      if (updates.length === 0) {
+        res.json({ success: true, message: "Nothing to update" });
+        return;
+      }
+
+      const now = new Date().toISOString();
+      updates.push("updated_at = ?");
+      values.push(now);
+      values.push(req.params.id);
+
+      db.prepare(`UPDATE director_drafts SET ${updates.join(", ")} WHERE id = ?`).run(...values);
+      logger.info(`[Director API] Draft updated: ${req.params.id}`);
+      res.json({ success: true, updatedAt: now });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      logger.error(`[Director API] PUT /drafts/:id failed: ${msg}`);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  /**
+   * DELETE /drafts/:id — delete a draft.
+   */
+  router.delete("/drafts/:id", (req, res) => {
+    try {
+      const { getDatabase } = require("../productivity/database.js") as typeof import("../productivity/database.js");
+      const db = getDatabase();
+      const result = db.prepare(`DELETE FROM director_drafts WHERE id = ?`).run(req.params.id);
+      if (result.changes === 0) {
+        res.status(404).json({ error: `Draft not found: ${req.params.id}` });
+        return;
+      }
+      logger.info(`[Director API] Draft deleted: ${req.params.id}`);
+      res.json({ success: true });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      logger.error(`[Director API] DELETE /drafts/:id failed: ${msg}`);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  /**
+   * POST /scenes/:sceneIndex/regenerate — regenerate a single scene image.
+   * Body: { draftId, prompt, provider?, model?, seed? }
+   */
+  router.post("/scenes/:sceneIndex/regenerate", async (req, res) => {
+    try {
+      const sceneIndex = Number.parseInt(req.params.sceneIndex, 10);
+      if (!Number.isFinite(sceneIndex) || sceneIndex < 0) {
+        res.status(400).json({ error: "Invalid scene index" });
+        return;
+      }
+
+      const { draftId, prompt, provider, model: imageModel, seed } = req.body as {
+        draftId?: string;
+        prompt?: string;
+        provider?: "auto" | "local" | "cloud";
+        model?: "flux" | "sdxl-turbo";
+        seed?: number;
+      };
+
+      if (!prompt || typeof prompt !== "string" || prompt.trim().length === 0) {
+        res.status(400).json({ error: "prompt is required" });
+        return;
+      }
+
+      const osMod = await import("node:os");
+      const pathMod = await import("node:path");
+      const imageOutputDir = pathMod.join(osMod.homedir(), ".openzigs", "director", "images");
+      const { ImageGenService } = await import("../video/generators/image-gen-service.js");
+      const imageGenUserConfig = await ImageGenService.loadUserImageGenConfig();
+      const imageService = new ImageGenService({ outputDir: imageOutputDir, ...imageGenUserConfig });
+      await imageService.initialize();
+
+      const result = await imageService.generateImage(prompt, {
+        provider: provider ?? "auto",
+        localModel: imageModel,
+        seed,
+      });
+
+      // If a draftId is provided, update the corresponding scene in the draft manifest
+      if (draftId) {
+        const { getDatabase } = await import("../productivity/database.js");
+        const db = getDatabase();
+        const row = db.prepare(`SELECT manifest FROM director_drafts WHERE id = ?`)
+          .get(draftId) as { manifest: string } | undefined;
+
+        if (row) {
+          try {
+            const manifest = JSON.parse(row.manifest);
+            if (Array.isArray(manifest.timeline)) {
+              const scenes = manifest.timeline.filter(
+                (e: { type: string }) => e.type === "image_scene" || e.type === "video_clip",
+              );
+              if (scenes[sceneIndex]) {
+                scenes[sceneIndex].src = result.filePath;
+                const now = new Date().toISOString();
+                db.prepare(`UPDATE director_drafts SET manifest = ?, updated_at = ? WHERE id = ?`)
+                  .run(JSON.stringify(manifest), now, draftId);
+              }
+            }
+          } catch {
+            // Non-fatal: scene image was generated, draft update failed
+            logger.warn(`[Director API] Failed to update draft ${draftId} scene ${sceneIndex}`);
+          }
+        }
+      }
+
+      res.json({
+        sceneIndex,
+        imagePath: result.filePath,
+        generationTimeMs: result.generationTimeMs,
+      });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      logger.error(`[Director API] POST /scenes/:sceneIndex/regenerate failed: ${msg}`);
       res.status(500).json({ error: msg });
     }
   });

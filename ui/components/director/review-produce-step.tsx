@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
+import { useRouter } from "next/navigation";
 import { fetchJson } from "@/lib/api";
 import { useSocket } from "@/lib/socket-context";
 import { showToast } from "@/components/toast";
@@ -22,6 +23,7 @@ import {
   HardDrive,
   Ban,
   Settings2,
+  PenTool,
 } from "lucide-react";
 import type { WizardState, RenderJobStatus, DirectorManifestSummary, RenderSettings, RenderQuality, ImageProvider, ImageModel } from "./types";
 import { QUALITY_PRESETS } from "./types";
@@ -76,6 +78,7 @@ export const ReviewProduceStep = ({
   onQuizEnabledChange,
 }: ReviewProduceStepProps) => {
   const { socket } = useSocket();
+  const router = useRouter();
   const [phase, setPhase] = useState<"review" | "producing" | "produced" | "rendering">("review");
   const [renderProgress, setRenderProgress] = useState(0);
   const [renderStatus, setRenderStatus] = useState<string | null>(null);
@@ -692,6 +695,27 @@ export const ReviewProduceStep = ({
               <Play className="h-4 w-4" />
             )}
             Start Render
+          </button>
+
+          <button
+            onClick={async () => {
+              if (!produceMutation.data?.manifest) return;
+              const manifest = produceMutation.data.manifest;
+              const title = (manifest as Record<string, unknown>).projectTitle as string || "Untitled";
+              const res = await fetchJson<{ id: string }>("/api/admin/director/drafts", {
+                method: "POST",
+                body: JSON.stringify({
+                  title,
+                  manifest,
+                  productionMode: state.mode ?? "presentation",
+                }),
+              });
+              router.push(`/director/studio/${res.id}`);
+            }}
+            className="w-full flex items-center justify-center gap-2 rounded-xl border border-border text-sm text-foreground py-3 hover:bg-muted/50 transition"
+          >
+            <PenTool className="h-4 w-4" />
+            Open in Studio
           </button>
         </div>
       )}
