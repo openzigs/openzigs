@@ -16,11 +16,13 @@ import {
   useAddTag,
   useUpdateContact,
   useCloseHandoff,
+  useSocialConfig,
   type Contact,
   type CommentRule,
+  type PlatformConfigEntry,
 } from "@/lib/hooks/use-social";
 
-type Tab = "dashboard" | "crm" | "automations" | "activity";
+type Tab = "dashboard" | "crm" | "automations" | "activity" | "settings";
 
 export default function SocialBrainPage() {
   const [activeTab, setActiveTab] = useState<Tab>("dashboard");
@@ -36,7 +38,7 @@ export default function SocialBrainPage() {
 
       {/* Tab navigation */}
       <div className="mb-6 flex gap-1 rounded-lg bg-muted p-1">
-        {(["dashboard", "crm", "automations", "activity"] as Tab[]).map((tab) => (
+        {(["dashboard", "crm", "automations", "activity", "settings"] as Tab[]).map((tab) => (
           <button
             key={tab}
             onClick={() => setActiveTab(tab)}
@@ -55,6 +57,7 @@ export default function SocialBrainPage() {
       {activeTab === "crm" && <CrmTab />}
       {activeTab === "automations" && <AutomationsTab />}
       {activeTab === "activity" && <ActivityTab />}
+      {activeTab === "settings" && <SettingsTab />}
 
       <ToastContainer />
     </main>
@@ -84,21 +87,24 @@ function DashboardTab() {
       {/* Connected platforms */}
       <SectionCard title="Connected Platforms" defaultOpen>
         {stats.connections.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No platforms connected yet. Configure webhooks or polling in config.</p>
+          <p className="text-sm text-muted-foreground">No platforms connected yet. Go to the Settings tab to configure platforms.</p>
         ) : (
           <div className="flex flex-wrap gap-2">
-            {stats.connections.map((c) => (
+            {stats.connections.filter((c) => c.connected || c.configured).map((c) => (
               <span
                 key={c.platform}
                 className={`rounded-full px-3 py-1 text-xs font-medium ${
                   c.connected
                     ? "bg-green-500/10 text-green-600 dark:text-green-400"
-                    : "bg-muted text-muted-foreground"
+                    : "bg-yellow-500/10 text-yellow-600 dark:text-yellow-400"
                 }`}
               >
-                {c.platform}
+                {c.platform} {c.connected ? "" : "(token set, not enabled)"}
               </span>
             ))}
+            {stats.connections.filter((c) => c.connected || c.configured).length === 0 && (
+              <p className="text-sm text-muted-foreground">No platforms configured. Go to the Settings tab to get started.</p>
+            )}
           </div>
         )}
       </SectionCard>
@@ -536,7 +542,7 @@ function RuleForm({ onSubmit }: { onSubmit: (data: Partial<CommentRule>) => void
         <textarea value={dmTemplate} onChange={(e) => setDmTemplate(e.target.value)} required rows={2}
           placeholder="Hey {{username}}, thanks for your interest! ..."
           className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm" />
-        <p className="text-xs text-muted-foreground mt-0.5">Variables: {"{{username}}, {{keyword}}, {{post_id}}"}</p>
+        <p className="text-xs text-muted-foreground mt-0.5">Variables: {"{{username}}, {{keyword}}, {{post_id}}, {{post_caption}}, {{post_url}}"}</p>
       </div>
       <div>
         <label className="text-xs font-medium text-muted-foreground">Comment Reply Template (optional)</label>
@@ -660,6 +666,142 @@ function ActivityTab() {
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+// ── Settings Tab ───────────────────────────────────────────────────────
+
+function SettingsTab() {
+  const { data: config } = useSocialConfig();
+
+  if (!config) {
+    return <p className="text-sm text-muted-foreground">Loading configuration...</p>;
+  }
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h2 className="text-lg font-semibold">Platform Configuration</h2>
+        <p className="text-sm text-muted-foreground">
+          Connect social platforms by setting environment variables and configuring webhooks on each platform&apos;s developer portal.
+        </p>
+      </div>
+
+      {/* Global status */}
+      <div className="flex flex-wrap gap-4">
+        <div className="rounded-lg border border-border bg-card p-3">
+          <p className="text-xs text-muted-foreground">Webhook Verify Token</p>
+          <p className={`text-sm font-medium ${config.webhookVerifyToken ? "text-green-600" : "text-destructive"}`}>
+            {config.webhookVerifyToken ? "Set" : "Not Set"}
+          </p>
+          {!config.webhookVerifyToken && (
+            <p className="mt-1 text-xs text-muted-foreground">
+              Set <code className="rounded bg-muted px-1">SOCIAL_WEBHOOK_VERIFY_TOKEN</code> in your .env
+            </p>
+          )}
+        </div>
+        <div className="rounded-lg border border-border bg-card p-3">
+          <p className="text-xs text-muted-foreground">Confidence Threshold</p>
+          <p className="text-sm font-medium capitalize">{config.confidenceThreshold}</p>
+        </div>
+      </div>
+
+      {/* Platform cards */}
+      <div className="grid gap-4 md:grid-cols-2">
+        {config.platforms.map((p) => (
+          <PlatformCard key={p.platform} platform={p} />
+        ))}
+      </div>
+
+      {/* Setup guide */}
+      <SectionCard title="Quick Setup Guide" defaultOpen={false}>
+        <div className="space-y-3 text-sm">
+          <div>
+            <p className="font-medium">1. Set environment variables</p>
+            <p className="text-muted-foreground">
+              Add platform access tokens and <code className="rounded bg-muted px-1">SOCIAL_WEBHOOK_VERIFY_TOKEN</code> to your <code className="rounded bg-muted px-1">.env</code> file.
+            </p>
+          </div>
+          <div>
+            <p className="font-medium">2. Enable platforms in config</p>
+            <p className="text-muted-foreground">
+              Set <code className="rounded bg-muted px-1">socialBrain.connections.&lt;platform&gt;.enabled: true</code> in <code className="rounded bg-muted px-1">~/.openzigs/config.json</code>.
+            </p>
+          </div>
+          <div>
+            <p className="font-medium">3. Configure webhooks on the platform</p>
+            <p className="text-muted-foreground">
+              Set the webhook URL in the platform&apos;s developer portal. You need a public URL — use <code className="rounded bg-muted px-1">cloudflared</code> tunnel or ngrok for local dev.
+            </p>
+          </div>
+          <div>
+            <p className="font-medium">4. Restart the server</p>
+            <p className="text-muted-foreground">
+              Restart openzigs so the new credentials are loaded and the platform adapter is registered.
+            </p>
+          </div>
+        </div>
+      </SectionCard>
+    </div>
+  );
+}
+
+function PlatformCard({ platform: p }: { platform: PlatformConfigEntry }) {
+  const statusColor = p.connected
+    ? "border-green-500/30 bg-green-500/5"
+    : p.configured
+      ? "border-yellow-500/30 bg-yellow-500/5"
+      : "border-border";
+
+  const statusLabel = p.connected
+    ? "Connected"
+    : p.configured
+      ? "Token Set — Not Enabled"
+      : "Not Configured";
+
+  const statusBadgeColor = p.connected
+    ? "bg-green-500/10 text-green-600"
+    : p.configured
+      ? "bg-yellow-500/10 text-yellow-600"
+      : "bg-muted text-muted-foreground";
+
+  return (
+    <div className={`rounded-lg border p-4 ${statusColor}`}>
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-2">
+          <PlatformBadge platform={p.platform} />
+          <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${statusBadgeColor}`}>
+            {statusLabel}
+          </span>
+        </div>
+        <span className="text-xs text-muted-foreground capitalize">{p.mode}</span>
+      </div>
+
+      <div className="space-y-2 text-xs">
+        <div className="flex items-center justify-between">
+          <span className="text-muted-foreground">Access Token</span>
+          <span className={p.configured ? "text-green-600" : "text-muted-foreground"}>
+            {p.configured ? "Configured" : "Missing"}
+          </span>
+        </div>
+        <div>
+          <span className="text-muted-foreground">Env var: </span>
+          <code className="rounded bg-muted px-1">{p.envVar}</code>
+        </div>
+        <div>
+          <span className="text-muted-foreground">Webhook: </span>
+          <code className="rounded bg-muted px-1 break-all">{p.webhookPath}</code>
+        </div>
+        <a
+          href={p.docsUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-block text-primary hover:underline"
+        >
+          Platform docs &rarr;
+        </a>
+      </div>
     </div>
   );
 }

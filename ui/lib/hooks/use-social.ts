@@ -13,7 +13,25 @@ export type SocialStats = {
   totalMessages: number;
   messagesLast24h: number;
   totalAutomationTriggers: number;
-  connections: { platform: string; connected: boolean }[];
+  connections: { platform: string; connected: boolean; configured?: boolean; enabled?: boolean; mode?: string }[];
+};
+
+export type PlatformConfigEntry = {
+  platform: string;
+  connected: boolean;
+  configured: boolean;
+  enabled: boolean;
+  mode: string;
+  envVar: string;
+  webhookPath: string;
+  docsUrl: string;
+};
+
+export type SocialConfig = {
+  enabled: boolean;
+  confidenceThreshold: string;
+  webhookVerifyToken: boolean;
+  platforms: PlatformConfigEntry[];
 };
 
 export type Contact = {
@@ -233,6 +251,13 @@ export const useCloseHandoff = () => {
 export const useSocialConnections = () =>
   useQuery({
     queryKey: ["social", "connections"],
-    queryFn: () => fetchJson<{ connections: { platform: string; connected: boolean }[] }>("/api/social/connections"),
+    queryFn: () => fetchJson<{ connections: { platform: string; connected: boolean; configured?: boolean; enabled?: boolean; mode?: string }[] }>("/api/social/connections"),
+    refetchInterval: 30_000,
+  });
+
+export const useSocialConfig = () =>
+  useQuery({
+    queryKey: ["social", "config"],
+    queryFn: () => fetchJson<SocialConfig>("/api/social/config"),
     refetchInterval: 30_000,
   });

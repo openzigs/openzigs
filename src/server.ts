@@ -316,14 +316,26 @@ if (voiceService.getConfig().enabled) {
 const socialRepository = new SocialRepository(db);
 socialRepository.migrate();
 
+const socialBrainConfig = (config as Record<string, unknown>).socialBrain as
+  import("./config/index.js").SocialBrainAppConfig | undefined;
+
 const postContextService = new PostContextService(socialRepository);
-if (process.env.INSTAGRAM_ACCESS_TOKEN) {
-  postContextService.registerClient(new InstagramApiClient(process.env.INSTAGRAM_ACCESS_TOKEN));
+const instagramToken = process.env.INSTAGRAM_ACCESS_TOKEN
+  || socialBrainConfig?.connections?.instagram?.accessToken
+  || "";
+if (instagramToken) {
+  postContextService.registerClient(new InstagramApiClient(instagramToken));
+}
+
+// Only register platform adapters when credentials are actually configured
+const socialAdapters: import("./channels/social/social-ingestion.js").SocialPlatformAdapter[] = [];
+if (instagramToken) {
+  socialAdapters.push(new InstagramAdapter());
 }
 
 const socialIngestion = new SocialIngestionService({
   repository: socialRepository,
-  adapters: [new InstagramAdapter()],
+  adapters: socialAdapters,
   postContextService,
 });
 
@@ -331,16 +343,12 @@ const socialBrain = new SocialBrain({
   repository: socialRepository,
   copilot,
   knowledgeService,
-  confidenceThreshold: (config as Record<string, unknown>).socialBrain
-    ? ((config as Record<string, unknown>).socialBrain as Record<string, unknown>).confidenceThreshold as "high" | "medium" | "low" | undefined
-    : undefined,
+  confidenceThreshold: socialBrainConfig?.confidenceThreshold,
 });
 
 const socialHandoff = new HandoffManager({
   repository: socialRepository,
-  preferredChannel: (config as Record<string, unknown>).socialBrain
-    ? (((config as Record<string, unknown>).socialBrain as Record<string, unknown>).handoff as Record<string, unknown> | undefined)?.preferredChannel as "discord" | "telegram" | undefined
-    : undefined,
+  preferredChannel: socialBrainConfig?.handoff?.preferredChannel,
 });
 
 const commentRuleEngine = new CommentRuleEngine({
@@ -438,6 +446,7 @@ const socialRouter = createSocialRouter({
   brain: socialBrain,
   handoff: socialHandoff,
   ruleEngine: commentRuleEngine,
+  config: socialBrainConfig,
 });
 app.use("/api/social", socialRouter);
 

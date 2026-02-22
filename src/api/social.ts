@@ -14,6 +14,7 @@ import type { SocialBrain } from "../channels/social/social-brain.js";
 import type { HandoffManager } from "../channels/social/handoff-manager.js";
 import type { CommentRuleEngine } from "../channels/social/comment-rule-engine.js";
 import type { SocialPlatform } from "../channels/social/types.js";
+import type { SocialBrainAppConfig } from "../config/index.js";
 
 export type SocialRouterOptions = {
   repository: SocialRepository;
@@ -21,22 +22,37 @@ export type SocialRouterOptions = {
   brain: SocialBrain;
   handoff: HandoffManager;
   ruleEngine: CommentRuleEngine;
+  config?: SocialBrainAppConfig;
 };
 
 const platformSchema = z.enum(["instagram", "reddit", "youtube", "tiktok", "twitter", "facebook", "linkedin"]);
 
 export const createSocialRouter = (opts: SocialRouterOptions): Router => {
-  const { repository, ingestion, handoff } = opts;
+  const { repository, ingestion, handoff, config: socialConfig } = opts;
   const router = Router();
+
+  /** Build connection info with real credential status. */
+  const getConnectionStatus = () => {
+    const platforms: SocialPlatform[] = ["instagram", "twitter", "facebook", "linkedin", "reddit", "youtube", "tiktok"];
+    const registered = new Set(ingestion.getRegisteredPlatforms());
+    return platforms.map((p) => {
+      const conn = socialConfig?.connections?.[p];
+      const hasToken = !!(conn?.accessToken || (p === "instagram" && process.env.INSTAGRAM_ACCESS_TOKEN));
+      return {
+        platform: p,
+        connected: registered.has(p) && hasToken,
+        configured: hasToken,
+        enabled: conn?.enabled ?? false,
+        mode: conn?.mode ?? "webhook",
+      };
+    });
+  };
 
   // ── GET /stats — Dashboard statistics ──
   router.get("/stats", (_req, res) => {
     try {
       const stats = repository.getStats();
-      const connections = ingestion.getRegisteredPlatforms().map((p) => ({
-        platform: p,
-        connected: true,
-      }));
+      const connections = getConnectionStatus();
       res.json({ ...stats, connections });
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
@@ -303,14 +319,62 @@ export const createSocialRouter = (opts: SocialRouterOptions): Router => {
     }
   });
 
-  // ── Connections — list registered platforms ──
+  // ── Connections — list platform connection status ──
   router.get("/connections", (_req, res) => {
-    const platforms = ingestion.getRegisteredPlatforms();
+    res.json({ connections: getConnectionStatus() });
+  });
+
+  // ── Config — platform setup requirements ──
+  router.get("/config", (_req, res) => {
+    const platformInfo: Record<string, { envVar: string; webhookPath: string; docsUrl: string }> = {
+      instagram: {
+        envVar: "INSTAGRAM_ACCESS_TOKEN",
+        webhookPath: "/api/social/webhooks/instagram",
+        docsUrl: "https://developers.facebook.com/docs/instagram-platform/webhooks",
+      },
+      twitter: {
+        envVar: "TWITTER_ACCESS_TOKEN",
+        webhookPath: "/api/social/webhooks/twitter",
+        docsUrl: "https://developer.x.com/en/docs/x-api",
+      },
+      facebook: {
+        envVar: "FACEBOOK_ACCESS_TOKEN",
+        webhookPath: "/api/social/webhooks/facebook",
+        docsUrl: "https://developers.facebook.com/docs/graph-api/webhooks",
+      },
+      linkedin: {
+        envVar: "LINKEDIN_ACCESS_TOKEN",
+        webhookPath: "/api/social/webhooks/linkedin",
+        docsUrl: "https://learn.microsoft.com/en-us/linkedin/",
+      },
+      reddit: {
+        envVar: "REDDIT_ACCESS_TOKEN",
+        webhookPath: "/api/social/webhooks/reddit",
+        docsUrl: "https://www.reddit.com/dev/api/",
+      },
+      youtube: {
+        envVar: "YOUTUBE_ACCESS_TOKEN",
+        webhookPath: "/api/social/webhooks/youtube",
+        docsUrl: "https://developers.google.com/youtube/v3",
+      },
+      tiktok: {
+        envVar: "TIKTOK_ACCESS_TOKEN",
+        webhookPath: "/api/social/webhooks/tiktok",
+        docsUrl: "https://developers.tiktok.com/",
+      },
+    };
+
+    const connections = getConnectionStatus();
+    const platforms = connections.map((c) => ({
+      ...c,
+      ...platformInfo[c.platform],
+    }));
+
     res.json({
-      connections: platforms.map((p) => ({
-        platform: p,
-        connected: true,
-      })),
+      enabled: socialConfig?.enabled ?? true,
+      confidenceThreshold: socialConfig?.confidenceThreshold ?? "medium",
+      webhookVerifyToken: !!process.env.SOCIAL_WEBHOOK_VERIFY_TOKEN,
+      platforms,
     });
   });
 

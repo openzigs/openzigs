@@ -4530,6 +4530,8 @@ Configure the knowledge base in your config file (`~/.openzigs/config.json`):
 
 ## Social Brain — Unified Social Inbox & CRM
 
+> **📖 Comprehensive Setup Guide:** For step-by-step platform setup, Cloudflare Tunnel configuration, curl testing commands, and troubleshooting, see the dedicated [Social Brain Guide](SOCIAL_BRAIN_GUIDE.md).
+
 The Social Brain at `/social` provides a unified inbox for managing DMs and comments across social platforms (Instagram, Facebook, Twitter/X, LinkedIn, TikTok, YouTube, Threads) with AI-powered auto-replies, a built-in CRM, and comment-to-DM automation.
 
 ### Dashboard Tab
