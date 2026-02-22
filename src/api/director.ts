@@ -1543,6 +1543,104 @@ Respond with ONLY a valid JSON array. No markdown, no explanation.`;
     }
   });
 
+  // ── Thumbnail Generation ───────────────────────────────────
+
+  /**
+   * POST /thumbnail — generate an AI-powered YouTube thumbnail for a manifest.
+   * Body: { manifestPath: string, outputDir: string, style?: string, textOverride?: string[] }
+   */
+  router.post("/thumbnail", async (req, res) => {
+    try {
+      const { manifestPath, outputDir, style, textOverride } = req.body as {
+        manifestPath?: string;
+        outputDir?: string;
+        style?: string;
+        textOverride?: string[];
+      };
+
+      if (!manifestPath || typeof manifestPath !== "string") {
+        res.status(400).json({ error: "manifestPath is required" });
+        return;
+      }
+      if (!outputDir || typeof outputDir !== "string") {
+        res.status(400).json({ error: "outputDir is required" });
+        return;
+      }
+
+      const fsMod = await import("node:fs");
+      const pathMod = await import("node:path");
+      const osMod = await import("node:os");
+
+      if (!fsMod.existsSync(manifestPath)) {
+        res.status(404).json({ error: `Manifest not found: ${manifestPath}` });
+        return;
+      }
+
+      const manifestRaw = JSON.parse(fsMod.readFileSync(manifestPath, "utf-8"));
+      const { DirectorManifestSchema } = await import("../video/manifest/manifest-schema.js");
+      const manifest = DirectorManifestSchema.parse(manifestRaw);
+
+      // LLM frame selection
+      const { extractKeyframesFromManifest, selectThumbnailFrame } = await import("../video/thumbnails/frame-selector.js");
+      const keyframes = extractKeyframesFromManifest(manifest, outputDir);
+
+      if (keyframes.length === 0) {
+        res.status(400).json({ error: "No scene images found in output directory" });
+        return;
+      }
+
+      const frameResult = await selectThumbnailFrame(keyframes, manifest, copilot);
+
+      // Apply text override if provided
+      const textLines = Array.isArray(textOverride) && textOverride.length > 0
+        ? textOverride.filter((t): t is string => typeof t === "string").slice(0, 3)
+        : frameResult.suggestedText;
+
+      // Stylize the selected frame via Flux img2img
+      let stylizedPath = frameResult.framePath;
+      try {
+        const imageOutputDir = pathMod.join(osMod.homedir(), ".openzigs", "director", "images");
+        const imageGenMod = await import("../video/generators/image-gen-service.js");
+        const imageGenUserConfig = await imageGenMod.ImageGenService.loadUserImageGenConfig();
+        const imageService = new imageGenMod.ImageGenService({ outputDir: imageOutputDir, ...imageGenUserConfig });
+        await imageService.initialize();
+
+        const stylePrompt = style ?? "YouTube thumbnail style, highly saturated, expressive, high contrast, vibrant colors, professional";
+        const enhanced = await imageService.enhanceImage(frameResult.framePath, stylePrompt, {
+          strength: 0.7,
+        });
+        stylizedPath = enhanced.filePath;
+      } catch (enhanceErr) {
+        logger.warn(`[Director API] Thumbnail img2img enhancement failed, using raw frame: ${enhanceErr instanceof Error ? enhanceErr.message : String(enhanceErr)}`);
+      }
+
+      // Composite text overlay
+      const { compositeThumbnail } = await import("../video/thumbnails/thumbnail-compositor.js");
+      const thumbnailPath = pathMod.join(outputDir, "thumbnail.jpg");
+      await compositeThumbnail({
+        backgroundPath: stylizedPath,
+        textLines,
+        textPlacement: frameResult.textPlacement,
+        textColor: frameResult.textColor,
+        outputPath: thumbnailPath,
+      });
+
+      res.json({
+        thumbnailPath,
+        suggestedText: frameResult.suggestedText,
+        selectedFrame: {
+          path: frameResult.framePath,
+          timestamp: frameResult.timestamp,
+          rationale: frameResult.rationale,
+        },
+      });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      logger.error(`[Director API] POST /thumbnail failed: ${msg}`);
+      res.status(500).json({ error: msg });
+    }
+  });
+
   // ── Render Jobs ────────────────────────────────────────────
 
   /**
