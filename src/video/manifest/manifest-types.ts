@@ -90,6 +90,8 @@ export interface VideoClipEntry {
   effects?: VideoEffect[];
   /** Text overlays rendered on top of this clip */
   textOverlays?: TextOverlay[];
+  /** Horizontal crop offset for 9:16 framing (0–100, default 50 = center) */
+  horizontalCropOffset?: number;
 }
 
 export interface OverlayEntry {

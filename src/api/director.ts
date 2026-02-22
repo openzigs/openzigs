@@ -20,6 +20,7 @@
  *   PUT  /drafts/:id                  — update a draft
  *   DELETE /drafts/:id                — delete a draft
  *   POST /scenes/:idx/regenerate      — regenerate a single scene image
+ *   POST /shorts                      — convert long-form video to YouTube Short
  *   POST /render                      — submit manifest to render queue
  *   GET  /jobs                        — list render jobs
  *   GET  /jobs/:id                    — get render job status
@@ -2023,6 +2024,79 @@ Respond with ONLY a valid JSON array. No markdown, no explanation.`;
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       logger.error(`[Director API] POST /scenes/:sceneIndex/regenerate failed: ${msg}`);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  // ── Shorts Pipeline ─────────────────────────────────────────
+
+  /**
+   * POST /shorts — convert a long-form video into a 30–60s YouTube Short.
+   * Body: { sourceVideo: string, style?: string, targetDuration?: number, voiceProfile?: string }
+   * Response: { draftId: string, manifest, viralClip, scriptText, processingTimeMs }
+   */
+  router.post("/shorts", async (req, res) => {
+    try {
+      const { sourceVideo, style, targetDuration, voiceProfile } = req.body as {
+        sourceVideo?: string;
+        style?: "react" | "summarize" | "highlight";
+        targetDuration?: number;
+        voiceProfile?: string;
+      };
+
+      if (!sourceVideo || typeof sourceVideo !== "string") {
+        res.status(400).json({ error: "sourceVideo is required" });
+        return;
+      }
+
+      const fsMod = await import("node:fs");
+      if (!fsMod.existsSync(sourceVideo)) {
+        res.status(404).json({ error: `Source video not found: ${sourceVideo}` });
+        return;
+      }
+
+      if (!voiceService) {
+        res.status(503).json({ error: "VoiceService is not available — Shorts pipeline requires TTS" });
+        return;
+      }
+
+      const { createShort } = await import("../video/shorts/shorts-pipeline.js");
+      const result = await createShort(
+        {
+          sourceVideo,
+          style: style ?? "highlight",
+          targetDuration: targetDuration ?? 45,
+          voiceProfile,
+          model: runtimeConfig.defaultModel || undefined,
+        },
+        copilot,
+        voiceService,
+      );
+
+      // Auto-save as a draft
+      const { getDatabase } = require("../productivity/database.js") as typeof import("../productivity/database.js");
+      const db = getDatabase();
+      const draftId = nanoid();
+      const now = new Date().toISOString();
+      const title = result.manifest.projectTitle || "Untitled Short";
+
+      db.prepare(
+        `INSERT INTO director_drafts (id, title, manifest, thumbnail, production_mode, created_at, updated_at, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 'draft')`,
+      ).run(draftId, title, JSON.stringify(result.manifest), null, "shorts", now, now);
+
+      logger.info(`[Director API] Short created as draft ${draftId}: "${title}"`);
+
+      res.json({
+        draftId,
+        manifest: result.manifest,
+        viralClip: result.viralClip,
+        scriptText: result.scriptText,
+        processingTimeMs: result.processingTimeMs,
+      });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      logger.error(`[Director API] POST /shorts failed: ${msg}`);
       res.status(500).json({ error: msg });
     }
   });

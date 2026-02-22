@@ -39,6 +39,7 @@ export const VideoClipPropsSchema = z.object({
     params: z.record(z.unknown()).optional(),
   })).default([]),
   textOverlays: z.array(TextOverlayPropsSchema).default([]),
+  horizontalCropOffset: z.number().min(0).max(100).default(50),
 });
 export type VideoClipProps = z.infer<typeof VideoClipPropsSchema>;
 

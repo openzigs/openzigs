@@ -23,6 +23,8 @@ interface VideoClipSegmentProps {
   durationInFrames: number;
   volume: number;
   effects: VideoEffect[];
+  /** Horizontal crop offset for 9:16 framing (0–100, default 50 = center) */
+  horizontalCropOffset?: number;
 }
 
 export const VideoClipSegment: React.FC<VideoClipSegmentProps> = ({
@@ -31,6 +33,7 @@ export const VideoClipSegment: React.FC<VideoClipSegmentProps> = ({
   durationInFrames,
   volume,
   effects,
+  horizontalCropOffset = 50,
 }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
@@ -115,6 +118,7 @@ export const VideoClipSegment: React.FC<VideoClipSegmentProps> = ({
             width: "100%",
             height: "100%",
             objectFit: "cover",
+            objectPosition: `${horizontalCropOffset}% center`,
           }}
         />
       </AbsoluteFill>

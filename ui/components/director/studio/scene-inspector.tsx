@@ -4,6 +4,7 @@ import { useState, useCallback, useRef } from "react";
 import { RefreshCw, Loader2, Image, Clock, Type, Mic, Upload } from "lucide-react";
 import { fetchJson } from "@/lib/api";
 import type { InspectorState, DirectorManifest } from "../types";
+import { FramingPanel } from "./framing-panel";
 
 interface SceneInspectorProps {
   inspector: InspectorState;
@@ -223,6 +224,30 @@ export function SceneInspector({ inspector, manifest, draftId, onManifestUpdate 
             Upload Replacement
           </button>
         </div>
+      )}
+
+      {/* 9:16 Framing Panel (Shorts) */}
+      {entry.type === "video_clip" && manifest?.composition?.height === 1920 && (
+        <FramingPanel
+          offset={typeof entry.horizontalCropOffset === "number" ? entry.horizontalCropOffset : 50}
+          onChange={(offset) => {
+            if (inspector.sceneIndex === null || !manifest) return;
+            const updated = { ...manifest, timeline: [...manifest.timeline] };
+            const visualTypes = new Set(["image_scene", "video_clip"]);
+            let sceneCount = 0;
+            for (let i = 0; i < updated.timeline.length; i++) {
+              if (visualTypes.has(updated.timeline[i].type)) {
+                if (sceneCount === inspector.sceneIndex) {
+                  updated.timeline[i] = { ...updated.timeline[i], horizontalCropOffset: offset };
+                  break;
+                }
+                sceneCount++;
+              }
+            }
+            onManifestUpdate(updated);
+            // Debounced persist is handled by parent on save
+          }}
+        />
       )}
     </div>
   );

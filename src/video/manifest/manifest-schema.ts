@@ -77,6 +77,7 @@ export const VideoClipEntrySchema = z.object({
   volume: z.number().min(0).max(1).optional(),
   effects: z.array(VideoEffectSchema).optional(),
   textOverlays: z.array(TextOverlaySchema).optional(),
+  horizontalCropOffset: z.number().min(0).max(100).optional(),
 });
 
 export const OverlayEntrySchema = z.object({
