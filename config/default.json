@@ -180,6 +180,24 @@
     "networkNodeUrl": "",
     "networkNodeToken": ""
   },
+  "socialBrain": {
+    "enabled": true,
+    "confidenceThreshold": "medium",
+    "handoff": {
+      "preferredChannel": "discord",
+      "autoArchiveMinutes": 60
+    },
+    "commentAutomation": {
+      "enabled": true
+    },
+    "connections": {
+      "instagram": {
+        "enabled": false,
+        "mode": "webhook",
+        "accessToken": "${INSTAGRAM_ACCESS_TOKEN}"
+      }
+    }
+  },
   "sentinel": {
     "enabled": false,
     "model": "gpt-4o-mini",

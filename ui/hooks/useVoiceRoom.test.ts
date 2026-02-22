@@ -109,12 +109,16 @@ afterEach(() => {
 /* ── Tests ────────────────────────────────────────────────── */
 
 describe("useVoiceRoom", () => {
-  it("does not initialize when localStream is null", () => {
-    const { unmount } = renderHook(() => useVoiceRoom("pres-1", null), { wrapper });
-    expect(mockSocket.on).not.toHaveBeenCalledWith(
+  it("registers socket listeners even when localStream is null", () => {
+    const { result, unmount } = renderHook(() => useVoiceRoom("pres-1", null), { wrapper });
+    // PeerJS + socket discovery initializes independently of localStream
+    // so participants can discover each other without a camera/mic
+    expect(mockSocket.on).toHaveBeenCalledWith(
       "room:peers_updated",
       expect.any(Function),
     );
+    expect(result.current.peerIds).toEqual([]);
+    expect(result.current.remoteStreams).toEqual([]);
     unmount();
   });
 

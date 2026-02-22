@@ -195,6 +195,28 @@ export type ImageGenAppConfig = {
   networkNodeToken?: string;
 };
 
+export type SocialBrainPlatformConnectionConfig = {
+  enabled?: boolean;
+  mode?: "webhook" | "polling";
+  pollIntervalSeconds?: number;
+  accessToken?: string;
+};
+
+export type SocialBrainAppConfig = {
+  enabled?: boolean;
+  confidenceThreshold?: "high" | "medium" | "low";
+  handoff?: {
+    preferredChannel?: "discord" | "telegram";
+    discordChannelId?: string;
+    telegramChatId?: string;
+    autoArchiveMinutes?: number;
+  };
+  commentAutomation?: {
+    enabled?: boolean;
+  };
+  connections?: Record<string, SocialBrainPlatformConnectionConfig>;
+};
+
 export type AppConfig = {
   server: {
     port: number;
@@ -212,6 +234,7 @@ export type AppConfig = {
   copilot?: CopilotConfig;
   presenter?: PresenterAppConfig;
   imageGen?: ImageGenAppConfig;
+  socialBrain?: SocialBrainAppConfig;
   sentinel?: SentinelAppConfig;
   knowledge?: KnowledgeAppConfig;
   voice?: VoiceAppConfig;
@@ -403,6 +426,25 @@ const appConfigSchema = z.object({
   presenter: z.object({
     inviteSecret: z.string().optional().default(""),
     baseUrl: z.string().optional().default(""),
+  }).optional(),
+  socialBrain: z.object({
+    enabled: z.boolean().optional(),
+    confidenceThreshold: z.enum(["high", "medium", "low"]).optional(),
+    handoff: z.object({
+      preferredChannel: z.enum(["discord", "telegram"]).optional(),
+      discordChannelId: z.string().optional(),
+      telegramChatId: z.string().optional(),
+      autoArchiveMinutes: z.number().optional(),
+    }).optional(),
+    commentAutomation: z.object({
+      enabled: z.boolean().optional(),
+    }).optional(),
+    connections: z.record(z.string(), z.object({
+      enabled: z.boolean().optional(),
+      mode: z.enum(["webhook", "polling"]).optional(),
+      pollIntervalSeconds: z.number().optional(),
+      accessToken: z.string().optional(),
+    })).optional(),
   }).optional(),
   sentinel: z.object({
     enabled: z.boolean().optional(),

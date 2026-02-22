@@ -25,6 +25,7 @@ import { createWizardTools } from "./tools/wizard-tools.js";
 import { createKnowledgeTools } from "./tools/knowledge-tools.js";
 import { createSecretTools } from "./tools/secret-tools.js";
 import { createVideoTools } from "./tools/video-tools.js";
+import { createSocialBrainTools } from "./tools/social-brain-tools.js";
 import { ToolRegistry, type ToolDefinition } from "./tool-registry.js";
 import type { LocalMcpServerManager } from "./local-mcp-server-manager.js";
 import { AuditLogger } from "../logging/audit-logger.js";
@@ -74,6 +75,10 @@ export type McpServerOptions = {
   vaultService?: SecretVaultService;
   /** Voice Service for TTS voiceover generation (Director Mode). */
   voiceService?: VoiceService;
+  /** Social Brain CRM repository for social-crm-* tools. */
+  socialRepository?: import("../channels/social/social-repository.js").SocialRepository;
+  /** Social Brain handoff manager for social-close-handoff tool. */
+  socialHandoffManager?: import("../channels/social/handoff-manager.js").HandoffManager;
 };
 
 export type RegisterMcpToolsOptions = Pick<
@@ -104,6 +109,8 @@ export type RegisterMcpToolsOptions = Pick<
   | "knowledgeService"
   | "vaultService"
   | "voiceService"
+  | "socialRepository"
+  | "socialHandoffManager"
 >;
 
 const readFileSchema = z.object({ path: z.string() });
@@ -534,6 +541,17 @@ export const registerMcpTools = (toolRegistry: ToolRegistry, options: RegisterMc
       voiceService: options.voiceService,
     });
     for (const tool of videoTools) {
+      registerTool(tool);
+    }
+  }
+
+  // ── Social Brain CRM Tools ──
+  if (options.socialRepository && options.socialHandoffManager) {
+    const socialBrainTools = createSocialBrainTools({
+      repository: options.socialRepository,
+      handoffManager: options.socialHandoffManager,
+    });
+    for (const tool of socialBrainTools) {
       registerTool(tool);
     }
   }
