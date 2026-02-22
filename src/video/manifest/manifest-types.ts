@@ -44,6 +44,26 @@ export interface AudioLayerConfig {
   voiceover?: VoiceoverConfig | null;
 }
 
+// ── Text Overlays ─────────────────────────────────────────────
+export type TextOverlayPosition = "center" | "bottom-third" | "top-third" | "custom";
+export type TextOverlayAnimation = "fade-in" | "slide-up" | "typewriter" | "none";
+
+export interface TextOverlay {
+  id: string;
+  text: string;
+  position: TextOverlayPosition;
+  customPosition?: { x: number; y: number };
+  fontSize?: number;
+  fontWeight?: "normal" | "bold" | "light";
+  color?: string;
+  backgroundColor?: string;
+  borderRadius?: number;
+  padding?: number;
+  animation: TextOverlayAnimation;
+  startFrame: number;
+  durationFrames: number;
+}
+
 // ── Video Effects ─────────────────────────────────────────────
 export type VideoEffect =
   | { type: "slowZoom"; from: number; to: number }
@@ -68,6 +88,8 @@ export interface VideoClipEntry {
   volume?: number;
   /** Visual effects applied to this clip */
   effects?: VideoEffect[];
+  /** Text overlays rendered on top of this clip */
+  textOverlays?: TextOverlay[];
 }
 
 export interface OverlayEntry {
@@ -131,6 +153,8 @@ export interface ImageSceneEntry {
     translateYFrom?: number;
     translateYTo?: number;
   };
+  /** Text overlays rendered on top of this scene */
+  textOverlays?: TextOverlay[];
 }
 
 export type TimelineEntry = VideoClipEntry | OverlayEntry | TitleCardEntry | TransitionEntry | ImageSceneEntry;

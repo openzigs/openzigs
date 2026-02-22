@@ -28,6 +28,19 @@ export interface StoryboardScene {
    * (2–5 words) and will be rendered as a visual title card before this scene.
    */
   chapterTitle?: string;
+  /** Text overlays to render on top of the scene visual */
+  textOverlays?: Array<{
+    id: string;
+    text: string;
+    position: "center" | "bottom-third" | "top-third" | "custom";
+    animation: "fade-in" | "slide-up" | "typewriter" | "none";
+    startFrame: number;
+    durationFrames: number;
+    fontSize?: number;
+    fontWeight?: "normal" | "bold" | "light";
+    color?: string;
+    backgroundColor?: string;
+  }>;
 }
 
 /** Full storyboard output from the engine. */
@@ -270,7 +283,17 @@ OUTPUT FORMAT (strict JSON):
       "voiceover": "string — narration script for this scene",
       "imageDescription": "string — scene-specific visual description (WITHOUT the style anchor prefix)",
       "durationEstimate": number — scene duration in seconds (${minDur}-${maxDur}),
-      "chapterTitle": "string | null — chapter title for chapter-starting scenes; null for all others"
+      "chapterTitle": "string | null — chapter title for chapter-starting scenes; null for all others",
+      "textOverlays": [
+        {
+          "id": "string — unique identifier e.g. scene-0-overlay-0",
+          "text": "string — short impactful text (max 60 chars)",
+          "position": "center | bottom-third | top-third",
+          "animation": "fade-in | slide-up | typewriter | none",
+          "startFrame": 0,
+          "durationFrames": 90
+        }
+      ]
     }
   ]
 }
@@ -288,7 +311,26 @@ TTS PACING TAGS (optional — use sparingly for dramatic effect):
 You may include these bracket tags in voiceover text for pacing control:
 - [PAUSE: Xs] — insert a pause of X seconds (0.1–10). Example: "And the result? [PAUSE: 1.5s] A 40% increase in revenue."
 - *word* — emphasize a word. Example: "This is *critical* for success."
-Do NOT use HTML or XML tags like <break> or <emphasis> — they will be stripped. Only use the bracket syntax above.`;
+Do NOT use HTML or XML tags like <break> or <emphasis> — they will be stripped. Only use the bracket syntax above.
+
+TEXT OVERLAYS (required for each scene):
+For each scene, generate 1-2 text overlays that display key statements, quotes, or data points as PowerPoint-style captions rendered on top of the visual.
+
+Each textOverlay object must have:
+- "id": unique string (e.g. "scene-0-overlay-0")
+- "text": short impactful text (max 60 chars) — a key statement, stat, or quote from that scene
+- "position": one of "center", "bottom-third", "top-third"
+- "animation": one of "fade-in", "slide-up", "typewriter", "none"
+- "startFrame": frame offset within the scene where this overlay appears (0 = scene start)
+- "durationFrames": how many frames the overlay stays visible (60-150 is typical at 30fps)
+
+Optional styling fields (sensible defaults will be applied if omitted):
+- "fontSize": number (default: 48)
+- "fontWeight": "normal" | "bold" | "light" (default: "bold")
+- "color": hex colour (default: "#ffffff")
+- "backgroundColor": CSS colour (default: "rgba(0,0,0,0.6)")
+
+Include these in the "textOverlays" array for each scene in the JSON output.`;
   }
 
   /**
@@ -411,6 +453,33 @@ Output a single JSON object.`;
         chapterTitle: typeof scene.chapterTitle === "string" && scene.chapterTitle.trim()
           ? scene.chapterTitle.trim()
           : undefined,
+        textOverlays: Array.isArray(scene.textOverlays)
+          ? scene.textOverlays
+              .filter((o) => o.text && typeof o.text === "string")
+              .map((o, oi) => {
+                const validPositions = ["center", "bottom-third", "top-third", "custom"] as const;
+                const validAnimations = ["fade-in", "slide-up", "typewriter", "none"] as const;
+                const validWeights = ["normal", "bold", "light"] as const;
+                return {
+                  id: o.id ?? `scene-${index}-overlay-${oi}`,
+                  text: o.text!.slice(0, 120),
+                  position: (validPositions.includes(o.position as (typeof validPositions)[number])
+                    ? o.position as (typeof validPositions)[number]
+                    : "bottom-third"),
+                  animation: (validAnimations.includes(o.animation as (typeof validAnimations)[number])
+                    ? o.animation as (typeof validAnimations)[number]
+                    : "fade-in"),
+                  startFrame: typeof o.startFrame === "number" ? Math.max(0, o.startFrame) : 0,
+                  durationFrames: typeof o.durationFrames === "number" ? Math.max(1, o.durationFrames) : 90,
+                  fontSize: typeof o.fontSize === "number" ? o.fontSize : undefined,
+                  fontWeight: (validWeights.includes(o.fontWeight as (typeof validWeights)[number])
+                    ? o.fontWeight as (typeof validWeights)[number]
+                    : undefined),
+                  color: typeof o.color === "string" ? o.color : undefined,
+                  backgroundColor: typeof o.backgroundColor === "string" ? o.backgroundColor : undefined,
+                };
+              })
+          : undefined,
       };
     });
 
@@ -448,5 +517,17 @@ interface RawStoryboardOutput {
     imageDescription?: string;
     durationEstimate?: number;
     chapterTitle?: string | null;
+    textOverlays?: Array<{
+      id?: string;
+      text?: string;
+      position?: string;
+      animation?: string;
+      startFrame?: number;
+      durationFrames?: number;
+      fontSize?: number;
+      fontWeight?: string;
+      color?: string;
+      backgroundColor?: string;
+    }>;
   }>;
 }

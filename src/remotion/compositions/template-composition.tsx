@@ -28,6 +28,7 @@ import { ProgressBar } from "../components/progress-bar";
 import { VideoClipSegment } from "../components/video-clip-segment";
 import { ImageSceneSegment } from "../components/image-scene-segment";
 import { ImageOverlay } from "../components/image-overlay";
+import { TextOverlayLayer } from "../components/text-overlay-layer";
 import { mapTransition } from "../util/transition-mapper";
 
 /**
@@ -123,13 +124,16 @@ function renderSegment(
   switch (item.type) {
     case "video_clip":
       return (
-        <VideoClipSegment
-          src={item.src}
-          trimStartFrame={item.trimStartFrame}
-          durationInFrames={item.durationInFrames}
-          volume={item.volume}
-          effects={item.effects}
-        />
+        <AbsoluteFill>
+          <VideoClipSegment
+            src={item.src}
+            trimStartFrame={item.trimStartFrame}
+            durationInFrames={item.durationInFrames}
+            volume={item.volume}
+            effects={item.effects}
+          />
+          <TextOverlayLayer overlays={item.textOverlays ?? []} />
+        </AbsoluteFill>
       );
     case "title_card":
       return (
@@ -144,13 +148,16 @@ function renderSegment(
       );
     case "image_scene":
       return (
-        <ImageSceneSegment
-          src={item.src}
-          durationInFrames={item.durationInFrames}
-          voiceover={item.voiceover}
-          voiceoverVolume={item.voiceoverVolume}
-          kenBurns={item.kenBurns}
-        />
+        <AbsoluteFill>
+          <ImageSceneSegment
+            src={item.src}
+            durationInFrames={item.durationInFrames}
+            voiceover={item.voiceover}
+            voiceoverVolume={item.voiceoverVolume}
+            kenBurns={item.kenBurns}
+          />
+          <TextOverlayLayer overlays={item.textOverlays ?? []} />
+        </AbsoluteFill>
       );
     default:
       return null;

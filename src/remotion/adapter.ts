@@ -42,6 +42,21 @@ function adaptTimelineEntry(entry: TimelineEntry, outputDir: string): TimelineIt
           type: e.type,
           params: { ...e } as Record<string, unknown>,
         })),
+        textOverlays: (entry.textOverlays ?? []).map((o) => ({
+          id: o.id,
+          text: o.text,
+          position: o.position,
+          customPosition: o.customPosition,
+          fontSize: o.fontSize ?? 48,
+          fontWeight: o.fontWeight ?? "bold",
+          color: o.color ?? "#ffffff",
+          backgroundColor: o.backgroundColor ?? "rgba(0,0,0,0.6)",
+          borderRadius: o.borderRadius ?? 8,
+          padding: o.padding ?? 16,
+          animation: o.animation,
+          startFrame: o.startFrame,
+          durationFrames: o.durationFrames,
+        })),
       };
     case "title_card":
       return {
@@ -84,6 +99,21 @@ function adaptTimelineEntry(entry: TimelineEntry, outputDir: string): TimelineIt
           translateYFrom: entry.kenBurns?.translateYFrom ?? 0,
           translateYTo: entry.kenBurns?.translateYTo ?? -5,
         },
+        textOverlays: (entry.textOverlays ?? []).map((o) => ({
+          id: o.id,
+          text: o.text,
+          position: o.position,
+          customPosition: o.customPosition,
+          fontSize: o.fontSize ?? 48,
+          fontWeight: o.fontWeight ?? "bold",
+          color: o.color ?? "#ffffff",
+          backgroundColor: o.backgroundColor ?? "rgba(0,0,0,0.6)",
+          borderRadius: o.borderRadius ?? 8,
+          padding: o.padding ?? 16,
+          animation: o.animation,
+          startFrame: o.startFrame,
+          durationFrames: o.durationFrames,
+        })),
       };
     default:
       throw new Error(`Unknown timeline entry type: ${(entry as { type: string }).type}`);

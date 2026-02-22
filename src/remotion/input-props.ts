@@ -9,6 +9,24 @@
 
 import { z } from "zod";
 
+// ── Text Overlay Props ────────────────────────────────────────
+export const TextOverlayPropsSchema = z.object({
+  id: z.string(),
+  text: z.string(),
+  position: z.enum(["center", "bottom-third", "top-third", "custom"]),
+  customPosition: z.object({ x: z.number(), y: z.number() }).optional(),
+  fontSize: z.number().default(48),
+  fontWeight: z.enum(["normal", "bold", "light"]).default("bold"),
+  color: z.string().default("#ffffff"),
+  backgroundColor: z.string().default("rgba(0,0,0,0.6)"),
+  borderRadius: z.number().default(8),
+  padding: z.number().default(16),
+  animation: z.enum(["fade-in", "slide-up", "typewriter", "none"]).default("fade-in"),
+  startFrame: z.number().int().min(0),
+  durationFrames: z.number().int().min(1),
+});
+export type TextOverlayProps = z.infer<typeof TextOverlayPropsSchema>;
+
 // ── Video Clip Props ──────────────────────────────────────────
 export const VideoClipPropsSchema = z.object({
   src: z.string().describe("Absolute path or URL to the source video file"),
@@ -20,6 +38,7 @@ export const VideoClipPropsSchema = z.object({
     type: z.enum(["slowZoom", "fadeIn", "fadeOut", "blur", "grayscale", "speedRamp"]),
     params: z.record(z.unknown()).optional(),
   })).default([]),
+  textOverlays: z.array(TextOverlayPropsSchema).default([]),
 });
 export type VideoClipProps = z.infer<typeof VideoClipPropsSchema>;
 
@@ -70,6 +89,7 @@ export const ImageScenePropsSchema = z.object({
     translateYFrom: z.number().default(0),
     translateYTo: z.number().default(-5),
   }).default({}),
+  textOverlays: z.array(TextOverlayPropsSchema).default([]),
 });
 export type ImageSceneProps = z.infer<typeof ImageScenePropsSchema>;
 

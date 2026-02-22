@@ -1170,6 +1170,7 @@ Respond with ONLY a valid JSON array. No explanation. Example:
               translateYFrom: 0,
               translateYTo: -5,
             },
+            textOverlays: scene.textOverlays,
           });
 
           currentFrame += durationInFrames;
