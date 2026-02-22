@@ -123,12 +123,39 @@ export const ImageSceneEntrySchema = z.object({
   textOverlays: z.array(TextOverlaySchema).optional(),
 });
 
+export const IntroCardEntrySchema = z.object({
+  type: z.literal("intro_card"),
+  title: z.string().min(1),
+  subtitle: z.string().optional(),
+  backgroundSrc: z.string().optional(),
+  enhancedBackgroundSrc: z.string().optional(),
+  logoSrc: z.string().optional(),
+  startAtFrame: z.number().int().min(0),
+  duration: z.number().int().min(1),
+  animation: z.enum(["fade-in", "slide-up", "scale-in", "typewriter"]).optional(),
+});
+
+export const OutroCardEntrySchema = z.object({
+  type: z.literal("outro_card"),
+  title: z.string().min(1),
+  subtitle: z.string().optional(),
+  backgroundSrc: z.string().optional(),
+  enhancedBackgroundSrc: z.string().optional(),
+  logoSrc: z.string().optional(),
+  ctaText: z.string().optional(),
+  startAtFrame: z.number().int().min(0),
+  duration: z.number().int().min(1),
+  animation: z.enum(["fade-out", "slide-down", "scale-out"]).optional(),
+});
+
 export const TimelineEntrySchema = z.discriminatedUnion("type", [
   VideoClipEntrySchema,
   OverlayEntrySchema,
   TitleCardEntrySchema,
   TransitionEntrySchema,
   ImageSceneEntrySchema,
+  IntroCardEntrySchema,
+  OutroCardEntrySchema,
 ]);
 
 // ── Audio ─────────────────────────────────────────────────────

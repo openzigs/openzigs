@@ -157,7 +157,32 @@ export interface ImageSceneEntry {
   textOverlays?: TextOverlay[];
 }
 
-export type TimelineEntry = VideoClipEntry | OverlayEntry | TitleCardEntry | TransitionEntry | ImageSceneEntry;
+export interface IntroCardEntry {
+  type: "intro_card";
+  title: string;
+  subtitle?: string;
+  backgroundSrc?: string;
+  enhancedBackgroundSrc?: string;
+  logoSrc?: string;
+  startAtFrame: number;
+  duration: number;
+  animation?: "fade-in" | "slide-up" | "scale-in" | "typewriter";
+}
+
+export interface OutroCardEntry {
+  type: "outro_card";
+  title: string;
+  subtitle?: string;
+  backgroundSrc?: string;
+  enhancedBackgroundSrc?: string;
+  logoSrc?: string;
+  ctaText?: string;
+  startAtFrame: number;
+  duration: number;
+  animation?: "fade-out" | "slide-down" | "scale-out";
+}
+
+export type TimelineEntry = VideoClipEntry | OverlayEntry | TitleCardEntry | TransitionEntry | ImageSceneEntry | IntroCardEntry | OutroCardEntry;
 
 // ── Branding ──────────────────────────────────────────────────
 export interface BrandingConfig {

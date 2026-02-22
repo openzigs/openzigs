@@ -93,6 +93,31 @@ export const ImageScenePropsSchema = z.object({
 });
 export type ImageSceneProps = z.infer<typeof ImageScenePropsSchema>;
 
+// ── Intro Card Props ──────────────────────────────────────────
+export const IntroCardPropsSchema = z.object({
+  title: z.string(),
+  subtitle: z.string().optional(),
+  backgroundSrc: z.string().optional(),
+  logoSrc: z.string().optional(),
+  startAtFrame: z.number().int().min(0),
+  durationInFrames: z.number().int().min(1),
+  animation: z.enum(["fade-in", "slide-up", "scale-in", "typewriter"]).default("fade-in"),
+});
+export type IntroCardProps = z.infer<typeof IntroCardPropsSchema>;
+
+// ── Outro Card Props ──────────────────────────────────────────
+export const OutroCardPropsSchema = z.object({
+  title: z.string(),
+  subtitle: z.string().optional(),
+  backgroundSrc: z.string().optional(),
+  logoSrc: z.string().optional(),
+  ctaText: z.string().optional(),
+  startAtFrame: z.number().int().min(0),
+  durationInFrames: z.number().int().min(1),
+  animation: z.enum(["fade-out", "slide-down", "scale-out"]).default("fade-out"),
+});
+export type OutroCardProps = z.infer<typeof OutroCardPropsSchema>;
+
 // ── Audio Props ───────────────────────────────────────────────
 export const AudioPropsSchema = z.object({
   music: z.object({
@@ -128,6 +153,8 @@ export const TimelineItemSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("overlay"), ...OverlayPropsSchema.shape }),
   z.object({ type: z.literal("transition"), ...TransitionPropsSchema.shape }),
   z.object({ type: z.literal("image_scene"), ...ImageScenePropsSchema.shape }),
+  z.object({ type: z.literal("intro_card"), ...IntroCardPropsSchema.shape }),
+  z.object({ type: z.literal("outro_card"), ...OutroCardPropsSchema.shape }),
 ]);
 export type TimelineItem = z.infer<typeof TimelineItemSchema>;
 

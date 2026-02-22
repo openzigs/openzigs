@@ -115,6 +115,37 @@ function adaptTimelineEntry(entry: TimelineEntry, outputDir: string): TimelineIt
           durationFrames: o.durationFrames,
         })),
       };
+    case "intro_card":
+      return {
+        type: "intro_card",
+        title: entry.title,
+        subtitle: entry.subtitle,
+        backgroundSrc: entry.enhancedBackgroundSrc
+          ? resolveMediaPath(entry.enhancedBackgroundSrc, outputDir)
+          : entry.backgroundSrc
+            ? resolveMediaPath(entry.backgroundSrc, outputDir)
+            : undefined,
+        logoSrc: entry.logoSrc ? resolveMediaPath(entry.logoSrc, outputDir) : undefined,
+        startAtFrame: entry.startAtFrame,
+        durationInFrames: entry.duration,
+        animation: entry.animation ?? "fade-in",
+      };
+    case "outro_card":
+      return {
+        type: "outro_card",
+        title: entry.title,
+        subtitle: entry.subtitle,
+        backgroundSrc: entry.enhancedBackgroundSrc
+          ? resolveMediaPath(entry.enhancedBackgroundSrc, outputDir)
+          : entry.backgroundSrc
+            ? resolveMediaPath(entry.backgroundSrc, outputDir)
+            : undefined,
+        logoSrc: entry.logoSrc ? resolveMediaPath(entry.logoSrc, outputDir) : undefined,
+        ctaText: entry.ctaText,
+        startAtFrame: entry.startAtFrame,
+        durationInFrames: entry.duration,
+        animation: entry.animation ?? "fade-out",
+      };
     default:
       throw new Error(`Unknown timeline entry type: ${(entry as { type: string }).type}`);
   }
@@ -234,6 +265,20 @@ export function stageInputPropsMedia(
         }
         logger.warn(`[Adapter] Overlay media file not found on disk — src will be unusable: "${overlayProps.src}"`);
       }
+    }
+    // Stage intro/outro card background and logo media
+    if (item.type === "intro_card" || item.type === "outro_card") {
+      let bgSrc = item.backgroundSrc;
+      let logo = item.logoSrc;
+      if (bgSrc) {
+        const staged = stageMediaFile(bgSrc, bundleDir);
+        bgSrc = staged ?? bgSrc;
+      }
+      if (logo) {
+        const staged = stageMediaFile(logo, bundleDir);
+        logo = staged ?? logo;
+      }
+      return { ...item, backgroundSrc: bgSrc, logoSrc: logo };
     }
     return item;
   });

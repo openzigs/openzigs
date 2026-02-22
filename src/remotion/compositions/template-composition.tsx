@@ -29,6 +29,8 @@ import { VideoClipSegment } from "../components/video-clip-segment";
 import { ImageSceneSegment } from "../components/image-scene-segment";
 import { ImageOverlay } from "../components/image-overlay";
 import { TextOverlayLayer } from "../components/text-overlay-layer";
+import { IntroCard } from "../components/intro-card";
+import { OutroCard } from "../components/outro-card";
 import { mapTransition } from "../util/transition-mapper";
 
 /**
@@ -46,6 +48,8 @@ function partitionTimeline(timeline: TimelineItem[]) {
       case "video_clip":
       case "title_card":
       case "image_scene":
+      case "intro_card":
+      case "outro_card":
         segments.push(item);
         break;
       case "overlay":
@@ -158,6 +162,28 @@ function renderSegment(
           />
           <TextOverlayLayer overlays={item.textOverlays ?? []} />
         </AbsoluteFill>
+      );
+    case "intro_card":
+      return (
+        <IntroCard
+          title={item.title}
+          subtitle={item.subtitle}
+          backgroundSrc={item.backgroundSrc}
+          logoSrc={item.logoSrc}
+          animation={item.animation}
+        />
+      );
+    case "outro_card":
+      return (
+        <OutroCard
+          title={item.title}
+          subtitle={item.subtitle}
+          backgroundSrc={item.backgroundSrc}
+          logoSrc={item.logoSrc}
+          ctaText={item.ctaText}
+          durationInFrames={item.durationInFrames}
+          animation={item.animation}
+        />
       );
     default:
       return null;
