@@ -25,6 +25,7 @@ Endpoints:
 from __future__ import annotations
 
 import argparse
+import base64
 import gc
 import io
 import logging
@@ -38,7 +39,9 @@ import torch
 from diffusers import (
     DiffusionPipeline,
     FluxPipeline,
+    FluxImg2ImgPipeline,
     StableDiffusionXLPipeline,
+    StableDiffusionXLImg2ImgPipeline,
 )
 from fastapi import FastAPI, HTTPException, Depends, Header
 from fastapi.responses import Response
@@ -95,6 +98,7 @@ MODEL_REGISTRY: dict[str, dict] = {
     "flux": {
         "repo_id": "black-forest-labs/FLUX.1-schnell",
         "loader": FluxPipeline,
+        "img2img_loader": FluxImg2ImgPipeline,
         "default_steps": 4,
         "default_guidance": 0.0,
         "recommended_width": 1024,
@@ -104,6 +108,7 @@ MODEL_REGISTRY: dict[str, dict] = {
     "sdxl-turbo": {
         "repo_id": "stabilityai/sdxl-turbo",
         "loader": StableDiffusionXLPipeline,
+        "img2img_loader": StableDiffusionXLImg2ImgPipeline,
         "default_steps": 4,
         "default_guidance": 0.0,
         "recommended_width": 512,
@@ -123,6 +128,8 @@ _last_used: float = 0.0            # monotonic time of last generation
 _idle_timeout: float = 0.0         # seconds before auto-unload (0 = disabled)
 _default_model: str = "sdxl-turbo"  # model to use on first request if none specified
 _preload_at_startup: bool = False     # True when --preload flag is used
+_img2img_pipeline: Optional[DiffusionPipeline] = None
+_img2img_model_name: Optional[str] = None
 
 
 def resolve_device() -> str:
@@ -449,6 +456,59 @@ class GenerateRequest(BaseModel):
     )
 
 
+class Img2ImgRequest(BaseModel):
+    """Request body for image-to-image enhancement."""
+
+    prompt: str = Field(
+        ...,
+        min_length=1,
+        max_length=2000,
+        description="Text prompt for the enhanced image",
+    )
+    image: str = Field(
+        ...,
+        description="Base64-encoded PNG/JPEG/WebP source image",
+    )
+    strength: float = Field(
+        default=0.6,
+        ge=0.1,
+        le=0.95,
+        description="Denoising strength (0.1 = subtle, 0.95 = near-full regen)",
+    )
+    model: Optional[str] = Field(
+        default=None,
+        description="Model to use (defaults to currently loaded model)",
+    )
+    num_inference_steps: int = Field(
+        default=4,
+        ge=1,
+        le=50,
+        description="Number of inference steps",
+    )
+    guidance_scale: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=20.0,
+        description="Classifier-free guidance scale",
+    )
+    width: Optional[int] = Field(
+        default=None,
+        ge=256,
+        le=2048,
+        description="Resize source image to this width (optional)",
+    )
+    height: Optional[int] = Field(
+        default=None,
+        ge=256,
+        le=2048,
+        description="Resize source image to this height (optional)",
+    )
+    seed: Optional[int] = Field(
+        default=None,
+        description="Random seed for reproducibility",
+    )
+
+
 class HealthResponse(BaseModel):
     """Health check response."""
 
@@ -717,6 +777,185 @@ async def generate(req: GenerateRequest):
             "X-Generation-Time": f"{elapsed:.2f}s",
             "X-Image-Size": f"{width}x{height}",
             "X-Model": _model_name or "unknown",
+        },
+    )
+
+
+# ── img2img pipeline loader ───────────────────────────────────
+
+def _load_img2img_pipeline(model_key: str) -> DiffusionPipeline:
+    """Load an img2img pipeline for the given model.
+
+    Reuses weights from the already-loaded txt2img pipeline if same model,
+    otherwise loads fresh. Applies same quantization strategy as txt2img.
+    """
+    global _img2img_pipeline, _img2img_model_name
+
+    if _img2img_pipeline is not None and _img2img_model_name == model_key:
+        return _img2img_pipeline
+
+    if model_key not in MODEL_REGISTRY:
+        raise ValueError(f"Unknown model: {model_key}")
+
+    spec = MODEL_REGISTRY[model_key]
+    repo_id = spec["repo_id"]
+    img2img_cls = spec.get("img2img_loader")
+    if img2img_cls is None:
+        raise ValueError(f"Model '{model_key}' does not support img2img")
+
+    log.info(f"Loading img2img pipeline for '{model_key}' ...")
+    start = time.monotonic()
+
+    # Reuse components from the txt2img pipeline if possible
+    if _model_loaded and _model_name == model_key and _pipeline is not None:
+        log.info("Sharing components from loaded txt2img pipeline ...")
+        shared_components = _pipeline.components
+        pipe = img2img_cls(**shared_components)
+    else:
+        # Full load with same dtype/device strategy as txt2img
+        if _device == "cpu":
+            dtype = torch.float32
+        elif model_key == "flux":
+            dtype = torch.bfloat16
+        elif _device == "mps":
+            dtype = torch.float32
+        else:
+            dtype = torch.float16
+
+        pretrained_kwargs: dict = {
+            "torch_dtype": dtype,
+            "use_safetensors": True,
+        }
+        if model_key == "sdxl-turbo":
+            pretrained_kwargs["variant"] = "fp16"
+
+        hf_token = os.environ.get("HF_TOKEN") or None
+        if hf_token:
+            pretrained_kwargs["token"] = hf_token
+
+        pipe = img2img_cls.from_pretrained(repo_id, **pretrained_kwargs)
+        pipe = pipe.to(_device)
+
+    pipe.enable_attention_slicing()
+    if hasattr(pipe, "vae"):
+        pipe.vae.enable_slicing()
+        pipe.vae.enable_tiling()
+    if _device == "mps":
+        pipe.set_progress_bar_config(disable=True)
+
+    elapsed = time.monotonic() - start
+    log.info(f"img2img pipeline ready in {elapsed:.1f}s")
+
+    _img2img_pipeline = pipe
+    _img2img_model_name = model_key
+    return pipe
+
+
+# ── Maximum base64 image size (20 MB) ─────────────────────────
+_MAX_IMG2IMG_BYTES = 20 * 1024 * 1024
+
+
+@app.post("/img2img", response_class=Response, dependencies=[Depends(verify_token)])
+async def img2img(req: Img2ImgRequest):
+    """Enhance an image using img2img diffusion.
+
+    Accepts a base64-encoded source image, applies the prompt-guided
+    enhancement at the given strength, and returns a PNG.
+    """
+    global _last_used
+
+    if not _ready:
+        raise HTTPException(status_code=503, detail="Server not ready")
+    if _loading:
+        raise HTTPException(status_code=409, detail="A model is currently being loaded")
+
+    # Decode and validate source image
+    try:
+        img_bytes = base64.b64decode(req.image)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid base64 image data")
+
+    if len(img_bytes) > _MAX_IMG2IMG_BYTES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Image too large: {len(img_bytes)} bytes (max {_MAX_IMG2IMG_BYTES})"
+        )
+
+    try:
+        source_image = Image.open(io.BytesIO(img_bytes)).convert("RGB")
+    except Exception:
+        raise HTTPException(status_code=400, detail="Could not decode image (PNG/JPEG/WebP only)")
+
+    # Determine model
+    requested_model = req.model or (_model_name if _model_loaded else _default_model)
+    if requested_model not in MODEL_REGISTRY:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown model: {requested_model}. Available: {list(MODEL_REGISTRY.keys())}"
+        )
+
+    # Ensure txt2img pipeline is loaded (for shared components)
+    if not _model_loaded or _model_name != requested_model:
+        log.info(f"Loading txt2img pipeline for '{requested_model}' (needed by img2img) ...")
+        _load_model(requested_model)
+
+    # Load img2img pipeline
+    pipe = _load_img2img_pipeline(requested_model)
+
+    # Resize image to model-compatible dimensions
+    target_w = req.width or source_image.width
+    target_h = req.height or source_image.height
+    target_w = (target_w // 8) * 8
+    target_h = (target_h // 8) * 8
+    if source_image.size != (target_w, target_h):
+        source_image = source_image.resize((target_w, target_h), Image.LANCZOS)
+
+    # Generator for reproducibility
+    generator = None
+    if req.seed is not None:
+        generator = torch.Generator(device=_device).manual_seed(req.seed)
+
+    log.info(
+        f"img2img: prompt='{req.prompt[:80]}...' "
+        f"model={requested_model} size={target_w}x{target_h} "
+        f"strength={req.strength} steps={req.num_inference_steps}"
+    )
+    start = time.monotonic()
+
+    try:
+        gen_kwargs: dict = {
+            "prompt": req.prompt,
+            "image": source_image,
+            "strength": req.strength,
+            "num_inference_steps": req.num_inference_steps,
+            "guidance_scale": req.guidance_scale,
+            "generator": generator,
+        }
+        result = pipe(**gen_kwargs)
+        enhanced_image: Image.Image = result.images[0]
+    except Exception as e:
+        log.error(f"img2img failed: {e}")
+        raise HTTPException(status_code=500, detail=f"img2img failed: {str(e)}")
+
+    elapsed = time.monotonic() - start
+    _last_used = time.monotonic()
+    log.info(f"img2img completed in {elapsed:.1f}s ({target_w}x{target_h})")
+
+    buf = io.BytesIO()
+    enhanced_image.save(buf, format="PNG", optimize=True)
+    png_bytes = buf.getvalue()
+
+    if _device == "mps":
+        torch.mps.empty_cache()
+
+    return Response(
+        content=png_bytes,
+        media_type="image/png",
+        headers={
+            "X-Generation-Time": f"{elapsed:.2f}s",
+            "X-Image-Size": f"{target_w}x{target_h}",
+            "X-Model": requested_model,
+            "X-Strength": str(req.strength),
         },
     )
 

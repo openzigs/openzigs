@@ -453,6 +453,67 @@ export class ImageGenService {
     }
   }
 
+  /**
+   * Enhance an existing image via img2img diffusion.
+   * Reads the source image, sends it as base64 to the sidecar's /img2img endpoint,
+   * and saves the enhanced result.
+   *
+   * @param imagePath - Path to the source image (PNG/JPEG/WebP)
+   * @param prompt    - Enhancement prompt guiding the diffusion
+   * @param options   - Strength (0.1–0.95), model, seed
+   * @returns Result with the enhanced image file path
+   */
+  async enhanceImage(
+    imagePath: string,
+    prompt: string,
+    options?: { strength?: number; model?: string; seed?: number },
+  ): Promise<ImageGenResult> {
+    const start = Date.now();
+    const url = `${this.effectiveSidecarUrl}/img2img`;
+
+    const imageBuffer = await fs.readFile(imagePath);
+    const maxBytes = 20 * 1024 * 1024; // 20 MB limit
+    if (imageBuffer.length > maxBytes) {
+      throw new Error(`Image too large: ${imageBuffer.length} bytes (max ${maxBytes})`);
+    }
+
+    const base64Image = imageBuffer.toString("base64");
+    const strength = Math.max(0.1, Math.min(0.95, options?.strength ?? 0.6));
+
+    const body = JSON.stringify({
+      prompt,
+      image: base64Image,
+      strength,
+      ...(options?.model ? { model: options.model } : {}),
+      ...(options?.seed !== undefined ? { seed: options.seed } : {}),
+    });
+
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (this.isNetworkMode && this.config.networkNodeToken) {
+      headers["Authorization"] = `Bearer ${this.config.networkNodeToken}`;
+    }
+
+    const response = await fetch(url, {
+      method: "POST",
+      headers,
+      body,
+      signal: AbortSignal.timeout(this.config.localTimeoutMs),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => "unknown");
+      throw new Error(`img2img sidecar returned ${response.status}: ${errorText}`);
+    }
+
+    const resultBuffer = Buffer.from(await response.arrayBuffer());
+    const filePath = await this.saveImage(resultBuffer, "img2img");
+
+    const elapsed = Date.now() - start;
+    logger.info(`[ImageGenService] img2img enhancement in ${elapsed}ms (strength=${strength})`);
+
+    return { filePath, provider: "local", generationTimeMs: elapsed, width: 0, height: 0 };
+  }
+
   private async checkLocalHealth(): Promise<boolean> {
     try {
       const headers: Record<string, string> = {};

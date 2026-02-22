@@ -1486,6 +1486,62 @@ Respond with ONLY a valid JSON array. No markdown, no explanation.`;
     }
   });
 
+  // ── Image Enhancement (img2img) ─────────────────────────────
+
+  /**
+   * POST /enhance — enhance a scene image via Flux img2img.
+   * Body: { imagePath, prompt, strength?, model?, seed? }
+   * Response: { enhancedImagePath, generationTimeMs }
+   */
+  router.post("/enhance", async (req, res) => {
+    try {
+      const { imagePath, prompt, strength, model, seed } = req.body as {
+        imagePath?: string;
+        prompt?: string;
+        strength?: number;
+        model?: string;
+        seed?: number;
+      };
+
+      if (!imagePath || typeof imagePath !== "string") {
+        res.status(400).json({ error: "imagePath is required" });
+        return;
+      }
+      if (!prompt || typeof prompt !== "string" || prompt.trim().length === 0) {
+        res.status(400).json({ error: "prompt is required" });
+        return;
+      }
+
+      const fsMod = await import("node:fs");
+      if (!fsMod.existsSync(imagePath)) {
+        res.status(404).json({ error: `Image not found: ${imagePath}` });
+        return;
+      }
+
+      const osMod = await import("node:os");
+      const pathMod = await import("node:path");
+      const imageOutputDir = pathMod.join(osMod.homedir(), ".openzigs", "director", "images");
+      const imageGenUserConfig = await (await import("../video/generators/image-gen-service.js")).ImageGenService.loadUserImageGenConfig();
+      const imageService = new (await import("../video/generators/image-gen-service.js")).ImageGenService({ outputDir: imageOutputDir, ...imageGenUserConfig });
+      await imageService.initialize();
+
+      const result = await imageService.enhanceImage(imagePath, prompt, {
+        strength,
+        model,
+        seed,
+      });
+
+      res.json({
+        enhancedImagePath: result.filePath,
+        generationTimeMs: result.generationTimeMs,
+      });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      logger.error(`[Director API] POST /enhance failed: ${msg}`);
+      res.status(500).json({ error: msg });
+    }
+  });
+
   // ── Render Jobs ────────────────────────────────────────────
 
   /**
