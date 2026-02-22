@@ -16,14 +16,15 @@ import type {
 } from "../types";
 
 function buildTracks(manifest: DirectorManifest): TimelineTrack[] {
-  const fps = manifest.composition.fps || 30;
+  const fps = manifest.composition?.fps || 30;
   const scenesEntries: TimelineTrackEntry[] = [];
   const voiceoverEntries: TimelineTrackEntry[] = [];
   const overlayEntries: TimelineTrackEntry[] = [];
   const audioEntries: TimelineTrackEntry[] = [];
 
+  const timeline = manifest.timeline ?? [];
   let sceneCounter = 0;
-  for (const [i, entry] of manifest.timeline.entries()) {
+  for (const [i, entry] of timeline.entries()) {
     const startFrame = entry.startAtFrame ?? 0;
     const dur = entry.duration ?? entry.durationInFrames ?? fps * 3;
 
@@ -75,8 +76,8 @@ function buildTracks(manifest: DirectorManifest): TimelineTrack[] {
   }
 
   // Music track
-  if (manifest.audioLayer.music) {
-    const totalFrames = manifest.timeline.reduce((max, e) => {
+  if (manifest.audioLayer?.music) {
+    const totalFrames = timeline.reduce((max, e) => {
       const end = (e.startAtFrame ?? 0) + (e.duration ?? e.durationInFrames ?? 0);
       return Math.max(max, end);
     }, 0);
@@ -159,8 +160,8 @@ export function StudioLayout({ draftId }: { draftId: string }) {
     playerRef.current?.seekTo(frame);
   }, []);
 
-  const totalFrames = draft?.manifest
-    ? draft.manifest.timeline.reduce((max, e) => {
+  const totalFrames = draft?.manifest?.timeline
+    ? draft.manifest.timeline.reduce((max: number, e: TimelineEntry) => {
         const end = (e.startAtFrame ?? 0) + (e.duration ?? e.durationInFrames ?? 0);
         return Math.max(max, end);
       }, 0)
@@ -227,7 +228,7 @@ export function StudioLayout({ draftId }: { draftId: string }) {
           tracks={tracks}
           totalFrames={totalFrames}
           currentFrame={currentFrame}
-          fps={draft.manifest?.composition.fps ?? 30}
+          fps={draft.manifest?.composition?.fps ?? 30}
           onSelectScene={handleSelectScene}
           onSeek={handleSeek}
           manifest={draft.manifest}

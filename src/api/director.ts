@@ -33,6 +33,7 @@ import { spawn } from "node:child_process";
 import { Router, raw } from "express";
 import { nanoid } from "nanoid";
 import { logger } from "../logging/logger.js";
+import { getDatabase } from "../productivity/database.js";
 import type { CopilotWrapper } from "../copilot/copilot-wrapper.js";
 import type { VoiceService } from "../voice/voice-service.js";
 import type { RenderOrchestrator } from "../video/render-orchestrator.js";
@@ -955,7 +956,6 @@ Respond with ONLY a valid JSON array. No explanation. Example:
               const health = await healthResp.json() as { active_engine?: string };
               if (health.active_engine === "sovits") {
                 // Load the first available voice profile from the DB
-                const { getDatabase } = await import("../productivity/database.js");
                 const db = getDatabase();
                 const profile = db.prepare(
                   `SELECT ref_audio_path, ref_text, language, top_p, temperature,
@@ -1756,7 +1756,6 @@ Respond with ONLY a valid JSON array. No markdown, no explanation.`;
         return;
       }
 
-      const { getDatabase } = require("../productivity/database.js") as typeof import("../productivity/database.js");
       const db = getDatabase();
       const id = nanoid();
       const now = new Date().toISOString();
@@ -1782,7 +1781,6 @@ Respond with ONLY a valid JSON array. No markdown, no explanation.`;
    */
   router.get("/drafts", (_req, res) => {
     try {
-      const { getDatabase } = require("../productivity/database.js") as typeof import("../productivity/database.js");
       const db = getDatabase();
       const rows = db.prepare(
         `SELECT id, title, thumbnail, production_mode, created_at, updated_at, status
@@ -1820,7 +1818,6 @@ Respond with ONLY a valid JSON array. No markdown, no explanation.`;
    */
   router.get("/drafts/:id", (req, res) => {
     try {
-      const { getDatabase } = require("../productivity/database.js") as typeof import("../productivity/database.js");
       const db = getDatabase();
       const row = db.prepare(
         `SELECT id, title, manifest, thumbnail, production_mode, created_at, updated_at, status
@@ -1878,7 +1875,6 @@ Respond with ONLY a valid JSON array. No markdown, no explanation.`;
         thumbnail?: string;
       };
 
-      const { getDatabase } = require("../productivity/database.js") as typeof import("../productivity/database.js");
       const db = getDatabase();
 
       const existing = db.prepare(`SELECT id FROM director_drafts WHERE id = ?`)
@@ -1934,7 +1930,6 @@ Respond with ONLY a valid JSON array. No markdown, no explanation.`;
    */
   router.delete("/drafts/:id", (req, res) => {
     try {
-      const { getDatabase } = require("../productivity/database.js") as typeof import("../productivity/database.js");
       const db = getDatabase();
       const result = db.prepare(`DELETE FROM director_drafts WHERE id = ?`).run(req.params.id);
       if (result.changes === 0) {
@@ -1991,7 +1986,6 @@ Respond with ONLY a valid JSON array. No markdown, no explanation.`;
 
       // If a draftId is provided, update the corresponding scene in the draft manifest
       if (draftId) {
-        const { getDatabase } = await import("../productivity/database.js");
         const db = getDatabase();
         const row = db.prepare(`SELECT manifest FROM director_drafts WHERE id = ?`)
           .get(draftId) as { manifest: string } | undefined;
@@ -2075,7 +2069,6 @@ Respond with ONLY a valid JSON array. No markdown, no explanation.`;
       );
 
       // Auto-save as a draft
-      const { getDatabase } = require("../productivity/database.js") as typeof import("../productivity/database.js");
       const db = getDatabase();
       const draftId = nanoid();
       const now = new Date().toISOString();
@@ -2155,7 +2148,6 @@ Respond with ONLY a valid JSON array. No markdown, no explanation.`;
       );
 
       // Auto-save as a draft
-      const { getDatabase } = require("../productivity/database.js") as typeof import("../productivity/database.js");
       const db = getDatabase();
       const draftId = nanoid();
       const now = new Date().toISOString();

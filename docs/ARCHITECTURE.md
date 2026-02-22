@@ -155,7 +155,7 @@ graph TB
     end
 
     subgraph NextJS["Next.js UI (localhost:3001)"]
-        NAV[NavBar<br/>Dashboard · Chat · Workbench · Admin · Library · Scheduler · Tasks]
+        NAV[NavBar<br/>Dashboard · Chat · Workbench · Director · Admin · Library · Scheduler · Tasks]
         DASH[Dashboard<br/>Stats · Approvals · Audit Log]
         CHAT[Chat View<br/>Streaming · Approvals]
         ADMIN[Admin Page<br/>Channels · Personality · Sidecars · Tools · Env]
@@ -229,6 +229,8 @@ The frontend is a **Next.js 14 App Router** application in the `ui/` directory. 
 | `/scheduler` | `scheduler/page.tsx` | Cron job CRUD with action types, prompt linking, model overrides, AI assist, live execution events |
 | `/tasks` | `task-dashboard.tsx` | Background task queue, status filters, cancel, recursive child expansion, real-time updates |
 | `/social` | `social/page.tsx` | Social Brain — unified inbox, CRM, automation rules, AI auto-reply |
+| `/director` | `director/page.tsx` | Director Mode — Video Wizard tab (production pipeline) + Blog to YouTube tab (blog conversion) |
+| `/director/studio/[id]` | `director/studio/[id]/page.tsx` | Timeline Studio — @remotion/player preview, multi-track timeline, scene inspector, per-scene regeneration |
 | `/workbench` | `workbench/page.tsx` | Rich Markdown editor (MDXEditor) with file sidebar, live file system CRUD, Cmd/Ctrl+S save |
 
 ### Component Structure
@@ -278,16 +280,33 @@ ui/
 │   │   ├── score-ring.tsx              # SVG circular score indicator
 │   │   ├── pdf-generator.ts           # jsPDF recap export
 │   │   └── push-to-talk-button.tsx   # Floating PTT button (hold/click toggle)
-│   └── admin/
-│       ├── tools-panel.tsx        # Tool list with risk badges + toggles
-│       ├── channels-panel.tsx     # Telegram + Discord config forms
-│       ├── sidecars-panel.tsx     # Docker sidecar management
-│       ├── local-servers-panel.tsx # Local MCP server status
-│       ├── personality-panel.tsx  # System instruction + pre/post prompts + mode selector
-│       ├── model-config-panel.tsx # Reasoning effort + BYOK provider configuration
-│       ├── agents-panel.tsx       # Custom agent CRUD with tool multi-select
-│       ├── mcp-editor-panel.tsx   # Native MCP server wizard + busy lock + reconnect
-│       └── env-panel.tsx          # Environment variable status
+│   ├── admin/
+│   │   ├── tools-panel.tsx        # Tool list with risk badges + toggles
+│   │   ├── channels-panel.tsx     # Telegram + Discord config forms
+│   │   ├── sidecars-panel.tsx     # Docker sidecar management
+│   │   ├── local-servers-panel.tsx # Local MCP server status
+│   │   ├── personality-panel.tsx  # System instruction + pre/post prompts + mode selector
+│   │   ├── model-config-panel.tsx # Reasoning effort + BYOK provider configuration
+│   │   ├── agents-panel.tsx       # Custom agent CRUD with tool multi-select
+│   │   ├── mcp-editor-panel.tsx   # Native MCP server wizard + busy lock + reconnect
+│   │   └── env-panel.tsx          # Environment variable status
+│   └── director/
+│       ├── director-wizard.tsx    # Multi-step video production wizard
+│       ├── blog-to-video-panel.tsx # Blog URL → video conversion panel
+│       ├── mode-selection-step.tsx # Production mode selector
+│       ├── template-picker-step.tsx # Template selection grid
+│       ├── media-upload-step.tsx   # Input media upload
+│       ├── visual-assets-step.tsx  # Visual asset configuration
+│       ├── sound-browser-step.tsx  # Music/SFX browser
+│       ├── review-produce-step.tsx # Review + produce
+│       ├── types.ts               # Director UI types
+│       └── studio/
+│           ├── studio-layout.tsx   # Studio page container (sidebar + preview + timeline)
+│           ├── player-preview.tsx  # @remotion/player wrapper
+│           ├── timeline-tracks.tsx # Multi-track visual timeline
+│           ├── scene-inspector.tsx # Per-scene property editor
+│           ├── studio-toolbar.tsx  # Render + thumbnail actions
+│           └── framing-panel.tsx   # 9:16 horizontal crop offset slider
 └── lib/
     ├── api.ts              # Shared fetchJson utility + API_BASE
     ├── types.ts            # All shared TypeScript types
@@ -1631,6 +1650,8 @@ Logs are queryable via `GET /api/logs` with filters for `category`, `level`, `si
 | `produce-video` | productivity | 🔴 high | Ingest clips, run single-shot LLM, and produce a Director Manifest (edit decision list). |
 | `list-templates` | productivity | 🟢 low | List available video templates with default compositions and features. |
 | `search-assets` | productivity | 🟢 low | Search royalty-free music, SFX, and images from local library, Pixabay, Jamendo, and Pexels. |
+| `create-short` | productivity | 🔴 high | Convert a long-form video into a 30–60s YouTube Short (9:16) with new voiceover and smart framing. |
+| `blog-to-video` | productivity | 🔴 high | Convert a blog post URL into a narrated video with AI imagery, voiceover, and Studio handoff. |
 
 ### Social Brain Tools (Built-in)
 
@@ -1710,6 +1731,18 @@ The shell executor uses a **command allowlist**. If the allowlist is empty, the 
 | `POST` | `/api/social/handoff/:contactId/close` | Token | Close an active human handoff. |
 | `POST` | `/api/social/webhooks/:platform` | None | Incoming platform webhook events. |
 | `GET` | `/api/social/connections` | Token | List connected platform statuses. |
+| `POST` | `/api/admin/director/drafts` | Token | Create a draft from a manifest. |
+| `GET` | `/api/admin/director/drafts` | Token | List all drafts (paginated). |
+| `GET` | `/api/admin/director/drafts/:id` | Token | Get draft with full manifest. |
+| `PUT` | `/api/admin/director/drafts/:id` | Token | Update manifest (partial or full). |
+| `DELETE` | `/api/admin/director/drafts/:id` | Token | Delete a draft. |
+| `POST` | `/api/admin/director/drafts/:id/render` | Token | Submit draft for render. |
+| `POST` | `/api/admin/director/drafts/:id/thumbnail` | Token | Generate AI thumbnail for a draft. |
+| `POST` | `/api/admin/director/scenes/:idx/regenerate` | Token | Regenerate image/voiceover for a specific scene. |
+| `POST` | `/api/admin/director/enhance` | Token | Flux img2img image enhancement. |
+| `POST` | `/api/admin/director/shorts` | Token | Create a YouTube Short from a long-form video. |
+| `POST` | `/api/admin/director/blog-to-video` | Token | Convert a blog post URL into a video draft. |
+| `POST` | `/api/admin/director/assets/upload` | Token | Upload BYOA media assets (max 200MB). |
 
 ---
 
@@ -3622,7 +3655,7 @@ Pipeline: Load source image → `FluxImg2ImgPipeline(prompt, image, strength=0.6
 
 New pipeline mode converting blog posts/articles into narrated video:
 
-1. **Ingest** — `BlogParser` fetches URL or reads local Markdown. Extracts: title, sections (H2/H3 headings + body), images.
+1. **Ingest** — `extractBlog()` (in `blog-extractor.ts`) fetches URL with SSRF protection (blocked hosts, private IP detection). Extracts: title, body text, metadata, images via HTML parsing (regex-based, no external HTML parser dependency).
 2. **Scene Plan** — Maps each section to a scene. Inline images become `image_scene` entries; text-only sections get AI-generated images via `ImageGenService`.
 3. **Narration** — Section body text → `ScriptSanitizer` → `VoiceService.synthesize()` per scene.
 4. **Manifest Build** — Auto-generates `DirectorManifest` with intro card (blog title), `image_scene` entries per section, transitions, text overlay for section headings, and outro card.
@@ -3654,7 +3687,7 @@ Raw narration text
   → Synthesized audio with pacing applied
 ```
 
-New modules: `src/voice/pacing-parser.ts`, `src/voice/pacing-resolver.ts`.
+New module: `src/voice/pacing-translator.ts` (combines parsing and engine-specific resolution).
 
 ### Sub-Issues
 
@@ -3710,21 +3743,20 @@ Generates stylized YouTube thumbnails for rendered videos:
 
 **New files (~24):**
 - `ui/app/director/studio/[id]/page.tsx` — Studio route
-- `ui/components/director/studio/timeline-editor.tsx` — Multi-track timeline
+- `ui/components/director/studio/timeline-tracks.tsx` — Multi-track timeline
 - `ui/components/director/studio/scene-inspector.tsx` — Property editor
-- `ui/components/director/studio/preview-panel.tsx` — @remotion/player wrapper
-- `ui/components/director/studio/asset-panel.tsx` — BYOA asset browser
-- `ui/components/director/studio/text-overlay-editor.tsx` — Text overlay WYSIWYG
+- `ui/components/director/studio/player-preview.tsx` — @remotion/player wrapper
+- `ui/components/director/studio/studio-layout.tsx` — Studio page layout (sidebar + preview + timeline)
+- `ui/components/director/studio/studio-toolbar.tsx` — Toolbar with render/thumbnail actions
 - `ui/components/director/studio/framing-panel.tsx` — Horizontal crop offset slider (Shorts)
 - `ui/components/director/studio/thumbnail-panel.tsx` — Thumbnail preview + generate
 - `src/remotion/components/intro-card.tsx` — Animated intro composition
 - `src/remotion/components/outro-card.tsx` — Animated outro composition
-- `src/remotion/components/text-overlay.tsx` — Positioned text composition
-- `src/video/blog/blog-parser.ts` — Blog content extractor
+- `src/remotion/components/text-overlay-layer.tsx` — Positioned text composition
+- `src/video/blog/blog-extractor.ts` — Blog content extractor with SSRF protection
 - `src/video/blog/blog-to-video-pipeline.ts` — End-to-end blog conversion
-- `src/voice/pacing-parser.ts` — Bracket syntax tokenizer
-- `src/voice/pacing-resolver.ts` — Engine-specific pacing resolution
-- `src/video/draft-repository.ts` — SQLite draft CRUD
+- `src/voice/pacing-translator.ts` — Bracket syntax parsing + engine-specific resolution (Google SSML, local silence padding)
+- `src/productivity/database.ts` — `director_drafts` table migration (draft CRUD in director API routes)
 - `src/mcp/tools/blog-tools.ts` — blog-to-video MCP tool
 - `src/video/shorts/viral-clip-extractor.ts` — LLM viral segment identification
 - `src/video/shorts/shorts-voice-pipeline.ts` — Script generation + TTS + ducking

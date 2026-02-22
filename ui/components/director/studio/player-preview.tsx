@@ -27,7 +27,7 @@ export function PlayerPreview({
   onFrameChange,
   playerRef,
 }: PlayerPreviewProps) {
-  const fps = manifest?.composition.fps ?? 30;
+  const fps = manifest?.composition?.fps ?? 30;
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const frameRef = useRef(currentFrame);
 
@@ -88,7 +88,7 @@ export function PlayerPreview({
   };
 
   // Find current scene for preview
-  const currentScene = manifest?.timeline.find((e) => {
+  const currentScene = manifest?.timeline?.find((e) => {
     if (e.type !== "image_scene" && e.type !== "video_clip" && e.type !== "title_card" && e.type !== "intro_card" && e.type !== "outro_card") return false;
     const start = e.startAtFrame ?? 0;
     const dur = e.duration ?? e.durationInFrames ?? 0;

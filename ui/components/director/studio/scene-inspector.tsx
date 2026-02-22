@@ -18,7 +18,7 @@ export function SceneInspector({ inspector, manifest, draftId, onManifestUpdate 
   const [regenerating, setRegenerating] = useState(false);
   const [uploading, setUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const fps = manifest?.composition.fps ?? 30;
+  const fps = manifest?.composition?.fps ?? 30;
 
   const entry = inspector.entry;
 
@@ -35,7 +35,7 @@ export function SceneInspector({ inspector, manifest, draftId, onManifestUpdate 
       );
 
       // Update the manifest locally with the new image path
-      const updated = { ...manifest, timeline: [...manifest.timeline] };
+      const updated = { ...manifest, timeline: [...(manifest.timeline ?? [])] };
       const visualTypes = new Set(["image_scene", "video_clip"]);
       let sceneCount = 0;
       for (let i = 0; i < updated.timeline.length; i++) {
@@ -185,7 +185,7 @@ export function SceneInspector({ inspector, manifest, draftId, onManifestUpdate 
                 );
 
                 // Update manifest with the new file path
-                const updated = { ...manifest, timeline: [...manifest.timeline] };
+                const updated = { ...manifest, timeline: [...(manifest.timeline ?? [])] };
                 const visualTypes = new Set(["image_scene", "video_clip"]);
                 let sceneCount = 0;
                 for (let i = 0; i < updated.timeline.length; i++) {
@@ -232,7 +232,7 @@ export function SceneInspector({ inspector, manifest, draftId, onManifestUpdate 
           offset={typeof entry.horizontalCropOffset === "number" ? entry.horizontalCropOffset : 50}
           onChange={(offset) => {
             if (inspector.sceneIndex === null || !manifest) return;
-            const updated = { ...manifest, timeline: [...manifest.timeline] };
+            const updated = { ...manifest, timeline: [...(manifest.timeline ?? [])] };
             const visualTypes = new Set(["image_scene", "video_clip"]);
             let sceneCount = 0;
             for (let i = 0; i < updated.timeline.length; i++) {

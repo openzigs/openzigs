@@ -39,15 +39,16 @@ export function TimelineTracks({
     (timelineIndex: number, e: React.MouseEvent) => {
       e.stopPropagation();
       if (!manifest) return;
-      const entry = manifest.timeline[timelineIndex];
+      const tl = manifest.timeline ?? [];
+      const entry = tl[timelineIndex];
       if (!entry) return;
 
       // Compute scene index among visual scenes
       const visualTypes = new Set(["image_scene", "video_clip", "title_card", "intro_card", "outro_card"]);
       let sceneIdx = 0;
-      for (let i = 0; i < manifest.timeline.length; i++) {
+      for (let i = 0; i < tl.length; i++) {
         if (i === timelineIndex) break;
-        if (visualTypes.has(manifest.timeline[i].type)) sceneIdx++;
+        if (visualTypes.has(tl[i].type)) sceneIdx++;
       }
       onSelectScene(sceneIdx, entry);
     },

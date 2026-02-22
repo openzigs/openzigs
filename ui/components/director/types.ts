@@ -187,7 +187,7 @@ export interface DirectorManifest {
     music: { track: string; volume: number; loop: boolean } | null;
     voiceover: { src: string; volume: number } | null;
   };
-  timeline: TimelineEntry[];
+  timeline?: TimelineEntry[];
   metadata?: Record<string, unknown>;
 }
 
