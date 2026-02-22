@@ -20,6 +20,7 @@ import type {
   LocalVoicePreset,
 } from "./types.js";
 import { DEFAULT_VOICE_CONFIG, AVAILABLE_LOCAL_VOICES } from "./types.js";
+import { translatePacingTags, hasPacingTags } from "./pacing-translator.js";
 
 const DEFAULT_LOCAL_VOICE = "af_heart";
 const LOCAL_VOICE_IDS = new Set(AVAILABLE_LOCAL_VOICES.map((voice) => voice.id));
@@ -157,8 +158,14 @@ export class VoiceService {
 
     const startTime = Date.now();
 
+    // Use SSML input when pacing tags are present, plain text otherwise
+    const useSsml = hasPacingTags(text);
+    const input: google.cloud.texttospeech.v1.ISynthesizeSpeechRequest["input"] = useSsml
+      ? { ssml: translatePacingTags(text).ssml }
+      : { text };
+
     const request: google.cloud.texttospeech.v1.ISynthesizeSpeechRequest = {
-      input: { text },
+      input,
       voice: {
         languageCode: voice.split("-").slice(0, 2).join("-"), // "en-US-Journey-D" → "en-US"
         name: voice,
@@ -236,6 +243,59 @@ export class VoiceService {
     }
 
     const startTime = Date.now();
+
+    // If pacing tags are present, split into segments and pad with silence
+    if (hasPacingTags(text)) {
+      const pacing = translatePacingTags(text);
+      if (pacing.plainSegments.length > 0) {
+        const segmentBuffers: Buffer[] = [];
+        for (const segment of pacing.plainSegments) {
+          // Synthesize each segment individually
+          const resp = await fetch(`${this.sidecarUrl}/tts`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              text: segment.text,
+              voice,
+              speed: this.config.speakingRate,
+            }),
+          });
+          if (!resp.ok) {
+            const errorBody = await resp.text().catch(() => "");
+            throw new Error(`Audio sidecar TTS failed (${resp.status}): ${errorBody}`);
+          }
+          segmentBuffers.push(Buffer.from(await resp.arrayBuffer()));
+
+          // Generate silence padding if needed
+          if (segment.pauseAfterMs > 0) {
+            segmentBuffers.push(generateSilenceWav(segment.pauseAfterMs));
+          }
+        }
+
+        // Concatenate all WAV segments (strip headers from subsequent buffers)
+        const audio = concatenateWavBuffers(segmentBuffers);
+        const durationMs = Date.now() - startTime;
+
+        // Write to cache
+        const tmpPath = cachePath + `.tmp-${Date.now()}`;
+        try {
+          await fs.writeFile(tmpPath, audio);
+          await fs.rename(tmpPath, cachePath);
+        } catch (error) {
+          await fs.unlink(tmpPath).catch(() => {});
+          const details = error instanceof Error ? error.message : String(error);
+          logger.warn(`Voice cache write failed: ${details}`);
+        }
+
+        void this.evictIfNeeded().catch((err) => {
+          const details = err instanceof Error ? err.message : String(err);
+          logger.warn(`Voice cache eviction failed: ${details}`);
+        });
+
+        logger.info(`Local TTS synthesis (paced): ${pacing.plainSegments.length} segments → ${audio.length} bytes in ${durationMs}ms`);
+        return { audio, cached: false, durationMs, contentType: "audio/wav" };
+      }
+    }
 
     const resp = await fetch(`${this.sidecarUrl}/tts`, {
       method: "POST",
@@ -511,4 +571,82 @@ export class VoiceService {
       logger.info(`Voice cache LRU eviction: removed ${evicted} files`);
     }
   }
+}
+
+// ── WAV utility helpers for pacing segment concatenation ──────
+
+const WAV_HEADER_SIZE = 44;
+const WAV_SAMPLE_RATE = 24000; // Kokoro default sample rate
+const WAV_BITS_PER_SAMPLE = 16;
+const WAV_NUM_CHANNELS = 1;
+
+/**
+ * Generate a WAV buffer containing silence of the given duration.
+ */
+function generateSilenceWav(durationMs: number): Buffer {
+  const numSamples = Math.round((WAV_SAMPLE_RATE * durationMs) / 1000);
+  const dataSize = numSamples * WAV_NUM_CHANNELS * (WAV_BITS_PER_SAMPLE / 8);
+  const buffer = Buffer.alloc(WAV_HEADER_SIZE + dataSize);
+
+  // WAV header
+  buffer.write("RIFF", 0);
+  buffer.writeUInt32LE(36 + dataSize, 4);
+  buffer.write("WAVE", 8);
+  buffer.write("fmt ", 12);
+  buffer.writeUInt32LE(16, 16); // chunk size
+  buffer.writeUInt16LE(1, 20); // PCM format
+  buffer.writeUInt16LE(WAV_NUM_CHANNELS, 22);
+  buffer.writeUInt32LE(WAV_SAMPLE_RATE, 24);
+  buffer.writeUInt32LE(WAV_SAMPLE_RATE * WAV_NUM_CHANNELS * (WAV_BITS_PER_SAMPLE / 8), 28);
+  buffer.writeUInt16LE(WAV_NUM_CHANNELS * (WAV_BITS_PER_SAMPLE / 8), 32);
+  buffer.writeUInt16LE(WAV_BITS_PER_SAMPLE, 34);
+  buffer.write("data", 36);
+  buffer.writeUInt32LE(dataSize, 40);
+  // Data region is already zero-filled (silence)
+
+  return buffer;
+}
+
+/**
+ * Concatenate multiple WAV buffers into a single WAV file.
+ * The first buffer's header (sample rate, channels) is used for the output.
+ * Subsequent buffers have their headers stripped and raw PCM data appended.
+ */
+function concatenateWavBuffers(buffers: Buffer[]): Buffer {
+  if (buffers.length === 0) return Buffer.alloc(0);
+  if (buffers.length === 1) return buffers[0];
+
+  // Extract raw PCM data from each buffer
+  const pcmChunks: Buffer[] = buffers.map((buf) => {
+    if (buf.length <= WAV_HEADER_SIZE) return Buffer.alloc(0);
+    // Find the "data" chunk — in standard WAV it starts at byte 36
+    // but some encoders add extra chunks. Search for the "data" marker.
+    let dataOffset = WAV_HEADER_SIZE;
+    for (let i = 12; i < Math.min(buf.length - 4, 200); i++) {
+      if (buf.toString("ascii", i, i + 4) === "data") {
+        dataOffset = i + 8; // skip "data" + 4-byte size
+        break;
+      }
+    }
+    return buf.subarray(dataOffset);
+  });
+
+  const totalPcmSize = pcmChunks.reduce((sum, chunk) => sum + chunk.length, 0);
+  const output = Buffer.alloc(WAV_HEADER_SIZE + totalPcmSize);
+
+  // Copy header from first buffer
+  buffers[0].copy(output, 0, 0, WAV_HEADER_SIZE);
+
+  // Update header sizes
+  output.writeUInt32LE(36 + totalPcmSize, 4); // RIFF chunk size
+  output.writeUInt32LE(totalPcmSize, 40); // data chunk size
+
+  // Copy PCM data
+  let offset = WAV_HEADER_SIZE;
+  for (const chunk of pcmChunks) {
+    chunk.copy(output, offset);
+    offset += chunk.length;
+  }
+
+  return output;
 }

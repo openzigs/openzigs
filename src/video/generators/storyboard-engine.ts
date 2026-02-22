@@ -282,7 +282,13 @@ RULES:
 - Duration estimates should reflect the voiceover length (roughly ${WORDS_PER_SECOND} words per second).
 - Scenes must follow the document's logical flow — do not rearrange arbitrarily.
 - Each scene's imageDescription should be specific and visually descriptive, not vague.
-- If the user has provided VISUAL ASSETS (images or videos) with descriptions, naturally reference what those assets depict within the voiceover narration at appropriate moments. Treat the asset descriptions as additional context about the topic — weave their content into the script so the narration acknowledges what the viewer will see on screen.`;
+- If the user has provided VISUAL ASSETS (images or videos) with descriptions, naturally reference what those assets depict within the voiceover narration at appropriate moments. Treat the asset descriptions as additional context about the topic — weave their content into the script so the narration acknowledges what the viewer will see on screen.
+
+TTS PACING TAGS (optional — use sparingly for dramatic effect):
+You may include these bracket tags in voiceover text for pacing control:
+- [PAUSE: Xs] — insert a pause of X seconds (0.1–10). Example: "And the result? [PAUSE: 1.5s] A 40% increase in revenue."
+- *word* — emphasize a word. Example: "This is *critical* for success."
+Do NOT use HTML or XML tags like <break> or <emphasis> — they will be stripped. Only use the bracket syntax above.`;
   }
 
   /**
