@@ -3436,9 +3436,9 @@ The Social Brain subsystem provides a unified DM/comment ingestion pipeline, AI-
 ```
 Ingestion "message" ──────▶ Brain.process()
                                 │
-                                ├─ confidence > 0.7 ──▶ emit "reply" ──▶ Socket.IO "social:reply"
-                                │
-                                └─ confidence ≤ 0.7 ──▶ emit "escalate" ──▶ Handoff.escalate()
+                                ├─ confidence ≥ threshold ──▶ emit "reply" ──▶ Socket.IO "social:reply"
+                                │       (configurable: "high" | "medium" | "low")
+                                └─ confidence < threshold ──▶ emit "escalate" ──▶ Handoff.escalate()
                                                                                │
                                                                                ├─ emit "handoff:created"
                                                                                └─ Socket.IO "social:handoff:created"

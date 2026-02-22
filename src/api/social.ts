@@ -70,8 +70,14 @@ export const createSocialRouter = (opts: SocialRouterOptions): Router => {
       const tag = req.query.tag ? String(req.query.tag) : undefined;
       const handoffActive = req.query.handoffActive === "true" ? true : req.query.handoffActive === "false" ? false : undefined;
 
+      const platformValidation = platform ? platformSchema.safeParse(platform) : { success: true as const, data: undefined };
+      if (!platformValidation.success) {
+        res.status(400).json({ error: "Invalid platform provided." });
+        return;
+      }
+
       const result = repository.listContacts({
-        platform: platform as SocialPlatform | undefined,
+        platform: platformValidation.data,
         search,
         tag,
         handoffActive,
@@ -109,8 +115,17 @@ export const createSocialRouter = (opts: SocialRouterOptions): Router => {
   });
 
   // ── PATCH /contacts/:id — Update contact tags/notes ──
+  const updateContactSchema = z.object({
+    tags: z.string().optional(),
+    notes: z.string().optional(),
+  }).strict();
+
   router.patch("/contacts/:id", (req, res) => {
-    const body = req.body as Record<string, unknown>;
+    const parsed = updateContactSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.format() });
+      return;
+    }
     const contact = repository.getContact(req.params.id);
     if (!contact) {
       res.status(404).json({ error: "Contact not found" });
@@ -118,8 +133,8 @@ export const createSocialRouter = (opts: SocialRouterOptions): Router => {
     }
 
     const updates: Record<string, unknown> = {};
-    if (typeof body.tags === "string") updates.tags = body.tags;
-    if (typeof body.notes === "string") updates.notes = body.notes;
+    if (parsed.data.tags !== undefined) updates.tags = parsed.data.tags;
+    if (parsed.data.notes !== undefined) updates.notes = parsed.data.notes;
 
     const updated = repository.updateContact(req.params.id, updates);
     res.json(updated);

@@ -194,8 +194,8 @@ export class SocialRepository {
       params.push(like, like, like);
     }
     if (tag) {
-      conditions.push("tags LIKE ?");
-      params.push(`%"${tag}"%`);
+      conditions.push("EXISTS (SELECT 1 FROM json_each(tags) WHERE value = ?)");
+      params.push(tag);
     }
     if (handoffActive !== undefined) {
       conditions.push("handoff_active = ?");
@@ -223,7 +223,10 @@ export class SocialRepository {
     const sets: string[] = ["updated_at = ?"];
     const params: unknown[] = [now];
 
-    if (updates.tags !== undefined) { sets.push("tags = ?"); params.push(updates.tags); }
+    if (updates.tags !== undefined) {
+      try { JSON.parse(updates.tags as string); } catch { throw new Error("Invalid JSON in tags"); }
+      sets.push("tags = ?"); params.push(updates.tags);
+    }
     if (updates.notes !== undefined) { sets.push("notes = ?"); params.push(updates.notes); }
     if (updates.handoff_active !== undefined) { sets.push("handoff_active = ?"); params.push(updates.handoff_active); }
     if (updates.handoff_thread_id !== undefined) { sets.push("handoff_thread_id = ?"); params.push(updates.handoff_thread_id); }
@@ -339,8 +342,9 @@ export class SocialRepository {
     const sets: string[] = ["updated_at = ?"];
     const params: unknown[] = [now];
 
+    const allowed = ["name", "platform", "enabled", "post_ids", "keywords", "regex", "comment_reply_template", "dm_template", "dm_delay_seconds", "max_triggers_per_user", "max_triggers_total", "auto_tag"];
     for (const [key, value] of Object.entries(updates)) {
-      if (value !== undefined && key !== "id" && key !== "created_at" && key !== "updated_at") {
+      if (value !== undefined && allowed.includes(key)) {
         sets.push(`${key} = ?`);
         params.push(value);
       }
@@ -462,8 +466,8 @@ export class SocialRepository {
     const headers = ["id", "platform", "username", "display_name", "tags", "notes", "first_seen_at", "last_seen_at", "message_count", "handoff_active"];
     const rows = contacts.map((c) => {
       const tags = JSON.parse(c.tags).join("; ");
-      return [c.id, c.platform, c.username, c.display_name, tags, c.notes.replace(/"/g, '""'), c.first_seen_at, c.last_seen_at, String(c.message_count), String(c.handoff_active)]
-        .map((v) => `"${v}"`)
+      return [c.id, c.platform, c.username, c.display_name, tags, c.notes, c.first_seen_at, c.last_seen_at, String(c.message_count), String(c.handoff_active)]
+        .map((v) => `"${String(v ?? "").replace(/"/g, '""')}"`)
         .join(",");
     });
     return [headers.join(","), ...rows].join("\n");

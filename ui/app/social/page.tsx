@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { SectionCard } from "@/components/section-card";
 import { ToastContainer, showToast } from "@/components/toast";
+import { ConfirmDialog } from "@/components/confirm-dialog";
 import {
   useSocialStats,
   useSocialContacts,
@@ -391,6 +392,7 @@ function AutomationsTab() {
   const updateRule = useUpdateRule();
   const deleteRule = useDeleteRule();
   const [showCreate, setShowCreate] = useState(false);
+  const [ruleToDelete, setRuleToDelete] = useState<CommentRule | null>(null);
 
   const rules = data?.rules ?? [];
 
@@ -405,11 +407,16 @@ function AutomationsTab() {
   };
 
   const handleDelete = (rule: CommentRule) => {
-    if (!confirm(`Delete rule "${rule.name}"?`)) return;
-    deleteRule.mutate(rule.id, {
+    setRuleToDelete(rule);
+  };
+
+  const confirmDelete = () => {
+    if (!ruleToDelete) return;
+    deleteRule.mutate(ruleToDelete.id, {
       onSuccess: () => showToast("Rule deleted", "success"),
       onError: (err) => showToast(`Failed: ${err.message}`, "error"),
     });
+    setRuleToDelete(null);
   };
 
   return (
@@ -484,6 +491,17 @@ function AutomationsTab() {
 
       {/* Automation Log */}
       <AutomationLogSection />
+
+      {ruleToDelete && (
+        <ConfirmDialog
+          title="Delete Rule"
+          message={`Are you sure you want to delete rule "${ruleToDelete.name}"?`}
+          confirmLabel="Delete"
+          variant="danger"
+          onConfirm={confirmDelete}
+          onCancel={() => setRuleToDelete(null)}
+        />
+      )}
     </div>
   );
 }

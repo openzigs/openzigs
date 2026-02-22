@@ -63,7 +63,7 @@ export class PostContextService {
 
 // ── Instagram API Client ─────────────────────────────────────────────
 
-const META_GRAPH_API_VERSION = "v24.0";
+const META_GRAPH_API_VERSION = process.env.META_GRAPH_API_VERSION || "v24.0";
 
 export class InstagramApiClient implements PlatformApiClient {
   readonly platform: SocialPlatform = "instagram";
