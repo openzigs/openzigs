@@ -49,6 +49,36 @@ from optimum.quanto import freeze, quantize, qint4, qint8
 from PIL import Image
 from pydantic import BaseModel, Field
 
+# ── Enable TinyGemm int4 kernel on MPS ────────────────────────
+# quanto only enables TinyGemmWeightQBitsTensor for CPU/CUDA, but
+# the underlying torch._weight_int4pack_mm and _convert_weight_to_int4pack
+# work on MPS too.  Monkey-patching WeightQBitsTensor.create lets us
+# quantize directly on MPS → MPS-native packed format → zero CPU→MPS
+# repacking.  This avoids the catastrophically slow TinyGemm unpack→
+# repack that takes 30+ minutes on CPU→MPS device transfer.
+# See: https://github.com/huggingface/optimum-quanto/issues/270
+def _patch_tinygemm_for_mps():
+    from optimum.quanto.tensor.weights.qbits import WeightQBitsTensor
+    from optimum.quanto.tensor.weights.tinygemm import TinyGemmWeightQBitsTensor
+    _orig_create = WeightQBitsTensor.create
+
+    def patched_create(qtype, axis, group_size, size, stride, data, scale, shift, requires_grad=False):
+        from optimum.quanto.tensor.packed import PackedTensor
+        from optimum.quanto.tensor.qtype import qint4 as _qint4
+        if (qtype == _qint4 and scale.dtype == torch.bfloat16
+                and axis == 0 and group_size == 128 and len(size) == 2
+                and data.device.type in ('cpu', 'mps')):
+            if type(data) is PackedTensor:
+                data = data.unpack()
+            return TinyGemmWeightQBitsTensor(
+                qtype, axis, group_size, size, stride, data, (scale, shift), requires_grad
+            )
+        return _orig_create(qtype, axis, group_size, size, stride, data, scale, shift, requires_grad)
+
+    WeightQBitsTensor.create = staticmethod(patched_create)
+
+_patch_tinygemm_for_mps()
+
 # ── Token Authentication ───────────────────────────────────────
 # When FLUXQ_SECRET_TOKEN is set, all mutating endpoints require
 # Authorization: Bearer <token>.  Health/models remain public.
@@ -154,10 +184,18 @@ def load_pipeline(model_key: str, device: str) -> DiffusionPipeline:
     from ~24 GB to ~6 GB, leaving ample headroom for inference.
 
     Quantization strategy (FLUX on MPS):
-      1. Load pipeline to MPS in bfloat16 (native weight format).
-      2. Quantize transformer weights to int4 in-place (exclude proj_out).
-      3. Quantize T5 text encoder weights to int8 in-place.
-      4. GC + MPS cache clear to reclaim freed bf16 memory.
+      1. Load pipeline to CPU in bfloat16 (native weight format).
+      2. Move transformer to MPS (bf16 regular tensors, fast).
+      3. Quantize transformer directly on MPS to int4
+         (TinyGemm packing into MPS-native format — no slow repack).
+      4. Move T5 encoder to MPS and quantize to int8.
+      5. Move remaining components (CLIP, VAE) to MPS.
+      6. GC + MPS cache clear to reclaim freed bf16 memory.
+
+    This avoids the catastrophically slow CPU→MPS transfer of
+    TinyGemmPackedTensor that took 30+ min due to unpack→repack
+    per tensor.  By quantizing on-device, packing uses the native
+    MPS format from the start.
 
     SDXL Turbo is small enough (~3 GB) to skip quantization entirely.
     """
@@ -206,82 +244,59 @@ def load_pipeline(model_key: str, device: str) -> DiffusionPipeline:
         pretrained_kwargs["token"] = hf_token
 
     # ── Load and quantize strategy ─────────────────────────────
-    # For FLUX on MPS: load to CPU, quantize there (bf16→int4/int8),
-    # then move each component to MPS individually.  This avoids:
-    #   1. The 33 GB MPS allocator bloat from loading bf16 to MPS first
-    #   2. The slow pipe.to("mps") on the entire quantized pipeline
-    # Peak MPS ≈ 10 GB (quantized weights only).  Per-component move
-    # takes ~2s per quantized layer but we log progress.
+    # For FLUX on MPS: load to CPU, move components to MPS one at a
+    # time, quantize each directly on MPS.  Quantizing on the target
+    # device creates native packed weights (TinyGemm MPS format) and
+    # avoids the catastrophically slow CPU→MPS TinyGemmPackedTensor
+    # unpack→repack that took 30+ min per model load.
     needs_quantization = model_key == "flux" and device in ("mps", "cuda")
 
     if needs_quantization:
-        log.info("Loading to CPU for quantization ...")
         pipe = loader_cls.from_pretrained(repo_id, **pretrained_kwargs)
         load_elapsed = time.monotonic() - start
         log.info(f"Pipeline loaded to CPU in {load_elapsed:.1f}s (dtype={dtype})")
 
-        # ── Quantize on CPU ────────────────────────────────────
-        quant_start = time.monotonic()
-        log.info("Quantizing transformer to int4 (excluding proj_out) ...")
-        quantize(pipe.transformer, weights=qint4, exclude="proj_out")
-        freeze(pipe.transformer)
-        gc.collect()
-        log.info(f"Transformer quantized in {time.monotonic() - quant_start:.1f}s")
+        with torch.no_grad():
+            # ── Transformer: move to device then quantize in-place ──
+            move_start = time.monotonic()
+            log.info(f"Moving transformer to {device} (bf16, ~23 GB) ...")
+            pipe.transformer.to(device)
+            log.info(f"  Transformer on {device} in {time.monotonic() - move_start:.1f}s")
 
-        if hasattr(pipe, "text_encoder_2") and pipe.text_encoder_2 is not None:
-            te_start = time.monotonic()
-            log.info("Quantizing T5 text encoder to int8 ...")
-            quantize(pipe.text_encoder_2, weights=qint8)
-            freeze(pipe.text_encoder_2)
+            quant_start = time.monotonic()
+            log.info("Quantizing transformer to int4 on device (excluding proj_out) ...")
+            quantize(pipe.transformer, weights=qint4, exclude="proj_out")
+            freeze(pipe.transformer)
             gc.collect()
-            log.info(f"Text encoder quantized in {time.monotonic() - te_start:.1f}s")
+            if device == "mps":
+                torch.mps.empty_cache()
+            log.info(f"  Transformer quantized in {time.monotonic() - quant_start:.1f}s")
 
-        # ── Move components to device one by one ───────────────
-        # For quantized components (transformer, text_encoder_2), move
-        # each direct child submodule individually.  Calling .to() on the
-        # whole quantized module triggers an extremely slow recursive path
-        # in quanto's QTensor (~37 min for the transformer).  Moving
-        # children individually is ~2s per large layer and gives progress.
-        move_start = time.monotonic()
-
-        def _move_submodules(module, label: str) -> None:
-            """Move a quantized module to *device* child-by-child."""
-            children = list(module.named_children())
-            total = len(children)
-            for idx, (name, child) in enumerate(children, 1):
-                child.to(device)
-            # Move any remaining direct parameters / buffers that
-            # aren't nested inside a child submodule.
-            for key, p in module._parameters.items():
-                if p is not None and p.device.type != device:
-                    module._parameters[key] = p.to(device)
-            for key, b in module._buffers.items():
-                if b is not None and b.device.type != device:
-                    module._buffers[key] = b.to(device)
-            log.info(f"  {label}: moved {total} children to {device}")
-
-        components = [
-            ("text_encoder", "CLIP text encoder", False),
-            ("vae", "VAE", False),
-            ("transformer", "Transformer (quantized int4)", True),
-            ("text_encoder_2", "T5 text encoder (quantized int8)", True),
-        ]
-        for attr, label, quantized in components:
-            comp = getattr(pipe, attr, None)
-            if comp is not None and hasattr(comp, "to"):
-                comp_start = time.monotonic()
-                log.info(f"Moving {label} to {device} ...")
-                if quantized:
-                    _move_submodules(comp, label)
-                else:
-                    comp.to(device)
+            # ── T5 text encoder: move to device then quantize ───
+            if hasattr(pipe, "text_encoder_2") and pipe.text_encoder_2 is not None:
+                te_start = time.monotonic()
+                log.info(f"Moving T5 text encoder to {device} ...")
+                pipe.text_encoder_2.to(device)
+                log.info("Quantizing T5 text encoder to int8 on device ...")
+                quantize(pipe.text_encoder_2, weights=qint8)
+                freeze(pipe.text_encoder_2)
                 gc.collect()
-                log.info(f"  {label} moved in {time.monotonic() - comp_start:.1f}s")
+                if device == "mps":
+                    torch.mps.empty_cache()
+                log.info(f"  T5 encoder quantized in {time.monotonic() - te_start:.1f}s")
 
-        gc.collect()
-        if device == "mps":
-            torch.mps.empty_cache()
-        log.info(f"All components moved to {device} in {time.monotonic() - move_start:.1f}s")
+            # ── Move remaining non-quantized components ─────────
+            for attr, label in [("text_encoder", "CLIP"), ("vae", "VAE")]:
+                comp = getattr(pipe, attr, None)
+                if comp is not None:
+                    comp_start = time.monotonic()
+                    log.info(f"Moving {label} to {device} ...")
+                    comp.to(device)
+                    log.info(f"  {label} moved in {time.monotonic() - comp_start:.1f}s")
+
+            gc.collect()
+            if device == "mps":
+                torch.mps.empty_cache()
     else:
         pipe = loader_cls.from_pretrained(repo_id, **pretrained_kwargs)
         pipe = pipe.to(device)

@@ -194,6 +194,19 @@ cmd_sync() {
   ok "Synced. Restart to apply: ./scripts/fluxq-ctl.sh restart"
 }
 
+cmd_clear_cache() {
+  local cache_dir="${FLUXQ_CACHE_DIR:-$HOME/.cache/fluxq-quantized}"
+  if [[ ! -d "$cache_dir" ]]; then
+    info "No quantization cache found at $cache_dir"
+    return
+  fi
+  local size
+  size=$(du -sh "$cache_dir" 2>/dev/null | awk '{print $1}')
+  info "Removing quantization cache at $cache_dir ($size) ..."
+  rm -rf "$cache_dir"
+  ok "Cache cleared. Next model load will re-quantize and rebuild cache."
+}
+
 cmd_help() {
   echo -e "${BOLD}fluxq-ctl.sh${NC} — FluxQ Node Control"
   echo
@@ -206,6 +219,7 @@ cmd_help() {
   echo "  ${CYAN}unload${NC}             Release model from memory"
   echo "  ${CYAN}generate [prompt]${NC}  Send a test generation request"
   echo "  ${CYAN}sync${NC}               Copy server.py from repo to ~/fluxq-node"
+  echo "  ${CYAN}clear-cache${NC}        Remove cached quantized weights (forces re-quantization)"
   echo
   echo "Environment:"
   echo "  FLUXQ_DIR   Installation directory (default: ~/fluxq-node)"
@@ -226,6 +240,7 @@ case "$COMMAND" in
   unload)   cmd_unload ;;
   generate) cmd_generate "$@" ;;
   sync)     cmd_sync ;;
+  clear-cache) cmd_clear_cache ;;
   help|--help|-h) cmd_help ;;
   *)
     warn "Unknown command: $COMMAND"
