@@ -229,8 +229,8 @@ The frontend is a **Next.js 14 App Router** application in the `ui/` directory. 
 | `/scheduler` | `scheduler/page.tsx` | Cron job CRUD with action types, prompt linking, model overrides, AI assist, live execution events |
 | `/tasks` | `task-dashboard.tsx` | Background task queue, status filters, cancel, recursive child expansion, real-time updates |
 | `/social` | `social/page.tsx` | Social Brain — unified inbox, CRM, automation rules, AI auto-reply |
-| `/director` | `director/page.tsx` | Director Mode — Video Wizard tab (production pipeline) + Blog to YouTube tab (blog conversion) |
-| `/director/studio/[id]` | `director/studio/[id]/page.tsx` | Timeline Studio — @remotion/player preview, multi-track timeline, scene inspector, per-scene regeneration |
+| `/director` | `director/page.tsx` | Director Mode — Video Wizard tab (production pipeline) + Blog to YouTube tab (blog conversion) + My Drafts tab (browse/reopen saved drafts) |
+| `/director/studio/[id]` | `director/studio/[id]/page.tsx` | Timeline Studio — @remotion/player preview, multi-track timeline, scene inspector, save/auto-save, render history |
 | `/workbench` | `workbench/page.tsx` | Rich Markdown editor (MDXEditor) with file sidebar, live file system CRUD, Cmd/Ctrl+S save |
 
 ### Component Structure
@@ -293,6 +293,7 @@ ui/
 │   └── director/
 │       ├── director-wizard.tsx    # Multi-step video production wizard
 │       ├── blog-to-video-panel.tsx # Blog URL → video conversion panel
+│       ├── drafts-panel.tsx       # My Drafts tab — browse/reopen/delete saved drafts
 │       ├── mode-selection-step.tsx # Production mode selector
 │       ├── template-picker-step.tsx # Template selection grid
 │       ├── media-upload-step.tsx   # Input media upload
@@ -305,7 +306,8 @@ ui/
 │           ├── player-preview.tsx  # @remotion/player wrapper
 │           ├── timeline-tracks.tsx # Multi-track visual timeline
 │           ├── scene-inspector.tsx # Per-scene property editor
-│           ├── studio-toolbar.tsx  # Render + thumbnail actions
+│           ├── studio-toolbar.tsx  # Save + Renders + Render actions with dirty indicator
+│           ├── render-history.tsx  # Render history dropdown with status/progress/download
 │           └── framing-panel.tsx   # 9:16 horizontal crop offset slider
 └── lib/
     ├── api.ts              # Shared fetchJson utility + API_BASE
@@ -3571,6 +3573,27 @@ New API endpoints on the Director router (`src/api/director.ts`):
 | `PUT` | `/api/admin/director/drafts/:id` | Update manifest (partial or full) |
 | `DELETE` | `/api/admin/director/drafts/:id` | Delete a draft |
 | `POST` | `/api/admin/director/drafts/:id/render` | Submit draft for render |
+| `GET` | `/api/admin/director/drafts/:id/renders` | List render history for a draft (enriched with live job status) |
+
+### Render History (`director_renders` SQLite Table)
+
+Tracks every render submitted from the Studio, linked to its parent draft:
+
+```sql
+CREATE TABLE IF NOT EXISTS director_renders (
+  id          TEXT PRIMARY KEY,
+  draft_id    TEXT NOT NULL REFERENCES director_drafts(id) ON DELETE CASCADE,
+  job_id      TEXT NOT NULL,
+  quality     TEXT NOT NULL DEFAULT 'preview',
+  status      TEXT NOT NULL DEFAULT 'queued',
+  output_path TEXT,
+  error       TEXT,
+  created_at  TEXT NOT NULL,
+  updated_at  TEXT NOT NULL
+);
+```
+
+The `POST /render` endpoint accepts an optional `draftId` — when provided, a row is inserted into `director_renders` linking the render job to the draft. The `GET /drafts/:id/renders` endpoint returns all renders for a draft, enriched with live job progress from the `renderOrchestrator`.
 
 ### Timeline Studio UI (#314)
 

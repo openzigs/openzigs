@@ -1,12 +1,13 @@
 "use client";
 
 import { useState } from "react";
-import { Film, Globe } from "lucide-react";
+import { Film, Globe, FolderOpen } from "lucide-react";
 import { DirectorWizard } from "@/components/director/director-wizard";
 import { BlogToVideoPanel } from "@/components/director/blog-to-video-panel";
+import { DraftsPanel } from "@/components/director/drafts-panel";
 import { ToastContainer } from "@/components/toast";
 
-type DirectorTab = "wizard" | "blog";
+type DirectorTab = "wizard" | "blog" | "drafts";
 
 export default function DirectorPage() {
   const [tab, setTab] = useState<DirectorTab>("wizard");
@@ -45,11 +46,23 @@ export default function DirectorPage() {
           <Globe className="h-4 w-4" />
           Blog to YouTube
         </button>
+        <button
+          onClick={() => setTab("drafts")}
+          className={`flex items-center gap-1.5 px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+            tab === "drafts"
+              ? "border-primary text-primary"
+              : "border-transparent text-muted-foreground hover:text-foreground"
+          }`}
+        >
+          <FolderOpen className="h-4 w-4" />
+          My Drafts
+        </button>
       </div>
 
       <div className="min-h-0 flex-1">
         {tab === "wizard" && <DirectorWizard />}
         {tab === "blog" && <BlogToVideoPanel />}
+        {tab === "drafts" && <DraftsPanel />}
       </div>
       <ToastContainer />
     </main>

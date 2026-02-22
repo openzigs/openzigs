@@ -2765,6 +2765,9 @@ The Director page at `/director` now has a tabbed layout:
 |-----|------|-------------|
 | **Video Wizard** | Film | The original Director wizard — ingest clips, pick a template, review/produce |
 | **Blog to YouTube** | Globe | Convert any blog post URL into a fully produced video |
+| **My Drafts** | FolderOpen | Browse, reopen, and delete saved drafts |
+
+The **My Drafts** tab lists all saved drafts with thumbnail, production mode badge (e.g. WIZARD, PRESENTATION), status, and relative timestamp. Click any draft to reopen it in the Studio. Delete with the trash icon.
 
 ### Director Studio (Timeline Editor)
 
@@ -2774,7 +2777,7 @@ The Studio provides a three-panel layout:
 
 | Panel | Position | Description |
 |-------|----------|-------------|
-| **Toolbar** | Top | Draft title, Save button, back navigation |
+| **Toolbar** | Top | Draft title, Save/Renders/Render buttons, dirty indicator, back navigation |
 | **Player Preview** | Left (60%) | Live Remotion `<Player>` preview with play/pause, frame scrubber, and timecode display |
 | **Scene Inspector** | Right (40%) | Per-scene property editor — narration text, duration, image source, scene type, transitions, Ken Burns settings |
 | **Timeline Tracks** | Bottom | Multi-track editor with Scenes, Voiceover, Overlays, and Audio lanes |
@@ -2785,6 +2788,10 @@ The Studio provides a three-panel layout:
 - **Playhead scrubbing** — Click anywhere on the timeline to seek. The vertical playhead syncs with the player preview.
 - **Scene Inspector** — Edit individual scene properties (narration text, transition type, duration, image path). Changes update the manifest in memory; click **Save** to persist.
 - **Frame-accurate preview** — The Remotion Player renders the exact composition at the current frame, including text overlays, intro/outro cards, and transitions.
+- **Save with feedback** — Clicking Save shows a toast notification ("Draft saved" / error) and a checkmark animation. The toolbar displays "saved" or "unsaved" next to the title.
+- **Auto-save** — After any manifest change, the Studio auto-saves every 30 seconds while the draft is dirty. Manual saves reset the timer.
+- **Render history** — The **Renders** dropdown button shows all past renders for the current draft with status icons (complete, failed, queued, in-progress), progress bars for active renders, and download links for completed outputs. Polls every 5 seconds while renders are active.
+- **Render-to-draft linking** — Each render is recorded in the `director_renders` table and linked to its parent draft. The Render button auto-saves before submitting.
 
 ### Blog-to-YouTube Pipeline
 

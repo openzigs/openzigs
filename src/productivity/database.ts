@@ -109,6 +109,19 @@ const initSchema = (db: Database.Database) => {
       updated_at TEXT NOT NULL,
       status TEXT NOT NULL DEFAULT 'draft'
     );
+
+    CREATE TABLE IF NOT EXISTS director_renders (
+      id TEXT PRIMARY KEY,
+      draft_id TEXT NOT NULL,
+      job_id TEXT NOT NULL,
+      quality TEXT NOT NULL DEFAULT 'standard',
+      status TEXT NOT NULL DEFAULT 'queued',
+      output_path TEXT,
+      error TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (draft_id) REFERENCES director_drafts(id) ON DELETE CASCADE
+    );
   `);
 
   const voiceProfileColumns = db

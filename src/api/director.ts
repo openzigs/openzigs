@@ -1946,6 +1946,50 @@ Respond with ONLY a valid JSON array. No markdown, no explanation.`;
   });
 
   /**
+   * GET /drafts/:id/renders — list render history for a draft.
+   */
+  router.get("/drafts/:id/renders", (req, res) => {
+    try {
+      const db = getDatabase();
+      const rows = db.prepare(
+        `SELECT id, job_id, quality, status, output_path, error, created_at, updated_at
+         FROM director_renders WHERE draft_id = ? ORDER BY created_at DESC`,
+      ).all(req.params.id) as Array<{
+        id: string;
+        job_id: string;
+        quality: string;
+        status: string;
+        output_path: string | null;
+        error: string | null;
+        created_at: string;
+        updated_at: string;
+      }>;
+
+      // Enrich with live job status from the render orchestrator
+      const renders = rows.map((r) => {
+        const job = renderOrchestrator?.getJob(r.job_id);
+        return {
+          id: r.id,
+          jobId: r.job_id,
+          quality: r.quality,
+          status: job?.status ?? r.status,
+          progress: job?.progress ?? (r.status === "complete" ? 100 : 0),
+          outputPath: job?.outputPath ?? r.output_path,
+          error: job?.error ?? r.error,
+          createdAt: r.created_at,
+          updatedAt: r.updated_at,
+        };
+      });
+
+      res.json({ renders });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      logger.error(`[Director API] GET /drafts/:id/renders failed: ${msg}`);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  /**
    * POST /scenes/:sceneIndex/regenerate — regenerate a single scene image.
    * Body: { draftId, prompt, provider?, model?, seed? }
    */
@@ -2193,11 +2237,12 @@ Respond with ONLY a valid JSON array. No markdown, no explanation.`;
         return;
       }
 
-      const { manifest, codec, crf, quality } = req.body as {
+      const { manifest, codec, crf, quality, draftId } = req.body as {
         manifest: unknown;
         codec?: string;
         crf?: number;
         quality?: "draft" | "standard" | "high" | "lossless";
+        draftId?: string;
       };
       if (!manifest || typeof manifest !== "object") {
         res.status(400).json({ error: "manifest object is required" });
@@ -2221,10 +2266,22 @@ Respond with ONLY a valid JSON array. No markdown, no explanation.`;
       // Store quality metadata on the job for logging/display
       const job = renderOrchestrator.getJob(jobId);
       if (job) {
-        const jobMeta = job as typeof job & { codec?: string; crf?: number; quality?: string };
+        const jobMeta = job as typeof job & { codec?: string; crf?: number; quality?: string; draftId?: string };
         jobMeta.codec = codec ?? "h264";
         jobMeta.crf = resolvedCrf ?? 23;
         jobMeta.quality = quality ?? "standard";
+        jobMeta.draftId = draftId;
+      }
+
+      // Record render in history if linked to a draft
+      if (draftId) {
+        const db = getDatabase();
+        const now = new Date().toISOString();
+        const renderId = nanoid();
+        db.prepare(
+          `INSERT INTO director_renders (id, draft_id, job_id, quality, status, created_at, updated_at)
+           VALUES (?, ?, ?, ?, 'queued', ?, ?)`,
+        ).run(renderId, draftId, jobId, quality ?? "standard", now, now);
       }
 
       res.json({ jobId, status: "queued", codec: codec ?? "h264", crf: resolvedCrf ?? 23 });

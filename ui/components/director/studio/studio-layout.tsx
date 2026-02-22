@@ -106,6 +106,8 @@ export function StudioLayout({ draftId }: { draftId: string }) {
   const [isPlaying, setIsPlaying] = useState(false);
   const [inspector, setInspector] = useState<InspectorState>({ sceneIndex: null, entry: null });
   const [tracks, setTracks] = useState<TimelineTrack[]>([]);
+  const [dirty, setDirty] = useState(false);
+  const [lastSaved, setLastSaved] = useState<string | null>(null);
   const playerRef = useRef<{ seekTo: (frame: number) => void; play: () => void; pause: () => void } | null>(null);
 
   const loadDraft = useCallback(async () => {
@@ -134,12 +136,30 @@ export function StudioLayout({ draftId }: { draftId: string }) {
       method: "PUT",
       body: JSON.stringify({ manifest: draft.manifest, title: draft.title }),
     });
+    setDirty(false);
+    setLastSaved(new Date().toISOString());
   }, [draft, draftId]);
 
   const handleManifestUpdate = useCallback((manifest: DirectorManifest) => {
     setDraft((prev) => prev ? { ...prev, manifest } : prev);
     setTracks(buildTracks(manifest));
+    setDirty(true);
   }, []);
+
+  // Auto-save every 30 seconds when dirty
+  useEffect(() => {
+    if (!dirty || !draft?.manifest) return;
+    const timer = setTimeout(() => {
+      fetchJson(`/api/admin/director/drafts/${draftId}`, {
+        method: "PUT",
+        body: JSON.stringify({ manifest: draft.manifest, title: draft.title }),
+      }).then(() => {
+        setDirty(false);
+        setLastSaved(new Date().toISOString());
+      }).catch(() => { /* silent — user can still manual save */ });
+    }, 30_000);
+    return () => clearTimeout(timer);
+  }, [dirty, draft, draftId]);
 
   const handleSelectScene = useCallback(
     (sceneIndex: number, entry: TimelineEntry) => {
@@ -195,6 +215,8 @@ export function StudioLayout({ draftId }: { draftId: string }) {
         onSave={handleSave}
         draftId={draftId}
         manifest={draft.manifest}
+        dirty={dirty}
+        lastSaved={lastSaved}
       />
 
       <div className="flex min-h-0 flex-1 gap-0">
