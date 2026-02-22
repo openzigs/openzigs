@@ -21,6 +21,7 @@
  *   DELETE /drafts/:id                — delete a draft
  *   POST /scenes/:idx/regenerate      — regenerate a single scene image
  *   POST /shorts                      — convert long-form video to YouTube Short
+ *   POST /blog-to-video               — convert blog post URL to draft video
  *   POST /render                      — submit manifest to render queue
  *   GET  /jobs                        — list render jobs
  *   GET  /jobs/:id                    — get render job status
@@ -2097,6 +2098,86 @@ Respond with ONLY a valid JSON array. No markdown, no explanation.`;
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       logger.error(`[Director API] POST /shorts failed: ${msg}`);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  // ── Blog-to-Video Pipeline ─────────────────────────────────
+
+  /**
+   * POST /blog-to-video — convert a blog post URL into a draft video manifest.
+   * Body: { url: string, template?, styleHint?, imageProvider?, imageModel?, musicTrackPath?, targetDuration? }
+   * Response: { draftId, manifest, blog, storyboard, processingTimeMs }
+   */
+  router.post("/blog-to-video", async (req, res) => {
+    try {
+      const { url, template, styleHint, imageProvider, imageModel, musicTrackPath, targetDuration } = req.body as {
+        url?: string;
+        template?: "Minimalist" | "ContentCreator" | "Corporate" | "TechDemo";
+        styleHint?: string;
+        imageProvider?: "cloud" | "local" | "auto";
+        imageModel?: "flux" | "sdxl-turbo";
+        musicTrackPath?: string;
+        targetDuration?: number;
+      };
+
+      if (!url || typeof url !== "string") {
+        res.status(400).json({ error: "url is required" });
+        return;
+      }
+
+      // Basic URL validation
+      try {
+        const parsed = new URL(url);
+        if (!["http:", "https:"].includes(parsed.protocol)) {
+          res.status(400).json({ error: "Only http/https URLs are allowed" });
+          return;
+        }
+      } catch {
+        res.status(400).json({ error: "Invalid URL" });
+        return;
+      }
+
+      const { blogToVideo } = await import("../video/blog/blog-to-video-pipeline.js");
+      const result = await blogToVideo(
+        {
+          url,
+          template,
+          styleHint,
+          imageProvider,
+          imageModel,
+          musicTrackPath,
+          model: runtimeConfig.defaultModel || undefined,
+          targetDuration,
+        },
+        copilot,
+        voiceService,
+      );
+
+      // Auto-save as a draft
+      const { getDatabase } = require("../productivity/database.js") as typeof import("../productivity/database.js");
+      const db = getDatabase();
+      const draftId = nanoid();
+      const now = new Date().toISOString();
+      const title = result.manifest.projectTitle || "Untitled Blog Video";
+
+      db.prepare(
+        `INSERT INTO director_drafts (id, title, manifest, thumbnail, production_mode, created_at, updated_at, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 'draft')`,
+      ).run(draftId, title, JSON.stringify(result.manifest), null, "blog-to-video", now, now);
+
+      logger.info(`[Director API] Blog-to-video saved as draft ${draftId}: "${title}"`);
+
+      res.json({
+        draftId,
+        manifest: result.manifest,
+        blog: result.blog,
+        storyboard: result.storyboard,
+        processingTimeMs: result.processingTimeMs,
+      });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      logger.error(`[Director API] POST /blog-to-video failed: ${msg}`);
       res.status(500).json({ error: msg });
     }
   });

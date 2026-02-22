@@ -1,22 +1,55 @@
 "use client";
 
+import { useState } from "react";
+import { Film, Globe } from "lucide-react";
 import { DirectorWizard } from "@/components/director/director-wizard";
+import { BlogToVideoPanel } from "@/components/director/blog-to-video-panel";
 import { ToastContainer } from "@/components/toast";
 
+type DirectorTab = "wizard" | "blog";
+
 export default function DirectorPage() {
+  const [tab, setTab] = useState<DirectorTab>("wizard");
+
   return (
     <main className="mx-auto flex h-[calc(100vh-4rem)] max-w-4xl flex-col px-6 py-10 lg:px-12">
-      <header className="mb-6 shrink-0">
+      <header className="mb-4 shrink-0">
         <p className="text-sm uppercase tracking-[0.3em] text-muted-foreground">OpenZigs</p>
         <h1 className="mt-1 text-3xl font-semibold text-foreground">Director Mode</h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          Produce AI-directed videos from raw clips — choose a mode, upload media,
-          pick a template, add music, and render.
+          Produce AI-directed videos from raw clips, text documents, or blog posts.
         </p>
       </header>
 
+      {/* Tab Navigation */}
+      <div className="flex items-center gap-1 border-b border-border mb-4 shrink-0">
+        <button
+          onClick={() => setTab("wizard")}
+          className={`flex items-center gap-1.5 px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+            tab === "wizard"
+              ? "border-primary text-primary"
+              : "border-transparent text-muted-foreground hover:text-foreground"
+          }`}
+        >
+          <Film className="h-4 w-4" />
+          Video Wizard
+        </button>
+        <button
+          onClick={() => setTab("blog")}
+          className={`flex items-center gap-1.5 px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+            tab === "blog"
+              ? "border-primary text-primary"
+              : "border-transparent text-muted-foreground hover:text-foreground"
+          }`}
+        >
+          <Globe className="h-4 w-4" />
+          Blog to YouTube
+        </button>
+      </div>
+
       <div className="min-h-0 flex-1">
-        <DirectorWizard />
+        {tab === "wizard" && <DirectorWizard />}
+        {tab === "blog" && <BlogToVideoPanel />}
       </div>
       <ToastContainer />
     </main>

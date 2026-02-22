@@ -26,6 +26,7 @@ import { createKnowledgeTools } from "./tools/knowledge-tools.js";
 import { createSecretTools } from "./tools/secret-tools.js";
 import { createVideoTools } from "./tools/video-tools.js";
 import { createShortsTools } from "./tools/shorts-tools.js";
+import { createBlogTools } from "./tools/blog-tools.js";
 import { createSocialBrainTools } from "./tools/social-brain-tools.js";
 import { ToolRegistry, type ToolDefinition } from "./tool-registry.js";
 import type { LocalMcpServerManager } from "./local-mcp-server-manager.js";
@@ -551,6 +552,15 @@ export const registerMcpTools = (toolRegistry: ToolRegistry, options: RegisterMc
       voiceService: options.voiceService,
     });
     for (const tool of shortsTools) {
+      registerTool(tool);
+    }
+
+    // Blog-to-video tools (blog-to-video)
+    const blogTools = createBlogTools({
+      copilot: options.copilot,
+      voiceService: options.voiceService,
+    });
+    for (const tool of blogTools) {
       registerTool(tool);
     }
   }
