@@ -3667,6 +3667,32 @@ New modules: `src/voice/pacing-parser.ts`, `src/voice/pacing-resolver.ts`.
 | #318 | Flux img2img Enhancement Pipeline | None |
 | #319 | Blog-to-YouTube Conversion Pipeline | #314, #318, #320 |
 | #320 | Script Pacing & TTS Bracket Syntax | None |
+| #321 | Shorts Maker Pipeline (Long-form to 9:16) | #314, #318 (opt.), #320 |
+| #322 | AI Clickbait Thumbnail Generator | #318 |
+
+### Shorts Maker Pipeline (#321)
+
+Converts horizontal long-form video into a 30–60 second YouTube Short (9:16) with new voiceover:
+
+- **Dense Ingestion** — `scene-detector.ts` `extractIntervalFrames()` with `minInterval: 1` (1 frame/sec) vs default `5`. New `mode?: "standard" | "dense"` option on `IngestionOptions`.
+- **Viral Clip Extraction** — New `src/video/shorts/viral-clip-extractor.ts`: LLM receives dense keyframe thumbnails + Whisper transcript, selects the most engaging 30–60s contiguous segment. Returns `{ startSeconds, endSeconds, rationale, suggestedHook }`.
+- **Voice Dubbing** — New `src/video/shorts/shorts-voice-pipeline.ts`: LLM writes a punchy script, routed through `ScriptSanitizer` → `PacingParser` → `VoiceService.synthesize()`. Original audio ducked to ~10%.
+- **Vertical Formatting** — Forces `ContentCreator` template (already 1080×1920 at `src/remotion/index.tsx:52-55`). Auto-applies `SmartCaptions` overlay with `style: "karaoke"`.
+- **Smart Framing** — `OffthreadVideo` with `objectFit: 'cover'` and `objectPosition: '${xOffset}% center'` for horizontal crop control. New `horizontalCropOffset` field on `VideoClipEntry`. Studio Inspector gets a "Framing" panel with X-offset slider.
+- **MCP Tool** — `create-short` (🔴 high risk): `{ source, style?, target_duration?, voice_profile? }`.
+- **New files**: `src/video/shorts/viral-clip-extractor.ts`, `shorts-voice-pipeline.ts`, `shorts-pipeline.ts`, `src/mcp/tools/shorts-tools.ts`, `ui/components/director/studio/framing-panel.tsx`
+
+### AI Clickbait Thumbnail Generator (#322)
+
+Generates stylized YouTube thumbnails for rendered videos:
+
+- **Frame Selection** — New `src/video/thumbnails/frame-selector.ts`: LLM receives keyframe thumbnails + manifest metadata, selects the most visually striking frame. Returns `{ framePath, timestamp, suggestedText[], textPlacement, textColor }`.
+- **Flux img2img Stylization** — Selected frame → `ImageGenService.enhance()` with `strength: 0.7` and YouTube thumbnail style prompt (heavy saturation, high contrast, vibrant colors).
+- **Text Compositing** — New `src/video/thumbnails/thumbnail-compositor.ts`: `@napi-rs/canvas` renders bold text with stroke/shadow on the stylized background. Text is **never** sent to Flux — only React/canvas for crisp, controllable text.
+- **Output** — Saved as `thumbnail.jpg` alongside `output.mp4` in `~/.openzigs/video-output/<draft-id>/`.
+- **API** — `POST /api/admin/director/drafts/:id/thumbnail` with optional `{ style?, textOverride? }`.
+- **Studio UI** — "Generate Thumbnail" button in toolbar, preview panel with editable text fields and regeneration.
+- **New dependency**: `@napi-rs/canvas` (headless canvas, native, no system deps).
 
 ### Implementation Order
 
@@ -3674,19 +3700,23 @@ New modules: `src/voice/pacing-parser.ts`, `src/voice/pacing-resolver.ts`.
 2. **#318** — Flux img2img (standalone, enables enhance features)
 3. **#317** — Text Overlays (standalone Remotion component work)
 4. **#316** — Intro/Outro Cards (uses img2img from #318)
-5. **#314** — Timeline Studio UI (largest, draft persistence + full UI)
-6. **#315** — BYOA (extends Studio with uploads)
-7. **#319** — Blog-to-YouTube (integrates everything)
+5. **#322** — AI Clickbait Thumbnails (uses img2img from #318, standalone otherwise)
+6. **#314** — Timeline Studio UI (largest, draft persistence + full UI)
+7. **#315** — BYOA (extends Studio with uploads)
+8. **#321** — Shorts Maker (requires Studio for framing, plus pacing + img2img)
+9. **#319** — Blog-to-YouTube (integrates everything)
 
 ### File Change Summary
 
-**New files (~17):**
+**New files (~24):**
 - `ui/app/director/studio/[id]/page.tsx` — Studio route
 - `ui/components/director/studio/timeline-editor.tsx` — Multi-track timeline
 - `ui/components/director/studio/scene-inspector.tsx` — Property editor
 - `ui/components/director/studio/preview-panel.tsx` — @remotion/player wrapper
 - `ui/components/director/studio/asset-panel.tsx` — BYOA asset browser
 - `ui/components/director/studio/text-overlay-editor.tsx` — Text overlay WYSIWYG
+- `ui/components/director/studio/framing-panel.tsx` — Horizontal crop offset slider (Shorts)
+- `ui/components/director/studio/thumbnail-panel.tsx` — Thumbnail preview + generate
 - `src/remotion/components/intro-card.tsx` — Animated intro composition
 - `src/remotion/components/outro-card.tsx` — Animated outro composition
 - `src/remotion/components/text-overlay.tsx` — Positioned text composition
@@ -3696,22 +3726,32 @@ New modules: `src/voice/pacing-parser.ts`, `src/voice/pacing-resolver.ts`.
 - `src/voice/pacing-resolver.ts` — Engine-specific pacing resolution
 - `src/video/draft-repository.ts` — SQLite draft CRUD
 - `src/mcp/tools/blog-tools.ts` — blog-to-video MCP tool
+- `src/video/shorts/viral-clip-extractor.ts` — LLM viral segment identification
+- `src/video/shorts/shorts-voice-pipeline.ts` — Script generation + TTS + ducking
+- `src/video/shorts/shorts-pipeline.ts` — End-to-end Shorts orchestrator
+- `src/mcp/tools/shorts-tools.ts` — create-short MCP tool
+- `src/video/thumbnails/frame-selector.ts` — LLM frame selection
+- `src/video/thumbnails/thumbnail-compositor.ts` — Canvas text compositing
 
-**Modified files (~16):**
-- `src/video/manifest/manifest-types.ts` — New entry types
+**Modified files (~21):**
+- `src/video/manifest/manifest-types.ts` — New entry types + `horizontalCropOffset`
 - `src/video/manifest/manifest-schema.ts` — Extended Zod schemas
 - `src/remotion/adapter.ts` — Map new entry types to input props
-- `src/remotion/input-props.ts` — New prop schemas
+- `src/remotion/input-props.ts` — New prop schemas + `horizontalCropOffset`
 - `src/remotion/compositions/template-composition.tsx` — Dispatch new components
+- `src/remotion/components/video-clip-segment.tsx` — Apply `objectPosition` from crop offset
 - `src/remotion/index.tsx` — Register new compositions
-- `src/api/director.ts` — Draft CRUD + upload routes
+- `src/api/director.ts` — Draft CRUD + upload + shorts + thumbnail routes
 - `src/video/generators/image-gen-service.ts` — `enhance()` method
 - `sidecars/image-gen/server.py` — `/img2img` endpoint
 - `src/voice/voice-service.ts` — SSML support, pacing integration
 - `src/video/generators/storyboard-engine.ts` — Card/overlay scene types
+- `src/video/ingestion/index.ts` — `mode?: "standard" | "dense"` option
 - `src/productivity/database.ts` — `director_drafts` table migration
 - `src/server.ts` — Draft repository initialization
 - `ui/lib/types.ts` — Studio + draft types
 - `ui/app/director/page.tsx` — Wizard → draft flow
+- `ui/components/director/studio/scene-inspector.tsx` — Framing panel for 9:16 clips
+- `ui/components/director/studio/studio-toolbar.tsx` — Thumbnail generate button
 
 ### Tracking: [Epic #313](https://github.com/mgcronin/openzigs/issues/313)

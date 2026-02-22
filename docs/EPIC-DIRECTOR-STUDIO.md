@@ -18,9 +18,11 @@
 7. [Sub-Issue 5: Flux img2img Enhancement Pipeline](#sub-issue-5-flux-img2img-enhancement-pipeline)
 8. [Sub-Issue 6: Blog-to-YouTube Pipeline](#sub-issue-6-blog-to-youtube-pipeline)
 9. [Sub-Issue 7: Script Pacing & TTS Bracket Syntax](#sub-issue-7-script-pacing--tts-bracket-syntax)
-10. [Cross-Cutting Concerns](#cross-cutting-concerns)
-11. [File Change Manifest](#file-change-manifest)
-12. [Dependency Graph](#dependency-graph)
+10. [Sub-Issue 8: Shorts Maker Pipeline (Long-form to 9:16)](#sub-issue-8-shorts-maker-pipeline-long-form-to-916)
+11. [Sub-Issue 9: AI Clickbait Thumbnail Generator](#sub-issue-9-ai-clickbait-thumbnail-generator)
+12. [Cross-Cutting Concerns](#cross-cutting-concerns)
+13. [File Change Manifest](#file-change-manifest)
+14. [Dependency Graph](#dependency-graph)
 
 ---
 
@@ -868,6 +870,307 @@ describe('translatePacingTags', () => {
 
 ---
 
+## Sub-Issue 8: Shorts Maker Pipeline (Long-form to 9:16)
+
+**Goal:** Allow users to select an existing horizontal video (from the local library or uploaded) and automatically convert it into a highly engaging, 30–60 second YouTube Short with a new voiceover.
+
+**Dependencies:** Sub-Issue 1 (Studio UI for framing adjustment), Sub-Issue 5 (img2img, optional), Sub-Issue 7 (Script Pacing)
+
+### Implementation
+
+#### 8.1 Dense Ingestion Mode
+
+Update `src/video/ingestion/scene-detector.ts` and `src/video/ingestion/index.ts` to support a `dense` mode that extracts one frame every 1–2 seconds instead of the default 5–10 seconds.
+
+```typescript
+// New option in IngestionOptions:
+interface IngestionOptions {
+  // ... existing fields ...
+  mode?: "standard" | "dense";  // dense = 1 frame/sec for Shorts analysis
+}
+```
+
+The existing `extractIntervalFrames()` in `scene-detector.ts` already accepts a configurable `minInterval` parameter. Dense mode simply passes `minInterval: 1` instead of the default `5`.
+
+#### 8.2 Viral Clip Extraction via LLM
+
+New module: `src/video/shorts/viral-clip-extractor.ts`
+
+```typescript
+interface ViralClipResult {
+  startSeconds: number;
+  endSeconds: number;
+  rationale: string;         // LLM explanation of why this segment is engaging
+  suggestedHook: string;     // Opening line for the Short
+}
+
+async function extractViralClip(
+  keyframes: KeyframeInfo[],
+  transcript: TranscriptSegment[],
+  options: { minDuration: 30; maxDuration: 60; model?: string }
+): Promise<ViralClipResult>;
+```
+
+The LLM receives:
+- Dense vision frames (base64 thumbnails, batched — same pattern as `keyframe-analyzer.ts`)
+- Whisper transcript with timestamps
+- System prompt instructing it to find the most "interesting, high-retention" contiguous 30–60 second segment
+- Output is a structured JSON response parsed from the LLM output
+
+#### 8.3 Voice Dubbing & Audio Ducking
+
+New module: `src/video/shorts/shorts-voice-pipeline.ts`
+
+1. The LLM writes a punchy, fast-paced script summarizing/reacting to the selected clip
+2. Script → `ScriptSanitizer` → `PacingParser` → `VoiceService.synthesize()` → TTS audio
+3. The original video audio is ducked (volume reduced to ~10%) in the manifest's `audioLayers`
+4. New voiceover audio is placed as a primary `voiceover` audioLayer
+
+```typescript
+interface ShortsManifestOptions {
+  sourceVideoPath: string;
+  clip: ViralClipResult;
+  voiceoverPath: string;
+  originalAudioDuck: number;  // 0.0-1.0, default 0.1
+}
+```
+
+#### 8.4 Vertical Formatting (ContentCreator 9:16 Template)
+
+The existing `ContentCreator` composition in `src/remotion/index.tsx` is already registered at **1080×1920** (9:16). The Shorts pipeline forces:
+- `templateId: "ContentCreator"` (already 9:16)
+- `width: 1080, height: 1920`
+- Automatically applies `SmartCaptions` overlay (existing `src/remotion/components/smart-captions.tsx`) with `style: "karaoke"` for maximum Short engagement
+
+The 16:9 source video is rendered inside the 9:16 frame using `OffthreadVideo` with:
+```tsx
+<OffthreadVideo
+  src={clipPath}
+  style={{
+    width: '100%',
+    height: '100%',
+    objectFit: 'cover',
+    objectPosition: `${xOffsetPercent}% center`,  // Adjustable horizontal crop
+  }}
+/>
+```
+
+#### 8.5 Smart Framing (Studio Integration)
+
+The Studio Timeline UI (Sub-Issue 1) adds a "Framing" panel to the Scene Inspector when editing a Shorts clip:
+- Horizontal X-offset slider (0–100%) controlling `objectPosition` on the `OffthreadVideo`
+- Live preview in the `@remotion/player` at 9:16 aspect
+- The offset is stored as `horizontalCropOffset` on the timeline entry
+
+```typescript
+interface VideoClipEntry {
+  // ... existing fields ...
+  horizontalCropOffset?: number;  // 0-100, default 50 (center)
+}
+```
+
+#### 8.6 New Manifest Entry Type
+
+No new timeline entry type is needed — the Shorts pipeline produces a standard `DirectorManifest` using existing entry types (`VideoClipEntry` with crop offset, `TransitionEntry`, overlay entries for `SmartCaptions`). The key difference is:
+- `template: "ContentCreator"` (forces 9:16)
+- `videoClip.horizontalCropOffset` for framing
+- `SmartCaptions` overlay auto-applied
+- Audio ducking on the original track
+
+#### 8.7 MCP Tool
+
+New tool: `create-short` (🔴 high risk)
+
+```typescript
+{
+  name: "create-short",
+  description: "Convert a long-form video into a 30-60 second YouTube Short",
+  parameters: {
+    source: z.string().describe("Path to source video or ID of existing library video"),
+    style: z.enum(["react", "summarize", "highlight"]).optional(),
+    target_duration: z.number().min(15).max(60).default(45),
+    voice_profile: z.string().optional(),
+  }
+}
+```
+
+### Schema Changes
+
+| File | Change |
+|------|--------|
+| `src/video/manifest/manifest-types.ts` | Add `horizontalCropOffset?: number` to `VideoClipEntry` |
+| `src/video/manifest/manifest-schema.ts` | Add Zod field for `horizontalCropOffset` |
+| `src/video/ingestion/index.ts` | Add `mode?: "standard" \| "dense"` to `IngestionOptions` |
+| `src/video/ingestion/scene-detector.ts` | No schema change — existing `minInterval` param suffices |
+
+### New Files
+
+| File | Purpose |
+|------|--------|
+| `src/video/shorts/viral-clip-extractor.ts` | LLM-powered viral segment identification |
+| `src/video/shorts/shorts-voice-pipeline.ts` | Script generation + TTS + audio ducking |
+| `src/video/shorts/shorts-pipeline.ts` | End-to-end orchestrator: ingest → extract → dub → build manifest |
+| `src/mcp/tools/shorts-tools.ts` | `create-short` MCP tool definition |
+| `ui/components/director/studio/framing-panel.tsx` | Horizontal crop offset slider for 9:16 framing |
+
+### Modified Files
+
+| File | Change |
+|------|--------|
+| `src/remotion/components/video-clip-segment.tsx` | Read `horizontalCropOffset` and apply as `objectPosition` on `OffthreadVideo` |
+| `src/remotion/adapter.ts` | Pass `horizontalCropOffset` through to video clip props |
+| `src/remotion/input-props.ts` | Add `horizontalCropOffset` to video clip props schema |
+| `src/api/director.ts` | Add `POST /api/admin/director/shorts` endpoint |
+| `ui/components/director/studio/scene-inspector.tsx` | Embed `FramingPanel` when entry is a video clip in 9:16 mode |
+
+---
+
+## Sub-Issue 9: AI Clickbait Thumbnail Generator
+
+**Goal:** Generate highly clickable, stylized YouTube thumbnails for rendered videos.
+
+**Dependencies:** Sub-Issue 5 (Flux img2img pipeline)
+
+### Implementation
+
+#### 9.1 Thumbnail Generation Flow
+
+```
+Studio UI "Generate Thumbnail" button
+  ↓
+POST /api/admin/director/drafts/:id/thumbnail
+  ↓
+1. LLM selects optimal frame
+   (receives keyframes from manifest + transcript context)
+  ↓
+2. Selected frame → Flux img2img pipeline
+   prompt: "YouTube thumbnail style, highly saturated,
+            expressive, high contrast, vibrant colors"
+   strength: 0.7 (heavy stylization)
+  ↓
+3. React/canvas text overlay (NOT Flux)
+   Bold enticing text based on LLM suggestions
+  ↓
+4. Composite → save as .jpg alongside rendered MP4
+```
+
+#### 9.2 Frame Selection via LLM
+
+New module: `src/video/thumbnails/frame-selector.ts`
+
+```typescript
+interface FrameSelectionResult {
+  framePath: string;        // path to the selected keyframe JPEG
+  timestamp: number;        // seconds into the video
+  rationale: string;        // why this frame was selected
+  suggestedText: string[];  // 1-3 text lines for the thumbnail overlay
+  textPlacement: "top" | "center" | "bottom";
+  textColor: string;        // hex color suggestion
+}
+
+async function selectThumbnailFrame(
+  keyframes: KeyframeInfo[],
+  manifest: DirectorManifest,
+  options?: { model?: string }
+): Promise<FrameSelectionResult>;
+```
+
+The LLM receives:
+- Keyframe thumbnails (batched, base64 — same pattern as `keyframe-analyzer.ts`)
+- Manifest metadata (title, scene descriptions)
+- System prompt: "Select the single most visually striking, emotionally engaging frame that would make a viewer click. Suggest 1-3 bold text lines for overlay."
+
+#### 9.3 Flux img2img Stylization
+
+Uses the `ImageGenService.enhance()` method from Sub-Issue 5:
+
+```typescript
+const stylizedPath = await imageGenService.enhance(
+  selectedFrame.framePath,
+  "YouTube thumbnail style, highly saturated, expressive, high contrast, vibrant colors, professional",
+  { strength: 0.7, num_inference_steps: 8 }  // heavier stylization than standard enhance
+);
+```
+
+#### 9.4 Text Overlay Compositing (React/Canvas)
+
+New module: `src/video/thumbnails/thumbnail-compositor.ts`
+
+**Critical:** Text is rendered via a headless canvas (Node.js `canvas` or `@napi-rs/canvas`), **NOT** via Flux. This ensures crisp, readable text at any resolution.
+
+```typescript
+interface ThumbnailCompositeOptions {
+  backgroundPath: string;       // stylized frame from img2img
+  textLines: string[];           // 1-3 lines of enticing text
+  textPlacement: "top" | "center" | "bottom";
+  textColor: string;
+  textStrokeColor?: string;     // default: black
+  textStrokeWidth?: number;     // default: 4px
+  width: number;                // output width (default: 1280)
+  height: number;               // output height (default: 720)
+  outputPath: string;
+  outputFormat?: "jpeg" | "png"; // default: jpeg, quality 95
+}
+
+async function compositeThumbnail(
+  options: ThumbnailCompositeOptions
+): Promise<string>;  // returns output path
+```
+
+Text rendering:
+- Bold sans-serif font (Impact/Arial Black/Inter Black)
+- White text with black stroke (3-4px) for readability on any background
+- Auto-sized to fill ~60% of thumbnail width
+- Drop shadow for depth
+- Padding from edges
+
+#### 9.5 API Endpoint
+
+```
+POST /api/admin/director/drafts/:id/thumbnail
+Body: { style?: string, textOverride?: string[] }
+Response: { thumbnailPath: string, suggestedText: string[] }
+```
+
+The generated thumbnail is saved alongside the draft's rendered output:
+```
+~/.openzigs/video-output/<draft-id>/
+  ├── output.mp4
+  └── thumbnail.jpg
+```
+
+#### 9.6 Studio UI Integration
+
+Add a "Generate Thumbnail" button to the Studio UI header, next to the "Render" button:
+- Shows a loading spinner during generation
+- Displays the generated thumbnail in a preview panel
+- Allows regeneration with different style prompts
+- Shows the suggested text with editable fields for customization
+- "Download" button to save the thumbnail separately
+
+### New Files
+
+| File | Purpose |
+|------|--------|
+| `src/video/thumbnails/frame-selector.ts` | LLM-powered optimal frame selection |
+| `src/video/thumbnails/thumbnail-compositor.ts` | Canvas-based text overlay compositing |
+| `ui/components/director/studio/thumbnail-panel.tsx` | Thumbnail preview + generate button |
+
+### Modified Files
+
+| File | Change |
+|------|--------|
+| `src/api/director.ts` | Add `POST /drafts/:id/thumbnail` endpoint |
+| `ui/components/director/studio/preview-panel.tsx` | Add thumbnail generate button in header |
+
+### New Dependency
+
+| Package | Purpose |
+|---------|--------|
+| `@napi-rs/canvas` | Headless canvas for Node.js thumbnail text compositing (native, fast, no system deps) |
+
+---
+
 ## Cross-Cutting Concerns
 
 ### Draft Persistence & Migration
@@ -954,6 +1257,21 @@ New events for Studio real-time updates:
 | 14 | `ui/components/director/director-wizard.tsx` | 1 | Redirect to Studio after production |
 | 15 | `ui/components/director/visual-assets-step.tsx` | 2 | Accept video file uploads |
 | 16 | `ui/app/director/page.tsx` | 6 | Add "Import Blog" button |
+| 17 | `src/video/shorts/viral-clip-extractor.ts` | 8 | LLM-powered viral segment identification |
+| 18 | `src/video/shorts/shorts-voice-pipeline.ts` | 8 | Script generation + TTS + audio ducking |
+| 19 | `src/video/shorts/shorts-pipeline.ts` | 8 | End-to-end Shorts orchestrator |
+| 20 | `src/mcp/tools/shorts-tools.ts` | 8 | `create-short` MCP tool |
+| 21 | `ui/components/director/studio/framing-panel.tsx` | 8 | Horizontal crop offset slider |
+| 22 | `src/video/thumbnails/frame-selector.ts` | 9 | LLM-powered frame selection |
+| 23 | `src/video/thumbnails/thumbnail-compositor.ts` | 9 | Canvas text compositing |
+| 24 | `ui/components/director/studio/thumbnail-panel.tsx` | 9 | Thumbnail UI panel |
+
+### Modified Files (Updated)
+
+| # | File | Sub-Issue(s) | Change |
+|---|------|------------|--------|
+| 17 | `src/remotion/components/video-clip-segment.tsx` | 8 | Read `horizontalCropOffset`, apply as `objectPosition` |
+| 18 | `src/video/ingestion/index.ts` | 8 | Add `mode?: "standard" \| "dense"` to IngestionOptions |
 
 ---
 
@@ -967,6 +1285,8 @@ Sub-Issue 3 (Intro/Outro Cards)     ← Depends on Sub-Issue 5 (for "Enhance via
 Sub-Issue 2 (BYOA)                  ← No dependencies, can start immediately
 Sub-Issue 1 (Timeline Studio UI)    ← Depends on: Draft persistence (cross-cutting)
 Sub-Issue 6 (Blog-to-YouTube)       ← Depends on: Sub-Issues 1, 5, 7
+Sub-Issue 8 (Shorts Maker)          ← Depends on: Sub-Issues 1 (framing UI), 5 (img2img, opt.), 7 (pacing)
+Sub-Issue 9 (AI Thumbnails)         ← Depends on: Sub-Issue 5 (img2img pipeline)
 ```
 
 ### Recommended Implementation Order
@@ -975,9 +1295,11 @@ Sub-Issue 6 (Blog-to-YouTube)       ← Depends on: Sub-Issues 1, 5, 7
 2. **Sub-Issue 5** — Flux img2img (standalone, enables enhance features across epic)
 3. **Sub-Issue 4** — Text Overlays (standalone Remotion component work)
 4. **Sub-Issue 3** — Intro/Outro Cards (uses img2img from #5)
-5. **Sub-Issue 1** — Timeline Studio UI (largest, draft persistence + full UI)
-6. **Sub-Issue 2** — BYOA (extends Studio with upload capabilities)
-7. **Sub-Issue 6** — Blog-to-YouTube (integrates everything: Studio, img2img, pacing)
+5. **Sub-Issue 9** — AI Clickbait Thumbnails (uses img2img from #5, standalone otherwise)
+6. **Sub-Issue 1** — Timeline Studio UI (largest, draft persistence + full UI)
+7. **Sub-Issue 2** — BYOA (extends Studio with upload capabilities)
+8. **Sub-Issue 8** — Shorts Maker (requires Studio for framing, plus pacing + img2img)
+9. **Sub-Issue 6** — Blog-to-YouTube (integrates everything: Studio, img2img, pacing)
 
 ---
 
