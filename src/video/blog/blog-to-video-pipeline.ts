@@ -138,8 +138,25 @@ export async function blogToVideo(
   await fs.mkdir(imageOutputDir, { recursive: true });
 
   const imageGenUserConfig = await ImageGenService.loadUserImageGenConfig();
-  const imageService = new ImageGenService({ outputDir: imageOutputDir, ...imageGenUserConfig });
+  let imageService = new ImageGenService({ outputDir: imageOutputDir, ...imageGenUserConfig });
   await imageService.initialize();
+
+  // Pre-flight: verify the image node is actually ready before committing to a
+  // 5-min-per-scene generation loop. In network mode, the remote node accepts
+  // connections even while the model is loading — generating against it hangs
+  // for the full localTimeoutMs on every scene. Fall back to the local sidecar
+  // instead so blog images and AI-gen scenes work without a long stall.
+  if (imageService.isNetworkMode) {
+    const health = await imageService.checkHealth();
+    if (!health.local) {
+      logger.warn(
+        "[BlogToVideo] Network image node not ready (model may still be loading) — " +
+        "falling back to local sidecar for this run",
+      );
+      imageService = new ImageGenService({ outputDir: imageOutputDir, imageGenMode: "local" });
+      await imageService.initialize();
+    }
+  }
 
   let imageWidth = 1024;
   let imageHeight = 576;
