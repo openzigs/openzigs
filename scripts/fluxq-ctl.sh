@@ -128,7 +128,7 @@ cmd_logs() {
 
 cmd_load_model() {
   require_token
-  local model="${1:-flux}"
+  local model="${1:-flux-schnell}"
   local url
   url=$(api_url)
   info "Requesting model load: $model"
@@ -140,7 +140,7 @@ cmd_load_model() {
     || fail "Request failed. Is the server running? Try: ./scripts/fluxq-ctl.sh status"
   echo "$response" | python3 -m json.tool 2>/dev/null || echo "$response"
   echo
-  ok "Model load triggered. This takes ~35–40 min for FLUX."
+  ok "Model load triggered (MFLUX/MLX — typically 30-60s)."
   info "Watch progress: ./scripts/fluxq-ctl.sh logs"
 }
 
@@ -170,7 +170,7 @@ cmd_generate() {
   http_code=$(curl -sf -X POST "$url/generate" \
     -H "Authorization: Bearer $FLUXQ_SECRET_TOKEN" \
     -H "Content-Type: application/json" \
-    -d "{\"prompt\":\"$prompt\",\"width\":512,\"height\":512,\"num_inference_steps\":4}" \
+    -d "{\"prompt\":\"$prompt\",\"width\":512,\"height\":512,\"steps\":4}" \
     --output "$outfile" \
     -w "%{http_code}" 2>/dev/null) \
     || fail "Request failed. Is a model loaded? Run: ./scripts/fluxq-ctl.sh load"
@@ -189,8 +189,13 @@ cmd_sync() {
   if [[ ! -f "$src" ]]; then
     fail "Source not found: $src"
   fi
+  local req_src="$script_dir/../sidecars/image-gen/requirements.txt"
   info "Syncing server.py → $FLUXQ_DIR/server.py"
   cp "$src" "$FLUXQ_DIR/server.py"
+  if [[ -f "$req_src" ]]; then
+    info "Syncing requirements.txt → $FLUXQ_DIR/requirements.txt"
+    cp "$req_src" "$FLUXQ_DIR/requirements.txt"
+  fi
   ok "Synced. Restart to apply: ./scripts/fluxq-ctl.sh restart"
 }
 
@@ -215,7 +220,7 @@ cmd_help() {
   echo "  ${CYAN}restart${NC}            Stop then start"
   echo "  ${CYAN}status${NC}             launchctl state + /health endpoint"
   echo "  ${CYAN}logs${NC}               Tail stdout + stderr logs"
-  echo "  ${CYAN}load [model]${NC}       Trigger model load (flux|sdxl-turbo) [default: flux]"
+  echo "  ${CYAN}load [model]${NC}       Trigger model load (flux-schnell|flux-dev) [default: flux-schnell]"
   echo "  ${CYAN}unload${NC}             Release model from memory"
   echo "  ${CYAN}generate [prompt]${NC}  Send a test generation request"
   echo "  ${CYAN}sync${NC}               Copy server.py from repo to ~/fluxq-node"

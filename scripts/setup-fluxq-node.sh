@@ -86,8 +86,8 @@ brew_ensure() {
   ok "$pkg installed"
 }
 
-# Return the path of the best available Python interpreter (3.10–3.12 preferred).
-# If only 3.13+ is found, installs python@3.12 via Homebrew automatically.
+# Return the path of the best available Python interpreter (3.10+ preferred).
+# MFLUX + MLX support Python 3.10 and newer including 3.13+.
 select_python() {
   # Honour explicit override
   if [[ -n "${FLUXQ_PYTHON:-}" ]]; then
@@ -96,18 +96,18 @@ select_python() {
   fi
 
   # Check candidates in preference order
-  for candidate in python3.12 python3.11 python3.10; do
+  for candidate in python3.12 python3.13 python3.11 python3.10; do
     if command -v "$candidate" >/dev/null 2>&1; then
       echo "$candidate"; return
     fi
   done
 
-  # Check if the system python3 is in a good range (3.10–3.12)
+  # Check if the system python3 is in a good range (3.10+)
   if command -v python3 >/dev/null 2>&1; then
     local major minor
     major=$(python3 -c 'import sys; print(sys.version_info.major)')
     minor=$(python3 -c 'import sys; print(sys.version_info.minor)')
-    if [[ "$major" -eq 3 && "$minor" -ge 10 && "$minor" -le 12 ]]; then
+    if [[ "$major" -eq 3 && "$minor" -ge 10 ]]; then
       echo "python3"; return
     fi
   fi
@@ -115,12 +115,12 @@ select_python() {
   # Nothing suitable — install python@3.12 via Homebrew
   if command -v brew >/dev/null 2>&1; then
     ensure_brew_writable
-    info "No Python 3.10–3.12 found — installing python@3.12 via Homebrew..."
+    info "No Python 3.10+ found — installing python@3.12 via Homebrew..."
     brew install python@3.12
     ok "python@3.12 installed"
     echo "python3.12"
   else
-    fail "Python 3.10–3.12 is required.\nInstall Homebrew (https://brew.sh), then run: brew install python@3.12"
+    fail "Python 3.10+ is required.\nInstall Homebrew (https://brew.sh), then run: brew install python@3.12"
   fi
 }
 
@@ -162,7 +162,7 @@ else
   warn "│  4. Add to $INSTALL_DIR/.env:│"
   warn "│       HF_TOKEN=hf_…                                              │"
   warn "│                                                                  │"
-  warn "│  Alternatively, use sdxl-turbo which needs NO auth.              │"
+  warn "│  Alternatively, MFLUX may cache models locally after first download.  │"
   warn "└────────────────────────────────────────────────────────────┘"
   echo ""
 fi
@@ -205,12 +205,8 @@ if [[ "$PY_MAJOR" -lt 3 ]] || [[ "$PY_MAJOR" -eq 3 && "$PY_MINOR" -lt 10 ]]; the
   fail "Python 3.10+ required, found $("$PYTHON" --version 2>&1)"
 fi
 
-# Ensure build tools needed to compile Python extensions from source
+# Ensure build tools needed to compile Python extensions from source (if needed)
 brew_ensure cmake cmake
-brew_ensure pkg-config pkg-config
-
-# Install sentencepiece system library if available (avoids building from source entirely)
-brew_ensure sentencepiece sentencepiece_trainer 2>/dev/null || true
 
 # Check for Apple Silicon (MPS)
 ARCH=$(uname -m)
@@ -251,13 +247,7 @@ fetch_file "requirements.txt" "requirements.txt"
 
 info "Installing Python dependencies (this may take several minutes on first run)..."
 pip install --upgrade pip wheel setuptools -q
-# --prefer-binary: use pre-built wheels whenever available (avoids source compilation for packages
-# like sentencepiece that don't yet have wheels for newer Python versions).
-#
-# CMAKE_POLICY_VERSION_MINIMUM=3.5: CMake 4.x dropped support for cmake_minimum_required < 3.5.
-# This env var tells CMake 4 to allow old CMakeLists.txt files (like sentencepiece 0.2.0) to
-# configure without failing. Inherited by any cmake subprocess spawned during the pip build.
-CMAKE_POLICY_VERSION_MINIMUM=3.5 pip install --prefer-binary -r requirements.txt
+pip install --prefer-binary -r requirements.txt
 
 ok "Dependencies installed"
 
@@ -309,7 +299,7 @@ if [[ ! -f "$ENV_FILE" ]]; then
 FLUXQ_SECRET_TOKEN=$TOKEN
 IMAGE_GEN_HOST=0.0.0.0
 IMAGE_GEN_PORT=5005
-IMAGE_GEN_MODEL=sdxl-turbo
+IMAGE_GEN_MODEL=flux-schnell
 # IMAGE_GEN_IDLE_TIMEOUT=600
 #
 # HuggingFace token — required for Flux.1 models (gated).

@@ -2714,14 +2714,14 @@ Add API keys for cloud asset sources in your config:
 Presentation Mode (Mode C) produces complete videos from a text topic with zero input media. The pipeline:
 
 1. **Storyboard Generation** — The LLM creates a structured scene plan with title, style anchor, narration, and visual descriptions for each scene
-2. **Image Generation** — Each scene's visual description is sent to Stable Diffusion (local FastAPI sidecar on Apple Silicon / CUDA) with the style anchor prepended for consistency. Falls back to Google Cloud Imagen if local generation is unavailable
+2. **Image Generation** — Each scene's visual description is sent to FLUX.1-schnell (local MFLUX/MLX FastAPI sidecar on Apple Silicon) with the style anchor prepended for consistency. Falls back to Google Cloud Imagen if local generation is unavailable
 3. **Voiceover Synthesis** — Per-scene narration is converted to speech via Google Cloud TTS
 4. **Assembly** — Images, voiceover audio, Ken Burns animations, crossfade transitions, and background music are assembled into a Director Manifest and rendered via Remotion
 
 #### Presentation Mode Prerequisites
 
-- **Python 3.10+** with `torch`, `diffusers`, `transformers`, `accelerate`, `safetensors`, `fastapi`, `uvicorn`, `Pillow` — install via `pip install -r sidecars/image-gen/requirements.txt`
-- **Apple Silicon Mac** (MPS backend) or **NVIDIA GPU** (CUDA) for local image generation
+- **Python 3.10+** with `mflux`, `fastapi`, `uvicorn`, `Pillow` — install via `pip install -r sidecars/image-gen/requirements.txt`
+- **Apple Silicon Mac** (M-series, MLX backend) — NVIDIA/CUDA is not supported with MFLUX
 - **Google Cloud Vertex AI** (optional fallback) — set `GOOGLE_CLOUD_PROJECT` env var and authenticate via `gcloud auth application-default login`
 - The image gen sidecar starts automatically when needed, or run manually: `cd sidecars/image-gen && python server.py`
 
@@ -2801,7 +2801,7 @@ The **Blog to YouTube** tab converts a blog post URL into a complete video:
 2. Optionally configure:
    - **Template** — Minimalist, ContentCreator, Corporate, or TechDemo
    - **Style hint** — Free-text aesthetic direction (e.g., "warm, documentary feel")
-   - **Image provider** — Auto, local (Flux/SDXL), or cloud (Vertex AI)
+   - **Image provider** — Auto, local (FLUX.1 via MFLUX), or cloud (Vertex AI)
 3. Click **Convert to Video**.
 4. The pipeline runs 5 steps:
    - **Extract** — Fetches the blog with SSRF protection (blocked private IPs, restricted protocols) and parses title, images, and text content.

@@ -1106,7 +1106,7 @@ Mode C ("Presentation Mode") is a **zero-input video production pipeline** — t
 └────────────┘     └──────────────────┘     └──────────────────┘     └──────────────┘
                           │                        │                        │
                    ┌──────┴──────┐          ┌──────┴──────┐         ┌──────┴──────┐
-                   │ Scene Plan  │          │ Stable Diff │         │ image_scene │
+                   │ Scene Plan  │          │ FLUX.1/MFLUX│         │ image_scene │
                    │ title,      │          │ (local) or  │         │ timeline    │
                    │ narration,  │          │ Cloud API   │         │ entries +   │
                    │ visual desc │          │ (fallback)  │         │ Ken Burns + │
@@ -1119,12 +1119,12 @@ Mode C ("Presentation Mode") is a **zero-input video production pipeline** — t
 | Module | Path | Purpose |
 |---|---|---|
 | **StoryboardEngine** (#254) | `src/video/generators/storyboard-engine.ts` | LLM-powered scene planner. Takes a topic + optional style/audience hints, returns a structured storyboard with title, `styleAnchor`, and ordered scenes (each with `title`, `narration`, `visualDescription`, `duration`, `rawImageDescription`). |
-| **ImageGenService** (#255) | `src/video/generators/image-gen-service.ts` | Multi-provider image generation (local Stable Diffusion via FastAPI sidecar, cloud GCP Imagen fallback). Supports configurable dimensions, guidance scale, inference steps. Health-checks providers at startup. |
-| **Image Gen Sidecar** (#255) | `sidecars/image-gen/server.py` | FastAPI Python server wrapping `diffusers` + `torch` for local Stable Diffusion inference on Apple Silicon (MPS) or CUDA. Endpoints: `POST /generate`, `GET /health`. |
+| **ImageGenService** (#255) | `src/video/generators/image-gen-service.ts` | Multi-provider image generation (local FLUX.1 via MFLUX/MLX FastAPI sidecar, cloud GCP Imagen fallback). Supports configurable dimensions, guidance scale, inference steps. Health-checks providers at startup. |
+| **Image Gen Sidecar** (#255) | `sidecars/image-gen/server.py` | FastAPI Python server wrapping [MFLUX](https://github.com/filipstrand/mflux) (native MLX) for FLUX.1 inference on Apple Silicon. Endpoints: `POST /generate`, `GET /health`, `GET /models`, `POST /model`, `POST /unload`. |
 | **ImageSceneSegment** (#256) | `src/remotion/components/image-scene-segment.tsx` | Remotion component rendering a single Mode C scene: AI image with Ken Burns pan/zoom + optional per-scene `Audio` voiceover in a `Sequence`. |
 | **KenBurns** (#256) | `src/remotion/components/KenBurns.tsx` | Animated Ken Burns effect using Remotion `interpolate()` — configurable `scaleFrom`/`scaleTo`, `translateX`/`translateY` ranges over the clip's duration. |
 
-Model download behavior for Mode C image generation mirrors the audio sidecar: Python dependencies are installed via `pip`, but diffusion model weights are fetched lazily on first generation/model load and cached under sidecar cache/model directories (git-ignored by default).
+Model download behavior for Mode C image generation mirrors the audio sidecar: Python dependencies are installed via `pip`, but FLUX.1 model weights are downloaded lazily by MFLUX on first generation and cached in `~/.cache/huggingface/` (git-ignored). A HuggingFace token (`HF_TOKEN`) is required to access the gated FLUX.1 models.
 
 #### Remote Image Generation — FluxQ Network Node (#290)
 
@@ -1134,8 +1134,8 @@ Model download behavior for Mode C image generation mirrors the audio sidecar: P
 ┌────────────────────┐      HTTP + Bearer Token       ┌────────────────────┐
 │  Primary Mac       │ ─────────────────────────────▶ │  Remote Mac        │
 │  OpenZigs Server   │    POST /generate              │  FluxQ Sidecar     │
-│  ImageGenService   │    GET  /health                │  (FastAPI + MPS)   │
-│  mode: "network"   │◀── JSON + PNG bytes ────────── │  Flux.1 / SDXL     │
+│  ImageGenService   │    GET  /health                │  (FastAPI + MLX)   │
+│  mode: "network"   │◀── JSON + PNG bytes ────────── │  FLUX.1 (MFLUX)    │
 └────────────────────┘                                └────────────────────┘
 ```
 
