@@ -88,6 +88,15 @@ MODEL_REGISTRY: dict[str, dict] = {
         "recommended_height": 576,
         "description": "FLUX.1 dev — high-quality guidance-distilled via MFLUX",
     },
+    "flux-kontext": {
+        "mflux_alias": "dev-kontext",
+        "model_class": "kontext",
+        "default_steps": 20,
+        "default_guidance": 2.5,
+        "recommended_width": 1024,
+        "recommended_height": 1024,
+        "description": "FLUX.1 Kontext — text-guided semantic image editing via MFLUX",
+    },
 }
 
 # ── Global State ───────────────────────────────────────────────
@@ -105,15 +114,22 @@ _quantization: Optional[int] = 4    # MLX quantization bits: 4, 8, or None
 
 def _create_mflux_model(model_key: str) -> Any:
     """Instantiate an MFLUX model for the given registry key."""
-    from mflux.models.flux.variants.txt2img.flux import Flux1
-
     spec = MODEL_REGISTRY[model_key]
-    alias = spec["mflux_alias"]
+    model_class = spec.get("model_class", "txt2img")
 
-    log.info(f"Loading MFLUX model '{model_key}' (alias={alias}, quantize={_quantization}) ...")
     start = time.monotonic()
 
-    model = Flux1.from_name(alias, quantize=_quantization)
+    if model_class == "kontext":
+        from mflux.models.flux.variants.kontext.flux_kontext import Flux1Kontext
+
+        log.info(f"Loading MFLUX Kontext model (quantize={_quantization}) ...")
+        model = Flux1Kontext(quantize=_quantization)
+    else:
+        from mflux.models.flux.variants.txt2img.flux import Flux1
+
+        alias = spec["mflux_alias"]
+        log.info(f"Loading MFLUX model '{model_key}' (alias={alias}, quantize={_quantization}) ...")
+        model = Flux1.from_name(alias, quantize=_quantization)
 
     elapsed = time.monotonic() - start
     log.info(f"MFLUX model '{model_key}' ready in {elapsed:.1f}s "
@@ -307,6 +323,59 @@ class Img2ImgRequest(BaseModel):
         ge=0.0,
         le=20.0,
         description="Classifier-free guidance scale (default: model-specific)",
+    )
+    seed: Optional[int] = Field(
+        default=None,
+        description="Random seed for reproducibility",
+    )
+
+
+class KontextRequest(BaseModel):
+    """Request body for Kontext text-guided image editing.
+
+    Supply the input image as either:
+    - ``image``      — base64-encoded PNG/JPEG bytes (remote callers)
+    - ``image_path`` — absolute filesystem path on this server (local use)
+    At least one must be provided for image editing.
+    """
+
+    prompt: str = Field(
+        ...,
+        min_length=1,
+        max_length=2000,
+        description="Editing instruction (e.g. 'Add a woman sitting on the hood of the car')",
+    )
+    image: Optional[str] = Field(
+        default=None,
+        description="Base64-encoded source image (PNG/JPEG/WebP).",
+    )
+    image_path: Optional[str] = Field(
+        default=None,
+        description="Absolute path to the input image on this server's filesystem.",
+    )
+    width: int = Field(
+        default=1024,
+        ge=256,
+        le=2048,
+        description="Output image width in pixels (must be divisible by 16)",
+    )
+    height: int = Field(
+        default=1024,
+        ge=256,
+        le=2048,
+        description="Output image height in pixels (must be divisible by 16)",
+    )
+    steps: Optional[int] = Field(
+        default=None,
+        ge=1,
+        le=50,
+        description="Number of inference steps (default: 20)",
+    )
+    guidance: Optional[float] = Field(
+        default=None,
+        ge=0.0,
+        le=20.0,
+        description="Guidance scale (default: 2.5). Recommended range: 2.5–4.0.",
     )
     seed: Optional[int] = Field(
         default=None,
@@ -643,6 +712,115 @@ async def img2img(req: Img2ImgRequest):
             "X-Generation-Time": f"{elapsed:.2f}s",
             "X-Image-Size": f"{width}x{height}",
             "X-Model": _model_name or "unknown",
+            "X-Seed": str(seed),
+        },
+    )
+
+
+@app.post("/kontext", response_class=Response, dependencies=[Depends(verify_token)])
+async def kontext_edit(req: KontextRequest):
+    """Edit an image using FLUX.1 Kontext text-guided editing.
+
+    Kontext can add, remove, or modify objects in an image using natural
+    language instructions — unlike img2img which only restyles.
+
+    Supply the source image as either:
+    - ``image``      — base64-encoded PNG/JPEG (remote callers)
+    - ``image_path`` — filesystem path on this server (local use)
+
+    Returns a PNG image as binary response.
+    """
+    import os
+    import base64
+    import tempfile
+    global _last_used
+
+    if not _ready:
+        raise HTTPException(status_code=503, detail="Server not ready")
+    if _loading:
+        raise HTTPException(status_code=409, detail="A model is currently being loaded")
+
+    # ── Resolve source image to a local path ───────────────────
+    tmp_file = None
+    if req.image:
+        try:
+            img_bytes = base64.b64decode(req.image, validate=True)
+        except Exception:
+            raise HTTPException(status_code=400, detail="'image' is not valid base64")
+        if len(img_bytes) > 20 * 1024 * 1024:
+            raise HTTPException(status_code=413, detail="Image exceeds 20 MB limit")
+        suffix = ".jpg" if img_bytes[:3] == b"\xff\xd8\xff" else ".png"
+        tmp_file = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+        tmp_file.write(img_bytes)
+        tmp_file.close()
+        source_path = tmp_file.name
+    elif req.image_path:
+        if not os.path.isfile(req.image_path):
+            raise HTTPException(status_code=400, detail=f"image_path not found: {req.image_path}")
+        source_path = req.image_path
+    else:
+        raise HTTPException(
+            status_code=422,
+            detail="Provide either 'image' (base64) or 'image_path' (server filesystem path)",
+        )
+
+    # ── Always use flux-kontext model ──────────────────────────
+    kontext_key = "flux-kontext"
+    if not _model_loaded or _model_name != kontext_key:
+        log.info(f"Loading Kontext model for /kontext request ...")
+        load_time = _load_model(kontext_key)
+        log.info(f"Kontext model ready in {load_time:.1f}s")
+
+    assert _model is not None
+
+    width = (req.width // 16) * 16
+    height = (req.height // 16) * 16
+
+    spec = MODEL_REGISTRY[kontext_key]
+    steps = req.steps or spec["default_steps"]
+    guidance = req.guidance if req.guidance is not None else spec["default_guidance"]
+    seed = req.seed if req.seed is not None else random.randint(0, 2**32 - 1)
+
+    log.info(
+        f"kontext: prompt='{req.prompt[:80]}...' "
+        f"size={width}x{height} steps={steps} guidance={guidance} seed={seed} "
+        f"input={'<base64>' if req.image else source_path}"
+    )
+    start = time.monotonic()
+
+    try:
+        result = _model.generate_image(
+            seed=seed,
+            prompt=req.prompt,
+            num_inference_steps=steps,
+            height=height,
+            width=width,
+            guidance=guidance,
+            image_path=source_path,
+        )
+        pil_image = result.image
+    except Exception as e:
+        log.error(f"kontext failed: {e}")
+        raise HTTPException(status_code=500, detail=f"kontext editing failed: {str(e)}")
+    finally:
+        if tmp_file and os.path.exists(tmp_file.name):
+            os.unlink(tmp_file.name)
+
+    elapsed = time.monotonic() - start
+    _last_used = time.monotonic()
+    log.info(f"kontext done in {elapsed:.1f}s ({width}x{height})")
+
+    buf = io.BytesIO()
+    pil_image.save(buf, format="PNG", optimize=True)
+    png_bytes = buf.getvalue()
+
+    return Response(
+        content=png_bytes,
+        media_type="image/png",
+        headers={
+            "X-Generation-Time": f"{elapsed:.2f}s",
+            "X-Image-Size": f"{width}x{height}",
+            "X-Model": "flux-kontext",
             "X-Seed": str(seed),
         },
     )

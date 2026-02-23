@@ -1713,8 +1713,11 @@ Respond with ONLY a valid JSON array. No markdown, no explanation.`;
         await imageService.initialize();
 
         const stylePrompt = style ?? "YouTube thumbnail style, highly saturated, expressive, high contrast, vibrant colors, professional";
-        const enhanced = await imageService.enhanceImage(frameResult.framePath, stylePrompt, {
-          strength: 0.7,
+        const enhanced = await imageService.kontextEdit(frameResult.framePath, stylePrompt, {
+          width: 1280,
+          height: 720,
+          steps: 20,
+          guidance: 2.5,
         });
         stylizedPath = enhanced.filePath;
       } catch (enhanceErr) {
@@ -2293,14 +2296,15 @@ Respond with ONLY a valid JSON array. No markdown, no explanation.`;
         suggestedText = frame.text;
 
         const enhancePrompt = prompt ?? style ?? "YouTube thumbnail style, highly saturated, expressive, high contrast, vibrant colors, professional";
-        try {
-          const enhanced = await imageService.enhanceImage(frame.path, enhancePrompt, { strength: 0.65 });
-          backgroundPath = enhanced.filePath;
-          frameInfo.rationale = `Enhanced with: "${enhancePrompt.slice(0, 80)}"`;
-        } catch (enhanceErr) {
-          logger.warn(`[Director API] Thumbnail img2img enhancement failed, using raw frame: ${enhanceErr instanceof Error ? enhanceErr.message : String(enhanceErr)}`);
-          backgroundPath = frame.path;
-        }
+        const enhanced = await imageService.kontextEdit(frame.path, enhancePrompt, {
+          width: 1280,
+          height: 720,
+          steps: 20,
+          guidance: 2.5,
+        });
+        backgroundPath = enhanced.filePath;
+        frameInfo.rationale = `Enhanced with: "${enhancePrompt.slice(0, 80)}"`;
+        logger.info(`[Director API] Thumbnail img2img enhanced: ${enhanced.filePath} (${enhanced.generationTimeMs}ms)`);
 
       } else {
         // flux-generate: completely new image from text prompt

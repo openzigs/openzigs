@@ -466,7 +466,7 @@ export class ImageGenService {
   async enhanceImage(
     imagePath: string,
     prompt: string,
-    options?: { strength?: number; model?: string; seed?: number },
+    options?: { strength?: number; model?: string; seed?: number; width?: number; height?: number; steps?: number; guidance_scale?: number },
   ): Promise<ImageGenResult> {
     const start = Date.now();
     const url = `${this.effectiveSidecarUrl}/img2img`;
@@ -486,6 +486,10 @@ export class ImageGenService {
       strength,
       ...(options?.model ? { model: options.model } : {}),
       ...(options?.seed !== undefined ? { seed: options.seed } : {}),
+      ...(options?.width ? { width: options.width } : {}),
+      ...(options?.height ? { height: options.height } : {}),
+      ...(options?.steps ? { steps: options.steps } : {}),
+      ...(options?.guidance_scale !== undefined ? { guidance_scale: options.guidance_scale } : {}),
     });
 
     const headers: Record<string, string> = { "Content-Type": "application/json" };
@@ -512,6 +516,68 @@ export class ImageGenService {
     logger.info(`[ImageGenService] img2img enhancement in ${elapsed}ms (strength=${strength})`);
 
     return { filePath, provider: "local", generationTimeMs: elapsed, width: 0, height: 0 };
+  }
+
+  /**
+   * Edit an image using FLUX.1 Kontext text-guided semantic editing.
+   * Unlike img2img (which only restyles), Kontext can add, remove, or modify
+   * objects in the scene based on natural language instructions.
+   *
+   * @param imagePath - Path to the source image (PNG/JPEG/WebP)
+   * @param prompt    - Editing instruction (e.g. "Add a woman sitting on the hood")
+   * @param options   - seed, width, height, steps, guidance
+   * @returns Result with the edited image file path
+   */
+  async kontextEdit(
+    imagePath: string,
+    prompt: string,
+    options?: { seed?: number; width?: number; height?: number; steps?: number; guidance?: number },
+  ): Promise<ImageGenResult> {
+    const start = Date.now();
+    const url = `${this.effectiveSidecarUrl}/kontext`;
+
+    const imageBuffer = await fs.readFile(imagePath);
+    const maxBytes = 20 * 1024 * 1024;
+    if (imageBuffer.length > maxBytes) {
+      throw new Error(`Image too large: ${imageBuffer.length} bytes (max ${maxBytes})`);
+    }
+
+    const base64Image = imageBuffer.toString("base64");
+
+    const body = JSON.stringify({
+      prompt,
+      image: base64Image,
+      ...(options?.seed !== undefined ? { seed: options.seed } : {}),
+      ...(options?.width ? { width: options.width } : {}),
+      ...(options?.height ? { height: options.height } : {}),
+      ...(options?.steps ? { steps: options.steps } : {}),
+      ...(options?.guidance !== undefined ? { guidance: options.guidance } : {}),
+    });
+
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (this.isNetworkMode && this.config.networkNodeToken) {
+      headers["Authorization"] = `Bearer ${this.config.networkNodeToken}`;
+    }
+
+    const response = await fetch(url, {
+      method: "POST",
+      headers,
+      body,
+      signal: AbortSignal.timeout(this.config.localTimeoutMs),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => "unknown");
+      throw new Error(`Kontext sidecar returned ${response.status}: ${errorText}`);
+    }
+
+    const resultBuffer = Buffer.from(await response.arrayBuffer());
+    const filePath = await this.saveImage(resultBuffer, "kontext");
+
+    const elapsed = Date.now() - start;
+    logger.info(`[ImageGenService] Kontext edit in ${elapsed}ms`);
+
+    return { filePath, provider: "local", generationTimeMs: elapsed, width: options?.width ?? 0, height: options?.height ?? 0 };
   }
 
   private async checkLocalHealth(): Promise<boolean> {

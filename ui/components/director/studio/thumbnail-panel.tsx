@@ -307,7 +307,7 @@ export function ThumbnailPanel({ draftId }: ThumbnailPanelProps) {
                       className="flex w-full items-center justify-center gap-1.5 rounded-md bg-primary px-3 py-2 text-xs font-medium text-primary-foreground hover:bg-primary/90 transition disabled:opacity-50"
                     >
                       {generating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Wand2 className="h-3.5 w-3.5" />}
-                      {generating ? "Enhancing…" : "Enhance Frame with Flux"}
+                      {generating ? "Editing…" : "Edit Frame with Kontext"}
                     </button>
                   )}
                   <div className="flex gap-1.5">
