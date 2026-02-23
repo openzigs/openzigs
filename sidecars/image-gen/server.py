@@ -244,6 +244,76 @@ class HealthResponse(BaseModel):
     available_models: list[str] = []
 
 
+class Img2ImgRequest(BaseModel):
+    """Request body for image-to-image generation.
+
+    Supply the input image as either:
+    - ``image``      — base64-encoded PNG/JPEG bytes (used by ImageGenService / remote callers)
+    - ``image_path`` — absolute filesystem path on this server (local/same-machine use)
+    Exactly one must be provided.
+    """
+
+    prompt: str = Field(
+        ...,
+        min_length=1,
+        max_length=2000,
+        description="Text prompt describing the desired output image",
+    )
+    image: Optional[str] = Field(
+        default=None,
+        description="Base64-encoded source image (PNG/JPEG/WebP). Use this when calling from a remote machine.",
+    )
+    image_path: Optional[str] = Field(
+        default=None,
+        description="Absolute path to the input image on this server's filesystem. Use for local calls.",
+    )
+    # 'strength' is the field name ImageGenService sends; 'image_strength' is the alias
+    strength: Optional[float] = Field(
+        default=None,
+        ge=0.01,
+        le=1.0,
+        description="How much to transform the input (0=no change, 1=ignore input). Alias: image_strength.",
+    )
+    image_strength: Optional[float] = Field(
+        default=None,
+        ge=0.01,
+        le=1.0,
+        description="Alias for 'strength'.",
+    )
+    model: Optional[str] = Field(
+        default=None,
+        description="Model to use. Defaults to the currently loaded model or server default.",
+    )
+    width: int = Field(
+        default=1024,
+        ge=256,
+        le=2048,
+        description="Output image width in pixels (must be divisible by 16)",
+    )
+    height: int = Field(
+        default=1024,
+        ge=256,
+        le=2048,
+        description="Output image height in pixels (must be divisible by 16)",
+    )
+    steps: Optional[int] = Field(
+        default=None,
+        ge=1,
+        le=50,
+        description="Number of inference steps (default: model-specific)",
+    )
+    guidance_scale: Optional[float] = Field(
+        default=None,
+        ge=0.0,
+        le=20.0,
+        description="Classifier-free guidance scale (default: model-specific)",
+    )
+    seed: Optional[int] = Field(
+        default=None,
+        description="Random seed for reproducibility",
+    )
+
+
 class ModelRequest(BaseModel):
     """Request body for model loading/switching."""
 
@@ -440,6 +510,127 @@ async def generate(req: GenerateRequest):
     elapsed = time.monotonic() - start
     _last_used = time.monotonic()
     log.info(f"Generated in {elapsed:.1f}s ({width}x{height}, model={_model_name})")
+
+    buf = io.BytesIO()
+    pil_image.save(buf, format="PNG", optimize=True)
+    png_bytes = buf.getvalue()
+
+    return Response(
+        content=png_bytes,
+        media_type="image/png",
+        headers={
+            "X-Generation-Time": f"{elapsed:.2f}s",
+            "X-Image-Size": f"{width}x{height}",
+            "X-Model": _model_name or "unknown",
+            "X-Seed": str(seed),
+        },
+    )
+
+
+@app.post("/img2img", response_class=Response, dependencies=[Depends(verify_token)])
+async def img2img(req: Img2ImgRequest):
+    """Transform an existing image guided by a text prompt.
+
+    Supply the source image as either:
+    - ``image``      — base64-encoded PNG/JPEG (used by ImageGenService / remote callers)
+    - ``image_path`` — absolute filesystem path on this server (local use)
+
+    Returns a PNG image as binary response.
+    """
+    import os
+    import base64
+    import tempfile
+    global _last_used
+
+    if not _ready:
+        raise HTTPException(status_code=503, detail="Server not ready")
+    if _loading:
+        raise HTTPException(status_code=409, detail="A model is currently being loaded")
+
+    # ── Resolve source image to a local path ───────────────────
+    tmp_file = None
+    if req.image:
+        # Decode base64 → temp file (MFLUX needs a filesystem path)
+        try:
+            img_bytes = base64.b64decode(req.image, validate=True)
+        except Exception:
+            raise HTTPException(status_code=400, detail="'image' is not valid base64")
+        if len(img_bytes) > 20 * 1024 * 1024:
+            raise HTTPException(status_code=413, detail="Image exceeds 20 MB limit")
+        # Sniff format so MFLUX gets the right extension
+        suffix = ".jpg" if img_bytes[:3] == b"\xff\xd8\xff" else ".png"
+        tmp_file = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+        tmp_file.write(img_bytes)
+        tmp_file.close()
+        source_path = tmp_file.name
+    elif req.image_path:
+        if not os.path.isfile(req.image_path):
+            raise HTTPException(status_code=400, detail=f"image_path not found: {req.image_path}")
+        source_path = req.image_path
+    else:
+        raise HTTPException(
+            status_code=422,
+            detail="Provide either 'image' (base64) or 'image_path' (server filesystem path)",
+        )
+
+    # 'strength' (ImageGenService) and 'image_strength' are both accepted
+    effective_strength = req.strength if req.strength is not None else (
+        req.image_strength if req.image_strength is not None else 0.8
+    )
+
+    # ── Lazy load / model switch ───────────────────────────────
+    requested_model = req.model or (_model_name if _model_loaded else _default_model)
+    if requested_model not in MODEL_REGISTRY:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown model: {requested_model}. Available: {list(MODEL_REGISTRY.keys())}",
+        )
+
+    if not _model_loaded or _model_name != requested_model:
+        log.info(f"Lazy-loading model '{requested_model}' for img2img request ...")
+        load_time = _load_model(requested_model)
+        log.info(f"Model '{requested_model}' ready in {load_time:.1f}s")
+
+    assert _model is not None
+
+    width = (req.width // 16) * 16
+    height = (req.height // 16) * 16
+
+    spec = MODEL_REGISTRY[requested_model]
+    steps = req.steps or spec["default_steps"]
+    guidance = req.guidance_scale if req.guidance_scale is not None else spec["default_guidance"]
+    seed = req.seed if req.seed is not None else random.randint(0, 2**32 - 1)
+
+    log.info(
+        f"img2img: prompt='{req.prompt[:80]}...' "
+        f"model={_model_name} size={width}x{height} "
+        f"steps={steps} guidance={guidance} seed={seed} "
+        f"strength={effective_strength} input={'<base64>' if req.image else source_path}"
+    )
+    start = time.monotonic()
+
+    try:
+        result = _model.generate_image(
+            seed=seed,
+            prompt=req.prompt,
+            num_inference_steps=steps,
+            height=height,
+            width=width,
+            guidance=guidance,
+            image_path=source_path,
+            image_strength=effective_strength,
+        )
+        pil_image = result.image
+    except Exception as e:
+        log.error(f"img2img failed: {e}")
+        raise HTTPException(status_code=500, detail=f"img2img failed: {str(e)}")
+    finally:
+        if tmp_file and os.path.exists(tmp_file.name):
+            os.unlink(tmp_file.name)
+
+    elapsed = time.monotonic() - start
+    _last_used = time.monotonic()
+    log.info(f"img2img done in {elapsed:.1f}s ({width}x{height}, model={_model_name})")
 
     buf = io.BytesIO()
     pil_image.save(buf, format="PNG", optimize=True)
