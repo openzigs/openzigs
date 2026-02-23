@@ -158,8 +158,11 @@ export async function blogToVideo(
     }
   }
 
-  // Fixed 16:9 video frame resolution — do not query sidecar (its native training
-  // resolution overrides this with e.g. 1024x1024 for Flux, costing 3-5x more time).
+  // Fixed 16:9 video frame resolution — do not query sidecar.
+  // The sidecar's "recommended resolution" is intended for standalone
+  // generation (e.g. Flux native 1024x1024) which is square and slows down
+  // MPS-based models by 3–5×. For video we target 768×432 and keep generation
+  // fast.
   const imageWidth = 768;
   const imageHeight = 432;
 
