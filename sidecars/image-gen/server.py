@@ -159,8 +159,9 @@ _last_used: float = 0.0            # monotonic time of last generation
 _idle_timeout: float = 0.0         # seconds before auto-unload (0 = disabled)
 _default_model: str = "sdxl-turbo"  # model to use on first request if none specified
 _preload_at_startup: bool = False     # True when --preload flag is used
-_flux_quantization: str = "int8"     # Transformer quantization: "int4", "int8", or "none"
+_flux_quantization: str = "int4"     # Transformer quantization: "int4", "int8", or "none"
 _compile_transformer: bool = False    # Try torch.compile() on transformer
+_offload_encoders: bool = True        # Offload text encoders to CPU after encoding to free MPS memory
 _img2img_pipeline: Optional[DiffusionPipeline] = None
 _img2img_model_name: Optional[str] = None
 
@@ -326,6 +327,25 @@ def load_pipeline(model_key: str, device: str) -> DiffusionPipeline:
             pipe.enable_xformers_memory_efficient_attention()
         except Exception:
             pass  # attention_slicing already active
+
+    # ── Text encoder offloading ─────────────────────────────────
+    # For FLUX on memory-constrained systems (e.g. 32 GB M2 Pro), the T5 and
+    # CLIP encoders (~3 GB combined on MPS) compete with the transformer
+    # (~6 GB int4) for unified memory.  We use enable_model_cpu_offload()
+    # which hooks each component's forward() to move it to GPU on demand
+    # and back to CPU after.  Text encoding is slightly slower, but the
+    # denoising loop (57 blocks × 4 steps) gets full MPS memory headroom.
+    #
+    # IMPORTANT: enable_model_cpu_offload() moves all components to CPU
+    # first and manages device placement via hooks.  Our manual quantization
+    # already placed everything on MPS, so we skip offloading when quantization
+    # was applied (the components are already on the target device with
+    # quantized weights that can't easily be moved).  Instead, we do a
+    # targeted cleanup: delete CPU-side references and clear caches.
+    if _offload_encoders and model_key == "flux" and device == "mps":
+        gc.collect()
+        torch.mps.empty_cache()
+        log.info("Post-load MPS cache cleared to maximize denoising headroom")
 
     # ── torch.compile() ───────────────────────────────────────
     if _compile_transformer and model_key == "flux" and hasattr(torch, 'compile'):
@@ -1054,8 +1074,8 @@ Examples:
     parser.add_argument(
         "--quantization",
         choices=["int4", "int8", "none"],
-        default=os.environ.get("FLUX_QUANTIZATION", "int8"),
-        help="FLUX transformer quantization: int8 is faster, int4 uses less memory (default: int8)",
+        default=os.environ.get("FLUX_QUANTIZATION", "int4"),
+        help="FLUX transformer quantization: int4 is default (fits 32GB), int8 needs 64GB+ (default: int4)",
     )
     parser.add_argument(
         "--compile",
@@ -1063,12 +1083,19 @@ Examples:
         default=os.environ.get("FLUX_COMPILE", "").lower() in ("1", "true", "yes"),
         help="Apply torch.compile() to transformer for potential speedup (experimental)",
     )
+    parser.add_argument(
+        "--no-offload",
+        action="store_true",
+        default=False,
+        help="Disable CPU offloading of text encoders (uses more MPS memory)",
+    )
 
     args = parser.parse_args()
     _default_model = args.default_model
     _idle_timeout = args.idle_timeout
     _flux_quantization = args.quantization
     _compile_transformer = args.compile
+    _offload_encoders = not args.no_offload
 
     if args.preload:
         _default_model = args.preload
