@@ -107,18 +107,10 @@ export const createVideoTools = ({ copilot, voiceService }: VideoToolsOptions): 
           const fps = 30;
           const templateId = (template as "Minimalist" | "ContentCreator" | "Corporate" | "TechDemo") ?? "Minimalist";
 
-          // Query sidecar for recommended resolution (falls back to 1024x576)
-          let imageWidth = 1024;
-          let imageHeight = 576;
-          try {
-            const sidecarHealth = await imageService.getRecommendedResolution();
-            if (sidecarHealth) {
-              imageWidth = sidecarHealth.width;
-              imageHeight = sidecarHealth.height;
-            }
-          } catch {
-            // Use defaults if sidecar health check fails
-          }
+          // Fixed 16:9 video frame resolution — do not query sidecar (its native training
+          // resolution overrides this with e.g. 1024x1024 for Flux, costing 3-5x more time).
+          const imageWidth = 768;
+          const imageHeight = 432;
 
           // Build timeline entries for the DirectorManifest
           const timeline: Array<import("../../video/manifest/manifest-types.js").ImageSceneEntry | import("../../video/manifest/manifest-types.js").TransitionEntry> = [];

@@ -903,18 +903,10 @@ Respond with ONLY a valid JSON array. No explanation. Example:
         const isAssetsOnlyMode = !!assetsOnlyMode && !!visualAssets && visualAssets.length > 0;
         const lastSceneIndex = storyboard.scenes.length - 1;
 
-        // Query sidecar for recommended resolution (falls back to 1024x576)
-        let imageWidth = 1024;
-        let imageHeight = 576;
-        try {
-          const sidecarHealth = await imageService.getRecommendedResolution();
-          if (sidecarHealth) {
-            imageWidth = sidecarHealth.width;
-            imageHeight = sidecarHealth.height;
-          }
-        } catch {
-          // Use defaults if sidecar health check fails
-        }
+        // Fixed 16:9 video frame resolution — do not query sidecar (its native training
+        // resolution overrides this with e.g. 1024x1024 for Flux, costing 3-5x more time).
+        const imageWidth = 768;
+        const imageHeight = 432;
         logger.info(`[Director API] Image generation resolution: ${imageWidth}x${imageHeight}`);
 
         const fps = 30;
