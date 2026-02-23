@@ -133,6 +133,7 @@ MODEL_REGISTRY: dict[str, dict] = {
         "default_guidance": 0.0,
         "recommended_width": 1024,
         "recommended_height": 576,
+        "max_sequence_length": 256,
         "description": "Flux.1 schnell — 4-step distilled, fast inference",
     },
     "sdxl-turbo": {
@@ -158,6 +159,8 @@ _last_used: float = 0.0            # monotonic time of last generation
 _idle_timeout: float = 0.0         # seconds before auto-unload (0 = disabled)
 _default_model: str = "sdxl-turbo"  # model to use on first request if none specified
 _preload_at_startup: bool = False     # True when --preload flag is used
+_flux_quantization: str = "int8"     # Transformer quantization: "int4", "int8", or "none"
+_compile_transformer: bool = False    # Try torch.compile() on transformer
 _img2img_pipeline: Optional[DiffusionPipeline] = None
 _img2img_model_name: Optional[str] = None
 
@@ -249,7 +252,7 @@ def load_pipeline(model_key: str, device: str) -> DiffusionPipeline:
     # device creates native packed weights (TinyGemm MPS format) and
     # avoids the catastrophically slow CPU→MPS TinyGemmPackedTensor
     # unpack→repack that took 30+ min per model load.
-    needs_quantization = model_key == "flux" and device in ("mps", "cuda")
+    needs_quantization = model_key == "flux" and device in ("mps", "cuda") and _flux_quantization != "none"
 
     if needs_quantization:
         pipe = loader_cls.from_pretrained(repo_id, **pretrained_kwargs)
@@ -264,8 +267,10 @@ def load_pipeline(model_key: str, device: str) -> DiffusionPipeline:
             log.info(f"  Transformer on {device} in {time.monotonic() - move_start:.1f}s")
 
             quant_start = time.monotonic()
-            log.info("Quantizing transformer to int4 on device (excluding proj_out) ...")
-            quantize(pipe.transformer, weights=qint4, exclude="proj_out")
+            qtype = qint4 if _flux_quantization == "int4" else qint8
+            qlabel = "int4" if _flux_quantization == "int4" else "int8"
+            log.info(f"Quantizing transformer to {qlabel} on device (excluding proj_out) ...")
+            quantize(pipe.transformer, weights=qtype, exclude="proj_out")
             freeze(pipe.transformer)
             gc.collect()
             if device == "mps":
@@ -322,27 +327,42 @@ def load_pipeline(model_key: str, device: str) -> DiffusionPipeline:
         except Exception:
             pass  # attention_slicing already active
 
+    # ── torch.compile() ───────────────────────────────────────
+    if _compile_transformer and model_key == "flux" and hasattr(torch, 'compile'):
+        try:
+            log.info("Compiling transformer with torch.compile() ...")
+            compile_start = time.monotonic()
+            pipe.transformer = torch.compile(pipe.transformer)
+            log.info(f"  torch.compile() applied in {time.monotonic() - compile_start:.1f}s "
+                     "(first inference will trigger actual compilation)")
+        except Exception as e:
+            log.warning(f"torch.compile() failed, using eager mode: {e}")
+
     elapsed = time.monotonic() - start
+    quantized_label = _flux_quantization if model_key == 'flux' and needs_quantization else 'none'
     log.info(f"Model ready in {elapsed:.1f}s (device={device}, dtype={dtype}, "
-             f"quantized={'int4' if model_key == 'flux' else 'none'})")
+             f"quantized={quantized_label})")
 
     return pipe
 
 
 def warmup_pipeline(pipe: DiffusionPipeline, model_key: str) -> None:
     """Run a single inference pass to pre-warm the pipeline and shader compilation."""
-    spec = MODEL_REGISTRY[model_key]
     log.info("Warming up pipeline (first inference compiles MPS shaders) ...")
     start = time.monotonic()
     try:
         # Tiny warmup image at minimal resolution
-        _ = pipe(
-            prompt="warmup test",
-            width=256,
-            height=256,
-            num_inference_steps=1,
-            guidance_scale=0.0,
-        ).images[0]
+        warmup_kwargs = {
+            "prompt": "warmup test",
+            "width": 256,
+            "height": 256,
+            "num_inference_steps": 1,
+            "guidance_scale": 0.0,
+        }
+        spec = MODEL_REGISTRY.get(model_key, {})
+        if "max_sequence_length" in spec:
+            warmup_kwargs["max_sequence_length"] = spec["max_sequence_length"]
+        _ = pipe(**warmup_kwargs).images[0]
         elapsed = time.monotonic() - start
         log.info(f"Warmup completed in {elapsed:.1f}s")
     except Exception as e:
@@ -663,7 +683,11 @@ async def switch_model(req: ModelRequest):
         )
 
     elapsed = _load_model(req.model)
-    quantized = "int4" if req.model == "flux" else "none"
+    # report actual quantization setting rather than hardcoded int4
+    if req.model == "flux" and _flux_quantization != "none":
+        quantized = _flux_quantization
+    else:
+        quantized = "none"
 
     if elapsed == 0.0:
         log.info(f"Model '{req.model}' already loaded")
@@ -763,6 +787,8 @@ async def generate(req: GenerateRequest):
         }
         if req.negative_prompt and _model_name != "flux":
             gen_kwargs["negative_prompt"] = req.negative_prompt
+        if _model_name == "flux" and "max_sequence_length" in spec:
+            gen_kwargs["max_sequence_length"] = spec["max_sequence_length"]
 
         result = _pipeline(**gen_kwargs)
         image: Image.Image = result.images[0]  # type: ignore[union-attr]
@@ -978,7 +1004,8 @@ async def img2img(req: Img2ImgRequest):
 # ── CLI Entry Point ────────────────────────────────────────────
 def main():
     """Parse CLI args and start the sidecar server."""
-    global _default_model, _idle_timeout
+    global _default_model, _idle_timeout, _flux_quantization, _compile_transformer
+    global _preload_at_startup
 
     parser = argparse.ArgumentParser(
         description="OpenZigs Image Generation Sidecar",
@@ -1024,10 +1051,24 @@ Examples:
             "(0 = disabled, env: IMAGE_GEN_IDLE_TIMEOUT)"
         ),
     )
+    parser.add_argument(
+        "--quantization",
+        choices=["int4", "int8", "none"],
+        default=os.environ.get("FLUX_QUANTIZATION", "int8"),
+        help="FLUX transformer quantization: int8 is faster, int4 uses less memory (default: int8)",
+    )
+    parser.add_argument(
+        "--compile",
+        action="store_true",
+        default=os.environ.get("FLUX_COMPILE", "").lower() in ("1", "true", "yes"),
+        help="Apply torch.compile() to transformer for potential speedup (experimental)",
+    )
 
     args = parser.parse_args()
     _default_model = args.default_model
     _idle_timeout = args.idle_timeout
+    _flux_quantization = args.quantization
+    _compile_transformer = args.compile
 
     if args.preload:
         _default_model = args.preload
@@ -1040,6 +1081,7 @@ Examples:
     log.info(
         f"Starting sidecar: default_model={_default_model}, "
         f"host={args.host}, port={args.port}, "
+        f"quantization={_flux_quantization}, compile={_compile_transformer}, "
         f"auth={'enabled' if _secret_token else 'disabled'}"
     )
     log.info(f"PyTorch version: {torch.__version__}")
