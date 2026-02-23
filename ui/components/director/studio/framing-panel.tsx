@@ -1,20 +1,24 @@
 "use client";
 
 import { useState, useCallback } from "react";
-import { Move, RotateCcw } from "lucide-react";
+import { Move, RotateCcw, Maximize2, Crop } from "lucide-react";
 
 interface FramingPanelProps {
   /** Current horizontal offset (0–100, 50 = center) */
   offset: number;
   /** Callback when user adjusts the offset */
   onChange: (offset: number) => void;
+  /** Fit mode: "cover" crops to fill, "contain" shows full frame with blur bg */
+  fitMode?: "cover" | "contain";
+  /** Callback when fit mode changes */
+  onFitModeChange?: (mode: "cover" | "contain") => void;
 }
 
 /**
  * Horizontal crop offset slider for 9:16 framing of 16:9 source video.
  * Shows in the Scene Inspector when editing a Shorts video clip.
  */
-export function FramingPanel({ offset, onChange }: FramingPanelProps) {
+export function FramingPanel({ offset, onChange, fitMode = "cover", onFitModeChange }: FramingPanelProps) {
   const [localOffset, setLocalOffset] = useState(offset);
 
   const handleChange = useCallback(
@@ -47,8 +51,38 @@ export function FramingPanel({ offset, onChange }: FramingPanelProps) {
         </button>
       </div>
 
+      {/* Fit mode toggle */}
+      {onFitModeChange && (
+        <div className="mb-3 flex gap-1 rounded-md bg-muted p-0.5">
+          <button
+            onClick={() => onFitModeChange("contain")}
+            className={`flex flex-1 items-center justify-center gap-1.5 rounded px-2 py-1.5 text-[10px] font-medium transition ${
+              fitMode === "contain"
+                ? "bg-background text-foreground shadow-sm"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+            title="Show full frame with blurred background"
+          >
+            <Maximize2 className="h-3 w-3" />
+            Fit (Blur BG)
+          </button>
+          <button
+            onClick={() => onFitModeChange("cover")}
+            className={`flex flex-1 items-center justify-center gap-1.5 rounded px-2 py-1.5 text-[10px] font-medium transition ${
+              fitMode === "cover"
+                ? "bg-background text-foreground shadow-sm"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+            title="Crop to fill 9:16 frame"
+          >
+            <Crop className="h-3 w-3" />
+            Crop
+          </button>
+        </div>
+      )}
+
       {/* Visual preview of crop region */}
-      <div className="relative mb-3 h-12 overflow-hidden rounded bg-muted">
+      <div className={`relative mb-3 h-12 overflow-hidden rounded bg-muted ${fitMode === "contain" ? "opacity-40" : ""}`}>
         {/* 16:9 source representation */}
         <div className="absolute inset-0 flex items-center justify-center">
           <div className="relative h-full w-full bg-muted-foreground/10">
@@ -63,18 +97,19 @@ export function FramingPanel({ offset, onChange }: FramingPanelProps) {
           </div>
         </div>
         <p className="absolute inset-0 flex items-center justify-center text-[10px] text-muted-foreground">
-          {localOffset}%
+          {fitMode === "contain" ? "Full frame" : `${localOffset}%`}
         </p>
       </div>
 
-      {/* Slider */}
+      {/* Slider — disabled in contain mode */}
       <input
         type="range"
         min={0}
         max={100}
         value={localOffset}
         onChange={(e) => handleChange(Number(e.target.value))}
-        className="w-full accent-primary"
+        disabled={fitMode === "contain"}
+        className="w-full accent-primary disabled:opacity-40"
       />
       <div className="mt-1 flex justify-between text-[9px] text-muted-foreground">
         <span>Left</span>

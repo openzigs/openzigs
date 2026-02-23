@@ -58,6 +58,7 @@ function adaptTimelineEntry(entry: TimelineEntry, outputDir: string): TimelineIt
           durationFrames: o.durationFrames,
         })),
         horizontalCropOffset: entry.horizontalCropOffset ?? 50,
+        fitMode: entry.fitMode ?? "cover",
       };
     case "title_card":
       return {

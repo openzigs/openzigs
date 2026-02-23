@@ -92,6 +92,10 @@ export interface VideoClipEntry {
   textOverlays?: TextOverlay[];
   /** Horizontal crop offset for 9:16 framing (0–100, default 50 = center) */
   horizontalCropOffset?: number;
+  /** Fit mode for aspect-ratio mismatch: "cover" crops, "contain" shows full frame with blur bg */
+  fitMode?: "cover" | "contain";
+  /** Narration script text associated with this clip (e.g. Shorts voiceover) */
+  scriptText?: string;
 }
 
 export interface OverlayEntry {

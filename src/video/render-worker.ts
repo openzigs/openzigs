@@ -143,6 +143,14 @@ async function renderManifest(
   // ── Phase 5: Finalize (95–100%) ─────────────────────────
   emitProgress(jobId, 0.98, totalFrames, totalFrames);
 
+  // Save manifest alongside rendered video so downstream pipelines (e.g. Shorts)
+  // can identify title card / intro / outro frame ranges to skip.
+  await fs.promises.writeFile(
+    path.join(outputDir, "manifest.json"),
+    JSON.stringify(manifest, null, 2),
+    "utf-8",
+  );
+
   const stat = await fs.promises.stat(outputPath);
   const durationSec = totalFrames / fps;
 

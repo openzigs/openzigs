@@ -3,7 +3,7 @@
  * Issue #319: End-to-end pipeline converting a blog post URL into a
  * draft DirectorManifest ready for Studio editing and rendering.
  *
- * Pipeline: URL → Fetch & Parse → LLM Rewrite → Storyboard → Image Gen → Voiceover → Draft
+ * Pipeline: URL → Fetch & Parse → Download Images → Vision Caption → Storyboard → Image Gen → Voiceover → Draft
  */
 
 import path from "node:path";
@@ -13,7 +13,7 @@ import { logger } from "../../logging/logger.js";
 import { extractBlog } from "./blog-extractor.js";
 import { StoryboardEngine, type StoryboardOptions } from "../generators/storyboard-engine.js";
 import { ImageGenService } from "../generators/image-gen-service.js";
-import type { CopilotWrapper } from "../../copilot/copilot-wrapper.js";
+import type { CopilotWrapper, SdkAttachment } from "../../copilot/copilot-wrapper.js";
 import type { VoiceService } from "../../voice/voice-service.js";
 import type {
   DirectorManifest,
@@ -105,8 +105,22 @@ export async function blogToVideo(
     `${blog.wordCount} words, ${blog.images.length} images`,
   );
 
-  // ── Step 2: LLM Storyboard Generation ──────────────────────
-  logger.info("[BlogToVideo] Step 2: Generating storyboard via LLM…");
+  // ── Step 2: Download Blog Images & Vision Captioning ─────────
+  logger.info("[BlogToVideo] Step 2: Downloading blog images and generating captions…");
+
+  const blogImagesToProcess = blog.images.slice(0, 20);
+  const downloadedBlogImages = await downloadBlogImages(blogImagesToProcess, outputDir);
+
+  // Vision captioning: send each downloaded image to the LLM for a real description
+  const visionCaptions = await captionBlogImages(
+    blogImagesToProcess,
+    downloadedBlogImages,
+    copilot,
+    model,
+  );
+
+  // ── Step 3: LLM Storyboard Generation ──────────────────────
+  logger.info("[BlogToVideo] Step 3: Generating storyboard via LLM…");
 
   const storyboardEngine = new StoryboardEngine(copilot);
   const storyboardOptions: StoryboardOptions = {};
@@ -114,14 +128,13 @@ export async function blogToVideo(
   if (model) storyboardOptions.model = model;
   if (targetDuration) storyboardOptions.targetDuration = targetDuration;
 
-  // Provide blog images as visual asset context so the LLM can reference them
-  if (blog.images.length > 0) {
-    storyboardOptions.visualAssets = blog.images
-      .slice(0, 20)
-      .map((img) => ({
-        description: img.alt || "Blog article image",
-        type: "image" as const,
-      }));
+  // Provide blog images as visual asset context with vision captions and positional context
+  if (blogImagesToProcess.length > 0) {
+    storyboardOptions.visualAssets = blogImagesToProcess.map((img, i) => ({
+      description: visionCaptions[i] || img.alt || "Blog article image",
+      type: "image" as const,
+      positionHint: img.surroundingText || undefined,
+    }));
   }
 
   const storyboard = await storyboardEngine.generate(blog.text, storyboardOptions);
@@ -131,8 +144,8 @@ export async function blogToVideo(
     `style: "${storyboard.styleAnchor.substring(0, 50)}…"`,
   );
 
-  // ── Step 3: Image Generation ────────────────────────────────
-  logger.info("[BlogToVideo] Step 3: Generating scene images…");
+  // ── Step 4: Image Generation Setup ───────────────────────────
+  logger.info("[BlogToVideo] Step 4: Setting up image generation…");
 
   const imageOutputDir = path.join(os.homedir(), ".openzigs", "director", "images");
   await fs.mkdir(imageOutputDir, { recursive: true });
@@ -166,11 +179,8 @@ export async function blogToVideo(
   const imageWidth = 768;
   const imageHeight = 432;
 
-  // Download blog images that may be used for scenes
-  const downloadedBlogImages = await downloadBlogImages(blog.images.slice(0, 5), outputDir);
-
-  // ── Step 4: Build Timeline with Images + Voiceover ──────────
-  logger.info("[BlogToVideo] Step 4: Building timeline with images and voiceover…");
+  // ── Step 5: Build Timeline with Images + Voiceover ──────────
+  logger.info("[BlogToVideo] Step 5: Building timeline with images and voiceover…");
 
   const fps = 30;
   const timeline: Array<ImageSceneEntry | TitleCardEntry | TransitionEntry> = [];
@@ -305,8 +315,8 @@ export async function blogToVideo(
     currentFrame += durationInFrames;
   }
 
-  // ── Step 5: Construct Manifest ──────────────────────────────
-  logger.info("[BlogToVideo] Step 5: Building DirectorManifest…");
+  // ── Step 6: Construct Manifest ──────────────────────────────
+  logger.info("[BlogToVideo] Step 6: Building DirectorManifest…");
 
   const manifest: DirectorManifest = {
     projectTitle: storyboard.title,
@@ -439,4 +449,89 @@ async function probeAudioDuration(filePath: string): Promise<number | null> {
       resolve(Number.isFinite(duration) && duration > 0 ? duration : null);
     });
   });
+}
+
+/**
+ * Send downloaded blog images to the LLM for vision-based captioning.
+ * Returns an array of captions (same indices as input images).
+ * Falls back to null for images that couldn't be captioned.
+ */
+async function captionBlogImages(
+  blogImages: Array<{ url: string; alt: string }>,
+  downloadedPaths: Array<string | null>,
+  copilot: CopilotWrapper,
+  model?: string,
+): Promise<Array<string | null>> {
+  const captions: Array<string | null> = new Array(blogImages.length).fill(null);
+
+  // Collect images that were downloaded successfully
+  const toCaption: Array<{ index: number; filePath: string; alt: string }> = [];
+  for (let i = 0; i < blogImages.length; i++) {
+    if (downloadedPaths[i]) {
+      toCaption.push({ index: i, filePath: downloadedPaths[i]!, alt: blogImages[i].alt });
+    }
+  }
+
+  if (toCaption.length === 0) {
+    logger.info("[BlogToVideo] No downloaded images to caption — skipping vision pass");
+    return captions;
+  }
+
+  logger.info(`[BlogToVideo] Vision captioning ${toCaption.length} blog images…`);
+
+  // Caption images in parallel batches of 5 to avoid rate limits
+  const BATCH_SIZE = 5;
+  for (let batchStart = 0; batchStart < toCaption.length; batchStart += BATCH_SIZE) {
+    const batch = toCaption.slice(batchStart, batchStart + BATCH_SIZE);
+    const batchResults = await Promise.allSettled(
+      batch.map(async ({ index, filePath, alt }) => {
+        try {
+          const attachment: SdkAttachment = {
+            type: "file",
+            path: filePath,
+            displayName: path.basename(filePath),
+          };
+
+          const prompt =
+            "Describe this image in 1-2 concise sentences for a video storyboard. " +
+            "Focus on: what is depicted, key visual details, mood/setting. " +
+            "Be specific and factual. Do not speculate about what you cannot see." +
+            (alt ? `\n\nThe image's alt text is: "${alt}"` : "");
+
+          let caption = "";
+          for await (const chunk of copilot.chat(prompt, {
+            model,
+            attachments: [attachment],
+          })) {
+            caption += chunk;
+          }
+
+          caption = caption.trim();
+          if (caption.length > 0) {
+            return { index, caption };
+          }
+          return { index, caption: null };
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          logger.warn(`[BlogToVideo] Vision captioning failed for image ${index}: ${msg}`);
+          return { index, caption: null };
+        }
+      }),
+    );
+
+    for (const result of batchResults) {
+      if (result.status === "fulfilled" && result.value.caption) {
+        captions[result.value.index] = result.value.caption;
+        logger.info(
+          `[BlogToVideo] Captioned image ${result.value.index}: ` +
+          `"${result.value.caption.substring(0, 80)}…"`,
+        );
+      }
+    }
+  }
+
+  const successCount = captions.filter(Boolean).length;
+  logger.info(`[BlogToVideo] Vision captioning complete: ${successCount}/${toCaption.length} succeeded`);
+
+  return captions;
 }

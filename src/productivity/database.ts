@@ -122,6 +122,15 @@ const initSchema = (db: Database.Database) => {
       updated_at TEXT NOT NULL,
       FOREIGN KEY (draft_id) REFERENCES director_drafts(id) ON DELETE CASCADE
     );
+
+    CREATE TABLE IF NOT EXISTS director_draft_versions (
+      id TEXT PRIMARY KEY,
+      draft_id TEXT NOT NULL,
+      label TEXT NOT NULL,
+      manifest TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (draft_id) REFERENCES director_drafts(id) ON DELETE CASCADE
+    );
   `);
 
   const voiceProfileColumns = db

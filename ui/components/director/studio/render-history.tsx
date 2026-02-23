@@ -118,7 +118,7 @@ export function RenderHistory({ draftId }: { draftId: string }) {
                   </div>
                   {r.status === "complete" && r.outputPath && (
                     <a
-                      href={r.outputPath}
+                      href={`/api/admin/director/renders/${r.jobId}/download`}
                       download
                       className="shrink-0 rounded p-1 text-muted-foreground hover:text-primary transition"
                       title="Download"

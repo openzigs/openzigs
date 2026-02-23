@@ -20,6 +20,7 @@ export interface ThumbnailCompositeOptions {
   height?: number;
   outputPath: string;
   outputFormat?: "jpeg" | "png";
+  clickbaitOverlay?: "arrows" | "circles" | "emoji" | "badge";
 }
 
 /**
@@ -40,6 +41,7 @@ export async function compositeThumbnail(
     height = 720,
     outputPath,
     outputFormat = "jpeg",
+    clickbaitOverlay,
   } = options;
 
   const canvas = createCanvas(width, height);
@@ -133,6 +135,11 @@ export async function compositeThumbnail(
     ctx.fillText(textLines[i], x, y);
   }
 
+  // Clickbait overlay decorations
+  if (clickbaitOverlay) {
+    drawClickbaitOverlay(ctx, width, height, clickbaitOverlay);
+  }
+
   // Ensure output directory exists
   const outDir = path.dirname(outputPath);
   if (!fs.existsSync(outDir)) {
@@ -148,4 +155,82 @@ export async function compositeThumbnail(
   logger.info(`[ThumbnailCompositor] Wrote thumbnail: ${outputPath} (${width}x${height})`);
 
   return outputPath;
+}
+
+/**
+ * Draw clickbait-style decorative overlays on the canvas.
+ */
+function drawClickbaitOverlay(
+  ctx: ReturnType<ReturnType<typeof createCanvas>["getContext"]>,
+  width: number,
+  height: number,
+  style: "arrows" | "circles" | "emoji" | "badge",
+): void {
+  switch (style) {
+    case "arrows": {
+      // Red arrows pointing inward from corners
+      ctx.fillStyle = "#ff0000";
+      ctx.strokeStyle = "#ff0000";
+      ctx.lineWidth = 6;
+      const arrowSize = Math.round(width * 0.06);
+      // Top-right arrow pointing down-left
+      const arX = width - arrowSize * 2;
+      const arY = arrowSize;
+      ctx.beginPath();
+      ctx.moveTo(arX + arrowSize, arY);
+      ctx.lineTo(arX, arY + arrowSize);
+      ctx.lineTo(arX + arrowSize * 0.6, arY + arrowSize * 0.6);
+      ctx.closePath();
+      ctx.fill();
+      // Bottom-left arrow pointing up-right
+      const blX = arrowSize;
+      const blY = height - arrowSize * 2;
+      ctx.beginPath();
+      ctx.moveTo(blX, blY + arrowSize);
+      ctx.lineTo(blX + arrowSize, blY);
+      ctx.lineTo(blX + arrowSize * 0.4, blY + arrowSize * 0.4);
+      ctx.closePath();
+      ctx.fill();
+      break;
+    }
+    case "circles": {
+      // Red highlight circles
+      ctx.strokeStyle = "#ff0000";
+      ctx.lineWidth = 5;
+      const cx = Math.round(width * 0.7);
+      const cy = Math.round(height * 0.35);
+      const r = Math.round(width * 0.08);
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, 0, Math.PI * 2);
+      ctx.stroke();
+      break;
+    }
+    case "emoji": {
+      // Large emoji icons in corners
+      const emojiSize = Math.round(width * 0.06);
+      ctx.font = `${emojiSize}px serif`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText("🔥", width - emojiSize, emojiSize);
+      ctx.fillText("😱", emojiSize, height - emojiSize);
+      break;
+    }
+    case "badge": {
+      // "NEW" / "MUST SEE" badge in top-left corner
+      const badgeW = Math.round(width * 0.18);
+      const badgeH = Math.round(height * 0.08);
+      const bx = 15;
+      const by = 15;
+      ctx.fillStyle = "#ff0000";
+      ctx.beginPath();
+      ctx.roundRect(bx, by, badgeW, badgeH, 8);
+      ctx.fill();
+      ctx.fillStyle = "#ffffff";
+      ctx.font = `bold ${Math.round(badgeH * 0.6)}px Impact, Arial Black, sans-serif`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText("MUST SEE", bx + badgeW / 2, by + badgeH / 2);
+      break;
+    }
+  }
 }

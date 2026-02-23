@@ -498,7 +498,66 @@ const directorRouter = createDirectorRouter({
 });
 app.use("/api/admin/director", directorRouter);
 
-// ── Audio / Voice Lab Router (Issue #269, #272) ──
+// ── Render → Knowledge ingestion hook + DB persistence ──
+// After each successful render: persist the output path so it survives
+// restarts, then ingest the narration text into the knowledge base.
+if (renderOrchestrator) {
+  renderOrchestrator.on("render:complete", async (result: { jobId: string; outputPath: string | null }) => {
+    try {
+      const db = getDatabase();
+      const now = new Date().toISOString();
+
+      // Persist output_path to director_renders so it survives server restarts.
+      if (result.outputPath) {
+        db.prepare(
+          `UPDATE director_renders SET output_path = ?, status = 'complete', updated_at = ? WHERE job_id = ?`,
+        ).run(result.outputPath, now, result.jobId);
+      }
+
+      const row = db
+        .prepare(
+          `SELECT d.id, d.title, d.manifest
+           FROM director_renders r
+           JOIN director_drafts d ON d.id = r.draft_id
+           WHERE r.job_id = ?`,
+        )
+        .get(result.jobId) as { id: string; title: string; manifest: string } | undefined;
+
+      if (!row) return;
+
+      const manifest = JSON.parse(row.manifest) as {
+        projectTitle?: string;
+        timeline?: Array<{ narration?: string; title?: string }>;
+      };
+
+      const narrationLines = (manifest.timeline ?? [])
+        .map((s) => s.narration ?? s.title ?? "")
+        .filter(Boolean);
+
+      if (narrationLines.length === 0) return;
+
+      const text = `Video: ${row.title}\n\n${narrationLines.join("\n\n")}`;
+      await knowledgeService.ingestText(`render:${row.id}`, row.title, text);
+      logger.info(`[Director] Ingested render knowledge for draft "${row.title}"`);
+    } catch (err) {
+      logger.warn(`[Director] Failed to ingest render knowledge: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  });
+
+  renderOrchestrator.on("render:failed", (evt: { jobId: string; error: string }) => {
+    try {
+      const db = getDatabase();
+      db.prepare(
+        `UPDATE director_renders SET status = 'failed', error = ?, updated_at = ? WHERE job_id = ?`,
+      ).run(evt.error, new Date().toISOString(), evt.jobId);
+      logger.info(`[Director] Render ${evt.jobId} marked failed in DB`);
+    } catch (err) {
+      logger.warn(`[Director] Failed to persist render failure: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  });
+}
+
+
 const audioRouterInstance = createAudioRouter({
   db: getDatabase(),
   sidecarUrl: config.voice?.sidecarUrl ?? "http://127.0.0.1:5006",
@@ -1091,6 +1150,11 @@ socialBrain.on("escalate", (data: unknown) => io.emit("social:escalate", data));
 socialHandoff.on("escalated", (data: unknown) => io.emit("social:handoff:created", data));
 socialHandoff.on("resolved", (data: unknown) => io.emit("social:handoff:resolved", data));
 commentRuleEngine.on("rule_triggered", (data: unknown) => io.emit("social:rule:triggered", data));
+
+// Wire Render Orchestrator → Socket.IO event forwarding
+renderOrchestrator.on("render:progress", (data: unknown) => io.emit("render:progress", data));
+renderOrchestrator.on("render:complete", (data: unknown) => io.emit("render:complete", data));
+renderOrchestrator.on("render:failed", (data: unknown) => io.emit("render:failed", data));
 
 // Wire NotificationDispatcher now that we have the Socket.IO server
 // (side-effect: registers event listeners on TaskEngine)

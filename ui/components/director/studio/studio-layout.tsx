@@ -2,10 +2,14 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { fetchJson } from "@/lib/api";
+import { useSocket } from "@/lib/socket-context";
+import { showToast } from "@/components/toast";
 import { StudioToolbar } from "./studio-toolbar";
 import { PlayerPreview } from "./player-preview";
 import { SceneInspector } from "./scene-inspector";
+import { CaptionStylePanel } from "./caption-style-panel";
 import { TimelineTracks } from "./timeline-tracks";
+import { Plus } from "lucide-react";
 import type {
   DraftFull,
   InspectorState,
@@ -35,11 +39,12 @@ function buildTracks(manifest: DirectorManifest): TimelineTrack[] {
       case "intro_card":
       case "outro_card": {
         sceneCounter++;
+        const sourceFile = entry.source ? String(entry.source).split("/").pop() : undefined;
         scenesEntries.push({
           timelineIndex: i,
           startFrame,
           durationFrames: dur,
-          label: entry.title ?? entry.scriptText?.slice(0, 30) ?? `Scene ${sceneCounter}`,
+          label: entry.title ?? entry.scriptText?.slice(0, 30) ?? sourceFile ?? `Scene ${sceneCounter}`,
           color:
             entry.type === "intro_card"
               ? "bg-emerald-500/70"
@@ -75,6 +80,23 @@ function buildTracks(manifest: DirectorManifest): TimelineTrack[] {
     }
   }
 
+  // Global voiceover track (e.g. Shorts pipeline)
+  const vo = manifest.audioLayer?.voiceover;
+  if (vo && (vo.src || vo.source)) {
+    const totalFrames = timeline.reduce((max, e) => {
+      const end = (e.startAtFrame ?? 0) + (e.duration ?? e.durationInFrames ?? 0);
+      return Math.max(max, end);
+    }, 0);
+    const voStart = vo.startAtFrame ?? 0;
+    voiceoverEntries.push({
+      timelineIndex: -1,
+      startFrame: voStart,
+      durationFrames: totalFrames - voStart,
+      label: "Voiceover",
+      color: "bg-purple-500/70",
+    });
+  }
+
   // Music track
   if (manifest.audioLayer?.music) {
     const totalFrames = timeline.reduce((max, e) => {
@@ -108,7 +130,9 @@ export function StudioLayout({ draftId }: { draftId: string }) {
   const [tracks, setTracks] = useState<TimelineTrack[]>([]);
   const [dirty, setDirty] = useState(false);
   const [lastSaved, setLastSaved] = useState<string | null>(null);
+  const [renderStatus, setRenderStatus] = useState<{ jobId: string; progress: number; status: string } | null>(null);
   const playerRef = useRef<{ seekTo: (frame: number) => void; play: () => void; pause: () => void } | null>(null);
+  const { socket } = useSocket();
 
   const loadDraft = useCallback(async () => {
     try {
@@ -130,6 +154,40 @@ export function StudioLayout({ draftId }: { draftId: string }) {
     loadDraft();
   }, [loadDraft]);
 
+  // Listen for render events via Socket.IO
+  useEffect(() => {
+    if (!socket) return;
+
+    const onProgress = (data: { jobId: string; progress: number; status: string }) => {
+      setRenderStatus(data);
+    };
+
+    const onComplete = (_data: { jobId: string; outputPath: string | null }) => {
+      setRenderStatus(null);
+      showToast(
+        `Render complete! Your video is ready.`,
+        "success",
+      );
+      // Reload draft to reflect updated status
+      loadDraft();
+    };
+
+    const onFailed = (data: { jobId: string; error: string }) => {
+      setRenderStatus(null);
+      showToast(`Render failed: ${data.error}`, "error");
+    };
+
+    socket.on("render:progress", onProgress);
+    socket.on("render:complete", onComplete);
+    socket.on("render:failed", onFailed);
+
+    return () => {
+      socket.off("render:progress", onProgress);
+      socket.off("render:complete", onComplete);
+      socket.off("render:failed", onFailed);
+    };
+  }, [socket, loadDraft]);
+
   const handleSave = useCallback(async () => {
     if (!draft?.manifest) return;
     await fetchJson(`/api/admin/director/drafts/${draftId}`, {
@@ -145,6 +203,61 @@ export function StudioLayout({ draftId }: { draftId: string }) {
     setTracks(buildTracks(manifest));
     setDirty(true);
   }, []);
+
+  const hasIntro = draft?.manifest?.timeline?.some((e) => e.type === "intro_card") ?? false;
+  const hasOutro = draft?.manifest?.timeline?.some((e) => e.type === "outro_card") ?? false;
+
+  const handleAddIntro = useCallback(() => {
+    if (!draft?.manifest || hasIntro) return;
+    const fps = draft.manifest.composition?.fps ?? 30;
+    const introDuration = fps * 4; // 4 seconds
+
+    // Shift all existing entries forward
+    const shifted = (draft.manifest.timeline ?? []).map((e) => ({
+      ...e,
+      startAtFrame: (e.startAtFrame ?? 0) + introDuration,
+    }));
+
+    const introEntry: TimelineEntry = {
+      type: "intro_card",
+      title: draft.manifest.projectTitle || "Untitled",
+      startAtFrame: 0,
+      duration: introDuration,
+      animation: "fade-in",
+    };
+
+    const updated: DirectorManifest = {
+      ...draft.manifest,
+      timeline: [introEntry, ...shifted],
+    };
+    handleManifestUpdate(updated);
+  }, [draft, hasIntro, handleManifestUpdate]);
+
+  const handleAddOutro = useCallback(() => {
+    if (!draft?.manifest || hasOutro) return;
+    const fps = draft.manifest.composition?.fps ?? 30;
+    const outroDuration = fps * 4; // 4 seconds
+
+    const timeline = draft.manifest.timeline ?? [];
+    const lastFrame = timeline.reduce((max, e) => {
+      const end = (e.startAtFrame ?? 0) + (e.duration ?? e.durationInFrames ?? 0);
+      return Math.max(max, end);
+    }, 0);
+
+    const outroEntry: TimelineEntry = {
+      type: "outro_card",
+      title: "Thanks for watching",
+      startAtFrame: lastFrame,
+      duration: outroDuration,
+      animation: "fade-out",
+    };
+
+    const updated: DirectorManifest = {
+      ...draft.manifest,
+      timeline: [...timeline, outroEntry],
+    };
+    handleManifestUpdate(updated);
+  }, [draft, hasOutro, handleManifestUpdate]);
 
   // Auto-save every 30 seconds when dirty
   useEffect(() => {
@@ -213,11 +326,29 @@ export function StudioLayout({ draftId }: { draftId: string }) {
       <StudioToolbar
         title={draft.title}
         onSave={handleSave}
+        onRestore={handleManifestUpdate}
         draftId={draftId}
         manifest={draft.manifest}
         dirty={dirty}
         lastSaved={lastSaved}
       />
+
+      {/* Render progress banner */}
+      {renderStatus && (
+        <div className="flex items-center gap-3 border-b border-border bg-primary/10 px-4 py-2">
+          <div className="h-2 w-2 animate-pulse rounded-full bg-primary" />
+          <span className="text-xs font-medium text-foreground">
+            Rendering… {Math.round(renderStatus.progress * 100)}%
+          </span>
+          <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-muted">
+            <div
+              className="h-full rounded-full bg-primary transition-all duration-500"
+              style={{ width: `${Math.round(renderStatus.progress * 100)}%` }}
+            />
+          </div>
+          <span className="text-[10px] text-muted-foreground capitalize">{renderStatus.status}</span>
+        </div>
+      )}
 
       <div className="flex min-h-0 flex-1 gap-0">
         {/* Left: Player preview */}
@@ -241,11 +372,41 @@ export function StudioLayout({ draftId }: { draftId: string }) {
             draftId={draftId}
             onManifestUpdate={handleManifestUpdate}
           />
+
+          {/* Global caption settings */}
+          {draft.manifest && (
+            <div className="mt-4">
+              <CaptionStylePanel
+                manifest={draft.manifest}
+                onManifestUpdate={handleManifestUpdate}
+              />
+            </div>
+          )}
         </div>
       </div>
 
       {/* Bottom: Timeline */}
       <div className="shrink-0 border-t border-border">
+        {/* Intro/Outro controls */}
+        <div className="flex items-center gap-2 border-b border-border px-4 py-1.5">
+          <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Cards</span>
+          <button
+            onClick={handleAddIntro}
+            disabled={hasIntro}
+            className="flex items-center gap-1 rounded px-2 py-0.5 text-[11px] font-medium text-emerald-600 hover:bg-emerald-500/10 transition disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            <Plus className="h-3 w-3" />
+            {hasIntro ? "Intro added" : "Add Intro"}
+          </button>
+          <button
+            onClick={handleAddOutro}
+            disabled={hasOutro}
+            className="flex items-center gap-1 rounded px-2 py-0.5 text-[11px] font-medium text-rose-600 hover:bg-rose-500/10 transition disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            <Plus className="h-3 w-3" />
+            {hasOutro ? "Outro added" : "Add Outro"}
+          </button>
+        </div>
         <TimelineTracks
           tracks={tracks}
           totalFrames={totalFrames}

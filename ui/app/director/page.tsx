@@ -1,13 +1,14 @@
 "use client";
 
 import { useState } from "react";
-import { Film, Globe, FolderOpen } from "lucide-react";
+import { Film, Globe, FolderOpen, Scissors } from "lucide-react";
 import { DirectorWizard } from "@/components/director/director-wizard";
 import { BlogToVideoPanel } from "@/components/director/blog-to-video-panel";
+import { ShortsPanel } from "@/components/director/shorts-panel";
 import { DraftsPanel } from "@/components/director/drafts-panel";
 import { ToastContainer } from "@/components/toast";
 
-type DirectorTab = "wizard" | "blog" | "drafts";
+type DirectorTab = "wizard" | "blog" | "shorts" | "drafts";
 
 export default function DirectorPage() {
   const [tab, setTab] = useState<DirectorTab>("wizard");
@@ -47,6 +48,17 @@ export default function DirectorPage() {
           Blog to YouTube
         </button>
         <button
+          onClick={() => setTab("shorts")}
+          className={`flex items-center gap-1.5 px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+            tab === "shorts"
+              ? "border-primary text-primary"
+              : "border-transparent text-muted-foreground hover:text-foreground"
+          }`}
+        >
+          <Scissors className="h-4 w-4" />
+          YouTube Shorts
+        </button>
+        <button
           onClick={() => setTab("drafts")}
           className={`flex items-center gap-1.5 px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
             tab === "drafts"
@@ -62,6 +74,7 @@ export default function DirectorPage() {
       <div className="min-h-0 flex-1">
         {tab === "wizard" && <DirectorWizard />}
         {tab === "blog" && <BlogToVideoPanel />}
+        {tab === "shorts" && <ShortsPanel />}
         {tab === "drafts" && <DraftsPanel />}
       </div>
       <ToastContainer />

@@ -23,7 +23,14 @@ export const IntroCard: React.FC<Omit<IntroCardProps, "startAtFrame" | "duration
   animation = "fade-in",
 }) => {
   const frame = useCurrentFrame();
-  const { fps } = useVideoConfig();
+  const { fps, width, height } = useVideoConfig();
+
+  // Scale font sizes for portrait (9:16) compositions
+  const isPortrait = height > width;
+  const titleFontSize = isPortrait ? 52 : 72;
+  const subtitleFontSize = isPortrait ? 24 : 32;
+  const containerWidth = isPortrait ? "90%" : "80%";
+  const logoHeight = isPortrait ? 48 : 60;
 
   // Title animation
   const titleSpring = spring({ frame, fps, config: { damping: 18, stiffness: 80 } });
@@ -94,12 +101,12 @@ export const IntroCard: React.FC<Omit<IntroCardProps, "startAtFrame" | "duration
           transform: `translate(-50%, -50%) translateY(${titleTranslateY}px) scale(${titleScale})`,
           opacity: titleOpacity,
           textAlign: "center",
-          width: "80%",
+          width: containerWidth,
         }}
       >
         <div
           style={{
-            fontSize: 72,
+            fontSize: titleFontSize,
             fontWeight: "bold",
             color: "#ffffff",
             fontFamily: "Inter, system-ui, sans-serif",
@@ -113,7 +120,7 @@ export const IntroCard: React.FC<Omit<IntroCardProps, "startAtFrame" | "duration
         {subtitle && (
           <div
             style={{
-              fontSize: 32,
+              fontSize: subtitleFontSize,
               fontWeight: 300,
               color: "rgba(255,255,255,0.85)",
               fontFamily: "Inter, system-ui, sans-serif",
@@ -139,7 +146,7 @@ export const IntroCard: React.FC<Omit<IntroCardProps, "startAtFrame" | "duration
         >
           <Img
             src={logoSrc}
-            style={{ height: 60, objectFit: "contain" }}
+            style={{ height: logoHeight, objectFit: "contain" }}
           />
         </div>
       )}

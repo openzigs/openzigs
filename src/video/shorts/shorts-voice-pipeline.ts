@@ -9,8 +9,12 @@
 
 import fs from "node:fs/promises";
 import path from "node:path";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { nanoid } from "nanoid";
 import { logger } from "../../logging/logger.js";
+
+const execFileAsync = promisify(execFile);
 import type { CopilotWrapper } from "../../copilot/copilot-wrapper.js";
 import type { VoiceService } from "../../voice/voice-service.js";
 import type { TranscriptSegment } from "../ingestion/types.js";
@@ -103,9 +107,18 @@ Respond with ONLY the script text (no JSON, no markdown).`;
     await voiceService.initialize();
   }
 
-  const voiceoverPath = path.join(outputDir, `shorts-vo-${nanoid(8)}.mp3`);
   const ttsResult = await voiceService.synthesize(scriptText);
+
+  // Use correct extension based on actual audio format (Google → MP3, Kokoro → WAV)
+  const ext = ttsResult.contentType === "audio/wav" ? "wav" : "mp3";
+  const voiceoverPath = path.join(outputDir, `shorts-vo-${nanoid(8)}.${ext}`);
   await fs.writeFile(voiceoverPath, ttsResult.audio);
+
+  // Kokoro sidecar outputs IEEE Float WAV which Remotion's ffprobe can't parse.
+  // Convert to standard PCM 16-bit WAV for universal compatibility.
+  if (ext === "wav") {
+    await normalizeWavToPcm16(voiceoverPath);
+  }
 
   logger.info(`[ShortsVoice] Voiceover synthesized: ${voiceoverPath}`);
 
@@ -143,4 +156,40 @@ function parseTimestamp(ts: string): number {
     return parseFloat(parts[0]) * 60 + parseFloat(parts[1]);
   }
   return parseFloat(ts) || 0;
+}
+
+/**
+ * Convert a WAV file to PCM 16-bit LE in-place.
+ * Kokoro TTS (soundfile + IEEE Float) can produce malformed WAVs where the
+ * audio data lives in a 'fact' chunk instead of 'data'. ffmpeg can't parse
+ * these, so we patch the chunk tag first if needed, then re-encode to PCM s16le.
+ */
+async function normalizeWavToPcm16(wavPath: string): Promise<void> {
+  // Fix malformed WAV: if 'fact' chunk at offset 0x24 holds the audio data,
+  // rewrite it as 'data' so ffmpeg can parse the file.
+  const buf = await fs.readFile(wavPath);
+  if (buf.length > 0x28 && buf.toString("ascii", 0x24, 0x28) === "fact") {
+    const patched = Buffer.from(buf);
+    patched.write("data", 0x24, "ascii");
+    await fs.writeFile(wavPath, patched);
+    logger.info(`[ShortsVoice] Patched malformed WAV fact→data: ${wavPath}`);
+  }
+
+  const tmpPath = wavPath + ".pcm16.tmp.wav";
+  try {
+    await execFileAsync("ffmpeg", [
+      "-y",
+      "-i", wavPath,
+      "-c:a", "pcm_s16le",
+      "-ar", "24000",
+      "-ac", "1",
+      tmpPath,
+    ]);
+    await fs.rename(tmpPath, wavPath);
+    logger.info(`[ShortsVoice] Normalized WAV to PCM s16le: ${wavPath}`);
+  } catch (err) {
+    await fs.unlink(tmpPath).catch(() => {});
+    logger.warn(`[ShortsVoice] Failed to normalize WAV: ${(err as Error).message}`);
+    throw err;
+  }
 }

@@ -69,6 +69,8 @@ export interface StoryboardVisualAsset {
   description: string;
   /** Asset type */
   type: "image" | "video";
+  /** Positional hint: surrounding text from the source document near where this image appeared */
+  positionHint?: string;
 }
 
 /** Options for storyboard generation. */
@@ -352,9 +354,15 @@ Include these in the "textOverlays" array for each scene in the JSON output.`;
     if (visualAssets && visualAssets.length > 0) {
       const assetLines = visualAssets
         .filter((a) => a.description.trim())
-        .map((a, i) => `  [${i}] [${a.type}] ${a.description.trim()}`);
+        .map((a, i) => {
+          let line = `  [${i}] [${a.type}] ${a.description.trim()}`;
+          if (a.positionHint) {
+            line += `\n       Position context: "${a.positionHint}"`;
+          }
+          return line;
+        });
       if (assetLines.length > 0) {
-        assetBlock = `\n\n=== SOURCE VISUAL ASSETS ===\nThe following images are available from the source document. Each has a 0-based index in brackets.\nAssign the most relevant image to each scene via the "blogImageIndex" field in your JSON output.\nPrefer using these source images over AI-generated ones. Only leave blogImageIndex as null for scenes\nwhere no source image is relevant. Weave references to what the images depict into the voiceover.\n\n${assetLines.join("\n")}\n\n=== END OF VISUAL ASSETS ===`;
+        assetBlock = `\n\n=== SOURCE VISUAL ASSETS ===\nThe following images are available from the source document. Each has a 0-based index in brackets.\nEach image includes a description (from vision analysis or alt text) and a "Position context" showing\nthe surrounding text from where the image appeared in the original article.\nAssign the most relevant image to each scene via the "blogImageIndex" field in your JSON output.\nUse both the image description AND position context to decide which scene each image belongs to.\nPrefer using these source images over AI-generated ones. Only leave blogImageIndex as null for scenes\nwhere no source image is relevant. Weave references to what the images depict into the voiceover.\n\n${assetLines.join("\n")}\n\n=== END OF VISUAL ASSETS ===`;
       }
     }
 

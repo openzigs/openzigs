@@ -9,6 +9,10 @@ import {
   hasPacingTags,
   PAUSE_RE,
   EMPHASIS_RE,
+  SPEED_RE,
+  SPEED_END_RE,
+  VOICE_RE,
+  NARRATION_DIRECTIVES,
 } from "./pacing-translator.js";
 
 describe("hasPacingTags", () => {
@@ -26,6 +30,14 @@ describe("hasPacingTags", () => {
 
   it("detects both tag types together", () => {
     expect(hasPacingTags("Hello [PAUSE: 1s] *world*")).toBe(true);
+  });
+
+  it("detects [SPEED: Xx] tags", () => {
+    expect(hasPacingTags("Hello [SPEED: 1.2x] world")).toBe(true);
+  });
+
+  it("detects [VOICE: id] tags", () => {
+    expect(hasPacingTags("Hello [VOICE: am_adam] world")).toBe(true);
   });
 });
 
@@ -107,6 +119,64 @@ describe("translatePacingTags", () => {
     });
   });
 
+  describe("SPEED tags", () => {
+    it("converts [SPEED: 1.2x] to SSML prosody", () => {
+      const result = translatePacingTags("Normal [SPEED: 1.2x]fast talking[/SPEED] normal");
+      expect(result.ssml).toContain('<prosody rate="120%">');
+      expect(result.ssml).toContain("</prosody>");
+      expect(result.hasTags).toBe(true);
+    });
+
+    it("converts [SPEED: 0.8x] to slower rate", () => {
+      const result = translatePacingTags("[SPEED: 0.8x]Slow and steady[/SPEED]");
+      expect(result.ssml).toContain('<prosody rate="80%">');
+    });
+
+    it("clamps speed above 2.0 to 2.0", () => {
+      const result = translatePacingTags("[SPEED: 5x]too fast[/SPEED]");
+      expect(result.ssml).toContain('<prosody rate="200%">');
+    });
+
+    it("clamps speed below 0.5 to 0.5", () => {
+      const result = translatePacingTags("[SPEED: 0.1x]too slow[/SPEED]");
+      expect(result.ssml).toContain('<prosody rate="50%">');
+    });
+
+    it("sets speed on plain segments", () => {
+      const result = translatePacingTags("Normal [SPEED: 1.5x]fast part[/SPEED] normal again");
+      expect(result.plainSegments.length).toBeGreaterThanOrEqual(2);
+      const fast = result.plainSegments.find(s => s.speed === 1.5);
+      expect(fast).toBeDefined();
+      expect(fast!.text).toContain("fast part");
+      const normal = result.plainSegments.find(s => s.text.includes("normal again"));
+      expect(normal).toBeDefined();
+      expect(normal!.speed).toBeUndefined();
+    });
+  });
+
+  describe("VOICE tags", () => {
+    it("strips [VOICE: id] from SSML (local-only feature)", () => {
+      const result = translatePacingTags("[VOICE: am_adam]Authoritative speech");
+      expect(result.ssml).not.toContain("[VOICE");
+      expect(result.ssml).not.toContain("am_adam");
+      expect(result.hasTags).toBe(true);
+    });
+
+    it("sets voice on plain segments", () => {
+      const result = translatePacingTags("[VOICE: am_adam]Hello from Adam");
+      const seg = result.plainSegments.find(s => s.voice === "am_adam");
+      expect(seg).toBeDefined();
+      expect(seg!.text).toContain("Hello from Adam");
+    });
+
+    it("switches voice mid-script", () => {
+      const result = translatePacingTags("Normal voice [VOICE: af_nova]Energetic voice");
+      expect(result.plainSegments.length).toBe(2);
+      expect(result.plainSegments[0].voice).toBeUndefined();
+      expect(result.plainSegments[1].voice).toBe("af_nova");
+    });
+  });
+
   describe("combined tags", () => {
     it("handles pause + emphasis together", () => {
       const result = translatePacingTags(
@@ -115,6 +185,17 @@ describe("translatePacingTags", () => {
       expect(result.ssml).toContain('<break time="1000ms"/>');
       expect(result.ssml).toContain("<emphasis>OpenZigs</emphasis>");
       expect(result.hasTags).toBe(true);
+    });
+
+    it("handles speed + pause + voice together", () => {
+      const result = translatePacingTags(
+        "[SPEED: 1.2x]Fast intro[/SPEED] [PAUSE: 1s] [VOICE: am_adam]Main content"
+      );
+      expect(result.ssml).toContain('<prosody rate="120%">');
+      expect(result.ssml).toContain('<break time="1000ms"/>');
+      expect(result.hasTags).toBe(true);
+      const adam = result.plainSegments.find(s => s.voice === "am_adam");
+      expect(adam).toBeDefined();
     });
   });
 
@@ -177,7 +258,7 @@ describe("translatePacingTags", () => {
     it("bracket tags survive sanitization (simulated)", () => {
       // The ScriptSanitizer strips HTML/XML tags via /<\/?[a-zA-Z]...>/g
       // but brackets [PAUSE: Xs] do NOT match that pattern
-      const input = "Welcome [PAUSE: 1s] to *OpenZigs*";
+      const input = "Welcome [PAUSE: 1s] to *OpenZigs* [SPEED: 1.2x]fast[/SPEED] [VOICE: am_adam]deep";
       const htmlTagRe =
         /<\/?[a-zA-Z][a-zA-Z0-9-]*(?:\s[^>]*)?\/?>/g;
       const afterSanitizer = input.replace(htmlTagRe, "");
@@ -185,11 +266,14 @@ describe("translatePacingTags", () => {
       // Brackets survive
       expect(afterSanitizer).toContain("[PAUSE: 1s]");
       expect(afterSanitizer).toContain("*OpenZigs*");
+      expect(afterSanitizer).toContain("[SPEED: 1.2x]");
+      expect(afterSanitizer).toContain("[VOICE: am_adam]");
 
       // Translation still works
       const result = translatePacingTags(afterSanitizer);
       expect(result.ssml).toContain('<break time="1000ms"/>');
       expect(result.ssml).toContain("<emphasis>OpenZigs</emphasis>");
+      expect(result.ssml).toContain('<prosody rate="120%">');
     });
 
     it("SSML tags do NOT survive sanitization (proving bracket syntax is needed)", () => {
@@ -242,5 +326,61 @@ describe("regex patterns", () => {
   it("EMPHASIS_RE rejects empty emphasis", () => {
     EMPHASIS_RE.lastIndex = 0;
     expect(EMPHASIS_RE.test("**")).toBe(false);
+  });
+
+  it("SPEED_RE matches valid formats", () => {
+    const cases = [
+      "[SPEED: 1.2x]",
+      "[SPEED: 0.5x]",
+      "[SPEED:2x]",
+      "[speed: 1x]",
+    ];
+    for (const c of cases) {
+      SPEED_RE.lastIndex = 0;
+      expect(SPEED_RE.test(c)).toBe(true);
+    }
+  });
+
+  it("SPEED_END_RE matches closing tag", () => {
+    SPEED_END_RE.lastIndex = 0;
+    expect(SPEED_END_RE.test("[/SPEED]")).toBe(true);
+    SPEED_END_RE.lastIndex = 0;
+    expect(SPEED_END_RE.test("[/speed]")).toBe(true);
+  });
+
+  it("VOICE_RE matches valid voice preset ids", () => {
+    const cases = [
+      "[VOICE: af_heart]",
+      "[VOICE: am_adam]",
+      "[VOICE: bm_daniel]",
+      "[voice: af_nova]",
+    ];
+    for (const c of cases) {
+      VOICE_RE.lastIndex = 0;
+      expect(VOICE_RE.test(c)).toBe(true);
+    }
+  });
+
+  it("VOICE_RE rejects invalid formats", () => {
+    const cases = [
+      "[VOICE: ]",
+      "[VOICE: 123]",
+      "VOICE: af_heart",
+    ];
+    for (const c of cases) {
+      VOICE_RE.lastIndex = 0;
+      expect(VOICE_RE.test(c)).toBe(false);
+    }
+  });
+});
+
+describe("NARRATION_DIRECTIVES", () => {
+  it("exports directive metadata for UI autocomplete", () => {
+    expect(NARRATION_DIRECTIVES.length).toBeGreaterThan(0);
+    for (const d of NARRATION_DIRECTIVES) {
+      expect(d.tag).toBeTruthy();
+      expect(d.label).toBeTruthy();
+      expect(d.description).toBeTruthy();
+    }
   });
 });

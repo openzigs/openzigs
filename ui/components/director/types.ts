@@ -2,7 +2,7 @@
  * Director Mode — Shared types for the wizard UI.
  */
 
-export type ProductionMode = "highlight" | "script" | "presentation";
+export type ProductionMode = "highlight" | "script" | "presentation" | "shorts";
 
 export type ImageProvider = "auto" | "local" | "cloud";
 export type ImageModel = "sdxl-turbo" | "flux";
@@ -185,7 +185,7 @@ export interface DirectorManifest {
   composition: { width: number; height: number; fps: number };
   audioLayer: {
     music: { track: string; volume: number; loop: boolean } | null;
-    voiceover: { src: string; volume: number } | null;
+    voiceover: { src?: string; source?: string; volume: number; startAtFrame?: number } | null;
   };
   timeline?: TimelineEntry[];
   metadata?: Record<string, unknown>;
@@ -206,6 +206,8 @@ export interface TimelineEntry {
   duration?: number;
   durationInFrames?: number;
   src?: string;
+  /** video_clip entries use `source` instead of `src` */
+  source?: string;
   title?: string;
   voiceover?: string;
   scriptText?: string;

@@ -250,14 +250,26 @@ export class VoiceService {
       if (pacing.plainSegments.length > 0) {
         const segmentBuffers: Buffer[] = [];
         for (const segment of pacing.plainSegments) {
+          if (!segment.text) {
+            // Empty segment (e.g. leading pause) — just add silence
+            if (segment.pauseAfterMs > 0) {
+              segmentBuffers.push(generateSilenceWav(segment.pauseAfterMs));
+            }
+            continue;
+          }
+          // Per-segment speed and voice overrides (fall back to global config)
+          const segSpeed = segment.speed ?? this.config.speakingRate;
+          const segVoiceRaw = segment.voice ?? voice;
+          const segVoice = LOCAL_VOICE_IDS.has(segVoiceRaw) ? segVoiceRaw : voice;
+
           // Synthesize each segment individually
           const resp = await fetch(`${this.sidecarUrl}/tts`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               text: segment.text,
-              voice,
-              speed: this.config.speakingRate,
+              voice: segVoice,
+              speed: segSpeed,
             }),
           });
           if (!resp.ok) {

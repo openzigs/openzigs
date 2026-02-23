@@ -70,6 +70,7 @@ Requirements:
 - The segment must be contiguous (no jump cuts from different parts)
 - startSeconds + duration must not exceed ${clip.duration.toFixed(1)}
 - Prefer segments with both visual interest AND speech
+- AVOID sections that are title cards, intro cards, or outro cards with large text overlays — these crop poorly when converted to 9:16 vertical format
 - Write a punchy 1-sentence hook that could open the Short
 
 Respond with ONLY valid JSON (no markdown):

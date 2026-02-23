@@ -6,6 +6,8 @@ import { useRouter } from "next/navigation";
 import { fetchJson } from "@/lib/api";
 import { showToast } from "@/components/toast";
 import { RenderHistory } from "./render-history";
+import { VersionHistory } from "./version-history";
+import { ThumbnailPanel } from "./thumbnail-panel";
 import type { DirectorManifest } from "../types";
 
 interface StudioToolbarProps {
@@ -13,11 +15,12 @@ interface StudioToolbarProps {
   draftId: string;
   manifest: DirectorManifest | null;
   onSave: () => Promise<void>;
+  onRestore: (manifest: DirectorManifest) => void;
   dirty?: boolean;
   lastSaved?: string | null;
 }
 
-export function StudioToolbar({ title, draftId, manifest, onSave, dirty, lastSaved }: StudioToolbarProps) {
+export function StudioToolbar({ title, draftId, manifest, onSave, onRestore, dirty, lastSaved }: StudioToolbarProps) {
   const router = useRouter();
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -59,6 +62,15 @@ export function StudioToolbar({ title, draftId, manifest, onSave, dirty, lastSav
     }
   }, [manifest, draftId, onSave]);
 
+  const handleSaveVersion = useCallback(async () => {
+    await onSave();
+    const label = window.prompt("Version label (leave blank for auto)") ?? "";
+    await fetchJson(`/api/admin/director/drafts/${draftId}/versions`, {
+      method: "POST",
+      body: JSON.stringify({ label: label.trim() || undefined }),
+    });
+  }, [draftId, onSave]);
+
   return (
     <div className="flex shrink-0 items-center justify-between border-b border-border bg-background px-4 py-2">
       <div className="flex items-center gap-3">
@@ -88,6 +100,14 @@ export function StudioToolbar({ title, draftId, manifest, onSave, dirty, lastSav
           {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : saved ? <Check className="h-3.5 w-3.5 text-green-500" /> : <Save className="h-3.5 w-3.5" />}
           {saved ? "Saved" : "Save"}
         </button>
+        {draftId && (
+          <VersionHistory
+            draftId={draftId}
+            onRestore={onRestore}
+            onSaveVersion={handleSaveVersion}
+          />
+        )}
+        {draftId && <ThumbnailPanel draftId={draftId} />}
         {draftId && <RenderHistory draftId={draftId} />}
         <button
           onClick={handleRender}

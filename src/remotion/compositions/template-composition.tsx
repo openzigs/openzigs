@@ -135,6 +135,8 @@ function renderSegment(
             durationInFrames={item.durationInFrames}
             volume={item.volume}
             effects={item.effects}
+            horizontalCropOffset={item.horizontalCropOffset}
+            fitMode={item.fitMode}
           />
           <TextOverlayLayer overlays={item.textOverlays ?? []} />
         </AbsoluteFill>
@@ -209,6 +211,8 @@ function renderOverlay(
           style={(props.style as "pill" | "underline" | "boxed" | "karaoke") ?? "pill"}
           fontSize={props.fontSize as number | undefined}
           fontColor={props.fontColor as string | undefined}
+          backgroundColor={props.backgroundColor as string | undefined}
+          position={(props.position as "bottom" | "center" | "top") ?? "bottom"}
           fontFamily={branding.fontFamily}
         />
       );
@@ -381,8 +385,11 @@ export const TemplateComposition: React.FC<CompositionInputProps> = (props) => {
                 transFrames = transitionItem.durationInFrames ?? 15;
                 transStyle = transitionItem.style ?? "crossfade";
               } else {
-                transFrames = 15;
-                transStyle = "crossfade";
+                // No explicit transition — hard cut (no default crossfade).
+                // Shorts manifests and other auto-generated pipelines rely on
+                // precise clip timing without invisible overlap.
+                transFrames = 0;
+                transStyle = "cut";
               }
 
               // Remotion requires: sequence duration >= transition duration.

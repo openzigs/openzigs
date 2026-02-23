@@ -549,7 +549,7 @@ async def _synthesize_kokoro(req: TTSRequest) -> Response:
 
     audio_np = np.concatenate(audio_chunks)
     buf = io.BytesIO()
-    sf.write(buf, audio_np, TTS_SAMPLE_RATE, format="WAV", subtype="FLOAT")
+    sf.write(buf, audio_np, TTS_SAMPLE_RATE, format="WAV", subtype="PCM_16")
     wav_bytes = buf.getvalue()
 
     elapsed = time.monotonic() - start

@@ -46,17 +46,23 @@ export const SmartCaptions: React.FC<SmartCaptionsComponentProps> = ({
     (w) => w.start <= frame + 30, // show upcoming words dimly
   );
 
-  const positionStyle: React.CSSProperties = {
-    bottom: position === "bottom" ? "8%" : undefined,
-    top: position === "top" ? "8%" : position === "center" ? "45%" : undefined,
-  };
+  // For "bottom": detach from top so the container sits at the bottom.
+  // For "top": detach from bottom so it sits at the top.
+  // For "center": fill the space and center content.
+  const positionStyle: React.CSSProperties =
+    position === "bottom"
+      ? { top: "auto", bottom: "8%" }
+      : position === "top"
+        ? { top: "8%", bottom: "auto" }
+        : {}; // center: keep AbsoluteFill defaults (top:0, bottom:0)
 
   const containerPadding = Math.round(width * 0.04);
 
   return (
     <AbsoluteFill
       style={{
-        justifyContent: position === "center" ? "center" : undefined,
+        justifyContent:
+          position === "center" ? "center" : position === "bottom" ? "flex-end" : "flex-start",
         alignItems: "center",
         ...positionStyle,
         position: "absolute",

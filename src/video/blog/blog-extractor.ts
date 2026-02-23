@@ -15,6 +15,8 @@ export interface BlogImage {
   url: string;
   /** Alt text from the <img> tag */
   alt: string;
+  /** Surrounding paragraph text from the blog (context before + after the image) */
+  surroundingText?: string;
 }
 
 export interface BlogMetadata {
@@ -124,7 +126,7 @@ function extractTitle(html: string): string {
   return m?.[1]?.trim() ?? "";
 }
 
-/** Extract all <img> tags with src and alt. */
+/** Extract all <img> tags with src and alt, plus surrounding paragraph context. */
 function extractImages(html: string, baseUrl: string): BlogImage[] {
   const images: BlogImage[] = [];
   const imgRegex = /<img\s+[^>]*src\s*=\s*["']([^"']+)["'][^>]*>/gi;
@@ -149,7 +151,10 @@ function extractImages(html: string, baseUrl: string): BlogImage[] {
     const altMatch = /alt\s*=\s*["']([^"']*)["']/i.exec(match[0]);
     const alt = altMatch?.[1]?.trim() ?? "";
 
-    images.push({ url: fullUrl, alt });
+    // Extract surrounding paragraph context (text before and after the <img>)
+    const surroundingText = extractSurroundingText(html, match.index);
+
+    images.push({ url: fullUrl, alt, surroundingText });
   }
 
   // Deduplicate by URL
@@ -159,6 +164,58 @@ function extractImages(html: string, baseUrl: string): BlogImage[] {
     seen.add(img.url);
     return true;
   });
+}
+
+/**
+ * Extract the surrounding paragraph text around an <img> tag position.
+ * Looks for the nearest block-level boundaries and converts the text to plain.
+ */
+function extractSurroundingText(html: string, imgPosition: number): string {
+  // Search backwards for the nearest block-level opening tag or start of string
+  const blockBoundary = /<\/?(p|div|section|article|blockquote|figure|figcaption|h[1-6]|li|td|th)[^>]*>/gi;
+  const CONTEXT_WINDOW = 500; // chars to search in each direction
+
+  const searchStart = Math.max(0, imgPosition - CONTEXT_WINDOW);
+  const searchEnd = Math.min(html.length, imgPosition + CONTEXT_WINDOW);
+  const region = html.slice(searchStart, searchEnd);
+
+  // Find all block boundaries in the region
+  const boundaries: number[] = [0];
+  let bm: RegExpExecArray | null;
+  while ((bm = blockBoundary.exec(region)) !== null) {
+    boundaries.push(bm.index + bm[0].length);
+  }
+  boundaries.push(region.length);
+
+  // Find which segment the image falls in (relative to region)
+  const imgOffset = imgPosition - searchStart;
+  let segStart = 0;
+  let segEnd = region.length;
+  for (let i = 0; i < boundaries.length - 1; i++) {
+    if (boundaries[i] <= imgOffset && boundaries[i + 1] > imgOffset) {
+      // Include one segment before and after for context
+      segStart = i > 0 ? boundaries[i - 1] : boundaries[i];
+      segEnd = i + 2 < boundaries.length ? boundaries[i + 2] : boundaries[boundaries.length - 1];
+      break;
+    }
+  }
+
+  const snippet = region.slice(segStart, segEnd);
+
+  // Strip HTML tags, collapse whitespace
+  const text = snippet
+    .replace(/<img[^>]*>/gi, "") // remove image tags from context
+    .replace(/<[^>]+>/g, " ")   // strip HTML
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&nbsp;/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return text.length > 300 ? text.substring(0, 300) + "…" : text;
 }
 
 /**

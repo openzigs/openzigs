@@ -37,6 +37,8 @@ import { getDatabase } from "../productivity/database.js";
 import type { CopilotWrapper } from "../copilot/copilot-wrapper.js";
 import type { VoiceService } from "../voice/voice-service.js";
 import type { RenderOrchestrator } from "../video/render-orchestrator.js";
+import { NARRATION_DIRECTIVES } from "../voice/pacing-translator.js";
+import { AVAILABLE_LOCAL_VOICES } from "../voice/types.js";
 
 export interface DirectorRouterOptions {
   copilot: CopilotWrapper;
@@ -97,6 +99,60 @@ export const createDirectorRouter = ({
           return;
         }
         resolve(duration);
+      });
+    });
+  }
+
+  /**
+   * Probe a video file for duration and dimensions using ffprobe.
+   */
+  async function probeVideoInfo(
+    filePath: string,
+  ): Promise<{ durationSec: number; width: number; height: number } | null> {
+    return await new Promise((resolve) => {
+      const proc = spawn("ffprobe", [
+        "-v",
+        "error",
+        "-select_streams",
+        "v:0",
+        "-show_entries",
+        "stream=width,height:format=duration",
+        "-of",
+        "json",
+        filePath,
+      ]);
+
+      let stdout = "";
+
+      proc.stdout?.on("data", (chunk: Buffer) => {
+        stdout += chunk.toString("utf-8");
+      });
+
+      proc.on("error", () => {
+        resolve(null);
+      });
+
+      proc.on("close", (code) => {
+        if (code !== 0) {
+          resolve(null);
+          return;
+        }
+        try {
+          const data = JSON.parse(stdout);
+          const stream = data.streams?.[0];
+          const durationSec = Number.parseFloat(data.format?.duration);
+          if (!Number.isFinite(durationSec) || durationSec <= 0) {
+            resolve(null);
+            return;
+          }
+          resolve({
+            durationSec,
+            width: stream?.width ?? 0,
+            height: stream?.height ?? 0,
+          });
+        } catch {
+          resolve(null);
+        }
       });
     });
   }
@@ -169,6 +225,28 @@ export const createDirectorRouter = ({
   /**
    * GET /config — return Director Mode configuration (safe subset).
    */
+  /**
+   * GET /narration/directives — available speech directives & voice presets for autocomplete.
+   */
+  router.get("/narration/directives", (_req, res) => {
+    res.json({
+      directives: NARRATION_DIRECTIVES,
+      voices: AVAILABLE_LOCAL_VOICES.map(v => {
+        // Infer language/gender from the voice id prefix (af=American Female, bm=British Male, etc.)
+        const prefix = v.id.slice(0, 2);
+        const langMap: Record<string, string> = { a: "en-US", b: "en-GB", j: "ja-JP", z: "zh-CN" };
+        const genderMap: Record<string, string> = { f: "female", m: "male" };
+        return {
+          id: v.id,
+          label: `${v.id} — ${v.description}`,
+          language: langMap[prefix[0]] ?? "en",
+          gender: genderMap[prefix[1]] ?? "unknown",
+          style: v.description,
+        };
+      }),
+    });
+  });
+
   router.get("/config", (_req, res) => {
     res.json({
       enabled: config.enabled,
@@ -569,7 +647,14 @@ export const createDirectorRouter = ({
       await fs.writeFile(filePath, body);
 
       logger.info(`[Director API] Uploaded ${kind} overlay asset: ${filePath} (${body.length} bytes)`);
-      res.json({ success: true, kind, filePath, fileName: uniqueName, size: body.length });
+
+      // For video uploads, probe for duration and dimensions
+      let videoInfo: { durationSec: number; width: number; height: number } | null = null;
+      if (kind === "video") {
+        videoInfo = await probeVideoInfo(filePath);
+      }
+
+      res.json({ success: true, kind, filePath, fileName: uniqueName, size: body.length, videoInfo });
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       logger.error(`[Director API] POST /files/upload-asset failed: ${msg}`);
@@ -735,6 +820,10 @@ Respond with ONLY a valid JSON array. No explanation. Example:
         pathMod.join(osMod.homedir(), ".openzigs", "director", "uploads", "videos"),
         pathMod.join(osMod.homedir(), ".openzigs", "director", "uploads", "overlay"),
         pathMod.join(osMod.homedir(), ".openzigs", "director", "ref-audio"),
+        pathMod.join(osMod.homedir(), ".openzigs", "director", "images"),
+        pathMod.join(osMod.homedir(), ".openzigs", "director", "blog"),
+        pathMod.join(osMod.homedir(), ".openzigs", "director", "thumbnails"),
+        pathMod.join(osMod.homedir(), ".openzigs", "director", "shorts"),
       ];
 
       let found: string | null = null;
@@ -743,6 +832,22 @@ Respond with ONLY a valid JSON array. No explanation. Example:
         if (fsMod.existsSync(candidate)) {
           found = candidate;
           break;
+        }
+      }
+
+      // Search render job subdirectories (~/.openzigs/renders/<jobId>/)
+      if (!found) {
+        const rendersBase = pathMod.join(osMod.homedir(), ".openzigs", "renders");
+        if (fsMod.existsSync(rendersBase)) {
+          const jobDirs = fsMod.readdirSync(rendersBase, { withFileTypes: true });
+          for (const d of jobDirs) {
+            if (!d.isDirectory()) continue;
+            const candidate = pathMod.join(rendersBase, d.name, fileName);
+            if (fsMod.existsSync(candidate)) {
+              found = candidate;
+              break;
+            }
+          }
         }
       }
 
@@ -1938,6 +2043,78 @@ Respond with ONLY a valid JSON array. No markdown, no explanation.`;
   });
 
   /**
+   * POST /drafts/:id/versions — snapshot the current manifest with a label.
+   * Body: { label?: string }
+   */
+  router.post("/drafts/:id/versions", async (req, res) => {
+    try {
+      const { randomUUID } = await import("node:crypto");
+      const db = getDatabase();
+      const draft = db.prepare(`SELECT title, manifest FROM director_drafts WHERE id = ?`)
+        .get(req.params.id) as { title: string; manifest: string } | undefined;
+      if (!draft) {
+        res.status(404).json({ error: `Draft not found: ${req.params.id}` });
+        return;
+      }
+      const { label } = req.body as { label?: string };
+      const id = randomUUID();
+      const now = new Date().toISOString();
+      const resolvedLabel = (label?.trim()) || `v – ${new Date(now).toLocaleString(undefined, {
+        month: "short", day: "numeric", hour: "2-digit", minute: "2-digit",
+      })}`;
+      db.prepare(
+        `INSERT INTO director_draft_versions (id, draft_id, label, manifest, created_at) VALUES (?, ?, ?, ?, ?)`,
+      ).run(id, req.params.id, resolvedLabel, draft.manifest, now);
+      logger.info(`[Director API] Draft version created: ${id} for draft ${req.params.id}`);
+      res.status(201).json({ id, label: resolvedLabel, createdAt: now });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      logger.error(`[Director API] POST /drafts/:id/versions failed: ${msg}`);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  /**
+   * GET /drafts/:id/versions — list saved versions for a draft.
+   */
+  router.get("/drafts/:id/versions", (req, res) => {
+    try {
+      const db = getDatabase();
+      const rows = db.prepare(
+        `SELECT id, label, created_at FROM director_draft_versions
+         WHERE draft_id = ? ORDER BY created_at DESC`,
+      ).all(req.params.id) as Array<{ id: string; label: string; created_at: string }>;
+      res.json({ versions: rows.map((r) => ({ id: r.id, label: r.label, createdAt: r.created_at })) });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  /**
+   * POST /drafts/:id/versions/:versionId/restore — overwrite the draft manifest from a saved version.
+   */
+  router.post("/drafts/:id/versions/:versionId/restore", (req, res) => {
+    try {
+      const db = getDatabase();
+      const ver = db.prepare(
+        `SELECT manifest FROM director_draft_versions WHERE id = ? AND draft_id = ?`,
+      ).get(req.params.versionId, req.params.id) as { manifest: string } | undefined;
+      if (!ver) {
+        res.status(404).json({ error: "Version not found" });
+        return;
+      }
+      db.prepare(`UPDATE director_drafts SET manifest = ?, updated_at = ? WHERE id = ?`)
+        .run(ver.manifest, new Date().toISOString(), req.params.id);
+      logger.info(`[Director API] Draft ${req.params.id} restored from version ${req.params.versionId}`);
+      res.json({ success: true, manifest: JSON.parse(ver.manifest) });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  /**
    * GET /drafts/:id/renders — list render history for a draft.
    */
   router.get("/drafts/:id/renders", (req, res) => {
@@ -1977,6 +2154,351 @@ Respond with ONLY a valid JSON array. No markdown, no explanation.`;
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       logger.error(`[Director API] GET /drafts/:id/renders failed: ${msg}`);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  /**
+   * POST /drafts/:id/thumbnail — generate a clickbait thumbnail from a draft's manifest.
+   * Body: {
+   *   style?: string,
+   *   textOverride?: string[],
+   *   mode?: "frame-select" | "flux-enhance" | "flux-generate",
+   *   prompt?: string,
+   *   clickbaitOverlay?: "none" | "arrows" | "circles" | "emoji" | "badge",
+   *   baseFrameUrl?: string  — for flux-enhance, reuse a previously selected frame
+   * }
+   *
+   * Modes:
+   *   frame-select    — LLM picks the best keyframe, returns raw (no img2img). Fast.
+   *   flux-enhance    — img2img on the selected frame with user prompt (e.g. "add a person next to the car").
+   *   flux-generate   — completely new image from text prompt.
+   *
+   * Response: { thumbnailUrl, suggestedText, selectedFrame, mode, rawFrameUrl? }
+   */
+  router.post("/drafts/:id/thumbnail", async (req, res) => {
+    try {
+      const osMod = await import("node:os");
+      const pathMod = await import("node:path");
+      const fsMod = await import("node:fs");
+
+      const db = getDatabase();
+      const draft = db.prepare(`SELECT title, manifest FROM director_drafts WHERE id = ?`)
+        .get(req.params.id) as { title: string; manifest: string } | undefined;
+      if (!draft) {
+        res.status(404).json({ error: `Draft not found: ${req.params.id}` });
+        return;
+      }
+
+      const { DirectorManifestSchema } = await import("../video/manifest/manifest-schema.js");
+      const manifest = DirectorManifestSchema.parse(JSON.parse(draft.manifest));
+
+      const imageDir = pathMod.join(osMod.homedir(), ".openzigs", "director", "images");
+      const outputDir = pathMod.join(osMod.homedir(), ".openzigs", "director", "thumbnails");
+      if (!fsMod.existsSync(outputDir)) {
+        fsMod.mkdirSync(outputDir, { recursive: true });
+      }
+
+      const { style, textOverride, mode, prompt, clickbaitOverlay, baseFrameUrl } = req.body as {
+        style?: string;
+        textOverride?: string[];
+        mode?: "frame-select" | "flux-enhance" | "flux-generate";
+        prompt?: string;
+        clickbaitOverlay?: "none" | "arrows" | "circles" | "emoji" | "badge";
+        baseFrameUrl?: string;
+      };
+
+      const imageGenMod = await import("../video/generators/image-gen-service.js");
+      const imageGenUserConfig = await imageGenMod.ImageGenService.loadUserImageGenConfig();
+      const imageService = new imageGenMod.ImageGenService({ outputDir: imageDir, ...imageGenUserConfig });
+      await imageService.initialize();
+
+      // -- Helper: select the best keyframe from the manifest --
+      const pickBestFrame = async () => {
+        const { extractKeyframesFromManifest, selectThumbnailFrame } = await import("../video/thumbnails/frame-selector.js");
+        const keyframes = extractKeyframesFromManifest(manifest, imageDir);
+        if (keyframes.length === 0) return null;
+        return selectThumbnailFrame(keyframes, manifest, copilot);
+      };
+
+      // -- Helper: resolve a base frame path from URL or fresh selection --
+      const resolveBaseFrame = async (): Promise<{ path: string; timestamp: number; rationale: string; text: string[] } | null> => {
+        // If the client sent back a previously selected frame URL, resolve it
+        if (baseFrameUrl) {
+          const filename = baseFrameUrl.split("/").pop() ?? "";
+          // Check thumbnails directory first, then images directory
+          let resolved = pathMod.join(outputDir, filename);
+          if (!fsMod.existsSync(resolved)) {
+            resolved = pathMod.join(imageDir, filename);
+          }
+          if (fsMod.existsSync(resolved)) {
+            return { path: resolved, timestamp: 0, rationale: "Using previously selected frame", text: [manifest.projectTitle.toUpperCase()] };
+          }
+        }
+        // Fall back to fresh LLM selection
+        const frameResult = await pickBestFrame();
+        if (!frameResult) return null;
+        return { path: frameResult.framePath, timestamp: frameResult.timestamp, rationale: frameResult.rationale, text: frameResult.suggestedText };
+      };
+
+      let backgroundPath: string;
+      let rawFrameUrl: string | undefined;
+      let frameInfo: { timestamp: number; rationale: string } = { timestamp: 0, rationale: "" };
+      let suggestedText: string[];
+      const effectiveMode = mode ?? "frame-select";
+
+      if (effectiveMode === "frame-select") {
+        // Step 1 flow: just pick the best frame, no enhancement. Return fast.
+        const frame = await resolveBaseFrame();
+        if (!frame) {
+          res.status(400).json({ error: "No scene images found — ensure the draft has generated images" });
+          return;
+        }
+        // Copy frame to thumbnails dir so it's serveable
+        const rawFilename = `raw_${req.params.id}_${Date.now()}.jpg`;
+        const rawPath = pathMod.join(outputDir, rawFilename);
+        fsMod.copyFileSync(frame.path, rawPath);
+        rawFrameUrl = `/api/admin/director/files/${rawFilename}`;
+
+        backgroundPath = frame.path;
+        frameInfo = { timestamp: frame.timestamp, rationale: frame.rationale };
+        suggestedText = frame.text;
+
+        // Ask LLM for clickbait text suggestions
+        try {
+          const textChunks: string[] = [];
+          const textStream = copilot.chat(
+            `You are a YouTube clickbait expert. Given this video title: "${manifest.projectTitle}", suggest 2 short, bold, enticing text overlay lines for the thumbnail. ALL CAPS, max 25 chars per line. Respond with JSON: { "suggestedText": ["LINE1", "LINE2"] }`,
+            { tools: [] },
+          );
+          for await (const chunk of textStream) textChunks.push(chunk);
+          let jsonText = textChunks.join("").trim();
+          if (jsonText.startsWith("```")) jsonText = jsonText.replace(/^```(?:json)?\n?/, "").replace(/\n?```$/, "");
+          const parsed = JSON.parse(jsonText) as { suggestedText?: string[] };
+          if (Array.isArray(parsed.suggestedText)) {
+            suggestedText = parsed.suggestedText.filter((t): t is string => typeof t === "string").slice(0, 3);
+          }
+        } catch {
+          logger.warn("[Director API] Thumbnail text suggestion failed, using project title");
+        }
+
+      } else if (effectiveMode === "flux-enhance") {
+        // User wants to modify the selected frame with a prompt via img2img
+        const frame = await resolveBaseFrame();
+        if (!frame) {
+          res.status(400).json({ error: "No scene images found — ensure the draft has generated images" });
+          return;
+        }
+        frameInfo = { timestamp: frame.timestamp, rationale: frame.rationale };
+        suggestedText = frame.text;
+
+        const enhancePrompt = prompt ?? style ?? "YouTube thumbnail style, highly saturated, expressive, high contrast, vibrant colors, professional";
+        try {
+          const enhanced = await imageService.enhanceImage(frame.path, enhancePrompt, { strength: 0.65 });
+          backgroundPath = enhanced.filePath;
+          frameInfo.rationale = `Enhanced with: "${enhancePrompt.slice(0, 80)}"`;
+        } catch (enhanceErr) {
+          logger.warn(`[Director API] Thumbnail img2img enhancement failed, using raw frame: ${enhanceErr instanceof Error ? enhanceErr.message : String(enhanceErr)}`);
+          backgroundPath = frame.path;
+        }
+
+      } else {
+        // flux-generate: completely new image from text prompt
+        const thumbnailPrompt = prompt
+          ?? `YouTube thumbnail for "${manifest.projectTitle}", highly saturated, expressive, high contrast, vibrant colors, dramatic lighting, professional photography, 4K`;
+
+        const genResult = await imageService.generateImage(thumbnailPrompt, {
+          width: 1280,
+          height: 720,
+        });
+        backgroundPath = genResult.filePath;
+        frameInfo = { timestamp: 0, rationale: `AI-generated from prompt: "${thumbnailPrompt.slice(0, 100)}"` };
+        suggestedText = [manifest.projectTitle.toUpperCase()];
+
+        // Ask LLM for clickbait text suggestions
+        try {
+          const textChunks: string[] = [];
+          const textStream = copilot.chat(
+            `You are a YouTube clickbait expert. Given this video title: "${manifest.projectTitle}", suggest 2 short, bold, enticing text overlay lines for the thumbnail. ALL CAPS, max 25 chars per line. Respond with JSON: { "suggestedText": ["LINE1", "LINE2"] }`,
+            { tools: [] },
+          );
+          for await (const chunk of textStream) textChunks.push(chunk);
+          let jsonText = textChunks.join("").trim();
+          if (jsonText.startsWith("```")) jsonText = jsonText.replace(/^```(?:json)?\n?/, "").replace(/\n?```$/, "");
+          const parsed = JSON.parse(jsonText) as { suggestedText?: string[] };
+          if (Array.isArray(parsed.suggestedText)) {
+            suggestedText = parsed.suggestedText.filter((t): t is string => typeof t === "string").slice(0, 3);
+          }
+        } catch {
+          logger.warn("[Director API] Thumbnail text suggestion failed, using project title");
+        }
+      }
+
+      const textLines = Array.isArray(textOverride) && textOverride.length > 0
+        ? textOverride.filter((t): t is string => typeof t === "string").slice(0, 3)
+        : suggestedText;
+
+      // Composite text overlay with optional clickbait decorations
+      const { compositeThumbnail } = await import("../video/thumbnails/thumbnail-compositor.js");
+      const thumbnailFilename = `thumb_${req.params.id}_${Date.now()}.jpg`;
+      const thumbnailPath = pathMod.join(outputDir, thumbnailFilename);
+      await compositeThumbnail({
+        backgroundPath,
+        textLines,
+        textPlacement: "bottom",
+        textColor: "#ffffff",
+        outputPath: thumbnailPath,
+        clickbaitOverlay: clickbaitOverlay !== "none" ? clickbaitOverlay : undefined,
+      });
+
+      // Update draft thumbnail reference
+      db.prepare(`UPDATE director_drafts SET thumbnail = ?, updated_at = ? WHERE id = ?`)
+        .run(thumbnailFilename, new Date().toISOString(), req.params.id);
+
+      res.json({
+        thumbnailUrl: `/api/admin/director/files/${thumbnailFilename}`,
+        suggestedText,
+        selectedFrame: {
+          timestamp: frameInfo.timestamp,
+          rationale: frameInfo.rationale,
+        },
+        mode: effectiveMode,
+        rawFrameUrl,
+      });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      logger.error(`[Director API] POST /drafts/:id/thumbnail failed: ${msg}`);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  /**
+   * GET /renders — list all drafts with their latest completed render (if any).
+   * Queries director_drafts as the base so all presentations appear.
+   */
+  router.get("/renders", async (_req, res) => {
+    try {
+      const db = getDatabase();
+      const fsMod = await import("node:fs");
+      const pathMod = await import("node:path");
+      const osMod = await import("node:os");
+
+      const rendersDir = pathMod.join(osMod.homedir(), ".openzigs", "renders");
+
+      // Fetch all drafts.
+      const drafts = db
+        .prepare(
+          `SELECT id, title, production_mode, updated_at FROM director_drafts ORDER BY updated_at DESC LIMIT 100`,
+        )
+        .all() as Array<{ id: string; title: string; production_mode: string; updated_at: string }>;
+
+      // Fetch the latest render row per draft using a proper SQLite GROUP BY pattern.
+      const renderRows = db
+        .prepare(
+          `SELECT r.draft_id, r.job_id, r.quality, r.status, r.output_path, r.created_at
+           FROM director_renders r
+           INNER JOIN (
+             SELECT draft_id, MAX(created_at) AS max_created_at
+             FROM director_renders
+             GROUP BY draft_id
+           ) latest ON r.draft_id = latest.draft_id AND r.created_at = latest.max_created_at`,
+        )
+        .all() as Array<{
+        draft_id: string;
+        job_id: string;
+        quality: string;
+        status: string;
+        output_path: string | null;
+        created_at: string;
+      }>;
+
+      const renderByDraft = new Map<string, (typeof renderRows)[0]>();
+      for (const r of renderRows) renderByDraft.set(r.draft_id, r);
+
+      const renders = drafts.map((d) => {
+        const r = renderByDraft.get(d.id);
+        const liveJob = r ? renderOrchestrator?.getJob(r.job_id) : undefined;
+
+        // Resolve output path: live job → DB row → filesystem probe for historical renders.
+        let resolvedPath: string | null = liveJob?.outputPath ?? r?.output_path ?? null;
+        if (!resolvedPath && r?.job_id) {
+          // Historical renders (pre-persistence hook) may have the file on disk but
+          // null in the DB. Scan the job's output directory for any .mp4 file.
+          const jobDir = pathMod.join(rendersDir, r.job_id);
+          if (fsMod.existsSync(jobDir)) {
+            const files = fsMod.readdirSync(jobDir).filter((f) => f.endsWith(".mp4"));
+            if (files.length > 0) {
+              resolvedPath = pathMod.join(jobDir, files[0]);
+              // Back-fill the DB so future requests are instant.
+              db.prepare(
+                `UPDATE director_renders SET output_path = ?, status = 'complete', updated_at = ? WHERE job_id = ?`,
+              ).run(resolvedPath, new Date().toISOString(), r.job_id);
+            }
+          }
+        }
+
+        const resolvedStatus = liveJob?.status ?? (resolvedPath ? "complete" : (r?.status ?? null));
+        return {
+          draftId: d.id,
+          draftTitle: d.title,
+          productionMode: d.production_mode,
+          quality: r?.quality ?? null,
+          status: resolvedStatus,
+          outputPath: resolvedPath,
+          downloadUrl: resolvedPath && r?.job_id ? `/api/admin/director/renders/${r.job_id}/download` : null,
+          updatedAt: d.updated_at,
+        };
+      });
+
+      res.json({ renders });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      logger.error(`[Director API] GET /renders failed: ${msg}`);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  /**
+   * GET /renders/:jobId/download — stream a completed render file as an attachment.
+   */
+  router.get("/renders/:jobId/download", async (req, res) => {
+    try {
+      const fsMod = await import("node:fs");
+
+      const db = getDatabase();
+      const row = db.prepare(
+        `SELECT r.output_path, d.title
+         FROM director_renders r
+         JOIN director_drafts d ON d.id = r.draft_id
+         WHERE r.job_id = ?`,
+      ).get(req.params.jobId) as { output_path: string | null; title: string } | undefined;
+
+      // Also check live job state in case DB hasn't been flushed yet
+      const liveJob = renderOrchestrator?.getJob(req.params.jobId);
+      const outputPath = liveJob?.outputPath ?? row?.output_path ?? null;
+
+      if (!outputPath) {
+        res.status(404).json({ error: "Render not found or not yet complete" });
+        return;
+      }
+
+      if (!fsMod.existsSync(outputPath)) {
+        res.status(404).json({ error: "Render file not found on disk" });
+        return;
+      }
+
+      const safeTitle = (row?.title ?? "render")
+        .replace(/[^a-zA-Z0-9_\- ]/g, "")
+        .trim()
+        .replace(/\s+/g, "_") || "render";
+      const fileName = `${safeTitle}_${req.params.jobId.slice(0, 8)}.mp4`;
+
+      res.setHeader("Content-Type", "video/mp4");
+      res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
+      fsMod.createReadStream(outputPath).pipe(res);
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      logger.error(`[Director API] GET /renders/:jobId/download failed: ${msg}`);
       res.status(500).json({ error: msg });
     }
   });
@@ -2055,6 +2577,101 @@ Respond with ONLY a valid JSON array. No markdown, no explanation.`;
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       logger.error(`[Director API] POST /scenes/:sceneIndex/regenerate failed: ${msg}`);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  /**
+   * POST /scenes/:sceneIndex/rewrite-script — use LLM to rewrite narration after
+   * a scene's visual asset has been replaced (e.g. image → video swap).
+   *
+   * Body: { draftId, videoDurationSec?, currentScript?, context? }
+   * Returns: { sceneIndex, newScript }
+   */
+  router.post("/scenes/:sceneIndex/rewrite-script", async (req, res) => {
+    try {
+      const sceneIndex = Number.parseInt(req.params.sceneIndex, 10);
+      if (!Number.isFinite(sceneIndex) || sceneIndex < 0) {
+        res.status(400).json({ error: "Invalid scene index" });
+        return;
+      }
+
+      const { draftId, videoDurationSec, currentScript, context } = req.body as {
+        draftId?: string;
+        videoDurationSec?: number;
+        currentScript?: string;
+        context?: string;
+      };
+
+      if (!draftId) {
+        res.status(400).json({ error: "draftId is required" });
+        return;
+      }
+
+      // Load the full manifest to get surrounding context
+      const db = getDatabase();
+      const row = db.prepare(`SELECT manifest FROM director_drafts WHERE id = ?`)
+        .get(draftId) as { manifest: string } | undefined;
+
+      if (!row) {
+        res.status(404).json({ error: "Draft not found" });
+        return;
+      }
+
+      const manifest = JSON.parse(row.manifest);
+      const scenes = (manifest.timeline ?? []).filter(
+        (e: { type: string }) => e.type === "image_scene" || e.type === "video_clip",
+      );
+
+      if (sceneIndex >= scenes.length) {
+        res.status(400).json({ error: `Scene index ${sceneIndex} out of range (${scenes.length} scenes)` });
+        return;
+      }
+
+      const scene = scenes[sceneIndex];
+      const prevScene = sceneIndex > 0 ? scenes[sceneIndex - 1] : null;
+      const nextScene = sceneIndex < scenes.length - 1 ? scenes[sceneIndex + 1] : null;
+
+      const durationHint = videoDurationSec
+        ? `The replacement video is ${videoDurationSec.toFixed(1)} seconds long.`
+        : "";
+
+      const prompt = `You are rewriting the narration script for scene ${sceneIndex + 1} of a video project.
+The visual asset for this scene was just replaced${videoDurationSec ? " with a video clip" : ""}.
+${durationHint}
+
+CURRENT SCRIPT for this scene:
+"${currentScript ?? scene.scriptText ?? "(none)"}"
+
+${prevScene?.scriptText ? `PREVIOUS SCENE script (for continuity): "${prevScene.scriptText}"` : ""}
+${nextScene?.scriptText ? `NEXT SCENE script (for continuity): "${nextScene.scriptText}"` : ""}
+${context ? `ADDITIONAL CONTEXT: ${context}` : ""}
+
+PROJECT TITLE: ${manifest.projectTitle ?? "Untitled"}
+
+Rewrite the narration for this scene to smoothly accommodate the new visual.
+${videoDurationSec ? `Aim for narration that fills approximately ${videoDurationSec.toFixed(1)} seconds (~${Math.round(videoDurationSec * 2.5)} words at natural pace).` : ""}
+Keep the same tone and style as the surrounding scenes.
+Return ONLY the new narration text, no explanations or formatting.`;
+
+      const stream = copilot.chat(prompt, { tools: [] });
+      const chunks: string[] = [];
+      for await (const chunk of stream) {
+        chunks.push(chunk);
+      }
+      const newScript = chunks.join("").trim().replace(/^["']|["']$/g, "");
+
+      // Update the draft manifest with the new script
+      scene.scriptText = newScript;
+      const now = new Date().toISOString();
+      db.prepare(`UPDATE director_drafts SET manifest = ?, updated_at = ? WHERE id = ?`)
+        .run(JSON.stringify(manifest), now, draftId);
+
+      logger.info(`[Director API] Rewrote script for scene ${sceneIndex} in draft ${draftId}`);
+      res.json({ sceneIndex, newScript });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      logger.error(`[Director API] POST /scenes/:sceneIndex/rewrite-script failed: ${msg}`);
       res.status(500).json({ error: msg });
     }
   });

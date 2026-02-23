@@ -26,7 +26,15 @@ export const OutroCard: React.FC<
   animation = "fade-out",
 }) => {
   const frame = useCurrentFrame();
-  const { fps } = useVideoConfig();
+  const { fps, width, height } = useVideoConfig();
+
+  // Scale font sizes for portrait (9:16) compositions
+  const isPortrait = height > width;
+  const titleFontSize = isPortrait ? 48 : 64;
+  const subtitleFontSize = isPortrait ? 22 : 28;
+  const ctaFontSize = isPortrait ? 20 : 24;
+  const containerWidth = isPortrait ? "90%" : "80%";
+  const logoHeight = isPortrait ? 40 : 50;
 
   // Entrance: fade in at start
   const entranceSpring = spring({ frame, fps, config: { damping: 18, stiffness: 80 } });
@@ -95,12 +103,12 @@ export const OutroCard: React.FC<
           transform: `translate(-50%, -50%) translateY(${exitTranslateY}px) scale(${exitScale})`,
           opacity: combinedOpacity,
           textAlign: "center",
-          width: "80%",
+          width: containerWidth,
         }}
       >
         <div
           style={{
-            fontSize: 64,
+            fontSize: titleFontSize,
             fontWeight: "bold",
             color: "#ffffff",
             fontFamily: "Inter, system-ui, sans-serif",
@@ -114,7 +122,7 @@ export const OutroCard: React.FC<
         {subtitle && (
           <div
             style={{
-              fontSize: 28,
+              fontSize: subtitleFontSize,
               fontWeight: 300,
               color: "rgba(255,255,255,0.85)",
               fontFamily: "Inter, system-ui, sans-serif",
@@ -140,7 +148,7 @@ export const OutroCard: React.FC<
                 borderRadius: 8,
                 background: "linear-gradient(90deg, #e94560, #c23660)",
                 color: "#ffffff",
-                fontSize: 24,
+                fontSize: ctaFontSize,
                 fontWeight: 600,
                 fontFamily: "Inter, system-ui, sans-serif",
                 letterSpacing: 1,
@@ -165,7 +173,7 @@ export const OutroCard: React.FC<
         >
           <Img
             src={logoSrc}
-            style={{ height: 50, objectFit: "contain" }}
+            style={{ height: logoHeight, objectFit: "contain" }}
           />
         </div>
       )}
