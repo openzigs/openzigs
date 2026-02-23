@@ -9,7 +9,9 @@ INPUT_IMG = os.path.expanduser(
     "~/.openzigs/director/thumbnails/raw_mndz5D6KAJGMTNKh7MpaO_1771880772597.jpg"
 )
 OUTPUT_IMG = "/tmp/img2img_test_output.png"
-SIDECAR_URL = "http://192.168.68.61:5005/img2img"
+# toggle between `/img2img` and `/kontext` for manual testing
+# use localhost when testing locally
+SIDECAR_URL = "http://192.168.68.61:5005/kontext"
 TOKEN = "0b4b2f89467b4b39cf8388092c78104cd780aa2a4ef405f30db12c8021e8e458"
 
 with open(INPUT_IMG, "rb") as f:
@@ -20,12 +22,10 @@ encoded = base64.b64encode(img_bytes).decode()
 body = {
     "prompt": "add a woman in a red dress sitting on the hood of the car, photorealistic, high quality",
     "image": encoded,
-    "model": "flux-dev",
-    "strength": 0.6,
     "width": 1280,
     "height": 720,
     "steps": 20,
-    "guidance_scale": 3.5,
+    "guidance": 2.5,
 }
 payload = json.dumps(body).encode()
 
@@ -42,7 +42,8 @@ req = urllib.request.Request(
 print(f"Sending img2img request ({len(payload)} bytes) to {SIDECAR_URL} ...")
 start = time.time()
 try:
-    resp = urllib.request.urlopen(req, timeout=300)
+    # give plenty of time for model download / long-gen
+    resp = urllib.request.urlopen(req, timeout=1200)
     data = resp.read()
     elapsed = time.time() - start
     print(f"Response: HTTP {resp.status}, {len(data)} bytes in {elapsed:.1f}s")

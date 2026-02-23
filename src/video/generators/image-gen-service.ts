@@ -83,7 +83,10 @@ function getDefaultConfig(): Required<ImageGenServiceConfig> {
     imagenModel: "imagen-3.0-generate-001",
     localSidecarUrl: process.env.IMAGE_GEN_SIDECAR_URL ?? "http://127.0.0.1:5005",
     cloudTimeoutMs: 60_000,
-    localTimeoutMs: 600_000,
+    // The local sidecar can take a long time to download models or run a heavy
+    // kontext edit. 20 minutes (1,200,000 ms) gives ample headroom; callers may
+    // still override via USER config if they want shorter timeouts.
+    localTimeoutMs: 1_200_000,
     outputDir: path.join(os.tmpdir(), "openzigs-image-gen"),
     imageGenMode: (process.env.IMAGE_GEN_MODE as "local" | "network" | undefined) ?? "local",
     networkNodeUrl: process.env.IMAGE_GEN_NETWORK_URL ?? "",
@@ -457,6 +460,10 @@ export class ImageGenService {
    * Enhance an existing image via img2img diffusion.
    * Reads the source image, sends it as base64 to the sidecar's /img2img endpoint,
    * and saves the enhanced result.
+   *
+   * This path is used by thumbnail enhancement; because Kontext and large models
+   * may take many minutes to complete, the underlying fetch uses
+   * ``localTimeoutMs`` which defaults to 20 minutes.
    *
    * @param imagePath - Path to the source image (PNG/JPEG/WebP)
    * @param prompt    - Enhancement prompt guiding the diffusion
