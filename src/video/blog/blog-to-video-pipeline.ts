@@ -117,7 +117,7 @@ export async function blogToVideo(
   // Provide blog images as visual asset context so the LLM can reference them
   if (blog.images.length > 0) {
     storyboardOptions.visualAssets = blog.images
-      .slice(0, 10) // Limit to 10 images
+      .slice(0, 20)
       .map((img) => ({
         description: img.alt || "Blog article image",
         type: "image" as const,
@@ -182,13 +182,20 @@ export async function blogToVideo(
   const baseSeed = Date.now() % 100_000;
 
   for (const scene of storyboard.scenes) {
-    // Resolve image: use downloaded blog image or generate
+    // Resolve image: use LLM-assigned blog image or generate
     let sceneImagePath: string;
-    const blogImageIndex = scene.index < downloadedBlogImages.length ? scene.index : -1;
+    const assignedImageIdx = scene.blogImageIndex;
+    const hasBlogImage = assignedImageIdx != null
+      && assignedImageIdx >= 0
+      && assignedImageIdx < downloadedBlogImages.length
+      && downloadedBlogImages[assignedImageIdx];
 
-    if (blogImageIndex >= 0 && downloadedBlogImages[blogImageIndex]) {
-      sceneImagePath = downloadedBlogImages[blogImageIndex]!;
-      logger.info(`[BlogToVideo] Scene ${scene.index}: using blog image`);
+    if (hasBlogImage) {
+      sceneImagePath = downloadedBlogImages[assignedImageIdx]!;
+      logger.info(`[BlogToVideo] Scene ${scene.index}: using blog image #${assignedImageIdx}`);
+    } else if (!imageService) {
+      logger.warn(`[BlogToVideo] Scene ${scene.index}: no blog image and no image service — skipping`);
+      continue;
     } else {
       // Throttle cloud requests
       if (imageProvider !== "local" && scene.index > 0) {

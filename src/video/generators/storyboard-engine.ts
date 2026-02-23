@@ -41,6 +41,8 @@ export interface StoryboardScene {
     color?: string;
     backgroundColor?: string;
   }>;
+  /** 0-based index into the source blog's image list; set when the LLM assigns a blog image to this scene */
+  blogImageIndex?: number;
 }
 
 /** Full storyboard output from the engine. */
@@ -284,6 +286,7 @@ OUTPUT FORMAT (strict JSON):
       "imageDescription": "string — scene-specific visual description (WITHOUT the style anchor prefix)",
       "durationEstimate": number — scene duration in seconds (${minDur}-${maxDur}),
       "chapterTitle": "string | null — chapter title for chapter-starting scenes; null for all others",
+      "blogImageIndex": "number | null — 0-based index of a source image from the VISUAL ASSETS list to use for this scene, or null if AI image generation is needed",
       "textOverlays": [
         {
           "id": "string — unique identifier e.g. scene-0-overlay-0",
@@ -305,6 +308,7 @@ RULES:
 - Duration estimates should reflect the voiceover length (roughly ${WORDS_PER_SECOND} words per second).
 - Scenes must follow the document's logical flow — do not rearrange arbitrarily.
 - Each scene's imageDescription should be specific and visually descriptive, not vague.
+- When VISUAL ASSETS (source images) are provided, PREFER assigning them to matching scenes via blogImageIndex. Write a full imageDescription ONLY for scenes that truly need AI-generated imagery; for scenes with a blogImageIndex, imageDescription can be brief or empty.
 - If the user has provided VISUAL ASSETS (images or videos) with descriptions, naturally reference what those assets depict within the voiceover narration at appropriate moments. Treat the asset descriptions as additional context about the topic — weave their content into the script so the narration acknowledges what the viewer will see on screen.
 
 TTS PACING TAGS (optional — use sparingly for dramatic effect):
@@ -348,9 +352,9 @@ Include these in the "textOverlays" array for each scene in the JSON output.`;
     if (visualAssets && visualAssets.length > 0) {
       const assetLines = visualAssets
         .filter((a) => a.description.trim())
-        .map((a, i) => `  ${i + 1}. [${a.type}] ${a.description.trim()}`);
+        .map((a, i) => `  [${i}] [${a.type}] ${a.description.trim()}`);
       if (assetLines.length > 0) {
-        assetBlock = `\n\n=== USER-PROVIDED VISUAL ASSETS ===\nThe user has uploaded the following images/videos that will be overlaid on the final video.\nTheir descriptions provide additional context about the topic. Naturally weave references to what\nthese assets depict into the voiceover narration at appropriate moments — do NOT simply list them,\nbut incorporate their content as supporting visuals the narrator acknowledges.\n\n${assetLines.join("\n")}\n\n=== END OF VISUAL ASSETS ===`;
+        assetBlock = `\n\n=== SOURCE VISUAL ASSETS ===\nThe following images are available from the source document. Each has a 0-based index in brackets.\nAssign the most relevant image to each scene via the "blogImageIndex" field in your JSON output.\nPrefer using these source images over AI-generated ones. Only leave blogImageIndex as null for scenes\nwhere no source image is relevant. Weave references to what the images depict into the voiceover.\n\n${assetLines.join("\n")}\n\n=== END OF VISUAL ASSETS ===`;
       }
     }
 
@@ -450,6 +454,7 @@ Output a single JSON object.`;
         imagePrompt,
         durationEstimate: Math.max(5, Math.min(60, duration)),
         rawImageDescription: rawDesc,
+        blogImageIndex: typeof scene.blogImageIndex === "number" ? scene.blogImageIndex : undefined,
         chapterTitle: typeof scene.chapterTitle === "string" && scene.chapterTitle.trim()
           ? scene.chapterTitle.trim()
           : undefined,
@@ -517,6 +522,7 @@ interface RawStoryboardOutput {
     imageDescription?: string;
     durationEstimate?: number;
     chapterTitle?: string | null;
+    blogImageIndex?: number | null;
     textOverlays?: Array<{
       id?: string;
       text?: string;
