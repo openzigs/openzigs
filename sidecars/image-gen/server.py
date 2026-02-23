@@ -870,7 +870,12 @@ def _load_img2img_pipeline(model_key: str) -> DiffusionPipeline:
     # Reuse components from the txt2img pipeline if possible
     if _model_loaded and _model_name == model_key and _pipeline is not None:
         log.info("Sharing components from loaded txt2img pipeline ...")
-        shared_components = _pipeline.components
+        import inspect
+        valid_params = inspect.signature(img2img_cls.__init__).parameters
+        shared_components = {
+            k: v for k, v in _pipeline.components.items()
+            if k in valid_params
+        }
         pipe = img2img_cls(**shared_components)
     else:
         # Full load with same dtype/device strategy as txt2img
