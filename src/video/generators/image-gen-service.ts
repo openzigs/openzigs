@@ -59,7 +59,7 @@ export interface ImageGenServiceConfig {
   localSidecarUrl?: string;
   /** Timeout for cloud requests in ms (default: 60000) */
   cloudTimeoutMs?: number;
-  /** Timeout for local requests in ms (default: 120000) */
+  /** Timeout for local requests in ms (default: 600000 — 10 min to cover first-time model downloads) */
   localTimeoutMs?: number;
   /** Directory to save generated images (default: os.tmpdir()) */
   outputDir?: string;
@@ -83,7 +83,7 @@ function getDefaultConfig(): Required<ImageGenServiceConfig> {
     imagenModel: "imagen-3.0-generate-001",
     localSidecarUrl: process.env.IMAGE_GEN_SIDECAR_URL ?? "http://127.0.0.1:5005",
     cloudTimeoutMs: 60_000,
-    localTimeoutMs: 300_000,
+    localTimeoutMs: 600_000,
     outputDir: path.join(os.tmpdir(), "openzigs-image-gen"),
     imageGenMode: (process.env.IMAGE_GEN_MODE as "local" | "network" | undefined) ?? "local",
     networkNodeUrl: process.env.IMAGE_GEN_NETWORK_URL ?? "",
