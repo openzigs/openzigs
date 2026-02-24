@@ -12,6 +12,16 @@
  *   GET  /assets/local                — list local library
  *   DELETE /assets/:id                — remove cached asset
  *   POST /produce                     — trigger video production (ingestion → LLM → manifest)
+ *   POST /enhance                     — enhance a scene image via Flux img2img
+ *   POST /thumbnail                   — generate an AI thumbnail
+ *   POST /drafts                      — create a new draft
+ *   GET  /drafts                      — list all drafts
+ *   GET  /drafts/:id                  — get a single draft with manifest
+ *   PUT  /drafts/:id                  — update a draft
+ *   DELETE /drafts/:id                — delete a draft
+ *   POST /scenes/:idx/regenerate      — regenerate a single scene image
+ *   POST /shorts                      — convert long-form video to YouTube Short
+ *   POST /blog-to-video               — convert blog post URL to draft video
  *   POST /render                      — submit manifest to render queue
  *   GET  /jobs                        — list render jobs
  *   GET  /jobs/:id                    — get render job status
@@ -23,9 +33,12 @@ import { spawn } from "node:child_process";
 import { Router, raw } from "express";
 import { nanoid } from "nanoid";
 import { logger } from "../logging/logger.js";
+import { getDatabase } from "../productivity/database.js";
 import type { CopilotWrapper } from "../copilot/copilot-wrapper.js";
 import type { VoiceService } from "../voice/voice-service.js";
 import type { RenderOrchestrator } from "../video/render-orchestrator.js";
+import { NARRATION_DIRECTIVES } from "../voice/pacing-translator.js";
+import { AVAILABLE_LOCAL_VOICES } from "../voice/types.js";
 
 export interface DirectorRouterOptions {
   copilot: CopilotWrapper;
@@ -86,6 +99,60 @@ export const createDirectorRouter = ({
           return;
         }
         resolve(duration);
+      });
+    });
+  }
+
+  /**
+   * Probe a video file for duration and dimensions using ffprobe.
+   */
+  async function probeVideoInfo(
+    filePath: string,
+  ): Promise<{ durationSec: number; width: number; height: number } | null> {
+    return await new Promise((resolve) => {
+      const proc = spawn("ffprobe", [
+        "-v",
+        "error",
+        "-select_streams",
+        "v:0",
+        "-show_entries",
+        "stream=width,height:format=duration",
+        "-of",
+        "json",
+        filePath,
+      ]);
+
+      let stdout = "";
+
+      proc.stdout?.on("data", (chunk: Buffer) => {
+        stdout += chunk.toString("utf-8");
+      });
+
+      proc.on("error", () => {
+        resolve(null);
+      });
+
+      proc.on("close", (code) => {
+        if (code !== 0) {
+          resolve(null);
+          return;
+        }
+        try {
+          const data = JSON.parse(stdout);
+          const stream = data.streams?.[0];
+          const durationSec = Number.parseFloat(data.format?.duration);
+          if (!Number.isFinite(durationSec) || durationSec <= 0) {
+            resolve(null);
+            return;
+          }
+          resolve({
+            durationSec,
+            width: stream?.width ?? 0,
+            height: stream?.height ?? 0,
+          });
+        } catch {
+          resolve(null);
+        }
       });
     });
   }
@@ -158,6 +225,28 @@ export const createDirectorRouter = ({
   /**
    * GET /config — return Director Mode configuration (safe subset).
    */
+  /**
+   * GET /narration/directives — available speech directives & voice presets for autocomplete.
+   */
+  router.get("/narration/directives", (_req, res) => {
+    res.json({
+      directives: NARRATION_DIRECTIVES,
+      voices: AVAILABLE_LOCAL_VOICES.map(v => {
+        // Infer language/gender from the voice id prefix (af=American Female, bm=British Male, etc.)
+        const prefix = v.id.slice(0, 2);
+        const langMap: Record<string, string> = { a: "en-US", b: "en-GB", j: "ja-JP", z: "zh-CN" };
+        const genderMap: Record<string, string> = { f: "female", m: "male" };
+        return {
+          id: v.id,
+          label: `${v.id} — ${v.description}`,
+          language: langMap[prefix[0]] ?? "en",
+          gender: genderMap[prefix[1]] ?? "unknown",
+          style: v.description,
+        };
+      }),
+    });
+  });
+
   router.get("/config", (_req, res) => {
     res.json({
       enabled: config.enabled,
@@ -558,7 +647,14 @@ export const createDirectorRouter = ({
       await fs.writeFile(filePath, body);
 
       logger.info(`[Director API] Uploaded ${kind} overlay asset: ${filePath} (${body.length} bytes)`);
-      res.json({ success: true, kind, filePath, fileName: uniqueName, size: body.length });
+
+      // For video uploads, probe for duration and dimensions
+      let videoInfo: { durationSec: number; width: number; height: number } | null = null;
+      if (kind === "video") {
+        videoInfo = await probeVideoInfo(filePath);
+      }
+
+      res.json({ success: true, kind, filePath, fileName: uniqueName, size: body.length, videoInfo });
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       logger.error(`[Director API] POST /files/upload-asset failed: ${msg}`);
@@ -724,6 +820,10 @@ Respond with ONLY a valid JSON array. No explanation. Example:
         pathMod.join(osMod.homedir(), ".openzigs", "director", "uploads", "videos"),
         pathMod.join(osMod.homedir(), ".openzigs", "director", "uploads", "overlay"),
         pathMod.join(osMod.homedir(), ".openzigs", "director", "ref-audio"),
+        pathMod.join(osMod.homedir(), ".openzigs", "director", "images"),
+        pathMod.join(osMod.homedir(), ".openzigs", "director", "blog"),
+        pathMod.join(osMod.homedir(), ".openzigs", "director", "thumbnails"),
+        pathMod.join(osMod.homedir(), ".openzigs", "director", "shorts"),
       ];
 
       let found: string | null = null;
@@ -732,6 +832,22 @@ Respond with ONLY a valid JSON array. No explanation. Example:
         if (fsMod.existsSync(candidate)) {
           found = candidate;
           break;
+        }
+      }
+
+      // Search render job subdirectories (~/.openzigs/renders/<jobId>/)
+      if (!found) {
+        const rendersBase = pathMod.join(osMod.homedir(), ".openzigs", "renders");
+        if (fsMod.existsSync(rendersBase)) {
+          const jobDirs = fsMod.readdirSync(rendersBase, { withFileTypes: true });
+          for (const d of jobDirs) {
+            if (!d.isDirectory()) continue;
+            const candidate = pathMod.join(rendersBase, d.name, fileName);
+            if (fsMod.existsSync(candidate)) {
+              found = candidate;
+              break;
+            }
+          }
         }
       }
 
@@ -892,18 +1008,10 @@ Respond with ONLY a valid JSON array. No explanation. Example:
         const isAssetsOnlyMode = !!assetsOnlyMode && !!visualAssets && visualAssets.length > 0;
         const lastSceneIndex = storyboard.scenes.length - 1;
 
-        // Query sidecar for recommended resolution (falls back to 1024x576)
-        let imageWidth = 1024;
-        let imageHeight = 576;
-        try {
-          const sidecarHealth = await imageService.getRecommendedResolution();
-          if (sidecarHealth) {
-            imageWidth = sidecarHealth.width;
-            imageHeight = sidecarHealth.height;
-          }
-        } catch {
-          // Use defaults if sidecar health check fails
-        }
+        // Fixed 16:9 video frame resolution — do not query sidecar (its native training
+        // resolution overrides this with e.g. 1024x1024 for Flux, costing 3-5x more time).
+        const imageWidth = 768;
+        const imageHeight = 432;
         logger.info(`[Director API] Image generation resolution: ${imageWidth}x${imageHeight}`);
 
         const fps = 30;
@@ -945,7 +1053,6 @@ Respond with ONLY a valid JSON array. No explanation. Example:
               const health = await healthResp.json() as { active_engine?: string };
               if (health.active_engine === "sovits") {
                 // Load the first available voice profile from the DB
-                const { getDatabase } = await import("../productivity/database.js");
                 const db = getDatabase();
                 const profile = db.prepare(
                   `SELECT ref_audio_path, ref_text, language, top_p, temperature,
@@ -1170,6 +1277,7 @@ Respond with ONLY a valid JSON array. No explanation. Example:
               translateYFrom: 0,
               translateYTo: -5,
             },
+            textOverlays: scene.textOverlays,
           });
 
           currentFrame += durationInFrames;
@@ -1486,6 +1594,1267 @@ Respond with ONLY a valid JSON array. No markdown, no explanation.`;
     }
   });
 
+  // ── Image Enhancement (img2img) ─────────────────────────────
+
+  /**
+   * POST /enhance — enhance a scene image via Flux img2img.
+   * Body: { imagePath, prompt, strength?, model?, seed? }
+   * Response: { enhancedImagePath, generationTimeMs }
+   */
+  router.post("/enhance", async (req, res) => {
+    try {
+      const { imagePath, prompt, strength, model, seed } = req.body as {
+        imagePath?: string;
+        prompt?: string;
+        strength?: number;
+        model?: string;
+        seed?: number;
+      };
+
+      if (!imagePath || typeof imagePath !== "string") {
+        res.status(400).json({ error: "imagePath is required" });
+        return;
+      }
+      if (!prompt || typeof prompt !== "string" || prompt.trim().length === 0) {
+        res.status(400).json({ error: "prompt is required" });
+        return;
+      }
+
+      const fsMod = await import("node:fs");
+      const osMod = await import("node:os");
+      const pathMod = await import("node:path");
+
+      // Path traversal guard: only allow files under home directory or configured outputDir
+      const normalizedImagePath = pathMod.resolve(imagePath);
+      const homeDir = osMod.homedir();
+      const allowedRoots = [homeDir, pathMod.resolve(config.outputDir)];
+      if (!allowedRoots.some((root) => normalizedImagePath.startsWith(root + pathMod.sep) || normalizedImagePath === root)) {
+        res.status(403).json({ error: "Access denied: imagePath is outside allowed directories" });
+        return;
+      }
+
+      if (!fsMod.existsSync(normalizedImagePath)) {
+        res.status(404).json({ error: `Image not found: ${imagePath}` });
+        return;
+      }
+      const imageOutputDir = pathMod.join(osMod.homedir(), ".openzigs", "director", "images");
+      const imageGenUserConfig = await (await import("../video/generators/image-gen-service.js")).ImageGenService.loadUserImageGenConfig();
+      const imageService = new (await import("../video/generators/image-gen-service.js")).ImageGenService({ outputDir: imageOutputDir, ...imageGenUserConfig });
+      await imageService.initialize();
+
+      const result = await imageService.enhanceImage(normalizedImagePath, prompt, {
+        strength,
+        model,
+        seed,
+      });
+
+      res.json({
+        enhancedImagePath: result.filePath,
+        generationTimeMs: result.generationTimeMs,
+      });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      logger.error(`[Director API] POST /enhance failed: ${msg}`);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  // ── Thumbnail Generation ───────────────────────────────────
+
+  /**
+   * POST /thumbnail — generate an AI-powered YouTube thumbnail for a manifest.
+   * Body: { manifestPath: string, outputDir: string, style?: string, textOverride?: string[] }
+   */
+  router.post("/thumbnail", async (req, res) => {
+    try {
+      const { manifestPath, outputDir, style, textOverride } = req.body as {
+        manifestPath?: string;
+        outputDir?: string;
+        style?: string;
+        textOverride?: string[];
+      };
+
+      if (!manifestPath || typeof manifestPath !== "string") {
+        res.status(400).json({ error: "manifestPath is required" });
+        return;
+      }
+      if (!outputDir || typeof outputDir !== "string") {
+        res.status(400).json({ error: "outputDir is required" });
+        return;
+      }
+
+      const fsMod = await import("node:fs");
+      const pathMod = await import("node:path");
+      const osMod = await import("node:os");
+
+      // Path traversal guard: only allow files under home directory or configured outputDir
+      const normalizedManifestPath = pathMod.resolve(manifestPath);
+      const normalizedOutputDir = pathMod.resolve(outputDir);
+      const homeDir = osMod.homedir();
+      const allowedRoots = [homeDir, pathMod.resolve(config.outputDir)];
+      if (!allowedRoots.some((root) => normalizedManifestPath.startsWith(root + pathMod.sep) || normalizedManifestPath === root)) {
+        res.status(403).json({ error: "Access denied: manifestPath is outside allowed directories" });
+        return;
+      }
+      if (!allowedRoots.some((root) => normalizedOutputDir.startsWith(root + pathMod.sep) || normalizedOutputDir === root)) {
+        res.status(403).json({ error: "Access denied: outputDir is outside allowed directories" });
+        return;
+      }
+
+      if (!fsMod.existsSync(normalizedManifestPath)) {
+        res.status(404).json({ error: `Manifest not found: ${manifestPath}` });
+        return;
+      }
+
+      const manifestRaw = JSON.parse(fsMod.readFileSync(normalizedManifestPath, "utf-8"));
+      const { DirectorManifestSchema } = await import("../video/manifest/manifest-schema.js");
+      const manifest = DirectorManifestSchema.parse(manifestRaw);
+
+      // LLM frame selection
+      const { extractKeyframesFromManifest, selectThumbnailFrame } = await import("../video/thumbnails/frame-selector.js");
+      const keyframes = extractKeyframesFromManifest(manifest, outputDir);
+
+      if (keyframes.length === 0) {
+        res.status(400).json({ error: "No scene images found in output directory" });
+        return;
+      }
+
+      const frameResult = await selectThumbnailFrame(keyframes, manifest, copilot);
+
+      // Apply text override if provided
+      const textLines = Array.isArray(textOverride) && textOverride.length > 0
+        ? textOverride.filter((t): t is string => typeof t === "string").slice(0, 3)
+        : frameResult.suggestedText;
+
+      // Stylize the selected frame via Flux img2img
+      let stylizedPath = frameResult.framePath;
+      try {
+        const imageOutputDir = pathMod.join(osMod.homedir(), ".openzigs", "director", "images");
+        const imageGenMod = await import("../video/generators/image-gen-service.js");
+        const imageGenUserConfig = await imageGenMod.ImageGenService.loadUserImageGenConfig();
+        const imageService = new imageGenMod.ImageGenService({ outputDir: imageOutputDir, ...imageGenUserConfig });
+        await imageService.initialize();
+
+        const stylePrompt = style ?? "YouTube thumbnail style, highly saturated, expressive, high contrast, vibrant colors, professional";
+        const enhanced = await imageService.enhanceImage(frameResult.framePath, stylePrompt, {
+          width: 1280,
+          height: 720,
+          steps: 20,
+          strength: 0.6,
+        });
+        stylizedPath = enhanced.filePath;
+      } catch (enhanceErr) {
+        logger.warn(`[Director API] Thumbnail img2img enhancement failed, using raw frame: ${enhanceErr instanceof Error ? enhanceErr.message : String(enhanceErr)}`);
+      }
+
+      // Composite text overlay
+      const { compositeThumbnail } = await import("../video/thumbnails/thumbnail-compositor.js");
+      const thumbnailPath = pathMod.join(outputDir, "thumbnail.jpg");
+      await compositeThumbnail({
+        backgroundPath: stylizedPath,
+        textLines,
+        textPlacement: frameResult.textPlacement,
+        textColor: frameResult.textColor,
+        outputPath: thumbnailPath,
+      });
+
+      res.json({
+        thumbnailPath,
+        suggestedText: frameResult.suggestedText,
+        selectedFrame: {
+          path: frameResult.framePath,
+          timestamp: frameResult.timestamp,
+          rationale: frameResult.rationale,
+        },
+      });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      logger.error(`[Director API] POST /thumbnail failed: ${msg}`);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  // ── Draft Persistence (CRUD) ─────────────────────────────
+
+  /**
+   * POST /assets/ingest — ingest a user-uploaded video through the ingestion pipeline.
+   * Body: { filePath: string, enableVision?: boolean, model?: string }
+   *
+   * Runs: ffprobe → audio extraction → keyframe analysis → (optional) vision → transcript.
+   * Returns: ClipAnalysis with keyframes, transcript, and descriptions.
+   */
+  router.post("/assets/ingest", async (req, res) => {
+    try {
+      const { filePath: srcPath, enableVision, model: visionModel } = req.body as {
+        filePath?: string;
+        enableVision?: boolean;
+        model?: string;
+      };
+
+      if (!srcPath || typeof srcPath !== "string") {
+        res.status(400).json({ error: "filePath is required" });
+        return;
+      }
+
+      const fsMod = await import("node:fs");
+      if (!fsMod.existsSync(srcPath)) {
+        res.status(404).json({ error: `File not found: ${srcPath}` });
+        return;
+      }
+
+      const { ingest } = await import("../video/ingestion/index.js");
+      const resolvedModel = visionModel || runtimeConfig.defaultModel || undefined;
+      const useVision = enableVision !== false;
+
+      const progressLog: Array<{ phase: string; message: string }> = [];
+      const result = await ingest(
+        { clips: [srcPath], mode: "highlight" },
+        {
+          copilot: useVision ? copilot : undefined,
+          visionAnalysis: useVision
+            ? { maxKeyframes: 10, delayMs: 1000, model: resolvedModel }
+            : undefined,
+          onProgress: (event) => {
+            progressLog.push({ phase: event.phase, message: event.message });
+            logger.info(`[Director API] Ingest: ${event.phase}: ${event.message}`);
+          },
+        },
+      );
+
+      const clip = result.clips[0];
+      if (!clip) {
+        res.status(500).json({ error: "Ingestion produced no clip analysis" });
+        return;
+      }
+
+      logger.info(
+        `[Director API] Asset ingested: ${srcPath} — ${clip.keyframes.length} keyframes, ${clip.transcript.length} transcript segments`,
+      );
+
+      res.json({
+        analysis: {
+          sourcePath: clip.sourcePath,
+          duration: clip.duration,
+          resolution: clip.resolution,
+          fps: clip.fps,
+          keyframes: clip.keyframes.map((kf) => ({
+            timestamp: kf.timestamp,
+            framePath: kf.framePath,
+            sceneScore: kf.sceneScore,
+            description: kf.description,
+          })),
+          transcriptSegments: clip.transcript.length,
+          transcript: clip.transcript.slice(0, 50),
+        },
+        progressLog,
+      });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      logger.error(`[Director API] POST /assets/ingest failed: ${msg}`);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  // ── Draft Persistence (CRUD) ─────────────────────────────
+
+  /**
+   * POST /drafts — create a new draft from a manifest.
+   * Body: { title, manifest, productionMode, thumbnail? }
+   */
+  router.post("/drafts", (req, res) => {
+    try {
+      const { title, manifest, productionMode, thumbnail } = req.body as {
+        title?: string;
+        manifest?: unknown;
+        productionMode?: string;
+        thumbnail?: string;
+      };
+
+      if (!manifest || typeof manifest !== "object") {
+        res.status(400).json({ error: "manifest object is required" });
+        return;
+      }
+      if (!productionMode || typeof productionMode !== "string") {
+        res.status(400).json({ error: "productionMode is required" });
+        return;
+      }
+
+      const db = getDatabase();
+      const id = nanoid();
+      const now = new Date().toISOString();
+      const manifestJson = JSON.stringify(manifest);
+      const resolvedTitle = (title && typeof title === "string" && title.trim()) || "Untitled Draft";
+
+      db.prepare(
+        `INSERT INTO director_drafts (id, title, manifest, thumbnail, production_mode, created_at, updated_at, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 'draft')`,
+      ).run(id, resolvedTitle, manifestJson, thumbnail ?? null, productionMode, now, now);
+
+      logger.info(`[Director API] Draft created: ${id} "${resolvedTitle}"`);
+      res.json({ id, title: resolvedTitle, status: "draft", createdAt: now, updatedAt: now });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      logger.error(`[Director API] POST /drafts failed: ${msg}`);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  /**
+   * GET /drafts — list all drafts.
+   */
+  router.get("/drafts", (_req, res) => {
+    try {
+      const db = getDatabase();
+      const rows = db.prepare(
+        `SELECT id, title, thumbnail, production_mode, created_at, updated_at, status
+         FROM director_drafts ORDER BY updated_at DESC`,
+      ).all() as Array<{
+        id: string;
+        title: string;
+        thumbnail: string | null;
+        production_mode: string;
+        created_at: string;
+        updated_at: string;
+        status: string;
+      }>;
+
+      res.json({
+        drafts: rows.map((r) => ({
+          id: r.id,
+          title: r.title,
+          thumbnail: r.thumbnail,
+          productionMode: r.production_mode,
+          createdAt: r.created_at,
+          updatedAt: r.updated_at,
+          status: r.status,
+        })),
+      });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      logger.error(`[Director API] GET /drafts failed: ${msg}`);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  /**
+   * GET /drafts/:id — get a single draft with full manifest.
+   */
+  router.get("/drafts/:id", (req, res) => {
+    try {
+      const db = getDatabase();
+      const row = db.prepare(
+        `SELECT id, title, manifest, thumbnail, production_mode, created_at, updated_at, status
+         FROM director_drafts WHERE id = ?`,
+      ).get(req.params.id) as {
+        id: string;
+        title: string;
+        manifest: string;
+        thumbnail: string | null;
+        production_mode: string;
+        created_at: string;
+        updated_at: string;
+        status: string;
+      } | undefined;
+
+      if (!row) {
+        res.status(404).json({ error: `Draft not found: ${req.params.id}` });
+        return;
+      }
+
+      let manifest: unknown;
+      try {
+        manifest = JSON.parse(row.manifest);
+      } catch (err) {
+        manifest = null;
+        logger.warn(`[Director API] Draft ${row.id} has corrupt manifest JSON: ${err instanceof Error ? err.message : String(err)}`);
+      }
+
+      res.json({
+        id: row.id,
+        title: row.title,
+        manifest,
+        thumbnail: row.thumbnail,
+        productionMode: row.production_mode,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+        status: row.status,
+      });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      logger.error(`[Director API] GET /drafts/:id failed: ${msg}`);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  /**
+   * PUT /drafts/:id — update a draft's manifest and/or title.
+   * Body: { title?, manifest?, status?, thumbnail? }
+   */
+  router.put("/drafts/:id", (req, res) => {
+    try {
+      const { title, manifest, status, thumbnail } = req.body as {
+        title?: string;
+        manifest?: unknown;
+        status?: string;
+        thumbnail?: string;
+      };
+
+      const db = getDatabase();
+
+      const existing = db.prepare(`SELECT id FROM director_drafts WHERE id = ?`)
+        .get(req.params.id) as { id: string } | undefined;
+
+      if (!existing) {
+        res.status(404).json({ error: `Draft not found: ${req.params.id}` });
+        return;
+      }
+
+      const updates: string[] = [];
+      const values: unknown[] = [];
+
+      if (title !== undefined) {
+        updates.push("title = ?");
+        values.push(title);
+      }
+      if (manifest !== undefined) {
+        updates.push("manifest = ?");
+        values.push(JSON.stringify(manifest));
+      }
+      if (status !== undefined) {
+        updates.push("status = ?");
+        values.push(status);
+      }
+      if (thumbnail !== undefined) {
+        updates.push("thumbnail = ?");
+        values.push(thumbnail);
+      }
+
+      if (updates.length === 0) {
+        res.json({ success: true, message: "Nothing to update" });
+        return;
+      }
+
+      const now = new Date().toISOString();
+      updates.push("updated_at = ?");
+      values.push(now);
+      values.push(req.params.id);
+
+      db.prepare(`UPDATE director_drafts SET ${updates.join(", ")} WHERE id = ?`).run(...values);
+      logger.info(`[Director API] Draft updated: ${req.params.id}`);
+      res.json({ success: true, updatedAt: now });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      logger.error(`[Director API] PUT /drafts/:id failed: ${msg}`);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  /**
+   * DELETE /drafts/:id — delete a draft.
+   */
+  router.delete("/drafts/:id", (req, res) => {
+    try {
+      const db = getDatabase();
+      const result = db.prepare(`DELETE FROM director_drafts WHERE id = ?`).run(req.params.id);
+      if (result.changes === 0) {
+        res.status(404).json({ error: `Draft not found: ${req.params.id}` });
+        return;
+      }
+      logger.info(`[Director API] Draft deleted: ${req.params.id}`);
+      res.json({ success: true });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      logger.error(`[Director API] DELETE /drafts/:id failed: ${msg}`);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  /**
+   * POST /drafts/:id/versions — snapshot the current manifest with a label.
+   * Body: { label?: string }
+   */
+  router.post("/drafts/:id/versions", async (req, res) => {
+    try {
+      const { randomUUID } = await import("node:crypto");
+      const db = getDatabase();
+      const draft = db.prepare(`SELECT title, manifest FROM director_drafts WHERE id = ?`)
+        .get(req.params.id) as { title: string; manifest: string } | undefined;
+      if (!draft) {
+        res.status(404).json({ error: `Draft not found: ${req.params.id}` });
+        return;
+      }
+      const { label } = req.body as { label?: string };
+      const id = randomUUID();
+      const now = new Date().toISOString();
+      const resolvedLabel = (label?.trim()) || `v – ${new Date(now).toLocaleString(undefined, {
+        month: "short", day: "numeric", hour: "2-digit", minute: "2-digit",
+      })}`;
+      db.prepare(
+        `INSERT INTO director_draft_versions (id, draft_id, label, manifest, created_at) VALUES (?, ?, ?, ?, ?)`,
+      ).run(id, req.params.id, resolvedLabel, draft.manifest, now);
+      logger.info(`[Director API] Draft version created: ${id} for draft ${req.params.id}`);
+      res.status(201).json({ id, label: resolvedLabel, createdAt: now });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      logger.error(`[Director API] POST /drafts/:id/versions failed: ${msg}`);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  /**
+   * GET /drafts/:id/versions — list saved versions for a draft.
+   */
+  router.get("/drafts/:id/versions", (req, res) => {
+    try {
+      const db = getDatabase();
+      const rows = db.prepare(
+        `SELECT id, label, created_at FROM director_draft_versions
+         WHERE draft_id = ? ORDER BY created_at DESC`,
+      ).all(req.params.id) as Array<{ id: string; label: string; created_at: string }>;
+      res.json({ versions: rows.map((r) => ({ id: r.id, label: r.label, createdAt: r.created_at })) });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  /**
+   * POST /drafts/:id/versions/:versionId/restore — overwrite the draft manifest from a saved version.
+   */
+  router.post("/drafts/:id/versions/:versionId/restore", (req, res) => {
+    try {
+      const db = getDatabase();
+      const ver = db.prepare(
+        `SELECT manifest FROM director_draft_versions WHERE id = ? AND draft_id = ?`,
+      ).get(req.params.versionId, req.params.id) as { manifest: string } | undefined;
+      if (!ver) {
+        res.status(404).json({ error: "Version not found" });
+        return;
+      }
+      db.prepare(`UPDATE director_drafts SET manifest = ?, updated_at = ? WHERE id = ?`)
+        .run(ver.manifest, new Date().toISOString(), req.params.id);
+      logger.info(`[Director API] Draft ${req.params.id} restored from version ${req.params.versionId}`);
+      res.json({ success: true, manifest: JSON.parse(ver.manifest) });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  /**
+   * GET /drafts/:id/renders — list render history for a draft.
+   */
+  router.get("/drafts/:id/renders", (req, res) => {
+    try {
+      const db = getDatabase();
+      const rows = db.prepare(
+        `SELECT id, job_id, quality, status, output_path, error, created_at, updated_at
+         FROM director_renders WHERE draft_id = ? ORDER BY created_at DESC`,
+      ).all(req.params.id) as Array<{
+        id: string;
+        job_id: string;
+        quality: string;
+        status: string;
+        output_path: string | null;
+        error: string | null;
+        created_at: string;
+        updated_at: string;
+      }>;
+
+      // Enrich with live job status from the render orchestrator
+      const renders = rows.map((r) => {
+        const job = renderOrchestrator?.getJob(r.job_id);
+        return {
+          id: r.id,
+          jobId: r.job_id,
+          quality: r.quality,
+          status: job?.status ?? r.status,
+          progress: job?.progress ?? (r.status === "complete" ? 100 : 0),
+          outputPath: job?.outputPath ?? r.output_path,
+          error: job?.error ?? r.error,
+          createdAt: r.created_at,
+          updatedAt: r.updated_at,
+        };
+      });
+
+      res.json({ renders });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      logger.error(`[Director API] GET /drafts/:id/renders failed: ${msg}`);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  /**
+   * POST /drafts/:id/thumbnail — generate a clickbait thumbnail from a draft's manifest.
+   * Body: {
+   *   style?: string,
+   *   textOverride?: string[],
+   *   mode?: "frame-select" | "flux-enhance" | "flux-generate",
+   *   prompt?: string,
+   *   clickbaitOverlay?: "none" | "arrows" | "circles" | "emoji" | "badge",
+   *   baseFrameUrl?: string  — for flux-enhance, reuse a previously selected frame
+   * }
+   *
+   * Modes:
+   *   frame-select    — LLM picks the best keyframe, returns raw (no img2img). Fast.
+   *   flux-enhance    — img2img on the selected frame with user prompt (e.g. "add a person next to the car").
+   *   flux-generate   — completely new image from text prompt.
+   *
+   * Response: { thumbnailUrl, suggestedText, selectedFrame, mode, rawFrameUrl? }
+   */
+  router.post("/drafts/:id/thumbnail", async (req, res) => {
+    try {
+      const osMod = await import("node:os");
+      const pathMod = await import("node:path");
+      const fsMod = await import("node:fs");
+
+      const db = getDatabase();
+      const draft = db.prepare(`SELECT title, manifest FROM director_drafts WHERE id = ?`)
+        .get(req.params.id) as { title: string; manifest: string } | undefined;
+      if (!draft) {
+        res.status(404).json({ error: `Draft not found: ${req.params.id}` });
+        return;
+      }
+
+      const { DirectorManifestSchema } = await import("../video/manifest/manifest-schema.js");
+      const manifest = DirectorManifestSchema.parse(JSON.parse(draft.manifest));
+
+      const imageDir = pathMod.join(osMod.homedir(), ".openzigs", "director", "images");
+      const outputDir = pathMod.join(osMod.homedir(), ".openzigs", "director", "thumbnails");
+      if (!fsMod.existsSync(outputDir)) {
+        fsMod.mkdirSync(outputDir, { recursive: true });
+      }
+
+      const { style, textOverride, mode, prompt, clickbaitOverlay, baseFrameUrl } = req.body as {
+        style?: string;
+        textOverride?: string[];
+        mode?: "frame-select" | "flux-enhance" | "flux-generate";
+        prompt?: string;
+        clickbaitOverlay?: "none" | "arrows" | "circles" | "emoji" | "badge";
+        baseFrameUrl?: string;
+      };
+
+      const imageGenMod = await import("../video/generators/image-gen-service.js");
+      const imageGenUserConfig = await imageGenMod.ImageGenService.loadUserImageGenConfig();
+      const imageService = new imageGenMod.ImageGenService({ outputDir: imageDir, ...imageGenUserConfig });
+      await imageService.initialize();
+
+      // -- Helper: select the best keyframe from the manifest --
+      const pickBestFrame = async () => {
+        const { extractKeyframesFromManifest, selectThumbnailFrame } = await import("../video/thumbnails/frame-selector.js");
+        const keyframes = extractKeyframesFromManifest(manifest, imageDir);
+        if (keyframes.length === 0) return null;
+        return selectThumbnailFrame(keyframes, manifest, copilot);
+      };
+
+      // -- Helper: resolve a base frame path from URL or fresh selection --
+      const resolveBaseFrame = async (): Promise<{ path: string; timestamp: number; rationale: string; text: string[] } | null> => {
+        // If the client sent back a previously selected frame URL, resolve it
+        if (baseFrameUrl) {
+          const filename = baseFrameUrl.split("/").pop() ?? "";
+          // Check thumbnails directory first, then images directory
+          let resolved = pathMod.join(outputDir, filename);
+          if (!fsMod.existsSync(resolved)) {
+            resolved = pathMod.join(imageDir, filename);
+          }
+          if (fsMod.existsSync(resolved)) {
+            return { path: resolved, timestamp: 0, rationale: "Using previously selected frame", text: [manifest.projectTitle.toUpperCase()] };
+          }
+        }
+        // Fall back to fresh LLM selection
+        const frameResult = await pickBestFrame();
+        if (!frameResult) return null;
+        return { path: frameResult.framePath, timestamp: frameResult.timestamp, rationale: frameResult.rationale, text: frameResult.suggestedText };
+      };
+
+      let backgroundPath: string;
+      let rawFrameUrl: string | undefined;
+      let frameInfo: { timestamp: number; rationale: string } = { timestamp: 0, rationale: "" };
+      let suggestedText: string[];
+      const effectiveMode = mode ?? "frame-select";
+
+      if (effectiveMode === "frame-select") {
+        // Step 1 flow: just pick the best frame, no enhancement. Return fast.
+        const frame = await resolveBaseFrame();
+        if (!frame) {
+          res.status(400).json({ error: "No scene images found — ensure the draft has generated images" });
+          return;
+        }
+        // Copy frame to thumbnails dir so it's serveable
+        const rawFilename = `raw_${req.params.id}_${Date.now()}.jpg`;
+        const rawPath = pathMod.join(outputDir, rawFilename);
+        fsMod.copyFileSync(frame.path, rawPath);
+        rawFrameUrl = `/api/admin/director/files/${rawFilename}`;
+
+        backgroundPath = frame.path;
+        frameInfo = { timestamp: frame.timestamp, rationale: frame.rationale };
+        suggestedText = frame.text;
+
+        // Ask LLM for clickbait text suggestions
+        try {
+          const textChunks: string[] = [];
+          const textStream = copilot.chat(
+            `You are a YouTube clickbait expert. Given this video title: "${manifest.projectTitle}", suggest 2 short, bold, enticing text overlay lines for the thumbnail. ALL CAPS, max 25 chars per line. Respond with JSON: { "suggestedText": ["LINE1", "LINE2"] }`,
+            { tools: [] },
+          );
+          for await (const chunk of textStream) textChunks.push(chunk);
+          let jsonText = textChunks.join("").trim();
+          if (jsonText.startsWith("```")) jsonText = jsonText.replace(/^```(?:json)?\n?/, "").replace(/\n?```$/, "");
+          const parsed = JSON.parse(jsonText) as { suggestedText?: string[] };
+          if (Array.isArray(parsed.suggestedText)) {
+            suggestedText = parsed.suggestedText.filter((t): t is string => typeof t === "string").slice(0, 3);
+          }
+        } catch {
+          logger.warn("[Director API] Thumbnail text suggestion failed, using project title");
+        }
+
+      } else if (effectiveMode === "flux-enhance") {
+        // User wants to modify the selected frame with a prompt via img2img
+        const frame = await resolveBaseFrame();
+        if (!frame) {
+          res.status(400).json({ error: "No scene images found — ensure the draft has generated images" });
+          return;
+        }
+        frameInfo = { timestamp: frame.timestamp, rationale: frame.rationale };
+        suggestedText = frame.text;
+
+        const enhancePrompt = prompt ?? style ?? "YouTube thumbnail style, highly saturated, expressive, high contrast, vibrant colors, professional";
+        const enhanced = await imageService.kontextEdit(frame.path, enhancePrompt, {
+          width: 1280,
+          height: 720,
+          steps: 20,
+          guidance: 2.5,
+        });
+        backgroundPath = enhanced.filePath;
+        frameInfo.rationale = `Enhanced with: "${enhancePrompt.slice(0, 80)}"`;
+        logger.info(`[Director API] Thumbnail img2img enhanced: ${enhanced.filePath} (${enhanced.generationTimeMs}ms)`);
+
+      } else {
+        // flux-generate: completely new image from text prompt
+        const thumbnailPrompt = prompt
+          ?? `YouTube thumbnail for "${manifest.projectTitle}", highly saturated, expressive, high contrast, vibrant colors, dramatic lighting, professional photography, 4K`;
+
+        const genResult = await imageService.generateImage(thumbnailPrompt, {
+          width: 1280,
+          height: 720,
+        });
+        backgroundPath = genResult.filePath;
+        frameInfo = { timestamp: 0, rationale: `AI-generated from prompt: "${thumbnailPrompt.slice(0, 100)}"` };
+        suggestedText = [manifest.projectTitle.toUpperCase()];
+
+        // Ask LLM for clickbait text suggestions
+        try {
+          const textChunks: string[] = [];
+          const textStream = copilot.chat(
+            `You are a YouTube clickbait expert. Given this video title: "${manifest.projectTitle}", suggest 2 short, bold, enticing text overlay lines for the thumbnail. ALL CAPS, max 25 chars per line. Respond with JSON: { "suggestedText": ["LINE1", "LINE2"] }`,
+            { tools: [] },
+          );
+          for await (const chunk of textStream) textChunks.push(chunk);
+          let jsonText = textChunks.join("").trim();
+          if (jsonText.startsWith("```")) jsonText = jsonText.replace(/^```(?:json)?\n?/, "").replace(/\n?```$/, "");
+          const parsed = JSON.parse(jsonText) as { suggestedText?: string[] };
+          if (Array.isArray(parsed.suggestedText)) {
+            suggestedText = parsed.suggestedText.filter((t): t is string => typeof t === "string").slice(0, 3);
+          }
+        } catch {
+          logger.warn("[Director API] Thumbnail text suggestion failed, using project title");
+        }
+      }
+
+      const textLines = Array.isArray(textOverride) && textOverride.length > 0
+        ? textOverride.filter((t): t is string => typeof t === "string").slice(0, 3)
+        : suggestedText;
+
+      // Composite text overlay with optional clickbait decorations
+      const { compositeThumbnail } = await import("../video/thumbnails/thumbnail-compositor.js");
+      const thumbnailFilename = `thumb_${req.params.id}_${Date.now()}.jpg`;
+      const thumbnailPath = pathMod.join(outputDir, thumbnailFilename);
+      await compositeThumbnail({
+        backgroundPath,
+        textLines,
+        textPlacement: "bottom",
+        textColor: "#ffffff",
+        outputPath: thumbnailPath,
+        clickbaitOverlay: clickbaitOverlay !== "none" ? clickbaitOverlay : undefined,
+      });
+
+      // Update draft thumbnail reference
+      db.prepare(`UPDATE director_drafts SET thumbnail = ?, updated_at = ? WHERE id = ?`)
+        .run(thumbnailFilename, new Date().toISOString(), req.params.id);
+
+      res.json({
+        thumbnailUrl: `/api/admin/director/files/${thumbnailFilename}`,
+        suggestedText,
+        selectedFrame: {
+          timestamp: frameInfo.timestamp,
+          rationale: frameInfo.rationale,
+        },
+        mode: effectiveMode,
+        rawFrameUrl,
+      });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      logger.error(`[Director API] POST /drafts/:id/thumbnail failed: ${msg}`);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  /**
+   * GET /renders — list all drafts with their latest completed render (if any).
+   * Queries director_drafts as the base so all presentations appear.
+   */
+  router.get("/renders", async (_req, res) => {
+    try {
+      const db = getDatabase();
+      const fsMod = await import("node:fs");
+      const pathMod = await import("node:path");
+      const osMod = await import("node:os");
+
+      const rendersDir = pathMod.join(osMod.homedir(), ".openzigs", "renders");
+
+      // Fetch all drafts.
+      const drafts = db
+        .prepare(
+          `SELECT id, title, production_mode, updated_at FROM director_drafts ORDER BY updated_at DESC LIMIT 100`,
+        )
+        .all() as Array<{ id: string; title: string; production_mode: string; updated_at: string }>;
+
+      // Fetch the latest render row per draft using a proper SQLite GROUP BY pattern.
+      const renderRows = db
+        .prepare(
+          `SELECT r.draft_id, r.job_id, r.quality, r.status, r.output_path, r.created_at
+           FROM director_renders r
+           INNER JOIN (
+             SELECT draft_id, MAX(created_at) AS max_created_at
+             FROM director_renders
+             GROUP BY draft_id
+           ) latest ON r.draft_id = latest.draft_id AND r.created_at = latest.max_created_at`,
+        )
+        .all() as Array<{
+        draft_id: string;
+        job_id: string;
+        quality: string;
+        status: string;
+        output_path: string | null;
+        created_at: string;
+      }>;
+
+      const renderByDraft = new Map<string, (typeof renderRows)[0]>();
+      for (const r of renderRows) renderByDraft.set(r.draft_id, r);
+
+      const renders = drafts.map((d) => {
+        const r = renderByDraft.get(d.id);
+        const liveJob = r ? renderOrchestrator?.getJob(r.job_id) : undefined;
+
+        // Resolve output path: live job → DB row → filesystem probe for historical renders.
+        let resolvedPath: string | null = liveJob?.outputPath ?? r?.output_path ?? null;
+        if (!resolvedPath && r?.job_id) {
+          // Historical renders (pre-persistence hook) may have the file on disk but
+          // null in the DB. Scan the job's output directory for any .mp4 file.
+          const jobDir = pathMod.join(rendersDir, r.job_id);
+          if (fsMod.existsSync(jobDir)) {
+            const files = fsMod.readdirSync(jobDir).filter((f) => f.endsWith(".mp4"));
+            if (files.length > 0) {
+              resolvedPath = pathMod.join(jobDir, files[0]);
+              // Back-fill the DB so future requests are instant.
+              db.prepare(
+                `UPDATE director_renders SET output_path = ?, status = 'complete', updated_at = ? WHERE job_id = ?`,
+              ).run(resolvedPath, new Date().toISOString(), r.job_id);
+            }
+          }
+        }
+
+        const resolvedStatus = liveJob?.status ?? (resolvedPath ? "complete" : (r?.status ?? null));
+        return {
+          draftId: d.id,
+          draftTitle: d.title,
+          productionMode: d.production_mode,
+          quality: r?.quality ?? null,
+          status: resolvedStatus,
+          outputPath: resolvedPath,
+          downloadUrl: resolvedPath && r?.job_id ? `/api/admin/director/renders/${r.job_id}/download` : null,
+          updatedAt: d.updated_at,
+        };
+      });
+
+      res.json({ renders });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      logger.error(`[Director API] GET /renders failed: ${msg}`);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  /**
+   * GET /renders/:jobId/download — stream a completed render file as an attachment.
+   */
+  router.get("/renders/:jobId/download", async (req, res) => {
+    try {
+      const fsMod = await import("node:fs");
+
+      const db = getDatabase();
+      const row = db.prepare(
+        `SELECT r.output_path, d.title
+         FROM director_renders r
+         JOIN director_drafts d ON d.id = r.draft_id
+         WHERE r.job_id = ?`,
+      ).get(req.params.jobId) as { output_path: string | null; title: string } | undefined;
+
+      // Also check live job state in case DB hasn't been flushed yet
+      const liveJob = renderOrchestrator?.getJob(req.params.jobId);
+      const outputPath = liveJob?.outputPath ?? row?.output_path ?? null;
+
+      if (!outputPath) {
+        res.status(404).json({ error: "Render not found or not yet complete" });
+        return;
+      }
+
+      if (!fsMod.existsSync(outputPath)) {
+        res.status(404).json({ error: "Render file not found on disk" });
+        return;
+      }
+
+      const safeTitle = (row?.title ?? "render")
+        .replace(/[^a-zA-Z0-9_\- ]/g, "")
+        .trim()
+        .replace(/\s+/g, "_") || "render";
+      const fileName = `${safeTitle}_${req.params.jobId.slice(0, 8)}.mp4`;
+
+      res.setHeader("Content-Type", "video/mp4");
+      res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
+      fsMod.createReadStream(outputPath).pipe(res);
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      logger.error(`[Director API] GET /renders/:jobId/download failed: ${msg}`);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  /**
+   * POST /scenes/:sceneIndex/regenerate — regenerate a single scene image.
+   * Body: { draftId, prompt, provider?, model?, seed? }
+   */
+  router.post("/scenes/:sceneIndex/regenerate", async (req, res) => {
+    try {
+      const sceneIndex = Number.parseInt(req.params.sceneIndex, 10);
+      if (!Number.isFinite(sceneIndex) || sceneIndex < 0) {
+        res.status(400).json({ error: "Invalid scene index" });
+        return;
+      }
+
+      const { draftId, prompt, provider, model: imageModel, seed } = req.body as {
+        draftId?: string;
+        prompt?: string;
+        provider?: "auto" | "local" | "cloud";
+        model?: "flux" | "sdxl-turbo";
+        seed?: number;
+      };
+
+      if (!prompt || typeof prompt !== "string" || prompt.trim().length === 0) {
+        res.status(400).json({ error: "prompt is required" });
+        return;
+      }
+
+      const osMod = await import("node:os");
+      const pathMod = await import("node:path");
+      const imageOutputDir = pathMod.join(osMod.homedir(), ".openzigs", "director", "images");
+      const { ImageGenService } = await import("../video/generators/image-gen-service.js");
+      const imageGenUserConfig = await ImageGenService.loadUserImageGenConfig();
+      const imageService = new ImageGenService({ outputDir: imageOutputDir, ...imageGenUserConfig });
+      await imageService.initialize();
+
+      const result = await imageService.generateImage(prompt, {
+        provider: provider ?? "auto",
+        localModel: imageModel,
+        seed,
+      });
+
+      // If a draftId is provided, update the corresponding scene in the draft manifest
+      if (draftId) {
+        const db = getDatabase();
+        const row = db.prepare(`SELECT manifest FROM director_drafts WHERE id = ?`)
+          .get(draftId) as { manifest: string } | undefined;
+
+        if (row) {
+          try {
+            const manifest = JSON.parse(row.manifest);
+            if (Array.isArray(manifest.timeline)) {
+              const scenes = manifest.timeline.filter(
+                (e: { type: string }) => e.type === "image_scene" || e.type === "video_clip",
+              );
+              if (scenes[sceneIndex]) {
+                scenes[sceneIndex].src = result.filePath;
+                const now = new Date().toISOString();
+                db.prepare(`UPDATE director_drafts SET manifest = ?, updated_at = ? WHERE id = ?`)
+                  .run(JSON.stringify(manifest), now, draftId);
+              }
+            }
+          } catch {
+            // Non-fatal: scene image was generated, draft update failed
+            logger.warn(`[Director API] Failed to update draft ${draftId} scene ${sceneIndex}`);
+          }
+        }
+      }
+
+      res.json({
+        sceneIndex,
+        imagePath: result.filePath,
+        generationTimeMs: result.generationTimeMs,
+      });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      logger.error(`[Director API] POST /scenes/:sceneIndex/regenerate failed: ${msg}`);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  /**
+   * POST /scenes/:sceneIndex/rewrite-script — use LLM to rewrite narration after
+   * a scene's visual asset has been replaced (e.g. image → video swap).
+   *
+   * Body: { draftId, videoDurationSec?, currentScript?, context? }
+   * Returns: { sceneIndex, newScript }
+   */
+  router.post("/scenes/:sceneIndex/rewrite-script", async (req, res) => {
+    try {
+      const sceneIndex = Number.parseInt(req.params.sceneIndex, 10);
+      if (!Number.isFinite(sceneIndex) || sceneIndex < 0) {
+        res.status(400).json({ error: "Invalid scene index" });
+        return;
+      }
+
+      const { draftId, videoDurationSec, currentScript, context } = req.body as {
+        draftId?: string;
+        videoDurationSec?: number;
+        currentScript?: string;
+        context?: string;
+      };
+
+      if (!draftId) {
+        res.status(400).json({ error: "draftId is required" });
+        return;
+      }
+
+      // Load the full manifest to get surrounding context
+      const db = getDatabase();
+      const row = db.prepare(`SELECT manifest FROM director_drafts WHERE id = ?`)
+        .get(draftId) as { manifest: string } | undefined;
+
+      if (!row) {
+        res.status(404).json({ error: "Draft not found" });
+        return;
+      }
+
+      const manifest = JSON.parse(row.manifest);
+      const scenes = (manifest.timeline ?? []).filter(
+        (e: { type: string }) => e.type === "image_scene" || e.type === "video_clip",
+      );
+
+      if (sceneIndex >= scenes.length) {
+        res.status(400).json({ error: `Scene index ${sceneIndex} out of range (${scenes.length} scenes)` });
+        return;
+      }
+
+      const scene = scenes[sceneIndex];
+      const prevScene = sceneIndex > 0 ? scenes[sceneIndex - 1] : null;
+      const nextScene = sceneIndex < scenes.length - 1 ? scenes[sceneIndex + 1] : null;
+
+      const durationHint = videoDurationSec
+        ? `The replacement video is ${videoDurationSec.toFixed(1)} seconds long.`
+        : "";
+
+      const prompt = `You are rewriting the narration script for scene ${sceneIndex + 1} of a video project.
+The visual asset for this scene was just replaced${videoDurationSec ? " with a video clip" : ""}.
+${durationHint}
+
+CURRENT SCRIPT for this scene:
+"${currentScript ?? scene.scriptText ?? "(none)"}"
+
+${prevScene?.scriptText ? `PREVIOUS SCENE script (for continuity): "${prevScene.scriptText}"` : ""}
+${nextScene?.scriptText ? `NEXT SCENE script (for continuity): "${nextScene.scriptText}"` : ""}
+${context ? `ADDITIONAL CONTEXT: ${context}` : ""}
+
+PROJECT TITLE: ${manifest.projectTitle ?? "Untitled"}
+
+Rewrite the narration for this scene to smoothly accommodate the new visual.
+${videoDurationSec ? `Aim for narration that fills approximately ${videoDurationSec.toFixed(1)} seconds (~${Math.round(videoDurationSec * 2.5)} words at natural pace).` : ""}
+Keep the same tone and style as the surrounding scenes.
+Return ONLY the new narration text, no explanations or formatting.`;
+
+      const stream = copilot.chat(prompt, { tools: [] });
+      const chunks: string[] = [];
+      for await (const chunk of stream) {
+        chunks.push(chunk);
+      }
+      const newScript = chunks.join("").trim().replace(/^["']|["']$/g, "");
+
+      // Update the draft manifest with the new script
+      scene.scriptText = newScript;
+      const now = new Date().toISOString();
+      db.prepare(`UPDATE director_drafts SET manifest = ?, updated_at = ? WHERE id = ?`)
+        .run(JSON.stringify(manifest), now, draftId);
+
+      logger.info(`[Director API] Rewrote script for scene ${sceneIndex} in draft ${draftId}`);
+      res.json({ sceneIndex, newScript });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      logger.error(`[Director API] POST /scenes/:sceneIndex/rewrite-script failed: ${msg}`);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  // ── Shorts Pipeline ─────────────────────────────────────────
+
+  /**
+   * POST /shorts — convert a long-form video into a 30–60s YouTube Short.
+   * Body: { sourceVideo: string, style?: string, targetDuration?: number, voiceProfile?: string }
+   * Response: { draftId: string, manifest, viralClip, scriptText, processingTimeMs }
+   */
+  router.post("/shorts", async (req, res) => {
+    try {
+      const { sourceVideo, style, targetDuration, voiceProfile } = req.body as {
+        sourceVideo?: string;
+        style?: "react" | "summarize" | "highlight";
+        targetDuration?: number;
+        voiceProfile?: string;
+      };
+
+      if (!sourceVideo || typeof sourceVideo !== "string") {
+        res.status(400).json({ error: "sourceVideo is required" });
+        return;
+      }
+
+      const fsMod = await import("node:fs");
+      if (!fsMod.existsSync(sourceVideo)) {
+        res.status(404).json({ error: `Source video not found: ${sourceVideo}` });
+        return;
+      }
+
+      if (!voiceService) {
+        res.status(503).json({ error: "VoiceService is not available — Shorts pipeline requires TTS" });
+        return;
+      }
+
+      const { createShort } = await import("../video/shorts/shorts-pipeline.js");
+      const result = await createShort(
+        {
+          sourceVideo,
+          style: style ?? "highlight",
+          targetDuration: targetDuration ?? 45,
+          voiceProfile,
+          model: runtimeConfig.defaultModel || undefined,
+        },
+        copilot,
+        voiceService,
+      );
+
+      // Auto-save as a draft
+      const db = getDatabase();
+      const draftId = nanoid();
+      const now = new Date().toISOString();
+      const title = result.manifest.projectTitle || "Untitled Short";
+
+      db.prepare(
+        `INSERT INTO director_drafts (id, title, manifest, thumbnail, production_mode, created_at, updated_at, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 'draft')`,
+      ).run(draftId, title, JSON.stringify(result.manifest), null, "shorts", now, now);
+
+      logger.info(`[Director API] Short created as draft ${draftId}: "${title}"`);
+
+      res.json({
+        draftId,
+        manifest: result.manifest,
+        viralClip: result.viralClip,
+        scriptText: result.scriptText,
+        processingTimeMs: result.processingTimeMs,
+      });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      logger.error(`[Director API] POST /shorts failed: ${msg}`);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  // ── Blog-to-Video Pipeline ─────────────────────────────────
+
+  /**
+   * POST /blog-to-video — convert a blog post URL into a draft video manifest.
+   * Body: { url: string, template?, styleHint?, imageProvider?, imageModel?, musicTrackPath?, targetDuration? }
+   * Response: { draftId, manifest, blog, storyboard, processingTimeMs }
+   */
+  router.post("/blog-to-video", async (req, res) => {
+    try {
+      const { url, template, styleHint, imageProvider, imageModel, musicTrackPath, targetDuration } = req.body as {
+        url?: string;
+        template?: "Minimalist" | "ContentCreator" | "Corporate" | "TechDemo";
+        styleHint?: string;
+        imageProvider?: "cloud" | "local" | "auto";
+        imageModel?: "flux" | "sdxl-turbo";
+        musicTrackPath?: string;
+        targetDuration?: number;
+      };
+
+      if (!url || typeof url !== "string") {
+        res.status(400).json({ error: "url is required" });
+        return;
+      }
+
+      // Basic URL validation
+      try {
+        const parsed = new URL(url);
+        if (!["http:", "https:"].includes(parsed.protocol)) {
+          res.status(400).json({ error: "Only http/https URLs are allowed" });
+          return;
+        }
+      } catch {
+        res.status(400).json({ error: "Invalid URL" });
+        return;
+      }
+
+      const { blogToVideo } = await import("../video/blog/blog-to-video-pipeline.js");
+      const result = await blogToVideo(
+        {
+          url,
+          template,
+          styleHint,
+          imageProvider,
+          imageModel,
+          musicTrackPath,
+          model: runtimeConfig.defaultModel || undefined,
+          targetDuration,
+        },
+        copilot,
+        voiceService,
+      );
+
+      // Auto-save as a draft
+      const db = getDatabase();
+      const draftId = nanoid();
+      const now = new Date().toISOString();
+      const title = result.manifest.projectTitle || "Untitled Blog Video";
+
+      db.prepare(
+        `INSERT INTO director_drafts (id, title, manifest, thumbnail, production_mode, created_at, updated_at, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 'draft')`,
+      ).run(draftId, title, JSON.stringify(result.manifest), null, "blog-to-video", now, now);
+
+      logger.info(`[Director API] Blog-to-video saved as draft ${draftId}: "${title}"`);
+
+      res.json({
+        draftId,
+        manifest: result.manifest,
+        blog: result.blog,
+        storyboard: result.storyboard,
+        processingTimeMs: result.processingTimeMs,
+      });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      logger.error(`[Director API] POST /blog-to-video failed: ${msg}`);
+      res.status(500).json({ error: msg });
+    }
+  });
+
   // ── Render Jobs ────────────────────────────────────────────
 
   /**
@@ -1505,11 +2874,12 @@ Respond with ONLY a valid JSON array. No markdown, no explanation.`;
         return;
       }
 
-      const { manifest, codec, crf, quality } = req.body as {
+      const { manifest, codec, crf, quality, draftId } = req.body as {
         manifest: unknown;
         codec?: string;
         crf?: number;
         quality?: "draft" | "standard" | "high" | "lossless";
+        draftId?: string;
       };
       if (!manifest || typeof manifest !== "object") {
         res.status(400).json({ error: "manifest object is required" });
@@ -1533,10 +2903,22 @@ Respond with ONLY a valid JSON array. No markdown, no explanation.`;
       // Store quality metadata on the job for logging/display
       const job = renderOrchestrator.getJob(jobId);
       if (job) {
-        const jobMeta = job as typeof job & { codec?: string; crf?: number; quality?: string };
+        const jobMeta = job as typeof job & { codec?: string; crf?: number; quality?: string; draftId?: string };
         jobMeta.codec = codec ?? "h264";
         jobMeta.crf = resolvedCrf ?? 23;
         jobMeta.quality = quality ?? "standard";
+        jobMeta.draftId = draftId;
+      }
+
+      // Record render in history if linked to a draft
+      if (draftId) {
+        const db = getDatabase();
+        const now = new Date().toISOString();
+        const renderId = nanoid();
+        db.prepare(
+          `INSERT INTO director_renders (id, draft_id, job_id, quality, status, created_at, updated_at)
+           VALUES (?, ?, ?, ?, 'queued', ?, ?)`,
+        ).run(renderId, draftId, jobId, quality ?? "standard", now, now);
       }
 
       res.json({ jobId, status: "queued", codec: codec ?? "h264", crf: resolvedCrf ?? 23 });

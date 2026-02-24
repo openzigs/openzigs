@@ -92,6 +92,11 @@ const SHELL_OPERATORS_RE = /(?<!\w)(;{1,2}|\|\||&&|\|(?!\w))(?!\w)/g;
  *
  * Tags like <script>, <iframe>, or injected prompts wrapped in XML are
  * semantically meaningless in spoken voice output and potentially dangerous.
+ *
+ * NOTE: F5-TTS emotion tags like (Excited), (Whisper), (Regular) use
+ * parentheses — NOT angle brackets — and intentionally pass through all
+ * sanitization rules unmodified.  Do not add rules that strip parenthesized
+ * words without also exempting the emotion-tag pattern.
  */
 const HTML_TAG_RE = /<\/?[a-zA-Z][a-zA-Z0-9-]*(?:\s[^>]*)?\/?>/g;
 

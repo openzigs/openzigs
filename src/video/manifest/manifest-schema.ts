@@ -50,6 +50,23 @@ export const VideoEffectSchema = z.discriminatedUnion("type", [
   SpeedRampEffectSchema,
 ]);
 
+// ── Text Overlays ─────────────────────────────────────────────
+export const TextOverlaySchema = z.object({
+  id: z.string().min(1),
+  text: z.string().min(1),
+  position: z.enum(["center", "bottom-third", "top-third", "custom"]),
+  customPosition: z.object({ x: z.number(), y: z.number() }).optional(),
+  fontSize: z.number().int().min(8).max(200).optional(),
+  fontWeight: z.enum(["normal", "bold", "light"]).optional(),
+  color: z.string().optional(),
+  backgroundColor: z.string().optional(),
+  borderRadius: z.number().min(0).optional(),
+  padding: z.number().min(0).optional(),
+  animation: z.enum(["fade-in", "slide-up", "typewriter", "none"]),
+  startFrame: z.number().int().min(0),
+  durationFrames: z.number().int().min(1),
+});
+
 // ── Timeline Entries ──────────────────────────────────────────
 export const VideoClipEntrySchema = z.object({
   type: z.literal("video_clip"),
@@ -59,6 +76,8 @@ export const VideoClipEntrySchema = z.object({
   duration: z.number().int().min(1),
   volume: z.number().min(0).max(1).optional(),
   effects: z.array(VideoEffectSchema).optional(),
+  textOverlays: z.array(TextOverlaySchema).optional(),
+  horizontalCropOffset: z.number().min(0).max(100).optional(),
 });
 
 export const OverlayEntrySchema = z.object({
@@ -102,6 +121,32 @@ export const ImageSceneEntrySchema = z.object({
     translateYFrom: z.number().optional(),
     translateYTo: z.number().optional(),
   }).optional(),
+  textOverlays: z.array(TextOverlaySchema).optional(),
+});
+
+export const IntroCardEntrySchema = z.object({
+  type: z.literal("intro_card"),
+  title: z.string().min(1),
+  subtitle: z.string().optional(),
+  backgroundSrc: z.string().optional(),
+  enhancedBackgroundSrc: z.string().optional(),
+  logoSrc: z.string().optional(),
+  startAtFrame: z.number().int().min(0),
+  duration: z.number().int().min(1),
+  animation: z.enum(["fade-in", "slide-up", "scale-in", "typewriter"]).optional(),
+});
+
+export const OutroCardEntrySchema = z.object({
+  type: z.literal("outro_card"),
+  title: z.string().min(1),
+  subtitle: z.string().optional(),
+  backgroundSrc: z.string().optional(),
+  enhancedBackgroundSrc: z.string().optional(),
+  logoSrc: z.string().optional(),
+  ctaText: z.string().optional(),
+  startAtFrame: z.number().int().min(0),
+  duration: z.number().int().min(1),
+  animation: z.enum(["fade-out", "slide-down", "scale-out"]).optional(),
 });
 
 export const TimelineEntrySchema = z.discriminatedUnion("type", [
@@ -110,6 +155,8 @@ export const TimelineEntrySchema = z.discriminatedUnion("type", [
   TitleCardEntrySchema,
   TransitionEntrySchema,
   ImageSceneEntrySchema,
+  IntroCardEntrySchema,
+  OutroCardEntrySchema,
 ]);
 
 // ── Audio ─────────────────────────────────────────────────────

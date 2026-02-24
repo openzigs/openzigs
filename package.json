@@ -30,6 +30,7 @@
     "@huggingface/transformers": "^3.8.1",
     "@lancedb/lancedb": "^0.26.2",
     "@modelcontextprotocol/sdk": "^0.4.0",
+    "@napi-rs/canvas": "^0.1.94",
     "@remotion/bundler": "^4.0.422",
     "@remotion/cli": "^4.0.422",
     "@remotion/renderer": "^4.0.422",

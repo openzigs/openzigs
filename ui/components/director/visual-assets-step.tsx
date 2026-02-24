@@ -5,15 +5,19 @@
  * final render.  After uploading, users can describe each asset ("company logo",
  * "product shot for the intro") and request AI-assisted placement.
  *
+ * Video uploads are optionally routed through the ingestion pipeline
+ * (ffmpeg keyframe extraction + Copilot Vision + Whisper transcription).
+ *
  * API surface:
  *   POST /api/admin/director/files/upload-asset?kind=image|video
  *   POST /api/admin/director/assets/placement  (LLM placement)
+ *   POST /api/admin/director/assets/ingest    (video ingestion pipeline)
  */
 
 "use client";
 
 import { useRef, useState, useCallback } from "react";
-import { Upload, X, Image, Film, Sparkles, Loader2, ChevronDown, ChevronUp } from "lucide-react";
+import { Upload, X, Image, Film, Sparkles, Loader2, ChevronDown, ChevronUp, ScanSearch } from "lucide-react";
 import { fetchJson } from "@/lib/api";
 import { showToast } from "@/components/toast";
 import type { VisualAsset } from "./types";
@@ -34,11 +38,15 @@ function AssetCard({
   index: _index,
   onDescriptionChange,
   onRemove,
+  onIngest,
+  ingesting,
 }: {
   asset: VisualAsset;
   index: number;
   onDescriptionChange: (desc: string) => void;
   onRemove: () => void;
+  onIngest: () => void;
+  ingesting: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
   const isVideo = asset.type === "video";
@@ -94,6 +102,16 @@ function AssetCard({
           >
             <X className="h-3.5 w-3.5" />
           </button>
+          {isVideo && (
+            <button
+              onClick={onIngest}
+              disabled={ingesting}
+              title="Analyze video (keyframes + transcription)"
+              className="rounded-md p-1 text-muted-foreground hover:text-primary hover:bg-primary/8 transition-all disabled:opacity-50"
+            >
+              {ingesting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ScanSearch className="h-3.5 w-3.5" />}
+            </button>
+          )}
           {asset.placement && (
             <button
               onClick={() => setExpanded((v) => !v)}
@@ -135,6 +153,49 @@ export function VisualAssetsStep({ assets, onChange }: VisualAssetsStepProps) {
   const [uploading, setUploading] = useState(false);
   const [placingAI, setPlacingAI] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
+  const [ingestingIndex, setIngestingIndex] = useState<number | null>(null);
+
+  const ingestAsset = useCallback(
+    async (index: number) => {
+      const asset = assets[index];
+      if (!asset || asset.type !== "video") return;
+      setIngestingIndex(index);
+      try {
+        const result = await fetchJson<{
+          analysis: {
+            duration: number;
+            resolution: { width: number; height: number };
+            keyframes: Array<{ description?: string }>;
+            transcriptSegments: number;
+          };
+        }>("/api/admin/director/assets/ingest", {
+          method: "POST",
+          body: JSON.stringify({ filePath: asset.path }),
+        });
+
+        // Auto-populate the description with the first keyframe description or transcript
+        const descriptions = result.analysis.keyframes
+          .map((kf) => kf.description)
+          .filter(Boolean);
+        const autoDesc = descriptions.length > 0
+          ? descriptions[0]!
+          : `Video clip (${result.analysis.duration.toFixed(1)}s, ${result.analysis.resolution.width}×${result.analysis.resolution.height})`;
+
+        const updated = [...assets];
+        updated[index] = { ...updated[index], description: updated[index].description || autoDesc };
+        onChange(updated);
+        showToast(
+          `Video analyzed: ${result.analysis.keyframes.length} keyframes, ${result.analysis.transcriptSegments} transcript segments`,
+          "success",
+        );
+      } catch (err) {
+        showToast(`Ingestion failed: ${String(err)}`, "error");
+      } finally {
+        setIngestingIndex(null);
+      }
+    },
+    [assets, onChange],
+  );
 
   const uploadAsset = useCallback(async (file: File): Promise<VisualAsset | null> => {
     const kind = file.type.startsWith("video/") ? "video" : "image";
@@ -344,6 +405,8 @@ export function VisualAssetsStep({ assets, onChange }: VisualAssetsStepProps) {
                 index={i}
                 onDescriptionChange={(desc) => updateDescription(i, desc)}
                 onRemove={() => removeAsset(i)}
+                onIngest={() => void ingestAsset(i)}
+                ingesting={ingestingIndex === i}
               />
             ))}
           </div>

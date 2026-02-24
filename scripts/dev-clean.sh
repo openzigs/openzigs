@@ -201,8 +201,8 @@ if [ "${OPENZIGS_START_SOVITS:-1}" != "0" ] && [ -x "$SOVITS_DIR/start.sh" ]; th
   SOVITS_PID=$!
 
   echo "[clean-start] GPT-SoVITS logs: $SOVITS_LOG"
-  echo "[clean-start] Probing GPT-SoVITS health in background..."
-  start_health_probe "GPT-SoVITS (port 9880)" "http://127.0.0.1:9880/" 60 2 1
+  echo "[clean-start] Probing GPT-SoVITS health in background (model load can take 5+ min)..."
+  start_health_probe "GPT-SoVITS (port 9880)" "http://127.0.0.1:9880/" 150 2 1
 else
   if [ "${OPENZIGS_START_SOVITS:-1}" != "0" ]; then
     echo "[clean-start] GPT-SoVITS not installed at $SOVITS_DIR — skipping Engine B."
@@ -219,7 +219,7 @@ if [ "${OPENZIGS_START_AUDIO_SIDECAR:-1}" != "0" ]; then
   AUDIO_LOG="$PROJECT_ROOT/.openzigs-audio-sidecar.log"
   AUDIO_TTS_MODEL="${AUDIO_TTS_MODEL:-mlx-community/Kokoro-82M-bf16}"
   AUDIO_STT_MODEL="${AUDIO_STT_MODEL:-distil-large-v3}"
-  AUDIO_IDLE_TIMEOUT="${AUDIO_IDLE_TIMEOUT:-0}"
+  AUDIO_IDLE_TIMEOUT="${AUDIO_IDLE_TIMEOUT:-300}"
 
   if [ -x "$AUDIO_DIR/.venv/bin/python" ]; then
     AUDIO_PY="$AUDIO_DIR/.venv/bin/python"

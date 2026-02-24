@@ -9,6 +9,24 @@
 
 import { z } from "zod";
 
+// ── Text Overlay Props ────────────────────────────────────────
+export const TextOverlayPropsSchema = z.object({
+  id: z.string(),
+  text: z.string(),
+  position: z.enum(["center", "bottom-third", "top-third", "custom"]),
+  customPosition: z.object({ x: z.number(), y: z.number() }).optional(),
+  fontSize: z.number().default(48),
+  fontWeight: z.enum(["normal", "bold", "light"]).default("bold"),
+  color: z.string().default("#ffffff"),
+  backgroundColor: z.string().default("rgba(0,0,0,0.6)"),
+  borderRadius: z.number().default(8),
+  padding: z.number().default(16),
+  animation: z.enum(["fade-in", "slide-up", "typewriter", "none"]).default("fade-in"),
+  startFrame: z.number().int().min(0),
+  durationFrames: z.number().int().min(1),
+});
+export type TextOverlayProps = z.infer<typeof TextOverlayPropsSchema>;
+
 // ── Video Clip Props ──────────────────────────────────────────
 export const VideoClipPropsSchema = z.object({
   src: z.string().describe("Absolute path or URL to the source video file"),
@@ -20,6 +38,9 @@ export const VideoClipPropsSchema = z.object({
     type: z.enum(["slowZoom", "fadeIn", "fadeOut", "blur", "grayscale", "speedRamp"]),
     params: z.record(z.unknown()).optional(),
   })).default([]),
+  textOverlays: z.array(TextOverlayPropsSchema).default([]),
+  horizontalCropOffset: z.number().min(0).max(100).default(50),
+  fitMode: z.enum(["cover", "contain"]).default("cover"),
 });
 export type VideoClipProps = z.infer<typeof VideoClipPropsSchema>;
 
@@ -70,8 +91,34 @@ export const ImageScenePropsSchema = z.object({
     translateYFrom: z.number().default(0),
     translateYTo: z.number().default(-5),
   }).default({}),
+  textOverlays: z.array(TextOverlayPropsSchema).default([]),
 });
 export type ImageSceneProps = z.infer<typeof ImageScenePropsSchema>;
+
+// ── Intro Card Props ──────────────────────────────────────────
+export const IntroCardPropsSchema = z.object({
+  title: z.string(),
+  subtitle: z.string().optional(),
+  backgroundSrc: z.string().optional(),
+  logoSrc: z.string().optional(),
+  startAtFrame: z.number().int().min(0),
+  durationInFrames: z.number().int().min(1),
+  animation: z.enum(["fade-in", "slide-up", "scale-in", "typewriter"]).default("fade-in"),
+});
+export type IntroCardProps = z.infer<typeof IntroCardPropsSchema>;
+
+// ── Outro Card Props ──────────────────────────────────────────
+export const OutroCardPropsSchema = z.object({
+  title: z.string(),
+  subtitle: z.string().optional(),
+  backgroundSrc: z.string().optional(),
+  logoSrc: z.string().optional(),
+  ctaText: z.string().optional(),
+  startAtFrame: z.number().int().min(0),
+  durationInFrames: z.number().int().min(1),
+  animation: z.enum(["fade-out", "slide-down", "scale-out"]).default("fade-out"),
+});
+export type OutroCardProps = z.infer<typeof OutroCardPropsSchema>;
 
 // ── Audio Props ───────────────────────────────────────────────
 export const AudioPropsSchema = z.object({
@@ -108,6 +155,8 @@ export const TimelineItemSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("overlay"), ...OverlayPropsSchema.shape }),
   z.object({ type: z.literal("transition"), ...TransitionPropsSchema.shape }),
   z.object({ type: z.literal("image_scene"), ...ImageScenePropsSchema.shape }),
+  z.object({ type: z.literal("intro_card"), ...IntroCardPropsSchema.shape }),
+  z.object({ type: z.literal("outro_card"), ...OutroCardPropsSchema.shape }),
 ]);
 export type TimelineItem = z.infer<typeof TimelineItemSchema>;
 

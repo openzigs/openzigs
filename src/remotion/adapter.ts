@@ -42,6 +42,23 @@ function adaptTimelineEntry(entry: TimelineEntry, outputDir: string): TimelineIt
           type: e.type,
           params: { ...e } as Record<string, unknown>,
         })),
+        textOverlays: (entry.textOverlays ?? []).map((o) => ({
+          id: o.id,
+          text: o.text,
+          position: o.position,
+          customPosition: o.customPosition,
+          fontSize: o.fontSize ?? 48,
+          fontWeight: o.fontWeight ?? "bold",
+          color: o.color ?? "#ffffff",
+          backgroundColor: o.backgroundColor ?? "rgba(0,0,0,0.6)",
+          borderRadius: o.borderRadius ?? 8,
+          padding: o.padding ?? 16,
+          animation: o.animation,
+          startFrame: o.startFrame,
+          durationFrames: o.durationFrames,
+        })),
+        horizontalCropOffset: entry.horizontalCropOffset ?? 50,
+        fitMode: entry.fitMode ?? "cover",
       };
     case "title_card":
       return {
@@ -84,6 +101,52 @@ function adaptTimelineEntry(entry: TimelineEntry, outputDir: string): TimelineIt
           translateYFrom: entry.kenBurns?.translateYFrom ?? 0,
           translateYTo: entry.kenBurns?.translateYTo ?? -5,
         },
+        textOverlays: (entry.textOverlays ?? []).map((o) => ({
+          id: o.id,
+          text: o.text,
+          position: o.position,
+          customPosition: o.customPosition,
+          fontSize: o.fontSize ?? 48,
+          fontWeight: o.fontWeight ?? "bold",
+          color: o.color ?? "#ffffff",
+          backgroundColor: o.backgroundColor ?? "rgba(0,0,0,0.6)",
+          borderRadius: o.borderRadius ?? 8,
+          padding: o.padding ?? 16,
+          animation: o.animation,
+          startFrame: o.startFrame,
+          durationFrames: o.durationFrames,
+        })),
+      };
+    case "intro_card":
+      return {
+        type: "intro_card",
+        title: entry.title,
+        subtitle: entry.subtitle,
+        backgroundSrc: entry.enhancedBackgroundSrc
+          ? resolveMediaPath(entry.enhancedBackgroundSrc, outputDir)
+          : entry.backgroundSrc
+            ? resolveMediaPath(entry.backgroundSrc, outputDir)
+            : undefined,
+        logoSrc: entry.logoSrc ? resolveMediaPath(entry.logoSrc, outputDir) : undefined,
+        startAtFrame: entry.startAtFrame,
+        durationInFrames: entry.duration,
+        animation: entry.animation ?? "fade-in",
+      };
+    case "outro_card":
+      return {
+        type: "outro_card",
+        title: entry.title,
+        subtitle: entry.subtitle,
+        backgroundSrc: entry.enhancedBackgroundSrc
+          ? resolveMediaPath(entry.enhancedBackgroundSrc, outputDir)
+          : entry.backgroundSrc
+            ? resolveMediaPath(entry.backgroundSrc, outputDir)
+            : undefined,
+        logoSrc: entry.logoSrc ? resolveMediaPath(entry.logoSrc, outputDir) : undefined,
+        ctaText: entry.ctaText,
+        startAtFrame: entry.startAtFrame,
+        durationInFrames: entry.duration,
+        animation: entry.animation ?? "fade-out",
       };
     default:
       throw new Error(`Unknown timeline entry type: ${(entry as { type: string }).type}`);
@@ -204,6 +267,20 @@ export function stageInputPropsMedia(
         }
         logger.warn(`[Adapter] Overlay media file not found on disk — src will be unusable: "${overlayProps.src}"`);
       }
+    }
+    // Stage intro/outro card background and logo media
+    if (item.type === "intro_card" || item.type === "outro_card") {
+      let bgSrc = item.backgroundSrc;
+      let logo = item.logoSrc;
+      if (bgSrc) {
+        const staged = stageMediaFile(bgSrc, bundleDir);
+        bgSrc = staged ?? bgSrc;
+      }
+      if (logo) {
+        const staged = stageMediaFile(logo, bundleDir);
+        logo = staged ?? logo;
+      }
+      return { ...item, backgroundSrc: bgSrc, logoSrc: logo };
     }
     return item;
   });

@@ -180,6 +180,8 @@ The OpenZigs UI is a **Next.js** application with a navigation bar providing acc
 | **Social Brain** | `/social` | Unified social inbox, CRM, automation rules, and AI-powered auto-replies |
 | **Post-Actions** | `/admin/post-actions` | Create and manage custom post-action types for pipeline stages |
 | **Webhooks** | `/admin/webhooks` | Create and manage inbound webhooks for external integrations |
+| **Director** | `/director` | AI video production wizard, blog-to-YouTube, and timeline studio |
+| **Director Studio** | `/director/studio/[id]` | Full timeline editor with player preview, scene inspector, and drag-and-drop reordering |
 
 ### Chat
 
@@ -2712,14 +2714,14 @@ Add API keys for cloud asset sources in your config:
 Presentation Mode (Mode C) produces complete videos from a text topic with zero input media. The pipeline:
 
 1. **Storyboard Generation** — The LLM creates a structured scene plan with title, style anchor, narration, and visual descriptions for each scene
-2. **Image Generation** — Each scene's visual description is sent to Stable Diffusion (local FastAPI sidecar on Apple Silicon / CUDA) with the style anchor prepended for consistency. Falls back to Google Cloud Imagen if local generation is unavailable
+2. **Image Generation** — Each scene's visual description is sent to FLUX.1-schnell (local MFLUX/MLX FastAPI sidecar on Apple Silicon) with the style anchor prepended for consistency. Falls back to Google Cloud Imagen if local generation is unavailable
 3. **Voiceover Synthesis** — Per-scene narration is converted to speech via Google Cloud TTS
 4. **Assembly** — Images, voiceover audio, Ken Burns animations, crossfade transitions, and background music are assembled into a Director Manifest and rendered via Remotion
 
 #### Presentation Mode Prerequisites
 
-- **Python 3.10+** with `torch`, `diffusers`, `transformers`, `accelerate`, `safetensors`, `fastapi`, `uvicorn`, `Pillow` — install via `pip install -r sidecars/image-gen/requirements.txt`
-- **Apple Silicon Mac** (MPS backend) or **NVIDIA GPU** (CUDA) for local image generation
+- **Python 3.10+** with `mflux`, `fastapi`, `uvicorn`, `Pillow` — install via `pip install -r sidecars/image-gen/requirements.txt`
+- **Apple Silicon Mac** (M-series, MLX backend) — NVIDIA/CUDA is not supported with MFLUX
 - **Google Cloud Vertex AI** (optional fallback) — set `GOOGLE_CLOUD_PROJECT` env var and authenticate via `gcloud auth application-default login`
 - The image gen sidecar starts automatically when needed, or run manually: `cd sidecars/image-gen && python server.py`
 
@@ -2751,6 +2753,282 @@ Each generated image is animated with a Ken Burns pan/zoom effect:
 
 ---
 
+## Director Studio & Advanced Compositing
+
+> **Epic #313** — Extends Director Mode with a full timeline studio UI, blog-to-YouTube pipeline, shorts maker, AI thumbnails, text overlays, intro/outro cards, image enhancement, script pacing, and asset uploads.
+
+### Director Page (Tabs)
+
+The Director page at `/director` now has a tabbed layout:
+
+| Tab | Icon | Description |
+|-----|------|-------------|
+| **Video Wizard** | Film | The original Director wizard — ingest clips, pick a template, review/produce |
+| **Blog to YouTube** | Globe | Convert any blog post URL into a fully produced video |
+| **My Drafts** | FolderOpen | Browse, reopen, and delete saved drafts |
+
+The **My Drafts** tab lists all saved drafts with thumbnail, production mode badge (e.g. WIZARD, PRESENTATION), status, and relative timestamp. Click any draft to reopen it in the Studio. Delete with the trash icon.
+
+### Director Studio (Timeline Editor)
+
+After producing a video or creating a draft, click **Open in Studio** to launch the full timeline editor at `/director/studio/[id]`.
+
+The Studio provides a three-panel layout:
+
+| Panel | Position | Description |
+|-------|----------|-------------|
+| **Toolbar** | Top | Draft title, Save/Renders/Render buttons, dirty indicator, back navigation |
+| **Player Preview** | Left (60%) | Live Remotion `<Player>` preview with play/pause, frame scrubber, and timecode display |
+| **Scene Inspector** | Right (40%) | Per-scene property editor — narration text, duration, image source, scene type, transitions, Ken Burns settings |
+| **Timeline Tracks** | Bottom | Multi-track editor with Scenes, Voiceover, Overlays, and Audio lanes |
+
+**Key features:**
+
+- **Multi-track timeline** — Scenes, voiceover, overlays, and audio tracks are rendered as color-coded horizontal lanes. Click any entry to select it and load its properties in the Inspector.
+- **Playhead scrubbing** — Click anywhere on the timeline to seek. The vertical playhead syncs with the player preview.
+- **Scene Inspector** — Edit individual scene properties (narration text, transition type, duration, image path). Changes update the manifest in memory; click **Save** to persist.
+- **Frame-accurate preview** — The Remotion Player renders the exact composition at the current frame, including text overlays, intro/outro cards, and transitions.
+- **Save with feedback** — Clicking Save shows a toast notification ("Draft saved" / error) and a checkmark animation. The toolbar displays "saved" or "unsaved" next to the title.
+- **Auto-save** — After any manifest change, the Studio auto-saves every 30 seconds while the draft is dirty. Manual saves reset the timer.
+- **Render history** — The **Renders** dropdown button shows all past renders for the current draft with status icons (complete, failed, queued, in-progress), progress bars for active renders, and download links for completed outputs. Polls every 5 seconds while renders are active.
+- **Render-to-draft linking** — Each render is recorded in the `director_renders` table and linked to its parent draft. The Render button auto-saves before submitting.
+
+### Blog-to-YouTube Pipeline
+
+The **Blog to YouTube** tab converts a blog post URL into a complete video:
+
+1. Paste a blog URL into the input field.
+2. Optionally configure:
+   - **Template** — Minimalist, ContentCreator, Corporate, or TechDemo
+   - **Style hint** — Free-text aesthetic direction (e.g., "warm, documentary feel")
+   - **Image provider** — Auto, local (FLUX.1 via MFLUX), or cloud (Vertex AI)
+3. Click **Convert to Video**.
+4. The pipeline runs 5 steps:
+   - **Extract** — Fetches the blog with SSRF protection (blocked private IPs, restricted protocols) and parses title, images, and text content.
+   - **Storyboard** — The LLM generates a structured scene plan from the blog text.
+   - **Images** — AI-generated scene images plus downloaded blog images.
+   - **Voiceover** — Per-scene TTS narration with title cards and transitions.
+   - **Assembly** — Produces a `DirectorManifest` and auto-saves as a draft.
+5. The result card shows blog metadata (title, word count, image count) and an **Open in Studio** button.
+
+**MCP tool:** `blog-to-video` — programmatic access with parameters: `url`, `template`, `style_hint`, `image_provider`, `image_model`, `music_track`, `target_duration`.
+
+**REST API:**
+
+```bash
+# Convert a blog post to video
+curl -X POST http://localhost:3000/api/admin/director/blog-to-video \
+  -H "Content-Type: application/json" \
+  -d '{
+    "url": "https://example.com/my-article",
+    "template": "Corporate",
+    "styleHint": "professional, clean"
+  }'
+# Response: { draftId, manifest, blog: { title, wordCount, imageCount }, storyboard, processingTimeMs }
+```
+
+### Shorts Maker Pipeline
+
+Convert any long-form video into a 30–60 second YouTube Short / TikTok / Reel:
+
+1. The pipeline extracts the most "viral-worthy" segment using transcript analysis and engagement scoring.
+2. An LLM generates a reaction/summary/highlight script for the extracted clip.
+3. Per-sentence TTS voiceover is synthesized and aligned to the timeline.
+4. The result is assembled into a 9:16 `ContentCreator` manifest with the clip cropped for vertical framing (`horizontalCropOffset`).
+5. Auto-saved as a draft — open in the Studio to refine before rendering.
+
+**MCP tool:** `create-short` — parameters: `source_video`, `style` (`react`, `summarize`, `highlight`), `target_duration`, `voice_profile`.
+
+**REST API:**
+
+```bash
+# Create a short from a long-form video
+curl -X POST http://localhost:3000/api/admin/director/shorts \
+  -H "Content-Type: application/json" \
+  -d '{
+    "sourceVideo": "/path/to/long-video.mp4",
+    "style": "highlight",
+    "targetDuration": 45
+  }'
+# Response: { draftId, manifest, viralClip, scriptText, processingTimeMs }
+```
+
+### AI Thumbnail Generation
+
+Generate YouTube-style thumbnails with LLM-guided frame selection, Flux img2img stylization, and text compositing:
+
+1. The LLM analyzes the manifest's scenes and selects the most visually striking frame.
+2. The selected frame is enhanced via Flux img2img with a thumbnail-optimized prompt (vibrant, high contrast).
+3. Text is composited onto the image using `@napi-rs/canvas` — up to 3 lines with automatic placement, color selection, and shadow effects.
+
+**REST API:**
+
+```bash
+# Generate a thumbnail for a manifest
+curl -X POST http://localhost:3000/api/admin/director/thumbnail \
+  -H "Content-Type: application/json" \
+  -d '{
+    "manifestPath": "/path/to/manifest.json",
+    "outputDir": "/path/to/output",
+    "style": "YouTube thumbnail style, vibrant",
+    "textOverride": ["TOP LINE", "BOTTOM LINE"]
+  }'
+# Response: { thumbnailPath, suggestedText, selectedFrame: { path, timestamp, rationale } }
+```
+
+### Image Enhancement (Flux img2img)
+
+Enhance any scene image using the Flux img2img pipeline. This takes an existing image and transforms it guided by a text prompt — useful for style transfer, quality upscaling, or artistic reinterpretation.
+
+**REST API:**
+
+```bash
+# Enhance a scene image
+curl -X POST http://localhost:3000/api/admin/director/enhance \
+  -H "Content-Type: application/json" \
+  -d '{
+    "imagePath": "/path/to/scene.png",
+    "prompt": "cinematic lighting, film grain, color graded",
+    "strength": 0.6
+  }'
+# Response: { enhancedImagePath, generationTimeMs }
+```
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `imagePath` | string | Yes | — | Path to the source image |
+| `prompt` | string | Yes | — | Text prompt guiding the enhancement |
+| `strength` | number | No | `0.7` | How much to transform (0 = no change, 1 = full regeneration) |
+| `model` | string | No | `"flux"` | Image model to use |
+| `seed` | number | No | random | Reproducibility seed |
+
+### Text Overlays
+
+Text overlays are a new timeline entry type (`text_overlay`) that renders animated text on top of video scenes. Supported in both the Remotion composition and the Studio Inspector.
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `text` | string | The overlay text content |
+| `style` | string | `"subtitle"`, `"title"`, `"lower-third"`, or `"callout"` |
+| `position` | string | `"top"`, `"center"`, or `"bottom"` |
+| `fontSize` | number | Font size in pixels (default: 48) |
+| `color` | string | Text color (hex or CSS color name) |
+| `startAtFrame` | number | Frame at which the overlay appears |
+| `durationInFrames` | number | How long the overlay is visible |
+
+Text overlays appear on the **Overlays** track in the Studio timeline and can be edited via the Scene Inspector.
+
+### Intro & Outro Cards
+
+Configurable intro and outro cards as timeline entries:
+
+- **`intro_card`** — Fade-in title card with project name, subtitle, and optional background color/image. Rendered as a full-screen card at the start of the timeline.
+- **`outro_card`** — Closing card with customizable CTA text, social links, and background. Supports fade, slide-up, and typewriter animations.
+
+Both card types are managed in the manifest's `timeline` array and appear as distinct entries on the Scenes track in the Studio.
+
+### Script Pacing (SSML)
+
+Narration scripts now support inline pacing annotations that are translated to SSML before TTS synthesis:
+
+| Annotation | SSML Output | Example |
+|------------|-------------|---------|
+| `[PAUSE: 2s]` | `<break time="2000ms"/>` | `And then... [PAUSE: 2s] it happened.` |
+| `[PAUSE: 500ms]` | `<break time="500ms"/>` | `Wait [PAUSE: 500ms] for it.` |
+| `*word*` | `<emphasis level="strong">word</emphasis>` | `This is *critical* information.` |
+
+The pacing translator runs automatically during TTS synthesis — no manual SSML authoring required. The LLM can include pacing tags directly in generated scripts.
+
+### BYOA (Bring Your Own Assets) Uploads
+
+Upload your own video, audio, or script files for use in productions:
+
+**REST API:**
+
+```bash
+# Upload a video file
+curl -X POST "http://localhost:3000/api/admin/director/files/upload?kind=video" \
+  -H "x-file-name: my-clip.mp4" \
+  --data-binary @my-clip.mp4
+
+# Upload an audio file
+curl -X POST "http://localhost:3000/api/admin/director/files/upload?kind=audio" \
+  -H "x-file-name: background-music.mp3" \
+  --data-binary @background-music.mp3
+
+# Upload a script file
+curl -X POST "http://localhost:3000/api/admin/director/files/upload?kind=script" \
+  -H "x-file-name: narration.txt" \
+  --data-binary @narration.txt
+```
+
+| Kind | Max Size | Storage Location |
+|------|----------|-----------------|
+| `video` | 2 GB | `~/.openzigs/director/uploads/videos/` |
+| `audio` | 2 GB | Asset library (`localLibraryPath`) |
+| `script` | 2 GB | `~/.openzigs/director/uploads/scripts/` |
+
+Uploaded files receive a timestamped unique filename and are immediately available for use in the Director wizard or Studio.
+
+### Scene Regeneration
+
+Regenerate a single scene's image without re-running the entire pipeline:
+
+```bash
+curl -X POST http://localhost:3000/api/admin/director/scenes/0/regenerate \
+  -H "Content-Type: application/json" \
+  -d '{
+    "draftId": "abc123",
+    "prompt": "A futuristic cityscape at sunset, cyberpunk aesthetic",
+    "provider": "local",
+    "model": "flux"
+  }'
+# Response: { sceneIndex, imagePath, generationTimeMs }
+```
+
+If `draftId` is provided, the draft manifest is automatically updated with the new image path.
+
+### Draft Persistence
+
+All produced videos, shorts, and blog conversions are automatically saved as drafts in the SQLite `director_drafts` table. Drafts can be listed, updated, and deleted:
+
+```bash
+# List all drafts
+curl http://localhost:3000/api/admin/director/drafts
+# Response: { drafts: [{ id, title, thumbnail, productionMode, createdAt, updatedAt, status }] }
+
+# Get a draft with full manifest
+curl http://localhost:3000/api/admin/director/drafts/<id>
+
+# Update a draft
+curl -X PUT http://localhost:3000/api/admin/director/drafts/<id> \
+  -H "Content-Type: application/json" \
+  -d '{"title": "My Updated Video", "manifest": {...}}'
+
+# Delete a draft
+curl -X DELETE http://localhost:3000/api/admin/director/drafts/<id>
+```
+
+### Epic #313 API Reference
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/admin/director/drafts` | Create a new draft |
+| GET | `/api/admin/director/drafts` | List all drafts |
+| GET | `/api/admin/director/drafts/:id` | Get draft with full manifest |
+| PUT | `/api/admin/director/drafts/:id` | Update draft title/manifest/status |
+| DELETE | `/api/admin/director/drafts/:id` | Delete a draft |
+| POST | `/api/admin/director/enhance` | Enhance image via Flux img2img |
+| POST | `/api/admin/director/thumbnail` | Generate AI thumbnail |
+| POST | `/api/admin/director/scenes/:idx/regenerate` | Regenerate a scene image |
+| POST | `/api/admin/director/shorts` | Create a YouTube Short from long-form video |
+| POST | `/api/admin/director/blog-to-video` | Convert blog URL to video draft |
+| POST | `/api/admin/director/files/upload` | Upload video/audio/script files (BYOA) |
+| POST | `/api/admin/director/assets/upload` | Upload asset to local library |
+| POST | `/api/admin/director/assets/ingest` | Ingest uploaded video through analysis pipeline |
+
+---
+
 ## Advanced Director Mode (Voice Cloning & Visual Injection)
 
 > **Epic #268** — Advanced Director Mode extends the core Director pipeline with two major capabilities: swappable TTS engine support (including GPT-SoVITS voice cloning) and LLM-guided visual asset injection. All new features are managed from the **Voice Lab** panel in the Admin UI.
@@ -2767,6 +3045,7 @@ OpenZigs ships with two TTS engines:
 |---|---|---|---|
 | **Engine A (Kokoro)** | On-device mlx-audio (Apple Silicon) | ~1 GB | Low-latency, general-purpose narration |
 | **Engine B (GPT-SoVITS)** | Local GPT-SoVITS server (proxy) | 6–10 GB | Cloned voices, expressive character TTS |
+| **Engine C (F5-TTS)** | f5-tts-mlx (Apple Silicon) | ~1–2 GB | Multi-emotion voice cloning with per-clip reference audio |
 
 Only one engine is active at a time. Switching engines frees Apple Silicon VRAM before loading the next engine.
 
@@ -2839,6 +3118,64 @@ Click **Test** on any profile card. The sidecar synthesizes a short sample using
 #### Kokoro Presets (Engine A)
 
 The **Kokoro Presets** grid shows all available built-in voices. Click a preset to preview it. Presets are loaded from the audio sidecar's `/voices` endpoint.
+
+#### F5-TTS Profiles (Engine C)
+
+Engine C provides **emotion-driven voice cloning** via F5-TTS. Unlike Engine B (one reference clip per profile), Engine C supports **multiple emotion clips** per profile — each clip maps to an emotion label (Regular, Excited, Whisper, etc.).
+
+**Installing F5-TTS:**
+
+```bash
+pip install f5-tts-mlx>=0.3.0
+```
+
+Or use the `requirements-mac.txt` from the sidecar directory:
+
+```bash
+cd sidecars/audio && pip install -r requirements-mac.txt
+```
+
+**Creating an F5-TTS profile:**
+
+1. Open **Voice Lab** in the Admin UI.
+2. In the **F5-TTS Profiles · Engine C** section, click **New F5-TTS Profile**.
+3. Give the profile a name and click **Create**.
+4. Click the **+** button on the profile card to add emotion clips:
+   - **Emotion Label** — A short name like `Regular`, `Excited`, `Whisper`, `Calm`, `Breaking News`.
+   - **Reference Audio** — Upload a short WAV/MP3 clip (up to 15 seconds). The sidecar converts it to 24kHz mono WAV automatically.
+   - **Reference Transcript** — The exact words spoken in the reference clip (improves synthesis quality).
+5. Add at least one `Regular` clip — this serves as the default voice when no emotion tag is specified.
+
+**Writing emotion-tagged scripts:**
+
+Use parenthesized emotion tags before text segments:
+
+```
+(Regular)Welcome to the show. (Excited)Today we have incredible news! (Whisper)But first, a secret.
+```
+
+The sidecar splits the text at each emotion tag, synthesizes each segment with the matching reference clip, and concatenates the output into a single WAV file.
+
+**Inserting emotion tags in the Narration Editor:**
+
+The Director Studio narration editor includes an **Emotions** dropdown when emotion tags are available. Click an emotion pill to insert `(EmotionName)` at the cursor position.
+
+**Testing an F5-TTS profile:**
+
+1. Expand a profile card by clicking its name.
+2. Enter test text with emotion tags in the test input field.
+3. Click **Test** to synthesize and play the result.
+
+**F5-TTS synthesis parameters (advanced):**
+
+| Parameter | Default | Description |
+|---|---|---|
+| `steps` | 8 | Number of diffusion steps (higher = better quality, slower) |
+| `method` | `rk4` | ODE solver: `rk4` or `euler` |
+| `cfg_strength` | 2.0 | Classifier-free guidance strength |
+| `sway_sampling_coef` | -1.0 | Sway sampling coefficient |
+| `speed` | 1.0 | Speech rate multiplier |
+| `seed` | null | Random seed for reproducibility |
 
 ---
 

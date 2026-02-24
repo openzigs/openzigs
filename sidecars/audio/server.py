@@ -2,6 +2,7 @@
 Audio Sidecar — Local Speech-to-Text & Text-to-Speech Server
 Issue #261: FastAPI wrapper around lightning-whisper-mlx (STT) and mlx-audio (TTS).
 Issue #269: Swappable TTS Engines — Kokoro (Engine A) and GPT-SoVITS (Engine B).
+Issue #313: Engine C — F5-TTS (f5-tts-mlx) for emotion-driven voice cloning.
 Optimized for Apple Silicon (MPS) with lazy model loading and idle auto-unload.
 
 ISOLATION CONTRACT (Issue #271):
@@ -15,8 +16,9 @@ ISOLATION CONTRACT (Issue #271):
     It is deployable as a completely standalone process with zero
     knowledge of the OpenZigs Agent system.
 
-    CI ENFORCEMENT: grep -r "import sqlite3\|import agent_tasks" sidecars/audio/
-    must return no matches. Any addition must be code-reviewed.
+    CI ENFORCEMENT: grep -r "import sqlite3" sidecars/audio/ and
+    grep -r "import agent_tasks" sidecars/audio/
+    must both return no matches. Any addition must be code-reviewed.
 
 Features:
     - Lazy loading: No models loaded at startup — loads on first request
@@ -24,23 +26,27 @@ Features:
     - Auto-unload: Models unloaded after configurable idle timeout to reclaim RAM
     - 24kHz WAV output for TTS (Kokoro model, 54 voice presets) — Engine A
     - Engine B: GPT-SoVITS via HTTP proxy for high-fidelity voice cloning
+    - Engine C: F5-TTS via f5-tts-mlx for emotion-driven voice cloning
     - POST /switch_engine — swap engines with mutex (prevents double-load)
+    - POST /f5tts — emotion-aware TTS with multiple reference clips
     - Segment-level timestamps from STT (Whisper distil-large-v3)
 
 Usage:
     cd sidecars/audio
-    pip install -r requirements.txt
+    pip install -r requirements.txt          # Base (Kokoro + GPT-SoVITS)
+    pip install -r requirements-mac.txt      # + F5-TTS (Apple Silicon)
     python server.py [--port 5006] [--host 127.0.0.1]
     # For Engine B (GPT-SoVITS), start the GPT-SoVITS server separately
     # then pass --sovits-url http://127.0.0.1:9880
 
 Endpoints:
     POST /tts              — Synthesize speech (Kokoro or GPT-SoVITS based on active engine)
+    POST /f5tts            — Synthesize speech with F5-TTS (emotion tags + multi-reference)
     POST /transcribe       — Transcribe audio file to text (accepts multipart upload)
     GET  /voices           — List available TTS voice presets
     GET  /health           — Readiness probe (returns model + engine status)
     POST /unload           — Unload one or all models to free RAM
-    POST /switch_engine    — Switch active TTS engine ("kokoro" | "sovits")
+    POST /switch_engine    — Switch active TTS engine ("kokoro" | "sovits" | "f5tts")
 """
 
 from __future__ import annotations
@@ -49,11 +55,14 @@ import argparse
 import asyncio
 import gc
 import io
+import json
 import logging
 import os
+import re
 import time
 from contextlib import asynccontextmanager
-from typing import Literal, Optional
+from pathlib import Path
+from typing import Any, Literal, Optional
 
 import subprocess
 import tempfile
@@ -125,7 +134,7 @@ _tts_loading: bool = False
 _stt_loading: bool = False
 _tts_last_used: float = 0.0
 _stt_last_used: float = 0.0
-_idle_timeout: float = 0.0  # seconds before auto-unload (0 = disabled)
+_idle_timeout: float = 300.0  # seconds before auto-unload (0 = disabled)
 _ready: bool = False
 _tts_model_name: str = DEFAULT_TTS_MODEL
 _stt_model_name: str = DEFAULT_STT_MODEL
@@ -133,9 +142,79 @@ _stt_model_name: str = DEFAULT_STT_MODEL
 # ── Engine State (Issue #269) ──────────────────────────────────
 # "kokoro" = Engine A (MLX Kokoro, always-on, ~1 GB RAM)
 # "sovits" = Engine B (GPT-SoVITS HTTP proxy, on-demand, 6-10 GB RAM)
-_active_engine: Literal["kokoro", "sovits"] = "kokoro"
+# "f5tts"  = Engine C (F5-TTS MLX, on-demand, ~2 GB RAM)
+_ENGINE_STATE_FILE = Path.home() / ".openzigs" / "engine-state.json"
+
+
+def _load_persisted_engine() -> Literal["kokoro", "sovits", "f5tts"]:
+    """Load the last active engine from disk. Falls back to 'kokoro'."""
+    try:
+        data = json.loads(_ENGINE_STATE_FILE.read_text())
+        engine = data.get("active_engine", "kokoro")
+        if engine in ("kokoro", "sovits", "f5tts"):
+            return engine
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        pass
+    return "kokoro"
+
+
+def _save_persisted_engine(engine: str) -> None:
+    """Persist the active engine to disk."""
+    try:
+        _ENGINE_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        _ENGINE_STATE_FILE.write_text(json.dumps({"active_engine": engine}))
+    except OSError as e:
+        log.warning(f"Could not persist engine state: {e}")
+
+
+_active_engine: Literal["kokoro", "sovits", "f5tts"] = _load_persisted_engine()
 _sovits_url: str = DEFAULT_SOVITS_URL
 _engine_switch_lock: asyncio.Lock | None = None  # Initialized in lifespan
+
+# Cached F5-TTS clips for /tts routing when f5tts is active.
+# Set automatically from the last /f5tts call, or explicitly via /f5tts/set-active-clips.
+_f5tts_cached_clips: list[dict] | None = None
+
+
+def _load_persisted_clips() -> list[dict] | None:
+    """Load cached F5-TTS clips from engine state file."""
+    try:
+        data = json.loads(_ENGINE_STATE_FILE.read_text())
+        clips = data.get("f5tts_clips")
+        if isinstance(clips, list) and len(clips) > 0:
+            return clips
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        pass
+    return None
+
+
+def _save_persisted_clips(clips: list[dict] | None) -> None:
+    """Persist cached F5-TTS clips to engine state file."""
+    try:
+        data: dict = {}
+        try:
+            data = json.loads(_ENGINE_STATE_FILE.read_text())
+        except (FileNotFoundError, json.JSONDecodeError, OSError):
+            pass
+        if clips is not None:
+            data["f5tts_clips"] = clips
+        elif "f5tts_clips" in data:
+            del data["f5tts_clips"]
+        _ENGINE_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        _ENGINE_STATE_FILE.write_text(json.dumps(data))
+    except OSError as e:
+        log.warning(f"Could not persist f5tts clips: {e}")
+
+
+_f5tts_cached_clips = _load_persisted_clips()
+
+# ── F5-TTS State (Engine C) ───────────────────────────────────
+_f5tts_model: Any = None
+_f5tts_loaded: bool = False
+_f5tts_loading: bool = False
+_f5tts_last_used: float = 0.0
+F5TTS_SAMPLE_RATE = 24000
+DEFAULT_F5TTS_MODEL = "lucasnewman/f5-tts-mlx"
 
 
 # ── Model Lifecycle ─────────────────────────────────────────────
@@ -231,6 +310,126 @@ def _unload_stt() -> None:
     _stt_loaded = False
 
 
+def _load_f5tts() -> float:
+    """Load the F5-TTS model. Returns time taken in seconds."""
+    global _f5tts_model, _f5tts_loaded, _f5tts_loading, _f5tts_last_used
+
+    if _f5tts_loaded:
+        return 0.0
+
+    _f5tts_loading = True
+    try:
+        start = time.monotonic()
+        log.info(f"Loading F5-TTS model '{DEFAULT_F5TTS_MODEL}' ...")
+
+        from f5_tts_mlx.generate import F5TTS
+        _f5tts_model = F5TTS.from_pretrained(DEFAULT_F5TTS_MODEL)
+
+        elapsed = time.monotonic() - start
+        _f5tts_loaded = True
+        _f5tts_last_used = time.monotonic()
+        log.info(f"F5-TTS model loaded in {elapsed:.1f}s")
+        return elapsed
+    except ImportError:
+        log.error("f5-tts-mlx is not installed. Install with: pip install f5-tts-mlx")
+        raise
+    except Exception as e:
+        log.error(f"Failed to load F5-TTS model: {e}")
+        raise
+    finally:
+        _f5tts_loading = False
+
+
+def _unload_f5tts() -> None:
+    """Unload F5-TTS model and free memory."""
+    global _f5tts_model, _f5tts_loaded
+
+    if _f5tts_model is not None:
+        log.info("Unloading F5-TTS model ...")
+        del _f5tts_model
+        _f5tts_model = None
+        gc.collect()
+        try:
+            import mlx.core
+            mlx.core.metal.clear_cache()
+            log.info("MLX Metal cache cleared (F5-TTS)")
+        except Exception:
+            pass
+        log.info("F5-TTS model unloaded")
+    _f5tts_loaded = False
+
+
+def _convert_to_24khz_mono_wav(input_path: str) -> tuple[str, bool]:
+    """Convert any audio file to 24kHz mono WAV for F5-TTS.
+
+    Also trims to F5TTS_MAX_REF_AUDIO_SECONDS to prevent excessive generation
+    time with long reference audio.
+
+    Returns (path_to_use, is_temp). If is_temp is True the caller must
+    delete the file after use.
+    """
+    fd, tmp_path = tempfile.mkstemp(suffix=".wav")
+    os.close(fd)
+    try:
+        cmd = [
+            "ffmpeg", "-y", "-i", input_path,
+            "-ar", "24000", "-ac", "1",
+            "-t", str(F5TTS_MAX_REF_AUDIO_SECONDS),
+            "-c:a", "pcm_s16le", tmp_path,
+        ]
+        subprocess.run(cmd, capture_output=True, timeout=30, check=True)
+        return tmp_path, True
+    except Exception as e:
+        log.warning(f"[Engine C] Audio conversion failed ({e}), using original file")
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        return input_path, False
+
+
+# ── Emotion Tag Parsing ────────────────────────────────────────
+# F5-TTS emotion tags use parenthesis syntax: (Excited), (Whisper), etc.
+# Text is split at these markers and each segment is synthesized with
+# the corresponding reference audio clip.
+
+_EMOTION_TAG_RE = re.compile(r"\(([A-Za-z][A-Za-z0-9_ ]{0,30})\)")
+
+# Sentence splitter for long text — avoids upstream f5-tts-mlx duration
+# variable shadowing bug in multi-sentence generate() loop.
+_SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?;:])\s+")
+
+F5TTS_MAX_REF_AUDIO_SECONDS = 30.0
+
+
+def _split_text_by_emotion(text: str, default_emotion: str = "Regular") -> list[tuple[str, str]]:
+    """Split text into (segment_text, emotion_label) pairs.
+
+    Example:
+        "Hello! (Excited) Wow, this is great! (Whisper) Keep it secret."
+        → [("Hello!", "Regular"), ("Wow, this is great!", "Excited"),
+           ("Keep it secret.", "Whisper")]
+    """
+    parts: list[tuple[str, str]] = []
+    current_emotion = default_emotion
+    last_end = 0
+
+    for match in _EMOTION_TAG_RE.finditer(text):
+        # Text before this emotion tag belongs to the previous emotion
+        segment = text[last_end:match.start()].strip()
+        if segment:
+            parts.append((segment, current_emotion))
+        current_emotion = match.group(1)
+        last_end = match.end()
+
+    # Remaining text after the last emotion tag
+    remaining = text[last_end:].strip()
+    if remaining:
+        parts.append((remaining, current_emotion))
+
+    return parts if parts else [(text.strip(), default_emotion)]
+
+
 async def _idle_unload_loop() -> None:
     """Background task: periodically check for idle timeout and unload models."""
     import asyncio
@@ -269,6 +468,20 @@ async def _idle_unload_loop() -> None:
                 f"(threshold={_idle_timeout:.0f}s) — auto-unloading"
             )
             _unload_stt()
+
+        # Check F5-TTS idle
+        if (
+            _f5tts_loaded
+            and not _f5tts_loading
+            and _f5tts_last_used > 0
+            and (now - _f5tts_last_used) > _idle_timeout
+        ):
+            idle_secs = now - _f5tts_last_used
+            log.info(
+                f"F5-TTS model idle for {idle_secs:.0f}s "
+                f"(threshold={_idle_timeout:.0f}s) — auto-unloading"
+            )
+            _unload_f5tts()
 
 
 # ── Request / Response Models ──────────────────────────────────
@@ -329,9 +542,75 @@ class TTSRequest(BaseModel):
 class SwitchEngineRequest(BaseModel):
     """Request body for POST /switch_engine."""
 
-    engine: Literal["kokoro", "sovits"] = Field(
+    engine: Literal["kokoro", "sovits", "f5tts"] = Field(
         ...,
-        description="Target TTS engine to activate ('kokoro' or 'sovits')",
+        description="Target TTS engine to activate ('kokoro', 'sovits', or 'f5tts')",
+    )
+
+
+class F5TTSClip(BaseModel):
+    """A single reference audio clip with emotion label for F5-TTS."""
+
+    emotion: str = Field(
+        default="Regular",
+        min_length=1,
+        max_length=32,
+        description="Emotion label (e.g. 'Regular', 'Excited', 'Whisper')",
+    )
+    ref_audio_path: str = Field(
+        ...,
+        description="Absolute path to the reference audio file",
+    )
+    ref_text: str = Field(
+        ...,
+        min_length=1,
+        description="Verbatim transcript of the reference audio (required for duration estimation)",
+    )
+
+
+class F5TTSRequest(BaseModel):
+    """Request body for F5-TTS synthesis (Engine C).
+
+    Supports emotion-driven multi-clip voice cloning. Text can contain
+    emotion tags like (Excited) or (Whisper) that switch the reference
+    audio for each segment.
+    """
+
+    text: str = Field(
+        ...,
+        min_length=1,
+        max_length=10000,
+        description="Text to synthesize. May contain (EmotionName) tags.",
+    )
+    clips: list[F5TTSClip] = Field(
+        ...,
+        min_length=1,
+        description="Reference audio clips with emotion labels. Must include at least one 'Regular' clip.",
+    )
+    # ── F5-TTS generation parameters ──
+    steps: int = Field(default=8, ge=1, le=64, description="Diffusion steps")
+    method: str = Field(
+        default="rk4",
+        description="ODE solver method: 'euler', 'midpoint', or 'rk4'",
+    )
+    cfg_strength: float = Field(
+        default=2.0, ge=0.0, le=10.0,
+        description="Classifier-free guidance strength",
+    )
+    sway_sampling_coef: float = Field(
+        default=-1.0, ge=-5.0, le=5.0,
+        description="Sway sampling coefficient",
+    )
+    speed: float = Field(
+        default=1.0, ge=0.25, le=2.0,
+        description=(
+            "Speaking speed factor for duration heuristic. "
+            "1.0 = natural pace, <1 = slower (more natural for longer text), >1 = faster"
+        ),
+    )
+    seed: Optional[int] = Field(
+        default=None,
+        description="Random seed for reproducibility",
     )
 
 
@@ -349,9 +628,13 @@ class HealthResponse(BaseModel):
     voice_count: int = 0
     # Engine state (Issue #269)
     active_engine: str = "kokoro"
-    engines_available: list[str] = ["kokoro", "sovits"]
+    engines_available: list[str] = ["kokoro", "sovits", "f5tts"]
     sovits_url: str = ""
     sovits_reachable: bool = False
+    # F5-TTS state (Engine C)
+    f5tts_loaded: bool = False
+    f5tts_loading: bool = False
+    f5tts_available: bool = False
 
 
 class TranscribeResponse(BaseModel):
@@ -388,6 +671,7 @@ async def lifespan(app: FastAPI):
     idle_task.cancel()
     _unload_tts()
     _unload_stt()
+    _unload_f5tts()
     log.info("Audio sidecar shut down")
 
 
@@ -420,11 +704,19 @@ async def _probe_sovits(url: str, timeout_seconds: float = 2.0) -> bool:
 @app.get("/health", response_model=HealthResponse)
 async def health():
     """Readiness probe. Returns model load states and active engine status."""
-    is_loading = _tts_loading or _stt_loading
+    is_loading = _tts_loading or _stt_loading or _f5tts_loading
     status = "loading" if is_loading else ("ok" if _ready else "starting")
 
     # Async probe of GPT-SoVITS reachability (non-blocking, 2s timeout)
     sovits_reachable = await _probe_sovits(_sovits_url, timeout_seconds=2.0)
+
+    # Check if f5-tts-mlx is installed
+    f5tts_available = False
+    try:
+        import f5_tts_mlx  # noqa: F401
+        f5tts_available = True
+    except ImportError:
+        pass
 
     return HealthResponse(
         status=status,
@@ -439,6 +731,9 @@ async def health():
         active_engine=_active_engine,
         sovits_url=_sovits_url,
         sovits_reachable=sovits_reachable,
+        f5tts_loaded=_f5tts_loaded,
+        f5tts_loading=_f5tts_loading,
+        f5tts_available=f5tts_available,
     )
 
 
@@ -467,6 +762,7 @@ async def switch_engine(req: SwitchEngineRequest):
 
     Acquires a mutex so only one engine is ever in VRAM at a time.
     Switching to 'sovits' unloads the Kokoro MLX model (clears Metal cache).
+    Switching to 'f5tts' unloads Kokoro; F5-TTS lazy-loads on next /f5tts request.
     Switching back to 'kokoro' marks Engine A as active; it lazy-loads on the
     next /tts request.
 
@@ -485,10 +781,13 @@ async def switch_engine(req: SwitchEngineRequest):
         log.info(f"Switching TTS engine: {_active_engine} → {req.engine}")
 
         if req.engine == "sovits":
-            # Unload Kokoro to free ~1 GB VRAM before GPT-SoVITS tries to load
+            # Unload Kokoro + F5-TTS to free VRAM before GPT-SoVITS
             if _tts_loaded:
                 log.info("Unloading Kokoro (Engine A) before activating Engine B ...")
                 _unload_tts()
+            if _f5tts_loaded:
+                log.info("Unloading F5-TTS (Engine C) before activating Engine B ...")
+                _unload_f5tts()
             # Verify GPT-SoVITS is reachable before committing the switch
             if not await _probe_sovits(_sovits_url, timeout_seconds=5.0):
                 raise HTTPException(
@@ -498,9 +797,27 @@ async def switch_engine(req: SwitchEngineRequest):
                         "Start the GPT-SoVITS server before switching engines."
                     ),
                 )
-        # else: switching to kokoro — Kokoro lazy-loads on the next /tts request
+        elif req.engine == "f5tts":
+            # Verify f5-tts-mlx is installed
+            try:
+                import f5_tts_mlx  # noqa: F401
+            except ImportError:
+                raise HTTPException(
+                    status_code=400,
+                    detail="f5-tts-mlx is not installed. Install with: pip install f5-tts-mlx",
+                )
+            # Unload Kokoro to free VRAM; F5-TTS lazy-loads on next request
+            if _tts_loaded:
+                log.info("Unloading Kokoro (Engine A) before activating Engine C ...")
+                _unload_tts()
+        else:
+            # Switching to kokoro — unload F5-TTS if loaded
+            if _f5tts_loaded:
+                log.info("Unloading F5-TTS (Engine C) before activating Engine A ...")
+                _unload_f5tts()
 
         _active_engine = req.engine
+        _save_persisted_engine(_active_engine)
         log.info(f"Active TTS engine is now: {_active_engine}")
         return {"engine": _active_engine, "status": "switched"}
 
@@ -549,7 +866,7 @@ async def _synthesize_kokoro(req: TTSRequest) -> Response:
 
     audio_np = np.concatenate(audio_chunks)
     buf = io.BytesIO()
-    sf.write(buf, audio_np, TTS_SAMPLE_RATE, format="WAV", subtype="FLOAT")
+    sf.write(buf, audio_np, TTS_SAMPLE_RATE, format="WAV", subtype="PCM_16")
     wav_bytes = buf.getvalue()
 
     elapsed = time.monotonic() - start
@@ -714,6 +1031,206 @@ async def _synthesize_sovits(req: TTSRequest) -> Response:
                 pass
 
 
+@app.post("/f5tts", response_class=Response)
+async def synthesize_f5tts(req: F5TTSRequest):
+    """Synthesize text to speech using F5-TTS (Engine C).
+
+    Supports emotion-driven multi-clip voice cloning. Text can contain
+    emotion tags like (Excited) that cause the engine to switch reference
+    audio clips mid-stream. Each segment is generated separately and the
+    resulting WAV buffers are concatenated.
+
+    Returns 24kHz mono WAV audio.
+    """
+    global _f5tts_last_used
+
+    if not _ready:
+        raise HTTPException(status_code=503, detail="Server not ready")
+    if _f5tts_loading:
+        raise HTTPException(status_code=409, detail="F5-TTS model is currently loading")
+
+    # Validate at least one "Regular" clip exists
+    clip_map: dict[str, F5TTSClip] = {}
+    for clip in req.clips:
+        clip_map[clip.emotion] = clip
+    if "Regular" not in clip_map:
+        raise HTTPException(
+            status_code=400,
+            detail="At least one clip with emotion='Regular' is required.",
+        )
+
+    # Lazy load F5-TTS model
+    if not _f5tts_loaded:
+        log.info("Lazy-loading F5-TTS (Engine C) ...")
+        _load_f5tts()
+
+    assert _f5tts_model is not None
+
+    # Split text by emotion tags
+    segments = _split_text_by_emotion(req.text, default_emotion="Regular")
+    log.info(
+        f"[Engine C] Synthesizing {len(segments)} segment(s): "
+        f"text='{req.text[:80]}...' emotions={[s[1] for s in segments]}"
+    )
+
+    start = time.monotonic()
+    wav_chunks: list[bytes] = []
+    temp_files: list[str] = []
+
+    try:
+        from f5_tts_mlx.generate import generate
+
+        for segment_text, emotion_label in segments:
+            if not segment_text.strip():
+                continue
+
+            # Find the matching clip; fall back to Regular
+            clip = clip_map.get(emotion_label, clip_map["Regular"])
+
+            # Convert reference audio to 24kHz mono WAV (capped at 10s)
+            ref_path, ref_is_temp = _convert_to_24khz_mono_wav(clip.ref_audio_path)
+            if ref_is_temp:
+                temp_files.append(ref_path)
+
+            # Split segment into individual sentences to avoid the upstream
+            # f5-tts-mlx duration variable shadowing bug in the multi-sentence
+            # loop of generate(). By passing one sentence at a time,
+            # is_single_generation=True and the bug is bypassed.
+            sentences = [s.strip() for s in _SENTENCE_SPLIT_RE.split(segment_text) if s.strip()]
+            if not sentences:
+                sentences = [segment_text.strip()]
+
+            log.info(
+                f"[Engine C] Segment ({emotion_label}): {len(sentences)} sentence(s)"
+            )
+
+            for sentence in sentences:
+                # Generate to a temp output file
+                fd, out_path = tempfile.mkstemp(suffix=".wav")
+                os.close(fd)
+                temp_files.append(out_path)
+
+                generate(
+                    generation_text=sentence,
+                    ref_audio_path=ref_path,
+                    ref_audio_text=clip.ref_text,
+                    estimate_duration=True,
+                    steps=req.steps,
+                    method=req.method,
+                    cfg_strength=req.cfg_strength,
+                    sway_sampling_coef=req.sway_sampling_coef,
+                    speed=req.speed,
+                    seed=req.seed,
+                    output_path=out_path,
+                )
+
+                # Read the generated WAV
+                with open(out_path, "rb") as f:
+                    wav_chunks.append(f.read())
+
+        if not wav_chunks:
+            raise HTTPException(status_code=500, detail="F5-TTS generation produced no audio")
+
+        # Concatenate WAV chunks
+        if len(wav_chunks) == 1:
+            wav_bytes = wav_chunks[0]
+        else:
+            wav_bytes = _concatenate_wav_bytes(wav_chunks)
+
+        elapsed = time.monotonic() - start
+        _f5tts_last_used = time.monotonic()
+
+        # Cache clips for /tts routing when f5tts is the active engine
+        _cache_f5tts_clips(req.clips)
+
+        log.info(
+            f"[Engine C] Synthesized in {elapsed:.1f}s — "
+            f"{len(wav_bytes)} bytes, {len(segments)} segment(s)"
+        )
+
+        return Response(
+            content=wav_bytes,
+            media_type="audio/wav",
+            headers={
+                "X-Synthesis-Time": f"{elapsed:.2f}s",
+                "X-Engine": "f5tts",
+                "X-Sample-Rate": str(F5TTS_SAMPLE_RATE),
+                "X-Segments": str(len(segments)),
+            },
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.error(f"[Engine C] F5-TTS synthesis failed: {e}")
+        raise HTTPException(status_code=500, detail=f"F5-TTS synthesis failed: {str(e)}")
+    finally:
+        for tmp in temp_files:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+
+
+def _cache_f5tts_clips(clips: list[F5TTSClip]) -> None:
+    """Cache F5-TTS clips for /tts routing and persist to disk."""
+    global _f5tts_cached_clips
+    clip_dicts = [c.model_dump() for c in clips]
+    _f5tts_cached_clips = clip_dicts
+    _save_persisted_clips(clip_dicts)
+    log.info(f"[Engine C] Cached {len(clip_dicts)} clip(s) for /tts routing")
+
+
+@app.post("/f5tts/set-active-clips")
+async def set_f5tts_active_clips(req: dict):
+    """Set the cached F5-TTS clips used when /tts routes to f5tts.
+
+    Called by the admin API when switching to f5tts or updating the active profile.
+    Body: { clips: [{ emotion, ref_audio_path, ref_text }, ...] }
+    """
+    clips_raw = req.get("clips", [])
+    if not isinstance(clips_raw, list) or len(clips_raw) == 0:
+        raise HTTPException(status_code=400, detail="clips array is required and must be non-empty")
+    try:
+        clips = [F5TTSClip(**c) for c in clips_raw]
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid clip data: {e}")
+    has_regular = any(c.emotion == "Regular" for c in clips)
+    if not has_regular:
+        raise HTTPException(status_code=400, detail="At least one clip with emotion='Regular' is required")
+    _cache_f5tts_clips(clips)
+    return {"status": "ok", "clips_cached": len(clips)}
+
+
+def _concatenate_wav_bytes(chunks: list[bytes]) -> bytes:
+    """Concatenate multiple WAV byte buffers into a single WAV file."""
+    if len(chunks) == 0:
+        return b""
+    if len(chunks) == 1:
+        return chunks[0]
+
+    # Read all audio data using soundfile
+    all_audio: list[np.ndarray] = []
+    sample_rate = F5TTS_SAMPLE_RATE
+
+    for chunk in chunks:
+        buf = io.BytesIO(chunk)
+        try:
+            data, sr = sf.read(buf, dtype="float32")
+            sample_rate = sr
+            all_audio.append(data)
+        except Exception as e:
+            log.warning(f"[Engine C] Failed to read WAV chunk: {e}")
+            continue
+
+    if not all_audio:
+        return chunks[0]
+
+    combined = np.concatenate(all_audio)
+    out_buf = io.BytesIO()
+    sf.write(out_buf, combined, sample_rate, format="WAV", subtype="PCM_16")
+    return out_buf.getvalue()
+
+
 @app.post("/tts", response_class=Response)
 async def synthesize(req: TTSRequest):
     """Synthesize text to speech. Returns WAV audio.
@@ -721,6 +1238,7 @@ async def synthesize(req: TTSRequest):
     Routes to the active TTS engine:
     - Engine A (Kokoro): lazy-loaded MLX model, 54 voice presets, 24kHz output
     - Engine B (GPT-SoVITS): HTTP proxy to running GPT-SoVITS instance for voice cloning
+    - Engine C (F5-TTS): emotion-driven voice cloning using cached clips
 
     Switch engines via POST /switch_engine.
     """
@@ -730,6 +1248,8 @@ async def synthesize(req: TTSRequest):
     try:
         if _active_engine == "sovits":
             return await _synthesize_sovits(req)
+        elif _active_engine == "f5tts":
+            return await _synthesize_f5tts_via_cached_clips(req)
         else:
             return await _synthesize_kokoro(req)
     except HTTPException:
@@ -737,6 +1257,25 @@ async def synthesize(req: TTSRequest):
     except Exception as e:
         log.error(f"TTS synthesis failed: {e}")
         raise HTTPException(status_code=500, detail=f"TTS synthesis failed: {str(e)}")
+
+
+async def _synthesize_f5tts_via_cached_clips(req: TTSRequest) -> Response:
+    """Route a /tts request to F5-TTS using cached clips."""
+    if not _f5tts_cached_clips:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "F5-TTS is the active engine but no voice profile clips are cached. "
+                "Use the Voice Lab to test an F5-TTS profile first, or switch to kokoro/sovits."
+            ),
+        )
+    # Build an F5TTSRequest from the TTSRequest + cached clips
+    f5_req = F5TTSRequest(
+        text=req.text,
+        clips=[F5TTSClip(**c) for c in _f5tts_cached_clips],
+        speed=req.speed,
+    )
+    return await synthesize_f5tts(f5_req)
 
 
 @app.post("/transcribe", response_model=TranscribeResponse)
@@ -860,7 +1399,7 @@ async def unload_model(model: str = "all"):
     """Unload one or all models to free RAM.
 
     Args:
-        model: Which model to unload — 'tts', 'stt', or 'all' (default).
+        model: Which model to unload — 'tts', 'stt', 'f5tts', or 'all' (default).
     """
     result: dict[str, str] = {}
 
@@ -878,10 +1417,17 @@ async def unload_model(model: str = "all"):
         else:
             result["stt"] = "not_loaded"
 
-    if model not in ("tts", "stt", "all"):
+    if model in ("f5tts", "all"):
+        if _f5tts_loaded:
+            _unload_f5tts()
+            result["f5tts"] = "unloaded"
+        else:
+            result["f5tts"] = "not_loaded"
+
+    if model not in ("tts", "stt", "f5tts", "all"):
         raise HTTPException(
             status_code=400,
-            detail=f"Unknown model: {model}. Use 'tts', 'stt', or 'all'.",
+            detail=f"Unknown model: {model}. Use 'tts', 'stt', 'f5tts', or 'all'.",
         )
 
     return {"status": "ok", **result}
@@ -930,7 +1476,7 @@ Examples:
     parser.add_argument(
         "--idle-timeout",
         type=float,
-        default=float(os.environ.get("AUDIO_IDLE_TIMEOUT", "0")),
+        default=float(os.environ.get("AUDIO_IDLE_TIMEOUT", "300")),
         help=(
             "Seconds of inactivity before auto-unloading models "
             "(0 = disabled, env: AUDIO_IDLE_TIMEOUT)"

@@ -28,6 +28,21 @@ export interface StoryboardScene {
    * (2–5 words) and will be rendered as a visual title card before this scene.
    */
   chapterTitle?: string;
+  /** Text overlays to render on top of the scene visual */
+  textOverlays?: Array<{
+    id: string;
+    text: string;
+    position: "center" | "bottom-third" | "top-third" | "custom";
+    animation: "fade-in" | "slide-up" | "typewriter" | "none";
+    startFrame: number;
+    durationFrames: number;
+    fontSize?: number;
+    fontWeight?: "normal" | "bold" | "light";
+    color?: string;
+    backgroundColor?: string;
+  }>;
+  /** 0-based index into the source blog's image list; set when the LLM assigns a blog image to this scene */
+  blogImageIndex?: number;
 }
 
 /** Full storyboard output from the engine. */
@@ -54,6 +69,8 @@ export interface StoryboardVisualAsset {
   description: string;
   /** Asset type */
   type: "image" | "video";
+  /** Positional hint: surrounding text from the source document near where this image appeared */
+  positionHint?: string;
 }
 
 /** Options for storyboard generation. */
@@ -270,7 +287,18 @@ OUTPUT FORMAT (strict JSON):
       "voiceover": "string — narration script for this scene",
       "imageDescription": "string — scene-specific visual description (WITHOUT the style anchor prefix)",
       "durationEstimate": number — scene duration in seconds (${minDur}-${maxDur}),
-      "chapterTitle": "string | null — chapter title for chapter-starting scenes; null for all others"
+      "chapterTitle": "string | null — chapter title for chapter-starting scenes; null for all others",
+      "blogImageIndex": "number | null — 0-based index of a source image from the VISUAL ASSETS list to use for this scene, or null if AI image generation is needed",
+      "textOverlays": [
+        {
+          "id": "string — unique identifier e.g. scene-0-overlay-0",
+          "text": "string — short impactful text (max 60 chars)",
+          "position": "center | bottom-third | top-third",
+          "animation": "fade-in | slide-up | typewriter | none",
+          "startFrame": 0,
+          "durationFrames": 90
+        }
+      ]
     }
   ]
 }
@@ -282,7 +310,33 @@ RULES:
 - Duration estimates should reflect the voiceover length (roughly ${WORDS_PER_SECOND} words per second).
 - Scenes must follow the document's logical flow — do not rearrange arbitrarily.
 - Each scene's imageDescription should be specific and visually descriptive, not vague.
-- If the user has provided VISUAL ASSETS (images or videos) with descriptions, naturally reference what those assets depict within the voiceover narration at appropriate moments. Treat the asset descriptions as additional context about the topic — weave their content into the script so the narration acknowledges what the viewer will see on screen.`;
+- When VISUAL ASSETS (source images) are provided, PREFER assigning them to matching scenes via blogImageIndex. Write a full imageDescription ONLY for scenes that truly need AI-generated imagery; for scenes with a blogImageIndex, imageDescription can be brief or empty.
+- If the user has provided VISUAL ASSETS (images or videos) with descriptions, naturally reference what those assets depict within the voiceover narration at appropriate moments. Treat the asset descriptions as additional context about the topic — weave their content into the script so the narration acknowledges what the viewer will see on screen.
+
+TTS PACING TAGS (optional — use sparingly for dramatic effect):
+You may include these bracket tags in voiceover text for pacing control:
+- [PAUSE: Xs] — insert a pause of X seconds (0.1–10). Example: "And the result? [PAUSE: 1.5s] A 40% increase in revenue."
+- *word* — emphasize a word. Example: "This is *critical* for success."
+Do NOT use HTML or XML tags like <break> or <emphasis> — they will be stripped. Only use the bracket syntax above.
+
+TEXT OVERLAYS (required for each scene):
+For each scene, generate 1-2 text overlays that display key statements, quotes, or data points as PowerPoint-style captions rendered on top of the visual.
+
+Each textOverlay object must have:
+- "id": unique string (e.g. "scene-0-overlay-0")
+- "text": short impactful text (max 60 chars) — a key statement, stat, or quote from that scene
+- "position": one of "center", "bottom-third", "top-third"
+- "animation": one of "fade-in", "slide-up", "typewriter", "none"
+- "startFrame": frame offset within the scene where this overlay appears (0 = scene start)
+- "durationFrames": how many frames the overlay stays visible (60-150 is typical at 30fps)
+
+Optional styling fields (sensible defaults will be applied if omitted):
+- "fontSize": number (default: 48)
+- "fontWeight": "normal" | "bold" | "light" (default: "bold")
+- "color": hex colour (default: "#ffffff")
+- "backgroundColor": CSS colour (default: "rgba(0,0,0,0.6)")
+
+Include these in the "textOverlays" array for each scene in the JSON output.`;
   }
 
   /**
@@ -300,9 +354,15 @@ RULES:
     if (visualAssets && visualAssets.length > 0) {
       const assetLines = visualAssets
         .filter((a) => a.description.trim())
-        .map((a, i) => `  ${i + 1}. [${a.type}] ${a.description.trim()}`);
+        .map((a, i) => {
+          let line = `  [${i}] [${a.type}] ${a.description.trim()}`;
+          if (a.positionHint) {
+            line += `\n       Position context: "${a.positionHint}"`;
+          }
+          return line;
+        });
       if (assetLines.length > 0) {
-        assetBlock = `\n\n=== USER-PROVIDED VISUAL ASSETS ===\nThe user has uploaded the following images/videos that will be overlaid on the final video.\nTheir descriptions provide additional context about the topic. Naturally weave references to what\nthese assets depict into the voiceover narration at appropriate moments — do NOT simply list them,\nbut incorporate their content as supporting visuals the narrator acknowledges.\n\n${assetLines.join("\n")}\n\n=== END OF VISUAL ASSETS ===`;
+        assetBlock = `\n\n=== SOURCE VISUAL ASSETS ===\nThe following images are available from the source document. Each has a 0-based index in brackets.\nEach image includes a description (from vision analysis or alt text) and a "Position context" showing\nthe surrounding text from where the image appeared in the original article.\nAssign the most relevant image to each scene via the "blogImageIndex" field in your JSON output.\nUse both the image description AND position context to decide which scene each image belongs to.\nPrefer using these source images over AI-generated ones. Only leave blogImageIndex as null for scenes\nwhere no source image is relevant. Weave references to what the images depict into the voiceover.\n\n${assetLines.join("\n")}\n\n=== END OF VISUAL ASSETS ===`;
       }
     }
 
@@ -402,8 +462,36 @@ Output a single JSON object.`;
         imagePrompt,
         durationEstimate: Math.max(5, Math.min(60, duration)),
         rawImageDescription: rawDesc,
+        blogImageIndex: typeof scene.blogImageIndex === "number" ? scene.blogImageIndex : undefined,
         chapterTitle: typeof scene.chapterTitle === "string" && scene.chapterTitle.trim()
           ? scene.chapterTitle.trim()
+          : undefined,
+        textOverlays: Array.isArray(scene.textOverlays)
+          ? scene.textOverlays
+              .filter((o) => o.text && typeof o.text === "string")
+              .map((o, oi) => {
+                const validPositions = ["center", "bottom-third", "top-third", "custom"] as const;
+                const validAnimations = ["fade-in", "slide-up", "typewriter", "none"] as const;
+                const validWeights = ["normal", "bold", "light"] as const;
+                return {
+                  id: o.id ?? `scene-${index}-overlay-${oi}`,
+                  text: o.text!.slice(0, 120),
+                  position: (validPositions.includes(o.position as (typeof validPositions)[number])
+                    ? o.position as (typeof validPositions)[number]
+                    : "bottom-third"),
+                  animation: (validAnimations.includes(o.animation as (typeof validAnimations)[number])
+                    ? o.animation as (typeof validAnimations)[number]
+                    : "fade-in"),
+                  startFrame: typeof o.startFrame === "number" ? Math.max(0, o.startFrame) : 0,
+                  durationFrames: typeof o.durationFrames === "number" ? Math.max(1, o.durationFrames) : 90,
+                  fontSize: typeof o.fontSize === "number" ? o.fontSize : undefined,
+                  fontWeight: (validWeights.includes(o.fontWeight as (typeof validWeights)[number])
+                    ? o.fontWeight as (typeof validWeights)[number]
+                    : undefined),
+                  color: typeof o.color === "string" ? o.color : undefined,
+                  backgroundColor: typeof o.backgroundColor === "string" ? o.backgroundColor : undefined,
+                };
+              })
           : undefined,
       };
     });
@@ -442,5 +530,18 @@ interface RawStoryboardOutput {
     imageDescription?: string;
     durationEstimate?: number;
     chapterTitle?: string | null;
+    blogImageIndex?: number | null;
+    textOverlays?: Array<{
+      id?: string;
+      text?: string;
+      position?: string;
+      animation?: string;
+      startFrame?: number;
+      durationFrames?: number;
+      fontSize?: number;
+      fontWeight?: string;
+      color?: string;
+      backgroundColor?: string;
+    }>;
   }>;
 }

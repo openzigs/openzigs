@@ -28,6 +28,9 @@ import { ProgressBar } from "../components/progress-bar";
 import { VideoClipSegment } from "../components/video-clip-segment";
 import { ImageSceneSegment } from "../components/image-scene-segment";
 import { ImageOverlay } from "../components/image-overlay";
+import { TextOverlayLayer } from "../components/text-overlay-layer";
+import { IntroCard } from "../components/intro-card";
+import { OutroCard } from "../components/outro-card";
 import { mapTransition } from "../util/transition-mapper";
 
 /**
@@ -45,6 +48,8 @@ function partitionTimeline(timeline: TimelineItem[]) {
       case "video_clip":
       case "title_card":
       case "image_scene":
+      case "intro_card":
+      case "outro_card":
         segments.push(item);
         break;
       case "overlay":
@@ -123,13 +128,18 @@ function renderSegment(
   switch (item.type) {
     case "video_clip":
       return (
-        <VideoClipSegment
-          src={item.src}
-          trimStartFrame={item.trimStartFrame}
-          durationInFrames={item.durationInFrames}
-          volume={item.volume}
-          effects={item.effects}
-        />
+        <AbsoluteFill>
+          <VideoClipSegment
+            src={item.src}
+            trimStartFrame={item.trimStartFrame}
+            durationInFrames={item.durationInFrames}
+            volume={item.volume}
+            effects={item.effects}
+            horizontalCropOffset={item.horizontalCropOffset}
+            fitMode={item.fitMode}
+          />
+          <TextOverlayLayer overlays={item.textOverlays ?? []} />
+        </AbsoluteFill>
       );
     case "title_card":
       return (
@@ -144,12 +154,37 @@ function renderSegment(
       );
     case "image_scene":
       return (
-        <ImageSceneSegment
-          src={item.src}
+        <AbsoluteFill>
+          <ImageSceneSegment
+            src={item.src}
+            durationInFrames={item.durationInFrames}
+            voiceover={item.voiceover}
+            voiceoverVolume={item.voiceoverVolume}
+            kenBurns={item.kenBurns}
+          />
+          <TextOverlayLayer overlays={item.textOverlays ?? []} />
+        </AbsoluteFill>
+      );
+    case "intro_card":
+      return (
+        <IntroCard
+          title={item.title}
+          subtitle={item.subtitle}
+          backgroundSrc={item.backgroundSrc}
+          logoSrc={item.logoSrc}
+          animation={item.animation}
+        />
+      );
+    case "outro_card":
+      return (
+        <OutroCard
+          title={item.title}
+          subtitle={item.subtitle}
+          backgroundSrc={item.backgroundSrc}
+          logoSrc={item.logoSrc}
+          ctaText={item.ctaText}
           durationInFrames={item.durationInFrames}
-          voiceover={item.voiceover}
-          voiceoverVolume={item.voiceoverVolume}
-          kenBurns={item.kenBurns}
+          animation={item.animation}
         />
       );
     default:
@@ -176,6 +211,8 @@ function renderOverlay(
           style={(props.style as "pill" | "underline" | "boxed" | "karaoke") ?? "pill"}
           fontSize={props.fontSize as number | undefined}
           fontColor={props.fontColor as string | undefined}
+          backgroundColor={props.backgroundColor as string | undefined}
+          position={(props.position as "bottom" | "center" | "top") ?? "bottom"}
           fontFamily={branding.fontFamily}
         />
       );
@@ -348,8 +385,11 @@ export const TemplateComposition: React.FC<CompositionInputProps> = (props) => {
                 transFrames = transitionItem.durationInFrames ?? 15;
                 transStyle = transitionItem.style ?? "crossfade";
               } else {
-                transFrames = 15;
-                transStyle = "crossfade";
+                // No explicit transition — hard cut (no default crossfade).
+                // Shorts manifests and other auto-generated pipelines rely on
+                // precise clip timing without invisible overlap.
+                transFrames = 0;
+                transStyle = "cut";
               }
 
               // Remotion requires: sequence duration >= transition duration.

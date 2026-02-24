@@ -155,7 +155,7 @@ graph TB
     end
 
     subgraph NextJS["Next.js UI (localhost:3001)"]
-        NAV[NavBar<br/>Dashboard · Chat · Workbench · Admin · Library · Scheduler · Tasks]
+        NAV[NavBar<br/>Dashboard · Chat · Workbench · Director · Admin · Library · Scheduler · Tasks]
         DASH[Dashboard<br/>Stats · Approvals · Audit Log]
         CHAT[Chat View<br/>Streaming · Approvals]
         ADMIN[Admin Page<br/>Channels · Personality · Sidecars · Tools · Env]
@@ -229,6 +229,8 @@ The frontend is a **Next.js 14 App Router** application in the `ui/` directory. 
 | `/scheduler` | `scheduler/page.tsx` | Cron job CRUD with action types, prompt linking, model overrides, AI assist, live execution events |
 | `/tasks` | `task-dashboard.tsx` | Background task queue, status filters, cancel, recursive child expansion, real-time updates |
 | `/social` | `social/page.tsx` | Social Brain — unified inbox, CRM, automation rules, AI auto-reply |
+| `/director` | `director/page.tsx` | Director Mode — Video Wizard tab (production pipeline) + Blog to YouTube tab (blog conversion) + My Drafts tab (browse/reopen saved drafts) |
+| `/director/studio/[id]` | `director/studio/[id]/page.tsx` | Timeline Studio — @remotion/player preview, multi-track timeline, scene inspector, save/auto-save, render history |
 | `/workbench` | `workbench/page.tsx` | Rich Markdown editor (MDXEditor) with file sidebar, live file system CRUD, Cmd/Ctrl+S save |
 
 ### Component Structure
@@ -278,16 +280,35 @@ ui/
 │   │   ├── score-ring.tsx              # SVG circular score indicator
 │   │   ├── pdf-generator.ts           # jsPDF recap export
 │   │   └── push-to-talk-button.tsx   # Floating PTT button (hold/click toggle)
-│   └── admin/
-│       ├── tools-panel.tsx        # Tool list with risk badges + toggles
-│       ├── channels-panel.tsx     # Telegram + Discord config forms
-│       ├── sidecars-panel.tsx     # Docker sidecar management
-│       ├── local-servers-panel.tsx # Local MCP server status
-│       ├── personality-panel.tsx  # System instruction + pre/post prompts + mode selector
-│       ├── model-config-panel.tsx # Reasoning effort + BYOK provider configuration
-│       ├── agents-panel.tsx       # Custom agent CRUD with tool multi-select
-│       ├── mcp-editor-panel.tsx   # Native MCP server wizard + busy lock + reconnect
-│       └── env-panel.tsx          # Environment variable status
+│   ├── admin/
+│   │   ├── tools-panel.tsx        # Tool list with risk badges + toggles
+│   │   ├── channels-panel.tsx     # Telegram + Discord config forms
+│   │   ├── sidecars-panel.tsx     # Docker sidecar management
+│   │   ├── local-servers-panel.tsx # Local MCP server status
+│   │   ├── personality-panel.tsx  # System instruction + pre/post prompts + mode selector
+│   │   ├── model-config-panel.tsx # Reasoning effort + BYOK provider configuration
+│   │   ├── agents-panel.tsx       # Custom agent CRUD with tool multi-select
+│   │   ├── mcp-editor-panel.tsx   # Native MCP server wizard + busy lock + reconnect
+│   │   └── env-panel.tsx          # Environment variable status
+│   └── director/
+│       ├── director-wizard.tsx    # Multi-step video production wizard
+│       ├── blog-to-video-panel.tsx # Blog URL → video conversion panel
+│       ├── drafts-panel.tsx       # My Drafts tab — browse/reopen/delete saved drafts
+│       ├── mode-selection-step.tsx # Production mode selector
+│       ├── template-picker-step.tsx # Template selection grid
+│       ├── media-upload-step.tsx   # Input media upload
+│       ├── visual-assets-step.tsx  # Visual asset configuration
+│       ├── sound-browser-step.tsx  # Music/SFX browser
+│       ├── review-produce-step.tsx # Review + produce
+│       ├── types.ts               # Director UI types
+│       └── studio/
+│           ├── studio-layout.tsx   # Studio page container (sidebar + preview + timeline)
+│           ├── player-preview.tsx  # @remotion/player wrapper
+│           ├── timeline-tracks.tsx # Multi-track visual timeline
+│           ├── scene-inspector.tsx # Per-scene property editor
+│           ├── studio-toolbar.tsx  # Save + Renders + Render actions with dirty indicator
+│           ├── render-history.tsx  # Render history dropdown with status/progress/download
+│           └── framing-panel.tsx   # 9:16 horizontal crop offset slider
 └── lib/
     ├── api.ts              # Shared fetchJson utility + API_BASE
     ├── types.ts            # All shared TypeScript types
@@ -1085,7 +1106,7 @@ Mode C ("Presentation Mode") is a **zero-input video production pipeline** — t
 └────────────┘     └──────────────────┘     └──────────────────┘     └──────────────┘
                           │                        │                        │
                    ┌──────┴──────┐          ┌──────┴──────┐         ┌──────┴──────┐
-                   │ Scene Plan  │          │ Stable Diff │         │ image_scene │
+                   │ Scene Plan  │          │ FLUX.1/MFLUX│         │ image_scene │
                    │ title,      │          │ (local) or  │         │ timeline    │
                    │ narration,  │          │ Cloud API   │         │ entries +   │
                    │ visual desc │          │ (fallback)  │         │ Ken Burns + │
@@ -1098,12 +1119,12 @@ Mode C ("Presentation Mode") is a **zero-input video production pipeline** — t
 | Module | Path | Purpose |
 |---|---|---|
 | **StoryboardEngine** (#254) | `src/video/generators/storyboard-engine.ts` | LLM-powered scene planner. Takes a topic + optional style/audience hints, returns a structured storyboard with title, `styleAnchor`, and ordered scenes (each with `title`, `narration`, `visualDescription`, `duration`, `rawImageDescription`). |
-| **ImageGenService** (#255) | `src/video/generators/image-gen-service.ts` | Multi-provider image generation (local Stable Diffusion via FastAPI sidecar, cloud GCP Imagen fallback). Supports configurable dimensions, guidance scale, inference steps. Health-checks providers at startup. |
-| **Image Gen Sidecar** (#255) | `sidecars/image-gen/server.py` | FastAPI Python server wrapping `diffusers` + `torch` for local Stable Diffusion inference on Apple Silicon (MPS) or CUDA. Endpoints: `POST /generate`, `GET /health`. |
+| **ImageGenService** (#255) | `src/video/generators/image-gen-service.ts` | Multi-provider image generation (local FLUX.1 via MFLUX/MLX FastAPI sidecar, cloud GCP Imagen fallback). Supports configurable dimensions, guidance scale, inference steps. Health-checks providers at startup. |
+| **Image Gen Sidecar** (#255) | `sidecars/image-gen/server.py` | FastAPI Python server wrapping [MFLUX](https://github.com/filipstrand/mflux) (native MLX) for FLUX.1 inference on Apple Silicon. Endpoints: `POST /generate`, `GET /health`, `GET /models`, `POST /model`, `POST /unload`. |
 | **ImageSceneSegment** (#256) | `src/remotion/components/image-scene-segment.tsx` | Remotion component rendering a single Mode C scene: AI image with Ken Burns pan/zoom + optional per-scene `Audio` voiceover in a `Sequence`. |
 | **KenBurns** (#256) | `src/remotion/components/KenBurns.tsx` | Animated Ken Burns effect using Remotion `interpolate()` — configurable `scaleFrom`/`scaleTo`, `translateX`/`translateY` ranges over the clip's duration. |
 
-Model download behavior for Mode C image generation mirrors the audio sidecar: Python dependencies are installed via `pip`, but diffusion model weights are fetched lazily on first generation/model load and cached under sidecar cache/model directories (git-ignored by default).
+Model download behavior for Mode C image generation mirrors the audio sidecar: Python dependencies are installed via `pip`, but FLUX.1 model weights are downloaded lazily by MFLUX on first generation and cached in `~/.cache/huggingface/` (git-ignored). A HuggingFace token (`HF_TOKEN`) is required to access the gated FLUX.1 models.
 
 #### Remote Image Generation — FluxQ Network Node (#290)
 
@@ -1113,8 +1134,8 @@ Model download behavior for Mode C image generation mirrors the audio sidecar: P
 ┌────────────────────┐      HTTP + Bearer Token       ┌────────────────────┐
 │  Primary Mac       │ ─────────────────────────────▶ │  Remote Mac        │
 │  OpenZigs Server   │    POST /generate              │  FluxQ Sidecar     │
-│  ImageGenService   │    GET  /health                │  (FastAPI + MPS)   │
-│  mode: "network"   │◀── JSON + PNG bytes ────────── │  Flux.1 / SDXL     │
+│  ImageGenService   │    GET  /health                │  (FastAPI + MLX)   │
+│  mode: "network"   │◀── JSON + PNG bytes ────────── │  FLUX.1 (MFLUX)    │
 └────────────────────┘                                └────────────────────┘
 ```
 
@@ -1212,12 +1233,13 @@ When `mode === "presentation"`, the `produce-video` tool handler:
 
 #### Engine Registry
 
-The audio sidecar (`sidecars/audio/server.py`) manages two mutually exclusive TTS engines behind a shared `POST /tts` endpoint:
+The audio sidecar (`sidecars/audio/server.py`) manages three TTS engines behind dedicated endpoints:
 
 | Engine | Identifier | Technology | VRAM | Notes |
 |---|---|---|---|---|
 | **Engine A** | `kokoro` | mlx-audio (on-device) | ~1 GB | Default; always available on Apple Silicon |
 | **Engine B** | `sovits` | GPT-SoVITS (HTTP proxy) | 6–10 GB | External process at `http://127.0.0.1:9880` |
+| **Engine C** | `f5tts` | f5-tts-mlx (on-device) | ~1–2 GB | Emotion-driven voice cloning via per-clip reference audio |
 
 #### Engine Switch Mutex
 
@@ -1316,6 +1338,58 @@ Voice Lab UI
                     → httpx POST → GPT-SoVITS :9880/tts
                     → WAV response
 ```
+
+#### F5-TTS Engine C — Emotion-Driven Voice Cloning (Issue #313)
+
+Engine C adds **multi-emotion voice cloning** via [f5-tts-mlx](https://github.com/lucasnewman/f5-tts-mlx), running natively on Apple Silicon (MLX).
+
+**Architecture:**
+- Each F5-TTS profile contains one or more **emotion clips** (Regular, Excited, Whisper, etc.)
+- Each clip has its own reference audio + transcript
+- Narration scripts use parenthesized emotion tags: `(Excited)Welcome to the show!`
+- The sidecar splits text at emotion markers, synthesizes each segment with the matching clip, and concatenates the WAV output
+
+**Database Schema:**
+
+| Table | Column | Description |
+|---|---|---|
+| `voice_profiles` | `engine_type` | `"sovits"` (default) or `"f5tts"` |
+| `f5tts_clips` | `id` | nanoid primary key |
+| `f5tts_clips` | `profile_id` | FK → `voice_profiles.id` (CASCADE delete) |
+| `f5tts_clips` | `emotion` | Emotion label (e.g. "Regular", "Excited") |
+| `f5tts_clips` | `ref_audio_path` | Path to reference WAV/MP3 (max 15s) |
+| `f5tts_clips` | `ref_text` | Transcript of reference audio |
+
+**Synthesis Flow:**
+
+```
+POST /f5tts
+    │
+    ├─ Parse text → split at (EmotionTag) markers
+    │     e.g. "(Regular)Hello. (Excited)Amazing news!"
+    │     → [{emotion: "Regular", text: "Hello."}, {emotion: "Excited", text: "Amazing news!"}]
+    │
+    ├─ For each segment:
+    │     ├─ Match emotion → clip ref_audio_path + ref_text
+    │     ├─ Convert ref audio → 24kHz mono WAV (ffmpeg)
+    │     └─ f5_tts_mlx.generate(text, ref_audio, ref_text, steps, method, ...)
+    │           → 24kHz WAV segment
+    │
+    └─ Concatenate all WAV segments → single WAV response
+```
+
+**API Endpoints (under `/api/admin/audio`):**
+
+| Method | Path | Description |
+|---|---|---|
+| GET | `/f5tts/profiles` | List all F5-TTS profiles with clips |
+| POST | `/f5tts/profiles` | Create F5-TTS profile |
+| GET | `/f5tts/profiles/:id` | Get profile with clips |
+| DELETE | `/f5tts/profiles/:id` | Delete profile (cascades clips) |
+| POST | `/f5tts/profiles/:id/clips` | Add emotion clip to profile |
+| DELETE | `/f5tts/clips/:clipId` | Delete single clip |
+| POST | `/f5tts/profiles/:id/test` | Test synthesis with emotion-tagged text |
+| POST | `/upload/f5tts-ref-audio` | Upload ref audio (stored at `~/.openzigs/director/f5tts-ref-audio/`) |
 
 **Process ports (local dev):**
 
@@ -1631,6 +1705,8 @@ Logs are queryable via `GET /api/logs` with filters for `category`, `level`, `si
 | `produce-video` | productivity | 🔴 high | Ingest clips, run single-shot LLM, and produce a Director Manifest (edit decision list). |
 | `list-templates` | productivity | 🟢 low | List available video templates with default compositions and features. |
 | `search-assets` | productivity | 🟢 low | Search royalty-free music, SFX, and images from local library, Pixabay, Jamendo, and Pexels. |
+| `create-short` | productivity | 🔴 high | Convert a long-form video into a 30–60s YouTube Short (9:16) with new voiceover and smart framing. |
+| `blog-to-video` | productivity | 🔴 high | Convert a blog post URL into a narrated video with AI imagery, voiceover, and Studio handoff. |
 
 ### Social Brain Tools (Built-in)
 
@@ -1710,6 +1786,18 @@ The shell executor uses a **command allowlist**. If the allowlist is empty, the 
 | `POST` | `/api/social/handoff/:contactId/close` | Token | Close an active human handoff. |
 | `POST` | `/api/social/webhooks/:platform` | None | Incoming platform webhook events. |
 | `GET` | `/api/social/connections` | Token | List connected platform statuses. |
+| `POST` | `/api/admin/director/drafts` | Token | Create a draft from a manifest. |
+| `GET` | `/api/admin/director/drafts` | Token | List all drafts (paginated). |
+| `GET` | `/api/admin/director/drafts/:id` | Token | Get draft with full manifest. |
+| `PUT` | `/api/admin/director/drafts/:id` | Token | Update manifest (partial or full). |
+| `DELETE` | `/api/admin/director/drafts/:id` | Token | Delete a draft. |
+| `POST` | `/api/admin/director/drafts/:id/render` | Token | Submit draft for render. |
+| `POST` | `/api/admin/director/drafts/:id/thumbnail` | Token | Generate AI thumbnail for a draft. |
+| `POST` | `/api/admin/director/scenes/:idx/regenerate` | Token | Regenerate image/voiceover for a specific scene. |
+| `POST` | `/api/admin/director/enhance` | Token | Flux img2img image enhancement. |
+| `POST` | `/api/admin/director/shorts` | Token | Create a YouTube Short from a long-form video. |
+| `POST` | `/api/admin/director/blog-to-video` | Token | Convert a blog post URL into a video draft. |
+| `POST` | `/api/admin/director/assets/upload` | Token | Upload BYOA media assets (max 200MB). |
 
 ---
 
@@ -3538,6 +3626,27 @@ New API endpoints on the Director router (`src/api/director.ts`):
 | `PUT` | `/api/admin/director/drafts/:id` | Update manifest (partial or full) |
 | `DELETE` | `/api/admin/director/drafts/:id` | Delete a draft |
 | `POST` | `/api/admin/director/drafts/:id/render` | Submit draft for render |
+| `GET` | `/api/admin/director/drafts/:id/renders` | List render history for a draft (enriched with live job status) |
+
+### Render History (`director_renders` SQLite Table)
+
+Tracks every render submitted from the Studio, linked to its parent draft:
+
+```sql
+CREATE TABLE IF NOT EXISTS director_renders (
+  id          TEXT PRIMARY KEY,
+  draft_id    TEXT NOT NULL REFERENCES director_drafts(id) ON DELETE CASCADE,
+  job_id      TEXT NOT NULL,
+  quality     TEXT NOT NULL DEFAULT 'preview',
+  status      TEXT NOT NULL DEFAULT 'queued',
+  output_path TEXT,
+  error       TEXT,
+  created_at  TEXT NOT NULL,
+  updated_at  TEXT NOT NULL
+);
+```
+
+The `POST /render` endpoint accepts an optional `draftId` — when provided, a row is inserted into `director_renders` linking the render job to the draft. The `GET /drafts/:id/renders` endpoint returns all renders for a draft, enriched with live job progress from the `renderOrchestrator`.
 
 ### Timeline Studio UI (#314)
 
@@ -3622,7 +3731,7 @@ Pipeline: Load source image → `FluxImg2ImgPipeline(prompt, image, strength=0.6
 
 New pipeline mode converting blog posts/articles into narrated video:
 
-1. **Ingest** — `BlogParser` fetches URL or reads local Markdown. Extracts: title, sections (H2/H3 headings + body), images.
+1. **Ingest** — `extractBlog()` (in `blog-extractor.ts`) fetches URL with SSRF protection (blocked hosts, private IP detection). Extracts: title, body text, metadata, images via HTML parsing (regex-based, no external HTML parser dependency).
 2. **Scene Plan** — Maps each section to a scene. Inline images become `image_scene` entries; text-only sections get AI-generated images via `ImageGenService`.
 3. **Narration** — Section body text → `ScriptSanitizer` → `VoiceService.synthesize()` per scene.
 4. **Manifest Build** — Auto-generates `DirectorManifest` with intro card (blog title), `image_scene` entries per section, transitions, text overlay for section headings, and outro card.
@@ -3654,7 +3763,7 @@ Raw narration text
   → Synthesized audio with pacing applied
 ```
 
-New modules: `src/voice/pacing-parser.ts`, `src/voice/pacing-resolver.ts`.
+New module: `src/voice/pacing-translator.ts` (combines parsing and engine-specific resolution).
 
 ### Sub-Issues
 
@@ -3710,21 +3819,20 @@ Generates stylized YouTube thumbnails for rendered videos:
 
 **New files (~24):**
 - `ui/app/director/studio/[id]/page.tsx` — Studio route
-- `ui/components/director/studio/timeline-editor.tsx` — Multi-track timeline
+- `ui/components/director/studio/timeline-tracks.tsx` — Multi-track timeline
 - `ui/components/director/studio/scene-inspector.tsx` — Property editor
-- `ui/components/director/studio/preview-panel.tsx` — @remotion/player wrapper
-- `ui/components/director/studio/asset-panel.tsx` — BYOA asset browser
-- `ui/components/director/studio/text-overlay-editor.tsx` — Text overlay WYSIWYG
+- `ui/components/director/studio/player-preview.tsx` — @remotion/player wrapper
+- `ui/components/director/studio/studio-layout.tsx` — Studio page layout (sidebar + preview + timeline)
+- `ui/components/director/studio/studio-toolbar.tsx` — Toolbar with render/thumbnail actions
 - `ui/components/director/studio/framing-panel.tsx` — Horizontal crop offset slider (Shorts)
 - `ui/components/director/studio/thumbnail-panel.tsx` — Thumbnail preview + generate
 - `src/remotion/components/intro-card.tsx` — Animated intro composition
 - `src/remotion/components/outro-card.tsx` — Animated outro composition
-- `src/remotion/components/text-overlay.tsx` — Positioned text composition
-- `src/video/blog/blog-parser.ts` — Blog content extractor
+- `src/remotion/components/text-overlay-layer.tsx` — Positioned text composition
+- `src/video/blog/blog-extractor.ts` — Blog content extractor with SSRF protection
 - `src/video/blog/blog-to-video-pipeline.ts` — End-to-end blog conversion
-- `src/voice/pacing-parser.ts` — Bracket syntax tokenizer
-- `src/voice/pacing-resolver.ts` — Engine-specific pacing resolution
-- `src/video/draft-repository.ts` — SQLite draft CRUD
+- `src/voice/pacing-translator.ts` — Bracket syntax parsing + engine-specific resolution (Google SSML, local silence padding)
+- `src/productivity/database.ts` — `director_drafts` table migration (draft CRUD in director API routes)
 - `src/mcp/tools/blog-tools.ts` — blog-to-video MCP tool
 - `src/video/shorts/viral-clip-extractor.ts` — LLM viral segment identification
 - `src/video/shorts/shorts-voice-pipeline.ts` — Script generation + TTS + ducking

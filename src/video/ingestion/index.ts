@@ -47,6 +47,8 @@ export interface IngestionOptions {
   visionAnalysis?: KeyframeAnalysisOptions;
   /** Progress callback for UI feedback */
   onProgress?: (event: IngestionProgressEvent) => void;
+  /** Ingestion density: 'dense' extracts 1 frame/sec for Shorts analysis */
+  mode?: "standard" | "dense";
 }
 
 /**
@@ -59,7 +61,7 @@ export async function ingest(
 ): Promise<IngestionResult> {
   const {
     sceneThreshold = 0.3,
-    keyframeInterval = 5,
+    keyframeInterval = options.mode === "dense" ? 1 : 5,
     whisperModel = "base.en",
     adaptiveThreshold = true,
     copilot,

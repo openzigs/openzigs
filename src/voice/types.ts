@@ -5,7 +5,7 @@
  */
 
 /** Supported TTS providers */
-export type VoiceProvider = "google" | "local";
+export type VoiceProvider = "google" | "local" | "f5tts";
 
 export interface VoiceServiceConfig {
   /** Enable/disable voice features globally */
@@ -159,3 +159,34 @@ export const AVAILABLE_LOCAL_VOICES: VoiceOption[] = [
   { id: "zf_xiaobei", type: "Kokoro", description: "Bright, friendly (Chinese Female)", pricingTier: "local" },
   { id: "zm_yunxi", type: "Kokoro", description: "Smooth, professional (Chinese Male)", pricingTier: "local" },
 ];
+
+/** F5-TTS clip — a single reference audio with emotion label */
+export interface F5TTSClip {
+  id: string;
+  profileId: string;
+  emotion: string;
+  refAudioPath: string;
+  refText: string;
+  sortOrder: number;
+  createdAt: string;
+}
+
+/** F5-TTS voice profile (extends base voice profile with clips) */
+export interface F5TTSProfile {
+  id: string;
+  name: string;
+  engineType: "f5tts";
+  clips: F5TTSClip[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** F5-TTS generation parameters */
+export interface F5TTSParams {
+  steps?: number;
+  method?: "euler" | "midpoint" | "rk4";
+  cfgStrength?: number;
+  swayCoef?: number;
+  speed?: number;
+  seed?: number;
+}

@@ -23,6 +23,10 @@ interface VideoClipSegmentProps {
   durationInFrames: number;
   volume: number;
   effects: VideoEffect[];
+  /** Horizontal crop offset for 9:16 framing (0–100, default 50 = center) */
+  horizontalCropOffset?: number;
+  /** Fit mode: "cover" crops to fill, "contain" shows full frame with blurred background */
+  fitMode?: "cover" | "contain";
 }
 
 export const VideoClipSegment: React.FC<VideoClipSegmentProps> = ({
@@ -31,12 +35,11 @@ export const VideoClipSegment: React.FC<VideoClipSegmentProps> = ({
   durationInFrames,
   volume,
   effects,
+  horizontalCropOffset = 50,
+  fitMode = "cover",
 }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
-
-  // Compute the start time in seconds for the source video
-  const startFrom = trimStartFrame / fps;
 
   // Build transform/filter values from effects
   let scale = 1;
@@ -106,17 +109,52 @@ export const VideoClipSegment: React.FC<VideoClipSegmentProps> = ({
           filter: filterParts.length > 0 ? filterParts.join(" ") : undefined,
         }}
       >
-        <OffthreadVideo
-          src={src}
-          startFrom={startFrom}
-          volume={volume}
-          playbackRate={playbackRate}
-          style={{
-            width: "100%",
-            height: "100%",
-            objectFit: "cover",
-          }}
-        />
+        {fitMode === "contain" ? (
+          <>
+            {/* Blurred, scaled-up background fill */}
+            <OffthreadVideo
+              src={src}
+              trimBefore={trimStartFrame}
+              volume={0}
+              playbackRate={playbackRate}
+              style={{
+                position: "absolute",
+                width: "100%",
+                height: "100%",
+                objectFit: "cover",
+                objectPosition: `${horizontalCropOffset}% center`,
+                filter: "blur(30px) brightness(0.4)",
+                transform: "scale(1.2)",
+              }}
+            />
+            {/* Contained foreground showing full frame */}
+            <OffthreadVideo
+              src={src}
+              trimBefore={trimStartFrame}
+              volume={volume}
+              playbackRate={playbackRate}
+              style={{
+                position: "absolute",
+                width: "100%",
+                height: "100%",
+                objectFit: "contain",
+              }}
+            />
+          </>
+        ) : (
+          <OffthreadVideo
+            src={src}
+            trimBefore={trimStartFrame}
+            volume={volume}
+            playbackRate={playbackRate}
+            style={{
+              width: "100%",
+              height: "100%",
+              objectFit: "cover",
+              objectPosition: `${horizontalCropOffset}% center`,
+            }}
+          />
+        )}
       </AbsoluteFill>
     </AbsoluteFill>
   );

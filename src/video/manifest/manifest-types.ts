@@ -44,6 +44,26 @@ export interface AudioLayerConfig {
   voiceover?: VoiceoverConfig | null;
 }
 
+// ── Text Overlays ─────────────────────────────────────────────
+export type TextOverlayPosition = "center" | "bottom-third" | "top-third" | "custom";
+export type TextOverlayAnimation = "fade-in" | "slide-up" | "typewriter" | "none";
+
+export interface TextOverlay {
+  id: string;
+  text: string;
+  position: TextOverlayPosition;
+  customPosition?: { x: number; y: number };
+  fontSize?: number;
+  fontWeight?: "normal" | "bold" | "light";
+  color?: string;
+  backgroundColor?: string;
+  borderRadius?: number;
+  padding?: number;
+  animation: TextOverlayAnimation;
+  startFrame: number;
+  durationFrames: number;
+}
+
 // ── Video Effects ─────────────────────────────────────────────
 export type VideoEffect =
   | { type: "slowZoom"; from: number; to: number }
@@ -68,6 +88,14 @@ export interface VideoClipEntry {
   volume?: number;
   /** Visual effects applied to this clip */
   effects?: VideoEffect[];
+  /** Text overlays rendered on top of this clip */
+  textOverlays?: TextOverlay[];
+  /** Horizontal crop offset for 9:16 framing (0–100, default 50 = center) */
+  horizontalCropOffset?: number;
+  /** Fit mode for aspect-ratio mismatch: "cover" crops, "contain" shows full frame with blur bg */
+  fitMode?: "cover" | "contain";
+  /** Narration script text associated with this clip (e.g. Shorts voiceover) */
+  scriptText?: string;
 }
 
 export interface OverlayEntry {
@@ -131,9 +159,36 @@ export interface ImageSceneEntry {
     translateYFrom?: number;
     translateYTo?: number;
   };
+  /** Text overlays rendered on top of this scene */
+  textOverlays?: TextOverlay[];
 }
 
-export type TimelineEntry = VideoClipEntry | OverlayEntry | TitleCardEntry | TransitionEntry | ImageSceneEntry;
+export interface IntroCardEntry {
+  type: "intro_card";
+  title: string;
+  subtitle?: string;
+  backgroundSrc?: string;
+  enhancedBackgroundSrc?: string;
+  logoSrc?: string;
+  startAtFrame: number;
+  duration: number;
+  animation?: "fade-in" | "slide-up" | "scale-in" | "typewriter";
+}
+
+export interface OutroCardEntry {
+  type: "outro_card";
+  title: string;
+  subtitle?: string;
+  backgroundSrc?: string;
+  enhancedBackgroundSrc?: string;
+  logoSrc?: string;
+  ctaText?: string;
+  startAtFrame: number;
+  duration: number;
+  animation?: "fade-out" | "slide-down" | "scale-out";
+}
+
+export type TimelineEntry = VideoClipEntry | OverlayEntry | TitleCardEntry | TransitionEntry | ImageSceneEntry | IntroCardEntry | OutroCardEntry;
 
 // ── Branding ──────────────────────────────────────────────────
 export interface BrandingConfig {

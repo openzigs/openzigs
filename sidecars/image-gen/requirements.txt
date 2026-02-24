@@ -1,15 +1,8 @@
 # Image Generation Sidecar — Python Dependencies
-# Optimized for Apple Silicon (MPS) with 4-bit quantization (optimum-quanto)
+# Powered by MFLUX (native MLX) for optimal Apple Silicon performance
 # Issue #257
 
 fastapi==0.115.6
 uvicorn[standard]==0.34.0
-diffusers==0.32.2
-transformers==4.48.1
-torch>=2.2.0
-accelerate==1.3.0
-safetensors==0.5.2
-sentencepiece==0.2.0
-protobuf>=3.20.0
-optimum-quanto>=0.2.7
+mflux>=0.16.1
 Pillow>=10.0.0
