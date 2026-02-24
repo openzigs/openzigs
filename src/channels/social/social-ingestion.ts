@@ -217,6 +217,144 @@ export class InstagramAdapter implements SocialPlatformAdapter {
   }
 }
 
+/** Facebook webhook adapter (Meta Graph API format). */
+export class FacebookAdapter implements SocialPlatformAdapter {
+  readonly platform: SocialPlatform = "facebook";
+
+  parseWebhook(body: unknown): IncomingSocialMessage | IncomingComment | null {
+    const payload = body as Record<string, unknown>;
+    if (payload.object !== "page") return null;
+    const entry = (payload.entry as Array<Record<string, unknown>>)?.[0];
+    if (!entry) return null;
+
+    // Page messaging
+    const messaging = (entry.messaging as Array<Record<string, unknown>>)?.[0];
+    if (messaging) {
+      const sender = messaging.sender as Record<string, string>;
+      const message = messaging.message as Record<string, string>;
+      if (!sender?.id || !message?.text) return null;
+
+      return {
+        platform: "facebook",
+        platformMessageId: message.mid ?? "",
+        platformUserId: sender.id,
+        username: sender.id,
+        text: message.text,
+        timestamp: new Date(Number(messaging.timestamp ?? Date.now())).toISOString(),
+      };
+    }
+
+    // Feed changes (comments)
+    const changes = (entry.changes as Array<Record<string, unknown>>)?.[0];
+    if (changes?.field === "feed") {
+      const value = changes.value as Record<string, unknown>;
+      if (!value || value.item !== "comment") return null;
+      return {
+        platform: "facebook",
+        postId: (value.post_id as string) ?? "",
+        commentId: (value.comment_id as string) ?? "",
+        userId: (value.from as Record<string, string>)?.id ?? "",
+        username: (value.from as Record<string, string>)?.name ?? "",
+        text: (value.message as string) ?? "",
+        timestamp: new Date(Number(value.created_time ?? Date.now()) * 1000).toISOString(),
+      };
+    }
+
+    return null;
+  }
+}
+
+/** Twitter/X Account Activity API webhook adapter. */
+export class TwitterAdapter implements SocialPlatformAdapter {
+  readonly platform: SocialPlatform = "twitter";
+
+  parseWebhook(body: unknown): IncomingSocialMessage | IncomingComment | null {
+    const payload = body as Record<string, unknown>;
+
+    // Direct message events
+    const dmEvents = payload.direct_message_events as Array<Record<string, unknown>> | undefined;
+    if (dmEvents?.length) {
+      const event = dmEvents[0];
+      const msgCreate = event.message_create as Record<string, unknown>;
+      if (!msgCreate) return null;
+      const msgData = msgCreate.message_data as Record<string, string>;
+      return {
+        platform: "twitter",
+        platformMessageId: (event.id as string) ?? "",
+        platformUserId: (msgCreate.sender_id as string) ?? "",
+        username: (msgCreate.sender_id as string) ?? "",
+        text: msgData?.text ?? "",
+        timestamp: new Date(Number(event.created_timestamp ?? Date.now())).toISOString(),
+      };
+    }
+
+    // Tweet create events (mentions / replies treated as comments)
+    const tweetCreateEvents = payload.tweet_create_events as Array<Record<string, unknown>> | undefined;
+    if (tweetCreateEvents?.length) {
+      const tweet = tweetCreateEvents[0];
+      const user = tweet.user as Record<string, string>;
+      const inReplyTo = tweet.in_reply_to_status_id_str as string | undefined;
+      if (inReplyTo) {
+        return {
+          platform: "twitter",
+          postId: inReplyTo,
+          commentId: (tweet.id_str as string) ?? "",
+          userId: user?.id_str ?? "",
+          username: user?.screen_name ?? "",
+          text: (tweet.text as string) ?? "",
+          timestamp: new Date(tweet.created_at as string).toISOString(),
+        };
+      }
+    }
+
+    return null;
+  }
+}
+
+/** LinkedIn webhook adapter (organization events). */
+export class LinkedInAdapter implements SocialPlatformAdapter {
+  readonly platform: SocialPlatform = "linkedin";
+
+  parseWebhook(body: unknown): IncomingSocialMessage | IncomingComment | null {
+    const payload = body as Record<string, unknown>;
+
+    // LinkedIn uses a batch-style format with eventType
+    const eventType = payload.eventType as string | undefined;
+
+    if (eventType === "MESSAGING") {
+      const event = payload.event as Record<string, unknown>;
+      if (!event) return null;
+      const msg = event.message as Record<string, unknown>;
+      const sender = event.from as Record<string, string>;
+      return {
+        platform: "linkedin",
+        platformMessageId: (msg?.id as string) ?? "",
+        platformUserId: sender?.id ?? "",
+        username: sender?.id ?? "",
+        text: (msg?.text as string) ?? "",
+        timestamp: new Date(event.createdAt as number ?? Date.now()).toISOString(),
+      };
+    }
+
+    if (eventType === "COMMENT") {
+      const event = payload.event as Record<string, unknown>;
+      if (!event) return null;
+      const actor = event.actor as string | undefined;
+      return {
+        platform: "linkedin",
+        postId: (event.object as string) ?? "",
+        commentId: (event.id as string) ?? "",
+        userId: actor ?? "",
+        username: actor ?? "",
+        text: (event.message as Record<string, string>)?.text ?? "",
+        timestamp: new Date(event.createdAt as number ?? Date.now()).toISOString(),
+      };
+    }
+
+    return null;
+  }
+}
+
 /** Generic adapter for platforms that use polling (Reddit, YouTube, etc.). */
 export class GenericPollAdapter implements SocialPlatformAdapter {
   readonly platform: SocialPlatform;

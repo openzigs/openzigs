@@ -18,7 +18,7 @@ export type WebhookRouterOptions = {
  * Mount at `/api/webhooks/trigger` — this endpoint is where external
  * systems POST to trigger OpenZigs actions.
  */
-export const createWebhookRouter = ({ webhookManager, taskEngine, promptManager }: WebhookRouterOptions) => {
+export const createWebhookRouter = ({ webhookManager, taskEngine, promptManager }: WebhookRouterOptions): Router => {
   const router = Router();
 
   /**

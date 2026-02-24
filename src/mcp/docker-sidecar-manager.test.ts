@@ -479,35 +479,8 @@ describe("DockerSidecarManager", () => {
   });
 
   describe("DEFAULT_SIDECAR_DEFINITIONS", () => {
-    it("contains the 4 expected sidecars", () => {
-      expect(DEFAULT_SIDECAR_DEFINITIONS).toHaveLength(4);
-      const names = DEFAULT_SIDECAR_DEFINITIONS.map((d) => d.name);
-      expect(names).toEqual(["linkedin", "twitter", "facebook", "pinterest"]);
-    });
-
-    it("has correct port mappings", () => {
-      const portMap = Object.fromEntries(
-        DEFAULT_SIDECAR_DEFINITIONS.map((d) => [d.name, d.ports.host])
-      );
-      expect(portMap).toEqual({
-        linkedin: 5101,
-        twitter: 5102,
-        facebook: 5103,
-        pinterest: 5104,
-      });
-    });
-
-    it("requires credentials for social platforms", () => {
-      const linkedin = DEFAULT_SIDECAR_DEFINITIONS.find((d) => d.name === "linkedin");
-      expect(linkedin?.requiredEnvVars).toEqual(["LINKEDIN_ACCESS_TOKEN"]);
-
-      const twitter = DEFAULT_SIDECAR_DEFINITIONS.find((d) => d.name === "twitter");
-      expect(twitter?.requiredEnvVars).toEqual(["TWITTER_BEARER_TOKEN"]);
-    });
-
-    it("does not include word (moved to local MCP servers)", () => {
-      const word = DEFAULT_SIDECAR_DEFINITIONS.find((d) => d.name === "word");
-      expect(word).toBeUndefined();
+    it("is empty (all sidecars migrated to native MCP servers)", () => {
+      expect(DEFAULT_SIDECAR_DEFINITIONS).toHaveLength(0);
     });
   });
 });

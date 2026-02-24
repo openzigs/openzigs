@@ -1,4 +1,4 @@
-import express from "express";
+import express, { type Express } from "express";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -67,7 +67,7 @@ const parseDate = (value: string | undefined) => {
   return parsed;
 };
 
-export const createApp = (config: AppConfig, options: CreateAppOptions = {}) => {
+export const createApp = (config: AppConfig, options: CreateAppOptions = {}): Express => {
   const app = express();
   const auditLogger = options.auditLogger ?? new AuditLogger();
   const approvalQueue = options.approvalQueue ?? new ApprovalQueue({ auditLogger });

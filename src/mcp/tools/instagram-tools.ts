@@ -67,6 +67,16 @@ const sendDmSchema = z.object({
   message: z.string().max(1000).describe("Message text to send"),
 });
 
+const replyToCommentSchema = z.object({
+  comment_id: z.string().describe("Instagram comment ID to reply to"),
+  message: z.string().max(2200).describe("Reply text"),
+});
+
+const getMediaCommentsSchema = z.object({
+  media_id: z.string().describe("Instagram media ID"),
+  limit: z.number().min(1).max(100).optional().describe("Number of comments to retrieve (max 100)"),
+});
+
 // ── Helper ──
 
 const callLocalServer = async (
@@ -262,6 +272,44 @@ export const createInstagramTools = (
       source: "instagram",
       handler: async (args) => {
         return callLocalServer(mgr, "send_dm", args);
+      },
+    },
+    {
+      name: "instagram-reply-to-comment",
+      description: "Reply to a comment on an Instagram post. Requires instagram_manage_comments permission.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          comment_id: { type: "string" },
+          message: { type: "string" },
+        },
+        required: ["comment_id", "message"],
+      },
+      zodSchema: replyToCommentSchema,
+      category: "social",
+      riskLevel: "medium",
+      source: "instagram",
+      handler: async (args) => {
+        return callLocalServer(mgr, "reply_to_comment", args);
+      },
+    },
+    {
+      name: "instagram-get-media-comments",
+      description: "Get comments on a specific Instagram post.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          media_id: { type: "string" },
+          limit: { type: "number" },
+        },
+        required: ["media_id"],
+      },
+      zodSchema: getMediaCommentsSchema,
+      category: "social",
+      riskLevel: "low",
+      source: "instagram",
+      handler: async (args) => {
+        return callLocalServer(mgr, "get_media_comments", args);
       },
     },
   ];

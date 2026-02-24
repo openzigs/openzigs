@@ -41,116 +41,6 @@ services:
     networks:
       - openzigs-network
 
-  # ── Social Media MCP Sidecars ──
-  mcp-linkedin:
-    image: ghcr.io/community/mcp-linkedin:latest
-    container_name: openzigs-mcp-linkedin
-    restart: unless-stopped
-    ports:
-      - "5101:5000"
-    environment:
-      - LINKEDIN_ACCESS_TOKEN=${LINKEDIN_ACCESS_TOKEN:-}
-    networks:
-      - openzigs-network
-
-  mcp-twitter:
-    image: ghcr.io/community/mcp-twitter:latest
-    container_name: openzigs-mcp-twitter
-    restart: unless-stopped
-    ports:
-      - "5102:5000"
-    environment:
-      - TWITTER_BEARER_TOKEN=${TWITTER_BEARER_TOKEN:-}
-      - TWITTER_API_KEY=${TWITTER_API_KEY:-}
-      - TWITTER_API_SECRET=${TWITTER_API_SECRET:-}
-    networks:
-      - openzigs-network
-
-  mcp-facebook:
-    image: ghcr.io/community/facebook-mcp-server:latest
-    container_name: openzigs-mcp-facebook
-    restart: unless-stopped
-    ports:
-      - "5103:5000"
-    environment:
-      - FACEBOOK_PAGE_TOKEN=${FACEBOOK_PAGE_TOKEN:-}
-    networks:
-      - openzigs-network
-
-  mcp-pinterest:
-    image: ghcr.io/collactivelabs/pinterest-mcp-server:latest
-    container_name: openzigs-mcp-pinterest
-    restart: unless-stopped
-    ports:
-      - "5104:3052"
-    environment:
-      - PINTEREST_APP_ID=${PINTEREST_APP_ID:-}
-      - PINTEREST_APP_SECRET=${PINTEREST_APP_SECRET:-}
-    volumes:
-      - pinterest-tokens:/app/tokens
-    networks:
-      - openzigs-network
-
-  # ── Document Intelligence MCP Sidecars ──
-  mcp-word:
-    image: ghcr.io/community/office-word-mcp-server:latest
-    container_name: openzigs-mcp-word
-    restart: unless-stopped
-    ports:
-      - "5201:5000"
-    networks:
-      - openzigs-network
-
-  # ── Personal Assistant MCP Sidecars ──
-  mcp-markitdown:
-    image: markitdown-mcp:latest
-    container_name: openzigs-mcp-markitdown
-    restart: unless-stopped
-    ports:
-      - "5301:5000"
-    volumes:
-      - openzigs-data:/workdir
-    networks:
-      - openzigs-network
-
-  mcp-gmail:
-    image: mcp/gmail:latest
-    container_name: openzigs-mcp-gmail
-    restart: unless-stopped
-    ports:
-      - "5302:5000"
-    volumes:
-      - gmail-credentials:/gmail-server
-      - ${GMAIL_OAUTH_KEYS_PATH:-./.gmail-mcp/gcp-oauth.keys.json}:/gcp-oauth.keys.json:ro
-    environment:
-      - GMAIL_OAUTH_PATH=/gcp-oauth.keys.json
-      - GMAIL_CREDENTIALS_PATH=/gmail-server/credentials.json
-    networks:
-      - openzigs-network
-
-  mcp-database:
-    image: openzigs-mcp-database:latest
-    container_name: openzigs-mcp-database
-    restart: unless-stopped
-    ports:
-      - "5303:5000"
-    environment:
-      - JDBC_URL=${JDBC_URL:-}
-      - DB_PASSWORD=${DB_PASSWORD:-}
-    networks:
-      - openzigs-network
-
-  mcp-github:
-    image: ghcr.io/github/github-mcp-server:latest
-    container_name: openzigs-mcp-github
-    restart: unless-stopped
-    ports:
-      - "5304:5000"
-    environment:
-      - GITHUB_PERSONAL_ACCESS_TOKEN=${GITHUB_PERSONAL_ACCESS_TOKEN:-}
-    networks:
-      - openzigs-network
-
   # ── Audio Sidecar (Local STT + TTS via MLX) ──
   audio-sidecar:
     build: ./sidecars/audio
@@ -167,8 +57,6 @@ services:
 
 volumes:
   openzigs-data:
-  pinterest-tokens:
-  gmail-credentials:
 
 networks:
   openzigs-network:

@@ -81,47 +81,12 @@ type SidecarManagerEvents = {
 
 // ── Default sidecar definitions (matches docker-compose.yml) ─────────────
 
-export const DEFAULT_SIDECAR_DEFINITIONS: SidecarDefinition[] = [
-  {
-    name: "linkedin",
-    image: "ghcr.io/community/mcp-linkedin:latest",
-    containerName: "openzigs-mcp-linkedin",
-    ports: { host: 5101, container: 5000 },
-    env: {},
-    network: "openzigs-network",
-    requiredEnvVars: ["LINKEDIN_ACCESS_TOKEN"],
-  },
-  {
-    name: "twitter",
-    image: "ghcr.io/community/mcp-twitter:latest",
-    containerName: "openzigs-mcp-twitter",
-    ports: { host: 5102, container: 5000 },
-    env: {},
-    network: "openzigs-network",
-    requiredEnvVars: ["TWITTER_BEARER_TOKEN"],
-  },
-  {
-    name: "facebook",
-    image: "ghcr.io/community/facebook-mcp-server:latest",
-    containerName: "openzigs-mcp-facebook",
-    ports: { host: 5103, container: 5000 },
-    env: {},
-    network: "openzigs-network",
-    requiredEnvVars: ["FACEBOOK_PAGE_TOKEN"],
-  },
-  {
-    name: "pinterest",
-    image: "ghcr.io/collactivelabs/pinterest-mcp-server:latest",
-    containerName: "openzigs-mcp-pinterest",
-    ports: { host: 5104, container: 3052 },
-    env: {},
-    network: "openzigs-network",
-    requiredEnvVars: ["PINTEREST_APP_ID", "PINTEREST_APP_SECRET"],
-    volumes: ["pinterest-tokens:/app/tokens"],
-  },
-  // Word/Office and Google Calendar are local subprocess MCP servers,
-  // managed by LocalMcpServerManager (not Docker). See local-mcp-server-manager.ts.
-];
+/**
+ * @deprecated Phantom social sidecar images have been removed (Issue #300).
+ * All social MCP servers are now native subprocess servers under external/.
+ * Only audio-sidecar remains as a legitimate Docker sidecar (REST API).
+ */
+export const DEFAULT_SIDECAR_DEFINITIONS: SidecarDefinition[] = [];
 
 // ── Manager ──────────────────────────────────────────────────────────────────
 
@@ -140,6 +105,13 @@ export type DockerSidecarManagerOptions = {
   dockerInstance?: Docker;
 };
 
+/**
+ * @deprecated All MCP sidecars have been migrated to native subprocess servers
+ * managed by `LocalMcpServerManager`. The only Docker service the platform still
+ * uses is `audio-sidecar` (REST API, NOT MCP) and `tunnel` (cloudflared).
+ * This class is retained for backwards compatibility but has empty defaults.
+ * It will be removed in a future release.
+ */
 export class DockerSidecarManager extends EventEmitter {
   private docker: Docker;
   private definitions: SidecarDefinition[];
@@ -384,12 +356,7 @@ export class DockerSidecarManager extends EventEmitter {
     }
 
     // Forward additional platform-specific env vars from host
-    const platformEnvMap: Record<string, string[]> = {
-      linkedin: ["LINKEDIN_ACCESS_TOKEN"],
-      twitter: ["TWITTER_BEARER_TOKEN", "TWITTER_API_KEY", "TWITTER_API_SECRET"],
-      facebook: ["FACEBOOK_PAGE_TOKEN"],
-      pinterest: ["PINTEREST_APP_ID", "PINTEREST_APP_SECRET"],
-    };
+    const platformEnvMap: Record<string, string[]> = {};
 
     const extraVars = platformEnvMap[def.name] ?? [];
     for (const envVar of extraVars) {
