@@ -161,6 +161,19 @@ export interface ImageSceneEntry {
   };
   /** Text overlays rendered on top of this scene */
   textOverlays?: TextOverlay[];
+  /**
+   * When true, this scene's static image will be animated into a 4-second
+   * video clip via the LTX-2 img2video pipeline on the M2 Pro worker.
+   * The StoryboardEngine LLM selects at most 2–3 scenes for animation
+   * to stay within the compute budget.
+   */
+  shouldAnimate?: boolean;
+  /**
+   * Motion prompt describing the desired camera/subject movement for the
+   * video clip. Only used when shouldAnimate is true.
+   * Example: "slow cinematic zoom in with subtle parallax"
+   */
+  motionPrompt?: string;
 }
 
 export interface IntroCardEntry {

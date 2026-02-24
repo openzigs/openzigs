@@ -67,6 +67,9 @@ import { QuizGenerator } from "./presenter/quiz-generator.js";
 import { RenderOrchestrator } from "./video/render-orchestrator.js";
 import { RoomManager } from "./presenter/room-manager.js";
 import { ExpressPeerServer } from "peer";
+import { MediaQueueRepository } from "./queue/media-queue-repository.js";
+import { QueueMaster } from "./queue/queue-master.js";
+import { createQueueRouter } from "./api/queue.js";
 
 // Register built-in post-action types (create-github-issues, send-webhook, etc.)
 registerBuiltinPostActions();
@@ -131,6 +134,23 @@ const promptManager = new PromptManager({ db });
 const personalityManager = new PersonalityManager({ db });
 const taskRepository = new TaskRepository(db);
 const taskEngine = new TaskEngine({ repository: taskRepository });
+
+// ── Media Queue: Push-Based Distributed Queue ──
+const mediaQueueRepo = new MediaQueueRepository(db);
+mediaQueueRepo.migrate();
+const queueMaster = new QueueMaster(mediaQueueRepo, {
+  pollIntervalMs: Number(process.env.QUEUE_POLL_INTERVAL_MS ?? 3000),
+  macMini: {
+    url: process.env.MAC_MINI_WORKER_URL ?? "http://localhost:5005",
+    token: process.env.MAC_MINI_WORKER_TOKEN,
+  },
+  m2Pro: {
+    url: process.env.M2_PRO_WORKER_URL ?? "http://localhost:5007",
+    token: process.env.M2_PRO_WORKER_TOKEN,
+  },
+  callbackUrl: process.env.QUEUE_CALLBACK_URL ?? "http://localhost:3000/api/queue/complete",
+});
+
 const scheduler = new Scheduler({
   db,
   promptResolver: (name, variables) => promptManager.resolveWithStages(name, variables ?? {}),
@@ -791,6 +811,10 @@ app.use("/api/webhooks/trigger", webhookRouter);
 // Tasks API routes
 const tasksRouter = createTasksRouter({ taskEngine, taskRepository });
 app.use("/api/tasks", tasksRouter);
+
+// Media Queue API routes (push-based distributed queue + gallery)
+const queueRouter = createQueueRouter({ queueMaster, repo: mediaQueueRepo });
+app.use("/api/queue", queueRouter);
 
 // Files API routes (Workbench file management)
 const filesBaseAllowedDirs = allowedDirs.length > 0
@@ -1559,6 +1583,25 @@ if (webConfig?.enabled !== false) {
 
 httpServer.listen(port, () => {
   logger.info(`OpenZigs server listening on port ${port}`);
+
+  // Start the media queue push loop
+  if (process.env.QUEUE_ENABLED !== "false") {
+    queueMaster.start();
+    logger.info("[QueueMaster] Push orchestrator started");
+
+    // Notify Telegram when an entire project's queue is complete
+    queueMaster.on("project:complete", (projectId: string, total: number) => {
+      const telegram = channelManager.getChannel("telegram");
+      if (telegram) {
+        const text = `✅ Project "${projectId}" — all ${total} media jobs complete. Assets ready in Gallery.`;
+        void telegram.sendMessage("broadcast", { text }).catch((err: unknown) => {
+          const msg = err instanceof Error ? err.message : String(err);
+          logger.warn(`[QueueMaster] Telegram notification failed: ${msg}`);
+        });
+      }
+    });
+  }
+
   void auditLogger.log({
     level: "info",
     category: "system",
@@ -1584,6 +1627,7 @@ httpServer.listen(port, () => {
 const gracefulShutdown = () => {
   scheduler.stopAll();
   socialIngestion.stopAllPolling();
+  queueMaster.stop();
   closeDatabase();
   killChrome();
   vaultService.lock();

@@ -3953,3 +3953,179 @@ Generates stylized YouTube thumbnails for rendered videos:
 - `ui/components/director/studio/studio-toolbar.tsx` — Thumbnail generate button
 
 ### Tracking: [Epic #313](https://github.com/mgcronin/openzigs/issues/313)
+
+---
+
+## Distributed Media Queue, Worker Nodes & Asset Gallery (Epic #325)
+
+A **push-based media generation queue** that routes image and video jobs to VRAM-aware worker nodes, persists results as gallery assets, and exposes a full-featured UI for browsing, creating, and managing media assets.
+
+### Architecture
+
+```mermaid
+graph TB
+    subgraph UI["Gallery UI (Next.js)"]
+        STATS[Queue Stats Bar<br/>Pending · Dispatched · Processing · Complete · Failed]
+        GRID[Asset Grid<br/>Type/Source Filters · Lightbox Preview]
+        STUDIO[Gallery Studio<br/>4 modes: txt2img · img2img · txt2video · img2video]
+    end
+
+    subgraph Backend["Express Server"]
+        QAPI[Queue API Router<br/>/api/queue/*]
+        REPO[MediaQueueRepository<br/>SQLite: media_jobs + media_assets]
+        QM[QueueMaster<br/>Push-based Orchestrator<br/>VRAM-aware Routing]
+    end
+
+    subgraph Workers["Worker Nodes"]
+        MINI[Mac Mini<br/>FLUX.1 (Schnell)<br/>:5005]
+        M2PRO[M2 Pro Sidecar<br/>LTX-2 (8-bit MLX)<br/>:5007]
+    end
+
+    STUDIO -->|POST /api/queue/jobs| QAPI
+    QAPI --> REPO
+    REPO --> QM
+    QM -->|POST /generate| MINI
+    QM -->|POST /generate| M2PRO
+    MINI -->|POST /api/queue/complete| QAPI
+    M2PRO -->|POST /api/queue/complete| QAPI
+    GRID -->|GET /api/queue/assets| QAPI
+
+    style UI fill:#0d2137,stroke:#16213e,color:#fff
+    style Backend fill:#16213e,stroke:#1a1a2e,color:#fff
+    style Workers fill:#1b2d1b,stroke:#3a8b3a,color:#fff
+```
+
+### Queue Master (`src/queue/queue-master.ts`)
+
+Push-based orchestrator that polls pending jobs on a configurable tick interval and dispatches them to the appropriate worker node based on job type → node mapping:
+
+| Job Type | Target Node | Required Model | Default Resolution |
+|---|---|---|---|
+| `txt2img` | `mac-mini` | `flux-schnell` | 1024×1024 |
+| `img2img` | `mac-mini` | `flux-schnell` | 1024×1024 |
+| `txt2video` | `m2-pro` | `ltx-2` | 768×512 |
+| `img2video` | `m2-pro` | `ltx-2` | 768×512 |
+
+**Dispatch flow:**
+1. `tick()` queries `getPendingByNode(node)` → oldest pending job
+2. Checks worker health via `GET /status` (must return `is_busy: false`)
+3. Updates job status to `dispatched`, sends `POST /generate` with payload + callback URL
+4. Worker processes asynchronously, calls back `POST /api/queue/complete` with result
+
+**Events:** `job:dispatched`, `job:complete`, `job:failed`, `project:complete`
+
+### Media Queue Repository (`src/queue/media-queue-repository.ts`)
+
+SQLite persistence for two tables:
+
+**`media_jobs`** — Job queue with status tracking:
+
+| Column | Type | Description |
+|---|---|---|
+| `id` | TEXT PK | UUID |
+| `type` | TEXT | `txt2img`, `img2img`, `txt2video`, `img2video` |
+| `required_model` | TEXT | Model name for the worker |
+| `target_node` | TEXT | `mac-mini` or `m2-pro` |
+| `payload` | TEXT (JSON) | Generation parameters |
+| `status` | TEXT | `pending`, `dispatched`, `processing`, `complete`, `failed` |
+| `result_url` | TEXT | Path to generated file |
+| `project_id` | TEXT | Optional project grouping |
+| `priority` | INTEGER | Higher = sooner (default 0) |
+| `retries` / `max_retries` | INTEGER | Auto-retry on failure (default 3) |
+
+**`media_assets`** — Gallery asset catalog:
+
+| Column | Type | Description |
+|---|---|---|
+| `id` | TEXT PK | UUID |
+| `job_id` | TEXT FK | Originating job |
+| `type` | TEXT | `image`, `video`, `audio` |
+| `source` | TEXT | `generated`, `uploaded`, `director` |
+| `filename` | TEXT | Storage filename |
+| `prompt` | TEXT | Generation prompt |
+| `tags` | TEXT (JSON) | User tags |
+| `metadata` | TEXT (JSON) | Dimensions, duration, model, etc. |
+
+### M2 Pro Worker Sidecar (`sidecars/worker/server.py`)
+
+FastAPI Python server for async video generation on Apple Silicon:
+
+| Endpoint | Method | Description |
+|---|---|---|
+| `/status` | GET | Returns `{ is_busy, loaded_model }` |
+| `/health` | GET | Health check |
+| `/generate` | POST | Accepts job payload, returns 202, runs generation in background |
+
+**Video generation pipeline:**
+1. `clear_vram()` — `mx.metal.clear_cache()` + `gc.collect()`
+2. Load LTX-2 model (`AITRADER/ltx2-distilled-8bit-mlx`) via mlx-video
+3. Generate frames (max 97 = 4s @ 24fps)
+4. Encode with `h264_videotoolbox` (hardware) with `libx264` fallback
+5. POST result as base64 to callback URL
+
+### Video Generation Constants
+
+| Constant | Value | Description |
+|---|---|---|
+| `MAX_VIDEO_FRAMES` | 97 | LTX-2 maximum frame count |
+| `MAX_VIDEO_DURATION_SEC` | 4 | Maximum video duration |
+| `DEFAULT_VIDEO_FPS` | 24 | Default frames per second |
+
+### VideoGenService (`src/video/generators/video-gen-service.ts`)
+
+TypeScript service wrapping the queue for Director pipeline integration:
+
+| Method | Description |
+|---|---|
+| `submitTextToVideo(prompt, options)` | Submit txt2video job, clamps frames to MAX_VIDEO_FRAMES |
+| `submitImageToVideo(prompt, imagePath, options)` | Submit img2video job with base image |
+| `waitForJob(jobId, timeoutMs)` | Poll job status until terminal state |
+| `getJobStatus(jobId)` | Get current job status |
+
+### Storyboard Animation Support
+
+The `StoryboardEngine` gains animation-aware scene planning:
+
+- `shouldAnimate?: boolean` and `motionPrompt?: string` added to `ImageSceneEntry` and `StoryboardScene`
+- System prompt includes "ANIMATION COMPUTE BUDGET" rules: max 2-3 animated scenes per video
+- Motion prompts describe camera movement for LTX-2 img2video (e.g., "slow zoom in with subtle parallax")
+
+### Queue API (`src/api/queue.ts`)
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/api/queue/jobs` | Submit a new generation job |
+| `GET` | `/api/queue/jobs` | List jobs with optional status/type filters |
+| `GET` | `/api/queue/jobs/stats` | Aggregate counts by status |
+| `GET` | `/api/queue/jobs/:id` | Get job details |
+| `DELETE` | `/api/queue/jobs/:id` | Cancel a pending job |
+| `POST` | `/api/queue/complete` | Worker callback with completion payload |
+| `GET` | `/api/queue/assets` | List gallery assets with type/source filters |
+| `GET` | `/api/queue/assets/:id` | Get asset details |
+| `DELETE` | `/api/queue/assets/:id` | Delete an asset |
+| `PATCH` | `/api/queue/assets/:id/tags` | Update asset tags |
+| `POST` | `/api/queue/assets/upload` | Upload a file as a gallery asset |
+| `GET` | `/api/queue/assets/file/:filename` | Serve an asset file |
+| `GET` | `/api/queue/project/:projectId/status` | Check project completion status |
+
+### Gallery UI (`ui/app/gallery/page.tsx`)
+
+The Gallery page at `/gallery` provides:
+
+- **Queue Stats Dashboard** — Real-time counts for Pending, Dispatched, Processing, Complete, and Failed jobs (auto-refreshes every 5s via React Query)
+- **Asset Grid** — Filterable by type (Images, Videos, Audio) and source (Generated, Uploaded, Director). Each asset card shows thumbnail, metadata overlay, and action buttons (preview, download, tag, delete)
+- **Preview Lightbox** — Full-screen modal for viewing images and playing videos
+- **Gallery Studio** — Inline asset creation panel with 4 modes:
+  - **Text → Image** — Prompt, dimensions, steps, guidance, seed
+  - **Image → Image** — Upload source image + prompt + strength slider
+  - **Text → Video** — Prompt, frames (max 97), FPS, computed duration (4s cinematic B-roll badge)
+  - **Image → Video** — Upload source image + motion prompt (4s cinematic B-roll badge)
+- **Submit to Queue** — All Studio jobs route through `POST /api/queue/jobs`
+
+### Route Map Update
+
+| Route | Component | Purpose |
+|---|---|---|
+| `/gallery` | `gallery/page.tsx` | Asset Gallery + Gallery Studio |
+
+### Tracking: [Epic #325](https://github.com/mgcronin/openzigs/issues/325)

@@ -43,6 +43,13 @@ export interface StoryboardScene {
   }>;
   /** 0-based index into the source blog's image list; set when the LLM assigns a blog image to this scene */
   blogImageIndex?: number;
+  /**
+   * When true, this scene should be animated into a 4-second video clip
+   * via the img2video pipeline. At most 2-3 scenes per storyboard.
+   */
+  shouldAnimate?: boolean;
+  /** Motion prompt for animated scenes (camera/subject movement description) */
+  motionPrompt?: string;
 }
 
 /** Full storyboard output from the engine. */
@@ -298,7 +305,9 @@ OUTPUT FORMAT (strict JSON):
           "startFrame": 0,
           "durationFrames": 90
         }
-      ]
+      ],
+      "shouldAnimate": "boolean — if true, this scene's image will be animated into a 4-second video clip via img2video. MAX 2-3 scenes per storyboard.",
+      "motionPrompt": "string | null — camera/subject motion description when shouldAnimate is true (e.g. 'slow cinematic zoom in with subtle parallax')"
     }
   ]
 }
@@ -312,6 +321,13 @@ RULES:
 - Each scene's imageDescription should be specific and visually descriptive, not vague.
 - When VISUAL ASSETS (source images) are provided, PREFER assigning them to matching scenes via blogImageIndex. Write a full imageDescription ONLY for scenes that truly need AI-generated imagery; for scenes with a blogImageIndex, imageDescription can be brief or empty.
 - If the user has provided VISUAL ASSETS (images or videos) with descriptions, naturally reference what those assets depict within the voiceover narration at appropriate moments. Treat the asset descriptions as additional context about the topic — weave their content into the script so the narration acknowledges what the viewer will see on screen.
+
+ANIMATION COMPUTE BUDGET (for shouldAnimate):
+- You may mark AT MOST 2-3 scenes with "shouldAnimate": true. These scenes will have their static image animated into a 4-second video clip via the img2video pipeline.
+- Choose scenes where motion adds the most cinematic impact: dramatic reveals, hero shots, establishing shots, or key emotional moments.
+- For animated scenes, also provide a "motionPrompt" describing the desired camera/subject movement (e.g. "slow dolly forward with rising camera angle", "gentle parallax with floating particles", "cinematic zoom out revealing full landscape").
+- All other scenes should have "shouldAnimate": false and "motionPrompt": null.
+- Video generation is expensive (4 seconds per clip on GPU). Be selective and strategic.
 
 TTS PACING TAGS (optional — use sparingly for dramatic effect):
 You may include these bracket tags in voiceover text for pacing control:
@@ -463,6 +479,10 @@ Output a single JSON object.`;
         durationEstimate: Math.max(5, Math.min(60, duration)),
         rawImageDescription: rawDesc,
         blogImageIndex: typeof scene.blogImageIndex === "number" ? scene.blogImageIndex : undefined,
+        shouldAnimate: scene.shouldAnimate === true,
+        motionPrompt: typeof scene.motionPrompt === "string" && scene.motionPrompt.trim()
+          ? scene.motionPrompt.trim()
+          : undefined,
         chapterTitle: typeof scene.chapterTitle === "string" && scene.chapterTitle.trim()
           ? scene.chapterTitle.trim()
           : undefined,
@@ -531,6 +551,8 @@ interface RawStoryboardOutput {
     durationEstimate?: number;
     chapterTitle?: string | null;
     blogImageIndex?: number | null;
+    shouldAnimate?: boolean;
+    motionPrompt?: string | null;
     textOverlays?: Array<{
       id?: string;
       text?: string;

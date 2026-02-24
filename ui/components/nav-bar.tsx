@@ -18,6 +18,7 @@ const NAV_ITEMS = [
   { href: "/knowledge", label: "Knowledge" },
   { href: "/director", label: "Director" },
   { href: "/presenter", label: "Presenter" },
+  { href: "/gallery", label: "Gallery" },
   { href: "/social", label: "Social Brain" },
 ];
 

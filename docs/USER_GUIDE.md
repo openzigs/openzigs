@@ -5207,3 +5207,105 @@ The browser automation includes anti-bot detection evasion that runs automatical
 - Permissions API notifications bypass
 
 The Chrome profile is now persistent at `~/.openzigs/chrome-profile/` (previously used a temp directory), preserving cookies and session state across server restarts.
+
+---
+
+## Media Queue & Asset Gallery
+
+The Media Queue is a push-based job system for generating images and videos across distributed GPU nodes. The Asset Gallery provides a visual interface for browsing, filtering, and managing all generated and uploaded media.
+
+### Gallery Page
+
+Navigate to **Gallery** in the top navigation bar. The page shows:
+
+- **Queue Stats Bar** — Live counts of Pending, Dispatched, Processing, Complete, and Failed jobs, updated every 5 seconds
+- **Asset Grid** — All generated and uploaded assets displayed as cards with thumbnails
+- **Filters** — Filter by type (Images, Videos, Audio) and source (Generated, Uploaded, Director)
+- **Preview** — Click any asset to open a full-screen lightbox for viewing images or playing videos
+- **Actions** — Download, tag, or delete assets from the card overlay
+
+### Gallery Studio
+
+Click **Create Asset** on the Gallery page to open the inline creation studio. Four generation modes are available:
+
+| Mode | Description | Key Controls |
+|---|---|---|
+| **Text → Image** | Generate an image from a text prompt | Width, Height, Steps, Guidance, Seed |
+| **Image → Image** | Transform an uploaded image with a prompt | Source image upload, Strength (0–1), Steps, Guidance |
+| **Text → Video** | Generate a 4-second video clip from a text prompt | Frames (max 97), FPS, computed Duration display |
+| **Image → Video** | Animate an uploaded image with a motion prompt | Source image upload, Frames, FPS, Duration |
+
+All jobs are submitted to the queue via **Submit to Queue** and processed by the appropriate worker node.
+
+### Queue API Examples
+
+**Submit a text-to-image job:**
+```bash
+curl -X POST http://localhost:3000/api/queue/jobs \
+  -H "Content-Type: application/json" \
+  -d '{
+    "type": "txt2img",
+    "payload": {
+      "prompt": "a sunset over mountains",
+      "width": 1024, "height": 1024,
+      "num_steps": 4, "guidance": 3.5
+    }
+  }'
+```
+
+**Submit a text-to-video job:**
+```bash
+curl -X POST http://localhost:3000/api/queue/jobs \
+  -H "Content-Type: application/json" \
+  -d '{
+    "type": "txt2video",
+    "payload": {
+      "prompt": "slow dolly shot of a forest at dawn",
+      "num_frames": 97, "fps": 24,
+      "width": 768, "height": 512
+    }
+  }'
+```
+
+**Check queue stats:**
+```bash
+curl http://localhost:3000/api/queue/jobs/stats
+# → {"pending":2,"dispatched":0,"processing":0,"complete":0,"failed":0}
+```
+
+**List gallery assets:**
+```bash
+curl http://localhost:3000/api/queue/assets
+# → {"assets":[...],"total":5}
+```
+
+**Delete a pending job:**
+```bash
+curl -X DELETE http://localhost:3000/api/queue/jobs/<job-id>
+```
+
+### Worker Sidecar Setup (M2 Pro)
+
+The video generation worker runs as a Python FastAPI sidecar on an M2 Pro Mac:
+
+```bash
+cd sidecars/worker
+pip install -r requirements.txt
+python server.py  # Starts on port 5007
+```
+
+The worker uses **LTX-2** (`AITRADER/ltx2-distilled-8bit-mlx`) for video generation with hardware-accelerated encoding via `h264_videotoolbox`. Maximum output is 97 frames (4 seconds at 24 FPS).
+
+Configure worker endpoints in `config/default.json` under the `queue` section:
+
+```json
+{
+  "queue": {
+    "nodes": {
+      "mac-mini": { "host": "http://localhost:5005" },
+      "m2-pro": { "host": "http://localhost:5007" }
+    },
+    "tickIntervalMs": 3000
+  }
+}
+```

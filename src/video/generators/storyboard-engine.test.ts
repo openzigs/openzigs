@@ -209,4 +209,37 @@ describe("StoryboardEngine", () => {
     expect(result.analysis.audience).toBe("general");
     expect(result.analysis.coreThemes).toEqual([]);
   });
+
+  it("parses shouldAnimate and motionPrompt from LLM response", async () => {
+    const response = JSON.stringify({
+      title: "Animated Test",
+      styleAnchor: "Cinematic style",
+      analysis: { tone: "dramatic", audience: "general", coreThemes: ["motion"] },
+      scenes: [
+        {
+          voiceover: "The city comes alive at dawn.",
+          imageDescription: "aerial city at dawn",
+          durationEstimate: 20,
+          shouldAnimate: true,
+          motionPrompt: "slow cinematic zoom in with rising camera",
+        },
+        {
+          voiceover: "Still scene of a park.",
+          imageDescription: "peaceful park bench",
+          durationEstimate: 18,
+          shouldAnimate: false,
+          motionPrompt: null,
+        },
+      ],
+    });
+
+    const copilot = buildMockCopilot(response);
+    const eng = new StoryboardEngine(copilot);
+    const result = await eng.generate("Test text.");
+
+    expect(result.scenes[0].shouldAnimate).toBe(true);
+    expect(result.scenes[0].motionPrompt).toBe("slow cinematic zoom in with rising camera");
+    expect(result.scenes[1].shouldAnimate).toBe(false);
+    expect(result.scenes[1].motionPrompt).toBeUndefined();
+  });
 });
