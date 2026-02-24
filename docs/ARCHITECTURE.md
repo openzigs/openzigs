@@ -4,10 +4,10 @@
 
 OpenZigs is a **local-first AI agent platform** built on top of the [GitHub Copilot SDK](https://github.com/github/copilot-sdk). It follows a "Safe Agent" philosophy:
 
-1. **Containerized Isolation** — The agent and its MCP sidecars run inside Docker containers via Docker Compose, limiting blast radius.
+1. **Local-First Native Servers** — MCP tool servers run as native subprocesses managed by `LocalMcpServerManager`, eliminating Docker overhead. Docker Compose is retained only for the agent container, Cloudflare tunnel, and audio sidecar.
 2. **Permissioned MCP Tools** — Every tool the agent can call is registered, risk-classified, and individually toggleable.
 3. **Human-in-the-Loop Approvals** — High-risk actions (file writes, shell commands) pause execution until a human approves via the Web Chat or a messaging channel.
-4. **MCP Host Architecture** — OpenZigs acts as an **MCP Host**, orchestrating external MCP servers (social media, document intelligence, Pinterest) that run as Docker sidecars alongside the core Node.js agent.
+4. **MCP Host Architecture** — OpenZigs acts as an **MCP Host**, orchestrating 12 native MCP servers (social media, document intelligence, personal assistant, developer tools) as local subprocesses alongside the core Node.js agent.
 
 The result is a "God Mode" AI assistant that **can** do anything, but only after you say it **should**.
 
@@ -140,12 +140,19 @@ graph TB
             SCH[Scheduler Tools<br/>schedule · toggle · list]
         end
 
-        subgraph MCPSidecars["MCP Sidecar Containers"]
-            LI[mcp-linkedin<br/>:5101]
-            TW[mcp-twitter<br/>:5102]
-            FB[mcp-facebook<br/>:5103]
-            PIN[mcp-pinterest<br/>:5104]
-            WORD[mcp-word<br/>:5201]
+        subgraph NativeMCP["Native MCP Servers (subprocesses)"]
+            WORD[mcp-word<br/>uvx]
+            MIT[mcp-markitdown<br/>uvx]
+            GMAIL[mcp-gmail<br/>npx]
+            DB[mcp-database<br/>jbang]
+            GH[mcp-github<br/>npx]
+            CAL[mcp-calendar<br/>npx]
+            IG[mcp-instagram<br/>python]
+            FB[mcp-facebook<br/>python]
+            TW[mcp-twitter<br/>python]
+            YT[mcp-youtube<br/>python]
+            LI[mcp-linkedin<br/>python]
+            RD[mcp-reddit<br/>python]
         end
     end
 
@@ -177,7 +184,7 @@ graph TB
     CW --> TR
     TR --> AQ
     TR --> BuiltinTools
-    TR -->|HTTP proxy| MCPSidecars
+    TR -->|stdio subprocess| NativeMCP
     AQ -->|approval events| EX
     PROD -->|SQLite| Data
 
@@ -189,7 +196,7 @@ graph TB
 
     style DockerCompose fill:#1a1a2e,stroke:#16213e,color:#fff
     style BuiltinTools fill:#0f3460,stroke:#16213e,color:#fff
-    style MCPSidecars fill:#1e3a5f,stroke:#16213e,color:#fff
+    style NativeMCP fill:#1e3a5f,stroke:#16213e,color:#fff
     style Server fill:#16213e,stroke:#1a1a2e,color:#fff
     style Tunnel fill:#2d1b69,stroke:#16213e,color:#fff
     style NextJS fill:#0d2137,stroke:#16213e,color:#fff
@@ -394,8 +401,8 @@ OpenZigs acts as an **MCP Host** — it orchestrates multiple external MCP serve
 2. **Message Router** resolves the session and forwards only the personality + current message to the **Copilot Wrapper** along with the `conversationId`.
 3. **Copilot Wrapper** reuses a cached SDK session (or creates / resumes one) via `getOrCreateSession()`. Tools are wrapped via `defineTool()` and passed to the session configuration.
 4. **GitHub Copilot** (the intelligence layer) decides which tools to invoke based on the user's intent. The SDK maintains multi-turn context natively within the session.
-5. **Tool execution returns to OpenZigs**, which dispatches to either a built-in handler or an HTTP proxy call to an MCP sidecar container.
-6. **MCP sidecar** processes the request (e.g., posts to LinkedIn, creates a Pinterest pin) and returns the result.
+5. **Tool execution returns to OpenZigs**, which dispatches to either a built-in handler or a stdio subprocess call to a native MCP server.
+6. **Native MCP server** processes the request (e.g., posts to LinkedIn, fetches YouTube analytics) and returns the result.
 7. **Result flows back** through the Copilot SDK to the user as a streamed response.
 
 ```mermaid
@@ -404,14 +411,14 @@ sequenceDiagram
     participant OpenZigs as OpenZigs Agent
     participant SDK as GitHub Copilot SDK
     participant Registry as Tool Registry
-    participant Sidecar as MCP Sidecar
+    participant NativeMCP as Native MCP Server
 
     User->>OpenZigs: "Post this to LinkedIn"
     OpenZigs->>SDK: createSession({ tools, model })
-    SDK->>OpenZigs: tool_call: social-post
-    OpenZigs->>Registry: lookup "social-post"
-    Registry->>Sidecar: POST http://mcp-linkedin:5000/mcp
-    Sidecar-->>Registry: { result: "Posted successfully" }
+    SDK->>OpenZigs: tool_call: linkedin-create-post
+    OpenZigs->>Registry: lookup "linkedin-create-post"
+    Registry->>NativeMCP: stdio call → linkedin-mcp
+    NativeMCP-->>Registry: { result: "Posted successfully" }
     Registry-->>SDK: tool result
     SDK-->>OpenZigs: streamed response
     OpenZigs-->>User: "Done! Your LinkedIn post is live."
@@ -419,47 +426,43 @@ sequenceDiagram
 
 ### Sidecar Registration
 
-MCP sidecars are **NOT** registered with the Copilot CLI directly. Instead:
+Native MCP servers are registered as subprocess definitions in `LocalMcpServerManager`. Each server is spawned on-demand via stdio transport:
 
-1. Each sidecar's tools are defined as `ToolDefinition` objects in TypeScript (e.g., `src/mcp/tools/social-media-tools.ts`).
+1. Each server's tools are defined as `ToolDefinition` objects in TypeScript (e.g., `src/mcp/tools/facebook-tools.ts`).
 2. At startup, `registerMcpTools()` in `src/mcp/server.ts` registers all tool definitions with the `ToolRegistry`.
-3. The `CopilotWrapperService` wraps each enabled tool via the SDK's `defineTool()` function and passes them to `createSession({ tools })`.
-4. When the SDK invokes a sidecar-backed tool, the handler makes an HTTP `POST` to the sidecar's URL (e.g., `http://localhost:5101/mcp`).
+3. The `CopilotWrapperService` wraps each enabled tool via the SDK's `defineTool()` function.
+4. When the SDK invokes a native MCP-backed tool, the handler calls the server's tool via `LocalMcpServerManager.callTool()`.
 
 The user does not need to manually register tools with any CLI. OpenZigs handles all registration automatically.
 
-### Current MCP Sidecars
+### Current MCP Servers
 
-| Service | Container | Port | Platform | Category | Runtime |
-|---|---|---|---|---|---|
-| `mcp-linkedin` | `openzigs-mcp-linkedin` | 5101 | LinkedIn | social | Docker (Python) |
-| `mcp-twitter` | `openzigs-mcp-twitter` | 5102 | Twitter/X | social | Docker (Python) |
-| `mcp-facebook` | `openzigs-mcp-facebook` | 5103 | Facebook | social | Docker (Python) |
-| `mcp-pinterest` | `openzigs-mcp-pinterest` | 5104 | Pinterest | social | Docker (Python) |
-| `mcp-word` | `openzigs-mcp-word` | 5201 | Office Word | documents | Docker (Python) |
-| `mcp-markitdown` | `openzigs-mcp-markitdown` | 5301 | MarkItDown | documents | Docker (Python) |
-| `mcp-gmail` | `openzigs-mcp-gmail` | 5302 | Gmail | personal | Docker (Node.js) |
-| `mcp-database` | `openzigs-mcp-database` | 5303 | JDBC Database | data | JBang (Java) |
-| `mcp-github` | `openzigs-mcp-github` | 5304 | GitHub | developer | Docker (Go) |
+All MCP servers now run as **native subprocesses** via `LocalMcpServerManager` (stdio transport), eliminating Docker overhead:
 
-### New MCP Server Details
+| Service | Runtime | Platform | Category |
+|---|---|---|---|
+| `mcp-word` | `uvx` (Python) | Office Word | documents |
+| `mcp-markitdown` | `uvx` (Python) | MarkItDown | documents |
+| `mcp-gmail` | `npx` (Node.js) | Gmail | personal |
+| `mcp-database` | `jbang` (Java) | JDBC Database | data |
+| `mcp-github` | `npx` (Go) | GitHub | developer |
+| `mcp-calendar` | `npx` (Node.js) | Google Calendar | personal |
+| `mcp-instagram` | `python` (venv) | Instagram | social |
+| `mcp-facebook` | `python` (venv) | Facebook/Meta | social |
+| `mcp-twitter` | `python` (venv) | Twitter/X | social |
+| `mcp-youtube` | `python` (venv) | YouTube | social |
+| `mcp-linkedin` | `python` (venv) | LinkedIn | social |
+| `mcp-reddit` | `python` (venv) | Reddit | social |
+
+> **Migration note:** Docker-based MCP sidecars have been fully deprecated. The `DockerSidecarManager` class remains in the codebase with `@deprecated` JSDoc and an empty `DEFAULT_SIDECAR_DEFINITIONS` array. All MCP servers now use native subprocess management for lower overhead and simpler deployment.
+
+### Native MCP Server Details
 
 #### MarkItDown (`mcp-markitdown`)
 
 **Source:** [microsoft/markitdown](https://github.com/microsoft/markitdown)
 
-Converts various file formats (PDF, DOCX, PPTX, XLSX, HTML, images, audio) into Markdown for LLM consumption. Runs as a Docker container with volume mounts for file access.
-
-```yaml
-# docker-compose.yml excerpt
-mcp-markitdown:
-  image: markitdown-mcp:latest
-  container_name: openzigs-mcp-markitdown
-  volumes:
-    - /data:/workdir
-  networks:
-    - openzigs-network
-```
+Converts various file formats (PDF, DOCX, PPTX, XLSX, HTML, images, audio) into Markdown for LLM consumption. Runs as a native subprocess via `uvx`.
 
 **Tools:** `convert-to-markdown` (🟢 low risk)
 
@@ -467,22 +470,7 @@ mcp-markitdown:
 
 **Source:** [GongRzhe/Gmail-MCP-Server](https://github.com/GongRzhe/Gmail-MCP-Server)
 
-Reads, searches, and drafts Gmail messages. Requires Google Cloud OAuth credentials (`gcp-oauth.keys.json`).
-
-```yaml
-# docker-compose.yml excerpt
-mcp-gmail:
-  image: mcp/gmail:latest
-  container_name: openzigs-mcp-gmail
-  volumes:
-    - gmail-credentials:/gmail-server
-    - ${GMAIL_OAUTH_KEYS_PATH:-./.gmail-mcp/gcp-oauth.keys.json}:/gcp-oauth.keys.json:ro
-  environment:
-    GMAIL_OAUTH_PATH: /gcp-oauth.keys.json
-    GMAIL_CREDENTIALS_PATH: /gmail-server/credentials.json
-  networks:
-    - openzigs-network
-```
+Reads, searches, and drafts Gmail messages. Requires Google Cloud OAuth credentials (`gcp-oauth.keys.json`). Runs via `npx`.
 
 **Tools:** `gmail-search` (🟢 low), `gmail-read` (🟢 low), `gmail-draft` (🟡 medium), `gmail-send` (🔴 high)
 
@@ -490,25 +478,7 @@ mcp-gmail:
 
 **Source:** [quarkiverse/quarkus-mcp-servers](https://github.com/quarkiverse/quarkus-mcp-servers/tree/main/jdbc)
 
-Provides SQL access to any JDBC-compatible database (PostgreSQL, MySQL, SQLite, H2). Requires Java/JBang runtime.
-
-```yaml
-# docker-compose.yml excerpt (or run via JBang locally)
-mcp-database:
-  image: openzigs-mcp-database:latest
-  container_name: openzigs-mcp-database
-  environment:
-    JDBC_URL: jdbc:postgresql://host.docker.internal:5432/mydb
-    DB_USER: postgres
-    DB_PASSWORD: ${DB_PASSWORD}
-  networks:
-    - openzigs-network
-```
-
-**Alternative (JBang, no Docker):**
-```bash
-jbang jdbc@quarkiverse/quarkus-mcp-servers jdbc:postgresql://localhost:5432/mydb -u postgres -p secret
-```
+Provides SQL access to any JDBC-compatible database (PostgreSQL, MySQL, SQLite, H2). Runs via `jbang`.
 
 **Tools:** `db-query` (🔴 high), `db-describe` (🟢 low), `db-list-tables` (🟢 low)
 
@@ -516,21 +486,24 @@ jbang jdbc@quarkiverse/quarkus-mcp-servers jdbc:postgresql://localhost:5432/mydb
 
 **Source:** [github/github-mcp-server](https://github.com/github/github-mcp-server)
 
-Full GitHub API access — repos, issues, PRs, code search, actions. Uses a GitHub Personal Access Token.
-
-```yaml
-# docker-compose.yml excerpt
-mcp-github:
-  image: ghcr.io/github/github-mcp-server:latest
-  container_name: openzigs-mcp-github
-  environment:
-    GITHUB_PERSONAL_ACCESS_TOKEN: ${GITHUB_PERSONAL_ACCESS_TOKEN}
-    GITHUB_TOOLSETS: repos,issues,pull_requests,code_security
-  networks:
-    - openzigs-network
-```
+Full GitHub API access — repos, issues, PRs, code search, actions. Uses a GitHub Personal Access Token. Runs via `npx`.
 
 **Tools:** `github-get-file` (🟢 low), `github-search-code` (🟢 low), `github-list-issues` (🟢 low), `github-create-issue` (🟡 medium), `github-create-pr` (🔴 high)
+
+#### Multi-Platform Social MCP Servers
+
+Five social platform MCP servers live under `external/` as Python FastMCP applications, each with its own virtualenv:
+
+| Server | Directory | Tools | API |
+|---|---|---|---|
+| Instagram | `external/ig-mcp/` | 9 tools | Instagram Graph API |
+| Facebook | `external/fb-mcp/` | 8 tools | Meta Graph API v24.0 |
+| Twitter/X | `external/twitter-mcp/` | 8 tools | Twitter API v2 (OAuth 1.0a) |
+| YouTube | `external/youtube-mcp/` | 7 tools | YouTube Data API v3 |
+| LinkedIn | `external/linkedin-mcp/` | 6 tools | LinkedIn API v2 |
+| Reddit | `external/reddit-mcp/` | 8 tools | Reddit OAuth2 |
+
+Each server requires platform-specific API credentials set as environment variables. See respective `README.md` files in `external/` for setup instructions.
 
 ---
 
@@ -553,7 +526,7 @@ Wraps `@github/copilot-sdk`'s `CopilotClient`. Responsibilities:
 | **Infinite Sessions** | Config | When `infiniteSessions.enabled` is true, the SDK automatically compacts context at configurable thresholds (`backgroundCompactionThreshold`, `bufferExhaustionThreshold`), preventing context window exhaustion in long conversations. |
 | **Model Selection** | `listModels()` | Proxies `client.listModels()` to enumerate available models (e.g., `gpt-4.1`, `claude-sonnet-4`). |
 | **Tool Limit Control** | `setMaxToolsPerRequest(n)` / `getMaxToolsPerRequest()` | Get or set the maximum number of tools sent per LLM request (range: 1-128). Changes take effect on the next `chat()` call. |
-| **Tool Dispatch** | Internal | When the SDK invokes a tool, the handler calls the `ToolDefinition.handler()` — which may proxy to an MCP sidecar or execute locally. ALWAYS_ON_TOOLS (7 tools) are guaranteed inclusion before filling remaining slots. |
+| **Tool Dispatch** | Internal | When the SDK invokes a tool, the handler calls the `ToolDefinition.handler()` — which may call a native MCP server subprocess or execute locally. ALWAYS_ON_TOOLS (7 tools) are guaranteed inclusion before filling remaining slots. |
 | **Retry Logic** | Internal | Automatic retries with exponential backoff for rate-limit (429) and timeout errors. Clears auth on 401. |
 | **Handler Cleanup** | Internal | Per-call event handlers (`assistant.message_delta`, `session.idle`) are unsubscribed in a `finally` block after each `chat()` call, preventing handler accumulation on reused sessions. |
 | **File Attachments** | `chat({ attachments })` | Passes `SdkAttachment[]` (file, directory, or selection references) alongside the prompt. The SDK reads file contents and provides them as context to the model. |
@@ -757,7 +730,7 @@ Converts Markdown content to platform-safe plain text using Unicode character tr
 | `> quote` | ❝quote❞ | Curly quotes |
 | `---` | ───────── | Box drawing |
 
-Used by the `social-post` tool handler in `src/mcp/tools/social-media-tools.ts` to preprocess content before dispatching to MCP sidecars. The system prompt also instructs the LLM to prefer Unicode formatting for social media output.
+Used by the `social-post` tool handler in `src/mcp/tools/social-media-tools.ts` to preprocess content before dispatching to native MCP servers. The system prompt also instructs the LLM to prefer Unicode formatting for social media output.
 
 ### Channel Abstraction (`src/channels/types.ts`)
 
@@ -1661,17 +1634,87 @@ Logs are queryable via `GET /api/logs` with filters for `category`, `level`, `si
 | `spawn-agent` | productivity | 🟡 medium | Spawn an asynchronous background sub-agent for long-running or independent tasks. |
 | `orchestrate-agents` | productivity | 🟡 medium | Fan-out/fan-in: dispatch multiple agents in parallel, wait for all results, optionally aggregate via Copilot. |
 
-### Social Media Tools (MCP Sidecars)
+### Social Media Tools (Native MCP Servers)
+
+Each social platform has a dedicated set of tools backed by its native MCP server:
+
+**Instagram** (9 tools — `external/ig-mcp/`)
 
 | Tool | Category | Risk | Description |
 |---|---|---|---|
-| `social-post` | social | 🔴 high | Post content to LinkedIn, Twitter/X, Facebook, or Pinterest. |
-| `social-timeline` | social | 🟡 medium | Get recent posts from a platform's timeline. |
-| `social-profile` | social | 🟢 low | Get profile information from a platform. |
-| `pinterest-boards` | social | 🟡 medium | List, create, or get details of Pinterest boards. |
-| `pinterest-pins` | social | 🟡 medium | List, create, or get details of Pinterest pins. |
+| `instagram-get-profile` | social | 🟢 low | Get Instagram business profile info. |
+| `instagram-get-media` | social | 🟢 low | Get recent media posts. |
+| `instagram-get-media-details` | social | 🟢 low | Get details for a specific media post. |
+| `instagram-get-comments` | social | 🟢 low | Get comments on a media post. |
+| `instagram-reply-to-comment` | social | 🟡 medium | Reply to a comment. |
+| `instagram-get-stories` | social | 🟢 low | Get current stories. |
+| `instagram-get-insights` | social | 🟢 low | Get account insights and analytics. |
+| `instagram-search-hashtags` | social | 🟢 low | Search hashtag media. |
+| `instagram-send-dm` | social | 🔴 high | Send a DM via Instagram. |
 
-### Document Intelligence Tools (MCP Sidecars)
+**Facebook** (8 tools — `external/fb-mcp/`)
+
+| Tool | Category | Risk | Description |
+|---|---|---|---|
+| `facebook-get-page-info` | social | 🟢 low | Get Facebook Page profile info. |
+| `facebook-get-posts` | social | 🟢 low | Get recent page posts. |
+| `facebook-get-post-insights` | social | 🟢 low | Get insights for a specific post. |
+| `facebook-publish-post` | social | 🔴 high | Publish a post to the page. |
+| `facebook-get-conversations` | social | 🟢 low | Get page conversations (inbox). |
+| `facebook-get-messages` | social | 🟢 low | Get messages in a conversation. |
+| `facebook-send-message` | social | 🔴 high | Send a message to a conversation. |
+| `facebook-get-page-insights` | social | 🟢 low | Get page-level analytics. |
+
+**Twitter/X** (8 tools — `external/twitter-mcp/`)
+
+| Tool | Category | Risk | Description |
+|---|---|---|---|
+| `twitter-get-me` | social | 🟢 low | Get authenticated user profile. |
+| `twitter-get-user-tweets` | social | 🟢 low | Get a user's recent tweets. |
+| `twitter-search-tweets` | social | 🟢 low | Search tweets by query. |
+| `twitter-get-tweet` | social | 🟢 low | Get a specific tweet by ID. |
+| `twitter-post-tweet` | social | 🔴 high | Post a new tweet. |
+| `twitter-get-dm-events` | social | 🟢 low | Get recent DM events. |
+| `twitter-send-dm` | social | 🔴 high | Send a direct message. |
+| `twitter-get-user` | social | 🟢 low | Get user profile by username. |
+
+**YouTube** (7 tools — `external/youtube-mcp/`)
+
+| Tool | Category | Risk | Description |
+|---|---|---|---|
+| `youtube-get-channel-info` | social | 🟢 low | Get YouTube channel info. |
+| `youtube-get-channel-videos` | social | 🟢 low | List channel videos. |
+| `youtube-get-video-details` | social | 🟢 low | Get video details by ID. |
+| `youtube-get-video-comments` | social | 🟢 low | Get video comment threads. |
+| `youtube-reply-to-comment` | social | 🟡 medium | Reply to a YouTube comment. |
+| `youtube-search-videos` | social | 🟢 low | Search YouTube videos. |
+| `youtube-get-channel-analytics` | social | 🟢 low | Get channel analytics. |
+
+**LinkedIn** (6 tools — `external/linkedin-mcp/`)
+
+| Tool | Category | Risk | Description |
+|---|---|---|---|
+| `linkedin-get-profile` | social | 🟢 low | Get LinkedIn profile info. |
+| `linkedin-get-posts` | social | 🟢 low | Get recent posts. |
+| `linkedin-create-post` | social | 🔴 high | Create a LinkedIn post. |
+| `linkedin-get-company` | social | 🟢 low | Get company page info. |
+| `linkedin-send-message` | social | 🔴 high | Send a LinkedIn message. |
+| `linkedin-get-conversations` | social | 🟢 low | Get messaging conversations. |
+
+**Reddit** (8 tools — `external/reddit-mcp/`)
+
+| Tool | Category | Risk | Description |
+|---|---|---|---|
+| `reddit-get-me` | social | 🟢 low | Get authenticated Reddit user. |
+| `reddit-get-subreddit-posts` | social | 🟢 low | Get posts from a subreddit. |
+| `reddit-get-post-comments` | social | 🟢 low | Get comments on a post. |
+| `reddit-submit-post` | social | 🔴 high | Submit a new post. |
+| `reddit-reply-to-comment` | social | 🟡 medium | Reply to a comment. |
+| `reddit-search` | social | 🟢 low | Search Reddit. |
+| `reddit-get-inbox` | social | 🟢 low | Get inbox messages. |
+| `reddit-send-message` | social | 🔴 high | Send a private message. |
+
+### Document Intelligence Tools (Native MCP Servers)
 
 | Tool | Category | Risk | Description |
 |---|---|---|---|
@@ -1680,7 +1723,7 @@ Logs are queryable via `GET /api/logs` with filters for `category`, `level`, `si
 | `calendar-list` | documents | 🟢 low | List upcoming Google Calendar events. |
 | `calendar-create` | documents | 🟡 medium | Create a new Google Calendar event. |
 
-### Personal Assistant Tools (MCP Sidecars — Planned)
+### Personal Assistant Tools (Native MCP Servers)
 
 | Tool | Category | Risk | Description |
 |---|---|---|---|
@@ -1751,7 +1794,7 @@ The shell executor uses a **command allowlist**. If the allowlist is empty, the 
 | `DELETE` | `/api/jobs/:id` | Token | Delete a scheduled job. |
 | `POST` | `/api/jobs/:id/toggle` | Token | Enable or disable a scheduled job. |
 | `POST` | `/api/admin/tools/:name/risk` | Admin | Override a tool's risk level. |
-| `GET` | `/api/admin/sidecars/:name/tools` | Admin | List tools for a specific MCP sidecar. |
+| `GET` | `/api/admin/sidecars/:name/tools` | Admin | List tools for a specific MCP server. |
 | `PUT` | `/api/admin/sidecars/:name/tools` | Admin | Update disabled tools for a sidecar. |
 | `POST` | `/api/admin/scheduler/assist` | Admin | Generate scheduler field suggestions from a natural language request. |
 | `GET` | `/api/files/list?path=` | Token | List directory entries within sandbox. |
@@ -1818,23 +1861,15 @@ The tunnel exposes the agent to the internet so webhook-based channels (Telegram
 
 ### Docker Compose Network
 
-All services (`agent`, `tunnel`, MCP sidecars) share the `openzigs-network` bridge network. Service-to-service communication uses Docker DNS hostnames:
+Docker Compose now only contains `agent`, `tunnel`, and `audio-sidecar` services sharing the `openzigs-network` bridge network:
 
 | Connection | From → To | Address |
 |---|---|---|
 | Tunnel → Agent | `tunnel` → `agent` | `http://agent:3000` |
-| Agent → LinkedIn MCP | `agent` → `mcp-linkedin` | `http://mcp-linkedin:5000/mcp` |
-| Agent → Twitter MCP | `agent` → `mcp-twitter` | `http://mcp-twitter:5000/mcp` |
-| Agent → Facebook MCP | `agent` → `mcp-facebook` | `http://mcp-facebook:5000/mcp` |
-| Agent → Pinterest MCP | `agent` → `mcp-pinterest` | `http://mcp-pinterest:3052/mcp` |
-| Agent → Word MCP | `agent` → `mcp-word` | `http://mcp-word:5000/mcp` |
-| Agent → MarkItDown MCP | `agent` → `mcp-markitdown` | `http://mcp-markitdown:5000/mcp` |
-| Agent → Gmail MCP | `agent` → `mcp-gmail` | `http://mcp-gmail:5000/mcp` |
-| Agent → Database MCP | `agent` → `mcp-database` | `http://mcp-database:5000/mcp` |
-| Agent → GitHub MCP | `agent` → `mcp-github` | `http://mcp-github:5000/mcp` |
+| Agent → Audio Sidecar | `agent` → `audio-sidecar` | `http://audio-sidecar:5006` |
 | Agent → Chrome | `agent` → host | `host.docker.internal:9222` |
 
-MCP sidecar URLs are passed to the agent via environment variables (`MCP_LINKEDIN_URL`, `MCP_TWITTER_URL`, `MCP_MARKITDOWN_URL`, `MCP_GMAIL_URL`, `MCP_DATABASE_URL`, `MCP_GITHUB_URL`, etc.) in `docker-compose.yml`.
+All MCP tool servers now run as native subprocesses via `LocalMcpServerManager` (stdio transport), not Docker containers. Platform-specific API credentials are passed as environment variables directly to the subprocess.
 
 ---
 
@@ -1844,12 +1879,12 @@ OpenZigs supports **per-tool enable/disable** within each MCP server. This allow
 
 ### Config Schema
 
-Each sidecar entry in `config/default.json` accepts an optional `disabledTools` array:
+Each server entry in `config/default.json` accepts an optional `disabledTools` array:
 
 ```json
 {
   "mcpServers": {
-    "sidecars": {
+    "localServers": {
       "gmail": {
         "enabled": true,
         "disabledTools": ["gmail-send"]
@@ -1865,10 +1900,10 @@ Each sidecar entry in `config/default.json` accepts an optional `disabledTools` 
 
 ### How It Works
 
-1. At startup, `registerMcpTools()` loads each sidecar's tool definitions.
-2. Before registering a tool with the `ToolRegistry`, it checks whether the tool name appears in the sidecar's `disabledTools` array.
+1. At startup, `registerMcpTools()` loads each server's tool definitions.
+2. Before registering a tool with the `ToolRegistry`, it checks whether the tool name appears in the server's `disabledTools` array.
 3. Disabled tools are **never** passed to `createSession({ tools })` — the LLM does not know they exist.
-4. The Admin UI's "Edit" button on the MCP settings page queries the server for its full tool list via `mcp.listTools()`, renders each tool with a toggle switch, and persists changes to `disabledTools` in `config/default.json`.
+4. The Admin UI's "Edit" button on the MCP settings page queries the server for its full tool list, renders each tool with a toggle switch, and persists changes to `disabledTools` in `config/default.json`.
 
 ### UI Workflow
 
@@ -3489,24 +3524,69 @@ The Social Brain subsystem provides a unified DM/comment ingestion pipeline, AI-
 ```
 ┌───────────────┐     ┌───────────────────┐     ┌──────────────────┐
 │  Platform      │────▶│  Ingestion        │────▶│  Social Brain    │
-│  Webhooks      │     │  Service          │     │  (RAG + LLM)     │
-│  (IG, FB, etc) │     │  (EventEmitter)   │     │  (EventEmitter)  │
-└───────────────┘     └───────────────────┘     └──────────────────┘
-                              │                        │       │
-                              │                        │       ▼
-                              ▼                        │  ┌──────────────┐
-                      ┌──────────────────┐             │  │  Handoff     │
-                      │  Comment Rule    │             │  │  Manager     │
-                      │  Engine          │             │  │  (threads)   │
-                      │  (keyword/regex) │             │  └──────────────┘
-                      └──────────────────┘             │
-                              │                        ▼
-                              ▼                  ┌──────────────────┐
-                      ┌──────────────────┐       │  Social          │
-                      │  DM Scheduling   │       │  Repository      │
-                      │  + Auto-Tagging  │       │  (SQLite CRM)    │
-                      └──────────────────┘       └──────────────────┘
+│  Webhooks/     │     │  Service          │     │  (RAG + LLM)     │
+│  Polling       │     │  (EventEmitter)   │     │  (EventEmitter)  │
+│  (IG, FB, TW,  │     │  + Platform       │     └──────────────────┘
+│   YT, LI, RD)  │     │    Adapters       │            │       │
+└───────────────┘     └───────────────────┘            │       ▼
+                              │                        │  ┌──────────────┐
+                              │                        │  │  Handoff     │
+                              ▼                        │  │  Manager     │
+                      ┌──────────────────┐             │  │  (threads)   │
+                      │  Comment Rule    │             │  └──────────────┘
+                      │  Engine          │             │
+                      │  (keyword/regex) │             ▼
+                      └──────────────────┘       ┌──────────────────┐
+                              │                  │  Social          │
+                              ▼                  │  Repository      │
+                      ┌──────────────────┐       │  (SQLite CRM)    │
+                      │  DM Dispatcher   │       └──────────────────┘
+                      │  + Auto-Tagging  │
+                      └──────────────────┘
 ```
+
+### Multi-Platform Ingestion
+
+The ingestion layer uses a **platform adapter pattern** to normalize incoming events from different platforms into a unified `IncomingSocialMessage` format:
+
+| Adapter | Platform | Transport | Events Handled |
+|---|---|---|---|
+| `InstagramAdapter` | Instagram | Webhook (Meta) | DMs via messaging webhook |
+| `FacebookAdapter` | Facebook | Webhook (Meta) | Page messaging + feed comments |
+| `TwitterAdapter` | Twitter/X | Webhook | DM events + reply tweets |
+| `LinkedInAdapter` | LinkedIn | Webhook | MESSAGING + COMMENT event types |
+| `GenericPollAdapter` | YouTube, Reddit | Polling | Periodic fetch of new comments/messages |
+
+Platform connections are configured in `config/default.json` under `socialBrain.connections` with `mode: "webhook"` or `mode: "polling"` and platform-specific polling intervals.
+
+### Platform API Clients
+
+Each platform has a dedicated `PlatformApiClient` implementation for fetching post context (used by the Social Brain's RAG pipeline):
+
+| Client | Platform | API |
+|---|---|---|
+| `InstagramApiClient` | Instagram | Meta Graph API |
+| `FacebookApiClient` | Facebook | Meta Graph API v24.0 |
+| `TwitterApiClient` | Twitter/X | Twitter API v2 |
+| `YouTubeApiClient` | YouTube | YouTube Data API v3 |
+| `LinkedInApiClient` | LinkedIn | LinkedIn API v2 |
+
+All clients implement the `PlatformApiClient` interface with `fetchPostContext()` and are registered with `PostContextService` when their respective environment variables are set.
+
+### DM Dispatcher
+
+The `DmDispatcher` class (`src/channels/social/dm-dispatcher.ts`) provides factory methods for sending DMs and replying to comments across all platforms, routing through the appropriate native MCP server:
+
+| Platform | DM Tool | Comment Reply Tool |
+|---|---|---|
+| Instagram | `send_dm` | — |
+| Facebook | `fb_send_message` | — |
+| Twitter/X | `twitter_send_dm` | — |
+| YouTube | — (no DM API) | `yt_reply_to_comment` |
+| LinkedIn | `linkedin_send_message` | — |
+| Reddit | `reddit_send_message` | `reddit_reply_to_comment` |
+
+The dispatcher is wired into the `CommentRuleEngine` via `setSendDm()` and `setReplyToComment()` callbacks.
 
 ### Module Structure (`src/channels/social/`)
 
@@ -3514,10 +3594,12 @@ The Social Brain subsystem provides a unified DM/comment ingestion pipeline, AI-
 |---|---|
 | `types.ts` | Shared types: `SocialPlatform`, `Contact`, `SocialMessage`, `IncomingSocialMessage`, `IncomingComment`, `CommentRule`, `AutomationLogEntry`, `BrainResult`, `EscalationContext`, `SocialBrainConfig` |
 | `social-repository.ts` | SQLite CRM — 4 tables (`contacts`, `social_messages`, `comment_automation_rules`, `comment_automation_log`). Pagination, tag management, CSV export, stats. 19 unit tests. |
-| `social-ingestion.ts` | `SocialIngestionService` (EventEmitter) — platform adapter pattern: `handleWebhook()`, `processMessage()`, `startPolling()`/`stopPolling()`. Ships with `InstagramAdapter` (Meta webhook format) and `GenericPollAdapter`. |
+| `social-ingestion.ts` | `SocialIngestionService` (EventEmitter) — platform adapter pattern: `handleWebhook()`, `processMessage()`, `startPolling()`/`stopPolling()`. Ships with `InstagramAdapter`, `FacebookAdapter`, `TwitterAdapter`, `LinkedInAdapter`, and `GenericPollAdapter` (for YouTube/Reddit). |
+| `platform-api-client.ts` | `PlatformApiClient` interface + `PostContextService` + per-platform API clients (Instagram, Facebook, Twitter, YouTube, LinkedIn). Each implements `fetchPostContext()` for RAG enrichment. |
+| `dm-dispatcher.ts` | `DmDispatcher` — multi-platform DM sender and comment replier. Factory methods `createDmSender()` and `createCommentReplier()` route through native MCP servers via `LocalMcpServerManager.callTool()`. |
 | `social-brain.ts` | `SocialBrain` (EventEmitter) — RAG pipeline: handoff check → `knowledgeService.search(query, 5, { mode: "hybrid" })` → conversation history (last 5) → `copilot.chat()` with `{ mode: "replace" }` system prompt → JSON parse → confidence routing. Emits `reply`, `escalate`, `escalated_message`. |
 | `handoff-manager.ts` | `HandoffManager` (EventEmitter) — `HandoffChannel` interface with `createThread`/`postToThread`/`archiveThread`. Escalate, forward messages, handle admin replies via thread→contact reverse map, close handoffs. Emits `handoff:created`, `handoff:resolved`. |
-| `comment-rule-engine.ts` | `CommentRuleEngine` (EventEmitter) — Keyword matching (word-boundary regex), regex fallback, template interpolation (`{{username}}`, `{{keyword}}`, `{{post_id}}`, `{{comment_text}}`), DM delay scheduling, auto-tagging, per-user rate limiting. Emits `rule:triggered`. |
+| `comment-rule-engine.ts` | `CommentRuleEngine` (EventEmitter) — Keyword matching (word-boundary regex), regex fallback, template interpolation (`{{username}}`, `{{keyword}}`, `{{post_id}}`, `{{comment_text}}`), DM delay scheduling, auto-tagging, per-user rate limiting. Wired to `DmDispatcher` for cross-platform DM/reply delivery. Emits `rule:triggered`. |
 
 ### Event Flow (Server Wiring)
 

@@ -34,13 +34,13 @@ Before you begin, ensure the following are installed and available:
 | `SOCIAL_WEBHOOK_VERIFY_TOKEN` | Verify token for Social Brain webhook subscriptions (Instagram, TikTok, etc.). |
 | `INSTAGRAM_ACCESS_TOKEN` | Instagram User Access Token for post context lookup (captions, media type in comment automation). |
 
-**MCP Sidecar prerequisites (optional — only needed if using social or document tools):**
+**Native MCP Server prerequisites (optional — only needed if using social, document, or personal assistant tools):**
 
 | Requirement | Purpose |
 |---|---|
-| **Python 3.10+** | Some MCP servers (LinkedIn, Twitter, Facebook, MarkItDown) are Python-based. |
+| **Python 3.10+** | Social media MCP servers (Instagram, Facebook, Twitter, YouTube, LinkedIn, Reddit) and MarkItDown are Python-based. Each has its own virtualenv under `external/`. |
 | **Java 17+ / JBang** | Required for the JDBC Database MCP server. [Install JBang](https://www.jbang.dev/download/). |
-| **LinkedIn / Twitter / Facebook / Pinterest API credentials** | Required by respective MCP sidecars. Passed via environment variables in `docker-compose.yml`. |
+| **Platform API credentials** | Each social platform requires API credentials set as environment variables. See respective `README.md` in `external/`. |
 | **Google Cloud OAuth credentials** | Required for Gmail MCP server. Create an OAuth app in Google Cloud Console. |
 | **GitHub Personal Access Token** | Required for GitHub MCP server. Create at github.com/settings/tokens. |
 
@@ -86,12 +86,20 @@ TUNNEL_TOKEN=your-cloudflare-tunnel-token
 # ── Optional: Voice Interface (Google Cloud TTS) ──
 GOOGLE_APPLICATION_CREDENTIALS=/path/to/your/service-account-key.json
 
-# ── Optional: MCP Sidecar URLs (set automatically by docker-compose.yml) ──
-# MCP_LINKEDIN_URL=http://linkedin-mcp-server:5101
-# MCP_TWITTER_URL=http://twitter-mcp-server:5102
-# MCP_FACEBOOK_URL=http://facebook-mcp-server:5103
-# MCP_PINTEREST_URL=http://pinterest-mcp-server:5104
-# MCP_WORD_URL=http://word-mcp-server:5201
+# ── Optional: Social Platform MCP Servers ──
+# INSTAGRAM_ACCESS_TOKEN=your-instagram-token
+# FB_PAGE_ACCESS_TOKEN=your-facebook-page-token
+# TWITTER_BEARER_TOKEN=your-twitter-bearer-token
+# TWITTER_API_KEY=your-twitter-api-key
+# TWITTER_API_SECRET=your-twitter-api-secret
+# TWITTER_ACCESS_TOKEN=your-twitter-access-token
+# TWITTER_ACCESS_SECRET=your-twitter-access-secret
+# YOUTUBE_API_KEY=your-youtube-api-key
+# LINKEDIN_ACCESS_TOKEN=your-linkedin-access-token
+# REDDIT_CLIENT_ID=your-reddit-client-id
+# REDDIT_CLIENT_SECRET=your-reddit-client-secret
+# REDDIT_USERNAME=your-reddit-username
+# REDDIT_PASSWORD=your-reddit-password
 
 # ── Optional: Personal Assistant MCP Servers ──
 # GMAIL_OAUTH_PATH=~/.gmail-mcp/gcp-oauth.keys.json
@@ -273,8 +281,8 @@ The admin page at `/admin` consolidates all configuration:
 - **Custom Agents** — Create, edit, and delete custom agent archetypes. Each agent has a name (identifier), display name, description, system prompt, tool allowlist (multi-select grouped by category), and auto-invoke toggle. Agents are displayed as cards with tool badges and infer indicators.
 
 ![New Agent form — name, description, system prompt, tool selection, and auto-invoke toggle](images/admin-new-agent-form.png)
-- **MCP Sidecars** — View Docker sidecar status (running, credentials missing, offline), manage credentials, restart containers, toggle per-tool within each sidecar.
-- **Local MCP Servers** — View status of locally-running MCP servers (MarkItDown, Database, GitHub).
+- **MCP Servers** — View status of native MCP servers (social platforms, document tools, personal assistant tools). Toggle per-tool within each server.
+- **Local MCP Servers** — View status of locally-running MCP servers (all 12 native servers).
 - **Native MCP Servers** — Define and manage native MCP server connections. Supports Local (stdio), HTTP, and SSE transport types. Local servers are configured with a command, arguments, working directory, and environment variables (sensitive values are masked). HTTP/SSE servers are configured with a URL and optional headers. Each server has a configurable timeout.
 - **Tools** — Toggle any tool on/off, view risk level badges (🟢 low, 🟡 medium, 🔴 high), grouped by category. Each tool also has a **🔓/🔒 global approval lock** toggle — see [Global Tool Approval Lock](#global-tool-approval-lock).
 
@@ -701,7 +709,7 @@ The Import Document feature converts non-Markdown files into editable Markdown d
 
 After import, the converted Markdown is loaded into the editor with a suggested file path (the original filename with a `.md` extension). The document is marked as unsaved — press **Cmd+S** to save it.
 
-> **Prerequisite:** The MarkItDown MCP sidecar (`markitdown-mcp-server`) must be running. Start it via `docker compose up -d markitdown-mcp-server`.
+> **Prerequisite:** The MarkItDown MCP server must be available. Ensure Python 3.10+ and `uvx` are installed.
 
 **Keyboard shortcuts:**
 
@@ -1728,7 +1736,7 @@ Tools can be managed via the **Admin** page at `/admin` or via the REST API. Eac
 
 Navigate to **http://localhost:3001/admin** and scroll to the **Tools** section. Tools are grouped by category (`filesystem`, `search`, `browser`, `shell`, `productivity`, `social`, `documents`, `personal`, `data`, `developer`). Each tool shows its risk level badge and a toggle switch.
 
-For MCP sidecar tools, expand a sidecar card and use the per-tool toggles to enable or disable individual tools within that server.
+For native MCP server tools, expand a server card and use the per-tool toggles to enable or disable individual tools within that server.
 
 ### REST API
 
@@ -2190,29 +2198,20 @@ This starts the complete stack:
 |---|---|---|
 | `agent` | OpenZigs agent server | 3000 |
 | `tunnel` | Cloudflare Tunnel sidecar | — (proxies to `agent:3000`) |
-| `linkedin-mcp-server` | LinkedIn MCP sidecar | 5101 |
-| `twitter-mcp-server` | Twitter/X MCP sidecar | 5102 |
-| `facebook-mcp-server` | Facebook MCP sidecar | 5103 |
-| `pinterest-mcp-server` | Pinterest MCP sidecar | 5104 |
-| `word-mcp-server` | Office Word MCP sidecar | 5201 |
-| `markitdown-mcp-server` | MarkItDown file converter | 5301 |
-| `gmail-mcp-server` | Gmail MCP sidecar | 5302 |
-| `database-mcp-server` | JDBC Database MCP sidecar | 5303 |
-| `github-mcp-server` | GitHub MCP sidecar | 5304 |
 | `audio-sidecar` | Local TTS + STT (MLX) | 5006 |
 
-All containers share the `openzigs-network` Docker bridge. The agent communicates with MCP sidecars via HTTP on their internal ports.
+All MCP tool servers now run as **native subprocesses** via `LocalMcpServerManager` (12 servers: word, markitdown, gmail, database, github, calendar, instagram, facebook, twitter, youtube, linkedin, reddit). They are managed automatically by the agent — no Docker containers needed.
 
 ### Starting Individual Services
 
 If you only need a subset of services:
 
 ```bash
-# Agent + tunnel only (no MCP sidecars)
+# Agent + tunnel only
 docker compose up -d agent tunnel
 
-# Agent + social media sidecars only
-docker compose up -d agent linkedin-mcp-server twitter-mcp-server
+# Agent only (no tunnel, no audio sidecar)
+docker compose up -d agent
 ```
 
 > **Note:** If an MCP sidecar is not running, the corresponding tools will return connection errors when invoked. The agent does not currently health-check sidecars on startup.

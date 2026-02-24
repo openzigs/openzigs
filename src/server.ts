@@ -53,11 +53,12 @@ import { createAudioRouter } from "./api/audio.js";
 import { createPresenterRouter } from "./api/presenter.js";
 import { createSocialRouter } from "./api/social.js";
 import { SocialRepository } from "./channels/social/social-repository.js";
-import { SocialIngestionService, InstagramAdapter } from "./channels/social/social-ingestion.js";
+import { SocialIngestionService, InstagramAdapter, FacebookAdapter, TwitterAdapter, LinkedInAdapter } from "./channels/social/social-ingestion.js";
 import { SocialBrain } from "./channels/social/social-brain.js";
 import { HandoffManager } from "./channels/social/handoff-manager.js";
 import { CommentRuleEngine } from "./channels/social/comment-rule-engine.js";
-import { PostContextService, InstagramApiClient } from "./channels/social/platform-api-client.js";
+import { PostContextService, InstagramApiClient, FacebookApiClient, TwitterApiClient, YouTubeApiClient, LinkedInApiClient } from "./channels/social/platform-api-client.js";
+import { DmDispatcher } from "./channels/social/dm-dispatcher.js";
 import { PresentationRepository } from "./presenter/presentation-repository.js";
 import { detectChapters, computeQuizTimestamps } from "./presenter/chapter-detector.js";
 import { generateThumbnail } from "./presenter/thumbnail-generator.js";
@@ -327,10 +328,39 @@ if (instagramToken) {
   postContextService.registerClient(new InstagramApiClient(instagramToken));
 }
 
+const facebookToken = process.env.FACEBOOK_PAGE_ACCESS_TOKEN ?? "";
+if (facebookToken) {
+  postContextService.registerClient(new FacebookApiClient(facebookToken));
+}
+
+const twitterBearerToken = process.env.TWITTER_BEARER_TOKEN ?? "";
+if (twitterBearerToken) {
+  postContextService.registerClient(new TwitterApiClient(twitterBearerToken));
+}
+
+const youtubeApiKey = process.env.YOUTUBE_API_KEY ?? "";
+if (youtubeApiKey) {
+  postContextService.registerClient(new YouTubeApiClient(youtubeApiKey));
+}
+
+const linkedinAccessToken = process.env.LINKEDIN_ACCESS_TOKEN ?? "";
+if (linkedinAccessToken) {
+  postContextService.registerClient(new LinkedInApiClient(linkedinAccessToken));
+}
+
 // Only register platform adapters when credentials are actually configured
 const socialAdapters: import("./channels/social/social-ingestion.js").SocialPlatformAdapter[] = [];
 if (instagramToken) {
   socialAdapters.push(new InstagramAdapter());
+}
+if (facebookToken) {
+  socialAdapters.push(new FacebookAdapter());
+}
+if (twitterBearerToken) {
+  socialAdapters.push(new TwitterAdapter());
+}
+if (linkedinAccessToken) {
+  socialAdapters.push(new LinkedInAdapter());
 }
 
 const socialIngestion = new SocialIngestionService({
@@ -354,6 +384,13 @@ const socialHandoff = new HandoffManager({
 const commentRuleEngine = new CommentRuleEngine({
   repository: socialRepository,
 });
+
+// Wire DM dispatcher into comment rule engine
+if (localServerManager) {
+  const dmDispatcher = new DmDispatcher({ localServerManager });
+  commentRuleEngine.setSendDm(dmDispatcher.createDmSender());
+  commentRuleEngine.setReplyToComment(dmDispatcher.createCommentReplier());
+}
 
 // Wire ingestion → brain → handoff pipeline
 socialIngestion.on("message", async ({ message, contact, raw }) => {

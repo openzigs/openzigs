@@ -12,7 +12,7 @@ export type VaultRouterOptions = {
   vaultService: SecretVaultService;
 };
 
-export const createVaultRouter = ({ vaultService }: VaultRouterOptions) => {
+export const createVaultRouter = ({ vaultService }: VaultRouterOptions): Router => {
   const router = Router();
 
   // ── Vault status ──

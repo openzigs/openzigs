@@ -28,6 +28,11 @@ import { createVideoTools } from "./tools/video-tools.js";
 import { createShortsTools } from "./tools/shorts-tools.js";
 import { createBlogTools } from "./tools/blog-tools.js";
 import { createSocialBrainTools } from "./tools/social-brain-tools.js";
+import { createFacebookTools } from "./tools/facebook-tools.js";
+import { createTwitterTools } from "./tools/twitter-tools.js";
+import { createYouTubeTools } from "./tools/youtube-tools.js";
+import { createLinkedInTools } from "./tools/linkedin-tools.js";
+import { createRedditTools } from "./tools/reddit-tools.js";
 import { ToolRegistry, type ToolDefinition } from "./tool-registry.js";
 import type { LocalMcpServerManager } from "./local-mcp-server-manager.js";
 import { AuditLogger } from "../logging/audit-logger.js";
@@ -488,6 +493,26 @@ export const registerMcpTools = (toolRegistry: ToolRegistry, options: RegisterMc
   for (const tool of instagramTools) {
     registerTool(tool);
   }
+
+  // ── Facebook Tools (Local python MCP server) ──
+  const facebookTools = createFacebookTools({ localServerManager: options.localServerManager });
+  for (const tool of facebookTools) { registerTool(tool); }
+
+  // ── Twitter Tools (Local python MCP server) ──
+  const twitterTools = createTwitterTools({ localServerManager: options.localServerManager });
+  for (const tool of twitterTools) { registerTool(tool); }
+
+  // ── YouTube Tools (Local python MCP server) ──
+  const youtubeTools = createYouTubeTools({ localServerManager: options.localServerManager });
+  for (const tool of youtubeTools) { registerTool(tool); }
+
+  // ── LinkedIn Tools (Local python MCP server) ──
+  const linkedinTools = createLinkedInTools({ localServerManager: options.localServerManager });
+  for (const tool of linkedinTools) { registerTool(tool); }
+
+  // ── Reddit Tools (Local python MCP server) ──
+  const redditTools = createRedditTools({ localServerManager: options.localServerManager });
+  for (const tool of redditTools) { registerTool(tool); }
 
   // ── Agent / Task Tools (spawn-agent) ──
   if (options.taskEngine) {
