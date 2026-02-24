@@ -29,31 +29,41 @@ describe("DmDispatcher", () => {
       expect(mgr.callTool).toHaveBeenCalledWith("facebook", "fb_send_message", expect.objectContaining({ message: "Hi FB!" }));
     });
 
-    it("sends DM via Twitter", async () => {
+    it("sends DM via Twitter using participant_id", async () => {
       const mgr = createMockManager();
       const dispatcher = new DmDispatcher({ localServerManager: mgr });
       const sendDm = dispatcher.createDmSender();
 
       await sendDm("twitter", "user_789", "Hey X!");
-      expect(mgr.callTool).toHaveBeenCalledWith("twitter", "twitter_send_dm", expect.objectContaining({ message: "Hey X!" }));
+      expect(mgr.callTool).toHaveBeenCalledWith("twitter", "twitter_send_dm", {
+        participant_id: "user_789",
+        text: "Hey X!",
+      });
     });
 
-    it("sends DM via LinkedIn", async () => {
+    it("sends DM via LinkedIn using recipient_urn", async () => {
       const mgr = createMockManager();
       const dispatcher = new DmDispatcher({ localServerManager: mgr });
       const sendDm = dispatcher.createDmSender();
 
       await sendDm("linkedin", "urn:li:person:abc", "Hello LinkedIn!");
-      expect(mgr.callTool).toHaveBeenCalledWith("linkedin", "linkedin_send_message", expect.objectContaining({ message: "Hello LinkedIn!" }));
+      expect(mgr.callTool).toHaveBeenCalledWith("linkedin", "linkedin_send_message", {
+        recipient_urn: "urn:li:person:abc",
+        text: "Hello LinkedIn!",
+      });
     });
 
-    it("sends DM via Reddit", async () => {
+    it("sends DM via Reddit using recipient + subject", async () => {
       const mgr = createMockManager();
       const dispatcher = new DmDispatcher({ localServerManager: mgr });
       const sendDm = dispatcher.createDmSender();
 
       await sendDm("reddit", "testuser", "Hello Redditor!");
-      expect(mgr.callTool).toHaveBeenCalledWith("reddit", "reddit_send_message", expect.objectContaining({ message: "Hello Redditor!" }));
+      expect(mgr.callTool).toHaveBeenCalledWith("reddit", "reddit_send_message", {
+        recipient: "testuser",
+        subject: "Message from OpenZigs",
+        text: "Hello Redditor!",
+      });
     });
 
     it("throws for unsupported platform (youtube DM)", async () => {
@@ -130,7 +140,7 @@ describe("DmDispatcher", () => {
       });
     });
 
-    it("replies to comment via LinkedIn using linkedin_reply_to_comment tool", async () => {
+    it("replies to LinkedIn comment with post_urn empty when no postId provided", async () => {
       const mgr = createMockManager();
       const dispatcher = new DmDispatcher({ localServerManager: mgr });
       const replier = dispatcher.createCommentReplier();
@@ -140,6 +150,19 @@ describe("DmDispatcher", () => {
         comment_urn: "li_comment_1",
         text: "Insightful!",
         post_urn: "",
+      });
+    });
+
+    it("replies to LinkedIn comment with post_urn populated when postId is provided", async () => {
+      const mgr = createMockManager();
+      const dispatcher = new DmDispatcher({ localServerManager: mgr });
+      const replier = dispatcher.createCommentReplier();
+
+      await replier("linkedin", "li_comment_1", "Insightful!", "urn:li:share:9999");
+      expect(mgr.callTool).toHaveBeenCalledWith("linkedin", "linkedin_reply_to_comment", {
+        comment_urn: "li_comment_1",
+        text: "Insightful!",
+        post_urn: "urn:li:share:9999",
       });
     });
 

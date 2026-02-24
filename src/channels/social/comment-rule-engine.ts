@@ -8,7 +8,7 @@ import type {
 } from "./types.js";
 
 export type DmSender = (platform: SocialPlatform, userId: string, text: string) => Promise<void>;
-export type CommentReplier = (platform: SocialPlatform, commentId: string, text: string) => Promise<void>;
+export type CommentReplier = (platform: SocialPlatform, commentId: string, text: string, postId?: string) => Promise<void>;
 
 export interface CommentRuleEngineOpts {
   repository: SocialRepository;
@@ -165,7 +165,7 @@ export class CommentRuleEngine extends EventEmitter {
     if (rule.comment_reply_template && this.replyToComment) {
       try {
         const reply = interpolateTemplate(rule.comment_reply_template, vars);
-        await this.replyToComment(comment.platform, comment.commentId, reply);
+        await this.replyToComment(comment.platform, comment.commentId, reply, comment.postId);
         commentReplied = true;
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);

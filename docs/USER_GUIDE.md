@@ -98,8 +98,9 @@ GOOGLE_APPLICATION_CREDENTIALS=/path/to/your/service-account-key.json
 # TWITTER_BEARER_TOKEN=your-twitter-bearer-token
 # TWITTER_API_KEY=your-twitter-api-key
 # TWITTER_API_SECRET=your-twitter-api-key-secret
-# YouTube (Data API v3)
+# YouTube (Data API v3 — API key for reads, OAuth token for write operations like replying to comments)
 # YOUTUBE_API_KEY=your-youtube-api-key
+# YOUTUBE_OAUTH_TOKEN=your-youtube-oauth-token
 # LinkedIn (API v2)
 # LINKEDIN_ACCESS_TOKEN=your-linkedin-access-token
 # Reddit (OAuth2)
@@ -287,9 +288,7 @@ The admin page at `/admin` consolidates all configuration:
 - **Custom Agents** — Create, edit, and delete custom agent archetypes. Each agent has a name (identifier), display name, description, system prompt, tool allowlist (multi-select grouped by category), and auto-invoke toggle. Agents are displayed as cards with tool badges and infer indicators.
 
 ![New Agent form — name, description, system prompt, tool selection, and auto-invoke toggle](images/admin-new-agent-form.png)
-- **MCP Servers** — View status of native MCP servers (social platforms, document tools, personal assistant tools). Toggle per-tool within each server.
-- **Local MCP Servers** — View status of locally-running MCP servers (all 12 native servers).
-- **Native MCP Servers** — Define and manage native MCP server connections. Supports Local (stdio), HTTP, and SSE transport types. Local servers are configured with a command, arguments, working directory, and environment variables (sensitive values are masked). HTTP/SSE servers are configured with a URL and optional headers. Each server has a configurable timeout.
+- **MCP Servers** — View and manage all 12 native MCP servers (social platforms, document tools, personal assistant, developer tools). See live running status for each server, toggle individual tools on/off, and define server connections (Local stdio, HTTP, SSE). Local servers are configured with a command, arguments, working directory, and masked environment variables. HTTP/SSE servers are configured with a URL and optional headers. Each server has a configurable timeout.
 - **Tools** — Toggle any tool on/off, view risk level badges (🟢 low, 🟡 medium, 🔴 high), grouped by category. Each tool also has a **🔓/🔒 global approval lock** toggle — see [Global Tool Approval Lock](#global-tool-approval-lock).
 
 ![Admin tools with global approval lock toggles — 🔓 unlocked, 🔒 locked](images/admin-tools-global-lock.png)

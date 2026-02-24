@@ -445,7 +445,7 @@ All MCP servers now run as **native subprocesses** via `LocalMcpServerManager` (
 | `mcp-markitdown` | `uvx` (Python) | MarkItDown | documents |
 | `mcp-gmail` | `npx` (Node.js) | Gmail | personal |
 | `mcp-database` | `jbang` (Java) | JDBC Database | data |
-| `mcp-github` | `npx` (Go) | GitHub | developer |
+| `mcp-github` | `npx` (Node.js) | GitHub | developer |
 | `mcp-calendar` | `npx` (Node.js) | Google Calendar | personal |
 | `mcp-instagram` | `python` (venv) | Instagram | social |
 | `mcp-facebook` | `python` (venv) | Facebook/Meta | social |
@@ -1640,20 +1640,19 @@ Logs are queryable via `GET /api/logs` with filters for `category`, `level`, `si
 
 Each social platform has a dedicated set of tools backed by its native MCP server:
 
-**Instagram** (12 tools — `external/ig-mcp/`)
+**Instagram** (11 tools — `external/ig-mcp/`, TypeScript handler: `src/mcp/tools/instagram-tools.ts`)
 
 | Tool | Category | Risk | Description |
 |---|---|---|---|
 | `instagram-get-profile` | social | 🟢 low | Get Instagram business profile info. |
-| `instagram-get-media` | social | 🟢 low | Get recent media posts. |
+| `instagram-get-posts` | social | 🟢 low | Get recent media posts with engagement metrics. |
 | `instagram-get-media-insights` | social | 🟢 low | Get insights for a specific post. |
 | `instagram-publish-media` | social | 🔴 high | Upload and publish image/video. |
-| `instagram-get-account-pages` | social | 🟢 low | List connected Facebook pages. |
+| `instagram-get-pages` | social | 🟢 low | List connected Facebook pages. |
 | `instagram-get-account-insights` | social | 🟢 low | Get account-level analytics. |
-| `instagram-validate-token` | social | 🟢 low | Validate access token. |
-| `instagram-get-conversations` | social | 🟢 low | List DM conversations. |
-| `instagram-get-conversation-messages` | social | 🟢 low | Get messages in a DM conversation. |
-| `instagram-send-dm` | social | 🔴 high | Send a DM via Instagram. |
+| `instagram-get-conversations` | social | 🟡 medium | List DM conversations (requires Advanced Access). |
+| `instagram-get-messages` | social | 🟡 medium | Get messages in a DM conversation. |
+| `instagram-send-dm` | social | 🔴 high | Send Instagram DM (24h messaging window, Advanced Access). |
 | `instagram-reply-to-comment` | social | 🟡 medium | Reply to a comment on a post. |
 | `instagram-get-media-comments` | social | 🟢 low | Get comments on a media post. |
 
@@ -3584,18 +3583,18 @@ All clients implement the `PlatformApiClient` interface with `fetchPostContext()
 
 ### DM Dispatcher
 
-The `DmDispatcher` class (`src/channels/social/dm-dispatcher.ts`) provides factory methods for sending DMs and replying to comments across all platforms, routing through the appropriate native MCP server:
+The `DmDispatcher` class (`src/channels/social/dm-dispatcher.ts`) provides factory methods for sending DMs and replying to comments across all platforms, routing through the appropriate native MCP server. Each platform uses different parameter names; `_buildDmArgs()` and `_buildReplyArgs()` handle the translation automatically.
 
-| Platform | DM Tool | Comment Reply Tool |
-|---|---|---|
-| Instagram | `send_dm` | — |
-| Facebook | `fb_send_message` | — |
-| Twitter/X | `twitter_send_dm` | — |
-| YouTube | — (no DM API) | `yt_reply_to_comment` |
-| LinkedIn | `linkedin_send_message` | — |
-| Reddit | `reddit_send_message` | `reddit_reply_to_comment` |
+| Platform | DM Tool | DM Recipient Param | Comment Reply Tool |
+|---|---|---|---|
+| Instagram | `send_dm` | `recipient_id` | `reply_to_comment` |
+| Facebook | `fb_send_message` | `recipient_id` | `fb_reply_to_comment` |
+| Twitter/X | `twitter_send_dm` | `participant_id` | `twitter_post_tweet` (with `reply_to`) |
+| YouTube | — (no DM API) | — | `yt_reply_to_comment` (with `parent_id`) |
+| LinkedIn | `linkedin_send_message` | `recipient_urn` | `linkedin_reply_to_comment` (needs `post_urn`) |
+| Reddit | `reddit_send_message` | `recipient` | `reddit_reply_to_comment` (with `thing_id`) |
 
-The dispatcher is wired into the `CommentRuleEngine` via `setSendDm()` and `setReplyToComment()` callbacks.
+The dispatcher is wired into the `CommentRuleEngine` via `setSendDm()` and `setReplyToComment()` callbacks. For LinkedIn comment replies, the parent `postId` is passed through from the `IncomingComment` to provide the required `post_urn`.
 
 ### Module Structure (`src/channels/social/`)
 

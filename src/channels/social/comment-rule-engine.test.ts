@@ -72,7 +72,7 @@ describe("CommentRuleEngine", () => {
     const comment = makeComment({ text: "I love it!" });
     await engine.evaluate(comment);
 
-    expect(replyToComment).toHaveBeenCalledWith("instagram", "comment_1", expect.stringContaining("Thanks testuser"));
+    expect(replyToComment).toHaveBeenCalledWith("instagram", "comment_1", expect.stringContaining("Thanks testuser"), "post_1");
   });
 
   it("regex match triggers rule when keywords don't match", async () => {

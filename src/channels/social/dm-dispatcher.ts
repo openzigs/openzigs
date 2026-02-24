@@ -41,11 +41,8 @@ export class DmDispatcher {
         throw new Error(`${platform} MCP server is not running`);
       }
 
-      const result = await this.mgr.callTool(mapping.server, mapping.dmTool, {
-        recipient_id: userId,
-        message: text,
-        text,
-      });
+      const args = this._buildDmArgs(platform, userId, text);
+      const result = await this.mgr.callTool(mapping.server, mapping.dmTool, args);
 
       if (result.isError) {
         throw new Error(`DM send failed (${platform}): ${result.text}`);
@@ -57,7 +54,7 @@ export class DmDispatcher {
 
   /** Returns a CommentReplier function compatible with CommentRuleEngine. */
   createCommentReplier(): CommentReplier {
-    return async (platform: SocialPlatform, commentId: string, text: string): Promise<void> => {
+    return async (platform: SocialPlatform, commentId: string, text: string, postId?: string): Promise<void> => {
       const mapping = PLATFORM_DM_MAP[platform];
       if (!mapping?.replyTool) {
         throw new Error(`Comment reply not supported for platform: ${platform}`);
@@ -67,7 +64,7 @@ export class DmDispatcher {
         throw new Error(`${platform} MCP server is not running`);
       }
 
-      const args = this._buildReplyArgs(platform, commentId, text);
+      const args = this._buildReplyArgs(platform, commentId, text, postId);
       const result = await this.mgr.callTool(mapping.server, mapping.replyTool, args);
 
       if (result.isError) {
@@ -79,10 +76,33 @@ export class DmDispatcher {
   }
 
   /**
-   * Build platform-specific arguments for the reply tool.
-   * Each MCP server has different parameter names.
+   * Build platform-specific arguments for DM tools.
+   * Each MCP server uses a different parameter name for the recipient ID.
    */
-  private _buildReplyArgs(platform: string, commentId: string, text: string): Record<string, string> {
+  private _buildDmArgs(platform: string, userId: string, text: string): Record<string, string> {
+    switch (platform) {
+      case "twitter":
+        // twitter_send_dm expects participant_id + text
+        return { participant_id: userId, text };
+      case "linkedin":
+        // linkedin_send_message expects recipient_urn + text
+        return { recipient_urn: userId, text };
+      case "reddit":
+        // reddit_send_message expects recipient + subject + text
+        return { recipient: userId, subject: "Message from OpenZigs", text };
+      case "instagram":
+      case "facebook":
+      default:
+        // send_dm / fb_send_message expect recipient_id + message
+        return { recipient_id: userId, message: text };
+    }
+  }
+
+  /**
+   * Build platform-specific arguments for comment reply tools.
+   * Each MCP server uses different parameter names.
+   */
+  private _buildReplyArgs(platform: string, commentId: string, text: string, postId?: string): Record<string, string> {
     switch (platform) {
       case "twitter":
         return { text, reply_to: commentId };
@@ -95,7 +115,8 @@ export class DmDispatcher {
       case "facebook":
         return { comment_id: commentId, message: text };
       case "linkedin":
-        return { comment_urn: commentId, text, post_urn: "" };
+        // linkedin_reply_to_comment requires the parent post URN for the API endpoint path
+        return { comment_urn: commentId, text, post_urn: postId ?? "" };
       default:
         return { comment_id: commentId, text, message: text };
     }
