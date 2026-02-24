@@ -290,8 +290,8 @@ ui/
 │   ├── admin/
 │   │   ├── tools-panel.tsx        # Tool list with risk badges + toggles
 │   │   ├── channels-panel.tsx     # Telegram + Discord config forms
-│   │   ├── sidecars-panel.tsx     # Docker sidecar management
-│   │   ├── local-servers-panel.tsx # Local MCP server status
+│   │   ├── sidecars-panel.tsx     # Docker sidecar management (deprecated, removed from admin page)
+│   │   ├── local-servers-panel.tsx # Local MCP server status (includes all social platform servers)
 │   │   ├── personality-panel.tsx  # System instruction + pre/post prompts + mode selector
 │   │   ├── model-config-panel.tsx # Reasoning effort + BYOK provider configuration
 │   │   ├── agents-panel.tsx       # Custom agent CRUD with tool multi-select
@@ -492,18 +492,20 @@ Full GitHub API access — repos, issues, PRs, code search, actions. Uses a GitH
 
 #### Multi-Platform Social MCP Servers
 
-Five social platform MCP servers live under `external/` as Python FastMCP applications, each with its own virtualenv:
+Six social platform MCP servers live under `external/` as Python applications using the official MCP SDK, each with its own virtualenv:
 
-| Server | Directory | Tools | API |
-|---|---|---|---|
-| Instagram | `external/ig-mcp/` | 9 tools | Instagram Graph API |
-| Facebook | `external/fb-mcp/` | 8 tools | Meta Graph API v24.0 |
-| Twitter/X | `external/twitter-mcp/` | 8 tools | Twitter API v2 (OAuth 1.0a) |
-| YouTube | `external/youtube-mcp/` | 7 tools | YouTube Data API v3 |
-| LinkedIn | `external/linkedin-mcp/` | 6 tools | LinkedIn API v2 |
-| Reddit | `external/reddit-mcp/` | 8 tools | Reddit OAuth2 |
+| Server | Directory | Tools | API | Key Capabilities |
+|---|---|---|---|---|
+| Instagram | `external/ig-mcp/` | 12 tools | Instagram Graph API | DMs, comment replies, post context, analytics, media publish |
+| Facebook | `external/fb-mcp/` | 10 tools | Meta Graph API v24.0 | Messenger DMs, comment replies, post reads, page analytics |
+| Twitter/X | `external/twitter-mcp/` | 8 tools | Twitter API v2 (OAuth 1.0a) | DMs, tweet replies, search, user lookup |
+| YouTube | `external/youtube-mcp/` | 7 tools | YouTube Data API v3 | Comment replies, video search, channel analytics |
+| LinkedIn | `external/linkedin-mcp/` | 8 tools | LinkedIn API v2 | DMs (partner-only), comment replies, post/company reads |
+| Reddit | `external/reddit-mcp/` | 8 tools | Reddit OAuth2 | Private messages, comment replies, post/search reads |
 
-Each server requires platform-specific API credentials set as environment variables. See respective `README.md` files in `external/` for setup instructions.
+All servers use **official platform APIs** (no scraping or unofficial endpoints). Each requires platform-specific API credentials set as environment variables. See respective `README.md` files in `external/` for setup instructions.
+
+The `DmDispatcher` (`src/channels/social/dm-dispatcher.ts`) routes DM sends and comment replies to the correct MCP server, translating Social Brain's platform-agnostic calls into platform-specific tool invocations.
 
 ---
 
@@ -1638,21 +1640,24 @@ Logs are queryable via `GET /api/logs` with filters for `category`, `level`, `si
 
 Each social platform has a dedicated set of tools backed by its native MCP server:
 
-**Instagram** (9 tools — `external/ig-mcp/`)
+**Instagram** (12 tools — `external/ig-mcp/`)
 
 | Tool | Category | Risk | Description |
 |---|---|---|---|
 | `instagram-get-profile` | social | 🟢 low | Get Instagram business profile info. |
 | `instagram-get-media` | social | 🟢 low | Get recent media posts. |
-| `instagram-get-media-details` | social | 🟢 low | Get details for a specific media post. |
-| `instagram-get-comments` | social | 🟢 low | Get comments on a media post. |
-| `instagram-reply-to-comment` | social | 🟡 medium | Reply to a comment. |
-| `instagram-get-stories` | social | 🟢 low | Get current stories. |
-| `instagram-get-insights` | social | 🟢 low | Get account insights and analytics. |
-| `instagram-search-hashtags` | social | 🟢 low | Search hashtag media. |
+| `instagram-get-media-insights` | social | 🟢 low | Get insights for a specific post. |
+| `instagram-publish-media` | social | 🔴 high | Upload and publish image/video. |
+| `instagram-get-account-pages` | social | 🟢 low | List connected Facebook pages. |
+| `instagram-get-account-insights` | social | 🟢 low | Get account-level analytics. |
+| `instagram-validate-token` | social | 🟢 low | Validate access token. |
+| `instagram-get-conversations` | social | 🟢 low | List DM conversations. |
+| `instagram-get-conversation-messages` | social | 🟢 low | Get messages in a DM conversation. |
 | `instagram-send-dm` | social | 🔴 high | Send a DM via Instagram. |
+| `instagram-reply-to-comment` | social | 🟡 medium | Reply to a comment on a post. |
+| `instagram-get-media-comments` | social | 🟢 low | Get comments on a media post. |
 
-**Facebook** (8 tools — `external/fb-mcp/`)
+**Facebook** (10 tools — `external/fb-mcp/`)
 
 | Tool | Category | Risk | Description |
 |---|---|---|---|
@@ -1662,8 +1667,10 @@ Each social platform has a dedicated set of tools backed by its native MCP serve
 | `facebook-publish-post` | social | 🔴 high | Publish a post to the page. |
 | `facebook-get-conversations` | social | 🟢 low | Get page conversations (inbox). |
 | `facebook-get-messages` | social | 🟢 low | Get messages in a conversation. |
-| `facebook-send-message` | social | 🔴 high | Send a message to a conversation. |
+| `facebook-send-message` | social | 🔴 high | Send a Messenger message. |
 | `facebook-get-page-insights` | social | 🟢 low | Get page-level analytics. |
+| `facebook-get-post-comments` | social | 🟢 low | Get comments on a page post. |
+| `facebook-reply-to-comment` | social | 🟡 medium | Reply to a comment on a page post. |
 
 **Twitter/X** (8 tools — `external/twitter-mcp/`)
 
@@ -1673,7 +1680,7 @@ Each social platform has a dedicated set of tools backed by its native MCP serve
 | `twitter-get-user-tweets` | social | 🟢 low | Get a user's recent tweets. |
 | `twitter-search-tweets` | social | 🟢 low | Search tweets by query. |
 | `twitter-get-tweet` | social | 🟢 low | Get a specific tweet by ID. |
-| `twitter-post-tweet` | social | 🔴 high | Post a new tweet. |
+| `twitter-post-tweet` | social | 🔴 high | Post a new tweet (also used for replies via `reply_to` param). |
 | `twitter-get-dm-events` | social | 🟢 low | Get recent DM events. |
 | `twitter-send-dm` | social | 🔴 high | Send a direct message. |
 | `twitter-get-user` | social | 🟢 low | Get user profile by username. |
@@ -1686,11 +1693,11 @@ Each social platform has a dedicated set of tools backed by its native MCP serve
 | `youtube-get-channel-videos` | social | 🟢 low | List channel videos. |
 | `youtube-get-video-details` | social | 🟢 low | Get video details by ID. |
 | `youtube-get-video-comments` | social | 🟢 low | Get video comment threads. |
-| `youtube-reply-to-comment` | social | 🟡 medium | Reply to a YouTube comment. |
+| `youtube-reply-to-comment` | social | 🟡 medium | Reply to a YouTube comment (requires OAuth). |
 | `youtube-search-videos` | social | 🟢 low | Search YouTube videos. |
 | `youtube-get-channel-analytics` | social | 🟢 low | Get channel analytics. |
 
-**LinkedIn** (6 tools — `external/linkedin-mcp/`)
+**LinkedIn** (8 tools — `external/linkedin-mcp/`)
 
 | Tool | Category | Risk | Description |
 |---|---|---|---|
@@ -1698,8 +1705,10 @@ Each social platform has a dedicated set of tools backed by its native MCP serve
 | `linkedin-get-posts` | social | 🟢 low | Get recent posts. |
 | `linkedin-create-post` | social | 🔴 high | Create a LinkedIn post. |
 | `linkedin-get-company` | social | 🟢 low | Get company page info. |
-| `linkedin-send-message` | social | 🔴 high | Send a LinkedIn message. |
+| `linkedin-send-message` | social | 🔴 high | Send a LinkedIn message (partner-only). |
 | `linkedin-get-conversations` | social | 🟢 low | Get messaging conversations. |
+| `linkedin-get-post-comments` | social | 🟢 low | Get comments on a post. |
+| `linkedin-reply-to-comment` | social | 🟡 medium | Reply to a comment on a post. |
 
 **Reddit** (8 tools — `external/reddit-mcp/`)
 

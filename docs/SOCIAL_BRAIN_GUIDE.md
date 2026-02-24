@@ -29,8 +29,13 @@ This guide walks through every step needed to get Social Brain running: Cloudfla
 - [AI Auto-Reply (Brain Engine)](#ai-auto-reply-brain-engine)
 - [Human Handoff](#human-handoff)
 - [MCP Tools (Chat Interface)](#mcp-tools-chat-interface)
+  - [Social CRM Tools](#social-crm-tools)
+  - [Platform-Specific Tools](#platform-specific-tools)
+- [Native MCP Server Configuration](#native-mcp-server-configuration)
 - [Testing with Curl](#testing-with-curl)
   - [Simulating an Instagram Comment Webhook](#simulating-an-instagram-comment-webhook)
+  - [Simulating a Facebook Page Comment Webhook](#simulating-a-facebook-page-comment-webhook)
+  - [Simulating a Twitter Mention](#simulating-a-twitter-mention)
   - [Simulating an Instagram DM Webhook](#simulating-an-instagram-dm-webhook)
   - [CRM and Activity Endpoints](#crm-and-activity-endpoints)
   - [Automation Rules CRUD](#automation-rules-crud)
@@ -45,10 +50,12 @@ This guide walks through every step needed to get Social Brain running: Cloudfla
 ```
                                      ┌─────────────────────┐
   Instagram ─── webhook POST ───────►│                     │
-  YouTube   ─── PubSubHubbub ──────►│  Cloudflare Tunnel  │
+  Facebook  ─── webhook POST ───────►│  Cloudflare Tunnel  │
   Twitter   ─── Account Activity ──►│   (cloudflared)     │
-  TikTok    ─── webhook POST ──────►│                     │
-                                     └────────┬────────────┘
+  TikTok    ─── webhook POST ───────►│                     │
+  YouTube   ─── polling ────────────►│                     │
+  LinkedIn  ─── polling ────────────►└────────┬────────────┘
+  Reddit    ─── polling ─────────────────────►│
                                               │ http://localhost:3000
                                               ▼
                                    ┌──────────────────────┐
@@ -62,27 +69,52 @@ This guide walks through every step needed to get Social Brain running: Cloudfla
                  │  Ingestion   │  │ Comment Rule │  │   Social Brain   │
                  │  Service     │  │   Engine     │  │   (AI Reply)     │
                  │  (normalize) │  │  (keyword →  │  │  (RAG + LLM)    │
-                 │              │  │   DM/reply)  │  │                  │
-                 └──────┬───────┘  └──────────────┘  └────────┬─────────┘
-                        │                                      │
-                        ▼                                      ▼
-                 ┌──────────────┐                    ┌──────────────────┐
-                 │  CRM (SQLite)│                    │  Handoff Manager │
-                 │  contacts,   │                    │  (Discord/       │
-                 │  messages,   │                    │   Telegram)      │
-                 │  rules, log  │                    └──────────────────┘
-                 └──────────────┘
+                 │              │  │ DM/reply)    │  │                  │
+                 └──────┬───────┘  └──────┬───────┘  └────────┬─────────┘
+                        │                 │                    │
+                        ▼                 ▼                    ▼
+                 ┌──────────────┐  ┌──────────────┐  ┌──────────────────┐
+                 │  CRM (SQLite)│  │ DmDispatcher │  │  Handoff Manager │
+                 │  contacts,   │  │  (routes DMs │  │  (Discord/       │
+                 │  messages,   │  │  and replies │  │   Telegram)      │
+                 │  rules, log  │  │  to native   │  └──────────────────┘
+                 └──────────────┘  │  MCP servers)│
+                                   └──────┬───────┘
+                                          │
+              ┌───────────────────────────┼────────────────────────────┐
+              ▼                           ▼                            ▼
+   ┌─────────────────────┐  ┌─────────────────────┐  ┌─────────────────────┐
+   │  ig-mcp (Python)    │  │  fb-mcp (Python)    │  │  twitter-mcp        │
+   │  instagram native   │  │  facebook native    │  │  (Python) native    │
+   │  stdio subprocess   │  │  stdio subprocess   │  │  stdio subprocess   │
+   └─────────────────────┘  └─────────────────────┘  └─────────────────────┘
 ```
 
 **Data flow:**
 
-1. Platform sends webhook to your public URL → Cloudflare Tunnel → OpenZigs
-2. Platform adapter parses the payload into a normalised message/comment
-3. Comments are enriched with post context (caption, permalink) via the platform API
-4. Comment Rule Engine evaluates keyword/regex rules for comment-to-DM automation
+1. Platform sends webhook / polling adapter fetches new comments → Cloudflare Tunnel → OpenZigs
+2. Platform adapter parses the payload into a normalised `IncomingComment` or `IncomingMessage`
+3. Comments are enriched with post context (caption, permalink) via the platform's HTTP API (`PlatformApiClient`)
+4. Comment Rule Engine evaluates keyword/regex rules for comment-to-DM and comment-reply automation
 5. DMs are processed by the Brain Engine (RAG + LLM) for AI auto-replies
-6. Low-confidence replies are escalated to a human via Discord/Telegram handoff
-7. Everything is logged in the CRM (contacts, messages, automation log)
+6. `DmDispatcher` routes DMs and comment replies to the correct native MCP server subprocess
+7. Low-confidence replies are escalated to a human via Discord/Telegram handoff
+8. Everything is logged in the CRM (contacts, messages, automation log)
+
+### MCP Server Architecture
+
+All social platform interactions use **native MCP servers** (stdio subprocess transport, managed by `LocalMcpServerManager`). There are no Docker MCP sidecars. The native servers start automatically when the agent boots, provided the required credentials are configured.
+
+| MCP Server | Runtime | Tools | Used For |
+|------------|---------|-------|----------|
+| `ig-mcp` | Python (uvx) | 12 | Instagram DMs (`send_dm`), comment replies (`reply_to_comment`), post reads, analytics, media publish |
+| `fb-mcp` | Python (uvx) | 10 | Facebook Messenger (`fb_send_message`), comment replies (`fb_reply_to_comment`), page analytics |
+| `twitter-mcp` | Python (uvx) | 8 | Twitter DMs (`twitter_send_dm`), tweet replies (`twitter_post_tweet` w/ `reply_to`), search |
+| `youtube-mcp` | Python (uvx) | 7 | YouTube comment replies (`yt_reply_to_comment`), video search, analytics (no DM API) |
+| `linkedin-mcp` | Python (uvx) | 8 | LinkedIn DMs (`linkedin_send_message`, partner-only), comment replies (`linkedin_reply_to_comment`) |
+| `reddit-mcp` | Python (uvx) | 8 | Reddit messages (`reddit_send_message`), comment replies (`reddit_reply_to_comment`), search |
+
+The `DmDispatcher` (`src/channels/social/dm-dispatcher.ts`) provides a platform-agnostic interface over these servers. It maps Social Brain's `sendDm(platform, userId, text)` and `replyToComment(platform, commentId, text)` calls to the correct MCP server tool with platform-specific parameter names.
 
 ---
 
@@ -232,9 +264,6 @@ Edit `~/.openzigs/config.json`:
 ```bash
 # Install cloudflared as a system service (runs on boot)
 sudo cloudflared service install
-
-# Or on macOS with launchd
-sudo cloudflared service install
 ```
 
 The service reads `~/.cloudflared/config.yml` automatically.
@@ -252,6 +281,8 @@ docker compose up -d
 ```
 
 The Docker tunnel sidecar connects to Cloudflare using the `TUNNEL_TOKEN` (generated in the Cloudflare Zero Trust dashboard under **Networks → Tunnels → Create a tunnel → Cloudflared connector**).
+
+> **Note:** Docker Compose only contains `agent`, `tunnel`, and `audio-sidecar` services. All social MCP servers run as native subprocesses inside the `agent` container — they are not separate Docker services.
 
 ### Verifying the Tunnel
 
@@ -283,14 +314,35 @@ Add these to your `.env` file at the project root:
 # ── Required for Social Brain ──
 SOCIAL_WEBHOOK_VERIFY_TOKEN=your-random-secret-string   # Used by Meta/TikTok to verify webhook subscriptions
 
-# ── Platform Access Tokens (set only the platforms you use) ──
-INSTAGRAM_ACCESS_TOKEN=your-instagram-user-access-token  # Meta Graph API token for Instagram
-# FACEBOOK_ACCESS_TOKEN=your-facebook-page-access-token  # For Facebook Pages
-# TWITTER_ACCESS_TOKEN=your-twitter-bearer-token         # X/Twitter API v2
-# TIKTOK_ACCESS_TOKEN=your-tiktok-access-token           # TikTok for Developers
-# YOUTUBE_ACCESS_TOKEN=your-youtube-api-key              # YouTube Data API v3
-# REDDIT_ACCESS_TOKEN=your-reddit-token                  # Reddit API (OAuth)
-# LINKEDIN_ACCESS_TOKEN=your-linkedin-token              # LinkedIn Marketing API
+# ── Instagram (Meta Graph API) ──
+INSTAGRAM_ACCESS_TOKEN=your-instagram-user-access-token
+INSTAGRAM_BUSINESS_ACCOUNT_ID=your-instagram-business-account-id
+FACEBOOK_APP_ID=your-meta-app-id
+FACEBOOK_APP_SECRET=your-meta-app-secret
+
+# ── Facebook Pages (same Meta app, different token) ──
+FACEBOOK_PAGE_TOKEN=your-facebook-page-access-token
+# FACEBOOK_APP_ID and FACEBOOK_APP_SECRET shared with Instagram above
+
+# ── Twitter / X ──
+TWITTER_BEARER_TOKEN=your-twitter-bearer-token
+TWITTER_API_KEY=your-twitter-api-key
+TWITTER_API_SECRET=your-twitter-api-key-secret
+
+# ── YouTube (Google Cloud API key) ──
+YOUTUBE_API_KEY=your-youtube-data-api-v3-key
+
+# ── LinkedIn ──
+LINKEDIN_ACCESS_TOKEN=your-linkedin-access-token
+
+# ── Reddit (OAuth2 script app) ──
+REDDIT_CLIENT_ID=your-reddit-client-id
+REDDIT_CLIENT_SECRET=your-reddit-client-secret
+REDDIT_USERNAME=your-reddit-bot-username
+REDDIT_PASSWORD=your-reddit-bot-password
+
+# ── TikTok (if configured) ──
+# TIKTOK_ACCESS_TOKEN=your-tiktok-access-token
 ```
 
 Generate a random verify token:
@@ -318,7 +370,26 @@ Platform connections can also be configured in `~/.openzigs/config.json`:
         "mode": "webhook",
         "accessToken": "your-token-here"
       },
+      "facebook": {
+        "enabled": true,
+        "mode": "webhook",
+        "pageToken": "your-page-token"
+      },
+      "twitter": {
+        "enabled": true,
+        "mode": "webhook"
+      },
       "youtube": {
+        "enabled": true,
+        "mode": "polling",
+        "pollIntervalSeconds": 120
+      },
+      "linkedin": {
+        "enabled": true,
+        "mode": "polling",
+        "pollIntervalSeconds": 300
+      },
+      "reddit": {
         "enabled": true,
         "mode": "polling",
         "pollIntervalSeconds": 120
@@ -328,7 +399,7 @@ Platform connections can also be configured in `~/.openzigs/config.json`:
 }
 ```
 
-> **Note:** Environment variables take precedence over config file values. If both `INSTAGRAM_ACCESS_TOKEN` and `socialBrain.connections.instagram.accessToken` are set, the env var wins.
+> **Note:** Environment variables take precedence over config file values.
 
 ---
 
@@ -336,7 +407,7 @@ Platform connections can also be configured in `~/.openzigs/config.json`:
 
 ### Instagram / Facebook (Meta Graph API)
 
-Instagram webhooks are delivered via the Meta Graph API. You need a **Meta Developer App** with the **Instagram** product added.
+Instagram and Facebook both use the Meta Graph API and can share the same Meta Developer App.
 
 #### Prerequisites
 
@@ -352,15 +423,16 @@ Instagram webhooks are delivered via the Meta Graph API. You need a **Meta Devel
 3. Enter an app name (e.g., "OpenZigs Social Brain") and select your business portfolio
 4. Click **Create App**
 
-**2. Add Instagram Product**
+**2. Add Instagram and Messenger Products**
 
 1. In the app dashboard, click **Add Product** in the left sidebar
 2. Find **Instagram** and click **Set Up**
-3. This adds Instagram API access to your app
+3. Also add **Messenger** (for Facebook Page DMs)
 
-**3. Generate Access Token**
+**3. Generate Access Tokens**
 
-1. Navigate to **Instagram → API Setup with Instagram Login** (or **Basic Display**)
+For **Instagram:**
+1. Navigate to **Instagram → API Setup with Instagram Login**
 2. Add your Instagram Professional account as a test user
 3. Generate a **User Access Token** with these permissions:
    - `instagram_basic`
@@ -368,26 +440,31 @@ Instagram webhooks are delivered via the Meta Graph API. You need a **Meta Devel
    - `instagram_manage_messages`
    - `pages_show_list`
    - `pages_read_engagement`
-4. Copy the token and set it as `INSTAGRAM_ACCESS_TOKEN` in your `.env`
+4. Copy the token → set as `INSTAGRAM_ACCESS_TOKEN`
+5. Find your Instagram Business Account ID → set as `INSTAGRAM_BUSINESS_ACCOUNT_ID`
+6. Set `FACEBOOK_APP_ID` and `FACEBOOK_APP_SECRET` from your app's Basic Settings
 
-> **Token expiry:** Instagram User Access Tokens expire after 60 days. For production, implement token refresh using the [long-lived token exchange](https://developers.facebook.com/docs/instagram-platform/instagram-api-with-instagram-login/business-login#exchange-a-short-lived-token-for-a-long-lived-token). Short-lived tokens last 1 hour.
+For **Facebook Pages:**
+1. Generate a **Page Access Token** for your Facebook Page (under Messenger settings)
+2. Set it as `FACEBOOK_PAGE_TOKEN`
+
+> **Token expiry:** Instagram User Access Tokens expire after 60 days. For production, implement token refresh using the [long-lived token exchange](https://developers.facebook.com/docs/instagram-platform/instagram-api-with-instagram-login/business-login#exchange-a-short-lived-token-for-a-long-lived-token).
 
 **4. Configure Webhooks**
 
-1. In the app dashboard, navigate to **Instagram → Webhooks** (left sidebar)
-2. Click **Configure** (or **Subscribe to events**)
-3. Enter:
+For **Instagram:**
+1. Navigate to **Instagram → Webhooks** → **Configure**
+2. Enter:
    - **Callback URL:** `https://<your-tunnel-url>/api/social/webhooks/instagram`
-   - **Verify Token:** the same value as `SOCIAL_WEBHOOK_VERIFY_TOKEN` in your `.env`
-4. Click **Verify and Save**
-   - Meta sends a `GET` request with `hub.mode=subscribe`, `hub.verify_token`, and `hub.challenge`
-   - OpenZigs validates the token and responds with the `hub.challenge` value
-   - If verification fails, check that your tunnel is running and the verify token matches
-5. Subscribe to these webhook fields:
-   - `comments` — triggers when someone comments on your posts
-   - `messages` — triggers when someone sends a DM
-   - `messaging_postbacks` — (optional) for quick reply buttons
-   - `messaging_referral` — (optional) for ad click-to-message
+   - **Verify Token:** same value as `SOCIAL_WEBHOOK_VERIFY_TOKEN`
+3. Subscribe to: `comments`, `messages`, `messaging_postbacks`
+
+For **Facebook Pages:**
+1. Navigate to **Messenger → Webhooks** → **Add Callback URL**
+2. Enter:
+   - **Callback URL:** `https://<your-tunnel-url>/api/social/webhooks/facebook`
+   - **Verify Token:** same as `SOCIAL_WEBHOOK_VERIFY_TOKEN`
+3. Subscribe to: `messages`, `messaging_postbacks`, `feed` (for page comments)
 
 **5. Test It**
 
@@ -395,9 +472,7 @@ Instagram webhooks are delivered via the Meta Graph API. You need a **Meta Devel
 # Use the Meta App Dashboard's built-in test tool:
 # Go to Instagram → Webhooks → click "Test" next to the "comments" field
 
-# Or send a real comment on one of your Instagram posts and watch the Activity tab
-
-# Check if the webhook was received:
+# Or check if webhooks are being received:
 curl http://localhost:3000/api/social/activity | python3 -m json.tool
 ```
 
@@ -413,7 +488,7 @@ curl http://localhost:3000/api/social/activity | python3 -m json.tool
       "value": {
         "from": { "id": "12345", "username": "commenter" },
         "media": { "id": "media_789" },
-        "comment_id": "comment_001",
+        "id": "comment_001",
         "text": "Interested in pricing!"
       }
     }]
@@ -441,7 +516,7 @@ curl http://localhost:3000/api/social/activity | python3 -m json.tool
 
 #### Post Context Enrichment
 
-When a comment arrives, OpenZigs automatically calls the Instagram Graph API to fetch the post's metadata:
+When a comment arrives, OpenZigs automatically calls the platform's API to fetch the post's metadata:
 
 ```
 GET /{media_id}?fields=caption,permalink,media_type,media_url,username,timestamp
@@ -476,8 +551,6 @@ curl -X POST https://pubsubhubbub.appspot.com/subscribe \
   -d "hub.verify_token=$SOCIAL_WEBHOOK_VERIFY_TOKEN"
 ```
 
-The callback receives Atom XML payloads when new videos are published. OpenZigs would need a YouTube-specific adapter to parse these.
-
 #### Approach B: Polling with YouTube Data API v3 (Comments)
 
 For comment monitoring, use the polling adapter pattern with the YouTube Data API:
@@ -490,7 +563,7 @@ For comment monitoring, use the polling adapter pattern with the YouTube Data AP
 4. Search for **YouTube Data API v3** and click **Enable**
 5. Go to **APIs & Services → Credentials**
 6. Click **Create Credentials → API Key**
-7. Copy the key and set it as `YOUTUBE_ACCESS_TOKEN` in your `.env`
+7. Copy the key and set it as `YOUTUBE_API_KEY` in your `.env`
 
 **2. Enable polling in config:**
 
@@ -516,19 +589,19 @@ The polling adapter calls these endpoints:
 # List comments on a video
 curl "https://www.googleapis.com/youtube/v3/commentThreads?part=snippet&videoId=VIDEO_ID&key=YOUR_API_KEY&maxResults=20&order=time"
 
-# List comment replies
-curl "https://www.googleapis.com/youtube/v3/comments?part=snippet&parentId=COMMENT_ID&key=YOUR_API_KEY"
+# Reply to a comment (via youtube-mcp server tool)
+# Called automatically by the DmDispatcher — not a direct API call
 ```
 
-> **Quota:** YouTube Data API has a daily quota of 10,000 units. `commentThreads.list` costs 1 unit per call. With 120-second polling, that's ~720 calls/day — well within the free quota.
+> **Quota:** YouTube Data API has a daily quota of 10,000 units. `commentThreads.list` costs 1 unit per call. With 120-second polling on 5 videos, that's ~3,600 calls/day — well within the free quota.
 
 **4. Responding to comments:**
 
 YouTube does not support DMs. The automation can:
-- Reply to comments via the API (`POST commentThreads.insert`)
+- Reply to comments via the `youtube-mcp` native server (calling `reply-to-comment` tool)
 - Auto-tag contacts in the CRM for follow-up
 
-> **Note:** YouTube comment polling requires a custom `GenericPollAdapter` implementation. See the [code example](#custom-polling-adapter-example) below.
+> **Note:** YouTube comment replies require OAuth 2.0 (not just an API key). The `youtube-mcp` server handles the OAuth flow via configured credentials.
 
 ---
 
@@ -542,18 +615,20 @@ Twitter/X webhook support depends on your API access tier.
 
 1. Go to [developer.x.com/en/portal/dashboard](https://developer.x.com/en/portal/dashboard)
 2. Create a new project and app
-3. Select at least **Basic** tier (free tier has limited access)
-4. Save your **Bearer Token** and **API Key/Secret**
+3. Select at least **Basic** tier (free tier has very limited access)
+4. Save your **Bearer Token**, **API Key**, and **API Secret**
 
 **2. Set environment variables:**
 
 ```dotenv
-TWITTER_ACCESS_TOKEN=your-bearer-token
+TWITTER_BEARER_TOKEN=your-bearer-token
+TWITTER_API_KEY=your-api-key
+TWITTER_API_SECRET=your-api-key-secret
 ```
 
-**3. Configure webhook (if using Account Activity API):**
+**3. Configure webhook (Account Activity API — Pro tier):**
 
-The Account Activity API (Pro tier) provides real-time webhooks for mentions, DMs, and other user activity:
+The Account Activity API (Pro tier, $5,000/month) provides real-time webhooks for mentions, DMs, and other user activity:
 
 ```bash
 # Register a webhook URL
@@ -562,24 +637,12 @@ curl -X POST "https://api.x.com/2/webhooks" \
   -H "Content-Type: application/json" \
   -d '{"url": "https://<your-tunnel-url>/api/social/webhooks/twitter"}'
 
-# Subscribe to user events
-curl -X POST "https://api.x.com/2/subscriptions" \
-  -H "Authorization: Bearer YOUR_BEARER_TOKEN"
+# The endpoint will respond to the CRC challenge automatically
 ```
 
-**4. Alternative — Polling with X API v2:**
+**4. Alternative — Polling with X API v2 (Free/Basic tier):**
 
 For free/basic tier without webhook support, use polling:
-
-```bash
-# Search for mentions
-curl "https://api.x.com/2/tweets/search/recent?query=@yourusername&tweet.fields=created_at,author_id" \
-  -H "Authorization: Bearer YOUR_BEARER_TOKEN"
-
-# Get DMs (requires OAuth 2.0 user context)
-curl "https://api.x.com/2/dm_events" \
-  -H "Authorization: Bearer YOUR_USER_TOKEN"
-```
 
 ```json
 {
@@ -595,7 +658,14 @@ curl "https://api.x.com/2/dm_events" \
 }
 ```
 
-> **Rate limits:** X API v2 free tier allows 500 tweets/month reading. Basic tier ($100/month) allows 10,000 reads/month. Pro tier ($5,000/month) includes webhook support.
+The polling adapter searches for recent mentions:
+
+```bash
+curl "https://api.x.com/2/tweets/search/recent?query=@yourusername&tweet.fields=created_at,author_id" \
+  -H "Authorization: Bearer YOUR_BEARER_TOKEN"
+```
+
+> **Rate limits:** X API v2 free tier allows 500 tweet reads/month. Basic tier ($100/month) allows 10,000 reads/month. Pro tier ($5,000/month) includes webhook support and higher limits.
 
 ---
 
@@ -644,21 +714,18 @@ Reddit does not support webhooks. Use the polling adapter.
 4. Set the redirect URI to `http://localhost:3000` (not used for polling)
 5. Note the **client ID** (under the app name) and **secret**
 
-**2. Get an access token:**
-
-```bash
-curl -X POST https://www.reddit.com/api/v1/access_token \
-  -u "CLIENT_ID:CLIENT_SECRET" \
-  -d "grant_type=password&username=YOUR_USERNAME&password=YOUR_PASSWORD"
-```
-
-**3. Set environment variables:**
+**2. Set environment variables:**
 
 ```dotenv
-REDDIT_ACCESS_TOKEN=your-reddit-bearer-token
+REDDIT_CLIENT_ID=your-reddit-client-id
+REDDIT_CLIENT_SECRET=your-reddit-client-secret
+REDDIT_USERNAME=your-reddit-bot-username
+REDDIT_PASSWORD=your-reddit-bot-password
 ```
 
-**4. Enable polling:**
+The `reddit-mcp` native server handles OAuth token acquisition automatically using these credentials.
+
+**3. Enable polling:**
 
 ```json
 {
@@ -674,15 +741,15 @@ REDDIT_ACCESS_TOKEN=your-reddit-bearer-token
 }
 ```
 
-**5. Reddit API endpoints used:**
+**4. Reddit API endpoints used:**
 
 ```bash
-# Get new comments on a subreddit
+# Get new comments on a subreddit (via polling adapter)
 curl "https://oauth.reddit.com/r/YOUR_SUBREDDIT/comments?limit=25&sort=new" \
   -H "Authorization: Bearer YOUR_TOKEN" \
   -H "User-Agent: openzigs/1.0"
 
-# Get inbox messages (DMs)
+# Get inbox messages / DMs
 curl "https://oauth.reddit.com/message/inbox?limit=25" \
   -H "Authorization: Bearer YOUR_TOKEN" \
   -H "User-Agent: openzigs/1.0"
@@ -694,7 +761,7 @@ curl "https://oauth.reddit.com/message/inbox?limit=25" \
 
 ### LinkedIn
 
-LinkedIn's API does not support traditional webhooks for comments or messages. Use the LinkedIn MCP sidecar for posting, and set up polling for monitoring.
+LinkedIn's API does not support traditional webhooks for comments or messages. Social Brain uses the polling adapter for comment monitoring. The `linkedin-mcp` native server handles posting and comment replies.
 
 **1. Create a LinkedIn App:**
 
@@ -711,19 +778,35 @@ LinkedIn's API does not support traditional webhooks for comments or messages. U
 LINKEDIN_ACCESS_TOKEN=your-linkedin-access-token
 ```
 
-**3. LinkedIn API endpoints:**
+**3. Enable polling:**
+
+```json
+{
+  "socialBrain": {
+    "connections": {
+      "linkedin": {
+        "enabled": true,
+        "mode": "polling",
+        "pollIntervalSeconds": 300
+      }
+    }
+  }
+}
+```
+
+**4. LinkedIn API endpoints:**
 
 ```bash
-# Get organization posts
+# Get organization posts (via LinkedInApiClient)
 curl "https://api.linkedin.com/v2/organizationShares?q=owners&owners=urn:li:organization:YOUR_ORG_ID&count=10" \
   -H "Authorization: Bearer YOUR_TOKEN"
 
-# Get comments on a post
+# Get comments on a post (via polling adapter)
 curl "https://api.linkedin.com/v2/socialActions/urn:li:share:POST_ID/comments?start=0&count=20" \
   -H "Authorization: Bearer YOUR_TOKEN"
 ```
 
-> **Note:** LinkedIn heavily rate-limits API access and requires app review for production use. The MCP sidecar (`linkedin-mcp-server`) handles most LinkedIn interactions; Social Brain CRM integration polls for new comments/messages.
+> **Note:** LinkedIn heavily rate-limits API access and requires app review for production use. DM sending via the Messaging API is only available to Marketing API partners. Social Brain comment replies use the `linkedin-mcp` server's `reply-to-comment` tool.
 
 ---
 
@@ -738,8 +821,9 @@ Navigate to `/social` and click the **Settings** tab to see platform connection 
 | **Not Configured** (gray) | No access token found |
 
 Each platform card shows:
-- The required environment variable name
-- The webhook endpoint path
+- The required environment variable name(s)
+- The webhook endpoint path (where applicable)
+- The ingestion mode (webhook vs polling)
 - A link to the platform's developer documentation
 
 ---
@@ -754,11 +838,12 @@ Every user who sends a DM or comment is automatically added to the CRM. Contact 
 |---|---|
 | `username` | Platform username |
 | `display_name` | Full name (if available) |
-| `platform` | Source platform |
+| `platform` | Source platform (`instagram`, `facebook`, `twitter`, `youtube`, `linkedin`, `reddit`) |
 | `tags` | JSON array of tags for segmentation |
 | `notes` | Free-text CRM notes |
 | `message_count` | Total messages exchanged |
 | `handoff_active` | Whether a human handoff is in progress |
+| `handoff_thread_id` | Discord/Telegram thread ID (if handoff active) |
 
 ### Searching and Filtering
 
@@ -800,12 +885,15 @@ Navigate to `/social` → **Automations** tab → **+ New Rule**:
 | Field | Description |
 |---|---|
 | **Name** | Display name (e.g., "Pricing Interest") |
-| **Platform** | Target platform (`instagram`, `youtube`, etc.) |
+| **Platform** | Target platform (`instagram`, `facebook`, `twitter`, `youtube`, `linkedin`, `reddit`) |
 | **Keywords** | Comma-separated trigger words (case-insensitive, word-boundary match) |
-| **DM Template** | Message to send, with variable interpolation |
+| **Regex** | Alternative to keywords — advanced pattern matching |
+| **Post IDs** | (Optional) Scope rule to specific post/video IDs |
+| **DM Template** | Message to send as DM, with variable interpolation |
 | **Comment Reply** | (Optional) Public reply to the comment |
 | **DM Delay** | Seconds to wait before sending the DM |
 | **Max per User** | Maximum times a single user can trigger this rule |
+| **Max Total** | Maximum times the rule fires across all users |
 | **Auto-Tag** | Tag to apply to contacts who trigger the rule |
 
 ### Template Variables
@@ -831,7 +919,16 @@ Comment Reply: Thanks for asking! Check your DMs 📬
 Auto-Tag: lead
 ```
 
-**Free Resource:**
+**YouTube Comment Reply (No DM — YouTube doesn't support DMs):**
+```
+Name: YouTube FAQ
+Platform: youtube
+Keywords: how to, tutorial, help
+Comment Reply: Check the description for the full tutorial! 🎥
+Max per User: 2
+```
+
+**Cross-Platform Free Resource:**
 ```
 Name: Free Guide
 Platform: instagram
@@ -882,9 +979,10 @@ The Brain Engine processes incoming DMs through a RAG pipeline:
 1. **Knowledge search** — Searches your local knowledge base for relevant documents
 2. **Conversation history** — Loads the last 5 messages for context
 3. **Post context** — If the message relates to a comment, includes the post's caption and URL
-4. **LLM call** — Sends everything to the model with a social-media-specific system prompt
-5. **Confidence routing:**
-   - **High confidence** → auto-sends the reply
+4. **Platform tone** — System prompt is platform-aware (formal for LinkedIn, casual for Instagram/Reddit)
+5. **LLM call** — Sends everything to the model with a social-media-specific system prompt
+6. **Confidence routing:**
+   - **High confidence** → auto-sends the reply via `DmDispatcher`
    - **Medium confidence** → auto-sends (configurable via `confidenceThreshold`)
    - **Low confidence** → escalates to human handoff
 
@@ -939,11 +1037,11 @@ When the AI cannot answer confidently, the conversation is escalated to a human 
 
 ### Flow
 
-1. Brain Engine returns `shouldEscalate: true`
+1. Brain Engine returns `confidence: "low"` (or below the configured threshold)
 2. Handoff Manager creates a thread in the configured Discord/Telegram channel
-3. Contact's CRM record is updated: `handoff_active: 1`
+3. Contact's CRM record is updated: `handoff_active: 1`, `handoff_thread_id: "..."`, `handoff_channel: "discord"`
 4. The contact detail drawer shows an orange "Handoff Active" banner
-5. Admin replies in the thread are forwarded back to the user
+5. Admin replies in the Discord/Telegram thread are forwarded back to the user (via `DmDispatcher`)
 6. Close the handoff from the CRM or via the `social-close-handoff` MCP tool
 
 ### Close via API
@@ -958,7 +1056,9 @@ curl -X POST http://localhost:3000/api/social/handoff/<contactId>/close \
 
 ## MCP Tools (Chat Interface)
 
-5 Social Brain tools are available in the chat interface:
+### Social CRM Tools
+
+5 Social Brain CRM tools are available in the chat interface regardless of which platforms are connected:
 
 | Tool | Risk | Description |
 |---|---|---|
@@ -968,6 +1068,75 @@ curl -X POST http://localhost:3000/api/social/handoff/<contactId>/close \
 | `social-close-handoff` | 🟡 medium | Close an active human handoff |
 | `social-brain-stats` | 🟢 low | Get dashboard statistics |
 
+### Platform-Specific Tools
+
+Each connected native MCP server exposes platform-specific tools. These are available in the chat interface when the corresponding server is running:
+
+**Instagram (`ig-mcp`) — 12 tools:**
+- `get_profile_info` — Business profile info (followers, bio)
+- `get_media_posts` — Recent posts with engagement metrics
+- `get_media_insights` — Per-post analytics (reach, likes, shares)
+- `publish_media` — Upload and publish image/video
+- `get_account_pages` — List connected Facebook pages
+- `get_account_insights` — Account-level analytics
+- `validate_access_token` — Token validation
+- `get_conversations` — List DM conversations
+- `get_conversation_messages` — Read DM thread messages
+- `send_dm` — Send Instagram DM (24h window, Advanced Access required)
+- `reply_to_comment` — Reply to a comment on a post
+- `get_media_comments` — Get comments on a media post
+
+**Facebook (`fb-mcp`) — 10 tools:**
+- `fb_get_page_info` — Page profile (name, followers, category)
+- `fb_get_page_posts` — Recent posts with engagement
+- `fb_get_post_insights` — Per-post analytics
+- `fb_publish_post` — Publish to the page feed
+- `fb_get_conversations` — List Messenger conversations
+- `fb_get_conversation_messages` — Read conversation messages
+- `fb_send_message` — Send Messenger reply (24h window)
+- `fb_get_page_insights` — Page-level analytics
+- `fb_get_post_comments` — Get comments on a page post
+- `fb_reply_to_comment` — Reply to a comment on a page post
+
+**Twitter/X (`twitter-mcp`) — 8 tools:**
+- `twitter_get_me` — Authenticated user profile
+- `twitter_get_user_tweets` — Recent tweets from a user
+- `twitter_search_tweets` — Search recent tweets
+- `twitter_get_tweet` — Get tweet by ID (with conversation context)
+- `twitter_post_tweet` — Post new tweet or reply (with `reply_to` param)
+- `twitter_get_dm_events` — Get recent DM events
+- `twitter_send_dm` — Send a direct message
+- `twitter_get_user` — Look up user by username
+
+**YouTube (`youtube-mcp`) — 7 tools:**
+- `yt_get_channel_info` — Channel info (subscribers, views)
+- `yt_get_channel_videos` — List channel videos
+- `yt_get_video_details` — Video details (stats, duration)
+- `yt_get_video_comments` — Get comment threads on a video
+- `yt_reply_to_comment` — Reply to a YouTube comment (requires OAuth)
+- `yt_search_videos` — Search YouTube videos
+- `yt_get_channel_analytics` — Channel statistics
+
+**LinkedIn (`linkedin-mcp`) — 8 tools:**
+- `linkedin_get_profile` — Authenticated user profile
+- `linkedin_get_posts` — Recent posts (personal or company)
+- `linkedin_create_post` — Publish a text post
+- `linkedin_get_company` — Company/organization page info
+- `linkedin_send_message` — Send a LinkedIn message (partner-only API)
+- `linkedin_get_conversations` — List message conversations
+- `linkedin_get_post_comments` — Get comments on a post
+- `linkedin_reply_to_comment` — Reply to a comment on a post
+
+**Reddit (`reddit-mcp`) — 8 tools:**
+- `reddit_get_me` — Authenticated user profile
+- `reddit_get_subreddit_posts` — Posts from a subreddit (hot/new/top/rising)
+- `reddit_get_post_comments` — Comments on a post
+- `reddit_submit_post` — Submit a new post
+- `reddit_reply_to_comment` — Reply to a comment or post
+- `reddit_search` — Search Reddit posts
+- `reddit_get_inbox` — Inbox messages
+- `reddit_send_message` — Send a private message
+
 **Example chat prompts:**
 
 ```
@@ -975,12 +1144,47 @@ Look up all Instagram contacts tagged "lead"
 
 Show me the message history for contact abc123
 
-Tag contact abc123 as "high-value"
-
-Close the handoff for contact abc123 with resolution "issue resolved"
-
 What are the current Social Brain stats?
+
+List the 10 most recent comments on our YouTube channel
+
+Search Twitter for recent mentions of our brand
+
+Reply to Instagram comment 123 with "Thanks for your feedback!"
 ```
+
+---
+
+## Native MCP Server Configuration
+
+All social MCP servers are configured via the Admin UI under **Local MCP Servers**. Navigate to `/admin` to access this panel.
+
+The Docker "MCP Sidecars" panel has been removed — all servers are now native subprocesses.
+
+### Required Credentials per Server
+
+| Server | Required Environment Variables |
+|--------|-------------------------------|
+| Instagram | `INSTAGRAM_ACCESS_TOKEN`, `FACEBOOK_APP_ID`, `FACEBOOK_APP_SECRET`, `INSTAGRAM_BUSINESS_ACCOUNT_ID` |
+| Facebook | `FACEBOOK_PAGE_TOKEN`, `FACEBOOK_APP_ID`, `FACEBOOK_APP_SECRET` |
+| Twitter/X | `TWITTER_BEARER_TOKEN`, `TWITTER_API_KEY`, `TWITTER_API_SECRET` |
+| YouTube | `YOUTUBE_API_KEY` |
+| LinkedIn | `LINKEDIN_ACCESS_TOKEN` |
+| Reddit | *(configured via Reddit OAuth in `reddit-mcp` settings)* |
+| Gmail | `GOOGLE_OAUTH_CREDENTIALS` |
+| GitHub | `GITHUB_PERSONAL_ACCESS_TOKEN` |
+| Database | `JDBC_URL`, `DB_PASSWORD` |
+
+Set credentials via the Admin UI → **Local MCP Servers** → click the ⚙️ icon next to the server, or directly in your `.env` file.
+
+### Server Status
+
+The Admin UI shows each server's current state:
+- **Running** (green) — subprocess is active and responding to tool calls
+- **Stopped** (gray) — process exited or not started
+- **Error** (red) — process crashed; hover for error details
+
+Click **Restart** on any server to restart it after changing credentials.
 
 ---
 
@@ -988,7 +1192,7 @@ What are the current Social Brain stats?
 
 You can fully test Social Brain without any platform credentials by simulating webhook payloads with curl.
 
-> **Important:** For webhook simulation to work, you need `INSTAGRAM_ACCESS_TOKEN` set (even a dummy value) so the Instagram adapter is registered. Set `INSTAGRAM_ACCESS_TOKEN=test` in your `.env` and restart.
+> **Important:** For webhook simulation to work, set `INSTAGRAM_ACCESS_TOKEN=test` in your `.env` and restart so the Instagram adapter is registered.
 
 ### Simulating an Instagram Comment Webhook
 
@@ -1002,14 +1206,61 @@ curl -X POST http://localhost:3000/api/social/webhooks/instagram \
         "value": {
           "from": { "id": "user_12345", "username": "test_customer" },
           "media": { "id": "media_67890" },
-          "comment_id": "comment_001",
+          "id": "comment_001",
           "text": "Interested in pricing!",
-          "id": "comment_001"
+          "comment_id": "comment_001"
         }
       }]
     }]
   }'
 # Expected: {"received":true}
+```
+
+### Simulating a Facebook Page Comment Webhook
+
+```bash
+curl -X POST http://localhost:3000/api/social/webhooks/facebook \
+  -H "Content-Type: application/json" \
+  -d '{
+    "object": "page",
+    "entry": [{
+      "id": "PAGE_ID",
+      "time": 1720000000,
+      "changes": [{
+        "field": "feed",
+        "value": {
+          "item": "comment",
+          "comment_id": "fb_comment_001",
+          "post_id": "fb_post_001_PAGE_ID",
+          "message": "Love this product! What is the price?",
+          "from": { "id": "fb_user_123", "name": "Facebook Customer" },
+          "created_time": 1720000000
+        }
+      }]
+    }]
+  }'
+# Expected: {"received":true}
+```
+
+### Simulating a Twitter Mention
+
+```bash
+# First, verify the CRC challenge endpoint
+curl "http://localhost:3000/api/social/webhooks/twitter?crc_token=test_crc_value"
+# Expected: {"response_token":"sha256=..."}
+
+# Then simulate a mention event
+curl -X POST http://localhost:3000/api/social/webhooks/twitter \
+  -H "Content-Type: application/json" \
+  -d '{
+    "for_user_id": "YOUR_TWITTER_USER_ID",
+    "tweet_create_events": [{
+      "id_str": "tweet_test_123",
+      "text": "@yourbrand what are your pricing plans?",
+      "user": { "id_str": "tw_user_456", "screen_name": "twitter_customer" },
+      "created_at": "Mon Jul 01 12:00:00 +0000 2026"
+    }]
+  }'
 ```
 
 ### Simulating an Instagram DM Webhook
@@ -1036,13 +1287,13 @@ curl -X POST http://localhost:3000/api/social/webhooks/instagram \
 ### CRM and Activity Endpoints
 
 ```bash
-# Check if the contact was created
+# Check if contacts were created
 curl http://localhost:3000/api/social/contacts | python3 -m json.tool
 
-# View the contact's messages
+# View a contact's messages
 curl "http://localhost:3000/api/social/contacts/<contact-id>/messages?limit=10" | python3 -m json.tool
 
-# Check activity feed
+# Check activity feed (all recent events)
 curl http://localhost:3000/api/social/activity | python3 -m json.tool
 
 # Dashboard stats
@@ -1069,7 +1320,7 @@ curl -X POST http://localhost:3000/api/social/rules \
 # List all rules
 curl http://localhost:3000/api/social/rules | python3 -m json.tool
 
-# Now simulate a comment that matches the rule
+# Simulate a comment that matches the rule
 curl -X POST http://localhost:3000/api/social/webhooks/instagram \
   -H "Content-Type: application/json" \
   -d '{
@@ -1079,9 +1330,9 @@ curl -X POST http://localhost:3000/api/social/webhooks/instagram \
         "value": {
           "from": { "id": "user_99999", "username": "interested_buyer" },
           "media": { "id": "media_11111" },
-          "comment_id": "comment_002",
+          "id": "comment_002",
           "text": "Very interested in your pricing!",
-          "id": "comment_002"
+          "comment_id": "comment_002"
         }
       }]
     }]
@@ -1090,13 +1341,11 @@ curl -X POST http://localhost:3000/api/social/webhooks/instagram \
 # Check the automation log
 curl "http://localhost:3000/api/social/rules/log?limit=10" | python3 -m json.tool
 
-# Check that the contact was auto-tagged
+# Verify the contact was auto-tagged
 curl http://localhost:3000/api/social/contacts | python3 -m json.tool
 ```
 
 ### End-to-End Test Flow
-
-Here's a complete test scenario:
 
 ```bash
 # 1. Set up environment (add to .env and restart server)
@@ -1128,9 +1377,9 @@ curl -X POST http://localhost:3000/api/social/webhooks/instagram \
         "value": {
           "from": { "id": "user_test_1", "username": "happy_customer" },
           "media": { "id": "media_test_1" },
-          "comment_id": "comment_test_1",
+          "id": "comment_test_1",
           "text": "Hello! Love this product!",
-          "id": "comment_test_1"
+          "comment_id": "comment_test_1"
         }
       }]
     }]
@@ -1168,6 +1417,7 @@ curl http://localhost:3000/api/social/activity | python3 -m json.tool
 # 10. Use MCP tools via the chat interface:
 # "Look up all contacts tagged engaged"
 # "What are the social brain stats?"
+# "List my recent Instagram comments"
 ```
 
 ---
@@ -1182,7 +1432,29 @@ curl http://localhost:3000/api/social/activity | python3 -m json.tool
 | Webhook returns 200 but no activity shows | Adapter not registered for the platform | Check Settings tab — platform should show "Connected". Ensure access token env var is set and server was restarted |
 | "No adapter registered for platform: instagram" in logs | `INSTAGRAM_ACCESS_TOKEN` not set | Set the env var and restart. The adapter is only registered when a token is present |
 | Instagram webhooks stop arriving after a while | Meta test mode webhooks expire after 1 hour | Switch to live mode in Meta App Dashboard, or use the "Test" button to resend |
-| Payload received but comment not parsed | Unexpected payload format from the platform | Check server logs for `[SocialIngestion] Webhook parse error`. The adapter may need updating for a new API version |
+| Twitter CRC challenge returns 500 | `TWITTER_API_SECRET` not set | Set the env var — it's required for HMAC CRC validation |
+
+### Native MCP Server Issues
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| Server shows "Stopped" in Admin UI | Missing credentials or `uvx`/`npx` not in PATH | Set required env vars, restart the server. Check `PATH` includes uv/node bin dirs |
+| DM not sent after rule triggers | Native MCP server for that platform is not running | Check Admin UI → Local MCP Servers — server should show "Running". Restart if stopped |
+| "instagram server not running" in logs | `ig-mcp` server crashed or credentials invalid | Check server logs in Admin UI. Verify `INSTAGRAM_ACCESS_TOKEN` is valid and not expired |
+| "Tool reply-to-comment not found" | Wrong server started, or server version mismatch | Restart the platform's MCP server from the Admin UI |
+| YouTube comment replies failing | YouTube requires OAuth 2.0 (not just an API key) for writes | YouTube Data API write operations need a full OAuth2 credential, not just an API key |
+
+### MCP Sidecars Panel is Missing (Expected)
+
+> **This is correct.** The "MCP Sidecars (Docker)" panel was removed in issue #312. All MCP servers are now native subprocesses shown in the **Local MCP Servers** panel. If you're looking for the Docker sidecar controls, they no longer exist.
+
+### Polling Adapter Issues
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| YouTube/LinkedIn/Reddit not showing new comments | Polling not started | Check config: `connections.youtube.enabled: true` and `mode: "polling"` |
+| Polling stops after server restart | Polling adapters need to be re-registered on boot | Restart is handled automatically if `enabled: true` in config |
+| Duplicate comments appearing | `since` timestamp not persisted across restarts | Known limitation for in-memory adapters; the `social_messages` deduplication check prevents duplicate CRM entries |
 
 ### Tunnel Issues
 
@@ -1192,25 +1464,13 @@ curl http://localhost:3000/api/social/activity | python3 -m json.tool
 | Quick tunnel URL not working | Tunnel process crashed or not connected | Check terminal output for errors. Restart with `cloudflared tunnel --url http://localhost:3000` |
 | Named tunnel shows "No connections" | Credentials file path incorrect or tunnel not running | Verify `~/.cloudflared/config.yml` paths. Run `cloudflared tunnel info <name>` to check status |
 | Webhook URL returns 502 | OpenZigs server not running on port 3000 | Start the server first, then the tunnel |
-| WebSocket connections fail through tunnel | Cloudflare free plan limitations | Ensure `websocket` is not blocked. Named tunnels handle WebSockets natively |
 
 ### CRM Issues
 
 | Symptom | Cause | Fix |
 |---|---|---|
 | Contact not created after webhook | Webhook payload missing required fields (user ID or username) | Check the raw webhook payload in server logs. Ensure `from.id` and `from.username` are present |
-| Tags not appearing on contacts | Tag was added to wrong contact ID | Use `social-crm-lookup` to find the correct contact ID first |
-| Message history empty for a contact | Messages stored under a different contact ID | Check if duplicate contacts exist for the same user (e.g., different platform user IDs) |
-| CSV export is empty | No contacts in the database | Send some test webhooks first |
-
-### Automation Issues
-
-| Symptom | Cause | Fix |
-|---|---|---|
-| Rule not triggering | Keywords don't match (word-boundary, case-insensitive) | Check that the keyword appears as a whole word in the comment. "interested" won't match "uninterested" |
-| DM not sent after rule triggers | DM sending requires actual platform API access (not just a test token) | With `INSTAGRAM_ACCESS_TOKEN=test`, the DM will fail but the rule still triggers and logs. The `dm_error` field in the automation log shows the failure |
-| `{{post_caption}}` is empty in DM | Access token invalid or post context fetch failed | Check server logs for `Post context enrichment failed`. Ensure `INSTAGRAM_ACCESS_TOKEN` is a valid token |
-| Max triggers exceeded | `max_triggers_per_user` limit reached for this user | Increase the limit or create a new rule |
+| Same person appears as multiple contacts | Different platform_user_id used across sessions (common with Twitter) | Use `social-crm-lookup` to find all contacts, then merge or tag them |
 
 ### Brain Engine Issues
 
@@ -1218,7 +1478,7 @@ curl http://localhost:3000/api/social/activity | python3 -m json.tool
 |---|---|---|
 | AI not auto-replying to DMs | Brain Engine not processing messages | Check server logs for `[SocialBrain]` entries. Ensure the knowledge service is initialized |
 | Replies are generic/not helpful | No relevant knowledge base content | Add FAQ documents, product info, etc. to your knowledge directory |
-| All messages are being escalated | Confidence threshold too high | Set `socialBrain.confidenceThreshold` to `"low"` to reduce escalations |
+| All messages being escalated | Confidence threshold too high | Set `socialBrain.confidenceThreshold` to `"low"` to reduce escalations |
 | Handoff thread not created | Discord/Telegram not configured or bot not in the channel | Ensure `DISCORD_BOT_TOKEN` is set and the bot has access to the configured channel |
 
 ### General Issues
@@ -1227,7 +1487,7 @@ curl http://localhost:3000/api/social/activity | python3 -m json.tool
 |---|---|---|
 | Settings tab shows all platforms "Not Configured" | No access tokens set in environment | Set the relevant env vars and restart the server |
 | Instagram shows "Token Set — Not Enabled" | Token is present but `connections.instagram.enabled` is not `true` | Add `"socialBrain": {"connections": {"instagram": {"enabled": true}}}` to `~/.openzigs/config.json` |
-| Admin Webhooks tab → does it relate to Social Brain? | **No** — the admin Webhooks tab is the general webhook system. Social Brain has its own webhook endpoints | Social Brain webhooks are at `/api/social/webhooks/:platform`. No admin Webhooks tab setup needed |
+| Admin Webhooks tab — does it relate to Social Brain? | **No** — the admin Webhooks tab is the general webhook system. Social Brain has its own webhook endpoints | Social Brain webhooks are at `/api/social/webhooks/:platform`. No admin Webhooks tab setup needed |
 
 ---
 
@@ -1237,7 +1497,7 @@ curl http://localhost:3000/api/social/activity | python3 -m json.tool
 
 | Method | Endpoint | Description |
 |---|---|---|
-| GET | `/api/social/stats` | Dashboard statistics + connection status |
+| GET | `/api/social/stats` | Dashboard statistics + platform connection status |
 | GET | `/api/social/config` | Platform configuration status with setup details |
 | GET | `/api/social/connections` | List platform connection status |
 
@@ -1245,7 +1505,7 @@ curl http://localhost:3000/api/social/activity | python3 -m json.tool
 
 | Method | Endpoint | Description |
 |---|---|---|
-| GET | `/api/social/contacts` | List contacts (paginated, filterable) |
+| GET | `/api/social/contacts` | List contacts (paginated, filterable by platform/tag) |
 | GET | `/api/social/contacts/export` | Export all contacts as CSV |
 | GET | `/api/social/contacts/:id` | Get a single contact |
 | PATCH | `/api/social/contacts/:id` | Update contact (tags, notes) |
@@ -1257,7 +1517,7 @@ curl http://localhost:3000/api/social/activity | python3 -m json.tool
 
 | Method | Endpoint | Description |
 |---|---|---|
-| GET | `/api/social/activity` | Recent activity feed |
+| GET | `/api/social/activity` | Recent activity feed (all platforms) |
 
 ### Automation Rules
 
@@ -1280,14 +1540,14 @@ curl http://localhost:3000/api/social/activity | python3 -m json.tool
 
 | Method | Endpoint | Description |
 |---|---|---|
-| GET | `/api/social/webhooks/:platform` | Webhook verification (Meta, TikTok) |
-| POST | `/api/social/webhooks/:platform` | Inbound webhook payload |
+| GET | `/api/social/webhooks/:platform` | Webhook verification (Meta, TikTok, Twitter CRC) |
+| POST | `/api/social/webhooks/:platform` | Inbound webhook payload (`instagram`, `facebook`, `twitter`, `tiktok`, `youtube`) |
 
 ---
 
 ## Custom Polling Adapter Example
 
-For platforms without webhook support (Reddit, YouTube), implement a custom polling adapter:
+For platforms without webhook support (Reddit, YouTube, LinkedIn), implement a custom polling adapter:
 
 ```typescript
 import { GenericPollAdapter } from "./channels/social/social-ingestion.js";
@@ -1295,7 +1555,7 @@ import type { IncomingComment } from "./channels/social/types.js";
 
 // YouTube comment polling adapter
 const youtubeAdapter = new GenericPollAdapter("youtube", async (since) => {
-  const apiKey = process.env.YOUTUBE_ACCESS_TOKEN;
+  const apiKey = process.env.YOUTUBE_API_KEY;
   if (!apiKey) return [];
 
   const videoIds = ["VIDEO_ID_1", "VIDEO_ID_2"]; // Your video IDs

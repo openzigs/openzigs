@@ -87,15 +87,22 @@ TUNNEL_TOKEN=your-cloudflare-tunnel-token
 GOOGLE_APPLICATION_CREDENTIALS=/path/to/your/service-account-key.json
 
 # ── Optional: Social Platform MCP Servers ──
-# INSTAGRAM_ACCESS_TOKEN=your-instagram-token
-# FB_PAGE_ACCESS_TOKEN=your-facebook-page-token
+# Instagram (Meta Graph API)
+# INSTAGRAM_ACCESS_TOKEN=your-instagram-user-access-token
+# INSTAGRAM_BUSINESS_ACCOUNT_ID=your-instagram-business-account-id
+# FACEBOOK_APP_ID=your-meta-app-id
+# FACEBOOK_APP_SECRET=your-meta-app-secret
+# Facebook Pages (same Meta app)
+# FACEBOOK_PAGE_TOKEN=your-facebook-page-access-token
+# Twitter / X (API v2)
 # TWITTER_BEARER_TOKEN=your-twitter-bearer-token
 # TWITTER_API_KEY=your-twitter-api-key
-# TWITTER_API_SECRET=your-twitter-api-secret
-# TWITTER_ACCESS_TOKEN=your-twitter-access-token
-# TWITTER_ACCESS_SECRET=your-twitter-access-secret
+# TWITTER_API_SECRET=your-twitter-api-key-secret
+# YouTube (Data API v3)
 # YOUTUBE_API_KEY=your-youtube-api-key
+# LinkedIn (API v2)
 # LINKEDIN_ACCESS_TOKEN=your-linkedin-access-token
+# Reddit (OAuth2)
 # REDDIT_CLIENT_ID=your-reddit-client-id
 # REDDIT_CLIENT_SECRET=your-reddit-client-secret
 # REDDIT_USERNAME=your-reddit-username
@@ -109,7 +116,6 @@ GOOGLE_APPLICATION_CREDENTIALS=/path/to/your/service-account-key.json
 
 # ── Optional: Social Brain ──
 # SOCIAL_WEBHOOK_VERIFY_TOKEN=your-random-verify-token
-# INSTAGRAM_ACCESS_TOKEN=your-instagram-user-access-token
 
 # ── Server ──
 PORT=3000

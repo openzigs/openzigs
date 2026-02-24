@@ -42,6 +42,8 @@ class FacebookMCPServer:
                 Tool(name="fb_get_conversation_messages", description="Get messages from a Messenger conversation", inputSchema={"type": "object", "properties": {"conversation_id": {"type": "string", "description": "Conversation ID"}, "limit": {"type": "integer", "default": 25}}, "required": ["conversation_id"]}),
                 Tool(name="fb_send_message", description="Send a Messenger reply to a user (within 24h window)", inputSchema={"type": "object", "properties": {"recipient_id": {"type": "string", "description": "Recipient Page-scoped user ID"}, "message": {"type": "string", "description": "Message text (max 2000 chars)", "maxLength": 2000}}, "required": ["recipient_id", "message"]}),
                 Tool(name="fb_get_page_insights", description="Get Page-level analytics (impressions, engaged users, fan adds)", inputSchema={"type": "object", "properties": {"period": {"type": "string", "enum": ["day", "week", "days_28"], "default": "day"}}}),
+                Tool(name="fb_get_post_comments", description="Get comments on a Facebook Page post", inputSchema={"type": "object", "properties": {"post_id": {"type": "string", "description": "Facebook post ID"}, "limit": {"type": "integer", "default": 25}}, "required": ["post_id"]}),
+                Tool(name="fb_reply_to_comment", description="Reply to a comment on a Facebook Page post", inputSchema={"type": "object", "properties": {"comment_id": {"type": "string", "description": "Comment ID to reply to"}, "message": {"type": "string", "description": "Reply text"}}, "required": ["comment_id", "message"]}),
             ]
 
         @self.server.call_tool()
@@ -66,6 +68,10 @@ class FacebookMCPServer:
                     data = await client.send_message(arguments["recipient_id"], arguments["message"])
                 elif name == "fb_get_page_insights":
                     data = await client.get_page_insights(arguments.get("period", "day"))
+                elif name == "fb_get_post_comments":
+                    data = await client.get_post_comments(arguments["post_id"], arguments.get("limit", 25))
+                elif name == "fb_reply_to_comment":
+                    data = await client.reply_to_comment(arguments["comment_id"], arguments["message"])
                 else:
                     return [TextContent(type="text", text=_result(False, error=f"Unknown tool: {name}"))]
                 return [TextContent(type="text", text=_result(True, data=data))]

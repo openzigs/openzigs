@@ -6,7 +6,6 @@ import { fetchJson } from "@/lib/api";
 import type { ToolInfo } from "@/lib/types";
 import { SectionCard } from "@/components/section-card";
 import { ChannelsPanel } from "@/components/admin/channels-panel";
-import { SidecarsPanel } from "@/components/admin/sidecars-panel";
 import { LocalServersPanel } from "@/components/admin/local-servers-panel";
 import { ToolsPanel } from "@/components/admin/tools-panel";
 import { EnvPanel } from "@/components/admin/env-panel";
@@ -57,7 +56,7 @@ export default function AdminPage() {
           <p className="text-sm uppercase tracking-[0.3em] text-muted-foreground">OpenZigs</p>
           <h1 className="mt-1 text-3xl font-semibold text-foreground">Administration</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Channels, sidecars, tool controls, and environment at a glance.
+            Channels, MCP servers, tool controls, and environment at a glance.
           </p>
         </div>
         <button
@@ -118,10 +117,6 @@ export default function AdminPage() {
 
         <SectionCard title="Sessions" defaultOpen={false}>
           <SessionsPanel />
-        </SectionCard>
-
-        <SectionCard title="MCP Sidecars (Docker)" defaultOpen={false}>
-          <SidecarsPanel />
         </SectionCard>
 
         <SectionCard title="Local MCP Servers" defaultOpen={false}>

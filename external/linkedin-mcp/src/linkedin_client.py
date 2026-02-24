@@ -81,5 +81,12 @@ class LinkedInClient:
         }
         return await self._request("POST", "messages", json=body)
 
+    async def get_post_comments(self, post_urn: str, count: int = 20) -> dict:
+        return await self._request("GET", f"socialActions/{post_urn}/comments", params={"count": str(count)})
+
+    async def reply_to_comment(self, post_urn: str, comment_urn: str, text: str) -> dict:
+        body = {"actor": f"urn:li:person:{self.settings.linkedin_person_id}", "message": {"text": text}}
+        return await self._request("POST", f"socialActions/{post_urn}/comments/{comment_urn}/comments", json=body)
+
     async def get_conversations(self, count: int = 20) -> dict:
         return await self._request("GET", "conversations", params={"count": str(count)})

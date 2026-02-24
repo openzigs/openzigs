@@ -78,6 +78,13 @@ class FacebookClient:
         data = {"recipient": {"id": recipient_id}, "message": {"text": message}, "messaging_type": "RESPONSE"}
         return await self._request("POST", f"{page_id}/messages", json=data)
 
+    async def get_post_comments(self, post_id: str, limit: int = 25) -> dict:
+        params = {"fields": "id,message,from,created_time,like_count,comment_count", "limit": str(limit)}
+        return await self._request("GET", f"{post_id}/comments", params=params)
+
+    async def reply_to_comment(self, comment_id: str, message: str) -> dict:
+        return await self._request("POST", f"{comment_id}/comments", data={"message": message})
+
     async def get_page_insights(self, period: str = "day") -> dict:
         page_id = await self._get_page_id()
         metrics = "page_impressions,page_engaged_users,page_fan_adds,page_views_total"

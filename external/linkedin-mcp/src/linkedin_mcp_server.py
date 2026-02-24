@@ -39,6 +39,8 @@ class LinkedInMCPServer:
                 Tool(name="linkedin_get_company", description="Get LinkedIn company/organization page info", inputSchema={"type": "object", "properties": {"org_id": {"type": "string", "description": "Organization ID (optional, uses configured org)"}}}),
                 Tool(name="linkedin_send_message", description="Send a LinkedIn direct message", inputSchema={"type": "object", "properties": {"recipient_urn": {"type": "string", "description": "Recipient URN (urn:li:person:xxx)"}, "text": {"type": "string"}}, "required": ["recipient_urn", "text"]}),
                 Tool(name="linkedin_get_conversations", description="List recent LinkedIn message conversations", inputSchema={"type": "object", "properties": {"count": {"type": "integer", "default": 20}}}),
+                Tool(name="linkedin_get_post_comments", description="Get comments on a LinkedIn post", inputSchema={"type": "object", "properties": {"post_urn": {"type": "string", "description": "Post URN (e.g. urn:li:share:xxx or urn:li:ugcPost:xxx)"}, "count": {"type": "integer", "default": 20}}, "required": ["post_urn"]}),
+                Tool(name="linkedin_reply_to_comment", description="Reply to a comment on a LinkedIn post", inputSchema={"type": "object", "properties": {"post_urn": {"type": "string", "description": "Post URN"}, "comment_urn": {"type": "string", "description": "Comment URN to reply to"}, "text": {"type": "string", "description": "Reply text"}}, "required": ["post_urn", "comment_urn", "text"]}),
             ]
 
         @self.server.call_tool()
@@ -59,6 +61,10 @@ class LinkedInMCPServer:
                     data = await client.send_message(arguments["recipient_urn"], arguments["text"])
                 elif name == "linkedin_get_conversations":
                     data = await client.get_conversations(arguments.get("count", 20))
+                elif name == "linkedin_get_post_comments":
+                    data = await client.get_post_comments(arguments["post_urn"], arguments.get("count", 20))
+                elif name == "linkedin_reply_to_comment":
+                    data = await client.reply_to_comment(arguments["post_urn"], arguments["comment_urn"], arguments["text"])
                 else:
                     return [TextContent(type="text", text=_result(False, error=f"Unknown tool: {name}"))]
                 return [TextContent(type="text", text=_result(True, data=data))]

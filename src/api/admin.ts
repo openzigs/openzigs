@@ -60,6 +60,11 @@ const ENV_CHECKS = [
   "INSTAGRAM_BUSINESS_ACCOUNT_ID",
 ] as const;
 
+/**
+ * @deprecated All MCP servers have been migrated to native subprocess transport.
+ * Docker sidecars are no longer used for MCP. This type is retained for backward
+ * compatibility with any consumers of the /api/admin/sidecars endpoint.
+ */
 type SidecarCredential = {
   platform: string;
   label: string;
@@ -67,18 +72,6 @@ type SidecarCredential = {
   enabled: boolean;
   envVars: { name: string; configured: boolean }[];
 };
-
-const SIDECAR_CREDENTIALS: Array<{ platform: string; label: string; envVars: string[]; imageAvailable: boolean }> = [
-  { platform: "linkedin", label: "LinkedIn", envVars: ["LINKEDIN_ACCESS_TOKEN"], imageAvailable: true },
-  { platform: "twitter", label: "Twitter / X", envVars: ["TWITTER_BEARER_TOKEN", "TWITTER_API_KEY", "TWITTER_API_SECRET"], imageAvailable: true },
-  { platform: "facebook", label: "Facebook", envVars: ["FACEBOOK_PAGE_TOKEN"], imageAvailable: true },
-  { platform: "pinterest", label: "Pinterest", envVars: ["PINTEREST_APP_ID", "PINTEREST_APP_SECRET"], imageAvailable: true },
-  // Word/Office and Calendar are NOT Docker sidecars — they use local MCP servers (see LOCAL_SERVER_CREDENTIALS below)
-  { platform: "markitdown", label: "MarkItDown", envVars: [], imageAvailable: true },
-  { platform: "gmail", label: "Gmail", envVars: ["GOOGLE_OAUTH_CREDENTIALS"], imageAvailable: true },
-  { platform: "database", label: "Database (JDBC)", envVars: ["JDBC_URL", "DB_PASSWORD"], imageAvailable: true },
-  { platform: "github", label: "GitHub", envVars: ["GITHUB_PERSONAL_ACCESS_TOKEN"], imageAvailable: true },
-];
 
 type LocalServerCredential = {
   server: string;
@@ -88,13 +81,49 @@ type LocalServerCredential = {
 };
 
 const LOCAL_SERVER_CREDENTIALS: Array<{ server: string; label: string; runtime: string; envVars: string[] }> = [
+  // Non-social servers (migrated from Docker sidecars — Issue #312)
+  { server: "markitdown", label: "MarkItDown", runtime: "python", envVars: [] },
+  { server: "gmail", label: "Gmail", runtime: "node", envVars: ["GOOGLE_OAUTH_CREDENTIALS"] },
+  { server: "database", label: "Database (JDBC)", runtime: "other", envVars: ["JDBC_URL", "DB_PASSWORD"] },
+  { server: "github", label: "GitHub", runtime: "node", envVars: ["GITHUB_PERSONAL_ACCESS_TOKEN"] },
   { server: "word", label: "Word / Office", runtime: "python", envVars: [] },
   { server: "calendar", label: "Google Calendar", runtime: "node", envVars: ["GOOGLE_OAUTH_CREDENTIALS"] },
+  // Social platform servers (Issue #301–#305)
   {
     server: "instagram",
     label: "Instagram",
     runtime: "python",
-    envVars: ["INSTAGRAM_ACCESS_TOKEN", "FACEBOOK_APP_ID", "FACEBOOK_APP_SECRET", "INSTAGRAM_BUSINESS_ACCOUNT_ID"]
+    envVars: ["INSTAGRAM_ACCESS_TOKEN", "FACEBOOK_APP_ID", "FACEBOOK_APP_SECRET", "INSTAGRAM_BUSINESS_ACCOUNT_ID"],
+  },
+  {
+    server: "facebook",
+    label: "Facebook / Meta Pages",
+    runtime: "python",
+    envVars: ["FACEBOOK_PAGE_TOKEN", "FACEBOOK_APP_ID", "FACEBOOK_APP_SECRET"],
+  },
+  {
+    server: "twitter",
+    label: "Twitter / X",
+    runtime: "python",
+    envVars: ["TWITTER_BEARER_TOKEN", "TWITTER_API_KEY", "TWITTER_API_SECRET"],
+  },
+  {
+    server: "youtube",
+    label: "YouTube",
+    runtime: "python",
+    envVars: ["YOUTUBE_API_KEY"],
+  },
+  {
+    server: "linkedin",
+    label: "LinkedIn",
+    runtime: "python",
+    envVars: ["LINKEDIN_ACCESS_TOKEN"],
+  },
+  {
+    server: "reddit",
+    label: "Reddit",
+    runtime: "python",
+    envVars: [],
   },
 ];
 
@@ -518,63 +547,28 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
     }
   });
 
-  // ── Per-Sidecar Tool Listing ──
+  /**
+   * @deprecated Redirects to local-server tools endpoint.
+   * Kept for backward compatibility with older UI builds.
+   */
   router.get("/sidecars/:name/tools", (_req, res) => {
     const { name } = _req.params;
-
-    // For social sidecars, merge platform-specific tools + cross-platform social tools
-    const socialSidecars = new Set(["linkedin", "twitter", "facebook", "pinterest"]);
-    if (socialSidecars.has(name)) {
-      const platformTools = toolRegistry.getToolsBySource(name); // e.g. pinterest-specific
-      const crossPlatformTools = toolRegistry.getToolsBySource("social"); // social-post, etc.
-      const tools = [...platformTools, ...crossPlatformTools];
-      return res.json({ sidecar: name, tools });
-    }
-
-    // For other sidecars with source tags, derive tool list dynamically
     const dynamicTools = toolRegistry.getToolsBySource(name);
     if (dynamicTools.length > 0) {
       return res.json({ sidecar: name, tools: dynamicTools });
     }
-
-    return res.status(404).json({ error: `Unknown sidecar: ${name}` });
+    const crossPlatformTools = toolRegistry.getToolsBySource("social");
+    if (crossPlatformTools.length > 0) {
+      return res.json({ sidecar: name, tools: crossPlatformTools });
+    }
+    return res.json({ sidecar: name, tools: [] });
   });
 
-  // ── Per-Sidecar Tool Toggle ──
-  router.put("/sidecars/:name/tools", async (req, res) => {
-    const { name } = req.params;
-    const { disabledTools } = req.body as { disabledTools?: string[] };
-    if (!Array.isArray(disabledTools)) {
-      return res.status(400).json({ error: "disabledTools must be an array of tool names" });
-    }
-    try {
-      // Merge platform-specific + cross-platform social tools
-      const socialSidecars = new Set(["linkedin", "twitter", "facebook", "pinterest"]);
-      let toolNames: string[];
-      if (socialSidecars.has(name)) {
-        const platformTools = toolRegistry.getToolsBySource(name);
-        const crossPlatformTools = toolRegistry.getToolsBySource("social");
-        toolNames = [...platformTools, ...crossPlatformTools].map((t) => t.name);
-      } else {
-        const allSidecarTools = toolRegistry.getToolsBySource(name);
-        toolNames = allSidecarTools.map((t) => t.name);
-      }
-
-      if (toolNames.length === 0) {
-        return res.status(404).json({ error: `Unknown sidecar: ${name}` });
-      }
-
-      const disabledSet = new Set(disabledTools);
-      for (const toolName of toolNames) {
-        await toolRegistry.setEnabled(toolName, !disabledSet.has(toolName));
-      }
-
-      logger.info(`Updated disabledTools for sidecar "${name}": ${disabledTools.join(", ") || "(none)"}`);
-      return res.json({ ok: true, sidecar: name, disabledTools });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return res.status(500).json({ error: message });
-    }
+  /** @deprecated Use /api/admin/local-servers/:name/tools instead. */
+  router.put("/sidecars/:name/tools", async (_req, res) => {
+    return res.status(410).json({
+      error: "Docker MCP sidecars have been deprecated. Use local-server tool management instead.",
+    });
   });
 
   router.get("/env", (_req, res) => {
@@ -869,89 +863,30 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
     }
   });
 
-  // ── MCP Sidecar Management ──
+  // ── MCP Sidecar Management (DEPRECATED — all servers migrated to native) ──
   router.get("/sidecars", async (_req, res) => {
     const dockerAvailable = sidecarManager
       ? await sidecarManager.isDockerAvailable()
       : false;
 
-    const statuses = sidecarManager?.getAllStatuses() ?? [];
-    const configured = sidecarManager?.getConfiguredSidecars() ?? [];
-
-    // Load sidecar enabled states from config
-    const sidecarEnabledMap: Record<string, boolean> = {};
-    try {
-      const config = await loadConfig();
-      const sidecars = config.mcpServers?.sidecars as Record<string, { enabled?: boolean }> | undefined;
-      if (sidecars) {
-        for (const [name, cfg] of Object.entries(sidecars)) {
-          sidecarEnabledMap[name] = cfg.enabled !== false; // default to true
-        }
-      }
-    } catch {
-      // Config unavailable — assume all enabled
-    }
-
-    const credentials: SidecarCredential[] = SIDECAR_CREDENTIALS.map((cred) => ({
-      platform: cred.platform,
-      label: cred.label,
-      imageAvailable: cred.imageAvailable,
-      enabled: sidecarEnabledMap[cred.platform] !== false,
-      envVars: cred.envVars.map((name) => ({
-        name,
-        configured: !!(process.env[name] && process.env[name]!.trim().length > 0)
-      }))
-    }));
-
     return res.json({
-      sidecars: statuses,
-      configuredSidecars: configured,
-      credentials,
+      sidecars: [],
+      configuredSidecars: [],
+      credentials: [] as SidecarCredential[],
       dockerAvailable,
+      deprecated: true,
+      message: "All MCP servers have been migrated to native subprocess transport. Use /api/admin/local-servers instead.",
     });
   });
 
-  // ── Toggle MCP Sidecar Enabled/Disabled ──
-  router.post("/sidecars/:name/toggle", async (req, res) => {
-    const { name } = req.params;
-    const { enabled } = req.body as { enabled?: boolean };
-    if (typeof enabled !== "boolean") {
-      return res.status(400).json({ error: "enabled must be a boolean" });
-    }
-
-    const validSidecars = new Set(SIDECAR_CREDENTIALS.map((c) => c.platform));
-    if (!validSidecars.has(name)) {
-      return res.status(404).json({ error: `Unknown sidecar: ${name}` });
-    }
-
-    try {
-      const configPath = defaultConfigPath();
-      const userConfig = await readUserConfig(configPath);
-      const mcpServers = (userConfig.mcpServers && typeof userConfig.mcpServers === "object")
-        ? (userConfig.mcpServers as Record<string, unknown>)
-        : {};
-      const sidecars = (mcpServers.sidecars && typeof mcpServers.sidecars === "object")
-        ? (mcpServers.sidecars as Record<string, unknown>)
-        : {};
-      const existing = (sidecars[name] && typeof sidecars[name] === "object")
-        ? (sidecars[name] as Record<string, unknown>)
-        : {};
-
-      sidecars[name] = { ...existing, enabled };
-      mcpServers.sidecars = sidecars;
-      userConfig.mcpServers = mcpServers;
-
-      await writeUserConfig(configPath, userConfig);
-
-      logger.info(`Sidecar "${name}" ${enabled ? "enabled" : "disabled"}`);
-      return res.json({ ok: true, sidecar: name, enabled, restartRequired: true });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return res.status(500).json({ error: message });
-    }
+  /** @deprecated Use local-server toggle instead. */
+  router.post("/sidecars/:name/toggle", async (_req, res) => {
+    return res.status(410).json({
+      error: "Docker MCP sidecars have been deprecated. Use /api/admin/local-servers/:name/toggle instead.",
+    });
   });
 
-  // ── Save MCP sidecar credentials ──
+  // ── Save MCP server credentials (kept at /sidecars/credentials for backward compat) ──
   router.post("/sidecars/credentials", async (req, res) => {
     const body = req.body as Record<string, unknown>;
     const credentials = body.credentials as Record<string, string> | undefined;
@@ -960,11 +895,7 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
       return res.status(400).json({ error: "credentials must be an object of { ENV_VAR: value }" });
     }
 
-    // Validate: only allow known sidecar + local server env vars
-    const allEnvVars = new Set([
-      ...SIDECAR_CREDENTIALS.flatMap((c) => c.envVars),
-      ...LOCAL_SERVER_CREDENTIALS.flatMap((c) => c.envVars),
-    ]);
+    const allEnvVars = new Set(LOCAL_SERVER_CREDENTIALS.flatMap((c) => c.envVars));
     const filtered: Record<string, string> = {};
     for (const [key, value] of Object.entries(credentials)) {
       if (!allEnvVars.has(key)) {
@@ -977,11 +908,9 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
     }
 
     try {
-      // Write to .env file
       const envPath = defaultEnvPath();
       await upsertEnvFile(envPath, filtered);
 
-      // Update process.env in-memory so sidecars can start immediately
       for (const [key, value] of Object.entries(filtered)) {
         if (value) {
           process.env[key] = value;
@@ -998,21 +927,11 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
     }
   });
 
-  router.post("/sidecars/:name/restart", async (req, res) => {
-    const { name } = req.params;
-    if (!sidecarManager) {
-      return res.status(503).json({ error: "Docker sidecar manager not available" });
-    }
-    try {
-      const status = await sidecarManager.restartSidecar(name);
-      if (!status) {
-        return res.status(404).json({ error: `Unknown sidecar: ${name}` });
-      }
-      return res.json({ ok: true, status });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return res.status(500).json({ error: message });
-    }
+  /** @deprecated Use /api/admin/local-servers/:name/restart instead. */
+  router.post("/sidecars/:name/restart", async (_req, res) => {
+    return res.status(410).json({
+      error: "Docker MCP sidecars have been deprecated. Use /api/admin/local-servers/:name/restart instead.",
+    });
   });
 
   // ── Local MCP Server Management ──

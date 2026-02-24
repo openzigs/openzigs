@@ -82,13 +82,40 @@ describe("DmDispatcher", () => {
   });
 
   describe("createCommentReplier", () => {
-    it("replies to comment via Reddit", async () => {
+    it("replies to comment via Instagram using reply_to_comment tool", async () => {
       const mgr = createMockManager();
       const dispatcher = new DmDispatcher({ localServerManager: mgr });
       const replier = dispatcher.createCommentReplier();
 
-      await replier("reddit", "t1_abc", "Thanks!");
-      expect(mgr.callTool).toHaveBeenCalledWith("reddit", "reddit_reply_to_comment", expect.objectContaining({ text: "Thanks!" }));
+      await replier("instagram", "comment_ig_1", "Thanks for commenting!");
+      expect(mgr.callTool).toHaveBeenCalledWith("instagram", "reply_to_comment", {
+        comment_id: "comment_ig_1",
+        message: "Thanks for commenting!",
+      });
+    });
+
+    it("replies to comment via Facebook using fb_reply_to_comment tool", async () => {
+      const mgr = createMockManager();
+      const dispatcher = new DmDispatcher({ localServerManager: mgr });
+      const replier = dispatcher.createCommentReplier();
+
+      await replier("facebook", "fb_comment_1", "Thanks!");
+      expect(mgr.callTool).toHaveBeenCalledWith("facebook", "fb_reply_to_comment", {
+        comment_id: "fb_comment_1",
+        message: "Thanks!",
+      });
+    });
+
+    it("replies to comment via Twitter using post_tweet with reply_to", async () => {
+      const mgr = createMockManager();
+      const dispatcher = new DmDispatcher({ localServerManager: mgr });
+      const replier = dispatcher.createCommentReplier();
+
+      await replier("twitter", "tweet_123", "Great tweet!");
+      expect(mgr.callTool).toHaveBeenCalledWith("twitter", "twitter_post_tweet", {
+        text: "Great tweet!",
+        reply_to: "tweet_123",
+      });
     });
 
     it("replies to comment via YouTube", async () => {
@@ -97,15 +124,35 @@ describe("DmDispatcher", () => {
       const replier = dispatcher.createCommentReplier();
 
       await replier("youtube", "comment_yt_1", "Great video!");
-      expect(mgr.callTool).toHaveBeenCalledWith("youtube", "yt_reply_to_comment", expect.objectContaining({ text: "Great video!" }));
+      expect(mgr.callTool).toHaveBeenCalledWith("youtube", "yt_reply_to_comment", {
+        parent_id: "comment_yt_1",
+        text: "Great video!",
+      });
     });
 
-    it("throws for platform without comment reply (twitter)", async () => {
+    it("replies to comment via LinkedIn using linkedin_reply_to_comment tool", async () => {
       const mgr = createMockManager();
       const dispatcher = new DmDispatcher({ localServerManager: mgr });
       const replier = dispatcher.createCommentReplier();
 
-      await expect(replier("twitter", "tweet_123", "Reply")).rejects.toThrow("Comment reply not supported");
+      await replier("linkedin", "li_comment_1", "Insightful!");
+      expect(mgr.callTool).toHaveBeenCalledWith("linkedin", "linkedin_reply_to_comment", {
+        comment_urn: "li_comment_1",
+        text: "Insightful!",
+        post_urn: "",
+      });
+    });
+
+    it("replies to comment via Reddit", async () => {
+      const mgr = createMockManager();
+      const dispatcher = new DmDispatcher({ localServerManager: mgr });
+      const replier = dispatcher.createCommentReplier();
+
+      await replier("reddit", "t1_abc", "Thanks!");
+      expect(mgr.callTool).toHaveBeenCalledWith("reddit", "reddit_reply_to_comment", {
+        thing_id: "t1_abc",
+        text: "Thanks!",
+      });
     });
 
     it("throws when server is not running", async () => {
@@ -114,6 +161,14 @@ describe("DmDispatcher", () => {
       const replier = dispatcher.createCommentReplier();
 
       await expect(replier("reddit", "t1_abc", "Hi")).rejects.toThrow("MCP server is not running");
+    });
+
+    it("throws when callTool returns error", async () => {
+      const mgr = createMockManager(true, { text: "Permission denied", isError: true });
+      const dispatcher = new DmDispatcher({ localServerManager: mgr });
+      const replier = dispatcher.createCommentReplier();
+
+      await expect(replier("instagram", "comment_1", "Hi")).rejects.toThrow("Comment reply failed");
     });
   });
 });
