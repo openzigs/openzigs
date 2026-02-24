@@ -238,3 +238,121 @@ describe("VoiceService", () => {
     expect(service.isReady()).toBe(false);
   });
 });
+
+// ── F5-TTS Synthesis ──────────────────────────────────────────────────────────
+
+describe("VoiceService — synthesizeF5TTS", () => {
+  let tempDir: string;
+  let config: Partial<VoiceServiceConfig>;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let fetchSpy: any = null;
+
+  beforeEach(async () => {
+    tempDir = path.join(os.tmpdir(), `voice-f5-test-${Date.now()}`);
+    config = {
+      cacheDir: tempDir,
+      maxCacheSizeMb: 1,
+      maxTextLength: 500,
+    };
+  });
+
+  afterEach(async () => {
+    fetchSpy?.mockRestore();
+    fetchSpy = null;
+    try {
+      await fs.rm(tempDir, { recursive: true, force: true });
+    } catch {
+      // Ignore
+    }
+  });
+
+  it("should throw for empty text", async () => {
+    const service = new VoiceService(config);
+    await service.initialize();
+
+    const clips = [{ emotion: "Regular", refAudioPath: "/tmp/ref.wav", refText: "Hello" }];
+    await expect(service.synthesizeF5TTS("", clips)).rejects.toThrow("Text cannot be empty");
+    await expect(service.synthesizeF5TTS("   ", clips)).rejects.toThrow("Text cannot be empty");
+
+    await service.shutdown();
+  });
+
+  it("should call sidecar /f5tts endpoint and return audio", async () => {
+    const fakeWav = Buffer.from("RIFF-fake-wav-data");
+    fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response(fakeWav, {
+        status: 200,
+        headers: { "Content-Type": "audio/wav" },
+      })
+    );
+
+    const service = new VoiceService(config);
+    await service.initialize();
+
+    const clips = [{ emotion: "Regular", refAudioPath: "/tmp/ref.wav", refText: "Hello world" }];
+    const result = await service.synthesizeF5TTS("(Regular)Hello world", clips);
+
+    expect(result.audio).toBeInstanceOf(Buffer);
+    expect(result.audio.toString()).toBe("RIFF-fake-wav-data");
+    expect(result.cached).toBe(false);
+    expect(result.contentType).toBe("audio/wav");
+
+    // Verify the fetch call
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    const [url, opts] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    expect(url).toContain("/f5tts");
+    const body = JSON.parse(opts.body as string);
+    expect(body.text).toBe("(Regular)Hello world");
+    expect(body.clips).toHaveLength(1);
+    expect(body.clips[0].emotion).toBe("Regular");
+    expect(body.steps).toBe(8);
+    expect(body.method).toBe("rk4");
+
+    await service.shutdown();
+  });
+
+  it("should pass custom params to sidecar", async () => {
+    const fakeWav = Buffer.from("wav");
+    fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response(fakeWav, { status: 200 })
+    );
+
+    const service = new VoiceService(config);
+    await service.initialize();
+
+    const clips = [{ emotion: "Excited", refAudioPath: "/tmp/exc.wav", refText: "Wow!" }];
+    await service.synthesizeF5TTS("(Excited)Wow!", clips, {
+      steps: 16,
+      method: "euler",
+      cfgStrength: 3.0,
+      speed: 1.2,
+      seed: 42,
+    });
+
+    const body = JSON.parse((fetchSpy.mock.calls[0] as [string, RequestInit])[1].body as string);
+    expect(body.steps).toBe(16);
+    expect(body.method).toBe("euler");
+    expect(body.cfg_strength).toBe(3.0);
+    expect(body.speed).toBe(1.2);
+    expect(body.seed).toBe(42);
+
+    await service.shutdown();
+  });
+
+  it("should throw on sidecar error response", async () => {
+    fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response('{"error":"model not loaded"}', {
+        status: 500,
+        statusText: "Internal Server Error",
+      })
+    );
+
+    const service = new VoiceService(config);
+    await service.initialize();
+
+    const clips = [{ emotion: "Regular", refAudioPath: "/tmp/ref.wav", refText: "Hi" }];
+    await expect(service.synthesizeF5TTS("Hi", clips)).rejects.toThrow("F5-TTS synthesis failed (500)");
+
+    await service.shutdown();
+  });
+});

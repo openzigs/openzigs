@@ -23,6 +23,8 @@ interface NarrationEditorProps {
   onSave: (value: string) => void;
   directives?: NarrationDirective[];
   voices?: VoicePreset[];
+  /** F5-TTS emotion labels for emotion tag insertion */
+  emotionTags?: string[];
   disabled?: boolean;
 }
 
@@ -36,12 +38,14 @@ export function NarrationEditor({
   onSave,
   directives = [],
   voices = [],
+  emotionTags = [],
   disabled = false,
 }: NarrationEditorProps) {
   const [showAutocomplete, setShowAutocomplete] = useState(false);
   const [autocompleteFilter, setAutocompleteFilter] = useState("");
   const [selectedIdx, setSelectedIdx] = useState(0);
   const [showVoicePicker, setShowVoicePicker] = useState(false);
+  const [showEmotionPicker, setShowEmotionPicker] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const autocompleteRef = useRef<HTMLDivElement>(null);
   const [dirty, setDirty] = useState(false);
@@ -176,15 +180,28 @@ export function NarrationEditor({
           <Mic className="h-3.5 w-3.5 text-muted-foreground" />
           <p className="text-[11px] font-medium text-foreground">Narration</p>
         </div>
-        <button
-          onClick={() => setShowVoicePicker((v) => !v)}
-          className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-muted-foreground hover:bg-muted transition"
-          title="Insert directive"
-        >
-          <Sparkles className="h-3 w-3" />
-          Directives
-          <ChevronDown className="h-3 w-3" />
-        </button>
+        <div className="flex items-center gap-1.5">
+          <button
+            onClick={() => setShowVoicePicker((v) => !v)}
+            className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-muted-foreground hover:bg-muted transition"
+            title="Insert directive"
+          >
+            <Sparkles className="h-3 w-3" />
+            Directives
+            <ChevronDown className="h-3 w-3" />
+          </button>
+          {emotionTags.length > 0 && (
+            <button
+              onClick={() => setShowEmotionPicker((v) => !v)}
+              className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-muted-foreground hover:bg-muted transition"
+              title="Insert F5-TTS emotion tag"
+            >
+              <Mic className="h-3 w-3" />
+              Emotions
+              <ChevronDown className="h-3 w-3" />
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Voice directive quick-insert panel */}
@@ -204,6 +221,29 @@ export function NarrationEditor({
               <span className="block text-muted-foreground font-mono">{d.tag}</span>
             </button>
           ))}
+        </div>
+      )}
+
+      {/* F5-TTS emotion tag quick-insert panel */}
+      {showEmotionPicker && emotionTags.length > 0 && (
+        <div className="mb-2 rounded-md border border-border bg-muted/50 p-2">
+          <p className="mb-1.5 text-[10px] text-muted-foreground">
+            Insert an emotion tag — F5-TTS will use the matching reference clip.
+          </p>
+          <div className="flex flex-wrap gap-1">
+            {emotionTags.map((emotion) => (
+              <button
+                key={emotion}
+                onClick={() => {
+                  insertDirectiveAtEnd(`(${emotion})`);
+                  setShowEmotionPicker(false);
+                }}
+                className="rounded-full border border-border px-2.5 py-1 text-[10px] font-medium text-foreground hover:border-primary/40 hover:bg-primary/5 transition"
+              >
+                ({emotion})
+              </button>
+            ))}
+          </div>
         </div>
       )}
 
@@ -263,7 +303,7 @@ export function NarrationEditor({
       )}
 
       <p className="mt-1 text-[9px] text-muted-foreground">
-        Type <span className="font-mono">[</span> for speech directives • <span className="font-mono">*word*</span> for emphasis
+        Type <span className="font-mono">[</span> for speech directives • <span className="font-mono">(Emotion)</span> for F5-TTS • <span className="font-mono">*word*</span> for emphasis
       </p>
     </div>
   );

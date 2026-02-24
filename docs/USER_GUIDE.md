@@ -3045,6 +3045,7 @@ OpenZigs ships with two TTS engines:
 |---|---|---|---|
 | **Engine A (Kokoro)** | On-device mlx-audio (Apple Silicon) | ~1 GB | Low-latency, general-purpose narration |
 | **Engine B (GPT-SoVITS)** | Local GPT-SoVITS server (proxy) | 6–10 GB | Cloned voices, expressive character TTS |
+| **Engine C (F5-TTS)** | f5-tts-mlx (Apple Silicon) | ~1–2 GB | Multi-emotion voice cloning with per-clip reference audio |
 
 Only one engine is active at a time. Switching engines frees Apple Silicon VRAM before loading the next engine.
 
@@ -3117,6 +3118,64 @@ Click **Test** on any profile card. The sidecar synthesizes a short sample using
 #### Kokoro Presets (Engine A)
 
 The **Kokoro Presets** grid shows all available built-in voices. Click a preset to preview it. Presets are loaded from the audio sidecar's `/voices` endpoint.
+
+#### F5-TTS Profiles (Engine C)
+
+Engine C provides **emotion-driven voice cloning** via F5-TTS. Unlike Engine B (one reference clip per profile), Engine C supports **multiple emotion clips** per profile — each clip maps to an emotion label (Regular, Excited, Whisper, etc.).
+
+**Installing F5-TTS:**
+
+```bash
+pip install f5-tts-mlx>=0.3.0
+```
+
+Or use the `requirements-mac.txt` from the sidecar directory:
+
+```bash
+cd sidecars/audio && pip install -r requirements-mac.txt
+```
+
+**Creating an F5-TTS profile:**
+
+1. Open **Voice Lab** in the Admin UI.
+2. In the **F5-TTS Profiles · Engine C** section, click **New F5-TTS Profile**.
+3. Give the profile a name and click **Create**.
+4. Click the **+** button on the profile card to add emotion clips:
+   - **Emotion Label** — A short name like `Regular`, `Excited`, `Whisper`, `Calm`, `Breaking News`.
+   - **Reference Audio** — Upload a short WAV/MP3 clip (up to 15 seconds). The sidecar converts it to 24kHz mono WAV automatically.
+   - **Reference Transcript** — The exact words spoken in the reference clip (improves synthesis quality).
+5. Add at least one `Regular` clip — this serves as the default voice when no emotion tag is specified.
+
+**Writing emotion-tagged scripts:**
+
+Use parenthesized emotion tags before text segments:
+
+```
+(Regular)Welcome to the show. (Excited)Today we have incredible news! (Whisper)But first, a secret.
+```
+
+The sidecar splits the text at each emotion tag, synthesizes each segment with the matching reference clip, and concatenates the output into a single WAV file.
+
+**Inserting emotion tags in the Narration Editor:**
+
+The Director Studio narration editor includes an **Emotions** dropdown when emotion tags are available. Click an emotion pill to insert `(EmotionName)` at the cursor position.
+
+**Testing an F5-TTS profile:**
+
+1. Expand a profile card by clicking its name.
+2. Enter test text with emotion tags in the test input field.
+3. Click **Test** to synthesize and play the result.
+
+**F5-TTS synthesis parameters (advanced):**
+
+| Parameter | Default | Description |
+|---|---|---|
+| `steps` | 8 | Number of diffusion steps (higher = better quality, slower) |
+| `method` | `rk4` | ODE solver: `rk4` or `euler` |
+| `cfg_strength` | 2.0 | Classifier-free guidance strength |
+| `sway_sampling_coef` | -1.0 | Sway sampling coefficient |
+| `speed` | 1.0 | Speech rate multiplier |
+| `seed` | null | Random seed for reproducibility |
 
 ---
 

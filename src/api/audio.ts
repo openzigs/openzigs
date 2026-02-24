@@ -41,8 +41,19 @@ export interface VoiceProfile {
   repetition_penalty: number;
   top_k: number;
   sample_steps: number;
+  engine_type: string;
   created_at: string;
   updated_at: string;
+}
+
+export interface F5TTSClipRow {
+  id: string;
+  profile_id: string;
+  emotion: string;
+  ref_audio_path: string;
+  ref_text: string;
+  sort_order: number;
+  created_at: string;
 }
 
 export interface AudioRouterOptions {
@@ -214,12 +225,12 @@ export const createAudioRouter = ({ db, sidecarUrl }: AudioRouterOptions): Route
 
   /**
    * POST /engine/switch — switch the active TTS engine.
-   * Body: { engine: "kokoro" | "sovits" }
+   * Body: { engine: "kokoro" | "sovits" | "f5tts" }
    */
   router.post("/engine/switch", async (req, res) => {
     const { engine } = req.body as { engine?: string };
-    if (!engine || !["kokoro", "sovits"].includes(engine)) {
-      res.status(400).json({ error: "engine must be 'kokoro' or 'sovits'" });
+    if (!engine || !["kokoro", "sovits", "f5tts"].includes(engine)) {
+      res.status(400).json({ error: "engine must be 'kokoro', 'sovits', or 'f5tts'" });
       return;
     }
     try {
@@ -228,6 +239,37 @@ export const createAudioRouter = ({ db, sidecarUrl }: AudioRouterOptions): Route
         body: JSON.stringify({ engine }),
       });
       logger.info(`[Audio API] Engine switched to: ${engine}`);
+
+      // When switching to f5tts, push the first profile's clips to the sidecar
+      // so that /tts routing works immediately without a manual "Try Voice" first.
+      if (engine === "f5tts") {
+        try {
+          const profiles = db
+            .prepare(`SELECT * FROM voice_profiles WHERE engine_type = 'f5tts' ORDER BY created_at ASC LIMIT 1`)
+            .all() as VoiceProfile[];
+          if (profiles.length > 0) {
+            const clips = db
+              .prepare(`SELECT * FROM f5tts_clips WHERE profile_id = ? ORDER BY sort_order ASC`)
+              .all(profiles[0].id) as F5TTSClipRow[];
+            if (clips.length > 0) {
+              const clipPayload = clips.map((c) => ({
+                emotion: c.emotion,
+                ref_audio_path: c.ref_audio_path,
+                ref_text: c.ref_text,
+              }));
+              await sidecarFetch(baseUrl, "/f5tts/set-active-clips", {
+                method: "POST",
+                body: JSON.stringify({ clips: clipPayload }),
+              });
+              logger.info(`[Audio API] Pushed ${clips.length} f5tts clip(s) to sidecar`);
+            }
+          }
+        } catch (clipErr) {
+          const msg = clipErr instanceof Error ? clipErr.message : String(clipErr);
+          logger.warn(`[Audio API] Failed to push f5tts clips on switch: ${msg}`);
+        }
+      }
+
       res.json(data);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -791,6 +833,399 @@ export const createAudioRouter = ({ db, sidecarUrl }: AudioRouterOptions): Route
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         logger.error(`[Audio API] POST /upload/ref-audio failed: ${msg}`);
+        res.status(500).json({ error: msg });
+      }
+    },
+  );
+
+  // ── F5-TTS Voice Profiles (Engine C) ───────────────────────────────────────
+
+  /**
+   * GET /f5tts/profiles — list all F5-TTS voice profiles with their clips.
+   */
+  router.get("/f5tts/profiles", (_req, res) => {
+    try {
+      const rows = db
+        .prepare(`SELECT * FROM voice_profiles WHERE engine_type = 'f5tts' ORDER BY created_at DESC`)
+        .all() as VoiceProfile[];
+
+      const profilesWithClips = rows.map((profile) => {
+        const clips = db
+          .prepare(`SELECT * FROM f5tts_clips WHERE profile_id = ? ORDER BY sort_order ASC`)
+          .all(profile.id) as F5TTSClipRow[];
+        return { ...profile, clips };
+      });
+
+      res.json({ profiles: profilesWithClips, total: profilesWithClips.length });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.error(`[Audio API] GET /f5tts/profiles failed: ${msg}`);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  /**
+   * POST /f5tts/profiles — create a new F5-TTS voice profile.
+   * Body: { name }
+   */
+  router.post("/f5tts/profiles", (req, res) => {
+    const { name } = req.body as { name?: string };
+
+    if (!name || typeof name !== "string" || !name.trim()) {
+      res.status(400).json({ error: "name is required" });
+      return;
+    }
+
+    const now = new Date().toISOString();
+    const id = nanoid();
+
+    try {
+      db.prepare(
+        `INSERT INTO voice_profiles
+           (id, name, engine_type, created_at, updated_at)
+         VALUES
+           (@id, @name, 'f5tts', @created_at, @updated_at)`,
+      ).run({ id, name: name.trim(), created_at: now, updated_at: now });
+
+      const profile = db
+        .prepare(`SELECT * FROM voice_profiles WHERE id = ?`)
+        .get(id) as VoiceProfile;
+
+      logger.info(`[Audio API] Created F5-TTS profile: ${id} (${name})`);
+      res.status(201).json({ ...profile, clips: [] });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes("UNIQUE")) {
+        res.status(409).json({ error: `A profile named "${name}" already exists` });
+        return;
+      }
+      logger.error(`[Audio API] POST /f5tts/profiles failed: ${msg}`);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  /**
+   * GET /f5tts/profiles/:id — get a single F5-TTS profile with clips.
+   */
+  router.get("/f5tts/profiles/:id", (req, res) => {
+    try {
+      const profile = db
+        .prepare(`SELECT * FROM voice_profiles WHERE id = ? AND engine_type = 'f5tts'`)
+        .get(req.params.id) as VoiceProfile | undefined;
+
+      if (!profile) {
+        res.status(404).json({ error: `F5-TTS profile not found: ${req.params.id}` });
+        return;
+      }
+
+      const clips = db
+        .prepare(`SELECT * FROM f5tts_clips WHERE profile_id = ? ORDER BY sort_order ASC`)
+        .all(profile.id) as F5TTSClipRow[];
+
+      res.json({ ...profile, clips });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  /**
+   * DELETE /f5tts/profiles/:id — delete an F5-TTS profile and its clips.
+   */
+  router.delete("/f5tts/profiles/:id", (req, res) => {
+    try {
+      const existing = db
+        .prepare(`SELECT id FROM voice_profiles WHERE id = ? AND engine_type = 'f5tts'`)
+        .get(req.params.id);
+
+      if (!existing) {
+        res.status(404).json({ error: `F5-TTS profile not found: ${req.params.id}` });
+        return;
+      }
+
+      // Clips are cascade-deleted via FK
+      db.prepare(`DELETE FROM voice_profiles WHERE id = ?`).run(req.params.id);
+      logger.info(`[Audio API] Deleted F5-TTS profile: ${req.params.id}`);
+      res.json({ success: true });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  /**
+   * POST /f5tts/profiles/:id/clips — add a clip to an F5-TTS profile.
+   * Body: { emotion, ref_audio_path, ref_text? }
+   */
+  router.post("/f5tts/profiles/:id/clips", (req, res) => {
+    const { emotion, ref_audio_path, ref_text = "" } = req.body as {
+      emotion?: string;
+      ref_audio_path?: string;
+      ref_text?: string;
+    };
+
+    if (!emotion || typeof emotion !== "string" || !emotion.trim()) {
+      res.status(400).json({ error: "emotion label is required" });
+      return;
+    }
+    if (!ref_audio_path || typeof ref_audio_path !== "string") {
+      res.status(400).json({ error: "ref_audio_path is required" });
+      return;
+    }
+
+    try {
+      const profile = db
+        .prepare(`SELECT id FROM voice_profiles WHERE id = ? AND engine_type = 'f5tts'`)
+        .get(req.params.id);
+
+      if (!profile) {
+        res.status(404).json({ error: `F5-TTS profile not found: ${req.params.id}` });
+        return;
+      }
+
+      // Check if this emotion already exists for this profile
+      const existing = db
+        .prepare(`SELECT id FROM f5tts_clips WHERE profile_id = ? AND emotion = ?`)
+        .get(req.params.id, emotion.trim());
+
+      if (existing) {
+        res.status(409).json({ error: `A clip with emotion "${emotion}" already exists for this profile` });
+        return;
+      }
+
+      const clipId = nanoid();
+      const now = new Date().toISOString();
+      const maxOrder = db
+        .prepare(`SELECT COALESCE(MAX(sort_order), -1) as max_order FROM f5tts_clips WHERE profile_id = ?`)
+        .get(req.params.id) as { max_order: number };
+
+      db.prepare(
+        `INSERT INTO f5tts_clips (id, profile_id, emotion, ref_audio_path, ref_text, sort_order, created_at)
+         VALUES (@id, @profile_id, @emotion, @ref_audio_path, @ref_text, @sort_order, @created_at)`,
+      ).run({
+        id: clipId,
+        profile_id: req.params.id,
+        emotion: emotion.trim(),
+        ref_audio_path,
+        ref_text,
+        sort_order: maxOrder.max_order + 1,
+        created_at: now,
+      });
+
+      // Update profile timestamp
+      db.prepare(`UPDATE voice_profiles SET updated_at = ? WHERE id = ?`)
+        .run(now, req.params.id);
+
+      const clip = db
+        .prepare(`SELECT * FROM f5tts_clips WHERE id = ?`)
+        .get(clipId) as F5TTSClipRow;
+
+      logger.info(`[Audio API] Added F5-TTS clip: ${clipId} (${emotion}) to profile ${req.params.id}`);
+      res.status(201).json(clip);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.error(`[Audio API] POST /f5tts/profiles/:id/clips failed: ${msg}`);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  /**
+   * DELETE /f5tts/clips/:clipId — delete a single clip.
+   */
+  router.delete("/f5tts/clips/:clipId", (req, res) => {
+    try {
+      const clip = db
+        .prepare(`SELECT * FROM f5tts_clips WHERE id = ?`)
+        .get(req.params.clipId) as F5TTSClipRow | undefined;
+
+      if (!clip) {
+        res.status(404).json({ error: `Clip not found: ${req.params.clipId}` });
+        return;
+      }
+
+      db.prepare(`DELETE FROM f5tts_clips WHERE id = ?`).run(req.params.clipId);
+      logger.info(`[Audio API] Deleted F5-TTS clip: ${req.params.clipId}`);
+      res.json({ success: true });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  /**
+   * GET /f5tts/clips/:clipId/audio — stream the reference audio file for playback.
+   */
+  router.get("/f5tts/clips/:clipId/audio", async (req, res) => {
+    try {
+      const clip = db
+        .prepare(`SELECT * FROM f5tts_clips WHERE id = ?`)
+        .get(req.params.clipId) as F5TTSClipRow | undefined;
+
+      if (!clip) {
+        res.status(404).json({ error: `Clip not found: ${req.params.clipId}` });
+        return;
+      }
+
+      const filePath = clip.ref_audio_path;
+      try {
+        await fs.access(filePath);
+      } catch {
+        res.status(404).json({ error: "Reference audio file not found on disk." });
+        return;
+      }
+
+      const ext = path.extname(filePath).toLowerCase();
+      const mimeMap: Record<string, string> = {
+        ".wav": "audio/wav",
+        ".mp3": "audio/mpeg",
+        ".ogg": "audio/ogg",
+        ".webm": "audio/webm",
+        ".m4a": "audio/mp4",
+      };
+      const contentType = mimeMap[ext] ?? "application/octet-stream";
+      const data = await fs.readFile(filePath);
+      res.set("Content-Type", contentType).send(data);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  /**
+   * POST /f5tts/profiles/:id/test — synthesize a test phrase with F5-TTS.
+   * Body: { text? }
+   * Returns: audio/wav binary
+   */
+  router.post("/f5tts/profiles/:id/test", async (req, res) => {
+    try {
+      const profile = db
+        .prepare(`SELECT * FROM voice_profiles WHERE id = ? AND engine_type = 'f5tts'`)
+        .get(req.params.id) as VoiceProfile | undefined;
+
+      if (!profile) {
+        res.status(404).json({ error: `F5-TTS profile not found: ${req.params.id}` });
+        return;
+      }
+
+      const clips = db
+        .prepare(`SELECT * FROM f5tts_clips WHERE profile_id = ? ORDER BY sort_order ASC`)
+        .all(req.params.id) as F5TTSClipRow[];
+
+      if (clips.length === 0) {
+        res.status(400).json({ error: "Profile has no clips. Add at least one 'Regular' clip." });
+        return;
+      }
+
+      const hasRegular = clips.some((c) => c.emotion === "Regular");
+      if (!hasRegular) {
+        res.status(400).json({ error: "Profile must have a 'Regular' emotion clip." });
+        return;
+      }
+
+      const testText: string = (req.body as { text?: string; speed?: number }).text?.trim()
+        || "Hello, this is a voice cloning test with F5 TTS.";
+      const testSpeed: number = Math.max(0.25, Math.min(2.0,
+        Number((req.body as { speed?: number }).speed) || 1.0,
+      ));
+
+      const payload = {
+        text: testText,
+        clips: clips.map((c) => ({
+          emotion: c.emotion,
+          ref_audio_path: c.ref_audio_path,
+          ref_text: c.ref_text,
+        })),
+        speed: testSpeed,
+      };
+
+      const url = `${baseUrl}/f5tts`;
+      const audioRes = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(180_000), // 3 min — F5-TTS can take ~60s on first run
+      });
+
+      if (!audioRes.ok) {
+        const errBody = await audioRes.text();
+        const sidecarMessage = formatSidecarErrorMessage(errBody);
+        const mappedStatus = audioRes.status >= 400 && audioRes.status < 500 ? 400 : 502;
+        res.status(mappedStatus).json({ error: sidecarMessage });
+        return;
+      }
+
+      const audioBuffer = Buffer.from(await audioRes.arrayBuffer());
+      res.set("Content-Type", "audio/wav").send(audioBuffer);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.error(`[Audio API] POST /f5tts/profiles/:id/test failed: ${msg}`);
+      res.status(502).json({ error: msg });
+    }
+  });
+
+  /**
+   * POST /upload/f5tts-ref-audio — upload reference audio for F5-TTS (Engine C).
+   *
+   * F5-TTS has relaxed duration constraints (up to 15 seconds).
+   * The sidecar handles conversion to 24kHz mono WAV.
+   *
+   * Headers:
+   *   x-file-name: <filename.wav>
+   * Body: raw binary audio bytes
+   *
+   * Returns: { filePath, fileName, size, duration_seconds }
+   */
+  router.post(
+    "/upload/f5tts-ref-audio",
+    raw({ type: "*/*", limit: "50mb" }),
+    async (req, res) => {
+      try {
+        const body = req.body as Buffer;
+        if (!Buffer.isBuffer(body) || body.length === 0) {
+          res.status(400).json({ error: "request body must contain audio bytes" });
+          return;
+        }
+
+        const rawName = req.header("x-file-name") ?? "reference.wav";
+        let decodedName: string;
+        try {
+          decodedName = decodeURIComponent(rawName);
+        } catch {
+          decodedName = rawName;
+        }
+
+        const safeName = path.basename(decodedName).replace(/[^a-zA-Z0-9._-]/g, "_");
+        const fileName = safeName || "reference.wav";
+        const uniqueName = `${Date.now()}-${fileName}`;
+
+        const f5ttsUploadDir = path.join(os.homedir(), ".openzigs", "director", "f5tts-ref-audio");
+        await fs.mkdir(f5ttsUploadDir, { recursive: true });
+        const filePath = path.join(f5ttsUploadDir, uniqueName);
+        await fs.writeFile(filePath, body);
+
+        const durationSeconds = await probeAudioDurationSeconds(filePath);
+
+        // F5-TTS: max 15 seconds reference audio
+        if (durationSeconds !== null && durationSeconds > 15) {
+          await fs.unlink(filePath).catch(() => undefined);
+          const rounded = Math.round(durationSeconds * 10) / 10;
+          res.status(400).json({
+            error: `Reference audio is ${rounded}s. F5-TTS clips must be 15s or shorter.`,
+          });
+          return;
+        }
+
+        logger.info(`[Audio API] Uploaded F5-TTS ref audio: ${filePath} (${body.length} bytes)`);
+        res.json({
+          success: true,
+          filePath,
+          fileName: uniqueName,
+          size: body.length,
+          duration_seconds: durationSeconds,
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        logger.error(`[Audio API] POST /upload/f5tts-ref-audio failed: ${msg}`);
         res.status(500).json({ error: msg });
       }
     },

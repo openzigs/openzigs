@@ -1233,12 +1233,13 @@ When `mode === "presentation"`, the `produce-video` tool handler:
 
 #### Engine Registry
 
-The audio sidecar (`sidecars/audio/server.py`) manages two mutually exclusive TTS engines behind a shared `POST /tts` endpoint:
+The audio sidecar (`sidecars/audio/server.py`) manages three TTS engines behind dedicated endpoints:
 
 | Engine | Identifier | Technology | VRAM | Notes |
 |---|---|---|---|---|
 | **Engine A** | `kokoro` | mlx-audio (on-device) | ~1 GB | Default; always available on Apple Silicon |
 | **Engine B** | `sovits` | GPT-SoVITS (HTTP proxy) | 6–10 GB | External process at `http://127.0.0.1:9880` |
+| **Engine C** | `f5tts` | f5-tts-mlx (on-device) | ~1–2 GB | Emotion-driven voice cloning via per-clip reference audio |
 
 #### Engine Switch Mutex
 
@@ -1337,6 +1338,58 @@ Voice Lab UI
                     → httpx POST → GPT-SoVITS :9880/tts
                     → WAV response
 ```
+
+#### F5-TTS Engine C — Emotion-Driven Voice Cloning (Issue #313)
+
+Engine C adds **multi-emotion voice cloning** via [f5-tts-mlx](https://github.com/lucasnewman/f5-tts-mlx), running natively on Apple Silicon (MLX).
+
+**Architecture:**
+- Each F5-TTS profile contains one or more **emotion clips** (Regular, Excited, Whisper, etc.)
+- Each clip has its own reference audio + transcript
+- Narration scripts use parenthesized emotion tags: `(Excited)Welcome to the show!`
+- The sidecar splits text at emotion markers, synthesizes each segment with the matching clip, and concatenates the WAV output
+
+**Database Schema:**
+
+| Table | Column | Description |
+|---|---|---|
+| `voice_profiles` | `engine_type` | `"sovits"` (default) or `"f5tts"` |
+| `f5tts_clips` | `id` | nanoid primary key |
+| `f5tts_clips` | `profile_id` | FK → `voice_profiles.id` (CASCADE delete) |
+| `f5tts_clips` | `emotion` | Emotion label (e.g. "Regular", "Excited") |
+| `f5tts_clips` | `ref_audio_path` | Path to reference WAV/MP3 (max 15s) |
+| `f5tts_clips` | `ref_text` | Transcript of reference audio |
+
+**Synthesis Flow:**
+
+```
+POST /f5tts
+    │
+    ├─ Parse text → split at (EmotionTag) markers
+    │     e.g. "(Regular)Hello. (Excited)Amazing news!"
+    │     → [{emotion: "Regular", text: "Hello."}, {emotion: "Excited", text: "Amazing news!"}]
+    │
+    ├─ For each segment:
+    │     ├─ Match emotion → clip ref_audio_path + ref_text
+    │     ├─ Convert ref audio → 24kHz mono WAV (ffmpeg)
+    │     └─ f5_tts_mlx.generate(text, ref_audio, ref_text, steps, method, ...)
+    │           → 24kHz WAV segment
+    │
+    └─ Concatenate all WAV segments → single WAV response
+```
+
+**API Endpoints (under `/api/admin/audio`):**
+
+| Method | Path | Description |
+|---|---|---|
+| GET | `/f5tts/profiles` | List all F5-TTS profiles with clips |
+| POST | `/f5tts/profiles` | Create F5-TTS profile |
+| GET | `/f5tts/profiles/:id` | Get profile with clips |
+| DELETE | `/f5tts/profiles/:id` | Delete profile (cascades clips) |
+| POST | `/f5tts/profiles/:id/clips` | Add emotion clip to profile |
+| DELETE | `/f5tts/clips/:clipId` | Delete single clip |
+| POST | `/f5tts/profiles/:id/test` | Test synthesis with emotion-tagged text |
+| POST | `/upload/f5tts-ref-audio` | Upload ref audio (stored at `~/.openzigs/director/f5tts-ref-audio/`) |
 
 **Process ports (local dev):**
 

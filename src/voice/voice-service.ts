@@ -18,6 +18,7 @@ import type {
   TranscribeResult,
   AudioSidecarHealth,
   LocalVoicePreset,
+  F5TTSParams,
 } from "./types.js";
 import { DEFAULT_VOICE_CONFIG, AVAILABLE_LOCAL_VOICES } from "./types.js";
 import { translatePacingTags, hasPacingTags } from "./pacing-translator.js";
@@ -345,6 +346,56 @@ export class VoiceService {
     });
 
     logger.info(`Local TTS synthesis: ${text.length} chars → ${audio.length} bytes in ${durationMs}ms`);
+
+    return { audio, cached: false, durationMs, contentType: "audio/wav" };
+  }
+
+  /**
+   * Synthesize via F5-TTS sidecar (Engine C).
+   * Sends multi-clip emotion-tagged text to the /f5tts endpoint.
+   * Returns WAV audio.
+   */
+  async synthesizeF5TTS(
+    text: string,
+    clips: Array<{ emotion: string; refAudioPath: string; refText: string }>,
+    params?: F5TTSParams,
+  ): Promise<SynthesizeResult> {
+    if (!text || text.trim().length === 0) {
+      throw new Error("Text cannot be empty");
+    }
+
+    const startTime = Date.now();
+
+    const payload = {
+      text,
+      clips: clips.map((c) => ({
+        emotion: c.emotion,
+        ref_audio_path: c.refAudioPath,
+        ref_text: c.refText,
+      })),
+      steps: params?.steps ?? 8,
+      method: params?.method ?? "rk4",
+      cfg_strength: params?.cfgStrength ?? 2.0,
+      sway_sampling_coef: params?.swayCoef ?? -1.0,
+      speed: params?.speed ?? 1.0,
+      seed: params?.seed ?? null,
+    };
+
+    const resp = await fetch(`${this.sidecarUrl}/f5tts`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+
+    if (!resp.ok) {
+      const errorBody = await resp.text().catch(() => "");
+      throw new Error(`F5-TTS synthesis failed (${resp.status}): ${errorBody}`);
+    }
+
+    const audio = Buffer.from(await resp.arrayBuffer());
+    const durationMs = Date.now() - startTime;
+
+    logger.info(`F5-TTS synthesis: ${text.length} chars → ${audio.length} bytes in ${durationMs}ms`);
 
     return { audio, cached: false, durationMs, contentType: "audio/wav" };
   }

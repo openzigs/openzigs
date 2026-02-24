@@ -26,10 +26,13 @@ type EngineStatus = {
   tts_model: string;
   stt_model: string;
   voice_count: number;
-  active_engine: "kokoro" | "sovits";
+  active_engine: "kokoro" | "sovits" | "f5tts";
   engines_available: string[];
   sovits_url: string;
   sovits_reachable: boolean;
+  f5tts_loaded: boolean;
+  f5tts_loading: boolean;
+  f5tts_available: boolean;
 };
 
 type SwitchResult = {
@@ -183,16 +186,21 @@ export function EngineToggle() {
   }, [starter.exitCode, queryClient]);
 
   const switchMutation = useMutation({
-    mutationFn: (engine: "kokoro" | "sovits") =>
+    mutationFn: (engine: "kokoro" | "sovits" | "f5tts") =>
       fetchJson<SwitchResult>("/api/admin/audio/engine/switch", {
         method: "POST",
         body: JSON.stringify({ engine }),
       }),
     onSuccess: (data) => {
+      const labels: Record<string, string> = {
+        kokoro: "Kokoro (Engine A)",
+        sovits: "GPT-SoVITS (Engine B)",
+        f5tts: "F5-TTS (Engine C)",
+      };
       const msg =
         data.status === "already_loaded"
           ? `Engine ${data.engine} is already active.`
-          : `Switched to ${data.engine === "kokoro" ? "Kokoro (Engine A)" : "GPT-SoVITS (Engine B)"}.`;
+          : `Switched to ${labels[data.engine] ?? data.engine}.`;
       showToast(msg, "success");
       void queryClient.invalidateQueries({ queryKey: ["audio-engine-status"] });
       setSwitching(false);
@@ -207,7 +215,7 @@ export function EngineToggle() {
   const isLoading = engineQuery.isLoading;
   const isError = engineQuery.isError;
 
-  const handleSwitch = (engine: "kokoro" | "sovits") => {
+  const handleSwitch = (engine: "kokoro" | "sovits" | "f5tts") => {
     setSwitching(true);
     switchMutation.mutate(engine);
   };
@@ -244,39 +252,49 @@ export function EngineToggle() {
       {status && (
         <div className="space-y-3">
           {/* Engine selector buttons */}
-          <div className="grid grid-cols-2 gap-2">
-            {(["kokoro", "sovits"] as const).map((engine) => {
+          <div className="grid grid-cols-3 gap-2">
+            {(["kokoro", "sovits", "f5tts"] as const).map((engine) => {
               const isActive = status.active_engine === engine;
               const isKokoro = engine === "kokoro";
+              const isF5TTS = engine === "f5tts";
               return (
                 <button
                   key={engine}
                   onClick={() => !isActive && handleSwitch(engine)}
-                  disabled={isActive || switching}
+                  disabled={isActive || switching || (isF5TTS && !status.f5tts_available)}
                   className={cn(
                     "relative flex flex-col items-start gap-0.5 rounded-xl border px-3 py-2.5 text-left text-sm transition-all",
                     isActive
                       ? "border-primary/40 bg-primary/8 cursor-default"
                       : "border-border bg-card hover:border-primary/20 hover:bg-primary/4 cursor-pointer",
                     (switching && !isActive) && "opacity-50",
+                    (isF5TTS && !status.f5tts_available) && "opacity-40 cursor-not-allowed",
                   )}
                 >
                   {isActive && (
                     <span className="absolute right-2 top-2 flex h-1.5 w-1.5 rounded-full bg-emerald-400" />
                   )}
                   {/* Proactive unreachability indicator on Engine B when Engine A is active */}
-                  {!isKokoro && !isActive && !status.sovits_reachable && (
+                  {!isKokoro && !isF5TTS && !isActive && !status.sovits_reachable && (
                     <span className="absolute right-2 top-2 flex h-1.5 w-1.5 rounded-full bg-amber-400" title={`GPT-SoVITS not reachable at ${status.sovits_url}`} />
                   )}
+                  {/* F5-TTS availability indicator */}
+                  {isF5TTS && !isActive && status.f5tts_available && (
+                    <span className="absolute right-2 top-2 flex h-1.5 w-1.5 rounded-full bg-emerald-400/60" title="f5-tts-mlx installed" />
+                  )}
                   <span className="font-semibold text-foreground">
-                    {isKokoro ? "Kokoro (Engine A)" : "GPT-SoVITS (Engine B)"}
+                    {isKokoro ? "Kokoro (A)" : isF5TTS ? "F5-TTS (C)" : "GPT-SoVITS (B)"}
                   </span>
                   <span className="text-xs text-muted-foreground">
                     {isKokoro
-                      ? `${status.voice_count} voice presets · MLX`
-                      : status.sovits_reachable
-                        ? "Voice cloning · ready"
-                        : `Offline · start GPT-SoVITS on ${status.sovits_url}`}
+                      ? `${status.voice_count} presets · MLX`
+                      : isF5TTS
+                        ? status.f5tts_available
+                          ? status.f5tts_loaded ? "Emotion cloning · loaded" : "Emotion cloning · MLX"
+                          : "Not installed"
+                        : status.sovits_reachable
+                          ? "Voice cloning · ready"
+                          : `Offline · ${status.sovits_url}`}
                   </span>
                 </button>
               );
@@ -303,6 +321,20 @@ export function EngineToggle() {
                   <><CheckCircle2 className="h-3 w-3 text-emerald-500" />reachable</>
                 ) : (
                   <><AlertCircle className="h-3 w-3 text-amber-500" />offline · {status.sovits_url}</>
+                )}
+              </span>
+            </div>
+            <div className="flex justify-between">
+              <span>F5-TTS</span>
+              <span className="flex items-center gap-1">
+                {status.f5tts_available ? (
+                  status.f5tts_loaded ? (
+                    <><CheckCircle2 className="h-3 w-3 text-emerald-500" />loaded</>
+                  ) : (
+                    <><CheckCircle2 className="h-3 w-3 text-emerald-500/60" />installed (lazy)</>
+                  )
+                ) : (
+                  <><AlertCircle className="h-3 w-3 text-amber-500" />not installed</>
                 )}
               </span>
             </div>

@@ -280,3 +280,43 @@ describe("sanitizeNarrationScript — invalid inputs", () => {
     expect(result.threats).toContain("invalid_input_type");
   });
 });
+
+// ── F5-TTS Emotion Tag Pass-Through ──────────────────────────────────────────
+
+describe("sanitizeNarrationScript — F5-TTS emotion tags", () => {
+  it("preserves single emotion tag at start of text", () => {
+    const text = "(Excited)Welcome to the show!";
+    const result = sanitizeNarrationScript(text);
+    expect(result.text).toBe(text);
+    expect(result.flagged).toBe(false);
+  });
+
+  it("preserves multiple emotion tags in a script", () => {
+    const text =
+      "(Regular)Welcome to the show. (Excited)Today we have amazing news! (Whisper)But first, a secret.";
+    const result = sanitizeNarrationScript(text);
+    expect(result.text).toBe(text);
+    expect(result.flagged).toBe(false);
+  });
+
+  it("preserves emotion tags with multi-word labels", () => {
+    const text = "(Calm and Steady)The market opened flat today. (Breaking News)But then it surged!";
+    const result = sanitizeNarrationScript(text);
+    expect(result.text).toBe(text);
+    expect(result.flagged).toBe(false);
+  });
+
+  it("preserves emotion tags on separate lines", () => {
+    const text = "(Happy)Line one is cheerful.\n\n(Sad)Line two is somber.";
+    const result = sanitizeNarrationScript(text);
+    expect(result.text).toBe(text);
+    expect(result.flagged).toBe(false);
+  });
+
+  it("preserves emotion tags mixed with normal parentheses", () => {
+    const text = "(Regular)The company (founded in 2020) reported strong earnings.";
+    const result = sanitizeNarrationScript(text);
+    expect(result.text).toBe(text);
+    expect(result.flagged).toBe(false);
+  });
+});

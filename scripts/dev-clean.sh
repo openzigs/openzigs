@@ -219,7 +219,7 @@ if [ "${OPENZIGS_START_AUDIO_SIDECAR:-1}" != "0" ]; then
   AUDIO_LOG="$PROJECT_ROOT/.openzigs-audio-sidecar.log"
   AUDIO_TTS_MODEL="${AUDIO_TTS_MODEL:-mlx-community/Kokoro-82M-bf16}"
   AUDIO_STT_MODEL="${AUDIO_STT_MODEL:-distil-large-v3}"
-  AUDIO_IDLE_TIMEOUT="${AUDIO_IDLE_TIMEOUT:-0}"
+  AUDIO_IDLE_TIMEOUT="${AUDIO_IDLE_TIMEOUT:-300}"
 
   if [ -x "$AUDIO_DIR/.venv/bin/python" ]; then
     AUDIO_PY="$AUDIO_DIR/.venv/bin/python"

@@ -141,6 +141,25 @@ const initSchema = (db: Database.Database) => {
   if (!hasSampleSteps) {
     db.exec("ALTER TABLE voice_profiles ADD COLUMN sample_steps INTEGER NOT NULL DEFAULT 32");
   }
+
+  // ── F5-TTS schema extensions ──
+  const hasEngineType = voiceProfileColumns.some((col) => col.name === "engine_type");
+  if (!hasEngineType) {
+    db.exec("ALTER TABLE voice_profiles ADD COLUMN engine_type TEXT NOT NULL DEFAULT 'sovits'");
+  }
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS f5tts_clips (
+      id TEXT PRIMARY KEY,
+      profile_id TEXT NOT NULL,
+      emotion TEXT NOT NULL DEFAULT 'Regular',
+      ref_audio_path TEXT NOT NULL,
+      ref_text TEXT NOT NULL DEFAULT '',
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (profile_id) REFERENCES voice_profiles(id) ON DELETE CASCADE
+    );
+  `);
 };
 
 /** Create a fresh in-memory database for testing. */
