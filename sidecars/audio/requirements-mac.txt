@@ -1,0 +1,25 @@
+# Audio Sidecar — macOS / Apple Silicon dependencies
+# Extends base requirements.txt with F5-TTS (Engine C) support.
+#
+# Usage:
+#   pip install -r requirements-mac.txt
+#
+# Includes everything from requirements.txt plus:
+#   - f5-tts-mlx: Apple Silicon optimized F5-TTS for voice cloning
+#     (ref-audio–driven TTS with emotion/style switching)
+
+# ── Base dependencies (same as requirements.txt) ──
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+python-multipart>=0.0.12
+pydantic>=2.0
+lightning-whisper-mlx>=0.0.10
+mlx-audio>=0.2.0
+misaki[en]>=0.9.0
+num2words>=0.5.14
+soundfile>=0.12.1
+numpy>=1.26.0
+httpx>=0.27.0
+
+# ── Engine C: F5-TTS (Apple Silicon MLX) ──
+f5-tts-mlx>=0.3.0

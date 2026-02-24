@@ -674,38 +674,49 @@ function generateSilenceWav(durationMs: number): Buffer {
  * Concatenate multiple WAV buffers into a single WAV file.
  * The first buffer's header (sample rate, channels) is used for the output.
  * Subsequent buffers have their headers stripped and raw PCM data appended.
+ *
+ * Handles non-standard headers (e.g. with metadata chunks between the fmt and
+ * data subchunks) by searching for the "data" marker rather than assuming a
+ * fixed 44-byte header.
  */
 function concatenateWavBuffers(buffers: Buffer[]): Buffer {
   if (buffers.length === 0) return Buffer.alloc(0);
   if (buffers.length === 1) return buffers[0];
 
-  // Extract raw PCM data from each buffer
-  const pcmChunks: Buffer[] = buffers.map((buf) => {
-    if (buf.length <= WAV_HEADER_SIZE) return Buffer.alloc(0);
-    // Find the "data" chunk — in standard WAV it starts at byte 36
-    // but some encoders add extra chunks. Search for the "data" marker.
-    let dataOffset = WAV_HEADER_SIZE;
+  /** Search for the "data" subchunk and return the offset of the first PCM byte. */
+  function findDataOffset(buf: Buffer): number {
     for (let i = 12; i < Math.min(buf.length - 4, 200); i++) {
       if (buf.toString("ascii", i, i + 4) === "data") {
-        dataOffset = i + 8; // skip "data" + 4-byte size
-        break;
+        return i + 8; // skip "data" (4 bytes) + size field (4 bytes)
       }
     }
-    return buf.subarray(dataOffset);
+    return WAV_HEADER_SIZE; // fall back to standard 44-byte offset
+  }
+
+  // Extract raw PCM data from each buffer using the detected data offset
+  const pcmChunks: Buffer[] = buffers.map((buf) => {
+    if (buf.length <= WAV_HEADER_SIZE) return Buffer.alloc(0);
+    return buf.subarray(findDataOffset(buf));
   });
 
   const totalPcmSize = pcmChunks.reduce((sum, chunk) => sum + chunk.length, 0);
-  const output = Buffer.alloc(WAV_HEADER_SIZE + totalPcmSize);
 
-  // Copy header from first buffer
-  buffers[0].copy(output, 0, 0, WAV_HEADER_SIZE);
+  // Use the first buffer's detected data offset so the output header is correct
+  // even when the first buffer has non-standard extra subchunks before "data".
+  const firstDataOffset = findDataOffset(buffers[0]);
+  const output = Buffer.alloc(firstDataOffset + totalPcmSize);
 
-  // Update header sizes
-  output.writeUInt32LE(36 + totalPcmSize, 4); // RIFF chunk size
-  output.writeUInt32LE(totalPcmSize, 40); // data chunk size
+  // Copy header from first buffer (up to and including the "data" subchunk label)
+  buffers[0].copy(output, 0, 0, firstDataOffset);
 
-  // Copy PCM data
-  let offset = WAV_HEADER_SIZE;
+  // Update RIFF chunk size (always at byte 4):  total file size minus the 8-byte RIFF descriptor
+  output.writeUInt32LE(firstDataOffset - 8 + totalPcmSize, 4);
+
+  // Update data chunk size at the field immediately before the PCM region
+  output.writeUInt32LE(totalPcmSize, firstDataOffset - 4);
+
+  // Append PCM data
+  let offset = firstDataOffset;
   for (const chunk of pcmChunks) {
     chunk.copy(output, offset);
     offset += chunk.length;

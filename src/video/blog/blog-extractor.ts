@@ -68,7 +68,7 @@ function isPrivateIp(hostname: string): boolean {
   return false;
 }
 
-function validateUrl(urlStr: string): URL {
+export function validateUrl(urlStr: string): URL {
   let parsed: URL;
   try {
     parsed = new URL(urlStr);
@@ -221,6 +221,13 @@ function extractSurroundingText(html: string, imgPosition: number): string {
 /**
  * Convert a block of HTML to clean plain text.
  * Preserves paragraph structure by converting block elements to \n\n.
+ */
+/**
+ * Convert HTML to plain text.
+ * NOTE: This uses regex-based tag stripping, which handles common cases well
+ * but may produce incorrect results for HTML containing `>` inside attribute
+ * values, HTML comments, or CDATA sections. It is intentionally dependency-free
+ * and sufficient for well-structured blog content.
  */
 function htmlToText(html: string): string {
   let text = html;

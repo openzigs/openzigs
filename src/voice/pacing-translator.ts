@@ -199,7 +199,7 @@ function buildPlainSegments(text: string): PacingSegment[] {
   const segments: PacingSegment[] = [];
 
   // Strip emphasis markers for plain text (local TTS doesn't support them)
-  let plain = text.replace(EMPHASIS_RE, "$1");
+  const plain = text.replace(EMPHASIS_RE, "$1");
   EMPHASIS_RE.lastIndex = 0;
 
   // Tokenize: split into text parts and directive tokens

@@ -10,7 +10,7 @@ import path from "node:path";
 import os from "node:os";
 import fs from "node:fs/promises";
 import { logger } from "../../logging/logger.js";
-import { extractBlog } from "./blog-extractor.js";
+import { extractBlog, validateUrl } from "./blog-extractor.js";
 import { StoryboardEngine, type StoryboardOptions } from "../generators/storyboard-engine.js";
 import { ImageGenService } from "../generators/image-gen-service.js";
 import type { CopilotWrapper, SdkAttachment } from "../../copilot/copilot-wrapper.js";
@@ -239,7 +239,8 @@ export async function blogToVideo(
         if (voiceService.isReady()) {
           const { nanoid } = await import("nanoid");
           const ttsResult = await voiceService.synthesize(scene.voiceover);
-          const voPath = path.join(imageOutputDir, `openzigs-blog-vo-${nanoid(8)}.mp3`);
+          const audioExt = ttsResult.contentType === "audio/wav" ? "wav" : "mp3";
+          const voPath = path.join(imageOutputDir, `openzigs-blog-vo-${nanoid(8)}.${audioExt}`);
           await fs.writeFile(voPath, ttsResult.audio);
           sceneVoiceoverPath = voPath;
         }
@@ -385,7 +386,16 @@ async function downloadBlogImages(
 
   for (const img of images) {
     try {
-      const response = await fetch(img.url, {
+      // Validate the URL before fetching to prevent SSRF
+      let parsedUrl: URL;
+      try {
+        parsedUrl = validateUrl(img.url);
+      } catch {
+        results.push(null);
+        continue;
+      }
+
+      const response = await fetch(parsedUrl.href, {
         headers: {
           "User-Agent": "Mozilla/5.0 (compatible; OpenZigs/1.0)",
         },

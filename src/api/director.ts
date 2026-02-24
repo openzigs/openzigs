@@ -1621,19 +1621,28 @@ Respond with ONLY a valid JSON array. No markdown, no explanation.`;
       }
 
       const fsMod = await import("node:fs");
-      if (!fsMod.existsSync(imagePath)) {
-        res.status(404).json({ error: `Image not found: ${imagePath}` });
+      const osMod = await import("node:os");
+      const pathMod = await import("node:path");
+
+      // Path traversal guard: only allow files under home directory or configured outputDir
+      const normalizedImagePath = pathMod.resolve(imagePath);
+      const homeDir = osMod.homedir();
+      const allowedRoots = [homeDir, pathMod.resolve(config.outputDir)];
+      if (!allowedRoots.some((root) => normalizedImagePath.startsWith(root + pathMod.sep) || normalizedImagePath === root)) {
+        res.status(403).json({ error: "Access denied: imagePath is outside allowed directories" });
         return;
       }
 
-      const osMod = await import("node:os");
-      const pathMod = await import("node:path");
+      if (!fsMod.existsSync(normalizedImagePath)) {
+        res.status(404).json({ error: `Image not found: ${imagePath}` });
+        return;
+      }
       const imageOutputDir = pathMod.join(osMod.homedir(), ".openzigs", "director", "images");
       const imageGenUserConfig = await (await import("../video/generators/image-gen-service.js")).ImageGenService.loadUserImageGenConfig();
       const imageService = new (await import("../video/generators/image-gen-service.js")).ImageGenService({ outputDir: imageOutputDir, ...imageGenUserConfig });
       await imageService.initialize();
 
-      const result = await imageService.enhanceImage(imagePath, prompt, {
+      const result = await imageService.enhanceImage(normalizedImagePath, prompt, {
         strength,
         model,
         seed,
@@ -1678,12 +1687,26 @@ Respond with ONLY a valid JSON array. No markdown, no explanation.`;
       const pathMod = await import("node:path");
       const osMod = await import("node:os");
 
-      if (!fsMod.existsSync(manifestPath)) {
+      // Path traversal guard: only allow files under home directory or configured outputDir
+      const normalizedManifestPath = pathMod.resolve(manifestPath);
+      const normalizedOutputDir = pathMod.resolve(outputDir);
+      const homeDir = osMod.homedir();
+      const allowedRoots = [homeDir, pathMod.resolve(config.outputDir)];
+      if (!allowedRoots.some((root) => normalizedManifestPath.startsWith(root + pathMod.sep) || normalizedManifestPath === root)) {
+        res.status(403).json({ error: "Access denied: manifestPath is outside allowed directories" });
+        return;
+      }
+      if (!allowedRoots.some((root) => normalizedOutputDir.startsWith(root + pathMod.sep) || normalizedOutputDir === root)) {
+        res.status(403).json({ error: "Access denied: outputDir is outside allowed directories" });
+        return;
+      }
+
+      if (!fsMod.existsSync(normalizedManifestPath)) {
         res.status(404).json({ error: `Manifest not found: ${manifestPath}` });
         return;
       }
 
-      const manifestRaw = JSON.parse(fsMod.readFileSync(manifestPath, "utf-8"));
+      const manifestRaw = JSON.parse(fsMod.readFileSync(normalizedManifestPath, "utf-8"));
       const { DirectorManifestSchema } = await import("../video/manifest/manifest-schema.js");
       const manifest = DirectorManifestSchema.parse(manifestRaw);
 
@@ -1713,11 +1736,11 @@ Respond with ONLY a valid JSON array. No markdown, no explanation.`;
         await imageService.initialize();
 
         const stylePrompt = style ?? "YouTube thumbnail style, highly saturated, expressive, high contrast, vibrant colors, professional";
-        const enhanced = await imageService.kontextEdit(frameResult.framePath, stylePrompt, {
+        const enhanced = await imageService.enhanceImage(frameResult.framePath, stylePrompt, {
           width: 1280,
           height: 720,
           steps: 20,
-          guidance: 2.5,
+          strength: 0.6,
         });
         stylizedPath = enhanced.filePath;
       } catch (enhanceErr) {
@@ -1941,8 +1964,9 @@ Respond with ONLY a valid JSON array. No markdown, no explanation.`;
       let manifest: unknown;
       try {
         manifest = JSON.parse(row.manifest);
-      } catch {
+      } catch (err) {
         manifest = null;
+        logger.warn(`[Director API] Draft ${row.id} has corrupt manifest JSON: ${err instanceof Error ? err.message : String(err)}`);
       }
 
       res.json({
