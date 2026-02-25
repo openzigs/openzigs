@@ -2389,9 +2389,9 @@ Social media tools are powered by **native MCP servers** — Python subprocess s
 | **Twitter/X** | `twitter-mcp` | `twitter-post-tweet` | Text (280 chars), replies | 8 tools: tweets, search, DMs, user lookup |
 | **LinkedIn** | `linkedin-mcp` | `linkedin-create-post` | Text (PUBLIC or CONNECTIONS) | 8 tools: profile, posts, company, messages, comments |
 | **Reddit** | `reddit-mcp` | `reddit-submit-post` | Text or link post to a subreddit | 8 tools: subreddits, posts, comments, search, inbox |
-| **YouTube** | `youtube-mcp` | — (read-only + comment reply) | No upload via MCP (use YouTube Studio) | 7 tools: channel, videos, comments, search, analytics |
+| **YouTube** | `youtube-mcp` | `youtube-upload-video` | Video file upload (resumable) with metadata | 8 tools: channel, videos, comments, search, analytics, **upload** |
 
-> **Note:** YouTube does not have a publishing tool because `videos.insert` consumes 1,600 quota units per upload (default daily quota: 10,000), making it impractical for automated use. Upload videos directly via YouTube Studio and use the MCP tools for analytics and comment management.
+> **Note — YouTube Upload Quota:** Each `youtube-upload-video` call consumes **1,600 quota units** (default daily quota: 10,000 units), limiting uploads to **~6 per day**. The upload uses the YouTube Data API v3 resumable upload protocol — provide a path to a local video file and the tool handles chunked transfer automatically. Uploads default to **private** privacy. Set `privacy_status` to `"public"` or `"unlisted"` as needed. Requires an OAuth2 token with the `youtube.upload` scope — see [YouTube OAuth Setup](#youtube-oauth-setup) in the Social Brain Guide.
 
 ### Posting Content
 
@@ -2412,6 +2412,9 @@ Agent: [calls reddit-submit-post] ✅ Submitted to r/programming
 
 You: Post "Excited to announce our Series A! 🎉" to Facebook
 Agent: [calls facebook-publish-post] ✅ Posted to Facebook Page
+
+You: Upload /path/to/video.mp4 to YouTube titled "Product Demo" with tags ["demo", "product"]
+Agent: [calls youtube-upload-video] ✅ Uploaded to YouTube (video ID: abc123, status: private)
 ```
 
 The agent automatically selects the correct platform-specific tool and handles parameter mapping. For a comprehensive list of all tools per platform, see the [Social Brain Guide](SOCIAL_BRAIN_GUIDE.md#platform-specific-tools).

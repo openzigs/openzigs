@@ -85,7 +85,7 @@ All MCP servers are now **native subprocess servers** (stdio transport, managed 
 | **Instagram** | `external/ig-mcp/` | stdio (Python) | 12 | ✅ Exists (DMs, comment reply, post context, analytics) |
 | **Facebook** | `external/fb-mcp/` | stdio (Python) | 10 | ✅ Built (#301) — DMs, comment reply, page analytics |
 | **Twitter/X** | `external/twitter-mcp/` | stdio (Python) | 8 | ✅ Built (#302) — DMs, tweet reply (via post_tweet), search |
-| **YouTube** | `external/youtube-mcp/` | stdio (Python) | 7 | ✅ Built (#303) — Comment reply, video search, analytics |
+| **YouTube** | `external/youtube-mcp/` | stdio (Python) | 8 | ✅ Built (#303) — **Video upload** (resumable), comment reply, video search, analytics |
 | **LinkedIn** | `external/linkedin-mcp/` | stdio (Python) | 8 | ✅ Built (#304) — DMs (partner-only), comment reply, posts |
 | **Reddit** | `external/reddit-mcp/` | stdio (Python) | 8 | ✅ Built (#305) — Messages, comment reply, search |
 | **MarkItDown** | `uvx markitdown-mcp` | stdio (Python via uvx) | — | ✅ Native |
@@ -430,6 +430,21 @@ Steps:
   3. CommentRuleEngine evaluates
   4. Assert: replyToComment called (via youtube-mcp)
   5. Assert: sendDm NOT called (YouTube has no DM API)
+```
+
+### 5.7 YouTube Video Upload (Resumable)
+
+```
+Steps:
+  1. Prepare a test video file on disk (or mock the file path check)
+  2. Call yt_upload_video with file_path, title, description, tags, privacy_status
+  3. Assert: Resumable upload session initiated (POST to /upload/youtube/v3/videos?uploadType=resumable)
+  4. Assert: File streamed in 10 MiB chunks via PUT to session URL
+  5. Assert: Returned video resource contains id, snippet.title, status.privacyStatus
+  6. Assert: Missing OAuth token raises YouTubeAPIError
+  7. Assert: Non-existent file_path raises YouTubeAPIError
+  8. Assert: Empty file raises YouTubeAPIError
+  9. Assert: 400/403 from YouTube API surfaces as YouTubeAPIError with message
 ```
 
 ### 5.7 Rate Limit / Per-User Cooldown

@@ -19,6 +19,8 @@ This guide walks through every step needed to get Social Brain running: Cloudfla
 - [Platform Setup Guides](#platform-setup-guides)
   - [Instagram / Facebook (Meta Graph API)](#instagram--facebook-meta-graph-api)
   - [YouTube](#youtube)
+    - [YouTube OAuth Setup](#youtube-oauth-setup)
+    - [YouTube Upload Quota](#youtube-upload-quota)
   - [Twitter / X](#twitter--x)
   - [TikTok](#tiktok)
   - [Reddit](#reddit)
@@ -111,7 +113,7 @@ All social platform interactions use **native MCP servers** (stdio subprocess tr
 | `ig-mcp` | Python (uvx) | 11 | Instagram DMs (`send_dm`), comment replies (`reply_to_comment`), post reads, analytics, media publish |
 | `fb-mcp` | Python (uvx) | 10 | Facebook Messenger (`fb_send_message`), comment replies (`fb_reply_to_comment`), page analytics |
 | `twitter-mcp` | Python (uvx) | 8 | Twitter DMs (`twitter_send_dm`), tweet replies (`twitter_post_tweet` w/ `reply_to`), search |
-| `youtube-mcp` | Python (uvx) | 7 | YouTube comment replies (`yt_reply_to_comment`), video search, analytics (no DM API) |
+| `youtube-mcp` | Python (uvx) | 8 | YouTube **video upload** (`yt_upload_video`), comment replies (`yt_reply_to_comment`), video search, analytics (no DM API) |
 | `linkedin-mcp` | Python (uvx) | 8 | LinkedIn DMs (`linkedin_send_message`, partner-only), comment replies (`linkedin_reply_to_comment`) |
 | `reddit-mcp` | Python (uvx) | 8 | Reddit messages (`reddit_send_message`), comment replies (`reddit_reply_to_comment`), search |
 
@@ -330,9 +332,9 @@ TWITTER_BEARER_TOKEN=your-twitter-bearer-token
 TWITTER_API_KEY=your-twitter-api-key
 TWITTER_API_SECRET=your-twitter-api-key-secret
 
-# ── YouTube (Data API v3 — API key for reads, OAuth token for write operations like replying to comments) ──
+# ── YouTube (Data API v3 — API key for reads, OAuth token for writes: comment replies + video uploads) ──
 YOUTUBE_API_KEY=your-youtube-data-api-v3-key
-YOUTUBE_OAUTH_TOKEN=your-youtube-oauth-token
+YOUTUBE_OAUTH_TOKEN=your-youtube-oauth-token  # Required for uploads and comment replies (scope: youtube.upload)
 
 # ── LinkedIn ──
 LINKEDIN_ACCESS_TOKEN=your-linkedin-access-token
@@ -601,9 +603,41 @@ curl "https://www.googleapis.com/youtube/v3/commentThreads?part=snippet&videoId=
 
 YouTube does not support DMs. The automation can:
 - Reply to comments via the `youtube-mcp` native server (calling `reply-to-comment` tool)
+- Upload videos via the `yt_upload_video` tool (resumable upload protocol)
 - Auto-tag contacts in the CRM for follow-up
 
-> **Note:** YouTube comment replies require OAuth 2.0 (not just an API key). The `youtube-mcp` server handles the OAuth flow via configured credentials.
+#### YouTube OAuth Setup
+
+Comment replies and video uploads require an OAuth 2.0 access token (an API key is only sufficient for read operations). To obtain one:
+
+1. In the [Google Cloud Console](https://console.cloud.google.com/), go to **APIs & Services → Credentials**.
+2. Click **Create Credentials → OAuth client ID** (application type: **Desktop app** or **Web application**).
+3. Under **OAuth consent screen**, add the following scopes:
+   - `https://www.googleapis.com/auth/youtube` — full channel access (comments, uploads, metadata)
+   - `https://www.googleapis.com/auth/youtube.upload` — upload-only (narrower scope)
+4. Use the [Google OAuth Playground](https://developers.google.com/oauthplayground/) or your own OAuth flow to exchange the client credentials for an access token.
+5. Set the token in your `.env`:
+   ```
+   YOUTUBE_OAUTH_TOKEN=ya29.a0AfH6SM...
+   ```
+
+> **Token refresh:** OAuth2 access tokens expire (typically 1 hour). For production use, implement a refresh token flow or use a service like [google-auth-library](https://github.com/googleapis/google-auth-library-python) to auto-refresh. The `youtube-mcp` server currently expects a valid bearer token in `YOUTUBE_OAUTH_TOKEN`.
+
+#### YouTube Upload Quota
+
+Each `yt_upload_video` call consumes **1,600 quota units** out of the default **10,000 daily quota**, limiting uploads to approximately **6 per day**. Other operations cost far less:
+
+| Operation | Quota Cost | ~Daily Limit |
+|-----------|-----------|-------------|
+| `videos.insert` (upload) | 1,600 | ~6 |
+| `commentThreads.list` | 1 | 10,000 |
+| `comments.insert` (reply) | 50 | 200 |
+| `search.list` | 100 | 100 |
+| `channels.list` | 1 | 10,000 |
+
+You can request a quota increase via the [Google Cloud Console Quotas page](https://console.cloud.google.com/iam-admin/quotas) if you need more uploads per day.
+
+> **Unverified API projects:** Videos uploaded from unverified API projects (created after July 28, 2020) are restricted to **private** viewing only. Your Google Cloud project must pass an [API audit](https://support.google.com/youtube/contact/yt_api_form) to allow public/unlisted uploads.
 
 ---
 
@@ -1111,7 +1145,7 @@ Each connected native MCP server exposes platform-specific tools. These are avai
 - `twitter_send_dm` — Send a direct message
 - `twitter_get_user` — Look up user by username
 
-**YouTube (`youtube-mcp`) — 7 tools (read-only + comment reply, no upload):**
+**YouTube (`youtube-mcp`) — 8 tools:**
 - `yt_get_channel_info` — Channel info (subscribers, views)
 - `yt_get_channel_videos` — List channel videos
 - `yt_get_video_details` — Video details (stats, duration)
@@ -1119,6 +1153,7 @@ Each connected native MCP server exposes platform-specific tools. These are avai
 - `yt_reply_to_comment` — Reply to a YouTube comment (requires OAuth)
 - `yt_search_videos` — Search YouTube videos
 - `yt_get_channel_analytics` — Channel statistics
+- `yt_upload_video` — **Upload a video file to YouTube** (resumable upload, requires OAuth with `youtube.upload` scope, costs 1600 quota units)
 
 **LinkedIn (`linkedin-mcp`) — 8 tools:**
 - `linkedin_get_profile` — Authenticated user profile
@@ -1171,7 +1206,7 @@ Social Brain isn't just for inbound messages — you can **publish content to an
 | **Twitter/X** | `twitter-post-tweet` | Text (280 chars) | Can also reply to tweets via `reply_to` parameter. Media upload not yet supported in MCP server |
 | **LinkedIn** | `linkedin-create-post` | Text post (PUBLIC or CONNECTIONS) | Max 3,000 characters. Image/video posts require separate LinkedIn upload API (not yet in MCP server) |
 | **Reddit** | `reddit-submit-post` | Text (self) post or link post | Requires `subreddit` and `title`. Text and URL are mutually exclusive |
-| **YouTube** | — | No publishing tool | `videos.insert` costs 1,600 API quota units per upload (daily limit: 10,000), making automated publishing impractical. Use YouTube Studio for uploads; use MCP tools for analytics and comment management |
+| **YouTube** | `youtube-upload-video` | Video file upload (resumable) with title, description, tags, category, privacy | Costs **1,600 quota units** per upload (~6/day with default 10k daily quota). File must exist on server disk. Requires OAuth2 with `youtube.upload` scope. Defaults to **private** |
 
 ### How to Post from Chat
 
@@ -1197,6 +1232,10 @@ Agent: [calls reddit-submit-post with subreddit="startups" title="Show HN:..." u
 You: Post "Big announcement coming tomorrow! Stay tuned 👀" to our Facebook Page
 Agent: [calls facebook-publish-post with message="Big announcement..."]
 ✅ Posted to Facebook Page
+
+You: Upload the video at /home/user/renders/demo.mp4 to YouTube titled "Product Demo v2" with tags ["demo", "walkthrough"] and set it to unlisted
+Agent: [calls youtube-upload-video with file_path="/home/user/renders/demo.mp4" title="Product Demo v2" tags=["demo","walkthrough"] privacy_status="unlisted"]
+✅ Uploaded to YouTube (video ID: dQw4w9WgXcQ, privacy: unlisted)
 ```
 
 ### Cross-Platform Posting
@@ -1239,7 +1278,7 @@ The Docker "MCP Sidecars" panel has been removed — all servers are now native 
 | Instagram | `INSTAGRAM_ACCESS_TOKEN`, `FACEBOOK_APP_ID`, `FACEBOOK_APP_SECRET`, `INSTAGRAM_BUSINESS_ACCOUNT_ID` |
 | Facebook | `FACEBOOK_PAGE_TOKEN`, `FACEBOOK_APP_ID`, `FACEBOOK_APP_SECRET` |
 | Twitter/X | `TWITTER_BEARER_TOKEN`, `TWITTER_API_KEY`, `TWITTER_API_SECRET` |
-| YouTube | `YOUTUBE_API_KEY` |
+| YouTube | `YOUTUBE_API_KEY`, `YOUTUBE_OAUTH_TOKEN` (required for uploads and comment replies) |
 | LinkedIn | `LINKEDIN_ACCESS_TOKEN` |
 | Reddit | *(configured via Reddit OAuth in `reddit-mcp` settings)* |
 | Gmail | `GOOGLE_OAUTH_CREDENTIALS` |

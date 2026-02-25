@@ -499,7 +499,7 @@ Six social platform MCP servers live under `external/` as Python applications us
 | Instagram | `external/ig-mcp/` | 12 tools | Instagram Graph API | DMs, comment replies, post context, analytics, media publish |
 | Facebook | `external/fb-mcp/` | 10 tools | Meta Graph API v24.0 | Messenger DMs, comment replies, post reads, page analytics |
 | Twitter/X | `external/twitter-mcp/` | 8 tools | Twitter API v2 (OAuth 1.0a) | DMs, tweet replies, search, user lookup |
-| YouTube | `external/youtube-mcp/` | 7 tools | YouTube Data API v3 | Comment replies, video search, channel analytics |
+| YouTube | `external/youtube-mcp/` | 8 tools | YouTube Data API v3 | **Video upload** (resumable), comment replies, video search, channel analytics |
 | LinkedIn | `external/linkedin-mcp/` | 8 tools | LinkedIn API v2 | DMs (partner-only), comment replies, post/company reads |
 | Reddit | `external/reddit-mcp/` | 8 tools | Reddit OAuth2 | Private messages, comment replies, post/search reads |
 
@@ -1684,7 +1684,7 @@ Each social platform has a dedicated set of tools backed by its native MCP serve
 | `twitter-send-dm` | social | 🔴 high | Send a direct message. |
 | `twitter-get-user` | social | 🟢 low | Get user profile by username. |
 
-**YouTube** (7 tools — `external/youtube-mcp/`)
+**YouTube** (8 tools — `external/youtube-mcp/`)
 
 | Tool | Category | Risk | Description |
 |---|---|---|---|
@@ -1695,6 +1695,7 @@ Each social platform has a dedicated set of tools backed by its native MCP serve
 | `youtube-reply-to-comment` | social | 🟡 medium | Reply to a YouTube comment (requires OAuth). |
 | `youtube-search-videos` | social | 🟢 low | Search YouTube videos. |
 | `youtube-get-channel-analytics` | social | 🟢 low | Get channel analytics. |
+| `youtube-upload-video` | social | 🔴 high | Upload a video file to YouTube via resumable upload (requires OAuth, 1600 quota units). |
 
 **LinkedIn** (8 tools — `external/linkedin-mcp/`)
 
