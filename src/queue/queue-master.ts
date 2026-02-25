@@ -1,7 +1,9 @@
 /**
  * Media Queue — Push-Based Queue Master
  * Issue #326: Actively pushes jobs to hardware worker nodes.
- * VRAM-aware routing for M2 Pro to prevent model thrashing.
+ * VRAM-aware routing with cross-sidecar coordination — both sidecars share
+ * the same M2 Pro unified memory, so only one model domain (image OR video)
+ * can be loaded at a time.
  */
 
 import { EventEmitter } from "node:events";
@@ -12,6 +14,7 @@ import type {
   QueueConfig,
   TargetNode,
   WorkerStatus,
+  WorkerNodeConfig,
 } from "./types.js";
 
 export interface QueueMasterEvents {
@@ -21,6 +24,15 @@ export interface QueueMasterEvents {
   "project:complete": [projectId: string, total: number];
 }
 
+/** Aggregated status of all worker nodes. */
+export interface NodeStatus {
+  node: TargetNode;
+  reachable: boolean;
+  is_busy: boolean;
+  loaded_model: string | null;
+  url: string;
+}
+
 export class QueueMaster extends EventEmitter {
   private repo: MediaQueueRepository;
   private config: QueueConfig;
@@ -28,6 +40,7 @@ export class QueueMaster extends EventEmitter {
   private running = false;
 
   /** Cache of last-known worker status to reduce /status polling. */
+  private macMiniStatus: WorkerStatus = { is_busy: false, loaded_model: null };
   private m2ProStatus: WorkerStatus = { is_busy: false, loaded_model: null };
 
   constructor(repo: MediaQueueRepository, config: QueueConfig) {
@@ -56,6 +69,158 @@ export class QueueMaster extends EventEmitter {
     logger.info("[QueueMaster] Stopped");
   }
 
+  // ── Node Status ───────────────────────────────────────────
+
+  /**
+   * Get the live status of all worker nodes.
+   * Polls each sidecar's /status (or /health for FluxQ) endpoint.
+   */
+  async getNodeStatuses(): Promise<NodeStatus[]> {
+    const [macMini, m2Pro] = await Promise.allSettled([
+      this.pollNodeStatus("mac-mini"),
+      this.pollNodeStatus("m2-pro"),
+    ]);
+
+    return [
+      macMini.status === "fulfilled"
+        ? macMini.value
+        : { node: "mac-mini" as TargetNode, reachable: false, is_busy: false, loaded_model: null, url: this.config.macMini.url },
+      m2Pro.status === "fulfilled"
+        ? m2Pro.value
+        : { node: "m2-pro" as TargetNode, reachable: false, is_busy: false, loaded_model: null, url: this.config.m2Pro.url },
+    ];
+  }
+
+  private async pollNodeStatus(node: TargetNode): Promise<NodeStatus> {
+    const nodeConfig = node === "mac-mini" ? this.config.macMini : this.config.m2Pro;
+    try {
+      const status = await this.getWorkerStatus(nodeConfig, node);
+      if (node === "mac-mini") this.macMiniStatus = status;
+      else this.m2ProStatus = status;
+      return { node, reachable: true, ...status, url: nodeConfig.url };
+    } catch {
+      return { node, reachable: false, is_busy: false, loaded_model: null, url: nodeConfig.url };
+    }
+  }
+
+  // ── VRAM Coordination ─────────────────────────────────────
+
+  /**
+   * Ensure the competing sidecar has unloaded its model before we
+   * dispatch to the target node. Both sidecars share M2 Pro unified memory.
+   *
+   * Before image job → unload LTX-2 from video worker
+   * Before video job → unload FLUX from image worker
+   */
+  private async ensureVramAvailable(targetNode: TargetNode): Promise<void> {
+    if (targetNode === "mac-mini") {
+      // About to dispatch image job — ensure video worker has unloaded
+      if (this.m2ProStatus.loaded_model) {
+        logger.info(`[QueueMaster] VRAM coordination: unloading ${this.m2ProStatus.loaded_model} from m2-pro before image dispatch`);
+        await this.unloadNode("m2-pro");
+      }
+    } else {
+      // About to dispatch video job — ensure image worker has unloaded
+      if (this.macMiniStatus.loaded_model) {
+        logger.info(`[QueueMaster] VRAM coordination: unloading ${this.macMiniStatus.loaded_model} from mac-mini before video dispatch`);
+        await this.unloadNode("mac-mini");
+      }
+    }
+  }
+
+  /**
+   * Tell a specific node to unload its current model and free VRAM.
+   * FluxQ uses POST /unload, M2 Pro worker uses POST /unload.
+   */
+  async unloadNode(node: TargetNode): Promise<{ ok: boolean; previous_model: string | null }> {
+    const nodeConfig = node === "mac-mini" ? this.config.macMini : this.config.m2Pro;
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (nodeConfig.token) headers["Authorization"] = `Bearer ${nodeConfig.token}`;
+
+    try {
+      const res = await fetch(`${nodeConfig.url}/unload`, {
+        method: "POST",
+        headers,
+        body: "{}",
+        signal: AbortSignal.timeout(10_000),
+      });
+
+      if (!res.ok) {
+        const text = await res.text().catch(() => "");
+        logger.warn(`[QueueMaster] Unload ${node} failed: ${res.status} ${text}`);
+        return { ok: false, previous_model: null };
+      }
+
+      const result = (await res.json()) as { status?: string; model?: string; previous_model?: string };
+      const previousModel = result.previous_model ?? result.model ?? null;
+
+      // Update cached status
+      if (node === "mac-mini") this.macMiniStatus = { is_busy: false, loaded_model: null };
+      else this.m2ProStatus = { is_busy: false, loaded_model: null };
+
+      logger.info(`[QueueMaster] Unloaded ${previousModel ?? "model"} from ${node}`);
+      return { ok: true, previous_model: previousModel };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.warn(`[QueueMaster] Unload ${node} error: ${msg}`);
+      return { ok: false, previous_model: null };
+    }
+  }
+
+  /**
+   * Switch the active model domain. Unloads the competing node and optionally
+   * preloads a model on the target node.
+   *
+   * @param targetNode - Which node domain to activate ("mac-mini" for images, "m2-pro" for video)
+   * @param model - Optional model to preload (e.g. "flux-schnell", "ltx-2")
+   */
+  async switchActiveNode(targetNode: TargetNode, model?: string): Promise<{
+    unloaded: { node: TargetNode; previous_model: string | null } | null;
+    loaded: { node: TargetNode; model: string } | null;
+  }> {
+    // Unload the competing node
+    const competingNode: TargetNode = targetNode === "mac-mini" ? "m2-pro" : "mac-mini";
+    let unloaded: { node: TargetNode; previous_model: string | null } | null = null;
+
+    const competingStatus = competingNode === "mac-mini" ? this.macMiniStatus : this.m2ProStatus;
+    if (competingStatus.loaded_model) {
+      const result = await this.unloadNode(competingNode);
+      if (result.ok) {
+        unloaded = { node: competingNode, previous_model: result.previous_model };
+      }
+    }
+
+    // Preload model on target if requested
+    let loaded: { node: TargetNode; model: string } | null = null;
+    if (model && targetNode === "mac-mini") {
+      // FluxQ: POST /model { model: "flux-schnell" }
+      try {
+        const nodeConfig = this.config.macMini;
+        const headers: Record<string, string> = { "Content-Type": "application/json" };
+        if (nodeConfig.token) headers["Authorization"] = `Bearer ${nodeConfig.token}`;
+
+        const res = await fetch(`${nodeConfig.url}/model`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ model }),
+          signal: AbortSignal.timeout(120_000), // Model loads can take 30-60s
+        });
+
+        if (res.ok) {
+          this.macMiniStatus = { is_busy: false, loaded_model: model };
+          loaded = { node: targetNode, model };
+          logger.info(`[QueueMaster] Preloaded ${model} on mac-mini`);
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        logger.warn(`[QueueMaster] Failed to preload ${model} on mac-mini: ${msg}`);
+      }
+    }
+    // M2 Pro video worker lazily loads on first job, no preload endpoint
+
+    return { unloaded, loaded };
+  }
+
   // ── Main Loop ─────────────────────────────────────────────
 
   async tick(): Promise<void> {
@@ -80,8 +245,21 @@ export class QueueMaster extends EventEmitter {
 
   private async processMacMini(): Promise<void> {
     const pending = this.repo.getPendingJobs("mac-mini", 3);
+    if (pending.length === 0) return;
+
+    // Poll FluxQ status to check if it's healthy
+    try {
+      this.macMiniStatus = await this.getWorkerStatus(this.config.macMini, "mac-mini");
+    } catch {
+      logger.debug("[QueueMaster] FluxQ unreachable, skipping image jobs");
+      return;
+    }
+
     for (const job of pending) {
       try {
+        // VRAM coordination: ensure video worker has freed memory
+        await this.ensureVramAvailable("mac-mini");
+
         await this.dispatchImageJob(job);
         this.repo.markDispatched(job.id);
         this.emit("job:dispatched", job, "mac-mini" as TargetNode);
@@ -99,7 +277,7 @@ export class QueueMaster extends EventEmitter {
   private async processM2Pro(): Promise<void> {
     // Check worker status first
     try {
-      this.m2ProStatus = await this.getWorkerStatus(this.config.m2Pro);
+      this.m2ProStatus = await this.getWorkerStatus(this.config.m2Pro, "m2-pro");
     } catch {
       logger.debug("[QueueMaster] M2 Pro unreachable, skipping video jobs");
       return;
@@ -125,6 +303,9 @@ export class QueueMaster extends EventEmitter {
 
     const job = pending[0];
     try {
+      // VRAM coordination: ensure image worker has freed memory
+      await this.ensureVramAvailable("m2-pro");
+
       await this.dispatchVideoJob(job);
       this.repo.markDispatched(job.id);
       this.emit("job:dispatched", job, "m2-pro" as TargetNode);
@@ -138,16 +319,29 @@ export class QueueMaster extends EventEmitter {
 
   // ── Worker Communication ──────────────────────────────────
 
-  private async getWorkerStatus(node: { url: string; token?: string }): Promise<WorkerStatus> {
+  private async getWorkerStatus(nodeConfig: WorkerNodeConfig, node: TargetNode): Promise<WorkerStatus> {
     const headers: Record<string, string> = {};
-    if (node.token) headers["Authorization"] = `Bearer ${node.token}`;
+    if (nodeConfig.token) headers["Authorization"] = `Bearer ${nodeConfig.token}`;
 
-    const res = await fetch(`${node.url}/status`, {
+    // FluxQ uses /health (returns { model, model_loaded, ... }), M2 Pro uses /status
+    const endpoint = node === "mac-mini" ? "/health" : "/status";
+    const res = await fetch(`${nodeConfig.url}${endpoint}`, {
       headers,
       signal: AbortSignal.timeout(5000),
     });
     if (!res.ok) throw new Error(`Status check failed: ${res.status}`);
-    return (await res.json()) as WorkerStatus;
+
+    const data = await res.json() as Record<string, unknown>;
+
+    if (node === "mac-mini") {
+      // FluxQ /health returns { model, model_loaded, ... }
+      return {
+        is_busy: false, // FluxQ is synchronous, so it's never "busy" in the async sense
+        loaded_model: data.model_loaded ? (data.model as string) : null,
+      };
+    }
+
+    return { is_busy: data.is_busy as boolean, loaded_model: (data.loaded_model as string) ?? null };
   }
 
   private async dispatchImageJob(job: MediaJob): Promise<void> {

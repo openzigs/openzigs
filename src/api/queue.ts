@@ -10,7 +10,7 @@ import os from "node:os";
 import { logger } from "../logging/logger.js";
 import type { QueueMaster } from "../queue/queue-master.js";
 import type { MediaQueueRepository } from "../queue/media-queue-repository.js";
-import type { CreateMediaJobInput, MediaJobType, MediaJobStatus } from "../queue/types.js";
+import type { CreateMediaJobInput, MediaJobType, MediaJobStatus, TargetNode } from "../queue/types.js";
 import { MAX_VIDEO_FRAMES, MAX_VIDEO_DURATION_SEC, DEFAULT_VIDEO_FPS } from "../queue/types.js";
 
 // ── Helpers ─────────────────────────────────────────────────
@@ -326,6 +326,54 @@ export const createQueueRouter = ({ queueMaster, repo }: QueueRouterOptions): Ro
   router.get("/project/:projectId/status", (req, res) => {
     const status = repo.isProjectComplete(req.params.projectId);
     res.json(status);
+  });
+
+  // ── GET /nodes — Live status of all worker nodes ────────
+  router.get("/nodes", async (_req, res) => {
+    try {
+      const nodes = await queueMaster.getNodeStatuses();
+      res.json({ nodes });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  // ── POST /nodes/:node/unload — Unload model from a node ─
+  router.post("/nodes/:node/unload", async (req, res) => {
+    try {
+      const node = req.params.node as TargetNode;
+      if (node !== "mac-mini" && node !== "m2-pro") {
+        res.status(400).json({ error: "Invalid node. Must be 'mac-mini' or 'm2-pro'" });
+        return;
+      }
+
+      const result = await queueMaster.unloadNode(node);
+      res.json(result);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  // ── POST /nodes/switch — Switch active model domain ─────
+  // Unloads the competing node and optionally preloads a model.
+  // Body: { targetNode: "mac-mini"|"m2-pro", model?: "flux-schnell" }
+  router.post("/nodes/switch", async (req, res) => {
+    try {
+      const { targetNode, model } = req.body as { targetNode?: string; model?: string };
+
+      if (!targetNode || (targetNode !== "mac-mini" && targetNode !== "m2-pro")) {
+        res.status(400).json({ error: "targetNode must be 'mac-mini' or 'm2-pro'" });
+        return;
+      }
+
+      const result = await queueMaster.switchActiveNode(targetNode as TargetNode, model);
+      res.json(result);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      res.status(500).json({ error: msg });
+    }
   });
 
   return router;

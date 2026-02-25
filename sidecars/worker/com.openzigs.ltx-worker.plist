@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  LTX Worker — macOS launchd Service Template
+  Issue #327: M2 Pro video generation worker (LTX-2)
+
+  Install:
+    cp com.openzigs.ltx-worker.plist ~/Library/LaunchAgents/
+    launchctl load ~/Library/LaunchAgents/com.openzigs.ltx-worker.plist
+
+  Uninstall:
+    launchctl unload ~/Library/LaunchAgents/com.openzigs.ltx-worker.plist
+    rm ~/Library/LaunchAgents/com.openzigs.ltx-worker.plist
+
+  Logs:
+    tail -f /tmp/ltx-worker-stdout.log
+    tail -f /tmp/ltx-worker-stderr.log
+
+  NOTE: Replace __LTX_DIR__ and __USER__ with your actual values,
+  or use setup-ltx-node.sh which does this automatically.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.openzigs.ltx-worker</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>__LTX_DIR__/start.sh</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>__LTX_DIR__</string>
+
+    <key>UserName</key>
+    <string>__USER__</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PYTORCH_MPS_HIGH_WATERMARK_RATIO</key>
+        <string>0.0</string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+
+    <key>StandardOutPath</key>
+    <string>/tmp/ltx-worker-stdout.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/tmp/ltx-worker-stderr.log</string>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+</dict>
+</plist>

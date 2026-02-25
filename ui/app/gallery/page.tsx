@@ -17,6 +17,9 @@ import {
   Loader2,
   Eye,
   X,
+  Cpu,
+  Power,
+  ArrowRightLeft,
 } from "lucide-react";
 
 // ── Types ───────────────────────────────────────────────────
@@ -48,6 +51,14 @@ interface QueueStats {
   processing: number;
   complete: number;
   failed: number;
+}
+
+interface NodeStatusInfo {
+  node: "mac-mini" | "m2-pro";
+  reachable: boolean;
+  is_busy: boolean;
+  loaded_model: string | null;
+  url: string;
 }
 
 // ── Helpers ─────────────────────────────────────────────────
@@ -115,8 +126,35 @@ export default function GalleryPage() {
     refetchInterval: 5000,
   });
 
+  const nodesQuery = useQuery({
+    queryKey: ["queue-nodes"],
+    queryFn: () => fetchJson<{ nodes: NodeStatusInfo[] }>("/api/queue/nodes"),
+    refetchInterval: 5000,
+  });
+
+  const switchMutation = useMutation({
+    mutationFn: (body: { targetNode: string; model?: string }) =>
+      fetchJson("/api/queue/nodes/switch", { method: "POST", body: JSON.stringify(body) }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["queue-nodes"] });
+      showToast("Model switch initiated", "success");
+    },
+    onError: (err) => showToast(`Switch failed: ${err.message}`, "error"),
+  });
+
+  const unloadMutation = useMutation({
+    mutationFn: (node: string) =>
+      fetchJson(`/api/queue/nodes/${node}/unload`, { method: "POST" }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["queue-nodes"] });
+      showToast("Model unloaded", "success");
+    },
+    onError: (err) => showToast(`Unload failed: ${err.message}`, "error"),
+  });
+
   const assets = assetsQuery.data?.assets ?? [];
   const stats = statsQuery.data;
+  const nodes = nodesQuery.data?.nodes ?? [];
 
   // ── Mutations ───────────────────────────────────────
 
@@ -178,6 +216,83 @@ export default function GalleryPage() {
               <p className="text-[11px] font-medium capitalize text-muted-foreground">{key}</p>
             </div>
           ))}
+        </div>
+      )}
+
+      {/* Node Status — VRAM-aware model switching */}
+      {nodes.length > 0 && (
+        <div className="mb-6 rounded-xl border border-border bg-card p-4">
+          <div className="mb-3 flex items-center gap-2">
+            <Cpu className="h-4 w-4 text-muted-foreground" />
+            <h3 className="text-sm font-semibold text-foreground">Worker Nodes</h3>
+            <span className="text-[10px] text-muted-foreground">(shared M2 memory — only one model at a time)</span>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            {nodes.map((node) => (
+              <div
+                key={node.node}
+                className={`rounded-lg border px-4 py-3 ${
+                  node.loaded_model
+                    ? "border-emerald-500/30 bg-emerald-500/5"
+                    : node.reachable
+                    ? "border-border bg-card"
+                    : "border-red-500/30 bg-red-500/5"
+                }`}
+              >
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-semibold text-foreground">
+                      {node.node === "mac-mini" ? "Image Gen (FluxQ)" : "Video Gen (LTX-2)"}
+                    </p>
+                    <p className="text-[11px] text-muted-foreground">{node.url}</p>
+                  </div>
+                  <div className={`h-2.5 w-2.5 rounded-full ${
+                    !node.reachable ? "bg-red-500" : node.loaded_model ? "bg-emerald-500" : "bg-yellow-500"
+                  }`} />
+                </div>
+                <div className="mt-2 flex items-center justify-between">
+                  <div className="text-xs text-muted-foreground">
+                    {!node.reachable ? (
+                      <span className="text-red-500">Offline</span>
+                    ) : node.is_busy ? (
+                      <span className="text-amber-500">Busy</span>
+                    ) : node.loaded_model ? (
+                      <span className="text-emerald-600 dark:text-emerald-400 font-medium">{node.loaded_model}</span>
+                    ) : (
+                      <span>No model loaded</span>
+                    )}
+                  </div>
+                  <div className="flex gap-1.5">
+                    {node.reachable && node.loaded_model && (
+                      <button
+                        onClick={() => unloadMutation.mutate(node.node)}
+                        disabled={unloadMutation.isPending || node.is_busy}
+                        className="rounded-lg border border-border px-2 py-1 text-[10px] font-medium text-muted-foreground hover:bg-muted disabled:opacity-50"
+                        title="Unload model to free VRAM"
+                      >
+                        <Power className="inline h-3 w-3 mr-0.5" />
+                        Unload
+                      </button>
+                    )}
+                    {node.reachable && !node.loaded_model && (
+                      <button
+                        onClick={() => switchMutation.mutate({
+                          targetNode: node.node,
+                          model: node.node === "mac-mini" ? "flux-schnell" : undefined,
+                        })}
+                        disabled={switchMutation.isPending}
+                        className="rounded-lg border border-primary/30 bg-primary/5 px-2 py-1 text-[10px] font-semibold text-primary hover:bg-primary/10 disabled:opacity-50"
+                        title={`Switch to ${node.node === "mac-mini" ? "image" : "video"} generation`}
+                      >
+                        <ArrowRightLeft className="inline h-3 w-3 mr-0.5" />
+                        Activate
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 

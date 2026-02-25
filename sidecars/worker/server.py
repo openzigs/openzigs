@@ -11,6 +11,7 @@ Endpoints:
 import asyncio
 import base64
 import gc
+import hmac
 import io
 import logging
 import os
@@ -19,9 +20,10 @@ import tempfile
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Optional
 
 import httpx
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -35,6 +37,24 @@ DEFAULT_FPS = 24
 DEFAULT_WIDTH = 768
 DEFAULT_HEIGHT = 512
 DEFAULT_MODEL_REPO = os.getenv("LTX_MODEL_REPO", "AITRADER/ltx2-distilled-8bit-mlx")
+
+# When LTX_SECRET_TOKEN is set, mutating endpoints require
+# Authorization: Bearer <token>.  Health/status remain public.
+_secret_token: Optional[str] = os.getenv("LTX_SECRET_TOKEN") or None
+
+
+def verify_token(authorization: Optional[str] = Header(None)) -> None:
+    """Validate Bearer token on protected endpoints."""
+    if _secret_token is None:
+        return  # auth disabled
+    if not authorization:
+        raise HTTPException(status_code=401, detail="Authorization header required")
+    parts = authorization.split(" ", 1)
+    if len(parts) != 2 or parts[0].lower() != "bearer":
+        raise HTTPException(status_code=401, detail="Invalid Authorization format")
+    if not hmac.compare_digest(parts[1], _secret_token):
+        raise HTTPException(status_code=403, detail="Invalid token")
+
 
 # ── Worker State ─────────────────────────────────────────────
 
@@ -323,7 +343,20 @@ async def health():
     )
 
 
-@app.post("/generate", status_code=202)
+@app.post("/unload", dependencies=[Depends(verify_token)])
+async def unload():
+    """Unload the current model and free VRAM.
+    Used by QueueMaster for cross-sidecar VRAM coordination."""
+    status = await state.get_status()
+    if status["is_busy"]:
+        raise HTTPException(status_code=409, detail="Worker is busy, cannot unload")
+    prev = state.loaded_model
+    unload_model()
+    state.loaded_model = None
+    return {"status": "unloaded", "previous_model": prev}
+
+
+@app.post("/generate", status_code=202, dependencies=[Depends(verify_token)])
 async def generate(request: GenerateRequest):
     """
     Accept a generation job. Returns 202 immediately.

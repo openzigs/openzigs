@@ -138,6 +138,23 @@ const taskEngine = new TaskEngine({ repository: taskRepository });
 // ── Media Queue: Push-Based Distributed Queue ──
 const mediaQueueRepo = new MediaQueueRepository(db);
 mediaQueueRepo.migrate();
+
+// Read user config for videoGen network mode (mirrors imageGen local/network toggle)
+let videoGenNodeUrl = process.env.M2_PRO_WORKER_URL ?? "http://localhost:5007";
+let videoGenNodeToken = process.env.M2_PRO_WORKER_TOKEN;
+try {
+  const cfgPath = path.join(os.homedir(), ".openzigs", "config.json");
+  const raw = await fs.readFile(cfgPath, "utf-8");
+  const userCfg = JSON.parse(raw) as Record<string, unknown>;
+  const vg = userCfg.videoGen as Record<string, unknown> | undefined;
+  if (vg?.mode === "network" && typeof vg.networkNodeUrl === "string" && vg.networkNodeUrl) {
+    videoGenNodeUrl = vg.networkNodeUrl;
+    if (typeof vg.networkNodeToken === "string" && vg.networkNodeToken) {
+      videoGenNodeToken = vg.networkNodeToken;
+    }
+  }
+} catch { /* no user config or parse error — use defaults */ }
+
 const queueMaster = new QueueMaster(mediaQueueRepo, {
   pollIntervalMs: Number(process.env.QUEUE_POLL_INTERVAL_MS ?? 3000),
   macMini: {
@@ -145,8 +162,8 @@ const queueMaster = new QueueMaster(mediaQueueRepo, {
     token: process.env.MAC_MINI_WORKER_TOKEN,
   },
   m2Pro: {
-    url: process.env.M2_PRO_WORKER_URL ?? "http://localhost:5007",
-    token: process.env.M2_PRO_WORKER_TOKEN,
+    url: videoGenNodeUrl,
+    token: videoGenNodeToken,
   },
   callbackUrl: process.env.QUEUE_CALLBACK_URL ?? "http://localhost:3000/api/queue/complete",
 });
