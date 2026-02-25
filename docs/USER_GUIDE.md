@@ -2378,44 +2378,47 @@ curl -X POST -H "Authorization: Bearer <token>" \
 
 ## Social Media Tools
 
-Social media tools are powered by **MCP sidecars** — separate Docker containers that the agent communicates with via HTTP.
+Social media tools are powered by **native MCP servers** — Python subprocess servers managed by `LocalMcpServerManager`. Each platform has its own server in `external/` with full API coverage for posting, reading, analytics, DMs, and comment replies.
 
 ### Supported Platforms
 
-| Platform | Sidecar Container | Port | Tools |
-|---|---|---|---|
-| **LinkedIn** | `linkedin-mcp-server` | 5101 | `social-post`, `social-timeline`, `social-profile` |
-| **Twitter/X** | `twitter-mcp-server` | 5102 | `social-post`, `social-timeline`, `social-profile` |
-| **Facebook** | `facebook-mcp-server` | 5103 | `social-post`, `social-timeline`, `social-profile` |
-| **Pinterest** | `pinterest-mcp-server` | 5104 | `social-post`, `social-timeline`, `social-profile`, `pinterest-boards`, `pinterest-pins` |
+| Platform | MCP Server | Publish Tool | Content Types | Key Tools |
+|---|---|---|---|---|
+| **Instagram** | `ig-mcp` | `instagram-publish-media` | Image, video (Reels), with caption | 11 tools: profile, posts, insights, DMs, comments |
+| **Facebook** | `fb-mcp` | `facebook-publish-post` | Text, link, photo | 10 tools: page info, posts, Messenger, insights, comments |
+| **Twitter/X** | `twitter-mcp` | `twitter-post-tweet` | Text (280 chars), replies | 8 tools: tweets, search, DMs, user lookup |
+| **LinkedIn** | `linkedin-mcp` | `linkedin-create-post` | Text (PUBLIC or CONNECTIONS) | 8 tools: profile, posts, company, messages, comments |
+| **Reddit** | `reddit-mcp` | `reddit-submit-post` | Text or link post to a subreddit | 8 tools: subreddits, posts, comments, search, inbox |
+| **YouTube** | `youtube-mcp` | — (read-only + comment reply) | No upload via MCP (use YouTube Studio) | 7 tools: channel, videos, comments, search, analytics |
 
-### Usage
+> **Note:** YouTube does not have a publishing tool because `videos.insert` consumes 1,600 quota units per upload (default daily quota: 10,000), making it impractical for automated use. Upload videos directly via YouTube Studio and use the MCP tools for analytics and comment management.
 
-When posting to social media, the agent automatically converts Markdown formatting to platform-native Unicode text. Social platforms do not render Markdown — so `**bold**` becomes 𝗯𝗼𝗹𝗱, `*italic*` becomes 𝑖𝑡𝑎𝑙𝑖𝑐, headings become BOLD UPPERCASE, and links are expanded to `text (url)` format. This conversion happens transparently before posts are dispatched to the MCP sidecars.
+### Posting Content
+
+You can publish content to any supported platform by asking the agent in chat:
 
 ```
 You: Post "Just shipped a new feature! 🚀" to LinkedIn
-Agent: [calls social-post with platform=linkedin] ✅ Posted to LinkedIn
+Agent: [calls linkedin-create-post] ✅ Posted to LinkedIn
 
-You: Show me my Pinterest boards
-Agent: [calls pinterest-boards with action=list] Here are your boards: ...
+You: Publish an Instagram post with caption "Summer vibes ☀️" using this image: https://example.com/photo.jpg
+Agent: [calls instagram-publish-media] ✅ Published to Instagram
 
-You: Get my Twitter profile
-Agent: [calls social-profile with platform=twitter] Here's your profile: ...
+You: Tweet "Check out our latest blog post: https://example.com/blog"
+Agent: [calls twitter-post-tweet] ✅ Tweeted
+
+You: Submit a post to r/programming titled "My new open-source project" with a link
+Agent: [calls reddit-submit-post] ✅ Submitted to r/programming
+
+You: Post "Excited to announce our Series A! 🎉" to Facebook
+Agent: [calls facebook-publish-post] ✅ Posted to Facebook Page
 ```
+
+The agent automatically selects the correct platform-specific tool and handles parameter mapping. For a comprehensive list of all tools per platform, see the [Social Brain Guide](SOCIAL_BRAIN_GUIDE.md#platform-specific-tools).
 
 ### Configuration
 
-Each sidecar requires platform-specific API credentials set as environment variables in `docker-compose.yml`. Refer to the individual MCP server documentation for the required credentials.
-
-Sidecar URLs are passed to the agent via environment variables:
-
-```dotenv
-MCP_LINKEDIN_URL=http://linkedin-mcp-server:5101
-MCP_TWITTER_URL=http://twitter-mcp-server:5102
-MCP_FACEBOOK_URL=http://facebook-mcp-server:5103
-MCP_PINTEREST_URL=http://pinterest-mcp-server:5104
-```
+Each MCP server requires platform-specific API credentials set as environment variables in your `.env` file (see [Environment Variables](#3-configure-environment)). Servers start automatically when credentials are present. Manage server status and restart servers from the Admin UI under **MCP Servers**.
 
 ---
 
@@ -4873,7 +4876,9 @@ Configure the knowledge base in your config file (`~/.openzigs/config.json`):
 
 > **📖 Comprehensive Setup Guide:** For step-by-step platform setup, Cloudflare Tunnel configuration, curl testing commands, and troubleshooting, see the dedicated [Social Brain Guide](SOCIAL_BRAIN_GUIDE.md).
 
-The Social Brain at `/social` provides a unified inbox for managing DMs and comments across social platforms (Instagram, Facebook, Twitter/X, LinkedIn, TikTok, YouTube, Threads) with AI-powered auto-replies, a built-in CRM, and comment-to-DM automation.
+The Social Brain at `/social` provides a unified inbox for managing DMs and comments across 6 social platforms — **Instagram**, **Facebook**, **Twitter/X**, **YouTube**, **LinkedIn**, and **Reddit** — with AI-powered auto-replies, a built-in CRM, comment-to-DM automation, and cross-platform content publishing.
+
+Each platform has a dedicated native MCP server with tools for posting, reading, analytics, DMs, and comment management. See the [Social Media Posting](#social-media-posting) section for publishing details, and the [Social Brain Guide](SOCIAL_BRAIN_GUIDE.md) for comprehensive setup and troubleshooting.
 
 ### Dashboard Tab
 
