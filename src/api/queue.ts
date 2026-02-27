@@ -104,7 +104,8 @@ export const createQueueRouter = ({ queueMaster, repo }: QueueRouterOptions): Ro
       const offset = req.query.offset ? Number(req.query.offset) : 0;
 
       const jobs = repo.listJobs({ status, type, projectId, limit, offset });
-      res.json({ jobs, total: jobs.length });
+      const total = repo.countJobs({ status, type, projectId });
+      res.json({ jobs, total });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       res.status(500).json({ error: msg });
@@ -260,7 +261,8 @@ export const createQueueRouter = ({ queueMaster, repo }: QueueRouterOptions): Ro
       const offset = req.query.offset ? Number(req.query.offset) : 0;
 
       const assets = repo.listAssets({ type, source, projectId, limit, offset });
-      res.json({ assets, total: assets.length });
+      const total = repo.countAssets({ type, source, projectId });
+      res.json({ assets, total });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       res.status(500).json({ error: msg });

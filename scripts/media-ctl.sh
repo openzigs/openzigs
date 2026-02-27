@@ -321,16 +321,13 @@ ltx_unload() {
   load_ltx_env
   local url
   url=$(ltx_api_url)
-  local headers=""
+  local -a curl_opts=(-sf -X POST "$url/unload" -H "Content-Type: application/json")
   if [[ -n "${LTX_SECRET_TOKEN:-}" ]]; then
-    headers="-H \"Authorization: Bearer $LTX_SECRET_TOKEN\""
+    curl_opts+=(-H "Authorization: Bearer $LTX_SECRET_TOKEN")
   fi
   info "Unloading LTX model..."
   local response
-  response=$(curl -sf -X POST "$url/unload" \
-    -H "Content-Type: application/json" \
-    ${LTX_SECRET_TOKEN:+-H "Authorization: Bearer $LTX_SECRET_TOKEN"} \
-    2>/dev/null) \
+  response=$(curl "${curl_opts[@]}" 2>/dev/null) \
     || fail "Request failed. Is LTX worker running?"
   echo "$response" | python3 -m json.tool 2>/dev/null || echo "$response"
 }
@@ -364,10 +361,13 @@ ltx_generate() {
   info "Submitting test job — pipeline=$pipeline"
   info "Prompt: \"$prompt\""
 
+  local -a curl_opts=(-s -X POST "$url/generate" -H "Content-Type: application/json")
+  if [[ -n "${LTX_SECRET_TOKEN:-}" ]]; then
+    curl_opts+=(-H "Authorization: Bearer $LTX_SECRET_TOKEN")
+  fi
+
   local response http_code body
-  response=$(curl -s -X POST "$url/generate" \
-    ${LTX_SECRET_TOKEN:+-H "Authorization: Bearer $LTX_SECRET_TOKEN"} \
-    -H "Content-Type: application/json" \
+  response=$(curl "${curl_opts[@]}" \
     -d "{
       \"job_id\": \"$job_id\",
       \"type\": \"txt2video\",

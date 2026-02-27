@@ -247,6 +247,26 @@ export class MediaQueueRepository {
     return (this.db.prepare(sql).all(...params) as StoredMediaJob[]).map(toJob);
   }
 
+  /** Count total jobs matching optional filters (for pagination). */
+  countJobs(opts: { status?: MediaJobStatus; type?: MediaJobType; projectId?: string } = {}): number {
+    let sql = "SELECT COUNT(*) as c FROM media_jobs WHERE 1=1";
+    const params: unknown[] = [];
+    if (opts.status) { sql += " AND status = ?"; params.push(opts.status); }
+    if (opts.type) { sql += " AND type = ?"; params.push(opts.type); }
+    if (opts.projectId) { sql += " AND project_id = ?"; params.push(opts.projectId); }
+    return (this.db.prepare(sql).get(...params) as { c: number }).c;
+  }
+
+  /** Count total assets matching optional filters (for pagination). */
+  countAssets(opts: { type?: string; source?: string; projectId?: string } = {}): number {
+    let sql = "SELECT COUNT(*) as c FROM media_assets WHERE 1=1";
+    const params: unknown[] = [];
+    if (opts.type) { sql += " AND type = ?"; params.push(opts.type); }
+    if (opts.source) { sql += " AND source = ?"; params.push(opts.source); }
+    if (opts.projectId) { sql += " AND project_id = ?"; params.push(opts.projectId); }
+    return (this.db.prepare(sql).get(...params) as { c: number }).c;
+  }
+
   /** Count jobs by status (for dashboard). */
   countByStatus(): Record<MediaJobStatus, number> {
     const rows = this.db.prepare(
