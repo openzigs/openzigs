@@ -147,7 +147,7 @@ export const createQueueRouter = ({ queueMaster, repo }: QueueRouterOptions): Ro
       }
 
       if (status === "failed") {
-        queueMaster.handleJobCompletion(job_id, { error: error ?? "Unknown worker error" });
+        await queueMaster.handleJobCompletion(job_id, { error: error ?? "Unknown worker error" });
         res.json({ ok: true });
         return;
       }
@@ -189,7 +189,7 @@ export const createQueueRouter = ({ queueMaster, repo }: QueueRouterOptions): Ro
         logger.info(`[QueueAPI] Asset saved: ${galleryAssetId} (${filename}, ${buffer.length} bytes)`);
       }
 
-      queueMaster.handleJobCompletion(job_id, {
+      await queueMaster.handleJobCompletion(job_id, {
         media_base64: undefined,
         media_type: undefined,
         metadata: {
@@ -316,6 +316,13 @@ export const createQueueRouter = ({ queueMaster, repo }: QueueRouterOptions): Ro
       }
 
       await fs.access(resolved);
+      // Allow cross-origin image/video/audio loads (NEXT_PUBLIC_OPENZIGS_API_BASE
+      // is an absolute URL on a different port, so helmet's default same-origin
+      // CORP would silently block <img> and <video> tags in the UI).
+      res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
+      if (req.query.download === "1") {
+        res.setHeader("Content-Disposition", `attachment; filename="${safeName}"`);
+      }
       res.sendFile(resolved);
     } catch {
       res.status(404).json({ error: "File not found" });

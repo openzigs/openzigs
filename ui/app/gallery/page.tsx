@@ -20,6 +20,8 @@ import {
   Cpu,
   Power,
   ArrowRightLeft,
+  LayoutGrid,
+  List,
 } from "lucide-react";
 
 // ── Types ───────────────────────────────────────────────────
@@ -106,6 +108,7 @@ export default function GalleryPage() {
   const [sourceFilter, setSourceFilter] = useState<string>("");
   const [previewAsset, setPreviewAsset] = useState<GalleryAsset | null>(null);
   const [showStudio, setShowStudio] = useState(false);
+  const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
 
   // ── Queries ─────────────────────────────────────────
 
@@ -118,6 +121,7 @@ export default function GalleryPage() {
       params.set("limit", "100");
       return fetchJson<{ assets: GalleryAsset[]; total: number }>(`/api/queue/assets?${params.toString()}`);
     },
+    refetchInterval: 5000,
   });
 
   const statsQuery = useQuery({
@@ -191,7 +195,10 @@ export default function GalleryPage() {
   };
 
   const handleDownload = (asset: GalleryAsset) => {
-    window.open(fileUrl(asset.filename), "_blank");
+    const a = document.createElement("a");
+    a.href = `${fileUrl(asset.filename)}?download=1`;
+    a.download = asset.filename;
+    a.click();
   };
 
   return (
@@ -325,6 +332,23 @@ export default function GalleryPage() {
           </select>
         </div>
         <div className="flex-1" />
+        {/* View toggle */}
+        <div className="flex rounded-lg border border-border overflow-hidden">
+          <button
+            onClick={() => setViewMode("grid")}
+            className={`px-3 py-2 ${viewMode === "grid" ? "bg-primary text-primary-foreground" : "bg-card text-muted-foreground hover:bg-muted"}`}
+            title="Grid view"
+          >
+            <LayoutGrid className="h-4 w-4" />
+          </button>
+          <button
+            onClick={() => setViewMode("list")}
+            className={`px-3 py-2 border-l border-border ${viewMode === "list" ? "bg-primary text-primary-foreground" : "bg-card text-muted-foreground hover:bg-muted"}`}
+            title="List view"
+          >
+            <List className="h-4 w-4" />
+          </button>
+        </div>
         <button
           onClick={() => setShowStudio(!showStudio)}
           className="rounded-xl bg-primary px-5 py-2.5 text-sm font-semibold text-primary-foreground flex items-center gap-1.5"
@@ -347,7 +371,7 @@ export default function GalleryPage() {
         </div>
       )}
 
-      {/* Gallery Grid */}
+      {/* Gallery Grid / List */}
       <SectionCard title={`Assets (${assets.length})`}>
         {assetsQuery.isLoading ? (
           <div className="flex items-center justify-center py-12">
@@ -357,10 +381,23 @@ export default function GalleryPage() {
           <p className="py-8 text-center text-sm text-muted-foreground">
             No assets yet. Use the Studio to create images and videos, or wait for queued jobs to complete.
           </p>
-        ) : (
+        ) : viewMode === "grid" ? (
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
             {assets.map((asset) => (
               <AssetCard
+                key={asset.id}
+                asset={asset}
+                onPreview={() => setPreviewAsset(asset)}
+                onDelete={() => handleDelete(asset)}
+                onTag={() => handleAddTag(asset)}
+                onDownload={() => handleDownload(asset)}
+              />
+            ))}
+          </div>
+        ) : (
+          <div className="divide-y divide-border">
+            {assets.map((asset) => (
+              <AssetListRow
                 key={asset.id}
                 asset={asset}
                 onPreview={() => setPreviewAsset(asset)}
@@ -401,9 +438,9 @@ function AssetCard({
   const url = fileUrl(asset.filename);
 
   return (
-    <div className="group relative overflow-hidden rounded-2xl border border-border bg-card">
+    <div onClick={onPreview} className="group relative cursor-pointer overflow-hidden rounded-2xl border border-border bg-card">
       {/* Thumbnail */}
-      <button onClick={onPreview} className="block w-full cursor-pointer">
+      <div className="block w-full">
         {asset.type === "image" ? (
           <img src={url} alt={asset.prompt ?? asset.filename} className="aspect-square w-full object-cover" loading="lazy" />
         ) : asset.type === "video" ? (
@@ -420,7 +457,7 @@ function AssetCard({
             <Music className="h-12 w-12 text-muted-foreground/50" />
           </div>
         )}
-      </button>
+      </div>
 
       {/* Overlay actions */}
       <div className="absolute right-2 top-2 flex gap-1 opacity-0 transition group-hover:opacity-100">
@@ -471,6 +508,81 @@ function AssetCard({
   );
 }
 
+// ── Asset List Row ──────────────────────────────────────────
+
+function AssetListRow({
+  asset,
+  onPreview,
+  onDelete,
+  onTag,
+  onDownload,
+}: {
+  asset: GalleryAsset;
+  onPreview: () => void;
+  onDelete: () => void;
+  onTag: () => void;
+  onDownload: () => void;
+}) {
+  const url = fileUrl(asset.filename);
+
+  return (
+    <div className="flex items-center gap-4 py-3 px-1 hover:bg-muted/40 rounded-lg transition">
+      {/* Thumbnail */}
+      <button onClick={onPreview} className="flex-shrink-0 h-14 w-14 rounded-lg overflow-hidden border border-border bg-muted">
+        {asset.type === "image" ? (
+          <img src={url} alt={asset.prompt ?? asset.filename} className="h-full w-full object-cover" loading="lazy" />
+        ) : asset.type === "video" ? (
+          <div className="relative h-full w-full bg-muted flex items-center justify-center">
+            <Video className="h-5 w-5 text-muted-foreground" />
+          </div>
+        ) : (
+          <div className="flex h-full w-full items-center justify-center">
+            <Music className="h-5 w-5 text-muted-foreground" />
+          </div>
+        )}
+      </button>
+
+      {/* Info */}
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-medium text-foreground truncate">{asset.filename}</span>
+          {sourceBadge(asset.source)}
+          {asset.model && (
+            <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
+              {asset.model}
+            </span>
+          )}
+        </div>
+        {asset.prompt && (
+          <p className="mt-0.5 text-xs text-muted-foreground truncate">{asset.prompt}</p>
+        )}
+        <div className="mt-0.5 flex items-center gap-3 text-[10px] text-muted-foreground">
+          {formatBytes(asset.file_size_bytes)}
+          {asset.width && asset.height && <span>{asset.width}×{asset.height}</span>}
+          {asset.duration_seconds && <span>{asset.duration_seconds.toFixed(1)}s</span>}
+          <span>{new Date(asset.created_at).toLocaleDateString()}</span>
+        </div>
+      </div>
+
+      {/* Actions */}
+      <div className="flex-shrink-0 flex items-center gap-1.5">
+        <button onClick={onPreview} className="rounded-lg border border-border p-1.5 text-muted-foreground hover:bg-muted" title="Preview">
+          <Eye className="h-3.5 w-3.5" />
+        </button>
+        <button onClick={onDownload} className="rounded-lg border border-border p-1.5 text-muted-foreground hover:bg-muted" title="Download">
+          <Download className="h-3.5 w-3.5" />
+        </button>
+        <button onClick={onTag} className="rounded-lg border border-border p-1.5 text-muted-foreground hover:bg-muted" title="Add tag">
+          <Tag className="h-3.5 w-3.5" />
+        </button>
+        <button onClick={onDelete} className="rounded-lg border border-red-500/30 p-1.5 text-red-500 hover:bg-red-500/10" title="Delete">
+          <Trash2 className="h-3.5 w-3.5" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ── Preview Lightbox ────────────────────────────────────────
 
 function PreviewLightbox({ asset, onClose }: { asset: GalleryAsset; onClose: () => void }) {
@@ -501,14 +613,27 @@ function PreviewLightbox({ asset, onClose }: { asset: GalleryAsset; onClose: () 
         )}
 
         <div className="mt-3 max-w-lg">
-          <p className="text-sm font-medium text-foreground">{asset.filename}</p>
-          {asset.prompt && <p className="mt-1 text-xs text-muted-foreground">{asset.prompt}</p>}
-          <div className="mt-2 flex items-center gap-2 text-[11px] text-muted-foreground">
-            {sourceBadge(asset.source)}
-            <span>{formatBytes(asset.file_size_bytes)}</span>
-            {asset.width && asset.height && <span>{asset.width}x{asset.height}</span>}
-            {asset.duration_seconds && <span>{asset.duration_seconds.toFixed(1)}s</span>}
-            {asset.model && <span>{asset.model}</span>}
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-foreground">{asset.filename}</p>
+              {asset.prompt && <p className="mt-1 text-xs text-muted-foreground">{asset.prompt}</p>}
+              <div className="mt-2 flex items-center gap-2 text-[11px] text-muted-foreground">
+                {sourceBadge(asset.source)}
+                <span>{formatBytes(asset.file_size_bytes)}</span>
+                {asset.width && asset.height && <span>{asset.width}x{asset.height}</span>}
+                {asset.duration_seconds && <span>{asset.duration_seconds.toFixed(1)}s</span>}
+                {asset.model && <span>{asset.model}</span>}
+              </div>
+            </div>
+            <a
+              href={`${fileUrl(asset.filename)}?download=1`}
+              download={asset.filename}
+              className="flex-shrink-0 flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <Download className="h-3.5 w-3.5" />
+              Download
+            </a>
           </div>
         </div>
       </div>

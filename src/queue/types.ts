@@ -152,6 +152,8 @@ export interface QueueConfig {
   macMini: WorkerNodeConfig;
   m2Pro: WorkerNodeConfig;
   callbackUrl: string;
+  /** Filesystem path where completed media assets are written. */
+  galleryDir?: string;
 }
 
 // ── Constants ─────────────────────────────────────────────────

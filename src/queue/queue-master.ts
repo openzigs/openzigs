@@ -6,6 +6,9 @@
  * can be loaded at a time.
  */
 
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { EventEmitter } from "node:events";
 import { logger } from "../logging/logger.js";
 import type { MediaQueueRepository } from "./media-queue-repository.js";
@@ -92,7 +95,7 @@ export class QueueMaster extends EventEmitter {
   }
 
   private async pollNodeStatus(node: TargetNode): Promise<NodeStatus> {
-    const nodeConfig = node === "mac-mini" ? this.config.macMini : this.config.m2Pro;
+    const nodeConfig = await this.getLiveNodeConfig(node);
 
     // FluxQ (mac-mini) is single-threaded Python — it cannot respond to /health
     // while blocking on inference. If we know it's busy, return the cached status
@@ -137,11 +140,45 @@ export class QueueMaster extends EventEmitter {
   }
 
   /**
+   * Returns a fresh WorkerNodeConfig for the given node by re-reading
+   * ~/.openzigs/config.json. Falls back to the baked-in startup config.
+   * Ensures token/URL changes saved via the admin UI take effect without
+   * requiring a server restart.
+   */
+  private async getLiveNodeConfig(node: TargetNode): Promise<WorkerNodeConfig> {
+    try {
+      const cfgPath = path.join(os.homedir(), ".openzigs", "config.json");
+      const raw = await fs.readFile(cfgPath, "utf-8");
+      const cfg = JSON.parse(raw) as Record<string, unknown>;
+      if (node === "mac-mini") {
+        const ig = cfg.imageGen as Record<string, unknown> | undefined;
+        if (ig?.mode === "network" && typeof ig.networkNodeUrl === "string" && ig.networkNodeUrl) {
+          return {
+            url: ig.networkNodeUrl,
+            token: typeof ig.networkNodeToken === "string" ? ig.networkNodeToken : this.config.macMini.token,
+          };
+        }
+      } else {
+        const vg = cfg.videoGen as Record<string, unknown> | undefined;
+        if (typeof vg?.networkNodeUrl === "string" && vg.networkNodeUrl) {
+          return {
+            url: vg.networkNodeUrl,
+            token: typeof vg.networkNodeToken === "string" ? vg.networkNodeToken : this.config.m2Pro.token,
+          };
+        }
+      }
+    } catch {
+      // config unreadable — fall through to startup config
+    }
+    return node === "mac-mini" ? this.config.macMini : this.config.m2Pro;
+  }
+
+  /**
    * Tell a specific node to unload its current model and free VRAM.
    * FluxQ uses POST /unload, M2 Pro worker uses POST /unload.
    */
   async unloadNode(node: TargetNode): Promise<{ ok: boolean; previous_model: string | null }> {
-    const nodeConfig = node === "mac-mini" ? this.config.macMini : this.config.m2Pro;
+    const nodeConfig = await this.getLiveNodeConfig(node);
     const headers: Record<string, string> = { "Content-Type": "application/json" };
     if (nodeConfig.token) headers["Authorization"] = `Bearer ${nodeConfig.token}`;
 
@@ -203,7 +240,7 @@ export class QueueMaster extends EventEmitter {
     if (model && targetNode === "mac-mini") {
       // FluxQ: POST /model { model: "flux-schnell" }
       try {
-        const nodeConfig = this.config.macMini;
+        const nodeConfig = await this.getLiveNodeConfig("mac-mini");
         const headers: Record<string, string> = { "Content-Type": "application/json" };
         if (nodeConfig.token) headers["Authorization"] = `Bearer ${nodeConfig.token}`;
 
@@ -264,7 +301,7 @@ export class QueueMaster extends EventEmitter {
 
     // Poll FluxQ status to check if it's healthy (only when not already busy)
     try {
-      this.macMiniStatus = await this.getWorkerStatus(this.config.macMini, "mac-mini");
+      this.macMiniStatus = await this.getWorkerStatus(await this.getLiveNodeConfig("mac-mini"), "mac-mini");
     } catch {
       logger.debug("[QueueMaster] FluxQ unreachable, skipping image jobs");
       return;
@@ -300,7 +337,7 @@ export class QueueMaster extends EventEmitter {
   private async processM2Pro(): Promise<void> {
     // Check worker status first
     try {
-      this.m2ProStatus = await this.getWorkerStatus(this.config.m2Pro, "m2-pro");
+      this.m2ProStatus = await this.getWorkerStatus(await this.getLiveNodeConfig("m2-pro"), "m2-pro");
     } catch {
       logger.debug("[QueueMaster] M2 Pro unreachable, skipping video jobs");
       return;
@@ -406,7 +443,7 @@ export class QueueMaster extends EventEmitter {
     const buffer = await res.arrayBuffer();
     const base64 = Buffer.from(buffer).toString("base64");
 
-    this.handleJobCompletion(job.id, {
+    await this.handleJobCompletion(job.id, {
       media_base64: base64,
       media_type: "image/png",
       metadata: {
@@ -418,7 +455,7 @@ export class QueueMaster extends EventEmitter {
   }
 
   private async dispatchVideoJob(job: MediaJob): Promise<void> {
-    const { url, token } = this.config.m2Pro;
+    const { url, token } = await this.getLiveNodeConfig("m2-pro");
     const headers: Record<string, string> = { "Content-Type": "application/json" };
     if (token) headers["Authorization"] = `Bearer ${token}`;
 
@@ -456,12 +493,12 @@ export class QueueMaster extends EventEmitter {
     }
   }
 
-  // ── Job Completion (called by webhook) ────────────────────
+  // ── Job Completion (called by webhook or directly) ───────
 
-  handleJobCompletion(
+  async handleJobCompletion(
     jobId: string,
     result: { media_base64?: string; media_type?: string; metadata?: Record<string, unknown>; error?: string },
-  ): void {
+  ): Promise<void> {
     const job = this.repo.getJob(jobId);
     if (!job) {
       logger.warn(`[QueueMaster] Completion for unknown job: ${jobId}`);
@@ -475,8 +512,45 @@ export class QueueMaster extends EventEmitter {
       return;
     }
 
-    // Save media asset — emitter will handle gallery storage
-    this.repo.markComplete(jobId, "", result.metadata);
+    let resultUrl = (result.metadata?.result_url as string | undefined) ?? "";
+    let galleryAssetId: string | undefined = result.metadata?.gallery_asset_id as string | undefined;
+
+    // When media bytes are delivered directly (image jobs from mac-mini), write to disk and
+    // create the gallery asset record here. Video jobs do this in the /complete webhook before
+    // calling handleJobCompletion with media_base64 = undefined.
+    if (result.media_base64 && result.media_type) {
+      const galleryDir = this.config.galleryDir ?? path.join(os.homedir(), ".openzigs", "gallery");
+      await fs.mkdir(galleryDir, { recursive: true });
+
+      const ext = result.media_type === "image/png" ? ".png"
+        : result.media_type === "image/jpeg" ? ".jpg"
+        : result.media_type === "image/webp" ? ".webp"
+        : ".bin";
+      const filename = `${jobId}${ext}`;
+      const filePath = path.join(galleryDir, filename);
+      const buffer = Buffer.from(result.media_base64, "base64");
+      await fs.writeFile(filePath, buffer);
+
+      galleryAssetId = this.repo.createAsset({
+        type: "image",
+        filename,
+        filePath,
+        mimeType: result.media_type,
+        fileSizeBytes: buffer.length,
+        width: result.metadata?.width as number | undefined,
+        height: result.metadata?.height as number | undefined,
+        prompt: job.payload.prompt,
+        model: (result.metadata?.model as string) ?? job.requiredModel,
+        generationParams: result.metadata,
+        source: "generated",
+        jobId,
+        projectId: job.projectId ?? undefined,
+      });
+      resultUrl = `/api/queue/assets/file/${filename}`;
+      logger.info(`[QueueMaster] Asset saved: ${galleryAssetId} (${filename}, ${buffer.length} bytes)`);
+    }
+
+    this.repo.markComplete(jobId, resultUrl, result.metadata, galleryAssetId);
 
     const updatedJob = this.repo.getJob(jobId)!;
     this.emit("job:complete", updatedJob);

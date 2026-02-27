@@ -175,6 +175,7 @@ const queueMaster = new QueueMaster(mediaQueueRepo, {
     token: videoGenNodeToken,
   },
   callbackUrl: process.env.QUEUE_CALLBACK_URL ?? "http://localhost:3000/api/queue/complete",
+  galleryDir: path.join(os.homedir(), ".openzigs", "gallery"),
 });
 
 const scheduler = new Scheduler({
