@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Media Kickstart Agent — ensures FluxQ and LTX worker start after login.
+
+  macOS Sequoia defers LaunchAgents with RunAtLoad into "speculative" spawn
+  state and never actually launches them. This agent runs at login and
+  force-kickstarts both media workers 5 seconds later, bypassing that deferral.
+
+  Install:
+    cp com.openzigs.media-kickstart.plist ~/Library/LaunchAgents/
+    launchctl load ~/Library/LaunchAgents/com.openzigs.media-kickstart.plist
+
+  Requires:
+    com.openzigs.fluxq and com.openzigs.ltx-worker must already be loaded
+    (installed via setup-fluxq-node.sh / setup-ltx-node.sh).
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.openzigs.media-kickstart</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>-c</string>
+        <string>sleep 5 &amp;&amp; launchctl kickstart -k "gui/$(id -u)/com.openzigs.fluxq" 2>/dev/null; launchctl kickstart -k "gui/$(id -u)/com.openzigs.ltx-worker" 2>/dev/null</string>
+    </array>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/tmp/media-kickstart.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/tmp/media-kickstart.log</string>
+</dict>
+</plist>

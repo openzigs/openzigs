@@ -124,7 +124,10 @@ flux_start() {
   check_flux_plist
   info "Loading launchctl job: $FLUX_PLIST_LABEL"
   launchctl load "$FLUX_PLIST_PATH" 2>/dev/null || warn "Job may already be loaded"
-  sleep 1
+  # Kickstart bypasses macOS Sequoia speculative spawn scheduling (RunAtLoad alone
+  # doesn't guarantee an immediate start for non-interactive LaunchAgents).
+  launchctl kickstart -k "gui/$(id -u)/$FLUX_PLIST_LABEL" 2>/dev/null || true
+  sleep 3
   flux_status
 }
 
@@ -267,7 +270,9 @@ ltx_start() {
   fi
   info "Loading launchctl job: $LTX_PLIST_LABEL"
   launchctl load "$LTX_PLIST_PATH" 2>/dev/null || warn "Job may already be loaded"
-  sleep 1
+  # Kickstart bypasses macOS Sequoia speculative spawn scheduling.
+  launchctl kickstart -k "gui/$(id -u)/$LTX_PLIST_LABEL" 2>/dev/null || true
+  sleep 3
   ltx_status
 }
 

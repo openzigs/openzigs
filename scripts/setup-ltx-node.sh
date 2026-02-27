@@ -190,7 +190,6 @@ ok "Server ready"
 fetch_file "com.openzigs.ltx-worker.plist" "com.openzigs.ltx-worker.plist"
 
 sed -i '' "s|__LTX_DIR__|$INSTALL_DIR|g" com.openzigs.ltx-worker.plist
-sed -i '' "s|__USER__|$(whoami)|g" com.openzigs.ltx-worker.plist
 
 ok "launchd plist template prepared"
 
