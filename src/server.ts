@@ -1608,13 +1608,30 @@ if (webConfig?.enabled !== false) {
   });
 }
 
-httpServer.listen(port, () => {
-  logger.info(`OpenZigs server listening on port ${port}`);
+httpServer.listen(port, "0.0.0.0", () => {
+  logger.info(`OpenZigs server listening on port ${port} (0.0.0.0)`);
 
   // Start the media queue push loop
   if (process.env.QUEUE_ENABLED !== "false") {
     queueMaster.start();
     logger.info("[QueueMaster] Push orchestrator started");
+
+    // Broadcast job events to all connected UI clients via Socket.IO
+    queueMaster.on("job:complete", (job) => {
+      io.emit("queue:job:complete", {
+        jobId: job.id,
+        type: job.type,
+        status: job.status,
+        resultUrl: job.resultUrl,
+        galleryAssetId: job.galleryAssetId,
+      });
+    });
+    queueMaster.on("job:failed", (job, error) => {
+      io.emit("queue:job:failed", { jobId: job.id, type: job.type, error });
+    });
+    queueMaster.on("job:dispatched", (job) => {
+      io.emit("queue:job:dispatched", { jobId: job.id, type: job.type });
+    });
 
     // Notify Telegram when an entire project's queue is complete
     queueMaster.on("project:complete", (projectId: string, total: number) => {

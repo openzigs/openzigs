@@ -106,6 +106,19 @@ export class QueueMaster extends EventEmitter {
 
     try {
       const status = await this.getWorkerStatus(nodeConfig, node);
+      // If the worker reports idle but there are RECENT dispatched jobs, it may
+      // still be loading the model (LTX-2 can take 10+ min to load). Override
+      // is_busy during that window so the UI shows "Busy" rather than the
+      // misleading "No model loaded". Only consider jobs dispatched within the
+      // last 15 minutes — stale dispatched jobs (orphans from crashed sessions)
+      // should not permanently gate the status on an idle worker.
+      if (!status.is_busy) {
+        const recentCutoffMs = Date.now() - 15 * 60 * 1000; // 15 min
+        const dispatched = this.repo.listJobs({ status: "dispatched" });
+        if (dispatched.some((j) => j.targetNode === node && j.dispatchedAt && j.dispatchedAt.getTime() > recentCutoffMs)) {
+          status.is_busy = true;
+        }
+      }
       if (node === "mac-mini") this.macMiniStatus = status;
       else this.m2ProStatus = status;
       return { node, reachable: true, ...status, url: nodeConfig.url };
@@ -270,11 +283,40 @@ export class QueueMaster extends EventEmitter {
 
   async tick(): Promise<void> {
     try {
+      this.recoverStuckJobs();
       await this.processNode("mac-mini");
       await this.processNode("m2-pro");
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       logger.warn(`[QueueMaster] Tick error: ${msg}`);
+    }
+  }
+
+  /**
+   * Watchdog: find jobs stuck in 'dispatched' state longer than dispatchTimeoutMs
+   * and fail them (which resets to 'pending' if retries remain). This recovers
+   * jobs lost when a worker restarts mid-generation.
+   */
+  private recoverStuckJobs(): void {
+    const timeoutMs = this.config.dispatchTimeoutMs ?? 45 * 60 * 1000; // 45 min default
+    const dispatched = this.repo.listJobs({ status: "dispatched", limit: 50 });
+    const cutoff = Date.now() - timeoutMs;
+
+    for (const job of dispatched) {
+      if (job.dispatchedAt && job.dispatchedAt.getTime() < cutoff) {
+        const ageMin = Math.round((Date.now() - job.dispatchedAt.getTime()) / 60_000);
+        logger.warn(
+          `[QueueMaster] Job ${job.id} stuck in dispatched for ${ageMin}min — resetting for retry`,
+        );
+        this.repo.markFailed(job.id, `Dispatch timeout after ${ageMin}min (worker may have restarted)`);
+        // Clear the in-memory busy flag for the relevant node
+        if (job.targetNode === "mac-mini") {
+          this.macMiniStatus = { ...this.macMiniStatus, is_busy: false };
+        } else {
+          this.m2ProStatus = { ...this.m2ProStatus, is_busy: false };
+        }
+        this.emit("job:failed", job, `Dispatch timeout after ${ageMin}min`);
+      }
     }
   }
 

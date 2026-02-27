@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useSocket } from "@/lib/socket-context";
 import { fetchJson } from "@/lib/api";
 import { SectionCard } from "@/components/section-card";
 import { ToastContainer, showToast } from "@/components/toast";
@@ -104,6 +105,7 @@ function sourceBadge(source: string) {
 
 export default function GalleryPage() {
   const queryClient = useQueryClient();
+  const { socket } = useSocket();
   const [typeFilter, setTypeFilter] = useState<string>("");
   const [sourceFilter, setSourceFilter] = useState<string>("");
   const [previewAsset, setPreviewAsset] = useState<GalleryAsset | null>(null);
@@ -135,6 +137,24 @@ export default function GalleryPage() {
     queryFn: () => fetchJson<{ nodes: NodeStatusInfo[] }>("/api/queue/nodes"),
     refetchInterval: 5000,
   });
+
+  // Real-time updates via Socket.IO
+  useEffect(() => {
+    if (!socket) return;
+    const invalidate = () => {
+      void queryClient.invalidateQueries({ queryKey: ["gallery-assets"] });
+      void queryClient.invalidateQueries({ queryKey: ["queue-stats"] });
+      void queryClient.invalidateQueries({ queryKey: ["queue-nodes"] });
+    };
+    socket.on("queue:job:complete", invalidate);
+    socket.on("queue:job:failed", invalidate);
+    socket.on("queue:job:dispatched", invalidate);
+    return () => {
+      socket.off("queue:job:complete", invalidate);
+      socket.off("queue:job:failed", invalidate);
+      socket.off("queue:job:dispatched", invalidate);
+    };
+  }, [socket, queryClient]);
 
   const switchMutation = useMutation({
     mutationFn: (body: { targetNode: string; model?: string }) =>

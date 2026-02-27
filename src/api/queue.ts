@@ -141,7 +141,14 @@ export const createQueueRouter = ({ queueMaster, repo }: QueueRouterOptions): Ro
     try {
       const { job_id, status, media_base64, media_type, metadata, error } = req.body;
 
+      logger.info(
+        `[QueueAPI] /complete called — job_id=${job_id ?? "(missing)"} status=${status ?? "(missing)"} ` +
+        `has_media=${!!media_base64} media_type=${media_type ?? "(none)"} ` +
+        `body_keys=${Object.keys(req.body ?? {}).join(",") || "(empty)"}`,
+      );
+
       if (!job_id || !status) {
+        logger.warn(`[QueueAPI] /complete rejected 400 — missing job_id or status. body=${JSON.stringify(req.body).slice(0, 200)}`);
         res.status(400).json({ error: "job_id and status are required" });
         return;
       }

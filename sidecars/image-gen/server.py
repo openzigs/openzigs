@@ -274,6 +274,7 @@ def _bg_generate(
         media_b64 = base64.b64encode(buf.getvalue()).decode("ascii")
         _post_callback(job_id, callback_url, {
             "job_id": job_id,
+            "status": "complete",
             "media_base64": media_b64,
             "media_type": "image/png",
             "metadata": {
@@ -284,7 +285,7 @@ def _bg_generate(
         })
     except Exception as e:
         log.error(f"[async] generate failed job={job_id}: {e}")
-        _post_callback(job_id, callback_url, {"job_id": job_id, "error": str(e)})
+        _post_callback(job_id, callback_url, {"job_id": job_id, "status": "failed", "error": str(e)})
     finally:
         _generating = False
 
@@ -331,6 +332,7 @@ def _bg_img2img(
         media_b64 = base64.b64encode(buf.getvalue()).decode("ascii")
         _post_callback(job_id, callback_url, {
             "job_id": job_id,
+            "status": "complete",
             "media_base64": media_b64,
             "media_type": "image/png",
             "metadata": {
@@ -341,7 +343,7 @@ def _bg_img2img(
         })
     except Exception as e:
         log.error(f"[async] img2img failed job={job_id}: {e}")
-        _post_callback(job_id, callback_url, {"job_id": job_id, "error": str(e)})
+        _post_callback(job_id, callback_url, {"job_id": job_id, "status": "failed", "error": str(e)})
     finally:
         _generating = False
         if os.path.exists(source_path) and tempfile.gettempdir() in source_path:
@@ -389,6 +391,7 @@ def _bg_kontext(
         media_b64 = base64.b64encode(buf.getvalue()).decode("ascii")
         _post_callback(job_id, callback_url, {
             "job_id": job_id,
+            "status": "complete",
             "media_base64": media_b64,
             "media_type": "image/png",
             "metadata": {
@@ -399,7 +402,7 @@ def _bg_kontext(
         })
     except Exception as e:
         log.error(f"[async] kontext failed job={job_id}: {e}")
-        _post_callback(job_id, callback_url, {"job_id": job_id, "error": str(e)})
+        _post_callback(job_id, callback_url, {"job_id": job_id, "status": "failed", "error": str(e)})
     finally:
         _generating = False
         if os.path.exists(source_path) and tempfile.gettempdir() in source_path:

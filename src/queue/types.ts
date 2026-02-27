@@ -156,6 +156,11 @@ export interface QueueConfig {
   callbackUrl: string;
   /** Filesystem path where completed media assets are written. */
   galleryDir?: string;
+  /**
+   * How long (ms) a job can sit in 'dispatched' state before the watchdog
+   * resets it to 'pending' for retry. Default: 45 minutes.
+   */
+  dispatchTimeoutMs?: number;
 }
 
 // ── Constants ─────────────────────────────────────────────────
