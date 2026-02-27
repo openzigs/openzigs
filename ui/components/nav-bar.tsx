@@ -45,7 +45,7 @@ export const NavBar = () => {
           <img
             src="/openzigs-logo-light.png"
             alt="OpenZigs"
-            className="h-6"
+            className="h-6 w-auto max-w-[8rem] flex-shrink-0"
             draggable="false"
           />
         </Link>
