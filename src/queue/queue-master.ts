@@ -547,6 +547,15 @@ export class QueueMaster extends EventEmitter {
       return;
     }
 
+    // Clear the in-memory busy flag so the tick loop can dispatch the next job.
+    // Without this, macMiniStatus.is_busy stays true forever after the health-check
+    // cache sets it, because processMacMini() early-returns without re-polling.
+    if (job.targetNode === "mac-mini") {
+      this.macMiniStatus = { ...this.macMiniStatus, is_busy: false };
+    } else if (job.targetNode === "m2-pro") {
+      this.m2ProStatus = { ...this.m2ProStatus, is_busy: false };
+    }
+
     if (result.error) {
       this.repo.markFailed(jobId, result.error);
       this.emit("job:failed", job, result.error);
@@ -606,5 +615,9 @@ export class QueueMaster extends EventEmitter {
         logger.info(`[QueueMaster] Project ${job.projectId} complete (${status.total} jobs)`);
       }
     }
+
+    // Immediately try to dispatch the next pending job rather than waiting
+    // for the next poll interval (which can be several seconds).
+    void this.tick();
   }
 }

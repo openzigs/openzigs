@@ -23,6 +23,10 @@ import {
   ArrowRightLeft,
   LayoutGrid,
   List,
+  Skull,
+  ChevronDown,
+  ChevronRight,
+  Clock,
 } from "lucide-react";
 
 // ── Types ───────────────────────────────────────────────────
@@ -62,6 +66,18 @@ interface NodeStatusInfo {
   is_busy: boolean;
   loaded_model: string | null;
   url: string;
+}
+
+interface MediaJob {
+  id: string;
+  type: string;
+  status: "pending" | "dispatched" | "processing" | "complete" | "failed";
+  targetNode: string;
+  requiredModel: string;
+  payload: { prompt?: string; [key: string]: unknown };
+  error: string | null;
+  createdAt: string;
+  dispatchedAt: string | null;
 }
 
 // ── Helpers ─────────────────────────────────────────────────
@@ -145,6 +161,7 @@ export default function GalleryPage() {
       void queryClient.invalidateQueries({ queryKey: ["gallery-assets"] });
       void queryClient.invalidateQueries({ queryKey: ["queue-stats"] });
       void queryClient.invalidateQueries({ queryKey: ["queue-nodes"] });
+      void queryClient.invalidateQueries({ queryKey: ["queue-active-jobs"] });
     };
     socket.on("queue:job:complete", invalidate);
     socket.on("queue:job:failed", invalidate);
@@ -174,6 +191,39 @@ export default function GalleryPage() {
       showToast("Model unloaded", "success");
     },
     onError: (err) => showToast(`Unload failed: ${err.message}`, "error"),
+  });
+
+  const activeJobsQuery = useQuery({
+    queryKey: ["queue-active-jobs"],
+    queryFn: async () => {
+      const [pending, dispatched] = await Promise.all([
+        fetchJson<{ jobs: MediaJob[] }>("/api/queue/jobs?status=pending&limit=50"),
+        fetchJson<{ jobs: MediaJob[] }>("/api/queue/jobs?status=dispatched&limit=50"),
+      ]);
+      return [...pending.jobs, ...dispatched.jobs];
+    },
+    refetchInterval: 5000,
+  });
+
+  const cancelJobMutation = useMutation({
+    mutationFn: (id: string) => fetchJson(`/api/queue/jobs/${id}`, { method: "DELETE" }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["queue-active-jobs"] });
+      queryClient.invalidateQueries({ queryKey: ["queue-stats"] });
+      showToast("Job cancelled", "success");
+    },
+    onError: (err) => showToast(`Cancel failed: ${err.message}`, "error"),
+  });
+
+  const killJobMutation = useMutation({
+    mutationFn: (id: string) => fetchJson(`/api/queue/jobs/${id}/kill`, { method: "POST" }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["queue-active-jobs"] });
+      queryClient.invalidateQueries({ queryKey: ["queue-stats"] });
+      queryClient.invalidateQueries({ queryKey: ["queue-nodes"] });
+      showToast("Job killed", "success");
+    },
+    onError: (err) => showToast(`Kill failed: ${err.message}`, "error"),
   });
 
   const assets = assetsQuery.data?.assets ?? [];
@@ -244,6 +294,17 @@ export default function GalleryPage() {
             </div>
           ))}
         </div>
+      )}
+
+      {/* Active Jobs Panel */}
+      {(activeJobsQuery.data?.length ?? 0) > 0 && (
+        <QueueJobsPanel
+          jobs={activeJobsQuery.data ?? []}
+          onCancel={(id) => cancelJobMutation.mutate(id)}
+          onKill={(id) => killJobMutation.mutate(id)}
+          isCancelling={cancelJobMutation.isPending}
+          isKilling={killJobMutation.isPending}
+        />
       )}
 
       {/* Node Status — VRAM-aware model switching */}
@@ -661,6 +722,159 @@ function PreviewLightbox({ asset, onClose }: { asset: GalleryAsset; onClose: () 
   );
 }
 
+// ── Queue Jobs Panel ────────────────────────────────────────
+
+function formatAge(dateStr: string): string {
+  const diff = Date.now() - new Date(dateStr).getTime();
+  const secs = Math.floor(diff / 1000);
+  if (secs < 60) return `${secs}s ago`;
+  const mins = Math.floor(secs / 60);
+  if (mins < 60) return `${mins}m ago`;
+  return `${Math.floor(mins / 60)}h ago`;
+}
+
+function QueueJobsPanel({
+  jobs,
+  onCancel,
+  onKill,
+  isCancelling,
+  isKilling,
+}: {
+  jobs: MediaJob[];
+  onCancel: (id: string) => void;
+  onKill: (id: string) => void;
+  isCancelling: boolean;
+  isKilling: boolean;
+}) {
+  const [expanded, setExpanded] = useState(true);
+  const pending = jobs.filter((j) => j.status === "pending");
+  const active = jobs.filter((j) => j.status === "dispatched" || j.status === "processing");
+
+  return (
+    <div className="mb-6 rounded-xl border border-amber-500/30 bg-amber-500/5">
+      <button
+        className="flex w-full items-center gap-2 px-4 py-3 text-left"
+        onClick={() => setExpanded((v) => !v)}
+      >
+        <Clock className="h-4 w-4 text-amber-500" />
+        <span className="text-sm font-semibold text-foreground">
+          Queue ({jobs.length} active)
+        </span>
+        {pending.length > 0 && (
+          <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-semibold text-muted-foreground">
+            {pending.length} pending
+          </span>
+        )}
+        {active.length > 0 && (
+          <span className="rounded-full bg-amber-500/20 px-2 py-0.5 text-[10px] font-semibold text-amber-600 dark:text-amber-400">
+            {active.length} running
+          </span>
+        )}
+        <div className="ml-auto text-muted-foreground">
+          {expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+        </div>
+      </button>
+
+      {expanded && (
+        <div className="px-4 pb-4">
+          {/* Dispatched / Processing */}
+          {active.length > 0 && (
+            <div className="mb-3">
+              <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-amber-600 dark:text-amber-400">
+                Running
+              </p>
+              <div className="space-y-2">
+                {active.map((job) => (
+                  <div
+                    key={job.id}
+                    className="flex items-center gap-3 rounded-lg border border-amber-500/20 bg-card px-3 py-2.5"
+                  >
+                    <Loader2 className="h-3.5 w-3.5 animate-spin flex-shrink-0 text-amber-500" />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-semibold text-foreground">{job.type}</span>
+                        <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                          {job.targetNode}
+                        </span>
+                        <span className="text-[10px] text-muted-foreground">{job.requiredModel}</span>
+                      </div>
+                      {job.payload?.prompt && (
+                        <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
+                          {job.payload.prompt as string}
+                        </p>
+                      )}
+                    </div>
+                    <div className="flex-shrink-0 text-right">
+                      <p className="text-[10px] text-muted-foreground">
+                        {job.dispatchedAt ? formatAge(job.dispatchedAt) : formatAge(job.createdAt)}
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => {
+                        if (!confirm("Kill this job and unload the worker node?")) return;
+                        onKill(job.id);
+                      }}
+                      disabled={isKilling}
+                      className="flex-shrink-0 rounded-lg border border-red-500/30 p-1.5 text-red-500 hover:bg-red-500/10 disabled:opacity-50"
+                      title="Kill job"
+                    >
+                      <Skull className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Pending */}
+          {pending.length > 0 && (
+            <div>
+              <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                Pending
+              </p>
+              <div className="space-y-2">
+                {pending.map((job) => (
+                  <div
+                    key={job.id}
+                    className="flex items-center gap-3 rounded-lg border border-border bg-card px-3 py-2.5"
+                  >
+                    <div className="h-3.5 w-3.5 flex-shrink-0 rounded-full border-2 border-muted-foreground/40" />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-semibold text-foreground">{job.type}</span>
+                        <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                          {job.targetNode}
+                        </span>
+                        <span className="text-[10px] text-muted-foreground">{job.requiredModel}</span>
+                      </div>
+                      {job.payload?.prompt && (
+                        <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
+                          {job.payload.prompt as string}
+                        </p>
+                      )}
+                    </div>
+                    <div className="flex-shrink-0 text-right">
+                      <p className="text-[10px] text-muted-foreground">{formatAge(job.createdAt)}</p>
+                    </div>
+                    <button
+                      onClick={() => onCancel(job.id)}
+                      disabled={isCancelling}
+                      className="flex-shrink-0 rounded-lg border border-red-500/30 p-1.5 text-red-500 hover:bg-red-500/10 disabled:opacity-50"
+                      title="Cancel job"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Gallery Studio (Sub-Issue #329) ─────────────────────────
 
 type StudioMode = "txt2img" | "img2img" | "txt2video" | "img2video";
@@ -679,7 +893,7 @@ interface StudioFormState {
   initImage: File | null;
   initImagePreview: string;
   imageProvider: "local" | "cloud" | "auto";
-  imageModel: "flux-schnell" | "sdxl-turbo";
+  imageModel: "flux-schnell" | "flux-dev" | "flux-kontext" | "sdxl-turbo";
 }
 
 const DEFAULT_FORM: StudioFormState = {
@@ -721,6 +935,14 @@ function GalleryStudio({ onClose, onCreated }: { onClose: () => void; onCreated:
   const turboAvailable = imageGenMode === "local" && form.imageProvider === "local";
   if (form.imageModel === "sdxl-turbo" && !turboAvailable) {
     setForm((prev) => ({ ...prev, imageModel: "flux-schnell" }));
+  }
+  // img2img always uses flux-kontext
+  if (form.mode === "img2img" && form.imageModel !== "flux-kontext") {
+    setForm((prev) => ({ ...prev, imageModel: "flux-kontext", steps: 20, guidance: 2.5 }));
+  }
+  // switching away from img2img resets to flux-schnell defaults
+  if (form.mode !== "img2img" && form.imageModel === "flux-kontext") {
+    setForm((prev) => ({ ...prev, imageModel: "flux-schnell", steps: 4, guidance: 3.5 }));
   }
 
   const update = <K extends keyof StudioFormState>(key: K, value: StudioFormState[K]) =>
@@ -913,11 +1135,27 @@ function GalleryStudio({ onClose, onCreated }: { onClose: () => void; onCreated:
               <label className="mb-1 block text-[11px] font-medium text-muted-foreground">Model</label>
               <select
                 value={form.imageModel}
-                onChange={(e) => update("imageModel", e.target.value as "flux-schnell" | "sdxl-turbo")}
+                onChange={(e) => {
+                  const m = e.target.value as StudioFormState["imageModel"];
+                  const defaults = m === "flux-dev"
+                    ? { steps: 25, guidance: 3.5 }
+                    : m === "flux-schnell"
+                    ? { steps: 4, guidance: 3.5 }
+                    : {};
+                  setForm((prev) => ({ ...prev, imageModel: m, ...defaults }));
+                }}
                 className="w-full rounded-lg border border-border bg-card px-2 py-1.5 text-sm text-foreground"
+                disabled={form.mode === "img2img"}
               >
-                <option value="flux-schnell">Flux Schnell</option>
-                {turboAvailable && <option value="sdxl-turbo">SDXL Turbo (local only)</option>}
+                {form.mode === "img2img" ? (
+                  <option value="flux-kontext">Flux Kontext</option>
+                ) : (
+                  <>
+                    <option value="flux-schnell">Flux Schnell (fast, 4 steps)</option>
+                    <option value="flux-dev">Flux Dev (quality, 25 steps)</option>
+                    {turboAvailable && <option value="sdxl-turbo">SDXL Turbo (local only)</option>}
+                  </>
+                )}
               </select>
             </div>
           )}

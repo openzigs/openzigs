@@ -28,8 +28,9 @@ export function targetNodeForJobType(type: MediaJobType): TargetNode {
 export function defaultModelForJobType(type: MediaJobType): string {
   switch (type) {
     case "txt2img":
-    case "img2img":
       return "flux-schnell";
+    case "img2img":
+      return "flux-kontext";
     case "txt2video":
     case "img2video":
       return "ltx-2";

@@ -164,6 +164,19 @@ try {
   }
 } catch { /* no user config or parse error — use defaults */ }
 
+// Resolve the primary machine's LAN IP so the remote FluxQ/worker node can
+// POST callbacks back to us.  Falls back to localhost when no external
+// interface is found (single-machine dev setup).
+function getLanIp(): string {
+  for (const addrs of Object.values(os.networkInterfaces())) {
+    if (!addrs) continue;
+    for (const addr of addrs) {
+      if (addr.family === "IPv4" && !addr.internal) return addr.address;
+    }
+  }
+  return "localhost";
+}
+
 const queueMaster = new QueueMaster(mediaQueueRepo, {
   pollIntervalMs: Number(process.env.QUEUE_POLL_INTERVAL_MS ?? 3000),
   macMini: {
@@ -174,7 +187,7 @@ const queueMaster = new QueueMaster(mediaQueueRepo, {
     url: videoGenNodeUrl,
     token: videoGenNodeToken,
   },
-  callbackUrl: process.env.QUEUE_CALLBACK_URL ?? "http://localhost:3000/api/queue/complete",
+  callbackUrl: process.env.QUEUE_CALLBACK_URL ?? `http://${getLanIp()}:${process.env.PORT ?? 3000}/api/queue/complete`,
   galleryDir: path.join(os.homedir(), ".openzigs", "gallery"),
 });
 
@@ -1614,7 +1627,7 @@ httpServer.listen(port, "0.0.0.0", () => {
   // Start the media queue push loop
   if (process.env.QUEUE_ENABLED !== "false") {
     queueMaster.start();
-    logger.info("[QueueMaster] Push orchestrator started");
+    logger.info(`[QueueMaster] Push orchestrator started (callback: ${process.env.QUEUE_CALLBACK_URL ?? `http://${getLanIp()}:${port}/api/queue/complete`})`);
 
     // Broadcast job events to all connected UI clients via Socket.IO
     queueMaster.on("job:complete", (job) => {

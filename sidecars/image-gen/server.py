@@ -220,22 +220,30 @@ def _post_callback(job_id: str, callback_url: str, payload: dict) -> None:
     """POST a job completion (or error) payload to the openzigs callback URL.
 
     Runs in a thread-pool thread via FastAPI BackgroundTasks, so blocking
-    urllib is safe here.
+    urllib is safe here.  Retries up to 3 times with exponential back-off to
+    survive transient network hiccups (e.g. ARP refresh, Wi-Fi roaming).
     """
     body = json.dumps(payload).encode("utf-8")
-    req = urllib.request.Request(
-        callback_url,
-        data=body,
-        method="POST",
-        headers={"Content-Type": "application/json"},
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            log.info(f"[async] Callback for job {job_id} delivered: HTTP {resp.status}")
-    except urllib.error.HTTPError as e:
-        log.error(f"[async] Callback for job {job_id} HTTP error: {e.code} {e.reason}")
-    except Exception as e:
-        log.error(f"[async] Callback for job {job_id} failed: {e}")
+    max_retries = 3
+    for attempt in range(1, max_retries + 1):
+        req = urllib.request.Request(
+            callback_url,
+            data=body,
+            method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                log.info(f"[async] Callback for job {job_id} delivered: HTTP {resp.status}")
+                return
+        except urllib.error.HTTPError as e:
+            log.error(f"[async] Callback for job {job_id} HTTP error: {e.code} {e.reason} → {callback_url}")
+            return  # HTTP error = server reachable, don't retry
+        except Exception as e:
+            log.error(f"[async] Callback for job {job_id} attempt {attempt}/{max_retries} failed: {e} → {callback_url}")
+            if attempt < max_retries:
+                time.sleep(2 ** attempt)  # 2s, 4s
+    log.error(f"[async] Callback for job {job_id} PERMANENTLY FAILED after {max_retries} attempts → {callback_url}")
 
 
 def _bg_generate(

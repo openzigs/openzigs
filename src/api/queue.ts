@@ -136,6 +136,37 @@ export const createQueueRouter = ({ queueMaster, repo }: QueueRouterOptions): Ro
     res.json({ ok: true });
   });
 
+  // ── POST /jobs/:id/kill — Force-fail a dispatched job ───
+  router.post("/jobs/:id/kill", async (req, res) => {
+    try {
+      const job = repo.getJob(req.params.id);
+      if (!job || (job.status !== "dispatched" && job.status !== "processing")) {
+        res.status(404).json({ error: "Job not found or not in a killable state" });
+        return;
+      }
+      const killed = repo.killJob(req.params.id);
+      if (!killed) { res.status(409).json({ error: "Kill failed — job may have already completed" }); return; }
+
+      logger.info(`[QueueAPI] Job ${req.params.id} killed by user (was ${job.status} on ${job.targetNode})`);
+
+      // Best-effort: unload the worker node to free VRAM
+      try {
+        await queueMaster.unloadNode(job.targetNode);
+      } catch {
+        // Non-fatal — job is already marked failed in DB
+      }
+
+      // Emit so Socket.IO listeners in server.ts re-broadcast to UI
+      const updatedJob = repo.getJob(req.params.id);
+      if (updatedJob) queueMaster.emit("job:failed", updatedJob, "Killed by user");
+
+      res.json({ ok: true });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      res.status(500).json({ error: msg });
+    }
+  });
+
   // ── POST /complete — Webhook callback from workers ──────
   router.post("/complete", async (req, res) => {
     try {

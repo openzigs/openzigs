@@ -223,6 +223,15 @@ export class MediaQueueRepository {
     return result.changes > 0;
   }
 
+  /** Force-fail a dispatched/processing job (user kill — no retry). */
+  killJob(id: string): boolean {
+    const now = new Date().toISOString();
+    const result = this.db.prepare(
+      "UPDATE media_jobs SET status = 'failed', error = 'Killed by user', completed_at = ? WHERE id = ? AND status IN ('dispatched', 'processing')",
+    ).run(now, id);
+    return result.changes > 0;
+  }
+
   /** List jobs with optional filters. */
   listJobs(opts: { status?: MediaJobStatus; type?: MediaJobType; projectId?: string; limit?: number; offset?: number }): MediaJob[] {
     let sql = "SELECT * FROM media_jobs WHERE 1=1";
