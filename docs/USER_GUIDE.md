@@ -118,6 +118,11 @@ GOOGLE_APPLICATION_CREDENTIALS=/path/to/your/service-account-key.json
 # ── Optional: Social Brain ──
 # SOCIAL_WEBHOOK_VERIFY_TOKEN=your-random-verify-token
 
+# ── Media Queue (Distributed GPU Nodes) ──
+# Set to the primary Mac's LAN IP so remote worker nodes can POST callbacks back to it.
+# Auto-detected from os.networkInterfaces() at startup if unset.
+# QUEUE_CALLBACK_URL=http://192.168.1.50:3000/api/queue/complete
+
 # ── Server ──
 PORT=3000
 ```
@@ -195,6 +200,7 @@ The OpenZigs UI is a **Next.js** application with a navigation bar providing acc
 | **Social Brain** | `/social` | Unified social inbox, CRM, automation rules, and AI-powered auto-replies |
 | **Post-Actions** | `/admin/post-actions` | Create and manage custom post-action types for pipeline stages |
 | **Webhooks** | `/admin/webhooks` | Create and manage inbound webhooks for external integrations |
+| **Gallery** | `/gallery` | Asset gallery for generated images and videos; inline creation studio for txt2img, img2img, txt2video, img2video |
 | **Director** | `/director` | AI video production wizard, blog-to-YouTube, and timeline studio |
 | **Director Studio** | `/director/studio/[id]` | Full timeline editor with player preview, scene inspector, and drag-and-drop reordering |
 
@@ -2378,44 +2384,50 @@ curl -X POST -H "Authorization: Bearer <token>" \
 
 ## Social Media Tools
 
-Social media tools are powered by **MCP sidecars** — separate Docker containers that the agent communicates with via HTTP.
+Social media tools are powered by **native MCP servers** — Python subprocess servers managed by `LocalMcpServerManager`. Each platform has its own server in `external/` with full API coverage for posting, reading, analytics, DMs, and comment replies.
 
 ### Supported Platforms
 
-| Platform | Sidecar Container | Port | Tools |
-|---|---|---|---|
-| **LinkedIn** | `linkedin-mcp-server` | 5101 | `social-post`, `social-timeline`, `social-profile` |
-| **Twitter/X** | `twitter-mcp-server` | 5102 | `social-post`, `social-timeline`, `social-profile` |
-| **Facebook** | `facebook-mcp-server` | 5103 | `social-post`, `social-timeline`, `social-profile` |
-| **Pinterest** | `pinterest-mcp-server` | 5104 | `social-post`, `social-timeline`, `social-profile`, `pinterest-boards`, `pinterest-pins` |
+| Platform | MCP Server | Publish Tool | Content Types | Key Tools |
+|---|---|---|---|---|
+| **Instagram** | `ig-mcp` | `instagram-publish-media` | Image, video (Reels), with caption | 11 tools: profile, posts, insights, DMs, comments |
+| **Facebook** | `fb-mcp` | `facebook-publish-post` | Text, link, photo | 10 tools: page info, posts, Messenger, insights, comments |
+| **Twitter/X** | `twitter-mcp` | `twitter-post-tweet` | Text (280 chars), replies | 8 tools: tweets, search, DMs, user lookup |
+| **LinkedIn** | `linkedin-mcp` | `linkedin-create-post` | Text (PUBLIC or CONNECTIONS) | 8 tools: profile, posts, company, messages, comments |
+| **Reddit** | `reddit-mcp` | `reddit-submit-post` | Text or link post to a subreddit | 8 tools: subreddits, posts, comments, search, inbox |
+| **YouTube** | `youtube-mcp` | `youtube-upload-video` | Video file upload (resumable) with metadata | 8 tools: channel, videos, comments, search, analytics, **upload** |
 
-### Usage
+> **Note — YouTube Upload Quota:** Each `youtube-upload-video` call consumes **1,600 quota units** (default daily quota: 10,000 units), limiting uploads to **~6 per day**. The upload uses the YouTube Data API v3 resumable upload protocol — provide a path to a local video file and the tool handles chunked transfer automatically. Uploads default to **private** privacy. Set `privacy_status` to `"public"` or `"unlisted"` as needed. Requires an OAuth2 token with the `youtube.upload` scope — see [YouTube OAuth Setup](#youtube-oauth-setup) in the Social Brain Guide.
 
-When posting to social media, the agent automatically converts Markdown formatting to platform-native Unicode text. Social platforms do not render Markdown — so `**bold**` becomes 𝗯𝗼𝗹𝗱, `*italic*` becomes 𝑖𝑡𝑎𝑙𝑖𝑐, headings become BOLD UPPERCASE, and links are expanded to `text (url)` format. This conversion happens transparently before posts are dispatched to the MCP sidecars.
+### Posting Content
+
+You can publish content to any supported platform by asking the agent in chat:
 
 ```
 You: Post "Just shipped a new feature! 🚀" to LinkedIn
-Agent: [calls social-post with platform=linkedin] ✅ Posted to LinkedIn
+Agent: [calls linkedin-create-post] ✅ Posted to LinkedIn
 
-You: Show me my Pinterest boards
-Agent: [calls pinterest-boards with action=list] Here are your boards: ...
+You: Publish an Instagram post with caption "Summer vibes ☀️" using this image: https://example.com/photo.jpg
+Agent: [calls instagram-publish-media] ✅ Published to Instagram
 
-You: Get my Twitter profile
-Agent: [calls social-profile with platform=twitter] Here's your profile: ...
+You: Tweet "Check out our latest blog post: https://example.com/blog"
+Agent: [calls twitter-post-tweet] ✅ Tweeted
+
+You: Submit a post to r/programming titled "My new open-source project" with a link
+Agent: [calls reddit-submit-post] ✅ Submitted to r/programming
+
+You: Post "Excited to announce our Series A! 🎉" to Facebook
+Agent: [calls facebook-publish-post] ✅ Posted to Facebook Page
+
+You: Upload /path/to/video.mp4 to YouTube titled "Product Demo" with tags ["demo", "product"]
+Agent: [calls youtube-upload-video] ✅ Uploaded to YouTube (video ID: abc123, status: private)
 ```
+
+The agent automatically selects the correct platform-specific tool and handles parameter mapping. For a comprehensive list of all tools per platform, see the [Social Brain Guide](SOCIAL_BRAIN_GUIDE.md#platform-specific-tools).
 
 ### Configuration
 
-Each sidecar requires platform-specific API credentials set as environment variables in `docker-compose.yml`. Refer to the individual MCP server documentation for the required credentials.
-
-Sidecar URLs are passed to the agent via environment variables:
-
-```dotenv
-MCP_LINKEDIN_URL=http://linkedin-mcp-server:5101
-MCP_TWITTER_URL=http://twitter-mcp-server:5102
-MCP_FACEBOOK_URL=http://facebook-mcp-server:5103
-MCP_PINTEREST_URL=http://pinterest-mcp-server:5104
-```
+Each MCP server requires platform-specific API credentials set as environment variables in your `.env` file (see [Environment Variables](#3-configure-environment)). Servers start automatically when credentials are present. Manage server status and restart servers from the Admin UI under **MCP Servers**.
 
 ---
 
@@ -4873,7 +4885,9 @@ Configure the knowledge base in your config file (`~/.openzigs/config.json`):
 
 > **📖 Comprehensive Setup Guide:** For step-by-step platform setup, Cloudflare Tunnel configuration, curl testing commands, and troubleshooting, see the dedicated [Social Brain Guide](SOCIAL_BRAIN_GUIDE.md).
 
-The Social Brain at `/social` provides a unified inbox for managing DMs and comments across social platforms (Instagram, Facebook, Twitter/X, LinkedIn, TikTok, YouTube, Threads) with AI-powered auto-replies, a built-in CRM, and comment-to-DM automation.
+The Social Brain at `/social` provides a unified inbox for managing DMs and comments across 6 social platforms — **Instagram**, **Facebook**, **Twitter/X**, **YouTube**, **LinkedIn**, and **Reddit** — with AI-powered auto-replies, a built-in CRM, comment-to-DM automation, and cross-platform content publishing.
+
+Each platform has a dedicated native MCP server with tools for posting, reading, analytics, DMs, and comment management. See the [Social Media Posting](#social-media-posting) section for publishing details, and the [Social Brain Guide](SOCIAL_BRAIN_GUIDE.md) for comprehensive setup and troubleshooting.
 
 ### Dashboard Tab
 
@@ -5207,3 +5221,187 @@ The browser automation includes anti-bot detection evasion that runs automatical
 - Permissions API notifications bypass
 
 The Chrome profile is now persistent at `~/.openzigs/chrome-profile/` (previously used a temp directory), preserving cookies and session state across server restarts.
+
+---
+
+## Media Queue & Asset Gallery
+
+The Media Queue is a push-based distributed job system for generating images and videos across networked GPU nodes. Jobs are dispatched to workers asynchronously — the worker accepts the job immediately (HTTP 202) and POSTs a completion callback back to the primary Mac when done. The Asset Gallery provides a visual interface for browsing, filtering, and managing all generated and uploaded media.
+
+### Gallery Page
+
+Navigate to **Gallery** in the top navigation bar. The page shows:
+
+- **Queue Stats Bar** — Live counts of Pending, Dispatched, Processing, Complete, and Failed jobs, updated every 5 seconds
+- **Asset Grid** — All generated and uploaded assets displayed as cards with thumbnails
+- **Filters** — Filter by type (Images, Videos, Audio) and source (Generated, Uploaded, Director)
+- **Preview** — Click any asset to open a full-screen lightbox for viewing images or playing videos
+- **Actions** — Download, tag, or delete assets from the card overlay
+
+### Gallery Studio
+
+Click **Create Asset** on the Gallery page to open the inline creation studio. Four generation modes are available:
+
+| Mode | Description | Key Controls |
+|---|---|---|
+| **Text → Image** | Generate an image from a text prompt | Width, Height, Steps, Guidance, Seed |
+| **Image → Image** | Transform an uploaded image with a prompt | Source image upload, Strength (0–1), Steps, Guidance |
+| **Text → Video** | Generate a 4-second video clip from a text prompt | Frames (max 97), FPS, computed Duration display |
+| **Image → Video** | Animate an uploaded image with a motion prompt | Source image upload, Frames, FPS, Duration |
+
+All jobs are submitted to the queue via **Submit to Queue** and processed by the appropriate worker node.
+
+### Queue API Examples
+
+**Submit a text-to-image job:**
+```bash
+curl -X POST http://localhost:3000/api/queue/jobs \
+  -H "Content-Type: application/json" \
+  -d '{
+    "type": "txt2img",
+    "payload": {
+      "prompt": "a sunset over mountains",
+      "width": 1024, "height": 1024,
+      "num_steps": 4, "guidance": 3.5
+    }
+  }'
+```
+
+**Submit a text-to-video job:**
+```bash
+curl -X POST http://localhost:3000/api/queue/jobs \
+  -H "Content-Type: application/json" \
+  -d '{
+    "type": "txt2video",
+    "payload": {
+      "prompt": "slow dolly shot of a forest at dawn",
+      "num_frames": 97, "fps": 24,
+      "width": 768, "height": 512
+    }
+  }'
+```
+
+**Check queue stats:**
+```bash
+curl http://localhost:3000/api/queue/jobs/stats
+# → {"pending":2,"dispatched":0,"processing":0,"complete":0,"failed":0}
+```
+
+**List gallery assets:**
+```bash
+curl http://localhost:3000/api/queue/assets
+# → {"assets":[...],"total":5}
+```
+
+**Delete a pending job:**
+```bash
+curl -X DELETE http://localhost:3000/api/queue/jobs/<job-id>
+```
+
+### Configuration & Networking
+
+**Required for multi-Mac setups:** The primary Mac's LAN IP must be reachable by the worker nodes for completion callbacks. Set `QUEUE_CALLBACK_URL` in your `.env` to point at the primary Mac:
+
+```dotenv
+# LAN IP of the primary openzigs machine — required so remote workers
+# can POST their completion callback back across the LAN.
+# Without this, the server auto-detects the LAN IP at startup, but
+# setting it explicitly is more reliable in multi-NIC environments.
+QUEUE_CALLBACK_URL=http://192.168.1.50:3000/api/queue/complete
+```
+
+If unset, the server auto-detects the first non-loopback IPv4 via `os.networkInterfaces()` and logs the resolved URL at startup.
+
+**Polling fallback for asymmetric networks:** If callback delivery fails (e.g., router AP/client isolation where the worker Mac cannot reach the primary Mac), the system automatically falls back to polling. Every tick, `QueueMaster` polls `GET /job-result/{job_id}` on any worker with a job dispatched more than 3 minutes ago. FluxQ stores results in memory for up to 100 jobs; results are deleted after the primary Mac acknowledges them. This means jobs will always complete even if push callbacks are blocked at the network layer.
+
+Configure worker endpoints in `config/default.json` under the `queue` section:
+
+```json
+{
+  "queue": {
+    "nodes": {
+      "mac-mini": { "host": "http://192.168.1.61:5005", "token": "<fluxq-token>" },
+      "m2-pro":   { "host": "http://localhost:5007",    "token": "<ltx-token>" }
+    },
+    "tickIntervalMs": 3000
+  }
+}
+```
+
+### Worker Sidecar Setup (M2 Pro)
+
+The video generation worker runs as a Python FastAPI sidecar on Apple Silicon. It uses the [CharafChnioune/mlx-video](https://github.com/CharafChnioune/mlx-video) fork of mlx-video which supports both DISTILLED (fast) and DEV (photorealistic) pipelines.
+
+**Quick setup:**
+
+```bash
+# Install from repo
+cd sidecars/worker
+pip install -r requirements.txt
+python server.py  # Starts on port 5007
+
+# Or use media-ctl.sh (recommended)
+./scripts/media-ctl.sh ltx start     # starts via launchctl + applies sysctl GPU tuning
+./scripts/media-ctl.sh ltx status    # check health
+./scripts/media-ctl.sh ltx generate  # quick test (9-frame DEV pipeline)
+```
+
+**Dedicated install (recommended for separate hardware):**
+
+```bash
+# On the video generation Mac
+mkdir ~/ltx-worker && cd ~/ltx-worker
+python3 -m venv .venv && source .venv/bin/activate
+pip install fastapi uvicorn httpx
+pip install git+https://github.com/CharafChnioune/mlx-video.git
+
+# Copy server.py from repo
+cp /path/to/openzigs/sidecars/worker/server.py .
+
+# Create .env with M2-specific tuning (see below)
+cat > .env << 'EOF'
+MLX_MAX_OPS_PER_BUFFER=1
+MLX_CACHE_LIMIT_MB=4096
+MLX_WIRED_LIMIT_MB=20480
+LTX_TE_PARAM_EVAL_CHUNK=4
+LTX_PARAM_EVAL_CHUNK=6
+LTX_EVAL_INTERVAL=8
+LTX_TE_MAX_LENGTH=128
+LTX_CONNECTOR_HEADS_CHUNK=6
+PYTHONUNBUFFERED=1
+LTX_SECRET_TOKEN=your-secret-token-here
+LTX_MODEL_REPO=AITRADER/ltx2-distilled-4bit-mlx
+EOF
+```
+
+**Pipeline selection:**
+
+| Pipeline | Quality | Speed (33 frames) | Max Resolution (M2 Pro 32GB) |
+|---|---|---|---|
+| `distilled` | Good (stylized) | ~2 minutes | 768×512 |
+| `dev` | Photorealistic | ~10 minutes | 512×320 |
+
+The DEV pipeline uses classifier-free guidance (CFG) which produces significantly higher quality output but doubles VRAM usage. On M2 Pro 32GB, the DEV pipeline is limited to 512×320 resolution — 768×512 will crash due to GPU memory limits.
+
+> **M2 GPU Workaround:** M2-family chips have a known Metal GPU timeout bug. The `MLX_MAX_OPS_PER_BUFFER=1` env var and the chunked `mx.eval()` patches in mlx-video work around this. M3+ chips don't need these workarounds.
+
+**Managing services with media-ctl.sh:**
+
+```bash
+# Start/stop services
+./scripts/media-ctl.sh ltx start        # start LTX worker (with sysctl GPU tuning)
+./scripts/media-ctl.sh flux start       # start FluxQ image sidecar
+
+# Switch between image and video gen (shared VRAM)
+./scripts/media-ctl.sh switch ltx       # unload FluxQ, prepare for video
+./scripts/media-ctl.sh switch flux      # unload LTX, load FluxQ model
+
+# Test video generation
+./scripts/media-ctl.sh ltx generate dev "A cat in a garden, photorealistic"
+
+# Sync server.py from repo to install dir
+./scripts/media-ctl.sh ltx sync
+./scripts/media-ctl.sh ltx restart
+```
+
+See [Configuration & Networking](#configuration--networking) above for how to configure worker endpoints and the callback URL.

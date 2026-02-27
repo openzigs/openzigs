@@ -40,6 +40,27 @@ class YouTubeMCPServer:
                 Tool(name="yt_reply_to_comment", description="Reply to a YouTube comment (requires OAuth)", inputSchema={"type": "object", "properties": {"parent_id": {"type": "string", "description": "Comment ID to reply to"}, "text": {"type": "string"}}, "required": ["parent_id", "text"]}),
                 Tool(name="yt_search_videos", description="Search YouTube videos by query", inputSchema={"type": "object", "properties": {"query": {"type": "string"}, "max_results": {"type": "integer", "default": 10}}, "required": ["query"]}),
                 Tool(name="yt_get_channel_analytics", description="Get channel statistics (views, subscribers, video count)", inputSchema={"type": "object", "properties": {}}),
+                Tool(
+                    name="yt_upload_video",
+                    description=(
+                        "Upload a video file to YouTube. Requires OAuth2 with youtube.upload scope. "
+                        "The file must exist on the server filesystem. Costs 1600 quota units per upload "
+                        "(~6 uploads/day with default 10k daily quota). Max file size: 256 GB."
+                    ),
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "file_path": {"type": "string", "description": "Absolute path to the video file on disk"},
+                            "title": {"type": "string", "description": "Video title (max 100 characters)", "maxLength": 100},
+                            "description": {"type": "string", "description": "Video description (max 5000 characters)", "maxLength": 5000},
+                            "tags": {"type": "array", "items": {"type": "string"}, "description": "Keyword tags for the video"},
+                            "category_id": {"type": "string", "description": "YouTube category ID (default: '22' = People & Blogs)", "default": "22"},
+                            "privacy_status": {"type": "string", "enum": ["public", "unlisted", "private"], "description": "Video privacy (default: 'private')", "default": "private"},
+                            "notify_subscribers": {"type": "boolean", "description": "Notify channel subscribers (default: true)", "default": True},
+                        },
+                        "required": ["file_path", "title"],
+                    },
+                ),
             ]
 
         @self.server.call_tool()
@@ -62,6 +83,16 @@ class YouTubeMCPServer:
                     data = await client.search_videos(arguments["query"], arguments.get("max_results", 10))
                 elif name == "yt_get_channel_analytics":
                     data = await client.get_channel_analytics()
+                elif name == "yt_upload_video":
+                    data = await client.upload_video(
+                        file_path=arguments["file_path"],
+                        title=arguments["title"],
+                        description=arguments.get("description", ""),
+                        tags=arguments.get("tags"),
+                        category_id=arguments.get("category_id", "22"),
+                        privacy_status=arguments.get("privacy_status", "private"),
+                        notify_subscribers=arguments.get("notify_subscribers", True),
+                    )
                 else:
                     return [TextContent(type="text", text=_result(False, error=f"Unknown tool: {name}"))]
                 return [TextContent(type="text", text=_result(True, data=data))]

@@ -134,6 +134,11 @@
     "networkNodeUrl": "",
     "networkNodeToken": ""
   },
+  "videoGen": {
+    "mode": "local",
+    "networkNodeUrl": "",
+    "networkNodeToken": ""
+  },
   "socialBrain": {
     "enabled": true,
     "confidenceThreshold": "medium",

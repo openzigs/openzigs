@@ -18,6 +18,7 @@ const NAV_ITEMS = [
   { href: "/knowledge", label: "Knowledge" },
   { href: "/director", label: "Director" },
   { href: "/presenter", label: "Presenter" },
+  { href: "/gallery", label: "Gallery" },
   { href: "/social", label: "Social Brain" },
 ];
 
@@ -44,7 +45,7 @@ export const NavBar = () => {
           <img
             src="/openzigs-logo-light.png"
             alt="OpenZigs"
-            className="h-6"
+            className="h-6 w-auto max-w-[8rem] flex-shrink-0"
             draggable="false"
           />
         </Link>

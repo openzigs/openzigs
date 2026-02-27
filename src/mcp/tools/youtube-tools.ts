@@ -39,6 +39,16 @@ const getChannelAnalyticsSchema = z.object({
   end_date: z.string().optional().describe("End date (YYYY-MM-DD)"),
 });
 
+const uploadVideoSchema = z.object({
+  file_path: z.string().describe("Absolute path to the video file on disk"),
+  title: z.string().max(100).describe("Video title (max 100 characters)"),
+  description: z.string().max(5000).optional().describe("Video description (max 5000 characters)"),
+  tags: z.array(z.string()).optional().describe("Keyword tags for the video"),
+  category_id: z.string().optional().describe("YouTube category ID (default: '22' = People & Blogs)"),
+  privacy_status: z.enum(["public", "unlisted", "private"]).optional().describe("Video privacy (default: 'private')"),
+  notify_subscribers: z.boolean().optional().describe("Notify channel subscribers (default: true)"),
+});
+
 const callLocalServer = async (
   manager: LocalMcpServerManager | undefined,
   toolName: string,
@@ -126,6 +136,31 @@ export const createYouTubeTools = (options: YouTubeToolsOptions): ToolDefinition
       riskLevel: "low",
       source: "youtube",
       handler: async (args) => callLocalServer(mgr, "yt_get_channel_analytics", args),
+    },
+    {
+      name: "youtube-upload-video",
+      description:
+        "Upload a video file to YouTube. Requires OAuth2 with youtube.upload scope. " +
+        "The file must exist on the server filesystem. Costs 1600 quota units per upload " +
+        "(~6 uploads/day with default 10k daily quota). Max file size: 256 GB.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          file_path: { type: "string", description: "Absolute path to the video file" },
+          title: { type: "string", description: "Video title (max 100 chars)" },
+          description: { type: "string", description: "Video description (max 5000 chars)" },
+          tags: { type: "array", items: { type: "string" }, description: "Keyword tags" },
+          category_id: { type: "string", description: "YouTube category ID (default '22')" },
+          privacy_status: { type: "string", enum: ["public", "unlisted", "private"], description: "Privacy status" },
+          notify_subscribers: { type: "boolean", description: "Notify subscribers (default true)" },
+        },
+        required: ["file_path", "title"],
+      },
+      zodSchema: uploadVideoSchema,
+      category: "social",
+      riskLevel: "high",
+      source: "youtube",
+      handler: async (args) => callLocalServer(mgr, "yt_upload_video", args),
     },
   ];
 };

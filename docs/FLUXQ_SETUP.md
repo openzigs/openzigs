@@ -149,21 +149,30 @@ Logs are written to `/tmp/fluxq-stdout.log` and `/tmp/fluxq-stderr.log`.
 ```
 ┌──────────────────────┐        HTTP + Bearer Token       ┌──────────────────────┐
 │   Primary Mac        │ ──────────────────────────────── │   Remote Mac         │
-│                      │   POST /generate                 │                      │
-│   OpenZigs Server    │   GET  /health                   │   FluxQ Sidecar      │
-│   (Express + UI)     │   POST /model                    │   (FastAPI + MPS)    │
-│                      │                                  │                      │
-│   ImageGenService    │◄─── JSON + PNG bytes ─────────│   FLUX.1 (MFLUX/MLX)  │
-│   mode: "network"    │                                  │   Apple Silicon GPU  │
+│                      │   POST /generate-async (→ 202)   │                      │
+│   OpenZigs Server    │   POST /img2img-async  (→ 202)   │   FluxQ Sidecar      │
+│   (Express + Next)   │   POST /kontext-async  (→ 202)   │   (FastAPI + MPS)    │
+│                      │   GET  /health                   │                      │
+│   QueueMaster        │   POST /model                    │   FLUX.1 (MFLUX/MLX) │
+│   MediaQueue         │   GET  /job-result/{id} ◄──────  │   Apple Silicon GPU  │
+│   (SQLite)           │                                  │                      │
+│                      │◄── POST /api/queue/complete ─────│   Result store       │
+│   Gallery            │       (callback on completion)   │   (in-memory, ≤100)  │
+│   ~/.openzigs/gallery│                                  │                      │
 └──────────────────────┘                                  └──────────────────────┘
 ```
 
-- **All requests** to `/generate`, `/model`, and `/unload` require a
-  `Authorization: Bearer <token>` header.
-- **Health and model list** endpoints (`/health`, `/models`) are unauthenticated
-  for easy discovery.
-- The sidecar is stateless (no database). Model weights are downloaded on first
-  use and cached in `~/.cache/huggingface/`.
+**Job flow (happy path):**
+1. `QueueMaster` dispatches a job via `POST /generate-async` (or `/img2img-async`, `/kontext-async`). FluxQ responds **202 Accepted** immediately.
+2. FluxQ generates the image in the background and POSTs the result (including base64 image bytes) back to the primary Mac's `QUEUE_CALLBACK_URL` (`/api/queue/complete`).
+3. The webhook handler saves the image to `~/.openzigs/gallery/` and creates a gallery asset record in SQLite.
+
+**Polling fallback (for asymmetric networks):**
+If the callback POST fails (e.g., router AP/client isolation where the worker cannot reach the primary Mac), `QueueMaster` automatically polls `GET /job-result/{job_id}` on the worker for any job dispatched more than 3 minutes ago. FluxQ stores results in memory (up to 100 jobs); results are acknowledged and deleted after the primary Mac fetches them.
+
+- **All requests** to `/generate-async`, `/img2img-async`, `/kontext-async`, `/model`, and `/unload` require an `Authorization: Bearer <token>` header.
+- **Health, model list, and job polling** endpoints (`/health`, `/models`, `/job-result/{id}`) are unauthenticated for easy discovery and fallback polling.
+- The sidecar is stateless (no database). The in-memory result store is only for polling fallback. Model weights are downloaded on first use and cached in `~/.cache/huggingface/`.
 
 ## Switching Models
 
@@ -196,6 +205,7 @@ Available models: `flux-schnell` (4-step, fast) and `flux-dev` (25-step, higher 
 |---------|-----|
 | `Connection refused` | Check the sidecar is running (`curl http://<ip>:5005/health`) and firewall allows port 5005. |
 | `401 Unauthorized` | Token mismatch. Compare `~/fluxq-node/.fluxq-token` on the remote with the value in OpenZigs config. |
+| Jobs stuck in `dispatched` after 3+ minutes | The callback POST from FluxQ → primary Mac is failing (check for `[Errno 65] No route to host` in FluxQ logs). The polling fallback should recover the result automatically after ~3 min. If it doesn't, verify `QUEUE_CALLBACK_URL` is a reachable LAN IP, not `localhost`. |
 | `MLX not available` | Ensure the remote Mac has Apple Silicon (M1–M4) and macOS ≥13. Check `python3 -c "import mlx.core as mx; print(mx.default_device())"`. |
 | `GatedRepoError: 401 Client Error` / `Cannot access gated repo` | FLUX.1 models are gated on HuggingFace. Perform all of the following:
 <br>• accept the license at https://huggingface.co/black-forest-labs/FLUX.1-schnell (must be done per account even if you use the same token elsewhere)

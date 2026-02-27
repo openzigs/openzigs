@@ -130,7 +130,7 @@ describe("SocialBrain", () => {
 
   it("handles LLM timeout/error gracefully", async () => {
     const copilot = {
-      chat: vi.fn().mockImplementation(async function* () {
+      chat: vi.fn().mockImplementation(async function* () { // eslint-disable-line require-yield
         throw new Error("LLM timeout");
       }),
       destroySession: vi.fn().mockResolvedValue(undefined),

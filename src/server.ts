@@ -67,6 +67,9 @@ import { QuizGenerator } from "./presenter/quiz-generator.js";
 import { RenderOrchestrator } from "./video/render-orchestrator.js";
 import { RoomManager } from "./presenter/room-manager.js";
 import { ExpressPeerServer } from "peer";
+import { MediaQueueRepository } from "./queue/media-queue-repository.js";
+import { QueueMaster } from "./queue/queue-master.js";
+import { createQueueRouter } from "./api/queue.js";
 
 // Register built-in post-action types (create-github-issues, send-webhook, etc.)
 registerBuiltinPostActions();
@@ -131,6 +134,63 @@ const promptManager = new PromptManager({ db });
 const personalityManager = new PersonalityManager({ db });
 const taskRepository = new TaskRepository(db);
 const taskEngine = new TaskEngine({ repository: taskRepository });
+
+// ── Media Queue: Push-Based Distributed Queue ──
+const mediaQueueRepo = new MediaQueueRepository(db);
+mediaQueueRepo.migrate();
+
+// Read user config for imageGen and videoGen network mode
+let imageGenNodeUrl = process.env.MAC_MINI_WORKER_URL ?? "http://localhost:5005";
+let imageGenNodeToken: string | undefined = process.env.MAC_MINI_WORKER_TOKEN;
+let videoGenNodeUrl = process.env.M2_PRO_WORKER_URL ?? "http://localhost:5007";
+let videoGenNodeToken = process.env.M2_PRO_WORKER_TOKEN;
+try {
+  const cfgPath = path.join(os.homedir(), ".openzigs", "config.json");
+  const raw = await fs.readFile(cfgPath, "utf-8");
+  const userCfg = JSON.parse(raw) as Record<string, unknown>;
+  const ig = userCfg.imageGen as Record<string, unknown> | undefined;
+  if (ig?.mode === "network" && typeof ig.networkNodeUrl === "string" && ig.networkNodeUrl) {
+    imageGenNodeUrl = ig.networkNodeUrl;
+    if (typeof ig.networkNodeToken === "string" && ig.networkNodeToken) {
+      imageGenNodeToken = ig.networkNodeToken;
+    }
+  }
+  const vg = userCfg.videoGen as Record<string, unknown> | undefined;
+  if (vg?.mode === "network" && typeof vg.networkNodeUrl === "string" && vg.networkNodeUrl) {
+    videoGenNodeUrl = vg.networkNodeUrl;
+    if (typeof vg.networkNodeToken === "string" && vg.networkNodeToken) {
+      videoGenNodeToken = vg.networkNodeToken;
+    }
+  }
+} catch { /* no user config or parse error — use defaults */ }
+
+// Resolve the primary machine's LAN IP so the remote FluxQ/worker node can
+// POST callbacks back to us.  Falls back to localhost when no external
+// interface is found (single-machine dev setup).
+function getLanIp(): string {
+  for (const addrs of Object.values(os.networkInterfaces())) {
+    if (!addrs) continue;
+    for (const addr of addrs) {
+      if (addr.family === "IPv4" && !addr.internal) return addr.address;
+    }
+  }
+  return "localhost";
+}
+
+const queueMaster = new QueueMaster(mediaQueueRepo, {
+  pollIntervalMs: Number(process.env.QUEUE_POLL_INTERVAL_MS ?? 3000),
+  macMini: {
+    url: imageGenNodeUrl,
+    token: imageGenNodeToken,
+  },
+  m2Pro: {
+    url: videoGenNodeUrl,
+    token: videoGenNodeToken,
+  },
+  callbackUrl: process.env.QUEUE_CALLBACK_URL ?? `http://${getLanIp()}:${process.env.PORT ?? 3000}/api/queue/complete`,
+  galleryDir: path.join(os.homedir(), ".openzigs", "gallery"),
+});
+
 const scheduler = new Scheduler({
   db,
   promptResolver: (name, variables) => promptManager.resolveWithStages(name, variables ?? {}),
@@ -791,6 +851,10 @@ app.use("/api/webhooks/trigger", webhookRouter);
 // Tasks API routes
 const tasksRouter = createTasksRouter({ taskEngine, taskRepository });
 app.use("/api/tasks", tasksRouter);
+
+// Media Queue API routes (push-based distributed queue + gallery)
+const queueRouter = createQueueRouter({ queueMaster, repo: mediaQueueRepo });
+app.use("/api/queue", queueRouter);
 
 // Files API routes (Workbench file management)
 const filesBaseAllowedDirs = allowedDirs.length > 0
@@ -1557,8 +1621,44 @@ if (webConfig?.enabled !== false) {
   });
 }
 
-httpServer.listen(port, () => {
-  logger.info(`OpenZigs server listening on port ${port}`);
+httpServer.listen(port, "0.0.0.0", () => {
+  logger.info(`OpenZigs server listening on port ${port} (0.0.0.0)`);
+
+  // Start the media queue push loop
+  if (process.env.QUEUE_ENABLED !== "false") {
+    queueMaster.start();
+    logger.info(`[QueueMaster] Push orchestrator started (callback: ${process.env.QUEUE_CALLBACK_URL ?? `http://${getLanIp()}:${port}/api/queue/complete`})`);
+
+    // Broadcast job events to all connected UI clients via Socket.IO
+    queueMaster.on("job:complete", (job) => {
+      io.emit("queue:job:complete", {
+        jobId: job.id,
+        type: job.type,
+        status: job.status,
+        resultUrl: job.resultUrl,
+        galleryAssetId: job.galleryAssetId,
+      });
+    });
+    queueMaster.on("job:failed", (job, error) => {
+      io.emit("queue:job:failed", { jobId: job.id, type: job.type, error });
+    });
+    queueMaster.on("job:dispatched", (job) => {
+      io.emit("queue:job:dispatched", { jobId: job.id, type: job.type });
+    });
+
+    // Notify Telegram when an entire project's queue is complete
+    queueMaster.on("project:complete", (projectId: string, total: number) => {
+      const telegram = channelManager.getChannel("telegram");
+      if (telegram) {
+        const text = `✅ Project "${projectId}" — all ${total} media jobs complete. Assets ready in Gallery.`;
+        void telegram.sendMessage("broadcast", { text }).catch((err: unknown) => {
+          const msg = err instanceof Error ? err.message : String(err);
+          logger.warn(`[QueueMaster] Telegram notification failed: ${msg}`);
+        });
+      }
+    });
+  }
+
   void auditLogger.log({
     level: "info",
     category: "system",
@@ -1584,6 +1684,7 @@ httpServer.listen(port, () => {
 const gracefulShutdown = () => {
   scheduler.stopAll();
   socialIngestion.stopAllPolling();
+  queueMaster.stop();
   closeDatabase();
   killChrome();
   vaultService.lock();

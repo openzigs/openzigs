@@ -33,9 +33,6 @@
     <key>WorkingDirectory</key>
     <string>__FLUXQ_DIR__</string>
 
-    <key>UserName</key>
-    <string>__USER__</string>
-
     <key>EnvironmentVariables</key>
     <dict>
         <!-- All secrets/tokens are loaded from .env by start.sh -->
@@ -47,21 +44,21 @@
     <true/>
 
     <key>KeepAlive</key>
-    <dict>
-        <key>SuccessfulExit</key>
-        <false/>
-    </dict>
+    <true/>
 
     <key>ThrottleInterval</key>
     <integer>10</integer>
+
+    <key>ProcessType</key>
+    <string>Interactive</string>
+
+    <key>SessionCreate</key>
+    <true/>
 
     <key>StandardOutPath</key>
     <string>/tmp/fluxq-stdout.log</string>
 
     <key>StandardErrorPath</key>
     <string>/tmp/fluxq-stderr.log</string>
-
-    <key>ProcessType</key>
-    <string>Background</string>
 </dict>
 </plist>

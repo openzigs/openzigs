@@ -499,7 +499,7 @@ Six social platform MCP servers live under `external/` as Python applications us
 | Instagram | `external/ig-mcp/` | 12 tools | Instagram Graph API | DMs, comment replies, post context, analytics, media publish |
 | Facebook | `external/fb-mcp/` | 10 tools | Meta Graph API v24.0 | Messenger DMs, comment replies, post reads, page analytics |
 | Twitter/X | `external/twitter-mcp/` | 8 tools | Twitter API v2 (OAuth 1.0a) | DMs, tweet replies, search, user lookup |
-| YouTube | `external/youtube-mcp/` | 7 tools | YouTube Data API v3 | Comment replies, video search, channel analytics |
+| YouTube | `external/youtube-mcp/` | 8 tools | YouTube Data API v3 | **Video upload** (resumable), comment replies, video search, channel analytics |
 | LinkedIn | `external/linkedin-mcp/` | 8 tools | LinkedIn API v2 | DMs (partner-only), comment replies, post/company reads |
 | Reddit | `external/reddit-mcp/` | 8 tools | Reddit OAuth2 | Private messages, comment replies, post/search reads |
 
@@ -1684,7 +1684,7 @@ Each social platform has a dedicated set of tools backed by its native MCP serve
 | `twitter-send-dm` | social | 🔴 high | Send a direct message. |
 | `twitter-get-user` | social | 🟢 low | Get user profile by username. |
 
-**YouTube** (7 tools — `external/youtube-mcp/`)
+**YouTube** (8 tools — `external/youtube-mcp/`)
 
 | Tool | Category | Risk | Description |
 |---|---|---|---|
@@ -1695,6 +1695,7 @@ Each social platform has a dedicated set of tools backed by its native MCP serve
 | `youtube-reply-to-comment` | social | 🟡 medium | Reply to a YouTube comment (requires OAuth). |
 | `youtube-search-videos` | social | 🟢 low | Search YouTube videos. |
 | `youtube-get-channel-analytics` | social | 🟢 low | Get channel analytics. |
+| `youtube-upload-video` | social | 🔴 high | Upload a video file to YouTube via resumable upload (requires OAuth, 1600 quota units). |
 
 **LinkedIn** (8 tools — `external/linkedin-mcp/`)
 
@@ -3953,3 +3954,244 @@ Generates stylized YouTube thumbnails for rendered videos:
 - `ui/components/director/studio/studio-toolbar.tsx` — Thumbnail generate button
 
 ### Tracking: [Epic #313](https://github.com/mgcronin/openzigs/issues/313)
+
+---
+
+## Distributed Media Queue, Worker Nodes & Asset Gallery (Epic #325)
+
+A **push-based media generation queue** that routes image and video jobs to VRAM-aware worker nodes, persists results as gallery assets, and exposes a full-featured UI for browsing, creating, and managing media assets.
+
+### Architecture
+
+```mermaid
+graph TB
+    subgraph UI["Gallery UI (Next.js)"]
+        STATS[Queue Stats Bar<br/>Pending · Dispatched · Processing · Complete · Failed]
+        GRID[Asset Grid<br/>Type/Source Filters · Lightbox Preview]
+        STUDIO[Gallery Studio<br/>4 modes: txt2img · img2img · txt2video · img2video]
+    end
+
+    subgraph Backend["Express Server"]
+        QAPI[Queue API Router<br/>/api/queue/*]
+        REPO[MediaQueueRepository<br/>SQLite: media_jobs + media_assets]
+        QM[QueueMaster<br/>Push-based Orchestrator<br/>VRAM-aware Routing]
+    end
+
+    subgraph Workers["Worker Nodes"]
+        MINI[Mac Mini<br/>FLUX.1 (Schnell)<br/>:5005]
+        M2PRO[M2 Pro Sidecar<br/>LTX-2 (8-bit MLX)<br/>:5007]
+    end
+
+    STUDIO -->|POST /api/queue/jobs| QAPI
+    QAPI --> REPO
+    REPO --> QM
+    QM -->|POST /generate| MINI
+    QM -->|POST /generate| M2PRO
+    MINI -->|POST /api/queue/complete| QAPI
+    M2PRO -->|POST /api/queue/complete| QAPI
+    GRID -->|GET /api/queue/assets| QAPI
+
+    style UI fill:#0d2137,stroke:#16213e,color:#fff
+    style Backend fill:#16213e,stroke:#1a1a2e,color:#fff
+    style Workers fill:#1b2d1b,stroke:#3a8b3a,color:#fff
+```
+
+### Queue Master (`src/queue/queue-master.ts`)
+
+Push-based orchestrator that polls pending jobs on a configurable tick interval and dispatches them to the appropriate worker node based on job type → node mapping:
+
+| Job Type | Target Node | Required Model | Default Resolution |
+|---|---|---|---|
+| `txt2img` | `mac-mini` | `flux-schnell` | 1024×1024 |
+| `img2img` | `mac-mini` | `flux-schnell` | 1024×1024 |
+| `txt2video` | `m2-pro` | `ltx-2` | 768×512 |
+| `img2video` | `m2-pro` | `ltx-2` | 768×512 |
+
+**Dispatch flow:**
+1. `tick()` queries `getPendingByNode(node)` → oldest pending job
+2. Checks worker health via `GET /status` (must return `is_busy: false`)
+3. Updates job status to `dispatched`, sends `POST /generate` with payload + callback URL
+4. Worker processes asynchronously, calls back `POST /api/queue/complete` with result
+
+**Events:** `job:dispatched`, `job:complete`, `job:failed`, `project:complete`
+
+### Media Queue Repository (`src/queue/media-queue-repository.ts`)
+
+SQLite persistence for two tables:
+
+**`media_jobs`** — Job queue with status tracking:
+
+| Column | Type | Description |
+|---|---|---|
+| `id` | TEXT PK | UUID |
+| `type` | TEXT | `txt2img`, `img2img`, `txt2video`, `img2video` |
+| `required_model` | TEXT | Model name for the worker |
+| `target_node` | TEXT | `mac-mini` or `m2-pro` |
+| `payload` | TEXT (JSON) | Generation parameters |
+| `status` | TEXT | `pending`, `dispatched`, `processing`, `complete`, `failed` |
+| `result_url` | TEXT | Path to generated file |
+| `project_id` | TEXT | Optional project grouping |
+| `priority` | INTEGER | Higher = sooner (default 0) |
+| `retries` / `max_retries` | INTEGER | Auto-retry on failure (default 3) |
+
+**`media_assets`** — Gallery asset catalog:
+
+| Column | Type | Description |
+|---|---|---|
+| `id` | TEXT PK | UUID |
+| `job_id` | TEXT FK | Originating job |
+| `type` | TEXT | `image`, `video`, `audio` |
+| `source` | TEXT | `generated`, `uploaded`, `director` |
+| `filename` | TEXT | Storage filename |
+| `prompt` | TEXT | Generation prompt |
+| `tags` | TEXT (JSON) | User tags |
+| `metadata` | TEXT (JSON) | Dimensions, duration, model, etc. |
+
+### M2 Pro Worker Sidecar (`sidecars/worker/server.py`)
+
+FastAPI Python server for async video generation on Apple Silicon:
+
+| Endpoint | Method | Description |
+|---|---|---|
+| `/status` | GET | Returns `{ is_busy, loaded_model }` |
+| `/health` | GET | Health check |
+| `/generate` | POST | Accepts job payload, returns 202, runs generation in background |
+| `/unload` | POST | Unload model from VRAM (used by QueueMaster for cross-sidecar coordination) |
+| `/memory` | GET | Detailed memory diagnostics (RSS, system free, budget status) |
+
+**Video generation pipeline:**
+1. `clear_vram()` — `mx.metal.clear_cache()` + `gc.collect()`
+2. Load LTX-2 model via [CharafChnioune/mlx-video](https://github.com/CharafChnioune/mlx-video) fork with runtime quantization from BF16 base weights
+3. Generate frames using DISTILLED (fast) or DEV (photorealistic, CFG-guided) pipeline
+4. Encode with `h264_videotoolbox` (hardware) with `libx264` fallback
+5. Base64-encode result and POST to callback URL
+
+**Pipeline types:**
+
+| Pipeline | CFG | Steps | Stages | Quality | Speed |
+|---|---|---|---|---|---|
+| `distilled` | No | 8+3 | 2-stage (half-res → upsample → refine) | Good | Fast (~2 min for 33 frames) |
+| `dev` | Yes (4.5) | 15-25 | 1-stage with classifier-free guidance | Photorealistic | Slow (~10 min for 33 frames) |
+
+> **Note:** The DEV pipeline produces significantly higher quality output but requires more VRAM due to CFG doubling the compute per denoising step.
+
+### Apple Silicon Hardware Considerations (M2 Pro 32GB)
+
+> **System-specific:** This section documents the current hardware setup. Your deployment may differ.
+
+The M2 Pro has a known GPU kernel timeout issue (`kIOGPUCommandBufferCallbackErrorImpactingInteractivity`) confirmed by the MLX team ([mlx#1231](https://github.com/ml-explore/mlx/issues/1231)). This affects all M2-family chips but not M3+.
+
+**Workarounds applied:**
+- **Chunked `mx.eval()`** — The `generate.py` in `mlx-video` is patched at three locations to split large `mx.eval()` calls into small batches via `_chunked_mx_eval()`. Without this, loading the 7.5GB text encoder crashes the GPU.
+- **`MLX_MAX_OPS_PER_BUFFER=1`** — Limits Metal command buffer size to prevent GPU watchdog timeout
+- **`sysctl iogpu.wired_limit_mb=28672`** — Increases GPU wired memory limit (resets on reboot, applied automatically by `media-ctl.sh ltx start`)
+- **`eval_interval=1`** — DEV pipeline evaluates after every denoising step to keep Metal command buffers small
+- **`tiling="aggressive"`** — Spatial/temporal chunking during VAE decode to stay within GPU memory
+
+**Resolution limits on M2 Pro 32GB:**
+
+| Pipeline | Max Resolution | Max Frames | Peak Memory |
+|---|---|---|---|
+| `distilled` | 768×512 | 97 (4s) | ~20 GB |
+| `dev` | 512×320 | 33+ (1.4s+) | ~24 GB |
+| `dev` | 768×512 | — | Crashes (CFG attention exceeds GPU capacity) |
+
+**Environment variables (set in `~/ltx-worker/.env`):**
+
+| Variable | Default | Description |
+|---|---|---|
+| `MLX_MAX_OPS_PER_BUFFER` | `1` | Metal command buffer ops limit (M2 workaround) |
+| `MLX_CACHE_LIMIT_MB` | `4096` | MLX weight cache ceiling |
+| `MLX_WIRED_LIMIT_MB` | `20480` | MLX wired memory limit |
+| `LTX_TE_PARAM_EVAL_CHUNK` | `4` | Chunk size for text encoder `mx.eval()` |
+| `LTX_PARAM_EVAL_CHUNK` | `6` | Chunk size for transformer `mx.eval()` |
+| `LTX_EVAL_INTERVAL` | `8` | Eval interval for denoising steps |
+| `LTX_MODEL_REPO` | `AITRADER/ltx2-distilled-4bit-mlx` | Model repo (remapped to BF16 base for runtime quant) |
+| `LTX_TEXT_ENCODER_REPO` | `mlx-community/gemma-3-12b-it-qat-4bit` | Text encoder model |
+| `LTX_MEMORY_LIMIT_GB` | `28` | Process RSS memory limit |
+
+### Video Generation Constants
+
+| Constant | Value | Description |
+|---|---|---|
+| `MAX_VIDEO_FRAMES` | 97 | LTX-2 maximum frame count |
+| `MAX_VIDEO_DURATION_SEC` | 4 | Maximum video duration |
+| `DEFAULT_VIDEO_FPS` | 24 | Default frames per second |
+| `DEFAULT_WIDTH` | 768 | Default video width |
+| `DEFAULT_HEIGHT` | 512 | Default video height |
+
+### VRAM Coordination
+
+Both the FluxQ image sidecar (port 5005) and LTX video worker (port 5007) share the same M2 Pro unified memory. Only one model domain can be loaded at a time.
+
+**Coordination flow:**
+1. QueueMaster checks which model is loaded via `/status`
+2. Before dispatching, `ensureVramAvailable()` calls `/unload` on the competing sidecar
+3. Model loads lazily on first job (LTX) or via explicit `/model` POST (FluxQ)
+4. After job completion, worker unloads model and clears VRAM in the `finally` block
+5. Idle model reaper (5-minute timeout) unloads models that haven't been used
+
+**Management script:** `scripts/media-ctl.sh` provides unified control:
+- `media-ctl.sh switch flux` — Unload LTX, load FluxQ model
+- `media-ctl.sh switch ltx` — Unload FluxQ, LTX loads on next job
+- `media-ctl.sh ltx generate [pipeline] [prompt]` — Submit a test video generation job
+- `media-ctl.sh status` — Show status of both services
+
+### VideoGenService (`src/video/generators/video-gen-service.ts`)
+
+TypeScript service wrapping the queue for Director pipeline integration:
+
+| Method | Description |
+|---|---|
+| `submitTextToVideo(prompt, options)` | Submit txt2video job, clamps frames to MAX_VIDEO_FRAMES |
+| `submitImageToVideo(prompt, imagePath, options)` | Submit img2video job with base image |
+| `waitForJob(jobId, timeoutMs)` | Poll job status until terminal state |
+| `getJobStatus(jobId)` | Get current job status |
+
+### Storyboard Animation Support
+
+The `StoryboardEngine` gains animation-aware scene planning:
+
+- `shouldAnimate?: boolean` and `motionPrompt?: string` added to `ImageSceneEntry` and `StoryboardScene`
+- System prompt includes "ANIMATION COMPUTE BUDGET" rules: max 2-3 animated scenes per video
+- Motion prompts describe camera movement for LTX-2 img2video (e.g., "slow zoom in with subtle parallax")
+
+### Queue API (`src/api/queue.ts`)
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/api/queue/jobs` | Submit a new generation job |
+| `GET` | `/api/queue/jobs` | List jobs with optional status/type filters |
+| `GET` | `/api/queue/jobs/stats` | Aggregate counts by status |
+| `GET` | `/api/queue/jobs/:id` | Get job details |
+| `DELETE` | `/api/queue/jobs/:id` | Cancel a pending job |
+| `POST` | `/api/queue/complete` | Worker callback with completion payload |
+| `GET` | `/api/queue/assets` | List gallery assets with type/source filters |
+| `GET` | `/api/queue/assets/:id` | Get asset details |
+| `DELETE` | `/api/queue/assets/:id` | Delete an asset |
+| `PATCH` | `/api/queue/assets/:id/tags` | Update asset tags |
+| `POST` | `/api/queue/assets/upload` | Upload a file as a gallery asset |
+| `GET` | `/api/queue/assets/file/:filename` | Serve an asset file |
+| `GET` | `/api/queue/project/:projectId/status` | Check project completion status |
+
+### Gallery UI (`ui/app/gallery/page.tsx`)
+
+The Gallery page at `/gallery` provides:
+
+- **Queue Stats Dashboard** — Real-time counts for Pending, Dispatched, Processing, Complete, and Failed jobs (auto-refreshes every 5s via React Query)
+- **Asset Grid** — Filterable by type (Images, Videos, Audio) and source (Generated, Uploaded, Director). Each asset card shows thumbnail, metadata overlay, and action buttons (preview, download, tag, delete)
+- **Preview Lightbox** — Full-screen modal for viewing images and playing videos
+- **Gallery Studio** — Inline asset creation panel with 4 modes:
+  - **Text → Image** — Prompt, dimensions, steps, guidance, seed
+  - **Image → Image** — Upload source image + prompt + strength slider
+  - **Text → Video** — Prompt, frames (max 97), FPS, computed duration (4s cinematic B-roll badge)
+  - **Image → Video** — Upload source image + motion prompt (4s cinematic B-roll badge)
+- **Submit to Queue** — All Studio jobs route through `POST /api/queue/jobs`
+
+### Route Map Update
+
+| Route | Component | Purpose |
+|---|---|---|
+| `/gallery` | `gallery/page.tsx` | Asset Gallery + Gallery Studio |
+
+### Tracking: [Epic #325](https://github.com/mgcronin/openzigs/issues/325)

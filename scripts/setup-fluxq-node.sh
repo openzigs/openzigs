@@ -260,7 +260,6 @@ fetch_file "com.openzigs.fluxq.plist" "com.openzigs.fluxq.plist"
 
 # Substitute the current user's home directory into the plist
 sed -i '' "s|__FLUXQ_DIR__|$INSTALL_DIR|g" com.openzigs.fluxq.plist
-sed -i '' "s|__USER__|$(whoami)|g" com.openzigs.fluxq.plist
 
 ok "launchd plist template downloaded"
 

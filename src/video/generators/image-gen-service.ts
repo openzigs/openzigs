@@ -216,7 +216,7 @@ export class ImageGenService {
   async getRecommendedResolution(): Promise<{ width: number; height: number } | null> {
     try {
       const headers: Record<string, string> = {};
-      if (this.isNetworkMode && this.config.networkNodeToken) {
+      if (this.config.networkNodeToken) {
         headers["Authorization"] = `Bearer ${this.config.networkNodeToken}`;
       }
       const response = await fetch(`${this.effectiveSidecarUrl}/health`, {
@@ -377,7 +377,7 @@ export class ImageGenService {
       });
 
       const headers: Record<string, string> = { "Content-Type": "application/json" };
-      if (this.isNetworkMode && this.config.networkNodeToken) {
+      if (this.config.networkNodeToken) {
         headers["Authorization"] = `Bearer ${this.config.networkNodeToken}`;
       }
 
@@ -500,7 +500,7 @@ export class ImageGenService {
     });
 
     const headers: Record<string, string> = { "Content-Type": "application/json" };
-    if (this.isNetworkMode && this.config.networkNodeToken) {
+    if (this.config.networkNodeToken) {
       headers["Authorization"] = `Bearer ${this.config.networkNodeToken}`;
     }
 
@@ -562,7 +562,7 @@ export class ImageGenService {
     });
 
     const headers: Record<string, string> = { "Content-Type": "application/json" };
-    if (this.isNetworkMode && this.config.networkNodeToken) {
+    if (this.config.networkNodeToken) {
       headers["Authorization"] = `Bearer ${this.config.networkNodeToken}`;
     }
 
@@ -590,7 +590,7 @@ export class ImageGenService {
   private async checkLocalHealth(): Promise<boolean> {
     try {
       const headers: Record<string, string> = {};
-      if (this.isNetworkMode && this.config.networkNodeToken) {
+      if (this.config.networkNodeToken) {
         headers["Authorization"] = `Bearer ${this.config.networkNodeToken}`;
       }
       const response = await fetch(`${this.effectiveSidecarUrl}/health`, {

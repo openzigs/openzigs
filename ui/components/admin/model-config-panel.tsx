@@ -7,6 +7,13 @@ import type { ModelConfig, ReasoningEffort, ProviderType } from "@/lib/types";
 import { showToast } from "@/components/toast";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { RotateCw, Key, Eye, EyeOff, CheckCircle, XCircle, Cloud, Trash2 } from "lucide-react";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 const EFFORT_LEVELS: { value: ReasoningEffort; label: string; dots: number }[] = [
   { value: "low", label: "Low", dots: 1 },
@@ -39,9 +46,15 @@ export const ModelConfigPanel = () => {
     queryFn: () => fetchJson<ModelConfig>("/api/admin/models/config"),
   });
 
+  const modelsQuery = useQuery({
+    queryKey: ["models-list"],
+    queryFn: () => fetchJson<{ models: { id: string }[]; selectedModel?: string | null; fallback?: boolean }>("/api/models"),
+  });
+
   const config = query.data;
 
   const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort>("medium");
+  const [selectedModel, setSelectedModel] = useState<string | null>(null);
   const [byokEnabled, setByokEnabled] = useState(false);
   const [providerType, setProviderType] = useState<ProviderType>("openai");
   const [baseUrl, setBaseUrl] = useState("");
@@ -50,6 +63,12 @@ export const ModelConfigPanel = () => {
   const [showKey, setShowKey] = useState(false);
   const [connectionResult, setConnectionResult] = useState<{ success: boolean; message: string } | null>(null);
   const [showClearConfirm, setShowClearConfirm] = useState(false);
+
+  useEffect(() => {
+    if (modelsQuery.data?.selectedModel != null) {
+      setSelectedModel(modelsQuery.data.selectedModel);
+    }
+  }, [modelsQuery.data]);
 
   useEffect(() => {
     if (config) {
@@ -110,6 +129,20 @@ export const ModelConfigPanel = () => {
     },
   });
 
+  const selectModelMutation = useMutation({
+    mutationFn: (modelId: string) =>
+      fetchJson("/api/models/select", {
+        method: "POST",
+        body: JSON.stringify({ modelId }),
+      }),
+    onSuccess: (_data, modelId) => {
+      setSelectedModel(modelId);
+      queryClient.invalidateQueries({ queryKey: ["models-list"] });
+      showToast(`Default model set to ${modelId}`, "success");
+    },
+    onError: (err) => showToast(`Error: ${err.message}`, "error"),
+  });
+
   const handleSave = () => {
     const payload: Record<string, unknown> = { reasoningEffort };
     if (byokEnabled) {
@@ -164,6 +197,33 @@ export const ModelConfigPanel = () => {
 
   return (
     <div className="space-y-6">
+      {/* Default Model */}
+      <div className="space-y-2">
+        <p className="text-sm font-semibold text-foreground">Default Model</p>
+        <Select
+          value={selectedModel ?? ""}
+          onValueChange={(value) => { if (value) selectModelMutation.mutate(value); }}
+          disabled={modelsQuery.isLoading || modelsQuery.data?.models.length === 0}
+        >
+          <SelectTrigger className="w-64 font-mono text-xs">
+            <SelectValue placeholder={modelsQuery.isLoading ? "Loading…" : "Select a model"} />
+          </SelectTrigger>
+          <SelectContent>
+            {(modelsQuery.data?.models ?? []).map((m) => (
+              <SelectItem key={m.id} value={m.id} className="font-mono text-xs">
+                {m.id}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <p className="text-[11px] text-muted-foreground/60">
+          Sets the default model for all new chat sessions. Users can override per-session in chat.
+          {modelsQuery.data?.fallback && (
+            <span className="ml-1 text-amber-500">Using fallback model list (Copilot SDK unavailable).</span>
+          )}
+        </p>
+      </div>
+
       {/* Reasoning Effort */}
       <div className="space-y-2">
         <p className="text-sm font-semibold text-foreground">Default Reasoning Effort</p>

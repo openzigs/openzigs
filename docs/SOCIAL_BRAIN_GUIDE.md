@@ -19,6 +19,8 @@ This guide walks through every step needed to get Social Brain running: Cloudfla
 - [Platform Setup Guides](#platform-setup-guides)
   - [Instagram / Facebook (Meta Graph API)](#instagram--facebook-meta-graph-api)
   - [YouTube](#youtube)
+    - [YouTube OAuth Setup](#youtube-oauth-setup)
+    - [YouTube Upload Quota](#youtube-upload-quota)
   - [Twitter / X](#twitter--x)
   - [TikTok](#tiktok)
   - [Reddit](#reddit)
@@ -31,6 +33,7 @@ This guide walks through every step needed to get Social Brain running: Cloudfla
 - [MCP Tools (Chat Interface)](#mcp-tools-chat-interface)
   - [Social CRM Tools](#social-crm-tools)
   - [Platform-Specific Tools](#platform-specific-tools)
+- [Posting to Social Media](#posting-to-social-media)
 - [Native MCP Server Configuration](#native-mcp-server-configuration)
 - [Testing with Curl](#testing-with-curl)
   - [Simulating an Instagram Comment Webhook](#simulating-an-instagram-comment-webhook)
@@ -107,10 +110,10 @@ All social platform interactions use **native MCP servers** (stdio subprocess tr
 
 | MCP Server | Runtime | Tools | Used For |
 |------------|---------|-------|----------|
-| `ig-mcp` | Python (uvx) | 12 | Instagram DMs (`send_dm`), comment replies (`reply_to_comment`), post reads, analytics, media publish |
+| `ig-mcp` | Python (uvx) | 11 | Instagram DMs (`send_dm`), comment replies (`reply_to_comment`), post reads, analytics, media publish |
 | `fb-mcp` | Python (uvx) | 10 | Facebook Messenger (`fb_send_message`), comment replies (`fb_reply_to_comment`), page analytics |
 | `twitter-mcp` | Python (uvx) | 8 | Twitter DMs (`twitter_send_dm`), tweet replies (`twitter_post_tweet` w/ `reply_to`), search |
-| `youtube-mcp` | Python (uvx) | 7 | YouTube comment replies (`yt_reply_to_comment`), video search, analytics (no DM API) |
+| `youtube-mcp` | Python (uvx) | 8 | YouTube **video upload** (`yt_upload_video`), comment replies (`yt_reply_to_comment`), video search, analytics (no DM API) |
 | `linkedin-mcp` | Python (uvx) | 8 | LinkedIn DMs (`linkedin_send_message`, partner-only), comment replies (`linkedin_reply_to_comment`) |
 | `reddit-mcp` | Python (uvx) | 8 | Reddit messages (`reddit_send_message`), comment replies (`reddit_reply_to_comment`), search |
 
@@ -329,8 +332,9 @@ TWITTER_BEARER_TOKEN=your-twitter-bearer-token
 TWITTER_API_KEY=your-twitter-api-key
 TWITTER_API_SECRET=your-twitter-api-key-secret
 
-# ── YouTube (Google Cloud API key) ──
+# ── YouTube (Data API v3 — API key for reads, OAuth token for writes: comment replies + video uploads) ──
 YOUTUBE_API_KEY=your-youtube-data-api-v3-key
+YOUTUBE_OAUTH_TOKEN=your-youtube-oauth-token  # Required for uploads and comment replies (scope: youtube.upload)
 
 # ── LinkedIn ──
 LINKEDIN_ACCESS_TOKEN=your-linkedin-access-token
@@ -599,9 +603,41 @@ curl "https://www.googleapis.com/youtube/v3/commentThreads?part=snippet&videoId=
 
 YouTube does not support DMs. The automation can:
 - Reply to comments via the `youtube-mcp` native server (calling `reply-to-comment` tool)
+- Upload videos via the `yt_upload_video` tool (resumable upload protocol)
 - Auto-tag contacts in the CRM for follow-up
 
-> **Note:** YouTube comment replies require OAuth 2.0 (not just an API key). The `youtube-mcp` server handles the OAuth flow via configured credentials.
+#### YouTube OAuth Setup
+
+Comment replies and video uploads require an OAuth 2.0 access token (an API key is only sufficient for read operations). To obtain one:
+
+1. In the [Google Cloud Console](https://console.cloud.google.com/), go to **APIs & Services → Credentials**.
+2. Click **Create Credentials → OAuth client ID** (application type: **Desktop app** or **Web application**).
+3. Under **OAuth consent screen**, add the following scopes:
+   - `https://www.googleapis.com/auth/youtube` — full channel access (comments, uploads, metadata)
+   - `https://www.googleapis.com/auth/youtube.upload` — upload-only (narrower scope)
+4. Use the [Google OAuth Playground](https://developers.google.com/oauthplayground/) or your own OAuth flow to exchange the client credentials for an access token.
+5. Set the token in your `.env`:
+   ```
+   YOUTUBE_OAUTH_TOKEN=ya29.a0AfH6SM...
+   ```
+
+> **Token refresh:** OAuth2 access tokens expire (typically 1 hour). For production use, implement a refresh token flow or use a service like [google-auth-library](https://github.com/googleapis/google-auth-library-python) to auto-refresh. The `youtube-mcp` server currently expects a valid bearer token in `YOUTUBE_OAUTH_TOKEN`.
+
+#### YouTube Upload Quota
+
+Each `yt_upload_video` call consumes **1,600 quota units** out of the default **10,000 daily quota**, limiting uploads to approximately **6 per day**. Other operations cost far less:
+
+| Operation | Quota Cost | ~Daily Limit |
+|-----------|-----------|-------------|
+| `videos.insert` (upload) | 1,600 | ~6 |
+| `commentThreads.list` | 1 | 10,000 |
+| `comments.insert` (reply) | 50 | 200 |
+| `search.list` | 100 | 100 |
+| `channels.list` | 1 | 10,000 |
+
+You can request a quota increase via the [Google Cloud Console Quotas page](https://console.cloud.google.com/iam-admin/quotas) if you need more uploads per day.
+
+> **Unverified API projects:** Videos uploaded from unverified API projects (created after July 28, 2020) are restricted to **private** viewing only. Your Google Cloud project must pass an [API audit](https://support.google.com/youtube/contact/yt_api_form) to allow public/unlisted uploads.
 
 ---
 
@@ -699,6 +735,8 @@ TIKTOK_ACCESS_TOKEN=your-tiktok-access-token
 TikTok uses a similar verification challenge to Meta — a `GET` request with `hub.verify_token` and `hub.challenge`.
 
 > **Note:** TikTok's DM API is currently limited to select partners. Comment automation works, but DM sending may require approval from TikTok.
+
+> **Important:** TikTok has **no dedicated MCP server** in OpenZigs. Webhook ingestion works (comments arrive via the `/api/social/webhooks/tiktok` endpoint and are processed by the Comment Rule Engine), but there are **no outbound posting, DM, or comment reply tools** for TikTok. To publish content on TikTok, use the TikTok Creator Tools or a third-party scheduler. The other 6 platforms (Instagram, Facebook, Twitter/X, YouTube, LinkedIn, Reddit) all have full MCP server coverage — see [Posting to Social Media](#posting-to-social-media).
 
 ---
 
@@ -1072,14 +1110,13 @@ curl -X POST http://localhost:3000/api/social/handoff/<contactId>/close \
 
 Each connected native MCP server exposes platform-specific tools. These are available in the chat interface when the corresponding server is running:
 
-**Instagram (`ig-mcp`) — 12 tools:**
+**Instagram (`ig-mcp`) — 11 tools:**
 - `get_profile_info` — Business profile info (followers, bio)
 - `get_media_posts` — Recent posts with engagement metrics
 - `get_media_insights` — Per-post analytics (reach, likes, shares)
-- `publish_media` — Upload and publish image/video
+- `publish_media` — **Publish image/video with caption** (requires publicly-accessible media URL)
 - `get_account_pages` — List connected Facebook pages
 - `get_account_insights` — Account-level analytics
-- `validate_access_token` — Token validation
 - `get_conversations` — List DM conversations
 - `get_conversation_messages` — Read DM thread messages
 - `send_dm` — Send Instagram DM (24h window, Advanced Access required)
@@ -1090,7 +1127,7 @@ Each connected native MCP server exposes platform-specific tools. These are avai
 - `fb_get_page_info` — Page profile (name, followers, category)
 - `fb_get_page_posts` — Recent posts with engagement
 - `fb_get_post_insights` — Per-post analytics
-- `fb_publish_post` — Publish to the page feed
+- `fb_publish_post` — **Publish text/link post to the page feed**
 - `fb_get_conversations` — List Messenger conversations
 - `fb_get_conversation_messages` — Read conversation messages
 - `fb_send_message` — Send Messenger reply (24h window)
@@ -1103,12 +1140,12 @@ Each connected native MCP server exposes platform-specific tools. These are avai
 - `twitter_get_user_tweets` — Recent tweets from a user
 - `twitter_search_tweets` — Search recent tweets
 - `twitter_get_tweet` — Get tweet by ID (with conversation context)
-- `twitter_post_tweet` — Post new tweet or reply (with `reply_to` param)
+- `twitter_post_tweet` — **Post a new tweet** or reply to an existing tweet (with `reply_to` param)
 - `twitter_get_dm_events` — Get recent DM events
 - `twitter_send_dm` — Send a direct message
 - `twitter_get_user` — Look up user by username
 
-**YouTube (`youtube-mcp`) — 7 tools:**
+**YouTube (`youtube-mcp`) — 8 tools:**
 - `yt_get_channel_info` — Channel info (subscribers, views)
 - `yt_get_channel_videos` — List channel videos
 - `yt_get_video_details` — Video details (stats, duration)
@@ -1116,11 +1153,12 @@ Each connected native MCP server exposes platform-specific tools. These are avai
 - `yt_reply_to_comment` — Reply to a YouTube comment (requires OAuth)
 - `yt_search_videos` — Search YouTube videos
 - `yt_get_channel_analytics` — Channel statistics
+- `yt_upload_video` — **Upload a video file to YouTube** (resumable upload, requires OAuth with `youtube.upload` scope, costs 1600 quota units)
 
 **LinkedIn (`linkedin-mcp`) — 8 tools:**
 - `linkedin_get_profile` — Authenticated user profile
 - `linkedin_get_posts` — Recent posts (personal or company)
-- `linkedin_create_post` — Publish a text post
+- `linkedin_create_post` — **Publish a text post** (PUBLIC or CONNECTIONS visibility)
 - `linkedin_get_company` — Company/organization page info
 - `linkedin_send_message` — Send a LinkedIn message (partner-only API)
 - `linkedin_get_conversations` — List message conversations
@@ -1131,7 +1169,7 @@ Each connected native MCP server exposes platform-specific tools. These are avai
 - `reddit_get_me` — Authenticated user profile
 - `reddit_get_subreddit_posts` — Posts from a subreddit (hot/new/top/rising)
 - `reddit_get_post_comments` — Comments on a post
-- `reddit_submit_post` — Submit a new post
+- `reddit_submit_post` — **Submit a new text or link post** to a subreddit
 - `reddit_reply_to_comment` — Reply to a comment or post
 - `reddit_search` — Search Reddit posts
 - `reddit_get_inbox` — Inbox messages
@@ -1155,6 +1193,78 @@ Reply to Instagram comment 123 with "Thanks for your feedback!"
 
 ---
 
+## Posting to Social Media
+
+Social Brain isn't just for inbound messages — you can **publish content to any connected platform** directly from the chat interface. Each platform's native MCP server includes a posting/publishing tool.
+
+### Platform Posting Capabilities
+
+| Platform | Tool | Content Types | Limitations |
+|---|---|---|---|
+| **Instagram** | `instagram-publish-media` | Image, video (Reels) with caption | Requires publicly-accessible media URL; caption-only posts not supported (must include image/video) |
+| **Facebook** | `facebook-publish-post` | Text post, text + link | Text required; optional link attachment. Photos/videos require separate Graph API upload |
+| **Twitter/X** | `twitter-post-tweet` | Text (280 chars) | Can also reply to tweets via `reply_to` parameter. Media upload not yet supported in MCP server |
+| **LinkedIn** | `linkedin-create-post` | Text post (PUBLIC or CONNECTIONS) | Max 3,000 characters. Image/video posts require separate LinkedIn upload API (not yet in MCP server) |
+| **Reddit** | `reddit-submit-post` | Text (self) post or link post | Requires `subreddit` and `title`. Text and URL are mutually exclusive |
+| **YouTube** | `youtube-upload-video` | Video file upload (resumable) with title, description, tags, category, privacy | Costs **1,600 quota units** per upload (~6/day with default 10k daily quota). File must exist on server disk. Requires OAuth2 with `youtube.upload` scope. Defaults to **private** |
+
+### How to Post from Chat
+
+Simply ask the agent to post content. The agent automatically selects the correct platform-specific tool:
+
+```
+You: Post "Just launched our new product! Check it out at https://example.com 🚀" to LinkedIn
+Agent: [calls linkedin-create-post with text="Just launched..." visibility="PUBLIC"]
+✅ Posted to LinkedIn
+
+You: Publish an Instagram Reel with this video https://cdn.example.com/reel.mp4 and caption "Behind the scenes 🎬"
+Agent: [calls instagram-publish-media with video_url="https://cdn..." caption="Behind the scenes 🎬"]
+✅ Published to Instagram
+
+You: Tweet "We're hiring! Apply at https://example.com/careers"
+Agent: [calls twitter-post-tweet with text="We're hiring!..."]
+✅ Posted to Twitter/X
+
+You: Submit a post to r/startups titled "Show HN: Our AI-powered social media tool" with a link to our site
+Agent: [calls reddit-submit-post with subreddit="startups" title="Show HN:..." url="https://example.com"]
+✅ Submitted to r/startups
+
+You: Post "Big announcement coming tomorrow! Stay tuned 👀" to our Facebook Page
+Agent: [calls facebook-publish-post with message="Big announcement..."]
+✅ Posted to Facebook Page
+
+You: Upload the video at /home/user/renders/demo.mp4 to YouTube titled "Product Demo v2" with tags ["demo", "walkthrough"] and set it to unlisted
+Agent: [calls youtube-upload-video with file_path="/home/user/renders/demo.mp4" title="Product Demo v2" tags=["demo","walkthrough"] privacy_status="unlisted"]
+✅ Uploaded to YouTube (video ID: dQw4w9WgXcQ, privacy: unlisted)
+```
+
+### Cross-Platform Posting
+
+You can ask the agent to post the same content to multiple platforms in one request:
+
+```
+You: Post "We just raised our Series A! 🎉 Read more: https://example.com/news" to LinkedIn, Twitter, and Facebook
+Agent: [calls linkedin-create-post] ✅ Posted to LinkedIn
+       [calls twitter-post-tweet] ✅ Posted to Twitter/X (truncated to 280 chars if needed)
+       [calls facebook-publish-post] ✅ Posted to Facebook Page
+```
+
+> **Markdown conversion:** When posting via the legacy `social-post` tool, Markdown is automatically converted to platform-safe Unicode text (`**bold**` → **bold**, `*italic*` → *italic*). The per-platform tools accept plain text directly.
+
+### Required Credentials for Posting
+
+| Platform | Required Env Vars | API Permissions |
+|---|---|---|
+| Instagram | `INSTAGRAM_ACCESS_TOKEN`, `INSTAGRAM_BUSINESS_ACCOUNT_ID`, `FACEBOOK_APP_ID`, `FACEBOOK_APP_SECRET` | `instagram_basic`, `instagram_content_publish`, `pages_read_engagement` |
+| Facebook | `FACEBOOK_PAGE_TOKEN`, `FACEBOOK_APP_ID`, `FACEBOOK_APP_SECRET` | `pages_manage_posts`, `pages_read_engagement` |
+| Twitter/X | `TWITTER_BEARER_TOKEN`, `TWITTER_API_KEY`, `TWITTER_API_SECRET` | OAuth 1.0a with `tweet.write` scope; Free tier: 500 tweets/month |
+| LinkedIn | `LINKEDIN_ACCESS_TOKEN` | `w_member_social` (personal) or `w_organization_social` (company page) |
+| Reddit | `REDDIT_CLIENT_ID`, `REDDIT_CLIENT_SECRET`, `REDDIT_USERNAME`, `REDDIT_PASSWORD` | OAuth2 script app; 100 requests/minute |
+
+> **Note:** Instagram publishing requires a Professional account (Business or Creator) and a connected Facebook Page. The media URL must be publicly accessible — Instagram fetches the image/video from the URL during the container creation step.
+
+---
+
 ## Native MCP Server Configuration
 
 All social MCP servers are configured via the Admin UI under **Local MCP Servers**. Navigate to `/admin` to access this panel.
@@ -1168,7 +1278,7 @@ The Docker "MCP Sidecars" panel has been removed — all servers are now native 
 | Instagram | `INSTAGRAM_ACCESS_TOKEN`, `FACEBOOK_APP_ID`, `FACEBOOK_APP_SECRET`, `INSTAGRAM_BUSINESS_ACCOUNT_ID` |
 | Facebook | `FACEBOOK_PAGE_TOKEN`, `FACEBOOK_APP_ID`, `FACEBOOK_APP_SECRET` |
 | Twitter/X | `TWITTER_BEARER_TOKEN`, `TWITTER_API_KEY`, `TWITTER_API_SECRET` |
-| YouTube | `YOUTUBE_API_KEY` |
+| YouTube | `YOUTUBE_API_KEY`, `YOUTUBE_OAUTH_TOKEN` (required for uploads and comment replies) |
 | LinkedIn | `LINKEDIN_ACCESS_TOKEN` |
 | Reddit | *(configured via Reddit OAuth in `reddit-mcp` settings)* |
 | Gmail | `GOOGLE_OAUTH_CREDENTIALS` |
