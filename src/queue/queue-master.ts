@@ -307,19 +307,22 @@ export class QueueMaster extends EventEmitter {
       return;
     }
 
+    // Recheck after health poll — FluxQ now reports is_busy while async generation is running
+    if (this.macMiniStatus.is_busy) {
+      logger.debug("[QueueMaster] Mac-mini busy (generating), skipping after health check");
+      return;
+    }
+
     const job = pending[0];
     try {
       // VRAM coordination: ensure video worker has freed memory
       await this.ensureVramAvailable("mac-mini");
 
-      // Mark dispatched and busy BEFORE the blocking fetch so:
-      //   1. The job doesn't stay in "pending" while generating (prevents re-dispatch)
-      //   2. Subsequent ticks see is_busy=true and skip the health check
-      //   3. Final status is: pending → dispatched → complete (correct order)
+      // Mark dispatched before sending so job transitions: pending → dispatched → complete
       this.repo.markDispatched(job.id);
       this.macMiniStatus = { ...this.macMiniStatus, is_busy: true };
       this.emit("job:dispatched", job, "mac-mini" as TargetNode);
-      logger.info(`[QueueMaster] Dispatching ${job.type} job ${job.id} → mac-mini (synchronous, node will appear busy)`);
+      logger.info(`[QueueMaster] Dispatching ${job.type} job ${job.id} → mac-mini (async, awaiting callback)`);
 
       await this.dispatchImageJob(job);
     } catch (err) {
@@ -394,9 +397,9 @@ export class QueueMaster extends EventEmitter {
     const data = await res.json() as Record<string, unknown>;
 
     if (node === "mac-mini") {
-      // FluxQ /health returns { model, model_loaded, ... }
+      // FluxQ /health returns { model, model_loaded, is_busy, ... }
       return {
-        is_busy: false, // FluxQ is synchronous, so it's never "busy" in the async sense
+        is_busy: !!(data.is_busy as boolean),
         loaded_model: data.model_loaded ? (data.model as string) : null,
       };
     }
@@ -405,19 +408,29 @@ export class QueueMaster extends EventEmitter {
   }
 
   private async dispatchImageJob(job: MediaJob): Promise<void> {
-    const { url, token } = this.config.macMini;
+    const { url, token } = await this.getLiveNodeConfig("mac-mini");
     const headers: Record<string, string> = { "Content-Type": "application/json" };
     if (token) headers["Authorization"] = `Bearer ${token}`;
 
-    const endpoint = job.type === "img2img" ? "/img2img" : "/generate";
+    let endpoint: string;
+    if (job.requiredModel === "flux-kontext") {
+      endpoint = "/kontext-async";
+    } else if (job.type === "img2img") {
+      endpoint = "/img2img-async";
+    } else {
+      endpoint = "/generate-async";
+    }
+
     const body: Record<string, unknown> = {
+      job_id: job.id,
+      callback_url: this.config.callbackUrl,
       prompt: job.payload.prompt,
       width: job.payload.width ?? 1024,
       height: job.payload.height ?? 576,
       steps: job.payload.steps,
       guidance_scale: job.payload.guidance_scale,
       seed: job.payload.seed,
-      model: job.requiredModel === "flux-schnell" ? "flux-schnell" : job.requiredModel,
+      model: job.requiredModel,
     };
 
     if (job.type === "img2img" && job.payload.init_image) {
@@ -425,33 +438,20 @@ export class QueueMaster extends EventEmitter {
       body.strength = job.payload.strength ?? 0.8;
     }
 
-    // Network node image generation can take 3-5 minutes on first run (model
-    // load + inference). 10 minutes gives comfortable headroom for any hardware.
+    // Async dispatch — FluxQ accepts immediately (202) and POSTs result to callback_url
     const res = await fetch(`${url}${endpoint}`, {
       method: "POST",
       headers,
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(600_000),
+      signal: AbortSignal.timeout(30_000),
     });
 
-    if (!res.ok) {
+    if (res.status !== 202 && !res.ok) {
       const text = await res.text().catch(() => "");
-      throw new Error(`Mac Mini ${endpoint} returned ${res.status}: ${text}`);
+      throw new Error(`FluxQ ${endpoint} returned ${res.status}: ${text}`);
     }
 
-    // Mac Mini returns PNG bytes synchronously — convert to base64 and complete
-    const buffer = await res.arrayBuffer();
-    const base64 = Buffer.from(buffer).toString("base64");
-
-    await this.handleJobCompletion(job.id, {
-      media_base64: base64,
-      media_type: "image/png",
-      metadata: {
-        model: res.headers.get("x-model") ?? job.requiredModel,
-        generation_time: res.headers.get("x-generation-time"),
-        seed: res.headers.get("x-seed"),
-      },
-    });
+    logger.info(`[QueueMaster] Image job ${job.id} accepted by FluxQ (202) — awaiting callback to ${this.config.callbackUrl}`);
   }
 
   private async dispatchVideoJob(job: MediaJob): Promise<void> {

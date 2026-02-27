@@ -26,16 +26,21 @@ Endpoints:
 from __future__ import annotations
 
 import argparse
+import base64
 import gc
 import io
+import json
 import logging
 import os
 import random
+import tempfile
 import time
+import urllib.error
+import urllib.request
 from contextlib import asynccontextmanager
 from typing import Any, Optional
 
-from fastapi import FastAPI, HTTPException, Depends, Header
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Depends, Header
 from fastapi.responses import Response
 from PIL import Image
 from pydantic import BaseModel, Field
@@ -110,6 +115,7 @@ _idle_timeout: float = 0.0         # seconds before auto-unload (0 = disabled)
 _default_model: str = "flux-schnell"
 _preload_at_startup: bool = False
 _quantization: Optional[int] = 4    # MLX quantization bits: 4, 8, or None
+_generating: bool = False           # True while an async background generation is running
 
 
 def _create_mflux_model(model_key: str) -> Any:
@@ -210,6 +216,199 @@ async def _idle_unload_loop() -> None:
             _unload_model()
 
 
+def _post_callback(job_id: str, callback_url: str, payload: dict) -> None:
+    """POST a job completion (or error) payload to the openzigs callback URL.
+
+    Runs in a thread-pool thread via FastAPI BackgroundTasks, so blocking
+    urllib is safe here.
+    """
+    body = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(
+        callback_url,
+        data=body,
+        method="POST",
+        headers={"Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            log.info(f"[async] Callback for job {job_id} delivered: HTTP {resp.status}")
+    except urllib.error.HTTPError as e:
+        log.error(f"[async] Callback for job {job_id} HTTP error: {e.code} {e.reason}")
+    except Exception as e:
+        log.error(f"[async] Callback for job {job_id} failed: {e}")
+
+
+def _bg_generate(
+    job_id: str,
+    callback_url: str,
+    prompt: str,
+    requested_model: str,
+    width: int,
+    height: int,
+    steps: Optional[int],
+    guidance: float,
+    seed: int,
+) -> None:
+    """Sync background task: run txt2img and POST callback to openzigs."""
+    global _last_used, _generating
+    _generating = True
+    try:
+        if not _model_loaded or _model_name != requested_model:
+            log.info(f"[async] Lazy-loading '{requested_model}' for job {job_id}")
+            _load_model(requested_model)
+        spec = MODEL_REGISTRY[requested_model]
+        w = (width // 16) * 16
+        h = (height // 16) * 16
+        actual_steps = steps or spec["default_steps"]
+        log.info(f"[async] generate job={job_id} model={_model_name} {w}x{h} steps={actual_steps} seed={seed}")
+        start = time.monotonic()
+        result = _model.generate_image(  # type: ignore[union-attr]
+            seed=seed, prompt=prompt, num_inference_steps=actual_steps,
+            height=h, width=w, guidance=guidance,
+        )
+        elapsed = time.monotonic() - start
+        _last_used = time.monotonic()
+        log.info(f"[async] generate done in {elapsed:.1f}s job={job_id}")
+        buf = io.BytesIO()
+        result.image.save(buf, format="PNG", optimize=True)
+        media_b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+        _post_callback(job_id, callback_url, {
+            "job_id": job_id,
+            "media_base64": media_b64,
+            "media_type": "image/png",
+            "metadata": {
+                "model": _model_name or requested_model,
+                "generation_time": f"{elapsed:.2f}s",
+                "seed": str(seed),
+            },
+        })
+    except Exception as e:
+        log.error(f"[async] generate failed job={job_id}: {e}")
+        _post_callback(job_id, callback_url, {"job_id": job_id, "error": str(e)})
+    finally:
+        _generating = False
+
+
+def _bg_img2img(
+    job_id: str,
+    callback_url: str,
+    prompt: str,
+    requested_model: str,
+    source_path: str,
+    effective_strength: float,
+    width: int,
+    height: int,
+    steps: Optional[int],
+    guidance: float,
+    seed: int,
+) -> None:
+    """Sync background task: run img2img and POST callback to openzigs."""
+    global _last_used, _generating
+    _generating = True
+    try:
+        if not _model_loaded or _model_name != requested_model:
+            log.info(f"[async] Lazy-loading '{requested_model}' for img2img job {job_id}")
+            _load_model(requested_model)
+        spec = MODEL_REGISTRY[requested_model]
+        w = (width // 16) * 16
+        h = (height // 16) * 16
+        actual_steps = steps or spec["default_steps"]
+        log.info(
+            f"[async] img2img job={job_id} model={_model_name} {w}x{h} "
+            f"steps={actual_steps} strength={effective_strength} seed={seed}"
+        )
+        start = time.monotonic()
+        result = _model.generate_image(  # type: ignore[union-attr]
+            seed=seed, prompt=prompt, num_inference_steps=actual_steps,
+            height=h, width=w, guidance=guidance,
+            image_path=source_path, image_strength=effective_strength,
+        )
+        elapsed = time.monotonic() - start
+        _last_used = time.monotonic()
+        log.info(f"[async] img2img done in {elapsed:.1f}s job={job_id}")
+        buf = io.BytesIO()
+        result.image.save(buf, format="PNG", optimize=True)
+        media_b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+        _post_callback(job_id, callback_url, {
+            "job_id": job_id,
+            "media_base64": media_b64,
+            "media_type": "image/png",
+            "metadata": {
+                "model": _model_name or requested_model,
+                "generation_time": f"{elapsed:.2f}s",
+                "seed": str(seed),
+            },
+        })
+    except Exception as e:
+        log.error(f"[async] img2img failed job={job_id}: {e}")
+        _post_callback(job_id, callback_url, {"job_id": job_id, "error": str(e)})
+    finally:
+        _generating = False
+        if os.path.exists(source_path) and tempfile.gettempdir() in source_path:
+            try:
+                os.unlink(source_path)
+            except OSError:
+                pass
+
+
+def _bg_kontext(
+    job_id: str,
+    callback_url: str,
+    prompt: str,
+    source_path: str,
+    width: int,
+    height: int,
+    steps: Optional[int],
+    guidance: float,
+    seed: int,
+) -> None:
+    """Sync background task: run Kontext editing and POST callback to openzigs."""
+    global _last_used, _generating
+    _generating = True
+    kontext_key = "flux-kontext"
+    try:
+        if not _model_loaded or _model_name != kontext_key:
+            log.info(f"[async] Loading Kontext model for job {job_id}")
+            _load_model(kontext_key)
+        spec = MODEL_REGISTRY[kontext_key]
+        w = (width // 16) * 16
+        h = (height // 16) * 16
+        actual_steps = steps or spec["default_steps"]
+        log.info(f"[async] kontext job={job_id} {w}x{h} steps={actual_steps} seed={seed}")
+        start = time.monotonic()
+        result = _model.generate_image(  # type: ignore[union-attr]
+            seed=seed, prompt=prompt, num_inference_steps=actual_steps,
+            height=h, width=w, guidance=guidance,
+            image_path=source_path,
+        )
+        elapsed = time.monotonic() - start
+        _last_used = time.monotonic()
+        log.info(f"[async] kontext done in {elapsed:.1f}s job={job_id}")
+        buf = io.BytesIO()
+        result.image.save(buf, format="PNG", optimize=True)
+        media_b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+        _post_callback(job_id, callback_url, {
+            "job_id": job_id,
+            "media_base64": media_b64,
+            "media_type": "image/png",
+            "metadata": {
+                "model": "flux-kontext",
+                "generation_time": f"{elapsed:.2f}s",
+                "seed": str(seed),
+            },
+        })
+    except Exception as e:
+        log.error(f"[async] kontext failed job={job_id}: {e}")
+        _post_callback(job_id, callback_url, {"job_id": job_id, "error": str(e)})
+    finally:
+        _generating = False
+        if os.path.exists(source_path) and tempfile.gettempdir() in source_path:
+            try:
+                os.unlink(source_path)
+            except OSError:
+                pass
+
+
 # ── Request / Response Models ──────────────────────────────────
 class GenerateRequest(BaseModel):
     """Request body for image generation."""
@@ -263,6 +462,7 @@ class HealthResponse(BaseModel):
     device: str
     ready: bool
     model_loaded: bool = False
+    is_busy: bool = False
     recommended_width: int = 1024
     recommended_height: int = 576
     available_models: list[str] = []
@@ -409,6 +609,27 @@ class ModelResponse(BaseModel):
     quantized: str
 
 
+class AsyncGenerateRequest(GenerateRequest):
+    """Extends GenerateRequest with async callback fields."""
+
+    job_id: str = Field(..., description="Job ID echoed in the callback payload")
+    callback_url: str = Field(..., description="URL to POST the result to on completion")
+
+
+class AsyncImg2ImgRequest(Img2ImgRequest):
+    """Extends Img2ImgRequest with async callback fields."""
+
+    job_id: str = Field(..., description="Job ID echoed in the callback payload")
+    callback_url: str = Field(..., description="URL to POST the result to on completion")
+
+
+class AsyncKontextRequest(KontextRequest):
+    """Extends KontextRequest with async callback fields."""
+
+    job_id: str = Field(..., description="Job ID echoed in the callback payload")
+    callback_url: str = Field(..., description="URL to POST the result to on completion")
+
+
 # ── Lifespan (startup/shutdown) ────────────────────────────────
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -463,6 +684,7 @@ async def health():
         device="mlx",
         ready=_ready and not _loading,
         model_loaded=_model_loaded,
+        is_busy=_generating,
         recommended_width=spec.get("recommended_width", 1024),
         recommended_height=spec.get("recommended_height", 576),
         available_models=list(MODEL_REGISTRY.keys()),
@@ -832,6 +1054,123 @@ async def kontext_edit(req: KontextRequest):
             "X-Seed": str(seed),
         },
     )
+
+
+@app.post("/generate-async", status_code=202, dependencies=[Depends(verify_token)])
+async def generate_async(req: AsyncGenerateRequest, background_tasks: BackgroundTasks):
+    """Async txt2img — returns 202 immediately, POSTs result to callback_url.
+
+    Callback payload: ``{ job_id, media_base64, media_type, metadata }``
+    or ``{ job_id, error }`` on failure. Same format as the LTX-2 video worker.
+    """
+    if not _ready:
+        raise HTTPException(status_code=503, detail="Server not ready")
+    if _loading or _generating:
+        raise HTTPException(status_code=409, detail="Server is busy with another generation")
+    requested_model = req.model or (_model_name if _model_loaded else _default_model)
+    if requested_model not in MODEL_REGISTRY:
+        raise HTTPException(status_code=400, detail=f"Unknown model: {requested_model}")
+    spec = MODEL_REGISTRY[requested_model]
+    guidance = req.guidance_scale if req.guidance_scale is not None else spec["default_guidance"]
+    seed = req.seed if req.seed is not None else random.randint(0, 2**32 - 1)
+    background_tasks.add_task(
+        _bg_generate,
+        req.job_id, req.callback_url,
+        req.prompt, requested_model,
+        req.width, req.height, req.steps, guidance, seed,
+    )
+    log.info(f"[async] generate job={req.job_id} accepted, callback={req.callback_url}")
+    return {"job_id": req.job_id, "status": "accepted"}
+
+
+@app.post("/img2img-async", status_code=202, dependencies=[Depends(verify_token)])
+async def img2img_async(req: AsyncImg2ImgRequest, background_tasks: BackgroundTasks):
+    """Async img2img — returns 202 immediately, POSTs result to callback_url.
+
+    Source image is decoded and validated synchronously before returning 202
+    so validation errors surface inline rather than silently in the callback.
+    """
+    if not _ready:
+        raise HTTPException(status_code=503, detail="Server not ready")
+    if _loading or _generating:
+        raise HTTPException(status_code=409, detail="Server is busy with another generation")
+    tmp_path: Optional[str] = None
+    if req.image:
+        try:
+            img_bytes = base64.b64decode(req.image, validate=True)
+        except Exception:
+            raise HTTPException(status_code=400, detail="'image' is not valid base64")
+        if len(img_bytes) > 20 * 1024 * 1024:
+            raise HTTPException(status_code=413, detail="Image exceeds 20 MB limit")
+        suffix = ".jpg" if img_bytes[:3] == b"\xff\xd8\xff" else ".png"
+        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+        tmp.write(img_bytes)
+        tmp.close()
+        tmp_path = tmp.name
+    elif req.image_path:
+        if not os.path.isfile(req.image_path):
+            raise HTTPException(status_code=400, detail=f"image_path not found: {req.image_path}")
+        tmp_path = req.image_path
+    else:
+        raise HTTPException(status_code=422, detail="Provide 'image' (base64) or 'image_path'")
+    requested_model = req.model or (_model_name if _model_loaded else _default_model)
+    if requested_model not in MODEL_REGISTRY:
+        if tmp_path and tmp_path != req.image_path:
+            os.unlink(tmp_path)
+        raise HTTPException(status_code=400, detail=f"Unknown model: {requested_model}")
+    spec = MODEL_REGISTRY[requested_model]
+    effective_strength = req.strength if req.strength is not None else (
+        req.image_strength if req.image_strength is not None else 0.8
+    )
+    guidance = req.guidance_scale if req.guidance_scale is not None else spec["default_guidance"]
+    seed = req.seed if req.seed is not None else random.randint(0, 2**32 - 1)
+    background_tasks.add_task(
+        _bg_img2img,
+        req.job_id, req.callback_url,
+        req.prompt, requested_model, tmp_path, effective_strength,
+        req.width, req.height, req.steps, guidance, seed,
+    )
+    log.info(f"[async] img2img job={req.job_id} accepted, callback={req.callback_url}")
+    return {"job_id": req.job_id, "status": "accepted"}
+
+
+@app.post("/kontext-async", status_code=202, dependencies=[Depends(verify_token)])
+async def kontext_async(req: AsyncKontextRequest, background_tasks: BackgroundTasks):
+    """Async Kontext editing — returns 202 immediately, POSTs result to callback_url."""
+    if not _ready:
+        raise HTTPException(status_code=503, detail="Server not ready")
+    if _loading or _generating:
+        raise HTTPException(status_code=409, detail="Server is busy with another generation")
+    tmp_path: Optional[str] = None
+    if req.image:
+        try:
+            img_bytes = base64.b64decode(req.image, validate=True)
+        except Exception:
+            raise HTTPException(status_code=400, detail="'image' is not valid base64")
+        if len(img_bytes) > 20 * 1024 * 1024:
+            raise HTTPException(status_code=413, detail="Image exceeds 20 MB limit")
+        suffix = ".jpg" if img_bytes[:3] == b"\xff\xd8\xff" else ".png"
+        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+        tmp.write(img_bytes)
+        tmp.close()
+        tmp_path = tmp.name
+    elif req.image_path:
+        if not os.path.isfile(req.image_path):
+            raise HTTPException(status_code=400, detail=f"image_path not found: {req.image_path}")
+        tmp_path = req.image_path
+    else:
+        raise HTTPException(status_code=422, detail="Provide 'image' (base64) or 'image_path'")
+    spec = MODEL_REGISTRY["flux-kontext"]
+    guidance = req.guidance if req.guidance is not None else spec["default_guidance"]
+    seed = req.seed if req.seed is not None else random.randint(0, 2**32 - 1)
+    background_tasks.add_task(
+        _bg_kontext,
+        req.job_id, req.callback_url,
+        req.prompt, tmp_path,
+        req.width, req.height, req.steps, guidance, seed,
+    )
+    log.info(f"[async] kontext job={req.job_id} accepted, callback={req.callback_url}")
+    return {"job_id": req.job_id, "status": "accepted"}
 
 
 # ── CLI Entry Point ────────────────────────────────────────────
