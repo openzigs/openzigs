@@ -405,7 +405,7 @@ async def run_generation_job(request: GenerateRequest):
     start = time.time()
     try:
         await state.set_busy(True)
-        logger.info(f"Starting job {request.job_id} ({request.type})")
+        logger.info(f"Starting job {request.job_id} ({request.type}) callback_url={request.callback_url}")
 
         # Run CPU/GPU-bound generation in a thread pool
         if request.type in ("txt2video", "img2video"):

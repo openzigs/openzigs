@@ -32,6 +32,7 @@ const toJob = (row: StoredMediaJob): MediaJob => ({
   retries: row.retries,
   maxRetries: row.max_retries,
   error: row.error,
+  retryAfter: row.retry_after ? new Date(row.retry_after) : null,
   createdAt: new Date(row.created_at),
   dispatchedAt: row.dispatched_at ? new Date(row.dispatched_at) : null,
   completedAt: row.completed_at ? new Date(row.completed_at) : null,
@@ -68,6 +69,7 @@ export class MediaQueueRepository {
         retries INTEGER NOT NULL DEFAULT 0,
         max_retries INTEGER NOT NULL DEFAULT 3,
         error TEXT,
+        retry_after TEXT,
         created_at TEXT NOT NULL,
         dispatched_at TEXT,
         completed_at TEXT
@@ -77,6 +79,13 @@ export class MediaQueueRepository {
       CREATE INDEX IF NOT EXISTS idx_media_jobs_target ON media_jobs(target_node, status);
       CREATE INDEX IF NOT EXISTS idx_media_jobs_project ON media_jobs(project_id);
     `);
+
+    // ── Migrations ──
+    try {
+      this.db.exec("ALTER TABLE media_jobs ADD COLUMN retry_after TEXT");
+    } catch {
+      // Column already exists
+    }
 
     // ── media_assets table ──
     this.db.exec(`
@@ -141,8 +150,8 @@ export class MediaQueueRepository {
 
   /** Get pending jobs for a target node, ordered by priority DESC, created_at ASC. */
   getPendingJobs(targetNode?: TargetNode, limit = 10): MediaJob[] {
-    let sql = "SELECT * FROM media_jobs WHERE status = 'pending'";
-    const params: unknown[] = [];
+    let sql = "SELECT * FROM media_jobs WHERE status = 'pending' AND (retry_after IS NULL OR retry_after <= ?)";
+    const params: unknown[] = [this.clock().toISOString()];
 
     if (targetNode) {
       sql += " AND target_node = ?";
@@ -158,11 +167,13 @@ export class MediaQueueRepository {
 
   /** Get pending jobs that match a specific model on a target node (VRAM-aware batching). */
   getPendingJobsForModel(targetNode: TargetNode, model: string, limit = 5): MediaJob[] {
+    const now = this.clock().toISOString();
     const rows = this.db.prepare(
       `SELECT * FROM media_jobs
        WHERE status = 'pending' AND target_node = ? AND required_model = ?
+         AND (retry_after IS NULL OR retry_after <= ?)
        ORDER BY priority DESC, created_at ASC LIMIT ?`,
-    ).all(targetNode, model, limit) as StoredMediaJob[];
+    ).all(targetNode, model, now, limit) as StoredMediaJob[];
     return rows.map(toJob);
   }
 
@@ -191,10 +202,13 @@ export class MediaQueueRepository {
     if (!job) return;
 
     if (job.retries < job.maxRetries) {
-      // Retry: bump retries and reset to pending
+      // Retry with exponential backoff: 60s * (retries + 1) before re-dispatch.
+      // Prevents rapid crash-loop storms (e.g. Metal GPU OOM cascades).
+      const backoffSecs = 60 * (job.retries + 1);
+      const retryAfter = new Date(Date.now() + backoffSecs * 1000).toISOString();
       this.db.prepare(
-        "UPDATE media_jobs SET status = 'pending', retries = retries + 1, error = ? WHERE id = ?",
-      ).run(error, id);
+        "UPDATE media_jobs SET status = 'pending', retries = retries + 1, error = ?, retry_after = ? WHERE id = ?",
+      ).run(error, retryAfter, id);
     } else {
       this.db.prepare(
         "UPDATE media_jobs SET status = 'failed', error = ?, completed_at = ? WHERE id = ?",

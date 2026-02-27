@@ -86,6 +86,7 @@ export interface StoredMediaJob {
   retries: number;
   max_retries: number;
   error: string | null;
+  retry_after: string | null;
   created_at: string;
   dispatched_at: string | null;
   completed_at: string | null;
@@ -107,6 +108,7 @@ export interface MediaJob {
   retries: number;
   maxRetries: number;
   error: string | null;
+  retryAfter: Date | null;
   createdAt: Date;
   dispatchedAt: Date | null;
   completedAt: Date | null;
