@@ -247,7 +247,7 @@ export default function GalleryPage() {
                     <p className="text-[11px] text-muted-foreground">{node.url}</p>
                   </div>
                   <div className={`h-2.5 w-2.5 rounded-full ${
-                    !node.reachable ? "bg-red-500" : node.loaded_model ? "bg-emerald-500" : "bg-yellow-500"
+                    !node.reachable ? "bg-red-500" : node.is_busy ? "bg-amber-500" : node.loaded_model ? "bg-emerald-500" : "bg-yellow-500"
                   }`} />
                 </div>
                 <div className="mt-2 flex items-center justify-between">
@@ -255,7 +255,10 @@ export default function GalleryPage() {
                     {!node.reachable ? (
                       <span className="text-red-500">Offline</span>
                     ) : node.is_busy ? (
-                      <span className="text-amber-500">Busy</span>
+                      <span className="flex items-center gap-1 text-amber-500">
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                        {node.node === "mac-mini" ? "Generating..." : "Busy"}
+                      </span>
                     ) : node.loaded_model ? (
                       <span className="text-emerald-600 dark:text-emerald-400 font-medium">{node.loaded_model}</span>
                     ) : (

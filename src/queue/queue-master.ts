@@ -93,6 +93,14 @@ export class QueueMaster extends EventEmitter {
 
   private async pollNodeStatus(node: TargetNode): Promise<NodeStatus> {
     const nodeConfig = node === "mac-mini" ? this.config.macMini : this.config.m2Pro;
+
+    // FluxQ (mac-mini) is single-threaded Python — it cannot respond to /health
+    // while blocking on inference. If we know it's busy, return the cached status
+    // as reachable rather than hammering it with health checks that will time out.
+    if (node === "mac-mini" && this.macMiniStatus.is_busy) {
+      return { node, reachable: true, ...this.macMiniStatus, url: nodeConfig.url };
+    }
+
     try {
       const status = await this.getWorkerStatus(nodeConfig, node);
       if (node === "mac-mini") this.macMiniStatus = status;
@@ -244,10 +252,17 @@ export class QueueMaster extends EventEmitter {
   // ── Mac Mini (Image jobs) ─────────────────────────────────
 
   private async processMacMini(): Promise<void> {
-    const pending = this.repo.getPendingJobs("mac-mini", 3);
+    // FluxQ is synchronous — one job at a time. If we're already dispatching,
+    // bail out to avoid double-dispatch and false "offline" health check failures.
+    if (this.macMiniStatus.is_busy) {
+      logger.debug("[QueueMaster] Mac-mini busy (generating), skipping tick");
+      return;
+    }
+
+    const pending = this.repo.getPendingJobs("mac-mini", 1);
     if (pending.length === 0) return;
 
-    // Poll FluxQ status to check if it's healthy
+    // Poll FluxQ status to check if it's healthy (only when not already busy)
     try {
       this.macMiniStatus = await this.getWorkerStatus(this.config.macMini, "mac-mini");
     } catch {
@@ -255,20 +270,28 @@ export class QueueMaster extends EventEmitter {
       return;
     }
 
-    for (const job of pending) {
-      try {
-        // VRAM coordination: ensure video worker has freed memory
-        await this.ensureVramAvailable("mac-mini");
+    const job = pending[0];
+    try {
+      // VRAM coordination: ensure video worker has freed memory
+      await this.ensureVramAvailable("mac-mini");
 
-        await this.dispatchImageJob(job);
-        this.repo.markDispatched(job.id);
-        this.emit("job:dispatched", job, "mac-mini" as TargetNode);
-        logger.info(`[QueueMaster] Dispatched ${job.type} job ${job.id} → mac-mini`);
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        logger.warn(`[QueueMaster] Failed to dispatch ${job.id} to mac-mini: ${msg}`);
-        this.repo.markFailed(job.id, msg);
-      }
+      // Mark dispatched and busy BEFORE the blocking fetch so:
+      //   1. The job doesn't stay in "pending" while generating (prevents re-dispatch)
+      //   2. Subsequent ticks see is_busy=true and skip the health check
+      //   3. Final status is: pending → dispatched → complete (correct order)
+      this.repo.markDispatched(job.id);
+      this.macMiniStatus = { ...this.macMiniStatus, is_busy: true };
+      this.emit("job:dispatched", job, "mac-mini" as TargetNode);
+      logger.info(`[QueueMaster] Dispatching ${job.type} job ${job.id} → mac-mini (synchronous, node will appear busy)`);
+
+      await this.dispatchImageJob(job);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.warn(`[QueueMaster] Failed to dispatch ${job.id} to mac-mini: ${msg}`);
+      this.repo.markFailed(job.id, msg);
+    } finally {
+      // Always clear busy flag whether the dispatch succeeded or failed
+      this.macMiniStatus = { ...this.macMiniStatus, is_busy: false };
     }
   }
 
@@ -365,11 +388,13 @@ export class QueueMaster extends EventEmitter {
       body.strength = job.payload.strength ?? 0.8;
     }
 
+    // Network node image generation can take 3-5 minutes on first run (model
+    // load + inference). 10 minutes gives comfortable headroom for any hardware.
     const res = await fetch(`${url}${endpoint}`, {
       method: "POST",
       headers,
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(120_000),
+      signal: AbortSignal.timeout(600_000),
     });
 
     if (!res.ok) {
