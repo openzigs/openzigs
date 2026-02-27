@@ -530,6 +530,8 @@ interface StudioFormState {
   seed: string;
   initImage: File | null;
   initImagePreview: string;
+  imageProvider: "local" | "cloud" | "auto";
+  imageModel: "flux-schnell" | "sdxl-turbo";
 }
 
 const DEFAULT_FORM: StudioFormState = {
@@ -545,6 +547,8 @@ const DEFAULT_FORM: StudioFormState = {
   seed: "",
   initImage: null,
   initImagePreview: "",
+  imageProvider: "local",
+  imageModel: "flux-schnell",
 };
 
 const MODE_INFO: Record<StudioMode, { label: string; desc: string; icon: React.ReactNode }> = {
@@ -585,6 +589,26 @@ function GalleryStudio({ onClose, onCreated }: { onClose: () => void; onCreated:
 
     setSubmitting(true);
     try {
+      // Cloud/auto image generation — direct route, bypasses queue
+      if (!isVideo && (form.imageProvider === "cloud" || form.imageProvider === "auto")) {
+        await fetchJson("/api/queue/image/generate", {
+          method: "POST",
+          body: JSON.stringify({
+            prompt: form.prompt.trim(),
+            provider: form.imageProvider,
+            imageModel: form.imageModel,
+            width: form.width,
+            height: form.height,
+            steps: form.steps,
+            seed: form.seed ? parseInt(form.seed, 10) : undefined,
+          }),
+        });
+        showToast("Image generated via cloud", "success");
+        onCreated();
+        setForm(DEFAULT_FORM);
+        return;
+      }
+
       let init_image: string | undefined;
       if (form.initImage) {
         const buf = await form.initImage.arrayBuffer();
@@ -622,9 +646,12 @@ function GalleryStudio({ onClose, onCreated }: { onClose: () => void; onCreated:
         payload.seed = parseInt(form.seed, 10);
       }
 
+      // For local image gen, pass the selected model
+      const model = !isVideo ? form.imageModel : undefined;
+
       await fetchJson("/api/queue/jobs", {
         method: "POST",
-        body: JSON.stringify({ type: form.mode, payload }),
+        body: JSON.stringify({ type: form.mode, payload, model }),
       });
 
       showToast(`Job submitted: ${MODE_INFO[form.mode].label}`, "success");
@@ -694,6 +721,37 @@ function GalleryStudio({ onClose, onCreated }: { onClose: () => void; onCreated:
               <img src={form.initImagePreview} alt="Preview" className="h-20 w-20 rounded-lg object-cover border border-border" />
             )}
           </div>
+        </div>
+      )}
+
+      {/* Image provider + model controls */}
+      {!isVideo && (
+        <div className="mb-4 grid grid-cols-2 gap-3">
+          <div>
+            <label className="mb-1 block text-[11px] font-medium text-muted-foreground">Provider</label>
+            <select
+              value={form.imageProvider}
+              onChange={(e) => update("imageProvider", e.target.value as "local" | "cloud" | "auto")}
+              className="w-full rounded-lg border border-border bg-card px-2 py-1.5 text-sm text-foreground"
+            >
+              <option value="local">Local (FluxQ)</option>
+              <option value="cloud">Cloud (Imagen 3)</option>
+              <option value="auto">Auto (cloud → local)</option>
+            </select>
+          </div>
+          {form.imageProvider === "local" && (
+            <div>
+              <label className="mb-1 block text-[11px] font-medium text-muted-foreground">Model</label>
+              <select
+                value={form.imageModel}
+                onChange={(e) => update("imageModel", e.target.value as "flux-schnell" | "sdxl-turbo")}
+                className="w-full rounded-lg border border-border bg-card px-2 py-1.5 text-sm text-foreground"
+              >
+                <option value="flux-schnell">Flux Schnell</option>
+                <option value="sdxl-turbo">SDXL Turbo</option>
+              </select>
+            </div>
+          )}
         </div>
       )}
 
@@ -818,7 +876,11 @@ function GalleryStudio({ onClose, onCreated }: { onClose: () => void; onCreated:
         <p className="text-[11px] text-muted-foreground">
           {isVideo
             ? `Video: ${form.num_frames} frames at ${form.fps}fps = ${(form.num_frames / form.fps).toFixed(1)}s (768x512)`
-            : `Image: ${form.width}x${form.height}, ${form.steps} steps`}
+            : form.imageProvider === "cloud"
+            ? `Cloud (Imagen 3) · ${form.width}x${form.height}`
+            : form.imageProvider === "auto"
+            ? `Auto (cloud→local) · ${form.width}x${form.height}`
+            : `${form.imageModel} · ${form.width}x${form.height}, ${form.steps} steps`}
         </p>
         <button
           onClick={handleSubmit}

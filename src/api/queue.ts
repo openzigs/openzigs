@@ -328,6 +328,75 @@ export const createQueueRouter = ({ queueMaster, repo }: QueueRouterOptions): Ro
     res.json(status);
   });
 
+  // ── POST /image/generate — Direct cloud/auto image gen, saves to gallery ──
+  // Bypasses the queue; uses ImageGenService (cloud Imagen or local sidecar).
+  router.post("/image/generate", async (req, res) => {
+    try {
+      const {
+        prompt,
+        provider,
+        imageModel,
+        width,
+        height,
+        steps,
+        seed,
+      } = req.body as {
+        prompt?: string;
+        provider?: "cloud" | "local" | "auto";
+        imageModel?: string;
+        width?: number;
+        height?: number;
+        steps?: number;
+        seed?: number;
+      };
+
+      if (!prompt?.trim()) {
+        res.status(400).json({ error: "prompt is required" });
+        return;
+      }
+
+      const { ImageGenService } = await import("../video/generators/image-gen-service.js");
+      await ensureGalleryDir();
+      const userConfig = await ImageGenService.loadUserImageGenConfig();
+      const imageService = new ImageGenService({ outputDir: GALLERY_DIR, ...userConfig });
+      await imageService.initialize();
+
+      const result = await imageService.generateImage(prompt.trim(), {
+        provider: provider ?? "cloud",
+        localModel: imageModel,
+        width: width ?? 1024,
+        height: height ?? 1024,
+        steps,
+        seed,
+      });
+
+      const filename = path.basename(result.filePath);
+      const stats = await fs.stat(result.filePath);
+      const modelLabel = result.provider === "cloud" ? "imagen-3" : (imageModel ?? "flux-schnell");
+
+      const assetId = repo.createAsset({
+        type: "image",
+        filename,
+        filePath: result.filePath,
+        mimeType: "image/png",
+        fileSizeBytes: stats.size,
+        width: result.width || undefined,
+        height: result.height || undefined,
+        prompt: prompt.trim(),
+        model: modelLabel,
+        generationParams: { provider: result.provider, seed, generationTimeMs: result.generationTimeMs },
+        source: "generated",
+      });
+
+      logger.info(`[QueueAPI] Cloud image generated: ${filename} via ${result.provider} in ${result.generationTimeMs}ms → asset ${assetId}`);
+      res.status(201).json({ assetId, provider: result.provider, model: modelLabel, filename });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.warn(`[QueueAPI] Cloud image generate failed: ${msg}`);
+      res.status(500).json({ error: msg });
+    }
+  });
+
   // ── GET /nodes — Live status of all worker nodes ────────
   router.get("/nodes", async (_req, res) => {
     try {

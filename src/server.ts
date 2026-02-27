@@ -139,13 +139,22 @@ const taskEngine = new TaskEngine({ repository: taskRepository });
 const mediaQueueRepo = new MediaQueueRepository(db);
 mediaQueueRepo.migrate();
 
-// Read user config for videoGen network mode (mirrors imageGen local/network toggle)
+// Read user config for imageGen and videoGen network mode
+let imageGenNodeUrl = process.env.MAC_MINI_WORKER_URL ?? "http://localhost:5005";
+let imageGenNodeToken: string | undefined = process.env.MAC_MINI_WORKER_TOKEN;
 let videoGenNodeUrl = process.env.M2_PRO_WORKER_URL ?? "http://localhost:5007";
 let videoGenNodeToken = process.env.M2_PRO_WORKER_TOKEN;
 try {
   const cfgPath = path.join(os.homedir(), ".openzigs", "config.json");
   const raw = await fs.readFile(cfgPath, "utf-8");
   const userCfg = JSON.parse(raw) as Record<string, unknown>;
+  const ig = userCfg.imageGen as Record<string, unknown> | undefined;
+  if (ig?.mode === "network" && typeof ig.networkNodeUrl === "string" && ig.networkNodeUrl) {
+    imageGenNodeUrl = ig.networkNodeUrl;
+    if (typeof ig.networkNodeToken === "string" && ig.networkNodeToken) {
+      imageGenNodeToken = ig.networkNodeToken;
+    }
+  }
   const vg = userCfg.videoGen as Record<string, unknown> | undefined;
   if (vg?.mode === "network" && typeof vg.networkNodeUrl === "string" && vg.networkNodeUrl) {
     videoGenNodeUrl = vg.networkNodeUrl;
@@ -158,8 +167,8 @@ try {
 const queueMaster = new QueueMaster(mediaQueueRepo, {
   pollIntervalMs: Number(process.env.QUEUE_POLL_INTERVAL_MS ?? 3000),
   macMini: {
-    url: process.env.MAC_MINI_WORKER_URL ?? "http://localhost:5005",
-    token: process.env.MAC_MINI_WORKER_TOKEN,
+    url: imageGenNodeUrl,
+    token: imageGenNodeToken,
   },
   m2Pro: {
     url: videoGenNodeUrl,
