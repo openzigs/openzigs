@@ -4056,13 +4056,59 @@ FastAPI Python server for async video generation on Apple Silicon:
 | `/status` | GET | Returns `{ is_busy, loaded_model }` |
 | `/health` | GET | Health check |
 | `/generate` | POST | Accepts job payload, returns 202, runs generation in background |
+| `/unload` | POST | Unload model from VRAM (used by QueueMaster for cross-sidecar coordination) |
+| `/memory` | GET | Detailed memory diagnostics (RSS, system free, budget status) |
 
 **Video generation pipeline:**
 1. `clear_vram()` — `mx.metal.clear_cache()` + `gc.collect()`
-2. Load LTX-2 model (`AITRADER/ltx2-distilled-8bit-mlx`) via mlx-video
-3. Generate frames (max 97 = 4s @ 24fps)
+2. Load LTX-2 model via [CharafChnioune/mlx-video](https://github.com/CharafChnioune/mlx-video) fork with runtime quantization from BF16 base weights
+3. Generate frames using DISTILLED (fast) or DEV (photorealistic, CFG-guided) pipeline
 4. Encode with `h264_videotoolbox` (hardware) with `libx264` fallback
-5. POST result as base64 to callback URL
+5. Base64-encode result and POST to callback URL
+
+**Pipeline types:**
+
+| Pipeline | CFG | Steps | Stages | Quality | Speed |
+|---|---|---|---|---|---|
+| `distilled` | No | 8+3 | 2-stage (half-res → upsample → refine) | Good | Fast (~2 min for 33 frames) |
+| `dev` | Yes (4.5) | 15-25 | 1-stage with classifier-free guidance | Photorealistic | Slow (~10 min for 33 frames) |
+
+> **Note:** The DEV pipeline produces significantly higher quality output but requires more VRAM due to CFG doubling the compute per denoising step.
+
+### Apple Silicon Hardware Considerations (M2 Pro 32GB)
+
+> **System-specific:** This section documents the current hardware setup. Your deployment may differ.
+
+The M2 Pro has a known GPU kernel timeout issue (`kIOGPUCommandBufferCallbackErrorImpactingInteractivity`) confirmed by the MLX team ([mlx#1231](https://github.com/ml-explore/mlx/issues/1231)). This affects all M2-family chips but not M3+.
+
+**Workarounds applied:**
+- **Chunked `mx.eval()`** — The `generate.py` in `mlx-video` is patched at three locations to split large `mx.eval()` calls into small batches via `_chunked_mx_eval()`. Without this, loading the 7.5GB text encoder crashes the GPU.
+- **`MLX_MAX_OPS_PER_BUFFER=1`** — Limits Metal command buffer size to prevent GPU watchdog timeout
+- **`sysctl iogpu.wired_limit_mb=28672`** — Increases GPU wired memory limit (resets on reboot, applied automatically by `media-ctl.sh ltx start`)
+- **`eval_interval=1`** — DEV pipeline evaluates after every denoising step to keep Metal command buffers small
+- **`tiling="aggressive"`** — Spatial/temporal chunking during VAE decode to stay within GPU memory
+
+**Resolution limits on M2 Pro 32GB:**
+
+| Pipeline | Max Resolution | Max Frames | Peak Memory |
+|---|---|---|---|
+| `distilled` | 768×512 | 97 (4s) | ~20 GB |
+| `dev` | 512×320 | 33+ (1.4s+) | ~24 GB |
+| `dev` | 768×512 | — | Crashes (CFG attention exceeds GPU capacity) |
+
+**Environment variables (set in `~/ltx-worker/.env`):**
+
+| Variable | Default | Description |
+|---|---|---|
+| `MLX_MAX_OPS_PER_BUFFER` | `1` | Metal command buffer ops limit (M2 workaround) |
+| `MLX_CACHE_LIMIT_MB` | `4096` | MLX weight cache ceiling |
+| `MLX_WIRED_LIMIT_MB` | `20480` | MLX wired memory limit |
+| `LTX_TE_PARAM_EVAL_CHUNK` | `4` | Chunk size for text encoder `mx.eval()` |
+| `LTX_PARAM_EVAL_CHUNK` | `6` | Chunk size for transformer `mx.eval()` |
+| `LTX_EVAL_INTERVAL` | `8` | Eval interval for denoising steps |
+| `LTX_MODEL_REPO` | `AITRADER/ltx2-distilled-4bit-mlx` | Model repo (remapped to BF16 base for runtime quant) |
+| `LTX_TEXT_ENCODER_REPO` | `mlx-community/gemma-3-12b-it-qat-4bit` | Text encoder model |
+| `LTX_MEMORY_LIMIT_GB` | `28` | Process RSS memory limit |
 
 ### Video Generation Constants
 
@@ -4071,6 +4117,25 @@ FastAPI Python server for async video generation on Apple Silicon:
 | `MAX_VIDEO_FRAMES` | 97 | LTX-2 maximum frame count |
 | `MAX_VIDEO_DURATION_SEC` | 4 | Maximum video duration |
 | `DEFAULT_VIDEO_FPS` | 24 | Default frames per second |
+| `DEFAULT_WIDTH` | 768 | Default video width |
+| `DEFAULT_HEIGHT` | 512 | Default video height |
+
+### VRAM Coordination
+
+Both the FluxQ image sidecar (port 5005) and LTX video worker (port 5007) share the same M2 Pro unified memory. Only one model domain can be loaded at a time.
+
+**Coordination flow:**
+1. QueueMaster checks which model is loaded via `/status`
+2. Before dispatching, `ensureVramAvailable()` calls `/unload` on the competing sidecar
+3. Model loads lazily on first job (LTX) or via explicit `/model` POST (FluxQ)
+4. After job completion, worker unloads model and clears VRAM in the `finally` block
+5. Idle model reaper (5-minute timeout) unloads models that haven't been used
+
+**Management script:** `scripts/media-ctl.sh` provides unified control:
+- `media-ctl.sh switch flux` — Unload LTX, load FluxQ model
+- `media-ctl.sh switch ltx` — Unload FluxQ, LTX loads on next job
+- `media-ctl.sh ltx generate [pipeline] [prompt]` — Submit a test video generation job
+- `media-ctl.sh status` — Show status of both services
 
 ### VideoGenService (`src/video/generators/video-gen-service.ts`)
 

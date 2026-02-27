@@ -5294,15 +5294,79 @@ curl -X DELETE http://localhost:3000/api/queue/jobs/<job-id>
 
 ### Worker Sidecar Setup (M2 Pro)
 
-The video generation worker runs as a Python FastAPI sidecar on an M2 Pro Mac:
+The video generation worker runs as a Python FastAPI sidecar on Apple Silicon. It uses the [CharafChnioune/mlx-video](https://github.com/CharafChnioune/mlx-video) fork of mlx-video which supports both DISTILLED (fast) and DEV (photorealistic) pipelines.
+
+**Quick setup:**
 
 ```bash
+# Install from repo
 cd sidecars/worker
 pip install -r requirements.txt
 python server.py  # Starts on port 5007
+
+# Or use media-ctl.sh (recommended)
+./scripts/media-ctl.sh ltx start     # starts via launchctl + applies sysctl GPU tuning
+./scripts/media-ctl.sh ltx status    # check health
+./scripts/media-ctl.sh ltx generate  # quick test (9-frame DEV pipeline)
 ```
 
-The worker uses **LTX-2** (`AITRADER/ltx2-distilled-8bit-mlx`) for video generation with hardware-accelerated encoding via `h264_videotoolbox`. Maximum output is 97 frames (4 seconds at 24 FPS).
+**Dedicated install (recommended for separate hardware):**
+
+```bash
+# On the video generation Mac
+mkdir ~/ltx-worker && cd ~/ltx-worker
+python3 -m venv .venv && source .venv/bin/activate
+pip install fastapi uvicorn httpx
+pip install git+https://github.com/CharafChnioune/mlx-video.git
+
+# Copy server.py from repo
+cp /path/to/openzigs/sidecars/worker/server.py .
+
+# Create .env with M2-specific tuning (see below)
+cat > .env << 'EOF'
+MLX_MAX_OPS_PER_BUFFER=1
+MLX_CACHE_LIMIT_MB=4096
+MLX_WIRED_LIMIT_MB=20480
+LTX_TE_PARAM_EVAL_CHUNK=4
+LTX_PARAM_EVAL_CHUNK=6
+LTX_EVAL_INTERVAL=8
+LTX_TE_MAX_LENGTH=128
+LTX_CONNECTOR_HEADS_CHUNK=6
+PYTHONUNBUFFERED=1
+LTX_SECRET_TOKEN=your-secret-token-here
+LTX_MODEL_REPO=AITRADER/ltx2-distilled-4bit-mlx
+EOF
+```
+
+**Pipeline selection:**
+
+| Pipeline | Quality | Speed (33 frames) | Max Resolution (M2 Pro 32GB) |
+|---|---|---|---|
+| `distilled` | Good (stylized) | ~2 minutes | 768×512 |
+| `dev` | Photorealistic | ~10 minutes | 512×320 |
+
+The DEV pipeline uses classifier-free guidance (CFG) which produces significantly higher quality output but doubles VRAM usage. On M2 Pro 32GB, the DEV pipeline is limited to 512×320 resolution — 768×512 will crash due to GPU memory limits.
+
+> **M2 GPU Workaround:** M2-family chips have a known Metal GPU timeout bug. The `MLX_MAX_OPS_PER_BUFFER=1` env var and the chunked `mx.eval()` patches in mlx-video work around this. M3+ chips don't need these workarounds.
+
+**Managing services with media-ctl.sh:**
+
+```bash
+# Start/stop services
+./scripts/media-ctl.sh ltx start        # start LTX worker (with sysctl GPU tuning)
+./scripts/media-ctl.sh flux start       # start FluxQ image sidecar
+
+# Switch between image and video gen (shared VRAM)
+./scripts/media-ctl.sh switch ltx       # unload FluxQ, prepare for video
+./scripts/media-ctl.sh switch flux      # unload LTX, load FluxQ model
+
+# Test video generation
+./scripts/media-ctl.sh ltx generate dev "A cat in a garden, photorealistic"
+
+# Sync server.py from repo to install dir
+./scripts/media-ctl.sh ltx sync
+./scripts/media-ctl.sh ltx restart
+```
 
 Configure worker endpoints in `config/default.json` under the `queue` section:
 

@@ -59,6 +59,14 @@ export interface MediaJobPayload {
   voice?: string;
   /** Model override */
   model?: string;
+  /** Pipeline type: "distilled" (fast) or "dev" (photorealistic, CFG-guided) */
+  pipeline?: string;
+  /** Negative prompt for quality control */
+  negative_prompt?: string;
+  /** CFG guidance scale for DEV pipeline (default 4.5) */
+  cfg_scale?: number;
+  /** Number of denoising steps for DEV pipeline (default 20) */
+  num_inference_steps?: number;
 }
 
 // ── Stored Job ────────────────────────────────────────────────

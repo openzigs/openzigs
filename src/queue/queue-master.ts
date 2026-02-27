@@ -407,6 +407,10 @@ export class QueueMaster extends EventEmitter {
       fps: job.payload.fps ?? 24,
       model: job.requiredModel,
       callback_url: this.config.callbackUrl,
+      pipeline: job.payload.pipeline ?? "distilled",
+      negative_prompt: job.payload.negative_prompt,
+      cfg_scale: job.payload.cfg_scale,
+      num_inference_steps: job.payload.num_inference_steps,
     };
 
     if (job.payload.init_image) {

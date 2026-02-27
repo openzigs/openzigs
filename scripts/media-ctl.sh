@@ -258,6 +258,13 @@ flux_clear_cache() {
 
 ltx_start() {
   check_ltx_plist
+  # Apply sysctl GPU wired memory tuning (non-destructive, resets on reboot)
+  local current_wired
+  current_wired=$(sysctl -n iogpu.wired_limit_mb 2>/dev/null || echo "0")
+  if [[ "$current_wired" -lt 28672 ]]; then
+    info "Setting iogpu.wired_limit_mb=28672 (currently $current_wired) — may require sudo"
+    sudo sysctl iogpu.wired_limit_mb=28672 2>/dev/null || warn "Could not set sysctl — GPU timeouts may occur. Run: sudo sysctl iogpu.wired_limit_mb=28672"
+  fi
   info "Loading launchctl job: $LTX_PLIST_LABEL"
   launchctl load "$LTX_PLIST_PATH" 2>/dev/null || warn "Job may already be loaded"
   sleep 1
@@ -340,6 +347,52 @@ ltx_sync() {
   ok "LTX worker synced. Restart to apply: $0 ltx restart"
 }
 
+ltx_generate() {
+  load_ltx_env
+  local url
+  url=$(ltx_api_url)
+  local pipeline="${1:-dev}"
+  local prompt="${2:-A cat sitting on a windowsill watching rain fall outside, cozy atmosphere, warm lighting, photorealistic, cinematic}"
+  local job_id
+  job_id=$(python3 -c "import uuid; print(uuid.uuid4())")
+
+  info "Submitting test job — pipeline=$pipeline"
+  info "Prompt: \"$prompt\""
+
+  local response http_code body
+  response=$(curl -s -X POST "$url/generate" \
+    ${LTX_SECRET_TOKEN:+-H "Authorization: Bearer $LTX_SECRET_TOKEN"} \
+    -H "Content-Type: application/json" \
+    -d "{
+      \"job_id\": \"$job_id\",
+      \"type\": \"txt2video\",
+      \"prompt\": \"$prompt\",
+      \"width\": 512,
+      \"height\": 320,
+      \"num_frames\": 9,
+      \"fps\": 24,
+      \"model\": \"ltx-2\",
+      \"pipeline\": \"$pipeline\",
+      \"cfg_scale\": 4.5,
+      \"num_inference_steps\": 15,
+      \"negative_prompt\": \"worst quality, blurry, distorted\",
+      \"callback_url\": \"http://localhost:19999/noop\",
+      \"seed\": 42
+    }" \
+    -w "\n%{http_code}" 2>/dev/null)
+
+  http_code=$(echo "$response" | tail -1)
+  body=$(echo "$response" | head -n -1)
+
+  if [[ "$http_code" == "202" ]]; then
+    ok "Job accepted (id=$job_id)"
+    info "Watch progress: $0 ltx logs"
+    info "Video saves to $(ltx_api_url)/... when complete — or use tmp/test_ltx_video.py for full callback handling"
+  else
+    fail "HTTP $http_code — $body"
+  fi
+}
+
 # ── Unified Commands ─────────────────────────────────────────────────────────
 
 cmd_status_all() {
@@ -385,6 +438,16 @@ cmd_switch() {
   esac
 }
 
+# ── Unified sync ─────────────────────────────────────────────────────────────
+
+cmd_sync_all() {
+  info "Syncing FluxQ files..."
+  flux_sync
+  echo
+  info "Syncing LTX worker files..."
+  ltx_sync
+}
+
 cmd_help() {
   echo -e "${BOLD}media-ctl.sh${NC} — Unified Media Node Control"
   echo
@@ -400,16 +463,18 @@ cmd_help() {
   echo -e "    ${CYAN}flux sync${NC}            Sync server.py from repo → ~/fluxq-node"
   echo -e "    ${CYAN}flux clear-cache${NC}     Remove quantized weight cache"
   echo
-  echo -e "    ${CYAN}ltx start${NC}            Start LTX worker (launchctl)"
+  echo -e "    ${CYAN}ltx start${NC}            Start LTX worker (launchctl + sysctl GPU tuning)"
   echo -e "    ${CYAN}ltx stop${NC}             Stop LTX worker"
   echo -e "    ${CYAN}ltx restart${NC}          Restart LTX worker"
   echo -e "    ${CYAN}ltx status${NC}           LTX launchctl state + /health"
   echo -e "    ${CYAN}ltx logs${NC}             Tail LTX worker logs"
   echo -e "    ${CYAN}ltx unload${NC}           Unload model from VRAM"
   echo -e "    ${CYAN}ltx sync${NC}             Sync server.py from repo → ~/ltx-worker"
+  echo -e "    ${CYAN}ltx generate [p] [t]${NC} Quick test: pipeline (dev|distilled) + prompt"
   echo
   echo -e "  ${BOLD}Unified commands:${NC}"
   echo -e "    ${CYAN}status${NC}               Show status of both services"
+  echo -e "    ${CYAN}sync${NC}                 Sync both FluxQ and LTX server files from repo"
   echo -e "    ${CYAN}switch flux [model]${NC}  Unload LTX, load FluxQ model"
   echo -e "    ${CYAN}switch ltx${NC}           Unload FluxQ, LTX loads on first job"
   echo
@@ -419,6 +484,8 @@ cmd_help() {
   echo
   echo -e "  ${YELLOW}Note:${NC} Both services share M2 unified memory."
   echo -e "        Only one model can be loaded at a time."
+  echo -e "        Video gen supports 'distilled' (fast) and 'dev' (photorealistic) pipelines."
+  echo -e "        On M2 Pro 32GB, DEV pipeline max resolution is 512x320."
 }
 
 # ── Service Dispatch ──────────────────────────────────────────────────────────
@@ -452,19 +519,20 @@ dispatch_ltx() {
   local cmd="${1:-help}"
   shift || true
   case "$cmd" in
-    start)   ltx_start ;;
-    stop)    ltx_stop ;;
-    restart) ltx_restart ;;
-    status)  ltx_status ;;
-    logs)    ltx_logs ;;
-    unload)  ltx_unload ;;
-    sync)    ltx_sync ;;
+    start)    ltx_start ;;
+    stop)     ltx_stop ;;
+    restart)  ltx_restart ;;
+    status)   ltx_status ;;
+    logs)     ltx_logs ;;
+    unload)   ltx_unload ;;
+    sync)     ltx_sync ;;
+    generate) ltx_generate "$@" ;;
     help|--help|-h)
-      echo -e "Usage: $0 ltx <start|stop|restart|status|logs|unload|sync>"
+      echo -e "Usage: $0 ltx <start|stop|restart|status|logs|unload|sync|generate>"
       ;;
     *)
       warn "Unknown ltx command: $cmd"
-      echo -e "Usage: $0 ltx <start|stop|restart|status|logs|unload|sync>"
+      echo -e "Usage: $0 ltx <start|stop|restart|status|logs|unload|sync|generate>"
       exit 1
       ;;
   esac
@@ -479,6 +547,7 @@ case "$ARG1" in
   flux)    dispatch_flux "$@" ;;
   ltx)     dispatch_ltx "$@" ;;
   status)  cmd_status_all ;;
+  sync)    cmd_sync_all ;;
   switch)  cmd_switch "$@" ;;
   help|--help|-h) cmd_help ;;
   *)
