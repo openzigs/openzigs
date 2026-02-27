@@ -118,6 +118,11 @@ GOOGLE_APPLICATION_CREDENTIALS=/path/to/your/service-account-key.json
 # ── Optional: Social Brain ──
 # SOCIAL_WEBHOOK_VERIFY_TOKEN=your-random-verify-token
 
+# ── Media Queue (Distributed GPU Nodes) ──
+# Set to the primary Mac's LAN IP so remote worker nodes can POST callbacks back to it.
+# Auto-detected from os.networkInterfaces() at startup if unset.
+# QUEUE_CALLBACK_URL=http://192.168.1.50:3000/api/queue/complete
+
 # ── Server ──
 PORT=3000
 ```
@@ -195,6 +200,7 @@ The OpenZigs UI is a **Next.js** application with a navigation bar providing acc
 | **Social Brain** | `/social` | Unified social inbox, CRM, automation rules, and AI-powered auto-replies |
 | **Post-Actions** | `/admin/post-actions` | Create and manage custom post-action types for pipeline stages |
 | **Webhooks** | `/admin/webhooks` | Create and manage inbound webhooks for external integrations |
+| **Gallery** | `/gallery` | Asset gallery for generated images and videos; inline creation studio for txt2img, img2img, txt2video, img2video |
 | **Director** | `/director` | AI video production wizard, blog-to-YouTube, and timeline studio |
 | **Director Studio** | `/director/studio/[id]` | Full timeline editor with player preview, scene inspector, and drag-and-drop reordering |
 
@@ -5220,7 +5226,7 @@ The Chrome profile is now persistent at `~/.openzigs/chrome-profile/` (previousl
 
 ## Media Queue & Asset Gallery
 
-The Media Queue is a push-based job system for generating images and videos across distributed GPU nodes. The Asset Gallery provides a visual interface for browsing, filtering, and managing all generated and uploaded media.
+The Media Queue is a push-based distributed job system for generating images and videos across networked GPU nodes. Jobs are dispatched to workers asynchronously — the worker accepts the job immediately (HTTP 202) and POSTs a completion callback back to the primary Mac when done. The Asset Gallery provides a visual interface for browsing, filtering, and managing all generated and uploaded media.
 
 ### Gallery Page
 
@@ -5290,6 +5296,36 @@ curl http://localhost:3000/api/queue/assets
 **Delete a pending job:**
 ```bash
 curl -X DELETE http://localhost:3000/api/queue/jobs/<job-id>
+```
+
+### Configuration & Networking
+
+**Required for multi-Mac setups:** The primary Mac's LAN IP must be reachable by the worker nodes for completion callbacks. Set `QUEUE_CALLBACK_URL` in your `.env` to point at the primary Mac:
+
+```dotenv
+# LAN IP of the primary openzigs machine — required so remote workers
+# can POST their completion callback back across the LAN.
+# Without this, the server auto-detects the LAN IP at startup, but
+# setting it explicitly is more reliable in multi-NIC environments.
+QUEUE_CALLBACK_URL=http://192.168.1.50:3000/api/queue/complete
+```
+
+If unset, the server auto-detects the first non-loopback IPv4 via `os.networkInterfaces()` and logs the resolved URL at startup.
+
+**Polling fallback for asymmetric networks:** If callback delivery fails (e.g., router AP/client isolation where the worker Mac cannot reach the primary Mac), the system automatically falls back to polling. Every tick, `QueueMaster` polls `GET /job-result/{job_id}` on any worker with a job dispatched more than 3 minutes ago. FluxQ stores results in memory for up to 100 jobs; results are deleted after the primary Mac acknowledges them. This means jobs will always complete even if push callbacks are blocked at the network layer.
+
+Configure worker endpoints in `config/default.json` under the `queue` section:
+
+```json
+{
+  "queue": {
+    "nodes": {
+      "mac-mini": { "host": "http://192.168.1.61:5005", "token": "<fluxq-token>" },
+      "m2-pro":   { "host": "http://localhost:5007",    "token": "<ltx-token>" }
+    },
+    "tickIntervalMs": 3000
+  }
+}
 ```
 
 ### Worker Sidecar Setup (M2 Pro)
@@ -5368,16 +5404,4 @@ The DEV pipeline uses classifier-free guidance (CFG) which produces significantl
 ./scripts/media-ctl.sh ltx restart
 ```
 
-Configure worker endpoints in `config/default.json` under the `queue` section:
-
-```json
-{
-  "queue": {
-    "nodes": {
-      "mac-mini": { "host": "http://localhost:5005" },
-      "m2-pro": { "host": "http://localhost:5007" }
-    },
-    "tickIntervalMs": 3000
-  }
-}
-```
+See [Configuration & Networking](#configuration--networking) above for how to configure worker endpoints and the callback URL.
