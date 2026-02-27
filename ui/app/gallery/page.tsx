@@ -559,14 +559,29 @@ const MODE_INFO: Record<StudioMode, { label: string; desc: string; icon: React.R
 };
 
 function GalleryStudio({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
-  const [form, setForm] = useState<StudioFormState>(DEFAULT_FORM);
+  const imageGenConfigQuery = useQuery({
+    queryKey: ["admin-image-gen-config"],
+    queryFn: () => fetchJson<{ mode: "local" | "network"; networkNodeUrl: string; hasToken: boolean }>("/api/admin/image-gen/config"),
+  });
+
+  const imageGenMode = imageGenConfigQuery.data?.mode ?? "local";
+  // When admin switches mode, reset provider default and clear turbo if needed
+  const [form, setForm] = useState<StudioFormState>(() => ({ ...DEFAULT_FORM, imageProvider: "local" }));
   const [submitting, setSubmitting] = useState(false);
+
+  // If admin mode is network/cloud, SDXL Turbo is unavailable — auto-reset model
+  const turboAvailable = imageGenMode === "local" && form.imageProvider === "local";
+  if (form.imageModel === "sdxl-turbo" && !turboAvailable) {
+    setForm((prev) => ({ ...prev, imageModel: "flux-schnell" }));
+  }
 
   const update = <K extends keyof StudioFormState>(key: K, value: StudioFormState[K]) =>
     setForm((prev) => ({ ...prev, [key]: value }));
 
   const isVideo = form.mode === "txt2video" || form.mode === "img2video";
   const needsImage = form.mode === "img2img" || form.mode === "img2video";
+
+  const fluxQLabel = imageGenMode === "network" ? "FluxQ (Network — via Admin)" : "FluxQ (Local)";
 
   const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -728,15 +743,21 @@ function GalleryStudio({ onClose, onCreated }: { onClose: () => void; onCreated:
       {!isVideo && (
         <div className="mb-4 grid grid-cols-2 gap-3">
           <div>
-            <label className="mb-1 block text-[11px] font-medium text-muted-foreground">Provider</label>
+            <label className="mb-1 flex items-center gap-2 text-[11px] font-medium text-muted-foreground">
+              Provider
+              {imageGenConfigQuery.isLoading && <span className="text-[10px] text-muted-foreground/60">(loading...)</span>}
+              {imageGenMode === "network" && form.imageProvider === "local" && (
+                <span className="rounded bg-sky-500/10 px-1.5 py-0.5 text-[9px] font-semibold text-sky-600 dark:text-sky-400">network node</span>
+              )}
+            </label>
             <select
               value={form.imageProvider}
               onChange={(e) => update("imageProvider", e.target.value as "local" | "cloud" | "auto")}
               className="w-full rounded-lg border border-border bg-card px-2 py-1.5 text-sm text-foreground"
             >
-              <option value="local">Local (FluxQ)</option>
+              <option value="local">{fluxQLabel}</option>
               <option value="cloud">Cloud (Imagen 3)</option>
-              <option value="auto">Auto (cloud → local)</option>
+              <option value="auto">Auto (cloud → FluxQ)</option>
             </select>
           </div>
           {form.imageProvider === "local" && (
@@ -748,7 +769,7 @@ function GalleryStudio({ onClose, onCreated }: { onClose: () => void; onCreated:
                 className="w-full rounded-lg border border-border bg-card px-2 py-1.5 text-sm text-foreground"
               >
                 <option value="flux-schnell">Flux Schnell</option>
-                <option value="sdxl-turbo">SDXL Turbo</option>
+                {turboAvailable && <option value="sdxl-turbo">SDXL Turbo (local only)</option>}
               </select>
             </div>
           )}
