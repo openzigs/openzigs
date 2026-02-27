@@ -117,6 +117,24 @@ _preload_at_startup: bool = False
 _quantization: Optional[int] = 4    # MLX quantization bits: 4, 8, or None
 _generating: bool = False           # True while an async background generation is running
 
+# ── Job Result Store ───────────────────────────────────────────
+# In-memory ring buffer of completed/failed job results.  When the callback
+# POST fails (e.g. "No route to host"), QueueMaster can poll GET /job-result/{id}
+# to pick up the result instead.  Capped at _MAX_STORED_RESULTS entries.
+import threading as _threading
+_MAX_STORED_RESULTS = 100
+_job_results: dict[str, dict] = {}       # job_id → payload (same shape as callback body)
+_job_results_lock = _threading.Lock()
+
+def _store_result(job_id: str, payload: dict) -> None:
+    """Store a job result for later polling.  Evicts oldest when full."""
+    with _job_results_lock:
+        _job_results[job_id] = payload
+        # Evict oldest entries if over cap
+        while len(_job_results) > _MAX_STORED_RESULTS:
+            oldest = next(iter(_job_results))
+            del _job_results[oldest]
+
 
 def _create_mflux_model(model_key: str) -> Any:
     """Instantiate an MFLUX model for the given registry key."""
@@ -223,6 +241,8 @@ def _post_callback(job_id: str, callback_url: str, payload: dict) -> None:
     urllib is safe here.  Retries up to 3 times with exponential back-off to
     survive transient network hiccups (e.g. ARP refresh, Wi-Fi roaming).
     """
+    # Store result for poll-based retrieval (fallback when callback fails)
+    _store_result(job_id, payload)
     body = json.dumps(payload).encode("utf-8")
     max_retries = 3
     for attempt in range(1, max_retries + 1):
@@ -682,6 +702,18 @@ app = FastAPI(
     version="3.0.0",
     lifespan=lifespan,
 )
+
+
+@app.get("/job-result/{job_id}")
+async def get_job_result(job_id: str):
+    """Poll for a completed job result.  Returns the same payload that would
+    have been POSTed to the callback URL.  Returns 404 if the job is unknown
+    or still in progress.  The result is deleted after retrieval (ack)."""
+    with _job_results_lock:
+        result = _job_results.pop(job_id, None)
+    if result is None:
+        raise HTTPException(status_code=404, detail="No result for this job")
+    return result
 
 
 @app.get("/health", response_model=HealthResponse)

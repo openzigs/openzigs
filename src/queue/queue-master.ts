@@ -284,11 +284,62 @@ export class QueueMaster extends EventEmitter {
   async tick(): Promise<void> {
     try {
       this.recoverStuckJobs();
+      await this.pollForStaleResults();
       await this.processNode("mac-mini");
       await this.processNode("m2-pro");
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       logger.warn(`[QueueMaster] Tick error: ${msg}`);
+    }
+  }
+
+  // ── Result Polling Fallback ───────────────────────────────
+
+  /**
+   * Poll workers for results of dispatched jobs that have been running longer
+   * than expected.  This recovers results when the callback POST fails
+   * (e.g. "No route to host" due to network asymmetry).
+   *
+   * FluxQ exposes GET /job-result/{id} which returns (and deletes) the stored
+   * result payload.  We only poll after a grace period (3 min for images) to
+   * avoid hammering the worker during normal generation.
+   */
+  private async pollForStaleResults(): Promise<void> {
+    const graceMs = 3 * 60 * 1000; // 3 minutes — images take ~25-100s + callback retries
+    const dispatched = this.repo.listJobs({ status: "dispatched", limit: 20 });
+    const cutoff = Date.now() - graceMs;
+
+    for (const job of dispatched) {
+      if (!job.dispatchedAt || job.dispatchedAt.getTime() > cutoff) continue;
+
+      const node = job.targetNode as TargetNode;
+      try {
+        const nodeConfig = await this.getLiveNodeConfig(node);
+        const headers: Record<string, string> = {};
+        if (nodeConfig.token) headers["Authorization"] = `Bearer ${nodeConfig.token}`;
+
+        const res = await fetch(`${nodeConfig.url}/job-result/${job.id}`, {
+          headers,
+          signal: AbortSignal.timeout(5_000),
+        });
+
+        if (res.status === 404) continue; // still in progress or unknown
+        if (!res.ok) continue;
+
+        const result = (await res.json()) as {
+          job_id?: string;
+          status?: string;
+          media_base64?: string;
+          media_type?: string;
+          metadata?: Record<string, unknown>;
+          error?: string;
+        };
+
+        logger.info(`[QueueMaster] Poll recovered result for job ${job.id} from ${node}`);
+        await this.handleJobCompletion(job.id, result);
+      } catch {
+        // Worker unreachable — skip, will retry next tick
+      }
     }
   }
 
