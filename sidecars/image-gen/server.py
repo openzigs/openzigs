@@ -149,6 +149,14 @@ def _unload_model() -> None:
         del _model
         _model = None
         gc.collect()
+        # MLX holds a Metal memory pool that Python GC knows nothing about.
+        # clear_cache() flushes it so unified memory is actually returned to the OS.
+        try:
+            import mlx.core as mx
+            mx.metal.clear_cache()
+            log.info(f"MLX Metal cache cleared (active={mx.metal.get_active_memory()//1024//1024}MB, cache={mx.metal.get_cache_memory()//1024//1024}MB)")
+        except Exception as e:
+            log.warning(f"Could not clear MLX Metal cache: {e}")
         log.info(f"Model '{model}' unloaded")
 
     _model_loaded = False
