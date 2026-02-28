@@ -66,12 +66,13 @@ export const createGalleryRouter = ({ copilot, toolRegistry }: GalleryRouterOpti
       const seed = typeof body.seed === "number" ? body.seed : undefined;
 
       const isVideo = mode === "txt2video" || mode === "img2video";
+      const isMusic = mode === "txt2music";
 
       // Build the LLM system prompt for prompt enhancement
-      const systemContent = buildSystemPrompt(model, mode, isVideo);
+      const systemContent = buildSystemPrompt(model, mode, isVideo, isMusic);
 
       // Build the user message
-      const userMessage = buildUserMessage(rawPrompt, model, mode, params, isVideo, seed);
+      const userMessage = buildUserMessage(rawPrompt, model, mode, params, isVideo, isMusic, seed);
 
       // Collect only the web-search tool for the LLM to use
       const webSearchTool = toolRegistry.getToolDefinition("web-search");
@@ -111,8 +112,30 @@ export const createGalleryRouter = ({ copilot, toolRegistry }: GalleryRouterOpti
 
 // ── Prompt Construction ─────────────────────────────────────
 
-function buildSystemPrompt(model: string, mode: string, isVideo: boolean): string {
-  const modelGuidance = getModelGuidance(model, isVideo);
+function buildSystemPrompt(model: string, mode: string, isVideo: boolean, isMusic: boolean): string {
+  const modelGuidance = getModelGuidance(model, isVideo, isMusic);
+
+  if (isMusic) {
+    return `You are an expert AI prompt engineer for music generation models.
+Your job is to take a user's rough music description and enhance it into a highly detailed, optimized caption for the ACE-Step music generation model.
+
+## Target Model: ${model}
+## Generation Mode: ${mode}
+
+${modelGuidance}
+
+## Rules
+1. If the user mentions a specific genre, artist style, or musical reference, use web search to find accurate musical characteristics to enrich the prompt.
+2. Preserve the user's core musical intent — do not change the genre or mood they want.
+3. Add rich musical details: tempo/BPM, key signature, instrumentation, arrangement, production style, mood, energy level.
+4. Use ACE-Step's tag format: include genre tags, mood descriptors, and instrument specifications.
+5. If a seed is provided, keep it unless you have a specific reason to change it.
+6. Respond ONLY with a bare JSON object — no markdown, no code fences, no explanation:
+
+{"thinking": "One sentence explaining your enhancement choices", "enhanced_prompt": "The enhanced music generation caption", "suggested_parameters": {"duration_seconds": 30}}
+
+Only include parameters in suggested_parameters that should change from current values.`;
+  }
 
   return `You are an expert AI prompt engineer for image and video generation models.
 Your job is to take a user's rough prompt and enhance it into a highly detailed, optimized prompt for the target model.
@@ -143,7 +166,23 @@ Choose width/height based on the subject matter:
 Only include parameters in suggested_parameters that should change from the current values. Omit seed unless you have a specific suggestion.`;
 }
 
-function getModelGuidance(model: string, isVideo: boolean): string {
+function getModelGuidance(model: string, isVideo: boolean, isMusic: boolean): string {
+  if (isMusic) {
+    return `## ACE-Step Music Generation Prompting Guide
+- Use descriptive, tag-style captions combining genre, mood, instruments, and production style.
+- Format: "genre tags, mood descriptors, instrument list, production style, tempo/BPM"
+- Example: "electronic, synthwave, retro, energetic, driving bassline, arpeggiated synths, 80s drums, 128 BPM"
+- Example: "acoustic folk, warm, gentle, fingerpicked guitar, soft vocals, campfire atmosphere, 90 BPM"
+- Include tempo (BPM) when possible — it significantly improves generation quality.
+- Specify key instruments: guitar, piano, synth, drums, bass, strings, brass, etc.
+- Add mood/energy: upbeat, melancholic, ethereal, aggressive, peaceful, cinematic.
+- Add production style: lo-fi, polished, raw, ambient, orchestral, minimalist.
+- For vocal tracks, include vocal style: male/female, raspy, smooth, choir, whispered.
+- For instrumental tracks, explicitly note "instrumental, no vocals".
+- Duration: 30s (default), up to 300s. Turbo model works best ≤60s.
+- Do NOT include lyrics in the caption — lyrics are a separate input field.`;
+  }
+
   if (isVideo) {
     return `## LTX-Video Prompting Guide
 - Use vivid, cinematic language describing camera movement, lighting, and atmosphere.
@@ -204,12 +243,15 @@ function buildUserMessage(
   mode: string,
   params: EnhancePromptRequest["parameters"],
   isVideo: boolean,
+  isMusic: boolean,
   seed?: number,
 ): string {
   const wordCount = rawPrompt.trim().split(/\s+/).length;
   const complexity = wordCount <= 5 ? "very simple (≤5 words)" : wordCount <= 15 ? "moderate (6–15 words)" : `detailed (${wordCount} words)`;
 
-  const paramSummary = isVideo
+  const paramSummary = isMusic
+    ? `Duration: ${(params as Record<string, unknown>).duration_seconds ?? 30}s${seed != null ? `, Seed: ${seed}` : ", Seed: (none)"}`
+    : isVideo
     ? `Frames: ${params.num_frames ?? 97}, FPS: ${params.fps ?? 24}, Resolution: 768×512`
     : `Resolution: ${params.width ?? 1024}×${params.height ?? 1024}, Steps: ${params.steps ?? 4}, Guidance: ${params.guidance ?? 3.5}${seed != null ? `, Seed: ${seed}` : ", Seed: (none)"}`;
 

@@ -195,6 +195,12 @@ export type ImageGenAppConfig = {
   networkNodeToken?: string;
 };
 
+export type MusicGenAppConfig = {
+  mode?: "local" | "network";
+  networkNodeUrl?: string;
+  networkNodeToken?: string;
+};
+
 export type SocialBrainPlatformConnectionConfig = {
   enabled?: boolean;
   mode?: "webhook" | "polling";
@@ -234,6 +240,7 @@ export type AppConfig = {
   copilot?: CopilotConfig;
   presenter?: PresenterAppConfig;
   imageGen?: ImageGenAppConfig;
+  musicGen?: MusicGenAppConfig;
   socialBrain?: SocialBrainAppConfig;
   sentinel?: SentinelAppConfig;
   knowledge?: KnowledgeAppConfig;

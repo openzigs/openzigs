@@ -200,7 +200,7 @@ The OpenZigs UI is a **Next.js** application with a navigation bar providing acc
 | **Social Brain** | `/social` | Unified social inbox, CRM, automation rules, and AI-powered auto-replies |
 | **Post-Actions** | `/admin/post-actions` | Create and manage custom post-action types for pipeline stages |
 | **Webhooks** | `/admin/webhooks` | Create and manage inbound webhooks for external integrations |
-| **Gallery** | `/gallery` | Asset gallery for generated images and videos; inline creation studio for txt2img, img2img, txt2video, img2video |
+| **Gallery** | `/gallery` | Asset gallery for generated images, videos, and audio; inline creation studio for txt2img, img2img, txt2video, img2video, txt2music |
 | **Director** | `/director` | AI video production wizard, blog-to-YouTube, and timeline studio |
 | **Director Studio** | `/director/studio/[id]` | Full timeline editor with player preview, scene inspector, and drag-and-drop reordering |
 
@@ -5226,7 +5226,7 @@ The Chrome profile is now persistent at `~/.openzigs/chrome-profile/` (previousl
 
 ## Media Queue & Asset Gallery
 
-The Media Queue is a push-based distributed job system for generating images and videos across networked GPU nodes. Jobs are dispatched to workers asynchronously — the worker accepts the job immediately (HTTP 202) and POSTs a completion callback back to the primary Mac when done. The Asset Gallery provides a visual interface for browsing, filtering, and managing all generated and uploaded media.
+The Media Queue is a push-based distributed job system for generating images, videos, and music across networked GPU nodes. Jobs are dispatched to workers asynchronously — the worker accepts the job immediately (HTTP 202) and POSTs a completion callback back to the primary Mac when done. The Asset Gallery provides a visual interface for browsing, filtering, and managing all generated and uploaded media.
 
 ### Gallery Page
 
@@ -5240,7 +5240,7 @@ Navigate to **Gallery** in the top navigation bar. The page shows:
 
 ### Gallery Studio
 
-Click **Create Asset** on the Gallery page to open the inline creation studio. Four generation modes are available:
+Click **Create Asset** on the Gallery page to open the inline creation studio. Five generation modes are available:
 
 | Mode | Description | Key Controls |
 |---|---|---|
@@ -5248,6 +5248,7 @@ Click **Create Asset** on the Gallery page to open the inline creation studio. F
 | **Image → Image** | Transform an uploaded image with a prompt | Source image upload, Strength (0–1), Steps, Guidance |
 | **Text → Video** | Generate a 4-second video clip from a text prompt | Frames (max 97), FPS, computed Duration display |
 | **Image → Video** | Animate an uploaded image with a motion prompt | Source image upload, Frames, FPS, Duration |
+| **Text → Music** | Generate music from a text description | Duration (10–300s), Instrumental toggle, Lyrics textarea, Seed |
 
 All jobs are submitted to the queue via **Submit to Queue** and processed by the appropriate worker node.
 
@@ -5277,6 +5278,20 @@ curl -X POST http://localhost:3000/api/queue/jobs \
       "prompt": "slow dolly shot of a forest at dawn",
       "num_frames": 97, "fps": 24,
       "width": 768, "height": 512
+    }
+  }'
+```
+
+**Submit a text-to-music job:**
+```bash
+curl -X POST http://localhost:3000/api/queue/jobs \
+  -H "Content-Type: application/json" \
+  -d '{
+    "type": "txt2music",
+    "payload": {
+      "prompt": "Dreamy lo-fi hip hop beat with vinyl crackle and soft piano chords, 90 BPM",
+      "duration_seconds": 30,
+      "instrumental": true
     }
   }'
 ```
@@ -5405,3 +5420,53 @@ The DEV pipeline uses classifier-free guidance (CFG) which produces significantl
 ```
 
 See [Configuration & Networking](#configuration--networking) above for how to configure worker endpoints and the callback URL.
+
+### Music Generation Sidecar Setup (ACE-Step 1.5)
+
+The music generation sidecar runs as a Python HTTP server wrapping [ACE-Step 1.5](https://github.com/ACE-Step/ACE-Step-1.5) for local AI music generation. It supports Apple Silicon (MPS/Metal) and CUDA.
+
+**Quick setup:**
+
+```bash
+cd sidecars/music
+
+# Create virtual environment (Python 3.11.x recommended)
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+
+# Install ACE-Step
+pip install git+https://github.com/clockworksquirrel/ace-step-apple-silicon.git
+
+# Start the sidecar (default port 5009)
+python server.py
+```
+
+**Environment variables:**
+
+| Variable | Default | Description |
+|---|---|---|
+| `PORT` | `5009` | HTTP server port |
+| `MUSIC_GEN_AUTH_TOKEN` | _(none)_ | Bearer token for API authentication |
+| `ACESTEP_REPO` | `ACE-Step/ACE-Step-1.5` | Model repository |
+
+**Admin configuration:**
+
+Navigate to **Admin → Music Generation Node** to configure:
+
+- **Local Process** — Sidecar runs on the same machine (localhost:5009)
+- **Network Node** — Point to a remote machine running the sidecar (URL + auth token)
+- **Test Connection** — Verify the sidecar is reachable and returns model/device info
+
+**Music prompt tips:**
+
+- Include genre, BPM, instruments, and mood: `"Upbeat electronic dance track, 128 BPM, energetic synth leads, punchy drums"`
+- Use the **AI Enhance** button in Gallery Studio to refine prompts for ACE-Step's tag-based format
+- For vocal tracks, add structured lyrics with `[Verse]`, `[Chorus]`, `[Bridge]` tags
+- Check the **Instrumental** toggle for pure instrumental output
+
+**Model variants:**
+
+| Model | Steps | Speed (30s, M2 Pro) | Quality |
+|---|---|---|---|
+| `acestep-v15-turbo` | 8 | ~45 seconds | Good (fast iteration) |
+| `acestep-v15-sft` | 32 | ~3 minutes | High (final output) |

@@ -140,7 +140,7 @@ const taskEngine = new TaskEngine({ repository: taskRepository });
 const mediaQueueRepo = new MediaQueueRepository(db);
 mediaQueueRepo.migrate();
 
-// Read user config for imageGen and videoGen network mode
+// Read user config for imageGen, videoGen, and musicGen network mode
 let imageGenNodeUrl = process.env.MAC_MINI_WORKER_URL ?? "http://localhost:5005";
 let imageGenNodeToken: string | undefined = process.env.MAC_MINI_WORKER_TOKEN;
 let videoGenNodeUrl = process.env.M2_PRO_WORKER_URL ?? "http://localhost:5007";

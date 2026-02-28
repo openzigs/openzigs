@@ -5,7 +5,7 @@
 
 // ── Job Types ─────────────────────────────────────────────────
 
-export type MediaJobType = "txt2img" | "img2img" | "txt2video" | "img2video" | "tts";
+export type MediaJobType = "txt2img" | "img2img" | "txt2video" | "img2video" | "tts" | "txt2music";
 
 export type MediaJobStatus = "pending" | "dispatched" | "processing" | "complete" | "failed";
 
@@ -20,6 +20,7 @@ export function targetNodeForJobType(type: MediaJobType): TargetNode {
     case "txt2video":
     case "img2video":
     case "tts":
+    case "txt2music":
       return "m2-pro";
   }
 }
@@ -36,6 +37,8 @@ export function defaultModelForJobType(type: MediaJobType): string {
       return "ltx-2";
     case "tts":
       return "f5-tts";
+    case "txt2music":
+      return "ace-step";
   }
 }
 
@@ -68,6 +71,12 @@ export interface MediaJobPayload {
   cfg_scale?: number;
   /** Number of denoising steps for DEV pipeline (default 20) */
   num_inference_steps?: number;
+  /** Duration in seconds for music generation (ACE-Step) */
+  duration_seconds?: number;
+  /** Lyrics text for vocal music generation */
+  lyrics?: string;
+  /** Whether to generate instrumental-only (no vocals) */
+  instrumental?: boolean;
 }
 
 // ── Stored Job ────────────────────────────────────────────────

@@ -963,7 +963,7 @@ function QueueJobsPanel({
 
 // ── Gallery Studio (Sub-Issue #329) ─────────────────────────
 
-type StudioMode = "txt2img" | "img2img" | "txt2video" | "img2video";
+type StudioMode = "txt2img" | "img2img" | "txt2video" | "img2video" | "txt2music";
 
 interface StudioFormState {
   mode: StudioMode;
@@ -980,6 +980,9 @@ interface StudioFormState {
   initImagePreview: string;
   imageProvider: "local" | "cloud" | "auto";
   imageModel: "flux-schnell" | "flux-dev" | "flux-kontext" | "sdxl-turbo";
+  duration_seconds: number;
+  lyrics: string;
+  instrumental: boolean;
 }
 
 const DEFAULT_FORM: StudioFormState = {
@@ -997,6 +1000,9 @@ const DEFAULT_FORM: StudioFormState = {
   initImagePreview: "",
   imageProvider: "local",
   imageModel: "flux-schnell",
+  duration_seconds: 30,
+  lyrics: "",
+  instrumental: false,
 };
 
 const MODE_INFO: Record<StudioMode, { label: string; desc: string; icon: React.ReactNode }> = {
@@ -1004,6 +1010,7 @@ const MODE_INFO: Record<StudioMode, { label: string; desc: string; icon: React.R
   img2img: { label: "Image → Image", desc: "Transform an existing image with a text prompt", icon: <ImageIcon className="h-4 w-4" /> },
   txt2video: { label: "Text → Video", desc: "4-second cinematic B-roll from text", icon: <Video className="h-4 w-4" /> },
   img2video: { label: "Image → Video", desc: "Animate an image into 4-second video", icon: <Video className="h-4 w-4" /> },
+  txt2music: { label: "Text → Music", desc: "Generate music from a text description", icon: <Music className="h-4 w-4" /> },
 };
 
 function GalleryStudio({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
@@ -1036,6 +1043,7 @@ function GalleryStudio({ onClose, onCreated }: { onClose: () => void; onCreated:
     setForm((prev) => ({ ...prev, [key]: value }));
 
   const isVideo = form.mode === "txt2video" || form.mode === "img2video";
+  const isMusic = form.mode === "txt2music";
   const needsImage = form.mode === "img2img" || form.mode === "img2video";
 
   const fluxQLabel = imageGenMode === "network" ? "FluxQ (Network — via Admin)" : "FluxQ (Local)";
@@ -1058,23 +1066,26 @@ function GalleryStudio({ onClose, onCreated }: { onClose: () => void; onCreated:
           num_frames?: number;
           fps?: number;
           seed?: number;
+          duration_seconds?: number;
         };
       }>("/api/gallery/enhance-prompt", {
         method: "POST",
         body: JSON.stringify({
           raw_prompt: form.prompt.trim(),
-          model: isVideo ? "ltx-2" : form.imageModel,
+          model: isMusic ? "ace-step" : isVideo ? "ltx-2" : form.imageModel,
           mode: form.mode,
           seed: form.seed ? parseInt(form.seed, 10) : undefined,
-          parameters: {
-            width: form.width,
-            height: form.height,
-            steps: form.steps,
-            guidance: form.guidance,
-            num_frames: form.num_frames,
-            fps: form.fps,
-            strength: form.strength,
-          },
+          parameters: isMusic
+            ? { duration_seconds: form.duration_seconds }
+            : {
+                width: form.width,
+                height: form.height,
+                steps: form.steps,
+                guidance: form.guidance,
+                num_frames: form.num_frames,
+                fps: form.fps,
+                strength: form.strength,
+              },
         }),
       });
 
@@ -1087,6 +1098,7 @@ function GalleryStudio({ onClose, onCreated }: { onClose: () => void; onCreated:
       if (sp.num_frames != null) updates.num_frames = sp.num_frames;
       if (sp.fps != null) updates.fps = sp.fps;
       if (sp.seed != null) updates.seed = String(sp.seed);
+      if (sp.duration_seconds != null) updates.duration_seconds = sp.duration_seconds;
 
       setForm((prev) => ({ ...prev, ...updates }));
       showToast(result.thinking ? `✨ ${result.thinking}` : "Prompt enhanced!", "success");
@@ -1118,6 +1130,31 @@ function GalleryStudio({ onClose, onCreated }: { onClose: () => void; onCreated:
 
     setSubmitting(true);
     try {
+      // Music generation — always goes through queue
+      if (isMusic) {
+        const payload: Record<string, unknown> = {
+          prompt: form.prompt.trim(),
+          duration_seconds: form.duration_seconds,
+          instrumental: form.instrumental,
+        };
+        if (form.lyrics.trim()) {
+          payload.lyrics = form.lyrics.trim();
+        }
+        if (form.seed) {
+          payload.seed = parseInt(form.seed, 10);
+        }
+
+        await fetchJson("/api/queue/jobs", {
+          method: "POST",
+          body: JSON.stringify({ type: "txt2music", payload, model: "ace-step" }),
+        });
+
+        showToast("Music generation job submitted!", "success");
+        onCreated();
+        setForm(DEFAULT_FORM);
+        return;
+      }
+
       // Cloud/auto image generation — direct route, bypasses queue
       if (!isVideo && (form.imageProvider === "cloud" || form.imageProvider === "auto")) {
         await fetchJson("/api/queue/image/generate", {
@@ -1203,7 +1240,7 @@ function GalleryStudio({ onClose, onCreated }: { onClose: () => void; onCreated:
       </div>
 
       {/* Mode Selector */}
-      <div className="mb-4 grid grid-cols-4 gap-2">
+      <div className="mb-4 grid grid-cols-5 gap-2">
         {(Object.entries(MODE_INFO) as [StudioMode, typeof MODE_INFO["txt2img"]][]).map(([mode, info]) => (
           <button
             key={mode}
@@ -1222,6 +1259,11 @@ function GalleryStudio({ onClose, onCreated }: { onClose: () => void; onCreated:
             {(mode === "txt2video" || mode === "img2video") && (
               <span className="mt-1 inline-block rounded bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-semibold text-amber-600 dark:text-amber-400">
                 4s cinematic B-roll
+              </span>
+            )}
+            {mode === "txt2music" && (
+              <span className="mt-1 inline-block rounded bg-violet-500/10 px-1.5 py-0.5 text-[9px] font-semibold text-violet-600 dark:text-violet-400">
+                ACE-Step 1.5
               </span>
             )}
           </button>
@@ -1246,9 +1288,57 @@ function GalleryStudio({ onClose, onCreated }: { onClose: () => void; onCreated:
           onChange={(e) => update("prompt", e.target.value)}
           className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-foreground"
           rows={3}
-          placeholder={isVideo ? "A cinematic aerial shot of a coastal city at golden hour..." : "A photorealistic portrait of a futuristic city skyline at dusk..."}
+          placeholder={isMusic ? "Upbeat electronic dance track, 128 BPM, energetic synth leads, punchy drums..." : isVideo ? "A cinematic aerial shot of a coastal city at golden hour..." : "A photorealistic portrait of a futuristic city skyline at dusk..."}
         />
       </div>
+
+      {/* Music-specific controls */}
+      {isMusic && (
+        <>
+          <div className="mb-4 grid grid-cols-3 gap-3">
+            <div>
+              <label className="mb-1 block text-[11px] font-medium text-muted-foreground">Duration (seconds)</label>
+              <input
+                type="number"
+                value={form.duration_seconds}
+                onChange={(e) => update("duration_seconds", Math.min(Math.max(parseInt(e.target.value) || 10, 10), 300))}
+                min={10}
+                max={300}
+                className="w-full rounded-lg border border-border bg-card px-2 py-1.5 text-sm text-foreground"
+              />
+            </div>
+            <div className="flex items-end">
+              <label className="flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-1.5 text-sm cursor-pointer hover:bg-muted/50 transition">
+                <input
+                  type="checkbox"
+                  checked={form.instrumental}
+                  onChange={(e) => update("instrumental", e.target.checked)}
+                  className="rounded"
+                />
+                <span className="text-foreground">Instrumental</span>
+              </label>
+            </div>
+            <div className="flex items-end">
+              <p className="text-xs text-muted-foreground">
+                {form.instrumental ? "No vocals — pure instrumental" : "Vocals enabled — add lyrics below"}
+              </p>
+            </div>
+          </div>
+
+          {!form.instrumental && (
+            <div className="mb-4">
+              <label className="mb-1 block text-[11px] font-medium text-muted-foreground">Lyrics (optional)</label>
+              <textarea
+                value={form.lyrics}
+                onChange={(e) => update("lyrics", e.target.value)}
+                className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-foreground font-mono"
+                rows={4}
+                placeholder={"[Verse 1]\nWalking through the city lights\nNeon dreams and starry nights\n\n[Chorus]\nWe're alive, we're alive tonight"}
+              />
+            </div>
+          )}
+        </>
+      )}
 
       {/* Image Upload (for img2img / img2video) */}
       {needsImage && (
@@ -1264,7 +1354,7 @@ function GalleryStudio({ onClose, onCreated }: { onClose: () => void; onCreated:
       )}
 
       {/* Image provider + model controls */}
-      {!isVideo && (
+      {!isVideo && !isMusic && (
         <div className="mb-4 grid grid-cols-2 gap-3">
           <div>
             <label className="mb-1 flex items-center gap-2 text-[11px] font-medium text-muted-foreground">
@@ -1317,7 +1407,7 @@ function GalleryStudio({ onClose, onCreated }: { onClose: () => void; onCreated:
       )}
 
       {/* Image-specific controls */}
-      {!isVideo && (
+      {!isVideo && !isMusic && (
         <div className="mb-4 grid grid-cols-4 gap-3">
           <div>
             <label className="mb-1 block text-[11px] font-medium text-muted-foreground">Width</label>
@@ -1435,7 +1525,9 @@ function GalleryStudio({ onClose, onCreated }: { onClose: () => void; onCreated:
       {/* Submit */}
       <div className="flex items-center justify-between">
         <p className="text-[11px] text-muted-foreground">
-          {isVideo
+          {isMusic
+            ? `ACE-Step · ${form.duration_seconds}s ${form.instrumental ? "instrumental" : "vocal"}`
+            : isVideo
             ? `Video: ${form.num_frames} frames at ${form.fps}fps = ${(form.num_frames / form.fps).toFixed(1)}s (768x512)`
             : form.imageProvider === "cloud"
             ? `Cloud (Imagen 3) · ${form.width}x${form.height}`

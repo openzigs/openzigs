@@ -462,7 +462,11 @@ export class QueueMaster extends EventEmitter {
       // VRAM coordination: ensure image worker has freed memory
       await this.ensureVramAvailable("m2-pro");
 
-      await this.dispatchVideoJob(job);
+      if (job.type === "txt2music") {
+        await this.dispatchMusicJob(job);
+      } else {
+        await this.dispatchVideoJob(job);
+      }
       this.repo.markDispatched(job.id);
       this.emit("job:dispatched", job, "m2-pro" as TargetNode);
       logger.info(`[QueueMaster] Dispatched ${job.type} job ${job.id} → m2-pro (model=${job.requiredModel})`);
@@ -584,6 +588,58 @@ export class QueueMaster extends EventEmitter {
       const text = await res.text().catch(() => "");
       throw new Error(`M2 Pro /generate returned ${res.status}: ${text}`);
     }
+  }
+
+  private async dispatchMusicJob(job: MediaJob): Promise<void> {
+    const nodeConfig = await this.getMusicNodeConfig();
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (nodeConfig.token) headers["Authorization"] = `Bearer ${nodeConfig.token}`;
+
+    const body: Record<string, unknown> = {
+      job_id: job.id,
+      prompt: job.payload.prompt,
+      duration_seconds: job.payload.duration_seconds ?? 30,
+      lyrics: job.payload.lyrics,
+      instrumental: job.payload.instrumental ?? false,
+      model: job.requiredModel,
+      seed: job.payload.seed,
+      callback_url: this.config.callbackUrl,
+    };
+
+    const res = await fetch(`${nodeConfig.url}/generate`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(10_000),
+    });
+
+    if (res.status !== 202 && !res.ok) {
+      const text = await res.text().catch(() => "");
+      throw new Error(`Music sidecar /generate returned ${res.status}: ${text}`);
+    }
+  }
+
+  /**
+   * Returns the WorkerNodeConfig for the music generation sidecar
+   * by reading musicGen from ~/.openzigs/config.json. Falls back to m2Pro config.
+   */
+  private async getMusicNodeConfig(): Promise<WorkerNodeConfig> {
+    try {
+      const cfgPath = path.join(os.homedir(), ".openzigs", "config.json");
+      const raw = await fs.readFile(cfgPath, "utf-8");
+      const cfg = JSON.parse(raw) as Record<string, unknown>;
+      const mg = cfg.musicGen as Record<string, unknown> | undefined;
+      if (typeof mg?.networkNodeUrl === "string" && mg.networkNodeUrl) {
+        return {
+          url: mg.networkNodeUrl,
+          token: typeof mg.networkNodeToken === "string" ? mg.networkNodeToken : undefined,
+        };
+      }
+    } catch {
+      // config unreadable — fall through
+    }
+    // Default: music sidecar on localhost:5009
+    return { url: "http://localhost:5009" };
   }
 
   // ── Job Completion (called by webhook or directly) ───────

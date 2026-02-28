@@ -2667,5 +2667,101 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
     }
   });
 
+  // ── Music Generation Node Configuration ──
+  router.get("/music-gen/config", async (_req, res) => {
+    try {
+      const userConfig = await readUserConfig(defaultConfigPath());
+      const musicGen = (userConfig.musicGen ?? {}) as Record<string, unknown>;
+      return res.json({
+        mode: musicGen.mode ?? "local",
+        networkNodeUrl: musicGen.networkNodeUrl ?? "",
+        networkNodeToken: musicGen.networkNodeToken ? "••••••••" : "",
+        hasToken: !!musicGen.networkNodeToken,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return res.status(500).json({ error: message });
+    }
+  });
+
+  router.put("/music-gen/config", async (req, res) => {
+    const body = req.body as Record<string, unknown>;
+    const mode = body.mode as string | undefined;
+    const networkNodeUrl = body.networkNodeUrl as string | undefined;
+    const networkNodeToken = body.networkNodeToken as string | undefined;
+
+    if (mode !== undefined && mode !== "local" && mode !== "network") {
+      return res.status(400).json({ error: "mode must be 'local' or 'network'" });
+    }
+    if (networkNodeUrl !== undefined && typeof networkNodeUrl !== "string") {
+      return res.status(400).json({ error: "networkNodeUrl must be a string" });
+    }
+    if (networkNodeUrl && !/^https?:\/\/.+/.test(networkNodeUrl)) {
+      return res.status(400).json({ error: "networkNodeUrl must be a valid HTTP(S) URL" });
+    }
+
+    try {
+      const configPath = defaultConfigPath();
+      const userConfig = await readUserConfig(configPath);
+      const existing = (userConfig.musicGen ?? {}) as Record<string, unknown>;
+      const updated: Record<string, unknown> = { ...existing };
+      if (mode !== undefined) updated.mode = mode;
+      if (networkNodeUrl !== undefined) updated.networkNodeUrl = networkNodeUrl;
+      if (networkNodeToken !== undefined) updated.networkNodeToken = networkNodeToken;
+      userConfig.musicGen = updated;
+      await writeUserConfig(configPath, userConfig);
+
+      logger.info(`[Admin] Music-gen config updated: mode=${updated.mode}`);
+      return res.json({
+        ok: true,
+        mode: updated.mode,
+        networkNodeUrl: updated.networkNodeUrl,
+        hasToken: !!updated.networkNodeToken,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return res.status(500).json({ error: message });
+    }
+  });
+
+  router.get("/music-gen/health", async (req, res) => {
+    const url = typeof req.query.url === "string" ? req.query.url : undefined;
+    const token = typeof req.query.token === "string" ? req.query.token : undefined;
+
+    let targetUrl: string;
+    let targetToken: string | undefined;
+    if (url) {
+      if (!/^https?:\/\/.+/.test(url)) {
+        return res.status(400).json({ error: "url must be a valid HTTP(S) URL" });
+      }
+      targetUrl = url.replace(/\/$/, "");
+      targetToken = token;
+    } else {
+      const userConfig = await readUserConfig(defaultConfigPath());
+      const musicGen = (userConfig.musicGen ?? {}) as Record<string, unknown>;
+      targetUrl = ((musicGen.networkNodeUrl as string) || "http://127.0.0.1:5009").replace(/\/$/, "");
+      targetToken = musicGen.networkNodeToken as string | undefined;
+    }
+
+    try {
+      const headers: Record<string, string> = {};
+      if (targetToken) {
+        headers["Authorization"] = `Bearer ${targetToken}`;
+      }
+      const response = await fetch(`${targetUrl}/health`, {
+        headers,
+        signal: AbortSignal.timeout(5000),
+      });
+      if (!response.ok) {
+        return res.json({ ok: false, status: response.status, error: `HTTP ${response.status}` });
+      }
+      const data = await response.json() as Record<string, unknown>;
+      return res.json({ ok: true, ...data });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return res.json({ ok: false, error: message });
+    }
+  });
+
   return router;
 };

@@ -139,6 +139,11 @@
     "networkNodeUrl": "",
     "networkNodeToken": ""
   },
+  "musicGen": {
+    "mode": "local",
+    "networkNodeUrl": "",
+    "networkNodeToken": ""
+  },
   "socialBrain": {
     "enabled": true,
     "confidenceThreshold": "medium",
