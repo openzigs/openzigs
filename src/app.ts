@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import helmet from "helmet";
 import cors from "cors";
+import rateLimit from "express-rate-limit";
 import multer from "multer";
 import * as z from "zod";
 import { getHealth } from "./health.js";
@@ -72,13 +73,20 @@ export const createApp = (config: AppConfig, options: CreateAppOptions = {}): Ex
   const approvalQueue = options.approvalQueue ?? new ApprovalQueue({ auditLogger });
   const toolRegistry = options.toolRegistry;
 
-  app.set("trust proxy", true);
+  // Only trust proxy if explicitly configured
+  const trustProxy = config.server?.trustProxy;
+  if (trustProxy) {
+    app.set("trust proxy", trustProxy);
+  }
 
   const uiOrigin = process.env.OPENZIGS_UI_ORIGIN ?? "http://localhost:3001";
   app.use(helmet({
     contentSecurityPolicy: {
       directives: {
         defaultSrc: ["'self'"],
+        scriptSrc: ["'self'"],
+        styleSrc: ["'self'", "'unsafe-inline'"],
+        imgSrc: ["'self'", "data:", "blob:"],
         connectSrc: [
           "'self'",
           uiOrigin,
@@ -86,7 +94,12 @@ export const createApp = (config: AppConfig, options: CreateAppOptions = {}): Ex
           "http://localhost:9222",
           "ws://localhost:3000",
           "ws://localhost:9222"
-        ]
+        ],
+        fontSrc: ["'self'"],
+        frameAncestors: ["'none'"],
+        objectSrc: ["'none'"],
+        baseUri: ["'self'"],
+        formAction: ["'self'"],
       }
     }
   }));
@@ -114,8 +127,17 @@ export const createApp = (config: AppConfig, options: CreateAppOptions = {}): Ex
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"],
   }));
-  app.use(express.json({ limit: "50mb" }));
-  app.use(express.urlencoded({ extended: true, limit: "50mb" }));
+  // Global rate limit: 100 requests per 15 minutes per IP
+  app.use(rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 100,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: "Too many requests, please try again later" },
+  }));
+
+  app.use(express.json({ limit: "1mb" }));
+  app.use(express.urlencoded({ extended: true, limit: "1mb" }));
 
   const authMiddleware = createAuthMiddleware(config.auth);
 
@@ -316,6 +338,10 @@ export const createApp = (config: AppConfig, options: CreateAppOptions = {}): Ex
       if (!name || !template) {
         return res.status(400).json({ error: "name and template are required" });
       }
+      const MAX_PROMPT_LENGTH = 100_000;
+      if (template.length > MAX_PROMPT_LENGTH) {
+        return res.status(400).json({ error: `Prompt template exceeds ${MAX_PROMPT_LENGTH} characters` });
+      }
       try {
         const prompt = promptManager.create({
           name,
@@ -424,6 +450,21 @@ export const createApp = (config: AppConfig, options: CreateAppOptions = {}): Ex
       }
     });
   }
+
+  // Global error handler — redact internal paths from error responses
+  const redactPaths = (message: string): string =>
+    message
+      .replace(/\/Users\/[^/\s]+/g, "~")
+      .replace(/\/home\/[^/\s]+/g, "~")
+      .replace(/C:\\\\Users\\\\[^\\\\\s]+/g, "~");
+
+  app.use((err: Error & { statusCode?: number }, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+    const statusCode = err.statusCode ?? 500;
+    const message = statusCode === 500
+      ? "Internal server error"
+      : redactPaths(err.message);
+    res.status(statusCode).json({ error: message });
+  });
 
   return app;
 };

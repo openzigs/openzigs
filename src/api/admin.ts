@@ -1145,6 +1145,10 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
       if (!name || !template) {
         return res.status(400).json({ error: "name and template are required" });
       }
+      const MAX_PROMPT_LENGTH = 100_000;
+      if (template.length > MAX_PROMPT_LENGTH) {
+        return res.status(400).json({ error: `Prompt template exceeds ${MAX_PROMPT_LENGTH} characters` });
+      }
       try {
         const prompt = promptManager.create({
           name,
@@ -1506,6 +1510,12 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
       }
       if (!name) {
         return res.status(400).json({ error: "Name is required" });
+      }
+      const MAX_SAMPLE_LENGTH = 10_000;
+      for (const sample of samples) {
+        if (sample.length > MAX_SAMPLE_LENGTH) {
+          return res.status(400).json({ error: `Sample exceeds ${MAX_SAMPLE_LENGTH} characters` });
+        }
       }
 
       try {

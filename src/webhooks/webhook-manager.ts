@@ -1,4 +1,4 @@
-import { randomBytes, createHash, timingSafeEqual } from "node:crypto";
+import { randomBytes, createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { nanoid } from "nanoid";
 
 /* ── Types ── */
@@ -129,8 +129,8 @@ export class WebhookManager {
     const wh = this.webhooks.get(webhookId);
     if (!wh) return false;
 
-    const expected = createHash("sha256")
-      .update(wh.secret + body)
+    const expected = createHmac("sha256", wh.secret)
+      .update(body)
       .digest("hex");
 
     try {

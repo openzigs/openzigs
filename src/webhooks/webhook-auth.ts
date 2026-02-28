@@ -53,8 +53,11 @@ export const webhookAuth = (webhookManager: WebhookManager) => {
     const webhookId = req.headers["x-webhook-id"] as string | undefined;
 
     if (signature && webhookId) {
-      const rawBody = typeof req.body === "string" ? req.body : JSON.stringify(req.body);
-      const valid = webhookManager.verifySignature(webhookId, rawBody, signature);
+      const rawBody = (req as unknown as Record<string, unknown>).rawBody;
+      const body = Buffer.isBuffer(rawBody)
+        ? rawBody.toString("utf8")
+        : typeof req.body === "string" ? req.body : JSON.stringify(req.body);
+      const valid = webhookManager.verifySignature(webhookId, body, signature);
       if (!valid) {
         res.status(401).json({ error: "Invalid signature" });
         return;

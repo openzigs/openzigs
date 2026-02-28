@@ -1,4 +1,5 @@
 import "dotenv/config";
+import express from "express";
 import { createServer } from "node:http";
 import { createRequire } from "node:module";
 import { randomBytes, timingSafeEqual } from "node:crypto";
@@ -857,7 +858,13 @@ void knowledgeService.start()
 const voiceRouter = createVoiceRouter({ voiceService });
 app.use("/api/voice", authMiddleware, voiceRouter);
 
-// Webhook trigger routes (public-facing)
+// Webhook trigger routes (public-facing) — capture raw body for HMAC verification
+app.use("/api/webhooks/trigger", express.json({
+  limit: "1mb",
+  verify: (req, _res, buf) => {
+    (req as unknown as Record<string, unknown>).rawBody = buf;
+  },
+}));
 const webhookRouter = createWebhookRouter({ webhookManager, taskEngine, promptManager });
 app.use("/api/webhooks/trigger", webhookRouter);
 
@@ -1279,12 +1286,26 @@ for (const event of [
   });
 }
 
-// Wire Social Brain Socket.IO event forwarding
-socialBrain.on("reply", (data: unknown) => io.emit("social:reply", data));
-socialBrain.on("escalate", (data: unknown) => io.emit("social:escalate", data));
-socialHandoff.on("escalated", (data: unknown) => io.emit("social:handoff:created", data));
-socialHandoff.on("resolved", (data: unknown) => io.emit("social:handoff:resolved", data));
-commentRuleEngine.on("rule_triggered", (data: unknown) => io.emit("social:rule:triggered", data));
+// Wire Social Brain Socket.IO event forwarding (sanitize cross-channel content)
+const sanitizeStringFields = (obj: unknown): unknown => {
+  if (typeof obj === "string") {
+    return obj.replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  }
+  if (Array.isArray(obj)) return obj.map(sanitizeStringFields);
+  if (obj && typeof obj === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(obj as Record<string, unknown>)) {
+      out[k] = sanitizeStringFields(v);
+    }
+    return out;
+  }
+  return obj;
+};
+socialBrain.on("reply", (data: unknown) => io.emit("social:reply", sanitizeStringFields(data)));
+socialBrain.on("escalate", (data: unknown) => io.emit("social:escalate", sanitizeStringFields(data)));
+socialHandoff.on("escalated", (data: unknown) => io.emit("social:handoff:created", sanitizeStringFields(data)));
+socialHandoff.on("resolved", (data: unknown) => io.emit("social:handoff:resolved", sanitizeStringFields(data)));
+commentRuleEngine.on("rule_triggered", (data: unknown) => io.emit("social:rule:triggered", sanitizeStringFields(data)));
 
 // Wire Render Orchestrator → Socket.IO event forwarding
 renderOrchestrator.on("render:progress", (data: unknown) => io.emit("render:progress", data));

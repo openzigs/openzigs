@@ -226,6 +226,7 @@ export type SocialBrainAppConfig = {
 export type AppConfig = {
   server: {
     port: number;
+    trustProxy?: boolean | number | string;
   };
   logging: {
     level: string;
@@ -417,7 +418,8 @@ const copilotSchema = z.object({
 
 const appConfigSchema = z.object({
   server: z.object({
-    port: z.number()
+    port: z.number(),
+    trustProxy: z.union([z.boolean(), z.number(), z.string()]).optional(),
   }),
   logging: z.object({
     level: z.string()

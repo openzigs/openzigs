@@ -67,6 +67,12 @@ export const createQueueRouter = ({ queueMaster, repo }: QueueRouterOptions): Ro
         return;
       }
 
+      const MAX_TASK_INPUT_LENGTH = 50_000;
+      if (typeof payload.prompt === "string" && payload.prompt.length > MAX_TASK_INPUT_LENGTH) {
+        res.status(400).json({ error: `Prompt exceeds ${MAX_TASK_INPUT_LENGTH} characters` });
+        return;
+      }
+
       // Enforce video frame limits
       if ((type === "txt2video" || type === "img2video") && payload.num_frames) {
         if (payload.num_frames > MAX_VIDEO_FRAMES) {
