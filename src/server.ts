@@ -553,6 +553,7 @@ const socialRouter = createSocialRouter({
   handoff: socialHandoff,
   ruleEngine: commentRuleEngine,
   config: socialBrainConfig,
+  brandVoiceService,
 });
 app.use("/api/social", socialRouter);
 

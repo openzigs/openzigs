@@ -12,7 +12,7 @@ import { PipelineEditor, type BackendPipelineNode, type AvailablePrompt } from "
 import { WorkflowWizard } from "@/components/pipeline/workflow-wizard";
 import { ToolMultiSelect, type ToolOption } from "@/components/pipeline/tool-multi-select";
 import { ImportWizard } from "@/components/library/import-wizard";
-import { ChevronDown, ChevronUp, Download, FileUp, Zap, Wrench } from "lucide-react";
+import { ChevronDown, ChevronUp, Download, FileUp, Zap, Wrench, PenTool } from "lucide-react";
 
 export default function LibraryPage() {
   const queryClient = useQueryClient();
@@ -304,6 +304,14 @@ const PromptForm = ({
     existing?.preferredTools ?? null
   );
 
+  // Brand voice state
+  const [brandVoiceId, setBrandVoiceId] = useState<string | null>(existing?.brandVoiceId ?? null);
+  const voicesQuery = useQuery({
+    queryKey: ["brand-voices"],
+    queryFn: () => fetchJson<{ voices: Array<{ id: string; name: string; active: boolean }> }>("/api/admin/brand-voice"),
+  });
+  const voices = voicesQuery.data?.voices ?? [];
+
   // Build ToolOption[] and AvailablePrompt[] for sub-components
   const toolOptions: ToolOption[] = useMemo(
     () => tools.map((t) => ({ name: t.name, description: t.description, category: t.category, enabled: t.enabled })),
@@ -343,6 +351,7 @@ const PromptForm = ({
         .filter(Boolean),
       stages: pipelineStages.length > 0 ? pipelineStages : null,
       preferredTools: preferredTools,
+      brandVoiceId: brandVoiceId,
     });
   };
 
@@ -437,6 +446,31 @@ const PromptForm = ({
             Restrict which tools this prompt can use. Leave empty for all tools.
           </p>
         </div>
+
+        {/* Brand Voice */}
+        {voices.length > 0 && (
+          <div className="space-y-1">
+            <label className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
+              <PenTool className="h-3.5 w-3.5" />
+              Brand Voice
+            </label>
+            <select
+              value={brandVoiceId ?? ""}
+              onChange={(e) => setBrandVoiceId(e.target.value || null)}
+              className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-foreground"
+            >
+              <option value="">Default (active voice)</option>
+              {voices.map((v) => (
+                <option key={v.id} value={v.id}>
+                  {v.name}{v.active ? " \u2713" : ""}
+                </option>
+              ))}
+            </select>
+            <p className="text-[11px] text-muted-foreground/60">
+              Apply a brand voice style when this prompt runs. Leave default to use the active voice.
+            </p>
+          </div>
+        )}
 
         {/* Pipeline Stages — collapsible progressive disclosure */}
         <div className="rounded-xl border border-primary/20 overflow-hidden">

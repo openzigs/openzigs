@@ -40,6 +40,7 @@ interface ReviewProduceStepProps {
   onSlideStyleChange: (enabled: boolean) => void;
   onAssetsOnlyModeChange: (enabled: boolean) => void;
   onQuizEnabledChange?: (enabled: boolean) => void;
+  onBrandVoiceChange: (voiceId: string | null) => void;
 }
 
 type ProduceResponse = {
@@ -76,6 +77,7 @@ export const ReviewProduceStep = ({
   onSlideStyleChange,
   onAssetsOnlyModeChange,
   onQuizEnabledChange,
+  onBrandVoiceChange,
 }: ReviewProduceStepProps) => {
   const { socket } = useSocket();
   const router = useRouter();
@@ -97,6 +99,13 @@ export const ReviewProduceStep = ({
     queryKey: ["director-config"],
     queryFn: () => fetchJson<{ defaultModel: string }>("/api/admin/director/config"),
   });
+
+  // Fetch brand voices for voice selector
+  const voicesQuery = useQuery({
+    queryKey: ["brand-voices"],
+    queryFn: () => fetchJson<{ voices: Array<{ id: string; name: string; active: boolean }> }>("/api/admin/brand-voice"),
+  });
+  const voices = voicesQuery.data?.voices ?? [];
 
   const models = modelsQuery.data?.models ?? [];
 
@@ -181,6 +190,7 @@ export const ReviewProduceStep = ({
             assetsOnlyMode: state.assetsOnlyMode || undefined,
             quizEnabled: state.quizEnabled,
             visualAssets: visualAssets.length > 0 ? visualAssets : undefined,
+            brandVoiceId: state.brandVoiceId || undefined,
           }),
         });
       }
@@ -195,6 +205,7 @@ export const ReviewProduceStep = ({
           template: state.templateId,
           model: state.model || undefined,
           enableVisionAnalysis,
+          brandVoiceId: state.brandVoiceId || undefined,
         }),
       });
     },
@@ -389,6 +400,31 @@ export const ReviewProduceStep = ({
           </select>
           <p className="text-[11px] text-muted-foreground/60">
             High-capability models (GPT-4.1, Claude Sonnet 4) produce better video timelines.
+          </p>
+        </div>
+      )}
+
+      {/* Brand Voice Selection */}
+      {phase === "review" && voices.length > 0 && (
+        <div className="space-y-1.5">
+          <label className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
+            <PenTool className="h-3.5 w-3.5" />
+            Brand Voice
+          </label>
+          <select
+            value={state.brandVoiceId ?? ""}
+            onChange={(e) => onBrandVoiceChange(e.target.value || null)}
+            className="w-full rounded-xl border border-border bg-card text-sm text-foreground px-3 py-2.5"
+          >
+            <option value="">Default (active voice)</option>
+            {voices.map((v) => (
+              <option key={v.id} value={v.id}>
+                {v.name}{v.active ? " ✓" : ""}
+              </option>
+            ))}
+          </select>
+          <p className="text-[11px] text-muted-foreground/60">
+            Apply a specific brand voice style to narration and captions.
           </p>
         </div>
       )}

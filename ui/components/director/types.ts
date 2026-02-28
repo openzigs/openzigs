@@ -54,6 +54,8 @@ export interface WizardState {
   quizEnabled: boolean;
   /** Step 6 — render quality/codec settings */
   renderSettings: RenderSettings;
+  /** Step 6 — brand voice to apply (null = use active default) */
+  brandVoiceId: string | null;
   /** Step 6 (populated after production) */
   manifest: DirectorManifestSummary | null;
   renderJobId: string | null;
@@ -157,6 +159,7 @@ export function createInitialState(): WizardState {
     assetsOnlyMode: false,
     quizEnabled: false,
     renderSettings: { quality: "standard", codec: "h264", crf: 23 },
+    brandVoiceId: null,
     manifest: null,
     renderJobId: null,
   };

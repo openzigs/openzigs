@@ -60,6 +60,8 @@ export type SavedPrompt = {
   stages: PipelineStage[] | null;
   /** Optional list of preferred tool names. null = no preference (all tools). */
   preferredTools: string[] | null;
+  /** Optional brand voice ID to apply when executing this prompt. null = use active default. */
+  brandVoiceId: string | null;
   createdAt: string;
   updatedAt: string;
 };

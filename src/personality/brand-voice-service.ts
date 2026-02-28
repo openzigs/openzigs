@@ -145,6 +145,17 @@ export class BrandVoiceService {
   }
 
   /**
+   * Build a brand-voice instruction block for a specific voice by ID.
+   * Falls back to the active voice if id is not provided, or returns empty string.
+   */
+  getVoicePromptBlockById(id?: string | null): string {
+    if (!id) return this.getActiveVoicePromptBlock();
+    const voice = this.repository.getById(id);
+    if (!voice) return this.getActiveVoicePromptBlock();
+    return this.buildPromptBlock(voice.rulebook);
+  }
+
+  /**
    * Build a prompt block from a specific rulebook.
    */
   buildPromptBlock(rulebook: BrandVoiceRulebook): string {

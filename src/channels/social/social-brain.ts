@@ -47,7 +47,8 @@ export class SocialBrain extends EventEmitter {
   private copilot: CopilotWrapperService;
   private knowledgeService: KnowledgeIngestionService;
   private confidenceThreshold: "high" | "medium" | "low";
-  private systemPrompt: string;
+  private systemPrompt!: string;
+  private baseSystemPrompt: string;
   private brandVoiceBlock: string;
 
   constructor(opts: SocialBrainOptions) {
@@ -57,11 +58,20 @@ export class SocialBrain extends EventEmitter {
     this.knowledgeService = opts.knowledgeService;
     this.confidenceThreshold = opts.confidenceThreshold ?? "medium";
     this.brandVoiceBlock = opts.brandVoiceBlock ?? "";
-    // Combine base system prompt with brand voice block if provided
-    const basePrompt = opts.systemPrompt ?? DEFAULT_SYSTEM_PROMPT;
+    this.baseSystemPrompt = opts.systemPrompt ?? DEFAULT_SYSTEM_PROMPT;
+    this.rebuildSystemPrompt();
+  }
+
+  /** Update the brand voice block used in system prompts at runtime. */
+  setBrandVoice(block: string): void {
+    this.brandVoiceBlock = block;
+    this.rebuildSystemPrompt();
+  }
+
+  private rebuildSystemPrompt(): void {
     this.systemPrompt = this.brandVoiceBlock
-      ? `${basePrompt}\n\n${this.brandVoiceBlock}`
-      : basePrompt;
+      ? `${this.baseSystemPrompt}\n\n${this.brandVoiceBlock}`
+      : this.baseSystemPrompt;
   }
 
   /**
