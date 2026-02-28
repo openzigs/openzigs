@@ -24,6 +24,7 @@ import { PipelinePlanner } from "../tasks/pipeline-planner.js";
 import type { WebhookManager } from "../webhooks/webhook-manager.js";
 import type { SentinelService } from "../sentinel/index.js";
 import type { KnowledgeIngestionService } from "../knowledge/index.js";
+import type { BrandVoiceService } from "../personality/brand-voice-service.js";
 import { SentinelConfigSchema, readStatusMarkdown } from "../sentinel/index.js";
 import { TemplateService } from "../productivity/template-service.js";
 import { CopilotNativeMcpTester, type NativeMcpDiscoveredTool, type NativeMcpTester } from "../mcp/native-mcp-test-service.js";
@@ -290,6 +291,7 @@ export type AdminRouterOptions = {
   customPostActionManager?: CustomPostActionManager;
   sentinel?: SentinelService;
   knowledgeService?: KnowledgeIngestionService;
+  brandVoiceService?: BrandVoiceService;
   nativeMcpTester?: NativeMcpTester;
 };
 
@@ -355,7 +357,7 @@ const parseReasoningEffort = (value: unknown): ReasoningEffort | undefined => {
     : undefined;
 };
 
-export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerManager, promptManager, scheduler, personalityManager, sessionManager, copilot, taskWorker, taskEngine, webhookManager, customPostActionManager, sentinel, nativeMcpTester }: AdminRouterOptions): Router => {
+export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerManager, promptManager, scheduler, personalityManager, sessionManager, copilot, taskWorker, taskEngine, webhookManager, customPostActionManager, sentinel, brandVoiceService, nativeMcpTester }: AdminRouterOptions): Router => {
   const router = Router();
   const mcpTester = nativeMcpTester ?? new CopilotNativeMcpTester();
 
@@ -1469,6 +1471,78 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
     router.post("/personality/reset", (_req, res) => {
       const config = personalityManager.reset();
       return res.json(config);
+    });
+  }
+
+  // ── Brand Voice Management ──
+  if (brandVoiceService) {
+    router.get("/brand-voice", (_req, res) => {
+      return res.json({ voices: brandVoiceService.getAll() });
+    });
+
+    router.get("/brand-voice/active", (_req, res) => {
+      const active = brandVoiceService.getActive();
+      return res.json({ voice: active });
+    });
+
+    router.get("/brand-voice/:id", (req, res) => {
+      const voice = brandVoiceService.getById(req.params.id);
+      if (!voice) return res.status(404).json({ error: "Brand voice not found" });
+      return res.json(voice);
+    });
+
+    router.post("/brand-voice/analyze", async (req, res) => {
+      const body = req.body as Record<string, unknown>;
+      const samples = Array.isArray(body.samples)
+        ? (body.samples as unknown[]).filter((s): s is string => typeof s === "string")
+        : [];
+      const name = typeof body.name === "string" ? body.name.trim() : "";
+      const active = body.active === true;
+      const model = typeof body.model === "string" ? body.model.trim() : undefined;
+
+      if (samples.length === 0) {
+        return res.status(400).json({ error: "At least one writing sample is required" });
+      }
+      if (!name) {
+        return res.status(400).json({ error: "Name is required" });
+      }
+
+      try {
+        const voice = await brandVoiceService.analyzeAndSave(name, samples, { active, model });
+        return res.json(voice);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        logger.error(`[BrandVoice] Analysis failed: ${message}`);
+        return res.status(500).json({ error: message });
+      }
+    });
+
+    router.put("/brand-voice/:id", (req, res) => {
+      const body = req.body as Record<string, unknown>;
+      const updated = brandVoiceService.update(req.params.id, {
+        name: typeof body.name === "string" ? body.name.trim() : undefined,
+        rulebook: body.rulebook && typeof body.rulebook === "object" ? body.rulebook as import("../personality/brand-voice-repository.js").BrandVoiceRulebook : undefined,
+        active: typeof body.active === "boolean" ? body.active : undefined,
+      });
+      if (!updated) return res.status(404).json({ error: "Brand voice not found" });
+      return res.json(updated);
+    });
+
+    router.post("/brand-voice/:id/activate", (req, res) => {
+      const voice = brandVoiceService.setActive(req.params.id);
+      if (!voice) return res.status(404).json({ error: "Brand voice not found" });
+      return res.json(voice);
+    });
+
+    router.post("/brand-voice/deactivate", (_req, res) => {
+      brandVoiceService.deactivateAll();
+      return res.json({ ok: true });
+    });
+
+    router.delete("/brand-voice/:id", (req, res) => {
+      const deleted = brandVoiceService.delete(req.params.id);
+      if (!deleted) return res.status(404).json({ error: "Brand voice not found" });
+      return res.json({ ok: true });
     });
   }
 

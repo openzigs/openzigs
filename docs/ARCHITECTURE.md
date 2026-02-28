@@ -225,7 +225,7 @@ The frontend is a **Next.js 14 App Router** application in the `ui/` directory. 
 |---|---|---|
 | `/` | `dashboard.tsx` | Snapshot stats, pending approvals, audit log |
 | `/chat` | `chat-view.tsx` | Full chat with streaming, model selector, reasoning effort, file attachments, session context bar, interactive clarification prompts, approval overlay |
-| `/admin` | `admin/page.tsx` | Channel config, personality settings with mode selector, model & provider configuration, custom agent management, sidecar management, native MCP server editor, tool toggles, env status |
+| `/admin` | `admin/page.tsx` | Channel config, personality settings with mode selector, brand voice analysis & management, model & provider configuration, custom agent management, sidecar management, native MCP server editor, tool toggles, env status |
 | `/library` | `library/page.tsx` | Saved prompt CRUD with `{{variable}}` template preview and system prompt apply |
 | `/presenter` | `presenter/page.tsx` | Presentation catalog — grid of rendered videos with thumbnails, search, delete |
 | `/presenter/[id]` | `presenter/[id]/page.tsx` | Interactive player with FSM (Play/Pause/Quiz/Recap), chapter sidebar, Raise Hand Q&A, blackboard with Mermaid, quiz overlays, PDF recap |
@@ -292,7 +292,8 @@ ui/
 │   │   ├── channels-panel.tsx     # Telegram + Discord config forms
 │   │   ├── sidecars-panel.tsx     # Docker sidecar management (deprecated, removed from admin page)
 │   │   ├── local-servers-panel.tsx # Local MCP server status (includes all social platform servers)
-│   │   ├── personality-panel.tsx  # System instruction + pre/post prompts + mode selector
+│   │   ├── personality-panel.tsx  # System instruction + pre/post prompts + mode selector + active brand voice indicator
+│   │   ├── brand-voice-panel.tsx  # Brand Voice CRUD — analyze samples, edit rulebook, activate/deactivate
 │   │   ├── model-config-panel.tsx # Reasoning effort + BYOK provider configuration
 │   │   ├── agents-panel.tsx       # Custom agent CRUD with tool multi-select
 │   │   ├── mcp-editor-panel.tsx   # Native MCP server wizard + busy lock + reconnect
@@ -663,6 +664,22 @@ Embedded SQLite-backed subsystem for saved prompts and cron scheduling:
 - **Database** (`database.ts`) — Shared `better-sqlite3` singleton with WAL mode. Tables: `saved_prompts`, `scheduled_jobs`.
 - **PromptManager** (`prompt-manager.ts`) — CRUD for saved prompts with `{{variable}}` template interpolation, optional pipeline stages (`stages: PipelineStage[] | null`) for multi-step execution, and preferred tool scoping (`preferredTools: string[] | null`). The `resolveWithStages()` method returns interpolated text, preferred tools, and pipeline stages in a single call — used by the scheduler to execute prompt-as-pipeline workflows.
 - **Scheduler** (`scheduler.ts`) — `node-cron` v4 in-process scheduler with JSONL audit logs and `EventEmitter` hooks for Socket.IO notifications.
+
+### Brand Voice (`src/personality/brand-voice-*.ts`)
+
+LLM-powered writing style analysis and enforcement system:
+
+- **BrandVoiceRepository** (`brand-voice-repository.ts`) — SQLite CRUD for the `brand_voices` table. Schema: `id TEXT PK, name TEXT UNIQUE, rulebook TEXT (JSON), active INTEGER, samples TEXT (JSON), created_at TEXT, updated_at TEXT`. Only one voice can be active at a time; `setActive()` deactivates all others first.
+- **BrandVoiceService** (`brand-voice-service.ts`) — Wraps the repository + Copilot SDK. Key methods:
+  - `analyzeWritingStyle(samples[])` — Sends samples to the LLM with the Linguistic Profiler system prompt; parses the returned `BrandVoiceRulebook` (tone, sentence_structure, vocabulary_level, formatting_quirks, banned_words).
+  - `analyzeAndSave(name, samples, opts)` — Analyze + persist + optionally activate in one call.
+  - `getActiveVoicePromptBlock()` — Returns a pre-formatted prompt block for injection into system prompts, or empty string if no voice is active.
+- **Injection Points** — The active brand voice block is injected into:
+  - `StoryboardEngine.buildSystemPrompt()` via `StoryboardOptions.brandVoiceBlock`
+  - `SocialBrain` constructor via `SocialBrainOptions.brandVoiceBlock`
+  - `blogToVideo()` pipeline via `BlogToVideoInput.brandVoiceBlock`
+- **Admin API** — 7 endpoints under `/api/admin/brand-voice` (list, get, analyze+save, update rulebook, activate, deactivate all, delete).
+- **Admin UI** — `brand-voice-panel.tsx` with sample analysis form, voice list, inline rulebook editing, and activate/deactivate controls. `personality-panel.tsx` shows an active brand voice indicator.
 
 ### Message Router (`src/routing/message-router.ts`)
 

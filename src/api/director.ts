@@ -37,6 +37,7 @@ import { getDatabase } from "../productivity/database.js";
 import type { CopilotWrapper } from "../copilot/copilot-wrapper.js";
 import type { VoiceService } from "../voice/voice-service.js";
 import type { RenderOrchestrator } from "../video/render-orchestrator.js";
+import type { BrandVoiceService } from "../personality/brand-voice-service.js";
 import { NARRATION_DIRECTIVES } from "../voice/pacing-translator.js";
 import { AVAILABLE_LOCAL_VOICES } from "../voice/types.js";
 
@@ -44,6 +45,7 @@ export interface DirectorRouterOptions {
   copilot: CopilotWrapper;
   voiceService?: VoiceService;
   renderOrchestrator?: RenderOrchestrator;
+  brandVoiceService?: BrandVoiceService;
   config: {
     enabled: boolean;
     outputDir: string;
@@ -62,6 +64,7 @@ export const createDirectorRouter = ({
   copilot,
   voiceService,
   renderOrchestrator,
+  brandVoiceService,
   config,
 }: DirectorRouterOptions): Router => {
   const router = Router();
@@ -980,6 +983,11 @@ Respond with ONLY a valid JSON array. No explanation. Example:
         }
         if (assetsOnlyMode && visualAssets && visualAssets.length > 0) {
           storyboardOptions.assetsOnlyMode = true;
+        }
+        // Inject active brand voice if available
+        if (brandVoiceService) {
+          const voiceBlock = brandVoiceService.getActiveVoicePromptBlock();
+          if (voiceBlock) storyboardOptions.brandVoiceBlock = voiceBlock;
         }
         const storyboard = await storyboardEngine.generate(rawText, storyboardOptions);
 
@@ -2823,6 +2831,7 @@ Return ONLY the new narration text, no explanations or formatting.`;
           musicTrackPath,
           model: runtimeConfig.defaultModel || undefined,
           targetDuration,
+          brandVoiceBlock: brandVoiceService?.getActiveVoicePromptBlock() || undefined,
         },
         copilot,
         voiceService,

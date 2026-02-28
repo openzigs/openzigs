@@ -41,6 +41,8 @@ export interface BlogToVideoInput {
   model?: string;
   /** Target video duration in seconds (default: auto) */
   targetDuration?: number;
+  /** Brand voice prompt block to inject into storyboard narration */
+  brandVoiceBlock?: string;
 }
 
 export interface BlogToVideoResult {
@@ -135,6 +137,11 @@ export async function blogToVideo(
       type: "image" as const,
       positionHint: img.surroundingText || undefined,
     }));
+  }
+
+  // Pass brand voice through to storyboard engine
+  if (input.brandVoiceBlock) {
+    storyboardOptions.brandVoiceBlock = input.brandVoiceBlock;
   }
 
   const storyboard = await storyboardEngine.generate(blog.text, storyboardOptions);

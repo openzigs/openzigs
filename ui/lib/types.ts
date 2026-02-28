@@ -184,6 +184,24 @@ export type PersonalityConfig = {
   mode: "append" | "replace";
 };
 
+export type BrandVoiceRulebook = {
+  tone: string;
+  sentence_structure: string;
+  vocabulary_level: string;
+  formatting_quirks: string;
+  banned_words: string[];
+};
+
+export type BrandVoice = {
+  id: string;
+  name: string;
+  rulebook: BrandVoiceRulebook;
+  active: boolean;
+  samples: string[];
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type SessionInfo = {
   id: string;
   createdAt: string;

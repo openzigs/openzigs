@@ -25,6 +25,7 @@ import { MusicGenPanel } from "@/components/admin/music-gen-panel";
 import { PresenterConfigPanel } from "@/components/admin/presenter-config-panel";
 import { VoiceConfigPanel } from "@/components/admin/voice-config-panel";
 import { VoiceLabPanel } from "@/components/voice-lab/voice-lab-panel";
+import { BrandVoicePanel } from "@/components/admin/brand-voice-panel";
 import { ToastContainer, showToast } from "@/components/toast";
 import { RotateCw } from "lucide-react";
 
@@ -79,6 +80,10 @@ export default function AdminPage() {
 
         <SectionCard title="AI Personality">
           <PersonalityPanel />
+        </SectionCard>
+
+        <SectionCard title="Brand Voice" defaultOpen={false}>
+          <BrandVoicePanel />
         </SectionCard>
 
         <SectionCard title="Model Configuration">
