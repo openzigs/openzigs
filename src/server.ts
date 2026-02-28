@@ -1,7 +1,7 @@
 import "dotenv/config";
 import { createServer } from "node:http";
 import { createRequire } from "node:module";
-import { randomBytes } from "node:crypto";
+import { randomBytes, timingSafeEqual } from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -916,6 +916,23 @@ const io = new SocketIOServer(httpServer, {
     origin: allowedOrigins,
     credentials: true
   }
+});
+
+// Socket.IO auth middleware — validate Bearer token on connection
+const expectedToken = config.auth.token ?? "";
+io.use((socket, next) => {
+  const token =
+    (socket.handshake.auth as Record<string, unknown>)?.token as string | undefined
+    ?? socket.handshake.headers?.authorization?.replace("Bearer ", "");
+  if (!token || !expectedToken) {
+    return next(new Error("Authentication required"));
+  }
+  const tokenBuf = Buffer.from(token);
+  const expectedBuf = Buffer.from(expectedToken);
+  if (tokenBuf.length !== expectedBuf.length || !timingSafeEqual(tokenBuf, expectedBuf)) {
+    return next(new Error("Authentication required"));
+  }
+  next();
 });
 
 // ── PeerJS Signaling Server (Issue #286) ──

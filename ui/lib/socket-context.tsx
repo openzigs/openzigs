@@ -5,6 +5,7 @@ import { io, type Socket } from "socket.io-client";
 import { showToast } from "@/components/toast";
 
 const RAW_SOCKET_URL = process.env.NEXT_PUBLIC_OPENZIGS_SOCKET_URL ?? process.env.NEXT_PUBLIC_OPENZIGS_API_BASE ?? "";
+const AUTH_TOKEN = process.env.NEXT_PUBLIC_OPENZIGS_TOKEN ?? "";
 
 /**
  * Resolve Socket.IO server URL at runtime.
@@ -64,6 +65,7 @@ export const SocketProvider = ({ children }: { children: ReactNode }) => {
     const socketUrl = resolveSocketUrl();
     const socket = io(socketUrl || undefined, {
       query: { clientId },
+      auth: { token: AUTH_TOKEN },
       transports: ["polling", "websocket"],
       reconnection: true,
       reconnectionAttempts: Infinity,
