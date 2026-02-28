@@ -1574,11 +1574,36 @@ Every tool is classified at registration time:
 ### Authentication & Authorization
 
 - **Auth Mode:** Local token auto-generated on first run, stored in `~/.openzigs/config.json`.
+- **API Auth:** All sensitive routes (`/api/admin/*`, `/api/knowledge/*`, `/api/social/*`, `/api/vault/*`, etc.) require Bearer token authentication via `createAuthMiddleware`.
+- **Socket.IO Auth:** WebSocket connections require token in the handshake `auth` object, validated with timing-safe comparison.
 - **Roles:**
   - `admin` — Full access (enable/disable tools, decide approvals, view logs).
   - `operator` — Read tools/approvals/logs, decide approvals.
   - `viewer` — Read-only health.
-- **Rate Limiting:** Failed auth attempts are rate-limited (default: 10 attempts per 60 s window).
+- **Rate Limiting:** Failed auth attempts are rate-limited (default: 10 attempts per 60 s window). Global rate limit: 100 requests per 15-minute window per IP via `express-rate-limit`.
+
+### Transport Security
+
+- **CORS:** Restricted to explicit origin allowlist (UI origin + localhost + `OPENZIGS_CORS_ORIGINS` env var). Credentials enabled.
+- **CSP:** Helmet enforces strict Content-Security-Policy: `frame-ancestors: 'none'` (anti-clickjacking), `script-src: 'self'`, `object-src: 'none'`, `base-uri: 'self'`.
+- **Trust Proxy:** Disabled by default; configurable via `server.trustProxy` in config. Prevents IP spoofing when not behind a reverse proxy.
+- **JSON Body Limit:** 1 MB (prevents memory exhaustion via large payloads).
+- **Error Redaction:** Internal filesystem paths are stripped from error responses; 500 errors return generic messages.
+
+### Input Validation
+
+- **File Uploads:** MIME type allowlist (text, JSON, PDF, DOCX, images, audio, video only), 25 MB per file, 10 files max.
+- **Chat Messages:** 10,000-character limit enforced at Socket.IO layer.
+- **Brand Voice Samples:** 10,000-character limit per sample.
+- **Prompt Templates:** 100,000-character limit.
+- **PATCH /rules/:id:** Zod schema validation with `.strict()` rejects unknown fields.
+
+### Sandbox & Isolation
+
+- **Post-Action Scripts:** Run with restricted environment — only `PATH`, `HOME`, `LANG`, `TERM` are inherited. Server env vars (API keys, tokens) are not leaked.
+- **MCP Command Validation:** Server command names are validated against `/^[a-zA-Z0-9_.\-/]+$/` regex. `which` lookups use `execFileSync` (no shell interpretation).
+- **Webhook SSRF Protection:** Webhook URLs are validated before fetch — private IPs, metadata endpoints, and non-HTTP protocols are blocked.
+- **Webhook HMAC:** Standard HMAC-SHA256 verification using raw request body bytes.
 
 ### Dual-Channel Approval Flow (via SDK Hooks)
 
