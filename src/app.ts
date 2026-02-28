@@ -90,7 +90,30 @@ export const createApp = (config: AppConfig, options: CreateAppOptions = {}): Ex
       }
     }
   }));
-  app.use(cors());
+  // CORS: restrict to explicit allowed origins
+  const corsOrigins = (process.env.OPENZIGS_CORS_ORIGINS ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const allowedOrigins = new Set([
+    uiOrigin,
+    "http://localhost:3000",
+    "http://localhost:3001",
+    ...corsOrigins,
+  ]);
+  app.use(cors({
+    origin: (origin, callback) => {
+      // Allow requests with no origin (curl, mobile apps, server-to-server)
+      if (!origin || allowedOrigins.has(origin)) {
+        callback(null, true);
+      } else {
+        callback(new Error("Not allowed by CORS"));
+      }
+    },
+    credentials: true,
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+  }));
   app.use(express.json({ limit: "50mb" }));
   app.use(express.urlencoded({ extended: true, limit: "50mb" }));
 
