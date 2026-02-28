@@ -1,6 +1,8 @@
 "use client";
 
 import { useState } from "react";
+import { useQuery, useMutation } from "@tanstack/react-query";
+import { fetchJson } from "@/lib/api";
 import { SectionCard } from "@/components/section-card";
 import { ToastContainer, showToast } from "@/components/toast";
 import { ConfirmDialog } from "@/components/confirm-dialog";
@@ -692,6 +694,23 @@ function ActivityTab() {
 
 function SettingsTab() {
   const { data: config } = useSocialConfig();
+  const voicesQuery = useQuery({
+    queryKey: ["brand-voices"],
+    queryFn: () => fetchJson<{ voices: Array<{ id: string; name: string; active: boolean }> }>("/api/admin/brand-voice"),
+  });
+  const voices = voicesQuery.data?.voices ?? [];
+  const [savingVoice, setSavingVoice] = useState(false);
+
+  const voiceMutation = useMutation({
+    mutationFn: (brandVoiceId: string | null) =>
+      fetchJson("/api/social/brand-voice", {
+        method: "PUT",
+        body: JSON.stringify({ brandVoiceId }),
+      }),
+    onSuccess: () => showToast("Brand voice updated for Social Brain", "success"),
+    onError: (err) => showToast(`Error: ${(err as Error).message}`, "error"),
+    onSettled: () => setSavingVoice(false),
+  });
 
   if (!config) {
     return <p className="text-sm text-muted-foreground">Loading configuration...</p>;
@@ -723,6 +742,27 @@ function SettingsTab() {
           <p className="text-xs text-muted-foreground">Confidence Threshold</p>
           <p className="text-sm font-medium capitalize">{config.confidenceThreshold}</p>
         </div>
+        {voices.length > 0 && (
+          <div className="rounded-lg border border-border bg-card p-3 min-w-[200px]">
+            <p className="text-xs text-muted-foreground mb-1">Brand Voice</p>
+            <select
+              className="w-full rounded-md border border-border bg-card px-2 py-1.5 text-sm text-foreground"
+              defaultValue=""
+              onChange={(e) => {
+                setSavingVoice(true);
+                voiceMutation.mutate(e.target.value || null);
+              }}
+              disabled={savingVoice}
+            >
+              <option value="">Default (active voice)</option>
+              {voices.map((v) => (
+                <option key={v.id} value={v.id}>
+                  {v.name}{v.active ? " \u2713" : ""}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
       </div>
 
       {/* Platform cards */}

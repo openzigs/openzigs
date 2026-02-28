@@ -5,6 +5,7 @@ import fs from "node:fs";
 import { TaskRepository } from "../tasks/task-repository.js";
 import { PresentationRepository } from "../presenter/presentation-repository.js";
 import { SocialRepository } from "../channels/social/social-repository.js";
+import { BrandVoiceRepository } from "../personality/brand-voice-repository.js";
 
 export type DatabaseOptions = {
   dbPath?: string;
@@ -39,6 +40,10 @@ export const getDatabase = (options: DatabaseOptions = {}): Database.Database =>
   // Run Social Brain migration (contacts, social_messages, comment_automation tables)
   const socialRepo = new SocialRepository(db);
   socialRepo.migrate();
+
+  // Run Brand Voice migration (brand_voices table)
+  const brandVoiceRepo = new BrandVoiceRepository(db);
+  brandVoiceRepo.migrate();
 
   sharedDb = db;
   return db;

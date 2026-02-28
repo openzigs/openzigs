@@ -98,7 +98,10 @@ export interface StoryboardOptions {
   visualAssets?: StoryboardVisualAsset[];
   /** When true, generate PowerPoint-style slide images with short text phrases rendered into the image */
   slideStyle?: boolean;  /** When true, user-provided visual assets cover all middle scenes — only generate AI images for intro (index 0) and outro (last scene) */
-  assetsOnlyMode?: boolean;}
+  assetsOnlyMode?: boolean;
+  /** Brand voice prompt block to inject into narration generation */
+  brandVoiceBlock?: string;
+}
 
 // ── Constants ─────────────────────────────────────────────────
 
@@ -235,7 +238,7 @@ RULES for imageDescription in this mode:
 Focus entirely on rich, engaging voiceover narration for every scene.`
       : "";
 
-    return `You are a professional Video Director and Visual Storyteller. Your task is to transform a text document into a compelling video storyboard.
+    const base = `You are a professional Video Director and Visual Storyteller. Your task is to transform a text document into a compelling video storyboard.
 
 YOUR PROCESS (follow this EXACTLY):
 
@@ -353,6 +356,12 @@ Optional styling fields (sensible defaults will be applied if omitted):
 - "backgroundColor": CSS colour (default: "rgba(0,0,0,0.6)")
 
 Include these in the "textOverlays" array for each scene in the JSON output.`;
+
+    // Inject brand voice rules into the system prompt if provided
+    if (options.brandVoiceBlock) {
+      return base + `\n\n${options.brandVoiceBlock}`;
+    }
+    return base;
   }
 
   /**

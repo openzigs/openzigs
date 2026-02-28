@@ -59,6 +59,8 @@ import { HandoffManager } from "./channels/social/handoff-manager.js";
 import { CommentRuleEngine } from "./channels/social/comment-rule-engine.js";
 import { PostContextService, InstagramApiClient, FacebookApiClient, TwitterApiClient, YouTubeApiClient, LinkedInApiClient } from "./channels/social/platform-api-client.js";
 import { DmDispatcher } from "./channels/social/dm-dispatcher.js";
+import { BrandVoiceRepository } from "./personality/brand-voice-repository.js";
+import { BrandVoiceService } from "./personality/brand-voice-service.js";
 import { PresentationRepository } from "./presenter/presentation-repository.js";
 import { detectChapters, computeQuizTimestamps } from "./presenter/chapter-detector.js";
 import { generateThumbnail } from "./presenter/thumbnail-generator.js";
@@ -133,6 +135,7 @@ if (chromeAutoLaunch && process.env.CHROME_DEBUG_HOST) {
 const db = getDatabase();
 const promptManager = new PromptManager({ db });
 const personalityManager = new PersonalityManager({ db });
+const brandVoiceRepo = new BrandVoiceRepository(db);
 const taskRepository = new TaskRepository(db);
 const taskEngine = new TaskEngine({ repository: taskRepository });
 
@@ -322,6 +325,9 @@ const copilot = new CopilotWrapperService({
 });
 copilotRef = copilot;
 
+// ── Brand Voice Service ──
+const brandVoiceService = new BrandVoiceService({ repository: brandVoiceRepo, copilot });
+
 // ── Knowledge Ingestion Service ──
 const knowledgeConfig = config.knowledge;
 const knowledgeService = new KnowledgeIngestionService({
@@ -435,6 +441,7 @@ const socialBrain = new SocialBrain({
   copilot,
   knowledgeService,
   confidenceThreshold: socialBrainConfig?.confidenceThreshold,
+  brandVoiceBlock: brandVoiceService.getActiveVoicePromptBlock(),
 });
 
 const socialHandoff = new HandoffManager({
@@ -531,7 +538,7 @@ const modelsRouter = createModelsRouter({ copilot });
 app.use("/api/models", modelsRouter);
 
 // Admin API routes (no auth for local dev; gate behind auth in prod)
-const adminRouter = createAdminRouter({ toolRegistry, sidecarManager, localServerManager, promptManager, scheduler, personalityManager, sessionManager, copilot, taskWorker, taskEngine, webhookManager, customPostActionManager, sentinel, knowledgeService });
+const adminRouter = createAdminRouter({ toolRegistry, sidecarManager, localServerManager, promptManager, scheduler, personalityManager, sessionManager, copilot, taskWorker, taskEngine, webhookManager, customPostActionManager, sentinel, knowledgeService, brandVoiceService });
 app.use("/api/admin", adminRouter);
 
 // Knowledge Base API routes
@@ -546,6 +553,7 @@ const socialRouter = createSocialRouter({
   handoff: socialHandoff,
   ruleEngine: commentRuleEngine,
   config: socialBrainConfig,
+  brandVoiceService,
 });
 app.use("/api/social", socialRouter);
 
@@ -582,6 +590,7 @@ const directorRouter = createDirectorRouter({
   copilot,
   voiceService,
   renderOrchestrator,
+  brandVoiceService,
   config: {
     enabled: directorConfig?.enabled ?? true,
     outputDir: expandTilde(directorConfig?.outputDir ?? "~/.openzigs/video-output"),
@@ -1428,6 +1437,7 @@ const createRouter = (accessControlOverride?: AccessControlConfig, onUserInputRe
     taskEngine,
     onUserInputRequest,
     vaultService,
+    brandVoiceService,
   });
 };
 

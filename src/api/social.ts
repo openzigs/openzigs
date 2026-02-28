@@ -15,6 +15,7 @@ import type { HandoffManager } from "../channels/social/handoff-manager.js";
 import type { CommentRuleEngine } from "../channels/social/comment-rule-engine.js";
 import type { SocialPlatform } from "../channels/social/types.js";
 import type { SocialBrainAppConfig } from "../config/index.js";
+import type { BrandVoiceService } from "../personality/brand-voice-service.js";
 
 export type SocialRouterOptions = {
   repository: SocialRepository;
@@ -23,12 +24,13 @@ export type SocialRouterOptions = {
   handoff: HandoffManager;
   ruleEngine: CommentRuleEngine;
   config?: SocialBrainAppConfig;
+  brandVoiceService?: BrandVoiceService;
 };
 
 const platformSchema = z.enum(["instagram", "reddit", "youtube", "tiktok", "twitter", "facebook", "linkedin"]);
 
 export const createSocialRouter = (opts: SocialRouterOptions): Router => {
-  const { repository, ingestion, handoff, config: socialConfig } = opts;
+  const { repository, ingestion, handoff, config: socialConfig, brandVoiceService } = opts;
   const router = Router();
 
   /** Build connection info with real credential status. */
@@ -391,6 +393,24 @@ export const createSocialRouter = (opts: SocialRouterOptions): Router => {
       webhookVerifyToken: !!process.env.SOCIAL_WEBHOOK_VERIFY_TOKEN,
       platforms,
     });
+  });
+
+  // ── PUT /brand-voice — Update the brand voice used by Social Brain ──
+  router.put("/brand-voice", (req, res) => {
+    try {
+      if (!brandVoiceService) {
+        res.status(503).json({ error: "Brand voice service not available" });
+        return;
+      }
+      const { brandVoiceId } = req.body as { brandVoiceId?: string | null };
+      const block = brandVoiceService.getVoicePromptBlockById(brandVoiceId ?? undefined);
+      opts.brain.setBrandVoice(block);
+      res.json({ ok: true, brandVoiceId: brandVoiceId ?? null });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      logger.error(`[SocialAPI] Failed to update brand voice: ${msg}`);
+      res.status(500).json({ error: msg });
+    }
   });
 
   return router;

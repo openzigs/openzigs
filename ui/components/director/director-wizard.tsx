@@ -103,6 +103,10 @@ export const DirectorWizard = () => {
     setState((s) => ({ ...s, quizEnabled }));
   }, []);
 
+  const setBrandVoiceId = useCallback((brandVoiceId: string | null) => {
+    setState((s) => ({ ...s, brandVoiceId }));
+  }, []);
+
   const setManifest = useCallback((manifest: DirectorManifestSummary) => {
     setState((s) => ({ ...s, manifest }));
   }, []);
@@ -207,6 +211,7 @@ export const DirectorWizard = () => {
             onSlideStyleChange={setSlideStyle}
             onAssetsOnlyModeChange={setAssetsOnlyMode}
             onQuizEnabledChange={setQuizEnabled}
+            onBrandVoiceChange={setBrandVoiceId}
           />
         )}
       </div>

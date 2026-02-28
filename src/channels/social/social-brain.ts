@@ -11,6 +11,8 @@ export type SocialBrainOptions = {
   knowledgeService: KnowledgeIngestionService;
   confidenceThreshold?: "high" | "medium" | "low";
   systemPrompt?: string;
+  /** Brand voice prompt block injected into the system prompt for stylistic consistency */
+  brandVoiceBlock?: string;
 };
 
 const DEFAULT_SYSTEM_PROMPT = `You are a helpful social media assistant. You respond to direct messages from users.
@@ -45,7 +47,9 @@ export class SocialBrain extends EventEmitter {
   private copilot: CopilotWrapperService;
   private knowledgeService: KnowledgeIngestionService;
   private confidenceThreshold: "high" | "medium" | "low";
-  private systemPrompt: string;
+  private systemPrompt!: string;
+  private baseSystemPrompt: string;
+  private brandVoiceBlock: string;
 
   constructor(opts: SocialBrainOptions) {
     super();
@@ -53,7 +57,21 @@ export class SocialBrain extends EventEmitter {
     this.copilot = opts.copilot;
     this.knowledgeService = opts.knowledgeService;
     this.confidenceThreshold = opts.confidenceThreshold ?? "medium";
-    this.systemPrompt = opts.systemPrompt ?? DEFAULT_SYSTEM_PROMPT;
+    this.brandVoiceBlock = opts.brandVoiceBlock ?? "";
+    this.baseSystemPrompt = opts.systemPrompt ?? DEFAULT_SYSTEM_PROMPT;
+    this.rebuildSystemPrompt();
+  }
+
+  /** Update the brand voice block used in system prompts at runtime. */
+  setBrandVoice(block: string): void {
+    this.brandVoiceBlock = block;
+    this.rebuildSystemPrompt();
+  }
+
+  private rebuildSystemPrompt(): void {
+    this.systemPrompt = this.brandVoiceBlock
+      ? `${this.baseSystemPrompt}\n\n${this.brandVoiceBlock}`
+      : this.baseSystemPrompt;
   }
 
   /**

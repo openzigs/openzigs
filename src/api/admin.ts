@@ -2,6 +2,7 @@ import { Router } from "express";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import multer from "multer";
 import { z } from "zod";
 import { loadConfig, customAgentSchema, mcpServerConfigSchema, nativeMcpServersSchema } from "../config/index.js";
 import { logger } from "../logging/logger.js";
@@ -24,6 +25,7 @@ import { PipelinePlanner } from "../tasks/pipeline-planner.js";
 import type { WebhookManager } from "../webhooks/webhook-manager.js";
 import type { SentinelService } from "../sentinel/index.js";
 import type { KnowledgeIngestionService } from "../knowledge/index.js";
+import type { BrandVoiceService } from "../personality/brand-voice-service.js";
 import { SentinelConfigSchema, readStatusMarkdown } from "../sentinel/index.js";
 import { TemplateService } from "../productivity/template-service.js";
 import { CopilotNativeMcpTester, type NativeMcpDiscoveredTool, type NativeMcpTester } from "../mcp/native-mcp-test-service.js";
@@ -290,6 +292,7 @@ export type AdminRouterOptions = {
   customPostActionManager?: CustomPostActionManager;
   sentinel?: SentinelService;
   knowledgeService?: KnowledgeIngestionService;
+  brandVoiceService?: BrandVoiceService;
   nativeMcpTester?: NativeMcpTester;
 };
 
@@ -355,7 +358,7 @@ const parseReasoningEffort = (value: unknown): ReasoningEffort | undefined => {
     : undefined;
 };
 
-export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerManager, promptManager, scheduler, personalityManager, sessionManager, copilot, taskWorker, taskEngine, webhookManager, customPostActionManager, sentinel, nativeMcpTester }: AdminRouterOptions): Router => {
+export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerManager, promptManager, scheduler, personalityManager, sessionManager, copilot, taskWorker, taskEngine, webhookManager, customPostActionManager, sentinel, brandVoiceService, nativeMcpTester }: AdminRouterOptions): Router => {
   const router = Router();
   const mcpTester = nativeMcpTester ?? new CopilotNativeMcpTester();
 
@@ -1469,6 +1472,182 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
     router.post("/personality/reset", (_req, res) => {
       const config = personalityManager.reset();
       return res.json(config);
+    });
+  }
+
+  // ── Brand Voice Management ──
+  if (brandVoiceService) {
+    router.get("/brand-voice", (_req, res) => {
+      return res.json({ voices: brandVoiceService.getAll() });
+    });
+
+    router.get("/brand-voice/active", (_req, res) => {
+      const active = brandVoiceService.getActive();
+      return res.json({ voice: active });
+    });
+
+    router.get("/brand-voice/:id", (req, res) => {
+      const voice = brandVoiceService.getById(req.params.id);
+      if (!voice) return res.status(404).json({ error: "Brand voice not found" });
+      return res.json(voice);
+    });
+
+    router.post("/brand-voice/analyze", async (req, res) => {
+      const body = req.body as Record<string, unknown>;
+      const samples = Array.isArray(body.samples)
+        ? (body.samples as unknown[]).filter((s): s is string => typeof s === "string")
+        : [];
+      const name = typeof body.name === "string" ? body.name.trim() : "";
+      const active = body.active === true;
+      const model = typeof body.model === "string" ? body.model.trim() : undefined;
+
+      if (samples.length === 0) {
+        return res.status(400).json({ error: "At least one writing sample is required" });
+      }
+      if (!name) {
+        return res.status(400).json({ error: "Name is required" });
+      }
+
+      try {
+        const voice = await brandVoiceService.analyzeAndSave(name, samples, { active, model });
+        return res.json(voice);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        logger.error(`[BrandVoice] Analysis failed: ${message}`);
+        return res.status(500).json({ error: message });
+      }
+    });
+
+    const BrandVoiceRulebookUpdateSchema = z.object({
+      tone: z.string(),
+      sentence_structure: z.string(),
+      vocabulary_level: z.string(),
+      formatting_quirks: z.string(),
+      banned_words: z.array(z.string()),
+    }).partial().strict();
+
+    router.put("/brand-voice/:id", (req, res) => {
+      const body = req.body as Record<string, unknown>;
+
+      let rulebook: import("../personality/brand-voice-repository.js").BrandVoiceRulebook | undefined;
+      if (body.rulebook !== undefined) {
+        const result = BrandVoiceRulebookUpdateSchema.safeParse(body.rulebook);
+        if (!result.success) {
+          return res.status(400).json({ error: "Invalid rulebook structure", issues: result.error.issues });
+        }
+        rulebook = result.data as import("../personality/brand-voice-repository.js").BrandVoiceRulebook;
+      }
+
+      const updated = brandVoiceService.update(req.params.id, {
+        name: typeof body.name === "string" ? body.name.trim() : undefined,
+        rulebook,
+        active: typeof body.active === "boolean" ? body.active : undefined,
+      });
+      if (!updated) return res.status(404).json({ error: "Brand voice not found" });
+      return res.json(updated);
+    });
+
+    router.post("/brand-voice/:id/activate", (req, res) => {
+      const voice = brandVoiceService.setActive(req.params.id);
+      if (!voice) return res.status(404).json({ error: "Brand voice not found" });
+      return res.json(voice);
+    });
+
+    router.post("/brand-voice/:id/reanalyze", async (req, res) => {
+      const body = req.body as Record<string, unknown>;
+      const samples = Array.isArray(body.samples)
+        ? (body.samples as unknown[]).filter((s): s is string => typeof s === "string")
+        : [];
+      const model = typeof body.model === "string" ? body.model.trim() : undefined;
+
+      if (samples.length === 0) {
+        return res.status(400).json({ error: "At least one writing sample is required" });
+      }
+
+      try {
+        const voice = await brandVoiceService.reanalyze(req.params.id, samples, model);
+        if (!voice) return res.status(404).json({ error: "Brand voice not found" });
+        return res.json(voice);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        logger.error(`[BrandVoice] Re-analysis failed: ${message}`);
+        return res.status(500).json({ error: message });
+      }
+    });
+
+    router.post("/brand-voice/deactivate", (_req, res) => {
+      brandVoiceService.deactivateAll();
+      return res.json({ ok: true });
+    });
+
+    // Upload Word/PDF files and extract text as writing samples
+    const sampleUpload = multer({
+      storage: multer.memoryStorage(),
+      limits: { fileSize: 10 * 1024 * 1024, files: 10 },
+      fileFilter: (_req, file, cb) => {
+        const ext = path.extname(file.originalname).toLowerCase();
+        if ([".pdf", ".docx", ".doc", ".txt"].includes(ext)) {
+          cb(null, true);
+        } else {
+          cb(new Error("Unsupported file type. Accepted: .pdf, .docx, .doc, .txt"));
+        }
+      },
+    });
+
+    router.post("/brand-voice/upload-samples", sampleUpload.array("files", 10), async (req, res) => {
+      const files = req.files as Express.Multer.File[] | undefined;
+      if (!files || files.length === 0) {
+        return res.status(400).json({ error: "No files uploaded" });
+      }
+
+      const samples: string[] = [];
+      const errors: string[] = [];
+
+      for (const file of files) {
+        const ext = path.extname(file.originalname).toLowerCase();
+        try {
+          let text = "";
+          if (ext === ".txt") {
+            text = file.buffer.toString("utf-8");
+          } else if (ext === ".docx" || ext === ".doc") {
+            const mod: unknown = await import("mammoth");
+            const m = mod as Record<string, unknown>;
+            const mammoth = (m.default ?? m) as Record<string, unknown>;
+            if (typeof mammoth.extractRawText !== "function") {
+              throw new Error("mammoth.extractRawText is not a function — unexpected module shape");
+            }
+            const result = await (mammoth.extractRawText as (opts: { buffer: Buffer }) => Promise<{ value: string }>)({ buffer: file.buffer });
+            text = result.value;
+          } else if (ext === ".pdf") {
+            const mod: unknown = await import("pdf-parse");
+            const m = mod as Record<string, unknown>;
+            const pdf = (m.default ?? m) as (data: Buffer) => Promise<{ text: string }>;
+            if (typeof pdf !== "function") {
+              throw new Error("pdf-parse default export is not a function — unexpected module shape");
+            }
+            const data = await pdf(file.buffer);
+            text = data.text;
+          }
+
+          const trimmed = text.trim();
+          if (trimmed) {
+            samples.push(trimmed);
+          } else {
+            errors.push(`${file.originalname}: extracted text was empty`);
+          }
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          errors.push(`${file.originalname}: ${msg}`);
+        }
+      }
+
+      return res.json({ samples, errors });
+    });
+
+    router.delete("/brand-voice/:id", (req, res) => {
+      const deleted = brandVoiceService.delete(req.params.id);
+      if (!deleted) return res.status(404).json({ error: "Brand voice not found" });
+      return res.json({ ok: true });
     });
   }
 

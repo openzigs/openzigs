@@ -5,7 +5,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { fetchJson } from "@/lib/api";
 import type { PersonalityConfig } from "@/lib/types";
 import { showToast } from "@/components/toast";
-import { RotateCw, Eye, EyeOff, RotateCcw, AlertTriangle } from "lucide-react";
+import { RotateCw, Eye, EyeOff, RotateCcw, AlertTriangle, Palette } from "lucide-react";
+import type { BrandVoice } from "@/lib/types";
 
 export const PersonalityPanel = () => {
   const queryClient = useQueryClient();
@@ -17,6 +18,12 @@ export const PersonalityPanel = () => {
   });
 
   const config = query.data;
+
+  const brandVoiceQuery = useQuery({
+    queryKey: ["brand-voices"],
+    queryFn: () => fetchJson<{ voices: BrandVoice[] }>("/api/admin/brand-voice"),
+  });
+  const activeBrandVoice = (brandVoiceQuery.data?.voices ?? []).find((v) => v.active);
 
   const [systemInstruction, setSystemInstruction] = useState("");
   const [prePrompt, setPrePrompt] = useState("");
@@ -90,6 +97,17 @@ export const PersonalityPanel = () => {
 
   return (
     <div className="space-y-5">
+      {/* Active brand voice indicator */}
+      {activeBrandVoice && (
+        <div className="flex items-center gap-2 rounded-lg border border-primary/20 bg-primary/5 px-4 py-2.5">
+          <Palette className="h-4 w-4 text-primary" />
+          <span className="text-xs text-foreground">
+            Brand Voice active: <span className="font-semibold text-primary">{activeBrandVoice.name}</span>
+            <span className="ml-1 text-muted-foreground">— {activeBrandVoice.rulebook.tone}</span>
+          </span>
+        </div>
+      )}
+
       {/* Enable toggle */}
       <div className="flex items-center justify-between">
         <div>

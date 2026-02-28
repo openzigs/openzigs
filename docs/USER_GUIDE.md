@@ -284,7 +284,10 @@ The dashboard at `/` provides:
 The admin page at `/admin` consolidates all configuration:
 
 - **Channels** — Configure Telegram and Discord tokens, toggle channels on/off, select default model.
-- **AI Personality** — Configure the system instruction and optional pre/post prompts, or disable injection globally. Set the **mode** to `append` (merge your personality with SDK defaults) or `replace` (fully override the system prompt with your personality text). A warning banner is displayed when replace mode is selected, and the prompt preview reflects the selected mode.
+- **AI Personality** — Configure the system instruction and optional pre/post prompts, or disable injection globally. Set the **mode** to `append` (merge your personality with SDK defaults) or `replace` (fully override the system prompt with your personality text). A warning banner is displayed when replace mode is selected, and the prompt preview reflects the selected mode. When a brand voice is active, an indicator is shown at the top of the personality panel.
+- **Brand Voice** — Analyze your writing samples to extract a reproducible style rulebook. Paste one or more writing samples (separated by `---`), give it a name, and click "Analyze & Save". The AI extracts your tone, sentence structure, vocabulary level, formatting quirks, and banned words into a rulebook. You can create multiple brand voices, expand any voice to view or edit its rulebook inline, and activate one at a time. The active brand voice is automatically injected into video storyboards, social brain replies, and blog-to-video pipelines.
+
+![Brand Voice panel — analyze samples, view rulebook, activate/deactivate](images/admin-brand-voice.png)
 ![Model Configuration — reasoning effort and BYOK provider settings](images/admin-model-config.png)
 
 - **Model Configuration** — Set the default reasoning effort (Low / Medium / High / xHigh) for reasoning models. Enable **BYOK (Bring Your Own Key)** to configure a custom provider (OpenAI, Azure, Anthropic, Ollama, or Custom) with base URL, API key (masked by default), and optional Azure API version. Test the connection before saving, or clear the provider to revert to GitHub Copilot.

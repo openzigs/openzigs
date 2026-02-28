@@ -37,6 +37,7 @@ import { getDatabase } from "../productivity/database.js";
 import type { CopilotWrapper } from "../copilot/copilot-wrapper.js";
 import type { VoiceService } from "../voice/voice-service.js";
 import type { RenderOrchestrator } from "../video/render-orchestrator.js";
+import type { BrandVoiceService } from "../personality/brand-voice-service.js";
 import { NARRATION_DIRECTIVES } from "../voice/pacing-translator.js";
 import { AVAILABLE_LOCAL_VOICES } from "../voice/types.js";
 
@@ -44,6 +45,7 @@ export interface DirectorRouterOptions {
   copilot: CopilotWrapper;
   voiceService?: VoiceService;
   renderOrchestrator?: RenderOrchestrator;
+  brandVoiceService?: BrandVoiceService;
   config: {
     enabled: boolean;
     outputDir: string;
@@ -62,6 +64,7 @@ export const createDirectorRouter = ({
   copilot,
   voiceService,
   renderOrchestrator,
+  brandVoiceService,
   config,
 }: DirectorRouterOptions): Router => {
   const router = Router();
@@ -890,7 +893,7 @@ Respond with ONLY a valid JSON array. No explanation. Example:
    */
   router.post("/produce", async (req, res) => {
     try {
-      const { clips, mode, scriptPath, musicTrackPath, template, model, enableVisionAnalysis, inputFile, sourceType, topic, imageProvider, imageModel, slideStyle, assetsOnlyMode, quizEnabled, visualAssets } = req.body as {
+      const { clips, mode, scriptPath, musicTrackPath, template, model, enableVisionAnalysis, inputFile, sourceType, topic, imageProvider, imageModel, slideStyle, assetsOnlyMode, quizEnabled, visualAssets, brandVoiceId } = req.body as {
         clips?: string[];
         mode: "highlight" | "script" | "presentation";
         scriptPath?: string;
@@ -906,6 +909,7 @@ Respond with ONLY a valid JSON array. No explanation. Example:
         slideStyle?: boolean;
         assetsOnlyMode?: boolean;
         quizEnabled?: boolean;
+        brandVoiceId?: string;
         visualAssets?: Array<{
           path: string;
           description: string;
@@ -980,6 +984,11 @@ Respond with ONLY a valid JSON array. No explanation. Example:
         }
         if (assetsOnlyMode && visualAssets && visualAssets.length > 0) {
           storyboardOptions.assetsOnlyMode = true;
+        }
+        // Inject brand voice (specific ID or active default) if available
+        if (brandVoiceService) {
+          const voiceBlock = brandVoiceService.getVoicePromptBlockById(brandVoiceId);
+          if (voiceBlock) storyboardOptions.brandVoiceBlock = voiceBlock;
         }
         const storyboard = await storyboardEngine.generate(rawText, storyboardOptions);
 
@@ -2785,7 +2794,7 @@ Return ONLY the new narration text, no explanations or formatting.`;
    */
   router.post("/blog-to-video", async (req, res) => {
     try {
-      const { url, template, styleHint, imageProvider, imageModel, musicTrackPath, targetDuration } = req.body as {
+      const { url, template, styleHint, imageProvider, imageModel, musicTrackPath, targetDuration, brandVoiceId } = req.body as {
         url?: string;
         template?: "Minimalist" | "ContentCreator" | "Corporate" | "TechDemo";
         styleHint?: string;
@@ -2793,6 +2802,7 @@ Return ONLY the new narration text, no explanations or formatting.`;
         imageModel?: "flux" | "sdxl-turbo";
         musicTrackPath?: string;
         targetDuration?: number;
+        brandVoiceId?: string;
       };
 
       if (!url || typeof url !== "string") {
@@ -2823,6 +2833,7 @@ Return ONLY the new narration text, no explanations or formatting.`;
           musicTrackPath,
           model: runtimeConfig.defaultModel || undefined,
           targetDuration,
+          brandVoiceBlock: brandVoiceService?.getVoicePromptBlockById(brandVoiceId) || undefined,
         },
         copilot,
         voiceService,
