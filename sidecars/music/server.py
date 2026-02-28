@@ -400,13 +400,26 @@ class MusicGenHandler(BaseHTTPRequestHandler):
             except ImportError:
                 pass
             gc.collect()
+            previous_model = worker_state["loaded_model"]
             worker_state["loaded_model"] = None
             self._send_json(200, {
                 "ok": True,
-                "previous_model": worker_state["loaded_model"],
+                "previous_model": previous_model,
             })
         else:
             self._send_json(404, {"error": "Not found"})
+
+    def _parse_generation_params(self, body: dict) -> dict:
+        """Extract and validate generation parameters from a request body."""
+        return {
+            "prompt": body.get("prompt", ""),
+            "duration_seconds": min(int(body.get("duration_seconds", 30)), 300),
+            "lyrics": body.get("lyrics"),
+            "instrumental": bool(body.get("instrumental", False)),
+            "model": body.get("model", DEFAULT_MODEL),
+            "seed": body.get("seed"),
+            "steps": min(max(int(body.get("steps", 20)), 8), 27),
+        }
 
     def _handle_generate_async(self):
         if worker_state["is_busy"]:
@@ -417,25 +430,21 @@ class MusicGenHandler(BaseHTTPRequestHandler):
             return
 
         body = self._read_body()
-        prompt = body.get("prompt", "")
-        if not prompt:
+        params = self._parse_generation_params(body)
+        if not params["prompt"]:
             self._send_json(400, {"error": "prompt is required"})
             return
 
         job_id = body.get("job_id", str(uuid.uuid4()))
         callback_url = body.get("callback_url")
-        duration = min(int(body.get("duration_seconds", 30)), 300)
-        lyrics = body.get("lyrics")
-        instrumental = bool(body.get("instrumental", False))
-        model = body.get("model", DEFAULT_MODEL)
-        seed = body.get("seed")
-        steps = min(max(int(body.get("steps", 20)), 8), 27)
 
         thread = threading.Thread(
             target=run_async_job,
             args=(
-                job_id, prompt, callback_url, duration,
-                lyrics, instrumental, model, seed, steps,
+                job_id, params["prompt"], callback_url,
+                params["duration_seconds"], params["lyrics"],
+                params["instrumental"], params["model"],
+                params["seed"], params["steps"],
             ),
             daemon=True,
         )
@@ -444,7 +453,7 @@ class MusicGenHandler(BaseHTTPRequestHandler):
         self._send_json(202, {
             "job_id": job_id,
             "status": "accepted",
-            "estimated_seconds": max(duration * 1.5, 30),
+            "estimated_seconds": max(params["duration_seconds"] * 1.5, 30),
         })
 
     def _handle_generate_sync(self):
@@ -453,23 +462,21 @@ class MusicGenHandler(BaseHTTPRequestHandler):
             return
 
         body = self._read_body()
-        prompt = body.get("prompt", "")
-        if not prompt:
+        params = self._parse_generation_params(body)
+        if not params["prompt"]:
             self._send_json(400, {"error": "prompt is required"})
             return
 
         worker_state["is_busy"] = True
         try:
             audio_bytes, mime_type = generate_music(
-                prompt=prompt,
-                duration_seconds=min(
-                    int(body.get("duration_seconds", 30)), 300
-                ),
-                lyrics=body.get("lyrics"),
-                instrumental=bool(body.get("instrumental", False)),
-                model=body.get("model", DEFAULT_MODEL),
-                seed=body.get("seed"),
-                steps=min(max(int(body.get("steps", 20)), 8), 27),
+                prompt=params["prompt"],
+                duration_seconds=params["duration_seconds"],
+                lyrics=params["lyrics"],
+                instrumental=params["instrumental"],
+                model=params["model"],
+                seed=params["seed"],
+                steps=params["steps"],
             )
 
             audio_b64 = base64.b64encode(audio_bytes).decode("ascii")
