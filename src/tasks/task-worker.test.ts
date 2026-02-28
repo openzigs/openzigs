@@ -64,6 +64,11 @@ describe("TaskWorker", () => {
       setNativeMcpServers: vi.fn(),
       getSessionUsage: vi.fn().mockReturnValue(null),
       clearSessionUsage: vi.fn().mockReturnValue(null),
+      listSdkSessions: vi.fn().mockResolvedValue([]),
+      getSdkSessionMessages: vi.fn().mockResolvedValue([]),
+      deleteSdkSession: vi.fn().mockResolvedValue(undefined),
+      getSessionAnalytics: vi.fn().mockReturnValue({ sessionsCreated: 0, sessionsResumed: 0, sessionsDestroyed: 0, compactionCount: 0, lifecycleEvents: [], lastUpdated: "" }),
+      resetSessionAnalytics: vi.fn(),
       chat: vi.fn().mockImplementation(async function* () {
         for (const chunk of chunks) {
           yield chunk;
@@ -125,6 +130,11 @@ describe("TaskWorker", () => {
       setNativeMcpServers: vi.fn(),
       getSessionUsage: vi.fn().mockReturnValue(null),
       clearSessionUsage: vi.fn().mockReturnValue(null),
+      listSdkSessions: vi.fn().mockResolvedValue([]),
+      getSdkSessionMessages: vi.fn().mockResolvedValue([]),
+      deleteSdkSession: vi.fn().mockResolvedValue(undefined),
+      getSessionAnalytics: vi.fn().mockReturnValue({ sessionsCreated: 0, sessionsResumed: 0, sessionsDestroyed: 0, compactionCount: 0, lifecycleEvents: [], lastUpdated: "" }),
+      resetSessionAnalytics: vi.fn(),
       chat: vi.fn().mockImplementation(async function* () {
         yield ""; // eslint requires yield in generators
         throw new Error("LLM exploded");
@@ -184,6 +194,11 @@ describe("TaskWorker", () => {
       setNativeMcpServers: vi.fn(),
       getSessionUsage: vi.fn().mockReturnValue(null),
       clearSessionUsage: vi.fn().mockReturnValue(null),
+      listSdkSessions: vi.fn().mockResolvedValue([]),
+      getSdkSessionMessages: vi.fn().mockResolvedValue([]),
+      deleteSdkSession: vi.fn().mockResolvedValue(undefined),
+      getSessionAnalytics: vi.fn().mockReturnValue({ sessionsCreated: 0, sessionsResumed: 0, sessionsDestroyed: 0, compactionCount: 0, lifecycleEvents: [], lastUpdated: "" }),
+      resetSessionAnalytics: vi.fn(),
       chat: vi.fn().mockImplementation(async function* () {
         concurrent++;
         concurrentPeak = Math.max(concurrentPeak, concurrent);
@@ -246,6 +261,11 @@ describe("TaskWorker", () => {
       setNativeMcpServers: vi.fn(),
       getSessionUsage: vi.fn().mockReturnValue(null),
       clearSessionUsage: vi.fn().mockReturnValue(null),
+      listSdkSessions: vi.fn().mockResolvedValue([]),
+      getSdkSessionMessages: vi.fn().mockResolvedValue([]),
+      deleteSdkSession: vi.fn().mockResolvedValue(undefined),
+      getSessionAnalytics: vi.fn().mockReturnValue({ sessionsCreated: 0, sessionsResumed: 0, sessionsDestroyed: 0, compactionCount: 0, lifecycleEvents: [], lastUpdated: "" }),
+      resetSessionAnalytics: vi.fn(),
       chat: vi.fn().mockImplementation(async function* () {
         yield "ok";
       }),
@@ -300,6 +320,11 @@ describe("TaskWorker", () => {
       setNativeMcpServers: vi.fn(),
       getSessionUsage: vi.fn().mockReturnValue(null),
       clearSessionUsage: vi.fn().mockReturnValue(null),
+      listSdkSessions: vi.fn().mockResolvedValue([]),
+      getSdkSessionMessages: vi.fn().mockResolvedValue([]),
+      deleteSdkSession: vi.fn().mockResolvedValue(undefined),
+      getSessionAnalytics: vi.fn().mockReturnValue({ sessionsCreated: 0, sessionsResumed: 0, sessionsDestroyed: 0, compactionCount: 0, lifecycleEvents: [], lastUpdated: "" }),
+      resetSessionAnalytics: vi.fn(),
       chat: vi.fn().mockImplementation(async function* () {
         yield "ok";
       }),
@@ -357,6 +382,11 @@ describe("TaskWorker", () => {
       setNativeMcpServers: vi.fn(),
       getSessionUsage: vi.fn().mockReturnValue(null),
       clearSessionUsage: vi.fn().mockReturnValue(null),
+      listSdkSessions: vi.fn().mockResolvedValue([]),
+      getSdkSessionMessages: vi.fn().mockResolvedValue([]),
+      deleteSdkSession: vi.fn().mockResolvedValue(undefined),
+      getSessionAnalytics: vi.fn().mockReturnValue({ sessionsCreated: 0, sessionsResumed: 0, sessionsDestroyed: 0, compactionCount: 0, lifecycleEvents: [], lastUpdated: "" }),
+      resetSessionAnalytics: vi.fn(),
       chat: vi.fn().mockImplementation(async function* (_prompt: string, options?: { onToolCall?: (t: string, a: unknown) => void }) {
         capturedOnToolCall = options?.onToolCall;
         yield "done";
@@ -423,6 +453,11 @@ describe("TaskWorker", () => {
       setNativeMcpServers: vi.fn(),
       getSessionUsage: vi.fn().mockReturnValue(null),
       clearSessionUsage: vi.fn().mockReturnValue(null),
+      listSdkSessions: vi.fn().mockResolvedValue([]),
+      getSdkSessionMessages: vi.fn().mockResolvedValue([]),
+      deleteSdkSession: vi.fn().mockResolvedValue(undefined),
+      getSessionAnalytics: vi.fn().mockReturnValue({ sessionsCreated: 0, sessionsResumed: 0, sessionsDestroyed: 0, compactionCount: 0, lifecycleEvents: [], lastUpdated: "" }),
+      resetSessionAnalytics: vi.fn(),
       chat: vi.fn().mockImplementation(async function* () { yield "x"; }),
     };
 
@@ -463,6 +498,11 @@ describe("TaskWorker", () => {
       setNativeMcpServers: vi.fn(),
       getSessionUsage: vi.fn().mockReturnValue(null),
       clearSessionUsage: vi.fn().mockReturnValue(null),
+      listSdkSessions: vi.fn().mockResolvedValue([]),
+      getSdkSessionMessages: vi.fn().mockResolvedValue([]),
+      deleteSdkSession: vi.fn().mockResolvedValue(undefined),
+      getSessionAnalytics: vi.fn().mockReturnValue({ sessionsCreated: 0, sessionsResumed: 0, sessionsDestroyed: 0, compactionCount: 0, lifecycleEvents: [], lastUpdated: "" }),
+      resetSessionAnalytics: vi.fn(),
       chat: vi.fn().mockImplementation(async function* () {
         yield "done";
       }),
@@ -531,6 +571,11 @@ describe("TaskWorker", () => {
       setNativeMcpServers: vi.fn(),
       getSessionUsage: vi.fn().mockReturnValue(null),
       clearSessionUsage: vi.fn().mockReturnValue(null),
+      listSdkSessions: vi.fn().mockResolvedValue([]),
+      getSdkSessionMessages: vi.fn().mockResolvedValue([]),
+      deleteSdkSession: vi.fn().mockResolvedValue(undefined),
+      getSessionAnalytics: vi.fn().mockReturnValue({ sessionsCreated: 0, sessionsResumed: 0, sessionsDestroyed: 0, compactionCount: 0, lifecycleEvents: [], lastUpdated: "" }),
+      resetSessionAnalytics: vi.fn(),
       chat: vi.fn().mockImplementation(async function* () {
         yield "done";
       }),

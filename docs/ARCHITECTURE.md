@@ -2152,6 +2152,78 @@ For the current Express/Node.js stack:
 
 ---
 
+## SDK Session History, Replay & Analytics (Epic #334)
+
+OpenZigs surfaces the Copilot SDK's native session management APIs to provide full session visibility, conversation replay, and lifecycle analytics through both the Admin API and the Admin UI.
+
+### Architecture
+
+```mermaid
+flowchart TB
+    subgraph CopilotWrapper
+        LC[Lifecycle Subscriber<br/>client.on handler]
+        AN[SessionAnalytics<br/>create/resume/destroy/compaction counters]
+        LSS[listSdkSessions<br/>client.listSessions]
+        GSM[getSdkSessionMessages<br/>session.getMessages]
+        DSS[deleteSdkSession<br/>client.deleteSession]
+    end
+
+    subgraph Admin API
+        R1["GET /copilot-sessions"]
+        R2["DELETE /copilot-sessions/:id"]
+        R3["POST /copilot-sessions/:id/resume"]
+        R4["GET /copilot-sessions/:id/messages"]
+        R5["GET /copilot-sessions/analytics"]
+        R6["POST /copilot-sessions/analytics/reset"]
+    end
+
+    subgraph Admin UI
+        T1[App Sessions Tab]
+        T2[Copilot Sessions Tab]
+        T3[Analytics Tab]
+    end
+
+    LC --> AN
+    R1 --> LSS
+    R2 --> DSS
+    R3 -->|resumeSession + getOrCreateSession| CopilotWrapper
+    R4 --> GSM
+    R5 --> AN
+    R6 --> AN
+    T2 --> R1
+    T2 --> R2
+    T2 --> R3
+    T2 --> R4
+    T3 --> R5
+    T3 --> R6
+```
+
+### SDK APIs Used
+
+| SDK Method | CopilotWrapper Method | Purpose |
+|---|---|---|
+| `client.listSessions(filter?)` | `listSdkSessions(filter?)` | List all persisted SDK sessions with metadata |
+| `session.getMessages()` | `getSdkSessionMessages(sessionId)` | Retrieve full event stream for conversation replay |
+| `client.deleteSession(sessionId)` | `deleteSdkSession(sessionId)` | Permanently delete an SDK session |
+| `client.on(handler)` | Subscribed in `doStart()` | Track lifecycle events (created/deleted/updated/foreground/background) |
+
+### Session Analytics Tracking
+
+The `SessionAnalytics` object tracks:
+- `sessionsCreated` — incremented in `getOrCreateSession()` when `createSession()` is called
+- `sessionsResumed` — incremented in `getOrCreateSession()` when `resumeSession()` succeeds
+- `sessionsDestroyed` — incremented in `destroySession()`
+- `compactionCount` — incremented on `compaction_start` events in `wireSessionEvents()`
+- `lifecycleEvents[]` — appended by the `client.on()` lifecycle subscriber (capped at 100 events)
+
+### Message Retrieval Strategy
+
+`getSdkSessionMessages(sessionId)` uses a two-tier strategy:
+1. **Cached session** — if the session is in the active cache (`Map<conversationId, CopilotSession>`), calls `getMessages()` directly
+2. **Temporary resume** — if not cached, creates a temporary session via `resumeSession()`, reads messages, then destroys the temporary session to avoid cache pollution
+
+---
+
 ## Interactive Clarifications (`onUserInputRequest`)
 
 The Copilot SDK supports mid-execution user input requests — the LLM can pause and ask the user a question (free-form text or multiple-choice) before continuing. OpenZigs wires this via the `onUserInputRequest` callback.

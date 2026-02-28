@@ -41,6 +41,11 @@ const createMockCopilot = () => ({
   setNativeMcpServers: vi.fn(),
   getSessionUsage: vi.fn().mockReturnValue(null),
   clearSessionUsage: vi.fn().mockReturnValue(null),
+  listSdkSessions: vi.fn().mockResolvedValue([]),
+  getSdkSessionMessages: vi.fn().mockResolvedValue([]),
+  deleteSdkSession: vi.fn().mockResolvedValue(undefined),
+  getSessionAnalytics: vi.fn().mockReturnValue({ sessionsCreated: 0, sessionsResumed: 0, sessionsDestroyed: 0, compactionCount: 0, lifecycleEvents: [], lastUpdated: "" }),
+  resetSessionAnalytics: vi.fn(),
   chat: vi.fn().mockImplementation(async function* () {
     yield "ok";
   }),

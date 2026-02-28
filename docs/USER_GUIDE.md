@@ -1117,6 +1117,58 @@ Background tasks (sub-agents, scheduled jobs) use **ephemeral sessions** — eac
 
 ---
 
+## Copilot SDK Session History & Analytics
+
+The Admin panel's **Sessions** tab provides full visibility into both OpenZigs platform sessions and the underlying Copilot SDK sessions. This surfaces session metadata, conversation replay, resume capabilities, and lifecycle analytics.
+
+### Admin Sessions Panel
+
+The Sessions admin panel has three tabs:
+
+| Tab | Description |
+|---|---|
+| **App Sessions** | OpenZigs-managed sessions (JSONL-backed). Shows channel, user, last active time, conversation history. Supports delete and restore-to-chat. |
+| **Copilot SDK Sessions** | Sessions maintained by the Copilot SDK (`client.listSessions()`). Shows session ID, repo/branch context, summary, remote/local badge. Supports resume, message replay, and delete. |
+| **Analytics** | Real-time counters for sessions created, resumed, destroyed, and context compactions. Shows a timeline of lifecycle events. Counters can be reset. |
+
+### Copilot SDK Sessions
+
+Each SDK session displays:
+- **Session ID** — unique identifier (truncated in UI, full on hover)
+- **Context** — repository, branch, working directory, and git root (if available)
+- **Summary** — SDK-generated session summary (when available)
+- **Remote/Local badge** — whether the session is running remotely
+- **Timestamps** — creation time and last modified time
+
+**Actions per session:**
+- **Resume** — resumes the session and returns a conversation ID for continued chat
+- **Replay** — expand to view the full event stream (user messages, assistant responses, tool executions, session lifecycle events)
+- **Delete** — permanently deletes the SDK session
+- **Search** — filter sessions by ID, summary, repository, or branch
+
+### Session Analytics
+
+Analytics tracks four counters since the last reset:
+- **Sessions Created** — new SDK sessions created via `createSession()`
+- **Sessions Resumed** — existing sessions restored via `resumeSession()`
+- **Sessions Destroyed** — sessions explicitly destroyed
+- **Compaction Count** — number of automatic context compactions triggered by infinite sessions
+
+The lifecycle events timeline shows recent SDK lifecycle events (`session.created`, `session.deleted`, `session.updated`, `session.foreground`, `session.background`) with timestamps.
+
+### API Endpoints
+
+| Method | Endpoint | Description |
+|---|---|---|
+| `GET` | `/api/admin/copilot-sessions` | List all SDK sessions. Optional query filters: `repository`, `branch`, `cwd`, `gitRoot`. |
+| `DELETE` | `/api/admin/copilot-sessions/:sessionId` | Delete an SDK session. |
+| `POST` | `/api/admin/copilot-sessions/:sessionId/resume` | Resume a session, returns `{ conversationId, metadata }`. |
+| `GET` | `/api/admin/copilot-sessions/:sessionId/messages` | Get all events for a session (conversation replay). |
+| `GET` | `/api/admin/copilot-sessions/analytics` | Get session analytics counters and lifecycle events. |
+| `POST` | `/api/admin/copilot-sessions/analytics/reset` | Reset analytics counters. |
+
+---
+
 ## Tool Limit Configuration
 
 OpenZigs registers 90+ MCP tools, but sending all of them to the LLM in every request wastes context window tokens and can degrade response quality. The **tool limit** controls how many tools are included per LLM call.
