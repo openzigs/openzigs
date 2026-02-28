@@ -70,6 +70,7 @@ import { ExpressPeerServer } from "peer";
 import { MediaQueueRepository } from "./queue/media-queue-repository.js";
 import { QueueMaster } from "./queue/queue-master.js";
 import { createQueueRouter } from "./api/queue.js";
+import { createGalleryRouter } from "./api/gallery.js";
 
 // Register built-in post-action types (create-github-issues, send-webhook, etc.)
 registerBuiltinPostActions();
@@ -477,7 +478,7 @@ socialBrain.on("escalated_message", async ({ contact, raw }) => {
 
 registerMcpTools(toolRegistry, {
   allowedDirs: allowedDirs.length > 0 ? allowedDirs : [process.cwd(), os.tmpdir(), os.homedir(), "/tmp", "/private/tmp"],
-  shellAllowlist: (process.env.OPENZIGS_SHELL_ALLOWLIST ?? "git,find,ls,cat,head,tail,grep,wc,echo,pwd,mkdir,cp,mv,rm,which,date,curl,bash,sh,java,javac,python3,node").split(",").map(s => s.trim()).filter(Boolean),
+  shellAllowlist: (process.env.OPENZIGS_SHELL_ALLOWLIST ?? "git,find,ls,cat,head,tail,grep,wc,echo,pwd,mkdir,cp,mv,rm,which,date,curl,bash,sh,java,javac,python3,node,pip,brew").split(",").map(s => s.trim()).filter(Boolean),
   braveApiKey: process.env.BRAVE_API_KEY,
   chromeDebugHost: process.env.CHROME_DEBUG_HOST,
   chromeDebugPort,
@@ -503,6 +504,7 @@ registerMcpTools(toolRegistry, {
   voiceService,
   socialRepository,
   socialHandoffManager: socialHandoff,
+  mediaQueueRepo,
 });
 
 // ── Task Background Worker ──
@@ -855,6 +857,10 @@ app.use("/api/tasks", tasksRouter);
 // Media Queue API routes (push-based distributed queue + gallery)
 const queueRouter = createQueueRouter({ queueMaster, repo: mediaQueueRepo });
 app.use("/api/queue", queueRouter);
+
+// Gallery API routes (AI prompt enhancement)
+const galleryRouter = createGalleryRouter({ copilot, toolRegistry });
+app.use("/api/gallery", galleryRouter);
 
 // Files API routes (Workbench file management)
 const filesBaseAllowedDirs = allowedDirs.length > 0

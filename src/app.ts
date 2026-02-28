@@ -3,7 +3,6 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import helmet from "helmet";
-// @ts-expect-error -- cors has no bundled types
 import cors from "cors";
 import multer from "multer";
 import * as z from "zod";

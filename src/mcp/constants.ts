@@ -10,6 +10,7 @@ export const ALWAYS_ON_TOOLS = new Set([
   "search-knowledge",
   "list-secrets",
   "get-secret",
+  "ingest-youtube",
 ]);
 
 /**
@@ -26,4 +27,5 @@ export const INTERACTIVE_CHAT_AUTO_APPROVE_TOOLS = [
   "list-secrets",
   "get-secret",
   "write-file",
+  "ingest-youtube",
 ];

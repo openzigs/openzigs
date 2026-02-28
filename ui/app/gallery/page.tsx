@@ -6,6 +6,7 @@ import { useSocket } from "@/lib/socket-context";
 import { fetchJson } from "@/lib/api";
 import { SectionCard } from "@/components/section-card";
 import { ToastContainer, showToast } from "@/components/toast";
+import { ConfirmDialog } from "@/components/confirm-dialog";
 import {
   Image as ImageIcon,
   Video,
@@ -27,6 +28,7 @@ import {
   ChevronDown,
   ChevronRight,
   Clock,
+  Sparkles,
 } from "lucide-react";
 
 // ── Types ───────────────────────────────────────────────────
@@ -44,7 +46,9 @@ interface GalleryAsset {
   prompt: string | null;
   model: string | null;
   generation_params: Record<string, unknown> | null;
-  source: "generated" | "uploaded" | "director";
+  source: "generated" | "uploaded" | "director" | "ingested";
+  source_url: string | null;
+  artist: string | null;
   job_id: string | null;
   project_id: string | null;
   tags: string[] | null;
@@ -108,6 +112,7 @@ function sourceBadge(source: string) {
     generated: { label: "Generated", classes: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" },
     uploaded: { label: "Uploaded", classes: "bg-sky-500/10 text-sky-600 dark:text-sky-400" },
     director: { label: "Director", classes: "bg-purple-500/10 text-purple-600 dark:text-purple-400" },
+    ingested: { label: "Ingested", classes: "bg-orange-500/10 text-orange-600 dark:text-orange-400" },
   };
   const badge = map[source] ?? map.generated;
   return (
@@ -251,9 +256,24 @@ export default function GalleryPage() {
     onError: (err) => showToast(`Failed: ${err.message}`, "error"),
   });
 
+  const [pendingDelete, setPendingDelete] = useState<GalleryAsset | null>(null);
+
   const handleDelete = (asset: GalleryAsset) => {
-    if (!confirm(`Delete "${asset.filename}"? This cannot be undone.`)) return;
-    deleteMutation.mutate(asset.id);
+    setPendingDelete(asset);
+  };
+
+  const confirmDelete = () => {
+    if (pendingDelete) {
+      if (previewAsset?.id === pendingDelete.id) {
+        setPreviewAsset(null);
+      }
+      deleteMutation.mutate(pendingDelete.id);
+      setPendingDelete(null);
+    }
+  };
+
+  const cancelDelete = () => {
+    setPendingDelete(null);
   };
 
   const handleAddTag = (asset: GalleryAsset) => {
@@ -410,6 +430,7 @@ export default function GalleryPage() {
             <option value="generated">Generated</option>
             <option value="uploaded">Uploaded</option>
             <option value="director">Director</option>
+            <option value="ingested">Ingested</option>
           </select>
         </div>
         <div className="flex-1" />
@@ -496,6 +517,17 @@ export default function GalleryPage() {
         <PreviewLightbox asset={previewAsset} onClose={() => setPreviewAsset(null)} />
       )}
 
+      {pendingDelete && (
+        <ConfirmDialog
+          title="Delete Asset"
+          message={`Delete "${pendingDelete.filename}"? This cannot be undone.`}
+          variant="danger"
+          confirmLabel="Delete"
+          onConfirm={confirmDelete}
+          onCancel={cancelDelete}
+        />
+      )}
+
       <ToastContainer />
     </main>
   );
@@ -534,24 +566,50 @@ function AssetCard({
             </div>
           </div>
         ) : (
-          <div className="flex aspect-square items-center justify-center bg-muted">
-            <Music className="h-12 w-12 text-muted-foreground/50" />
+          <div className="flex aspect-square flex-col items-center justify-center gap-3 bg-muted px-4">
+            <Music className="h-10 w-10 text-muted-foreground/50" />
+            {asset.artist && (
+              <span className="text-xs font-medium text-muted-foreground truncate max-w-full">{asset.artist}</span>
+            )}
+            <audio
+              src={url}
+              controls
+              preload="none"
+              className="w-full max-w-[200px]"
+              onClick={(e) => e.stopPropagation()}
+            />
           </div>
         )}
       </div>
 
       {/* Overlay actions */}
       <div className="absolute right-2 top-2 flex gap-1 opacity-0 transition group-hover:opacity-100">
-        <button onClick={onPreview} className="rounded-lg bg-black/60 p-1.5 text-white hover:bg-black/80" title="Preview">
+        <button
+          onClick={(e) => { e.stopPropagation(); onPreview(); }}
+          className="rounded-lg bg-black/60 p-1.5 text-white hover:bg-black/80"
+          title="Preview"
+        >
           <Eye className="h-3.5 w-3.5" />
         </button>
-        <button onClick={onDownload} className="rounded-lg bg-black/60 p-1.5 text-white hover:bg-black/80" title="Download">
+        <button
+          onClick={(e) => { e.stopPropagation(); onDownload(); }}
+          className="rounded-lg bg-black/60 p-1.5 text-white hover:bg-black/80"
+          title="Download"
+        >
           <Download className="h-3.5 w-3.5" />
         </button>
-        <button onClick={onTag} className="rounded-lg bg-black/60 p-1.5 text-white hover:bg-black/80" title="Add Tag">
+        <button
+          onClick={(e) => { e.stopPropagation(); onTag(); }}
+          className="rounded-lg bg-black/60 p-1.5 text-white hover:bg-black/80"
+          title="Add Tag"
+        >
           <Tag className="h-3.5 w-3.5" />
         </button>
-        <button onClick={onDelete} className="rounded-lg bg-red-600/80 p-1.5 text-white hover:bg-red-700" title="Delete">
+        <button
+          onClick={(e) => { e.stopPropagation(); onDelete(); }}
+          className="rounded-lg bg-red-600/80 p-1.5 text-white hover:bg-red-700"
+          title="Delete"
+        >
           <Trash2 className="h-3.5 w-3.5" />
         </button>
       </div>
@@ -622,6 +680,15 @@ function AssetListRow({
           </div>
         )}
       </button>
+      {asset.type === "audio" && (
+        <audio
+          src={url}
+          controls
+          preload="none"
+          className="h-8 w-40 flex-shrink-0"
+          onClick={(e) => e.stopPropagation()}
+        />
+      )}
 
       {/* Info */}
       <div className="flex-1 min-w-0">
@@ -647,16 +714,32 @@ function AssetListRow({
 
       {/* Actions */}
       <div className="flex-shrink-0 flex items-center gap-1.5">
-        <button onClick={onPreview} className="rounded-lg border border-border p-1.5 text-muted-foreground hover:bg-muted" title="Preview">
+        <button
+          onClick={(e) => { e.stopPropagation(); onPreview(); }}
+          className="rounded-lg border border-border p-1.5 text-muted-foreground hover:bg-muted"
+          title="Preview"
+        >
           <Eye className="h-3.5 w-3.5" />
         </button>
-        <button onClick={onDownload} className="rounded-lg border border-border p-1.5 text-muted-foreground hover:bg-muted" title="Download">
+        <button
+          onClick={(e) => { e.stopPropagation(); onDownload(); }}
+          className="rounded-lg border border-border p-1.5 text-muted-foreground hover:bg-muted"
+          title="Download"
+        >
           <Download className="h-3.5 w-3.5" />
         </button>
-        <button onClick={onTag} className="rounded-lg border border-border p-1.5 text-muted-foreground hover:bg-muted" title="Add tag">
+        <button
+          onClick={(e) => { e.stopPropagation(); onTag(); }}
+          className="rounded-lg border border-border p-1.5 text-muted-foreground hover:bg-muted"
+          title="Add tag"
+        >
           <Tag className="h-3.5 w-3.5" />
         </button>
-        <button onClick={onDelete} className="rounded-lg border border-red-500/30 p-1.5 text-red-500 hover:bg-red-500/10" title="Delete">
+        <button
+          onClick={(e) => { e.stopPropagation(); onDelete(); }}
+          className="rounded-lg border border-red-500/30 p-1.5 text-red-500 hover:bg-red-500/10"
+          title="Delete"
+        >
           <Trash2 className="h-3.5 w-3.5" />
         </button>
       </div>
@@ -689,7 +772,10 @@ function PreviewLightbox({ asset, onClose }: { asset: GalleryAsset; onClose: () 
         ) : (
           <div className="flex flex-col items-center gap-4 py-8 px-12">
             <Music className="h-16 w-16 text-muted-foreground" />
-            <audio src={url} controls autoPlay />
+            {asset.artist && (
+              <p className="text-sm font-medium text-muted-foreground">{asset.artist}</p>
+            )}
+            <audio src={url} controls autoPlay className="w-full min-w-[300px]" />
           </div>
         )}
 
@@ -930,6 +1016,7 @@ function GalleryStudio({ onClose, onCreated }: { onClose: () => void; onCreated:
   // When admin switches mode, reset provider default and clear turbo if needed
   const [form, setForm] = useState<StudioFormState>(() => ({ ...DEFAULT_FORM, imageProvider: "local" }));
   const [submitting, setSubmitting] = useState(false);
+  const [enhancing, setEnhancing] = useState(false);
 
   // If admin mode is network/cloud, SDXL Turbo is unavailable — auto-reset model
   const turboAvailable = imageGenMode === "local" && form.imageProvider === "local";
@@ -952,6 +1039,63 @@ function GalleryStudio({ onClose, onCreated }: { onClose: () => void; onCreated:
   const needsImage = form.mode === "img2img" || form.mode === "img2video";
 
   const fluxQLabel = imageGenMode === "network" ? "FluxQ (Network — via Admin)" : "FluxQ (Local)";
+
+  const handleEnhancePrompt = async () => {
+    if (!form.prompt.trim()) {
+      showToast("Enter a prompt first", "error");
+      return;
+    }
+    setEnhancing(true);
+    try {
+      const result = await fetchJson<{
+        enhanced_prompt: string;
+        thinking: string;
+        suggested_parameters: {
+          steps?: number;
+          guidance?: number;
+          width?: number;
+          height?: number;
+          num_frames?: number;
+          fps?: number;
+          seed?: number;
+        };
+      }>("/api/gallery/enhance-prompt", {
+        method: "POST",
+        body: JSON.stringify({
+          raw_prompt: form.prompt.trim(),
+          model: isVideo ? "ltx-2" : form.imageModel,
+          mode: form.mode,
+          seed: form.seed ? parseInt(form.seed, 10) : undefined,
+          parameters: {
+            width: form.width,
+            height: form.height,
+            steps: form.steps,
+            guidance: form.guidance,
+            num_frames: form.num_frames,
+            fps: form.fps,
+            strength: form.strength,
+          },
+        }),
+      });
+
+      const updates: Partial<StudioFormState> = { prompt: result.enhanced_prompt };
+      const sp = result.suggested_parameters;
+      if (sp.steps != null) updates.steps = sp.steps;
+      if (sp.guidance != null) updates.guidance = sp.guidance;
+      if (sp.width != null) updates.width = sp.width;
+      if (sp.height != null) updates.height = sp.height;
+      if (sp.num_frames != null) updates.num_frames = sp.num_frames;
+      if (sp.fps != null) updates.fps = sp.fps;
+      if (sp.seed != null) updates.seed = String(sp.seed);
+
+      setForm((prev) => ({ ...prev, ...updates }));
+      showToast(result.thinking ? `✨ ${result.thinking}` : "Prompt enhanced!", "success");
+    } catch (err) {
+      showToast(`Enhance failed: ${err instanceof Error ? err.message : String(err)}`, "error");
+    } finally {
+      setEnhancing(false);
+    }
+  };
 
   const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -1086,7 +1230,17 @@ function GalleryStudio({ onClose, onCreated }: { onClose: () => void; onCreated:
 
       {/* Prompt */}
       <div className="mb-4">
-        <label className="mb-1 block text-xs font-medium text-muted-foreground">Prompt</label>
+        <div className="mb-1 flex items-center justify-between">
+          <label className="text-xs font-medium text-muted-foreground">Prompt</label>
+          <button
+            onClick={handleEnhancePrompt}
+            disabled={enhancing || !form.prompt.trim()}
+            className="flex items-center gap-1.5 rounded-lg border border-primary/30 bg-primary/5 px-3 py-1 text-xs font-semibold text-primary hover:bg-primary/10 disabled:opacity-50 transition"
+          >
+            {enhancing ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
+            AI Enhance
+          </button>
+        </div>
         <textarea
           value={form.prompt}
           onChange={(e) => update("prompt", e.target.value)}

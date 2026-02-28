@@ -102,7 +102,9 @@ export class MediaQueueRepository {
         prompt TEXT,
         model TEXT,
         generation_params TEXT,
-        source TEXT NOT NULL CHECK(source IN ('generated','uploaded','director')),
+        source TEXT NOT NULL CHECK(source IN ('generated','uploaded','director','ingested')),
+        source_url TEXT,
+        artist TEXT,
         job_id TEXT,
         project_id TEXT,
         tags TEXT,
@@ -114,6 +116,58 @@ export class MediaQueueRepository {
       CREATE INDEX IF NOT EXISTS idx_media_assets_source ON media_assets(source);
       CREATE INDEX IF NOT EXISTS idx_media_assets_project ON media_assets(project_id);
     `);
+
+    // ── media_assets migrations ──
+    // SQLite doesn't support ALTER CHECK. To add 'ingested' to the source constraint
+    // and add source_url/artist columns on existing databases, we use the
+    // rename-copy-drop strategy inside a transaction.
+    const needsRebuild = (() => {
+      const row = this.db.prepare(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='media_assets'"
+      ).get() as { sql: string } | undefined;
+      if (!row) return false;
+      // Rebuild if the old CHECK doesn't include 'ingested' or columns are missing
+      return !row.sql.includes("'ingested'") || !row.sql.includes("source_url") || !row.sql.includes("artist");
+    })();
+
+    if (needsRebuild) {
+      this.db.exec(`
+        BEGIN;
+        ALTER TABLE media_assets RENAME TO media_assets_old;
+        CREATE TABLE media_assets (
+          id TEXT PRIMARY KEY,
+          type TEXT NOT NULL CHECK(type IN ('image','video','audio')),
+          filename TEXT NOT NULL,
+          file_path TEXT NOT NULL,
+          mime_type TEXT NOT NULL,
+          file_size_bytes INTEGER,
+          width INTEGER,
+          height INTEGER,
+          duration_seconds REAL,
+          prompt TEXT,
+          model TEXT,
+          generation_params TEXT,
+          source TEXT NOT NULL CHECK(source IN ('generated','uploaded','director','ingested')),
+          source_url TEXT,
+          artist TEXT,
+          job_id TEXT,
+          project_id TEXT,
+          tags TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        INSERT INTO media_assets (id,type,filename,file_path,mime_type,file_size_bytes,width,height,
+          duration_seconds,prompt,model,generation_params,source,job_id,project_id,tags,created_at,updated_at)
+        SELECT id,type,filename,file_path,mime_type,file_size_bytes,width,height,
+          duration_seconds,prompt,model,generation_params,source,job_id,project_id,tags,created_at,updated_at
+        FROM media_assets_old;
+        DROP TABLE media_assets_old;
+        CREATE INDEX IF NOT EXISTS idx_media_assets_type ON media_assets(type);
+        CREATE INDEX IF NOT EXISTS idx_media_assets_source ON media_assets(source);
+        CREATE INDEX IF NOT EXISTS idx_media_assets_project ON media_assets(project_id);
+        COMMIT;
+      `);
+    }
   }
 
   // ── Media Jobs CRUD ───────────────────────────────────────
@@ -305,7 +359,9 @@ export class MediaQueueRepository {
     prompt?: string;
     model?: string;
     generationParams?: Record<string, unknown>;
-    source: "generated" | "uploaded" | "director";
+    source: "generated" | "uploaded" | "director" | "ingested";
+    sourceUrl?: string;
+    artist?: string;
     jobId?: string;
     projectId?: string;
     tags?: string[];
@@ -316,14 +372,15 @@ export class MediaQueueRepository {
     this.db.prepare(`
       INSERT INTO media_assets (id, type, filename, file_path, mime_type, file_size_bytes,
         width, height, duration_seconds, prompt, model, generation_params,
-        source, job_id, project_id, tags, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        source, source_url, artist, job_id, project_id, tags, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       id, input.type, input.filename, input.filePath, input.mimeType,
       input.fileSizeBytes ?? null, input.width ?? null, input.height ?? null,
       input.durationSeconds ?? null, input.prompt ?? null, input.model ?? null,
       input.generationParams ? JSON.stringify(input.generationParams) : null,
-      input.source, input.jobId ?? null, input.projectId ?? null,
+      input.source, input.sourceUrl ?? null, input.artist ?? null,
+      input.jobId ?? null, input.projectId ?? null,
       input.tags ? JSON.stringify(input.tags) : null, now, now,
     );
 

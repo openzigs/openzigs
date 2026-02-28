@@ -128,6 +128,17 @@ export const createShellExecuteHandler = (
 
     const { binary, args: resolvedArgs } = parsed;
 
+    // Redirect yt-dlp calls to the dedicated ingest-youtube tool
+    if (binary === "yt-dlp") {
+      logDenial("yt-dlp_redirected_to_ingest_tool");
+      return {
+        stdout: "",
+        stderr: "Do not use shell-execute for yt-dlp. Use the ingest-youtube tool instead — " +
+          "it downloads to the correct Gallery directory and registers the asset in the database automatically.",
+        exitCode: 1
+      };
+    }
+
     if (!allowlist.includes(binary)) {
       logDenial("command_not_allowed");
       return {

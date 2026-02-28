@@ -33,6 +33,7 @@ import { createTwitterTools } from "./tools/twitter-tools.js";
 import { createYouTubeTools } from "./tools/youtube-tools.js";
 import { createLinkedInTools } from "./tools/linkedin-tools.js";
 import { createRedditTools } from "./tools/reddit-tools.js";
+import { createIngestYouTubeTools } from "./tools/ingest-youtube-tools.js";
 import { ToolRegistry, type ToolDefinition } from "./tool-registry.js";
 import type { LocalMcpServerManager } from "./local-mcp-server-manager.js";
 import { AuditLogger } from "../logging/audit-logger.js";
@@ -86,6 +87,8 @@ export type McpServerOptions = {
   socialRepository?: import("../channels/social/social-repository.js").SocialRepository;
   /** Social Brain handoff manager for social-close-handoff tool. */
   socialHandoffManager?: import("../channels/social/handoff-manager.js").HandoffManager;
+  /** Media Queue Repository for ingest-youtube tool cataloging. */
+  mediaQueueRepo?: import("../queue/media-queue-repository.js").MediaQueueRepository;
 };
 
 export type RegisterMcpToolsOptions = Pick<
@@ -118,6 +121,7 @@ export type RegisterMcpToolsOptions = Pick<
   | "voiceService"
   | "socialRepository"
   | "socialHandoffManager"
+  | "mediaQueueRepo"
 >;
 
 const readFileSchema = z.object({ path: z.string() });
@@ -597,6 +601,16 @@ export const registerMcpTools = (toolRegistry: ToolRegistry, options: RegisterMc
       handoffManager: options.socialHandoffManager,
     });
     for (const tool of socialBrainTools) {
+      registerTool(tool);
+    }
+  }
+
+  // ── YouTube / Audio Ingestion Tool ──
+  if (options.mediaQueueRepo) {
+    const ingestTools = createIngestYouTubeTools({
+      repo: options.mediaQueueRepo,
+    });
+    for (const tool of ingestTools) {
       registerTool(tool);
     }
   }

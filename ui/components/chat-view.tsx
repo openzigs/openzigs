@@ -395,7 +395,7 @@ export const ChatView = () => {
 
   useEffect(() => {
     scrollToBottom();
-  }, [messages, thinking, scrollToBottom]);
+  }, [messages, thinking, activeInputRequest, scrollToBottom]);
 
   const handleSend = useCallback(() => {
     const text = input.trim();
