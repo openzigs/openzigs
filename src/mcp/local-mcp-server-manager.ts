@@ -1,6 +1,6 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { EventEmitter } from "node:events";
 import path from "node:path";
 import { logger } from "../logging/logger.js";
@@ -381,8 +381,10 @@ export class LocalMcpServerManager extends EventEmitter {
   }
 
   private isRuntimeAvailable(def: LocalMcpServerDefinition): boolean {
+    // Validate command name to prevent injection via shell metacharacters
+    if (!/^[a-zA-Z0-9_.\-/]+$/.test(def.command)) return false;
     try {
-      execSync(`which ${def.command}`, { stdio: "ignore" });
+      execFileSync("which", [def.command], { stdio: "ignore" });
       return true;
     } catch {
       return false;
