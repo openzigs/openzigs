@@ -121,7 +121,7 @@ export const createApp = (config: AppConfig, options: CreateAppOptions = {}): Ex
    * Upload browser-selected files to a server-local temp area for chat attachments.
    * Returns SDK attachment descriptors with absolute server paths.
    */
-  app.post("/api/chat/upload", chatUpload.array("files", 10), async (req, res) => {
+  app.post("/api/chat/upload", authMiddleware, chatUpload.array("files", 10), async (req, res) => {
     const files = Array.isArray(req.files) ? req.files : [];
     if (files.length === 0) {
       return res.status(400).json({ error: "No files uploaded. Use multipart form field 'files'." });

@@ -48,6 +48,7 @@ import { VoiceService } from "./voice/index.js";
 import { createVoiceRouter } from "./api/voice.js";
 import { SecretVaultService } from "./vault/index.js";
 import { createVaultRouter } from "./api/vault.js";
+import { createAuthMiddleware } from "./auth/auth.js";
 import { createDirectorRouter } from "./api/director.js";
 import { createAudioRouter } from "./api/audio.js";
 import { createPresenterRouter } from "./api/presenter.js";
@@ -292,6 +293,7 @@ try {
 }
 
 const app = createApp(config, { auditLogger, approvalQueue, toolRegistry, promptManager, scheduler, personalityManager });
+const authMiddleware = createAuthMiddleware(config.auth);
 const port = Number(process.env.PORT ?? 3000);
 const uiOrigin = process.env.OPENZIGS_UI_ORIGIN ?? "http://localhost:3001";
 const channelManager = new ChannelManager();
@@ -535,15 +537,15 @@ const webhookManager = new WebhookManager();
 
 // Model API routes
 const modelsRouter = createModelsRouter({ copilot });
-app.use("/api/models", modelsRouter);
+app.use("/api/models", authMiddleware, modelsRouter);
 
-// Admin API routes (no auth for local dev; gate behind auth in prod)
+// Admin API routes — gated behind auth
 const adminRouter = createAdminRouter({ toolRegistry, sidecarManager, localServerManager, promptManager, scheduler, personalityManager, sessionManager, copilot, taskWorker, taskEngine, webhookManager, customPostActionManager, sentinel, knowledgeService, brandVoiceService });
-app.use("/api/admin", adminRouter);
+app.use("/api/admin", authMiddleware, adminRouter);
 
 // Knowledge Base API routes
 const knowledgeRouter = createKnowledgeRouter({ knowledgeService });
-app.use("/api/admin/knowledge", knowledgeRouter);
+app.use("/api/admin/knowledge", authMiddleware, knowledgeRouter);
 
 // Social Brain API routes
 const socialRouter = createSocialRouter({
@@ -555,11 +557,11 @@ const socialRouter = createSocialRouter({
   config: socialBrainConfig,
   brandVoiceService,
 });
-app.use("/api/social", socialRouter);
+app.use("/api/social", authMiddleware, socialRouter);
 
 // Vault API routes
 const vaultRouter = createVaultRouter({ vaultService });
-app.use("/api/admin/vault", vaultRouter);
+app.use("/api/admin/vault", authMiddleware, vaultRouter);
 
 // Director Mode API routes
 const directorConfig = (config as Record<string, unknown>).director as {
@@ -604,7 +606,7 @@ const directorRouter = createDirectorRouter({
     },
   },
 });
-app.use("/api/admin/director", directorRouter);
+app.use("/api/admin/director", authMiddleware, directorRouter);
 
 // ── Render → Knowledge ingestion hook + DB persistence ──
 // After each successful render: persist the output path so it survives
@@ -670,7 +672,7 @@ const audioRouterInstance = createAudioRouter({
   db: getDatabase(),
   sidecarUrl: config.voice?.sidecarUrl ?? "http://127.0.0.1:5006",
 });
-app.use("/api/admin/audio", audioRouterInstance);
+app.use("/api/admin/audio", authMiddleware, audioRouterInstance);
 
 // ── Presenter Mode Router (Issue #275) ──
 const presentationRepo = new PresentationRepository(db);
@@ -713,7 +715,7 @@ const presenterRouter = createPresenterRouter({
   inviteSecret: presenterInviteSecret,
   baseUrl: presenterBaseUrl,
 });
-app.use("/api/presentations", presenterRouter);
+app.use("/api/presentations", authMiddleware, presenterRouter);
 
 // ── Public Invite Redeem Route (no auth required) — Issue #283 ──
 app.get("/api/invite/redeem", async (req, res) => {
@@ -853,7 +855,7 @@ void knowledgeService.start()
 
 // ── Voice Router (Google Cloud TTS + Local Audio Sidecar) ──
 const voiceRouter = createVoiceRouter({ voiceService });
-app.use("/api/voice", voiceRouter);
+app.use("/api/voice", authMiddleware, voiceRouter);
 
 // Webhook trigger routes (public-facing)
 const webhookRouter = createWebhookRouter({ webhookManager, taskEngine, promptManager });
@@ -861,15 +863,15 @@ app.use("/api/webhooks/trigger", webhookRouter);
 
 // Tasks API routes
 const tasksRouter = createTasksRouter({ taskEngine, taskRepository });
-app.use("/api/tasks", tasksRouter);
+app.use("/api/tasks", authMiddleware, tasksRouter);
 
 // Media Queue API routes (push-based distributed queue + gallery)
 const queueRouter = createQueueRouter({ queueMaster, repo: mediaQueueRepo });
-app.use("/api/queue", queueRouter);
+app.use("/api/queue", authMiddleware, queueRouter);
 
 // Gallery API routes (AI prompt enhancement)
 const galleryRouter = createGalleryRouter({ copilot, toolRegistry });
-app.use("/api/gallery", galleryRouter);
+app.use("/api/gallery", authMiddleware, galleryRouter);
 
 // Files API routes (Workbench file management)
 const filesBaseAllowedDirs = allowedDirs.length > 0
@@ -888,7 +890,7 @@ const filesRouter = createFilesRouter({
   allowedDirs: effectiveAllowedDirs,
   markitdownUrl: process.env.MCP_MARKITDOWN_URL,
 });
-app.use("/api/files", filesRouter);
+app.use("/api/files", authMiddleware, filesRouter);
 
 const tunnelConfig = config.tunnel;
 const tunnel = tunnelConfig?.enabled
