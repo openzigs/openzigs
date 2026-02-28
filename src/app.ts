@@ -118,11 +118,29 @@ export const createApp = (config: AppConfig, options: CreateAppOptions = {}): Ex
   app.use(express.urlencoded({ extended: true, limit: "50mb" }));
 
   const authMiddleware = createAuthMiddleware(config.auth);
+
+  const ALLOWED_UPLOAD_MIMES = new Set([
+    "text/plain", "text/csv", "text/markdown", "text/html", "text/xml",
+    "application/json", "application/pdf", "application/xml",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document", // docx
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", // xlsx
+    "image/png", "image/jpeg", "image/gif", "image/webp", "image/svg+xml",
+    "audio/mpeg", "audio/wav", "audio/ogg", "audio/webm",
+    "video/mp4", "video/webm",
+  ]);
+
   const chatUpload = multer({
     storage: multer.memoryStorage(),
     limits: {
       fileSize: 25 * 1024 * 1024,
       files: 10,
+    },
+    fileFilter: (_req, file, cb) => {
+      if (ALLOWED_UPLOAD_MIMES.has(file.mimetype)) {
+        cb(null, true);
+      } else {
+        cb(new Error(`File type ${file.mimetype} is not allowed`));
+      }
     },
   });
 
