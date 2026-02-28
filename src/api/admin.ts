@@ -2,6 +2,7 @@ import { Router } from "express";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import multer from "multer";
 import { z } from "zod";
 import { loadConfig, customAgentSchema, mcpServerConfigSchema, nativeMcpServersSchema } from "../config/index.js";
 import { logger } from "../logging/logger.js";
@@ -1534,9 +1535,90 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
       return res.json(voice);
     });
 
+    router.post("/brand-voice/:id/reanalyze", async (req, res) => {
+      const body = req.body as Record<string, unknown>;
+      const samples = Array.isArray(body.samples)
+        ? (body.samples as unknown[]).filter((s): s is string => typeof s === "string")
+        : [];
+      const model = typeof body.model === "string" ? body.model.trim() : undefined;
+
+      if (samples.length === 0) {
+        return res.status(400).json({ error: "At least one writing sample is required" });
+      }
+
+      try {
+        const voice = await brandVoiceService.reanalyze(req.params.id, samples, model);
+        if (!voice) return res.status(404).json({ error: "Brand voice not found" });
+        return res.json(voice);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        logger.error(`[BrandVoice] Re-analysis failed: ${message}`);
+        return res.status(500).json({ error: message });
+      }
+    });
+
     router.post("/brand-voice/deactivate", (_req, res) => {
       brandVoiceService.deactivateAll();
       return res.json({ ok: true });
+    });
+
+    // Upload Word/PDF files and extract text as writing samples
+    const sampleUpload = multer({
+      storage: multer.memoryStorage(),
+      limits: { fileSize: 10 * 1024 * 1024, files: 10 },
+      fileFilter: (_req, file, cb) => {
+        const ext = path.extname(file.originalname).toLowerCase();
+        if ([".pdf", ".docx", ".doc", ".txt"].includes(ext)) {
+          cb(null, true);
+        } else {
+          cb(new Error("Unsupported file type. Accepted: .pdf, .docx, .doc, .txt"));
+        }
+      },
+    });
+
+    router.post("/brand-voice/upload-samples", sampleUpload.array("files", 10), async (req, res) => {
+      const files = req.files as Express.Multer.File[] | undefined;
+      if (!files || files.length === 0) {
+        return res.status(400).json({ error: "No files uploaded" });
+      }
+
+      const samples: string[] = [];
+      const errors: string[] = [];
+
+      for (const file of files) {
+        const ext = path.extname(file.originalname).toLowerCase();
+        try {
+          let text = "";
+          if (ext === ".txt") {
+            text = file.buffer.toString("utf-8");
+          } else if (ext === ".docx" || ext === ".doc") {
+            const mod: unknown = await import("mammoth");
+            const m = mod as Record<string, unknown>;
+            const mammoth = (m.default ?? m) as Record<string, (...args: unknown[]) => Promise<{ value: string }>>;
+            const result = await mammoth.extractRawText({ buffer: file.buffer });
+            text = result.value;
+          } else if (ext === ".pdf") {
+            const mod: unknown = await import("pdf-parse");
+            const m = mod as Record<string, unknown>;
+            const PdfParseClass = (m.default ?? m) as new (data: Uint8Array) => { getText(): Promise<{ text: string }> };
+            const parser = new PdfParseClass(new Uint8Array(file.buffer));
+            const result = await parser.getText();
+            text = result.text;
+          }
+
+          const trimmed = text.trim();
+          if (trimmed) {
+            samples.push(trimmed);
+          } else {
+            errors.push(`${file.originalname}: extracted text was empty`);
+          }
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          errors.push(`${file.originalname}: ${msg}`);
+        }
+      }
+
+      return res.json({ samples, errors });
     });
 
     router.delete("/brand-voice/:id", (req, res) => {

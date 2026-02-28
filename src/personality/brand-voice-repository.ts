@@ -41,6 +41,7 @@ export interface BrandVoiceUpdate {
   name?: string;
   rulebook?: BrandVoiceRulebook;
   active?: boolean;
+  samples?: string[];
 }
 
 type StoredBrandVoice = {
@@ -137,14 +138,15 @@ export class BrandVoiceRepository {
     const name = input.name ?? existing.name;
     const rulebook = input.rulebook ?? existing.rulebook;
     const active = input.active ?? existing.active;
+    const samples = input.samples ?? existing.samples;
 
     this.db
       .prepare(
         `UPDATE brand_voices
-         SET name = ?, rulebook = ?, active = ?, updated_at = ?
+         SET name = ?, rulebook = ?, active = ?, samples = ?, updated_at = ?
          WHERE id = ?`,
       )
-      .run(name, JSON.stringify(rulebook), active ? 1 : 0, now, id);
+      .run(name, JSON.stringify(rulebook), active ? 1 : 0, JSON.stringify(samples), now, id);
 
     return this.getById(id);
   }

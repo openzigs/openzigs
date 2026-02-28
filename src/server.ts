@@ -1436,6 +1436,7 @@ const createRouter = (accessControlOverride?: AccessControlConfig, onUserInputRe
     taskEngine,
     onUserInputRequest,
     vaultService,
+    brandVoiceService,
   });
 };
 

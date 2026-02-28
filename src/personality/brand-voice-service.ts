@@ -114,8 +114,20 @@ export class BrandVoiceService {
     this.repository.deactivateAll();
   }
 
-  update(id: string, input: { name?: string; rulebook?: BrandVoiceRulebook; active?: boolean }): BrandVoice | null {
+  update(id: string, input: { name?: string; rulebook?: BrandVoiceRulebook; active?: boolean; samples?: string[] }): BrandVoice | null {
     return this.repository.update(id, input);
+  }
+
+  /**
+   * Re-analyze writing samples for an existing brand voice.
+   * Updates both the rulebook and samples on the existing record.
+   */
+  async reanalyze(id: string, samples: string[], model?: string): Promise<BrandVoice | null> {
+    const existing = this.repository.getById(id);
+    if (!existing) return null;
+
+    const rulebook = await this.analyzeWritingStyle(samples, model);
+    return this.repository.update(id, { rulebook, samples });
   }
 
   delete(id: string): boolean {

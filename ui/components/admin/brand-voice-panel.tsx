@@ -1,21 +1,47 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { fetchJson } from "@/lib/api";
 import type { BrandVoice, BrandVoiceRulebook } from "@/lib/types";
 import { showToast } from "@/components/toast";
-import { Plus, Trash2, Star, StarOff, Loader2, ChevronDown, ChevronRight, Pencil, X, Check } from "lucide-react";
+import { Plus, Trash2, Star, StarOff, Loader2, ChevronDown, ChevronRight, Pencil, X, Check, Upload, RefreshCw } from "lucide-react";
+
+const API_BASE = process.env.NEXT_PUBLIC_OPENZIGS_API_BASE ?? "http://localhost:3000";
+const AUTH_TOKEN = process.env.NEXT_PUBLIC_OPENZIGS_TOKEN ?? "";
+
+/** Upload files and extract text samples from them */
+async function uploadSampleFiles(files: File[]): Promise<{ samples: string[]; errors: string[] }> {
+  const formData = new FormData();
+  for (const file of files) {
+    formData.append("files", file);
+  }
+  const headers: Record<string, string> = {};
+  if (AUTH_TOKEN) headers["Authorization"] = `Bearer ${AUTH_TOKEN}`;
+
+  const res = await fetch(`${API_BASE}/api/admin/brand-voice/upload-samples`, {
+    method: "POST",
+    headers,
+    body: formData,
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(text || res.statusText);
+  }
+  return res.json();
+}
 
 export const BrandVoicePanel = () => {
   const queryClient = useQueryClient();
   const [showAnalyzeForm, setShowAnalyzeForm] = useState(false);
   const [name, setName] = useState("");
-  const [samples, setSamples] = useState("");
+  const [sampleEntries, setSampleEntries] = useState<string[]>([""]);
   const [setActive, setSetActive] = useState(true);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editRulebook, setEditRulebook] = useState<BrandVoiceRulebook | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const voicesQuery = useQuery({
     queryKey: ["brand-voices"],
@@ -36,9 +62,22 @@ export const BrandVoicePanel = () => {
       showToast("Brand voice analyzed and saved!", "success");
       setShowAnalyzeForm(false);
       setName("");
-      setSamples("");
+      setSampleEntries([""]);
     },
     onError: (err) => showToast(`Analysis failed: ${err.message}`, "error"),
+  });
+
+  const reanalyzeMutation = useMutation({
+    mutationFn: ({ id, samples }: { id: string; samples: string[] }) =>
+      fetchJson<BrandVoice>(`/api/admin/brand-voice/${id}/reanalyze`, {
+        method: "POST",
+        body: JSON.stringify({ samples }),
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["brand-voices"] });
+      showToast("Brand voice re-analyzed!", "success");
+    },
+    onError: (err) => showToast(`Re-analysis failed: ${err.message}`, "error"),
   });
 
   const activateMutation = useMutation({
@@ -87,20 +126,52 @@ export const BrandVoicePanel = () => {
   });
 
   const handleAnalyze = () => {
-    const sampleList = samples
-      .split(/\n---\n/)
-      .map((s) => s.trim())
-      .filter(Boolean);
+    const validSamples = sampleEntries.map((s) => s.trim()).filter(Boolean);
 
     if (!name.trim()) {
       showToast("Name is required", "error");
       return;
     }
-    if (sampleList.length === 0) {
+    if (validSamples.length === 0) {
       showToast("At least one writing sample is required", "error");
       return;
     }
-    analyzeMutation.mutate({ name: name.trim(), samples: sampleList, active: setActive });
+    analyzeMutation.mutate({ name: name.trim(), samples: validSamples, active: setActive });
+  };
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files ?? []);
+    if (files.length === 0) return;
+    setUploading(true);
+    try {
+      const result = await uploadSampleFiles(files);
+      if (result.errors.length > 0) {
+        showToast(`Some files failed: ${result.errors.join("; ")}`, "error");
+      }
+      if (result.samples.length > 0) {
+        setSampleEntries((prev) => {
+          const nonEmpty = prev.filter((s) => s.trim());
+          return [...nonEmpty, ...result.samples];
+        });
+        showToast(`Extracted ${result.samples.length} sample(s) from files`, "success");
+      }
+    } catch (err) {
+      showToast(`Upload failed: ${err instanceof Error ? err.message : String(err)}`, "error");
+    } finally {
+      setUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
+
+  const addSampleEntry = () => setSampleEntries((prev) => [...prev, ""]);
+  const removeSampleEntry = (index: number) =>
+    setSampleEntries((prev) => prev.filter((_, i) => i !== index));
+  const updateSampleEntry = (index: number, value: string) =>
+    setSampleEntries((prev) => prev.map((s, i) => (i === index ? value : s)));
+
+  const handleReanalyze = (voice: BrandVoice) => {
+    if (!confirm(`Re-analyze "${voice.name}" with its current samples? This will regenerate the rulebook.`)) return;
+    reanalyzeMutation.mutate({ id: voice.id, samples: voice.samples });
   };
 
   const handleDelete = (id: string, voiceName: string) => {
@@ -190,6 +261,14 @@ export const BrandVoicePanel = () => {
                       <Star className="h-3.5 w-3.5" />
                     </button>
                   )}
+                  <button
+                    className="rounded p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground transition disabled:opacity-40"
+                    onClick={() => handleReanalyze(voice)}
+                    disabled={reanalyzeMutation.isPending}
+                    title="Re-analyze writing samples"
+                  >
+                    <RefreshCw className={`h-3.5 w-3.5 ${reanalyzeMutation.isPending ? "animate-spin" : ""}`} />
+                  </button>
                   <button
                     className="rounded p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground transition"
                     onClick={() => startEditing(voice)}
@@ -313,8 +392,7 @@ export const BrandVoicePanel = () => {
         <div className="rounded-lg border border-border bg-card p-4 space-y-3">
           <h4 className="text-sm font-semibold text-foreground">Analyze Writing Samples</h4>
           <p className="text-xs text-muted-foreground">
-            Paste your writing samples below. Separate multiple samples with a line containing only{" "}
-            <code className="rounded bg-muted px-1 py-0.5">---</code>
+            Add your writing samples individually below, or upload Word/PDF/TXT files to extract text.
           </p>
           <div>
             <label className="block text-xs font-medium text-muted-foreground mb-1">Voice Name</label>
@@ -325,16 +403,63 @@ export const BrandVoicePanel = () => {
               onChange={(e) => setName(e.target.value)}
             />
           </div>
+
+          {/* Individual sample entries */}
           <div>
-            <label className="block text-xs font-medium text-muted-foreground mb-1">Writing Samples</label>
-            <textarea
-              className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground font-mono"
-              rows={10}
-              placeholder={"Paste your first writing sample here...\n---\nPaste another sample here..."}
-              value={samples}
-              onChange={(e) => setSamples(e.target.value)}
-            />
+            <label className="block text-xs font-medium text-muted-foreground mb-1">
+              Writing Samples ({sampleEntries.filter((s) => s.trim()).length} added)
+            </label>
+            <div className="space-y-2">
+              {sampleEntries.map((sample, i) => (
+                <div key={i} className="flex gap-2">
+                  <textarea
+                    className="flex-1 rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground font-mono"
+                    rows={4}
+                    placeholder={`Writing sample ${i + 1}…`}
+                    value={sample}
+                    onChange={(e) => updateSampleEntry(i, e.target.value)}
+                  />
+                  {sampleEntries.length > 1 && (
+                    <button
+                      className="self-start rounded p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition"
+                      onClick={() => removeSampleEntry(i)}
+                      title="Remove sample"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+            <div className="flex gap-2 mt-2">
+              <button
+                className="flex items-center gap-1 rounded-md border border-border px-3 py-1.5 text-xs font-medium text-foreground transition hover:bg-muted"
+                onClick={addSampleEntry}
+              >
+                <Plus className="h-3 w-3" /> Add Sample
+              </button>
+              <button
+                className="flex items-center gap-1 rounded-md border border-border px-3 py-1.5 text-xs font-medium text-foreground transition hover:bg-muted disabled:opacity-40"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={uploading}
+              >
+                {uploading ? <Loader2 className="h-3 w-3 animate-spin" /> : <Upload className="h-3 w-3" />}
+                Upload Files
+              </button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                className="hidden"
+                accept=".pdf,.docx,.doc,.txt"
+                multiple
+                onChange={handleFileUpload}
+              />
+            </div>
+            <p className="text-xs text-muted-foreground mt-1">
+              Supported file types: .pdf, .docx, .doc, .txt
+            </p>
           </div>
+
           <div className="flex items-center gap-2">
             <label className="flex items-center gap-2 text-sm text-foreground cursor-pointer">
               <input
@@ -362,7 +487,11 @@ export const BrandVoicePanel = () => {
             </button>
             <button
               className="rounded-lg border border-border px-4 py-2 text-sm font-semibold text-foreground transition hover:bg-muted"
-              onClick={() => setShowAnalyzeForm(false)}
+              onClick={() => {
+                setShowAnalyzeForm(false);
+                setSampleEntries([""]);
+                setName("");
+              }}
             >
               Cancel
             </button>

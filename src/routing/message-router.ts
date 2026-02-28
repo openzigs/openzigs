@@ -6,6 +6,7 @@ import type { AccessControlConfig } from "../config/index.js";
 import type { SessionManager } from "../sessions/session-manager.js";
 import type { SecretVaultService } from "../vault/index.js";
 import type { PersonalityManager } from "../personality/personality-manager.js";
+import type { BrandVoiceService } from "../personality/brand-voice-service.js";
 import type { TaskEngine } from "../tasks/task-engine.js";
 import { ALWAYS_ON_TOOLS, INTERACTIVE_CHAT_AUTO_APPROVE_TOOLS } from "../mcp/constants.js";
 import { setActiveChatContext, clearActiveChatContext } from "../mcp/tools/agent-tools.js";
@@ -44,6 +45,8 @@ export type MessageRouterOptions = {
   onUserInputRequest?: UserInputHandler;
   /** When provided, vault status is injected into the system prompt so the LLM knows to use get-secret. */
   vaultService?: SecretVaultService;
+  /** When provided, active brand voice rules are injected into the system prompt. */
+  brandVoiceService?: BrandVoiceService;
 };
 
 const defaultAccessControl: AccessControlConfig = {
@@ -67,6 +70,7 @@ export class MessageRouter {
   private taskEngine?: TaskEngine;
   private userInputHandler?: UserInputHandler;
   private vaultService?: SecretVaultService;
+  private brandVoiceService?: BrandVoiceService;
 
   constructor({
     channelManager,
@@ -80,11 +84,13 @@ export class MessageRouter {
     taskEngine,
     onUserInputRequest,
     vaultService,
+    brandVoiceService,
   }: MessageRouterOptions) {
     this.channelManager = channelManager;
     this.sessionManager = sessionManager;
     this.copilot = copilot;
     this.vaultService = vaultService;
+    this.brandVoiceService = brandVoiceService;
     this.accessControl = accessControl ?? defaultAccessControl;
     this.historyLimit = historyLimit;
     this.maxToolsPerRequest = maxToolsPerRequest;
@@ -291,10 +297,13 @@ export class MessageRouter {
     const personality = this.personalityManager?.getConfig();
     const vaultContext = this.buildVaultSystemContext();
 
+    const brandVoiceBlock = this.brandVoiceService?.getActiveVoicePromptBlock();
+
     const parts = [
       ...(personality?.enabled
         ? [personality.systemInstruction, personality.prePrompt, personality.postPrompt]
         : []),
+      brandVoiceBlock,
       vaultContext,
     ].filter(Boolean);
 
