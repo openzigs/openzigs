@@ -270,13 +270,13 @@ export class LanceDBStore {
       const merged = Array.from(scoreMap.values())
         .sort((a, b) => b.score - a.score);
 
-      const maxScore = merged[0]?.score ?? 1;
+      // Use the original vector/FTS score from the best-scoring source for
+      // minScore filtering. RRF rank scores are relative and would defeat
+      // any absolute threshold, so we keep the underlying similarity score
+      // for the filter and only use RRF for ordering.
       return merged
         .slice(0, limit)
-        .map(({ score, result }) => ({
-          ...result,
-          score: maxScore > 0 ? score / maxScore : 0,
-        }))
+        .map(({ result }) => result)
         .filter((r) => minScore <= 0 || r.score >= minScore);
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);

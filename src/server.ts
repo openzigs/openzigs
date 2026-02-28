@@ -73,7 +73,7 @@ import { RoomManager } from "./presenter/room-manager.js";
 import { ExpressPeerServer } from "peer";
 import { MediaQueueRepository } from "./queue/media-queue-repository.js";
 import { QueueMaster } from "./queue/queue-master.js";
-import { createQueueRouter } from "./api/queue.js";
+import { createQueueRouter, createQueueCallbackRouter } from "./api/queue.js";
 import { createGalleryRouter } from "./api/gallery.js";
 
 // Register built-in post-action types (create-github-issues, send-webhook, etc.)
@@ -873,6 +873,10 @@ const tasksRouter = createTasksRouter({ taskEngine, taskRepository });
 app.use("/api/tasks", authMiddleware, tasksRouter);
 
 // Media Queue API routes (push-based distributed queue + gallery)
+// Callback route is mounted WITHOUT auth — remote workers (Mac Mini, FluxQ)
+// POST results to /api/queue/complete without an Authorization header.
+const queueCallbackRouter = createQueueCallbackRouter({ queueMaster, repo: mediaQueueRepo });
+app.use("/api/queue", express.json({ limit: "50mb" }), queueCallbackRouter);
 const queueRouter = createQueueRouter({ queueMaster, repo: mediaQueueRepo });
 app.use("/api/queue", authMiddleware, queueRouter);
 
@@ -915,12 +919,27 @@ const httpServer = createServer(app);
 // Allow both local UI and presenter subdomain (for Cloudflare tunnel guests).
 // OPENZIGS_PRESENTER_ORIGIN env var takes precedence; falls back to config.presenter.baseUrl.
 const presenterOrigin = process.env.OPENZIGS_PRESENTER_ORIGIN || config.presenter?.baseUrl;
-const allowedOrigins = presenterOrigin
+const socketAllowedOrigins = presenterOrigin
   ? [uiOrigin, presenterOrigin]
-  : uiOrigin;
+  : [uiOrigin];
 const io = new SocketIOServer(httpServer, {
   cors: {
-    origin: allowedOrigins,
+    origin: (origin, callback) => {
+      // Allow requests with no origin (non-browser clients)
+      if (!origin) return callback(null, true);
+      // Allow any localhost origin regardless of port (dev servers on 3001, 3101, etc.)
+      try {
+        const url = new URL(origin);
+        if (url.hostname === "localhost" || url.hostname === "127.0.0.1") {
+          return callback(null, true);
+        }
+      } catch { /* not a valid URL */ }
+      if (socketAllowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        callback(new Error("Not allowed by CORS"));
+      }
+    },
     credentials: true
   }
 });

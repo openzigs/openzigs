@@ -1,19 +1,15 @@
 const RAW_API_BASE = process.env.NEXT_PUBLIC_OPENZIGS_API_BASE ?? "";
 const AUTH_TOKEN = process.env.NEXT_PUBLIC_OPENZIGS_TOKEN ?? "";
 
-// Guard: if API_BASE points at localhost but the browser is on a different
-// origin (e.g. Cloudflare tunnel), ignore it and use relative paths so
-// Next.js rewrites proxy the request server-side.
+// Guard: if API_BASE origin differs from the browser origin (different
+// host OR port, e.g. Cloudflare tunnel, or dev server on a non-default port),
+// ignore it and use relative paths so Next.js rewrites proxy the request.
 function resolveApiBase(): string {
   if (!RAW_API_BASE) return "";
   if (typeof window === "undefined") return RAW_API_BASE;
   try {
-    const baseHost = new URL(RAW_API_BASE).hostname;
-    if (
-      (baseHost === "localhost" || baseHost === "127.0.0.1") &&
-      window.location.hostname !== "localhost" &&
-      window.location.hostname !== "127.0.0.1"
-    ) {
+    const base = new URL(RAW_API_BASE);
+    if (base.origin !== window.location.origin) {
       return "";
     }
   } catch { /* malformed URL, use as-is */ }

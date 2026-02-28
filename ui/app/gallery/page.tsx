@@ -88,7 +88,14 @@ interface MediaJob {
 
 function fileUrl(filename: string): string {
   const base = process.env.NEXT_PUBLIC_OPENZIGS_API_BASE ?? "";
-  return `${base}/api/queue/assets/file/${encodeURIComponent(filename)}`;
+  const token = process.env.NEXT_PUBLIC_OPENZIGS_TOKEN ?? "";
+  const url = `${base}/api/queue/assets/file/${encodeURIComponent(filename)}`;
+  return token ? `${url}?token=${encodeURIComponent(token)}` : url;
+}
+
+function fileDownloadUrl(filename: string): string {
+  const url = fileUrl(filename);
+  return url.includes("?") ? `${url}&download=1` : `${url}?download=1`;
 }
 
 function formatBytes(bytes: number | null): string {
@@ -286,7 +293,7 @@ export default function GalleryPage() {
 
   const handleDownload = (asset: GalleryAsset) => {
     const a = document.createElement("a");
-    a.href = `${fileUrl(asset.filename)}?download=1`;
+    a.href = fileDownloadUrl(asset.filename);
     a.download = asset.filename;
     a.click();
   };
@@ -799,7 +806,7 @@ function PreviewLightbox({ asset, onClose }: { asset: GalleryAsset; onClose: () 
               </div>
             </div>
             <a
-              href={`${fileUrl(asset.filename)}?download=1`}
+              href={fileDownloadUrl(asset.filename)}
               download={asset.filename}
               className="flex-shrink-0 flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted"
               onClick={(e) => e.stopPropagation()}

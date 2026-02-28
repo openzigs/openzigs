@@ -9,20 +9,17 @@ const AUTH_TOKEN = process.env.NEXT_PUBLIC_OPENZIGS_TOKEN ?? "";
 
 /**
  * Resolve Socket.IO server URL at runtime.
- * When configured URL points at localhost but browser is on a remote origin
- * (e.g. Cloudflare tunnel), return empty string so socket.io-client connects
- * to same-origin and Next.js rewrites proxy to the backend.
+ * When configured URL's origin differs from the browser origin (different
+ * host or port, e.g. Cloudflare tunnel or dev server on a non-default port),
+ * return empty string so socket.io-client connects to same-origin and
+ * Next.js rewrites proxy to the backend.
  */
 function resolveSocketUrl(): string {
   if (!RAW_SOCKET_URL) return "";
   if (typeof window === "undefined") return RAW_SOCKET_URL;
   try {
-    const host = new URL(RAW_SOCKET_URL).hostname;
-    if (
-      (host === "localhost" || host === "127.0.0.1") &&
-      window.location.hostname !== "localhost" &&
-      window.location.hostname !== "127.0.0.1"
-    ) {
+    const base = new URL(RAW_SOCKET_URL);
+    if (base.origin !== window.location.origin) {
       return "";
     }
   } catch { /* malformed URL, use as-is */ }

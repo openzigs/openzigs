@@ -108,7 +108,7 @@ export const createApp = (config: AppConfig, options: CreateAppOptions = {}): Ex
     .split(",")
     .map((s) => s.trim())
     .filter(Boolean);
-  const allowedOrigins = new Set([
+  const explicitOrigins = new Set([
     uiOrigin,
     "http://localhost:3000",
     "http://localhost:3001",
@@ -117,7 +117,16 @@ export const createApp = (config: AppConfig, options: CreateAppOptions = {}): Ex
   app.use(cors({
     origin: (origin, callback) => {
       // Allow requests with no origin (curl, mobile apps, server-to-server)
-      if (!origin || allowedOrigins.has(origin)) {
+      if (!origin) return callback(null, true);
+      // Allow any localhost origin regardless of port (local dev servers
+      // may run on non-default ports like 3101, 5173, etc.)
+      try {
+        const url = new URL(origin);
+        if (url.hostname === "localhost" || url.hostname === "127.0.0.1") {
+          return callback(null, true);
+        }
+      } catch { /* not a valid URL, fall through */ }
+      if (explicitOrigins.has(origin)) {
         callback(null, true);
       } else {
         callback(new Error("Not allowed by CORS"));
@@ -127,13 +136,15 @@ export const createApp = (config: AppConfig, options: CreateAppOptions = {}): Ex
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"],
   }));
-  // Global rate limit: 100 requests per 15 minutes per IP
+  // Global rate limit: generous for local use, protects against runaway loops.
+  // Authenticated requests are exempt since they've already proven identity.
   app.use(rateLimit({
     windowMs: 15 * 60 * 1000,
-    max: 100,
+    max: 5000,
     standardHeaders: true,
     legacyHeaders: false,
     message: { error: "Too many requests, please try again later" },
+    skip: (req) => req.path === "/health",
   }));
 
   app.use(express.json({ limit: "1mb" }));

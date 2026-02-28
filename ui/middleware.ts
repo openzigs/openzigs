@@ -44,11 +44,29 @@ async function verifyGuestToken(
 }
 
 export async function middleware(request: NextRequest) {
+  const pathname = request.nextUrl.pathname;
   const guestToken = request.cookies.get("guest_token")?.value;
+
+  // Helper: inject the Authorization header for API requests proxied via
+  // rewrites. Browser-native elements (<img>, <video>) can't add custom
+  // headers, so the middleware injects the token server-side before the
+  // rewrite forwards to Express.
+  const authToken = process.env.NEXT_PUBLIC_OPENZIGS_TOKEN;
+
+  // Helper: return NextResponse.next() with Authorization header injected
+  // for API requests that don't already have one.
+  function nextWithAuth(): NextResponse {
+    if (authToken && pathname.startsWith("/api/") && !request.headers.get("authorization")) {
+      const headers = new Headers(request.headers);
+      headers.set("Authorization", `Bearer ${authToken}`);
+      return NextResponse.next({ request: { headers } });
+    }
+    return NextResponse.next();
+  }
 
   // No guest cookie → admin/normal flow; allow through
   if (!guestToken) {
-    return NextResponse.next();
+    return nextWithAuth();
   }
 
   const payload = await verifyGuestToken(guestToken);
@@ -59,12 +77,10 @@ export async function middleware(request: NextRequest) {
     return response;
   }
 
-  const pathname = request.nextUrl.pathname;
-
   // Check non-scoped allowed paths
   for (const prefix of GUEST_ALLOWED_PREFIXES) {
     if (pathname.startsWith(prefix) || pathname === prefix.replace(/\/$/, "")) {
-      return NextResponse.next();
+      return nextWithAuth();
     }
   }
 
@@ -78,12 +94,12 @@ export async function middleware(request: NextRequest) {
           const afterPrefix = pathname.slice(prefix.length);
           const requestedId = afterPrefix.split("/")[0];
           if (requestedId === guestPresentationId) {
-            return NextResponse.next();
+            return nextWithAuth();
           }
         }
         // For /api/files/serve, allow (video file serving is path-based, not id-based)
         if (prefix === "/api/files/") {
-          return NextResponse.next();
+          return nextWithAuth();
         }
       }
     }
