@@ -22,12 +22,18 @@ interface EnhancePromptRequest {
     num_frames?: number;
     fps?: number;
     strength?: number;
+    duration_seconds?: number;
+    music_steps?: number;
+    instrumental?: boolean;
+    negative_prompt?: string;
   };
 }
 
 interface EnhancePromptResponse {
   enhanced_prompt: string;
   thinking: string;
+  suggested_lyrics?: string;
+  suggested_negative_prompt?: string;
   suggested_parameters: {
     steps?: number;
     guidance?: number;
@@ -36,6 +42,10 @@ interface EnhancePromptResponse {
     num_frames?: number;
     fps?: number;
     seed?: number;
+    duration_seconds?: number;
+    music_steps?: number;
+    video_steps?: number;
+    video_guidance?: number;
   };
 }
 
@@ -116,23 +126,62 @@ function buildSystemPrompt(model: string, mode: string, isVideo: boolean, isMusi
   const modelGuidance = getModelGuidance(model, isVideo, isMusic);
 
   if (isMusic) {
-    return `You are an expert AI prompt engineer for music generation models.
-Your job is to take a user's rough music description and enhance it into a highly detailed, optimized caption for the ACE-Step music generation model.
+    return `You are an expert AI prompt engineer specializing in the ACE-Step 1.5 music generation model.
+
+Your job: take a rough music description and produce two things:
+1. An **enhanced_prompt** — a comma-separated list of descriptive tags optimized for ACE-Step's caption encoder.
+2. **suggested_lyrics** — properly structured lyrics using ACE-Step's bracketed section format.
 
 ## Target Model: ${model}
 ## Generation Mode: ${mode}
 
 ${modelGuidance}
 
+## ACE-Step Tag Format for enhanced_prompt
+Comma-separated tags covering: genre, sub-genre, mood, energy, tempo/BPM, key, instruments, production style, vocal style (or "instrumental, no vocals").
+Example: "electronic, synthwave, retro, energetic, 128 BPM, A minor, driving bassline, arpeggiated synths, 80s drums, polished production, male vocals"
+
+## ACE-Step Lyrics Format for suggested_lyrics
+Use bracketed section headers. Each section gets a label on its own line, then lyric lines below.
+Example:
+[Verse 1]
+Line one of verse
+Line two of verse
+
+[Chorus]
+Chorus line one
+Chorus line two
+
+[Bridge]
+Bridge line
+
+[Outro]
+Final line
+
+If the user wants an instrumental track, set suggested_lyrics to "[Instrumental]".
+
+## Inference Steps Guidance
+Choose music_steps (8–27) based on prompt complexity:
+- Simple/ambient/minimal: 8–12 steps (faster generation)
+- Standard pop/rock/electronic: 16–20 steps
+- Complex orchestral/multi-instrument/detailed: 22–27 steps (higher quality)
+
+## Duration Guidance
+Choose duration_seconds (10–300) based on the content:
+- Short jingle/loop/sample: 10–20s
+- Standard song section (verse+chorus): 30–60s
+- Full song: 120–240s
+- Only suggest if the user implies a different length than current.
+
 ## Rules
-1. If the user mentions a specific genre, artist style, or musical reference, use web search to find accurate musical characteristics to enrich the prompt.
+1. If the user mentions a specific genre, artist style, or musical reference, use web search to research accurate musical characteristics.
 2. Preserve the user's core musical intent — do not change the genre or mood they want.
-3. Add rich musical details: tempo/BPM, key signature, instrumentation, arrangement, production style, mood, energy level.
-4. Use ACE-Step's tag format: include genre tags, mood descriptors, and instrument specifications.
-5. If a seed is provided, keep it unless you have a specific reason to change it.
+3. Do NOT put lyrics inside the enhanced_prompt — keep them strictly in suggested_lyrics.
+4. If the user provides lyrics, refine and restructure them with proper bracketed sections.
+5. If no lyrics are provided and it's not instrumental, write creative original lyrics matching the described mood/genre.
 6. Respond ONLY with a bare JSON object — no markdown, no code fences, no explanation:
 
-{"thinking": "One sentence explaining your enhancement choices", "enhanced_prompt": "The enhanced music generation caption", "suggested_parameters": {"duration_seconds": 30}}
+{"thinking": "One sentence explaining your choices", "enhanced_prompt": "comma, separated, tags", "suggested_lyrics": "[Verse 1]\\nLyric line...\\n\\n[Chorus]\\n...", "suggested_parameters": {"music_steps": 20, "duration_seconds": 30}}
 
 Only include parameters in suggested_parameters that should change from current values.`;
   }
@@ -159,9 +208,10 @@ Choose width/height based on the subject matter:
 3. Add rich visual details: lighting, composition, materials, textures, atmosphere, color palette.
 4. Use the word count and subject complexity to judge steps: simple/fast prompts stay at min steps; detailed/complex scenes push toward the model's max.
 5. If a seed is provided, you may suggest a different seed only if you have a specific reason (e.g., the subject has known aesthetic seeds). Otherwise omit it.
-6. Respond ONLY with a bare JSON object — no markdown, no code fences, no explanation before or after:
+6. For video generation, always include a "suggested_negative_prompt" string with terms to avoid (e.g., "text, watermark, bad anatomy, distorted, static, motionless, worst quality, blurry, jittery"). Also suggest "video_steps" (10-60, default 30) and "video_guidance" (1.0-8.0, default 3.5) based on prompt complexity.
+7. Respond ONLY with a bare JSON object — no markdown, no code fences, no explanation before or after:
 
-{"thinking": "One sentence explaining your parameter choices", "enhanced_prompt": "The enhanced, detailed prompt string", "suggested_parameters": {"steps": 4, "guidance": 3.5, "width": 768, "height": 1344}}
+${isVideo ? '{"thinking": "...", "enhanced_prompt": "...", "suggested_negative_prompt": "text, watermark, distorted, worst quality, static, motionless", "suggested_parameters": {"video_steps": 30, "video_guidance": 3.5, "num_frames": 97}}' : '{"thinking": "One sentence explaining your parameter choices", "enhanced_prompt": "The enhanced, detailed prompt string", "suggested_parameters": {"steps": 4, "guidance": 3.5, "width": 768, "height": 1344}}'}
 
 Only include parameters in suggested_parameters that should change from the current values. Omit seed unless you have a specific suggestion.`;
 }
@@ -250,9 +300,9 @@ function buildUserMessage(
   const complexity = wordCount <= 5 ? "very simple (≤5 words)" : wordCount <= 15 ? "moderate (6–15 words)" : `detailed (${wordCount} words)`;
 
   const paramSummary = isMusic
-    ? `Duration: ${(params as Record<string, unknown>).duration_seconds ?? 30}s${seed != null ? `, Seed: ${seed}` : ", Seed: (none)"}`
+    ? `Duration: ${(params as Record<string, unknown>).duration_seconds ?? 30}s, Steps: ${(params as Record<string, unknown>).music_steps ?? 20}, Instrumental: ${(params as Record<string, unknown>).instrumental ?? false}${seed != null ? `, Seed: ${seed}` : ", Seed: (none)"}`
     : isVideo
-    ? `Frames: ${params.num_frames ?? 97}, FPS: ${params.fps ?? 24}, Resolution: 768×512`
+    ? `Frames: ${params.num_frames ?? 97}, FPS: ${params.fps ?? 24}, Steps: ${params.steps ?? 30}, Guidance: ${params.guidance ?? 3.5}, Resolution: 768×512${seed != null ? `, Seed: ${seed}` : ", Seed: (none)"}`
     : `Resolution: ${params.width ?? 1024}×${params.height ?? 1024}, Steps: ${params.steps ?? 4}, Guidance: ${params.guidance ?? 3.5}${seed != null ? `, Seed: ${seed}` : ", Seed: (none)"}`;
 
   return `Enhance this prompt for ${model} (${mode}):
@@ -290,6 +340,8 @@ function parseEnhanceResponse(
       const parsed = JSON.parse(jsonStr) as {
         thinking?: string;
         enhanced_prompt?: string;
+        suggested_lyrics?: string;
+        suggested_negative_prompt?: string;
         suggested_parameters?: Record<string, unknown>;
       };
 
@@ -304,10 +356,16 @@ function parseEnhanceResponse(
         if (typeof sp.num_frames === "number") suggested.num_frames = sp.num_frames;
         if (typeof sp.fps === "number") suggested.fps = sp.fps;
         if (typeof sp.seed === "number") suggested.seed = sp.seed;
+        if (typeof sp.duration_seconds === "number") suggested.duration_seconds = sp.duration_seconds;
+        if (typeof sp.music_steps === "number") suggested.music_steps = sp.music_steps;
+        if (typeof sp.video_steps === "number") suggested.video_steps = sp.video_steps;
+        if (typeof sp.video_guidance === "number") suggested.video_guidance = sp.video_guidance;
 
         return {
           enhanced_prompt: parsed.enhanced_prompt,
           thinking: parsed.thinking ?? "",
+          suggested_lyrics: typeof parsed.suggested_lyrics === "string" ? parsed.suggested_lyrics : undefined,
+          suggested_negative_prompt: typeof parsed.suggested_negative_prompt === "string" ? parsed.suggested_negative_prompt : undefined,
           suggested_parameters: suggested,
         };
       }

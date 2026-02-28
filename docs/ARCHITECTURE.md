@@ -4009,13 +4009,17 @@ Push-based orchestrator that polls pending jobs on a configurable tick interval 
 | `img2img` | `mac-mini` | `flux-schnell` | 1024×1024 |
 | `txt2video` | `m2-pro` | `ltx-2` | 768×512 |
 | `img2video` | `m2-pro` | `ltx-2` | 768×512 |
-| `txt2music` | `m2-pro` | `ace-step` | 30s duration |
+| `txt2music` | `music` (independent) | `ace-step` | 30s duration |
 
 **Dispatch flow:**
 1. `tick()` queries `getPendingByNode(node)` → oldest pending job
 2. Checks worker health via `GET /status` (must return `is_busy: false`)
 3. Updates job status to `dispatched`, sends `POST /generate` with payload + callback URL
 4. Worker processes asynchronously, calls back `POST /api/queue/complete` with result
+
+**Music jobs** are dispatched independently of the M2 Pro VRAM coordination — the music sidecar runs on its own process (port 5009) and has a dedicated `processMusicJobs()` tick. For local sidecars (URL is `localhost`/`127.0.0.1`), the callback URL is rewritten to use `localhost` instead of the LAN IP to avoid network timeouts.
+
+**Stale result recovery:** `pollForStaleResults()` runs every tick and checks dispatched jobs older than 3 minutes. For each stale job, it polls the worker's `/job-result/<id>` endpoint. If the result is available, it's processed as if the callback had arrived — this recovers jobs where the callback POST failed.
 
 **Events:** `job:dispatched`, `job:complete`, `job:failed`, `project:complete`
 
@@ -4126,7 +4130,7 @@ The M2 Pro has a known GPU kernel timeout issue (`kIOGPUCommandBufferCallbackErr
 
 ### VRAM Coordination
 
-Both the FluxQ image sidecar (port 5005) and LTX video worker (port 5007) share the same M2 Pro unified memory. Only one model domain can be loaded at a time.
+Both the FluxQ image sidecar (port 5005) and LTX video worker (port 5007) share the same M2 Pro unified memory. Only one model domain can be loaded at a time. The music sidecar (port 5009) runs independently — it has its own process, memory, and busy state, and is not subject to VRAM coordination with image/video workers.
 
 **Coordination flow:**
 1. QueueMaster checks which model is loaded via `/status`
@@ -4162,7 +4166,11 @@ The `StoryboardEngine` gains animation-aware scene planning:
 
 ### Music Generation Sidecar (`sidecars/music/server.py`) — Epic #335
 
-FastAPI-style Python HTTP server wrapping [ACE-Step 1.5](https://github.com/ACE-Step/ACE-Step-1.5) for local AI music generation on Apple Silicon (MPS/Metal) or CUDA:
+stdlib `http.server` Python HTTP server wrapping [ACE-Step 1.5](https://github.com/ACE-Step/ACE-Step-1.5) for local AI music generation on Apple Silicon (MPS/Metal) or CUDA.
+
+**Generation approach:** The sidecar prepends `ACESTEP_DIR` (`~/ace-step-apple-silicon`) to `sys.path` and imports `AceStepHandler` + `generate_music()` directly from the cloned repo. `AceStepHandler.initialize_service()` is called lazily on the first generation request (model weights are downloaded then). The `LLMHandler` is instantiated but intentionally left un-initialized to skip LLM chain-of-thought overhead (`thinking=False`, `use_cot_metas=False`).
+
+**Known dependency patch:** `diffusers==0.36.0` has a bug in `quantizers/torchao/torchao_quantizer.py` where `logger` is referenced before definition at module import time. The sidecar venv's copy of that file has `logger = logging.get_logger(__name__)` moved above the `_update_torch_safe_globals()` call to fix this.
 
 | Endpoint | Method | Description |
 |---|---|---|
@@ -4216,6 +4224,11 @@ FastAPI-style Python HTTP server wrapping [ACE-Step 1.5](https://github.com/ACE-
 The Gallery page at `/gallery` provides:
 
 - **Queue Stats Dashboard** — Real-time counts for Pending, Dispatched, Processing, Complete, and Failed jobs (auto-refreshes every 5s via React Query)
+- **Worker Nodes Grid** — 3-column status panel showing all worker nodes:
+  - **Image Gen (FluxQ)** — Mac Mini, port 5005 — Activate/Unload buttons for VRAM control
+  - **Video Gen (LTX-2)** — M2 Pro, port 5007 — Activate/Unload buttons for VRAM control
+  - **Music Gen (ACE-Step)** — Independent localhost sidecar, port 5009 — no VRAM buttons (runs independently)
+  - Each card shows reachability (green/red dot), loaded model name, and current busy state ("Generating..." spinner)
 - **Asset Grid** — Filterable by type (Images, Videos, Audio) and source (Generated, Uploaded, Director). Each asset card shows thumbnail, metadata overlay, and action buttons (preview, download, tag, delete)
 - **Preview Lightbox** — Full-screen modal for viewing images and playing videos
 - **Gallery Studio** — Inline asset creation panel with 5 modes:

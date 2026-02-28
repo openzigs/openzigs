@@ -17,13 +17,11 @@ import gc
 import json
 import logging
 import os
-import subprocess
 import sys
 import tempfile
 import threading
 import time
 import uuid
-from functools import wraps
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
 from typing import Optional
@@ -84,6 +82,70 @@ DEFAULT_LM = os.environ.get("ACESTEP_LM", "acestep-5Hz-lm-0.6B")
 DEFAULT_BACKEND = os.environ.get("ACESTEP_BACKEND", "pt")
 DEFAULT_DEVICE = os.environ.get("ACESTEP_DEVICE", "auto")
 
+# Ensure the cloned ACE-Step repo is first on sys.path so that imports of
+# `acestep` use the source files where _get_project_root() resolves
+# correctly to ACESTEP_DIR (and finds checkpoints/ there).
+if os.path.isdir(ACESTEP_DIR) and ACESTEP_DIR not in sys.path:
+    sys.path.insert(0, ACESTEP_DIR)
+
+# ── Lazy Model Init ──────────────────────────────────────────
+
+_dit_handler = None
+_llm_handler = None
+_model_init_error: Optional[str] = None
+_model_init_lock = threading.Lock()
+
+
+def _ensure_model_loaded() -> None:
+    """Initialize ACE-Step DiT model on first generation request."""
+    global _dit_handler, _llm_handler, _model_init_error
+
+    if _dit_handler is not None:
+        return
+
+    with _model_init_lock:
+        if _dit_handler is not None:
+            return
+        if _model_init_error:
+            raise RuntimeError(
+                f"ACE-Step model init failed previously: {_model_init_error}"
+            )
+
+        try:
+            from acestep.handler import AceStepHandler  # noqa: PLC0415
+            from acestep.llm_inference import LLMHandler  # noqa: PLC0415
+
+            handler = AceStepHandler()
+            llm = LLMHandler()
+
+            logger.info(
+                f"Initializing ACE-Step model '{DEFAULT_MODEL}' on '{DEFAULT_DEVICE}'..."
+                " (first request — may take a while to download weights)"
+            )
+            status_msg, ok = handler.initialize_service(
+                project_root=ACESTEP_DIR,
+                config_path=DEFAULT_MODEL,
+                device=DEFAULT_DEVICE,
+                use_flash_attention=False,
+                compile_model=False,
+                offload_to_cpu=False,
+            )
+            if not ok:
+                raise RuntimeError(f"initialize_service failed: {status_msg}")
+
+            _dit_handler = handler
+            # LLMHandler is intentionally left un-initialized to skip LLM
+            # chain-of-thought overhead. generate_music() guards on
+            # llm_handler.llm_initialized, so no LLM calls will be made.
+            _llm_handler = llm
+            worker_state["loaded_model"] = DEFAULT_MODEL
+            logger.info("ACE-Step model ready")
+
+        except Exception as exc:
+            _model_init_error = str(exc)
+            logger.error(f"ACE-Step model init error: {exc}")
+            raise
+
 
 def generate_music(
     prompt: str,
@@ -93,75 +155,80 @@ def generate_music(
     model: str = DEFAULT_MODEL,
     lm_model: str = DEFAULT_LM,
     seed: Optional[int] = None,
+    steps: int = 20,
 ) -> tuple[bytes, str]:
     """
-    Run ACE-Step CLI to generate music.
+    Generate music using the ACE-Step Python API.
 
     Returns:
         Tuple of (audio_bytes, mime_type).
     """
+    _ensure_model_loaded()
+
+    from acestep.inference import (  # noqa: PLC0415
+        GenerationParams,
+        GenerationConfig,
+        generate_music as _acegen,
+    )
+
+    # Build the lyrics field for the params
+    if instrumental:
+        lyrics_field = "[Instrumental]"
+    elif lyrics:
+        lyrics_field = lyrics
+    else:
+        lyrics_field = ""
+
+    params = GenerationParams(
+        caption=prompt,
+        lyrics=lyrics_field,
+        instrumental=instrumental,
+        duration=float(min(duration_seconds, 300)),
+        inference_steps=steps,
+        seed=seed if seed is not None else -1,
+        task_type="text2music",
+        # Disable LLM chain-of-thought — llm_handler is not initialized,
+        # so these flags are effectively no-ops, but setting them to False
+        # is explicit about our intent.
+        thinking=False,
+        use_cot_metas=False,
+        use_cot_caption=False,
+    )
+
+    config = GenerationConfig(
+        batch_size=1,
+        use_random_seed=(seed is None),
+        audio_format="wav",
+    )
+
+    logger.info(
+        f"Generating: model={DEFAULT_MODEL}, duration={duration_seconds}s, "
+        f"instrumental={instrumental}, steps={steps}"
+    )
+
     with tempfile.TemporaryDirectory() as tmpdir:
-        output_path = os.path.join(tmpdir, "output.wav")
-
-        # Build the caption/prompt text
-        caption = prompt
-        if lyrics and not instrumental:
-            caption = f"{prompt}\n\n[Lyrics]\n{lyrics}"
-
-        cmd = [
-            "uv", "run", "python", "-m", "acestep.cli",
-            "generate",
-            "--caption", caption,
-            "--duration", str(min(duration_seconds, 300)),
-            "--model", model,
-            "--lm-model", lm_model,
-            "--device", DEFAULT_DEVICE,
-            "--backend", DEFAULT_BACKEND,
-            "--output", output_path,
-        ]
-
-        if instrumental:
-            cmd.append("--instrumental")
-
-        if seed is not None:
-            cmd.extend(["--seed", str(seed)])
-
-        logger.info(
-            f"Running ACE-Step: model={model}, duration={duration_seconds}s, "
-            f"instrumental={instrumental}"
+        result = _acegen(
+            dit_handler=_dit_handler,
+            llm_handler=_llm_handler,
+            params=params,
+            config=config,
+            save_dir=tmpdir,
         )
 
-        result = subprocess.run(
-            cmd,
-            cwd=ACESTEP_DIR,
-            capture_output=True,
-            text=True,
-            timeout=600,  # 10 min max
-        )
-
-        if result.returncode != 0:
-            logger.error(f"ACE-Step failed: {result.stderr}")
+        if not result.success:
             raise RuntimeError(
-                f"ACE-Step generation failed: {result.stderr[:500]}"
+                f"ACE-Step generation failed: {result.error or result.status_message}"
             )
 
-        # Read the generated audio file
-        if not os.path.exists(output_path):
-            # Check if output went to a different path
-            wav_files = list(Path(tmpdir).glob("*.wav"))
-            if wav_files:
-                output_path = str(wav_files[0])
-            else:
-                raise RuntimeError("No output audio file generated")
+        audio_paths = [a["path"] for a in result.audios if a.get("path")]
+        if not audio_paths:
+            raise RuntimeError("No audio generated — result.audios was empty")
 
-        with open(output_path, "rb") as f:
-            audio_bytes = f.read()
+        with open(audio_paths[0], "rb") as fh:
+            audio_bytes = fh.read()
 
-        logger.info(
-            f"Generated {len(audio_bytes)} bytes of audio"
-        )
-
-        return audio_bytes, "audio/wav"
+    logger.info(f"Generated {len(audio_bytes)} bytes of audio")
+    return audio_bytes, "audio/wav"
 
 
 def run_async_job(
@@ -173,6 +240,7 @@ def run_async_job(
     instrumental: bool = False,
     model: str = DEFAULT_MODEL,
     seed: Optional[int] = None,
+    steps: int = 20,
 ):
     """Run generation in a background thread and POST result to callback."""
     worker_state["is_busy"] = True
@@ -187,6 +255,7 @@ def run_async_job(
             instrumental=instrumental,
             model=model,
             seed=seed,
+            steps=steps,
         )
 
         audio_b64 = base64.b64encode(audio_bytes).decode("ascii")
@@ -200,6 +269,7 @@ def run_async_job(
                 "model": model,
                 "duration_seconds": duration_seconds,
                 "instrumental": instrumental,
+                "steps": steps,
             },
         }
 
@@ -359,12 +429,13 @@ class MusicGenHandler(BaseHTTPRequestHandler):
         instrumental = bool(body.get("instrumental", False))
         model = body.get("model", DEFAULT_MODEL)
         seed = body.get("seed")
+        steps = min(max(int(body.get("steps", 20)), 8), 27)
 
         thread = threading.Thread(
             target=run_async_job,
             args=(
                 job_id, prompt, callback_url, duration,
-                lyrics, instrumental, model, seed,
+                lyrics, instrumental, model, seed, steps,
             ),
             daemon=True,
         )
@@ -398,6 +469,7 @@ class MusicGenHandler(BaseHTTPRequestHandler):
                 instrumental=bool(body.get("instrumental", False)),
                 model=body.get("model", DEFAULT_MODEL),
                 seed=body.get("seed"),
+                steps=min(max(int(body.get("steps", 20)), 8), 27),
             )
 
             audio_b64 = base64.b64encode(audio_bytes).decode("ascii")

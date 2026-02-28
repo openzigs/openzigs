@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  ACE-Step Music Sidecar — macOS launchd Service Template
+  Issue #335: ACE-Step 1.5 music generation worker
+
+  Install:
+    cp com.openzigs.acestep.plist ~/Library/LaunchAgents/
+    launchctl load ~/Library/LaunchAgents/com.openzigs.acestep.plist
+
+  Uninstall:
+    launchctl unload ~/Library/LaunchAgents/com.openzigs.acestep.plist
+    rm ~/Library/LaunchAgents/com.openzigs.acestep.plist
+
+  Logs:
+    tail -f /tmp/acestep-stdout.log
+    tail -f /tmp/acestep-stderr.log
+
+  NOTE: Replace __ACESTEP_SIDECAR_DIR__ with the absolute path to
+  sidecars/music/ (e.g. /Users/you/Development/openzigs/sidecars/music).
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.openzigs.acestep</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>__ACESTEP_SIDECAR_DIR__/start.sh</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>__ACESTEP_SIDECAR_DIR__</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PYTORCH_MPS_HIGH_WATERMARK_RATIO</key>
+        <string>0.0</string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+
+    <key>ProcessType</key>
+    <string>Interactive</string>
+
+    <key>SessionCreate</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/tmp/acestep-stdout.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/tmp/acestep-stderr.log</string>
+</dict>
+</plist>

@@ -65,7 +65,7 @@ interface QueueStats {
 }
 
 interface NodeStatusInfo {
-  node: "mac-mini" | "m2-pro";
+  node: "mac-mini" | "m2-pro" | "music";
   reachable: boolean;
   is_busy: boolean;
   loaded_model: string | null;
@@ -335,8 +335,13 @@ export default function GalleryPage() {
             <h3 className="text-sm font-semibold text-foreground">Worker Nodes</h3>
             <span className="text-[10px] text-muted-foreground">(shared M2 memory — only one model at a time)</span>
           </div>
-          <div className="grid grid-cols-2 gap-3">
-            {nodes.map((node) => (
+          <div className="grid grid-cols-3 gap-3">
+            {nodes.map((node) => {
+              const nodeLabel = node.node === "mac-mini" ? "Image Gen (FluxQ)"
+                : node.node === "music" ? "Audio Gen (ACE-Step)"
+                : "Video Gen (LTX-2)";
+              const isHardwareNode = node.node === "mac-mini" || node.node === "m2-pro";
+              return (
               <div
                 key={node.node}
                 className={`rounded-lg border px-4 py-3 ${
@@ -350,7 +355,7 @@ export default function GalleryPage() {
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-sm font-semibold text-foreground">
-                      {node.node === "mac-mini" ? "Image Gen (FluxQ)" : "Video Gen (LTX-2)"}
+                      {nodeLabel}
                     </p>
                     <p className="text-[11px] text-muted-foreground">{node.url}</p>
                   </div>
@@ -365,7 +370,7 @@ export default function GalleryPage() {
                     ) : node.is_busy ? (
                       <span className="flex items-center gap-1 text-amber-500">
                         <Loader2 className="h-3 w-3 animate-spin" />
-                        {node.node === "mac-mini" ? "Generating..." : "Busy"}
+                        Generating...
                       </span>
                     ) : node.loaded_model ? (
                       <span className="text-emerald-600 dark:text-emerald-400 font-medium">{node.loaded_model}</span>
@@ -374,7 +379,7 @@ export default function GalleryPage() {
                     )}
                   </div>
                   <div className="flex gap-1.5">
-                    {node.reachable && node.loaded_model && (
+                    {isHardwareNode && node.reachable && node.loaded_model && (
                       <button
                         onClick={() => unloadMutation.mutate(node.node)}
                         disabled={unloadMutation.isPending || node.is_busy}
@@ -385,7 +390,7 @@ export default function GalleryPage() {
                         Unload
                       </button>
                     )}
-                    {node.reachable && !node.loaded_model && (
+                    {isHardwareNode && node.reachable && !node.loaded_model && (
                       <button
                         onClick={() => switchMutation.mutate({
                           targetNode: node.node,
@@ -402,7 +407,8 @@ export default function GalleryPage() {
                   </div>
                 </div>
               </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}
@@ -983,6 +989,10 @@ interface StudioFormState {
   duration_seconds: number;
   lyrics: string;
   instrumental: boolean;
+  music_steps: number;
+  video_steps: number;
+  video_guidance: number;
+  negative_prompt: string;
 }
 
 const DEFAULT_FORM: StudioFormState = {
@@ -1003,6 +1013,10 @@ const DEFAULT_FORM: StudioFormState = {
   duration_seconds: 30,
   lyrics: "",
   instrumental: false,
+  music_steps: 20,
+  video_steps: 30,
+  video_guidance: 3.5,
+  negative_prompt: "",
 };
 
 const MODE_INFO: Record<StudioMode, { label: string; desc: string; icon: React.ReactNode }> = {
@@ -1058,6 +1072,8 @@ function GalleryStudio({ onClose, onCreated }: { onClose: () => void; onCreated:
       const result = await fetchJson<{
         enhanced_prompt: string;
         thinking: string;
+        suggested_lyrics?: string;
+        suggested_negative_prompt?: string;
         suggested_parameters: {
           steps?: number;
           guidance?: number;
@@ -1067,6 +1083,9 @@ function GalleryStudio({ onClose, onCreated }: { onClose: () => void; onCreated:
           fps?: number;
           seed?: number;
           duration_seconds?: number;
+          music_steps?: number;
+          video_steps?: number;
+          video_guidance?: number;
         };
       }>("/api/gallery/enhance-prompt", {
         method: "POST",
@@ -1076,15 +1095,16 @@ function GalleryStudio({ onClose, onCreated }: { onClose: () => void; onCreated:
           mode: form.mode,
           seed: form.seed ? parseInt(form.seed, 10) : undefined,
           parameters: isMusic
-            ? { duration_seconds: form.duration_seconds }
+            ? { duration_seconds: form.duration_seconds, music_steps: form.music_steps, instrumental: form.instrumental }
             : {
                 width: form.width,
                 height: form.height,
-                steps: form.steps,
-                guidance: form.guidance,
+                steps: isVideo ? form.video_steps : form.steps,
+                guidance: isVideo ? form.video_guidance : form.guidance,
                 num_frames: form.num_frames,
                 fps: form.fps,
                 strength: form.strength,
+                negative_prompt: isVideo ? form.negative_prompt : undefined,
               },
         }),
       });
@@ -1099,6 +1119,11 @@ function GalleryStudio({ onClose, onCreated }: { onClose: () => void; onCreated:
       if (sp.fps != null) updates.fps = sp.fps;
       if (sp.seed != null) updates.seed = String(sp.seed);
       if (sp.duration_seconds != null) updates.duration_seconds = sp.duration_seconds;
+      if (sp.music_steps != null) updates.music_steps = sp.music_steps;
+      if (sp.video_steps != null) updates.video_steps = sp.video_steps;
+      if (sp.video_guidance != null) updates.video_guidance = sp.video_guidance;
+      if (result.suggested_lyrics) updates.lyrics = result.suggested_lyrics;
+      if (result.suggested_negative_prompt) updates.negative_prompt = result.suggested_negative_prompt;
 
       setForm((prev) => ({ ...prev, ...updates }));
       showToast(result.thinking ? `✨ ${result.thinking}` : "Prompt enhanced!", "success");
@@ -1140,6 +1165,7 @@ function GalleryStudio({ onClose, onCreated }: { onClose: () => void; onCreated:
         if (form.lyrics.trim()) {
           payload.lyrics = form.lyrics.trim();
         }
+        payload.steps = form.music_steps;
         if (form.seed) {
           payload.seed = parseInt(form.seed, 10);
         }
@@ -1202,6 +1228,11 @@ function GalleryStudio({ onClose, onCreated }: { onClose: () => void; onCreated:
       if (isVideo) {
         payload.num_frames = Math.min(form.num_frames, 97);
         payload.fps = form.fps;
+        payload.num_inference_steps = form.video_steps;
+        payload.cfg_scale = form.video_guidance;
+        if (form.negative_prompt.trim()) {
+          payload.negative_prompt = form.negative_prompt.trim();
+        }
       }
 
       if (form.mode === "img2video") {
@@ -1307,7 +1338,25 @@ function GalleryStudio({ onClose, onCreated }: { onClose: () => void; onCreated:
                 className="w-full rounded-lg border border-border bg-card px-2 py-1.5 text-sm text-foreground"
               />
             </div>
-            <div className="flex items-end">
+            <div>
+              <label className="mb-1 flex items-center justify-between text-[11px] font-medium text-muted-foreground">
+                <span>Inference Steps</span>
+                <span className="font-mono">{form.music_steps}</span>
+              </label>
+              <input
+                type="range"
+                min={8}
+                max={27}
+                value={form.music_steps}
+                onChange={(e) => update("music_steps", parseInt(e.target.value))}
+                className="w-full"
+              />
+              <div className="flex justify-between text-[10px] text-muted-foreground">
+                <span>Fast (8)</span>
+                <span>Quality (27)</span>
+              </div>
+            </div>
+            <div className="space-y-2">
               <label className="flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-1.5 text-sm cursor-pointer hover:bg-muted/50 transition">
                 <input
                   type="checkbox"
@@ -1317,9 +1366,7 @@ function GalleryStudio({ onClose, onCreated }: { onClose: () => void; onCreated:
                 />
                 <span className="text-foreground">Instrumental</span>
               </label>
-            </div>
-            <div className="flex items-end">
-              <p className="text-xs text-muted-foreground">
+              <p className="text-[10px] text-muted-foreground">
                 {form.instrumental ? "No vocals — pure instrumental" : "Vocals enabled — add lyrics below"}
               </p>
             </div>
@@ -1478,36 +1525,78 @@ function GalleryStudio({ onClose, onCreated }: { onClose: () => void; onCreated:
 
       {/* Video-specific controls */}
       {isVideo && (
-        <div className="mb-4 grid grid-cols-3 gap-3">
-          <div>
-            <label className="mb-1 block text-[11px] font-medium text-muted-foreground">Frames (max 97)</label>
-            <input
-              type="number"
-              value={form.num_frames}
-              onChange={(e) => update("num_frames", Math.min(parseInt(e.target.value) || 97, 97))}
-              min={1}
-              max={97}
-              className="w-full rounded-lg border border-border bg-card px-2 py-1.5 text-sm text-foreground"
+        <>
+          <div className="mb-4 grid grid-cols-5 gap-3">
+            <div>
+              <label className="mb-1 block text-[11px] font-medium text-muted-foreground">Frames (max 97)</label>
+              <input
+                type="number"
+                value={form.num_frames}
+                onChange={(e) => update("num_frames", Math.min(parseInt(e.target.value) || 97, 97))}
+                min={1}
+                max={97}
+                className="w-full rounded-lg border border-border bg-card px-2 py-1.5 text-sm text-foreground"
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-[11px] font-medium text-muted-foreground">FPS</label>
+              <input
+                type="number"
+                value={form.fps}
+                onChange={(e) => update("fps", parseInt(e.target.value) || 24)}
+                min={1}
+                max={60}
+                className="w-full rounded-lg border border-border bg-card px-2 py-1.5 text-sm text-foreground"
+              />
+            </div>
+            <div>
+              <label className="mb-1 flex items-center justify-between text-[11px] font-medium text-muted-foreground">
+                <span>Steps</span>
+                <span className="font-mono">{form.video_steps}</span>
+              </label>
+              <input
+                type="range"
+                min={10}
+                max={60}
+                value={form.video_steps}
+                onChange={(e) => update("video_steps", parseInt(e.target.value))}
+                className="w-full"
+              />
+              <div className="flex justify-between text-[10px] text-muted-foreground">
+                <span>10</span>
+                <span>60</span>
+              </div>
+            </div>
+            <div>
+              <label className="mb-1 block text-[11px] font-medium text-muted-foreground">Guidance</label>
+              <input
+                type="number"
+                value={form.video_guidance}
+                onChange={(e) => update("video_guidance", Math.min(Math.max(parseFloat(e.target.value) || 3.5, 1.0), 8.0))}
+                min={1.0}
+                max={8.0}
+                step={0.1}
+                className="w-full rounded-lg border border-border bg-card px-2 py-1.5 text-sm text-foreground"
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-[11px] font-medium text-muted-foreground">Duration</label>
+              <p className="mt-1 text-sm font-semibold text-foreground">
+                {(form.num_frames / form.fps).toFixed(1)}s
+              </p>
+            </div>
+          </div>
+          <div className="mb-4">
+            <label className="mb-1 block text-[11px] font-medium text-muted-foreground">Negative Prompt</label>
+            <textarea
+              value={form.negative_prompt}
+              onChange={(e) => update("negative_prompt", e.target.value)}
+              className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-foreground"
+              rows={2}
+              placeholder="watermark, distorted, mutated, blurry, jittery, static, motionless, worst quality..."
             />
           </div>
-          <div>
-            <label className="mb-1 block text-[11px] font-medium text-muted-foreground">FPS</label>
-            <input
-              type="number"
-              value={form.fps}
-              onChange={(e) => update("fps", parseInt(e.target.value) || 24)}
-              min={1}
-              max={60}
-              className="w-full rounded-lg border border-border bg-card px-2 py-1.5 text-sm text-foreground"
-            />
-          </div>
-          <div>
-            <label className="mb-1 block text-[11px] font-medium text-muted-foreground">Duration</label>
-            <p className="mt-1 text-sm font-semibold text-foreground">
-              {(form.num_frames / form.fps).toFixed(1)}s
-            </p>
-          </div>
-        </div>
+        </>
       )}
 
       {/* Seed */}
@@ -1526,9 +1615,9 @@ function GalleryStudio({ onClose, onCreated }: { onClose: () => void; onCreated:
       <div className="flex items-center justify-between">
         <p className="text-[11px] text-muted-foreground">
           {isMusic
-            ? `ACE-Step · ${form.duration_seconds}s ${form.instrumental ? "instrumental" : "vocal"}`
+            ? `ACE-Step · ${form.duration_seconds}s ${form.instrumental ? "instrumental" : "vocal"} · ${form.music_steps} steps`
             : isVideo
-            ? `Video: ${form.num_frames} frames at ${form.fps}fps = ${(form.num_frames / form.fps).toFixed(1)}s (768x512)`
+            ? `Video: ${form.num_frames}fr @ ${form.fps}fps = ${(form.num_frames / form.fps).toFixed(1)}s · ${form.video_steps} steps · cfg ${form.video_guidance}`
             : form.imageProvider === "cloud"
             ? `Cloud (Imagen 3) · ${form.width}x${form.height}`
             : form.imageProvider === "auto"
