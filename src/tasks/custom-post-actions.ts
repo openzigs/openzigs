@@ -180,7 +180,14 @@ function createScriptHandler(
 ): PostActionHandler {
   return async (stageOutput, config) => {
     return new Promise<string>((resolve) => {
-      const env: Record<string, string> = { ...process.env } as Record<string, string>;
+      // Only expose safe environment variables — never leak API keys, tokens,
+      // or secrets from process.env to user-provided scripts.
+      const env: Record<string, string> = {
+        PATH: "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+        HOME: process.env.HOME ?? "",
+        LANG: process.env.LANG ?? "en_US.UTF-8",
+        TERM: "dumb",
+      };
 
       // Pass config values as OPENZIGS_CONFIG_* environment variables
       for (const [key, val] of Object.entries(config)) {
