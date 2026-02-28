@@ -1,5 +1,6 @@
 import type Database from "better-sqlite3";
 import { randomUUID } from "node:crypto";
+import { logger } from "../logging/logger.js";
 
 /**
  * Structured Brand Voice Rulebook extracted by the Linguistic Profiler.
@@ -174,14 +175,27 @@ export class BrandVoiceRepository {
   }
 
   private toModel(row: StoredBrandVoice): BrandVoice {
-    return {
-      id: row.id,
-      name: row.name,
-      rulebook: JSON.parse(row.rulebook) as BrandVoiceRulebook,
-      active: row.active === 1,
-      samples: JSON.parse(row.samples) as string[],
-      createdAt: row.created_at,
-      updatedAt: row.updated_at,
-    };
+    try {
+      return {
+        id: row.id,
+        name: row.name,
+        rulebook: JSON.parse(row.rulebook) as BrandVoiceRulebook,
+        active: row.active === 1,
+        samples: JSON.parse(row.samples) as string[],
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+      };
+    } catch (error) {
+      logger.warn(`[BrandVoiceRepository] Failed to parse JSON for voice ${row.id}`, { error });
+      return {
+        id: row.id,
+        name: row.name,
+        rulebook: { tone: "", sentence_structure: "", vocabulary_level: "", formatting_quirks: "", banned_words: [] },
+        active: row.active === 1,
+        samples: [],
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+      };
+    }
   }
 }

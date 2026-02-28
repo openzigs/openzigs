@@ -1518,11 +1518,29 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
       }
     });
 
+    const BrandVoiceRulebookUpdateSchema = z.object({
+      tone: z.string(),
+      sentence_structure: z.string(),
+      vocabulary_level: z.string(),
+      formatting_quirks: z.string(),
+      banned_words: z.array(z.string()),
+    }).partial().strict();
+
     router.put("/brand-voice/:id", (req, res) => {
       const body = req.body as Record<string, unknown>;
+
+      let rulebook: import("../personality/brand-voice-repository.js").BrandVoiceRulebook | undefined;
+      if (body.rulebook !== undefined) {
+        const result = BrandVoiceRulebookUpdateSchema.safeParse(body.rulebook);
+        if (!result.success) {
+          return res.status(400).json({ error: "Invalid rulebook structure", issues: result.error.issues });
+        }
+        rulebook = result.data as import("../personality/brand-voice-repository.js").BrandVoiceRulebook;
+      }
+
       const updated = brandVoiceService.update(req.params.id, {
         name: typeof body.name === "string" ? body.name.trim() : undefined,
-        rulebook: body.rulebook && typeof body.rulebook === "object" ? body.rulebook as import("../personality/brand-voice-repository.js").BrandVoiceRulebook : undefined,
+        rulebook,
         active: typeof body.active === "boolean" ? body.active : undefined,
       });
       if (!updated) return res.status(404).json({ error: "Brand voice not found" });
@@ -1594,16 +1612,21 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
           } else if (ext === ".docx" || ext === ".doc") {
             const mod: unknown = await import("mammoth");
             const m = mod as Record<string, unknown>;
-            const mammoth = (m.default ?? m) as Record<string, (...args: unknown[]) => Promise<{ value: string }>>;
-            const result = await mammoth.extractRawText({ buffer: file.buffer });
+            const mammoth = (m.default ?? m) as Record<string, unknown>;
+            if (typeof mammoth.extractRawText !== "function") {
+              throw new Error("mammoth.extractRawText is not a function — unexpected module shape");
+            }
+            const result = await (mammoth.extractRawText as (opts: { buffer: Buffer }) => Promise<{ value: string }>)({ buffer: file.buffer });
             text = result.value;
           } else if (ext === ".pdf") {
             const mod: unknown = await import("pdf-parse");
             const m = mod as Record<string, unknown>;
-            const PdfParseClass = (m.default ?? m) as new (data: Uint8Array) => { getText(): Promise<{ text: string }> };
-            const parser = new PdfParseClass(new Uint8Array(file.buffer));
-            const result = await parser.getText();
-            text = result.text;
+            const pdf = (m.default ?? m) as (data: Buffer) => Promise<{ text: string }>;
+            if (typeof pdf !== "function") {
+              throw new Error("pdf-parse default export is not a function — unexpected module shape");
+            }
+            const data = await pdf(file.buffer);
+            text = data.text;
           }
 
           const trimmed = text.trim();

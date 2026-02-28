@@ -5,6 +5,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { fetchJson } from "@/lib/api";
 import type { BrandVoice, BrandVoiceRulebook } from "@/lib/types";
 import { showToast } from "@/components/toast";
+import { ConfirmDialog } from "@/components/confirm-dialog";
 import { Plus, Trash2, Star, StarOff, Loader2, ChevronDown, ChevronRight, Pencil, X, Check, Upload, RefreshCw } from "lucide-react";
 
 const API_BASE = process.env.NEXT_PUBLIC_OPENZIGS_API_BASE ?? "http://localhost:3000";
@@ -42,6 +43,12 @@ export const BrandVoicePanel = () => {
   const [editRulebook, setEditRulebook] = useState<BrandVoiceRulebook | null>(null);
   const [uploading, setUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [pendingConfirm, setPendingConfirm] = useState<{
+    title: string;
+    message: string;
+    variant?: "danger" | "default";
+    onConfirm: () => void;
+  } | null>(null);
 
   const voicesQuery = useQuery({
     queryKey: ["brand-voices"],
@@ -170,13 +177,26 @@ export const BrandVoicePanel = () => {
     setSampleEntries((prev) => prev.map((s, i) => (i === index ? value : s)));
 
   const handleReanalyze = (voice: BrandVoice) => {
-    if (!confirm(`Re-analyze "${voice.name}" with its current samples? This will regenerate the rulebook.`)) return;
-    reanalyzeMutation.mutate({ id: voice.id, samples: voice.samples });
+    setPendingConfirm({
+      title: "Re-analyze Voice",
+      message: `Re-analyze "${voice.name}" with its current samples? This will regenerate the rulebook.`,
+      onConfirm: () => {
+        setPendingConfirm(null);
+        reanalyzeMutation.mutate({ id: voice.id, samples: voice.samples });
+      },
+    });
   };
 
   const handleDelete = (id: string, voiceName: string) => {
-    if (!confirm(`Delete brand voice "${voiceName}"?`)) return;
-    deleteMutation.mutate(id);
+    setPendingConfirm({
+      title: "Delete Brand Voice",
+      message: `Delete brand voice "${voiceName}"? This cannot be undone.`,
+      variant: "danger",
+      onConfirm: () => {
+        setPendingConfirm(null);
+        deleteMutation.mutate(id);
+      },
+    });
   };
 
   const startEditing = (voice: BrandVoice) => {
@@ -201,6 +221,16 @@ export const BrandVoicePanel = () => {
 
   return (
     <div className="space-y-5">
+      {pendingConfirm && (
+        <ConfirmDialog
+          title={pendingConfirm.title}
+          message={pendingConfirm.message}
+          variant={pendingConfirm.variant}
+          confirmLabel={pendingConfirm.variant === "danger" ? "Delete" : "Confirm"}
+          onConfirm={pendingConfirm.onConfirm}
+          onCancel={() => setPendingConfirm(null)}
+        />
+      )}
       {/* Active voice indicator */}
       {activeVoice && (
         <div className="flex items-center gap-2 rounded-lg border border-primary/20 bg-primary/5 px-4 py-3">

@@ -185,8 +185,8 @@ BRAND VOICE RULES (follow these strictly for all generated content):
         ? (parsed.banned_words as unknown[]).filter((w): w is string => typeof w === "string")
         : [];
 
-      if (!tone && !sentence_structure) {
-        throw new Error("Parsed JSON is missing required fields (tone, sentence_structure)");
+      if (!tone || !sentence_structure || !vocabulary_level || !formatting_quirks || !banned_words) {
+        throw new Error("Parsed JSON is missing one or more required fields (tone, sentence_structure, vocabulary_level, formatting_quirks, banned_words)");
       }
 
       return { tone, sentence_structure, vocabulary_level, formatting_quirks, banned_words };
