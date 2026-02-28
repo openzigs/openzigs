@@ -12,8 +12,8 @@
     launchctl load ~/Library/LaunchAgents/com.openzigs.media-kickstart.plist
 
   Requires:
-    com.openzigs.fluxq and com.openzigs.ltx-worker must already be loaded
-    (installed via setup-fluxq-node.sh / setup-ltx-node.sh).
+    com.openzigs.fluxq, com.openzigs.ltx-worker, and com.openzigs.acestep
+    must already be loaded (installed via setup scripts or manual copy).
 -->
 <plist version="1.0">
 <dict>
@@ -24,7 +24,7 @@
     <array>
         <string>/bin/bash</string>
         <string>-c</string>
-        <string>sleep 5 &amp;&amp; launchctl kickstart -k "gui/$(id -u)/com.openzigs.fluxq" 2>/dev/null; launchctl kickstart -k "gui/$(id -u)/com.openzigs.ltx-worker" 2>/dev/null</string>
+        <string>sleep 5 &amp;&amp; launchctl kickstart -k "gui/$(id -u)/com.openzigs.fluxq" 2>/dev/null; launchctl kickstart -k "gui/$(id -u)/com.openzigs.ltx-worker" 2>/dev/null; launchctl kickstart -k "gui/$(id -u)/com.openzigs.acestep" 2>/dev/null</string>
     </array>
 
     <key>RunAtLoad</key>

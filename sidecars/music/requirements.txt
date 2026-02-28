@@ -1,0 +1,13 @@
+# ACE-Step 1.5 music generation sidecar dependencies
+#
+# Install the ACE-Step Apple Silicon fork (MPS/Metal + MLX support):
+#   pip install git+https://github.com/clockworksquirrel/ace-step-apple-silicon.git
+#
+# Or clone it locally and install in editable mode:
+#   git clone https://github.com/clockworksquirrel/ace-step-apple-silicon.git ~/ace-step-apple-silicon
+#   cd ~/ace-step-apple-silicon && uv sync
+#
+# The server.py uses Python stdlib only (http.server) — no additional pip packages required.
+# torch is an optional import used only by the /unload endpoint; it is installed as a
+# transitive dependency of ACE-Step.
+git+https://github.com/clockworksquirrel/ace-step-apple-silicon.git

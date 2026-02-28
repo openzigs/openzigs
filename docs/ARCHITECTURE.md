@@ -3959,7 +3959,7 @@ Generates stylized YouTube thumbnails for rendered videos:
 
 ## Distributed Media Queue, Worker Nodes & Asset Gallery (Epic #325)
 
-A **push-based media generation queue** that routes image and video jobs to VRAM-aware worker nodes, persists results as gallery assets, and exposes a full-featured UI for browsing, creating, and managing media assets.
+A **push-based media generation queue** that routes image, video, and music jobs to VRAM-aware worker nodes, persists results as gallery assets, and exposes a full-featured UI for browsing, creating, and managing media assets.
 
 ### Architecture
 
@@ -3968,7 +3968,7 @@ graph TB
     subgraph UI["Gallery UI (Next.js)"]
         STATS[Queue Stats Bar<br/>Pending · Dispatched · Processing · Complete · Failed]
         GRID[Asset Grid<br/>Type/Source Filters · Lightbox Preview]
-        STUDIO[Gallery Studio<br/>4 modes: txt2img · img2img · txt2video · img2video]
+        STUDIO[Gallery Studio<br/>5 modes: txt2img · img2img · txt2video · img2video · txt2music]
     end
 
     subgraph Backend["Express Server"]
@@ -3980,6 +3980,7 @@ graph TB
     subgraph Workers["Worker Nodes"]
         MINI[Mac Mini<br/>FLUX.1 (Schnell)<br/>:5005]
         M2PRO[M2 Pro Sidecar<br/>LTX-2 (8-bit MLX)<br/>:5007]
+        MUSIC[Music Sidecar<br/>ACE-Step 1.5<br/>:5009]
     end
 
     STUDIO -->|POST /api/queue/jobs| QAPI
@@ -3987,8 +3988,10 @@ graph TB
     REPO --> QM
     QM -->|POST /generate| MINI
     QM -->|POST /generate| M2PRO
+    QM -->|POST /generate| MUSIC
     MINI -->|POST /api/queue/complete| QAPI
     M2PRO -->|POST /api/queue/complete| QAPI
+    MUSIC -->|POST /api/queue/complete| QAPI
     GRID -->|GET /api/queue/assets| QAPI
 
     style UI fill:#0d2137,stroke:#16213e,color:#fff
@@ -4006,12 +4009,17 @@ Push-based orchestrator that polls pending jobs on a configurable tick interval 
 | `img2img` | `mac-mini` | `flux-schnell` | 1024×1024 |
 | `txt2video` | `m2-pro` | `ltx-2` | 768×512 |
 | `img2video` | `m2-pro` | `ltx-2` | 768×512 |
+| `txt2music` | `music` (independent) | `ace-step` | 30s duration |
 
 **Dispatch flow:**
 1. `tick()` queries `getPendingByNode(node)` → oldest pending job
 2. Checks worker health via `GET /status` (must return `is_busy: false`)
 3. Updates job status to `dispatched`, sends `POST /generate` with payload + callback URL
 4. Worker processes asynchronously, calls back `POST /api/queue/complete` with result
+
+**Music jobs** are dispatched independently of the M2 Pro VRAM coordination — the music sidecar runs on its own process (port 5009) and has a dedicated `processMusicJobs()` tick. For local sidecars (URL is `localhost`/`127.0.0.1`), the callback URL is rewritten to use `localhost` instead of the LAN IP to avoid network timeouts.
+
+**Stale result recovery:** `pollForStaleResults()` runs every tick and checks dispatched jobs older than 3 minutes. For each stale job, it polls the worker's `/job-result/<id>` endpoint. If the result is available, it's processed as if the callback had arrived — this recovers jobs where the callback POST failed.
 
 **Events:** `job:dispatched`, `job:complete`, `job:failed`, `project:complete`
 
@@ -4024,7 +4032,7 @@ SQLite persistence for two tables:
 | Column | Type | Description |
 |---|---|---|
 | `id` | TEXT PK | UUID |
-| `type` | TEXT | `txt2img`, `img2img`, `txt2video`, `img2video` |
+| `type` | TEXT | `txt2img`, `img2img`, `txt2video`, `img2video`, `txt2music` |
 | `required_model` | TEXT | Model name for the worker |
 | `target_node` | TEXT | `mac-mini` or `m2-pro` |
 | `payload` | TEXT (JSON) | Generation parameters |
@@ -4122,7 +4130,7 @@ The M2 Pro has a known GPU kernel timeout issue (`kIOGPUCommandBufferCallbackErr
 
 ### VRAM Coordination
 
-Both the FluxQ image sidecar (port 5005) and LTX video worker (port 5007) share the same M2 Pro unified memory. Only one model domain can be loaded at a time.
+Both the FluxQ image sidecar (port 5005) and LTX video worker (port 5007) share the same M2 Pro unified memory. Only one model domain can be loaded at a time. The music sidecar (port 5009) runs independently — it has its own process, memory, and busy state, and is not subject to VRAM coordination with image/video workers.
 
 **Coordination flow:**
 1. QueueMaster checks which model is loaded via `/status`
@@ -4156,6 +4164,43 @@ The `StoryboardEngine` gains animation-aware scene planning:
 - System prompt includes "ANIMATION COMPUTE BUDGET" rules: max 2-3 animated scenes per video
 - Motion prompts describe camera movement for LTX-2 img2video (e.g., "slow zoom in with subtle parallax")
 
+### Music Generation Sidecar (`sidecars/music/server.py`) — Epic #335
+
+stdlib `http.server` Python HTTP server wrapping [ACE-Step 1.5](https://github.com/ACE-Step/ACE-Step-1.5) for local AI music generation on Apple Silicon (MPS/Metal) or CUDA.
+
+**Generation approach:** The sidecar prepends `ACESTEP_DIR` (`~/ace-step-apple-silicon`) to `sys.path` and imports `AceStepHandler` + `generate_music()` directly from the cloned repo. `AceStepHandler.initialize_service()` is called lazily on the first generation request (model weights are downloaded then). The `LLMHandler` is instantiated but intentionally left un-initialized to skip LLM chain-of-thought overhead (`thinking=False`, `use_cot_metas=False`).
+
+**Known dependency patch:** `diffusers==0.36.0` has a bug in `quantizers/torchao/torchao_quantizer.py` where `logger` is referenced before definition at module import time. The sidecar venv's copy of that file has `logger = logging.get_logger(__name__)` moved above the `_update_torch_safe_globals()` call to fix this.
+
+| Endpoint | Method | Description |
+|---|---|---|
+| `/generate` | POST | Async generation, returns 202 with job ID |
+| `/generate-sync` | POST | Synchronous generation, returns audio file |
+| `/health` | GET | Returns `{ status, model, device, backend }` |
+| `/status` | GET | Returns `{ is_busy, loaded_model }` |
+| `/job-result/<id>` | GET | Poll for completed async job result |
+| `/unload` | POST | Unload model from VRAM |
+
+**Generation parameters:**
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `prompt` | string | required | Music description (genre, BPM, instruments, mood) |
+| `duration_seconds` | int | 30 | Output length (10–300s) |
+| `model` | string | `acestep-v15-turbo` | `turbo` (8 steps, fast) or `sft` (32 steps, quality) |
+| `instrumental` | bool | false | Pure instrumental (no vocals) |
+| `lyrics` | string | `""` | Lyrics with `[Verse]`/`[Chorus]` tags |
+| `seed` | int | -1 | Reproducibility seed (-1 = random) |
+
+**Performance (Apple Silicon):**
+
+| Model | M2 Pro (32GB) | M3 Max (48GB) |
+|---|---|---|
+| `turbo` (30s) | ~45s | ~25s |
+| `sft` (30s) | ~3 min | ~1.5 min |
+
+**Admin configuration:** `ui/components/admin/music-gen-panel.tsx` exposes Local Process / Network Node toggle, URL/token fields, and health check — matching the pattern of image and video generation panels.
+
 ### Queue API (`src/api/queue.ts`)
 
 | Method | Path | Description |
@@ -4179,13 +4224,19 @@ The `StoryboardEngine` gains animation-aware scene planning:
 The Gallery page at `/gallery` provides:
 
 - **Queue Stats Dashboard** — Real-time counts for Pending, Dispatched, Processing, Complete, and Failed jobs (auto-refreshes every 5s via React Query)
+- **Worker Nodes Grid** — 3-column status panel showing all worker nodes:
+  - **Image Gen (FluxQ)** — Mac Mini, port 5005 — Activate/Unload buttons for VRAM control
+  - **Video Gen (LTX-2)** — M2 Pro, port 5007 — Activate/Unload buttons for VRAM control
+  - **Music Gen (ACE-Step)** — Independent localhost sidecar, port 5009 — no VRAM buttons (runs independently)
+  - Each card shows reachability (green/red dot), loaded model name, and current busy state ("Generating..." spinner)
 - **Asset Grid** — Filterable by type (Images, Videos, Audio) and source (Generated, Uploaded, Director). Each asset card shows thumbnail, metadata overlay, and action buttons (preview, download, tag, delete)
 - **Preview Lightbox** — Full-screen modal for viewing images and playing videos
-- **Gallery Studio** — Inline asset creation panel with 4 modes:
+- **Gallery Studio** — Inline asset creation panel with 5 modes:
   - **Text → Image** — Prompt, dimensions, steps, guidance, seed
   - **Image → Image** — Upload source image + prompt + strength slider
   - **Text → Video** — Prompt, frames (max 97), FPS, computed duration (4s cinematic B-roll badge)
   - **Image → Video** — Upload source image + motion prompt (4s cinematic B-roll badge)
+  - **Text → Music** — Prompt, duration (10–300s), instrumental toggle, lyrics textarea (ACE-Step 1.5 badge)
 - **Submit to Queue** — All Studio jobs route through `POST /api/queue/jobs`
 
 ### Route Map Update
@@ -4194,4 +4245,4 @@ The Gallery page at `/gallery` provides:
 |---|---|---|
 | `/gallery` | `gallery/page.tsx` | Asset Gallery + Gallery Studio |
 
-### Tracking: [Epic #325](https://github.com/mgcronin/openzigs/issues/325)
+### Tracking: [Epic #325](https://github.com/mgcronin/openzigs/issues/325), [Epic #335](https://github.com/mgcronin/openzigs/issues/335)

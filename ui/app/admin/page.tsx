@@ -21,6 +21,7 @@ import { VaultPanel } from "@/components/admin/vault-panel";
 import { DirectorPanel } from "@/components/admin/director-panel";
 import { ImageGenPanel } from "@/components/admin/image-gen-panel";
 import { VideoGenPanel } from "@/components/admin/video-gen-panel";
+import { MusicGenPanel } from "@/components/admin/music-gen-panel";
 import { PresenterConfigPanel } from "@/components/admin/presenter-config-panel";
 import { VoiceConfigPanel } from "@/components/admin/voice-config-panel";
 import { VoiceLabPanel } from "@/components/voice-lab/voice-lab-panel";
@@ -114,6 +115,10 @@ export default function AdminPage() {
 
         <SectionCard title="Video Generation Node" defaultOpen={false}>
           <VideoGenPanel />
+        </SectionCard>
+
+        <SectionCard title="Music Generation Node" defaultOpen={false}>
+          <MusicGenPanel />
         </SectionCard>
 
         <SectionCard title="Custom Agents" defaultOpen={false}>

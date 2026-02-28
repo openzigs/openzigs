@@ -15,7 +15,7 @@ import { MAX_VIDEO_FRAMES, MAX_VIDEO_DURATION_SEC, DEFAULT_VIDEO_FPS } from "../
 
 // ── Helpers ─────────────────────────────────────────────────
 
-const VALID_JOB_TYPES: MediaJobType[] = ["txt2img", "img2img", "txt2video", "img2video", "tts"];
+const VALID_JOB_TYPES: MediaJobType[] = ["txt2img", "img2img", "txt2video", "img2video", "tts", "txt2music"];
 
 const GALLERY_DIR = path.join(os.homedir(), ".openzigs", "gallery");
 

@@ -15,6 +15,7 @@ pkill -f "$PROJECT_ROOT.*pnpm.*dev" || true
 pkill -f "$PROJECT_ROOT/ui.*next.*dev" || true
 pkill -f "$PROJECT_ROOT/sidecars/image-gen/server.py" || true
 pkill -f "$PROJECT_ROOT/sidecars/audio/server.py" || true
+pkill -f "$PROJECT_ROOT/sidecars/music/server.py" || true
 pkill -f "$PROJECT_ROOT.*api_v2.py" || true
 
 # Final deterministic sweep: kill any OpenZigs-rooted node/tsx/pnpm/next/python
@@ -59,6 +60,13 @@ fi
 PID=$(lsof -ti:9880 2>/dev/null || true)
 if [ -n "$PID" ]; then
   echo "[clean-start] Killing process on port 9880 (PID $PID)"
+  kill -9 $PID || true
+fi
+
+# Kill processes on port 5009 (music generation sidecar)
+PID=$(lsof -ti:5009 2>/dev/null || true)
+if [ -n "$PID" ]; then
+  echo "[clean-start] Killing process on port 5009 (PID $PID)"
   kill -9 $PID || true
 fi
 
@@ -210,6 +218,40 @@ else
   fi
 fi
 
+# Optional: start music generation sidecar (ACE-Step 1.5, default disabled)
+# NOTE: The sidecar is now managed by launchd (com.openzigs.acestep) and starts
+# automatically on login — you only need this if you want dev-clean.sh to own
+# the process (e.g. to capture output in .openzigs-music-sidecar.log).
+# Set OPENZIGS_START_MUSIC_SIDECAR=1 to enable. Requires Python 3.11 venv and
+# ~/ace-step-apple-silicon cloned + uv-synced (see docs/USER_GUIDE.md).
+MUSIC_SIDECAR_PID=""
+if [ "${OPENZIGS_START_MUSIC_SIDECAR:-0}" = "1" ]; then
+  MUSIC_DIR="$PROJECT_ROOT/sidecars/music"
+  MUSIC_LOG="$PROJECT_ROOT/.openzigs-music-sidecar.log"
+  MUSIC_PORT="${MUSIC_GEN_PORT:-5009}"
+
+  if [ -x "$MUSIC_DIR/.venv/bin/python" ]; then
+    MUSIC_PY="$MUSIC_DIR/.venv/bin/python"
+  else
+    echo "[clean-start] WARNING: music sidecar venv not found at $MUSIC_DIR/.venv — skipping."
+    echo "[clean-start] Run: cd sidecars/music && /opt/homebrew/bin/python3.11 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt"
+    MUSIC_PY=""
+  fi
+
+  if [ -n "$MUSIC_PY" ] && [ -f "$MUSIC_DIR/server.py" ]; then
+    echo "[clean-start] Starting music-gen sidecar (ACE-Step 1.5, port=$MUSIC_PORT)"
+    (
+      cd "$MUSIC_DIR"
+      "$MUSIC_PY" server.py --port "$MUSIC_PORT" > "$MUSIC_LOG" 2>&1
+    ) &
+    MUSIC_SIDECAR_PID=$!
+
+    echo "[clean-start] Music sidecar logs: $MUSIC_LOG"
+    echo "[clean-start] Probing music-gen sidecar health in background..."
+    start_health_probe "Music-gen sidecar (port $MUSIC_PORT)" "http://127.0.0.1:${MUSIC_PORT}/health" 15 1
+  fi
+fi
+
 # Optional: start local audio sidecar (default enabled)
 # The audio sidecar starts in lazy mode — no models loaded until first TTS/STT request.
 # Comment out this block if you don't need local TTS/STT.
@@ -270,6 +312,9 @@ cleanup() {
   if [ -n "${SOVITS_PID:-}" ]; then
     kill -9 "$SOVITS_PID" 2>/dev/null || true
   fi
+  if [ -n "${MUSIC_SIDECAR_PID:-}" ]; then
+    kill -9 "$MUSIC_SIDECAR_PID" 2>/dev/null || true
+  fi
   if [ -n "${TAIL_PID:-}" ]; then
     kill -9 "$TAIL_PID" 2>/dev/null || true
   fi
@@ -281,6 +326,7 @@ cleanup() {
   pkill -f "next.*dev" || true
   pkill -f "sidecars/image-gen/server.py" || true
   pkill -f "sidecars/audio/server.py" || true
+  pkill -f "sidecars/music/server.py" || true
   pkill -f "api_v2.py" || true
 }
 

@@ -29,7 +29,7 @@ export interface QueueMasterEvents {
 
 /** Aggregated status of all worker nodes. */
 export interface NodeStatus {
-  node: TargetNode;
+  node: TargetNode | "music";
   reachable: boolean;
   is_busy: boolean;
   loaded_model: string | null;
@@ -45,6 +45,8 @@ export class QueueMaster extends EventEmitter {
   /** Cache of last-known worker status to reduce /status polling. */
   private macMiniStatus: WorkerStatus = { is_busy: false, loaded_model: null };
   private m2ProStatus: WorkerStatus = { is_busy: false, loaded_model: null };
+  /** Independent status tracking for the music sidecar (separate service from video). */
+  private musicStatus: WorkerStatus = { is_busy: false, loaded_model: null };
 
   constructor(repo: MediaQueueRepository, config: QueueConfig) {
     super();
@@ -79,9 +81,10 @@ export class QueueMaster extends EventEmitter {
    * Polls each sidecar's /status (or /health for FluxQ) endpoint.
    */
   async getNodeStatuses(): Promise<NodeStatus[]> {
-    const [macMini, m2Pro] = await Promise.allSettled([
+    const [macMini, m2Pro, music] = await Promise.allSettled([
       this.pollNodeStatus("mac-mini"),
       this.pollNodeStatus("m2-pro"),
+      this.pollMusicNodeStatus(),
     ]);
 
     return [
@@ -91,7 +94,34 @@ export class QueueMaster extends EventEmitter {
       m2Pro.status === "fulfilled"
         ? m2Pro.value
         : { node: "m2-pro" as TargetNode, reachable: false, is_busy: false, loaded_model: null, url: this.config.m2Pro.url },
+      music.status === "fulfilled"
+        ? music.value
+        : { node: "music" as const, reachable: false, is_busy: false, loaded_model: null, url: "http://localhost:5009" },
     ];
+  }
+
+  /** Poll the music sidecar's /status endpoint independently from other nodes. */
+  private async pollMusicNodeStatus(): Promise<NodeStatus> {
+    const nodeConfig = await this.getMusicNodeConfig();
+    try {
+      const headers: Record<string, string> = {};
+      if (nodeConfig.token) headers["Authorization"] = `Bearer ${nodeConfig.token}`;
+
+      const res = await fetch(`${nodeConfig.url}/status`, {
+        headers,
+        signal: AbortSignal.timeout(5_000),
+      });
+      if (!res.ok) throw new Error(`Status check failed: ${res.status}`);
+
+      const data = await res.json() as Record<string, unknown>;
+      this.musicStatus = {
+        is_busy: !!(data.is_busy as boolean),
+        loaded_model: (data.loaded_model as string) ?? null,
+      };
+      return { node: "music" as const, reachable: true, ...this.musicStatus, url: nodeConfig.url };
+    } catch {
+      return { node: "music" as const, reachable: false, is_busy: false, loaded_model: null, url: nodeConfig.url };
+    }
   }
 
   private async pollNodeStatus(node: TargetNode): Promise<NodeStatus> {
@@ -287,6 +317,7 @@ export class QueueMaster extends EventEmitter {
       await this.pollForStaleResults();
       await this.processNode("mac-mini");
       await this.processNode("m2-pro");
+      await this.processMusicJobs();
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       logger.warn(`[QueueMaster] Tick error: ${msg}`);
@@ -314,7 +345,10 @@ export class QueueMaster extends EventEmitter {
 
       const node = job.targetNode as TargetNode;
       try {
-        const nodeConfig = await this.getLiveNodeConfig(node);
+        // Music jobs use a separate sidecar — resolve the correct node config
+        const nodeConfig = job.type === "txt2music"
+          ? await this.getMusicNodeConfig()
+          : await this.getLiveNodeConfig(node);
         const headers: Record<string, string> = {};
         if (nodeConfig.token) headers["Authorization"] = `Bearer ${nodeConfig.token}`;
 
@@ -365,6 +399,9 @@ export class QueueMaster extends EventEmitter {
           this.macMiniStatus = { ...this.macMiniStatus, is_busy: false };
         } else {
           this.m2ProStatus = { ...this.m2ProStatus, is_busy: false };
+        }
+        if (job.type === "txt2music") {
+          this.musicStatus = { ...this.musicStatus, is_busy: false };
         }
         this.emit("job:failed", job, `Dispatch timeout after ${ageMin}min`);
       }
@@ -445,14 +482,17 @@ export class QueueMaster extends EventEmitter {
     }
 
     // VRAM-aware: prioritize jobs matching currently loaded model
+    // Music jobs are handled separately by processMusicJobs() — exclude them here.
     let pending: MediaJob[] = [];
     if (this.m2ProStatus.loaded_model) {
-      pending = this.repo.getPendingJobsForModel("m2-pro", this.m2ProStatus.loaded_model, 1);
+      pending = this.repo.getPendingJobsForModel("m2-pro", this.m2ProStatus.loaded_model, 5)
+        .filter(j => j.type !== "txt2music");
     }
 
-    // If no jobs match loaded model, get any pending job
+    // If no jobs match loaded model, get any pending non-music job
     if (pending.length === 0) {
-      pending = this.repo.getPendingJobs("m2-pro", 1);
+      pending = this.repo.getPendingJobs("m2-pro", 5)
+        .filter(j => j.type !== "txt2music");
     }
 
     if (pending.length === 0) return;
@@ -470,6 +510,64 @@ export class QueueMaster extends EventEmitter {
       const msg = err instanceof Error ? err.message : String(err);
       logger.warn(`[QueueMaster] Failed to dispatch ${job.id} to m2-pro: ${msg}`);
       this.repo.markFailed(job.id, msg);
+    }
+  }
+
+  // ── Music Sidecar (independent from M2 Pro video) ────────
+
+  private async processMusicJobs(): Promise<void> {
+    // Early exit if we already know the sidecar is busy
+    if (this.musicStatus.is_busy) {
+      logger.debug("[QueueMaster] Music sidecar busy, skipping");
+      return;
+    }
+
+    // Poll music sidecar status directly (separate service from video worker)
+    try {
+      const nodeConfig = await this.getMusicNodeConfig();
+      const headers: Record<string, string> = {};
+      if (nodeConfig.token) headers["Authorization"] = `Bearer ${nodeConfig.token}`;
+
+      const res = await fetch(`${nodeConfig.url}/status`, {
+        headers,
+        signal: AbortSignal.timeout(5_000),
+      });
+      if (!res.ok) throw new Error(`Status check failed: ${res.status}`);
+
+      const data = await res.json() as Record<string, unknown>;
+      this.musicStatus = {
+        is_busy: !!(data.is_busy as boolean),
+        loaded_model: (data.loaded_model as string) ?? null,
+      };
+    } catch {
+      logger.debug("[QueueMaster] Music sidecar unreachable, skipping music jobs");
+      return;
+    }
+
+    if (this.musicStatus.is_busy) {
+      logger.debug("[QueueMaster] Music sidecar busy, skipping");
+      return;
+    }
+
+    // Get pending txt2music jobs
+    const pending = this.repo.getPendingJobsForModel("m2-pro", "ace-step", 1);
+    if (pending.length === 0) return;
+
+    const job = pending[0];
+    try {
+      this.repo.markDispatched(job.id);
+      this.musicStatus = { ...this.musicStatus, is_busy: true };
+      this.emit("job:dispatched", job, "m2-pro" as TargetNode);
+      logger.info(`[QueueMaster] Dispatching txt2music job ${job.id} → music sidecar (async, awaiting callback)`);
+
+      await this.dispatchMusicJob(job);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.warn(`[QueueMaster] Failed to dispatch music job ${job.id}: ${msg}`);
+      this.repo.markFailed(job.id, msg);
+    } finally {
+      // Clear in-memory flag — actual busy state is re-checked via /status poll on next tick
+      this.musicStatus = { ...this.musicStatus, is_busy: false };
     }
   }
 
@@ -586,6 +684,69 @@ export class QueueMaster extends EventEmitter {
     }
   }
 
+  private async dispatchMusicJob(job: MediaJob): Promise<void> {
+    const nodeConfig = await this.getMusicNodeConfig();
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (nodeConfig.token) headers["Authorization"] = `Bearer ${nodeConfig.token}`;
+
+    // When music sidecar runs on localhost, use localhost callback URL
+    // so it can reach back without relying on the LAN IP.
+    let callbackUrl = this.config.callbackUrl;
+    const sidecarHost = new URL(nodeConfig.url).hostname;
+    if (sidecarHost === "localhost" || sidecarHost === "127.0.0.1") {
+      const parsed = new URL(this.config.callbackUrl);
+      parsed.hostname = "localhost";
+      callbackUrl = parsed.toString();
+    }
+
+    const body: Record<string, unknown> = {
+      job_id: job.id,
+      prompt: job.payload.prompt,
+      duration_seconds: job.payload.duration_seconds ?? 30,
+      lyrics: job.payload.lyrics,
+      instrumental: job.payload.instrumental ?? false,
+      steps: job.payload.steps ?? 20,
+      model: job.requiredModel,
+      seed: job.payload.seed,
+      callback_url: callbackUrl,
+    };
+
+    const res = await fetch(`${nodeConfig.url}/generate`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(10_000),
+    });
+
+    if (res.status !== 202 && !res.ok) {
+      const text = await res.text().catch(() => "");
+      throw new Error(`Music sidecar /generate returned ${res.status}: ${text}`);
+    }
+  }
+
+  /**
+   * Returns the WorkerNodeConfig for the music generation sidecar
+   * by reading musicGen from ~/.openzigs/config.json. Falls back to m2Pro config.
+   */
+  private async getMusicNodeConfig(): Promise<WorkerNodeConfig> {
+    try {
+      const cfgPath = path.join(os.homedir(), ".openzigs", "config.json");
+      const raw = await fs.readFile(cfgPath, "utf-8");
+      const cfg = JSON.parse(raw) as Record<string, unknown>;
+      const mg = cfg.musicGen as Record<string, unknown> | undefined;
+      if (typeof mg?.networkNodeUrl === "string" && mg.networkNodeUrl) {
+        return {
+          url: mg.networkNodeUrl,
+          token: typeof mg.networkNodeToken === "string" ? mg.networkNodeToken : undefined,
+        };
+      }
+    } catch {
+      // config unreadable — fall through
+    }
+    // Default: music sidecar on localhost:5009
+    return { url: "http://localhost:5009" };
+  }
+
   // ── Job Completion (called by webhook or directly) ───────
 
   async handleJobCompletion(
@@ -605,6 +766,9 @@ export class QueueMaster extends EventEmitter {
       this.macMiniStatus = { ...this.macMiniStatus, is_busy: false };
     } else if (job.targetNode === "m2-pro") {
       this.m2ProStatus = { ...this.m2ProStatus, is_busy: false };
+    }
+    if (job.type === "txt2music") {
+      this.musicStatus = { ...this.musicStatus, is_busy: false };
     }
 
     if (result.error) {

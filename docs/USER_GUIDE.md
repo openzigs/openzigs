@@ -200,7 +200,7 @@ The OpenZigs UI is a **Next.js** application with a navigation bar providing acc
 | **Social Brain** | `/social` | Unified social inbox, CRM, automation rules, and AI-powered auto-replies |
 | **Post-Actions** | `/admin/post-actions` | Create and manage custom post-action types for pipeline stages |
 | **Webhooks** | `/admin/webhooks` | Create and manage inbound webhooks for external integrations |
-| **Gallery** | `/gallery` | Asset gallery for generated images and videos; inline creation studio for txt2img, img2img, txt2video, img2video |
+| **Gallery** | `/gallery` | Asset gallery for generated images, videos, and audio; inline creation studio for txt2img, img2img, txt2video, img2video, txt2music |
 | **Director** | `/director` | AI video production wizard, blog-to-YouTube, and timeline studio |
 | **Director Studio** | `/director/studio/[id]` | Full timeline editor with player preview, scene inspector, and drag-and-drop reordering |
 
@@ -5226,13 +5226,18 @@ The Chrome profile is now persistent at `~/.openzigs/chrome-profile/` (previousl
 
 ## Media Queue & Asset Gallery
 
-The Media Queue is a push-based distributed job system for generating images and videos across networked GPU nodes. Jobs are dispatched to workers asynchronously — the worker accepts the job immediately (HTTP 202) and POSTs a completion callback back to the primary Mac when done. The Asset Gallery provides a visual interface for browsing, filtering, and managing all generated and uploaded media.
+The Media Queue is a push-based distributed job system for generating images, videos, and music across networked GPU nodes. Jobs are dispatched to workers asynchronously — the worker accepts the job immediately (HTTP 202) and POSTs a completion callback back to the primary Mac when done. The Asset Gallery provides a visual interface for browsing, filtering, and managing all generated and uploaded media.
 
 ### Gallery Page
 
 Navigate to **Gallery** in the top navigation bar. The page shows:
 
 - **Queue Stats Bar** — Live counts of Pending, Dispatched, Processing, Complete, and Failed jobs, updated every 5 seconds
+- **Worker Nodes** — 3-column status grid showing all worker nodes:
+  - **Image Gen (FluxQ)** — Mac Mini network node (port 5005), with Activate/Unload for VRAM control
+  - **Video Gen (LTX-2)** — M2 Pro network node (port 5007), with Activate/Unload for VRAM control
+  - **Music Gen (ACE-Step)** — Independent localhost sidecar (port 5009), no VRAM buttons needed
+  - Each card shows a reachability dot (green = online, red = offline), loaded model name, and "Generating..." spinner when busy
 - **Asset Grid** — All generated and uploaded assets displayed as cards with thumbnails
 - **Filters** — Filter by type (Images, Videos, Audio) and source (Generated, Uploaded, Director)
 - **Preview** — Click any asset to open a full-screen lightbox for viewing images or playing videos
@@ -5240,7 +5245,7 @@ Navigate to **Gallery** in the top navigation bar. The page shows:
 
 ### Gallery Studio
 
-Click **Create Asset** on the Gallery page to open the inline creation studio. Four generation modes are available:
+Click **Create Asset** on the Gallery page to open the inline creation studio. Five generation modes are available:
 
 | Mode | Description | Key Controls |
 |---|---|---|
@@ -5248,6 +5253,7 @@ Click **Create Asset** on the Gallery page to open the inline creation studio. F
 | **Image → Image** | Transform an uploaded image with a prompt | Source image upload, Strength (0–1), Steps, Guidance |
 | **Text → Video** | Generate a 4-second video clip from a text prompt | Frames (max 97), FPS, computed Duration display |
 | **Image → Video** | Animate an uploaded image with a motion prompt | Source image upload, Frames, FPS, Duration |
+| **Text → Music** | Generate music from a text description | Duration (10–300s), Inference Steps (8–27, default 20), Instrumental toggle, Lyrics textarea, Seed |
 
 All jobs are submitted to the queue via **Submit to Queue** and processed by the appropriate worker node.
 
@@ -5281,6 +5287,21 @@ curl -X POST http://localhost:3000/api/queue/jobs \
   }'
 ```
 
+**Submit a text-to-music job:**
+```bash
+curl -X POST http://localhost:3000/api/queue/jobs \
+  -H "Content-Type: application/json" \
+  -d '{
+    "type": "txt2music",
+    "payload": {
+      "prompt": "Dreamy lo-fi hip hop beat with vinyl crackle and soft piano chords, 90 BPM",
+      "duration_seconds": 30,
+      "steps": 20,
+      "instrumental": true
+    }
+  }'
+```
+
 **Check queue stats:**
 ```bash
 curl http://localhost:3000/api/queue/jobs/stats
@@ -5310,7 +5331,7 @@ curl -X DELETE http://localhost:3000/api/queue/jobs/<job-id>
 QUEUE_CALLBACK_URL=http://192.168.1.50:3000/api/queue/complete
 ```
 
-If unset, the server auto-detects the first non-loopback IPv4 via `os.networkInterfaces()` and logs the resolved URL at startup.
+If unset, the server auto-detects the first non-loopback IPv4 via `os.networkInterfaces()` and logs the resolved URL at startup. **Note:** For local sidecars (music sidecar on `localhost`), `QueueMaster` automatically rewrites the callback URL to use `localhost` so the sidecar can reach back without relying on the LAN IP.
 
 **Polling fallback for asymmetric networks:** If callback delivery fails (e.g., router AP/client isolation where the worker Mac cannot reach the primary Mac), the system automatically falls back to polling. Every tick, `QueueMaster` polls `GET /job-result/{job_id}` on any worker with a job dispatched more than 3 minutes ago. FluxQ stores results in memory for up to 100 jobs; results are deleted after the primary Mac acknowledges them. This means jobs will always complete even if push callbacks are blocked at the network layer.
 
@@ -5405,3 +5426,64 @@ The DEV pipeline uses classifier-free guidance (CFG) which produces significantl
 ```
 
 See [Configuration & Networking](#configuration--networking) above for how to configure worker endpoints and the callback URL.
+
+### Music Generation Sidecar Setup (ACE-Step 1.5)
+
+The music generation sidecar runs as a Python HTTP server wrapping [ACE-Step 1.5](https://github.com/ACE-Step/ACE-Step-1.5) for local AI music generation. It supports Apple Silicon (MPS/Metal) and CUDA.
+
+**Quick setup:**
+
+```bash
+# 1. Install Python 3.11 (required — ACE-Step enforces ==3.11.*)
+brew install python@3.11
+
+# 2. Clone the ACE-Step Apple Silicon fork (provides the uv-managed runtime)
+git clone --depth 1 https://github.com/clockworksquirrel/ace-step-apple-silicon.git ~/ace-step-apple-silicon
+cd ~/ace-step-apple-silicon && uv sync
+
+# 3. Set up the sidecar HTTP wrapper
+cd /path/to/openzigs/sidecars/music
+/opt/homebrew/bin/python3.11 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+
+# 4. Start the sidecar (default port 5009)
+python server.py
+```
+
+> **Note:** Both the local repo clone (step 2) and the pip venv (step 3) are required. The sidecar imports `AceStepHandler` and `generate_music()` directly from the cloned repo (added to `sys.path`), so `ACESTEP_DIR` must point to the clone (default: `~/ace-step-apple-silicon`). Model weights (~4–8 GB) are downloaded automatically from HuggingFace on first generation request.
+
+> **Troubleshooting:** If you see `name 'logger' is not defined` on startup, the installed `diffusers==0.36.0` has a bug in `torchao_quantizer.py` where `logger` is used before it is defined. The sidecar venv's copy of that file needs the `logger = logging.get_logger(__name__)` line moved above the `_update_torch_safe_globals()` call at module level. This is a one-time fix to the venv file.
+
+**Environment variables:**
+
+| Variable | Default | Description |
+|---|---|---|
+| `PORT` | `5009` | HTTP server port |
+| `MUSIC_GEN_AUTH_TOKEN` | _(none)_ | Bearer token for API authentication |
+| `ACESTEP_REPO` | `ACE-Step/ACE-Step-1.5` | Model repository |
+
+**Admin configuration:**
+
+Navigate to **Admin → Music Generation Node** to configure:
+
+- **Local Process** — Sidecar runs on the same machine (localhost:5009)
+- **Network Node** — Point to a remote machine running the sidecar (URL + auth token)
+- **Test Connection** — Verify the sidecar is reachable and returns model/device info
+
+**Music prompt tips:**
+
+- Include genre, BPM, instruments, and mood: `"Upbeat electronic dance track, 128 BPM, energetic synth leads, punchy drums"`
+- Use the **AI Enhance** button in Gallery Studio to refine prompts for ACE-Step's tag-based format. The enhancer returns:
+  - **Enhanced Prompt** — Comma-separated descriptive tags optimized for ACE-Step's caption encoder
+  - **Suggested Lyrics** — Properly structured lyrics using ACE-Step's bracketed section format (`[Verse 1]`, `[Chorus]`, etc.)
+  - **Suggested Parameters** — Auto-tuned `music_steps` (8–27) and `duration_seconds` based on prompt complexity
+- Adjust **Inference Steps** (8–27, default 20) to balance speed vs quality: lower values generate faster, higher values produce more detailed audio
+- For vocal tracks, add structured lyrics with `[Verse]`, `[Chorus]`, `[Bridge]` tags
+- Check the **Instrumental** toggle for pure instrumental output
+
+**Model variants:**
+
+| Model | Steps | Speed (30s, M2 Pro) | Quality |
+|---|---|---|---|
+| `acestep-v15-turbo` | 8 | ~45 seconds | Good (fast iteration) |
+| `acestep-v15-sft` | 32 | ~3 minutes | High (final output) |
