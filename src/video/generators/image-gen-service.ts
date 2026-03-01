@@ -437,6 +437,10 @@ export class ImageGenService {
     const resolvedLocalModel = options.localModel === "flux" ? "flux-schnell" : options.localModel;
     const body = JSON.stringify({
       job_id: jobId,
+      // Send empty callback_url — we use polling, not callbacks.
+      // An empty string satisfies older sidecar versions that require the field,
+      // while the updated sidecar treats falsy values as poll-only.
+      callback_url: "",
       prompt,
       width,
       height,
