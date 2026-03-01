@@ -145,6 +145,10 @@ export const createApp = (config: AppConfig, options: CreateAppOptions = {}): Ex
     legacyHeaders: false,
     message: { error: "Too many requests, please try again later" },
     skip: (req) => req.path === "/health",
+    // When trust proxy isn't configured, suppress the X-Forwarded-For
+    // validation warning — the header is set by the Next.js dev proxy
+    // but isn't security-relevant in local-only deployments.
+    ...(!trustProxy && { validate: { xForwardedForHeader: false } }),
   }));
 
   app.use(express.json({ limit: "1mb" }));

@@ -778,4 +778,209 @@ describe("copilot wrapper", () => {
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(wrapper.hasSession("conv-mcp")).toBe(false);
   });
+
+  // ── Auth error paths ──
+
+  it("authenticate throws when no clientId configured", async () => {
+    const wrapper = new CopilotWrapperService({ clientId: "" });
+    await expect(wrapper.authenticate()).rejects.toThrow("GITHUB_CLIENT_ID");
+  });
+
+  it("authenticate throws when client lacks startDeviceAuth", async () => {
+    const minimalClient = {
+      async createSession() { return new FakeSession(); },
+    };
+    const wrapper = new CopilotWrapperService({ client: minimalClient, clientId: "test-id" });
+    await expect(wrapper.authenticate()).rejects.toThrow("device flow");
+  });
+
+  it("waitForAuth throws when auth not started", async () => {
+    const wrapper = new CopilotWrapperService({});
+    await expect(wrapper.waitForAuth()).rejects.toThrow("not been started");
+  });
+
+  it("isAuthenticated returns false when no auth file", async () => {
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "openzigs-noauth-"));
+    const wrapper = new CopilotWrapperService({
+      authPath: path.join(tmpDir, "nonexistent.json"),
+    });
+    expect(await wrapper.isAuthenticated()).toBe(false);
+    await fs.rm(tmpDir, { recursive: true, force: true });
+  });
+
+  // ── maxToolsPerRequest ──
+
+  it("maxToolsPerRequest limits tools passed to session", async () => {
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "openzigs-maxt-"));
+    const registry = new ToolRegistry({
+      statePath: path.join(tmpDir, "tools.json"),
+    });
+    for (let i = 0; i < 10; i++) {
+      registry.registerTool(buildTool(`tool-${i}`));
+    }
+    const client = new FakeCopilotClient();
+    const wrapper = new CopilotWrapperService({
+      client,
+      toolRegistry: registry,
+      maxToolsPerRequest: 3,
+    });
+
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    for await (const _chunk of wrapper.chat("Hello")) { /* drain */ }
+
+    const tools = client.lastSessionConfig?.tools as unknown[];
+    expect(tools.length).toBeLessThanOrEqual(3);
+    await fs.rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it("setMaxToolsPerRequest clamps to valid range", () => {
+    const wrapper = new CopilotWrapperService({});
+    wrapper.setMaxToolsPerRequest(0);
+    expect(wrapper.getMaxToolsPerRequest()).toBe(1);
+    wrapper.setMaxToolsPerRequest(200);
+    expect(wrapper.getMaxToolsPerRequest()).toBe(128);
+    wrapper.setMaxToolsPerRequest(50);
+    expect(wrapper.getMaxToolsPerRequest()).toBe(50);
+  });
+
+  // ── Token tracking ──
+
+  it("getSessionUsage returns null for unknown session", () => {
+    const wrapper = new CopilotWrapperService({});
+    expect(wrapper.getSessionUsage("nonexistent")).toBeNull();
+  });
+
+  it("clearSessionUsage returns null for unknown session", () => {
+    const wrapper = new CopilotWrapperService({});
+    expect(wrapper.clearSessionUsage("nonexistent")).toBeNull();
+  });
+
+  // ── Session Analytics (Phase 4) ──
+
+  it("getSessionAnalytics returns initial zero analytics", () => {
+    const wrapper = new CopilotWrapperService({});
+    const analytics = wrapper.getSessionAnalytics();
+    expect(analytics.sessionsCreated).toBe(0);
+    expect(analytics.sessionsResumed).toBe(0);
+    expect(analytics.sessionsDestroyed).toBe(0);
+    expect(analytics.compactionCount).toBe(0);
+    expect(analytics.lifecycleEvents).toEqual([]);
+  });
+
+  it("resetSessionAnalytics clears counters", async () => {
+    const client = new FakeCopilotClient();
+    const wrapper = new CopilotWrapperService({ client });
+
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    for await (const _chunk of wrapper.chat("Hello", { conversationId: "analytics-t" })) { /* drain */ }
+
+    const before = wrapper.getSessionAnalytics();
+    expect(before.sessionsCreated + before.sessionsResumed).toBeGreaterThan(0);
+
+    wrapper.resetSessionAnalytics();
+    const after = wrapper.getSessionAnalytics();
+    expect(after.sessionsCreated).toBe(0);
+    expect(after.sessionsResumed).toBe(0);
+  });
+
+  // ── New tests ──
+
+  it("hasSession returns false for unknown conversationId", () => {
+    const client = new FakeCopilotClient();
+    const wrapper = new CopilotWrapperService({ client });
+    expect(wrapper.hasSession("unknown-id")).toBe(false);
+  });
+
+  it("hasSession returns true after a chat with conversationId", async () => {
+    const client = new FakeCopilotClient();
+    const wrapper = new CopilotWrapperService({ client });
+    for await (const _ of wrapper.chat("hi", { conversationId: "has-test" })) { /* drain */ }
+    expect(wrapper.hasSession("has-test")).toBe(true);
+  });
+
+  it("destroySession is no-op for unknown session", async () => {
+    const client = new FakeCopilotClient();
+    const wrapper = new CopilotWrapperService({ client });
+    await wrapper.destroySession("doesnt-exist"); // should not throw
+  });
+
+  it("getProvider returns undefined by default", () => {
+    const client = new FakeCopilotClient();
+    const wrapper = new CopilotWrapperService({ client });
+    expect(wrapper.getProvider()).toBeUndefined();
+  });
+
+  it("setProvider stores config and clears sessions", async () => {
+    const client = new FakeCopilotClient();
+    const wrapper = new CopilotWrapperService({ client });
+    for await (const _ of wrapper.chat("hi", { conversationId: "prov-test" })) { /* drain */ }
+    expect(wrapper.hasSession("prov-test")).toBe(true);
+
+    wrapper.setProvider({ type: "ollama", baseUrl: "http://localhost:11434" });
+    expect(wrapper.getProvider()?.type).toBe("ollama");
+    expect(wrapper.hasSession("prov-test")).toBe(false);
+  });
+
+  it("modelSupportsReasoning returns true for known reasoning models", async () => {
+    const client = new FakeCopilotClient();
+    const wrapper = new CopilotWrapperService({ client });
+    // Populate cache by listing models
+    await wrapper.listModels();
+    expect(wrapper.modelSupportsReasoning("o3-mini")).toBe(true);
+    expect(wrapper.modelSupportsReasoning("gpt-4.1")).toBe(false);
+  });
+
+  it("modelSupportsReasoning falls back to static check for unknown models", () => {
+    const client = new FakeCopilotClient();
+    const wrapper = new CopilotWrapperService({ client });
+    // No listModels called, cache is empty — uses static prefix check
+    expect(wrapper.modelSupportsReasoning("o3-mini")).toBe(true);
+    expect(wrapper.modelSupportsReasoning("gpt-4.1")).toBe(false);
+  });
+
+  it("setMaxToolsPerRequest clamps to minimum of 1", () => {
+    const client = new FakeCopilotClient();
+    const wrapper = new CopilotWrapperService({ client });
+    wrapper.setMaxToolsPerRequest(0);
+    expect(wrapper.getMaxToolsPerRequest()).toBe(1);
+  });
+
+  it("setMaxToolsPerRequest clamps to maximum of 128", () => {
+    const client = new FakeCopilotClient();
+    const wrapper = new CopilotWrapperService({ client });
+    wrapper.setMaxToolsPerRequest(999);
+    expect(wrapper.getMaxToolsPerRequest()).toBe(128);
+  });
+
+  it("listSdkSessions returns empty when client lacks listSessions", async () => {
+    const client = new FakeCopilotClient();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    delete (client as any).listSessions;
+    const wrapper = new CopilotWrapperService({ client });
+    const sessions = await wrapper.listSdkSessions();
+    expect(sessions).toEqual([]);
+  });
+
+  it("deleteSdkSession is no-op when client lacks deleteSession", async () => {
+    const client = new FakeCopilotClient();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    delete (client as any).deleteSession;
+    const wrapper = new CopilotWrapperService({ client });
+    await wrapper.deleteSdkSession("some-id"); // should not throw
+  });
+
+  it("getSdkSessionMessages returns empty for session without getMessages", async () => {
+    const client = new FakeCopilotClient();
+    const wrapper = new CopilotWrapperService({ client });
+    const messages = await wrapper.getSdkSessionMessages("nonexistent");
+    expect(messages).toEqual([]);
+  });
+
+  it("setProvider to undefined clears the config", async () => {
+    const client = new FakeCopilotClient();
+    const wrapper = new CopilotWrapperService({ client, provider: { type: "ollama", baseUrl: "http://localhost:11434" } });
+    expect(wrapper.getProvider()).toBeDefined();
+    wrapper.setProvider(undefined);
+    expect(wrapper.getProvider()).toBeUndefined();
+  });
 });

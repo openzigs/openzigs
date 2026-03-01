@@ -57,6 +57,62 @@ describe("embedder", () => {
   it("getEmbeddingDim returns 384", () => {
     expect(getEmbeddingDim()).toBe(384);
   });
+
+  it("handles whitespace-only text as empty", async () => {
+    const vec = await generateEmbedding("   \t\n  ");
+    expect(vec).toHaveLength(getEmbeddingDim());
+    expect(vec.every((v) => v === 0)).toBe(true);
+  });
+
+  it("handles very long text without crashing", async () => {
+    const longText = "word ".repeat(5000);
+    const vec = await generateEmbedding(longText);
+    expect(vec).toHaveLength(getEmbeddingDim());
+  }, 30_000);
+
+  it("handles text with only special characters", async () => {
+    const vec = await generateEmbedding("!@#$%^&*()");
+    expect(vec).toHaveLength(getEmbeddingDim());
+  });
+
+  it("handles single-character input", async () => {
+    const vec = await generateEmbedding("a");
+    expect(vec).toHaveLength(getEmbeddingDim());
+  });
+
+  it("handles unicode text", async () => {
+    const vec = await generateEmbedding("こんにちは世界 你好世界");
+    expect(vec).toHaveLength(getEmbeddingDim());
+  });
+
+  it("handles text with numbers", async () => {
+    const vec = await generateEmbedding("12345 67890");
+    expect(vec).toHaveLength(getEmbeddingDim());
+  });
+
+  it("batch embeddings handles empty array", async () => {
+    const results = await generateEmbeddings([]);
+    expect(results).toEqual([]);
+  });
+
+  it("batch embeddings handles single item", async () => {
+    const results = await generateEmbeddings(["test"]);
+    expect(results).toHaveLength(1);
+    expect(results[0]).toHaveLength(getEmbeddingDim());
+  });
+
+  it("different short texts produce different embeddings", async () => {
+    const v1 = await generateEmbedding("cat");
+    const v2 = await generateEmbedding("quantum physics");
+    expect(v1).not.toEqual(v2);
+  });
+
+  it("isModelReady returns a boolean", async () => {
+    // Trigger model load first
+    await generateEmbedding("init");
+    const { isModelReady } = await import("./embedder.js");
+    expect(typeof isModelReady()).toBe("boolean");
+  });
 });
 
 /** Helper: cosine similarity between two vectors. */

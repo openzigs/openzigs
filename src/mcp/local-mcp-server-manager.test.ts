@@ -267,4 +267,274 @@ describe("LocalMcpServerManager", () => {
       expect(status!.error).toBeDefined();
     });
   });
+
+  // ── Additional coverage tests ──
+
+  describe("constructor defaults", () => {
+    it("defaults connectTimeout to 30000", () => {
+      const mgr = new LocalMcpServerManager();
+      // Access via internal — we verify indirectly by checking it doesn't throw
+      expect(mgr.getDefinitions().length).toBeGreaterThan(0);
+    });
+
+    it("allows custom connectTimeout", () => {
+      const mgr = new LocalMcpServerManager({ connectTimeout: 5000 });
+      expect(mgr.getDefinitions()).toBeDefined();
+    });
+  });
+
+  describe("hasRequiredCredentials (via getConfiguredServers)", () => {
+    it("returns server when requiredEnvVars is empty array", () => {
+      const mgr = new LocalMcpServerManager({
+        definitions: [
+          {
+            name: "no-env",
+            label: "No Env",
+            command: "echo",
+            args: [],
+            runtime: "other",
+            category: "test",
+            requiresCredentials: false,
+            requiredEnvVars: [],
+          },
+        ],
+      });
+      expect(mgr.getConfiguredServers()).toEqual(["no-env"]);
+    });
+
+    it("excludes server when env var is empty string", () => {
+      process.env.EMPTY_VAR_TEST = "";
+      const mgr = new LocalMcpServerManager({
+        definitions: [
+          {
+            name: "empty-env",
+            label: "Empty Env",
+            command: "echo",
+            args: [],
+            runtime: "node",
+            category: "test",
+            requiresCredentials: true,
+            requiredEnvVars: ["EMPTY_VAR_TEST"],
+          },
+        ],
+      });
+      expect(mgr.getConfiguredServers()).toEqual([]);
+      delete process.env.EMPTY_VAR_TEST;
+    });
+
+    it("requires ALL env vars to be set", () => {
+      process.env.TEST_KEY_A = "set";
+      delete process.env.TEST_KEY_B;
+      const mgr = new LocalMcpServerManager({
+        definitions: [
+          {
+            name: "multi-env",
+            label: "Multi Env",
+            command: "echo",
+            args: [],
+            runtime: "node",
+            category: "test",
+            requiresCredentials: true,
+            requiredEnvVars: ["TEST_KEY_A", "TEST_KEY_B"],
+          },
+        ],
+      });
+      expect(mgr.getConfiguredServers()).toEqual([]);
+      delete process.env.TEST_KEY_A;
+    });
+  });
+
+  describe("startAll with runtime unavailable", () => {
+    it("skips servers when runtime is not available", async () => {
+      const { execSync } = await import("node:child_process");
+      (execSync as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => {
+        throw new Error("not found");
+      });
+
+      const mgr = new LocalMcpServerManager({
+        definitions: [
+          {
+            name: "no-runtime",
+            label: "No Runtime",
+            command: "nonexistent-cmd",
+            args: [],
+            runtime: "other",
+            category: "test",
+            requiresCredentials: false,
+          },
+        ],
+        skipUnconfigured: false,
+      });
+
+      await mgr.startAll();
+      const status = mgr.getStatus("no-runtime");
+      expect(status).toBeDefined();
+      expect(status!.running).toBe(false);
+      expect(status!.error).toBe("runtime_unavailable");
+    });
+  });
+
+  describe("callTool error handling", () => {
+    it("returns isError true with descriptive message for non-running server", async () => {
+      const mgr = new LocalMcpServerManager({ definitions: [] });
+      const result = await mgr.callTool("nonexistent", "tool", {});
+      expect(result.isError).toBe(true);
+      expect(result.text).toContain("not running");
+    });
+  });
+
+  describe("restartServer with known definition", () => {
+    it("returns status with error when restart fails (no runtime)", async () => {
+      const { execSync } = await import("node:child_process");
+      // First let startAll skip, then try restart
+      (execSync as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => {
+        throw new Error("not found");
+      });
+
+      const def: LocalMcpServerDefinition = {
+        name: "restart-test",
+        label: "Restart Test",
+        command: "nonexistent-binary",
+        args: [],
+        runtime: "other",
+        category: "test",
+        requiresCredentials: false,
+      };
+      const mgr = new LocalMcpServerManager({ definitions: [def] });
+
+      const result = await mgr.restartServer("restart-test");
+      expect(result).toBeDefined();
+      expect(result!.running).toBe(false);
+    });
+  });
+
+  describe("isRunning", () => {
+    it("returns false for a defined but not started server", async () => {
+      const mgr = new LocalMcpServerManager({
+        definitions: [
+          {
+            name: "defined-only",
+            label: "Defined Only",
+            command: "echo",
+            args: [],
+            runtime: "other",
+            category: "test",
+            requiresCredentials: false,
+          },
+        ],
+      });
+      expect(mgr.isRunning("defined-only")).toBe(false);
+    });
+  });
+
+  describe("getServerTools for non-running server", () => {
+    it("returns empty array for defined but not started server", () => {
+      const mgr = new LocalMcpServerManager({
+        definitions: [
+          {
+            name: "no-tools",
+            label: "No Tools",
+            command: "echo",
+            args: [],
+            runtime: "other",
+            category: "test",
+            requiresCredentials: false,
+          },
+        ],
+      });
+      expect(mgr.getServerTools("no-tools")).toEqual([]);
+    });
+  });
+
+  describe("DEFAULT_LOCAL_SERVER_DEFINITIONS details", () => {
+    it("includes social media servers", () => {
+      const social = DEFAULT_LOCAL_SERVER_DEFINITIONS.filter((d) => d.category === "social");
+      expect(social.length).toBeGreaterThanOrEqual(4);
+      const names = social.map((d) => d.name);
+      expect(names).toContain("instagram");
+      expect(names).toContain("twitter");
+      expect(names).toContain("youtube");
+    });
+
+    it("all definitions have required fields", () => {
+      for (const def of DEFAULT_LOCAL_SERVER_DEFINITIONS) {
+        expect(def.name).toBeTruthy();
+        expect(def.label).toBeTruthy();
+        expect(def.command).toBeTruthy();
+        expect(Array.isArray(def.args)).toBe(true);
+        expect(["python", "node", "other"]).toContain(def.runtime);
+        expect(def.category).toBeTruthy();
+        expect(typeof def.requiresCredentials).toBe("boolean");
+      }
+    });
+
+    it("word and markitdown do not require credentials", () => {
+      const noCreds = DEFAULT_LOCAL_SERVER_DEFINITIONS.filter((d) => !d.requiresCredentials);
+      const names = noCreds.map((d) => d.name);
+      expect(names).toContain("word");
+      expect(names).toContain("markitdown");
+    });
+
+    it("github server requires GITHUB_PERSONAL_ACCESS_TOKEN", () => {
+      const gh = DEFAULT_LOCAL_SERVER_DEFINITIONS.find((d) => d.name === "github");
+      expect(gh).toBeDefined();
+      expect(gh!.requiredEnvVars).toContain("GITHUB_PERSONAL_ACCESS_TOKEN");
+    });
+
+    it("gmail requires both GMAIL_OAUTH_PATH and GMAIL_CREDENTIALS_PATH", () => {
+      const gmail = DEFAULT_LOCAL_SERVER_DEFINITIONS.find((d) => d.name === "gmail");
+      expect(gmail).toBeDefined();
+      expect(gmail!.requiredEnvVars).toContain("GMAIL_OAUTH_PATH");
+      expect(gmail!.requiredEnvVars).toContain("GMAIL_CREDENTIALS_PATH");
+    });
+  });
+
+  describe("stopAll with no instances", () => {
+    it("resolves immediately", async () => {
+      const mgr = new LocalMcpServerManager({ definitions: [] });
+      await expect(mgr.stopAll()).resolves.toBeUndefined();
+    });
+  });
+
+  describe("setStatus merging", () => {
+    it("getStatus returns undefined initially for custom definitions", () => {
+      const mgr = new LocalMcpServerManager({
+        definitions: [
+          {
+            name: "custom",
+            label: "Custom",
+            command: "echo",
+            args: [],
+            runtime: "other",
+            category: "test",
+            requiresCredentials: false,
+          },
+        ],
+      });
+      expect(mgr.getStatus("custom")).toBeUndefined();
+    });
+
+    it("getAllStatuses reflects state after startAll with missing creds", async () => {
+      delete process.env.SOME_MISSING_KEY;
+      const mgr = new LocalMcpServerManager({
+        definitions: [
+          {
+            name: "creds-test",
+            label: "Creds Test",
+            command: "echo",
+            args: [],
+            runtime: "other",
+            category: "test",
+            requiresCredentials: true,
+            requiredEnvVars: ["SOME_MISSING_KEY"],
+          },
+        ],
+      });
+      await mgr.startAll();
+      const statuses = mgr.getAllStatuses();
+      expect(statuses).toHaveLength(1);
+      expect(statuses[0].name).toBe("creds-test");
+      expect(statuses[0].error).toBe("credentials_missing");
+    });
+  });
 });

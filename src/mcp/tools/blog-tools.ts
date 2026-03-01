@@ -21,7 +21,7 @@ const blogToVideoSchema = z.object({
     .describe("Visual style hint (e.g. 'corporate', 'playful', 'technical')"),
   image_provider: z.enum(["cloud", "local", "auto"]).optional()
     .describe("Image generation provider (default: auto)"),
-  image_model: z.enum(["flux", "sdxl-turbo"]).optional()
+  image_model: z.enum(["flux", "flux-schnell", "sdxl-turbo"]).optional()
     .describe("Local sidecar model to use"),
   music_track: z.string().optional()
     .describe("Path to background music file"),
@@ -56,7 +56,7 @@ export const createBlogTools = ({ copilot, voiceService }: BlogToolsOptions): To
         },
         image_model: {
           type: "string",
-          enum: ["flux", "sdxl-turbo"],
+          enum: ["flux", "flux-schnell", "sdxl-turbo"],
           description: "Local image model",
         },
         music_track: { type: "string", description: "Background music path" },

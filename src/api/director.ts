@@ -13,6 +13,7 @@
  *   DELETE /assets/:id                — remove cached asset
  *   POST /produce                     — trigger video production (ingestion → LLM → manifest)
  *   POST /enhance                     — enhance a scene image via Flux img2img
+ *   POST /enhance-instructions         — enhance style & instructions preamble via LLM
  *   POST /thumbnail                   — generate an AI thumbnail
  *   POST /drafts                      — create a new draft
  *   GET  /drafts                      — list all drafts
@@ -219,6 +220,20 @@ export const createDirectorRouter = ({
     pexelsApiKey: config.assets.pexelsApiKey,
     defaultModel: "", // empty = use system default
   };
+
+  // ── Produce Job Tracker ────────────────────────────────────
+  // Matches the gallery's async pattern: POST returns immediately with a job ID,
+  // the pipeline runs in the background, and the frontend polls for completion.
+  interface ProduceJob {
+    id: string;
+    status: "running" | "complete" | "failed";
+    /** The full response payload — populated when status === "complete" */
+    result?: Record<string, unknown>;
+    error?: string;
+    startedAt: number;
+    completedAt?: number;
+  }
+  const produceJobs = new Map<string, ProduceJob>();
 
   /** Lazy singleton asset manager (hoisted so config PUT can reset it). */
   let assetManagerInstance: import("../video/assets/asset-manager.js").AssetManager | null = null;
@@ -884,12 +899,11 @@ Respond with ONLY a valid JSON array. No explanation. Example:
 
   /**
    * POST /produce — trigger the single-shot production pipeline.
+   * Returns 202 immediately with a `produceJobId`; the pipeline runs in the
+   * background.  Poll `GET /produce/:id` for status and result.
+   *
    * Body (highlight/script): { clips: string[], mode: "highlight" | "script", scriptPath?, musicTrackPath?, template?, model?, enableVisionAnalysis? }
    * Body (presentation):     { mode: "presentation", inputFile: string, sourceType?: "text"|"markdown", topic?: string, musicTrackPath?, template?, model?, imageProvider?, imageModel?, slideStyle?, assetsOnlyMode? }
-   *
-   * When enableVisionAnalysis is true (default), keyframe images are sent to a
-   * vision model for rich scene descriptions. This significantly improves editing
-   * quality but adds 1-5 minutes depending on the number of keyframes.
    */
   router.post("/produce", async (req, res) => {
     try {
@@ -905,7 +919,7 @@ Respond with ONLY a valid JSON array. No explanation. Example:
         sourceType?: "text" | "markdown";
         topic?: string;
         imageProvider?: "cloud" | "local" | "auto";
-        imageModel?: "flux" | "sdxl-turbo";
+        imageModel?: "flux" | "flux-schnell" | "sdxl-turbo";
         slideStyle?: boolean;
         assetsOnlyMode?: boolean;
         quizEnabled?: boolean;
@@ -928,12 +942,41 @@ Respond with ONLY a valid JSON array. No explanation. Example:
         return;
       }
 
+      // Validate mode-specific required fields before creating the job
+      if (mode === "presentation" && !inputFile) {
+        res.status(400).json({ error: "'inputFile' is required for presentation mode" });
+        return;
+      }
+      if ((mode === "highlight" || mode === "script") && (!clips || !Array.isArray(clips) || clips.length === 0)) {
+        res.status(400).json({ error: "clips array is required and must not be empty" });
+        return;
+      }
+
+      // Create produce job and return 202 immediately — pipeline runs in background.
+      // This matches the gallery's async pattern: submit → poll for result.
+      const produceJobId = nanoid();
+      const job: ProduceJob = { id: produceJobId, status: "running", startedAt: Date.now() };
+      produceJobs.set(produceJobId, job);
+
+      // Evict old completed/failed jobs (keep last 20)
+      const allJobs = [...produceJobs.values()];
+      const finished = allJobs.filter(j => j.status !== "running").sort((a, b) => (a.completedAt ?? 0) - (b.completedAt ?? 0));
+      while (finished.length > 20) {
+        const old = finished.shift()!;
+        produceJobs.delete(old.id);
+      }
+
+      res.status(202).json({ produceJobId });
+      logger.info(`[Director API] Produce job ${produceJobId} accepted (mode=${mode}) — running in background`);
+
+      // ── Background pipeline ────────────────────────────────
+      // Everything below runs after the HTTP response has been sent.
+      // Errors are captured into the job object, not thrown to Express.
+      (async () => {
+        try {
+
       // ── Presentation mode: document → storyboard → images → TTS → manifest ──
       if (mode === "presentation") {
-        if (!inputFile) {
-          res.status(400).json({ error: "'inputFile' is required for presentation mode" });
-          return;
-        }
 
         const startTime = Date.now();
 
@@ -947,14 +990,13 @@ Respond with ONLY a valid JSON array. No explanation. Example:
         // Step A: Ingest the text document
         let rawText: string;
         try {
-          rawText = await fs.readFile(inputFile, "utf-8");
+          rawText = await fs.readFile(inputFile!, "utf-8");
         } catch (readErr) {
           const readMsg = readErr instanceof Error ? readErr.message : String(readErr);
-          res.status(400).json({ error: `Failed to read input file: ${readMsg}` });
-          return;
+          throw new Error(`Failed to read input file: ${readMsg}`);
         }
 
-        if (sourceType === "markdown" || inputFile.endsWith(".md")) {
+        if (sourceType === "markdown" || inputFile!.endsWith(".md")) {
           rawText = rawText.replace(/```[\s\S]*?```/g, "[code block removed]");
         }
 
@@ -1050,9 +1092,16 @@ Respond with ONLY a valid JSON array. No explanation. Example:
           top_k: number;
           sample_steps: number;
         }
+        interface F5TTSClipRow {
+          emotion: string;
+          ref_audio_path: string;
+          ref_text: string;
+        }
         let sovitsProfile: SovitsProfileParams | null = null;
+        let f5ttsClips: F5TTSClipRow[] = [];
         let sidecarBaseUrl = "";
         let useSovitsVoice = false;
+        let useF5TTSVoice = false;
 
         if (voiceService) {
           sidecarBaseUrl = voiceService.getSidecarUrl();
@@ -1072,6 +1121,24 @@ Respond with ONLY a valid JSON array. No explanation. Example:
                   sovitsProfile = profile;
                   useSovitsVoice = true;
                   logger.info(`[Director API] GPT-SoVITS voice detected — using profile ref: ${profile.ref_audio_path}`);
+                }
+              } else if (health.active_engine === "f5tts") {
+                // Load F5-TTS clips from the most recently updated F5-TTS profile
+                const db = getDatabase();
+                const f5Profile = db.prepare(
+                  `SELECT id FROM voice_profiles WHERE engine_type = 'f5tts'
+                   ORDER BY updated_at DESC LIMIT 1`,
+                ).get() as { id: string } | undefined;
+                if (f5Profile) {
+                  const clips = db.prepare(
+                    `SELECT emotion, ref_audio_path, ref_text FROM f5tts_clips
+                     WHERE profile_id = ? ORDER BY sort_order ASC`,
+                  ).all(f5Profile.id) as F5TTSClipRow[];
+                  if (clips.length > 0) {
+                    f5ttsClips = clips;
+                    useF5TTSVoice = true;
+                    logger.info(`[Director API] F5-TTS voice detected — ${clips.length} clip(s) from profile ${f5Profile.id}`);
+                  }
                 }
               }
             }
@@ -1124,8 +1191,7 @@ Respond with ONLY a valid JSON array. No explanation. Example:
 
           // ── Step C.2b: Generate per-scene voiceover ───────────────────────────
           let sceneVoiceoverPath: string | undefined;
-          if (useSovitsVoice && sovitsProfile && scene.voiceover) {
-            // Synthesize with GPT-SoVITS via sentence-level chunking for
+          if (useSovitsVoice && sovitsProfile && scene.voiceover) {            // Synthesize with GPT-SoVITS via sentence-level chunking for
             // higher quality. Long text degrades SoVITS output; splitting
             // into sentences and stitching produces cleaner pronunciation.
             try {
@@ -1182,6 +1248,25 @@ Respond with ONLY a valid JSON array. No explanation. Example:
             } catch (sovitsErr) {
               const msg = sovitsErr instanceof Error ? sovitsErr.message : String(sovitsErr);
               logger.warn(`[Director API] SoVITS voiceover failed for scene ${scene.index}: ${msg}`);
+            }
+          } else if (useF5TTSVoice && f5ttsClips.length > 0 && scene.voiceover && voiceService) {
+            // Synthesize with F5-TTS using the configured clip profile
+            try {
+              const f5Result = await voiceService.synthesizeF5TTS(
+                scene.voiceover,
+                f5ttsClips.map((c) => ({
+                  emotion: c.emotion,
+                  refAudioPath: c.ref_audio_path,
+                  refText: c.ref_text,
+                })),
+              );
+              const voPath = path.join(imageOutputDir, `openzigs-vo-${nanoid(8)}.wav`);
+              await fs.writeFile(voPath, f5Result.audio);
+              sceneVoiceoverPath = voPath;
+              logger.info(`[Director API] F5-TTS voiceover for scene ${scene.index}: ${f5Result.audio.length} bytes`);
+            } catch (f5Err) {
+              const msg = f5Err instanceof Error ? f5Err.message : String(f5Err);
+              logger.warn(`[Director API] F5-TTS voiceover failed for scene ${scene.index}: ${msg}`);
             }
           } else if (voiceService && scene.voiceover) {
             // Fall back to VoiceService (Kokoro or Google Cloud TTS)
@@ -1499,7 +1584,9 @@ Respond with ONLY a valid JSON array. No markdown, no explanation.`;
           logger.error(`[Director API] No images were generated — the presentation will be blank. Check image generation provider availability.`);
         }
 
-        res.json({
+        job.status = "complete";
+        job.completedAt = Date.now();
+        job.result = {
           manifest,
           tokensUsed: storyboard.tokensUsed,
           clipsProcessed: 0,
@@ -1514,15 +1601,12 @@ Respond with ONLY a valid JSON array. No markdown, no explanation.`;
             analysis: storyboard.analysis,
             sceneCount: storyboard.scenes.length,
           },
-        });
+        };
+        logger.info(`[Director API] Produce job ${produceJobId} complete (presentation, ${elapsedMs}ms)`);
         return;
       }
 
       // ── Highlight / Script modes ──────────────────────────────
-      if (!clips || !Array.isArray(clips) || clips.length === 0) {
-        res.status(400).json({ error: "clips array is required and must not be empty" });
-        return;
-      }
 
       const startTime = Date.now();
       const progressLog: Array<{ phase: string; message: string; timestamp: number }> = [];
@@ -1532,7 +1616,7 @@ Respond with ONLY a valid JSON array. No markdown, no explanation.`;
 
       // Ingest clips (with optional vision analysis)
       const { ingest } = await import("../video/ingestion/index.js");
-      const ingestionResult = await ingest({ clips, mode }, {
+      const ingestionResult = await ingest({ clips: clips!, mode }, {
         copilot: useVision ? copilot : undefined,
         visionAnalysis: useVision ? {
           maxKeyframes: 30,
@@ -1580,7 +1664,9 @@ Respond with ONLY a valid JSON array. No markdown, no explanation.`;
         `${transitionsInManifest.length} transitions, ${clipsWithEffects.length} clips with effects`,
       );
 
-      res.json({
+      job.status = "complete";
+      job.completedAt = Date.now();
+      job.result = {
         manifest: result.manifest,
         tokensUsed: result.tokensUsed,
         clipsProcessed: ingestionResult.clips.length,
@@ -1593,14 +1679,48 @@ Respond with ONLY a valid JSON array. No markdown, no explanation.`;
           transitionCount: transitionsInManifest.length,
           clipsWithEffects: clipsWithEffects.length,
           uniqueSourcesUsed: uniqueSources.size,
-          totalSourcesProvided: clips.length,
+          totalSourcesProvided: clips!.length,
         },
-      });
+      };
+      logger.info(`[Director API] Produce job ${produceJobId} complete (${mode}, ${elapsedMs}ms)`);
+
+        } catch (bgError) {
+          const msg = bgError instanceof Error ? bgError.message : String(bgError);
+          logger.error(`[Director API] Produce job ${produceJobId} failed: ${msg}`);
+          job.status = "failed";
+          job.error = msg;
+          job.completedAt = Date.now();
+        }
+      })();
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
-      logger.error(`[Director API] POST /produce failed: ${msg}`);
+      logger.error(`[Director API] POST /produce validation failed: ${msg}`);
       res.status(500).json({ error: msg });
     }
+  });
+
+  /**
+   * GET /produce/:id — poll for produce job status.
+   * Returns { status: "running" } while in progress, or the full produce result
+   * when complete.
+   */
+  router.get("/produce/:id", (req, res) => {
+    const job = produceJobs.get(req.params.id);
+    if (!job) {
+      res.status(404).json({ error: "Produce job not found" });
+      return;
+    }
+    if (job.status === "running") {
+      const elapsedMs = Date.now() - job.startedAt;
+      res.json({ status: "running", elapsedMs });
+      return;
+    }
+    if (job.status === "failed") {
+      res.json({ status: "failed", error: job.error });
+      return;
+    }
+    // Complete — return the full result
+    res.json({ status: "complete", ...job.result });
   });
 
   // ── Image Enhancement (img2img) ─────────────────────────────
@@ -1664,6 +1784,78 @@ Respond with ONLY a valid JSON array. No markdown, no explanation.`;
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       logger.error(`[Director API] POST /enhance failed: ${msg}`);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  // ── Enhance Instructions ──────────────────────────────────
+
+  /**
+   * POST /enhance-instructions — use the LLM to enrich a Director style/instructions preamble.
+   * Body: { raw_instructions: string, mode?: string }
+   * Response: { enhanced_instructions: string, thinking: string }
+   */
+  router.post("/enhance-instructions", async (req, res) => {
+    try {
+      const { raw_instructions, mode } = req.body as { raw_instructions?: string; mode?: string };
+
+      if (!raw_instructions?.trim()) {
+        res.status(400).json({ error: "raw_instructions is required" });
+        return;
+      }
+
+      const productionMode = mode ?? "presentation";
+      const conversationId = `enhance-director-instructions-${Date.now()}`;
+
+      const systemMessage = `You are an expert AI video production director and prompt engineer.
+Your job is to take a rough style/instructions preamble written by a user and enhance it into a clear, comprehensive set of creative directions used to guide an AI storyboard generator.
+
+These instructions are NOT a visual image prompt — they describe the overall tone, visual style, audience, pacing, and narrative approach for a video presentation.
+
+## Guidelines
+- Clarify the target audience and communication goals if vague.
+- Add specific visual style direction (color palette, typography feel, illustration style).
+- Specify tone descriptors (authoritative, friendly, technical, inspirational, etc.).
+- Mention pacing and structure cues (e.g., "open with a hook", "use data slides mid-video", "close with a CTA").
+- Keep the voice consistent with what the user wrote — enhance, don't rewrite their intent.
+- Be concise: 3-6 sentences is ideal. Do not write more than 8 sentences.
+
+## Production Mode
+${productionMode === "presentation" ? "This is a PRESENTATION: AI-generated images with voiceover narration from a source document." : productionMode === "highlight" ? "This is a HIGHLIGHT REEL: user-supplied video clips edited to a script." : "This is a SCRIPT VIDEO: voiceover narration over uploaded video clips."}
+
+Respond ONLY with a bare JSON object — no markdown, no code fences:
+{"thinking": "One sentence explaining what you improved", "enhanced_instructions": "The enhanced, detailed instructions string"}`;
+
+      const userMessage = `Enhance these style and instructions for my video project:\n\n"${raw_instructions.trim()}"`;
+
+      let fullResponse = "";
+      for await (const chunk of copilot.chat(userMessage, {
+        conversationId,
+        systemMessage: { mode: "replace", content: systemMessage },
+        tools: [],
+        availableTools: [],
+      })) {
+        fullResponse += chunk;
+      }
+      await copilot.destroySession(conversationId);
+
+      // Parse JSON response — strip any accidental markdown fences
+      const jsonStr = fullResponse.replace(/^```(?:json)?\n?/m, "").replace(/```\s*$/m, "").trim();
+      let parsed: { thinking?: string; enhanced_instructions?: string };
+      try {
+        parsed = JSON.parse(jsonStr) as { thinking?: string; enhanced_instructions?: string };
+      } catch {
+        // Fallback: return the raw text as the enhancement
+        parsed = { thinking: "Instructions enhanced.", enhanced_instructions: fullResponse.trim() };
+      }
+
+      res.json({
+        enhanced_instructions: parsed.enhanced_instructions ?? raw_instructions,
+        thinking: parsed.thinking ?? "Instructions enhanced.",
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.warn(`[Director API] POST /enhance-instructions failed: ${msg}`);
       res.status(500).json({ error: msg });
     }
   });
@@ -2556,7 +2748,7 @@ Respond with ONLY a valid JSON array. No markdown, no explanation.`;
         draftId?: string;
         prompt?: string;
         provider?: "auto" | "local" | "cloud";
-        model?: "flux" | "sdxl-turbo";
+        model?: "flux" | "flux-schnell" | "sdxl-turbo";
         seed?: number;
       };
 
@@ -2799,7 +2991,7 @@ Return ONLY the new narration text, no explanations or formatting.`;
         template?: "Minimalist" | "ContentCreator" | "Corporate" | "TechDemo";
         styleHint?: string;
         imageProvider?: "cloud" | "local" | "auto";
-        imageModel?: "flux" | "sdxl-turbo";
+        imageModel?: "flux" | "flux-schnell" | "sdxl-turbo";
         musicTrackPath?: string;
         targetDuration?: number;
         brandVoiceId?: string;

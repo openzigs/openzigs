@@ -17,11 +17,28 @@
 "use client";
 
 import { useRef, useState, useCallback } from "react";
-import { Upload, X, Image, Film, Sparkles, Loader2, ChevronDown, ChevronUp, ScanSearch } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { Upload, X, Image, Film, Sparkles, Loader2, ChevronDown, ChevronUp, ScanSearch, Library, Check } from "lucide-react";
 import { fetchJson } from "@/lib/api";
 import { showToast } from "@/components/toast";
 import type { VisualAsset } from "./types";
 import { cn } from "@/lib/utils";
+
+type GalleryVisualAsset = {
+  id: string;
+  type: "image" | "video";
+  filename: string;
+  file_path: string;
+  mime_type: string;
+  file_size_bytes: number | null;
+  width: number | null;
+  height: number | null;
+  duration_seconds: number | null;
+  prompt: string | null;
+  source: string;
+  tags: string[] | null;
+  created_at: string;
+};
 
 interface VisualAssetsStepProps {
   assets: VisualAsset[];
@@ -154,6 +171,33 @@ export function VisualAssetsStep({ assets, onChange }: VisualAssetsStepProps) {
   const [placingAI, setPlacingAI] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const [ingestingIndex, setIngestingIndex] = useState<number | null>(null);
+  const [showGallery, setShowGallery] = useState(false);
+  const [galleryType, setGalleryType] = useState<"" | "image" | "video">("");
+
+  function galleryFileUrl(filename: string): string {
+    const base = process.env.NEXT_PUBLIC_OPENZIGS_API_BASE ?? "";
+    const token = process.env.NEXT_PUBLIC_OPENZIGS_TOKEN ?? "";
+    const url = `${base}/api/queue/assets/file/${encodeURIComponent(filename)}`;
+    return token ? `${url}?token=${encodeURIComponent(token)}` : url;
+  }
+
+  const galleryQuery = useQuery({
+    queryKey: ["gallery-assets", galleryType || "image,video"],
+    queryFn: () => {
+      const params = new URLSearchParams();
+      if (galleryType) params.set("type", galleryType);
+      params.set("limit", "50");
+      return fetchJson<{ assets: GalleryVisualAsset[]; total: number }>(
+        `/api/queue/assets?${params.toString()}`,
+      );
+    },
+    enabled: showGallery,
+    staleTime: 30_000,
+    select: (data) => ({
+      ...data,
+      assets: data.assets.filter((a) => a.type === "image" || a.type === "video"),
+    }),
+  });
 
   const ingestAsset = useCallback(
     async (index: number) => {
@@ -306,6 +350,30 @@ export function VisualAssetsStep({ assets, onChange }: VisualAssetsStepProps) {
     }
   };
 
+  const addFromGallery = (galleryAsset: GalleryVisualAsset) => {
+    if (assets.length >= MAX_ASSETS) {
+      showToast(`Maximum ${MAX_ASSETS} visual assets allowed.`, "error");
+      return;
+    }
+    const alreadyAdded = assets.some((a) => a.path === galleryAsset.file_path);
+    if (alreadyAdded) {
+      showToast("Asset already added.", "error");
+      return;
+    }
+    const previewUrl = galleryAsset.type === "image" ? galleryFileUrl(galleryAsset.filename) : undefined;
+    const newAsset: VisualAsset = {
+      name: galleryAsset.filename,
+      path: galleryAsset.file_path,
+      description: galleryAsset.prompt ?? "",
+      type: galleryAsset.type as "image" | "video",
+      size: galleryAsset.file_size_bytes ?? 0,
+      previewUrl,
+      placement: null,
+    };
+    onChange([...assets, newAsset]);
+    showToast(`Added ${galleryAsset.filename}`, "success");
+  };
+
   const onDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     setIsDragging(true);
@@ -369,6 +437,92 @@ export function VisualAssetsStep({ assets, onChange }: VisualAssetsStepProps) {
             Drag & drop or click · JPEG, PNG, WebP, GIF, MP4, MOV, WebM
           </p>
         </div>
+      </div>
+
+      {/* Gallery browser */}
+      <div className="space-y-3">
+        <button
+          onClick={() => setShowGallery((v) => !v)}
+          className="flex items-center gap-2 rounded-xl border border-border bg-card px-4 py-2.5 text-sm font-medium text-foreground hover:bg-muted transition w-full justify-center"
+        >
+          <Library className="h-4 w-4 text-muted-foreground" />
+          {showGallery ? "Hide Gallery" : "Browse Gallery"}
+          {showGallery ? <ChevronUp className="h-3.5 w-3.5 ml-auto" /> : <ChevronDown className="h-3.5 w-3.5 ml-auto" />}
+        </button>
+
+        {showGallery && (
+          <div className="rounded-xl border border-border bg-card p-4 space-y-3">
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-medium text-muted-foreground">Filter:</span>
+              <select
+                value={galleryType}
+                onChange={(e) => setGalleryType(e.target.value as typeof galleryType)}
+                className="rounded-lg border border-border bg-background text-xs text-foreground px-2 py-1"
+              >
+                <option value="">All</option>
+                <option value="image">Images</option>
+                <option value="video">Videos</option>
+              </select>
+            </div>
+
+            <div className="grid grid-cols-3 sm:grid-cols-4 gap-2 max-h-[280px] overflow-y-auto">
+              {galleryQuery.isLoading && (
+                <div className="col-span-full flex items-center justify-center py-6">
+                  <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+                </div>
+              )}
+
+              {galleryQuery.data && galleryQuery.data.assets.length === 0 && (
+                <div className="col-span-full text-center py-6">
+                  <p className="text-sm text-muted-foreground">No visual assets in gallery</p>
+                </div>
+              )}
+
+              {galleryQuery.data?.assets.map((ga) => {
+                const alreadyAdded = assets.some((a) => a.path === ga.file_path);
+                return (
+                  <button
+                    key={ga.id}
+                    disabled={alreadyAdded || assets.length >= MAX_ASSETS}
+                    onClick={() => addFromGallery(ga)}
+                    className={cn(
+                      "relative group rounded-lg border overflow-hidden aspect-square transition-all",
+                      alreadyAdded
+                        ? "border-primary/50 bg-primary/5 opacity-60 cursor-not-allowed"
+                        : "border-border hover:border-primary/40 hover:ring-1 hover:ring-primary/20 cursor-pointer",
+                    )}
+                  >
+                    {ga.type === "image" ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={galleryFileUrl(ga.filename)}
+                        alt={ga.filename}
+                        className="w-full h-full object-cover"
+                      />
+                    ) : (
+                      <div className="w-full h-full flex flex-col items-center justify-center bg-muted gap-1">
+                        <Film className="h-5 w-5 text-muted-foreground/60" />
+                        <span className="text-[10px] text-muted-foreground/60 px-1 truncate w-full text-center">
+                          {ga.filename}
+                        </span>
+                      </div>
+                    )}
+                    {alreadyAdded && (
+                      <div className="absolute inset-0 flex items-center justify-center bg-background/60">
+                        <Check className="h-5 w-5 text-primary" />
+                      </div>
+                    )}
+                    {!alreadyAdded && (
+                      <div className="absolute inset-0 flex items-center justify-center bg-background/60 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <span className="text-xs font-medium text-foreground">Add</span>
+                      </div>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Asset list */}

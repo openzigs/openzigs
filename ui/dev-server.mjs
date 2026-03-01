@@ -47,20 +47,36 @@ await new Promise((resolve) => {
 
 // ── 2. Reverse proxy server ──
 const proxy = createServer((req, res) => {
-  // Forward all HTTP to Next.js
+  const pathname = (req.url ?? "").split("?")[0];
+
+  // Route /api/* directly to the Express backend, bypassing Next.js rewrites.
+  // Next.js's internal http-proxy has a ~2-minute default timeout which kills
+  // long-running endpoints like /api/admin/director/produce (10+ minutes for
+  // image generation).  Direct proxying to Express has no such limit.
+  const isApiRoute = pathname.startsWith("/api/");
+  const targetPort = isApiRoute ? BACKEND_PORT : NEXT_PORT;
+  const targetHost = isApiRoute ? BACKEND_HOST : "127.0.0.1";
+
   const proxyReq = httpRequest(
     {
-      hostname: "127.0.0.1",
-      port: NEXT_PORT,
+      hostname: targetHost,
+      port: targetPort,
       path: req.url,
       method: req.method,
       headers: req.headers,
+      // Disable timeout for API routes — endpoints like /produce run for 10+ min
+      timeout: isApiRoute ? 0 : 120_000,
     },
     (proxyRes) => {
       res.writeHead(proxyRes.statusCode ?? 502, proxyRes.headers);
       proxyRes.pipe(res);
     },
   );
+  // Also disable socket timeout on the client side for long API requests
+  if (isApiRoute) {
+    req.socket.setTimeout(0);
+    res.setTimeout(0);
+  }
   proxyReq.on("error", () => {
     if (!res.headersSent) res.writeHead(502).end("Bad Gateway");
   });

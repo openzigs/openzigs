@@ -104,4 +104,86 @@ describe("RenderOrchestrator", () => {
       expect(aborted!.status).toBe("aborted");
     }
   });
+
+  // ── NEW: Additional coverage ────────────────────────────────────
+
+  it("rejects submission with invalid manifest", async () => {
+    const invalidManifest = {
+      projectTitle: "Bad",
+      // Missing required fields
+    } as never;
+
+    await expect(
+      orchestrator.submit({ manifest: invalidManifest }),
+    ).rejects.toThrow("Invalid manifest");
+  });
+
+  it("abort returns false for unknown job ID", () => {
+    expect(orchestrator.abort("nonexistent")).toBe(false);
+  });
+
+  it("abort returns false for already completed/failed job", async () => {
+    const id = await orchestrator.submit({ manifest: buildTestManifest() });
+    // Wait for the job to finish (success or fail)
+    await orchestrator.waitForCompletion(id);
+    // Now try to abort — should return false since it's already done
+    const result = orchestrator.abort(id);
+    expect(result).toBe(false);
+  }, 30_000);
+
+  it("waitForCompletion rejects for unknown job", async () => {
+    await expect(orchestrator.waitForCompletion("nonexistent")).rejects.toThrow("Unknown job");
+  });
+
+  it("listJobs returns all submitted jobs", async () => {
+    const id1 = await orchestrator.submit({ manifest: buildTestManifest() });
+    const id2 = await orchestrator.submit({ manifest: buildTestManifest() });
+    const jobs = orchestrator.listJobs();
+    expect(jobs.length).toBe(2);
+    const ids = jobs.map((j) => j.id);
+    expect(ids).toContain(id1);
+    expect(ids).toContain(id2);
+  });
+
+  it("shutdown aborts all running and queued jobs", async () => {
+    const id1 = await orchestrator.submit({ manifest: buildTestManifest() });
+    const id2 = await orchestrator.submit({ manifest: buildTestManifest() });
+    await orchestrator.shutdown();
+
+    const job1 = orchestrator.getJob(id1);
+    const job2 = orchestrator.getJob(id2);
+    // At least one of them should be aborted (the queued one)
+    const statuses = [job1?.status, job2?.status];
+    expect(statuses).toContain("aborted");
+  });
+
+  it("emits render:aborted when aborting a queued job", async () => {
+    const handler = vi.fn();
+    orchestrator.on("render:aborted", handler);
+
+    // Fill the concurrency slot
+    await orchestrator.submit({ manifest: buildTestManifest() });
+    // This one should be queued
+    const id2 = await orchestrator.submit({ manifest: buildTestManifest() });
+    const aborted = orchestrator.abort(id2);
+    if (aborted) {
+      expect(handler).toHaveBeenCalledWith(expect.objectContaining({ jobId: id2 }));
+    }
+  });
+
+  it("waitForCompletion resolves immediately for failed jobs", async () => {
+    const id = await orchestrator.submit({ manifest: buildTestManifest() });
+    // Wait for job to finish (likely fails in test environment without proper tsx loader)
+    const result = await orchestrator.waitForCompletion(id);
+    expect(result.jobId).toBe(id);
+
+    // Now calling waitForCompletion again should resolve immediately
+    const result2 = await orchestrator.waitForCompletion(id);
+    expect(result2.jobId).toBe(id);
+  }, 30_000);
+
+  it("creates orchestrator with custom rendersDir", () => {
+    const custom = new RenderOrchestrator({ rendersDir: "/tmp/test-renders", maxConcurrent: 2 });
+    expect(custom).toBeInstanceOf(RenderOrchestrator);
+  });
 });

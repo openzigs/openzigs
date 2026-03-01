@@ -605,4 +605,504 @@ describe("TaskWorker", () => {
     const chatOptions = mockCopilot.chat.mock.calls[0][1] as { availableTools?: string[] };
     expect(chatOptions.availableTools).toBeUndefined();
   });
+
+  // ── Helper to reduce mock boilerplate ──
+  function makeMockCopilot(chatImpl?: (...args: unknown[]) => AsyncGenerator<string>) {
+    return {
+      authenticate: vi.fn(),
+      waitForAuth: vi.fn(),
+      isAuthenticated: vi.fn().mockResolvedValue(true),
+      listModels: vi.fn().mockResolvedValue([]),
+      onToolCall: vi.fn(),
+      setMaxToolsPerRequest: vi.fn(),
+      getMaxToolsPerRequest: vi.fn().mockReturnValue(30),
+      destroySession: vi.fn().mockResolvedValue(undefined),
+      hasSession: vi.fn().mockReturnValue(false),
+      clearAllSessions: vi.fn().mockResolvedValue(undefined),
+      getReasoningEffort: vi.fn().mockReturnValue(undefined),
+      setReasoningEffort: vi.fn(),
+      modelSupportsReasoning: vi.fn().mockReturnValue(false),
+      getProvider: vi.fn().mockReturnValue(undefined),
+      setProvider: vi.fn(),
+      getWorkingDirectory: vi.fn().mockReturnValue(undefined),
+      setWorkingDirectory: vi.fn(),
+      getCustomAgents: vi.fn().mockReturnValue([]),
+      setCustomAgents: vi.fn(),
+      getNativeMcpServers: vi.fn().mockReturnValue({}),
+      setNativeMcpServers: vi.fn(),
+      getSessionUsage: vi.fn().mockReturnValue(null),
+      clearSessionUsage: vi.fn().mockReturnValue(null),
+      listSdkSessions: vi.fn().mockResolvedValue([]),
+      getSdkSessionMessages: vi.fn().mockResolvedValue([]),
+      deleteSdkSession: vi.fn().mockResolvedValue(undefined),
+      getSessionAnalytics: vi.fn().mockReturnValue({ sessionsCreated: 0, sessionsResumed: 0, sessionsDestroyed: 0, compactionCount: 0, lifecycleEvents: [], lastUpdated: "" }),
+      resetSessionAnalytics: vi.fn(),
+      chat: vi.fn().mockImplementation(chatImpl ?? async function* () { yield "ok"; }),
+    };
+  }
+
+  it("exposes activeCount and concurrencyLimit getters", () => {
+    const mockCopilot = makeMockCopilot();
+    worker = new TaskWorker({
+      engine,
+      copilot: mockCopilot,
+      maxConcurrent: 3,
+      pollIntervalMs: 100_000,
+      log: silentLog,
+    });
+    expect(worker.activeCount).toBe(0);
+    expect(worker.concurrencyLimit).toBe(3);
+  });
+
+  it("setMaxConcurrent validates range 1-10", () => {
+    const mockCopilot = makeMockCopilot();
+    worker = new TaskWorker({
+      engine,
+      copilot: mockCopilot,
+      maxConcurrent: 2,
+      pollIntervalMs: 100_000,
+      log: silentLog,
+    });
+
+    worker.setMaxConcurrent(5);
+    expect(worker.concurrencyLimit).toBe(5);
+
+    expect(() => worker.setMaxConcurrent(0)).toThrow(RangeError);
+    expect(() => worker.setMaxConcurrent(11)).toThrow(RangeError);
+    expect(() => worker.setMaxConcurrent(-1)).toThrow(RangeError);
+  });
+
+  it("stop drains in-flight tasks", async () => {
+    const mockCopilot = makeMockCopilot(async function* () {
+      await new Promise((r) => setTimeout(r, 100));
+      yield "delayed";
+    });
+
+    worker = new TaskWorker({
+      engine,
+      copilot: mockCopilot,
+      maxConcurrent: 1,
+      pollIntervalMs: 50,
+      log: silentLog,
+    });
+
+    engine.submit({ trigger: "cron", goal: "Slow work" }, { mode: "background" });
+    worker.start();
+    // Give the poll time to pick up
+    await new Promise((r) => setTimeout(r, 80));
+
+    // stop() should wait for the task to finish
+    await worker.stop();
+    const tasks = engine.listTasks({ status: "completed" });
+    expect(tasks.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("emits task:executing event before processing", async () => {
+    const mockCopilot = makeMockCopilot();
+    worker = new TaskWorker({
+      engine,
+      copilot: mockCopilot,
+      maxConcurrent: 1,
+      pollIntervalMs: 50,
+      log: silentLog,
+    });
+
+    const executingHandler = vi.fn();
+    worker.on("task:executing", executingHandler);
+
+    engine.submit({ trigger: "cron", goal: "Emit test" }, { mode: "background" });
+
+    const donePromise = new Promise<void>((resolve) => {
+      worker.on("task:done", () => resolve());
+    });
+
+    worker.start();
+    await donePromise;
+
+    expect(executingHandler).toHaveBeenCalledOnce();
+    expect(executingHandler.mock.calls[0][0].goal).toBe("Emit test");
+  });
+
+  it("passes reasoningEffort to copilot.chat", async () => {
+    const mockCopilot = makeMockCopilot();
+    worker = new TaskWorker({
+      engine,
+      copilot: mockCopilot,
+      maxConcurrent: 1,
+      pollIntervalMs: 50,
+      log: silentLog,
+    });
+
+    engine.submit(
+      { trigger: "cron", goal: "Think hard", reasoningEffort: "high" },
+      { mode: "background" }
+    );
+
+    const donePromise = new Promise<void>((resolve) => {
+      worker.on("task:done", () => resolve());
+    });
+
+    worker.start();
+    await donePromise;
+
+    const chatOptions = mockCopilot.chat.mock.calls[0][1] as { reasoningEffort?: string };
+    expect(chatOptions.reasoningEffort).toBe("high");
+  });
+
+  it("passes autoApproveTools to copilot.chat", async () => {
+    const mockCopilot = makeMockCopilot();
+    worker = new TaskWorker({
+      engine,
+      copilot: mockCopilot,
+      maxConcurrent: 1,
+      pollIntervalMs: 50,
+      log: silentLog,
+    });
+
+    engine.submit(
+      { trigger: "cron", goal: "Auto approve", autoApproveTools: ["shell-execute", "read-file"] },
+      { mode: "background" }
+    );
+
+    const donePromise = new Promise<void>((resolve) => {
+      worker.on("task:done", () => resolve());
+    });
+
+    worker.start();
+    await donePromise;
+
+    const chatOptions = mockCopilot.chat.mock.calls[0][1] as { autoApproveTools?: string[] };
+    expect(chatOptions.autoApproveTools).toEqual(["shell-execute", "read-file"]);
+  });
+
+  it("injects parentTaskId for orchestrate-agents tool calls", async () => {
+    let capturedOnToolCall: ((toolName: string, args: unknown) => void) | undefined;
+
+    const mockCopilot = makeMockCopilot(async function* (_prompt: string, options?: { onToolCall?: (t: string, a: unknown) => void }) {
+      capturedOnToolCall = options?.onToolCall;
+      yield "done";
+    });
+
+    worker = new TaskWorker({
+      engine,
+      copilot: mockCopilot,
+      maxConcurrent: 1,
+      pollIntervalMs: 50,
+      log: silentLog,
+    });
+
+    const task = engine.submit(
+      { trigger: "cron", goal: "Orchestrate", sessionId: "sess-99", channelType: "web", chatId: "chat-1" },
+      { mode: "background" }
+    );
+
+    const donePromise = new Promise<void>((resolve) => {
+      worker.on("task:done", () => resolve());
+    });
+
+    worker.start();
+    await donePromise;
+
+    const args: Record<string, unknown> = { agents: [] };
+    capturedOnToolCall!("orchestrate-agents", args);
+    expect(args.parentTaskId).toBe(task.id);
+    expect(args.sessionId).toBe("sess-99");
+    expect(args.channelType).toBe("web");
+    expect(args.chatId).toBe("chat-1");
+  });
+
+  it("provides onUserInputRequest that returns empty answer", async () => {
+    let capturedOnUserInput: (() => Promise<{ answer: string; wasFreeform: boolean }>) | undefined;
+
+    const mockCopilot = makeMockCopilot(async function* (_prompt: string, options?: { onUserInputRequest?: () => Promise<{ answer: string; wasFreeform: boolean }> }) {
+      capturedOnUserInput = options?.onUserInputRequest;
+      yield "done";
+    });
+
+    worker = new TaskWorker({
+      engine,
+      copilot: mockCopilot,
+      maxConcurrent: 1,
+      pollIntervalMs: 50,
+      log: silentLog,
+    });
+
+    engine.submit({ trigger: "cron", goal: "Background task" }, { mode: "background" });
+
+    const donePromise = new Promise<void>((resolve) => {
+      worker.on("task:done", () => resolve());
+    });
+
+    worker.start();
+    await donePromise;
+
+    expect(capturedOnUserInput).toBeDefined();
+    const result = await capturedOnUserInput!();
+    expect(result).toEqual({ answer: "", wasFreeform: false });
+  });
+
+  it("persists token usage on success when taskRepository is set", async () => {
+    const mockCopilot = makeMockCopilot();
+    mockCopilot.clearSessionUsage.mockReturnValue({
+      inputTokens: 100,
+      outputTokens: 50,
+      totalTokens: 150,
+      turns: 1,
+    });
+
+    worker = new TaskWorker({
+      engine,
+      copilot: mockCopilot,
+      taskRepository: repo,
+      maxConcurrent: 1,
+      pollIntervalMs: 50,
+      log: silentLog,
+    });
+
+    engine.submit(
+      { trigger: "cron", goal: "Track tokens", sessionId: "sess-tok" },
+      { mode: "background" }
+    );
+
+    const donePromise = new Promise<void>((resolve) => {
+      worker.on("task:done", () => resolve());
+    });
+
+    worker.start();
+    await donePromise;
+
+    expect(mockCopilot.clearSessionUsage).toHaveBeenCalledWith("sess-tok");
+  });
+
+  it("persists token usage even on task failure", async () => {
+    const mockCopilot = makeMockCopilot(async function* () {
+      throw new Error("Boom");
+    });
+    mockCopilot.clearSessionUsage.mockReturnValue({ inputTokens: 10, outputTokens: 5, totalTokens: 15, turns: 1 });
+
+    worker = new TaskWorker({
+      engine,
+      copilot: mockCopilot,
+      taskRepository: repo,
+      maxConcurrent: 1,
+      pollIntervalMs: 50,
+      log: silentLog,
+    });
+
+    engine.submit(
+      { trigger: "cron", goal: "Fail with tokens", sessionId: "sess-fail" },
+      { mode: "background" }
+    );
+
+    const errorPromise = new Promise<void>((resolve) => {
+      worker.on("task:error", () => resolve());
+    });
+
+    worker.start();
+    await errorPromise;
+
+    expect(mockCopilot.clearSessionUsage).toHaveBeenCalledWith("sess-fail");
+  });
+
+  it("skips token persistence when no taskRepository", async () => {
+    const mockCopilot = makeMockCopilot();
+    worker = new TaskWorker({
+      engine,
+      copilot: mockCopilot,
+      // no taskRepository
+      maxConcurrent: 1,
+      pollIntervalMs: 50,
+      log: silentLog,
+    });
+
+    engine.submit(
+      { trigger: "cron", goal: "No repo" },
+      { mode: "background" }
+    );
+
+    const donePromise = new Promise<void>((resolve) => {
+      worker.on("task:done", () => resolve());
+    });
+
+    worker.start();
+    await donePromise;
+
+    // clearSessionUsage should not be called when there's no repo or no sessionId
+    expect(mockCopilot.clearSessionUsage).not.toHaveBeenCalled();
+  });
+
+  it("handles non-Error throw in executeTask", async () => {
+    const mockCopilot = makeMockCopilot(async function* () {
+      // eslint-disable-next-line no-throw-literal
+      throw "string-error";
+    });
+
+    worker = new TaskWorker({
+      engine,
+      copilot: mockCopilot,
+      maxConcurrent: 1,
+      pollIntervalMs: 50,
+      log: silentLog,
+    });
+
+    engine.submit({ trigger: "cron", goal: "String throw" }, { mode: "background" });
+
+    const errorPromise = new Promise<void>((resolve) => {
+      worker.on("task:error", () => resolve());
+    });
+
+    worker.start();
+    await errorPromise;
+
+    const tasks = engine.listTasks({ status: "failed" });
+    expect(tasks).toHaveLength(1);
+    expect(tasks[0].error).toBe("string-error");
+  });
+
+  it("does not poll when stopped", async () => {
+    const mockCopilot = makeMockCopilot();
+    worker = new TaskWorker({
+      engine,
+      copilot: mockCopilot,
+      maxConcurrent: 1,
+      pollIntervalMs: 50,
+      log: silentLog,
+    });
+
+    worker.start();
+    await worker.stop();
+
+    // Submit after stop — should NOT be picked up
+    engine.submit({ trigger: "cron", goal: "After stop" }, { mode: "background" });
+    await new Promise((r) => setTimeout(r, 150));
+
+    const tasks = engine.listTasks({ status: "queued" });
+    expect(tasks).toHaveLength(1); // still queued since worker is stopped
+  });
+
+  it("executes a pipeline with sequential stages", async () => {
+    let chatCallCount = 0;
+    const mockCopilot = makeMockCopilot(async function* () {
+      chatCallCount++;
+      yield `stage-${chatCallCount}-result`;
+    });
+
+    worker = new TaskWorker({
+      engine,
+      copilot: mockCopilot,
+      maxConcurrent: 2, // needs capacity for parent + child tasks
+      pollIntervalMs: 50,
+      log: silentLog,
+    });
+
+    // Submit a task with pipeline stages
+    engine.submit(
+      {
+        trigger: "cron",
+        goal: "Pipeline test",
+        pipeline: {
+          stages: [
+            { type: "prompt", name: "research", prompt: "Research the topic" },
+            { type: "prompt", name: "summarize", prompt: "Summarize findings" },
+          ],
+        },
+      },
+      { mode: "background" }
+    );
+
+    // Wait for the pipeline parent to complete (it emits task:done)
+    const donePromise = new Promise<void>((resolve) => {
+      worker.on("task:done", (t) => {
+        if (t.goal === "Pipeline test") resolve();
+      });
+    });
+
+    worker.start();
+    await donePromise;
+
+    const completed = engine.listTasks({ status: "completed" });
+    const parentTask = completed.find((t) => t.goal === "Pipeline test");
+    expect(parentTask).toBeDefined();
+    expect(parentTask!.status).toBe("completed");
+    // Each stage spawns a child task, plus the worker processes them
+    expect(mockCopilot.chat.mock.calls.length).toBeGreaterThanOrEqual(2);
+  }, 15_000);
+
+  it("pipeline aborts if a stage fails", async () => {
+    let callCount = 0;
+    const mockCopilot = makeMockCopilot(async function* () {
+      callCount++;
+      if (callCount === 1) {
+        // First stage child task succeeds
+        yield "stage-1-ok";
+      } else {
+        throw new Error("Stage 2 exploded");
+      }
+    });
+
+    worker = new TaskWorker({
+      engine,
+      copilot: mockCopilot,
+      maxConcurrent: 2, // needs capacity for parent + child tasks
+      pollIntervalMs: 50,
+      log: silentLog,
+    });
+
+    engine.submit(
+      {
+        trigger: "cron",
+        goal: "Pipeline fail test",
+        pipeline: {
+          stages: [
+            { type: "prompt", name: "step-1", prompt: "Step 1" },
+            { type: "prompt", name: "step-2", prompt: "Step 2 will fail" },
+          ],
+        },
+      },
+      { mode: "background" }
+    );
+
+    const errorPromise = new Promise<void>((resolve) => {
+      worker.on("task:error", (t) => {
+        if (t.goal === "Pipeline fail test") resolve();
+      });
+    });
+
+    worker.start();
+    await errorPromise;
+
+    const parentTask = engine.getTask(
+      engine.listTasks().find((t) => t.goal === "Pipeline fail test")!.id
+    )!;
+    expect(parentTask.status).toBe("failed");
+    expect(parentTask.error).toContain("step-2");
+  }, 15_000);
+
+  it("buildPrompt includes context section when task has context", async () => {
+    const mockCopilot = makeMockCopilot();
+    worker = new TaskWorker({
+      engine,
+      copilot: mockCopilot,
+      maxConcurrent: 1,
+      pollIntervalMs: 50,
+      log: silentLog,
+    });
+
+    engine.submit(
+      { trigger: "agent", goal: "Summarize report", context: "Q4 revenue: $5M" },
+      { mode: "background" }
+    );
+
+    const donePromise = new Promise<void>((resolve) => {
+      worker.on("task:done", () => resolve());
+    });
+
+    worker.start();
+    await donePromise;
+
+    const prompt = mockCopilot.chat.mock.calls[0][0] as string;
+    expect(prompt).toContain("Additional Context:");
+    expect(prompt).toContain("Q4 revenue: $5M");
+    expect(prompt).toContain("autonomous agent");
+  });
 });

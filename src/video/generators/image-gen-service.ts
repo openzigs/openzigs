@@ -362,15 +362,23 @@ export class ImageGenService {
     height: number,
     options: ImageGenOptions,
   ): Promise<ImageGenResult> {
+    // In network mode, use async submit + poll to avoid long-lived HTTP
+    // connections that get ECONNRESET over the network.
+    if (this.isNetworkMode) {
+      return this.generateLocalAsync(prompt, width, height, options);
+    }
+
     const start = Date.now();
     const url = `${this.effectiveSidecarUrl}/generate`;
 
     try {
+      // Normalize legacy "flux" alias to the sidecar's canonical model name
+      const resolvedLocalModel = options.localModel === "flux" ? "flux-schnell" : options.localModel;
       const body = JSON.stringify({
         prompt,
         width,
         height,
-        ...(options.localModel ? { model: options.localModel } : {}),
+        ...(resolvedLocalModel ? { model: resolvedLocalModel } : {}),
         ...(options.steps !== undefined ? { steps: options.steps } : {}),
         ...(options.seed !== undefined ? { seed: options.seed } : {}),
         ...(options.negativePrompt ? { negative_prompt: options.negativePrompt } : {}),
@@ -406,6 +414,127 @@ export class ImageGenService {
       this._localAvailable = false;
       throw error;
     }
+  }
+
+  // ── Async Local Provider (submit + poll) ──────────────────────
+  //
+  // Used when imageGenMode === "network".  Submits to /generate-async
+  // (returns 202 immediately), then polls GET /job-result/{job_id} until
+  // the image is ready.  Avoids long-lived HTTP connections that get
+  // ECONNRESET when the sidecar is on a remote machine.
+
+  private async generateLocalAsync(
+    prompt: string,
+    width: number,
+    height: number,
+    options: ImageGenOptions,
+  ): Promise<ImageGenResult> {
+    const start = Date.now();
+    const { nanoid } = await import("nanoid");
+    const jobId = `director-${nanoid(12)}`;
+    const url = `${this.effectiveSidecarUrl}/generate-async`;
+
+    const resolvedLocalModel = options.localModel === "flux" ? "flux-schnell" : options.localModel;
+    const body = JSON.stringify({
+      job_id: jobId,
+      prompt,
+      width,
+      height,
+      ...(resolvedLocalModel ? { model: resolvedLocalModel } : {}),
+      ...(options.steps !== undefined ? { steps: options.steps } : {}),
+      ...(options.seed !== undefined ? { seed: options.seed } : {}),
+    });
+
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (this.config.networkNodeToken) {
+      headers["Authorization"] = `Bearer ${this.config.networkNodeToken}`;
+    }
+
+    // Submit async job — should return 202 immediately
+    const submitResp = await fetch(url, {
+      method: "POST",
+      headers,
+      body,
+      signal: AbortSignal.timeout(30_000),
+    });
+
+    if (!submitResp.ok) {
+      const errorText = await submitResp.text().catch(() => "unknown");
+      throw new Error(`Async generate submit failed (${submitResp.status}): ${errorText}`);
+    }
+
+    logger.info(`[ImageGenService] Async job ${jobId} accepted — polling for result`);
+
+    // Poll GET /job-result/{job_id} until the sidecar has the result
+    const pollUrl = `${this.effectiveSidecarUrl}/job-result/${encodeURIComponent(jobId)}`;
+    const pollHeaders: Record<string, string> = {};
+    if (this.config.networkNodeToken) {
+      pollHeaders["Authorization"] = `Bearer ${this.config.networkNodeToken}`;
+    }
+
+    let pollIntervalMs = 3_000;            // start at 3 s
+    const maxPollIntervalMs = 15_000;      // cap at 15 s
+    const deadline = start + this.config.localTimeoutMs;
+
+    while (Date.now() < deadline) {
+      await new Promise(r => setTimeout(r, pollIntervalMs));
+
+      try {
+        const pollResp = await fetch(pollUrl, {
+          headers: pollHeaders,
+          signal: AbortSignal.timeout(10_000),
+        });
+
+        if (pollResp.status === 404) {
+          // Still processing — back off and retry
+          pollIntervalMs = Math.min(Math.round(pollIntervalMs * 1.5), maxPollIntervalMs);
+          continue;
+        }
+
+        if (!pollResp.ok) {
+          const txt = await pollResp.text().catch(() => "unknown");
+          throw new Error(`Poll failed (${pollResp.status}): ${txt}`);
+        }
+
+        const result = await pollResp.json() as {
+          job_id: string;
+          status: string;
+          media_base64?: string;
+          media_type?: string;
+          error?: string;
+          metadata?: Record<string, string>;
+        };
+
+        if (result.status === "failed") {
+          this._localAvailable = false;
+          throw new Error(`Async image generation failed: ${result.error ?? "unknown error"}`);
+        }
+
+        if (result.status === "complete" && result.media_base64) {
+          const imageBuffer = Buffer.from(result.media_base64, "base64");
+          const filePath = await this.saveImage(imageBuffer, "local");
+          const elapsed = Date.now() - start;
+          const genTime = result.metadata?.generation_time ?? `${elapsed}ms`;
+          logger.info(
+            `[ImageGenService] Async image generated in ${genTime} (${width}x${height}) — job ${jobId}`,
+          );
+          this._localAvailable = true;
+          return { filePath, provider: "local", generationTimeMs: elapsed, width, height };
+        }
+      } catch (pollErr) {
+        // Network hiccup during a single poll — retry unless deadline exceeded
+        if (Date.now() >= deadline) throw pollErr;
+        const msg = pollErr instanceof Error ? pollErr.message : String(pollErr);
+        logger.warn(`[ImageGenService] Poll for ${jobId} failed: ${msg} — retrying`);
+      }
+
+      pollIntervalMs = Math.min(Math.round(pollIntervalMs * 1.5), maxPollIntervalMs);
+    }
+
+    this._localAvailable = false;
+    throw new Error(
+      `Async image generation timed out after ${this.config.localTimeoutMs}ms — job ${jobId}`,
+    );
   }
 
   // ── Helpers ─────────────────────────────────────────────────
