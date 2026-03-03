@@ -1396,9 +1396,11 @@ def _materialize_network_training(req: TrainRequest) -> str:
     num_epochs = int(cfg.get("num_epochs", 1))
 
     # Build the correct mflux training config format
-    # Based on official z-image-turbo training config from mflux README:
+    # Based on official z-image-turbo example config from mflux repo (2026):
     #   - quantize=8 is REQUIRED for 32GB Macs (model is ~31GB unquantized)
-    #   - Only train attention layers (to_q/k/v) on upper blocks (15-30)
+    #   - Train ALL blocks (0-30), not just upper — lower blocks encode structure/identity
+    #   - Include cap_embedder (text→trigger word association) and feed_forward layers
+    #   - all_final_layer is needed so the generation pipeline can reproduce the subject
     #   - timestep_low/high constrain noise schedule for turbo model
     #   - MUST satisfy: timestep_high <= steps (mflux validation)
     ts_high = min(9, steps)
@@ -1409,6 +1411,7 @@ def _materialize_network_training(req: TrainRequest) -> str:
         "steps": steps,
         "guidance": 0.0,
         "quantize": int(cfg.get("quantize", 8)),
+        "max_resolution": 1024,
         "data": data_dir,
         "training_loop": {
             "num_epochs": num_epochs,
@@ -1426,9 +1429,15 @@ def _materialize_network_training(req: TrainRequest) -> str:
         },
         "lora_layers": {
             "targets": [
-                {"module_path": "layers.{block}.attention.to_q", "blocks": {"start": 15, "end": 30}, "rank": lora_rank},
-                {"module_path": "layers.{block}.attention.to_k", "blocks": {"start": 15, "end": 30}, "rank": lora_rank},
-                {"module_path": "layers.{block}.attention.to_v", "blocks": {"start": 15, "end": 30}, "rank": lora_rank},
+                {"module_path": "layers.{block}.attention.to_q", "blocks": {"start": 0, "end": 30}, "rank": lora_rank},
+                {"module_path": "layers.{block}.attention.to_k", "blocks": {"start": 0, "end": 30}, "rank": lora_rank},
+                {"module_path": "layers.{block}.attention.to_v", "blocks": {"start": 0, "end": 30}, "rank": lora_rank},
+                {"module_path": "layers.{block}.attention.to_out.0", "blocks": {"start": 0, "end": 30}, "rank": lora_rank},
+                {"module_path": "layers.{block}.feed_forward.w1", "blocks": {"start": 0, "end": 30}, "rank": lora_rank},
+                {"module_path": "layers.{block}.feed_forward.w2", "blocks": {"start": 0, "end": 30}, "rank": lora_rank},
+                {"module_path": "layers.{block}.feed_forward.w3", "blocks": {"start": 0, "end": 30}, "rank": lora_rank},
+                {"module_path": "cap_embedder.1", "rank": lora_rank},
+                {"module_path": "all_final_layer.2-1.linear", "rank": lora_rank},
             ]
         },
     }

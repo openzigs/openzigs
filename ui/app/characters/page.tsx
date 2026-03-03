@@ -81,8 +81,8 @@ export default function CharactersPage() {
   // Training config
   const [trainSteps, setTrainSteps] = useState(9);
   const [trainLR, setTrainLR] = useState(0.0001);
-  const [trainRank, setTrainRank] = useState(8);
-  const [trainEpochs, setTrainEpochs] = useState(10);
+  const [trainRank, setTrainRank] = useState(16);
+  const [trainEpochs, setTrainEpochs] = useState(50);
 
   // ── Queries ───────────────────────────────────────────
   const charactersQuery = useQuery({
@@ -648,7 +648,7 @@ export default function CharactersPage() {
                         <span className="group relative cursor-help">
                           <Info className="h-3 w-3 opacity-50" />
                           <span className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-1 w-56 -translate-x-1/2 rounded-md bg-popover px-3 py-2 text-[10px] leading-snug text-popover-foreground shadow-md border border-border opacity-0 transition-opacity group-hover:opacity-100">
-                            Dimensionality of LoRA adapter. Higher → more expressive but uses more memory. 8 for faces/animals, 16 for complex subjects, 4 for simple styles.
+                            Dimensionality of LoRA adapter. Higher → more expressive but uses more memory. 16 is recommended for subjects (faces/animals). Use 8 for simple styles, 32 for very complex subjects.
                           </span>
                         </span>
                       </label>
@@ -658,8 +658,8 @@ export default function CharactersPage() {
                         className="mt-1 w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm"
                       >
                         <option value={4}>4</option>
-                        <option value={8}>8 (default)</option>
-                        <option value={16}>16</option>
+                        <option value={8}>8</option>
+                        <option value={16}>16 (default)</option>
                         <option value={32}>32</option>
                       </select>
                     </div>
