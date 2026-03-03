@@ -35,7 +35,7 @@ export const VideoClipPropsSchema = z.object({
   durationInFrames: z.number().int().min(1),
   volume: z.number().min(0).max(1).default(1),
   effects: z.array(z.object({
-    type: z.enum(["slowZoom", "fadeIn", "fadeOut", "blur", "grayscale", "speedRamp"]),
+    type: z.enum(["slowZoom", "fadeIn", "fadeOut", "blur", "grayscale", "speedRamp", "brightness", "contrast", "saturate", "sepia", "hueRotate"]),
     params: z.record(z.unknown()).optional(),
   })).default([]),
   textOverlays: z.array(TextOverlayPropsSchema).default([]),
@@ -66,7 +66,7 @@ export type OverlayProps = z.infer<typeof OverlayPropsSchema>;
 
 // ── Transition Props ──────────────────────────────────────────
 export const TransitionPropsSchema = z.object({
-  style: z.enum(["crossfade", "wipe-left", "wipe-right", "dissolve", "cut"]),
+  style: z.enum(["crossfade", "wipe-left", "wipe-right", "dissolve", "cut", "slide", "flip", "clock-wipe"]),
   durationInFrames: z.number().int().min(0),
   startAtFrame: z.number().int().min(0),
 });
@@ -91,6 +91,10 @@ export const ImageScenePropsSchema = z.object({
     translateYFrom: z.number().default(0),
     translateYTo: z.number().default(-5),
   }).default({}),
+  effects: z.array(z.object({
+    type: z.enum(["slowZoom", "fadeIn", "fadeOut", "blur", "grayscale", "speedRamp", "brightness", "contrast", "saturate", "sepia", "hueRotate"]),
+    params: z.record(z.unknown()).optional(),
+  })).default([]),
   textOverlays: z.array(TextOverlayPropsSchema).default([]),
 });
 export type ImageSceneProps = z.infer<typeof ImageScenePropsSchema>;

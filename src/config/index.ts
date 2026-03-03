@@ -111,6 +111,8 @@ export type CustomAgentConfig = {
   displayName?: string;
   description?: string;
   prompt?: string;
+  role?: string;
+  instructions?: string;
   tools?: string[] | null;
   infer?: boolean;
   mcpServers?: Record<string, NativeMcpServerConfig>;
@@ -400,6 +402,8 @@ export const customAgentSchema = z.object({
   displayName: z.string().optional(),
   description: z.string().optional(),
   prompt: z.string().optional().default(""),
+  role: z.string().optional(),
+  instructions: z.string().optional(),
   tools: z.array(z.string()).nullable().optional(),
   infer: z.boolean().optional(),
   mcpServers: z.record(z.string(), mcpServerConfigSchema).optional(),

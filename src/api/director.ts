@@ -914,7 +914,7 @@ Respond with ONLY a valid JSON array. No explanation. Example:
    */
   router.post("/produce", async (req, res) => {
     try {
-      const { clips, mode, scriptPath, musicTrackPath, template, model, enableVisionAnalysis, inputFile, sourceType, topic, imageProvider, imageModel, slideStyle, assetsOnlyMode, quizEnabled, visualAssets, brandVoiceId, imageClipDurationSeconds, heroReelOverview, defaultClipDuration } = req.body as {
+      const { clips, mode, scriptPath, musicTrackPath, template, model, enableVisionAnalysis, inputFile, sourceType, topic, imageProvider, imageModel, slideStyle, assetsOnlyMode, quizEnabled, visualAssets, brandVoiceId, imageClipDurationSeconds, heroReelOverview, defaultClipDuration, heroReelImages, inspirationContext } = req.body as {
         clips?: string[];
         mode: "highlight" | "script" | "presentation" | "hero-reel";
         scriptPath?: string;
@@ -926,7 +926,7 @@ Respond with ONLY a valid JSON array. No explanation. Example:
         sourceType?: "text" | "markdown";
         topic?: string;
         imageProvider?: "cloud" | "local" | "auto";
-        imageModel?: "flux" | "flux-schnell" | "sdxl-turbo";
+        imageModel?: "flux" | "flux-schnell" | "flux-dev" | "sdxl-turbo";
         slideStyle?: boolean;
         assetsOnlyMode?: boolean;
         quizEnabled?: boolean;
@@ -934,6 +934,8 @@ Respond with ONLY a valid JSON array. No explanation. Example:
         imageClipDurationSeconds?: number;
         heroReelOverview?: string;
         defaultClipDuration?: number;
+        heroReelImages?: Array<{ path: string; description: string }>;
+        inspirationContext?: string;
         visualAssets?: Array<{
           path: string;
           description: string;
@@ -985,9 +987,9 @@ Respond with ONLY a valid JSON array. No explanation. Example:
       logger.info(`[Director API] Produce job ${produceJobId} accepted (mode=${mode}) — running in background`);
 
       /** Emit a produce activity event via Socket.IO (if available). */
-      const emitActivity = (phase: string, detail?: string) => {
+      const emitActivity = (phase: string, detail?: string, extra?: Record<string, unknown>) => {
         if (!_io) return;
-        _io.emit("produce:progress", { id: produceJobId, mode, phase, detail, timestamp: Date.now() });
+        _io.emit("produce:progress", { id: produceJobId, mode, phase, detail, timestamp: Date.now(), ...extra });
       };
 
       emitActivity("started", `${mode} pipeline initiated`);
@@ -1695,8 +1697,19 @@ Respond with ONLY a valid JSON array. No markdown, no explanation.`;
             sceneCount: storyboard.scenes.length,
           },
         };
-        logger.info(`[Director API] Produce job ${produceJobId} complete (presentation, ${elapsedMs}ms)`);
-        emitActivity("complete", `Presentation ready (${(elapsedMs / 1000).toFixed(0)}s)`);
+        // Auto-save as a draft so the result survives navigation
+        const db = getDatabase();
+        const draftId = nanoid();
+        const now = new Date().toISOString();
+        const draftTitle = storyboard.title || "Untitled Presentation";
+        db.prepare(
+          `INSERT INTO director_drafts (id, title, manifest, thumbnail, production_mode, created_at, updated_at, status)
+           VALUES (?, ?, ?, ?, ?, ?, ?, 'draft')`,
+        ).run(draftId, draftTitle, JSON.stringify(manifest), null, "presentation", now, now);
+        job.result!.draftId = draftId;
+
+        logger.info(`[Director API] Produce job ${produceJobId} complete (presentation, ${elapsedMs}ms) — draft ${draftId}`);
+        emitActivity("complete", `Presentation ready (${(elapsedMs / 1000).toFixed(0)}s)`, { draftId, title: draftTitle });
         return;
       }
 
@@ -1720,6 +1733,8 @@ Respond with ONLY a valid JSON array. No markdown, no explanation.`;
           model: resolvedModel,
           styleHint: topic,
           imageClipDurationSeconds: clipDur,
+          userImages: heroReelImages?.map((img, i) => ({ index: i, description: img.description })),
+          inspirationContext,
         });
 
         logger.info(`[Director API] Hero reel storyboard: "${storyboard.title}" with ${storyboard.scenes.length} scenes`);
@@ -1747,19 +1762,50 @@ Respond with ONLY a valid JSON array. No markdown, no explanation.`;
           checkAborted();
           const prompt = scene.imagePrompt || storyboard.styleAnchor;
           let sceneImageFilePath: string | undefined;
-          try {
-            const result = await imageService.generateImage(prompt, {
-              provider: resolvedImageProvider,
-              localModel: imageModel,
-              width: imageWidth,
-              height: imageHeight,
-              seed: baseSeed + scene.index * 1000,
-            });
-            sceneImageFilePath = result.filePath;
-          } catch (imgErr) {
-            logger.warn(`[Director API] Hero reel scene ${scene.index} image failed: ${imgErr instanceof Error ? imgErr.message : String(imgErr)}`);
-            skippedScenes++;
-            continue;
+
+          // Use user-provided image if the LLM assigned one
+          const userImg = scene.userImageIndex !== undefined && heroReelImages?.[scene.userImageIndex];
+          if (userImg) {
+            const fs = await import("node:fs/promises");
+            try {
+              await fs.access(userImg.path);
+              // Enhance the user image with Kontext if there's a meaningful prompt
+              if (prompt && prompt.trim().length > 0) {
+                try {
+                  const enhanced = await imageService.kontextEdit(userImg.path, `${storyboard.styleAnchor}. ${prompt}`, {
+                    width: imageWidth,
+                    height: imageHeight,
+                  });
+                  sceneImageFilePath = enhanced.filePath;
+                  logger.info(`[Director API] Hero reel scene ${scene.index}: user image enhanced via Kontext (${enhanced.generationTimeMs}ms)`);
+                } catch (enhanceErr) {
+                  logger.warn(`[Director API] Hero reel scene ${scene.index}: Kontext enhance failed, using original image: ${enhanceErr instanceof Error ? enhanceErr.message : String(enhanceErr)}`);
+                  sceneImageFilePath = userImg.path;
+                }
+              } else {
+                sceneImageFilePath = userImg.path;
+              }
+            } catch {
+              logger.warn(`[Director API] Hero reel scene ${scene.index}: user image not found at ${userImg.path}, falling back to AI generation`);
+            }
+          }
+
+          // Fall back to AI image generation if no user image was used
+          if (!sceneImageFilePath) {
+            try {
+              const result = await imageService.generateImage(prompt, {
+                provider: resolvedImageProvider,
+                localModel: imageModel,
+                width: imageWidth,
+                height: imageHeight,
+                seed: baseSeed + scene.index * 1000,
+              });
+              sceneImageFilePath = result.filePath;
+            } catch (imgErr) {
+              logger.warn(`[Director API] Hero reel scene ${scene.index} image failed: ${imgErr instanceof Error ? imgErr.message : String(imgErr)}`);
+              skippedScenes++;
+              continue;
+            }
           }
 
           emitActivity("images", `Image ${scene.index + 1}/${storyboard.scenes.length} generated`);
@@ -1850,8 +1896,19 @@ Respond with ONLY a valid JSON array. No markdown, no explanation.`;
             sceneCount: storyboard.scenes.length,
           },
         };
-        logger.info(`[Director API] Produce job ${produceJobId} complete (hero-reel, ${elapsedMs}ms)`);
-        emitActivity("complete", `Hero reel ready (${(elapsedMs / 1000).toFixed(0)}s)`);
+        // Auto-save as a draft so the result survives navigation
+        const db = getDatabase();
+        const draftId = nanoid();
+        const now = new Date().toISOString();
+        const draftTitle = storyboard.title || "Untitled Hero Reel";
+        db.prepare(
+          `INSERT INTO director_drafts (id, title, manifest, thumbnail, production_mode, created_at, updated_at, status)
+           VALUES (?, ?, ?, ?, ?, ?, ?, 'draft')`,
+        ).run(draftId, draftTitle, JSON.stringify(manifest), null, "hero-reel", now, now);
+        job.result!.draftId = draftId;
+
+        logger.info(`[Director API] Produce job ${produceJobId} complete (hero-reel, ${elapsedMs}ms) — draft ${draftId}`);
+        emitActivity("complete", `Hero reel ready (${(elapsedMs / 1000).toFixed(0)}s)`, { draftId, title: draftTitle });
         return;
       }
 
@@ -1932,8 +1989,21 @@ Respond with ONLY a valid JSON array. No markdown, no explanation.`;
           totalSourcesProvided: clips!.length,
         },
       };
-      logger.info(`[Director API] Produce job ${produceJobId} complete (${mode}, ${elapsedMs}ms)`);
-      emitActivity("complete", `${mode} pipeline finished (${(elapsedMs / 1000).toFixed(0)}s)`);
+      // Auto-save as a draft so the result survives navigation
+      {
+        const db = getDatabase();
+        const draftId = nanoid();
+        const now = new Date().toISOString();
+        const draftTitle = (result.manifest as unknown as Record<string, unknown>).projectTitle as string || `Untitled ${mode}`;
+        db.prepare(
+          `INSERT INTO director_drafts (id, title, manifest, thumbnail, production_mode, created_at, updated_at, status)
+           VALUES (?, ?, ?, ?, ?, ?, ?, 'draft')`,
+        ).run(draftId, draftTitle, JSON.stringify(result.manifest), null, mode, now, now);
+        job.result!.draftId = draftId;
+
+        logger.info(`[Director API] Produce job ${produceJobId} complete (${mode}, ${elapsedMs}ms) — draft ${draftId}`);
+        emitActivity("complete", `${mode} pipeline finished (${(elapsedMs / 1000).toFixed(0)}s)`, { draftId, title: draftTitle });
+      }
 
         } catch (bgError) {
           // Don't overwrite status if already cancelled by user
@@ -3289,7 +3359,7 @@ Return ONLY the new narration text, no explanations or formatting.`;
         template?: "Minimalist" | "ContentCreator" | "Corporate" | "TechDemo";
         styleHint?: string;
         imageProvider?: "cloud" | "local" | "auto";
-        imageModel?: "flux" | "flux-schnell" | "sdxl-turbo";
+        imageModel?: "flux" | "flux-schnell" | "flux-dev" | "sdxl-turbo";
         musicTrackPath?: string;
         targetDuration?: number;
         brandVoiceId?: string;
@@ -4107,6 +4177,242 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       logger.error(`[Director API] POST /scenes/:sceneIndex/img2img failed: ${msg}`);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  /**
+   * POST /enhance-overview — use the LLM to improve a hero reel overview description.
+   *
+   * Body: { overview: string }
+   * Returns: { enhanced_overview: string }
+   */
+  router.post("/enhance-overview", async (req, res) => {
+    try {
+      const { overview } = req.body as { overview?: string };
+
+      if (!overview || typeof overview !== "string" || overview.trim().length === 0) {
+        res.status(400).json({ error: "overview is required" });
+        return;
+      }
+
+      const conversationId = `enhance-overview-${Date.now()}`;
+      const systemMessage = `You are an expert creative director specializing in short-form video content.
+
+Your job: take a rough hero reel overview description and enhance it into a clear, vivid creative brief that will produce a compelling highlight reel.
+
+## Guidelines
+- Sharpen the visual style, pacing, and mood (e.g., fast-cut, cinematic, energetic, minimal)
+- Clarify the subject matter and key themes to showcase
+- Add specific tonal direction (e.g., "dark tech aesthetic", "bold and punchy", "clean corporate")
+- Keep the original intent — enhance and expand, never override the user's core idea
+- Aim for 2-3 concise sentences. Be specific and actionable.
+
+Respond ONLY with a bare JSON object — no markdown, no code fences:
+{"enhanced_overview": "The improved overview string"}`;
+
+      let fullResponse = "";
+      for await (const chunk of copilot.chat(
+        `Enhance this hero reel overview description:\n\n"${overview.trim()}"`,
+        {
+          conversationId,
+          systemMessage: { mode: "replace", content: systemMessage },
+          tools: [],
+          availableTools: [],
+        },
+      )) {
+        fullResponse += chunk;
+      }
+      await copilot.destroySession(conversationId);
+
+      const jsonMatch = fullResponse.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) {
+        res.status(500).json({ error: "Failed to parse AI response" });
+        return;
+      }
+
+      const parsed = JSON.parse(jsonMatch[0]) as { enhanced_overview?: string };
+
+      res.json({ enhanced_overview: parsed.enhanced_overview ?? overview });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      logger.error(`[Director API] POST /enhance-overview failed: ${msg}`);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  /**
+   * POST /hero-reel/process-inspiration — extract text and images from a file
+   * to use as inspiration for a hero reel.
+   *
+   * Body: { filePath: string }
+   * Returns: { text: string, images: Array<{ path: string, description: string }> }
+   */
+  router.post("/hero-reel/process-inspiration", async (req, res) => {
+    try {
+      const { filePath: inputPath } = req.body as { filePath?: string };
+
+      if (!inputPath || typeof inputPath !== "string" || inputPath.trim().length === 0) {
+        res.status(400).json({ error: "filePath is required" });
+        return;
+      }
+
+      const fs = await import("node:fs/promises");
+      const pathMod = await import("node:path");
+
+      // Verify file exists
+      try {
+        await fs.access(inputPath);
+      } catch {
+        res.status(404).json({ error: `File not found: ${inputPath}` });
+        return;
+      }
+
+      const ext = pathMod.extname(inputPath).toLowerCase();
+      let extractedText = "";
+      const extractedImages: Array<{ path: string; description: string }> = [];
+
+      // Extract text content using the converter registry
+      const { createDefaultRegistry } = await import("../knowledge/converters/index.js");
+      const registry = await createDefaultRegistry();
+
+      if (registry.canConvert(inputPath)) {
+        const result = await registry.convert(inputPath);
+        if (result.success) {
+          extractedText = result.text;
+        } else {
+          logger.warn(`[Director API] Inspiration file conversion failed: ${result.error}`);
+        }
+      } else {
+        // For images, just read them directly
+        const imageExts = [".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".tiff"];
+        if (imageExts.includes(ext)) {
+          extractedImages.push({ path: inputPath, description: pathMod.basename(inputPath) });
+          res.json({ text: "", images: extractedImages });
+          return;
+        }
+        res.status(400).json({ error: `Unsupported file type: ${ext}` });
+        return;
+      }
+
+      // For markdown files, extract referenced images
+      if (ext === ".md" || ext === ".markdown") {
+        const fileDir = pathMod.dirname(inputPath);
+        const imgRegex = /!\[([^\]]*)\]\(([^)]+)\)/g;
+        let match: RegExpExecArray | null;
+        while ((match = imgRegex.exec(extractedText)) !== null) {
+          const altText = match[1] || "Image";
+          const imgRef = match[2];
+          // Resolve relative paths
+          const imgPath = pathMod.isAbsolute(imgRef)
+            ? imgRef
+            : pathMod.resolve(fileDir, imgRef);
+          try {
+            await fs.access(imgPath);
+            extractedImages.push({ path: imgPath, description: altText });
+          } catch {
+            logger.debug(`[Director API] Inspiration image not found: ${imgPath}`);
+          }
+        }
+      }
+
+      // For PDFs, render each page to a PNG to capture embedded images/diagrams
+      if (ext === ".pdf") {
+        const { execFile } = await import("node:child_process");
+        const { promisify } = await import("node:util");
+        const execFileAsync = promisify(execFile);
+        const osMod = await import("node:os");
+
+        // Check if ImageMagick is available
+        let hasMagick = false;
+        try {
+          await execFileAsync("magick", ["--version"]);
+          hasMagick = true;
+        } catch {
+          logger.debug("[Director API] ImageMagick not available for PDF page rendering");
+        }
+
+        if (hasMagick) {
+          // Identify how many pages the PDF has
+          let pageCount = 0;
+          try {
+            const { stdout } = await execFileAsync("magick", ["identify", inputPath]);
+            pageCount = stdout.trim().split("\n").length;
+          } catch (err) {
+            logger.warn(`[Director API] Failed to identify PDF pages: ${err instanceof Error ? err.message : String(err)}`);
+          }
+
+          if (pageCount > 0) {
+            // Cap to 10 pages to avoid excessive processing
+            const maxPages = Math.min(pageCount, 10);
+            const imgDir = pathMod.join(osMod.homedir(), ".openzigs", "director", "images");
+            await fs.mkdir(imgDir, { recursive: true });
+
+            for (let i = 0; i < maxPages; i++) {
+              try {
+                const outName = `insp-pdf-${Date.now()}-page${i + 1}.png`;
+                const outPath = pathMod.join(imgDir, outName);
+                await execFileAsync("magick", [
+                  "-density", "200",
+                  "-quality", "90",
+                  `${inputPath}[${i}]`,
+                  "-flatten",
+                  "-resize", "1536x1536>",
+                  outPath,
+                ]);
+                extractedImages.push({
+                  path: outPath,
+                  description: `PDF page ${i + 1}`,
+                });
+              } catch (err) {
+                logger.warn(`[Director API] PDF page ${i + 1} render failed: ${err instanceof Error ? err.message : String(err)}`);
+              }
+            }
+            if (extractedImages.length > 0) {
+              logger.info(`[Director API] Extracted ${extractedImages.length} page image(s) from PDF`);
+            }
+          }
+        }
+      }
+
+      // Use AI to generate descriptions for images that only have filenames
+      if (extractedImages.length > 0) {
+        const conversationId = `describe-inspiration-images-${Date.now()}`;
+        try {
+          const imageList = extractedImages.map((img, i) => `${i}: "${img.description}"`).join("\n");
+          let descResponse = "";
+          for await (const chunk of copilot.chat(
+            `Given these image references from a document, write a concise visual description (1 sentence) for each that would be useful for a hero reel video. If the alt text is already descriptive, refine it. If it's just a filename, infer from context.\n\nImages:\n${imageList}\n\nDocument context (first 1000 chars):\n${extractedText.slice(0, 1000)}\n\nRespond with a JSON array of strings, one description per image. No markdown fences.`,
+            { conversationId, tools: [], availableTools: [] },
+          )) {
+            descResponse += chunk;
+          }
+          await copilot.destroySession(conversationId);
+
+          const jsonMatch = descResponse.match(/\[[\s\S]*\]/);
+          if (jsonMatch) {
+            const descriptions = JSON.parse(jsonMatch[0]) as string[];
+            for (let i = 0; i < Math.min(descriptions.length, extractedImages.length); i++) {
+              if (descriptions[i] && typeof descriptions[i] === "string") {
+                extractedImages[i].description = descriptions[i];
+              }
+            }
+          }
+        } catch (descErr) {
+          logger.warn(`[Director API] Image description generation failed: ${descErr instanceof Error ? descErr.message : String(descErr)}`);
+        }
+      }
+
+      res.json({
+        text: extractedText.slice(0, 8000),
+        images: extractedImages.map((img) => ({
+          ...img,
+          url: `/api/admin/director/files/${pathMod.basename(img.path)}`,
+        })),
+      });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      logger.error(`[Director API] POST /hero-reel/process-inspiration failed: ${msg}`);
       res.status(500).json({ error: msg });
     }
   });

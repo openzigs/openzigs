@@ -4,9 +4,13 @@ import { useState, useCallback, useRef, useEffect, useMemo, type SyntheticEvent 
 import { RefreshCw, Loader2, Image, Clock, Type, Upload, PenLine, Mic, Play, Pause, Volume2, Sparkles, Wand2 } from "lucide-react";
 import { fetchJson, buildMediaUrl } from "@/lib/api";
 import { useActivity } from "@/lib/activity-context";
-import type { InspectorState, DirectorManifest } from "../types";
+import type { InspectorState, DirectorManifest, TimelineEntry } from "../types";
 import { FramingPanel } from "./framing-panel";
 import { NarrationEditor, type NarrationDirective, type VoicePreset } from "./narration-editor";
+import { SceneEffectsPanel } from "./scene-effects-panel";
+import { DurationControl } from "./duration-control";
+import { TextOverlayEditor } from "./text-overlay-editor";
+import { TransitionPicker, type TransitionStyle } from "./transition-picker";
 
 interface SceneInspectorProps {
   inspector: InspectorState;
@@ -1031,6 +1035,79 @@ export function SceneInspector({ inspector, manifest, draftId, onManifestUpdate 
           fitMode={(entry.fitMode as "cover" | "contain") ?? "cover"}
           onFitModeChange={(mode) => {
             updateTimelineEntry((e) => ({ ...e, fitMode: mode }));
+          }}
+        />
+      )}
+
+      {/* Duration Control */}
+      {isVisualScene && (
+        <DurationControl
+          durationFrames={dur}
+          fps={fps}
+          onDurationChange={(frames) => {
+            updateTimelineEntry((e) => ({ ...e, duration: frames, durationInFrames: frames }));
+          }}
+        />
+      )}
+
+      {/* Scene Effects Panel (visual scenes) */}
+      {isVisualScene && (
+        <SceneEffectsPanel
+          effects={(entry.effects as Array<{ type: string; [k: string]: unknown }>) ?? []}
+          kenBurns={entry.kenBurns as { scaleFrom?: number; scaleTo?: number; translateXFrom?: number; translateXTo?: number; translateYFrom?: number; translateYTo?: number } | undefined}
+          isImageScene={entry.type === "image_scene"}
+          onEffectsChange={(effects) => {
+            updateTimelineEntry((e) => ({ ...e, effects }));
+          }}
+          onKenBurnsChange={(kenBurns) => {
+            updateTimelineEntry((e) => ({ ...e, kenBurns }));
+          }}
+        />
+      )}
+
+      {/* Transition Picker */}
+      {isVisualScene && (() => {
+        const timeline = manifest?.timeline ?? [];
+        const currentIdx = timeline.indexOf(entry);
+        const nextIdx = currentIdx >= 0 ? timeline.findIndex((e, i) => i > currentIdx && (e.type === "image_scene" || e.type === "video_clip")) : -1;
+        const existingTransition = currentIdx >= 0 ? timeline.find((e, i) => i > currentIdx && i < (nextIdx >= 0 ? nextIdx : timeline.length) && e.type === "transition") : undefined;
+        return nextIdx >= 0 ? (
+          <TransitionPicker
+            currentStyle={(existingTransition?.style as TransitionStyle) ?? "crossfade"}
+            currentDuration={typeof existingTransition?.duration === "number" ? existingTransition.duration : Math.round(0.5 * fps)}
+            fps={fps}
+            onStyleChange={(style) => {
+              if (!manifest) return;
+              const updated = { ...manifest, timeline: [...timeline] };
+              const durationFrames = typeof existingTransition?.duration === "number" ? existingTransition.duration : Math.round(0.5 * fps);
+              if (existingTransition) {
+                const tIdx = updated.timeline.indexOf(existingTransition);
+                updated.timeline[tIdx] = { ...existingTransition, style, duration: durationFrames };
+              } else {
+                const transEntry = { type: "transition" as const, style, duration: durationFrames, startAtFrame: (entry.startAtFrame ?? 0) + dur };
+                updated.timeline.splice(currentIdx + 1, 0, transEntry as TimelineEntry);
+              }
+              onManifestUpdate(updated);
+            }}
+            onDurationChange={(frames) => {
+              if (!manifest || !existingTransition) return;
+              const updated = { ...manifest, timeline: [...timeline] };
+              const tIdx = updated.timeline.indexOf(existingTransition);
+              updated.timeline[tIdx] = { ...existingTransition, duration: frames };
+              onManifestUpdate(updated);
+            }}
+          />
+        ) : null;
+      })()}
+
+      {/* Text Overlay Editor */}
+      {isVisualScene && (
+        <TextOverlayEditor
+          overlays={(entry.textOverlays as Array<{ id: string; text: string; position: "center" | "bottom-third" | "top-third" | "custom"; animation: "fade-in" | "slide-up" | "typewriter" | "none"; fontSize?: number; fontWeight?: "normal" | "bold" | "light"; color?: string; backgroundColor?: string; startFrame: number; durationFrames: number }>) ?? []}
+          sceneDurationFrames={dur}
+          fps={fps}
+          onOverlaysChange={(overlays) => {
+            updateTimelineEntry((e) => ({ ...e, textOverlays: overlays }));
           }}
         />
       )}

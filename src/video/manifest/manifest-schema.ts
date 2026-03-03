@@ -201,7 +201,7 @@ export const ManifestMetadataSchema = z.object({
   generatedAt: z.string().datetime(),
   llmModel: z.string().min(1),
   llmTokensUsed: z.number().int().min(0),
-  productionMode: z.enum(["highlight", "script", "presentation"]),
+  productionMode: z.enum(["highlight", "script", "presentation", "hero-reel"]),
   presenterQuizEnabled: z.boolean().optional(),
   sourceClips: z.array(z.string()).optional(),
   estimatedRenderTime: z.number().positive().optional(),

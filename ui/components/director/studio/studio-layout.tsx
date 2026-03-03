@@ -9,6 +9,7 @@ import { PlayerPreview } from "./player-preview";
 import { SceneInspector } from "./scene-inspector";
 import { CaptionStylePanel } from "./caption-style-panel";
 import { TimelineTracks } from "./timeline-tracks";
+import { AudioManager } from "./audio-manager";
 import { Plus } from "lucide-react";
 import type {
   DraftFull,
@@ -313,6 +314,39 @@ export function StudioLayout({ draftId }: { draftId: string }) {
     playerRef.current?.seekTo(frame);
   }, []);
 
+  const handleReorderScenes = useCallback(
+    (fromIndex: number, toIndex: number) => {
+      if (!draft?.manifest) return;
+      const timeline = draft.manifest.timeline ?? [];
+      const fps = draft.manifest.composition?.fps ?? 30;
+
+      // Collect visual scene timeline indices
+      const visualTypes = new Set(["image_scene", "video_clip", "title_card", "intro_card", "outro_card"]);
+      const sceneIndices: number[] = [];
+      for (let i = 0; i < timeline.length; i++) {
+        if (visualTypes.has(timeline[i].type)) sceneIndices.push(i);
+      }
+      if (fromIndex < 0 || fromIndex >= sceneIndices.length || toIndex < 0 || toIndex >= sceneIndices.length) return;
+
+      const updated = [...timeline];
+      const fromTlIdx = sceneIndices[fromIndex];
+      const toTlIdx = sceneIndices[toIndex];
+      const [moved] = updated.splice(fromTlIdx, 1);
+      const insertAt = toTlIdx > fromTlIdx ? toTlIdx : toTlIdx;
+      updated.splice(insertAt, 0, moved);
+
+      // Recalculate startAtFrame for all entries
+      let frame = 0;
+      for (const entry of updated) {
+        entry.startAtFrame = frame;
+        frame += entry.duration ?? entry.durationInFrames ?? fps * 3;
+      }
+
+      handleManifestUpdate({ ...draft.manifest, timeline: updated });
+    },
+    [draft, handleManifestUpdate],
+  );
+
   const totalFrames = draft?.manifest?.timeline
     ? draft.manifest.timeline.reduce((max: number, e: TimelineEntry) => {
         const end = (e.startAtFrame ?? 0) + (e.duration ?? e.durationInFrames ?? 0);
@@ -402,6 +436,34 @@ export function StudioLayout({ draftId }: { draftId: string }) {
               />
             </div>
           )}
+
+          {/* Audio / Music management */}
+          {draft.manifest && (
+            <div className="mt-4">
+              <AudioManager
+                music={draft.manifest.audioLayer?.music ? {
+                  track: draft.manifest.audioLayer.music.track ?? "",
+                  volume: draft.manifest.audioLayer.music.volume ?? 0.3,
+                  loop: draft.manifest.audioLayer.music.loop ?? true,
+                } : null}
+                onMusicChange={(music) => {
+                  if (!draft.manifest) return;
+                  handleManifestUpdate({
+                    ...draft.manifest,
+                    audioLayer: {
+                      ...draft.manifest.audioLayer,
+                      music: music ? {
+                        track: music.track,
+                        volume: music.volume,
+                        loop: music.loop,
+                      } : null,
+                    },
+                  });
+                }}
+                fps={draft.manifest.composition?.fps ?? 30}
+              />
+            </div>
+          )}
         </div>
       </div>
 
@@ -435,6 +497,7 @@ export function StudioLayout({ draftId }: { draftId: string }) {
           onSelectScene={handleSelectScene}
           onSeek={handleSeek}
           manifest={draft.manifest}
+          onReorderScenes={handleReorderScenes}
         />
       </div>
     </div>

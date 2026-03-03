@@ -43,6 +43,8 @@ export interface StoryboardScene {
   }>;
   /** 0-based index into the source blog's image list; set when the LLM assigns a blog image to this scene */
   blogImageIndex?: number;
+  /** 0-based index into user-provided hero reel images; set when the LLM assigns a user image to this scene */
+  userImageIndex?: number;
   /**
    * When true, this scene should be animated into a 4-second video clip
    * via the img2video pipeline. At most 2-3 scenes per storyboard.
@@ -188,7 +190,10 @@ export class StoryboardEngine {
    */
   async generateHeroReel(
     overview: string,
-    options: Pick<StoryboardOptions, "model" | "styleHint" | "imageClipDurationSeconds"> = {},
+    options: Pick<StoryboardOptions, "model" | "styleHint" | "imageClipDurationSeconds"> & {
+      userImages?: Array<{ index: number; description: string }>;
+      inspirationContext?: string;
+    } = {},
   ): Promise<Storyboard> {
     if (!overview || overview.trim().length === 0) {
       throw new Error("Hero reel overview cannot be empty");
@@ -200,7 +205,7 @@ export class StoryboardEngine {
       `[StoryboardEngine] Generating hero reel: clipDuration=${clipDur}s`,
     );
 
-    const systemPrompt = this.buildHeroReelPrompt(clipDur, options.styleHint);
+    const systemPrompt = this.buildHeroReelPrompt(clipDur, options.styleHint, options.userImages, options.inspirationContext);
     const userPrompt = `=== HERO REEL BRIEF ===\n\n${overview.trim()}\n\n=== END OF BRIEF ===\n\nGenerate a hero reel storyboard following the instructions above. Output a single JSON object.`;
 
     const chunks: string[] = [];
@@ -233,9 +238,31 @@ export class StoryboardEngine {
   /**
    * Build the system prompt for hero reel generation.
    */
-  private buildHeroReelPrompt(clipDurationSec: number, styleHint?: string): string {
+  private buildHeroReelPrompt(
+    clipDurationSec: number,
+    styleHint?: string,
+    userImages?: Array<{ index: number; description: string }>,
+    inspirationContext?: string,
+  ): string {
     const styleBlock = styleHint
       ? `\nSTYLE HINT from the user: "${styleHint}" — use this as a starting point for your Visual Style Anchor.`
+      : "";
+
+    const userImageBlock = userImages && userImages.length > 0
+      ? `\n\nUSER-PROVIDED IMAGES:
+The user has provided ${userImages.length} image(s) to use in the reel. You MUST incorporate these into your storyboard. For scenes using a user image, set "userImageIndex" to the image's index number. Only generate an imageDescription for scenes that need AI-generated visuals.
+
+${userImages.map((img) => `  [Image ${img.index}]: ${img.description}`).join("\n")}\n
+IMPORTANT RULES FOR USER IMAGES:
+- Prioritize user-provided images — use them FIRST, fill remaining scenes with AI-generated images.
+- Set "userImageIndex" to the image index for scenes using user images.
+- For user-image scenes, still write a short imageDescription — it will be used as an enhancement prompt via Kontext to polish the image for the reel.
+- You may reorder user images for maximum narrative impact.
+- If the user provided enough images (5+), you may use them for ALL scenes.`
+      : "";
+
+    const inspirationBlock = inspirationContext
+      ? `\n\nINSPIRATION CONTEXT:\nThe user provided a reference document. Use it as creative inspiration for the reel's themes, tone, and content:\n\n${inspirationContext.slice(0, 4000)}`
       : "";
 
     return `You are a world-class creative director specializing in short-form hero reels — punchy, cinematic montages that tell a brand or personal story in under 60 seconds.
@@ -247,7 +274,7 @@ PROCESS:
 2. DEFINE a Visual Style Anchor — a single, immutable style prefix prepended to ALL image prompts. This must be photographic or stylized, NOT clip-art.
 3. CREATE 5–8 fast-paced scenes. Each scene should be ${clipDurationSec} seconds long.
 4. WRITE short, punchy voiceover lines (≤12 words per scene). Hero reels are FAST — think trailer energy.
-${styleBlock}
+${styleBlock}${userImageBlock}${inspirationBlock}
 
 OUTPUT FORMAT — respond with a single JSON object:
 {
@@ -264,7 +291,8 @@ OUTPUT FORMAT — respond with a single JSON object:
       "imageDescription": "Detailed visual description WITHOUT the style anchor prefix",
       "durationEstimate": ${clipDurationSec},
       "shouldAnimate": false,
-      "motionPrompt": null
+      "motionPrompt": null,
+      "userImageIndex": null
     }
   ]
 }
@@ -275,6 +303,7 @@ RULES:
 - imageDescription must be vivid and specific for AI image generation.
 - Do NOT include the styleAnchor text in imageDescription — it is prepended automatically.
 - You may mark AT MOST 1 scene as shouldAnimate: true for a dramatic hero shot.
+- Set "userImageIndex" to the index of a user-provided image when using one, or null for AI-generated.
 - The reel should feel like a movie trailer — build energy, hit a climax, end with impact.
 - Total scenes: 5–8. No more, no less.`;
   }
@@ -599,6 +628,7 @@ Output a single JSON object.`;
         durationEstimate: Math.max(5, Math.min(60, duration)),
         rawImageDescription: rawDesc,
         blogImageIndex: typeof scene.blogImageIndex === "number" ? scene.blogImageIndex : undefined,
+      userImageIndex: typeof scene.userImageIndex === "number" ? scene.userImageIndex : undefined,
         shouldAnimate: scene.shouldAnimate === true,
         motionPrompt: typeof scene.motionPrompt === "string" && scene.motionPrompt.trim()
           ? scene.motionPrompt.trim()
@@ -671,6 +701,7 @@ interface RawStoryboardOutput {
     durationEstimate?: number;
     chapterTitle?: string | null;
     blogImageIndex?: number | null;
+    userImageIndex?: number | null;
     shouldAnimate?: boolean;
     motionPrompt?: string | null;
     textOverlays?: Array<{

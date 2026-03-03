@@ -5,7 +5,7 @@
 export type ProductionMode = "highlight" | "script" | "presentation" | "shorts" | "hero-reel";
 
 export type ImageProvider = "auto" | "local" | "cloud";
-export type ImageModel = "sdxl-turbo" | "flux-schnell" | "flux";
+export type ImageModel = "sdxl-turbo" | "flux-schnell" | "flux" | "flux-dev";
 
 export interface VisualAsset {
   name: string;

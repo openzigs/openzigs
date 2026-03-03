@@ -50,8 +50,21 @@ describe("HeroReelPanel", () => {
     render(<HeroReelPanel />, { wrapper: createWrapper() });
 
     expect(screen.getByText("What happens next")).toBeInTheDocument();
-    expect(screen.getByText(/2-second video clip/)).toBeInTheDocument();
+    expect(screen.getByText(/Your images are used first/)).toBeInTheDocument();
     expect(screen.getByText(/No narrator script or TTS/)).toBeInTheDocument();
+  });
+
+  it("renders user image upload section", () => {
+    render(<HeroReelPanel />, { wrapper: createWrapper() });
+
+    expect(screen.getByText("Add Images")).toBeInTheDocument();
+    expect(screen.getByText(/Drop images here or click to browse/)).toBeInTheDocument();
+  });
+
+  it("renders inspiration file upload section", () => {
+    render(<HeroReelPanel />, { wrapper: createWrapper() });
+
+    expect(screen.getByText(/Upload a markdown, PDF, image/)).toBeInTheDocument();
   });
 
   it("allows typing in the overview textarea", () => {
@@ -80,5 +93,11 @@ describe("HeroReelPanel", () => {
         }),
       );
     });
+  });
+
+  it("renders AI enhance button for overview", () => {
+    render(<HeroReelPanel />, { wrapper: createWrapper() });
+
+    expect(screen.getByText("AI Enhance")).toBeInTheDocument();
   });
 });

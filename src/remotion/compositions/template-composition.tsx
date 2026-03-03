@@ -161,6 +161,7 @@ function renderSegment(
             voiceover={item.voiceover}
             voiceoverVolume={item.voiceoverVolume}
             kenBurns={item.kenBurns}
+            effects={item.effects}
           />
           <TextOverlayLayer overlays={item.textOverlays ?? []} />
         </AbsoluteFill>
