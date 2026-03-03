@@ -643,6 +643,13 @@ export class QueueMaster extends EventEmitter {
       body.strength = job.payload.strength ?? 0.8;
     }
 
+    if (job.payload.lora_paths?.length) {
+      body.lora_paths = job.payload.lora_paths;
+      if (job.payload.lora_scales?.length) {
+        body.lora_scales = job.payload.lora_scales;
+      }
+    }
+
     // Async dispatch — FluxQ accepts immediately (202) and POSTs result to callback_url
     const res = await fetch(`${url}${endpoint}`, {
       method: "POST",

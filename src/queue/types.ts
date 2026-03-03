@@ -77,6 +77,10 @@ export interface MediaJobPayload {
   lyrics?: string;
   /** Whether to generate instrumental-only (no vocals) */
   instrumental?: boolean;
+  /** LoRA adapter paths for character consistency (mac-mini only) */
+  lora_paths?: string[];
+  /** Scale factor for each LoRA adapter */
+  lora_scales?: number[];
 }
 
 // ── Stored Job ────────────────────────────────────────────────

@@ -1284,47 +1284,82 @@ _train_output_dir: Optional[str] = None
 
 
 def _materialize_network_training(req: TrainRequest) -> str:
-    """Write base64 photos to disk and generate a mflux training config file.
+    """Write base64 photos + prompt .txt files to disk and generate an mflux
+    training config file in the correct format.
+
+    mflux expects:
+      data/  — directory with image.jpg + image.txt (prompt) pairs
+      config.json — references data path and has training_loop/optimizer/checkpoint/lora_layers
 
     Returns the path to the generated config JSON.
     """
     char_id = req.character_id or "unknown"
     train_dir = os.path.join(tempfile.gettempdir(), "openzigs-training", char_id)
-    photos_dir = os.path.join(train_dir, "photos")
-    os.makedirs(photos_dir, exist_ok=True)
+    data_dir = os.path.join(train_dir, "data")
+    os.makedirs(data_dir, exist_ok=True)
 
-    # Write each photo to disk
-    examples = []
-    for i, photo in enumerate(req.photos or []):
-        ext = os.path.splitext(photo.filename)[1] or ".jpg"
-        safe_name = f"{i:04d}{ext}"
-        photo_path = os.path.join(photos_dir, safe_name)
-        img_bytes = base64.b64decode(photo.image_base64, validate=True)
-        with open(photo_path, "wb") as f:
-            f.write(img_bytes)
-        examples.append({"image": photo_path, "prompt": photo.prompt})
-        log.info(f"[train] Wrote photo {safe_name} ({len(img_bytes)} bytes)")
-
-    # Build mflux training config
     cfg = req.train_config or {}
+    trigger_word = cfg.get("trigger_word", "TOK")
+    lora_rank = int(cfg.get("lora_rank", 4))
+    steps = int(cfg.get("steps", 1000))
+
+    # Write each photo + matching .txt prompt file
+    # Always convert to JPEG via PIL — handles HEIC, WebP, PNG, and
+    # any other format that might arrive from iPhone or web uploads.
+    for i, photo in enumerate(req.photos or []):
+        safe_stem = f"{i:04d}"
+        photo_path = os.path.join(data_dir, f"{safe_stem}.jpg")
+        txt_path = os.path.join(data_dir, f"{safe_stem}.txt")
+        img_bytes = base64.b64decode(photo.image_base64, validate=True)
+        try:
+            import io as _io
+            pil_img = Image.open(_io.BytesIO(img_bytes)).convert("RGB")
+            pil_img.save(photo_path, format="JPEG", quality=95)
+            log.info(f"[train] Wrote {safe_stem}.jpg ({pil_img.width}x{pil_img.height}) + prompt")
+        except Exception as conv_err:
+            log.warning(f"[train] PIL conversion failed for photo {i}, writing raw bytes: {conv_err}")
+            with open(photo_path, "wb") as f:
+                f.write(img_bytes)
+        # Prompt text includes the trigger word — trigger word IS the prompt mechanism in mflux
+        prompt = photo.prompt if photo.prompt else f"A photo of {trigger_word}"
+        with open(txt_path, "w") as f:
+            f.write(prompt)
+
     lora_output = os.path.join(train_dir, "lora")
     os.makedirs(lora_output, exist_ok=True)
 
+    # Build the correct mflux training config format
     config = {
         "model": cfg.get("model", "dev"),
-        "output_dir": lora_output,
-        "trigger_word": cfg.get("trigger_word", "TOK"),
-        "steps": cfg.get("steps", 1000),
-        "learning_rate": cfg.get("learning_rate", 1e-4),
-        "lora_rank": cfg.get("lora_rank", 4),
-        "examples": examples,
+        "seed": 42,
+        "steps": steps,
+        "guidance": 0.0,
+        "data": data_dir,
+        "training_loop": {
+            "num_epochs": 1,
+            "batch_size": 1,
+        },
+        "optimizer": {
+            "name": "adam",
+            "learning_rate": cfg.get("learning_rate", 1e-4),
+        },
+        "checkpoint": {
+            "save_frequency": max(100, steps // 4),
+            "output_path": lora_output,
+        },
+        "lora_layers": {
+            "targets": [
+                {"module_path": "transformer.transformer_blocks.*.attn", "rank": lora_rank},
+                {"module_path": "transformer.single_transformer_blocks.*.attn", "rank": lora_rank},
+            ]
+        },
     }
 
     config_path = os.path.join(train_dir, "train-config.json")
     with open(config_path, "w") as f:
         json.dump(config, f, indent=2)
 
-    log.info(f"[train] Materialized {len(examples)} photos + config at {config_path}")
+    log.info(f"[train] Materialized {len(req.photos or [])} photos + config at {config_path}")
     return config_path
 
 
@@ -1366,14 +1401,18 @@ async def train_lora(req: TrainRequest, background_tasks: BackgroundTasks):
     try:
         with open(config_path, "r") as f:
             config = json.load(f)
-        if "examples" not in config:
-            raise HTTPException(status_code=400, detail="Training config must contain 'examples' array")
+        if "data" not in config:
+            raise HTTPException(status_code=400, detail="Training config must contain 'data' path")
+        if "training_loop" not in config:
+            raise HTTPException(status_code=400, detail="Training config must contain 'training_loop'")
+        if "lora_layers" not in config:
+            raise HTTPException(status_code=400, detail="Training config must contain 'lora_layers'")
     except json.JSONDecodeError as e:
         raise HTTPException(status_code=400, detail=f"Invalid JSON in config: {e}")
 
     _training = True
     _train_error = None
-    _train_output_dir = config.get("output_dir")
+    _train_output_dir = config.get("checkpoint", {}).get("output_path")
     background_tasks.add_task(_bg_train, config_path)
 
     log.info(f"[train] Started LoRA training with config: {config_path}")
