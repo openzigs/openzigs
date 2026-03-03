@@ -35,10 +35,17 @@ if [ -n "$PID" ]; then
   kill -9 $PID || true
 fi
 
-# Kill processes on port 3001 (Next.js dev server default)
+# Kill processes on port 3001 (Next.js dev proxy — dev-server.mjs)
 PID=$(lsof -ti:3001 2>/dev/null || true)
 if [ -n "$PID" ]; then
   echo "[clean-start] Killing process on port 3001 (PID $PID)"
+  kill -9 $PID || true
+fi
+
+# Kill processes on port 3101 (Next.js internal port, PROXY_PORT+100 in dev-server.mjs)
+PID=$(lsof -ti:3101 2>/dev/null || true)
+if [ -n "$PID" ]; then
+  echo "[clean-start] Killing process on port 3101 (PID $PID)"
   kill -9 $PID || true
 fi
 
@@ -332,4 +339,6 @@ cleanup() {
 
 trap cleanup EXIT
 
-wait "$UI_PID"
+# Wait for the UI process; use || true so a UI crash doesn't trigger set -e
+# and tear down the entire stack. The EXIT trap still fires on Ctrl+C.
+wait "$UI_PID" || true

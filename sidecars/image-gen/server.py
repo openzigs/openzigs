@@ -1244,10 +1244,28 @@ async def generate_controlnet(req: ControlNetRequest):
 
 # ── Training Endpoint ──────────────────────────────────────────
 
-class TrainRequest(BaseModel):
-    """Request body for DreamBooth LoRA training via mflux-train."""
 
-    train_config_path: str = Field(..., description="Path to the training config JSON file")
+class TrainPhotoItem(BaseModel):
+    """A training photo sent as base64 with its prompt."""
+
+    image_base64: str = Field(..., description="Base64-encoded image data")
+    filename: str = Field(..., description="Original filename (for extension detection)")
+    prompt: str = Field(..., description="Caption / prompt for this image")
+
+
+class TrainRequest(BaseModel):
+    """Request body for DreamBooth LoRA training via mflux-train.
+
+    Supports two modes:
+    - **Local mode**: provide `train_config_path` pointing to a JSON file on this machine.
+    - **Network mode**: provide `train_config` (inline JSON) + `photos` (base64 images).
+      The sidecar writes photos to a temp directory and builds the config automatically.
+    """
+
+    train_config_path: Optional[str] = Field(None, description="Path to a local training config JSON file")
+    train_config: Optional[dict] = Field(None, description="Inline training config (trigger_word, model, etc.)")
+    photos: Optional[list[TrainPhotoItem]] = Field(None, description="Base64-encoded training photos (network mode)")
+    character_id: Optional[str] = Field(None, description="Character ID for organizing output")
 
 
 class TrainResponse(BaseModel):
@@ -1255,11 +1273,59 @@ class TrainResponse(BaseModel):
 
     status: str
     message: str
+    output_dir: Optional[str] = None
 
 
 # Training state
 _training: bool = False
 _train_process: Any = None
+_train_error: Optional[str] = None
+_train_output_dir: Optional[str] = None
+
+
+def _materialize_network_training(req: TrainRequest) -> str:
+    """Write base64 photos to disk and generate a mflux training config file.
+
+    Returns the path to the generated config JSON.
+    """
+    char_id = req.character_id or "unknown"
+    train_dir = os.path.join(tempfile.gettempdir(), "openzigs-training", char_id)
+    photos_dir = os.path.join(train_dir, "photos")
+    os.makedirs(photos_dir, exist_ok=True)
+
+    # Write each photo to disk
+    examples = []
+    for i, photo in enumerate(req.photos or []):
+        ext = os.path.splitext(photo.filename)[1] or ".jpg"
+        safe_name = f"{i:04d}{ext}"
+        photo_path = os.path.join(photos_dir, safe_name)
+        img_bytes = base64.b64decode(photo.image_base64, validate=True)
+        with open(photo_path, "wb") as f:
+            f.write(img_bytes)
+        examples.append({"image": photo_path, "prompt": photo.prompt})
+        log.info(f"[train] Wrote photo {safe_name} ({len(img_bytes)} bytes)")
+
+    # Build mflux training config
+    cfg = req.train_config or {}
+    lora_output = os.path.join(train_dir, "lora")
+    os.makedirs(lora_output, exist_ok=True)
+
+    config = {
+        "model": cfg.get("model", "dev"),
+        "output_dir": lora_output,
+        "trigger_word": cfg.get("trigger_word", "TOK"),
+        "steps": cfg.get("steps", 1000),
+        "learning_rate": cfg.get("learning_rate", 1e-4),
+        "lora_rank": cfg.get("lora_rank", 4),
+        "examples": examples,
+    }
+
+    config_path = os.path.join(train_dir, "train-config.json")
+    with open(config_path, "w") as f:
+        json.dump(config, f, indent=2)
+
+    log.info(f"[train] Materialized {len(examples)} photos + config at {config_path}")
+    return config_path
 
 
 @app.post("/train", response_model=TrainResponse, dependencies=[Depends(verify_token)])
@@ -1268,18 +1334,37 @@ async def train_lora(req: TrainRequest, background_tasks: BackgroundTasks):
 
     Fires off the training subprocess in the background.
     Poll GET /train-status for progress.
+
+    Two modes:
+    - Local: provide `train_config_path` (path to JSON on this machine)
+    - Network: provide `train_config` + `photos` (inline config + base64 images)
     """
-    global _training
+    global _training, _train_error, _train_output_dir
 
     if _training:
         raise HTTPException(status_code=409, detail="A training job is already in progress")
 
-    if not os.path.isfile(req.train_config_path):
-        raise HTTPException(status_code=400, detail=f"Config file not found: {req.train_config_path}")
+    # Determine config path
+    if req.train_config_path:
+        # Local mode — config file on this machine
+        if not os.path.isfile(req.train_config_path):
+            raise HTTPException(status_code=400, detail=f"Config file not found: {req.train_config_path}")
+        config_path = req.train_config_path
+    elif req.train_config and req.photos:
+        # Network mode — materialize photos + config
+        try:
+            config_path = _materialize_network_training(req)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Failed to materialize training data: {e}")
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail="Provide either 'train_config_path' (local) or 'train_config' + 'photos' (network)",
+        )
 
     # Validate config JSON
     try:
-        with open(req.train_config_path, "r") as f:
+        with open(config_path, "r") as f:
             config = json.load(f)
         if "examples" not in config:
             raise HTTPException(status_code=400, detail="Training config must contain 'examples' array")
@@ -1287,30 +1372,60 @@ async def train_lora(req: TrainRequest, background_tasks: BackgroundTasks):
         raise HTTPException(status_code=400, detail=f"Invalid JSON in config: {e}")
 
     _training = True
-    background_tasks.add_task(_bg_train, req.train_config_path)
+    _train_error = None
+    _train_output_dir = config.get("output_dir")
+    background_tasks.add_task(_bg_train, config_path)
 
-    log.info(f"[train] Started LoRA training with config: {req.train_config_path}")
-    return TrainResponse(status="accepted", message="Training started in background")
+    log.info(f"[train] Started LoRA training with config: {config_path}")
+    return TrainResponse(
+        status="accepted",
+        message="Training started in background",
+        output_dir=_train_output_dir,
+    )
 
 
 @app.get("/train-status")
 async def train_status():
     """Check the status of the current training job."""
+    # Check if training produced output files
+    lora_path = None
+    if _train_output_dir and not _training:
+        lora_path = _find_trained_lora(_train_output_dir)
+
     return {
         "training": _training,
         "process_alive": _train_process is not None and _train_process.poll() is None if _train_process else False,
+        "error": _train_error,
+        "output_dir": _train_output_dir,
+        "lora_path": lora_path,
     }
+
+
+def _find_trained_lora(dir_path: str) -> Optional[str]:
+    """Find a trained .safetensors LoRA file in the output directory."""
+    try:
+        for root, _dirs, files in os.walk(dir_path):
+            for f in files:
+                if f.endswith(".safetensors"):
+                    return os.path.join(root, f)
+        for root, _dirs, files in os.walk(dir_path):
+            for f in files:
+                if f.endswith(".zip") and "checkpoint" in f:
+                    return os.path.join(root, f)
+    except Exception:
+        pass
+    return None
 
 
 def _bg_train(config_path: str) -> None:
     """Background task: run mflux-train subprocess."""
     import subprocess
 
-    global _training, _train_process
+    global _training, _train_process, _train_error
     try:
-        log.info(f"[train] Spawning mflux-train --train-config {config_path}")
+        log.info(f"[train] Spawning mflux-train --config {config_path}")
         _train_process = subprocess.Popen(
-            ["mflux-train", "--train-config", config_path],
+            ["mflux-train", "--config", config_path],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
         )
@@ -1318,14 +1433,17 @@ def _bg_train(config_path: str) -> None:
         rc = _train_process.returncode
 
         if rc == 0:
-            log.info(f"[train] Training completed successfully")
+            log.info("[train] Training completed successfully")
             if stdout:
                 log.info(f"[train] stdout: {stdout.decode()[-500:]}")
         else:
+            err_msg = stderr.decode()[-500:] if stderr else f"exit code {rc}"
+            _train_error = err_msg
             log.error(f"[train] Training failed with exit code {rc}")
             if stderr:
-                log.error(f"[train] stderr: {stderr.decode()[-500:]}")
+                log.error(f"[train] stderr: {err_msg}")
     except Exception as e:
+        _train_error = str(e)
         log.error(f"[train] Training error: {e}")
     finally:
         _training = False

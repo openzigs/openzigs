@@ -8,7 +8,6 @@ import multer from "multer";
 import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
-import { spawn } from "node:child_process";
 import { logger } from "../logging/logger.js";
 import type { CharacterRepository, CharacterCreate, CharacterUpdate } from "../characters/character-repository.js";
 
@@ -292,31 +291,50 @@ export function createCharacterRouter({ characterRepo }: CharacterRouterDeps): R
         return;
       }
 
+      // Resolve the image-gen sidecar URL from config
+      const sidecarUrl = await getImageGenSidecarUrl();
+      if (!sidecarUrl) {
+        res.status(503).json({
+          error: "Image generation sidecar not configured. Set imageGen.networkNodeUrl in config or IMAGE_GEN_NETWORK_URL env var.",
+        });
+        return;
+      }
+
       // Parse optional training overrides from request body
       const overrides = req.body as Record<string, unknown>;
       const steps = typeof overrides.steps === "number" ? overrides.steps : 1000;
       const learningRate = typeof overrides.learningRate === "number" ? overrides.learningRate : 1e-4;
       const loraRank = typeof overrides.loraRank === "number" ? overrides.loraRank : 4;
 
-      // Build the MFLUX DreamBooth training config
-      const loraOutputDir = path.join(getCharactersDir(), character.id, "lora");
-      await fs.mkdir(loraOutputDir, { recursive: true });
+      // Read photos as base64 for sending to remote sidecar
+      const photos: Array<{ image_base64: string; filename: string; prompt: string }> = [];
+      for (const photoPath of character.referencePhotos) {
+        try {
+          const data = await fs.readFile(photoPath);
+          photos.push({
+            image_base64: data.toString("base64"),
+            filename: path.basename(photoPath),
+            prompt: `A photo of ${character.triggerWord}`,
+          });
+        } catch (err) {
+          logger.warn(`[Characters] Skipping unreadable photo: ${photoPath}`);
+        }
+      }
+
+      if (photos.length < 5) {
+        res.status(400).json({
+          error: `Only ${photos.length} photos readable on disk. Need at least 5.`,
+        });
+        return;
+      }
 
       const trainConfig = {
         model: "dev",
-        output_dir: loraOutputDir,
         trigger_word: character.triggerWord,
         steps,
         learning_rate: learningRate,
         lora_rank: loraRank,
-        examples: character.referencePhotos.map((p) => ({
-          image_path: p,
-          prompt: `A photo of ${character.triggerWord}`,
-        })),
       };
-
-      const configPath = path.join(getCharactersDir(), character.id, "train-config.json");
-      await fs.writeFile(configPath, JSON.stringify(trainConfig, null, 2));
 
       // Update status to training
       characterRepo.update(character.id, {
@@ -325,14 +343,14 @@ export function createCharacterRouter({ characterRepo }: CharacterRouterDeps): R
         errorMessage: null,
       });
 
-      // Spawn training process in background
-      startTrainingProcess(character.id, configPath, loraOutputDir, characterRepo);
+      // POST to the image-gen sidecar's /train endpoint
+      startRemoteTraining(character.id, sidecarUrl, trainConfig, photos, characterRepo);
 
-      logger.info(`[Characters] Started LoRA training for '${character.name}' (${character.id})`);
+      logger.info(`[Characters] Started LoRA training for '${character.name}' (${character.id}) via ${sidecarUrl}`);
       res.json({
         ok: true,
         message: `Training started for '${character.name}'`,
-        configPath,
+        sidecarUrl,
         steps,
         learningRate,
         loraRank,
@@ -347,92 +365,172 @@ export function createCharacterRouter({ characterRepo }: CharacterRouterDeps): R
   return router;
 }
 
-// ── Training Process Manager ────────────────────────────────
+// ── Image-Gen Sidecar Config ────────────────────────────────
 
-function startTrainingProcess(
+async function getImageGenSidecarUrl(): Promise<string | null> {
+  // Check env vars first
+  const envUrl = process.env.IMAGE_GEN_NETWORK_URL || process.env.IMAGE_GEN_SIDECAR_URL;
+  if (envUrl) return envUrl.replace(/\/$/, "");
+
+  // Check user config
+  try {
+    const configPath = process.env.OPENZIGS_CONFIG_PATH
+      ?? path.join(os.homedir(), ".openzigs", "config.json");
+    const raw = await fs.readFile(configPath, "utf-8");
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const ig = parsed.imageGen as Record<string, unknown> | undefined;
+    if (ig?.networkNodeUrl && typeof ig.networkNodeUrl === "string") {
+      return ig.networkNodeUrl.replace(/\/$/, "");
+    }
+  } catch {
+    // Config unavailable
+  }
+
+  // Fallback to default local sidecar
+  return "http://127.0.0.1:5005";
+}
+
+async function getImageGenToken(): Promise<string> {
+  const envToken = process.env.IMAGE_GEN_NETWORK_TOKEN;
+  if (envToken) return envToken;
+
+  try {
+    const configPath = process.env.OPENZIGS_CONFIG_PATH
+      ?? path.join(os.homedir(), ".openzigs", "config.json");
+    const raw = await fs.readFile(configPath, "utf-8");
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const ig = parsed.imageGen as Record<string, unknown> | undefined;
+    if (ig?.networkNodeToken && typeof ig.networkNodeToken === "string") {
+      return ig.networkNodeToken;
+    }
+  } catch {
+    // Config unavailable
+  }
+  return "";
+}
+
+// ── Remote Training Manager ─────────────────────────────────
+
+async function startRemoteTraining(
   characterId: string,
-  configPath: string,
-  loraOutputDir: string,
+  sidecarUrl: string,
+  trainConfig: Record<string, unknown>,
+  photos: Array<{ image_base64: string; filename: string; prompt: string }>,
+  characterRepo: CharacterRepository,
+): Promise<void> {
+  const token = await getImageGenToken();
+
+  try {
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+
+    const body = JSON.stringify({
+      train_config: trainConfig,
+      photos,
+      character_id: characterId,
+    });
+
+    logger.info(`[Characters] Sending ${photos.length} photos to sidecar for training (${(body.length / 1024 / 1024).toFixed(1)} MB)`);
+
+    const response = await fetch(`${sidecarUrl}/train`, {
+      method: "POST",
+      headers,
+      body,
+    });
+
+    if (!response.ok) {
+      const errText = await response.text();
+      throw new Error(`Sidecar returned ${response.status}: ${errText}`);
+    }
+
+    const result = await response.json() as { status: string; message: string; output_dir?: string };
+    logger.info(`[Characters] Sidecar accepted training: ${result.message}`);
+
+    // Start polling for completion
+    pollTrainingStatus(characterId, sidecarUrl, token, result.output_dir ?? null, characterRepo);
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    characterRepo.update(characterId, {
+      status: "failed",
+      errorMessage: `Failed to start remote training: ${msg}`,
+    });
+    logger.error(`[Characters] Remote training request failed for ${characterId}: ${msg}`);
+  }
+}
+
+function pollTrainingStatus(
+  characterId: string,
+  sidecarUrl: string,
+  token: string,
+  _outputDir: string | null,
   characterRepo: CharacterRepository,
 ): void {
-  logger.info(`[Characters] Spawning mflux-train for character ${characterId}`);
+  const pollIntervalMs = 15_000; // 15 seconds
+  const maxPollTimeMs = 4 * 60 * 60 * 1000; // 4 hours max
+  const startTime = Date.now();
 
-  const proc = spawn("mflux-train", ["--train-config", configPath], {
-    stdio: ["ignore", "pipe", "pipe"],
-    detached: false,
-  });
-
-  let stderr = "";
-
-  proc.stdout?.on("data", (data: Buffer) => {
-    const line = data.toString().trim();
-    if (line) {
-      logger.info(`[mflux-train:${characterId}] ${line}`);
+  const poll = async () => {
+    if (Date.now() - startTime > maxPollTimeMs) {
+      characterRepo.update(characterId, {
+        status: "failed",
+        errorMessage: "Training timed out after 4 hours",
+      });
+      logger.error(`[Characters] Training timed out for ${characterId}`);
+      return;
     }
-  });
 
-  proc.stderr?.on("data", (data: Buffer) => {
-    stderr += data.toString();
-    const line = data.toString().trim();
-    if (line) {
-      logger.warn(`[mflux-train:${characterId}] stderr: ${line}`);
-    }
-  });
+    try {
+      const headers: Record<string, string> = {};
+      if (token) headers["Authorization"] = `Bearer ${token}`;
 
-  proc.on("close", async (code) => {
-    if (code === 0) {
-      // Find the trained LoRA adapter file
-      const loraPath = await findTrainedLora(loraOutputDir);
-      if (loraPath) {
+      const response = await fetch(`${sidecarUrl}/train-status`, { headers });
+      if (!response.ok) {
+        logger.warn(`[Characters] Train status poll failed: HTTP ${response.status}`);
+        setTimeout(poll, pollIntervalMs);
+        return;
+      }
+
+      const status = await response.json() as {
+        training: boolean;
+        error?: string;
+        lora_path?: string;
+        output_dir?: string;
+      };
+
+      if (status.training) {
+        // Still training — poll again
+        setTimeout(poll, pollIntervalMs);
+        return;
+      }
+
+      // Training finished
+      if (status.error) {
+        characterRepo.update(characterId, {
+          status: "failed",
+          errorMessage: status.error,
+        });
+        logger.error(`[Characters] Remote training failed for ${characterId}: ${status.error}`);
+      } else if (status.lora_path) {
         characterRepo.update(characterId, {
           status: "ready",
-          trainedLoraPath: loraPath,
+          trainedLoraPath: status.lora_path,
           errorMessage: null,
         });
-        logger.info(`[Characters] Training complete for ${characterId}: ${loraPath}`);
+        logger.info(`[Characters] Remote training complete for ${characterId}: ${status.lora_path}`);
       } else {
         characterRepo.update(characterId, {
           status: "failed",
           errorMessage: "Training completed but no LoRA adapter found in output directory",
         });
-        logger.error(`[Characters] Training completed but no LoRA found for ${characterId}`);
+        logger.error(`[Characters] Remote training completed but no LoRA found for ${characterId}`);
       }
-    } else {
-      const errorMsg = stderr.slice(-500) || `Process exited with code ${code}`;
-      characterRepo.update(characterId, {
-        status: "failed",
-        errorMessage: errorMsg,
-      });
-      logger.error(`[Characters] Training failed for ${characterId}: exit code ${code}`);
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      logger.warn(`[Characters] Train status poll error for ${characterId}: ${msg}`);
+      // Keep polling on transient errors
+      setTimeout(poll, pollIntervalMs);
     }
-  });
+  };
 
-  proc.on("error", (error) => {
-    characterRepo.update(characterId, {
-      status: "failed",
-      errorMessage: `Failed to spawn training process: ${error.message}`,
-    });
-    logger.error(`[Characters] Training process error for ${characterId}: ${error.message}`);
-  });
-}
-
-async function findTrainedLora(dir: string): Promise<string | null> {
-  try {
-    const entries = await fs.readdir(dir, { recursive: true }) as string[];
-    // Look for .safetensors files (MFLUX LoRA output format)
-    for (const entry of entries) {
-      if (entry.endsWith(".safetensors")) {
-        return path.join(dir, entry);
-      }
-    }
-    // Also check for checkpoint zips
-    for (const entry of entries) {
-      if (entry.endsWith(".zip") && entry.includes("checkpoint")) {
-        return path.join(dir, entry);
-      }
-    }
-    return null;
-  } catch {
-    return null;
-  }
+  setTimeout(poll, pollIntervalMs);
 }

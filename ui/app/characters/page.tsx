@@ -2,7 +2,7 @@
 
 import { useState, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { fetchJson } from "@/lib/api";
+import { fetchJson, buildUrl } from "@/lib/api";
 import { buildMediaUrl } from "@/lib/api";
 import { SectionCard } from "@/components/section-card";
 import { ToastContainer, showToast } from "@/components/toast";
@@ -70,7 +70,8 @@ export default function CharactersPage() {
   const [createScale, setCreateScale] = useState(0.8);
   const [selectedChar, setSelectedChar] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<CharacterProfile | null>(null);
-  const [uploadTarget, setUploadTarget] = useState<string | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
+  const [dragFileCount, setDragFileCount] = useState(0);
 
   // Training config
   const [trainSteps, setTrainSteps] = useState(1000);
@@ -125,10 +126,9 @@ export default function CharactersPage() {
         formData.append("photos", files[i]);
       }
       const token = process.env.NEXT_PUBLIC_OPENZIGS_TOKEN ?? "";
-      const base = process.env.NEXT_PUBLIC_OPENZIGS_API_BASE ?? "";
       const headers: Record<string, string> = {};
       if (token) headers["Authorization"] = `Bearer ${token}`;
-      const res = await fetch(`${base}/api/characters/${id}/photos`, {
+      const res = await fetch(buildUrl(`/api/characters/${id}/photos`), {
         method: "POST",
         headers,
         body: formData,
@@ -139,7 +139,6 @@ export default function CharactersPage() {
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["characters"] });
       showToast(`Uploaded ${data.uploaded} photo(s)`, "success");
-      setUploadTarget(null);
     },
     onError: (err) => showToast(err.message, "error"),
   });
@@ -182,9 +181,41 @@ export default function CharactersPage() {
   }
 
   function handleFileUpload(e: React.ChangeEvent<HTMLInputElement>) {
-    if (!e.target.files || !uploadTarget) return;
-    uploadMutation.mutate({ id: uploadTarget, files: e.target.files });
+    if (!e.target.files || !selected) return;
+    uploadMutation.mutate({ id: selected.id, files: e.target.files });
     e.target.value = "";
+  }
+
+  function handleDragOver(e: React.DragEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+  }
+
+  function handleDragEnter(e: React.DragEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(true);
+    setDragFileCount(e.dataTransfer.items.length);
+  }
+
+  function handleDragLeave(e: React.DragEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+      setIsDragging(false);
+      setDragFileCount(0);
+    }
+  }
+
+  function handleDrop(e: React.DragEvent, id: string) {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+    setDragFileCount(0);
+    const files = e.dataTransfer.files;
+    if (files.length > 0) {
+      uploadMutation.mutate({ id, files });
+    }
   }
 
   // ── Render ────────────────────────────────────────────
@@ -386,40 +417,64 @@ export default function CharactersPage() {
               {/* Reference Photos */}
               <SectionCard title={`Reference Photos (${selected.referencePhotos.length})`}>
                 <div className="space-y-4">
-                  <div className="grid grid-cols-3 gap-3 sm:grid-cols-4 md:grid-cols-5">
-                    {selected.referencePhotos.map((photo, i) => (
-                      <div
-                        key={i}
-                        className="group relative aspect-square overflow-hidden rounded-lg border border-border bg-muted"
-                      >
-                        <img
-                          src={photoUrl(selected.id, photo)}
-                          alt={`Reference ${i + 1}`}
-                          className="h-full w-full object-cover"
-                        />
-                      </div>
-                    ))}
-                    {/* Upload button */}
-                    <button
-                      onClick={() => {
-                        setUploadTarget(selected.id);
-                        fileInputRef.current?.click();
-                      }}
-                      className="flex aspect-square items-center justify-center rounded-lg border-2 border-dashed border-border hover:border-primary/50 hover:bg-accent/50"
-                    >
-                      <div className="text-center">
-                        <Upload className="mx-auto h-6 w-6 text-muted-foreground" />
-                        <span className="mt-1 block text-[10px] text-muted-foreground">Add Photos</span>
-                      </div>
-                    </button>
-                  </div>
-                  {uploadMutation.isPending && (
-                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                      <Loader2 className="h-4 w-4 animate-spin" /> Uploading...
+                  {selected.referencePhotos.length > 0 && (
+                    <div className="grid grid-cols-3 gap-3 sm:grid-cols-4 md:grid-cols-5">
+                      {selected.referencePhotos.map((photo, i) => (
+                        <div
+                          key={i}
+                          className="group relative aspect-square overflow-hidden rounded-lg border border-border bg-muted"
+                        >
+                          <img
+                            src={photoUrl(selected.id, photo)}
+                            alt={`Reference ${i + 1}`}
+                            className="h-full w-full object-cover"
+                          />
+                        </div>
+                      ))}
                     </div>
                   )}
+                  {/* Drag-and-drop upload zone */}
+                  <div
+                    onDragOver={handleDragOver}
+                    onDragEnter={handleDragEnter}
+                    onDragLeave={handleDragLeave}
+                    onDrop={(e) => handleDrop(e, selected.id)}
+                    onClick={() => fileInputRef.current?.click()}
+                    role="button"
+                    tabIndex={0}
+                    aria-label="Upload reference photos"
+                    onKeyDown={(e) => e.key === "Enter" && fileInputRef.current?.click()}
+                    className={`flex cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed p-8 transition-colors ${
+                      isDragging
+                        ? "border-primary bg-primary/10"
+                        : "border-border hover:border-primary/50 hover:bg-accent/50"
+                    }`}
+                  >
+                    {uploadMutation.isPending ? (
+                      <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                        <Loader2 className="h-5 w-5 animate-spin" /> Uploading...
+                      </div>
+                    ) : isDragging ? (
+                      <div className="text-center">
+                        <Upload className="mx-auto h-8 w-8 text-primary" />
+                        <p className="mt-2 text-sm font-medium text-primary">
+                          {dragFileCount > 0
+                            ? `Drop ${dragFileCount} photo${dragFileCount !== 1 ? "s" : ""}`
+                            : "Drop photos here"}
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="text-center">
+                        <Upload className="mx-auto h-8 w-8 text-muted-foreground" />
+                        <p className="mt-2 text-sm font-medium">Drop photos here or click to browse</p>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          JPEG, PNG, WebP, HEIC · up to 20 files · 20 MB each
+                        </p>
+                      </div>
+                    )}
+                  </div>
                   <p className="text-xs text-muted-foreground">
-                    Upload 10-20 reference photos of the character from various angles and lighting conditions.
+                    Upload 10–20 reference photos from various angles and lighting conditions.
                     Minimum 5 photos required for training.
                   </p>
                 </div>
@@ -512,7 +567,7 @@ export default function CharactersPage() {
         ref={fileInputRef}
         type="file"
         multiple
-        accept="image/jpeg,image/png,image/webp,image/heic"
+        accept="image/jpeg,image/png,image/webp,image/heic,image/heif"
         onChange={handleFileUpload}
         className="hidden"
       />
