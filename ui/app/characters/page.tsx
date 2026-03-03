@@ -1,0 +1,533 @@
+"use client";
+
+import { useState, useRef } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { fetchJson } from "@/lib/api";
+import { buildMediaUrl } from "@/lib/api";
+import { SectionCard } from "@/components/section-card";
+import { ToastContainer, showToast } from "@/components/toast";
+import { ConfirmDialog } from "@/components/confirm-dialog";
+import {
+  User,
+  Plus,
+  Trash2,
+  Upload,
+  Loader2,
+  Zap,
+  CheckCircle,
+  AlertCircle,
+  Clock,
+} from "lucide-react";
+
+// ── Types ───────────────────────────────────────────────────
+
+interface CharacterProfile {
+  id: string;
+  name: string;
+  triggerWord: string;
+  referencePhotos: string[];
+  trainedLoraPath: string | null;
+  loraScale: number;
+  trainingConfig: Record<string, unknown> | null;
+  status: "pending" | "training" | "ready" | "failed";
+  errorMessage: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// ── Helpers ─────────────────────────────────────────────────
+
+function statusBadge(status: CharacterProfile["status"]) {
+  const map = {
+    pending: { icon: <Clock className="h-3 w-3" />, label: "Pending", classes: "bg-yellow-500/10 text-yellow-600 dark:text-yellow-400" },
+    training: { icon: <Loader2 className="h-3 w-3 animate-spin" />, label: "Training", classes: "bg-blue-500/10 text-blue-600 dark:text-blue-400" },
+    ready: { icon: <CheckCircle className="h-3 w-3" />, label: "Ready", classes: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" },
+    failed: { icon: <AlertCircle className="h-3 w-3" />, label: "Failed", classes: "bg-red-500/10 text-red-600 dark:text-red-400" },
+  };
+  const b = map[status];
+  return (
+    <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold ${b.classes}`}>
+      {b.icon} {b.label}
+    </span>
+  );
+}
+
+function photoUrl(characterId: string, photoPath: string): string {
+  const filename = photoPath.split("/").pop() ?? "";
+  return buildMediaUrl(`/api/characters/${characterId}/photos/${encodeURIComponent(filename)}`);
+}
+
+// ── Page ────────────────────────────────────────────────────
+
+export default function CharactersPage() {
+  const queryClient = useQueryClient();
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // ── State ─────────────────────────────────────────────
+  const [showCreate, setShowCreate] = useState(false);
+  const [createName, setCreateName] = useState("");
+  const [createTrigger, setCreateTrigger] = useState("");
+  const [createScale, setCreateScale] = useState(0.8);
+  const [selectedChar, setSelectedChar] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<CharacterProfile | null>(null);
+  const [uploadTarget, setUploadTarget] = useState<string | null>(null);
+
+  // Training config
+  const [trainSteps, setTrainSteps] = useState(1000);
+  const [trainLR, setTrainLR] = useState(0.0001);
+  const [trainRank, setTrainRank] = useState(4);
+
+  // ── Queries ───────────────────────────────────────────
+  const charactersQuery = useQuery({
+    queryKey: ["characters"],
+    queryFn: () => fetchJson<{ characters: CharacterProfile[] }>("/api/characters"),
+    refetchInterval: 5000,
+  });
+
+  const characters = charactersQuery.data?.characters ?? [];
+  const selected = characters.find((c) => c.id === selectedChar) ?? null;
+
+  // ── Mutations ─────────────────────────────────────────
+  const createMutation = useMutation({
+    mutationFn: (data: { name: string; triggerWord: string; loraScale: number }) =>
+      fetchJson<CharacterProfile>("/api/characters", {
+        method: "POST",
+        body: JSON.stringify(data),
+      }),
+    onSuccess: (char) => {
+      queryClient.invalidateQueries({ queryKey: ["characters"] });
+      showToast(`Character '${char.name}' created`, "success");
+      setShowCreate(false);
+      setCreateName("");
+      setCreateTrigger("");
+      setCreateScale(0.8);
+      setSelectedChar(char.id);
+    },
+    onError: (err) => showToast(err.message, "error"),
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: (id: string) =>
+      fetchJson<{ ok: boolean }>(`/api/characters/${id}`, { method: "DELETE" }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["characters"] });
+      showToast("Character deleted", "success");
+      if (selectedChar === deleteTarget?.id) setSelectedChar(null);
+      setDeleteTarget(null);
+    },
+    onError: (err) => showToast(err.message, "error"),
+  });
+
+  const uploadMutation = useMutation({
+    mutationFn: async ({ id, files }: { id: string; files: FileList }) => {
+      const formData = new FormData();
+      for (let i = 0; i < files.length; i++) {
+        formData.append("photos", files[i]);
+      }
+      const token = process.env.NEXT_PUBLIC_OPENZIGS_TOKEN ?? "";
+      const base = process.env.NEXT_PUBLIC_OPENZIGS_API_BASE ?? "";
+      const headers: Record<string, string> = {};
+      if (token) headers["Authorization"] = `Bearer ${token}`;
+      const res = await fetch(`${base}/api/characters/${id}/photos`, {
+        method: "POST",
+        headers,
+        body: formData,
+      });
+      if (!res.ok) throw new Error(await res.text());
+      return res.json() as Promise<{ uploaded: number; totalPhotos: number }>;
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["characters"] });
+      showToast(`Uploaded ${data.uploaded} photo(s)`, "success");
+      setUploadTarget(null);
+    },
+    onError: (err) => showToast(err.message, "error"),
+  });
+
+  const trainMutation = useMutation({
+    mutationFn: (data: { id: string; steps: number; learningRate: number; loraRank: number }) =>
+      fetchJson<{ ok: boolean; message: string }>(`/api/characters/${data.id}/train`, {
+        method: "POST",
+        body: JSON.stringify({ steps: data.steps, learningRate: data.learningRate, loraRank: data.loraRank }),
+      }),
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["characters"] });
+      showToast(data.message, "success");
+    },
+    onError: (err) => showToast(err.message, "error"),
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: ({ id, ...data }: { id: string; loraScale?: number; name?: string; triggerWord?: string }) =>
+      fetchJson<CharacterProfile>(`/api/characters/${id}`, {
+        method: "PUT",
+        body: JSON.stringify(data),
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["characters"] });
+      showToast("Character updated", "success");
+    },
+    onError: (err) => showToast(err.message, "error"),
+  });
+
+  // ── Handlers ──────────────────────────────────────────
+  function handleCreate(e: React.FormEvent) {
+    e.preventDefault();
+    if (!createName.trim() || !createTrigger.trim()) return;
+    createMutation.mutate({
+      name: createName.trim(),
+      triggerWord: createTrigger.trim(),
+      loraScale: createScale,
+    });
+  }
+
+  function handleFileUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    if (!e.target.files || !uploadTarget) return;
+    uploadMutation.mutate({ id: uploadTarget, files: e.target.files });
+    e.target.value = "";
+  }
+
+  // ── Render ────────────────────────────────────────────
+  return (
+    <main className="container mx-auto max-w-7xl space-y-6 p-6">
+      <ToastContainer />
+
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight">Character Lab</h1>
+          <p className="text-sm text-muted-foreground">
+            Create characters with LoRA training for consistent identity across generations
+          </p>
+        </div>
+        <button
+          onClick={() => setShowCreate(true)}
+          className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
+        >
+          <Plus className="h-4 w-4" /> New Character
+        </button>
+      </div>
+
+      {/* Create Dialog */}
+      {showCreate && (
+        <SectionCard title="Create Character" className="border-primary/20">
+          <form onSubmit={handleCreate} className="space-y-4">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div>
+                <label className="text-sm font-medium">Character Name</label>
+                <input
+                  type="text"
+                  value={createName}
+                  onChange={(e) => setCreateName(e.target.value)}
+                  placeholder="e.g. Alice"
+                  className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+                  required
+                />
+              </div>
+              <div>
+                <label className="text-sm font-medium">Trigger Word</label>
+                <input
+                  type="text"
+                  value={createTrigger}
+                  onChange={(e) => setCreateTrigger(e.target.value)}
+                  placeholder="e.g. ALICE_TOK"
+                  className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+                  required
+                />
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Unique token to trigger character identity in prompts
+                </p>
+              </div>
+            </div>
+            <div>
+              <label className="text-sm font-medium">LoRA Scale: {createScale}</label>
+              <input
+                type="range"
+                min={0.1}
+                max={1.5}
+                step={0.05}
+                value={createScale}
+                onChange={(e) => setCreateScale(parseFloat(e.target.value))}
+                className="mt-1 w-full"
+              />
+            </div>
+            <div className="flex gap-2">
+              <button
+                type="submit"
+                disabled={createMutation.isPending}
+                className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+              >
+                {createMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : "Create"}
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowCreate(false)}
+                className="rounded-md border border-border px-4 py-2 text-sm hover:bg-accent"
+              >
+                Cancel
+              </button>
+            </div>
+          </form>
+        </SectionCard>
+      )}
+
+      {/* Characters Grid */}
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+        {/* Character List */}
+        <div className="space-y-3 lg:col-span-1">
+          <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">
+            Characters ({characters.length})
+          </h2>
+          {charactersQuery.isPending && (
+            <div className="flex items-center justify-center py-12">
+              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+            </div>
+          )}
+          {characters.length === 0 && !charactersQuery.isPending && (
+            <div className="rounded-lg border border-dashed border-border p-8 text-center text-sm text-muted-foreground">
+              <User className="mx-auto h-8 w-8 mb-2 opacity-50" />
+              No characters yet. Click &quot;New Character&quot; to get started.
+            </div>
+          )}
+          {characters.map((char) => (
+            <button
+              key={char.id}
+              onClick={() => setSelectedChar(char.id)}
+              className={`w-full rounded-lg border p-4 text-left transition-colors ${
+                selectedChar === char.id
+                  ? "border-primary bg-primary/5"
+                  : "border-border hover:border-primary/50 hover:bg-accent/50"
+              }`}
+            >
+              <div className="flex items-start justify-between">
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <User className="h-4 w-4 shrink-0 text-muted-foreground" />
+                    <span className="truncate font-medium">{char.name}</span>
+                  </div>
+                  <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
+                    <code className="rounded bg-muted px-1 py-0.5 font-mono text-[10px]">{char.triggerWord}</code>
+                    {statusBadge(char.status)}
+                  </div>
+                  <div className="mt-1 text-xs text-muted-foreground">
+                    {char.referencePhotos.length} photo{char.referencePhotos.length !== 1 ? "s" : ""}
+                    {" · LoRA "}{char.loraScale}
+                  </div>
+                </div>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setDeleteTarget(char);
+                  }}
+                  className="shrink-0 rounded p-1 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            </button>
+          ))}
+        </div>
+
+        {/* Detail Panel */}
+        <div className="lg:col-span-2">
+          {!selected && (
+            <div className="flex h-full items-center justify-center rounded-lg border border-dashed border-border p-12 text-sm text-muted-foreground">
+              Select a character to view details
+            </div>
+          )}
+          {selected && (
+            <div className="space-y-6">
+              {/* Character Header */}
+              <SectionCard title={selected.name}>
+                <div className="space-y-4">
+                  <div className="grid grid-cols-2 gap-4 text-sm">
+                    <div>
+                      <span className="text-muted-foreground">Trigger Word:</span>{" "}
+                      <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">{selected.triggerWord}</code>
+                    </div>
+                    <div>
+                      <span className="text-muted-foreground">Status:</span> {statusBadge(selected.status)}
+                    </div>
+                    <div>
+                      <span className="text-muted-foreground">LoRA Scale:</span>{" "}
+                      <input
+                        type="number"
+                        min={0.1}
+                        max={1.5}
+                        step={0.05}
+                        value={selected.loraScale}
+                        onChange={(e) =>
+                          updateMutation.mutate({ id: selected.id, loraScale: parseFloat(e.target.value) })
+                        }
+                        className="w-20 rounded border border-border bg-background px-2 py-0.5 text-xs"
+                      />
+                    </div>
+                    <div>
+                      <span className="text-muted-foreground">Photos:</span> {selected.referencePhotos.length}
+                    </div>
+                    {selected.trainedLoraPath && (
+                      <div className="col-span-2">
+                        <span className="text-muted-foreground">LoRA Path:</span>{" "}
+                        <code className="break-all rounded bg-muted px-1.5 py-0.5 font-mono text-[10px]">
+                          {selected.trainedLoraPath}
+                        </code>
+                      </div>
+                    )}
+                    {selected.errorMessage && (
+                      <div className="col-span-2 rounded-md bg-destructive/10 p-3 text-xs text-destructive">
+                        <AlertCircle className="mr-1 inline h-3 w-3" />
+                        {selected.errorMessage}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </SectionCard>
+
+              {/* Reference Photos */}
+              <SectionCard title={`Reference Photos (${selected.referencePhotos.length})`}>
+                <div className="space-y-4">
+                  <div className="grid grid-cols-3 gap-3 sm:grid-cols-4 md:grid-cols-5">
+                    {selected.referencePhotos.map((photo, i) => (
+                      <div
+                        key={i}
+                        className="group relative aspect-square overflow-hidden rounded-lg border border-border bg-muted"
+                      >
+                        <img
+                          src={photoUrl(selected.id, photo)}
+                          alt={`Reference ${i + 1}`}
+                          className="h-full w-full object-cover"
+                        />
+                      </div>
+                    ))}
+                    {/* Upload button */}
+                    <button
+                      onClick={() => {
+                        setUploadTarget(selected.id);
+                        fileInputRef.current?.click();
+                      }}
+                      className="flex aspect-square items-center justify-center rounded-lg border-2 border-dashed border-border hover:border-primary/50 hover:bg-accent/50"
+                    >
+                      <div className="text-center">
+                        <Upload className="mx-auto h-6 w-6 text-muted-foreground" />
+                        <span className="mt-1 block text-[10px] text-muted-foreground">Add Photos</span>
+                      </div>
+                    </button>
+                  </div>
+                  {uploadMutation.isPending && (
+                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                      <Loader2 className="h-4 w-4 animate-spin" /> Uploading...
+                    </div>
+                  )}
+                  <p className="text-xs text-muted-foreground">
+                    Upload 10-20 reference photos of the character from various angles and lighting conditions.
+                    Minimum 5 photos required for training.
+                  </p>
+                </div>
+              </SectionCard>
+
+              {/* Training Controls */}
+              <SectionCard title="LoRA Training">
+                <div className="space-y-4">
+                  <div className="grid grid-cols-3 gap-4">
+                    <div>
+                      <label className="text-xs font-medium text-muted-foreground">Training Steps</label>
+                      <input
+                        type="number"
+                        min={100}
+                        max={5000}
+                        step={100}
+                        value={trainSteps}
+                        onChange={(e) => setTrainSteps(parseInt(e.target.value))}
+                        className="mt-1 w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs font-medium text-muted-foreground">Learning Rate</label>
+                      <input
+                        type="number"
+                        min={0.00001}
+                        max={0.01}
+                        step={0.00001}
+                        value={trainLR}
+                        onChange={(e) => setTrainLR(parseFloat(e.target.value))}
+                        className="mt-1 w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs font-medium text-muted-foreground">LoRA Rank</label>
+                      <select
+                        value={trainRank}
+                        onChange={(e) => setTrainRank(parseInt(e.target.value))}
+                        className="mt-1 w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm"
+                      >
+                        <option value={4}>4 (default)</option>
+                        <option value={8}>8</option>
+                        <option value={16}>16</option>
+                        <option value={32}>32</option>
+                      </select>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() =>
+                      trainMutation.mutate({
+                        id: selected.id,
+                        steps: trainSteps,
+                        learningRate: trainLR,
+                        loraRank: trainRank,
+                      })
+                    }
+                    disabled={
+                      trainMutation.isPending ||
+                      selected.status === "training" ||
+                      selected.referencePhotos.length < 5
+                    }
+                    className="inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+                  >
+                    {trainMutation.isPending || selected.status === "training" ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Zap className="h-4 w-4" />
+                    )}
+                    {selected.status === "training" ? "Training in Progress..." : "Start Training"}
+                  </button>
+                  {selected.referencePhotos.length < 5 && (
+                    <p className="text-xs text-amber-600 dark:text-amber-400">
+                      ⚠ Need at least 5 reference photos ({selected.referencePhotos.length}/5 uploaded)
+                    </p>
+                  )}
+                  {selected.status === "ready" && (
+                    <p className="text-xs text-emerald-600 dark:text-emerald-400">
+                      ✓ LoRA adapter trained and ready. Use trigger word &quot;{selected.triggerWord}&quot; in your prompts.
+                    </p>
+                  )}
+                </div>
+              </SectionCard>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Hidden file input for photo uploads */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        multiple
+        accept="image/jpeg,image/png,image/webp,image/heic"
+        onChange={handleFileUpload}
+        className="hidden"
+      />
+
+      {/* Delete Confirmation */}
+      {deleteTarget && (
+        <ConfirmDialog
+          title="Delete Character"
+          message={`Delete "${deleteTarget.name}" and all associated photos and LoRA weights? This cannot be undone.`}
+          confirmLabel="Delete"
+          variant="danger"
+          onConfirm={() => deleteMutation.mutate(deleteTarget.id)}
+          onCancel={() => setDeleteTarget(null)}
+        />
+      )}
+    </main>
+  );
+}

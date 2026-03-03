@@ -5380,13 +5380,85 @@ Click **Create Asset** on the Gallery page to open the inline creation studio. F
 
 | Mode | Description | Key Controls |
 |---|---|---|
-| **Text → Image** | Generate an image from a text prompt | Width, Height, Steps, Guidance, Seed |
+| **Text → Image** | Generate an image from a text prompt | Width, Height, Steps, Guidance, Seed, Character (LoRA), ControlNet Strength |
 | **Image → Image** | Transform an uploaded image with a prompt | Source image upload, Strength (0–1), Steps, Guidance |
 | **Text → Video** | Generate a 4-second video clip from a text prompt | Frames (max 97), FPS, computed Duration display |
 | **Image → Video** | Animate an uploaded image with a motion prompt | Source image upload, Frames, FPS, Duration |
 | **Text → Music** | Generate music from a text description | Duration (10–300s), Inference Steps (8–27, default 20), Instrumental toggle, Lyrics textarea, Seed |
 
 All jobs are submitted to the queue via **Submit to Queue** and processed by the appropriate worker node.
+
+### Character Lab (LoRA Training & Identity Consistency)
+
+The Character Lab lets you create persistent character identities backed by LoRA (Low-Rank Adaptation) fine-tuning. Once trained, characters can be injected into any image generation to maintain consistent identity across shots.
+
+**Navigate to Studio → Characters** (or `/characters`).
+
+#### Creating a Character
+
+1. Click **+ New Character**
+2. Fill in:
+   - **Character Name** — A human-readable label (e.g., "Alice")
+   - **Trigger Word** — A unique token used in prompts to activate the character identity (e.g., `ALICE_TOK`). Use ALL_CAPS with `_TOK` suffix by convention.
+   - **LoRA Scale** — Controls how strongly the character identity is applied (0.1–1.5, default 0.8). Higher values = stronger likeness but may reduce prompt flexibility.
+3. Click **Create**
+
+#### Uploading Reference Photos
+
+Select a character from the list, then use the **Upload Photos** button in the detail panel. Requirements:
+
+- **Minimum 5 photos** required before training can begin
+- **Maximum 20 photos** per upload batch
+- **Maximum 20 MB** per photo
+- Accepted formats: JPEG, PNG, WebP
+- Use varied angles, lighting, and expressions for best results
+
+#### Training a LoRA
+
+Once you have at least 5 reference photos uploaded:
+
+1. Configure training parameters in the detail panel:
+   - **Training Steps** — Number of fine-tuning iterations (default: 1000). More steps = stronger identity but risk of overfitting.
+   - **Learning Rate** — Optimizer step size (default: 0.0001). Lower values train more carefully.
+   - **LoRA Rank** — Dimension of the LoRA adapter (default: 4). Higher rank captures more detail but uses more VRAM.
+2. Click **Start Training**
+3. The character status changes through: `pending` → `training` → `ready` (or `failed`)
+
+Training runs as a background subprocess using `mflux-train` (DreamBooth method). Progress is monitored automatically — the character status updates when training completes.
+
+#### Using Characters in Gallery Studio
+
+Once a character reaches **ready** status, it appears in the Gallery Studio's **Character** dropdown:
+
+1. Open **Gallery → Create Asset**
+2. Select your character from the **Character** dropdown
+3. Include the character's trigger word in your prompt (e.g., "A photo of ALICE_TOK standing in a garden")
+4. Optionally adjust **ControlNet Strength** (0–1) for pose control
+5. Submit to queue — the LoRA weights are automatically injected during generation
+
+#### Character API
+
+```bash
+# List all characters
+curl http://localhost:3000/api/characters
+
+# Create a character
+curl -X POST http://localhost:3000/api/characters \
+  -H "Content-Type: application/json" \
+  -d '{"name": "Alice", "triggerWord": "ALICE_TOK", "loraScale": 0.8}'
+
+# Upload reference photos
+curl -X POST http://localhost:3000/api/characters/<id>/photos \
+  -F "photos=@photo1.jpg" -F "photos=@photo2.jpg"
+
+# Start training
+curl -X POST http://localhost:3000/api/characters/<id>/train \
+  -H "Content-Type: application/json" \
+  -d '{"steps": 1000, "learningRate": 0.0001, "loraRank": 4}'
+
+# Delete a character
+curl -X DELETE http://localhost:3000/api/characters/<id>
+```
 
 ### Queue API Examples
 

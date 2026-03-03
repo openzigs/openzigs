@@ -1000,6 +1000,8 @@ interface StudioFormState {
   video_steps: number;
   video_guidance: number;
   negative_prompt: string;
+  characterId: string;
+  controlnetStrength: number;
 }
 
 const DEFAULT_FORM: StudioFormState = {
@@ -1024,6 +1026,8 @@ const DEFAULT_FORM: StudioFormState = {
   video_steps: 30,
   video_guidance: 3.5,
   negative_prompt: "",
+  characterId: "",
+  controlnetStrength: 0.4,
 };
 
 const MODE_INFO: Record<StudioMode, { label: string; desc: string; icon: React.ReactNode }> = {
@@ -1039,6 +1043,13 @@ function GalleryStudio({ onClose, onCreated }: { onClose: () => void; onCreated:
     queryKey: ["admin-image-gen-config"],
     queryFn: () => fetchJson<{ mode: "local" | "network"; networkNodeUrl: string; hasToken: boolean }>("/api/admin/image-gen/config"),
   });
+
+  // Fetch ready characters for the character dropdown
+  const charactersQuery = useQuery({
+    queryKey: ["characters"],
+    queryFn: () => fetchJson<{ characters: Array<{ id: string; name: string; triggerWord: string; trainedLoraPath: string | null; loraScale: number; status: string }> }>("/api/characters"),
+  });
+  const readyCharacters = (charactersQuery.data?.characters ?? []).filter((c) => c.status === "ready");
 
   const imageGenMode = imageGenConfigQuery.data?.mode ?? "local";
   // When admin switches mode, reset provider default and clear turbo if needed
@@ -1250,6 +1261,18 @@ function GalleryStudio({ onClose, onCreated }: { onClose: () => void; onCreated:
         payload.seed = parseInt(form.seed, 10);
       }
 
+      // Character LoRA injection
+      if (form.characterId) {
+        const char = readyCharacters.find((c) => c.id === form.characterId);
+        if (char?.trainedLoraPath) {
+          payload.lora_paths = [char.trainedLoraPath];
+          payload.lora_scales = [char.loraScale];
+        }
+        if (form.controlnetStrength > 0) {
+          payload.controlnet_strength = form.controlnetStrength;
+        }
+      }
+
       // For local image gen, pass the selected model
       const model = !isVideo ? form.imageModel : undefined;
 
@@ -1455,6 +1478,48 @@ function GalleryStudio({ onClose, onCreated }: { onClose: () => void; onCreated:
                   </>
                 )}
               </select>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Character LoRA */}
+      {!isVideo && !isMusic && readyCharacters.length > 0 && (
+        <div className="mb-4 space-y-3">
+          <div>
+            <label className="mb-1 block text-[11px] font-medium text-muted-foreground">Character</label>
+            <select
+              value={form.characterId}
+              onChange={(e) => update("characterId", e.target.value)}
+              className="w-full rounded-lg border border-border bg-card px-2 py-1.5 text-sm text-foreground"
+            >
+              <option value="">None</option>
+              {readyCharacters.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name} (trigger: {c.triggerWord})
+                </option>
+              ))}
+            </select>
+          </div>
+          {form.characterId && (
+            <div>
+              <label className="mb-1 flex items-center justify-between text-[11px] font-medium text-muted-foreground">
+                <span>ControlNet Strength</span>
+                <span className="font-mono">{form.controlnetStrength.toFixed(2)}</span>
+              </label>
+              <input
+                type="range"
+                min={0}
+                max={1}
+                step={0.05}
+                value={form.controlnetStrength}
+                onChange={(e) => update("controlnetStrength", parseFloat(e.target.value))}
+                className="w-full"
+              />
+              <div className="flex justify-between text-[10px] text-muted-foreground">
+                <span>Subtle</span>
+                <span>Strong pose control</span>
+              </div>
             </div>
           )}
         </div>

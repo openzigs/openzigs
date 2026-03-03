@@ -34,6 +34,16 @@ export interface ImageGenOptions {
   seed?: number;
   /** Number of inference steps (local only, default: model-specific) */
   steps?: number;
+  /** LoRA adapter paths for character consistency */
+  loraPaths?: string[];
+  /** LoRA scale factors (one per adapter) */
+  loraScales?: number[];
+  /** ControlNet reference image path */
+  controlnetImagePath?: string;
+  /** ControlNet influence strength (0.0-1.0) */
+  controlnetStrength?: number;
+  /** ControlNet type: "canny" or "depth" */
+  controlType?: "canny" | "depth";
 }
 
 export interface ImageGenResult {
@@ -369,7 +379,9 @@ export class ImageGenService {
     }
 
     const start = Date.now();
-    const url = `${this.effectiveSidecarUrl}/generate`;
+    // Use controlnet endpoint if controlnet params are provided
+    const isControlNet = !!options.controlnetImagePath;
+    const url = `${this.effectiveSidecarUrl}/${isControlNet ? "generate-controlnet" : "generate"}`;
 
     try {
       // Normalize legacy "flux" alias to the sidecar's canonical model name
@@ -382,6 +394,11 @@ export class ImageGenService {
         ...(options.steps !== undefined ? { steps: options.steps } : {}),
         ...(options.seed !== undefined ? { seed: options.seed } : {}),
         ...(options.negativePrompt ? { negative_prompt: options.negativePrompt } : {}),
+        ...(options.loraPaths ? { lora_paths: options.loraPaths } : {}),
+        ...(options.loraScales ? { lora_scales: options.loraScales } : {}),
+        ...(options.controlnetImagePath ? { controlnet_image_path: options.controlnetImagePath } : {}),
+        ...(options.controlnetStrength !== undefined ? { controlnet_strength: options.controlnetStrength } : {}),
+        ...(options.controlType ? { control_type: options.controlType } : {}),
       });
 
       const headers: Record<string, string> = { "Content-Type": "application/json" };

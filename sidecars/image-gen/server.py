@@ -16,11 +16,14 @@ Usage:
     python server.py [--port 5005] [--host 127.0.0.1]
 
 Endpoints:
-    POST /generate   — Generate an image from a text prompt
-    POST /model      — Load or switch the active model
-    POST /unload     — Unload the current model to free RAM
-    GET  /health     — Readiness probe (returns model status)
-    GET  /models     — List available models
+    POST /generate           — Generate an image from a text prompt (with optional LoRA)
+    POST /generate-controlnet — Generate with ControlNet conditioning (Canny/Depth)
+    POST /train              — Start DreamBooth LoRA training
+    GET  /train-status       — Check training job status
+    POST /model              — Load or switch the active model
+    POST /unload             — Unload the current model to free RAM
+    GET  /health             — Readiness probe (returns model status)
+    GET  /models             — List available models
 """
 
 from __future__ import annotations
@@ -116,6 +119,7 @@ _default_model: str = "flux-schnell"
 _preload_at_startup: bool = False
 _quantization: Optional[int] = 4    # MLX quantization bits: 4, 8, or None
 _generating: bool = False           # True while an async background generation is running
+_active_lora_paths: list[str] = []  # Currently loaded LoRA adapter paths
 
 # ── Job Result Store ───────────────────────────────────────────
 # In-memory ring buffer of completed/failed job results.  When the callback
@@ -136,12 +140,23 @@ def _store_result(job_id: str, payload: dict) -> None:
             del _job_results[oldest]
 
 
-def _create_mflux_model(model_key: str) -> Any:
-    """Instantiate an MFLUX model for the given registry key."""
+def _create_mflux_model(model_key: str, lora_paths: Optional[list[str]] = None, lora_scales: Optional[list[float]] = None) -> Any:
+    """Instantiate an MFLUX model for the given registry key, optionally with LoRA adapters."""
     spec = MODEL_REGISTRY[model_key]
     model_class = spec.get("model_class", "txt2img")
 
     start = time.monotonic()
+
+    # Build LoRA kwargs if provided
+    lora_kwargs: dict[str, Any] = {}
+    if lora_paths:
+        # Validate all paths exist
+        for lp in lora_paths:
+            if not os.path.isfile(lp):
+                raise ValueError(f"LoRA file not found: {lp}")
+        lora_kwargs["lora_paths"] = lora_paths
+        if lora_scales:
+            lora_kwargs["lora_scales"] = lora_scales
 
     if model_class == "kontext":
         from mflux.models.flux.variants.kontext.flux_kontext import Flux1Kontext
@@ -152,8 +167,9 @@ def _create_mflux_model(model_key: str) -> Any:
         from mflux.models.flux.variants.txt2img.flux import Flux1
 
         alias = spec["mflux_alias"]
-        log.info(f"Loading MFLUX model '{model_key}' (alias={alias}, quantize={_quantization}) ...")
-        model = Flux1.from_name(alias, quantize=_quantization)
+        lora_info = f", lora={len(lora_paths)} adapters" if lora_paths else ""
+        log.info(f"Loading MFLUX model '{model_key}' (alias={alias}, quantize={_quantization}{lora_info}) ...")
+        model = Flux1.from_name(alias, quantize=_quantization, **lora_kwargs)
 
     elapsed = time.monotonic() - start
     log.info(f"MFLUX model '{model_key}' ready in {elapsed:.1f}s "
@@ -165,7 +181,7 @@ def _create_mflux_model(model_key: str) -> Any:
 
 def _unload_model() -> None:
     """Unload the current model and free memory."""
-    global _model, _model_name, _model_loaded
+    global _model, _model_name, _model_loaded, _active_lora_paths
 
     if _model is not None:
         model = _model_name or "unknown"
@@ -185,17 +201,19 @@ def _unload_model() -> None:
 
     _model_loaded = False
     _model_name = None
+    _active_lora_paths = []
 
 
-def _load_model(model_key: str) -> float:
+def _load_model(model_key: str, lora_paths: Optional[list[str]] = None, lora_scales: Optional[list[float]] = None) -> float:
     """Load a model, unloading any existing one first.
 
     Returns the time taken to load in seconds (0.0 if already loaded).
     """
-    global _model, _model_name, _model_loaded, _loading, _last_used
+    global _model, _model_name, _model_loaded, _loading, _last_used, _active_lora_paths
 
-    if _model_loaded and _model_name == model_key:
-        return 0.0  # Already loaded
+    # If LoRA paths changed, need to reload even if same model
+    if _model_loaded and _model_name == model_key and (lora_paths or []) == (_active_lora_paths or []):
+        return 0.0  # Already loaded with same config
 
     _loading = True
     try:
@@ -203,10 +221,11 @@ def _load_model(model_key: str) -> float:
             _unload_model()
 
         start = time.monotonic()
-        _model = _create_mflux_model(model_key)
+        _model = _create_mflux_model(model_key, lora_paths=lora_paths, lora_scales=lora_scales)
         elapsed = time.monotonic() - start
         _model_name = model_key
         _model_loaded = True
+        _active_lora_paths = lora_paths or []
         _last_used = time.monotonic()
         return elapsed
     finally:
@@ -488,6 +507,15 @@ class GenerateRequest(BaseModel):
     seed: Optional[int] = Field(
         default=None,
         description="Random seed for reproducibility",
+    )
+    # LoRA character consistency fields
+    lora_paths: Optional[list[str]] = Field(
+        default=None,
+        description="Paths to LoRA adapter .safetensors files",
+    )
+    lora_scales: Optional[list[float]] = Field(
+        default=None,
+        description="Scale factor for each LoRA adapter (default: 1.0 each)",
     )
 
 
@@ -817,9 +845,14 @@ async def generate(req: GenerateRequest):
             detail=f"Unknown model: {requested_model}. Available: {list(MODEL_REGISTRY.keys())}",
         )
 
-    if not _model_loaded or _model_name != requested_model:
+    # Check if LoRA config changed (requires reload)
+    needs_reload = not _model_loaded or _model_name != requested_model
+    if not needs_reload and req.lora_paths:
+        needs_reload = (req.lora_paths or []) != (_active_lora_paths or [])
+
+    if needs_reload:
         log.info(f"Lazy-loading model '{requested_model}' for generation request ...")
-        load_time = _load_model(requested_model)
+        load_time = _load_model(requested_model, lora_paths=req.lora_paths, lora_scales=req.lora_scales)
         log.info(f"Model '{requested_model}' ready in {load_time:.1f}s")
 
     assert _model is not None
@@ -1103,6 +1136,207 @@ async def kontext_edit(req: KontextRequest):
             "X-Seed": str(seed),
         },
     )
+
+
+# ── ControlNet Endpoint ────────────────────────────────────────
+
+class ControlNetRequest(BaseModel):
+    """Request body for ControlNet-guided image generation."""
+
+    prompt: str = Field(..., min_length=1, max_length=2000)
+    controlnet_image_path: str = Field(..., description="Path to the control image (pose/edge map)")
+    controlnet_strength: float = Field(default=0.4, ge=0.0, le=1.0, description="ControlNet influence strength")
+    control_type: str = Field(default="canny", description="Control type: 'canny' or 'depth'")
+    save_canny: bool = Field(default=False, description="Whether to save the extracted canny edge map")
+    model: Optional[str] = Field(default=None)
+    width: int = Field(default=1024, ge=256, le=2048)
+    height: int = Field(default=1024, ge=256, le=2048)
+    steps: Optional[int] = Field(default=None, ge=1, le=50)
+    guidance_scale: Optional[float] = Field(default=None, ge=0.0, le=20.0)
+    seed: Optional[int] = Field(default=None)
+    lora_paths: Optional[list[str]] = Field(default=None)
+    lora_scales: Optional[list[float]] = Field(default=None)
+
+
+@app.post("/generate-controlnet", response_class=Response, dependencies=[Depends(verify_token)])
+async def generate_controlnet(req: ControlNetRequest):
+    """Generate an image using ControlNet conditioning (Canny edge or Depth).
+
+    The controlnet_image_path should point to a reference image. MFLUX will
+    extract Canny edges automatically and condition the generation on them.
+    """
+    global _last_used
+
+    if not _ready:
+        raise HTTPException(status_code=503, detail="Server not ready")
+    if _loading:
+        raise HTTPException(status_code=409, detail="A model is currently being loaded")
+
+    if not os.path.isfile(req.controlnet_image_path):
+        raise HTTPException(status_code=400, detail=f"Control image not found: {req.controlnet_image_path}")
+
+    requested_model = req.model or (_model_name if _model_loaded else _default_model)
+    if requested_model not in MODEL_REGISTRY:
+        raise HTTPException(status_code=400, detail=f"Unknown model: {requested_model}")
+
+    # Reload if model or LoRA config changed
+    needs_reload = not _model_loaded or _model_name != requested_model
+    if not needs_reload and req.lora_paths:
+        needs_reload = (req.lora_paths or []) != (_active_lora_paths or [])
+    if needs_reload:
+        load_time = _load_model(requested_model, lora_paths=req.lora_paths, lora_scales=req.lora_scales)
+        log.info(f"Model '{requested_model}' ready in {load_time:.1f}s")
+
+    assert _model is not None
+
+    width = (req.width // 16) * 16
+    height = (req.height // 16) * 16
+    spec = MODEL_REGISTRY[requested_model]
+    steps = req.steps or spec["default_steps"]
+    guidance = req.guidance_scale if req.guidance_scale is not None else spec["default_guidance"]
+    seed = req.seed if req.seed is not None else random.randint(0, 2**32 - 1)
+
+    log.info(
+        f"ControlNet generate: prompt='{req.prompt[:80]}...' "
+        f"control={req.control_type} strength={req.controlnet_strength} "
+        f"model={_model_name} size={width}x{height}"
+    )
+    start = time.monotonic()
+
+    try:
+        result = _model.generate_image(
+            seed=seed,
+            prompt=req.prompt,
+            num_inference_steps=steps,
+            height=height,
+            width=width,
+            guidance=guidance,
+            controlnet_image_path=req.controlnet_image_path,
+            controlnet_strength=req.controlnet_strength,
+            controlnet_save_canny=req.save_canny,
+        )
+        pil_image = result.image
+    except Exception as e:
+        log.error(f"ControlNet generation failed: {e}")
+        raise HTTPException(status_code=500, detail=f"ControlNet generation failed: {str(e)}")
+
+    elapsed = time.monotonic() - start
+    _last_used = time.monotonic()
+    log.info(f"ControlNet generated in {elapsed:.1f}s ({width}x{height})")
+
+    buf = io.BytesIO()
+    pil_image.save(buf, format="PNG", optimize=True)
+    png_bytes = buf.getvalue()
+
+    return Response(
+        content=png_bytes,
+        media_type="image/png",
+        headers={
+            "X-Generation-Time": f"{elapsed:.2f}s",
+            "X-Image-Size": f"{width}x{height}",
+            "X-Model": _model_name or "unknown",
+            "X-Seed": str(seed),
+            "X-Control-Type": req.control_type,
+            "X-Control-Strength": str(req.controlnet_strength),
+        },
+    )
+
+
+# ── Training Endpoint ──────────────────────────────────────────
+
+class TrainRequest(BaseModel):
+    """Request body for DreamBooth LoRA training via mflux-train."""
+
+    train_config_path: str = Field(..., description="Path to the training config JSON file")
+
+
+class TrainResponse(BaseModel):
+    """Response from the training endpoint."""
+
+    status: str
+    message: str
+
+
+# Training state
+_training: bool = False
+_train_process: Any = None
+
+
+@app.post("/train", response_model=TrainResponse, dependencies=[Depends(verify_token)])
+async def train_lora(req: TrainRequest, background_tasks: BackgroundTasks):
+    """Start LoRA DreamBooth training using mflux-train.
+
+    Fires off the training subprocess in the background.
+    Poll GET /train-status for progress.
+    """
+    global _training
+
+    if _training:
+        raise HTTPException(status_code=409, detail="A training job is already in progress")
+
+    if not os.path.isfile(req.train_config_path):
+        raise HTTPException(status_code=400, detail=f"Config file not found: {req.train_config_path}")
+
+    # Validate config JSON
+    try:
+        with open(req.train_config_path, "r") as f:
+            config = json.load(f)
+        if "examples" not in config:
+            raise HTTPException(status_code=400, detail="Training config must contain 'examples' array")
+    except json.JSONDecodeError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid JSON in config: {e}")
+
+    _training = True
+    background_tasks.add_task(_bg_train, req.train_config_path)
+
+    log.info(f"[train] Started LoRA training with config: {req.train_config_path}")
+    return TrainResponse(status="accepted", message="Training started in background")
+
+
+@app.get("/train-status")
+async def train_status():
+    """Check the status of the current training job."""
+    return {
+        "training": _training,
+        "process_alive": _train_process is not None and _train_process.poll() is None if _train_process else False,
+    }
+
+
+def _bg_train(config_path: str) -> None:
+    """Background task: run mflux-train subprocess."""
+    import subprocess
+
+    global _training, _train_process
+    try:
+        log.info(f"[train] Spawning mflux-train --train-config {config_path}")
+        _train_process = subprocess.Popen(
+            ["mflux-train", "--train-config", config_path],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        stdout, stderr = _train_process.communicate()
+        rc = _train_process.returncode
+
+        if rc == 0:
+            log.info(f"[train] Training completed successfully")
+            if stdout:
+                log.info(f"[train] stdout: {stdout.decode()[-500:]}")
+        else:
+            log.error(f"[train] Training failed with exit code {rc}")
+            if stderr:
+                log.error(f"[train] stderr: {stderr.decode()[-500:]}")
+    except Exception as e:
+        log.error(f"[train] Training error: {e}")
+    finally:
+        _training = False
+        _train_process = None
+        # Reclaim VRAM after training
+        gc.collect()
+        try:
+            import mlx.core as mx
+            mx.metal.clear_cache()
+        except Exception:
+            pass
 
 
 @app.post("/generate-async", status_code=202, dependencies=[Depends(verify_token)])

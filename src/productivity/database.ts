@@ -6,6 +6,7 @@ import { TaskRepository } from "../tasks/task-repository.js";
 import { PresentationRepository } from "../presenter/presentation-repository.js";
 import { SocialRepository } from "../channels/social/social-repository.js";
 import { BrandVoiceRepository } from "../personality/brand-voice-repository.js";
+import { CharacterRepository } from "../characters/character-repository.js";
 
 export type DatabaseOptions = {
   dbPath?: string;
@@ -44,6 +45,10 @@ export const getDatabase = (options: DatabaseOptions = {}): Database.Database =>
   // Run Brand Voice migration (brand_voices table)
   const brandVoiceRepo = new BrandVoiceRepository(db);
   brandVoiceRepo.migrate();
+
+  // Run Character Profiles migration (character_profiles table)
+  const characterRepo = new CharacterRepository(db);
+  characterRepo.migrate();
 
   sharedDb = db;
   return db;

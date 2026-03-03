@@ -4346,7 +4346,7 @@ The Gallery page at `/gallery` provides:
 - **Asset Grid** — Filterable by type (Images, Videos, Audio) and source (Generated, Uploaded, Director). Each asset card shows thumbnail, metadata overlay, and action buttons (preview, download, tag, delete)
 - **Preview Lightbox** — Full-screen modal for viewing images and playing videos
 - **Gallery Studio** — Inline asset creation panel with 5 modes:
-  - **Text → Image** — Prompt, dimensions, steps, guidance, seed
+  - **Text → Image** — Prompt, dimensions, steps, guidance, seed, character (LoRA) dropdown, ControlNet strength
   - **Image → Image** — Upload source image + prompt + strength slider
   - **Text → Video** — Prompt, frames (max 97), FPS, computed duration (4s cinematic B-roll badge)
   - **Image → Video** — Upload source image + motion prompt (4s cinematic B-roll badge)
@@ -4360,3 +4360,119 @@ The Gallery page at `/gallery` provides:
 | `/gallery` | `gallery/page.tsx` | Asset Gallery + Gallery Studio |
 
 ### Tracking: [Epic #325](https://github.com/mgcronin/openzigs/issues/325), [Epic #335](https://github.com/mgcronin/openzigs/issues/335)
+
+## Character Lab — LoRA Training & Identity Consistency (Epic #374)
+
+### Overview
+
+The Character Lab provides a complete pipeline for creating persistent character identities using LoRA (Low-Rank Adaptation) fine-tuning. Characters are trained from reference photos using DreamBooth, producing compact LoRA adapters that can be injected into any Flux image generation for consistent identity across shots.
+
+### Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                      Character Lab UI                           │
+│                    /characters (Next.js)                         │
+│  ┌─────────────┐  ┌──────────────────┐  ┌────────────────────┐ │
+│  │ Character    │  │ Detail Panel     │  │ Training Controls  │ │
+│  │ List         │  │ (photos, scale)  │  │ (steps, LR, rank) │ │
+│  └──────┬──────┘  └────────┬─────────┘  └─────────┬──────────┘ │
+└─────────┼──────────────────┼──────────────────────┼────────────┘
+          │                  │                      │
+          ▼                  ▼                      ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                  Characters API Router                          │
+│            /api/characters (Express.js)                          │
+│  CRUD  │  Photo Upload (multer)  │  Training (mflux-train)     │
+└────────┼─────────────────────────┼──────────────────────────────┘
+         │                         │
+         ▼                         ▼
+┌──────────────────┐    ┌────────────────────────────────────────┐
+│ CharacterRepo    │    │ Image Gen Sidecar (FastAPI, port 5005) │
+│ (SQLite)         │    │ ├─ /generate      (LoRA-aware)         │
+│ character_       │    │ ├─ /generate-controlnet (Canny/Depth)  │
+│   profiles       │    │ ├─ /train         (DreamBooth)         │
+│                  │    │ └─ /train-status                       │
+└──────────────────┘    └────────────────────────────────────────┘
+```
+
+### Data Model
+
+**Table: `character_profiles`** (SQLite, `~/.openzigs/openzigs.db`)
+
+| Column | Type | Description |
+|---|---|---|
+| `id` | TEXT PK | UUID |
+| `name` | TEXT UNIQUE | Human-readable character name |
+| `trigger_word` | TEXT | Unique token for prompt activation (e.g., `ALICE_TOK`) |
+| `reference_photos` | TEXT (JSON) | Array of photo filenames |
+| `trained_lora_path` | TEXT | Path to trained `.safetensors` LoRA adapter |
+| `lora_scale` | REAL | LoRA injection strength (0.1–1.5) |
+| `training_config` | TEXT (JSON) | Training hyperparameters (steps, LR, rank) |
+| `status` | TEXT | `pending` \| `training` \| `ready` \| `failed` |
+| `error_message` | TEXT | Error details if training failed |
+| `created_at` | TEXT | ISO 8601 timestamp |
+| `updated_at` | TEXT | ISO 8601 timestamp |
+
+**Repository:** `src/characters/character-repository.ts` — full CRUD with `migrate()`, type exports for `CharacterProfile` and `CharacterStatus`.
+
+### File Layout
+
+```
+~/.openzigs/characters/
+  └─ {character-id}/
+     ├─ photos/          # Reference photos (JPEG/PNG/WebP)
+     ├─ lora/            # Trained LoRA adapter (.safetensors)
+     └─ train-config.json  # DreamBooth training configuration
+```
+
+### API Endpoints
+
+**Router:** `src/api/characters.ts`, mounted at `/api/characters` with auth middleware.
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/` | List all characters |
+| `GET` | `/:id` | Get character by ID |
+| `POST` | `/` | Create character (name, triggerWord, loraScale) |
+| `PUT` | `/:id` | Update character (name, triggerWord, loraScale) |
+| `DELETE` | `/:id` | Delete character + all files |
+| `POST` | `/:id/photos` | Upload reference photos (multer, max 20 files, 20MB each) |
+| `GET` | `/:id/photos/:filename` | Serve a reference photo (path traversal protected) |
+| `DELETE` | `/:id/photos` | Delete all photos for a character |
+| `POST` | `/:id/train` | Start LoRA training (requires ≥5 photos) |
+
+### Image Gen Sidecar Extensions
+
+The MFLUX sidecar (`sidecars/image-gen/server.py`) was extended with:
+
+- **LoRA-aware model loading** — `Flux1.from_name()` accepts `lora_paths` and `lora_scales`. The model is reloaded when LoRA configuration changes.
+- **`/generate-controlnet`** — ControlNet generation with Canny or Depth control types. Supports LoRA injection alongside ControlNet.
+- **`/train`** — Spawns `mflux-train` subprocess for DreamBooth training. Accepts config JSON with `instance_prompt`, `instance_images_dir`, `lora_rank`, `learning_rate`, `num_steps`, `output_dir`.
+- **`/train-status`** — Returns current training state and process status.
+
+### ImageGenService Integration
+
+`src/video/generators/image-gen-service.ts` — `ImageGenOptions` extended with:
+- `loraPaths?: string[]` — Paths to LoRA `.safetensors` files
+- `loraScales?: number[]` — Per-LoRA injection strengths
+- `controlnetImagePath?: string` — Path to ControlNet reference image
+- `controlnetStrength?: number` — ControlNet conditioning strength
+- `controlType?: "canny" | "depth"` — ControlNet type
+
+`generateLocal()` auto-dispatches to `/generate-controlnet` when ControlNet params are present.
+
+### Gallery Studio Integration
+
+The Gallery Studio (`ui/app/gallery/page.tsx`) adds:
+- **Character dropdown** — Lists all "ready" characters, conditionally rendered when trained characters exist
+- **ControlNet Strength slider** — Appears when a character is selected (0–1 range)
+- **Payload injection** — Automatically includes `lora_paths`, `lora_scales`, and `controlnet_strength` in the job payload when a character is selected
+
+### Route Map Update
+
+| Route | Component | Purpose |
+|---|---|---|
+| `/characters` | `characters/page.tsx` | Character Lab (CRUD, photos, training) |
+
+### Tracking: [Epic #374](https://github.com/mgcronin/openzigs/issues/374)

@@ -35,6 +35,7 @@ const NAV_GROUPS: NavGroup[] = [
       { href: "/director", label: "Director" },
       { href: "/presenter", label: "Presenter" },
       { href: "/gallery", label: "Gallery" },
+      { href: "/characters", label: "Characters" },
     ],
   },
   {

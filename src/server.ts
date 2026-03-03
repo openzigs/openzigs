@@ -75,6 +75,8 @@ import { MediaQueueRepository } from "./queue/media-queue-repository.js";
 import { QueueMaster } from "./queue/queue-master.js";
 import { createQueueRouter, createQueueCallbackRouter } from "./api/queue.js";
 import { createGalleryRouter } from "./api/gallery.js";
+import { createCharacterRouter } from "./api/characters.js";
+import { CharacterRepository } from "./characters/character-repository.js";
 
 // Register built-in post-action types (create-github-issues, send-webhook, etc.)
 registerBuiltinPostActions();
@@ -887,6 +889,12 @@ app.use("/api/queue", authMiddleware, queueRouter);
 // Gallery API routes (AI prompt enhancement)
 const galleryRouter = createGalleryRouter({ copilot, toolRegistry });
 app.use("/api/gallery", authMiddleware, galleryRouter);
+
+// Character API routes (LoRA character profiles + training)
+const characterRepo = new CharacterRepository(db);
+characterRepo.migrate();
+const characterRouter = createCharacterRouter({ characterRepo });
+app.use("/api/characters", authMiddleware, characterRouter);
 
 // Files API routes (Workbench file management)
 const filesBaseAllowedDirs = allowedDirs.length > 0
