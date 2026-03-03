@@ -336,21 +336,32 @@ describe("ImageGenService", () => {
         networkNodeToken: "secret-token-123",
       });
 
-      const mockFetch = vi.fn().mockResolvedValue({
-        ok: true,
-        arrayBuffer: () => Promise.resolve(new ArrayBuffer(8)),
-        headers: new Map(),
-      });
+      const mockFetch = vi.fn()
+        // First call: submit to /generate-async
+        .mockResolvedValueOnce({ ok: true })
+        // Second call: poll /job-result/{id} — return completed
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({
+            status: "complete",
+            media_base64: Buffer.from("fakeimage").toString("base64"),
+          }),
+        });
       vi.stubGlobal("fetch", mockFetch);
 
       await svc.generateImage("test", { provider: "local", width: 512, height: 512 });
 
-      const fetchCall = mockFetch.mock.calls[0];
-      expect(fetchCall[0]).toBe("http://192.168.1.50:5005/generate");
-      expect(fetchCall[1].headers.Authorization).toBe("Bearer secret-token-123");
+      // Submit call includes Authorization header
+      const submitCall = mockFetch.mock.calls[0];
+      expect(submitCall[0]).toBe("http://192.168.1.50:5005/generate-async");
+      expect(submitCall[1].headers.Authorization).toBe("Bearer secret-token-123");
+
+      // Poll call also includes Authorization header
+      const pollCall = mockFetch.mock.calls[1];
+      expect(pollCall[1].headers.Authorization).toBe("Bearer secret-token-123");
 
       vi.unstubAllGlobals();
-    });
+    }, 10_000);
 
     it("does not send Authorization header in local mode", async () => {
       const svc = new ImageGenService({

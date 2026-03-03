@@ -130,7 +130,7 @@ describe("Admin Copilot Sessions API", () => {
     expect(res.status).toBe(200);
     expect(res.body.events).toHaveLength(3);
     expect(res.body.events[0].type).toBe("session.start");
-    expect(res.body.events[1].content).toBe("Refactor the auth module");
+    expect(res.body.events[1].data.content).toBe("Refactor the auth module");
   });
 
   it("GET /copilot-sessions/:sessionId/messages returns empty for unknown session", async () => {

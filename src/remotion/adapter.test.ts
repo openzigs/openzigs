@@ -403,7 +403,7 @@ describe("adaptManifest", () => {
     const clip = result.timeline[0];
     if (clip.type === "video_clip") {
       expect(clip.effects).toHaveLength(1);
-      expect(clip.effects![0].type).toBe("fade");
+      expect(clip.effects![0].type).toBe("fadeIn");
       expect(clip.textOverlays).toHaveLength(1);
       expect(clip.textOverlays![0].text).toBe("Hello");
       expect(clip.textOverlays![0].fontSize).toBe(48);
