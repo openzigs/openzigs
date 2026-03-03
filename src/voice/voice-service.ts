@@ -398,7 +398,10 @@ export class VoiceService {
         signal: AbortSignal.timeout(600_000), // 10 min
       };
       try {
-        const { Agent } = await import("undici");
+        // Use variable to prevent TypeScript from resolving the module at compile time
+        const mod = "undici";
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { Agent } = await (import(mod) as Promise<any>);
         fetchOpts = { ...fetchOpts, dispatcher: new Agent({ headersTimeout: 600_000, bodyTimeout: 600_000 }) };
       } catch {
         // undici not available as explicit module — rely on AbortSignal timeout
