@@ -199,6 +199,7 @@ export const ReviewProduceStep = ({
             quizEnabled: state.quizEnabled,
             visualAssets: visualAssets.length > 0 ? visualAssets : undefined,
             brandVoiceId: state.brandVoiceId || undefined,
+            imageClipDurationSeconds: state.imageClipDurationSeconds,
           }),
         });
       }

@@ -914,9 +914,9 @@ Respond with ONLY a valid JSON array. No explanation. Example:
    */
   router.post("/produce", async (req, res) => {
     try {
-      const { clips, mode, scriptPath, musicTrackPath, template, model, enableVisionAnalysis, inputFile, sourceType, topic, imageProvider, imageModel, slideStyle, assetsOnlyMode, quizEnabled, visualAssets, brandVoiceId } = req.body as {
+      const { clips, mode, scriptPath, musicTrackPath, template, model, enableVisionAnalysis, inputFile, sourceType, topic, imageProvider, imageModel, slideStyle, assetsOnlyMode, quizEnabled, visualAssets, brandVoiceId, imageClipDurationSeconds, heroReelOverview, defaultClipDuration } = req.body as {
         clips?: string[];
-        mode: "highlight" | "script" | "presentation";
+        mode: "highlight" | "script" | "presentation" | "hero-reel";
         scriptPath?: string;
         musicTrackPath?: string;
         template?: string;
@@ -931,6 +931,9 @@ Respond with ONLY a valid JSON array. No explanation. Example:
         assetsOnlyMode?: boolean;
         quizEnabled?: boolean;
         brandVoiceId?: string;
+        imageClipDurationSeconds?: number;
+        heroReelOverview?: string;
+        defaultClipDuration?: number;
         visualAssets?: Array<{
           path: string;
           description: string;
@@ -944,14 +947,18 @@ Respond with ONLY a valid JSON array. No explanation. Example:
         }>;
       };
 
-      if (!mode || !["highlight", "script", "presentation"].includes(mode)) {
-        res.status(400).json({ error: "mode must be 'highlight', 'script', or 'presentation'" });
+      if (!mode || !["highlight", "script", "presentation", "hero-reel"].includes(mode)) {
+        res.status(400).json({ error: "mode must be 'highlight', 'script', 'presentation', or 'hero-reel'" });
         return;
       }
 
       // Validate mode-specific required fields before creating the job
       if (mode === "presentation" && !inputFile) {
         res.status(400).json({ error: "'inputFile' is required for presentation mode" });
+        return;
+      }
+      if (mode === "hero-reel" && !heroReelOverview?.trim()) {
+        res.status(400).json({ error: "'heroReelOverview' is required for hero-reel mode" });
         return;
       }
       if ((mode === "highlight" || mode === "script") && (!clips || !Array.isArray(clips) || clips.length === 0)) {
@@ -1049,6 +1056,9 @@ Respond with ONLY a valid JSON array. No explanation. Example:
         }
         if (assetsOnlyMode && visualAssets && visualAssets.length > 0) {
           storyboardOptions.assetsOnlyMode = true;
+        }
+        if (imageClipDurationSeconds && imageClipDurationSeconds >= 1 && imageClipDurationSeconds <= 10) {
+          storyboardOptions.imageClipDurationSeconds = imageClipDurationSeconds;
         }
         // Inject brand voice (specific ID or active default) if available
         if (brandVoiceService) {
@@ -1687,6 +1697,161 @@ Respond with ONLY a valid JSON array. No markdown, no explanation.`;
         };
         logger.info(`[Director API] Produce job ${produceJobId} complete (presentation, ${elapsedMs}ms)`);
         emitActivity("complete", `Presentation ready (${(elapsedMs / 1000).toFixed(0)}s)`);
+        return;
+      }
+
+      // ── Hero Reel mode: overview → storyboard → images → manifest (no TTS) ──
+      if (mode === "hero-reel") {
+        const startTime = Date.now();
+
+        const path = await import("node:path");
+        const os = await import("node:os");
+        const { StoryboardEngine } = await import("../video/generators/storyboard-engine.js");
+        const { ImageGenService } = await import("../video/generators/image-gen-service.js");
+
+        checkAborted();
+        emitActivity("storyboard", "Generating hero reel storyboard");
+        const storyboardEngine = new StoryboardEngine(copilot);
+        const resolvedModel = model || runtimeConfig.defaultModel || undefined;
+        const clipDur = typeof defaultClipDuration === "number" && defaultClipDuration >= 1 && defaultClipDuration <= 10
+          ? defaultClipDuration : 2;
+
+        const storyboard = await storyboardEngine.generateHeroReel(heroReelOverview!, {
+          model: resolvedModel,
+          styleHint: topic,
+          imageClipDurationSeconds: clipDur,
+        });
+
+        logger.info(`[Director API] Hero reel storyboard: "${storyboard.title}" with ${storyboard.scenes.length} scenes`);
+        checkAborted();
+        emitActivity("images", `Generating images for ${storyboard.scenes.length} scenes`);
+
+        // Generate images
+        const imageOutputDir = path.join(os.homedir(), ".openzigs", "director", "images");
+        const imageGenUserConfig = await ImageGenService.loadUserImageGenConfig();
+        const imageService = new ImageGenService({ outputDir: imageOutputDir, ...imageGenUserConfig });
+        await imageService.initialize();
+
+        const resolvedImageProvider = imageProvider ?? "auto";
+        const imageWidth = 768;
+        const imageHeight = 432;
+        const fps = 30;
+        const templateId = (template as "Minimalist" | "ContentCreator" | "Corporate" | "TechDemo") ?? "Minimalist";
+        const baseSeed = Date.now() % 100_000;
+
+        const timeline: Array<import("../video/manifest/manifest-types.js").ImageSceneEntry | import("../video/manifest/manifest-types.js").TitleCardEntry | import("../video/manifest/manifest-types.js").TransitionEntry | import("../video/manifest/manifest-types.js").OverlayEntry> = [];
+        let currentFrame = 0;
+        let skippedScenes = 0;
+
+        for (const scene of storyboard.scenes) {
+          checkAborted();
+          const prompt = scene.imagePrompt || storyboard.styleAnchor;
+          let sceneImageFilePath: string | undefined;
+          try {
+            const result = await imageService.generateImage(prompt, {
+              provider: resolvedImageProvider,
+              localModel: imageModel,
+              width: imageWidth,
+              height: imageHeight,
+              seed: baseSeed + scene.index * 1000,
+            });
+            sceneImageFilePath = result.filePath;
+          } catch (imgErr) {
+            logger.warn(`[Director API] Hero reel scene ${scene.index} image failed: ${imgErr instanceof Error ? imgErr.message : String(imgErr)}`);
+            skippedScenes++;
+            continue;
+          }
+
+          emitActivity("images", `Image ${scene.index + 1}/${storyboard.scenes.length} generated`);
+
+          const durationInFrames = Math.max(Math.round(clipDur * fps), fps);
+
+          if (timeline.length > 0) {
+            const transitionDuration = Math.min(10, durationInFrames);
+            timeline.push({
+              type: "transition",
+              style: "crossfade",
+              duration: transitionDuration,
+              startAtFrame: currentFrame,
+            });
+          }
+
+          timeline.push({
+            type: "image_scene",
+            src: sceneImageFilePath,
+            startAtFrame: currentFrame,
+            duration: durationInFrames,
+            voiceover: undefined,
+            voiceoverVolume: 0,
+            scriptText: scene.voiceover,
+            kenBurns: {
+              scaleFrom: 1.0,
+              scaleTo: 1.2,
+              translateXFrom: 0,
+              translateXTo: scene.index % 2 === 0 ? -12 : 12,
+              translateYFrom: 0,
+              translateYTo: -6,
+            },
+          });
+
+          currentFrame += durationInFrames;
+        }
+
+        const resolvedMusicPath = musicTrackPath?.trim() || undefined;
+        const manifest: import("../video/manifest/manifest-types.js").DirectorManifest = {
+          projectTitle: storyboard.title,
+          templateId,
+          composition: { width: 1920, height: 1080, fps },
+          audioLayer: {
+            music: resolvedMusicPath ? {
+              track: resolvedMusicPath,
+              volume: 0.15,
+              ducking: false,
+              fadeInFrames: 30,
+              fadeOutFrames: 30,
+              loop: true,
+            } : null,
+            voiceover: null,
+          },
+          timeline,
+          metadata: {
+            generatedAt: new Date().toISOString(),
+            llmModel: resolvedModel ?? "copilot",
+            llmTokensUsed: storyboard.tokensUsed,
+            productionMode: "hero-reel",
+            presenterQuizEnabled: false,
+            sourceClips: [],
+            estimatedRenderTime: currentFrame / fps,
+          },
+        };
+
+        const elapsedMs = Date.now() - startTime;
+        const imageSceneCount = timeline.filter((t) => t.type === "image_scene").length;
+        logger.info(
+          `[Director API] Hero reel manifest: ${imageSceneCount} scenes, ` +
+          `${(currentFrame / fps).toFixed(1)}s total, ${elapsedMs}ms elapsed`,
+        );
+
+        job.status = "complete";
+        job.completedAt = Date.now();
+        job.result = {
+          manifest,
+          tokensUsed: storyboard.tokensUsed,
+          clipsProcessed: 0,
+          totalDuration: currentFrame / fps,
+          processingTimeMs: elapsedMs,
+          skippedScenes,
+          imageProvider: resolvedImageProvider,
+          imageModel: imageModel ?? "default",
+          storyboard: {
+            title: storyboard.title,
+            styleAnchor: storyboard.styleAnchor,
+            analysis: storyboard.analysis,
+            sceneCount: storyboard.scenes.length,
+          },
+        };
+        logger.info(`[Director API] Produce job ${produceJobId} complete (hero-reel, ${elapsedMs}ms)`);
+        emitActivity("complete", `Hero reel ready (${(elapsedMs / 1000).toFixed(0)}s)`);
         return;
       }
 

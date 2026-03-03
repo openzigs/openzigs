@@ -242,4 +242,125 @@ describe("StoryboardEngine", () => {
     expect(result.scenes[1].shouldAnimate).toBe(false);
     expect(result.scenes[1].motionPrompt).toBeUndefined();
   });
+
+  describe("imageClipDurationSeconds", () => {
+    it("injects duration constraint into system prompt when set", async () => {
+      await engine.generate("Test content.", { imageClipDurationSeconds: 5 });
+
+      const callArgs = (mockCopilot.chat as ReturnType<typeof vi.fn>).mock.calls[0];
+      const prompt = callArgs[0] as string;
+      expect(prompt).toContain("IMAGE CLIP DURATION CONSTRAINT");
+      expect(prompt).toContain("5 seconds");
+    });
+
+    it("does not inject duration constraint when unset", async () => {
+      await engine.generate("Test content.");
+
+      const callArgs = (mockCopilot.chat as ReturnType<typeof vi.fn>).mock.calls[0];
+      const prompt = callArgs[0] as string;
+      expect(prompt).not.toContain("IMAGE CLIP DURATION CONSTRAINT");
+    });
+  });
+});
+
+describe("StoryboardEngine.generateHeroReel", () => {
+  let engine: StoryboardEngine;
+  let mockCopilot: CopilotWrapper;
+
+  const HERO_REEL_RESPONSE = JSON.stringify({
+    title: "Rise of Innovation",
+    styleAnchor: "Cinematic 35mm film grain, warm golden hour lighting",
+    analysis: {
+      tone: "energetic",
+      audience: "general",
+      coreThemes: ["innovation", "progress"],
+    },
+    scenes: [
+      {
+        voiceover: "The future starts here.",
+        imageDescription: "Sunrise over a modern city skyline",
+        durationEstimate: 2,
+        shouldAnimate: false,
+        motionPrompt: null,
+      },
+      {
+        voiceover: "Built by dreamers.",
+        imageDescription: "Close-up of hands assembling a circuit board",
+        durationEstimate: 2,
+        shouldAnimate: true,
+        motionPrompt: "slow dolly forward with warm lighting",
+      },
+      {
+        voiceover: "Powered by ambition.",
+        imageDescription: "Rocket launch from ground perspective",
+        durationEstimate: 2,
+        shouldAnimate: false,
+        motionPrompt: null,
+      },
+    ],
+  });
+
+  beforeEach(() => {
+    mockCopilot = buildMockCopilot(HERO_REEL_RESPONSE);
+    engine = new StoryboardEngine(mockCopilot);
+  });
+
+  it("generates a hero reel storyboard from overview text", async () => {
+    const result = await engine.generateHeroReel("Create a punchy brand montage");
+    expect(result.title).toBe("Rise of Innovation");
+    expect(result.styleAnchor).toContain("Cinematic");
+    expect(result.scenes).toHaveLength(3);
+    expect(result.tokensUsed).toBeGreaterThan(0);
+  });
+
+  it("includes hero reel specific instructions in the prompt", async () => {
+    await engine.generateHeroReel("Brand montage");
+
+    const callArgs = (mockCopilot.chat as ReturnType<typeof vi.fn>).mock.calls[0];
+    const prompt = callArgs[0] as string;
+    expect(prompt).toContain("hero reel");
+    expect(prompt).toContain("5–8 fast-paced scenes");
+    expect(prompt).toContain("≤12 words");
+    expect(prompt).toContain("HERO REEL BRIEF");
+  });
+
+  it("uses custom clip duration in the prompt", async () => {
+    await engine.generateHeroReel("Montage", { imageClipDurationSeconds: 4 });
+
+    const callArgs = (mockCopilot.chat as ReturnType<typeof vi.fn>).mock.calls[0];
+    const prompt = callArgs[0] as string;
+    expect(prompt).toContain("4 seconds");
+  });
+
+  it("defaults clip duration to 2 seconds", async () => {
+    await engine.generateHeroReel("Fast montage");
+
+    const callArgs = (mockCopilot.chat as ReturnType<typeof vi.fn>).mock.calls[0];
+    const prompt = callArgs[0] as string;
+    expect(prompt).toContain("2 seconds");
+  });
+
+  it("throws on empty overview", async () => {
+    await expect(engine.generateHeroReel("")).rejects.toThrow("Hero reel overview cannot be empty");
+  });
+
+  it("throws on whitespace-only overview", async () => {
+    await expect(engine.generateHeroReel("   \n  ")).rejects.toThrow("Hero reel overview cannot be empty");
+  });
+
+  it("passes style hint into the hero reel prompt", async () => {
+    await engine.generateHeroReel("Brand montage", { styleHint: "retro synthwave" });
+
+    const callArgs = (mockCopilot.chat as ReturnType<typeof vi.fn>).mock.calls[0];
+    const prompt = callArgs[0] as string;
+    expect(prompt).toContain("retro synthwave");
+  });
+
+  it("passes custom model to copilot chat", async () => {
+    await engine.generateHeroReel("Brand montage", { model: "gpt-4.1" });
+
+    const callArgs = (mockCopilot.chat as ReturnType<typeof vi.fn>).mock.calls[0];
+    const options = callArgs[1] as { model?: string };
+    expect(options.model).toBe("gpt-4.1");
+  });
 });

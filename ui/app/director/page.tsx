@@ -1,14 +1,15 @@
 "use client";
 
 import { useState } from "react";
-import { Film, Globe, FolderOpen, Scissors } from "lucide-react";
+import { Film, Globe, FolderOpen, Scissors, Sparkles } from "lucide-react";
 import { DirectorWizard } from "@/components/director/director-wizard";
 import { BlogToVideoPanel } from "@/components/director/blog-to-video-panel";
 import { ShortsPanel } from "@/components/director/shorts-panel";
 import { DraftsPanel } from "@/components/director/drafts-panel";
+import { HeroReelPanel } from "@/components/director/hero-reel-panel";
 import { ToastContainer } from "@/components/toast";
 
-type DirectorTab = "wizard" | "blog" | "shorts" | "drafts";
+type DirectorTab = "wizard" | "blog" | "shorts" | "drafts" | "hero-reel";
 
 export default function DirectorPage() {
   const [tab, setTab] = useState<DirectorTab>("wizard");
@@ -69,6 +70,17 @@ export default function DirectorPage() {
           <FolderOpen className="h-4 w-4" />
           My Drafts
         </button>
+        <button
+          onClick={() => setTab("hero-reel")}
+          className={`flex items-center gap-1.5 px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+            tab === "hero-reel"
+              ? "border-primary text-primary"
+              : "border-transparent text-muted-foreground hover:text-foreground"
+          }`}
+        >
+          <Sparkles className="h-4 w-4" />
+          ✨ Hero Reel
+        </button>
       </div>
 
       <div className="min-h-0 flex-1">
@@ -76,6 +88,7 @@ export default function DirectorPage() {
         {tab === "blog" && <BlogToVideoPanel />}
         {tab === "shorts" && <ShortsPanel />}
         {tab === "drafts" && <DraftsPanel />}
+        {tab === "hero-reel" && <HeroReelPanel />}
       </div>
       <ToastContainer />
     </main>

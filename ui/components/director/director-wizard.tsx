@@ -103,6 +103,10 @@ export const DirectorWizard = () => {
     setState((s) => ({ ...s, quizEnabled }));
   }, []);
 
+  const setImageClipDurationSeconds = useCallback((imageClipDurationSeconds: number) => {
+    setState((s) => ({ ...s, imageClipDurationSeconds }));
+  }, []);
+
   const setBrandVoiceId = useCallback((brandVoiceId: string | null) => {
     setState((s) => ({ ...s, brandVoiceId }));
   }, []);
@@ -178,10 +182,12 @@ export const DirectorWizard = () => {
             scriptFile={state.scriptFile}
             topic={state.topic}
             sourceFiles={state.sourceFiles}
+            imageClipDurationSeconds={state.imageClipDurationSeconds}
             onClipsChange={setClips}
             onScriptChange={setScriptFile}
             onTopicChange={setTopic}
             onSourceFilesChange={setSourceFiles}
+            onImageClipDurationChange={setImageClipDurationSeconds}
           />
         )}
         {step === 3 && (

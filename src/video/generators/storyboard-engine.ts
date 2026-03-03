@@ -101,6 +101,8 @@ export interface StoryboardOptions {
   assetsOnlyMode?: boolean;
   /** Brand voice prompt block to inject into narration generation */
   brandVoiceBlock?: string;
+  /** Default duration in seconds for static image clips (1-10, default 3). Passed as LLM constraint. */
+  imageClipDurationSeconds?: number;
 }
 
 // ── Constants ─────────────────────────────────────────────────
@@ -131,6 +133,7 @@ export class StoryboardEngine {
 
     const minDur = options.minSceneDuration ?? DEFAULT_MIN_SCENE_SEC;
     const maxDur = options.maxSceneDuration ?? DEFAULT_MAX_SCENE_SEC;
+    const imageClipDurSec = options.imageClipDurationSeconds;
 
     // Estimate target duration from word count if not specified
     const wordCount = text.split(/\s+/).length;
@@ -140,7 +143,8 @@ export class StoryboardEngine {
 
     logger.info(
       `[StoryboardEngine] Generating storyboard: ${wordCount} words, ` +
-      `target ${targetDuration.toFixed(0)}s, ~${estimatedSceneCount} scenes`,
+      `target ${targetDuration.toFixed(0)}s, ~${estimatedSceneCount} scenes` +
+      (imageClipDurSec ? `, imageClipDuration=${imageClipDurSec}s` : ""),
     );
 
     const systemPrompt = this.buildSystemPrompt(options, estimatedSceneCount, minDur, maxDur);
@@ -175,6 +179,104 @@ export class StoryboardEngine {
     );
 
     return storyboard;
+  }
+
+  /**
+   * Generate a hero reel storyboard from a free-form text overview.
+   * Hero reels are short, punchy montages with no source document —
+   * the LLM invents all visuals and narration from the overview/tone description.
+   */
+  async generateHeroReel(
+    overview: string,
+    options: Pick<StoryboardOptions, "model" | "styleHint" | "imageClipDurationSeconds"> = {},
+  ): Promise<Storyboard> {
+    if (!overview || overview.trim().length === 0) {
+      throw new Error("Hero reel overview cannot be empty");
+    }
+
+    const clipDur = options.imageClipDurationSeconds ?? 2;
+
+    logger.info(
+      `[StoryboardEngine] Generating hero reel: clipDuration=${clipDur}s`,
+    );
+
+    const systemPrompt = this.buildHeroReelPrompt(clipDur, options.styleHint);
+    const userPrompt = `=== HERO REEL BRIEF ===\n\n${overview.trim()}\n\n=== END OF BRIEF ===\n\nGenerate a hero reel storyboard following the instructions above. Output a single JSON object.`;
+
+    const chunks: string[] = [];
+    const stream = this.copilot.chat(
+      `${systemPrompt}\n\n${userPrompt}`,
+      {
+        tools: [],
+        ...(options.model ? { model: options.model } : {}),
+      },
+    );
+
+    for await (const chunk of stream) {
+      chunks.push(chunk);
+    }
+
+    const responseText = chunks.join("");
+    const tokensUsed = Math.ceil((systemPrompt.length + userPrompt.length + responseText.length) / 4);
+
+    const rawOutput = this.parseResponse(responseText);
+    const storyboard = this.buildStoryboard(rawOutput, tokensUsed);
+
+    logger.info(
+      `[StoryboardEngine] Hero reel complete: "${storyboard.title}" ` +
+      `(${storyboard.scenes.length} scenes)`,
+    );
+
+    return storyboard;
+  }
+
+  /**
+   * Build the system prompt for hero reel generation.
+   */
+  private buildHeroReelPrompt(clipDurationSec: number, styleHint?: string): string {
+    const styleBlock = styleHint
+      ? `\nSTYLE HINT from the user: "${styleHint}" — use this as a starting point for your Visual Style Anchor.`
+      : "";
+
+    return `You are a world-class creative director specializing in short-form hero reels — punchy, cinematic montages that tell a brand or personal story in under 60 seconds.
+
+Given a free-form brief describing the desired tone, subject, and feel, you will create a complete storyboard.
+
+PROCESS:
+1. ANALYZE the brief to identify the core theme, mood, and visual style.
+2. DEFINE a Visual Style Anchor — a single, immutable style prefix prepended to ALL image prompts. This must be photographic or stylized, NOT clip-art.
+3. CREATE 5–8 fast-paced scenes. Each scene should be ${clipDurationSec} seconds long.
+4. WRITE short, punchy voiceover lines (≤12 words per scene). Hero reels are FAST — think trailer energy.
+${styleBlock}
+
+OUTPUT FORMAT — respond with a single JSON object:
+{
+  "title": "Short punchy title for the reel",
+  "styleAnchor": "Immutable visual style prefix (e.g., 'Cinematic 35mm film grain, warm golden hour lighting, shallow depth of field')",
+  "analysis": {
+    "tone": "energetic / dramatic / inspirational / etc.",
+    "audience": "target audience",
+    "coreThemes": ["theme1", "theme2"]
+  },
+  "scenes": [
+    {
+      "voiceover": "Short punchy line",
+      "imageDescription": "Detailed visual description WITHOUT the style anchor prefix",
+      "durationEstimate": ${clipDurationSec},
+      "shouldAnimate": false,
+      "motionPrompt": null
+    }
+  ]
+}
+
+RULES:
+- Every scene durationEstimate MUST be exactly ${clipDurationSec} seconds.
+- Voiceover lines must be ≤12 words — hero reels are rapid-fire.
+- imageDescription must be vivid and specific for AI image generation.
+- Do NOT include the styleAnchor text in imageDescription — it is prepended automatically.
+- You may mark AT MOST 1 scene as shouldAnimate: true for a dramatic hero shot.
+- The reel should feel like a movie trailer — build energy, hit a climax, end with impact.
+- Total scenes: 5–8. No more, no less.`;
   }
 
   /**
@@ -331,6 +433,7 @@ ANIMATION COMPUTE BUDGET (for shouldAnimate):
 - For animated scenes, also provide a "motionPrompt" describing the desired camera/subject movement (e.g. "slow dolly forward with rising camera angle", "gentle parallax with floating particles", "cinematic zoom out revealing full landscape").
 - All other scenes should have "shouldAnimate": false and "motionPrompt": null.
 - Video generation is expensive (4 seconds per clip on GPU). Be selective and strategic.
+${options.imageClipDurationSeconds ? `\nIMAGE CLIP DURATION CONSTRAINT:\n- For scenes using static images (not animated video clips), set durationEstimate to ${options.imageClipDurationSeconds} seconds.\n- This controls how long each image asset appears on screen during Ken Burns animation.\n- Adjust voiceover length accordingly to match this duration.` : ""}
 
 TTS PACING TAGS (REQUIRED — include in every scene's voiceover):
 Include these bracket tags in voiceover text for natural pacing and emphasis:
