@@ -1509,21 +1509,29 @@ def _bg_train(config_path: str) -> None:
         _train_process = subprocess.Popen(
             ["mflux-train", "--config", config_path],
             stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            stderr=subprocess.STDOUT,  # Merge stderr into stdout for unified streaming
+            text=True,
+            bufsize=1,  # Line-buffered
         )
-        stdout, stderr = _train_process.communicate()
+        # Stream output line-by-line so progress appears in sidecar logs in real time
+        last_lines: list[str] = []
+        assert _train_process.stdout is not None
+        for line in _train_process.stdout:
+            line = line.rstrip()
+            if line:
+                log.info(f"[mflux-train] {line}")
+                last_lines.append(line)
+                if len(last_lines) > 20:
+                    last_lines.pop(0)
+        _train_process.wait()
         rc = _train_process.returncode
 
         if rc == 0:
             log.info("[train] Training completed successfully")
-            if stdout:
-                log.info(f"[train] stdout: {stdout.decode()[-500:]}")
         else:
-            err_msg = stderr.decode()[-500:] if stderr else f"exit code {rc}"
+            err_msg = "\n".join(last_lines) if last_lines else f"exit code {rc}"
             _train_error = err_msg
             log.error(f"[train] Training failed with exit code {rc}")
-            if stderr:
-                log.error(f"[train] stderr: {err_msg}")
     except Exception as e:
         _train_error = str(e)
         log.error(f"[train] Training error: {e}")
