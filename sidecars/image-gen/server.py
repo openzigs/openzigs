@@ -105,6 +105,15 @@ MODEL_REGISTRY: dict[str, dict] = {
         "recommended_height": 1024,
         "description": "FLUX.1 Kontext — text-guided semantic image editing via MFLUX",
     },
+    "z-image-turbo": {
+        "mflux_alias": "z-image-turbo",
+        "model_class": "z-image",
+        "default_steps": 4,
+        "default_guidance": 0.0,
+        "recommended_width": 1280,
+        "recommended_height": 720,
+        "description": "Z-Image Turbo — fast distilled model (trainable, LoRA-compatible)",
+    },
 }
 
 # ── Global State ───────────────────────────────────────────────
@@ -163,6 +172,17 @@ def _create_mflux_model(model_key: str, lora_paths: Optional[list[str]] = None, 
 
         log.info(f"Loading MFLUX Kontext model (quantize={_quantization}) ...")
         model = Flux1Kontext(quantize=_quantization)
+    elif model_class == "z-image":
+        from mflux.models.z_image.variants.z_image import ZImage
+        from mflux.models.common.config.model_config import ModelConfig
+
+        lora_info = f", lora={len(lora_paths)} adapters" if lora_paths else ""
+        log.info(f"Loading ZImage model '{model_key}' (quantize={_quantization}{lora_info}) ...")
+        model = ZImage(
+            quantize=_quantization,
+            model_config=ModelConfig.from_name(spec["mflux_alias"]),
+            **lora_kwargs,
+        )
     else:
         from mflux.models.flux.variants.txt2img.flux import Flux1
 
@@ -175,6 +195,17 @@ def _create_mflux_model(model_key: str, lora_paths: Optional[list[str]] = None, 
     log.info(f"MFLUX model '{model_key}' ready in {elapsed:.1f}s "
              f"(quantize={_quantization})")
     return model
+
+
+def _extract_pil_image(result: Any) -> "Image.Image":
+    """Normalize generate_image return value to a PIL Image.
+
+    Flux1 returns GeneratedImage (with .image attribute),
+    ZImage returns PIL.Image.Image directly.
+    """
+    if isinstance(result, Image.Image):
+        return result
+    return result.image
 
 
 # ── Model lifecycle helpers ────────────────────────────────────
@@ -193,7 +224,7 @@ def _unload_model() -> None:
         # clear_cache() flushes it so unified memory is actually returned to the OS.
         try:
             import mlx.core as mx
-            mx.metal.clear_cache()
+            mx.clear_cache()
             log.info(f"MLX Metal cache cleared (active={mx.metal.get_active_memory()//1024//1024}MB, cache={mx.metal.get_cache_memory()//1024//1024}MB)")
         except Exception as e:
             log.warning(f"Could not clear MLX Metal cache: {e}")
@@ -301,14 +332,16 @@ def _bg_generate(
     steps: Optional[int],
     guidance: float,
     seed: int,
+    lora_paths: Optional[list[str]] = None,
+    lora_scales: Optional[list[float]] = None,
 ) -> None:
     """Sync background task: run txt2img and POST callback to openzigs."""
     global _last_used, _generating
     _generating = True
     try:
-        if not _model_loaded or _model_name != requested_model:
+        if not _model_loaded or _model_name != requested_model or (lora_paths or []) != (_active_lora_paths or []):
             log.info(f"[async] Lazy-loading '{requested_model}' for job {job_id}")
-            _load_model(requested_model)
+            _load_model(requested_model, lora_paths=lora_paths, lora_scales=lora_scales)
         spec = MODEL_REGISTRY[requested_model]
         w = (width // 16) * 16
         h = (height // 16) * 16
@@ -323,7 +356,7 @@ def _bg_generate(
         _last_used = time.monotonic()
         log.info(f"[async] generate done in {elapsed:.1f}s job={job_id}")
         buf = io.BytesIO()
-        result.image.save(buf, format="PNG", optimize=True)
+        _extract_pil_image(result).save(buf, format="PNG", optimize=True)
         media_b64 = base64.b64encode(buf.getvalue()).decode("ascii")
         _post_callback(job_id, callback_url, {
             "job_id": job_id,
@@ -381,7 +414,7 @@ def _bg_img2img(
         _last_used = time.monotonic()
         log.info(f"[async] img2img done in {elapsed:.1f}s job={job_id}")
         buf = io.BytesIO()
-        result.image.save(buf, format="PNG", optimize=True)
+        _extract_pil_image(result).save(buf, format="PNG", optimize=True)
         media_b64 = base64.b64encode(buf.getvalue()).decode("ascii")
         _post_callback(job_id, callback_url, {
             "job_id": job_id,
@@ -440,7 +473,7 @@ def _bg_kontext(
         _last_used = time.monotonic()
         log.info(f"[async] kontext done in {elapsed:.1f}s job={job_id}")
         buf = io.BytesIO()
-        result.image.save(buf, format="PNG", optimize=True)
+        _extract_pil_image(result).save(buf, format="PNG", optimize=True)
         media_b64 = base64.b64encode(buf.getvalue()).decode("ascii")
         _post_callback(job_id, callback_url, {
             "job_id": job_id,
@@ -882,8 +915,7 @@ async def generate(req: GenerateRequest):
             width=width,
             guidance=guidance,
         )
-        # GeneratedImage.image is a PIL.Image.Image
-        pil_image = result.image
+        pil_image = _extract_pil_image(result)
     except Exception as e:
         log.error(f"Generation failed: {e}")
         raise HTTPException(status_code=500, detail=f"Generation failed: {str(e)}")
@@ -1001,7 +1033,7 @@ async def img2img(req: Img2ImgRequest):
             image_path=source_path,
             image_strength=effective_strength,
         )
-        pil_image = result.image
+        pil_image = _extract_pil_image(result)
     except Exception as e:
         log.error(f"img2img failed: {e}")
         raise HTTPException(status_code=500, detail=f"img2img failed: {str(e)}")
@@ -1110,7 +1142,7 @@ async def kontext_edit(req: KontextRequest):
             guidance=guidance,
             image_path=source_path,
         )
-        pil_image = result.image
+        pil_image = _extract_pil_image(result)
     except Exception as e:
         log.error(f"kontext failed: {e}")
         raise HTTPException(status_code=500, detail=f"kontext editing failed: {str(e)}")
@@ -1215,7 +1247,7 @@ async def generate_controlnet(req: ControlNetRequest):
             controlnet_strength=req.controlnet_strength,
             controlnet_save_canny=req.save_canny,
         )
-        pil_image = result.image
+        pil_image = _extract_pil_image(result)
     except Exception as e:
         log.error(f"ControlNet generation failed: {e}")
         raise HTTPException(status_code=500, detail=f"ControlNet generation failed: {str(e)}")
@@ -1328,29 +1360,40 @@ def _materialize_network_training(req: TrainRequest) -> str:
     lora_output = os.path.join(train_dir, "lora")
     os.makedirs(lora_output, exist_ok=True)
 
-    # Build the correct mflux training config format
-    config = {
-        "model": cfg.get("model", "dev"),
+    # Resolve training model — Flux1 is no longer supported, default to z-image-turbo
+    model = cfg.get("model", "z-image-turbo")
+    num_epochs = int(cfg.get("num_epochs", 50))
+
+    # Build the correct mflux training config format (matches _example/train.json)
+    config: dict[str, Any] = {
+        "model": model,
         "seed": 42,
         "steps": steps,
         "guidance": 0.0,
         "data": data_dir,
         "training_loop": {
-            "num_epochs": 1,
+            "num_epochs": num_epochs,
             "batch_size": 1,
         },
         "optimizer": {
-            "name": "adam",
+            "name": "AdamW",
             "learning_rate": cfg.get("learning_rate", 1e-4),
         },
         "checkpoint": {
-            "save_frequency": max(100, steps // 4),
+            "save_frequency": max(5, num_epochs // 4),
             "output_path": lora_output,
         },
         "lora_layers": {
             "targets": [
-                {"module_path": "transformer.transformer_blocks.*.attn", "rank": lora_rank},
-                {"module_path": "transformer.single_transformer_blocks.*.attn", "rank": lora_rank},
+                {"module_path": "layers.{block}.attention.to_q", "blocks": {"start": 0, "end": 30}, "rank": lora_rank},
+                {"module_path": "layers.{block}.attention.to_k", "blocks": {"start": 0, "end": 30}, "rank": lora_rank},
+                {"module_path": "layers.{block}.attention.to_v", "blocks": {"start": 0, "end": 30}, "rank": lora_rank},
+                {"module_path": "layers.{block}.attention.to_out.0", "blocks": {"start": 0, "end": 30}, "rank": lora_rank},
+                {"module_path": "layers.{block}.feed_forward.w1", "blocks": {"start": 0, "end": 30}, "rank": lora_rank},
+                {"module_path": "layers.{block}.feed_forward.w2", "blocks": {"start": 0, "end": 30}, "rank": lora_rank},
+                {"module_path": "layers.{block}.feed_forward.w3", "blocks": {"start": 0, "end": 30}, "rank": lora_rank},
+                {"module_path": "cap_embedder.1", "rank": lora_rank},
+                {"module_path": "all_final_layer.2-1.linear", "rank": lora_rank},
             ]
         },
     }
@@ -1491,7 +1534,7 @@ def _bg_train(config_path: str) -> None:
         gc.collect()
         try:
             import mlx.core as mx
-            mx.metal.clear_cache()
+            mx.clear_cache()
         except Exception:
             pass
 
@@ -1518,6 +1561,7 @@ async def generate_async(req: AsyncGenerateRequest, background_tasks: Background
         req.job_id, req.callback_url,
         req.prompt, requested_model,
         req.width, req.height, req.steps, guidance, seed,
+        req.lora_paths, req.lora_scales,
     )
     log.info(f"[async] generate job={req.job_id} accepted, callback={req.callback_url}")
     return {"job_id": req.job_id, "status": "accepted"}

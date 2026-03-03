@@ -1261,20 +1261,22 @@ function GalleryStudio({ onClose, onCreated }: { onClose: () => void; onCreated:
         payload.seed = parseInt(form.seed, 10);
       }
 
-      // Character LoRA injection
+      // Character LoRA injection — LoRA trained on z-image-turbo requires that model for generation
+      let modelOverride: string | undefined;
       if (form.characterId) {
         const char = readyCharacters.find((c) => c.id === form.characterId);
         if (char?.trainedLoraPath) {
           payload.lora_paths = [char.trainedLoraPath];
           payload.lora_scales = [char.loraScale];
+          modelOverride = "z-image-turbo";
         }
         if (form.controlnetStrength > 0) {
           payload.controlnet_strength = form.controlnetStrength;
         }
       }
 
-      // For local image gen, pass the selected model
-      const model = !isVideo ? form.imageModel : undefined;
+      // For local image gen, pass the selected model (or character LoRA model override)
+      const model = !isVideo ? (modelOverride ?? form.imageModel) : undefined;
 
       await fetchJson("/api/queue/jobs", {
         method: "POST",

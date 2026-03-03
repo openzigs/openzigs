@@ -302,9 +302,10 @@ export function createCharacterRouter({ characterRepo }: CharacterRouterDeps): R
 
       // Parse optional training overrides from request body
       const overrides = req.body as Record<string, unknown>;
-      const steps = typeof overrides.steps === "number" ? overrides.steps : 1000;
+      const steps = typeof overrides.steps === "number" ? overrides.steps : 9;
       const learningRate = typeof overrides.learningRate === "number" ? overrides.learningRate : 1e-4;
-      const loraRank = typeof overrides.loraRank === "number" ? overrides.loraRank : 4;
+      const loraRank = typeof overrides.loraRank === "number" ? overrides.loraRank : 16;
+      const numEpochs = typeof overrides.numEpochs === "number" ? overrides.numEpochs : 50;
 
       // Read photos as base64 for sending to remote sidecar
       const photos: Array<{ image_base64: string; filename: string; prompt: string }> = [];
@@ -329,9 +330,10 @@ export function createCharacterRouter({ characterRepo }: CharacterRouterDeps): R
       }
 
       const trainConfig = {
-        model: "dev",
+        model: "z-image-turbo",
         trigger_word: character.triggerWord,
         steps,
+        num_epochs: numEpochs,
         learning_rate: learningRate,
         lora_rank: loraRank,
       };
