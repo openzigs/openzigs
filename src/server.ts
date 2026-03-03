@@ -75,7 +75,7 @@ import { MediaQueueRepository } from "./queue/media-queue-repository.js";
 import { QueueMaster } from "./queue/queue-master.js";
 import { createQueueRouter, createQueueCallbackRouter } from "./api/queue.js";
 import { createGalleryRouter } from "./api/gallery.js";
-import { createCharacterRouter } from "./api/characters.js";
+import { createCharacterRouter, setCharacterIO } from "./api/characters.js";
 import { CharacterRepository } from "./characters/character-repository.js";
 
 // Register built-in post-action types (create-github-issues, send-webhook, etc.)
@@ -958,6 +958,8 @@ const io = new SocketIOServer(httpServer, {
 
 // Bind Socket.IO to Director router for real-time produce activity events
 setDirectorIO(io);
+// Bind Socket.IO to Character router for training progress events
+setCharacterIO(io);
 
 // Socket.IO auth middleware — validate Bearer token on connection
 const expectedToken = config.auth.token ?? "";

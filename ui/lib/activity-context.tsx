@@ -92,6 +92,9 @@ export const ActivityProvider = ({ children }: { children: ReactNode }) => {
         case "queue":
           await fetchJson(`/api/queue/jobs/${rawId}`, { method: "DELETE" });
           break;
+        case "training":
+          await fetchJson(`/api/characters/${rawId}/cancel-training`, { method: "POST" });
+          break;
         default:
           removeActivity(id);
           return true;
@@ -134,6 +137,11 @@ export const ActivityProvider = ({ children }: { children: ReactNode }) => {
     };
     const onQueueDone = (data: { jobId: string }) => removeActivity(`queue:${data.jobId}`);
 
+    const onTrainingStart = (data: { characterId: string; characterName: string }) => {
+      addActivity(`training:${data.characterId}`, "training", `Training LoRA: ${data.characterName}`);
+    };
+    const onTrainingDone = (data: { characterId: string }) => removeActivity(`training:${data.characterId}`);
+
     socket.on("produce:progress", onProduceProgress);
     socket.on("task:status", onTaskStatus);
     socket.on("render:progress", onRenderProgress);
@@ -142,6 +150,9 @@ export const ActivityProvider = ({ children }: { children: ReactNode }) => {
     socket.on("queue:job:dispatched", onQueueDispatched);
     socket.on("queue:job:complete", onQueueDone);
     socket.on("queue:job:failed", onQueueDone);
+    socket.on("character:training:start", onTrainingStart);
+    socket.on("character:training:complete", onTrainingDone);
+    socket.on("character:training:failed", onTrainingDone);
 
     return () => {
       socket.off("produce:progress", onProduceProgress);
@@ -152,6 +163,9 @@ export const ActivityProvider = ({ children }: { children: ReactNode }) => {
       socket.off("queue:job:dispatched", onQueueDispatched);
       socket.off("queue:job:complete", onQueueDone);
       socket.off("queue:job:failed", onQueueDone);
+      socket.off("character:training:start", onTrainingStart);
+      socket.off("character:training:complete", onTrainingDone);
+      socket.off("character:training:failed", onTrainingDone);
     };
   }, [socket, addActivity, removeActivity]);
 

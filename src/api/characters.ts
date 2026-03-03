@@ -10,12 +10,22 @@ import path from "node:path";
 import os from "node:os";
 import { logger } from "../logging/logger.js";
 import type { CharacterRepository, CharacterCreate, CharacterUpdate } from "../characters/character-repository.js";
+import type { Server as SocketIOServer } from "socket.io";
 
 // ── Types ───────────────────────────────────────────────────
 
 export interface CharacterRouterDeps {
   characterRepo: CharacterRepository;
 }
+
+// ── Socket.IO (injected after server init via setCharacterIO) ─
+let _io: SocketIOServer | null = null;
+export function setCharacterIO(io: SocketIOServer): void {
+  _io = io;
+}
+
+// ── In-flight training cancellation flags ────────────────────
+const _cancelledTraining = new Set<string>();
 
 // ── Storage Config ──────────────────────────────────────────
 
@@ -57,6 +67,16 @@ const upload = multer({
 
 export function createCharacterRouter({ characterRepo }: CharacterRouterDeps): Router {
   const router = Router();
+
+  // ── Startup: reset any characters stuck in "training" from a previous server run ──
+  // The poll loop runs in-memory; on restart it dies and the status never clears.
+  for (const char of characterRepo.getByStatus("training")) {
+    characterRepo.update(char.id, {
+      status: "failed",
+      errorMessage: "Training was interrupted by a server restart",
+    });
+    logger.warn(`[Characters] Reset stale training status for '${char.name}' (${char.id})`);
+  }
 
   // ── GET / — List all characters ───────────────────────────
   router.get("/", (_req, res) => {
@@ -364,6 +384,32 @@ export function createCharacterRouter({ characterRepo }: CharacterRouterDeps): R
     }
   });
 
+  // ── POST /:id/cancel-training — Cancel an in-progress training run ──
+  router.post("/:id/cancel-training", (req, res) => {
+    try {
+      const character = characterRepo.getById(req.params.id);
+      if (!character) {
+        res.status(404).json({ error: "Character not found" });
+        return;
+      }
+      if (character.status !== "training") {
+        res.status(409).json({ error: "Character is not currently training" });
+        return;
+      }
+      _cancelledTraining.add(req.params.id);
+      characterRepo.update(req.params.id, {
+        status: "failed",
+        errorMessage: "Training cancelled by user",
+      });
+      _io?.emit("character:training:failed", { characterId: req.params.id, characterName: character.name });
+      logger.info(`[Characters] Training cancelled for '${character.name}' (${req.params.id})`);
+      res.json({ ok: true, message: "Training cancelled" });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      res.status(500).json({ error: msg });
+    }
+  });
+
   return router;
 }
 
@@ -448,8 +494,11 @@ async function startRemoteTraining(
     const result = await response.json() as { status: string; message: string; output_dir?: string };
     logger.info(`[Characters] Sidecar accepted training: ${result.message}`);
 
+    const characterName = characterRepo.getById(characterId)?.name ?? characterId;
+    _io?.emit("character:training:start", { characterId, characterName });
+
     // Start polling for completion
-    pollTrainingStatus(characterId, sidecarUrl, token, result.output_dir ?? null, characterRepo);
+    pollTrainingStatus(characterId, characterName, sidecarUrl, token, result.output_dir ?? null, characterRepo);
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
     characterRepo.update(characterId, {
@@ -462,6 +511,7 @@ async function startRemoteTraining(
 
 function pollTrainingStatus(
   characterId: string,
+  characterName: string,
   sidecarUrl: string,
   token: string,
   _outputDir: string | null,
@@ -472,11 +522,18 @@ function pollTrainingStatus(
   const startTime = Date.now();
 
   const poll = async () => {
+    // Stop polling if training was cancelled
+    if (_cancelledTraining.has(characterId)) {
+      _cancelledTraining.delete(characterId);
+      return;
+    }
+
     if (Date.now() - startTime > maxPollTimeMs) {
       characterRepo.update(characterId, {
         status: "failed",
         errorMessage: "Training timed out after 4 hours",
       });
+      _io?.emit("character:training:failed", { characterId, characterName });
       logger.error(`[Characters] Training timed out for ${characterId}`);
       return;
     }
@@ -511,6 +568,7 @@ function pollTrainingStatus(
           status: "failed",
           errorMessage: status.error,
         });
+        _io?.emit("character:training:failed", { characterId, characterName });
         logger.error(`[Characters] Remote training failed for ${characterId}: ${status.error}`);
       } else if (status.lora_path) {
         characterRepo.update(characterId, {
@@ -518,12 +576,14 @@ function pollTrainingStatus(
           trainedLoraPath: status.lora_path,
           errorMessage: null,
         });
+        _io?.emit("character:training:complete", { characterId, characterName });
         logger.info(`[Characters] Remote training complete for ${characterId}: ${status.lora_path}`);
       } else {
         characterRepo.update(characterId, {
           status: "failed",
           errorMessage: "Training completed but no LoRA adapter found in output directory",
         });
+        _io?.emit("character:training:failed", { characterId, characterName });
         logger.error(`[Characters] Remote training completed but no LoRA found for ${characterId}`);
       }
     } catch (error) {

@@ -68,6 +68,9 @@ def verify_token(authorization: Optional[str] = Header(None)) -> None:
         raise HTTPException(status_code=403, detail="Invalid token")
 
 
+# ── Version ────────────────────────────────────────────────────
+SIDECAR_VERSION = "3.1.0"  # Bump on every deploy to verify Mac Mini is current
+
 # ── Logging ────────────────────────────────────────────────────
 logging.basicConfig(
     level=logging.INFO,
@@ -564,6 +567,7 @@ class HealthResponse(BaseModel):
     recommended_width: int = 1024
     recommended_height: int = 576
     available_models: list[str] = []
+    version: str = SIDECAR_VERSION
 
 
 class Img2ImgRequest(BaseModel):
@@ -744,7 +748,7 @@ async def lifespan(app: FastAPI):
         log.info(f"Model '{_default_model}' preloaded in {elapsed:.1f}s")
 
     log.info(
-        f"Sidecar ready — {'preloaded' if _preload_at_startup else 'lazy'} mode "
+        f"Sidecar v{SIDECAR_VERSION} ready — {'preloaded' if _preload_at_startup else 'lazy'} mode "
         f"({'model loaded' if _model_loaded else 'no model loaded'}, device=mlx, "
         f"default_model={_default_model}, "
         f"idle_timeout={'disabled' if _idle_timeout <= 0 else f'{_idle_timeout:.0f}s'})"
@@ -798,6 +802,7 @@ async def health():
         recommended_width=spec.get("recommended_width", 1024),
         recommended_height=spec.get("recommended_height", 576),
         available_models=list(MODEL_REGISTRY.keys()),
+        version=SIDECAR_VERSION,
     )
 
 
@@ -1421,7 +1426,13 @@ def _materialize_network_training(req: TrainRequest) -> str:
     with open(config_path, "w") as f:
         json.dump(config, f, indent=2)
 
-    log.info(f"[train] Materialized {len(req.photos or [])} photos + config at {config_path}")
+    num_photos = len(req.photos or [])
+    total_steps = num_epochs * num_photos
+    log.info(
+        f"[train] Materialized {num_photos} photos + config at {config_path} "
+        f"(num_epochs={num_epochs}, total_steps={total_steps}, "
+        f"quantize={config['quantize']}, lora_rank={lora_rank}, model={model})"
+    )
     return config_path
 
 
