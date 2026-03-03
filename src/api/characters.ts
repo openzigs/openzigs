@@ -304,8 +304,8 @@ export function createCharacterRouter({ characterRepo }: CharacterRouterDeps): R
       const overrides = req.body as Record<string, unknown>;
       const steps = typeof overrides.steps === "number" ? overrides.steps : 9;
       const learningRate = typeof overrides.learningRate === "number" ? overrides.learningRate : 1e-4;
-      const loraRank = typeof overrides.loraRank === "number" ? overrides.loraRank : 16;
-      const numEpochs = typeof overrides.numEpochs === "number" ? overrides.numEpochs : 50;
+      const loraRank = typeof overrides.loraRank === "number" ? overrides.loraRank : 8;
+      const numEpochs = typeof overrides.numEpochs === "number" ? overrides.numEpochs : 1;
 
       // Read photos as base64 for sending to remote sidecar
       const photos: Array<{ image_base64: string; filename: string; prompt: string }> = [];

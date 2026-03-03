@@ -1332,12 +1332,18 @@ def _materialize_network_training(req: TrainRequest) -> str:
 
     cfg = req.train_config or {}
     trigger_word = cfg.get("trigger_word", "TOK")
-    lora_rank = int(cfg.get("lora_rank", 4))
-    steps = int(cfg.get("steps", 1000))
+    lora_rank = int(cfg.get("lora_rank", 8))
+    steps = int(cfg.get("steps", 9))
+
+    # Max training image dimension — larger images cause OOM on 32GB Macs.
+    # Z-Image Turbo native res is 1280x720; we cap at 720px longest edge
+    # to keep VAE encoding within Metal buffer limits.
+    max_dim = int(cfg.get("max_image_dim", 720))
 
     # Write each photo + matching .txt prompt file
     # Always convert to JPEG via PIL — handles HEIC, WebP, PNG, and
     # any other format that might arrive from iPhone or web uploads.
+    # Resizes to fit within max_dim to prevent Metal OOM during training.
     for i, photo in enumerate(req.photos or []):
         safe_stem = f"{i:04d}"
         photo_path = os.path.join(data_dir, f"{safe_stem}.jpg")
@@ -1346,6 +1352,14 @@ def _materialize_network_training(req: TrainRequest) -> str:
         try:
             import io as _io
             pil_img = Image.open(_io.BytesIO(img_bytes)).convert("RGB")
+            # Resize if larger than max_dim — critical for 32GB Metal allocation limit
+            w, h = pil_img.size
+            if max(w, h) > max_dim:
+                scale = max_dim / max(w, h)
+                new_w = int(w * scale) // 16 * 16  # Must be divisible by 16
+                new_h = int(h * scale) // 16 * 16
+                pil_img = pil_img.resize((new_w, new_h), Image.LANCZOS)
+                log.info(f"[train] Resized {safe_stem}.jpg from {w}x{h} → {new_w}x{new_h}")
             pil_img.save(photo_path, format="JPEG", quality=95)
             log.info(f"[train] Wrote {safe_stem}.jpg ({pil_img.width}x{pil_img.height}) + prompt")
         except Exception as conv_err:
@@ -1362,38 +1376,43 @@ def _materialize_network_training(req: TrainRequest) -> str:
 
     # Resolve training model — Flux1 is no longer supported, default to z-image-turbo
     model = cfg.get("model", "z-image-turbo")
-    num_epochs = int(cfg.get("num_epochs", 50))
+    num_epochs = int(cfg.get("num_epochs", 1))
 
-    # Build the correct mflux training config format (matches _example/train.json)
+    # Build the correct mflux training config format
+    # Based on official z-image-turbo training config from mflux README:
+    #   - quantize=8 is REQUIRED for 32GB Macs (model is ~31GB unquantized)
+    #   - Only train attention layers (to_q/k/v) on upper blocks (15-30)
+    #   - timestep_low/high constrain noise schedule for turbo model
     config: dict[str, Any] = {
         "model": model,
         "seed": 42,
         "steps": steps,
         "guidance": 0.0,
+        "quantize": int(cfg.get("quantize", 8)),
         "data": data_dir,
         "training_loop": {
             "num_epochs": num_epochs,
             "batch_size": 1,
+            "timestep_low": 4,
+            "timestep_high": 9,
         },
         "optimizer": {
             "name": "AdamW",
             "learning_rate": cfg.get("learning_rate", 1e-4),
         },
         "checkpoint": {
-            "save_frequency": max(5, num_epochs // 4),
+            "save_frequency": max(1, num_epochs // 4) if num_epochs > 4 else num_epochs,
             "output_path": lora_output,
+        },
+        "monitoring": {
+            "plot_frequency": 1,
+            "generate_image_frequency": max(1, num_epochs // 4) if num_epochs > 4 else num_epochs,
         },
         "lora_layers": {
             "targets": [
-                {"module_path": "layers.{block}.attention.to_q", "blocks": {"start": 0, "end": 30}, "rank": lora_rank},
-                {"module_path": "layers.{block}.attention.to_k", "blocks": {"start": 0, "end": 30}, "rank": lora_rank},
-                {"module_path": "layers.{block}.attention.to_v", "blocks": {"start": 0, "end": 30}, "rank": lora_rank},
-                {"module_path": "layers.{block}.attention.to_out.0", "blocks": {"start": 0, "end": 30}, "rank": lora_rank},
-                {"module_path": "layers.{block}.feed_forward.w1", "blocks": {"start": 0, "end": 30}, "rank": lora_rank},
-                {"module_path": "layers.{block}.feed_forward.w2", "blocks": {"start": 0, "end": 30}, "rank": lora_rank},
-                {"module_path": "layers.{block}.feed_forward.w3", "blocks": {"start": 0, "end": 30}, "rank": lora_rank},
-                {"module_path": "cap_embedder.1", "rank": lora_rank},
-                {"module_path": "all_final_layer.2-1.linear", "rank": lora_rank},
+                {"module_path": "layers.{block}.attention.to_q", "blocks": {"start": 15, "end": 30}, "rank": lora_rank},
+                {"module_path": "layers.{block}.attention.to_k", "blocks": {"start": 15, "end": 30}, "rank": lora_rank},
+                {"module_path": "layers.{block}.attention.to_v", "blocks": {"start": 15, "end": 30}, "rank": lora_rank},
             ]
         },
     }
