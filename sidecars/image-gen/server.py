@@ -69,7 +69,7 @@ def verify_token(authorization: Optional[str] = Header(None)) -> None:
 
 
 # ── Version ────────────────────────────────────────────────────
-SIDECAR_VERSION = "3.2.0"  # Bump on every deploy to verify Mac Mini is current
+SIDECAR_VERSION = "3.3.0"  # Bump on every deploy to verify Mac Mini is current
 
 # ── Logging ────────────────────────────────────────────────────
 logging.basicConfig(
@@ -1382,7 +1382,14 @@ def _materialize_network_training(req: TrainRequest) -> str:
             f.write(prompt)
 
     lora_output = os.path.join(train_dir, "lora")
-    os.makedirs(lora_output, exist_ok=True)
+    # CRITICAL: Do NOT pre-create this directory.  mflux's _resolve_output_path
+    # appends a timestamp suffix when the directory already exists, which causes
+    # us to look for checkpoints in the wrong path.  If a previous training run
+    # left a directory here, wipe it so mflux creates a fresh one at the exact
+    # path we record in _train_output_dir.
+    if os.path.isdir(lora_output):
+        import shutil as _sh
+        _sh.rmtree(lora_output)
 
     # Resolve training model — Flux1 is no longer supported, default to z-image-turbo
     model = cfg.get("model", "z-image-turbo")
