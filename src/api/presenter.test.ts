@@ -258,7 +258,7 @@ describe("Presenter API router", () => {
       const repo = createMockPresentationRepo();
       repo.getQuizzes.mockReturnValue([
         { id: "q1", question: "What?", options: '["a","b","c","d"]', correct_answer: 0, chapter_index: 0 },
-      ]);
+      ] as any);
       const { app } = buildApp({ presentationRepo: repo as never });
       const res = await request(app).get("/presentations/p1/quiz");
       expect(res.status).toBe(200);
@@ -285,6 +285,7 @@ describe("Presenter API router", () => {
 
     it("returns 500 when teacher agent throws", async () => {
       const mockTeacher = {
+        // eslint-disable-next-line require-yield
         ask: vi.fn().mockImplementation(async function* () {
           throw new Error("LLM timeout");
         }),

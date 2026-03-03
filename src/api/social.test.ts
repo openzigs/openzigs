@@ -276,7 +276,7 @@ describe("Social API router", () => {
   describe("GET /stats — error path", () => {
     it("returns 500 when getStats throws", async () => {
       const { app, opts } = buildApp();
-      (opts.repository as ReturnType<typeof createMockRepository>).getStats.mockImplementation(() => {
+      (opts.repository as unknown as ReturnType<typeof createMockRepository>).getStats.mockImplementation(() => {
         throw new Error("DB error");
       });
       const res = await request(app).get("/social/stats");
@@ -289,7 +289,7 @@ describe("Social API router", () => {
     it("passes page and pageSize params", async () => {
       const { app, opts } = buildApp();
       await request(app).get("/social/contacts?page=2&pageSize=10");
-      expect((opts.repository as ReturnType<typeof createMockRepository>).listContacts).toHaveBeenCalledWith(
+      expect((opts.repository as unknown as ReturnType<typeof createMockRepository>).listContacts).toHaveBeenCalledWith(
         expect.objectContaining({ page: 2, pageSize: 10 }),
       );
     });
@@ -297,7 +297,7 @@ describe("Social API router", () => {
     it("passes search and tag params", async () => {
       const { app, opts } = buildApp();
       await request(app).get("/social/contacts?search=foo&tag=vip");
-      expect((opts.repository as ReturnType<typeof createMockRepository>).listContacts).toHaveBeenCalledWith(
+      expect((opts.repository as unknown as ReturnType<typeof createMockRepository>).listContacts).toHaveBeenCalledWith(
         expect.objectContaining({ search: "foo", tag: "vip" }),
       );
     });
@@ -305,7 +305,7 @@ describe("Social API router", () => {
     it("passes handoffActive=true filter", async () => {
       const { app, opts } = buildApp();
       await request(app).get("/social/contacts?handoffActive=true");
-      expect((opts.repository as ReturnType<typeof createMockRepository>).listContacts).toHaveBeenCalledWith(
+      expect((opts.repository as unknown as ReturnType<typeof createMockRepository>).listContacts).toHaveBeenCalledWith(
         expect.objectContaining({ handoffActive: true }),
       );
     });
@@ -313,14 +313,14 @@ describe("Social API router", () => {
     it("passes handoffActive=false filter", async () => {
       const { app, opts } = buildApp();
       await request(app).get("/social/contacts?handoffActive=false");
-      expect((opts.repository as ReturnType<typeof createMockRepository>).listContacts).toHaveBeenCalledWith(
+      expect((opts.repository as unknown as ReturnType<typeof createMockRepository>).listContacts).toHaveBeenCalledWith(
         expect.objectContaining({ handoffActive: false }),
       );
     });
 
     it("returns 500 when listContacts throws", async () => {
       const { app, opts } = buildApp();
-      (opts.repository as ReturnType<typeof createMockRepository>).listContacts.mockImplementation(() => {
+      (opts.repository as unknown as ReturnType<typeof createMockRepository>).listContacts.mockImplementation(() => {
         throw new Error("DB error");
       });
       const res = await request(app).get("/social/contacts");
@@ -331,7 +331,7 @@ describe("Social API router", () => {
   describe("GET /contacts/export — error path", () => {
     it("returns 500 when exportContactsCsv throws", async () => {
       const { app, opts } = buildApp();
-      (opts.repository as ReturnType<typeof createMockRepository>).exportContactsCsv.mockImplementation(() => {
+      (opts.repository as unknown as ReturnType<typeof createMockRepository>).exportContactsCsv.mockImplementation(() => {
         throw new Error("DB error");
       });
       const res = await request(app).get("/social/contacts/export");
@@ -350,7 +350,7 @@ describe("Social API router", () => {
       const { app, opts } = buildApp();
       const res = await request(app).patch("/social/contacts/c1").send({ notes: "VIP customer" });
       expect(res.status).toBe(200);
-      expect((opts.repository as ReturnType<typeof createMockRepository>).updateContact).toHaveBeenCalledWith(
+      expect((opts.repository as unknown as ReturnType<typeof createMockRepository>).updateContact).toHaveBeenCalledWith(
         "c1",
         expect.objectContaining({ notes: "VIP customer" }),
       );
@@ -360,7 +360,7 @@ describe("Social API router", () => {
   describe("POST /contacts/:id/tags — not found", () => {
     it("returns 404 when addTag returns null", async () => {
       const { app, opts } = buildApp();
-      (opts.repository as ReturnType<typeof createMockRepository>).addTag.mockReturnValue(null);
+      (opts.repository as unknown as ReturnType<typeof createMockRepository>).addTag.mockReturnValue(null);
       const res = await request(app).post("/social/contacts/missing/tags").send({ tag: "vip" });
       expect(res.status).toBe(404);
     });
@@ -375,7 +375,7 @@ describe("Social API router", () => {
 
     it("returns 404 when removeTag returns null", async () => {
       const { app, opts } = buildApp();
-      (opts.repository as ReturnType<typeof createMockRepository>).removeTag.mockReturnValue(null);
+      (opts.repository as unknown as ReturnType<typeof createMockRepository>).removeTag.mockReturnValue(null);
       const res = await request(app).delete("/social/contacts/missing/tags/vip");
       expect(res.status).toBe(404);
     });
@@ -385,14 +385,14 @@ describe("Social API router", () => {
     it("passes limit and offset to repository", async () => {
       const { app, opts } = buildApp();
       await request(app).get("/social/contacts/c1/messages?limit=5&offset=10");
-      expect((opts.repository as ReturnType<typeof createMockRepository>).getMessages).toHaveBeenCalledWith("c1", 5, 10);
+      expect((opts.repository as unknown as ReturnType<typeof createMockRepository>).getMessages).toHaveBeenCalledWith("c1", 5, 10);
     });
   });
 
   describe("GET /activity — error path", () => {
     it("returns 500 when getRecentActivity throws", async () => {
       const { app, opts } = buildApp();
-      (opts.repository as ReturnType<typeof createMockRepository>).getRecentActivity.mockImplementation(() => {
+      (opts.repository as unknown as ReturnType<typeof createMockRepository>).getRecentActivity.mockImplementation(() => {
         throw new Error("DB error");
       });
       const res = await request(app).get("/social/activity");
@@ -404,12 +404,12 @@ describe("Social API router", () => {
     it("passes platform filter to listRules", async () => {
       const { app, opts } = buildApp();
       await request(app).get("/social/rules?platform=instagram");
-      expect((opts.repository as ReturnType<typeof createMockRepository>).listRules).toHaveBeenCalledWith("instagram");
+      expect((opts.repository as unknown as ReturnType<typeof createMockRepository>).listRules).toHaveBeenCalledWith("instagram");
     });
 
     it("returns 500 when listRules throws", async () => {
       const { app, opts } = buildApp();
-      (opts.repository as ReturnType<typeof createMockRepository>).listRules.mockImplementation(() => {
+      (opts.repository as unknown as ReturnType<typeof createMockRepository>).listRules.mockImplementation(() => {
         throw new Error("DB error");
       });
       const res = await request(app).get("/social/rules");
@@ -420,7 +420,7 @@ describe("Social API router", () => {
   describe("POST /rules — error path", () => {
     it("returns 500 when createRule throws", async () => {
       const { app, opts } = buildApp();
-      (opts.repository as ReturnType<typeof createMockRepository>).createRule.mockImplementation(() => {
+      (opts.repository as unknown as ReturnType<typeof createMockRepository>).createRule.mockImplementation(() => {
         throw new Error("constraint violation");
       });
       const res = await request(app).post("/social/rules").send({
@@ -453,7 +453,7 @@ describe("Social API router", () => {
 
     it("returns 500 when updateRule throws", async () => {
       const { app, opts } = buildApp();
-      (opts.repository as ReturnType<typeof createMockRepository>).updateRule.mockImplementation(() => {
+      (opts.repository as unknown as ReturnType<typeof createMockRepository>).updateRule.mockImplementation(() => {
         throw new Error("DB error");
       });
       const res = await request(app).patch("/social/rules/r1").send({ name: "Updated" });
@@ -467,14 +467,14 @@ describe("Social API router", () => {
   describe("POST /handoff/:contactId/close — error paths", () => {
     it("returns 404 when handoff not found", async () => {
       const { app, opts } = buildApp();
-      (opts.handoff as ReturnType<typeof createMockHandoff>).closeHandoff.mockResolvedValue(false);
+      (opts.handoff as unknown as ReturnType<typeof createMockHandoff>).closeHandoff.mockResolvedValue(false);
       const res = await request(app).post("/social/handoff/c1/close").send({});
       expect(res.status).toBe(404);
     });
 
     it("returns 500 when closeHandoff throws", async () => {
       const { app, opts } = buildApp();
-      (opts.handoff as ReturnType<typeof createMockHandoff>).closeHandoff.mockRejectedValue(new Error("fail"));
+      (opts.handoff as unknown as ReturnType<typeof createMockHandoff>).closeHandoff.mockRejectedValue(new Error("fail"));
       const res = await request(app).post("/social/handoff/c1/close").send({});
       expect(res.status).toBe(500);
     });

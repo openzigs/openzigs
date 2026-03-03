@@ -370,8 +370,8 @@ describe("KnowledgeIngestionService", () => {
   describe("search with overrides", () => {
     it("passes mode override to store", async () => {
       const store = getStore();
-      await service.search("query", 5, { mode: "keyword" });
-      expect(store.searchByMode).toHaveBeenCalledWith("query", 5, "keyword", expect.any(Number));
+      await service.search("query", 5, { mode: "fts" });
+      expect(store.searchByMode).toHaveBeenCalledWith("query", 5, "fts", expect.any(Number));
     });
 
     it("passes minScore override to store", async () => {

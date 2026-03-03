@@ -11,6 +11,7 @@ vi.mock("../logging/logger.js", () => ({
 // Mock spawn for ffprobe/install scripts — always return null duration
 vi.mock("node:child_process", () => ({
   spawn: vi.fn(() => {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
     const EventEmitter = require("node:events");
     const proc = new EventEmitter();
     proc.stdout = new EventEmitter();

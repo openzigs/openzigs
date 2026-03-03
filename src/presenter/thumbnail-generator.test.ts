@@ -20,6 +20,12 @@ import fs from "node:fs";
 import { generateThumbnail } from "./thumbnail-generator.js";
 import { logger } from "../logging/logger.js";
 
+// Helper to mock execFile with proper typing (overloaded signature is complex)
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function mockExecFile(impl: (...args: any[]) => any) {
+  (vi.mocked(execFile) as any).mockImplementation(impl);
+}
+
 describe("thumbnail-generator", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -27,7 +33,7 @@ describe("thumbnail-generator", () => {
 
   describe("generateThumbnail", () => {
     it("creates thumbnail directory recursively", async () => {
-      vi.mocked(execFile).mockImplementation(
+      mockExecFile(
         (_cmd: string, _args: unknown, _opts: unknown, cb?: Function) => {
           if (cb) cb(null, "", "");
           return {} as ReturnType<typeof execFile>;
@@ -45,7 +51,7 @@ describe("thumbnail-generator", () => {
 
     it("calls ffmpeg with correct seek time at 25%", async () => {
       let capturedArgs: string[] = [];
-      vi.mocked(execFile).mockImplementation(
+      mockExecFile(
         (_cmd: string, args: unknown, _opts: unknown, cb?: Function) => {
           capturedArgs = args as string[];
           if (cb) cb(null, "", "");
@@ -64,7 +70,7 @@ describe("thumbnail-generator", () => {
 
     it("uses presentation ID for output filename", async () => {
       let capturedArgs: string[] = [];
-      vi.mocked(execFile).mockImplementation(
+      mockExecFile(
         (_cmd: string, args: unknown, _opts: unknown, cb?: Function) => {
           capturedArgs = args as string[];
           if (cb) cb(null, "", "");
@@ -80,7 +86,7 @@ describe("thumbnail-generator", () => {
     });
 
     it("returns the output path when file exists after ffmpeg", async () => {
-      vi.mocked(execFile).mockImplementation(
+      mockExecFile(
         (_cmd: string, _args: unknown, _opts: unknown, cb?: Function) => {
           if (cb) cb(null, "", "");
           return {} as ReturnType<typeof execFile>;
@@ -94,7 +100,7 @@ describe("thumbnail-generator", () => {
     });
 
     it("returns null when output file does not exist after ffmpeg", async () => {
-      vi.mocked(execFile).mockImplementation(
+      mockExecFile(
         (_cmd: string, _args: unknown, _opts: unknown, cb?: Function) => {
           if (cb) cb(null, "", "");
           return {} as ReturnType<typeof execFile>;
@@ -111,7 +117,7 @@ describe("thumbnail-generator", () => {
     });
 
     it("returns null when ffmpeg fails", async () => {
-      vi.mocked(execFile).mockImplementation(
+      mockExecFile(
         (_cmd: string, _args: unknown, _opts: unknown, cb?: Function) => {
           if (cb) cb(new Error("ffmpeg not found"), "", "");
           return {} as ReturnType<typeof execFile>;
@@ -128,7 +134,7 @@ describe("thumbnail-generator", () => {
 
     it("handles zero duration gracefully (seek at 0)", async () => {
       let capturedArgs: string[] = [];
-      vi.mocked(execFile).mockImplementation(
+      mockExecFile(
         (_cmd: string, args: unknown, _opts: unknown, cb?: Function) => {
           capturedArgs = args as string[];
           if (cb) cb(null, "", "");
@@ -145,7 +151,7 @@ describe("thumbnail-generator", () => {
 
     it("clamps negative seek time to 0", async () => {
       let capturedArgs: string[] = [];
-      vi.mocked(execFile).mockImplementation(
+      mockExecFile(
         (_cmd: string, args: unknown, _opts: unknown, cb?: Function) => {
           capturedArgs = args as string[];
           if (cb) cb(null, "", "");
@@ -163,7 +169,7 @@ describe("thumbnail-generator", () => {
 
     it("passes -y flag to overwrite existing thumbnails", async () => {
       let capturedArgs: string[] = [];
-      vi.mocked(execFile).mockImplementation(
+      mockExecFile(
         (_cmd: string, args: unknown, _opts: unknown, cb?: Function) => {
           capturedArgs = args as string[];
           if (cb) cb(null, "", "");
@@ -179,7 +185,7 @@ describe("thumbnail-generator", () => {
 
     it("extracts only 1 frame (-vframes 1)", async () => {
       let capturedArgs: string[] = [];
-      vi.mocked(execFile).mockImplementation(
+      mockExecFile(
         (_cmd: string, args: unknown, _opts: unknown, cb?: Function) => {
           capturedArgs = args as string[];
           if (cb) cb(null, "", "");

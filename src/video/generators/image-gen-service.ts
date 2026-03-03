@@ -476,7 +476,8 @@ export class ImageGenService {
       pollHeaders["Authorization"] = `Bearer ${this.config.networkNodeToken}`;
     }
 
-    const pollIntervalMs = 3_000;             // fixed 3 s — no backoff needed
+    let pollIntervalMs = 3_000;             // start at 3s, with backoff
+    const maxPollIntervalMs = 10_000;
     const deadline = start + this.config.localTimeoutMs;
 
     while (Date.now() < deadline) {

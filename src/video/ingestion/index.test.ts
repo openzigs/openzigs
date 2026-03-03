@@ -104,7 +104,7 @@ describe("ingestion/index", () => {
 
   describe("ingest", () => {
     it("processes a single clip through the pipeline", async () => {
-      const result = await ingest({ clips: ["/tmp/video.mp4"], mode: "standard" });
+      const result = await ingest({ clips: ["/tmp/video.mp4"], mode: "highlight" });
 
       expect(result.clips.length).toBe(1);
       expect(result.totalDuration).toBeCloseTo(10.5);
@@ -116,20 +116,20 @@ describe("ingestion/index", () => {
     });
 
     it("processes multiple clips", async () => {
-      const result = await ingest({ clips: ["/tmp/v1.mp4", "/tmp/v2.mp4"], mode: "standard" });
+      const result = await ingest({ clips: ["/tmp/v1.mp4", "/tmp/v2.mp4"], mode: "highlight" });
       expect(result.clips.length).toBeGreaterThanOrEqual(1);
       expect(result.totalDuration).toBeGreaterThan(0);
       expect(assembleContext).toHaveBeenCalled();
     });
 
     it("skips vision analysis when no copilot", async () => {
-      await ingest({ clips: ["/tmp/v.mp4"] });
+      await ingest({ clips: ["/tmp/v.mp4"], mode: "highlight" });
       expect(analyzeKeyframes).not.toHaveBeenCalled();
     });
 
     it("calls onProgress with phase events", async () => {
       const onProgress = vi.fn();
-      await ingest({ clips: ["/tmp/v.mp4"] }, { onProgress });
+      await ingest({ clips: ["/tmp/v.mp4"], mode: "highlight" }, { onProgress });
       expect(onProgress).toHaveBeenCalled();
       const phases = onProgress.mock.calls.map((c: any[]) => c[0].phase);
       expect(phases).toContain("extracting");
@@ -137,7 +137,7 @@ describe("ingestion/index", () => {
     });
 
     it("uses dense mode settings", async () => {
-      await ingest({ clips: ["/tmp/v.mp4"] }, { mode: "dense" });
+      await ingest({ clips: ["/tmp/v.mp4"], mode: "highlight" }, { mode: "dense" });
       expect(extractKeyframes).toHaveBeenCalledWith(
         expect.any(String),
         expect.any(String),
@@ -146,7 +146,7 @@ describe("ingestion/index", () => {
     });
 
     it("passes custom sceneThreshold", async () => {
-      await ingest({ clips: ["/tmp/v.mp4"] }, { sceneThreshold: 0.5 });
+      await ingest({ clips: ["/tmp/v.mp4"], mode: "highlight" }, { sceneThreshold: 0.5 });
       expect(extractKeyframes).toHaveBeenCalledWith(
         expect.any(String),
         expect.any(String),
@@ -155,7 +155,7 @@ describe("ingestion/index", () => {
     });
 
     it("returns workingDir in result", async () => {
-      const result = await ingest({ clips: ["/tmp/v.mp4"] });
+      const result = await ingest({ clips: ["/tmp/v.mp4"], mode: "highlight" });
       expect(result.workingDir).toBeDefined();
       expect(result.contextPayload).toBeDefined();
     });
@@ -165,7 +165,7 @@ describe("ingestion/index", () => {
       vi.mocked(extractAudio).mockRejectedValue(new Error("ffmpeg error"));
       vi.mocked(extractKeyframes).mockRejectedValue(new Error("ffmpeg error"));
 
-      await expect(ingest({ clips: ["/tmp/bad.mp4"] })).rejects.toThrow("All clips failed");
+      await expect(ingest({ clips: ["/tmp/bad.mp4"], mode: "highlight" })).rejects.toThrow("All clips failed");
     });
 
     it("continues when some clips fail", async () => {
@@ -173,7 +173,7 @@ describe("ingestion/index", () => {
         .mockResolvedValueOnce("/tmp/audio1.wav")
         .mockRejectedValueOnce(new Error("bad clip"));
 
-      const result = await ingest({ clips: ["/tmp/v1.mp4", "/tmp/bad.mp4"] });
+      const result = await ingest({ clips: ["/tmp/v1.mp4", "/tmp/bad.mp4"], mode: "highlight" });
       expect(result.clips.length).toBe(1);
     });
   });

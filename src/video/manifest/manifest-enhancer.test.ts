@@ -189,7 +189,7 @@ describe("enhanceManifest", () => {
     const clip = makeVideoClip({ startAtFrame: 0, duration: 150 });
     const manifest = makeManifest({ timeline: [clip] });
 
-    const stats = enhanceManifest(manifest, ["/clips/clip1.mp4"]);
+    enhanceManifest(manifest, ["/clips/clip1.mp4"]);
 
     // Only title card injections, no multi-clip coverage clips
     const videoClips = manifest.timeline.filter(

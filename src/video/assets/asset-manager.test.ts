@@ -1,4 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import type { AssetMetadata } from "./asset-types.js";
+
+function makeAsset(overrides: Partial<AssetMetadata> & Pick<AssetMetadata, "id" | "name" | "type" | "source">): AssetMetadata {
+  return { filePath: "", license: "", previewUrl: "", tags: [], duration: 0, ...overrides };
+}
 
 vi.mock("../../logging/logger.js", () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
@@ -197,7 +202,7 @@ describe("AssetManager", () => {
   describe("download", () => {
     it("downloads pixabay asset", async () => {
       await manager.initialize();
-      const asset = { id: "px-1", name: "photo", type: "image" as const, source: "pixabay" as const, previewUrl: "https://example.com/photo.jpg", tags: [], duration: 0 };
+      const asset = makeAsset({ id: "px-1", name: "photo", type: "image", source: "pixabay", previewUrl: "https://example.com/photo.jpg" });
       const result = await manager.download(asset);
       expect(result.filePath).toBe("/cache/pixabay-photo.jpg");
       expect(result.asset.filePath).toBe("/cache/pixabay-photo.jpg");
@@ -205,32 +210,32 @@ describe("AssetManager", () => {
 
     it("downloads jamendo asset", async () => {
       await manager.initialize();
-      const asset = { id: "jm-1", name: "song", type: "music" as const, source: "jamendo" as const, previewUrl: "https://example.com/song.mp3", tags: [], duration: 180, attribution: "CC" };
+      const asset = makeAsset({ id: "jm-1", name: "song", type: "music", source: "jamendo", previewUrl: "https://example.com/song.mp3", duration: 180, attribution: "CC" });
       const result = await manager.download(asset);
       expect(result.filePath).toBe("/cache/jamendo-song.mp3");
     });
 
     it("downloads pexels asset", async () => {
       await manager.initialize();
-      const asset = { id: "px-2", name: "vid", type: "video" as const, source: "pexels" as const, previewUrl: "https://example.com/vid.mp4", tags: [], duration: 10 };
+      const asset = makeAsset({ id: "px-2", name: "vid", type: "video", source: "pexels", previewUrl: "https://example.com/vid.mp4", duration: 10 });
       const result = await manager.download(asset);
       expect(result.filePath).toBe("/cache/pexels-video.mp4");
     });
 
     it("throws for asset without previewUrl", async () => {
-      const asset = { id: "1", name: "t", type: "image" as const, source: "pixabay" as const, previewUrl: "", tags: [], duration: 0 };
+      const asset = makeAsset({ id: "1", name: "t", type: "image", source: "pixabay" });
       await expect(manager.download(asset)).rejects.toThrow("has no download URL");
     });
 
     it("throws for local asset download attempt", async () => {
-      const asset = { id: "1", name: "t", type: "image" as const, source: "local" as const, previewUrl: "http://x.com", tags: [], duration: 0 };
+      const asset = makeAsset({ id: "1", name: "t", type: "image", source: "local", previewUrl: "http://x.com" });
       await expect(manager.download(asset)).rejects.toThrow("Cannot download local asset");
     });
 
     it("adds downloaded asset to local cache", async () => {
       await manager.initialize();
       const beforeCount = manager.getLocalAssets().length;
-      const asset = { id: "px-1", name: "photo", type: "image" as const, source: "pixabay" as const, previewUrl: "https://example.com/photo.jpg", tags: [], duration: 0 };
+      const asset = makeAsset({ id: "px-1", name: "photo", type: "image", source: "pixabay", previewUrl: "https://example.com/photo.jpg" });
       await manager.download(asset);
       expect(manager.getLocalAssets().length).toBe(beforeCount + 1);
     });
@@ -239,7 +244,7 @@ describe("AssetManager", () => {
   describe("remove", () => {
     it("removes cached external asset", async () => {
       await manager.initialize();
-      const asset = { id: "px-1", name: "photo", type: "image" as const, source: "pixabay" as const, previewUrl: "https://example.com/photo.jpg", tags: [], duration: 0 };
+      const asset = makeAsset({ id: "px-1", name: "photo", type: "image", source: "pixabay", previewUrl: "https://example.com/photo.jpg" });
       await manager.download(asset);
       const countBefore = manager.getLocalAssets().length;
       const removed = await manager.remove("px-1");

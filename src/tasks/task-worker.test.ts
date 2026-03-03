@@ -607,7 +607,8 @@ describe("TaskWorker", () => {
   });
 
   // ── Helper to reduce mock boilerplate ──
-  function makeMockCopilot(chatImpl?: (...args: unknown[]) => AsyncGenerator<string>) {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  function makeMockCopilot(chatImpl?: (...args: any[]) => AsyncGenerator<string>) {
     return {
       authenticate: vi.fn(),
       waitForAuth: vi.fn(),
@@ -875,6 +876,7 @@ describe("TaskWorker", () => {
   });
 
   it("persists token usage even on task failure", async () => {
+    // eslint-disable-next-line require-yield
     const mockCopilot = makeMockCopilot(async function* () {
       throw new Error("Boom");
     });
@@ -932,6 +934,7 @@ describe("TaskWorker", () => {
   });
 
   it("handles non-Error throw in executeTask", async () => {
+    // eslint-disable-next-line require-yield
     const mockCopilot = makeMockCopilot(async function* () {
       // eslint-disable-next-line no-throw-literal
       throw "string-error";

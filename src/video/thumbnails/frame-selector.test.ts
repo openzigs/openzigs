@@ -10,7 +10,7 @@ function makeManifest(overrides: Partial<DirectorManifest> = {}): DirectorManife
   return {
     projectTitle: "Test Video",
     templateId: "Minimalist",
-    composition: { width: 1920, height: 1080, fps: 30, durationInFrames: 900 },
+    composition: { width: 1920, height: 1080, fps: 30 },
     audioLayer: {} as DirectorManifest["audioLayer"],
     timeline: [],
     ...overrides,
@@ -169,7 +169,7 @@ describe("selectThumbnailFrame", () => {
 
     await selectThumbnailFrame(keyframes, manifest, copilot);
 
-    const prompt = copilot.chat.mock.calls[0][0] as string;
+    const prompt = vi.mocked(copilot.chat).mock.calls[0][0] as string;
     expect(prompt).toContain("Opening shot of a forest");
     expect(prompt).toContain('Title — "Hello World"');
   });
@@ -183,7 +183,7 @@ describe("extractKeyframesFromManifest", () => {
   it("extracts keyframes from image_scene entries that exist on disk", () => {
     vi.mocked(fs.existsSync).mockReturnValue(true);
     const manifest = makeManifest({
-      composition: { width: 1920, height: 1080, fps: 30, durationInFrames: 900 },
+      composition: { width: 1920, height: 1080, fps: 30 },
       timeline: [
         { type: "image_scene", src: "/abs/img1.png", startAtFrame: 0, durationInFrames: 150 } as any,
         { type: "image_scene", src: "img2.png", startAtFrame: 300, durationInFrames: 150 } as any,

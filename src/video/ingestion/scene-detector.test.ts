@@ -54,7 +54,7 @@ describe("scene-detector", () => {
 
     it("returns 0 on probe error", async () => {
       const ffmpeg = await import("fluent-ffmpeg");
-      vi.mocked(ffmpeg.default.ffprobe).mockImplementation((_path: string, cb: Function) => {
+      (vi.mocked(ffmpeg.default.ffprobe) as any).mockImplementation((_path: string, cb: (...args: unknown[]) => void) => {
         cb(new Error("file not found"), null);
       });
       const duration = await getVideoDuration("/tmp/missing.mp4");
@@ -79,7 +79,7 @@ describe("scene-detector", () => {
     it("respects maxKeyframes limit", async () => {
       // Create scenario with many keyframes via interval
       const ffmpeg = await import("fluent-ffmpeg");
-      vi.mocked(ffmpeg.default.ffprobe).mockImplementation((_path: string, cb: Function) => {
+      (vi.mocked(ffmpeg.default.ffprobe) as any).mockImplementation((_path: string, cb: (...args: unknown[]) => void) => {
         cb(null, { format: { duration: 600 } }); // 10 min video
       });
 

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { QueueMaster } from "./queue-master.js";
-import type { MediaJob, QueueConfig, TargetNode } from "./types.js";
+import type { MediaJob, QueueConfig } from "./types.js";
 
 vi.mock("../logging/logger.js", () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
@@ -43,10 +43,10 @@ function makeJob(overrides: Partial<MediaJob> = {}): MediaJob {
 
 function makeRepo() {
   return {
-    listJobs: vi.fn(() => []),
-    getPendingJobs: vi.fn(() => []),
-    getPendingJobsForModel: vi.fn(() => []),
-    getJob: vi.fn(() => null),
+    listJobs: vi.fn((): MediaJob[] => []),
+    getPendingJobs: vi.fn((_node?: string): MediaJob[] => []),
+    getPendingJobsForModel: vi.fn((_node: string, _model: string): MediaJob[] => []),
+    getJob: vi.fn((): MediaJob | null => null),
     markDispatched: vi.fn(),
     markComplete: vi.fn(),
     markFailed: vi.fn(),
@@ -262,7 +262,7 @@ describe("QueueMaster", () => {
         requiredModel: "ltx-2",
         targetNode: "m2-pro",
       });
-      repo.getPendingJobs.mockImplementation((node: string) =>
+      repo.getPendingJobs.mockImplementation((node?: string) =>
         node === "m2-pro" ? [job] : []
       );
       repo.getPendingJobsForModel.mockReturnValue([]);

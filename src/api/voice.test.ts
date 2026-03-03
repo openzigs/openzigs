@@ -23,7 +23,7 @@ function createMockVoiceService() {
       maxCacheSizeMb: 100,
       maxTextLength: 5000,
     })),
-    getProvider: vi.fn(() => "local" as const),
+    getProvider: vi.fn((): string => "local"),
     getSidecarUrl: vi.fn(() => "http://127.0.0.1:5006"),
     synthesize: vi.fn().mockResolvedValue({
       audio: Buffer.from("audio-data"),

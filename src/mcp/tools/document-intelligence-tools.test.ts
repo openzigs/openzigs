@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 // Mock docx module to avoid actual file generation
 vi.mock("docx", () => ({

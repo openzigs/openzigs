@@ -386,12 +386,15 @@ describe("adaptManifest", () => {
         startAtFrame: 0,
         trimStart: 0,
         duration: 60,
-        effects: [{ type: "fade" }],
+        effects: [{ type: "fadeIn", durationFrames: 15 }],
         textOverlays: [
           {
             id: "ov1",
             text: "Hello",
             position: "center",
+            animation: "none",
+            startFrame: 0,
+            durationFrames: 60,
           },
         ],
       },
@@ -500,7 +503,10 @@ describe("adaptManifest", () => {
           {
             id: "t1",
             text: "Caption",
-            position: "bottom",
+            position: "bottom-third",
+            animation: "none",
+            startFrame: 0,
+            durationFrames: 150,
           },
         ],
       },
@@ -552,7 +558,7 @@ describe("adaptManifest", () => {
       { type: "title_card", title: "T", startAtFrame: 30, duration: 30 } as never,
       { type: "transition", style: "crossfade", startAtFrame: 60, duration: 10 },
       { type: "image_scene", src: "/img.png", startAtFrame: 70, duration: 20 },
-      { type: "overlay", component: "Logo", props: {}, startAtFrame: 0, duration: 90 },
+      { type: "overlay", component: "LogoWatermark", props: {}, startAtFrame: 0, duration: 90 },
     ];
     const result = adaptManifest(manifest, outputDir);
     expect(result.timeline).toHaveLength(5);

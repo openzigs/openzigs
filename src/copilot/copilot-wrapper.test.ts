@@ -894,7 +894,8 @@ describe("copilot wrapper", () => {
   it("hasSession returns true after a chat with conversationId", async () => {
     const client = new FakeCopilotClient();
     const wrapper = new CopilotWrapperService({ client });
-    for await (const _ of wrapper.chat("hi", { conversationId: "has-test" })) { /* drain */ }
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    for await (const _chunk of wrapper.chat("hi", { conversationId: "has-test" })) { /* drain */ }
     expect(wrapper.hasSession("has-test")).toBe(true);
   });
 
@@ -913,7 +914,8 @@ describe("copilot wrapper", () => {
   it("setProvider stores config and clears sessions", async () => {
     const client = new FakeCopilotClient();
     const wrapper = new CopilotWrapperService({ client });
-    for await (const _ of wrapper.chat("hi", { conversationId: "prov-test" })) { /* drain */ }
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    for await (const _chunk of wrapper.chat("hi", { conversationId: "prov-test" })) { /* drain */ }
     expect(wrapper.hasSession("prov-test")).toBe(true);
 
     wrapper.setProvider({ type: "ollama", baseUrl: "http://localhost:11434" });

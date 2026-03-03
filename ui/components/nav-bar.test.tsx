@@ -20,9 +20,11 @@ describe("NavBar", () => {
 
     expect(screen.getByText("Dashboard")).toBeInTheDocument();
     expect(screen.getByText("Chat")).toBeInTheDocument();
+    expect(screen.getByText("Workbench")).toBeInTheDocument();
+    // Dropdown group labels
+    expect(screen.getByText("Studio")).toBeInTheDocument();
+    expect(screen.getByText("Automation")).toBeInTheDocument();
     expect(screen.getByText("Admin")).toBeInTheDocument();
-    expect(screen.getByText("Library")).toBeInTheDocument();
-    expect(screen.getByText("Scheduler")).toBeInTheDocument();
   });
 
   it("renders the OpenZigs logo", () => {
@@ -30,11 +32,11 @@ describe("NavBar", () => {
     expect(screen.getByRole("img", { name: "OpenZigs" })).toBeInTheDocument();
   });
 
-  it("highlights the active link", () => {
+  it("highlights the active admin group", () => {
     render(<NavBar />);
 
-    const adminLink = screen.getByText("Admin");
-    expect(adminLink.className).toContain("bg-primary");
+    const adminGroup = screen.getByText("Admin");
+    expect(adminGroup.className).toContain("bg-primary");
 
     const chatLink = screen.getByText("Chat");
     expect(chatLink.className).not.toContain("bg-primary");

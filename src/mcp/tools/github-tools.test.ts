@@ -790,7 +790,7 @@ describe("GitHub Tools", () => {
   describe("Sidecar fallback", () => {
     it("falls back to direct API when sidecar returns non-ok", async () => {
       let callCount = 0;
-      const mockFetch = vi.fn().mockImplementation((url: string) => {
+      const mockFetch = vi.fn().mockImplementation((_url: string) => {
         callCount++;
         if (callCount === 1) {
           // Sidecar call - non-ok
@@ -818,7 +818,7 @@ describe("GitHub Tools", () => {
 
     it("falls back to direct API when sidecar is unreachable", async () => {
       let callCount = 0;
-      const mockFetch = vi.fn().mockImplementation((url: string) => {
+      const mockFetch = vi.fn().mockImplementation((_url: string) => {
         callCount++;
         if (callCount === 1) {
           // Sidecar unreachable

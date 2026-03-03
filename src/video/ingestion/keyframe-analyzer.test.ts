@@ -126,6 +126,7 @@ describe("keyframe-analyzer", () => {
     const copilot = {
       chat: vi.fn()
         // First call (batch) throws
+        // eslint-disable-next-line require-yield
         .mockImplementationOnce(function* () {
           throw new Error("Model overloaded");
         })
@@ -148,9 +149,11 @@ describe("keyframe-analyzer", () => {
     const kf = makeKeyframe();
     const copilot = {
       chat: vi.fn()
+        // eslint-disable-next-line require-yield
         .mockImplementationOnce(function* () {
           throw new Error("Batch error");
         })
+        // eslint-disable-next-line require-yield
         .mockImplementationOnce(function* () {
           throw new Error("Individual error");
         }),

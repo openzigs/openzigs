@@ -399,9 +399,9 @@ describe("blogToVideo", () => {
       fakeCopilot,
     );
 
-    expect(result.manifest.metadata.llmModel).toBe("claude-3");
-    expect(result.manifest.metadata.productionMode).toBe("presentation");
-    expect(result.manifest.metadata.llmTokensUsed).toBe(1500);
+    expect(result.manifest.metadata!.llmModel).toBe("claude-3");
+    expect(result.manifest.metadata!.productionMode).toBe("presentation");
+    expect(result.manifest.metadata!.llmTokensUsed).toBe(1500);
   });
 
   it("passes targetDuration to storyboard", async () => {

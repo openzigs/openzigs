@@ -225,7 +225,6 @@ describe("buildInterleavedBody", () => {
 // Use dynamic import + vi.mock to test the factory function
 import { vi } from "vitest";
 import { createSidecarMediaConverter, extractKeyframes } from "./sidecar-media-converter.js";
-import type { ExtractedKeyframe } from "./sidecar-media-converter.js";
 
 // Mock child_process.execFile — default: callback with error (command not found)
 vi.mock("node:child_process", () => ({
@@ -253,7 +252,6 @@ vi.mock("node:os", () => ({
 
 import { execFile } from "node:child_process";
 import fs from "node:fs/promises";
-import { promisify } from "node:util";
 
 /**
  * Helper: make execFile succeed for ffmpeg -version (so ffmpegAvailable returns true).
@@ -279,7 +277,7 @@ function mockFfmpegAvailable() {
  */
 function mockFfmpegUnavailable() {
   const mock = vi.mocked(execFile);
-  mock.mockImplementation(((cmd: string, _args: string[], cb: (err: Error | null) => void) => {
+  mock.mockImplementation(((_cmd: string, _args: string[], cb: (err: Error | null) => void) => {
     cb(new Error("command not found: ffmpeg"));
   }) as typeof execFile);
 }
@@ -406,8 +404,8 @@ describe("createSidecarMediaConverter", () => {
     const reg = await createSidecarMediaConverter({ sidecarUrl: "http://localhost:5006" });
 
     // Mock ffprobe returning "video" for hasVideoStream
-    vi.mocked(execFile).mockImplementation(((cmd: string, args: string[], cb: (err: Error | null, result?: { stdout: string; stderr: string }) => void) => {
-      if (cmd === "ffprobe") {
+    vi.mocked(execFile).mockImplementation(((_cmd: string, _args: string[], cb: (err: Error | null, result?: { stdout: string; stderr: string }) => void) => {
+      if (_cmd === "ffprobe") {
         cb(null, { stdout: "video", stderr: "" });
       } else {
         cb(null, { stdout: "", stderr: "" });

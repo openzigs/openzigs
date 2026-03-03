@@ -103,7 +103,7 @@ describe("pdf-converter", () => {
   it("reports failure when scanned PDF and OCR produces empty text", async () => {
     // Set up OCR stack as available
     vi.mocked(isTesseractAvailable).mockResolvedValue(true);
-    vi.mocked(execFile).mockImplementation((cmd: any, _args: any, cb: any) => {
+    vi.mocked(execFile).mockImplementation((_cmd: any, _args: any, cb: any) => {
       if (typeof cb === "function") cb(null, "ok", "");
       return {} as any;
     });
@@ -127,7 +127,7 @@ describe("pdf-converter", () => {
   it("uses OCR fallback when text extraction is empty and OCR is available", async () => {
     // Set up full OCR stack
     vi.mocked(isTesseractAvailable).mockResolvedValue(true);
-    vi.mocked(execFile).mockImplementation((cmd: any, _args: any, cb: any) => {
+    vi.mocked(execFile).mockImplementation((_cmd: any, _args: any, cb: any) => {
       if (typeof cb === "function") cb(null, "ok", "");
       return {} as any;
     });

@@ -403,7 +403,7 @@ export const customAgentSchema = z.object({
   tools: z.array(z.string()).nullable().optional(),
   infer: z.boolean().optional(),
   mcpServers: z.record(z.string(), mcpServerConfigSchema).optional(),
-}).passthrough();
+}).strict();
 
 /** Zod schema for the nativeMcpServers record. */
 export const nativeMcpServersSchema = z.record(z.string(), mcpServerConfigSchema);

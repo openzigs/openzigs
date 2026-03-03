@@ -8,7 +8,7 @@ import { registerBuiltinPostActions, executePostAction } from "./post-actions.js
 describe("registerBuiltinPostActions", () => {
   beforeEach(() => {
     // Clear the registry before each test
-    (postActionRegistry as { definitions: Map<string, unknown> }).definitions?.clear?.();
+    postActionRegistry.clear();
   });
 
   it("registers create-github-issues and send-webhook", () => {
@@ -26,7 +26,7 @@ describe("registerBuiltinPostActions", () => {
 
 describe("executePostAction", () => {
   beforeEach(() => {
-    (postActionRegistry as { definitions: Map<string, unknown> }).definitions?.clear?.();
+    postActionRegistry.clear();
     registerBuiltinPostActions();
   });
 
@@ -45,7 +45,7 @@ describe("create-github-issues handler", () => {
   let originalEnv: string | undefined;
 
   beforeEach(() => {
-    (postActionRegistry as { definitions: Map<string, unknown> }).definitions?.clear?.();
+    postActionRegistry.clear();
     registerBuiltinPostActions();
     originalFetch = global.fetch;
     originalEnv = process.env.GITHUB_PERSONAL_ACCESS_TOKEN;
@@ -156,7 +156,7 @@ describe("send-webhook handler", () => {
   let originalFetch: typeof global.fetch;
 
   beforeEach(() => {
-    (postActionRegistry as { definitions: Map<string, unknown> }).definitions?.clear?.();
+    postActionRegistry.clear();
     registerBuiltinPostActions();
     originalFetch = global.fetch;
   });

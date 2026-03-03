@@ -47,10 +47,10 @@ function makeViralClip(overrides: Partial<ViralClipResult> = {}): ViralClipResul
 
 function makeTranscript(): TranscriptSegment[] {
   return [
-    { start: "0:00:10", end: "0:00:20", speech: "Some earlier content" },
-    { start: "0:00:35", end: "0:00:45", speech: "This is the viral part" },
-    { start: "0:00:50", end: "0:01:00", speech: "More exciting stuff" },
-    { start: "0:02:00", end: "0:02:10", speech: "After the clip" },
+    { start: "0:00:10", end: "0:00:20", speech: "Some earlier content", clipIndex: 0 },
+    { start: "0:00:35", end: "0:00:45", speech: "This is the viral part", clipIndex: 0 },
+    { start: "0:00:50", end: "0:01:00", speech: "More exciting stuff", clipIndex: 0 },
+    { start: "0:02:00", end: "0:02:10", speech: "After the clip", clipIndex: 0 },
   ];
 }
 

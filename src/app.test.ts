@@ -384,7 +384,7 @@ describe("/api/approvals edge cases", () => {
     const config = await loadConfig({ configPath: path.join(configDir, "config.json") });
     const auditLogger = new AuditLogger({ baseDir: logDir });
     const approvalQueue = new ApprovalQueue({ auditLogger, timeoutMs: 5000 });
-    void approvalQueue.requestApproval({ tool: "test", args: {}, riskLevel: "low", explanation: "test" });
+    void approvalQueue.requestApproval({ tool: "test", args: {}, riskLevel: "medium", explanation: "test" });
     const app = createApp(config, { auditLogger, approvalQueue });
     const { server, baseUrl } = startServer(app);
     try {
@@ -751,7 +751,7 @@ describe("/api/approvals decision edge cases", () => {
     const config = await loadConfig({ configPath: path.join(configDir, "config.json") });
     const auditLogger = new AuditLogger({ baseDir: logDir });
     const approvalQueue = new ApprovalQueue({ auditLogger, timeoutMs: 5000 });
-    void approvalQueue.requestApproval({ tool: "test", args: {}, riskLevel: "low", explanation: "t" });
+    void approvalQueue.requestApproval({ tool: "test", args: {}, riskLevel: "medium", explanation: "t" });
     const app = createApp(config, { auditLogger, approvalQueue });
     const { server, baseUrl } = startServer(app);
     try {

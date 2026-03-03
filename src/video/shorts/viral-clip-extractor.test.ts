@@ -196,7 +196,8 @@ describe("extractViralClip", () => {
   it("samples keyframes when more than maxCount", async () => {
     const manyFrames = Array.from({ length: 100 }, (_, i) => ({
       timestamp: i,
-      path: `/tmp/frame-${i}.jpg`,
+      framePath: `/tmp/frame-${i}.jpg`,
+      sceneScore: 0.5,
       description: `Frame ${i}`,
     }));
     const clip = makeClip({ keyframes: manyFrames });
@@ -240,6 +241,7 @@ describe("extractViralClip", () => {
       start: `${i}:00`,
       end: `${i}:05`,
       speech: `Segment ${i}`,
+      clipIndex: 0,
     }));
     const clip = makeClip({ transcript: longTranscript });
     const copilot = makeCopilot(

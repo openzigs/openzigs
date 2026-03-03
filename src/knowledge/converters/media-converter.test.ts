@@ -19,6 +19,12 @@ vi.mock("node:util", () => ({
 import { execFile } from "node:child_process";
 import { createMediaConverter } from "./media-converter.js";
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function mockExecFile(...args: any[]) {
+  const cb = args[args.length - 1];
+  return cb;
+}
+
 describe("media-converter", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -26,10 +32,10 @@ describe("media-converter", () => {
 
   describe("createMediaConverter", () => {
     it("returns unavailable when ffmpeg is not found", async () => {
-      vi.mocked(execFile).mockImplementation((...args: any[]) => {
-        const cb = args[args.length - 1];
-        cb(new Error("ENOENT"), "", "");
-      });
+      vi.mocked(execFile).mockImplementation(((...args: any[]) => {
+        mockExecFile(...args)(new Error("ENOENT"), "", "");
+        return {} as any;
+      }) as any);
 
       const converter = await createMediaConverter();
       expect(converter.available).toBe(false);
@@ -38,10 +44,10 @@ describe("media-converter", () => {
     });
 
     it("unavailable converter returns error on convert", async () => {
-      vi.mocked(execFile).mockImplementation((...args: any[]) => {
-        const cb = args[args.length - 1];
-        cb(new Error("ENOENT"), "", "");
-      });
+      vi.mocked(execFile).mockImplementation(((...args: any[]) => {
+        mockExecFile(...args)(new Error("ENOENT"), "", "");
+        return {} as any;
+      }) as any);
 
       const converter = await createMediaConverter();
       const result = await converter.convert("/tmp/test.mp4");
@@ -50,25 +56,23 @@ describe("media-converter", () => {
     });
 
     it("returns unavailable when whisper-node is not importable", async () => {
-      vi.mocked(execFile).mockImplementation((...args: any[]) => {
-        const cb = args[args.length - 1];
-        cb(null, "ffmpeg version 6.0", "");
-      });
+      vi.mocked(execFile).mockImplementation(((...args: any[]) => {
+        mockExecFile(...args)(null, "ffmpeg version 6.0", "");
+        return {} as any;
+      }) as any);
 
       const converter = await createMediaConverter();
-      // whisper-node won't be available in test environment
       expect(converter.name).toBe("media");
-      // Either available (if whisper-node is installed) or not
       if (!converter.available) {
         expect(converter.unavailableReason).toContain("whisper-node");
       }
     });
 
     it("includes correct media extensions", async () => {
-      vi.mocked(execFile).mockImplementation((...args: any[]) => {
-        const cb = args[args.length - 1];
-        cb(new Error("ENOENT"), "", "");
-      });
+      vi.mocked(execFile).mockImplementation(((...args: any[]) => {
+        mockExecFile(...args)(new Error("ENOENT"), "", "");
+        return {} as any;
+      }) as any);
 
       const converter = await createMediaConverter();
       expect(converter.extensions).toContain(".mp4");
@@ -81,10 +85,10 @@ describe("media-converter", () => {
     });
 
     it("passes modelName option", async () => {
-      vi.mocked(execFile).mockImplementation((...args: any[]) => {
-        const cb = args[args.length - 1];
-        cb(new Error("ENOENT"), "", "");
-      });
+      vi.mocked(execFile).mockImplementation(((...args: any[]) => {
+        mockExecFile(...args)(new Error("ENOENT"), "", "");
+        return {} as any;
+      }) as any);
 
       const converter = await createMediaConverter({ modelName: "large-v3" });
       expect(converter).toBeDefined();
@@ -92,20 +96,20 @@ describe("media-converter", () => {
     });
 
     it("uses base.en as default model", async () => {
-      vi.mocked(execFile).mockImplementation((...args: any[]) => {
-        const cb = args[args.length - 1];
-        cb(new Error("ENOENT"), "", "");
-      });
+      vi.mocked(execFile).mockImplementation(((...args: any[]) => {
+        mockExecFile(...args)(new Error("ENOENT"), "", "");
+        return {} as any;
+      }) as any);
 
       const converter = await createMediaConverter({});
       expect(converter).toBeDefined();
     });
 
     it("unavailable whisper-node converter returns error on convert", async () => {
-      vi.mocked(execFile).mockImplementation((...args: any[]) => {
-        const cb = args[args.length - 1];
-        cb(null, "ffmpeg version 6.0", "");
-      });
+      vi.mocked(execFile).mockImplementation(((...args: any[]) => {
+        mockExecFile(...args)(null, "ffmpeg version 6.0", "");
+        return {} as any;
+      }) as any);
 
       const converter = await createMediaConverter();
       if (!converter.available) {

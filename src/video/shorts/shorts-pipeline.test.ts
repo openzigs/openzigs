@@ -335,9 +335,9 @@ describe("createShort", () => {
       fakeVoiceService,
     );
 
-    expect(result.manifest.metadata.llmModel).toBe("gpt-4o");
-    expect(result.manifest.metadata.productionMode).toBe("highlight");
-    expect(result.manifest.metadata.sourceClips).toEqual(["/tmp/test.mp4"]);
+    expect(result.manifest.metadata!.llmModel).toBe("gpt-4o");
+    expect(result.manifest.metadata!.productionMode).toBe("highlight");
+    expect(result.manifest.metadata!.sourceClips).toEqual(["/tmp/test.mp4"]);
   });
 
   it("uses default style and targetDuration", async () => {

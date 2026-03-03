@@ -178,7 +178,7 @@ describe("validateManifest", () => {
   it("warns about script mode without voiceover", () => {
     const manifest = makeValidManifest({
       audioLayer: {},
-      metadata: { sourceClips: [], productionMode: "script" as const },
+      metadata: { sourceClips: [], productionMode: "script" as const, generatedAt: new Date().toISOString(), llmModel: "test", llmTokensUsed: 0 },
     });
     mockedSafeParse.mockReturnValue({ success: true, data: manifest } as unknown as ReturnType<typeof DirectorManifestSchema.safeParse>);
 

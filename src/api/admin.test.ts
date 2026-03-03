@@ -1111,7 +1111,7 @@ describe("Admin API router", () => {
 
     it("POST /jobs/:id/run rejects disabled job", async () => {
       const scheduler = createMockScheduler();
-      scheduler.getById.mockReturnValue({ id: "j1", enabled: false });
+      scheduler.getById.mockReturnValue({ id: "j1", enabled: false } as any);
       const { app } = buildApp({ scheduler: scheduler as any });
       const res = await request(app).post("/admin/jobs/j1/run");
       expect(res.status).toBe(400);

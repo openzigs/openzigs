@@ -24,7 +24,7 @@ import type { OverlayOptions } from "./asset-overlay.js";
 
 const HOME = os.homedir();
 
-function mockSpawnSuccess(stdout = "", probeJson = '{"streams":[{"duration":"10.5"}]}') {
+function mockSpawnSuccess(_stdout = "", probeJson = '{"streams":[{"duration":"10.5"}]}') {
   let callCount = 0;
   vi.mocked(spawn).mockImplementation(() => {
     callCount++;

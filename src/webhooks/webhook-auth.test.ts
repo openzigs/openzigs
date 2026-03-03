@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { webhookAuth } from "./webhook-auth.js";
 import type { Request, Response } from "express";
 import type { WebhookConfig } from "./webhook-manager.js";

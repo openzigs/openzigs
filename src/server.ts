@@ -104,7 +104,11 @@ const userAgents: CustomAgentConfig[] = config.copilot?.customAgents ?? [];
 const mergedAgentMap = new Map<string, CustomAgentConfig>();
 for (const agent of defaultAgents) mergedAgentMap.set(agent.name, agent);
 for (const agent of userAgents) mergedAgentMap.set(agent.name, agent);
-const resolvedCustomAgents = [...mergedAgentMap.values()];
+const resolvedCustomAgents = [...mergedAgentMap.values()].map(a => ({
+  ...a,
+  displayName: a.displayName ?? a.name,
+  prompt: a.prompt ?? "",
+}));
 
 // Native MCP servers from config (no default file — purely user-configured)
 const resolvedNativeMcpServers: Record<string, NativeMcpServerConfig> = config.copilot?.nativeMcpServers ?? {};

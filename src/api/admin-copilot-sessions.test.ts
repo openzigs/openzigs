@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -27,9 +27,9 @@ const FAKE_SESSIONS: SdkSessionMetadata[] = [
 ];
 
 const FAKE_EVENTS: SdkSessionEvent[] = [
-  { type: "session.start", timestamp: "2026-01-15T10:00:00.000Z" },
-  { type: "user.message", content: "Refactor the auth module", timestamp: "2026-01-15T10:00:05.000Z" },
-  { type: "assistant.message", content: "I'll start by analyzing the current auth module.", timestamp: "2026-01-15T10:00:10.000Z" },
+  { id: "e1", type: "session.start", timestamp: "2026-01-15T10:00:00.000Z", parentId: null, data: {} },
+  { id: "e2", type: "user.message", timestamp: "2026-01-15T10:00:05.000Z", parentId: "e1", data: { content: "Refactor the auth module" } },
+  { id: "e3", type: "assistant.message", timestamp: "2026-01-15T10:00:10.000Z", parentId: "e2", data: { content: "I'll start by analyzing the current auth module." } },
 ];
 
 class FakeCopilot implements CopilotWrapper {
@@ -41,7 +41,7 @@ class FakeCopilot implements CopilotWrapper {
     sessionsDestroyed: 1,
     compactionCount: 2,
     lifecycleEvents: [
-      { type: "session.created", sessionId: "sdk-session-1", timestamp: "2026-01-15T10:00:00.000Z" },
+      { type: "session.created", sessionId: "sdk-session-1" },
     ],
     lastUpdated: "2026-01-16T15:00:00.000Z",
   };
@@ -141,7 +141,7 @@ describe("Admin Copilot Sessions API", () => {
   });
 
   it("DELETE /copilot-sessions/:sessionId deletes the session", async () => {
-    const { app, copilot } = await createApp();
+    const { app } = await createApp();
     const res = await request(app).delete("/api/admin/copilot-sessions/sdk-session-1");
     expect(res.status).toBe(200);
     expect(res.body.deleted).toBe(true);

@@ -441,7 +441,6 @@ describe("VoiceService — local provider", () => {
 
   it("should throw when text exceeds max length on local provider", async () => {
     fetchSpy = vi.spyOn(globalThis, "fetch").mockRejectedValueOnce(new Error("ECONNREFUSED"));
-    const service = new VoiceService({ ...config, maxTextLength: 10 });
     const svc = new VoiceService({ ...config, maxTextLength: 10 });
     await svc.initialize();
 

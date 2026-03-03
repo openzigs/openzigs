@@ -40,7 +40,7 @@ describe("blog-tools", () => {
     it("input schema has template enum values", () => {
       tools = createBlogTools({ copilot: mockCopilot });
       const tool = tools[0];
-      const templateProp = tool.inputSchema.properties.template as { enum: string[] };
+      const templateProp = tool.inputSchema.properties!.template as { enum: string[] };
       expect(templateProp.enum).toEqual(["Minimalist", "ContentCreator", "Corporate", "TechDemo"]);
     });
   });
