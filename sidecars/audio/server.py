@@ -594,8 +594,8 @@ class F5TTSRequest(BaseModel):
         description="ODE solver method: 'euler', 'midpoint', or 'rk4'",
     )
     cfg_strength: float = Field(
-        default=2.0, ge=0.0, le=10.0,
-        description="Classifier-free guidance strength",
+        default=1.0, ge=0.0, le=10.0,
+        description="Classifier-free guidance strength (lower = cleaner, higher = more expressive but noisier)",
     )
     sway_sampling_coef: float = Field(
         default=-1.0, ge=-5.0, le=5.0,
@@ -1080,6 +1080,10 @@ async def synthesize_f5tts(req: F5TTSRequest):
     try:
         from f5_tts_mlx.generate import generate
 
+        # Mark as in-use BEFORE generation starts so the idle monitor
+        # doesn't unload the model during a long synthesis run.
+        _f5tts_last_used = time.monotonic()
+
         for segment_text, emotion_label in segments:
             if not segment_text.strip():
                 continue
@@ -1110,6 +1114,8 @@ async def synthesize_f5tts(req: F5TTSRequest):
                 os.close(fd)
                 temp_files.append(out_path)
 
+                # NOTE: generate() is synchronous and blocks the event loop,
+                # but MLX Metal is NOT thread-safe so we cannot use to_thread().
                 generate(
                     generation_text=sentence,
                     ref_audio_path=ref_path,
@@ -1123,6 +1129,9 @@ async def synthesize_f5tts(req: F5TTSRequest):
                     seed=req.seed,
                     output_path=out_path,
                 )
+
+                # Refresh timestamp after each sentence to prevent idle unload
+                _f5tts_last_used = time.monotonic()
 
                 # Read the generated WAV
                 with open(out_path, "rb") as f:
@@ -1202,7 +1211,11 @@ async def set_f5tts_active_clips(req: dict):
 
 
 def _concatenate_wav_bytes(chunks: list[bytes]) -> bytes:
-    """Concatenate multiple WAV byte buffers into a single WAV file."""
+    """Concatenate multiple WAV byte buffers into a single WAV file.
+
+    Applies a short crossfade between adjacent chunks to eliminate boundary
+    clicks/pops caused by waveform discontinuities at splice points.
+    """
     if len(chunks) == 0:
         return b""
     if len(chunks) == 1:
@@ -1225,7 +1238,23 @@ def _concatenate_wav_bytes(chunks: list[bytes]) -> bytes:
     if not all_audio:
         return chunks[0]
 
-    combined = np.concatenate(all_audio)
+    # Crossfade between adjacent chunks to avoid boundary artifacts.
+    # 20ms (~480 samples at 24kHz) is enough to smooth discontinuities
+    # without audibly blurring word boundaries.
+    crossfade_samples = min(int(sample_rate * 0.02), 480)
+    combined = all_audio[0]
+    for i in range(1, len(all_audio)):
+        nxt = all_audio[i]
+        overlap = min(crossfade_samples, len(combined), len(nxt))
+        if overlap > 0:
+            fade_out = np.linspace(1.0, 0.0, overlap, dtype=np.float32)
+            fade_in = np.linspace(0.0, 1.0, overlap, dtype=np.float32)
+            # Blend the overlapping region
+            blended = combined[-overlap:] * fade_out + nxt[:overlap] * fade_in
+            combined = np.concatenate([combined[:-overlap], blended, nxt[overlap:]])
+        else:
+            combined = np.concatenate([combined, nxt])
+
     out_buf = io.BytesIO()
     sf.write(out_buf, combined, sample_rate, format="WAV", subtype="PCM_16")
     return out_buf.getvalue()

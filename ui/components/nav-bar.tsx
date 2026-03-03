@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { ChevronDown, Film, Zap, Settings } from "lucide-react";
 import { ModeToggle } from "@/components/mode-toggle";
+import { ActivityIndicator } from "@/components/activity-indicator";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -157,6 +158,7 @@ export const NavBar = () => {
               ))}
             </>
           )}
+          <ActivityIndicator />
           <ModeToggle />
         </div>
       </div>

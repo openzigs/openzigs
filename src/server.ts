@@ -50,7 +50,7 @@ import { createVoiceRouter } from "./api/voice.js";
 import { SecretVaultService } from "./vault/index.js";
 import { createVaultRouter } from "./api/vault.js";
 import { createAuthMiddleware } from "./auth/auth.js";
-import { createDirectorRouter } from "./api/director.js";
+import { createDirectorRouter, setDirectorIO } from "./api/director.js";
 import { createAudioRouter } from "./api/audio.js";
 import { createPresenterRouter } from "./api/presenter.js";
 import { createSocialRouter } from "./api/social.js";
@@ -943,6 +943,9 @@ const io = new SocketIOServer(httpServer, {
     credentials: true
   }
 });
+
+// Bind Socket.IO to Director router for real-time produce activity events
+setDirectorIO(io);
 
 // Socket.IO auth middleware — validate Bearer token on connection
 const expectedToken = config.auth.token ?? "";

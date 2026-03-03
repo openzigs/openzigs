@@ -476,8 +476,7 @@ export class ImageGenService {
       pollHeaders["Authorization"] = `Bearer ${this.config.networkNodeToken}`;
     }
 
-    let pollIntervalMs = 3_000;            // start at 3 s
-    const maxPollIntervalMs = 15_000;      // cap at 15 s
+    const pollIntervalMs = 3_000;             // fixed 3 s — no backoff needed
     const deadline = start + this.config.localTimeoutMs;
 
     while (Date.now() < deadline) {
@@ -490,8 +489,7 @@ export class ImageGenService {
         });
 
         if (pollResp.status === 404) {
-          // Still processing — back off and retry
-          pollIntervalMs = Math.min(Math.round(pollIntervalMs * 1.5), maxPollIntervalMs);
+          // Still processing
           continue;
         }
 

@@ -332,11 +332,19 @@ ANIMATION COMPUTE BUDGET (for shouldAnimate):
 - All other scenes should have "shouldAnimate": false and "motionPrompt": null.
 - Video generation is expensive (4 seconds per clip on GPU). Be selective and strategic.
 
-TTS PACING TAGS (optional — use sparingly for dramatic effect):
-You may include these bracket tags in voiceover text for pacing control:
-- [PAUSE: Xs] — insert a pause of X seconds (0.1–10). Example: "And the result? [PAUSE: 1.5s] A 40% increase in revenue."
-- *word* — emphasize a word. Example: "This is *critical* for success."
+TTS PACING TAGS (REQUIRED — include in every scene's voiceover):
+Include these bracket tags in voiceover text for natural pacing and emphasis:
+- [PAUSE: Xs] — insert a pause of X seconds (0.1–3). Use at natural breath points, before key reveals, and between topic transitions. Every scene should have at least 1-2 pauses. Example: "And the result? [PAUSE: 1.5s] A 40% increase in revenue."
+- *word* — emphasize a word. Use on 1-3 key words per scene to add vocal emphasis. Example: "This is *critical* for success."
 Do NOT use HTML or XML tags like <break> or <emphasis> — they will be stripped. Only use the bracket syntax above.
+
+TTS PRONUNCIATION (IMPORTANT for acronyms and abbreviations):
+The voiceover narration will be synthesized by a text-to-speech engine that treats lowercase letter sequences as pronounceable words. To ensure acronyms and abbreviations are SPELLED OUT letter-by-letter rather than mispronounced as words:
+- Write acronyms in UPPERCASE with dots between letters: N.P.M., A.P.I., H.T.T.P., C.L.I., U.R.L., S.Q.L., G.P.U., L.L.M.
+- Common examples: npm → N.P.M., api → A.P.I., url → U.R.L., css → C.S.S., html → H.T.M.L., cli → C.L.I., sdk → S.D.K., ai → A.I.
+- Numbers and version strings: spell out naturally (e.g. "version three point two" not "v3.2")
+- Pronounceable acronyms can stay as words: NASA, RADAR, SCUBA, RAM, GIF
+- When in doubt, use the dotted uppercase form — it's always safe
 
 TEXT OVERLAYS (required for each scene):
 For each scene, generate 1-2 text overlays that display key statements, quotes, or data points as PowerPoint-style captions rendered on top of the visual.

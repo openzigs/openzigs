@@ -1,8 +1,9 @@
 "use client";
 
-import { useState, useCallback, useRef, useEffect, type SyntheticEvent } from "react";
-import { RefreshCw, Loader2, Image, Clock, Type, Upload, PenLine } from "lucide-react";
-import { fetchJson } from "@/lib/api";
+import { useState, useCallback, useRef, useEffect, useMemo, type SyntheticEvent } from "react";
+import { RefreshCw, Loader2, Image, Clock, Type, Upload, PenLine, Mic, Play, Pause, Volume2, Sparkles, Wand2 } from "lucide-react";
+import { fetchJson, buildMediaUrl } from "@/lib/api";
+import { useActivity } from "@/lib/activity-context";
 import type { InspectorState, DirectorManifest } from "../types";
 import { FramingPanel } from "./framing-panel";
 import { NarrationEditor, type NarrationDirective, type VoicePreset } from "./narration-editor";
@@ -25,7 +26,15 @@ interface DirectivesResponse {
   voices: VoicePreset[];
 }
 
+interface VoiceEngine {
+  id: string;
+  name: string;
+  available: boolean;
+  active: boolean;
+}
+
 export function SceneInspector({ inspector, manifest, draftId, onManifestUpdate }: SceneInspectorProps) {
+  const { startActivity } = useActivity();
   const [editPrompt, setEditPrompt] = useState("");
   const [regenerating, setRegenerating] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -36,11 +45,58 @@ export function SceneInspector({ inspector, manifest, draftId, onManifestUpdate 
   const [narrationDirectives, setNarrationDirectives] = useState<NarrationDirective[]>([]);
   const [voicePresets, setVoicePresets] = useState<VoicePreset[]>([]);
   const [scriptText, setScriptText] = useState("");
+
+  // Voice Lab state
+  const [voiceEngines, setVoiceEngines] = useState<VoiceEngine[]>([]);
+  const [selectedEngine, setSelectedEngine] = useState<string>("auto");
+  const [reRecording, setReRecording] = useState(false);
+  const [voicePreviewPlaying, setVoicePreviewPlaying] = useState(false);
+  const [f5Params, setF5Params] = useState({
+    speed: 1.0,
+    steps: 8,
+    method: "rk4" as "euler" | "midpoint" | "rk4",
+    cfgStrength: 1.0,
+    swayCoef: -1.0,
+  });
+  const voicePreviewRef = useRef<HTMLAudioElement>(null);
+
+  // Image generation state
+  const [imageModel, setImageModel] = useState<"flux-schnell" | "flux-dev">("flux-schnell");
+  const [enhancingPrompt, setEnhancingPrompt] = useState(false);
+  const [img2imgPrompt, setImg2imgPrompt] = useState("");
+  const [img2imgStrength, setImg2imgStrength] = useState(0.6);
+  const [enhancingImage, setEnhancingImage] = useState(false);
+  const [suggestingParams, setSuggestingParams] = useState(false);
+  const [addingDirectives, setAddingDirectives] = useState(false);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const bgFileInputRef = useRef<HTMLInputElement>(null);
   const fps = manifest?.composition?.fps ?? 30;
 
-  const entry = inspector.entry;
+  // Derive entry from the live manifest so updates (re-record, regenerate, etc.)
+  // are immediately reflected instead of using the stale inspector snapshot.
+  const entry = useMemo(() => {
+    if (inspector.sceneIndex === null || !manifest) return inspector.entry;
+    const timeline = manifest.timeline ?? [];
+    const targetType = inspector.entry?.type;
+
+    if (targetType === "intro_card" || targetType === "outro_card" || targetType === "title_card") {
+      // Cards are matched by type + startAtFrame (since there can be multiple title_cards)
+      return timeline.find((e) =>
+        e.type === targetType && e.startAtFrame === inspector.entry?.startAtFrame,
+      ) ?? timeline.find((e) => e.type === targetType) ?? inspector.entry;
+    }
+
+    const visualTypes = new Set(["image_scene", "video_clip"]);
+    let sceneCount = 0;
+    for (const e of timeline) {
+      if (visualTypes.has(e.type)) {
+        if (sceneCount === inspector.sceneIndex) return e;
+        sceneCount++;
+      }
+    }
+    return inspector.entry;
+  }, [inspector.sceneIndex, inspector.entry, manifest]);
 
   // Fetch narration directives once
   useEffect(() => {
@@ -58,6 +114,22 @@ export function SceneInspector({ inspector, manifest, draftId, onManifestUpdate 
   useEffect(() => {
     setScriptText(entry?.scriptText ?? "");
   }, [entry?.scriptText, inspector.sceneIndex]);
+
+  // Fetch available voice engines
+  useEffect(() => {
+    fetchJson<{ engines: VoiceEngine[] }>("/api/admin/director/voice/engines")
+      .then((data) => setVoiceEngines(data.engines))
+      .catch(() => {});
+  }, []);
+
+  // Stop preview audio when scene changes
+  useEffect(() => {
+    const audio = voicePreviewRef.current;
+    if (audio) {
+      audio.pause();
+      setVoicePreviewPlaying(false);
+    }
+  }, [inspector.sceneIndex]);
 
   const isVisualScene = entry?.type === "image_scene" || entry?.type === "video_clip";
   const isCardWithBackground = entry?.type === "intro_card" || entry?.type === "outro_card";
@@ -100,15 +172,191 @@ export function SceneInspector({ inspector, manifest, draftId, onManifestUpdate 
     [inspector.sceneIndex, manifest, entry?.type, onManifestUpdate],
   );
 
+  const handleReRecord = useCallback(async () => {
+    if (inspector.sceneIndex === null || !scriptText.trim()) return;
+    setReRecording(true);
+    const done = startActivity(`rerecord:${inspector.sceneIndex}`, "voice", `Re-recording scene ${(inspector.sceneIndex ?? 0) + 1} voiceover`);
+    try {
+      const body: Record<string, unknown> = {
+        draftId,
+        text: scriptText,
+      };
+      if (selectedEngine !== "auto") body.engine = selectedEngine;
+      if (selectedEngine === "f5tts") body.f5ttsParams = f5Params;
+
+      const result = await fetchJson<{
+        sceneIndex: number;
+        voiceoverPath: string;
+        durationSec: number;
+        engine: string;
+      }>(`/api/admin/director/scenes/${inspector.sceneIndex}/re-record`, {
+        method: "POST",
+        body: JSON.stringify(body),
+      });
+
+      // Update manifest with new voiceover
+      const updated = updateTimelineEntry((e) => ({
+        ...e,
+        voiceover: result.voiceoverPath,
+        scriptText,
+        duration: Math.max(Math.round((result.durationSec + 0.35) * fps), fps),
+      }));
+
+      if (updated) {
+        await fetchJson(`/api/admin/director/drafts/${draftId}`, {
+          method: "PUT",
+          body: JSON.stringify({ manifest: updated }),
+        });
+      }
+
+      // Auto-load the new voiceover for preview
+      const audio = voicePreviewRef.current;
+      if (audio) {
+        const fileName = result.voiceoverPath.split("/").pop() ?? "";
+        audio.src = buildMediaUrl(`/api/admin/director/files/${encodeURIComponent(fileName)}`);
+        audio.load();
+      }
+    } catch (err) {
+      console.error("Re-record failed:", err);
+    } finally {
+      done();
+      setReRecording(false);
+    }
+  }, [inspector.sceneIndex, scriptText, draftId, selectedEngine, f5Params, fps, updateTimelineEntry, startActivity]);
+
+  const toggleVoicePreview = useCallback(() => {
+    const audio = voicePreviewRef.current;
+    if (!audio) return;
+    if (voicePreviewPlaying) {
+      audio.pause();
+      setVoicePreviewPlaying(false);
+    } else {
+      audio.play().then(() => setVoicePreviewPlaying(true)).catch(() => {});
+    }
+  }, [voicePreviewPlaying]);
+
+  const handleSuggestF5Params = useCallback(async () => {
+    if (!scriptText.trim()) return;
+    setSuggestingParams(true);
+    const done = startActivity("suggest-f5", "ai", "AI analyzing voice parameters");
+    try {
+      const result = await fetchJson<{
+        speed: number;
+        steps: number;
+        method: "euler" | "midpoint" | "rk4";
+        cfgStrength: number;
+        swayCoef: number;
+        reasoning: string;
+      }>("/api/admin/director/voice/analyze-params", {
+        method: "POST",
+        body: JSON.stringify({ text: scriptText }),
+      });
+      setF5Params({
+        speed: result.speed,
+        steps: result.steps,
+        method: result.method,
+        cfgStrength: result.cfgStrength,
+        swayCoef: result.swayCoef,
+      });
+    } catch (err) {
+      console.error("F5-TTS param suggestion failed:", err);
+    } finally {
+      done();
+      setSuggestingParams(false);
+    }
+  }, [scriptText, startActivity]);
+
+  const handleAddDirectives = useCallback(async () => {
+    if (!scriptText.trim()) return;
+    setAddingDirectives(true);
+    const done = startActivity("add-directives", "ai", "AI adding narration directives");
+    try {
+      const result = await fetchJson<{ enhanced: string; reasoning: string }>(
+        "/api/admin/director/voice/add-directives",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            text: scriptText,
+            engine: selectedEngine === "auto" ? undefined : selectedEngine,
+          }),
+        },
+      );
+      setScriptText(result.enhanced);
+
+      // Persist directive-enhanced text to manifest immediately so it isn't
+      // lost when the entry re-syncs (useEffect sets scriptText from entry.scriptText).
+      const updated = updateTimelineEntry((e) => ({ ...e, scriptText: result.enhanced }));
+      if (updated) {
+        await fetchJson(`/api/admin/director/drafts/${draftId}`, {
+          method: "PUT",
+          body: JSON.stringify({ manifest: updated }),
+        });
+      }
+    } catch (err) {
+      console.error("Add directives failed:", err);
+    } finally {
+      done();
+      setAddingDirectives(false);
+    }
+  }, [scriptText, selectedEngine, startActivity, draftId, updateTimelineEntry]);
+
+  const handleEnhancePrompt = useCallback(async () => {
+    if (!editPrompt.trim()) return;
+    setEnhancingPrompt(true);
+    const done = startActivity("enhance-prompt", "ai", "AI enhancing image prompt");
+    try {
+      const result = await fetchJson<{ enhanced_prompt: string; thinking: string }>(
+        `/api/admin/director/scenes/${inspector.sceneIndex}/enhance-prompt`,
+        {
+          method: "POST",
+          body: JSON.stringify({ prompt: editPrompt }),
+        },
+      );
+      setEditPrompt(result.enhanced_prompt);
+    } catch (err) {
+      console.error("Prompt enhancement failed:", err);
+    } finally {
+      done();
+      setEnhancingPrompt(false);
+    }
+  }, [editPrompt, inspector.sceneIndex, startActivity]);
+
+  const handleImg2Img = useCallback(async () => {
+    if (inspector.sceneIndex === null || !img2imgPrompt.trim() || !manifest) return;
+    setEnhancingImage(true);
+    const done = startActivity(`img2img:${inspector.sceneIndex}`, "image", `Enhancing scene ${(inspector.sceneIndex ?? 0) + 1} image`);
+    try {
+      const result = await fetchJson<{ sceneIndex: number; imagePath: string; generationTimeMs: number }>(
+        `/api/admin/director/scenes/${inspector.sceneIndex}/img2img`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            draftId,
+            prompt: img2imgPrompt,
+            strength: img2imgStrength,
+            model: imageModel,
+          }),
+        },
+      );
+      updateTimelineEntry((e) => ({ ...e, src: result.imagePath }));
+    } catch (err) {
+      console.error("img2img failed:", err);
+    } finally {
+      done();
+      setEnhancingImage(false);
+    }
+  }, [inspector.sceneIndex, img2imgPrompt, img2imgStrength, imageModel, draftId, manifest, updateTimelineEntry, startActivity]);
+
   const handleRegenerate = useCallback(async () => {
     if (inspector.sceneIndex === null || !editPrompt.trim() || !manifest) return;
     setRegenerating(true);
+    const done = startActivity(`regen:${inspector.sceneIndex}`, "image", `Regenerating scene ${(inspector.sceneIndex ?? 0) + 1} image`);
     try {
       const result = await fetchJson<{ sceneIndex: number; imagePath: string }>(
         `/api/admin/director/scenes/${inspector.sceneIndex}/regenerate`,
         {
           method: "POST",
-          body: JSON.stringify({ draftId, prompt: editPrompt }),
+          body: JSON.stringify({ draftId, prompt: editPrompt, model: imageModel }),
         },
       );
 
@@ -116,13 +364,15 @@ export function SceneInspector({ inspector, manifest, draftId, onManifestUpdate 
     } catch (err) {
       console.error("Scene regeneration failed:", err);
     } finally {
+      done();
       setRegenerating(false);
     }
-  }, [inspector.sceneIndex, editPrompt, draftId, manifest, updateTimelineEntry]);
+  }, [inspector.sceneIndex, editPrompt, draftId, manifest, imageModel, updateTimelineEntry, startActivity]);
 
   const handleRewriteScript = useCallback(async () => {
     if (inspector.sceneIndex === null || !manifest) return;
     setRewritingScript(true);
+    const done = startActivity(`rewrite:${inspector.sceneIndex}`, "ai", `Rewriting scene ${(inspector.sceneIndex ?? 0) + 1} script`);
     try {
       const result = await fetchJson<{ newScript: string }>(
         `/api/admin/director/scenes/${inspector.sceneIndex}/rewrite-script`,
@@ -142,9 +392,10 @@ export function SceneInspector({ inspector, manifest, draftId, onManifestUpdate 
     } catch (err) {
       console.error("Script rewrite failed:", err);
     } finally {
+      done();
       setRewritingScript(false);
     }
-  }, [inspector.sceneIndex, manifest, draftId, lastVideoDuration, entry?.scriptText, updateTimelineEntry]);
+  }, [inspector.sceneIndex, manifest, draftId, lastVideoDuration, entry?.scriptText, updateTimelineEntry, startActivity]);
 
   const handleScriptSave = useCallback(
     async (newScript: string) => {
@@ -229,7 +480,7 @@ export function SceneInspector({ inspector, manifest, draftId, onManifestUpdate 
       {entry.src && (
         <div className="overflow-hidden rounded-lg border border-border">
           <img
-            src={`/api/admin/director/files/${encodeURIComponent(entry.src.split("/").pop() ?? "")}`}
+            src={buildMediaUrl(`/api/admin/director/files/${encodeURIComponent(entry.src.split("/").pop() ?? "")}`)}
             alt="Scene"
             className="w-full object-cover"
           />
@@ -253,7 +504,7 @@ export function SceneInspector({ inspector, manifest, draftId, onManifestUpdate 
       {isCardWithBackground && backgroundSrc && (
         <div className="overflow-hidden rounded-lg border border-border">
           <img
-            src={`/api/admin/director/files/${encodeURIComponent(backgroundSrc.split("/").pop() ?? "")}`}
+            src={buildMediaUrl(`/api/admin/director/files/${encodeURIComponent(backgroundSrc.split("/").pop() ?? "")}`)}
             alt="Background"
             className="w-full object-cover"
           />
@@ -300,6 +551,192 @@ export function SceneInspector({ inspector, manifest, draftId, onManifestUpdate 
         />
       )}
 
+      {/* Voice Lab — per-scene re-record with engine selection */}
+      {hasScript && entry?.voiceover && (
+        <div className="rounded-lg border border-border p-3">
+          <div className="mb-2 flex items-center gap-1.5">
+            <Volume2 className="h-3.5 w-3.5 text-muted-foreground" />
+            <p className="text-[11px] font-semibold text-foreground">Voice Lab</p>
+          </div>
+
+          {/* Current voiceover preview */}
+          <div className="mb-3 flex items-center gap-2 rounded-md bg-muted px-2 py-1.5">
+            <button
+              onClick={toggleVoicePreview}
+              className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground hover:bg-primary/90 transition"
+            >
+              {voicePreviewPlaying ? (
+                <Pause className="h-3 w-3" />
+              ) : (
+                <Play className="h-3 w-3 ml-0.5" />
+              )}
+            </button>
+            <span className="truncate text-[10px] text-muted-foreground">
+              {(entry.voiceover as string).split("/").pop()}
+            </span>
+            <audio
+              ref={voicePreviewRef}
+              src={buildMediaUrl(`/api/admin/director/files/${encodeURIComponent((entry.voiceover as string).split("/").pop() ?? "")}`)}
+              preload="auto"
+              onEnded={() => setVoicePreviewPlaying(false)}
+            />
+          </div>
+
+          {/* Engine selector */}
+          <div className="mb-2">
+            <label className="mb-1 block text-[10px] text-muted-foreground">Voice Engine</label>
+            <select
+              value={selectedEngine}
+              onChange={(e) => setSelectedEngine(e.target.value)}
+              className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-primary"
+            >
+              <option value="auto">Auto (best available)</option>
+              {voiceEngines.map((eng) => (
+                <option key={eng.id} value={eng.id} disabled={!eng.available}>
+                  {eng.name}{eng.available ? "" : " (unavailable)"}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* F5-TTS controls */}
+          {selectedEngine === "f5tts" && (
+            <div className="mb-3 space-y-2 rounded-md border border-border/50 bg-muted/30 p-2">
+              <div className="flex items-center justify-between">
+                <p className="text-[10px] font-medium text-muted-foreground">F5-TTS Settings</p>
+                <button
+                  onClick={handleSuggestF5Params}
+                  disabled={suggestingParams || !scriptText.trim()}
+                  className="flex items-center gap-1 rounded border border-primary/30 bg-primary/5 px-2 py-0.5 text-[10px] font-medium text-primary hover:bg-primary/10 disabled:opacity-50 transition"
+                >
+                  {suggestingParams ? (
+                    <Loader2 className="h-2.5 w-2.5 animate-spin" />
+                  ) : (
+                    <Sparkles className="h-2.5 w-2.5" />
+                  )}
+                  AI Suggest
+                </button>
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between">
+                  <label className="text-[10px] text-muted-foreground">Speed</label>
+                  <span className="text-[10px] tabular-nums text-foreground">{f5Params.speed.toFixed(1)}</span>
+                </div>
+                <input
+                  type="range"
+                  min="0.5"
+                  max="2.0"
+                  step="0.1"
+                  value={f5Params.speed}
+                  onChange={(e) => setF5Params((p) => ({ ...p, speed: parseFloat(e.target.value) }))}
+                  className="w-full accent-primary"
+                />
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between">
+                  <label className="text-[10px] text-muted-foreground">Steps</label>
+                  <span className="text-[10px] tabular-nums text-foreground">{f5Params.steps}</span>
+                </div>
+                <input
+                  type="range"
+                  min="4"
+                  max="32"
+                  step="1"
+                  value={f5Params.steps}
+                  onChange={(e) => setF5Params((p) => ({ ...p, steps: parseInt(e.target.value) }))}
+                  className="w-full accent-primary"
+                />
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between">
+                  <label className="text-[10px] text-muted-foreground">CFG Strength</label>
+                  <span className="text-[10px] tabular-nums text-foreground">{f5Params.cfgStrength.toFixed(1)}</span>
+                </div>
+                <input
+                  type="range"
+                  min="0.5"
+                  max="5.0"
+                  step="0.1"
+                  value={f5Params.cfgStrength}
+                  onChange={(e) => setF5Params((p) => ({ ...p, cfgStrength: parseFloat(e.target.value) }))}
+                  className="w-full accent-primary"
+                />
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between">
+                  <label className="text-[10px] text-muted-foreground">Sway Coefficient</label>
+                  <span className="text-[10px] tabular-nums text-foreground">{f5Params.swayCoef.toFixed(1)}</span>
+                </div>
+                <input
+                  type="range"
+                  min="-3.0"
+                  max="3.0"
+                  step="0.1"
+                  value={f5Params.swayCoef}
+                  onChange={(e) => setF5Params((p) => ({ ...p, swayCoef: parseFloat(e.target.value) }))}
+                  className="w-full accent-primary"
+                />
+              </div>
+
+              <div>
+                <label className="mb-1 block text-[10px] text-muted-foreground">Method</label>
+                <select
+                  value={f5Params.method}
+                  onChange={(e) => setF5Params((p) => ({ ...p, method: e.target.value as "euler" | "midpoint" | "rk4" }))}
+                  className="w-full rounded-md border border-border bg-background px-2 py-1 text-[11px] focus:outline-none focus:ring-1 focus:ring-primary"
+                >
+                  <option value="rk4">RK4 (highest quality)</option>
+                  <option value="midpoint">Midpoint</option>
+                  <option value="euler">Euler (fastest)</option>
+                </select>
+              </div>
+            </div>
+          )}
+
+          {/* AI Directives button */}
+          <button
+            onClick={handleAddDirectives}
+            disabled={addingDirectives || !scriptText.trim()}
+            className="flex w-full items-center justify-center gap-1.5 rounded-md border border-primary/30 bg-primary/5 px-3 py-1.5 text-xs font-medium text-primary hover:bg-primary/10 transition disabled:opacity-50"
+          >
+            {addingDirectives ? (
+              <>
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                Adding directives…
+              </>
+            ) : (
+              <>
+                <Wand2 className="h-3.5 w-3.5" />
+                AI Directives
+              </>
+            )}
+          </button>
+
+          {/* Re-record button */}
+          <button
+            onClick={handleReRecord}
+            disabled={reRecording || !scriptText.trim()}
+            className="flex w-full items-center justify-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 transition disabled:opacity-50"
+          >
+            {reRecording ? (
+              <>
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                Re-recording…
+              </>
+            ) : (
+              <>
+                <Mic className="h-3.5 w-3.5" />
+                Re-record Voiceover
+              </>
+            )}
+          </button>
+        </div>
+      )}
+
       {/* Script rewrite offer (shown after video replacement) */}
       {showRewriteOffer && (
         <div className="rounded-lg border border-amber-500/50 bg-amber-500/10 p-3">
@@ -337,6 +774,35 @@ export function SceneInspector({ inspector, manifest, draftId, onManifestUpdate 
       {isVisualScene && (
         <div className="rounded-lg border border-border p-3">
           <p className="mb-2 text-[11px] font-medium text-foreground">Regenerate Image</p>
+
+          {/* Model selector */}
+          <div className="mb-2">
+            <label className="mb-1 block text-[10px] text-muted-foreground">Flux Model</label>
+            <select
+              value={imageModel}
+              onChange={(e) => setImageModel(e.target.value as "flux-schnell" | "flux-dev")}
+              className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-primary"
+            >
+              <option value="flux-schnell">Flux Schnell (fast, 4 steps)</option>
+              <option value="flux-dev">Flux Dev (high quality, 25 steps)</option>
+            </select>
+          </div>
+
+          <div className="mb-1 flex items-center justify-between">
+            <label className="text-[10px] text-muted-foreground">Prompt</label>
+            <button
+              onClick={handleEnhancePrompt}
+              disabled={enhancingPrompt || !editPrompt.trim()}
+              className="flex items-center gap-1 rounded border border-primary/30 bg-primary/5 px-2 py-0.5 text-[10px] font-medium text-primary hover:bg-primary/10 disabled:opacity-50 transition"
+            >
+              {enhancingPrompt ? (
+                <Loader2 className="h-2.5 w-2.5 animate-spin" />
+              ) : (
+                <Sparkles className="h-2.5 w-2.5" />
+              )}
+              AI Enhance
+            </button>
+          </div>
           <textarea
             value={editPrompt}
             onChange={(e) => setEditPrompt(e.target.value)}
@@ -355,6 +821,62 @@ export function SceneInspector({ inspector, manifest, draftId, onManifestUpdate 
               <RefreshCw className="h-3.5 w-3.5" />
             )}
             Regenerate
+          </button>
+        </div>
+      )}
+
+      {/* Enhance existing image (img2img) */}
+      {isVisualScene && entry.src && (
+        <div className="rounded-lg border border-border p-3">
+          <div className="mb-2 flex items-center gap-1.5">
+            <Wand2 className="h-3.5 w-3.5 text-muted-foreground" />
+            <p className="text-[11px] font-medium text-foreground">Enhance / Modify Image</p>
+          </div>
+          <p className="mb-2 text-[10px] text-muted-foreground">
+            Modify the current image using img2img. Describe what to change or enhance.
+          </p>
+          <textarea
+            value={img2imgPrompt}
+            onChange={(e) => setImg2imgPrompt(e.target.value)}
+            placeholder="e.g. Add dramatic lighting, make colors more vibrant…"
+            rows={2}
+            className="mb-2 w-full resize-none rounded-md border border-border bg-background px-2 py-1.5 text-xs placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+          />
+          <div className="mb-2">
+            <div className="flex items-center justify-between">
+              <label className="text-[10px] text-muted-foreground">Strength</label>
+              <span className="text-[10px] tabular-nums text-foreground">{img2imgStrength.toFixed(2)}</span>
+            </div>
+            <input
+              type="range"
+              min="0.1"
+              max="0.95"
+              step="0.05"
+              value={img2imgStrength}
+              onChange={(e) => setImg2imgStrength(parseFloat(e.target.value))}
+              className="w-full accent-primary"
+            />
+            <div className="flex justify-between text-[9px] text-muted-foreground">
+              <span>Subtle</span>
+              <span>Strong</span>
+            </div>
+          </div>
+          <button
+            onClick={handleImg2Img}
+            disabled={enhancingImage || !img2imgPrompt.trim()}
+            className="flex w-full items-center justify-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 transition disabled:opacity-50"
+          >
+            {enhancingImage ? (
+              <>
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                Enhancing…
+              </>
+            ) : (
+              <>
+                <Wand2 className="h-3.5 w-3.5" />
+                Enhance Image
+              </>
+            )}
           </button>
         </div>
       )}
@@ -574,7 +1096,7 @@ function VideoClipPreview({
       >
         <video
           ref={vidRef}
-          src={`/api/admin/director/files/${encodeURIComponent(fileName)}`}
+          src={buildMediaUrl(`/api/admin/director/files/${encodeURIComponent(fileName)}`)}
           className="h-full w-full"
           style={
             isVertical

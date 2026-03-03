@@ -25,6 +25,18 @@ export const buildUrl = (path: string): string => {
   return `${API_BASE}${path}`;
 };
 
+/**
+ * Build a URL for media elements (<img>, <video>, <audio>) that cannot
+ * send Authorization headers. Appends the auth token as a query parameter
+ * so Express's extractToken() fallback can authenticate the request.
+ */
+export const buildMediaUrl = (path: string): string => {
+  const base = buildUrl(path);
+  if (!AUTH_TOKEN) return base;
+  const sep = base.includes("?") ? "&" : "?";
+  return `${base}${sep}token=${encodeURIComponent(AUTH_TOKEN)}`;
+};
+
 export const fetchJson = async <T>(path: string, options?: RequestInit): Promise<T> => {
   const headers = new Headers(options?.headers);
   if (!headers.has("Content-Type")) {

@@ -3,7 +3,7 @@
 import { useEffect, useCallback, useMemo, useState, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
-import { fetchJson, buildUrl } from "@/lib/api";
+import { fetchJson, buildUrl, buildMediaUrl } from "@/lib/api";
 import { useSocket } from "@/lib/socket-context";
 import { usePresenterState } from "@/hooks/use-presenter-state";
 import type { QuizQuestion } from "@/hooks/use-presenter-state";
@@ -405,7 +405,7 @@ export default function PresenterPlayerPage() {
           <div className="flex h-full w-full items-center justify-center">
             <InteractivePlayer
               videoRef={videoRef}
-              videoUrl={`/api/files/serve?path=${encodeURIComponent(presentation.video_path)}`}
+              videoUrl={buildMediaUrl(`/api/files/serve?path=${encodeURIComponent(presentation.video_path)}`)}
               onTimeUpdate={handleTimeUpdate}
               onEnded={handleVideoEnd}
               onPlay={handleVideoPlay}
