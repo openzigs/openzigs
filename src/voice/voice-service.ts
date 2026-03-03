@@ -8,7 +8,6 @@ import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
-import { Agent } from "undici";
 import { TextToSpeechClient } from "@google-cloud/text-to-speech";
 import type { google } from "@google-cloud/text-to-speech/build/protos/protos.js";
 import { logger } from "../logging/logger.js";
@@ -390,15 +389,21 @@ export class VoiceService {
 
     let resp: Response;
     try {
-      resp = await fetch(`${this.sidecarUrl}/f5tts`, {
+      // Dynamically import undici's Agent to override Node.js fetch's default
+      // 5-min headersTimeout (sidecar blocks on synchronous MLX inference).
+      let fetchOpts: RequestInit & Record<string, unknown> = {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
-        signal: AbortSignal.timeout(600_000), // 10 min — long narrations generate many sentences sequentially
-        // Override undici's default 5-min headersTimeout which fires before
-        // the sidecar can respond (it blocks on synchronous MLX inference).
-        dispatcher: new Agent({ headersTimeout: 600_000, bodyTimeout: 600_000 }),
-      } as RequestInit);
+        signal: AbortSignal.timeout(600_000), // 10 min
+      };
+      try {
+        const { Agent } = await import("undici");
+        fetchOpts = { ...fetchOpts, dispatcher: new Agent({ headersTimeout: 600_000, bodyTimeout: 600_000 }) };
+      } catch {
+        // undici not available as explicit module — rely on AbortSignal timeout
+      }
+      resp = await fetch(`${this.sidecarUrl}/f5tts`, fetchOpts as RequestInit);
     } catch (fetchErr) {
       const cause = fetchErr instanceof Error && fetchErr.cause
         ? ` (${fetchErr.cause instanceof Error ? fetchErr.cause.message : String(fetchErr.cause)})`
