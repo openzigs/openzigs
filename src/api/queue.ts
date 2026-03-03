@@ -49,6 +49,101 @@ export interface QueueRouterOptions {
   repo: MediaQueueRepository;
 }
 
+/**
+ * Callback router for worker completion webhooks.  Mounted WITHOUT auth
+ * because remote sidecars (Mac Mini LTX worker, FluxQ image-gen, music
+ * sidecar) POST results to `/api/queue/complete` without an auth token.
+ * Safety: the handler validates that job_id matches an existing dispatched
+ * job via queueMaster.handleJobCompletion; unknown job IDs are rejected.
+ */
+export const createQueueCallbackRouter = ({ queueMaster, repo }: QueueRouterOptions): Router => {
+  const callbackRouter = Router();
+
+  callbackRouter.post("/complete", async (req, res) => {
+    try {
+      const { job_id, status, media_base64, media_type, metadata, error } = req.body;
+
+      logger.info(
+        `[QueueAPI] /complete called — job_id=${job_id ?? "(missing)"} status=${status ?? "(missing)"} ` +
+        `has_media=${!!media_base64} media_type=${media_type ?? "(none)"} ` +
+        `body_keys=${Object.keys(req.body ?? {}).join(",") || "(empty)"}`,
+      );
+
+      if (!job_id || !status) {
+        logger.warn(`[QueueAPI] /complete rejected 400 — missing job_id or status. body=${JSON.stringify(req.body).slice(0, 200)}`);
+        res.status(400).json({ error: "job_id and status are required" });
+        return;
+      }
+
+      if (status === "failed") {
+        await queueMaster.handleJobCompletion(job_id, { error: error ?? "Unknown worker error" });
+        res.json({ ok: true });
+        return;
+      }
+
+      // Save media to gallery filesystem
+      let resultUrl = "";
+      let galleryAssetId: string | undefined;
+
+      if (media_base64 && media_type) {
+        await ensureGalleryDir();
+        const ext = mimeToExtension(media_type);
+        const filename = `${job_id}${ext}`;
+        const filePath = path.join(GALLERY_DIR, filename);
+        const buffer = Buffer.from(media_base64, "base64");
+        await fs.writeFile(filePath, buffer);
+        resultUrl = `/api/queue/assets/file/${filename}`;
+
+        // Get the job to pull metadata for the asset record
+        const job = repo.getJob(job_id);
+        const assetType = assetTypeFromMime(media_type);
+
+        galleryAssetId = repo.createAsset({
+          type: assetType,
+          filename,
+          filePath,
+          mimeType: media_type,
+          fileSizeBytes: buffer.length,
+          width: (metadata?.width as number) ?? undefined,
+          height: (metadata?.height as number) ?? undefined,
+          durationSeconds: (metadata?.duration as number) ?? (assetType === "video" ? MAX_VIDEO_DURATION_SEC : undefined),
+          prompt: job?.payload?.prompt,
+          model: (metadata?.model as string) ?? job?.requiredModel,
+          generationParams: metadata as Record<string, unknown> | undefined,
+          source: "generated",
+          jobId: job_id,
+          projectId: job?.projectId ?? undefined,
+        });
+
+        logger.info(`[QueueAPI] Asset saved: ${galleryAssetId} (${filename}, ${buffer.length} bytes)`);
+      }
+
+      await queueMaster.handleJobCompletion(job_id, {
+        media_base64: undefined,
+        media_type: undefined,
+        metadata: {
+          ...((metadata as Record<string, unknown>) ?? {}),
+          result_url: resultUrl,
+          gallery_asset_id: galleryAssetId,
+        },
+      });
+
+      // Update the job with result URL and gallery asset ID
+      if (resultUrl) {
+        repo.markComplete(job_id, resultUrl, metadata as Record<string, unknown>, galleryAssetId);
+      }
+
+      res.json({ ok: true, asset_id: galleryAssetId, result_url: resultUrl });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.warn(`[QueueAPI] Completion webhook failed: ${msg}`);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  return callbackRouter;
+};
+
 export const createQueueRouter = ({ queueMaster, repo }: QueueRouterOptions): Router => {
   const router = Router();
 
@@ -64,6 +159,12 @@ export const createQueueRouter = ({ queueMaster, repo }: QueueRouterOptions): Ro
 
       if (!payload || typeof payload !== "object" || !payload.prompt) {
         res.status(400).json({ error: "payload.prompt is required" });
+        return;
+      }
+
+      const MAX_TASK_INPUT_LENGTH = 50_000;
+      if (typeof payload.prompt === "string" && payload.prompt.length > MAX_TASK_INPUT_LENGTH) {
+        res.status(400).json({ error: `Prompt exceeds ${MAX_TASK_INPUT_LENGTH} characters` });
         return;
       }
 
@@ -164,89 +265,6 @@ export const createQueueRouter = ({ queueMaster, repo }: QueueRouterOptions): Ro
       res.json({ ok: true });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      res.status(500).json({ error: msg });
-    }
-  });
-
-  // ── POST /complete — Webhook callback from workers ──────
-  router.post("/complete", async (req, res) => {
-    try {
-      const { job_id, status, media_base64, media_type, metadata, error } = req.body;
-
-      logger.info(
-        `[QueueAPI] /complete called — job_id=${job_id ?? "(missing)"} status=${status ?? "(missing)"} ` +
-        `has_media=${!!media_base64} media_type=${media_type ?? "(none)"} ` +
-        `body_keys=${Object.keys(req.body ?? {}).join(",") || "(empty)"}`,
-      );
-
-      if (!job_id || !status) {
-        logger.warn(`[QueueAPI] /complete rejected 400 — missing job_id or status. body=${JSON.stringify(req.body).slice(0, 200)}`);
-        res.status(400).json({ error: "job_id and status are required" });
-        return;
-      }
-
-      if (status === "failed") {
-        await queueMaster.handleJobCompletion(job_id, { error: error ?? "Unknown worker error" });
-        res.json({ ok: true });
-        return;
-      }
-
-      // Save media to gallery filesystem
-      let resultUrl = "";
-      let galleryAssetId: string | undefined;
-
-      if (media_base64 && media_type) {
-        await ensureGalleryDir();
-        const ext = mimeToExtension(media_type);
-        const filename = `${job_id}${ext}`;
-        const filePath = path.join(GALLERY_DIR, filename);
-        const buffer = Buffer.from(media_base64, "base64");
-        await fs.writeFile(filePath, buffer);
-        resultUrl = `/api/queue/assets/file/${filename}`;
-
-        // Get the job to pull metadata for the asset record
-        const job = repo.getJob(job_id);
-        const assetType = assetTypeFromMime(media_type);
-
-        galleryAssetId = repo.createAsset({
-          type: assetType,
-          filename,
-          filePath,
-          mimeType: media_type,
-          fileSizeBytes: buffer.length,
-          width: (metadata?.width as number) ?? undefined,
-          height: (metadata?.height as number) ?? undefined,
-          durationSeconds: (metadata?.duration as number) ?? (assetType === "video" ? MAX_VIDEO_DURATION_SEC : undefined),
-          prompt: job?.payload?.prompt,
-          model: (metadata?.model as string) ?? job?.requiredModel,
-          generationParams: metadata as Record<string, unknown> | undefined,
-          source: "generated",
-          jobId: job_id,
-          projectId: job?.projectId ?? undefined,
-        });
-
-        logger.info(`[QueueAPI] Asset saved: ${galleryAssetId} (${filename}, ${buffer.length} bytes)`);
-      }
-
-      await queueMaster.handleJobCompletion(job_id, {
-        media_base64: undefined,
-        media_type: undefined,
-        metadata: {
-          ...((metadata as Record<string, unknown>) ?? {}),
-          result_url: resultUrl,
-          gallery_asset_id: galleryAssetId,
-        },
-      });
-
-      // Update the job with result URL and gallery asset ID
-      if (resultUrl) {
-        repo.markComplete(job_id, resultUrl, metadata as Record<string, unknown>, galleryAssetId);
-      }
-
-      res.json({ ok: true, asset_id: galleryAssetId, result_url: resultUrl });
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      logger.warn(`[QueueAPI] Completion webhook failed: ${msg}`);
       res.status(500).json({ error: msg });
     }
   });

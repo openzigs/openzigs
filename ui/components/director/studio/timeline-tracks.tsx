@@ -43,8 +43,10 @@ export function TimelineTracks({
       const entry = tl[timelineIndex];
       if (!entry) return;
 
-      // Compute scene index among visual scenes
-      const visualTypes = new Set(["image_scene", "video_clip", "title_card", "intro_card", "outro_card"]);
+      // Compute scene index among visual scenes (image_scene / video_clip only)
+      // to stay consistent with SceneInspector's entry derivation.
+      // Card types (intro_card, outro_card, title_card) are matched by type, not index.
+      const visualTypes = new Set(["image_scene", "video_clip"]);
       let sceneIdx = 0;
       for (let i = 0; i < tl.length; i++) {
         if (i === timelineIndex) break;

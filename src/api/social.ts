@@ -244,14 +244,34 @@ export const createSocialRouter = (opts: SocialRouterOptions): Router => {
   });
 
   // PATCH /rules/:id — Update a rule
+  const UpdateRuleSchema = z.object({
+    name: z.string().max(255).optional(),
+    platform: platformSchema.optional(),
+    enabled: z.boolean().optional(),
+    post_ids: z.string().max(10000).optional(),
+    keywords: z.string().max(10000).optional(),
+    regex: z.string().max(1000).optional(),
+    comment_reply_template: z.string().max(5000).optional(),
+    dm_template: z.string().max(5000).optional(),
+    dm_delay_seconds: z.number().int().min(0).optional(),
+    max_triggers_per_user: z.number().int().min(0).optional(),
+    max_triggers_total: z.number().int().min(0).optional(),
+    auto_tag: z.string().max(255).optional(),
+  }).strict();
+
   router.patch("/rules/:id", (req, res) => {
     const rule = repository.getRule(req.params.id);
     if (!rule) {
       res.status(404).json({ error: "Rule not found" });
       return;
     }
+    const parsed = UpdateRuleSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.format() });
+      return;
+    }
     try {
-      const updated = repository.updateRule(req.params.id, req.body as Record<string, unknown>);
+      const updated = repository.updateRule(req.params.id, parsed.data as Record<string, unknown>);
       res.json(updated);
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);

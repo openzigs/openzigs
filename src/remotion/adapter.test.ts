@@ -262,4 +262,309 @@ describe("adaptManifest", () => {
     // Last entry ends at 300 + 450 = 750
     expect(result.durationInFrames).toBe(750);
   });
+
+  // ── Additional coverage tests ──
+
+  it("throws on unknown timeline entry type", () => {
+    const manifest = buildMinimalManifest();
+    manifest.timeline = [
+      { type: "unknown_type" as never, startAtFrame: 0, duration: 30 } as never,
+    ];
+    expect(() => adaptManifest(manifest, outputDir)).toThrow("Unknown timeline entry type");
+  });
+
+  it("transforms intro_card entries", () => {
+    const manifest = buildMinimalManifest();
+    manifest.timeline = [
+      {
+        type: "intro_card",
+        title: "Welcome",
+        subtitle: "To the show",
+        backgroundSrc: "/bg.png",
+        logoSrc: "/logo.png",
+        startAtFrame: 0,
+        duration: 90,
+        animation: "fade-in",
+      } as never,
+    ];
+    const result = adaptManifest(manifest, outputDir);
+    const card = result.timeline[0];
+    expect(card.type).toBe("intro_card");
+    if (card.type === "intro_card") {
+      expect(card.title).toBe("Welcome");
+      expect(card.subtitle).toBe("To the show");
+      expect(card.animation).toBe("fade-in");
+      expect(card.backgroundSrc).toBe("/bg.png");
+      expect(card.logoSrc).toBe("/logo.png");
+    }
+  });
+
+  it("transforms outro_card entries", () => {
+    const manifest = buildMinimalManifest();
+    manifest.timeline = [
+      {
+        type: "outro_card",
+        title: "Thanks",
+        subtitle: "See you next time",
+        ctaText: "Subscribe",
+        startAtFrame: 0,
+        duration: 90,
+      } as never,
+    ];
+    const result = adaptManifest(manifest, outputDir);
+    const card = result.timeline[0];
+    expect(card.type).toBe("outro_card");
+    if (card.type === "outro_card") {
+      expect(card.title).toBe("Thanks");
+      expect(card.ctaText).toBe("Subscribe");
+      expect(card.animation).toBe("fade-out");
+    }
+  });
+
+  it("intro_card prefers enhancedBackgroundSrc over backgroundSrc", () => {
+    const manifest = buildMinimalManifest();
+    manifest.timeline = [
+      {
+        type: "intro_card",
+        title: "Title",
+        backgroundSrc: "/bg.png",
+        enhancedBackgroundSrc: "/bg-enhanced.png",
+        startAtFrame: 0,
+        duration: 60,
+      } as never,
+    ];
+    const result = adaptManifest(manifest, outputDir);
+    const card = result.timeline[0];
+    if (card.type === "intro_card") {
+      expect(card.backgroundSrc).toBe("/bg-enhanced.png");
+    }
+  });
+
+  it("outro_card prefers enhancedBackgroundSrc over backgroundSrc", () => {
+    const manifest = buildMinimalManifest();
+    manifest.timeline = [
+      {
+        type: "outro_card",
+        title: "End",
+        backgroundSrc: "/bg.png",
+        enhancedBackgroundSrc: "/bg-enhanced.png",
+        startAtFrame: 0,
+        duration: 60,
+      } as never,
+    ];
+    const result = adaptManifest(manifest, outputDir);
+    const card = result.timeline[0];
+    if (card.type === "outro_card") {
+      expect(card.backgroundSrc).toBe("/bg-enhanced.png");
+    }
+  });
+
+  it("intro_card without any background or logo", () => {
+    const manifest = buildMinimalManifest();
+    manifest.timeline = [
+      {
+        type: "intro_card",
+        title: "Plain",
+        startAtFrame: 0,
+        duration: 60,
+      } as never,
+    ];
+    const result = adaptManifest(manifest, outputDir);
+    const card = result.timeline[0];
+    if (card.type === "intro_card") {
+      expect(card.backgroundSrc).toBeUndefined();
+      expect(card.logoSrc).toBeUndefined();
+    }
+  });
+
+  it("video_clip applies default effects and textOverlays", () => {
+    const manifest = buildMinimalManifest();
+    manifest.timeline = [
+      {
+        type: "video_clip",
+        source: "/clip.mp4",
+        startAtFrame: 0,
+        trimStart: 0,
+        duration: 60,
+        effects: [{ type: "fadeIn", durationFrames: 15 }],
+        textOverlays: [
+          {
+            id: "ov1",
+            text: "Hello",
+            position: "center",
+            animation: "none",
+            startFrame: 0,
+            durationFrames: 60,
+          },
+        ],
+      },
+    ];
+    const result = adaptManifest(manifest, outputDir);
+    const clip = result.timeline[0];
+    if (clip.type === "video_clip") {
+      expect(clip.effects).toHaveLength(1);
+      expect(clip.effects![0].type).toBe("fadeIn");
+      expect(clip.textOverlays).toHaveLength(1);
+      expect(clip.textOverlays![0].text).toBe("Hello");
+      expect(clip.textOverlays![0].fontSize).toBe(48);
+      expect(clip.textOverlays![0].fontWeight).toBe("bold");
+      expect(clip.textOverlays![0].color).toBe("#ffffff");
+    }
+  });
+
+  it("video_clip defaults volume to 1 when not specified", () => {
+    const manifest = buildMinimalManifest();
+    manifest.timeline = [
+      {
+        type: "video_clip",
+        source: "/clip.mp4",
+        startAtFrame: 0,
+        trimStart: 0,
+        duration: 60,
+      },
+    ];
+    const result = adaptManifest(manifest, outputDir);
+    const clip = result.timeline[0];
+    if (clip.type === "video_clip") {
+      expect(clip.volume).toBe(1);
+    }
+  });
+
+  it("video_clip defaults fitMode to cover", () => {
+    const manifest = buildMinimalManifest();
+    manifest.timeline = [
+      {
+        type: "video_clip",
+        source: "/clip.mp4",
+        startAtFrame: 0,
+        trimStart: 0,
+        duration: 60,
+      },
+    ];
+    const result = adaptManifest(manifest, outputDir);
+    const clip = result.timeline[0];
+    if (clip.type === "video_clip") {
+      expect(clip.fitMode).toBe("cover");
+      expect(clip.horizontalCropOffset).toBe(50);
+    }
+  });
+
+  it("title_card defaults background and animation", () => {
+    const manifest = buildMinimalManifest();
+    manifest.timeline = [
+      {
+        type: "title_card",
+        title: "Test",
+        startAtFrame: 0,
+        duration: 30,
+      } as never,
+    ];
+    const result = adaptManifest(manifest, outputDir);
+    const card = result.timeline[0];
+    if (card.type === "title_card") {
+      expect(card.background).toBe("#1a1a1a");
+      expect(card.animation).toBe("fade");
+    }
+  });
+
+  it("adapts audio with default values", () => {
+    const manifest = buildMinimalManifest();
+    manifest.audioLayer = {
+      music: { track: "/bg.mp3" } as never,
+      voiceover: { source: "/vo.mp3" } as never,
+    };
+    const result = adaptManifest(manifest, outputDir);
+    expect(result.audio.music!.volume).toBe(1);
+    expect(result.audio.music!.loop).toBe(true);
+    expect(result.audio.music!.fadeInFrames).toBe(0);
+    expect(result.audio.music!.fadeOutFrames).toBe(0);
+    expect(result.audio.music!.ducking).toBe(false);
+    expect(result.audio.voiceover!.volume).toBe(1);
+    expect(result.audio.voiceover!.startAtFrame).toBe(0);
+  });
+
+  it("handles null audioLayer gracefully", () => {
+    const manifest = buildMinimalManifest();
+    manifest.audioLayer = undefined as never;
+    const result = adaptManifest(manifest, outputDir);
+    expect(result.audio.music).toBeNull();
+    expect(result.audio.voiceover).toBeNull();
+  });
+
+  it("image_scene with textOverlays", () => {
+    const manifest = buildMinimalManifest();
+    manifest.timeline = [
+      {
+        type: "image_scene",
+        src: "/img.png",
+        startAtFrame: 0,
+        duration: 150,
+        textOverlays: [
+          {
+            id: "t1",
+            text: "Caption",
+            position: "bottom-third",
+            animation: "none",
+            startFrame: 0,
+            durationFrames: 150,
+          },
+        ],
+      },
+    ];
+    const result = adaptManifest(manifest, outputDir);
+    const scene = result.timeline[0];
+    if (scene.type === "image_scene") {
+      expect(scene.textOverlays).toHaveLength(1);
+      expect(scene.textOverlays![0].text).toBe("Caption");
+      expect(scene.textOverlays![0].backgroundColor).toBe("rgba(0,0,0,0.6)");
+    }
+  });
+
+  it("handles empty timeline", () => {
+    const manifest = buildMinimalManifest();
+    manifest.timeline = [];
+    const result = adaptManifest(manifest, outputDir);
+    expect(result.timeline).toEqual([]);
+    // Duration should be fps (minimum 1 second)
+    expect(result.durationInFrames).toBe(30);
+  });
+
+  it("handles timeline entry without duration", () => {
+    const manifest = buildMinimalManifest();
+    manifest.timeline = [
+      {
+        type: "video_clip",
+        source: "/clip.mp4",
+        startAtFrame: 10,
+        trimStart: 0,
+      } as never,
+    ];
+    const result = adaptManifest(manifest, outputDir);
+    // duration is undefined → treated as 0, so maxFrame = 10, but min is fps=30
+    expect(result.durationInFrames).toBe(30);
+  });
+
+  it("preserves branding undefined logoUrl", () => {
+    const manifest = buildMinimalManifest();
+    // No branding at all
+    const result = adaptManifest(manifest, outputDir);
+    expect(result.branding.logoUrl).toBeUndefined();
+  });
+
+  it("mixed timeline with all entry types", () => {
+    const manifest = buildMinimalManifest();
+    manifest.timeline = [
+      { type: "video_clip", source: "/a.mp4", startAtFrame: 0, trimStart: 0, duration: 30 },
+      { type: "title_card", title: "T", startAtFrame: 30, duration: 30 } as never,
+      { type: "transition", style: "crossfade", startAtFrame: 60, duration: 10 },
+      { type: "image_scene", src: "/img.png", startAtFrame: 70, duration: 20 },
+      { type: "overlay", component: "LogoWatermark", props: {}, startAtFrame: 0, duration: 90 },
+    ];
+    const result = adaptManifest(manifest, outputDir);
+    expect(result.timeline).toHaveLength(5);
+    expect(result.timeline.map((t) => t.type)).toEqual([
+      "video_clip", "title_card", "transition", "image_scene", "overlay",
+    ]);
+    expect(result.durationInFrames).toBe(90);
+  });
 });

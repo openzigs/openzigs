@@ -165,7 +165,7 @@ export const DEFAULT_KNOWLEDGE_CONFIG: KnowledgeConfig = {
   excludePatterns: ["node_modules", ".git", "dist", "build", ".DS_Store"],
   watchEnabled: true,
   mediaModel: "base.en",
-  minScore: 0.25,
+  minScore: 0.65,
   searchMode: "hybrid",
 };
 

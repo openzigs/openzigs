@@ -1145,6 +1145,10 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
       if (!name || !template) {
         return res.status(400).json({ error: "name and template are required" });
       }
+      const MAX_PROMPT_LENGTH = 100_000;
+      if (template.length > MAX_PROMPT_LENGTH) {
+        return res.status(400).json({ error: `Prompt template exceeds ${MAX_PROMPT_LENGTH} characters` });
+      }
       try {
         const prompt = promptManager.create({
           name,
@@ -1507,6 +1511,12 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
       if (!name) {
         return res.status(400).json({ error: "Name is required" });
       }
+      const MAX_SAMPLE_LENGTH = 10_000;
+      for (const sample of samples) {
+        if (sample.length > MAX_SAMPLE_LENGTH) {
+          return res.status(400).json({ error: `Sample exceeds ${MAX_SAMPLE_LENGTH} characters` });
+        }
+      }
 
       try {
         const voice = await brandVoiceService.analyzeAndSave(name, samples, { active, model });
@@ -1703,6 +1713,82 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         return res.status(400).json({ error: message });
+      }
+    });
+  }
+
+  // ── Copilot SDK Sessions (Phase 1-4 of Epic #334) ──
+  if (copilot) {
+    // Phase 4: Session analytics (must be before :sessionId routes)
+    router.get("/copilot-sessions/analytics", (_req, res) => {
+      const analytics = copilot.getSessionAnalytics();
+      return res.json(analytics);
+    });
+
+    router.post("/copilot-sessions/analytics/reset", (_req, res) => {
+      copilot.resetSessionAnalytics();
+      return res.json({ reset: true });
+    });
+
+    // Phase 1: List SDK-managed sessions
+    router.get("/copilot-sessions", async (req, res) => {
+      try {
+        const filter: Record<string, string> = {};
+        if (typeof req.query.repository === "string") filter.repository = req.query.repository;
+        if (typeof req.query.branch === "string") filter.branch = req.query.branch;
+        if (typeof req.query.cwd === "string") filter.cwd = req.query.cwd;
+        if (typeof req.query.gitRoot === "string") filter.gitRoot = req.query.gitRoot;
+        const sessions = await copilot.listSdkSessions(Object.keys(filter).length > 0 ? filter : undefined);
+        return res.json({ sessions });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return res.status(500).json({ error: message });
+      }
+    });
+
+    // Phase 1: Delete an SDK session
+    router.delete("/copilot-sessions/:sessionId", async (req, res) => {
+      try {
+        await copilot.deleteSdkSession(req.params.sessionId);
+        return res.json({ deleted: true });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return res.status(400).json({ error: message });
+      }
+    });
+
+    // Phase 2: Resume a past Copilot session (returns session metadata for the UI to open chat)
+    router.post("/copilot-sessions/:sessionId/resume", async (req, res) => {
+      try {
+        // Verify the session exists in the SDK listing
+        const sessions = await copilot.listSdkSessions();
+        const target = sessions.find((s) => s.sessionId === req.params.sessionId);
+        if (!target) {
+          return res.status(404).json({ error: "SDK session not found" });
+        }
+        // The SDK handles resume via the CopilotWrapper.getOrCreateSession flow.
+        // We just need to tell the UI to open chat with this conversationId.
+        return res.json({
+          conversationId: req.params.sessionId,
+          summary: target.summary,
+          context: target.context,
+          startTime: target.startTime,
+          modifiedTime: target.modifiedTime,
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return res.status(500).json({ error: message });
+      }
+    });
+
+    // Phase 3: Get conversation events for replay
+    router.get("/copilot-sessions/:sessionId/messages", async (req, res) => {
+      try {
+        const events = await copilot.getSdkSessionMessages(req.params.sessionId);
+        return res.json({ events });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return res.status(500).json({ error: message });
       }
     });
   }

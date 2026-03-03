@@ -1,7 +1,8 @@
 import "dotenv/config";
+import express from "express";
 import { createServer } from "node:http";
 import { createRequire } from "node:module";
-import { randomBytes } from "node:crypto";
+import { randomBytes, timingSafeEqual } from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -48,7 +49,8 @@ import { VoiceService } from "./voice/index.js";
 import { createVoiceRouter } from "./api/voice.js";
 import { SecretVaultService } from "./vault/index.js";
 import { createVaultRouter } from "./api/vault.js";
-import { createDirectorRouter } from "./api/director.js";
+import { createAuthMiddleware } from "./auth/auth.js";
+import { createDirectorRouter, setDirectorIO } from "./api/director.js";
 import { createAudioRouter } from "./api/audio.js";
 import { createPresenterRouter } from "./api/presenter.js";
 import { createSocialRouter } from "./api/social.js";
@@ -71,7 +73,7 @@ import { RoomManager } from "./presenter/room-manager.js";
 import { ExpressPeerServer } from "peer";
 import { MediaQueueRepository } from "./queue/media-queue-repository.js";
 import { QueueMaster } from "./queue/queue-master.js";
-import { createQueueRouter } from "./api/queue.js";
+import { createQueueRouter, createQueueCallbackRouter } from "./api/queue.js";
 import { createGalleryRouter } from "./api/gallery.js";
 
 // Register built-in post-action types (create-github-issues, send-webhook, etc.)
@@ -102,7 +104,11 @@ const userAgents: CustomAgentConfig[] = config.copilot?.customAgents ?? [];
 const mergedAgentMap = new Map<string, CustomAgentConfig>();
 for (const agent of defaultAgents) mergedAgentMap.set(agent.name, agent);
 for (const agent of userAgents) mergedAgentMap.set(agent.name, agent);
-const resolvedCustomAgents = [...mergedAgentMap.values()];
+const resolvedCustomAgents = [...mergedAgentMap.values()].map(a => ({
+  ...a,
+  displayName: a.displayName ?? a.name,
+  prompt: a.prompt ?? "",
+}));
 
 // Native MCP servers from config (no default file — purely user-configured)
 const resolvedNativeMcpServers: Record<string, NativeMcpServerConfig> = config.copilot?.nativeMcpServers ?? {};
@@ -292,6 +298,7 @@ try {
 }
 
 const app = createApp(config, { auditLogger, approvalQueue, toolRegistry, promptManager, scheduler, personalityManager });
+const authMiddleware = createAuthMiddleware(config.auth);
 const port = Number(process.env.PORT ?? 3000);
 const uiOrigin = process.env.OPENZIGS_UI_ORIGIN ?? "http://localhost:3001";
 const channelManager = new ChannelManager();
@@ -535,15 +542,15 @@ const webhookManager = new WebhookManager();
 
 // Model API routes
 const modelsRouter = createModelsRouter({ copilot });
-app.use("/api/models", modelsRouter);
+app.use("/api/models", authMiddleware, modelsRouter);
 
-// Admin API routes (no auth for local dev; gate behind auth in prod)
+// Admin API routes — gated behind auth
 const adminRouter = createAdminRouter({ toolRegistry, sidecarManager, localServerManager, promptManager, scheduler, personalityManager, sessionManager, copilot, taskWorker, taskEngine, webhookManager, customPostActionManager, sentinel, knowledgeService, brandVoiceService });
-app.use("/api/admin", adminRouter);
+app.use("/api/admin", authMiddleware, adminRouter);
 
 // Knowledge Base API routes
 const knowledgeRouter = createKnowledgeRouter({ knowledgeService });
-app.use("/api/admin/knowledge", knowledgeRouter);
+app.use("/api/admin/knowledge", authMiddleware, knowledgeRouter);
 
 // Social Brain API routes
 const socialRouter = createSocialRouter({
@@ -555,11 +562,11 @@ const socialRouter = createSocialRouter({
   config: socialBrainConfig,
   brandVoiceService,
 });
-app.use("/api/social", socialRouter);
+app.use("/api/social", authMiddleware, socialRouter);
 
 // Vault API routes
 const vaultRouter = createVaultRouter({ vaultService });
-app.use("/api/admin/vault", vaultRouter);
+app.use("/api/admin/vault", authMiddleware, vaultRouter);
 
 // Director Mode API routes
 const directorConfig = (config as Record<string, unknown>).director as {
@@ -604,7 +611,7 @@ const directorRouter = createDirectorRouter({
     },
   },
 });
-app.use("/api/admin/director", directorRouter);
+app.use("/api/admin/director", authMiddleware, directorRouter);
 
 // ── Render → Knowledge ingestion hook + DB persistence ──
 // After each successful render: persist the output path so it survives
@@ -670,7 +677,7 @@ const audioRouterInstance = createAudioRouter({
   db: getDatabase(),
   sidecarUrl: config.voice?.sidecarUrl ?? "http://127.0.0.1:5006",
 });
-app.use("/api/admin/audio", audioRouterInstance);
+app.use("/api/admin/audio", authMiddleware, audioRouterInstance);
 
 // ── Presenter Mode Router (Issue #275) ──
 const presentationRepo = new PresentationRepository(db);
@@ -713,7 +720,7 @@ const presenterRouter = createPresenterRouter({
   inviteSecret: presenterInviteSecret,
   baseUrl: presenterBaseUrl,
 });
-app.use("/api/presentations", presenterRouter);
+app.use("/api/presentations", authMiddleware, presenterRouter);
 
 // ── Public Invite Redeem Route (no auth required) — Issue #283 ──
 app.get("/api/invite/redeem", async (req, res) => {
@@ -853,23 +860,33 @@ void knowledgeService.start()
 
 // ── Voice Router (Google Cloud TTS + Local Audio Sidecar) ──
 const voiceRouter = createVoiceRouter({ voiceService });
-app.use("/api/voice", voiceRouter);
+app.use("/api/voice", authMiddleware, voiceRouter);
 
-// Webhook trigger routes (public-facing)
+// Webhook trigger routes (public-facing) — capture raw body for HMAC verification
+app.use("/api/webhooks/trigger", express.json({
+  limit: "1mb",
+  verify: (req, _res, buf) => {
+    (req as unknown as Record<string, unknown>).rawBody = buf;
+  },
+}));
 const webhookRouter = createWebhookRouter({ webhookManager, taskEngine, promptManager });
 app.use("/api/webhooks/trigger", webhookRouter);
 
 // Tasks API routes
 const tasksRouter = createTasksRouter({ taskEngine, taskRepository });
-app.use("/api/tasks", tasksRouter);
+app.use("/api/tasks", authMiddleware, tasksRouter);
 
 // Media Queue API routes (push-based distributed queue + gallery)
+// Callback route is mounted WITHOUT auth — remote workers (Mac Mini, FluxQ)
+// POST results to /api/queue/complete without an Authorization header.
+const queueCallbackRouter = createQueueCallbackRouter({ queueMaster, repo: mediaQueueRepo });
+app.use("/api/queue", express.json({ limit: "50mb" }), queueCallbackRouter);
 const queueRouter = createQueueRouter({ queueMaster, repo: mediaQueueRepo });
-app.use("/api/queue", queueRouter);
+app.use("/api/queue", authMiddleware, queueRouter);
 
 // Gallery API routes (AI prompt enhancement)
 const galleryRouter = createGalleryRouter({ copilot, toolRegistry });
-app.use("/api/gallery", galleryRouter);
+app.use("/api/gallery", authMiddleware, galleryRouter);
 
 // Files API routes (Workbench file management)
 const filesBaseAllowedDirs = allowedDirs.length > 0
@@ -888,7 +905,7 @@ const filesRouter = createFilesRouter({
   allowedDirs: effectiveAllowedDirs,
   markitdownUrl: process.env.MCP_MARKITDOWN_URL,
 });
-app.use("/api/files", filesRouter);
+app.use("/api/files", authMiddleware, filesRouter);
 
 const tunnelConfig = config.tunnel;
 const tunnel = tunnelConfig?.enabled
@@ -906,14 +923,49 @@ const httpServer = createServer(app);
 // Allow both local UI and presenter subdomain (for Cloudflare tunnel guests).
 // OPENZIGS_PRESENTER_ORIGIN env var takes precedence; falls back to config.presenter.baseUrl.
 const presenterOrigin = process.env.OPENZIGS_PRESENTER_ORIGIN || config.presenter?.baseUrl;
-const allowedOrigins = presenterOrigin
+const socketAllowedOrigins = presenterOrigin
   ? [uiOrigin, presenterOrigin]
-  : uiOrigin;
+  : [uiOrigin];
 const io = new SocketIOServer(httpServer, {
   cors: {
-    origin: allowedOrigins,
+    origin: (origin, callback) => {
+      // Allow requests with no origin (non-browser clients)
+      if (!origin) return callback(null, true);
+      // Allow any localhost origin regardless of port (dev servers on 3001, 3101, etc.)
+      try {
+        const url = new URL(origin);
+        if (url.hostname === "localhost" || url.hostname === "127.0.0.1") {
+          return callback(null, true);
+        }
+      } catch { /* not a valid URL */ }
+      if (socketAllowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        callback(new Error("Not allowed by CORS"));
+      }
+    },
     credentials: true
   }
+});
+
+// Bind Socket.IO to Director router for real-time produce activity events
+setDirectorIO(io);
+
+// Socket.IO auth middleware — validate Bearer token on connection
+const expectedToken = config.auth.token ?? "";
+io.use((socket, next) => {
+  const token =
+    (socket.handshake.auth as Record<string, unknown>)?.token as string | undefined
+    ?? socket.handshake.headers?.authorization?.replace("Bearer ", "");
+  if (!token || !expectedToken) {
+    return next(new Error("Authentication required"));
+  }
+  const tokenBuf = Buffer.from(token);
+  const expectedBuf = Buffer.from(expectedToken);
+  if (tokenBuf.length !== expectedBuf.length || !timingSafeEqual(tokenBuf, expectedBuf)) {
+    return next(new Error("Authentication required"));
+  }
+  next();
 });
 
 // ── PeerJS Signaling Server (Issue #286) ──
@@ -1260,12 +1312,26 @@ for (const event of [
   });
 }
 
-// Wire Social Brain Socket.IO event forwarding
-socialBrain.on("reply", (data: unknown) => io.emit("social:reply", data));
-socialBrain.on("escalate", (data: unknown) => io.emit("social:escalate", data));
-socialHandoff.on("escalated", (data: unknown) => io.emit("social:handoff:created", data));
-socialHandoff.on("resolved", (data: unknown) => io.emit("social:handoff:resolved", data));
-commentRuleEngine.on("rule_triggered", (data: unknown) => io.emit("social:rule:triggered", data));
+// Wire Social Brain Socket.IO event forwarding (sanitize cross-channel content)
+const sanitizeStringFields = (obj: unknown): unknown => {
+  if (typeof obj === "string") {
+    return obj.replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  }
+  if (Array.isArray(obj)) return obj.map(sanitizeStringFields);
+  if (obj && typeof obj === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(obj as Record<string, unknown>)) {
+      out[k] = sanitizeStringFields(v);
+    }
+    return out;
+  }
+  return obj;
+};
+socialBrain.on("reply", (data: unknown) => io.emit("social:reply", sanitizeStringFields(data)));
+socialBrain.on("escalate", (data: unknown) => io.emit("social:escalate", sanitizeStringFields(data)));
+socialHandoff.on("escalated", (data: unknown) => io.emit("social:handoff:created", sanitizeStringFields(data)));
+socialHandoff.on("resolved", (data: unknown) => io.emit("social:handoff:resolved", sanitizeStringFields(data)));
+commentRuleEngine.on("rule_triggered", (data: unknown) => io.emit("social:rule:triggered", sanitizeStringFields(data)));
 
 // Wire Render Orchestrator → Socket.IO event forwarding
 renderOrchestrator.on("render:progress", (data: unknown) => io.emit("render:progress", data));

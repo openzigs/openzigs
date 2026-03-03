@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { createHash } from "node:crypto";
+import { createHmac } from "node:crypto";
 import { WebhookManager } from "./webhook-manager.js";
 
 describe("WebhookManager", () => {
@@ -98,8 +98,8 @@ describe("WebhookManager", () => {
     const { webhook } = manager.create({ name: "sig", action: "prompt", actionPayload: {} });
     const body = '{"test":true}';
 
-    // Compute valid signature
-    const expected = createHash("sha256").update(webhook.secret + body).digest("hex");
+    // Compute valid HMAC signature
+    const expected = createHmac("sha256", webhook.secret).update(body).digest("hex");
 
     expect(manager.verifySignature(webhook.id, body, expected)).toBe(true);
     expect(manager.verifySignature(webhook.id, body, "invalid-sig")).toBe(false);

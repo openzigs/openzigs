@@ -5,7 +5,7 @@
 export type ProductionMode = "highlight" | "script" | "presentation" | "shorts";
 
 export type ImageProvider = "auto" | "local" | "cloud";
-export type ImageModel = "sdxl-turbo" | "flux";
+export type ImageModel = "sdxl-turbo" | "flux-schnell" | "flux";
 
 export interface VisualAsset {
   name: string;
@@ -71,7 +71,7 @@ export interface MediaFile {
 export interface SelectedAsset {
   id: string;
   name: string;
-  source: "local" | "pixabay" | "jamendo" | "pexels" | "upload";
+  source: "local" | "pixabay" | "jamendo" | "pexels" | "upload" | "gallery";
   type: "music" | "sfx" | "image" | "video";
   filePath?: string;
   duration?: number;
@@ -154,7 +154,7 @@ export function createInitialState(): WizardState {
     visualAssets: [],
     model: "",
     imageProvider: "auto",
-    imageModel: "sdxl-turbo",
+    imageModel: "flux-schnell",
     slideStyle: false,
     assetsOnlyMode: false,
     quizEnabled: false,

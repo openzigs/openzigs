@@ -1574,11 +1574,36 @@ Every tool is classified at registration time:
 ### Authentication & Authorization
 
 - **Auth Mode:** Local token auto-generated on first run, stored in `~/.openzigs/config.json`.
+- **API Auth:** All sensitive routes (`/api/admin/*`, `/api/knowledge/*`, `/api/social/*`, `/api/vault/*`, etc.) require Bearer token authentication via `createAuthMiddleware`.
+- **Socket.IO Auth:** WebSocket connections require token in the handshake `auth` object, validated with timing-safe comparison.
 - **Roles:**
   - `admin` — Full access (enable/disable tools, decide approvals, view logs).
   - `operator` — Read tools/approvals/logs, decide approvals.
   - `viewer` — Read-only health.
-- **Rate Limiting:** Failed auth attempts are rate-limited (default: 10 attempts per 60 s window).
+- **Rate Limiting:** Failed auth attempts are rate-limited (default: 10 attempts per 60 s window). Global rate limit: 100 requests per 15-minute window per IP via `express-rate-limit`.
+
+### Transport Security
+
+- **CORS:** Restricted to explicit origin allowlist (UI origin + localhost + `OPENZIGS_CORS_ORIGINS` env var). Credentials enabled.
+- **CSP:** Helmet enforces strict Content-Security-Policy: `frame-ancestors: 'none'` (anti-clickjacking), `script-src: 'self'`, `object-src: 'none'`, `base-uri: 'self'`.
+- **Trust Proxy:** Disabled by default; configurable via `server.trustProxy` in config. Prevents IP spoofing when not behind a reverse proxy.
+- **JSON Body Limit:** 1 MB (prevents memory exhaustion via large payloads).
+- **Error Redaction:** Internal filesystem paths are stripped from error responses; 500 errors return generic messages.
+
+### Input Validation
+
+- **File Uploads:** MIME type allowlist (text, JSON, PDF, DOCX, images, audio, video only), 25 MB per file, 10 files max.
+- **Chat Messages:** 10,000-character limit enforced at Socket.IO layer.
+- **Brand Voice Samples:** 10,000-character limit per sample.
+- **Prompt Templates:** 100,000-character limit.
+- **PATCH /rules/:id:** Zod schema validation with `.strict()` rejects unknown fields.
+
+### Sandbox & Isolation
+
+- **Post-Action Scripts:** Run with restricted environment — only `PATH`, `HOME`, `LANG`, `TERM` are inherited. Server env vars (API keys, tokens) are not leaked.
+- **MCP Command Validation:** Server command names are validated against `/^[a-zA-Z0-9_.\-/]+$/` regex. `which` lookups use `execFileSync` (no shell interpretation).
+- **Webhook SSRF Protection:** Webhook URLs are validated before fetch — private IPs, metadata endpoints, and non-HTTP protocols are blocked.
+- **Webhook HMAC:** Standard HMAC-SHA256 verification using raw request body bytes.
 
 ### Dual-Channel Approval Flow (via SDK Hooks)
 
@@ -2124,6 +2149,78 @@ For the current Express/Node.js stack:
 3. **`maxToolsPerRequest: 30` is implemented** as a runtime-configurable safety valve. Increase to 50-80 if you need broader tool coverage per request; decrease if you hit context limits or observe hallucinated tool calls.
 4. **Monitor tool-related failures.** If the model calls tools that were excluded by the cap, increase the limit or add the tool to `ALWAYS_ON_TOOLS` in `src/mcp/constants.ts`.
 5. **Future: vector-based tool retrieval** — embed tool descriptions and retrieve top-K by semantic similarity to the user query. This is the long-term scalable solution. See [Epic #112](https://github.com/mgcronin/openzigs/issues/112).
+
+---
+
+## SDK Session History, Replay & Analytics (Epic #334)
+
+OpenZigs surfaces the Copilot SDK's native session management APIs to provide full session visibility, conversation replay, and lifecycle analytics through both the Admin API and the Admin UI.
+
+### Architecture
+
+```mermaid
+flowchart TB
+    subgraph CopilotWrapper
+        LC[Lifecycle Subscriber<br/>client.on handler]
+        AN[SessionAnalytics<br/>create/resume/destroy/compaction counters]
+        LSS[listSdkSessions<br/>client.listSessions]
+        GSM[getSdkSessionMessages<br/>session.getMessages]
+        DSS[deleteSdkSession<br/>client.deleteSession]
+    end
+
+    subgraph Admin API
+        R1["GET /copilot-sessions"]
+        R2["DELETE /copilot-sessions/:id"]
+        R3["POST /copilot-sessions/:id/resume"]
+        R4["GET /copilot-sessions/:id/messages"]
+        R5["GET /copilot-sessions/analytics"]
+        R6["POST /copilot-sessions/analytics/reset"]
+    end
+
+    subgraph Admin UI
+        T1[App Sessions Tab]
+        T2[Copilot Sessions Tab]
+        T3[Analytics Tab]
+    end
+
+    LC --> AN
+    R1 --> LSS
+    R2 --> DSS
+    R3 -->|resumeSession + getOrCreateSession| CopilotWrapper
+    R4 --> GSM
+    R5 --> AN
+    R6 --> AN
+    T2 --> R1
+    T2 --> R2
+    T2 --> R3
+    T2 --> R4
+    T3 --> R5
+    T3 --> R6
+```
+
+### SDK APIs Used
+
+| SDK Method | CopilotWrapper Method | Purpose |
+|---|---|---|
+| `client.listSessions(filter?)` | `listSdkSessions(filter?)` | List all persisted SDK sessions with metadata |
+| `session.getMessages()` | `getSdkSessionMessages(sessionId)` | Retrieve full event stream for conversation replay |
+| `client.deleteSession(sessionId)` | `deleteSdkSession(sessionId)` | Permanently delete an SDK session |
+| `client.on(handler)` | Subscribed in `doStart()` | Track lifecycle events (created/deleted/updated/foreground/background) |
+
+### Session Analytics Tracking
+
+The `SessionAnalytics` object tracks:
+- `sessionsCreated` — incremented in `getOrCreateSession()` when `createSession()` is called
+- `sessionsResumed` — incremented in `getOrCreateSession()` when `resumeSession()` succeeds
+- `sessionsDestroyed` — incremented in `destroySession()`
+- `compactionCount` — incremented on `compaction_start` events in `wireSessionEvents()`
+- `lifecycleEvents[]` — appended by the `client.on()` lifecycle subscriber (capped at 100 events)
+
+### Message Retrieval Strategy
+
+`getSdkSessionMessages(sessionId)` uses a two-tier strategy:
+1. **Cached session** — if the session is in the active cache (`Map<conversationId, CopilotSession>`), calls `getMessages()` directly
+2. **Temporary resume** — if not cached, creates a temporary session via `resumeSession()`, reads messages, then destroys the temporary session to avoid cache pollution
 
 ---
 

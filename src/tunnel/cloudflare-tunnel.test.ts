@@ -122,4 +122,94 @@ describe("CloudflareTunnel", () => {
 
     expect(spawn).toHaveBeenCalledTimes(2);
   });
+
+  it("stop() kills process and clears URL", async () => {
+    const proc = new FakeProcess();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const spawn = vi.fn(() => proc as unknown as any);
+    const tunnel = new CloudflareTunnel({
+      mode: "quick",
+      spawn,
+      connectTimeoutMs: 5000
+    });
+
+    const startPromise = tunnel.start(3000);
+    proc.stderr.emit("data", Buffer.from("https://stop-test.trycloudflare.com"));
+    await startPromise;
+
+    expect(tunnel.getPublicUrl()).toBe("https://stop-test.trycloudflare.com");
+    await tunnel.stop();
+    expect(tunnel.getPublicUrl()).toBeNull();
+    expect(proc.kill).toHaveBeenCalled();
+  });
+
+  it("returns existing URL when already connected", async () => {
+    const proc = new FakeProcess();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const spawn = vi.fn(() => proc as unknown as any);
+    const tunnel = new CloudflareTunnel({
+      mode: "quick",
+      spawn,
+      connectTimeoutMs: 5000
+    });
+
+    const p1 = tunnel.start(3000);
+    proc.stderr.emit("data", Buffer.from("https://existing.trycloudflare.com"));
+    await p1;
+
+    // Second start returns immediately
+    const url = await tunnel.start(3000);
+    expect(url).toBe("https://existing.trycloudflare.com");
+    expect(spawn).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects when process exits before connecting", async () => {
+    const proc = new FakeProcess();
+    proc.kill = vi.fn(); // Don't auto-emit exit on kill
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const spawn = vi.fn(() => proc as unknown as any);
+    const tunnel = new CloudflareTunnel({
+      mode: "quick",
+      spawn,
+      connectTimeoutMs: 5000
+    });
+
+    const startPromise = tunnel.start(3000);
+    proc.emit("exit", 1, null);
+
+    await expect(startPromise).rejects.toThrow("Tunnel exited before connection was established");
+  });
+
+  it("rejects when process emits error during initial connect", async () => {
+    const proc = new FakeProcess();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const spawn = vi.fn(() => proc as unknown as any);
+    const tunnel = new CloudflareTunnel({
+      mode: "quick",
+      spawn,
+      connectTimeoutMs: 5000
+    });
+
+    const startPromise = tunnel.start(3000);
+    proc.emit("error", new Error("ENOENT"));
+
+    await expect(startPromise).rejects.toThrow("ENOENT");
+  });
+
+  it("stop() rejects pending connect promise", async () => {
+    const proc = new FakeProcess();
+    proc.kill = vi.fn(); // Don't auto-emit exit
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const spawn = vi.fn(() => proc as unknown as any);
+    const tunnel = new CloudflareTunnel({
+      mode: "quick",
+      spawn,
+      connectTimeoutMs: 5000
+    });
+
+    const startPromise = tunnel.start(3000);
+    await tunnel.stop();
+
+    await expect(startPromise).rejects.toThrow("Tunnel stopped");
+  });
 });

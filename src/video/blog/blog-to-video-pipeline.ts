@@ -33,8 +33,8 @@ export interface BlogToVideoInput {
   styleHint?: string;
   /** Image provider: cloud, local, or auto */
   imageProvider?: "cloud" | "local" | "auto";
-  /** Local image model: flux or sdxl-turbo */
-  imageModel?: "flux" | "sdxl-turbo";
+  /** Local image model: flux-schnell, flux, or sdxl-turbo */
+  imageModel?: "flux-schnell" | "flux" | "sdxl-turbo";
   /** Background music path */
   musicTrackPath?: string;
   /** LLM model override */

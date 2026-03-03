@@ -336,21 +336,32 @@ describe("ImageGenService", () => {
         networkNodeToken: "secret-token-123",
       });
 
-      const mockFetch = vi.fn().mockResolvedValue({
-        ok: true,
-        arrayBuffer: () => Promise.resolve(new ArrayBuffer(8)),
-        headers: new Map(),
-      });
+      const mockFetch = vi.fn()
+        // First call: submit to /generate-async
+        .mockResolvedValueOnce({ ok: true })
+        // Second call: poll /job-result/{id} — return completed
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({
+            status: "complete",
+            media_base64: Buffer.from("fakeimage").toString("base64"),
+          }),
+        });
       vi.stubGlobal("fetch", mockFetch);
 
       await svc.generateImage("test", { provider: "local", width: 512, height: 512 });
 
-      const fetchCall = mockFetch.mock.calls[0];
-      expect(fetchCall[0]).toBe("http://192.168.1.50:5005/generate");
-      expect(fetchCall[1].headers.Authorization).toBe("Bearer secret-token-123");
+      // Submit call includes Authorization header
+      const submitCall = mockFetch.mock.calls[0];
+      expect(submitCall[0]).toBe("http://192.168.1.50:5005/generate-async");
+      expect(submitCall[1].headers.Authorization).toBe("Bearer secret-token-123");
+
+      // Poll call also includes Authorization header
+      const pollCall = mockFetch.mock.calls[1];
+      expect(pollCall[1].headers.Authorization).toBe("Bearer secret-token-123");
 
       vi.unstubAllGlobals();
-    });
+    }, 10_000);
 
     it("does not send Authorization header in local mode", async () => {
       const svc = new ImageGenService({
@@ -404,6 +415,377 @@ describe("ImageGenService", () => {
       const result = await ImageGenService.loadUserImageGenConfig();
       // Will return {} or values from actual config — either way should not throw
       expect(result).toBeDefined();
+    });
+  });
+
+  describe("enhanceImage", () => {
+    it("calls /img2img endpoint with base64 image and returns result", async () => {
+      const fakeResult = Buffer.from("enhanced-png");
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        arrayBuffer: () => Promise.resolve(fakeResult.buffer.slice(0)),
+        headers: new Map(),
+      });
+      vi.stubGlobal("fetch", mockFetch);
+
+      // Mock fs.readFile to return a small fake image
+      const readFileSpy = vi.spyOn(fs, "readFile").mockResolvedValueOnce(Buffer.from("fake-source-image"));
+
+      const result = await service.enhanceImage("/tmp/source.png", "make it look cinematic");
+
+      expect(result.provider).toBe("local");
+      expect(result.filePath).toContain("openzigs-img2img-testid12.png");
+      expect(result.generationTimeMs).toBeGreaterThanOrEqual(0);
+
+      const fetchCall = mockFetch.mock.calls[0];
+      expect(fetchCall[0]).toBe("http://127.0.0.1:5005/img2img");
+      const body = JSON.parse(fetchCall[1].body);
+      expect(body.prompt).toBe("make it look cinematic");
+      expect(body.image).toBeDefined(); // base64
+      expect(body.strength).toBe(0.6); // default
+
+      readFileSpy.mockRestore();
+      vi.unstubAllGlobals();
+    });
+
+    it("clamps strength between 0.1 and 0.95", async () => {
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        arrayBuffer: () => Promise.resolve(new ArrayBuffer(8)),
+        headers: new Map(),
+      });
+      vi.stubGlobal("fetch", mockFetch);
+      const readFileSpy = vi.spyOn(fs, "readFile").mockResolvedValue(Buffer.from("img"));
+
+      // strength too low — clamped to 0.1
+      await service.enhanceImage("/tmp/src.png", "test", { strength: 0.01 });
+      let body = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(body.strength).toBe(0.1);
+
+      // strength too high — clamped to 0.95
+      await service.enhanceImage("/tmp/src.png", "test", { strength: 1.5 });
+      body = JSON.parse(mockFetch.mock.calls[1][1].body);
+      expect(body.strength).toBe(0.95);
+
+      readFileSpy.mockRestore();
+      vi.unstubAllGlobals();
+    });
+
+    it("throws when image exceeds 20MB limit", async () => {
+      const bigBuffer = Buffer.alloc(21 * 1024 * 1024); // 21 MB
+      const readFileSpy = vi.spyOn(fs, "readFile").mockResolvedValueOnce(bigBuffer);
+
+      await expect(
+        service.enhanceImage("/tmp/huge.png", "enhance"),
+      ).rejects.toThrow("Image too large");
+
+      readFileSpy.mockRestore();
+    });
+
+    it("throws when sidecar returns error on img2img", async () => {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+        ok: false,
+        status: 500,
+        text: () => Promise.resolve("CUDA OOM"),
+      }));
+      const readFileSpy = vi.spyOn(fs, "readFile").mockResolvedValueOnce(Buffer.from("small"));
+
+      await expect(
+        service.enhanceImage("/tmp/src.png", "enhance"),
+      ).rejects.toThrow("img2img sidecar returned 500");
+
+      readFileSpy.mockRestore();
+      vi.unstubAllGlobals();
+    });
+
+    it("passes optional params (model, seed, width, height, steps, guidance_scale)", async () => {
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        arrayBuffer: () => Promise.resolve(new ArrayBuffer(8)),
+        headers: new Map(),
+      });
+      vi.stubGlobal("fetch", mockFetch);
+      const readFileSpy = vi.spyOn(fs, "readFile").mockResolvedValue(Buffer.from("img"));
+
+      await service.enhanceImage("/tmp/src.png", "enhance", {
+        model: "kontext-dev",
+        seed: 42,
+        width: 1024,
+        height: 768,
+        steps: 20,
+        guidance_scale: 7.5,
+      });
+
+      const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(body.model).toBe("kontext-dev");
+      expect(body.seed).toBe(42);
+      expect(body.width).toBe(1024);
+      expect(body.height).toBe(768);
+      expect(body.steps).toBe(20);
+      expect(body.guidance_scale).toBe(7.5);
+
+      readFileSpy.mockRestore();
+      vi.unstubAllGlobals();
+    });
+
+    it("sends auth header in network mode for img2img", async () => {
+      const svc = new ImageGenService({
+        outputDir: testOutputDir,
+        imageGenMode: "network",
+        networkNodeUrl: "http://192.168.1.50:5005",
+        networkNodeToken: "my-token",
+      });
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        arrayBuffer: () => Promise.resolve(new ArrayBuffer(8)),
+        headers: new Map(),
+      });
+      vi.stubGlobal("fetch", mockFetch);
+      const readFileSpy = vi.spyOn(fs, "readFile").mockResolvedValue(Buffer.from("img"));
+
+      await svc.enhanceImage("/tmp/src.png", "enhance");
+
+      const fetchCall = mockFetch.mock.calls[0];
+      expect(fetchCall[0]).toBe("http://192.168.1.50:5005/img2img");
+      expect(fetchCall[1].headers.Authorization).toBe("Bearer my-token");
+
+      readFileSpy.mockRestore();
+      vi.unstubAllGlobals();
+    });
+  });
+
+  describe("kontextEdit", () => {
+    it("calls /kontext endpoint with base64 image and returns result", async () => {
+      const fakeResult = Buffer.from("edited-png");
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        arrayBuffer: () => Promise.resolve(fakeResult.buffer.slice(0)),
+        headers: new Map(),
+      });
+      vi.stubGlobal("fetch", mockFetch);
+      const readFileSpy = vi.spyOn(fs, "readFile").mockResolvedValueOnce(Buffer.from("source-img"));
+
+      const result = await service.kontextEdit("/tmp/source.png", "Add a dog in the foreground");
+
+      expect(result.provider).toBe("local");
+      expect(result.filePath).toContain("openzigs-kontext-testid12.png");
+
+      const fetchCall = mockFetch.mock.calls[0];
+      expect(fetchCall[0]).toBe("http://127.0.0.1:5005/kontext");
+      const body = JSON.parse(fetchCall[1].body);
+      expect(body.prompt).toBe("Add a dog in the foreground");
+      expect(body.image).toBeDefined();
+
+      readFileSpy.mockRestore();
+      vi.unstubAllGlobals();
+    });
+
+    it("throws when image exceeds 20MB limit", async () => {
+      const bigBuffer = Buffer.alloc(21 * 1024 * 1024);
+      const readFileSpy = vi.spyOn(fs, "readFile").mockResolvedValueOnce(bigBuffer);
+
+      await expect(
+        service.kontextEdit("/tmp/huge.png", "edit it"),
+      ).rejects.toThrow("Image too large");
+
+      readFileSpy.mockRestore();
+    });
+
+    it("throws when sidecar returns error on kontext", async () => {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+        ok: false,
+        status: 422,
+        text: () => Promise.resolve("Invalid prompt"),
+      }));
+      const readFileSpy = vi.spyOn(fs, "readFile").mockResolvedValueOnce(Buffer.from("small"));
+
+      await expect(
+        service.kontextEdit("/tmp/src.png", "edit"),
+      ).rejects.toThrow("Kontext sidecar returned 422");
+
+      readFileSpy.mockRestore();
+      vi.unstubAllGlobals();
+    });
+
+    it("passes optional params (seed, width, height, steps, guidance)", async () => {
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        arrayBuffer: () => Promise.resolve(new ArrayBuffer(8)),
+        headers: new Map(),
+      });
+      vi.stubGlobal("fetch", mockFetch);
+      const readFileSpy = vi.spyOn(fs, "readFile").mockResolvedValue(Buffer.from("img"));
+
+      const result = await service.kontextEdit("/tmp/src.png", "add hat", {
+        seed: 123,
+        width: 512,
+        height: 512,
+        steps: 30,
+        guidance: 5.0,
+      });
+
+      const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(body.seed).toBe(123);
+      expect(body.width).toBe(512);
+      expect(body.height).toBe(512);
+      expect(body.steps).toBe(30);
+      expect(body.guidance).toBe(5.0);
+      expect(result.width).toBe(512);
+      expect(result.height).toBe(512);
+
+      readFileSpy.mockRestore();
+      vi.unstubAllGlobals();
+    });
+
+    it("sends auth header in network mode for kontext", async () => {
+      const svc = new ImageGenService({
+        outputDir: testOutputDir,
+        imageGenMode: "network",
+        networkNodeUrl: "http://192.168.1.50:5005",
+        networkNodeToken: "kontext-token",
+      });
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        arrayBuffer: () => Promise.resolve(new ArrayBuffer(8)),
+        headers: new Map(),
+      });
+      vi.stubGlobal("fetch", mockFetch);
+      const readFileSpy = vi.spyOn(fs, "readFile").mockResolvedValue(Buffer.from("img"));
+
+      await svc.kontextEdit("/tmp/src.png", "edit");
+
+      expect(mockFetch.mock.calls[0][0]).toBe("http://192.168.1.50:5005/kontext");
+      expect(mockFetch.mock.calls[0][1].headers.Authorization).toBe("Bearer kontext-token");
+
+      readFileSpy.mockRestore();
+      vi.unstubAllGlobals();
+    });
+  });
+
+  describe("getRecommendedResolution", () => {
+    it("returns resolution when sidecar reports it", async () => {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ ready: true, recommended_width: 1024, recommended_height: 1024 }),
+      }));
+
+      const result = await service.getRecommendedResolution();
+      expect(result).toEqual({ width: 1024, height: 1024 });
+
+      vi.unstubAllGlobals();
+    });
+
+    it("returns null when sidecar is not ready", async () => {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ ready: false }),
+      }));
+
+      const result = await service.getRecommendedResolution();
+      expect(result).toBeNull();
+
+      vi.unstubAllGlobals();
+    });
+
+    it("returns null when sidecar is unreachable", async () => {
+      vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("ECONNREFUSED")));
+
+      const result = await service.getRecommendedResolution();
+      expect(result).toBeNull();
+
+      vi.unstubAllGlobals();
+    });
+
+    it("returns null when recommended dimensions are missing", async () => {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ ready: true }),
+      }));
+
+      const result = await service.getRecommendedResolution();
+      expect(result).toBeNull();
+
+      vi.unstubAllGlobals();
+    });
+
+    it("sends auth header in network mode", async () => {
+      const svc = new ImageGenService({
+        outputDir: testOutputDir,
+        imageGenMode: "network",
+        networkNodeUrl: "http://192.168.1.50:5005",
+        networkNodeToken: "res-token",
+      });
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ ready: true, recommended_width: 512, recommended_height: 512 }),
+      });
+      vi.stubGlobal("fetch", mockFetch);
+
+      await svc.getRecommendedResolution();
+
+      expect(mockFetch.mock.calls[0][1].headers.Authorization).toBe("Bearer res-token");
+
+      vi.unstubAllGlobals();
+    });
+  });
+
+  describe("generateLocal with localModel", () => {
+    it("includes model in request body when localModel is specified", async () => {
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        arrayBuffer: () => Promise.resolve(new ArrayBuffer(8)),
+        headers: new Map(),
+      });
+      vi.stubGlobal("fetch", mockFetch);
+
+      await service.generateImage("test", {
+        provider: "local",
+        localModel: "sdxl-turbo",
+        width: 512,
+        height: 512,
+      });
+
+      const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(body.model).toBe("sdxl-turbo");
+
+      vi.unstubAllGlobals();
+    });
+
+    it("omits model from request body when not specified", async () => {
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        arrayBuffer: () => Promise.resolve(new ArrayBuffer(8)),
+        headers: new Map(),
+      });
+      vi.stubGlobal("fetch", mockFetch);
+
+      await service.generateImage("test", { provider: "local" });
+
+      const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(body.model).toBeUndefined();
+
+      vi.unstubAllGlobals();
+    });
+  });
+
+  describe("default dimensions", () => {
+    it("uses 1024x1024 when no dimensions are provided", async () => {
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        arrayBuffer: () => Promise.resolve(new ArrayBuffer(8)),
+        headers: new Map(),
+      });
+      vi.stubGlobal("fetch", mockFetch);
+
+      const result = await service.generateImage("a landscape", { provider: "local" });
+
+      const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(body.width).toBe(1024);
+      expect(body.height).toBe(1024);
+      expect(result.width).toBe(1024);
+      expect(result.height).toBe(1024);
+
+      vi.unstubAllGlobals();
     });
   });
 });

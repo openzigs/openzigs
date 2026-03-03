@@ -10,7 +10,7 @@
  * - Full converter creation and availability checks
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach } from "vitest";
 import {
   hasVideoStream,
   parseVisionBatchResponse,
@@ -217,5 +217,366 @@ describe("buildInterleavedBody", () => {
 
     const result = buildInterleavedBody(segments, []);
     expect(result).toContain("1:01:01.0");
+  });
+});
+
+// ── createSidecarMediaConverter Tests (mocked) ──
+
+// Use dynamic import + vi.mock to test the factory function
+import { vi } from "vitest";
+import { createSidecarMediaConverter, extractKeyframes } from "./sidecar-media-converter.js";
+
+// Mock child_process.execFile — default: callback with error (command not found)
+vi.mock("node:child_process", () => ({
+  execFile: vi.fn((_cmd: string, _args: string[], cb: (err: Error | null, result?: { stdout: string; stderr: string }) => void) => {
+    cb(new Error("command not found"));
+  }),
+}));
+
+// Mock fs/promises
+vi.mock("node:fs/promises", () => ({
+  default: {
+    mkdir: vi.fn().mockResolvedValue(undefined),
+    readdir: vi.fn().mockResolvedValue([]),
+    readFile: vi.fn().mockResolvedValue(Buffer.from("fake-wav")),
+    unlink: vi.fn().mockResolvedValue(undefined),
+  },
+}));
+
+// Mock os.tmpdir
+vi.mock("node:os", () => ({
+  default: {
+    tmpdir: () => "/tmp",
+  },
+}));
+
+import { execFile } from "node:child_process";
+import fs from "node:fs/promises";
+
+/**
+ * Helper: make execFile succeed for ffmpeg -version (so ffmpegAvailable returns true).
+ */
+function mockFfmpegAvailable() {
+  const mock = vi.mocked(execFile);
+  mock.mockImplementation(((cmd: string, args: string[], cb: (err: Error | null, result?: { stdout: string; stderr: string }) => void) => {
+    if (cmd === "ffmpeg" && args[0] === "-version") {
+      cb(null, { stdout: "ffmpeg version 6.0", stderr: "" });
+    } else if (cmd === "ffprobe") {
+      cb(null, { stdout: "video", stderr: "" });
+    } else if (cmd === "ffmpeg") {
+      // ffmpeg extraction commands
+      cb(null, { stdout: "", stderr: "" });
+    } else {
+      cb(new Error(`unexpected command: ${cmd}`));
+    }
+  }) as typeof execFile);
+}
+
+/**
+ * Helper: make execFile fail for ffmpeg -version (so ffmpegAvailable returns false).
+ */
+function mockFfmpegUnavailable() {
+  const mock = vi.mocked(execFile);
+  mock.mockImplementation(((_cmd: string, _args: string[], cb: (err: Error | null) => void) => {
+    cb(new Error("command not found: ffmpeg"));
+  }) as typeof execFile);
+}
+
+// Mock global fetch
+const mockFetch = vi.fn();
+vi.stubGlobal("fetch", mockFetch);
+
+describe("createSidecarMediaConverter", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("should return unavailable when ffmpeg is not found", async () => {
+    mockFfmpegUnavailable();
+
+    const reg = await createSidecarMediaConverter();
+    expect(reg.available).toBe(false);
+    expect(reg.unavailableReason).toContain("ffmpeg not found");
+
+    // The convert function should return an error result
+    const result = await reg.convert("/any/file.mp3");
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("ffmpeg is not installed");
+  });
+
+  it("should return unavailable when sidecar is unreachable", async () => {
+    mockFfmpegAvailable();
+    mockFetch.mockRejectedValue(new Error("ECONNREFUSED"));
+
+    const reg = await createSidecarMediaConverter({ sidecarUrl: "http://localhost:9999" });
+    expect(reg.available).toBe(false);
+    expect(reg.unavailableReason).toContain("not reachable");
+
+    const result = await reg.convert("/any/file.mp3");
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("not reachable");
+  });
+
+  it("should return available when both ffmpeg and sidecar are reachable", async () => {
+    mockFfmpegAvailable();
+    mockFetch.mockResolvedValueOnce({ ok: true }); // sidecar health check
+
+    const reg = await createSidecarMediaConverter({ sidecarUrl: "http://localhost:5006" });
+    expect(reg.available).toBe(true);
+    expect(reg.name).toBe("media-sidecar");
+    expect(reg.extensions).toContain(".mp4");
+    expect(reg.extensions).toContain(".mp3");
+  });
+
+  it("should strip trailing slash from sidecar URL", async () => {
+    mockFfmpegAvailable();
+    mockFetch.mockResolvedValueOnce({ ok: true });
+
+    await createSidecarMediaConverter({ sidecarUrl: "http://localhost:5006/" });
+    // Health check should be called without double slash
+    expect(mockFetch).toHaveBeenCalledWith(
+      "http://localhost:5006/health",
+      expect.any(Object),
+    );
+  });
+
+  it("should handle sidecar health returning non-ok response", async () => {
+    mockFfmpegAvailable();
+    mockFetch.mockResolvedValueOnce({ ok: false, status: 503 });
+
+    const reg = await createSidecarMediaConverter();
+    expect(reg.available).toBe(false);
+    expect(reg.unavailableReason).toContain("not reachable");
+  });
+
+  it("should convert audio file successfully via sidecar", async () => {
+    mockFfmpegAvailable();
+    // Health check
+    mockFetch.mockResolvedValueOnce({ ok: true });
+
+    const reg = await createSidecarMediaConverter({ sidecarUrl: "http://localhost:5006" });
+
+    // Transcription response
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({
+        text: "Hello world",
+        language: "en",
+        segments: [{ start: 0, end: 2.5, text: "Hello world" }],
+        duration_seconds: 2.5,
+      }),
+    });
+
+    // fs.readFile for wav data
+    vi.mocked(fs.readFile).mockResolvedValueOnce(Buffer.from("fake-wav-data"));
+
+    const result = await reg.convert("/path/to/audio.mp3");
+    expect(result.success).toBe(true);
+    expect(result.converter).toBe("media-sidecar");
+    expect(result.text).toContain("Transcript: audio.mp3");
+    expect(result.text).toContain("Hello world");
+    expect(result.metadata).toBeDefined();
+    expect((result.metadata as Record<string, unknown>).language).toBe("en");
+    expect((result.metadata as Record<string, unknown>).isVideo).toBe(false);
+  });
+
+  it("should handle sidecar transcription failure", async () => {
+    mockFfmpegAvailable();
+    mockFetch.mockResolvedValueOnce({ ok: true }); // health
+
+    const reg = await createSidecarMediaConverter();
+
+    // Transcription fails
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 500,
+      text: () => Promise.resolve("Internal Server Error"),
+    });
+    vi.mocked(fs.readFile).mockResolvedValueOnce(Buffer.from("wav"));
+
+    await expect(reg.convert("/path/to/audio.wav")).rejects.toThrow("Sidecar transcription failed (500)");
+  });
+
+  it("should log info when video detected but no copilot provided", async () => {
+    mockFfmpegAvailable();
+    mockFetch.mockResolvedValueOnce({ ok: true }); // health
+
+    const reg = await createSidecarMediaConverter({ sidecarUrl: "http://localhost:5006" });
+
+    // Mock ffprobe returning "video" for hasVideoStream
+    vi.mocked(execFile).mockImplementation(((_cmd: string, _args: string[], cb: (err: Error | null, result?: { stdout: string; stderr: string }) => void) => {
+      if (_cmd === "ffprobe") {
+        cb(null, { stdout: "video", stderr: "" });
+      } else {
+        cb(null, { stdout: "", stderr: "" });
+      }
+    }) as typeof execFile);
+
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({
+        text: "Video content",
+        language: "en",
+        segments: [{ start: 0, end: 5, text: "Video content" }],
+        duration_seconds: 5,
+      }),
+    });
+    vi.mocked(fs.readFile).mockResolvedValueOnce(Buffer.from("wav"));
+
+    const result = await reg.convert("/path/to/video.mp4");
+    expect(result.success).toBe(true);
+    expect((result.metadata as Record<string, unknown>).isVideo).toBe(true);
+    // No keyframe descriptions since no copilot
+    expect((result.metadata as Record<string, unknown>).keyframeDescriptions).toBeUndefined();
+  });
+
+  it("should include segment count and duration in metadata", async () => {
+    mockFfmpegAvailable();
+    mockFetch.mockResolvedValueOnce({ ok: true }); // health
+
+    const reg = await createSidecarMediaConverter();
+
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({
+        text: "First segment. Second segment.",
+        language: "fr",
+        segments: [
+          { start: 0, end: 3, text: "First segment." },
+          { start: 3, end: 6, text: "Second segment." },
+        ],
+        duration_seconds: 6.0,
+      }),
+    });
+    vi.mocked(fs.readFile).mockResolvedValueOnce(Buffer.from("wav"));
+
+    const result = await reg.convert("/test/file.m4a");
+    expect(result.metadata).toBeDefined();
+    const meta = result.metadata as Record<string, unknown>;
+    expect(meta.segmentCount).toBe(2);
+    expect(meta.durationSeconds).toBe(6.0);
+    expect(meta.language).toBe("fr");
+    expect(meta.sourceFile).toBe("file.m4a");
+  });
+
+  it("should include markdown header with duration and engine info", async () => {
+    mockFfmpegAvailable();
+    mockFetch.mockResolvedValueOnce({ ok: true });
+
+    const reg = await createSidecarMediaConverter();
+
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({
+        text: "Test",
+        language: "",
+        segments: [{ start: 0, end: 1, text: "Test" }],
+        duration_seconds: 1.0,
+      }),
+    });
+    vi.mocked(fs.readFile).mockResolvedValueOnce(Buffer.from("wav"));
+
+    const result = await reg.convert("/test/podcast.ogg");
+    expect(result.text).toContain("# Transcript: podcast.ogg");
+    expect(result.text).toContain("**Duration:**");
+    expect(result.text).toContain("auto-detected");
+    expect(result.text).toContain("Audio Sidecar (Whisper MLX)");
+  });
+
+  it("should clean up temp WAV file even on transcription error", async () => {
+    mockFfmpegAvailable();
+    mockFetch.mockResolvedValueOnce({ ok: true });
+
+    const reg = await createSidecarMediaConverter();
+
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 400,
+      text: () => Promise.resolve("Bad request"),
+    });
+    vi.mocked(fs.readFile).mockResolvedValueOnce(Buffer.from("wav"));
+
+    try {
+      await reg.convert("/test/bad.mp3");
+    } catch {
+      // expected
+    }
+
+    // fs.unlink should have been called to clean up the temp file
+    expect(vi.mocked(fs.unlink)).toHaveBeenCalled();
+  });
+});
+
+// ── extractKeyframes Tests ──
+
+describe("extractKeyframes (mocked)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("should extract frames with correct timestamps and default interval", async () => {
+    mockFfmpegAvailable();
+    vi.mocked(fs.readdir).mockResolvedValueOnce(
+      ["frame_0001.jpg", "frame_0002.jpg", "frame_0003.jpg"] as unknown as Awaited<ReturnType<typeof fs.readdir>>
+    );
+
+    const { frames, tempDir } = await extractKeyframes("/video.mp4");
+    expect(tempDir).toContain("openzigs-keyframes");
+    expect(frames).toHaveLength(3);
+    expect(frames[0].timestamp).toBe(0);
+    expect(frames[1].timestamp).toBe(10); // default interval
+    expect(frames[2].timestamp).toBe(20);
+    expect(frames[0].framePath).toContain("frame_0001.jpg");
+  });
+
+  it("should use custom interval and maxFrames", async () => {
+    mockFfmpegAvailable();
+    vi.mocked(fs.readdir).mockResolvedValueOnce(
+      ["frame_0001.jpg", "frame_0002.jpg"] as unknown as Awaited<ReturnType<typeof fs.readdir>>
+    );
+
+    const { frames } = await extractKeyframes("/video.mp4", {
+      intervalSeconds: 5,
+      maxFrames: 2,
+    });
+    expect(frames).toHaveLength(2);
+    expect(frames[0].timestamp).toBe(0);
+    expect(frames[1].timestamp).toBe(5);
+  });
+
+  it("should filter non-frame files from temp dir", async () => {
+    mockFfmpegAvailable();
+    vi.mocked(fs.readdir).mockResolvedValueOnce(
+      ["frame_0001.jpg", ".DS_Store", "other.txt", "frame_0002.jpg"] as unknown as Awaited<ReturnType<typeof fs.readdir>>
+    );
+
+    const { frames } = await extractKeyframes("/video.mp4");
+    expect(frames).toHaveLength(2);
+  });
+
+  it("should return empty frames when no frames extracted", async () => {
+    mockFfmpegAvailable();
+    vi.mocked(fs.readdir).mockResolvedValueOnce([] as unknown as Awaited<ReturnType<typeof fs.readdir>>);
+
+    const { frames } = await extractKeyframes("/video.mp4");
+    expect(frames).toHaveLength(0);
+  });
+});
+
+// ── parseVisionBatchResponse edge cases ──
+
+describe("parseVisionBatchResponse (additional edge cases)", () => {
+  it("should handle descriptions with numbers in text", () => {
+    const raw = `1. Frame shows 42 people in a room
+2. Graph displaying 2024 Q3 revenue figures`;
+
+    const result = parseVisionBatchResponse(raw, 2);
+    expect(result[0]).toBe("Frame shows 42 people in a room");
+    expect(result[1]).toBe("Graph displaying 2024 Q3 revenue figures");
+  });
+
+  it("should handle expectedCount of 0", () => {
+    const result = parseVisionBatchResponse("1. Something", 0);
+    expect(result).toEqual([]);
   });
 });

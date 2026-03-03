@@ -128,10 +128,16 @@ export class QueueMaster extends EventEmitter {
     const nodeConfig = await this.getLiveNodeConfig(node);
 
     // FluxQ (mac-mini) is single-threaded Python — it cannot respond to /health
-    // while blocking on inference. If we know it's busy, return the cached status
-    // as reachable rather than hammering it with health checks that will time out.
+    // while blocking on inference. If we know it's busy AND there are dispatched
+    // jobs, return the cached status rather than hammering it with health checks.
+    // If there are no dispatched jobs, the flag is stale — fall through and re-poll.
     if (node === "mac-mini" && this.macMiniStatus.is_busy) {
-      return { node, reachable: true, ...this.macMiniStatus, url: nodeConfig.url };
+      const dispatched = this.repo.listJobs({ status: "dispatched" });
+      if (dispatched.some((j) => j.targetNode === "mac-mini")) {
+        return { node, reachable: true, ...this.macMiniStatus, url: nodeConfig.url };
+      }
+      logger.info("[QueueMaster] Mac-mini busy flag stale in pollNodeStatus — re-polling worker");
+      this.macMiniStatus = { ...this.macMiniStatus, is_busy: false };
     }
 
     try {
@@ -421,9 +427,17 @@ export class QueueMaster extends EventEmitter {
   private async processMacMini(): Promise<void> {
     // FluxQ is synchronous — one job at a time. If we're already dispatching,
     // bail out to avoid double-dispatch and false "offline" health check failures.
+    // Guard against stale busy flag: if no dispatched jobs exist for mac-mini,
+    // the flag was set by a race between health-check and callback — clear it.
     if (this.macMiniStatus.is_busy) {
-      logger.debug("[QueueMaster] Mac-mini busy (generating), skipping tick");
-      return;
+      const dispatched = this.repo.listJobs({ status: "dispatched" });
+      const hasMacMiniDispatch = dispatched.some((j) => j.targetNode === "mac-mini");
+      if (hasMacMiniDispatch) {
+        logger.debug("[QueueMaster] Mac-mini busy (generating), skipping tick");
+        return;
+      }
+      logger.info("[QueueMaster] Mac-mini busy flag stale (no dispatched jobs) — clearing");
+      this.macMiniStatus = { ...this.macMiniStatus, is_busy: false };
     }
 
     const pending = this.repo.getPendingJobs("mac-mini", 1);

@@ -1,10 +1,11 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import {
   InstagramAdapter,
   FacebookAdapter,
   TwitterAdapter,
   LinkedInAdapter,
   GenericPollAdapter,
+  SocialIngestionService,
 } from "./social-ingestion.js";
 
 // ── InstagramAdapter ──
@@ -317,5 +318,246 @@ describe("GenericPollAdapter", () => {
     const result = await adapter.poll!("2025-12-31T00:00:00Z");
     expect(result).toHaveLength(1);
     expect(result[0]).toEqual(items[0]);
+  });
+});
+
+// ── SocialIngestionService tests ──────────────────────────────────
+
+describe("SocialIngestionService", () => {
+  const createMockRepo = () => ({
+    upsertContact: vi.fn(() => ({ id: "contact-1", platform: "instagram", platform_user_id: "u1", username: "user1", display_name: "", tags: "[]", notes: "", first_seen_at: "", last_seen_at: "", message_count: 1, handoff_active: 0, handoff_thread_id: null, created_at: "", updated_at: "" })),
+    insertMessage: vi.fn(() => ({ id: "msg-1", contact_id: "contact-1", platform: "instagram", direction: "inbound", status: "received", platform_message_id: "", content: "hi", metadata: "{}", created_at: "" })),
+  });
+
+  it("emits message event on processMessage", () => {
+    const repo = createMockRepo();
+    const service = new SocialIngestionService({ repository: repo as any });
+    const handler = vi.fn();
+    service.on("message", handler);
+
+    service.processMessage({
+      platform: "instagram",
+      platformMessageId: "m1",
+      platformUserId: "u1",
+      username: "user1",
+      text: "hello",
+      timestamp: new Date().toISOString(),
+    });
+
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(repo.upsertContact).toHaveBeenCalled();
+    expect(repo.insertMessage).toHaveBeenCalled();
+  });
+
+  it("registerAdapter adds runtime adapter", () => {
+    const repo = createMockRepo();
+    const service = new SocialIngestionService({ repository: repo as any });
+    const adapter = new InstagramAdapter();
+    service.registerAdapter(adapter);
+    expect(service.getRegisteredPlatforms()).toContain("instagram");
+  });
+
+  it("getRegisteredPlatforms returns empty array when no adapters", () => {
+    const repo = createMockRepo();
+    const service = new SocialIngestionService({ repository: repo as any });
+    expect(service.getRegisteredPlatforms()).toEqual([]);
+  });
+
+  it("handleWebhook warns when no adapter for platform", async () => {
+    const repo = createMockRepo();
+    const service = new SocialIngestionService({ repository: repo as any });
+    // should not throw, just log warning
+    await service.handleWebhook("instagram", {}, {});
+  });
+
+  it("handleWebhook with adapter that returns null is a no-op", async () => {
+    const repo = createMockRepo();
+    const adapter = new InstagramAdapter();
+    const service = new SocialIngestionService({ repository: repo as any, adapters: [adapter] });
+    const handler = vi.fn();
+    service.on("message", handler);
+
+    await service.handleWebhook("instagram", {}, {});
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it("handleWebhook processes DM message", async () => {
+    const repo = createMockRepo();
+    const adapter = new InstagramAdapter();
+    const service = new SocialIngestionService({ repository: repo as any, adapters: [adapter] });
+    const handler = vi.fn();
+    service.on("message", handler);
+
+    await service.handleWebhook("instagram", {
+      entry: [{
+        messaging: [{
+          sender: { id: "u1" },
+          message: { mid: "m1", text: "hi" },
+          timestamp: String(Date.now()),
+        }],
+      }],
+    }, {});
+
+    expect(handler).toHaveBeenCalledTimes(1);
+  });
+
+  it("handleWebhook emits comment event for comment webhook", async () => {
+    const repo = createMockRepo();
+    const adapter = new InstagramAdapter();
+    const service = new SocialIngestionService({ repository: repo as any, adapters: [adapter] });
+    const handler = vi.fn();
+    service.on("comment", handler);
+
+    await service.handleWebhook("instagram", {
+      entry: [{
+        changes: [{
+          field: "comments",
+          value: {
+            from: { id: "u1", username: "user1" },
+            text: "nice!",
+            comment_id: "c1",
+            media: { id: "p1" },
+          },
+        }],
+      }],
+    }, {});
+
+    expect(handler).toHaveBeenCalledTimes(1);
+  });
+
+  it("handleWebhook enriches comment with post context service", async () => {
+    const repo = createMockRepo();
+    const adapter = new InstagramAdapter();
+    const postContextService = {
+      getPostContext: vi.fn().mockResolvedValue({
+        postId: "p1", platform: "instagram", caption: "pic", permalink: "http://x",
+        mediaType: "IMAGE", mediaUrl: "http://img", authorUsername: "a", publishedAt: "", cachedAt: "",
+      }),
+    };
+    const service = new SocialIngestionService({
+      repository: repo as any,
+      adapters: [adapter],
+      postContextService: postContextService as any,
+    });
+    const handler = vi.fn();
+    service.on("comment", handler);
+
+    await service.handleWebhook("instagram", {
+      entry: [{
+        changes: [{
+          field: "comments",
+          value: { from: { id: "u1" }, text: "wow", comment_id: "c2", media: { id: "p1" } },
+        }],
+      }],
+    }, {});
+
+    expect(postContextService.getPostContext).toHaveBeenCalledWith("instagram", "p1");
+    expect(handler).toHaveBeenCalledTimes(1);
+  });
+
+  it("handleWebhook continues when post context enrichment fails", async () => {
+    const repo = createMockRepo();
+    const adapter = new InstagramAdapter();
+    const postContextService = {
+      getPostContext: vi.fn().mockRejectedValue(new Error("API error")),
+    };
+    const service = new SocialIngestionService({
+      repository: repo as any,
+      adapters: [adapter],
+      postContextService: postContextService as any,
+    });
+    const handler = vi.fn();
+    service.on("comment", handler);
+
+    await service.handleWebhook("instagram", {
+      entry: [{
+        changes: [{
+          field: "comments",
+          value: { from: { id: "u1" }, text: "ok", comment_id: "c3", media: { id: "p1" } },
+        }],
+      }],
+    }, {});
+
+    expect(handler).toHaveBeenCalledTimes(1);
+  });
+
+  it("handleWebhook catches parse errors", async () => {
+    const repo = createMockRepo();
+    const badAdapter: any = {
+      platform: "instagram",
+      parseWebhook: () => { throw new Error("parse boom"); },
+    };
+    const service = new SocialIngestionService({ repository: repo as any, adapters: [badAdapter] });
+    // should not throw
+    await service.handleWebhook("instagram", {}, {});
+  });
+
+  it("stopPolling is no-op when no timer exists", () => {
+    const repo = createMockRepo();
+    const service = new SocialIngestionService({ repository: repo as any });
+    service.stopPolling("instagram"); // should not throw
+  });
+
+  it("stopAllPolling clears all timers", () => {
+    const repo = createMockRepo();
+    const service = new SocialIngestionService({ repository: repo as any });
+    service.stopAllPolling(); // should not throw
+  });
+
+  it("startPolling warns when adapter has no poll method", () => {
+    const repo = createMockRepo();
+    const adapter = new InstagramAdapter(); // no poll method
+    const service = new SocialIngestionService({ repository: repo as any, adapters: [adapter] });
+    service.startPolling("instagram", 60); // should log warning, no crash
+  });
+});
+
+// ── Instagram adapter edge cases ──
+
+describe("InstagramAdapter - additional", () => {
+  const adapter = new InstagramAdapter();
+
+  it("returns null for entry with neither messaging nor changes", () => {
+    expect(adapter.parseWebhook({ entry: [{ other: "data" }] })).toBeNull();
+  });
+
+  it("returns null for messaging without text", () => {
+    expect(adapter.parseWebhook({
+      entry: [{ messaging: [{ sender: { id: "x" }, message: { mid: "m" } }] }],
+    })).toBeNull();
+  });
+});
+
+// ── Facebook adapter edge cases ──
+
+describe("FacebookAdapter - additional", () => {
+  const adapter = new FacebookAdapter();
+
+  it("returns null for page entry with neither messaging nor feed changes", () => {
+    expect(adapter.parseWebhook({ object: "page", entry: [{ other: "data" }] })).toBeNull();
+  });
+
+  it("returns null for messaging without text", () => {
+    expect(adapter.parseWebhook({
+      object: "page",
+      entry: [{ messaging: [{ sender: { id: "x" }, message: {} }] }],
+    })).toBeNull();
+  });
+
+  it("returns null for feed changes that are not comments", () => {
+    expect(adapter.parseWebhook({
+      object: "page",
+      entry: [{ changes: [{ field: "feed", value: { item: "post" } }] }],
+    })).toBeNull();
+  });
+});
+
+// ── Twitter adapter edge cases ──
+
+describe("TwitterAdapter - additional", () => {
+  const adapter = new TwitterAdapter();
+
+  it("returns null for direct_message_events with no message_create", () => {
+    expect(adapter.parseWebhook({ direct_message_events: [{ id: "1" }] })).toBeNull();
   });
 });

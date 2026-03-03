@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useCallback, useRef, type ChangeEvent } from "react";
-import { Upload, X, FileVideo, FileText, FolderOpen, Plus, Loader2, BookOpen } from "lucide-react";
+import { Upload, X, FileVideo, FileText, FolderOpen, Plus, Loader2, BookOpen, Sparkles } from "lucide-react";
 import { fetchJson } from "@/lib/api";
 import { showToast } from "@/components/toast";
 import type { MediaFile, ProductionMode } from "./types";
@@ -34,9 +34,33 @@ export const MediaUploadStep = ({
   const [uploadingVideo, setUploadingVideo] = useState(false);
   const [uploadingScript, setUploadingScript] = useState(false);
   const [uploadingSource, setUploadingSource] = useState(false);
+  const [enhancingInstructions, setEnhancingInstructions] = useState(false);
   const clipInputRef = useRef<HTMLInputElement>(null);
   const scriptInputRef = useRef<HTMLInputElement>(null);
   const sourceInputRef = useRef<HTMLInputElement>(null);
+
+  const handleEnhanceInstructions = async () => {
+    if (!topic.trim()) {
+      showToast("Enter some instructions first", "error");
+      return;
+    }
+    setEnhancingInstructions(true);
+    try {
+      const result = await fetchJson<{ enhanced_instructions: string; thinking: string }>(
+        "/api/admin/director/enhance-instructions",
+        {
+          method: "POST",
+          body: JSON.stringify({ raw_instructions: topic.trim(), mode }),
+        }
+      );
+      onTopicChange(result.enhanced_instructions);
+      showToast(result.thinking ? `✨ ${result.thinking}` : "Instructions enhanced!", "success");
+    } catch (err) {
+      showToast(`Enhance failed: ${err instanceof Error ? err.message : String(err)}`, "error");
+    } finally {
+      setEnhancingInstructions(false);
+    }
+  };
 
   const uploadFile = useCallback(async (file: File, kind: "video" | "script"): Promise<MediaFile> => {
     const result = await fetchJson<{
@@ -292,9 +316,19 @@ export const MediaUploadStep = ({
 
           {/* ── Style & Instructions (preamble) ──────────────── */}
           <div className="space-y-2">
-            <label className="text-xs font-medium text-muted-foreground">
-              Style &amp; Instructions <span className="text-muted-foreground/50">(optional)</span>
-            </label>
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-medium text-muted-foreground">
+                Style &amp; Instructions <span className="text-muted-foreground/50">(optional)</span>
+              </label>
+              <button
+                onClick={handleEnhanceInstructions}
+                disabled={enhancingInstructions || !topic.trim()}
+                className="flex items-center gap-1.5 rounded-lg border border-primary/30 bg-primary/5 px-3 py-1 text-xs font-semibold text-primary hover:bg-primary/10 disabled:opacity-50 transition"
+              >
+                {enhancingInstructions ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
+                AI Enhance
+              </button>
+            </div>
             <textarea
               value={topic}
               onChange={(e) => onTopicChange(e.target.value)}

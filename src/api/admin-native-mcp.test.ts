@@ -39,6 +39,11 @@ class FakeCopilot implements CopilotWrapper {
   setNativeMcpServers(servers: Record<string, NativeMcpServerDefinition>): void { this.nativeServers = { ...servers }; }
   getSessionUsage() { return null; }
   clearSessionUsage() { return null; }
+  async listSdkSessions() { return []; }
+  async getSdkSessionMessages() { return []; }
+  async deleteSdkSession() {}
+  getSessionAnalytics() { return { sessionsCreated: 0, sessionsResumed: 0, sessionsDestroyed: 0, compactionCount: 0, lifecycleEvents: [] as never[], lastUpdated: "" }; }
+  resetSessionAnalytics() {}
 }
 
 class FakeTester implements NativeMcpTester {

@@ -2,6 +2,7 @@
 
 import { useEffect, useCallback, useImperativeHandle, useRef, useMemo, type MutableRefObject } from "react";
 import { Play, Pause } from "lucide-react";
+import { buildMediaUrl } from "@/lib/api";
 import type { DirectorManifest } from "../types";
 
 interface PlayerPreviewProps {
@@ -31,6 +32,8 @@ export function PlayerPreview({
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const frameRef = useRef(currentFrame);
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const prevVoiceoverRef = useRef<string | null>(null);
 
   // Keep frame ref in sync
   useEffect(() => {
@@ -80,6 +83,48 @@ export function PlayerPreview({
     const frameInClip = currentFrame - sceneStartFrame;
     vid.currentTime = (trimStartFrames + Math.max(0, frameInClip)) / fps;
   }, [trimStartFrames, sceneStartFrame, currentFrame, fps]);
+
+  // ── Per-scene voiceover audio sync ──────────────────────────
+  const voiceoverSrc = currentScene?.voiceover
+    ? buildMediaUrl(`/api/admin/director/files/${encodeURIComponent(String(currentScene.voiceover).split("/").pop() ?? "")}`)
+    : null;
+
+  // Load new voiceover source when scene changes
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    if (voiceoverSrc !== prevVoiceoverRef.current) {
+      prevVoiceoverRef.current = voiceoverSrc;
+      if (voiceoverSrc) {
+        audio.src = voiceoverSrc;
+        audio.load();
+      } else {
+        audio.pause();
+        audio.removeAttribute("src");
+      }
+    }
+  }, [voiceoverSrc]);
+
+  // Sync voiceover playback with play/pause state
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio || !voiceoverSrc) return;
+    if (isPlaying) {
+      const frameInScene = currentFrame - sceneStartFrame;
+      audio.currentTime = Math.max(0, frameInScene / fps);
+      audio.play().catch(() => {});
+    } else {
+      audio.pause();
+    }
+  }, [isPlaying, voiceoverSrc, currentFrame, sceneStartFrame, fps]);
+
+  // Sync voiceover position on seek (when not playing)
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio || !voiceoverSrc || isPlaying) return;
+    const frameInScene = currentFrame - sceneStartFrame;
+    audio.currentTime = Math.max(0, frameInScene / fps);
+  }, [currentFrame, sceneStartFrame, fps, voiceoverSrc, isPlaying]);
 
   // Simple playback simulation (the actual @remotion/player integration requires
   // bundling the Remotion composition which lives in the backend project).
@@ -161,7 +206,7 @@ export function PlayerPreview({
           >
             <video
               ref={videoRef}
-              src={`/api/admin/director/files/${encodeURIComponent(String(currentScene.source).split("/").pop() ?? "")}`}
+              src={buildMediaUrl(`/api/admin/director/files/${encodeURIComponent(String(currentScene.source).split("/").pop() ?? "")}`)}
               className="h-full"
               style={
                 isVertical
@@ -188,7 +233,7 @@ export function PlayerPreview({
               : { width: "100%", height: "100%" }}
           >
             <img
-              src={`/api/admin/director/files/${encodeURIComponent(currentScene.src.split("/").pop() ?? "")}`}
+              src={buildMediaUrl(`/api/admin/director/files/${encodeURIComponent(currentScene.src.split("/").pop() ?? "")}`)}
               alt="Scene preview"
               className="h-full w-full object-cover"
             />
@@ -197,6 +242,11 @@ export function PlayerPreview({
               currentFrame={currentFrame}
             />
           </div>
+        ) : currentScene?.type === "title_card" || currentScene?.type === "intro_card" || currentScene?.type === "outro_card" ? (
+          <TitleCardPreview
+            scene={currentScene}
+            isVertical={isVertical}
+          />
         ) : (
           <div className="flex flex-col items-center gap-2 text-white/50">
             <Film className="h-12 w-12" />
@@ -215,6 +265,9 @@ export function PlayerPreview({
         <div className="absolute bottom-2 left-2 rounded bg-black/70 px-2 py-0.5 text-[9px] text-white/50">
           Captions &amp; effects render with final video
         </div>
+
+        {/* Hidden audio element for per-scene voiceover playback */}
+        <audio ref={audioRef} preload="auto" />
       </div>
 
       {/* Transport controls */}
@@ -239,6 +292,53 @@ export function PlayerPreview({
         <span className="w-24 text-right text-xs tabular-nums text-muted-foreground">
           Frame {currentFrame} / {totalFrames}
         </span>
+      </div>
+    </div>
+  );
+}
+
+/** Preview rendering for title_card, intro_card, and outro_card entries. */
+function TitleCardPreview({
+  scene,
+  isVertical,
+}: {
+  scene: Record<string, unknown>;
+  isVertical: boolean;
+}) {
+  // title_card uses .background, intro/outro use .backgroundSrc or .enhancedBackgroundSrc
+  const bgPath = (scene.enhancedBackgroundSrc ?? scene.backgroundSrc ?? scene.background) as string | undefined;
+  const bgSrc = bgPath
+    ? buildMediaUrl(`/api/admin/director/files/${encodeURIComponent(String(bgPath).split("/").pop() ?? "")}`)
+    : undefined;
+  const title = scene.title as string | undefined;
+  const subtitle = scene.subtitle as string | undefined;
+  const ctaText = scene.ctaText as string | undefined;
+
+  return (
+    <div
+      className="relative flex items-center justify-center overflow-hidden"
+      style={isVertical
+        ? { aspectRatio: "9/16", height: "100%", maxHeight: "100%" }
+        : { width: "100%", height: "100%" }}
+    >
+      {bgSrc ? (
+        <img src={bgSrc} alt="Card background" className="absolute inset-0 h-full w-full object-cover" />
+      ) : (
+        <div className="absolute inset-0 bg-gradient-to-br from-slate-900 to-slate-800" />
+      )}
+      <div className="relative z-10 flex flex-col items-center gap-3 px-8 text-center">
+        {title && (
+          <h2 className="text-2xl font-bold text-white drop-shadow-lg">{title}</h2>
+        )}
+        {subtitle && (
+          <p className="text-base text-white/80 drop-shadow">{subtitle}</p>
+        )}
+        {ctaText && (
+          <p className="text-sm text-white/60 italic">{ctaText}</p>
+        )}
+        {!title && !subtitle && (
+          <p className="text-sm text-white/40">{String(scene.type).replace(/_/g, " ")}</p>
+        )}
       </div>
     </div>
   );

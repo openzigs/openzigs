@@ -322,4 +322,121 @@ describe("CustomPostActionManager", () => {
     expect(schema.properties.verbose.default).toBe(false);
     expect(schema.required).toEqual(["channel"]);
   });
+
+  /* ── Handler execution ── */
+
+  describe("webhook handler execution", () => {
+    afterEach(() => vi.unstubAllGlobals());
+
+    it("returns error when URL is missing", async () => {
+      await manager.initialize();
+      await manager.create(makeWebhookDef({ type: "wh-no-url", templateConfig: {} }));
+      const def = postActionRegistry.get("wh-no-url");
+      const result = await def!.handler("output", {});
+      expect(JSON.parse(result).error).toContain("Webhook URL is required");
+    });
+
+    it("blocks localhost URLs (SSRF)", async () => {
+      await manager.initialize();
+      await manager.create(makeWebhookDef({
+        type: "wh-ssrf-local",
+        templateConfig: { url: "http://localhost:8080/hook" },
+      }));
+      const def = postActionRegistry.get("wh-ssrf-local");
+      const result = await def!.handler("output", {});
+      expect(JSON.parse(result).error).toContain("blocked");
+    });
+
+    it("blocks private IP URLs (SSRF)", async () => {
+      await manager.initialize();
+      await manager.create(makeWebhookDef({
+        type: "wh-ssrf-private",
+        templateConfig: { url: "http://10.0.0.1/hook" },
+      }));
+      const def = postActionRegistry.get("wh-ssrf-private");
+      const result = await def!.handler("output", {});
+      expect(JSON.parse(result).error).toContain("blocked");
+    });
+
+    it("sends webhook and returns status on success", async () => {
+      await manager.initialize();
+      await manager.create(makeWebhookDef({ type: "wh-ok" }));
+      const def = postActionRegistry.get("wh-ok");
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+        status: 200,
+        ok: true,
+        text: vi.fn().mockResolvedValue(""),
+      }));
+      const result = await def!.handler("stage output", {});
+      const parsed = JSON.parse(result);
+      expect(parsed.status).toBe(200);
+      expect(parsed.ok).toBe(true);
+    });
+
+    it("returns error when fetch throws", async () => {
+      await manager.initialize();
+      await manager.create(makeWebhookDef({ type: "wh-fail" }));
+      const def = postActionRegistry.get("wh-fail");
+      vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("Network error")));
+      const result = await def!.handler("output", {});
+      expect(JSON.parse(result).error).toContain("Network error");
+    });
+  });
+
+  describe("script handler execution", () => {
+    it("executes script and returns stdout", async () => {
+      await manager.initialize();
+      await manager.create(makeScriptDef({ type: "sh-echo", scriptBody: 'echo "hello"' }));
+      const def = postActionRegistry.get("sh-echo");
+      const result = await def!.handler("input", {});
+      expect(result.trim()).toBe("hello");
+    });
+
+    it("passes config values as environment variables", async () => {
+      await manager.initialize();
+      await manager.create(makeScriptDef({
+        type: "sh-env",
+        scriptBody: 'echo "$OPENZIGS_CONFIG_MY_KEY"',
+      }));
+      const def = postActionRegistry.get("sh-env");
+      const result = await def!.handler("input", { my_key: "test-value" });
+      expect(result.trim()).toBe("test-value");
+    });
+
+    it("returns error details when script fails", async () => {
+      await manager.initialize();
+      await manager.create(makeScriptDef({
+        type: "sh-fail",
+        scriptBody: "exit 1",
+      }));
+      const def = postActionRegistry.get("sh-fail");
+      const result = await def!.handler("input", {});
+      const parsed = JSON.parse(result);
+      expect(parsed.error).toBeDefined();
+    });
+  });
+
+  describe("advanced builder schema variants", () => {
+    it("handles enum fields in schema", async () => {
+      await manager.initialize();
+      const fields: CustomFieldDefinition[] = [
+        { key: "level", type: "string", title: "Level", enum: ["low", "medium", "high"], enumLabels: ["Low", "Medium", "High"] },
+      ];
+      await manager.create(makeAdvancedDef({ type: "adv-enum", customFields: fields }));
+      const def = postActionRegistry.get("adv-enum");
+      expect(def!.configSchema.properties.level.enum).toEqual(["low", "medium", "high"]);
+      expect(def!.configSchema.properties.level.enumLabels).toEqual(["Low", "Medium", "High"]);
+    });
+
+    it("handles array fields with items in schema", async () => {
+      await manager.initialize();
+      const fields: CustomFieldDefinition[] = [
+        { key: "tags", type: "array", title: "Tags" },
+      ];
+      await manager.create(makeAdvancedDef({ type: "adv-array", customFields: fields }));
+      const def = postActionRegistry.get("adv-array");
+      expect(def!.configSchema.properties.tags.type).toBe("array");
+      expect(def!.configSchema.properties.tags.items).toEqual({ type: "string" });
+    });
+  });
 });

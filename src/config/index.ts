@@ -108,9 +108,9 @@ export type CopilotProviderConfig =
 // ── Native Custom Agent Config ──
 export type CustomAgentConfig = {
   name: string;
-  displayName: string;
+  displayName?: string;
   description?: string;
-  prompt: string;
+  prompt?: string;
   tools?: string[] | null;
   infer?: boolean;
   mcpServers?: Record<string, NativeMcpServerConfig>;
@@ -226,6 +226,7 @@ export type SocialBrainAppConfig = {
 export type AppConfig = {
   server: {
     port: number;
+    trustProxy?: boolean | number | string;
   };
   logging: {
     level: string;
@@ -396,13 +397,13 @@ export const mcpServerConfigSchema = z.union([
 /** Zod schema for a single custom agent entry. */
 export const customAgentSchema = z.object({
   name: z.string(),
-  displayName: z.string(),
+  displayName: z.string().optional(),
   description: z.string().optional(),
-  prompt: z.string(),
+  prompt: z.string().optional().default(""),
   tools: z.array(z.string()).nullable().optional(),
   infer: z.boolean().optional(),
   mcpServers: z.record(z.string(), mcpServerConfigSchema).optional(),
-});
+}).strict();
 
 /** Zod schema for the nativeMcpServers record. */
 export const nativeMcpServersSchema = z.record(z.string(), mcpServerConfigSchema);
@@ -417,7 +418,8 @@ const copilotSchema = z.object({
 
 const appConfigSchema = z.object({
   server: z.object({
-    port: z.number()
+    port: z.number(),
+    trustProxy: z.union([z.boolean(), z.number(), z.string()]).optional(),
   }),
   logging: z.object({
     level: z.string()

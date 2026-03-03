@@ -23,7 +23,7 @@ const produceVideoSchema = z.object({
   inputFile: z.string().optional().describe("Path to .md or .txt file (required for 'presentation' mode)"),
   sourceType: z.enum(["text", "markdown"]).optional().describe("Type of input document for presentation mode"),
   imageProvider: z.enum(["cloud", "local", "auto"]).optional().describe("Image generation provider: 'cloud' (Vertex AI), 'local' (sidecar), 'auto' (failover)"),
-  imageModel: z.enum(["flux", "sdxl-turbo"]).optional().describe("Local sidecar model to use: 'flux' (higher quality, slower) or 'sdxl-turbo' (faster, smaller). Only used when imageProvider is 'local' or 'auto'."),
+  imageModel: z.enum(["flux", "flux-schnell", "sdxl-turbo"]).optional().describe("Local sidecar model to use: 'flux-schnell' (higher quality, slower) or 'sdxl-turbo' (faster, smaller). Only used when imageProvider is 'local' or 'auto'."),
 });
 
 const listTemplatesSchema = z.object({

@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import helmet from "helmet";
 import cors from "cors";
+import rateLimit from "express-rate-limit";
 import multer from "multer";
 import * as z from "zod";
 import { getHealth } from "./health.js";
@@ -72,13 +73,20 @@ export const createApp = (config: AppConfig, options: CreateAppOptions = {}): Ex
   const approvalQueue = options.approvalQueue ?? new ApprovalQueue({ auditLogger });
   const toolRegistry = options.toolRegistry;
 
-  app.set("trust proxy", true);
+  // Only trust proxy if explicitly configured
+  const trustProxy = config.server?.trustProxy;
+  if (trustProxy) {
+    app.set("trust proxy", trustProxy);
+  }
 
   const uiOrigin = process.env.OPENZIGS_UI_ORIGIN ?? "http://localhost:3001";
   app.use(helmet({
     contentSecurityPolicy: {
       directives: {
         defaultSrc: ["'self'"],
+        scriptSrc: ["'self'"],
+        styleSrc: ["'self'", "'unsafe-inline'"],
+        imgSrc: ["'self'", "data:", "blob:"],
         connectSrc: [
           "'self'",
           uiOrigin,
@@ -86,20 +94,90 @@ export const createApp = (config: AppConfig, options: CreateAppOptions = {}): Ex
           "http://localhost:9222",
           "ws://localhost:3000",
           "ws://localhost:9222"
-        ]
+        ],
+        fontSrc: ["'self'"],
+        frameAncestors: ["'none'"],
+        objectSrc: ["'none'"],
+        baseUri: ["'self'"],
+        formAction: ["'self'"],
       }
     }
   }));
-  app.use(cors());
-  app.use(express.json({ limit: "50mb" }));
-  app.use(express.urlencoded({ extended: true, limit: "50mb" }));
+  // CORS: restrict to explicit allowed origins
+  const corsOrigins = (process.env.OPENZIGS_CORS_ORIGINS ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const explicitOrigins = new Set([
+    uiOrigin,
+    "http://localhost:3000",
+    "http://localhost:3001",
+    ...corsOrigins,
+  ]);
+  app.use(cors({
+    origin: (origin, callback) => {
+      // Allow requests with no origin (curl, mobile apps, server-to-server)
+      if (!origin) return callback(null, true);
+      // Allow any localhost origin regardless of port (local dev servers
+      // may run on non-default ports like 3101, 5173, etc.)
+      try {
+        const url = new URL(origin);
+        if (url.hostname === "localhost" || url.hostname === "127.0.0.1") {
+          return callback(null, true);
+        }
+      } catch { /* not a valid URL, fall through */ }
+      if (explicitOrigins.has(origin)) {
+        callback(null, true);
+      } else {
+        callback(new Error("Not allowed by CORS"));
+      }
+    },
+    credentials: true,
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+  }));
+  // Global rate limit: generous for local use, protects against runaway loops.
+  // Authenticated requests are exempt since they've already proven identity.
+  app.use(rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 5000,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: "Too many requests, please try again later" },
+    skip: (req) => req.path === "/health",
+    // When trust proxy isn't configured, suppress the X-Forwarded-For
+    // validation warning — the header is set by the Next.js dev proxy
+    // but isn't security-relevant in local-only deployments.
+    ...(!trustProxy && { validate: { xForwardedForHeader: false } }),
+  }));
+
+  app.use(express.json({ limit: "1mb" }));
+  app.use(express.urlencoded({ extended: true, limit: "1mb" }));
 
   const authMiddleware = createAuthMiddleware(config.auth);
+
+  const ALLOWED_UPLOAD_MIMES = new Set([
+    "text/plain", "text/csv", "text/markdown", "text/html", "text/xml",
+    "application/json", "application/pdf", "application/xml",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document", // docx
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", // xlsx
+    "image/png", "image/jpeg", "image/gif", "image/webp", "image/svg+xml",
+    "audio/mpeg", "audio/wav", "audio/ogg", "audio/webm",
+    "video/mp4", "video/webm",
+  ]);
+
   const chatUpload = multer({
     storage: multer.memoryStorage(),
     limits: {
       fileSize: 25 * 1024 * 1024,
       files: 10,
+    },
+    fileFilter: (_req, file, cb) => {
+      if (ALLOWED_UPLOAD_MIMES.has(file.mimetype)) {
+        cb(null, true);
+      } else {
+        cb(new Error(`File type ${file.mimetype} is not allowed`));
+      }
     },
   });
 
@@ -121,7 +199,7 @@ export const createApp = (config: AppConfig, options: CreateAppOptions = {}): Ex
    * Upload browser-selected files to a server-local temp area for chat attachments.
    * Returns SDK attachment descriptors with absolute server paths.
    */
-  app.post("/api/chat/upload", chatUpload.array("files", 10), async (req, res) => {
+  app.post("/api/chat/upload", authMiddleware, chatUpload.array("files", 10), async (req, res) => {
     const files = Array.isArray(req.files) ? req.files : [];
     if (files.length === 0) {
       return res.status(400).json({ error: "No files uploaded. Use multipart form field 'files'." });
@@ -275,6 +353,10 @@ export const createApp = (config: AppConfig, options: CreateAppOptions = {}): Ex
       if (!name || !template) {
         return res.status(400).json({ error: "name and template are required" });
       }
+      const MAX_PROMPT_LENGTH = 100_000;
+      if (template.length > MAX_PROMPT_LENGTH) {
+        return res.status(400).json({ error: `Prompt template exceeds ${MAX_PROMPT_LENGTH} characters` });
+      }
       try {
         const prompt = promptManager.create({
           name,
@@ -383,6 +465,21 @@ export const createApp = (config: AppConfig, options: CreateAppOptions = {}): Ex
       }
     });
   }
+
+  // Global error handler — redact internal paths from error responses
+  const redactPaths = (message: string): string =>
+    message
+      .replace(/\/Users\/[^/\s]+/g, "~")
+      .replace(/\/home\/[^/\s]+/g, "~")
+      .replace(/C:\\\\Users\\\\[^\\\\\s]+/g, "~");
+
+  app.use((err: Error & { statusCode?: number }, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+    const statusCode = err.statusCode ?? 500;
+    const message = statusCode === 500
+      ? "Internal server error"
+      : redactPaths(err.message);
+    res.status(statusCode).json({ error: message });
+  });
 
   return app;
 };

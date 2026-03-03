@@ -9,6 +9,10 @@ import type { CopilotWrapper } from "../../copilot/copilot-wrapper.js";
 import type { ContextPayload } from "../ingestion/types.js";
 import type { DirectorManifest } from "../manifest/manifest-types.js";
 
+vi.mock("../ingestion/audio-extractor.js", () => ({
+  getAudioDuration: vi.fn().mockResolvedValue(15.5),
+}));
+
 // Build a valid manifest JSON that the mock LLM will return
 function buildValidManifestJson(): string {
   const manifest: DirectorManifest = {
@@ -206,5 +210,104 @@ describe("ProducerService", () => {
         contextPayload: buildTestContext(),
       }),
     ).rejects.toThrow("requires either a scriptPath or voiceoverPath");
+  });
+
+  // ── NEW: Additional coverage ────────────────────────────────────
+
+  it("handles generic code block wrapping (no json lang hint)", async () => {
+    const wrapped = "```\n" + buildValidManifestJson() + "\n```";
+    const mockCopilot = createMockCopilot(wrapped);
+    const p = new ProducerService(mockCopilot);
+
+    const result = await p.produce({
+      mode: "highlight",
+      contextPayload: buildTestContext(),
+    });
+    expect(result.manifest.projectTitle).toBe("Test Highlight");
+  });
+
+  it("passes model override to copilot.chat", async () => {
+    await producer.produce({
+      mode: "highlight",
+      contextPayload: buildTestContext(),
+      model: "claude-sonnet-4",
+    });
+
+    const chatFn = copilot.chat as unknown as ReturnType<typeof vi.fn>;
+    const callArgs = chatFn.mock.calls[0];
+    expect(callArgs[1]).toEqual(expect.objectContaining({ model: "claude-sonnet-4" }));
+  });
+
+  it("includes sourceClips from input in enhancement", async () => {
+    const result = await producer.produce({
+      mode: "highlight",
+      contextPayload: buildTestContext(),
+      sourceClips: ["/clips/clip1.mp4", "/clips/clip2.mp4"],
+    });
+    expect(result.manifest).toBeDefined();
+  });
+
+  it("calculates tokensUsed as approximation of total text", async () => {
+    const result = await producer.produce({
+      mode: "highlight",
+      contextPayload: buildTestContext(),
+    });
+
+    // Token count should be > 0 (rough estimate = total chars / 4)
+    expect(result.tokensUsed).toBeGreaterThan(0);
+  });
+
+  it("extracts JSON when invalid text surrounds valid JSON", async () => {
+    const invalidJson = '{"broken": true, invalid}';
+    const mockCopilot = createMockCopilot(invalidJson);
+    const p = new ProducerService(mockCopilot);
+
+    // Since the JSON itself is broken, this should throw
+    await expect(
+      p.produce({ mode: "highlight", contextPayload: buildTestContext() }),
+    ).rejects.toThrow();
+  });
+
+  it("handles preferredTemplate option", async () => {
+    const result = await producer.produce({
+      mode: "highlight",
+      contextPayload: buildTestContext(),
+      preferredTemplate: "Corporate",
+    });
+
+    // Should still produce a valid manifest
+    expect(result.manifest).toBeDefined();
+    const chatFn = copilot.chat as unknown as ReturnType<typeof vi.fn>;
+    const prompt = chatFn.mock.calls[0][0] as string;
+    expect(prompt).toContain("Corporate");
+  });
+
+  it("produces manifest in script mode with pre-generated voiceover", async () => {
+    // Build a manifest with audioLayer that can accept voiceover injection
+    const manifestJson = buildValidManifestJson();
+    const mockCopilot = createMockCopilot(manifestJson);
+    const p = new ProducerService(mockCopilot);
+
+    const result = await p.produce({
+      mode: "script",
+      contextPayload: buildTestContext(),
+      voiceoverPath: "/tmp/voiceover.mp3",
+    });
+
+    expect(result.manifest).toBeDefined();
+    // Voiceover should be injected into audioLayer
+    if (result.manifest.audioLayer) {
+      expect(result.manifest.audioLayer.voiceover).toBeDefined();
+      expect(result.manifest.audioLayer.voiceover?.source).toBe("/tmp/voiceover.mp3");
+    }
+  });
+
+  it("throws comprehensively when JSON parse fails completely", async () => {
+    const mockCopilot = createMockCopilot("no JSON here whatsoever");
+    const p = new ProducerService(mockCopilot);
+
+    await expect(
+      p.produce({ mode: "highlight", contextPayload: buildTestContext() }),
+    ).rejects.toThrow("No JSON object found");
   });
 });

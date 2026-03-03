@@ -306,4 +306,228 @@ describe("Scheduler", () => {
 
     expect(job.autoApproveTools).toBeNull();
   });
+
+  // ── Additional coverage tests ──
+
+  it("creates a job with model and reasoningEffort", () => {
+    const job = scheduler.create({
+      name: "model-job",
+      cronExpression: "0 9 * * *",
+      actionPayload: {},
+      model: "gpt-4",
+      reasoningEffort: "high",
+    });
+    expect(job.model).toBe("gpt-4");
+    expect(job.reasoningEffort).toBe("high");
+  });
+
+  it("defaults model and reasoningEffort to null", () => {
+    const job = scheduler.create({
+      name: "no-model",
+      cronExpression: "0 9 * * *",
+      actionPayload: {},
+    });
+    expect(job.model).toBeNull();
+    expect(job.reasoningEffort).toBeNull();
+  });
+
+  it("updates model on existing job", () => {
+    const job = scheduler.create({
+      name: "update-model",
+      cronExpression: "0 9 * * *",
+      actionPayload: {},
+    });
+    const updated = scheduler.update(job.id, { model: "claude-3" });
+    expect(updated.model).toBe("claude-3");
+  });
+
+  it("clears model by setting null", () => {
+    const job = scheduler.create({
+      name: "clear-model",
+      cronExpression: "0 9 * * *",
+      actionPayload: {},
+      model: "gpt-4",
+    });
+    expect(job.model).toBe("gpt-4");
+    const updated = scheduler.update(job.id, { model: null });
+    expect(updated.model).toBeNull();
+  });
+
+  it("updates reasoningEffort", () => {
+    const job = scheduler.create({
+      name: "effort-update",
+      cronExpression: "0 9 * * *",
+      actionPayload: {},
+    });
+    const updated = scheduler.update(job.id, { reasoningEffort: "low" });
+    expect(updated.reasoningEffort).toBe("low");
+  });
+
+  it("clears reasoningEffort by setting null", () => {
+    const job = scheduler.create({
+      name: "clear-effort",
+      cronExpression: "0 9 * * *",
+      actionPayload: {},
+      reasoningEffort: "high",
+    });
+    const updated = scheduler.update(job.id, { reasoningEffort: null });
+    expect(updated.reasoningEffort).toBeNull();
+  });
+
+  it("defaults timezone to UTC", () => {
+    const job = scheduler.create({
+      name: "tz-default",
+      cronExpression: "0 9 * * *",
+      actionPayload: {},
+    });
+    expect(job.timezone).toBe("UTC");
+  });
+
+  it("defaults actionType to prompt", () => {
+    const job = scheduler.create({
+      name: "type-default",
+      cronExpression: "0 9 * * *",
+      actionPayload: {},
+    });
+    expect(job.actionType).toBe("prompt");
+  });
+
+  it("creates a job with custom actionType", () => {
+    const job = scheduler.create({
+      name: "shell-job",
+      cronExpression: "0 9 * * *",
+      actionType: "shell",
+      actionPayload: { command: "ls" },
+    });
+    expect(job.actionType).toBe("shell");
+  });
+
+  it("executeJob captures error from onExecute", async () => {
+    const handler = vi.fn();
+    const failScheduler = new Scheduler({
+      db,
+      clock: () => fixedNow,
+      auditLogDir: "/tmp/openzigs-test-audit",
+      onExecute: async () => { throw new Error("boom"); },
+    });
+    failScheduler.on("job:executed", handler);
+
+    const job = failScheduler.create({
+      name: "error-job",
+      cronExpression: "0 0 * * *",
+      actionPayload: {},
+    });
+
+    await failScheduler.executeJob(job.id);
+
+    expect(handler).toHaveBeenCalledOnce();
+    expect(handler.mock.calls[0][0]).toMatchObject({
+      success: false,
+      error: "boom",
+    });
+    failScheduler.stopAll();
+  });
+
+  it("executeJob with no handler returns default message", async () => {
+    const handler = vi.fn();
+    const noHandlerScheduler = new Scheduler({
+      db,
+      clock: () => fixedNow,
+      auditLogDir: "/tmp/openzigs-test-audit",
+    });
+    noHandlerScheduler.on("job:executed", handler);
+
+    const job = noHandlerScheduler.create({
+      name: "no-handler",
+      cronExpression: "0 0 * * *",
+      actionPayload: {},
+    });
+
+    await noHandlerScheduler.executeJob(job.id);
+
+    expect(handler).toHaveBeenCalledOnce();
+    expect(handler.mock.calls[0][0].result).toContain("no handler");
+    noHandlerScheduler.stopAll();
+  });
+
+  it("executeJob skips nonexistent job", async () => {
+    const handler = vi.fn();
+    scheduler.on("job:executed", handler);
+    await scheduler.executeJob("nonexistent-id");
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it("startAll starts only enabled jobs", () => {
+    scheduler.create({ name: "enabled", cronExpression: "0 9 * * *", actionPayload: {}, enabled: true });
+    scheduler.create({ name: "disabled", cronExpression: "0 9 * * *", actionPayload: {}, enabled: false });
+    // startAll should not throw
+    scheduler.startAll();
+    // Both jobs should exist
+    expect(scheduler.list()).toHaveLength(2);
+  });
+
+  it("stopAll stops all tasks", () => {
+    scheduler.create({ name: "s1", cronExpression: "0 9 * * *", actionPayload: {} });
+    scheduler.create({ name: "s2", cronExpression: "0 10 * * *", actionPayload: {} });
+    scheduler.startAll();
+    // Should not throw
+    scheduler.stopAll();
+  });
+
+  it("update changes timezone", () => {
+    const job = scheduler.create({
+      name: "tz-update",
+      cronExpression: "0 9 * * *",
+      actionPayload: {},
+    });
+    const updated = scheduler.update(job.id, { timezone: "America/Chicago" });
+    expect(updated.timezone).toBe("America/Chicago");
+  });
+
+  it("update changes actionPayload", () => {
+    const job = scheduler.create({
+      name: "payload-update",
+      cronExpression: "0 9 * * *",
+      actionPayload: { key: "old" },
+    });
+    const updated = scheduler.update(job.id, { actionPayload: { key: "new" } });
+    expect(updated.actionPayload).toEqual({ key: "new" });
+  });
+
+  it("update re-enables disabled job and restarts task", () => {
+    const job = scheduler.create({
+      name: "re-enable",
+      cronExpression: "0 9 * * *",
+      actionPayload: {},
+      enabled: false,
+    });
+    expect(job.enabled).toBe(false);
+    const updated = scheduler.update(job.id, { enabled: true });
+    expect(updated.enabled).toBe(true);
+  });
+
+  it("update autoApproveTools on a job", () => {
+    const job = scheduler.create({
+      name: "auto-update",
+      cronExpression: "0 9 * * *",
+      actionPayload: {},
+    });
+    const updated = scheduler.update(job.id, { autoApproveTools: ["shell-execute"] });
+    expect(updated.autoApproveTools).toEqual(["shell-execute"]);
+  });
+
+  it("setTaskEngine sets the task engine", () => {
+    const mockEngine = {} as never;
+    scheduler.setTaskEngine(mockEngine);
+    // Should not throw
+  });
+
+  it("creates multiple jobs and lists them all", () => {
+    scheduler.create({ name: "first", cronExpression: "0 1 * * *", actionPayload: {} });
+    scheduler.create({ name: "second", cronExpression: "0 2 * * *", actionPayload: {} });
+    const jobs = scheduler.list();
+    expect(jobs).toHaveLength(2);
+    const names = jobs.map((j) => j.name).sort();
+    expect(names).toEqual(["first", "second"]);
+  });
 });

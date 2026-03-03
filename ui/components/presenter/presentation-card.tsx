@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { Clock, Trash2, Brain, Link2, Check } from "lucide-react";
 import { useState } from "react";
-import { fetchJson } from "@/lib/api";
+import { fetchJson, buildMediaUrl } from "@/lib/api";
 
 interface PresentationSummary {
   id: string;
@@ -59,7 +59,7 @@ export function PresentationCard({
         <div className="relative aspect-video w-full bg-muted">
           {thumbnail_path ? (
             <img
-              src={`/api/presentations/${id}/thumbnail`}
+              src={buildMediaUrl(`/api/presentations/${id}/thumbnail`)}
               alt={title}
               className="h-full w-full object-cover"
             />

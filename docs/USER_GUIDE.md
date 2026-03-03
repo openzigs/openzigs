@@ -1117,6 +1117,58 @@ Background tasks (sub-agents, scheduled jobs) use **ephemeral sessions** — eac
 
 ---
 
+## Copilot SDK Session History & Analytics
+
+The Admin panel's **Sessions** tab provides full visibility into both OpenZigs platform sessions and the underlying Copilot SDK sessions. This surfaces session metadata, conversation replay, resume capabilities, and lifecycle analytics.
+
+### Admin Sessions Panel
+
+The Sessions admin panel has three tabs:
+
+| Tab | Description |
+|---|---|
+| **App Sessions** | OpenZigs-managed sessions (JSONL-backed). Shows channel, user, last active time, conversation history. Supports delete and restore-to-chat. |
+| **Copilot SDK Sessions** | Sessions maintained by the Copilot SDK (`client.listSessions()`). Shows session ID, repo/branch context, summary, remote/local badge. Supports resume, message replay, and delete. |
+| **Analytics** | Real-time counters for sessions created, resumed, destroyed, and context compactions. Shows a timeline of lifecycle events. Counters can be reset. |
+
+### Copilot SDK Sessions
+
+Each SDK session displays:
+- **Session ID** — unique identifier (truncated in UI, full on hover)
+- **Context** — repository, branch, working directory, and git root (if available)
+- **Summary** — SDK-generated session summary (when available)
+- **Remote/Local badge** — whether the session is running remotely
+- **Timestamps** — creation time and last modified time
+
+**Actions per session:**
+- **Resume** — resumes the session and returns a conversation ID for continued chat
+- **Replay** — expand to view the full event stream (user messages, assistant responses, tool executions, session lifecycle events)
+- **Delete** — permanently deletes the SDK session
+- **Search** — filter sessions by ID, summary, repository, or branch
+
+### Session Analytics
+
+Analytics tracks four counters since the last reset:
+- **Sessions Created** — new SDK sessions created via `createSession()`
+- **Sessions Resumed** — existing sessions restored via `resumeSession()`
+- **Sessions Destroyed** — sessions explicitly destroyed
+- **Compaction Count** — number of automatic context compactions triggered by infinite sessions
+
+The lifecycle events timeline shows recent SDK lifecycle events (`session.created`, `session.deleted`, `session.updated`, `session.foreground`, `session.background`) with timestamps.
+
+### API Endpoints
+
+| Method | Endpoint | Description |
+|---|---|---|
+| `GET` | `/api/admin/copilot-sessions` | List all SDK sessions. Optional query filters: `repository`, `branch`, `cwd`, `gitRoot`. |
+| `DELETE` | `/api/admin/copilot-sessions/:sessionId` | Delete an SDK session. |
+| `POST` | `/api/admin/copilot-sessions/:sessionId/resume` | Resume a session, returns `{ conversationId, metadata }`. |
+| `GET` | `/api/admin/copilot-sessions/:sessionId/messages` | Get all events for a session (conversation replay). |
+| `GET` | `/api/admin/copilot-sessions/analytics` | Get session analytics counters and lifecycle events. |
+| `POST` | `/api/admin/copilot-sessions/analytics/reset` | Reset analytics counters. |
+
+---
+
 ## Tool Limit Configuration
 
 OpenZigs registers 90+ MCP tools, but sending all of them to the LLM in every request wastes context window tokens and can degrade response quality. The **tool limit** controls how many tools are included per LLM call.
@@ -4520,6 +4572,7 @@ The JSON body is passed as prompt variables (for `prompt` actions) or task conte
 - **IP Allowlisting** — Restrict which IPs can trigger the webhook.
 - **Rate Limiting** — Per-webhook rate limits (default 60/min).
 - **Key Rotation** — Rotate API keys from the UI without deleting the webhook.
+- **HMAC-SHA256 Verification** — Webhook payloads are verified using standard HMAC-SHA256 with the raw request body.
 
 ### Managing Webhooks
 
@@ -5224,6 +5277,81 @@ The browser automation includes anti-bot detection evasion that runs automatical
 - Permissions API notifications bypass
 
 The Chrome profile is now persistent at `~/.openzigs/chrome-profile/` (previously used a temp directory), preserving cookies and session state across server restarts.
+
+---
+
+## Security Hardening
+
+OpenZigs includes multiple layers of security controls to protect against the OWASP Top 10 threats.
+
+### API Authentication
+
+All API routes (except `/health` and public webhook triggers) require Bearer token authentication:
+
+```bash
+curl -H "Authorization: Bearer <token>" http://localhost:3000/api/admin/tools
+```
+
+Set the token in `~/.openzigs/config.json` under `auth.token`, or via the `OPENZIGS_TOKEN` environment variable. The UI passes its token via `NEXT_PUBLIC_OPENZIGS_TOKEN`.
+
+Socket.IO connections also require authentication — the token is passed in the handshake `auth` object.
+
+### CORS & Origin Restriction
+
+CORS is restricted to explicit allowed origins:
+- The UI origin (`OPENZIGS_UI_ORIGIN` or `http://localhost:3001`)
+- `http://localhost:3000` and `http://localhost:3001`
+- Additional origins via `OPENZIGS_CORS_ORIGINS` (comma-separated)
+
+### Rate Limiting
+
+A global rate limit of 100 requests per 15-minute window per IP is applied to all routes. Per-webhook rate limits are also enforced (default 60/min).
+
+### Content Security Policy
+
+Helmet CSP directives include:
+- `frame-ancestors: 'none'` — Prevents clickjacking via iframe embedding
+- `script-src: 'self'` — Only same-origin scripts
+- `object-src: 'none'` — Blocks Flash/plugin embeds
+- `base-uri: 'self'` — Prevents base tag hijacking
+
+### Input Validation & Size Limits
+
+- **JSON body limit**: 1 MB (prevents memory exhaustion via large payloads)
+- **Chat messages**: 10,000 characters max
+- **Brand voice samples**: 10,000 characters per sample
+- **Prompt templates**: 100,000 characters max
+- **Task inputs**: 50,000 characters max
+- **File uploads**: 25 MB per file, 10 files max, restricted to safe MIME types
+
+### Trust Proxy Configuration
+
+By default, `trust proxy` is disabled. If running behind a reverse proxy (nginx, Cloudflare), enable it in config:
+
+```json
+{
+  "server": {
+    "trustProxy": true
+  }
+}
+```
+
+When disabled, `X-Forwarded-For` headers are ignored, preventing IP spoofing.
+
+### Post-Action Sandboxing
+
+Custom post-action scripts run with a restricted environment — only `PATH`, `HOME`, `LANG`, and `TERM` are inherited (plus `OPENZIGS_CONFIG_*` variables). Server environment variables like API keys are not leaked.
+
+### SSRF Protection
+
+Webhook URLs are validated before fetch:
+- Private IP ranges (10.x, 172.16-31.x, 192.168.x, 127.x) are blocked
+- Cloud metadata endpoints (169.254.169.254) are blocked
+- Only `http:` and `https:` protocols are allowed
+
+### Error Redaction
+
+Internal filesystem paths are stripped from error responses. 500 errors return a generic "Internal server error" message to prevent information disclosure.
 
 ---
 

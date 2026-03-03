@@ -286,7 +286,27 @@ export function StudioLayout({ draftId }: { draftId: string }) {
 
   const handleFrameChange = useCallback((frame: number) => {
     setCurrentFrame(frame);
-  }, []);
+
+    // Auto-sync inspector to the scene at the current frame during playback
+    if (!draft?.manifest?.timeline) return;
+    const timeline = draft.manifest.timeline;
+    const visualTypes = new Set(["image_scene", "video_clip"]);
+    let sceneIdx = 0;
+    for (const entry of timeline) {
+      const start = entry.startAtFrame ?? 0;
+      const dur = entry.duration ?? entry.durationInFrames ?? 0;
+      if (frame >= start && frame < start + dur) {
+        if (visualTypes.has(entry.type)) {
+          setInspector((prev) => {
+            if (prev.sceneIndex === sceneIdx) return prev;
+            return { sceneIndex: sceneIdx, entry };
+          });
+        }
+        return;
+      }
+      if (visualTypes.has(entry.type)) sceneIdx++;
+    }
+  }, [draft?.manifest?.timeline]);
 
   const handleSeek = useCallback((frame: number) => {
     setCurrentFrame(frame);

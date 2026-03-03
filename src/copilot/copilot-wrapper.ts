@@ -97,12 +97,56 @@ type SessionCreateConfig = {
   ) => Promise<{ answer: string; wasFreeform?: boolean }>;
 };
 
+// ── SDK Session Event / Metadata types (re-exported for consumers) ──
+export type SdkSessionContext = {
+  cwd: string;
+  gitRoot?: string;
+  repository?: string;
+  branch?: string;
+};
+
+export type SdkSessionMetadata = {
+  sessionId: string;
+  startTime: string;   // ISO
+  modifiedTime: string; // ISO
+  summary?: string;
+  isRemote: boolean;
+  context?: SdkSessionContext;
+};
+
+export type SdkSessionListFilter = {
+  cwd?: string;
+  gitRoot?: string;
+  repository?: string;
+  branch?: string;
+};
+
+export type SdkSessionEvent = {
+  id: string;
+  timestamp: string;
+  parentId: string | null;
+  ephemeral?: boolean;
+  type: string;
+  data: Record<string, unknown>;
+};
+
+export type SdkSessionLifecycleEvent = {
+  type: "session.created" | "session.deleted" | "session.updated" | "session.foreground" | "session.background";
+  sessionId: string;
+  metadata?: {
+    startTime: string;
+    modifiedTime: string;
+    summary?: string;
+  };
+};
+
 type CopilotSessionLike = {
   readonly sessionId: string;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   on: (event: string, handler: (event: any) => void) => (() => void);
   sendAndWait: (input: { prompt: string; attachments?: SdkAttachment[] }, timeout?: number) => Promise<unknown>;
   destroy: () => Promise<void>;
+  getMessages?: () => Promise<SdkSessionEvent[]>;
 };
 
 export type ModelCapabilities = {
@@ -131,6 +175,11 @@ type CopilotClientLike = {
   startDeviceAuth?: (input: { clientId: string; scopes: string[] }) => Promise<DeviceAuthInfo>;
   waitForAuth?: (input: { timeoutMs: number }) => Promise<unknown>;
   listModels?: () => Promise<CopilotModel[]>;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  listSessions?: (filter?: SdkSessionListFilter) => Promise<any[]>;
+  deleteSession?: (sessionId: string) => Promise<void>;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  on?: (...args: any[]) => (() => void);
 };
 
 export type SystemMessageConfig = {
@@ -284,6 +333,16 @@ export interface CopilotWrapper {
   getSessionUsage(sessionId: string): TokenUsage | null;
   /** Get and remove accumulated usage for a session (used on task completion). */
   clearSessionUsage(sessionId: string): TokenUsage | null;
+  /** List all SDK-managed sessions (Phase 1). */
+  listSdkSessions(filter?: SdkSessionListFilter): Promise<SdkSessionMetadata[]>;
+  /** Get conversation events from an SDK session (Phase 3). */
+  getSdkSessionMessages(sessionId: string): Promise<SdkSessionEvent[]>;
+  /** Delete an SDK-managed session (Phase 1). */
+  deleteSdkSession(sessionId: string): Promise<void>;
+  /** Get session analytics metrics (Phase 4). */
+  getSessionAnalytics(): SessionAnalytics;
+  /** Reset session analytics counters. */
+  resetSessionAnalytics(): void;
 }
 
 export type CopilotWrapperOptions = {
@@ -379,6 +438,16 @@ const normalizeAuthResult = (result: unknown): DeviceAuthResult => {
 };
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// ── Session Analytics (Phase 4) ──
+export type SessionAnalytics = {
+  sessionsCreated: number;
+  sessionsResumed: number;
+  sessionsDestroyed: number;
+  compactionCount: number;
+  lifecycleEvents: SdkSessionLifecycleEvent[];
+  lastUpdated: string; // ISO
+};
 
 const isUnauthorizedError = (error: unknown) => {
   if (!error) {
@@ -482,6 +551,15 @@ export class CopilotWrapperService extends EventEmitter implements CopilotWrappe
   private sessionConfigSignatures = new Map<string, string>();
   private sessionCreationPromises = new Map<string, Promise<CopilotSessionLike>>();
   private modelCapabilitiesCache = new Map<string, { supportsReasoning: boolean }>();
+  private analytics: SessionAnalytics = {
+    sessionsCreated: 0,
+    sessionsResumed: 0,
+    sessionsDestroyed: 0,
+    compactionCount: 0,
+    lifecycleEvents: [],
+    lastUpdated: new Date().toISOString(),
+  };
+  private lifecycleUnsubscribe?: () => void; // retained for future teardown
   readonly tokenTracker = new TokenTracker();
 
   constructor({
@@ -735,6 +813,10 @@ export class CopilotWrapperService extends EventEmitter implements CopilotWrappe
     }
     this.sessionCache.clear();
     this.sessionConfigSignatures.clear();
+    if (this.lifecycleUnsubscribe) {
+      this.lifecycleUnsubscribe();
+      this.lifecycleUnsubscribe = undefined;
+    }
     await Promise.allSettled(destroyPromises);
   }
 
@@ -796,6 +878,19 @@ export class CopilotWrapperService extends EventEmitter implements CopilotWrappe
         )
       ]);
       this.started = true;
+
+      // Subscribe to client-level lifecycle events (Phase 4)
+      if (this.client.on) {
+        this.lifecycleUnsubscribe = this.client.on((event: SdkSessionLifecycleEvent) => {
+          const MAX_LIFECYCLE_EVENTS = 200;
+          if (this.analytics.lifecycleEvents.length >= MAX_LIFECYCLE_EVENTS) {
+            this.analytics.lifecycleEvents.splice(0, this.analytics.lifecycleEvents.length - MAX_LIFECYCLE_EVENTS + 1);
+          }
+          this.analytics.lifecycleEvents.push(event);
+          this.analytics.lastUpdated = new Date().toISOString();
+          this.emit("session:lifecycle", event);
+        });
+      }
     } catch {
       this.startFailed = true;
     }
@@ -1028,18 +1123,22 @@ export class CopilotWrapperService extends EventEmitter implements CopilotWrappe
               conversationId,
               this.buildSessionConfig(model, tools, undefined, extra)
             );
+            this.analytics.sessionsResumed++;
           } catch (resumeError) {
             // It's useful to log why resume failed, even if we fall back gracefully.
             // console.warn(`Failed to resume session ${conversationId}, creating a new one. Error:`, resumeError);
             session = await this.client.createSession(
               this.buildSessionConfig(model, tools, conversationId, extra)
             );
+            this.analytics.sessionsCreated++;
           }
         } else {
           session = await this.client.createSession(
             this.buildSessionConfig(model, tools, conversationId, extra)
           );
+          this.analytics.sessionsCreated++;
         }
+        this.analytics.lastUpdated = new Date().toISOString();
         this.sessionCache.set(conversationId, session);
         this.sessionConfigSignatures.set(conversationId, requestedSignature);
         this.wireSessionEvents(session, conversationId);
@@ -1118,6 +1217,8 @@ export class CopilotWrapperService extends EventEmitter implements CopilotWrappe
 
     // Track context compaction lifecycle events (infinite sessions)
     session.on("compaction_start", () => {
+      this.analytics.compactionCount++;
+      this.analytics.lastUpdated = new Date().toISOString();
       const compactionEvent: CompactionEvent = { sessionId, status: "started" };
       this.emit("context:compaction", compactionEvent);
     });
@@ -1136,5 +1237,97 @@ export class CopilotWrapperService extends EventEmitter implements CopilotWrappe
   /** Get and remove accumulated usage for a session (used on task completion). */
   clearSessionUsage(sessionId: string): TokenUsage | null {
     return this.tokenTracker.clearUsage(sessionId);
+  }
+
+  // ── Phase 1: SDK Session Listing ──
+
+  async listSdkSessions(filter?: SdkSessionListFilter): Promise<SdkSessionMetadata[]> {
+    await this.ensureStarted();
+    if (this.startFailed || !this.client.listSessions) {
+      return [];
+    }
+    const raw = await this.client.listSessions(filter);
+    return raw.map((s) => ({
+      sessionId: String(s.sessionId ?? ""),
+      startTime: s.startTime instanceof Date ? s.startTime.toISOString() : String(s.startTime ?? ""),
+      modifiedTime: s.modifiedTime instanceof Date ? s.modifiedTime.toISOString() : String(s.modifiedTime ?? ""),
+      summary: s.summary ?? undefined,
+      isRemote: Boolean(s.isRemote),
+      context: s.context ?? undefined,
+    }));
+  }
+
+  async deleteSdkSession(sessionId: string): Promise<void> {
+    await this.ensureStarted();
+    // Also remove from local cache if present
+    const cached = this.sessionCache.get(sessionId);
+    if (cached) {
+      this.sessionCache.delete(sessionId);
+      this.sessionConfigSignatures.delete(sessionId);
+    }
+    if (this.client.deleteSession) {
+      await this.client.deleteSession(sessionId);
+    } else if (cached) {
+      await cached.destroy();
+    }
+    this.analytics.sessionsDestroyed++;
+    this.analytics.lastUpdated = new Date().toISOString();
+  }
+
+  // ── Phase 3: Conversation Replay ──
+
+  async getSdkSessionMessages(sessionId: string): Promise<SdkSessionEvent[]> {
+    await this.ensureStarted();
+    if (this.startFailed) return [];
+
+    // Try cached session first
+    let session = this.sessionCache.get(sessionId);
+    let needsCleanup = false;
+
+    if (!session) {
+      // Resume the session temporarily to read messages
+      if (!this.client.resumeSession) return [];
+      try {
+        session = await this.client.resumeSession(sessionId, {});
+        needsCleanup = true;
+      } catch {
+        return [];
+      }
+    }
+
+    if (!session.getMessages) return [];
+
+    try {
+      const events = await session.getMessages();
+      return events.map((e) => ({
+        id: String((e as Record<string, unknown>).id ?? ""),
+        timestamp: String((e as Record<string, unknown>).timestamp ?? ""),
+        parentId: ((e as Record<string, unknown>).parentId as string | null) ?? null,
+        ephemeral: Boolean((e as Record<string, unknown>).ephemeral),
+        type: String((e as Record<string, unknown>).type ?? "unknown"),
+        data: ((e as Record<string, unknown>).data as Record<string, unknown>) ?? {},
+      }));
+    } finally {
+      if (needsCleanup && session) {
+        await session.destroy().catch(() => {});
+      }
+    }
+  }
+
+  // ── Phase 4: Session Analytics ──
+
+  getSessionAnalytics(): SessionAnalytics {
+    return { ...this.analytics, lifecycleEvents: [...this.analytics.lifecycleEvents] };
+  }
+
+  resetSessionAnalytics(): void {
+    this.analytics = {
+      sessionsCreated: 0,
+      sessionsResumed: 0,
+      sessionsDestroyed: 0,
+      compactionCount: 0,
+      lifecycleEvents: [],
+      lastUpdated: new Date().toISOString(),
+    };
   }
 }

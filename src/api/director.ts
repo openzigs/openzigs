@@ -13,6 +13,7 @@
  *   DELETE /assets/:id                — remove cached asset
  *   POST /produce                     — trigger video production (ingestion → LLM → manifest)
  *   POST /enhance                     — enhance a scene image via Flux img2img
+ *   POST /enhance-instructions         — enhance style & instructions preamble via LLM
  *   POST /thumbnail                   — generate an AI thumbnail
  *   POST /drafts                      — create a new draft
  *   GET  /drafts                      — list all drafts
@@ -38,8 +39,13 @@ import type { CopilotWrapper } from "../copilot/copilot-wrapper.js";
 import type { VoiceService } from "../voice/voice-service.js";
 import type { RenderOrchestrator } from "../video/render-orchestrator.js";
 import type { BrandVoiceService } from "../personality/brand-voice-service.js";
+import type { Server as SocketIOServer } from "socket.io";
 import { NARRATION_DIRECTIVES } from "../voice/pacing-translator.js";
 import { AVAILABLE_LOCAL_VOICES } from "../voice/types.js";
+
+/** Late-bound Socket.IO reference for emitting activity events. */
+let _io: SocketIOServer | null = null;
+export function setDirectorIO(io: SocketIOServer): void { _io = io; }
 
 export interface DirectorRouterOptions {
   copilot: CopilotWrapper;
@@ -219,6 +225,22 @@ export const createDirectorRouter = ({
     pexelsApiKey: config.assets.pexelsApiKey,
     defaultModel: "", // empty = use system default
   };
+
+  // ── Produce Job Tracker ────────────────────────────────────
+  // Matches the gallery's async pattern: POST returns immediately with a job ID,
+  // the pipeline runs in the background, and the frontend polls for completion.
+  interface ProduceJob {
+    id: string;
+    status: "running" | "complete" | "failed" | "cancelled";
+    /** The full response payload — populated when status === "complete" */
+    result?: Record<string, unknown>;
+    error?: string;
+    startedAt: number;
+    completedAt?: number;
+    /** Abort controller for cancelling the running pipeline */
+    abort?: AbortController;
+  }
+  const produceJobs = new Map<string, ProduceJob>();
 
   /** Lazy singleton asset manager (hoisted so config PUT can reset it). */
   let assetManagerInstance: import("../video/assets/asset-manager.js").AssetManager | null = null;
@@ -884,12 +906,11 @@ Respond with ONLY a valid JSON array. No explanation. Example:
 
   /**
    * POST /produce — trigger the single-shot production pipeline.
+   * Returns 202 immediately with a `produceJobId`; the pipeline runs in the
+   * background.  Poll `GET /produce/:id` for status and result.
+   *
    * Body (highlight/script): { clips: string[], mode: "highlight" | "script", scriptPath?, musicTrackPath?, template?, model?, enableVisionAnalysis? }
    * Body (presentation):     { mode: "presentation", inputFile: string, sourceType?: "text"|"markdown", topic?: string, musicTrackPath?, template?, model?, imageProvider?, imageModel?, slideStyle?, assetsOnlyMode? }
-   *
-   * When enableVisionAnalysis is true (default), keyframe images are sent to a
-   * vision model for rich scene descriptions. This significantly improves editing
-   * quality but adds 1-5 minutes depending on the number of keyframes.
    */
   router.post("/produce", async (req, res) => {
     try {
@@ -905,7 +926,7 @@ Respond with ONLY a valid JSON array. No explanation. Example:
         sourceType?: "text" | "markdown";
         topic?: string;
         imageProvider?: "cloud" | "local" | "auto";
-        imageModel?: "flux" | "sdxl-turbo";
+        imageModel?: "flux" | "flux-schnell" | "sdxl-turbo";
         slideStyle?: boolean;
         assetsOnlyMode?: boolean;
         quizEnabled?: boolean;
@@ -928,12 +949,55 @@ Respond with ONLY a valid JSON array. No explanation. Example:
         return;
       }
 
+      // Validate mode-specific required fields before creating the job
+      if (mode === "presentation" && !inputFile) {
+        res.status(400).json({ error: "'inputFile' is required for presentation mode" });
+        return;
+      }
+      if ((mode === "highlight" || mode === "script") && (!clips || !Array.isArray(clips) || clips.length === 0)) {
+        res.status(400).json({ error: "clips array is required and must not be empty" });
+        return;
+      }
+
+      // Create produce job and return 202 immediately — pipeline runs in background.
+      // This matches the gallery's async pattern: submit → poll for result.
+      const produceJobId = nanoid();
+      const produceAbort = new AbortController();
+      const job: ProduceJob = { id: produceJobId, status: "running", startedAt: Date.now(), abort: produceAbort };
+      produceJobs.set(produceJobId, job);
+
+      // Evict old completed/failed jobs (keep last 20)
+      const allJobs = [...produceJobs.values()];
+      const finished = allJobs.filter(j => j.status !== "running").sort((a, b) => (a.completedAt ?? 0) - (b.completedAt ?? 0));
+      while (finished.length > 20) {
+        const old = finished.shift()!;
+        produceJobs.delete(old.id);
+      }
+
+      res.status(202).json({ produceJobId });
+      logger.info(`[Director API] Produce job ${produceJobId} accepted (mode=${mode}) — running in background`);
+
+      /** Emit a produce activity event via Socket.IO (if available). */
+      const emitActivity = (phase: string, detail?: string) => {
+        if (!_io) return;
+        _io.emit("produce:progress", { id: produceJobId, mode, phase, detail, timestamp: Date.now() });
+      };
+
+      emitActivity("started", `${mode} pipeline initiated`);
+
+      // ── Background pipeline ────────────────────────────────
+      // Everything below runs after the HTTP response has been sent.
+      // Errors are captured into the job object, not thrown to Express.
+      (async () => {
+        /** Throw if the pipeline was cancelled. Call before each major stage. */
+        const checkAborted = () => {
+          if (produceAbort.signal.aborted) throw new Error("Cancelled by user");
+        };
+
+        try {
+
       // ── Presentation mode: document → storyboard → images → TTS → manifest ──
       if (mode === "presentation") {
-        if (!inputFile) {
-          res.status(400).json({ error: "'inputFile' is required for presentation mode" });
-          return;
-        }
 
         const startTime = Date.now();
 
@@ -947,20 +1011,21 @@ Respond with ONLY a valid JSON array. No explanation. Example:
         // Step A: Ingest the text document
         let rawText: string;
         try {
-          rawText = await fs.readFile(inputFile, "utf-8");
+          rawText = await fs.readFile(inputFile!, "utf-8");
         } catch (readErr) {
           const readMsg = readErr instanceof Error ? readErr.message : String(readErr);
-          res.status(400).json({ error: `Failed to read input file: ${readMsg}` });
-          return;
+          throw new Error(`Failed to read input file: ${readMsg}`);
         }
 
-        if (sourceType === "markdown" || inputFile.endsWith(".md")) {
+        if (sourceType === "markdown" || inputFile!.endsWith(".md")) {
           rawText = rawText.replace(/```[\s\S]*?```/g, "[code block removed]");
         }
 
         logger.info(`[Director API] Presentation mode: read ${rawText.length} chars from ${inputFile}`);
 
         // Step B: Generate storyboard via LLM
+        checkAborted();
+        emitActivity("storyboard", "Generating storyboard from document");
         const storyboardEngine = new StoryboardEngine(copilot);
         const storyboardOptions: import("../video/generators/storyboard-engine.js").StoryboardOptions = {};
         if (topic) {
@@ -993,6 +1058,8 @@ Respond with ONLY a valid JSON array. No explanation. Example:
         const storyboard = await storyboardEngine.generate(rawText, storyboardOptions);
 
         logger.info(`[Director API] Storyboard generated: "${storyboard.title}" with ${storyboard.scenes.length} scenes`);
+        checkAborted();
+        emitActivity("images", `Generating assets for ${storyboard.scenes.length} scenes`);
 
         // Step C: Generate images for each scene
         // Generate at ~model-native resolution (NOT output resolution).
@@ -1050,9 +1117,16 @@ Respond with ONLY a valid JSON array. No explanation. Example:
           top_k: number;
           sample_steps: number;
         }
+        interface F5TTSClipRow {
+          emotion: string;
+          ref_audio_path: string;
+          ref_text: string;
+        }
         let sovitsProfile: SovitsProfileParams | null = null;
+        let f5ttsClips: F5TTSClipRow[] = [];
         let sidecarBaseUrl = "";
         let useSovitsVoice = false;
+        let useF5TTSVoice = false;
 
         if (voiceService) {
           sidecarBaseUrl = voiceService.getSidecarUrl();
@@ -1073,6 +1147,24 @@ Respond with ONLY a valid JSON array. No explanation. Example:
                   useSovitsVoice = true;
                   logger.info(`[Director API] GPT-SoVITS voice detected — using profile ref: ${profile.ref_audio_path}`);
                 }
+              } else if (health.active_engine === "f5tts") {
+                // Load F5-TTS clips from the most recently updated F5-TTS profile
+                const db = getDatabase();
+                const f5Profile = db.prepare(
+                  `SELECT id FROM voice_profiles WHERE engine_type = 'f5tts'
+                   ORDER BY updated_at DESC LIMIT 1`,
+                ).get() as { id: string } | undefined;
+                if (f5Profile) {
+                  const clips = db.prepare(
+                    `SELECT emotion, ref_audio_path, ref_text FROM f5tts_clips
+                     WHERE profile_id = ? ORDER BY sort_order ASC`,
+                  ).all(f5Profile.id) as F5TTSClipRow[];
+                  if (clips.length > 0) {
+                    f5ttsClips = clips;
+                    useF5TTSVoice = true;
+                    logger.info(`[Director API] F5-TTS voice detected — ${clips.length} clip(s) from profile ${f5Profile.id}`);
+                  }
+                }
               }
             }
           } catch {
@@ -1080,58 +1172,50 @@ Respond with ONLY a valid JSON array. No explanation. Example:
           }
         }
 
-        for (const scene of storyboard.scenes) {
-          // ── Step C.2a: Resolve the image path for this scene ──────────────────
-          // Assets-only mode: middle scenes use uploaded visual assets directly;
-          // only the intro (index 0) and outro (last) scenes are AI-generated.
-          // Normal mode: every scene is AI-generated.
-          let sceneImageFilePath: string;
+        // ── Parallel image + voiceover generation ──────────────────────────
+        // Images and voiceovers are independent — they typically run on
+        // different machines/sidecars. By launching both streams concurrently,
+        // total production time drops significantly compared to the old
+        // sequential approach (image → audio → next scene).
 
+        type SceneImageResult = { index: number; filePath: string | null; skipped: boolean };
+        type SceneVoiceResult = { index: number; voiceoverPath: string | undefined };
+
+        const generateSceneImage = async (scene: typeof storyboard.scenes[0]): Promise<SceneImageResult> => {
           if (isAssetsOnlyMode && scene.index > 0 && scene.index < lastSceneIndex) {
             const assetIndex = (scene.index - 1) % visualAssets!.length;
-            sceneImageFilePath = visualAssets![assetIndex].path;
-            logger.info(
-              `[Director API] Assets-only: scene ${scene.index + 1}/${storyboard.scenes.length} → ${sceneImageFilePath}`,
-            );
-          } else {
-            // Throttle cloud image requests to stay within Vertex AI QPM limits.
-            if (resolvedImageProvider !== "local" && scene.index > 0) {
-              await new Promise(r => setTimeout(r, 15_000));
-            }
-
-            logger.info(
-              `[Director API] Generating image ${scene.index + 1}/${storyboard.scenes.length}: ` +
-              `"${scene.rawImageDescription.substring(0, 60)}..."`,
-            );
-
-            let imageResult: import("../video/generators/image-gen-service.js").ImageGenResult;
-            try {
-              imageResult = await imageService.generateImage(scene.imagePrompt, {
-                provider: resolvedImageProvider,
-                localModel: imageModel,
-                width: imageWidth,
-                height: imageHeight,
-                seed: baseSeed + scene.index * 1000,
-              });
-            } catch (imgErr) {
-              const imgMsg = imgErr instanceof Error ? imgErr.message : String(imgErr);
-              logger.error(`[Director API] Image generation failed for scene ${scene.index}: ${imgMsg}`);
-              skippedScenes++;
-              continue;
-            }
-            sceneImageFilePath = imageResult.filePath;
+            const fp = visualAssets![assetIndex].path;
+            logger.info(`[Director API] Assets-only: scene ${scene.index + 1}/${storyboard.scenes.length} → ${fp}`);
+            return { index: scene.index, filePath: fp, skipped: false };
           }
+          logger.info(
+            `[Director API] Generating image ${scene.index + 1}/${storyboard.scenes.length}: ` +
+            `"${scene.rawImageDescription.substring(0, 60)}..."`,
+          );
+          try {
+            const result = await imageService.generateImage(scene.imagePrompt, {
+              provider: resolvedImageProvider,
+              localModel: imageModel,
+              width: imageWidth,
+              height: imageHeight,
+              seed: baseSeed + scene.index * 1000,
+            });
+            return { index: scene.index, filePath: result.filePath, skipped: false };
+          } catch (imgErr) {
+            const imgMsg = imgErr instanceof Error ? imgErr.message : String(imgErr);
+            logger.error(`[Director API] Image generation failed for scene ${scene.index}: ${imgMsg}`);
+            return { index: scene.index, filePath: null, skipped: true };
+          }
+        };
 
-          // ── Step C.2b: Generate per-scene voiceover ───────────────────────────
-          let sceneVoiceoverPath: string | undefined;
-          if (useSovitsVoice && sovitsProfile && scene.voiceover) {
-            // Synthesize with GPT-SoVITS via sentence-level chunking for
-            // higher quality. Long text degrades SoVITS output; splitting
-            // into sentences and stitching produces cleaner pronunciation.
+        const generateSceneVoiceover = async (scene: typeof storyboard.scenes[0]): Promise<SceneVoiceResult> => {
+          if (!scene.voiceover) return { index: scene.index, voiceoverPath: undefined };
+          let voiceoverPath: string | undefined;
+
+          if (useSovitsVoice && sovitsProfile) {
             try {
               const sentences = splitIntoSentences(scene.voiceover);
               const chunkPaths: string[] = [];
-
               for (const sentence of sentences) {
                 const ttsResp = await fetch(`${sidecarBaseUrl}/tts`, {
                   method: "POST",
@@ -1165,17 +1249,12 @@ Respond with ONLY a valid JSON array. No explanation. Example:
                   logger.warn(`[Director API] SoVITS chunk failed (${ttsResp.status}): ${errText.substring(0, 200)}`);
                 }
               }
-
               if (chunkPaths.length > 0) {
                 if (chunkPaths.length === 1) {
-                  sceneVoiceoverPath = chunkPaths[0];
+                  voiceoverPath = chunkPaths[0];
                 } else {
-                  // Stitch sentence chunks into a single WAV
-                  sceneVoiceoverPath = await concatWavFiles(chunkPaths, imageOutputDir);
-                  // Clean up individual chunks
-                  for (const cp of chunkPaths) {
-                    await fs.unlink(cp).catch(() => {});
-                  }
+                  voiceoverPath = await concatWavFiles(chunkPaths, imageOutputDir);
+                  for (const cp of chunkPaths) { await fs.unlink(cp).catch(() => {}); }
                 }
                 logger.info(`[Director API] SoVITS voiceover for scene ${scene.index}: ${sentences.length} sentence(s) stitched`);
               }
@@ -1183,38 +1262,133 @@ Respond with ONLY a valid JSON array. No explanation. Example:
               const msg = sovitsErr instanceof Error ? sovitsErr.message : String(sovitsErr);
               logger.warn(`[Director API] SoVITS voiceover failed for scene ${scene.index}: ${msg}`);
             }
-          } else if (voiceService && scene.voiceover) {
-            // Fall back to VoiceService (Kokoro or Google Cloud TTS)
+          } else if (useF5TTSVoice && f5ttsClips.length > 0 && voiceService) {
+            try {
+              const f5Result = await voiceService.synthesizeF5TTS(
+                scene.voiceover,
+                f5ttsClips.map((c) => ({
+                  emotion: c.emotion,
+                  refAudioPath: c.ref_audio_path,
+                  refText: c.ref_text,
+                })),
+              );
+              const voPath = path.join(imageOutputDir, `openzigs-vo-${nanoid(8)}.wav`);
+              await fs.writeFile(voPath, f5Result.audio);
+              voiceoverPath = voPath;
+              logger.info(`[Director API] F5-TTS voiceover for scene ${scene.index}: ${f5Result.audio.length} bytes`);
+            } catch (f5Err) {
+              const msg = f5Err instanceof Error ? f5Err.message : String(f5Err);
+              const cause = f5Err instanceof Error && f5Err.cause ? ` (cause: ${f5Err.cause instanceof Error ? f5Err.cause.message : String(f5Err.cause)})` : "";
+              logger.warn(`[Director API] F5-TTS voiceover failed for scene ${scene.index}: ${msg}${cause}`);
+            }
+          } else if (voiceService) {
             try {
               if (!voiceService.isReady()) {
+                logger.info(`[Director API] Initializing Kokoro TTS for scene ${scene.index}`);
                 await voiceService.initialize();
               }
               if (voiceService.isReady()) {
                 const ttsResult = await voiceService.synthesize(scene.voiceover);
                 const voPath = path.join(imageOutputDir, `openzigs-vo-${nanoid(8)}.mp3`);
                 await fs.writeFile(voPath, ttsResult.audio);
-                sceneVoiceoverPath = voPath;
+                voiceoverPath = voPath;
+                logger.info(`[Director API] Kokoro voiceover for scene ${scene.index}: ${ttsResult.audio.length} bytes`);
+              } else {
+                logger.warn(`[Director API] Kokoro TTS not ready for scene ${scene.index} — skipping voiceover`);
+              }
+            } catch (kokoroErr) {
+              const msg = kokoroErr instanceof Error ? kokoroErr.message : String(kokoroErr);
+              logger.warn(`[Director API] Kokoro voiceover failed for scene ${scene.index}: ${msg}`);
+            }
+          } else {
+            logger.warn(`[Director API] No TTS engine available for scene ${scene.index} — skipping voiceover`);
+          }
+
+          return { index: scene.index, voiceoverPath };
+        };
+
+        // Launch image and voiceover generation concurrently.
+        // Images: sequential per scene (cloud has QPM limits, local sidecar
+        // processes one at a time) but runs IN PARALLEL with voiceover stream.
+        // Voiceovers: sequential — F5-TTS is a single-threaded ML model that
+        // crashes or drops connections under concurrent load. Serializing
+        // ensures each scene gets a clean generation pass.
+        checkAborted();
+        emitActivity("generating", `Generating images + voiceovers for ${storyboard.scenes.length} scenes in parallel`);
+
+        const imageGenStream = (async (): Promise<SceneImageResult[]> => {
+          const results: SceneImageResult[] = [];
+          for (const scene of storyboard.scenes) {
+            checkAborted();
+            if (resolvedImageProvider !== "local" && scene.index > 0) {
+              await new Promise(r => setTimeout(r, 15_000));
+            }
+            results.push(await generateSceneImage(scene));
+            emitActivity("images", `Image ${results.length}/${storyboard.scenes.length} generated`);
+          }
+          return results;
+        })();
+
+        const voiceGenStream = (async (): Promise<SceneVoiceResult[]> => {
+          // Pre-flight: re-verify sidecar is still alive before burning time on TTS
+          if ((useF5TTSVoice || useSovitsVoice) && voiceService) {
+            try {
+              const ping = await fetch(`${sidecarBaseUrl}/health`, { signal: AbortSignal.timeout(5000) });
+              if (!ping.ok) {
+                logger.warn(`[Director API] Audio sidecar health check failed before voiceover generation (${ping.status}) — falling back to Kokoro`);
+                useF5TTSVoice = false;
+                useSovitsVoice = false;
               }
             } catch {
-              // TTS failure is non-fatal for scene processing
+              logger.warn("[Director API] Audio sidecar unreachable before voiceover generation — falling back to Kokoro");
+              useF5TTSVoice = false;
+              useSovitsVoice = false;
             }
           }
+          const engine = useF5TTSVoice ? "F5-TTS" : useSovitsVoice ? "SoVITS" : "Kokoro";
+          logger.info(`[Director API] Starting voiceover generation (engine=${engine}, scenes=${storyboard.scenes.length})`);
+          const results: SceneVoiceResult[] = [];
+          for (const scene of storyboard.scenes) {
+            checkAborted();
+            results.push(await generateSceneVoiceover(scene));
+            emitActivity("voices", `Voiceover ${results.length}/${storyboard.scenes.length} generated`);
+            logger.info(`[Director API] Voiceover ${results.length}/${storyboard.scenes.length} complete (scene ${scene.index}, path=${results[results.length - 1].voiceoverPath ?? "none"})`);
+          }
+          return results;
+        })();
+
+        const [imageResults, voiceResults] = await Promise.all([imageGenStream, voiceGenStream]);
+
+        const imageMap = new Map(imageResults.map((r) => [r.index, r]));
+        const voiceMap = new Map(voiceResults.map((r) => [r.index, r]));
+        skippedScenes = imageResults.filter((r) => r.skipped).length;
+
+        logger.info(`[Director API] Parallel generation complete: ${imageResults.length - skippedScenes} images, ${voiceResults.filter(v => v.voiceoverPath).length} voiceovers`);
+        checkAborted();
+        emitActivity("timeline", "Assembling timeline");
+
+        // ── Phase 2: Assemble timeline using pre-generated results ──────────
+        for (const scene of storyboard.scenes) {
+          const imgResult = imageMap.get(scene.index);
+          if (!imgResult || imgResult.skipped || !imgResult.filePath) continue;
+
+          const sceneImageFilePath = imgResult.filePath;
+          const sceneVoiceoverPath = voiceMap.get(scene.index)?.voiceoverPath;
 
           let sceneDurationSec = scene.durationEstimate;
           if (sceneVoiceoverPath) {
             const measuredDuration = await probeAudioDurationSeconds(sceneVoiceoverPath);
             if (measuredDuration && measuredDuration > 0) {
-              // Add a small tail to avoid abrupt cutoffs at sentence ends.
               sceneDurationSec = Math.max(measuredDuration + 0.35, 2);
             }
           }
 
           const durationInFrames = Math.max(Math.round(sceneDurationSec * fps), fps);
-          // ── Chapter title card: inject before the scene's image when a new chapter starts ──
-          if (scene.chapterTitle) {
-            const CHAPTER_CARD_DURATION = 90; // 3 seconds at 30fps
 
-            // Crossfade into the chapter title card (if not the very first timeline entry)
+          // ── Chapter title card ──
+          if (scene.chapterTitle) {
+            const CHAPTER_CARD_DURATION = 90;
+
             if (timeline.length > 0) {
               timeline.push({
                 type: "transition",
@@ -1224,9 +1398,6 @@ Respond with ONLY a valid JSON array. No explanation. Example:
               });
             }
 
-            // Try to generate a background image for the separator card.
-            // A thematic abstract image makes the chapter break visually compelling.
-            // Non-fatal: falls back to a solid colour if generation fails.
             let separatorBackground: string | undefined;
             try {
               const separatorPrompt =
@@ -1255,10 +1426,8 @@ Respond with ONLY a valid JSON array. No explanation. Example:
             currentFrame += CHAPTER_CARD_DURATION;
           }
 
-          // sceneStartFrame marks where the image_scene begins (after any title card)
           const sceneStartFrame = currentFrame;
 
-          // Add crossfade transition between scenes (not before the first)
           if (timeline.length > 0) {
             const transitionDuration = Math.min(15, durationInFrames);
             timeline.push({
@@ -1276,7 +1445,6 @@ Respond with ONLY a valid JSON array. No explanation. Example:
             duration: durationInFrames,
             voiceover: sceneVoiceoverPath,
             voiceoverVolume: 1.0,
-            // Preserve the original narration text so Presenter Mode can build transcripts.
             scriptText: typeof scene.voiceover === "string" ? scene.voiceover : undefined,
             kenBurns: {
               scaleFrom: 1.0,
@@ -1499,7 +1667,9 @@ Respond with ONLY a valid JSON array. No markdown, no explanation.`;
           logger.error(`[Director API] No images were generated — the presentation will be blank. Check image generation provider availability.`);
         }
 
-        res.json({
+        job.status = "complete";
+        job.completedAt = Date.now();
+        job.result = {
           manifest,
           tokensUsed: storyboard.tokensUsed,
           clipsProcessed: 0,
@@ -1514,15 +1684,14 @@ Respond with ONLY a valid JSON array. No markdown, no explanation.`;
             analysis: storyboard.analysis,
             sceneCount: storyboard.scenes.length,
           },
-        });
+        };
+        logger.info(`[Director API] Produce job ${produceJobId} complete (presentation, ${elapsedMs}ms)`);
+        emitActivity("complete", `Presentation ready (${(elapsedMs / 1000).toFixed(0)}s)`);
         return;
       }
 
       // ── Highlight / Script modes ──────────────────────────────
-      if (!clips || !Array.isArray(clips) || clips.length === 0) {
-        res.status(400).json({ error: "clips array is required and must not be empty" });
-        return;
-      }
+      emitActivity("ingestion", `${mode} mode — ingesting clips`);
 
       const startTime = Date.now();
       const progressLog: Array<{ phase: string; message: string; timestamp: number }> = [];
@@ -1532,7 +1701,7 @@ Respond with ONLY a valid JSON array. No markdown, no explanation.`;
 
       // Ingest clips (with optional vision analysis)
       const { ingest } = await import("../video/ingestion/index.js");
-      const ingestionResult = await ingest({ clips, mode }, {
+      const ingestionResult = await ingest({ clips: clips!, mode }, {
         copilot: useVision ? copilot : undefined,
         visionAnalysis: useVision ? {
           maxKeyframes: 30,
@@ -1580,7 +1749,9 @@ Respond with ONLY a valid JSON array. No markdown, no explanation.`;
         `${transitionsInManifest.length} transitions, ${clipsWithEffects.length} clips with effects`,
       );
 
-      res.json({
+      job.status = "complete";
+      job.completedAt = Date.now();
+      job.result = {
         manifest: result.manifest,
         tokensUsed: result.tokensUsed,
         clipsProcessed: ingestionResult.clips.length,
@@ -1593,14 +1764,96 @@ Respond with ONLY a valid JSON array. No markdown, no explanation.`;
           transitionCount: transitionsInManifest.length,
           clipsWithEffects: clipsWithEffects.length,
           uniqueSourcesUsed: uniqueSources.size,
-          totalSourcesProvided: clips.length,
+          totalSourcesProvided: clips!.length,
         },
-      });
+      };
+      logger.info(`[Director API] Produce job ${produceJobId} complete (${mode}, ${elapsedMs}ms)`);
+      emitActivity("complete", `${mode} pipeline finished (${(elapsedMs / 1000).toFixed(0)}s)`);
+
+        } catch (bgError) {
+          // Don't overwrite status if already cancelled by user
+          if (job.status === "cancelled") return;
+          const msg = bgError instanceof Error ? bgError.message : String(bgError);
+          logger.error(`[Director API] Produce job ${produceJobId} failed: ${msg}`);
+          job.status = "failed";
+          job.error = msg;
+          job.completedAt = Date.now();
+          emitActivity("failed", msg);
+        }
+      })();
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
-      logger.error(`[Director API] POST /produce failed: ${msg}`);
+      logger.error(`[Director API] POST /produce validation failed: ${msg}`);
       res.status(500).json({ error: msg });
     }
+  });
+
+  /**
+  /**
+   * GET /produce/jobs — return all produce jobs (for activity monitoring).
+   */
+  router.get("/produce/jobs", (_req, res) => {
+    const jobs = [...produceJobs.values()].map((j) => ({
+      id: j.id,
+      status: j.status,
+      startedAt: j.startedAt,
+      completedAt: j.completedAt,
+      error: j.error,
+      elapsedMs: j.status === "running" ? Date.now() - j.startedAt : (j.completedAt ?? j.startedAt) - j.startedAt,
+    }));
+    res.json({ jobs });
+  });
+
+  /**
+   * GET /produce/:id — poll for produce job status.
+   * Returns { status: "running" } while in progress, or the full produce result
+   * when complete.
+   */
+  router.get("/produce/:id", (req, res) => {
+    const job = produceJobs.get(req.params.id);
+    if (!job) {
+      res.status(404).json({ error: "Produce job not found" });
+      return;
+    }
+    if (job.status === "running") {
+      const elapsedMs = Date.now() - job.startedAt;
+      res.json({ status: "running", elapsedMs });
+      return;
+    }
+    if (job.status === "failed") {
+      res.json({ status: "failed", error: job.error });
+      return;
+    }
+    if (job.status === "cancelled") {
+      res.json({ status: "cancelled", error: job.error });
+      return;
+    }
+    // Complete — return the full result
+    res.json({ status: "complete", ...job.result });
+  });
+
+  /**
+   * POST /produce/:id/cancel — cancel a running produce pipeline.
+   */
+  router.post("/produce/:id/cancel", (req, res) => {
+    const job = produceJobs.get(req.params.id);
+    if (!job) {
+      res.status(404).json({ error: "Produce job not found" });
+      return;
+    }
+    if (job.status !== "running") {
+      res.status(409).json({ error: `Job already ${job.status}` });
+      return;
+    }
+    job.abort?.abort();
+    job.status = "cancelled";
+    job.error = "Cancelled by user";
+    job.completedAt = Date.now();
+    if (_io) {
+      _io.emit("produce:progress", { id: job.id, mode: "produce", phase: "cancelled", detail: "Cancelled by user", timestamp: Date.now() });
+    }
+    logger.info(`[Director API] Produce job ${job.id} cancelled by user`);
+    res.json({ success: true });
   });
 
   // ── Image Enhancement (img2img) ─────────────────────────────
@@ -1664,6 +1917,78 @@ Respond with ONLY a valid JSON array. No markdown, no explanation.`;
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       logger.error(`[Director API] POST /enhance failed: ${msg}`);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  // ── Enhance Instructions ──────────────────────────────────
+
+  /**
+   * POST /enhance-instructions — use the LLM to enrich a Director style/instructions preamble.
+   * Body: { raw_instructions: string, mode?: string }
+   * Response: { enhanced_instructions: string, thinking: string }
+   */
+  router.post("/enhance-instructions", async (req, res) => {
+    try {
+      const { raw_instructions, mode } = req.body as { raw_instructions?: string; mode?: string };
+
+      if (!raw_instructions?.trim()) {
+        res.status(400).json({ error: "raw_instructions is required" });
+        return;
+      }
+
+      const productionMode = mode ?? "presentation";
+      const conversationId = `enhance-director-instructions-${Date.now()}`;
+
+      const systemMessage = `You are an expert AI video production director and prompt engineer.
+Your job is to take a rough style/instructions preamble written by a user and enhance it into a clear, comprehensive set of creative directions used to guide an AI storyboard generator.
+
+These instructions are NOT a visual image prompt — they describe the overall tone, visual style, audience, pacing, and narrative approach for a video presentation.
+
+## Guidelines
+- Clarify the target audience and communication goals if vague.
+- Add specific visual style direction (color palette, typography feel, illustration style).
+- Specify tone descriptors (authoritative, friendly, technical, inspirational, etc.).
+- Mention pacing and structure cues (e.g., "open with a hook", "use data slides mid-video", "close with a CTA").
+- Keep the voice consistent with what the user wrote — enhance, don't rewrite their intent.
+- Be concise: 3-6 sentences is ideal. Do not write more than 8 sentences.
+
+## Production Mode
+${productionMode === "presentation" ? "This is a PRESENTATION: AI-generated images with voiceover narration from a source document." : productionMode === "highlight" ? "This is a HIGHLIGHT REEL: user-supplied video clips edited to a script." : "This is a SCRIPT VIDEO: voiceover narration over uploaded video clips."}
+
+Respond ONLY with a bare JSON object — no markdown, no code fences:
+{"thinking": "One sentence explaining what you improved", "enhanced_instructions": "The enhanced, detailed instructions string"}`;
+
+      const userMessage = `Enhance these style and instructions for my video project:\n\n"${raw_instructions.trim()}"`;
+
+      let fullResponse = "";
+      for await (const chunk of copilot.chat(userMessage, {
+        conversationId,
+        systemMessage: { mode: "replace", content: systemMessage },
+        tools: [],
+        availableTools: [],
+      })) {
+        fullResponse += chunk;
+      }
+      await copilot.destroySession(conversationId);
+
+      // Parse JSON response — strip any accidental markdown fences
+      const jsonStr = fullResponse.replace(/^```(?:json)?\n?/m, "").replace(/```\s*$/m, "").trim();
+      let parsed: { thinking?: string; enhanced_instructions?: string };
+      try {
+        parsed = JSON.parse(jsonStr) as { thinking?: string; enhanced_instructions?: string };
+      } catch {
+        // Fallback: return the raw text as the enhancement
+        parsed = { thinking: "Instructions enhanced.", enhanced_instructions: fullResponse.trim() };
+      }
+
+      res.json({
+        enhanced_instructions: parsed.enhanced_instructions ?? raw_instructions,
+        thinking: parsed.thinking ?? "Instructions enhanced.",
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.warn(`[Director API] POST /enhance-instructions failed: ${msg}`);
       res.status(500).json({ error: msg });
     }
   });
@@ -2556,7 +2881,7 @@ Respond with ONLY a valid JSON array. No markdown, no explanation.`;
         draftId?: string;
         prompt?: string;
         provider?: "auto" | "local" | "cloud";
-        model?: "flux" | "sdxl-turbo";
+        model?: "flux-schnell" | "flux-dev" | "sdxl-turbo";
         seed?: number;
       };
 
@@ -2799,7 +3124,7 @@ Return ONLY the new narration text, no explanations or formatting.`;
         template?: "Minimalist" | "ContentCreator" | "Corporate" | "TechDemo";
         styleHint?: string;
         imageProvider?: "cloud" | "local" | "auto";
-        imageModel?: "flux" | "sdxl-turbo";
+        imageModel?: "flux" | "flux-schnell" | "sdxl-turbo";
         musicTrackPath?: string;
         targetDuration?: number;
         brandVoiceId?: string;
@@ -3002,6 +3327,623 @@ Return ONLY the new narration text, no explanations or formatting.`;
     }
     const aborted = renderOrchestrator.abort(req.params.id);
     res.json({ success: aborted });
+  });
+
+  // ── Per-scene voiceover re-record ─────────────────────────
+
+  /**
+   * POST /scenes/:sceneIndex/re-record — re-synthesize voiceover for a single
+   * scene without regenerating the entire presentation.
+   *
+   * Body: {
+   *   draftId: string,
+   *   text: string,                     — narration text to synthesize
+   *   engine?: "kokoro" | "f5tts",      — voice engine override
+   *   f5ttsParams?: { steps?, method?, cfgStrength?, swayCoef?, speed?, seed? },
+   *   voice?: string,                   — Kokoro voice ID override
+   * }
+   *
+   * Returns: { sceneIndex, voiceoverPath, durationSec, engine }
+   */
+  router.post("/scenes/:sceneIndex/re-record", async (req, res) => {
+    try {
+      const sceneIndex = parseInt(req.params.sceneIndex, 10);
+      if (isNaN(sceneIndex) || sceneIndex < 0) {
+        res.status(400).json({ error: "Invalid scene index" });
+        return;
+      }
+
+      const { draftId, text, engine, f5ttsParams, voice } = req.body as {
+        draftId?: string;
+        text?: string;
+        engine?: "kokoro" | "f5tts";
+        f5ttsParams?: {
+          steps?: number;
+          method?: "euler" | "midpoint" | "rk4";
+          cfgStrength?: number;
+          swayCoef?: number;
+          speed?: number;
+          seed?: number;
+        };
+        voice?: string;
+      };
+
+      if (!text || typeof text !== "string" || text.trim().length === 0) {
+        res.status(400).json({ error: "text is required" });
+        return;
+      }
+
+      if (!voiceService) {
+        res.status(503).json({ error: "Voice service not available" });
+        return;
+      }
+
+      if (!voiceService.isReady()) {
+        await voiceService.initialize();
+      }
+
+      const osMod = await import("node:os");
+      const fsMod = await import("node:fs/promises");
+      const imageOutputDir = path.join(osMod.homedir(), ".openzigs", "director", "images");
+      await fsMod.mkdir(imageOutputDir, { recursive: true });
+
+      let voiceoverPath: string;
+      let usedEngine: string;
+
+      const resolvedEngine = engine ?? "auto";
+
+      // Determine which engine to use
+      if (resolvedEngine === "f5tts" || resolvedEngine === "auto") {
+        // Check if F5-TTS is available
+        const sidecarUrl = voiceService.getSidecarUrl();
+        let f5Available = false;
+        let f5Clips: Array<{ emotion: string; ref_audio_path: string; ref_text: string }> = [];
+
+        try {
+          const healthResp = await fetch(`${sidecarUrl}/health`, { signal: AbortSignal.timeout(3000) });
+          if (healthResp.ok) {
+            const health = await healthResp.json() as { active_engine?: string };
+            if (health.active_engine === "f5tts") {
+              const db = getDatabase();
+              const f5Profile = db.prepare(
+                `SELECT id FROM voice_profiles WHERE engine_type = 'f5tts'
+                 ORDER BY updated_at DESC LIMIT 1`,
+              ).get() as { id: string } | undefined;
+              if (f5Profile) {
+                const clips = db.prepare(
+                  `SELECT emotion, ref_audio_path, ref_text FROM f5tts_clips
+                   WHERE profile_id = ? ORDER BY sort_order ASC`,
+                ).all(f5Profile.id) as Array<{ emotion: string; ref_audio_path: string; ref_text: string }>;
+                if (clips.length > 0) {
+                  f5Clips = clips;
+                  f5Available = true;
+                }
+              }
+            }
+          }
+        } catch {
+          // F5-TTS not reachable
+        }
+
+        if (f5Available && f5Clips.length > 0 && (resolvedEngine === "f5tts" || resolvedEngine === "auto")) {
+          const f5Result = await voiceService.synthesizeF5TTS(
+            text,
+            f5Clips.map((c) => ({
+              emotion: c.emotion,
+              refAudioPath: c.ref_audio_path,
+              refText: c.ref_text,
+            })),
+            f5ttsParams ? {
+              steps: f5ttsParams.steps,
+              method: f5ttsParams.method,
+              cfgStrength: f5ttsParams.cfgStrength,
+              swayCoef: f5ttsParams.swayCoef,
+              speed: f5ttsParams.speed,
+              seed: f5ttsParams.seed,
+            } : undefined,
+          );
+          const voPath = path.join(imageOutputDir, `openzigs-vo-${nanoid(8)}.wav`);
+          await fsMod.writeFile(voPath, f5Result.audio);
+          voiceoverPath = voPath;
+          usedEngine = "f5tts";
+        } else if (resolvedEngine === "f5tts") {
+          res.status(503).json({ error: "F5-TTS engine not available. Check sidecar health." });
+          return;
+        } else {
+          // Fall back to Kokoro/VoiceService
+          const ttsResult = await voiceService.synthesize(text, voice);
+          const ext = ttsResult.contentType?.includes("wav") ? "wav" : "mp3";
+          const voPath = path.join(imageOutputDir, `openzigs-vo-${nanoid(8)}.${ext}`);
+          await fsMod.writeFile(voPath, ttsResult.audio);
+          voiceoverPath = voPath;
+          usedEngine = voiceService.getProvider();
+        }
+      } else {
+        // Kokoro / VoiceService
+        const ttsResult = await voiceService.synthesize(text, voice);
+        const ext = ttsResult.contentType?.includes("wav") ? "wav" : "mp3";
+        const voPath = path.join(imageOutputDir, `openzigs-vo-${nanoid(8)}.${ext}`);
+        await fsMod.writeFile(voPath, ttsResult.audio);
+        voiceoverPath = voPath;
+        usedEngine = voiceService.getProvider();
+      }
+
+      // Measure duration
+      const durationSec = await probeAudioDurationSeconds(voiceoverPath) ?? 0;
+
+      // Update the draft manifest if draftId provided
+      if (draftId) {
+        const db = getDatabase();
+        const row = db.prepare(`SELECT manifest FROM director_drafts WHERE id = ?`).get(draftId) as
+          | { manifest: string }
+          | undefined;
+
+        if (row) {
+          try {
+            const manifest = JSON.parse(row.manifest);
+            if (Array.isArray(manifest.timeline)) {
+              const visualTypes = new Set(["image_scene", "video_clip"]);
+              let visualIdx = 0;
+              for (let i = 0; i < manifest.timeline.length; i++) {
+                if (visualTypes.has(manifest.timeline[i].type)) {
+                  if (visualIdx === sceneIndex) {
+                    manifest.timeline[i].voiceover = voiceoverPath;
+                    manifest.timeline[i].scriptText = text;
+                    // Update scene duration to match new audio
+                    const fps = manifest.composition?.fps ?? 30;
+                    if (durationSec > 0) {
+                      const newDuration = Math.max(Math.round((durationSec + 0.35) * fps), fps);
+                      manifest.timeline[i].duration = newDuration;
+                    }
+                    break;
+                  }
+                  visualIdx++;
+                }
+              }
+              const now = new Date().toISOString();
+              db.prepare(`UPDATE director_drafts SET manifest = ?, updated_at = ? WHERE id = ?`)
+                .run(JSON.stringify(manifest), now, draftId);
+            }
+          } catch {
+            logger.warn(`[Director API] Failed to update draft ${draftId} scene ${sceneIndex} voiceover`);
+          }
+        }
+      }
+
+      logger.info(`[Director API] Re-recorded scene ${sceneIndex} voiceover: engine=${usedEngine}, dur=${durationSec.toFixed(1)}s`);
+
+      res.json({
+        sceneIndex,
+        voiceoverPath,
+        durationSec,
+        engine: usedEngine,
+      });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      logger.error(`[Director API] POST /scenes/:sceneIndex/re-record failed: ${msg}`);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  /**
+   * GET /voice/engines — return available voice engines and their status.
+   */
+  router.get("/voice/engines", async (_req, res) => {
+    try {
+      const engines: Array<{ id: string; name: string; available: boolean; active: boolean }> = [];
+
+      if (voiceService) {
+        const provider = voiceService.getProvider();
+        engines.push({
+          id: "kokoro",
+          name: "Kokoro (Local TTS)",
+          available: voiceService.isReady() && (provider === "local" || provider === "f5tts"),
+          active: provider === "local",
+        });
+
+        // Check F5-TTS availability
+        const sidecarUrl = voiceService.getSidecarUrl();
+        let f5Active = false;
+        try {
+          const healthResp = await fetch(`${sidecarUrl}/health`, { signal: AbortSignal.timeout(3000) });
+          if (healthResp.ok) {
+            const health = await healthResp.json() as { active_engine?: string };
+            f5Active = health.active_engine === "f5tts";
+          }
+        } catch {
+          // not reachable
+        }
+
+        // Check if F5-TTS has clips configured
+        let f5HasClips = false;
+        try {
+          const db = getDatabase();
+          const clipCount = db.prepare(
+            `SELECT COUNT(*) as cnt FROM f5tts_clips c
+             JOIN voice_profiles p ON c.profile_id = p.id
+             WHERE p.engine_type = 'f5tts'`,
+          ).get() as { cnt: number } | undefined;
+          f5HasClips = (clipCount?.cnt ?? 0) > 0;
+        } catch {
+          // DB not available
+        }
+
+        engines.push({
+          id: "f5tts",
+          name: "F5-TTS (Voice Cloning)",
+          available: f5Active && f5HasClips,
+          active: f5Active,
+        });
+
+        engines.push({
+          id: "google",
+          name: "Google Cloud TTS",
+          available: provider === "google" && voiceService.isReady(),
+          active: provider === "google",
+        });
+      }
+
+      res.json({ engines });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  // ── AI-analyze F5-TTS parameters ──────────────────────────
+
+  /**
+   * POST /voice/analyze-params — use the LLM to recommend optimal F5-TTS
+   * parameters based on the complexity/nature of the narration text.
+   *
+   * Body: { text: string }
+   * Returns: { speed, steps, method, cfgStrength, swayCoef, reasoning }
+   */
+  router.post("/voice/analyze-params", async (req, res) => {
+    try {
+      const { text } = req.body as { text?: string };
+      if (!text || typeof text !== "string" || text.trim().length === 0) {
+        res.status(400).json({ error: "text is required" });
+        return;
+      }
+
+      const conversationId = `f5tts-params-${Date.now()}`;
+      const systemMessage = `You are an expert audio engineer specializing in text-to-speech synthesis with the F5-TTS voice cloning model.
+
+Your job: analyze narration text and recommend optimal F5-TTS parameters for the highest quality output.
+
+## F5-TTS Parameters
+- **speed** (0.5–2.0, default 1.0): Speech rate. Slower values help with complex, technical, or data-heavy text. Faster for casual/conversational text.
+- **steps** (4–32, default 8): Inference steps. More steps = higher quality but slower generation. Complex text with technical terms, numbers, or acronyms benefits from more steps.
+- **method** ("euler" | "midpoint" | "rk4"): Sampling method. "rk4" is highest quality but slowest. "euler" is fastest but lower quality. "midpoint" is a balanced middle ground.
+- **cfgStrength** (0.5–5.0, default 2.0): Classifier-free guidance strength. Higher values make output more closely follow the prompt but can cause artifacts. Lower values are more natural.
+- **swayCoef** (-3.0–3.0, default -1.0): Controls expressiveness/intonation variation. Negative values are more monotone/stable; positive values are more expressive/dynamic.
+
+## Analysis Criteria
+Consider these factors when recommending parameters:
+1. **Technical complexity**: Acronyms, numbers, URLs, code references → slower speed, more steps
+2. **Sentence length**: Long sentences → slightly slower speed for clarity
+3. **Emotional tone**: Exciting/dramatic → higher swayCoef; calm/professional → lower
+4. **Proper nouns/unusual words**: More of these → more steps, slower speed
+5. **Punctuation density**: Heavy punctuation (ellipses, dashes, exclamations) → higher cfgStrength
+
+Respond ONLY with a bare JSON object — no markdown, no code fences:
+{"speed": number, "steps": number, "method": "euler"|"midpoint"|"rk4", "cfgStrength": number, "swayCoef": number, "reasoning": "One sentence explaining your choices"}`;
+
+      let fullResponse = "";
+      for await (const chunk of copilot.chat(
+        `Analyze this narration text and recommend optimal F5-TTS parameters:\n\n"${text.trim()}"`,
+        {
+          conversationId,
+          systemMessage: { mode: "replace", content: systemMessage },
+          tools: [],
+          availableTools: [],
+        },
+      )) {
+        fullResponse += chunk;
+      }
+      await copilot.destroySession(conversationId);
+
+      // Parse the JSON response
+      const jsonMatch = fullResponse.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) {
+        res.status(500).json({ error: "Failed to parse AI response" });
+        return;
+      }
+
+      const parsed = JSON.parse(jsonMatch[0]) as {
+        speed?: number;
+        steps?: number;
+        method?: string;
+        cfgStrength?: number;
+        swayCoef?: number;
+        reasoning?: string;
+      };
+
+      res.json({
+        speed: Math.max(0.5, Math.min(2.0, parsed.speed ?? 1.0)),
+        steps: Math.max(4, Math.min(32, Math.round(parsed.steps ?? 8))),
+        method: ["euler", "midpoint", "rk4"].includes(parsed.method ?? "") ? parsed.method : "rk4",
+        cfgStrength: Math.max(0.5, Math.min(5.0, parsed.cfgStrength ?? 2.0)),
+        swayCoef: Math.max(-3.0, Math.min(3.0, parsed.swayCoef ?? -1.0)),
+        reasoning: parsed.reasoning ?? "",
+      });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      logger.error(`[Director API] POST /voice/analyze-params failed: ${msg}`);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  // ── AI narration directives ───────────────────────────────
+
+  /**
+   * POST /voice/add-directives — use the LLM to analyze narration text and
+   * insert pacing/emotion directives for more expressive TTS output.
+   *
+   * Inserts [PAUSE: Xs], *emphasis*, and (Emotion) tags based on semantic
+   * analysis of the script content.
+   *
+   * Body: { text: string, engine?: "kokoro" | "f5tts" }
+   * Returns: { enhanced: string, reasoning: string }
+   */
+  router.post("/voice/add-directives", async (req, res) => {
+    try {
+      const { text, engine } = req.body as { text?: string; engine?: string };
+      if (!text || typeof text !== "string" || text.trim().length === 0) {
+        res.status(400).json({ error: "text is required" });
+        return;
+      }
+
+      const isF5 = engine === "f5tts";
+
+      const conversationId = `narration-directives-${Date.now()}`;
+      const systemMessage = `You are an expert voice director and narration coach specializing in text-to-speech optimization.
+
+Your job: analyze narration text and insert directives that make TTS output sound more natural, expressive, and engaging — as if a professional voice actor were reading it.
+
+## Available Directives
+
+### Pauses — [PAUSE: Xs]
+Insert strategic pauses for dramatic effect, emphasis, or natural breathing.
+- [PAUSE: 0.3s] — beat pause (after key statement before revealing result)
+- [PAUSE: 0.5s] — short pause (between thoughts, before a key point)
+- [PAUSE: 1s] — medium pause (at section transitions, after impactful statements)
+- [PAUSE: 1.5s] — long pause (dramatic reveal, major topic shift)
+- [PAUSE: 2s] — extended pause (chapter break, dramatic silence)
+
+### Emphasis — *word*
+Wrap key words or short phrases in asterisks to indicate vocal emphasis.
+Use for: statistics/data, important names, action words, contrasts.
+Example: "Revenue grew by *forty percent*" or "This is *critical*."
+
+${isF5 ? `### Emotion Tags — (Emotion)
+F5-TTS can switch between reference audio clips tagged by emotion. Use these to control vocal tone:
+- (Regular) — normal, conversational tone (default)
+- (Excited) — enthusiastic, energetic delivery
+- (Serious) — grave, authoritative tone
+- (Whisper) — soft, intimate, secretive
+- (Warm) — friendly, empathetic, caring
+Place the emotion tag BEFORE the text that should use that tone. It stays active until the next emotion tag.` : ""}
+
+## Rules
+1. Do NOT rewrite, rephrase, or change ANY words in the source text. Only INSERT directive tags.
+2. Be surgical — a few well-placed directives are better than over-tagging every sentence.
+3. Aim for 3-8 directives total for a typical paragraph. More for longer text.
+4. Pauses work best: before reveals, after questions, at topic transitions.
+5. Emphasis works best: on numbers/stats, on contrasting words, on the single most important word in a key sentence.
+${isF5 ? "6. Emotion tags should only change 1-3 times in a typical paragraph. Don't oscillate rapidly." : ""}
+7. Preserve all existing directives already in the text — do not remove or modify them.
+8. The text may contain pronunciation hints (dotted acronyms like N.P.M.) — preserve them exactly.
+
+Respond ONLY with a bare JSON object — no markdown, no code fences:
+{"enhanced": "the original text with directives inserted", "reasoning": "Brief explanation of your choices"}`;
+
+      let fullResponse = "";
+      for await (const chunk of copilot.chat(
+        `Add narration directives to this script:\n\n"${text.trim()}"`,
+        {
+          conversationId,
+          systemMessage: { mode: "replace", content: systemMessage },
+          tools: [],
+          availableTools: [],
+        },
+      )) {
+        fullResponse += chunk;
+      }
+      await copilot.destroySession(conversationId);
+
+      const jsonMatch = fullResponse.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) {
+        res.status(500).json({ error: "Failed to parse AI response" });
+        return;
+      }
+
+      const parsed = JSON.parse(jsonMatch[0]) as {
+        enhanced?: string;
+        reasoning?: string;
+      };
+
+      if (!parsed.enhanced) {
+        res.status(500).json({ error: "AI did not return enhanced text" });
+        return;
+      }
+
+      res.json({
+        enhanced: parsed.enhanced,
+        reasoning: parsed.reasoning ?? "",
+      });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      logger.error(`[Director API] POST /voice/add-directives failed: ${msg}`);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  // ── AI-enhance image prompt ───────────────────────────────
+
+  /**
+   * POST /scenes/:sceneIndex/enhance-prompt — use the LLM to improve/enhance
+   * the image generation prompt for a scene.
+   *
+   * Body: { prompt: string, context?: string }
+   * Returns: { enhanced_prompt: string, thinking: string }
+   */
+  router.post("/scenes/:sceneIndex/enhance-prompt", async (req, res) => {
+    try {
+      const { prompt, context } = req.body as { prompt?: string; context?: string };
+
+      if (!prompt || typeof prompt !== "string" || prompt.trim().length === 0) {
+        res.status(400).json({ error: "prompt is required" });
+        return;
+      }
+
+      const conversationId = `enhance-scene-prompt-${Date.now()}`;
+      const systemMessage = `You are an expert AI prompt engineer specializing in image generation with Flux diffusion models.
+
+Your job: take a rough image prompt and enhance it into a detailed, high-quality generation prompt optimized for Flux models (schnell and dev).
+
+## Guidelines
+- Add specific visual details: lighting, composition, camera angle, color palette, mood
+- Include style references: "professional photography", "cinematic", "editorial", "illustration style"
+- Specify quality tags: "high resolution", "sharp focus", "detailed", "professional"
+- Keep the core subject/intent intact — enhance, don't replace
+- Aim for 2-4 sentences total. Be specific but concise.
+- For scenes in a video presentation, ensure the image style would work well as a visual aid.
+${context ? `\nContext about the overall video: ${context}` : ""}
+
+Respond ONLY with a bare JSON object — no markdown, no code fences:
+{"thinking": "One sentence explaining what you improved", "enhanced_prompt": "The enhanced prompt string"}`;
+
+      let fullResponse = "";
+      for await (const chunk of copilot.chat(
+        `Enhance this image generation prompt:\n\n"${prompt.trim()}"`,
+        {
+          conversationId,
+          systemMessage: { mode: "replace", content: systemMessage },
+          tools: [],
+          availableTools: [],
+        },
+      )) {
+        fullResponse += chunk;
+      }
+      await copilot.destroySession(conversationId);
+
+      const jsonMatch = fullResponse.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) {
+        res.status(500).json({ error: "Failed to parse AI response" });
+        return;
+      }
+
+      const parsed = JSON.parse(jsonMatch[0]) as {
+        thinking?: string;
+        enhanced_prompt?: string;
+      };
+
+      res.json({
+        enhanced_prompt: parsed.enhanced_prompt ?? prompt,
+        thinking: parsed.thinking ?? "",
+      });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      logger.error(`[Director API] POST /scenes/:sceneIndex/enhance-prompt failed: ${msg}`);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  // ── Scene img2img ─────────────────────────────────────────
+
+  /**
+   * POST /scenes/:sceneIndex/img2img — enhance/modify an existing scene image
+   * via img2img diffusion. Uses the scene's current image as the source.
+   *
+   * Body: { draftId, prompt, strength?, model?, seed? }
+   * Returns: { sceneIndex, imagePath, generationTimeMs }
+   */
+  router.post("/scenes/:sceneIndex/img2img", async (req, res) => {
+    try {
+      const sceneIndex = Number.parseInt(req.params.sceneIndex, 10);
+      if (!Number.isFinite(sceneIndex) || sceneIndex < 0) {
+        res.status(400).json({ error: "Invalid scene index" });
+        return;
+      }
+
+      const { draftId, prompt, strength, model, seed } = req.body as {
+        draftId?: string;
+        prompt?: string;
+        strength?: number;
+        model?: string;
+        seed?: number;
+      };
+
+      if (!prompt || typeof prompt !== "string" || prompt.trim().length === 0) {
+        res.status(400).json({ error: "prompt is required" });
+        return;
+      }
+      if (!draftId) {
+        res.status(400).json({ error: "draftId is required" });
+        return;
+      }
+
+      // Load draft to get the current image path
+      const db = getDatabase();
+      const row = db.prepare(`SELECT manifest FROM director_drafts WHERE id = ?`)
+        .get(draftId) as { manifest: string } | undefined;
+      if (!row) {
+        res.status(404).json({ error: "Draft not found" });
+        return;
+      }
+
+      const manifestData = JSON.parse(row.manifest);
+      if (!Array.isArray(manifestData.timeline)) {
+        res.status(400).json({ error: "Draft has no timeline" });
+        return;
+      }
+
+      const scenes = manifestData.timeline.filter(
+        (e: { type: string }) => e.type === "image_scene" || e.type === "video_clip",
+      );
+      if (!scenes[sceneIndex] || !scenes[sceneIndex].src) {
+        res.status(404).json({ error: "Scene or scene image not found" });
+        return;
+      }
+
+      const currentImagePath = scenes[sceneIndex].src as string;
+      const fsMod = await import("node:fs");
+      if (!fsMod.existsSync(currentImagePath)) {
+        res.status(404).json({ error: `Source image not found: ${currentImagePath}` });
+        return;
+      }
+
+      const osMod = await import("node:os");
+      const imageOutputDir = path.join(osMod.homedir(), ".openzigs", "director", "images");
+      const { ImageGenService } = await import("../video/generators/image-gen-service.js");
+      const imageGenUserConfig = await ImageGenService.loadUserImageGenConfig();
+      const imageService = new ImageGenService({ outputDir: imageOutputDir, ...imageGenUserConfig });
+      await imageService.initialize();
+
+      const result = await imageService.enhanceImage(currentImagePath, prompt, {
+        strength: strength ?? 0.6,
+        model,
+        seed,
+      });
+
+      // Update the draft manifest with the new image
+      scenes[sceneIndex].src = result.filePath;
+      const now = new Date().toISOString();
+      db.prepare(`UPDATE director_drafts SET manifest = ?, updated_at = ? WHERE id = ?`)
+        .run(JSON.stringify(manifestData), now, draftId);
+
+      res.json({
+        sceneIndex,
+        imagePath: result.filePath,
+        generationTimeMs: result.generationTimeMs,
+      });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      logger.error(`[Director API] POST /scenes/:sceneIndex/img2img failed: ${msg}`);
+      res.status(500).json({ error: msg });
+    }
   });
 
   return router;

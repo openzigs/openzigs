@@ -234,15 +234,21 @@ async def _idle_unload_loop() -> None:
             _unload_model()
 
 
-def _post_callback(job_id: str, callback_url: str, payload: dict) -> None:
+def _post_callback(job_id: str, callback_url: Optional[str], payload: dict) -> None:
     """POST a job completion (or error) payload to the openzigs callback URL.
 
     Runs in a thread-pool thread via FastAPI BackgroundTasks, so blocking
     urllib is safe here.  Retries up to 3 times with exponential back-off to
     survive transient network hiccups (e.g. ARP refresh, Wi-Fi roaming).
+
+    When *callback_url* is None or empty the result is only stored in the
+    ring buffer for poll-based retrieval — no outbound HTTP request is made.
     """
-    # Store result for poll-based retrieval (fallback when callback fails)
+    # Store result for poll-based retrieval (always, regardless of callback)
     _store_result(job_id, payload)
+    if not callback_url:
+        log.info(f"[async] Result for job {job_id} stored (no callback URL — polling only)")
+        return
     body = json.dumps(payload).encode("utf-8")
     max_retries = 3
     for attempt in range(1, max_retries + 1):
@@ -268,7 +274,7 @@ def _post_callback(job_id: str, callback_url: str, payload: dict) -> None:
 
 def _bg_generate(
     job_id: str,
-    callback_url: str,
+    callback_url: Optional[str],
     prompt: str,
     requested_model: str,
     width: int,
@@ -320,7 +326,7 @@ def _bg_generate(
 
 def _bg_img2img(
     job_id: str,
-    callback_url: str,
+    callback_url: Optional[str],
     prompt: str,
     requested_model: str,
     source_path: str,
@@ -383,7 +389,7 @@ def _bg_img2img(
 
 def _bg_kontext(
     job_id: str,
-    callback_url: str,
+    callback_url: Optional[str],
     prompt: str,
     source_path: str,
     width: int,
@@ -644,21 +650,21 @@ class AsyncGenerateRequest(GenerateRequest):
     """Extends GenerateRequest with async callback fields."""
 
     job_id: str = Field(..., description="Job ID echoed in the callback payload")
-    callback_url: str = Field(..., description="URL to POST the result to on completion")
+    callback_url: Optional[str] = Field(None, description="URL to POST the result to on completion (omit to use polling only)")
 
 
 class AsyncImg2ImgRequest(Img2ImgRequest):
     """Extends Img2ImgRequest with async callback fields."""
 
     job_id: str = Field(..., description="Job ID echoed in the callback payload")
-    callback_url: str = Field(..., description="URL to POST the result to on completion")
+    callback_url: Optional[str] = Field(None, description="URL to POST the result to on completion (omit to use polling only)")
 
 
 class AsyncKontextRequest(KontextRequest):
     """Extends KontextRequest with async callback fields."""
 
     job_id: str = Field(..., description="Job ID echoed in the callback payload")
-    callback_url: str = Field(..., description="URL to POST the result to on completion")
+    callback_url: Optional[str] = Field(None, description="URL to POST the result to on completion (omit to use polling only)")
 
 
 # ── Lifespan (startup/shutdown) ────────────────────────────────

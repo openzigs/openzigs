@@ -60,16 +60,18 @@ function adaptTimelineEntry(entry: TimelineEntry, outputDir: string): TimelineIt
         horizontalCropOffset: entry.horizontalCropOffset ?? 50,
         fitMode: entry.fitMode ?? "cover",
       };
-    case "title_card":
+    case "title_card": {
+      const bg = entry.background ?? "#1a1a1a";
       return {
         type: "title_card",
         title: entry.title,
         subtitle: entry.subtitle,
-        background: entry.background ?? "#1a1a1a",
+        background: bg.startsWith("#") ? bg : resolveMediaPath(bg, outputDir),
         startAtFrame: entry.startAtFrame,
         durationInFrames: entry.duration,
         animation: entry.animation ?? "fade",
       };
+    }
     case "overlay":
       return {
         type: "overlay",
@@ -267,6 +269,14 @@ export function stageInputPropsMedia(
         }
         logger.warn(`[Adapter] Overlay media file not found on disk — src will be unusable: "${overlayProps.src}"`);
       }
+    }
+    // Stage title_card background image (if it's a file path, not a CSS color)
+    if (item.type === "title_card" && !item.background.startsWith("#")) {
+      const staged = stageMediaFile(item.background, bundleDir);
+      if (staged) {
+        return { ...item, background: staged };
+      }
+      logger.warn(`[Adapter] Title card background file not found on disk — background will be unusable: "${item.background}"`);
     }
     // Stage intro/outro card background and logo media
     if (item.type === "intro_card" || item.type === "outro_card") {

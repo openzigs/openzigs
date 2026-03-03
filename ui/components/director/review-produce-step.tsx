@@ -43,11 +43,18 @@ interface ReviewProduceStepProps {
   onBrandVoiceChange: (voiceId: string | null) => void;
 }
 
-type ProduceResponse = {
-  manifest: Record<string, unknown>;
-  tokensUsed: number;
-  clipsProcessed: number;
-  totalDuration: number;
+type ProduceAcceptedResponse = {
+  produceJobId: string;
+};
+
+type ProduceJobStatus = {
+  status: "running" | "complete" | "failed";
+  elapsedMs?: number;
+  error?: string;
+  manifest?: Record<string, unknown>;
+  tokensUsed?: number;
+  clipsProcessed?: number;
+  totalDuration?: number;
   visionAnalysisEnabled?: boolean;
   processingTimeMs?: number;
   progressLog?: Array<{ phase: string; message: string; timestamp: number }>;
@@ -82,6 +89,7 @@ export const ReviewProduceStep = ({
   const { socket } = useSocket();
   const router = useRouter();
   const [phase, setPhase] = useState<"review" | "producing" | "produced" | "rendering">("review");
+  const [produceJobId, setProduceJobId] = useState<string | null>(null);
   const [renderProgress, setRenderProgress] = useState(0);
   const [renderStatus, setRenderStatus] = useState<string | null>(null);
   const [framesInfo, setFramesInfo] = useState<string | null>(null);
@@ -155,7 +163,7 @@ export const ReviewProduceStep = ({
     return () => clearInterval(interval);
   }, [phase]);
 
-  // Produce mutation — ingests clips → LLM → manifest (or presentation pipeline)
+  // Produce mutation — submits produce request, gets back a job ID (202 Accepted)
   const produceMutation = useMutation({
     mutationFn: () => {
       if (state.mode === "presentation") {
@@ -174,7 +182,7 @@ export const ReviewProduceStep = ({
             type: a.type,
             placement: a.placement,
           }));
-        return fetchJson<ProduceResponse>("/api/admin/director/produce", {
+        return fetchJson<ProduceAcceptedResponse>("/api/admin/director/produce", {
           method: "POST",
           body: JSON.stringify({
             mode: "presentation",
@@ -195,7 +203,7 @@ export const ReviewProduceStep = ({
         });
       }
       // Highlight / Script mode
-      return fetchJson<ProduceResponse>("/api/admin/director/produce", {
+      return fetchJson<ProduceAcceptedResponse>("/api/admin/director/produce", {
         method: "POST",
         body: JSON.stringify({
           clips: state.clips.map((c) => c.path),
@@ -210,22 +218,46 @@ export const ReviewProduceStep = ({
       });
     },
     onSuccess: (data) => {
-      const manifest = data.manifest as Record<string, unknown>;
+      setProduceJobId(data.produceJobId);
+      // phase is already "producing" from handleProduce
+    },
+    onError: (err) => {
+      setPhase("review");
+      showToast(`Production failed: ${(err as Error).message}`, "error");
+    },
+  });
+
+  // Poll for produce job completion
+  const produceJobQuery = useQuery({
+    queryKey: ["produce-job", produceJobId],
+    queryFn: () => fetchJson<ProduceJobStatus>(`/api/admin/director/produce/${produceJobId}`),
+    enabled: !!produceJobId && phase === "producing",
+    refetchInterval: 3000,
+  });
+
+  // React to produce job status changes
+  useEffect(() => {
+    if (!produceJobQuery.data) return;
+    const data = produceJobQuery.data;
+
+    if (data.status === "complete" && data.manifest) {
+      const manifest = data.manifest;
       const summary: DirectorManifestSummary = {
         projectTitle: (manifest.projectTitle as string) || "Untitled",
         templateId: (manifest.templateId as string) || "unknown",
         timelineEntries: Array.isArray(manifest.timeline) ? manifest.timeline.length : 0,
-        totalDuration: data.totalDuration,
-        tokensUsed: data.tokensUsed,
+        totalDuration: data.totalDuration ?? 0,
+        tokensUsed: data.tokensUsed ?? 0,
       };
       onManifestGenerated(summary);
       setPhase("produced");
       showToast("Production manifest generated", "success");
-    },
-    onError: (err) => {
-      showToast(`Production failed: ${(err as Error).message}`, "error");
-    },
-  });
+    } else if (data.status === "failed") {
+      setPhase("review");
+      setProduceJobId(null);
+      showToast(`Production failed: ${data.error || "Unknown error"}`, "error");
+    }
+  }, [produceJobQuery.data, onManifestGenerated]);
 
   // Render mutation — submits manifest
   const renderMutation = useMutation({
@@ -233,7 +265,7 @@ export const ReviewProduceStep = ({
       fetchJson<RenderResponse>("/api/admin/director/render", {
         method: "POST",
         body: JSON.stringify({
-          manifest: produceMutation.data?.manifest,
+          manifest: produceJobQuery.data?.manifest,
           codec: state.renderSettings.codec,
           crf: state.renderSettings.crf,
           quality: state.renderSettings.quality,
@@ -539,7 +571,7 @@ export const ReviewProduceStep = ({
             <div className="grid grid-cols-2 gap-2">
               {([
                 { id: "sdxl-turbo" as const, name: "SDXL Turbo", desc: "Fast, ~1s/image, 512×512" },
-                { id: "flux" as const, name: "FLUX.1 Schnell", desc: "High quality, ~8s/image, 1024×1024" },
+                { id: "flux-schnell" as const, name: "FLUX.1 Schnell", desc: "High quality, ~8s/image, 1024×1024" },
               ]).map((m) => {
                 const isActive = state.imageModel === m.id;
                 return (
@@ -735,8 +767,8 @@ export const ReviewProduceStep = ({
 
           <button
             onClick={async () => {
-              if (!produceMutation.data?.manifest) return;
-              const manifest = produceMutation.data.manifest;
+              if (!produceJobQuery.data?.manifest) return;
+              const manifest = produceJobQuery.data.manifest;
               const title = (manifest as Record<string, unknown>).projectTitle as string || "Untitled";
               const res = await fetchJson<{ id: string }>("/api/admin/director/drafts", {
                 method: "POST",

@@ -224,6 +224,46 @@ export type ConversationEvent = {
   };
 };
 
+/* ── Copilot SDK Session types (Epic #334) ── */
+
+export type SdkSessionContext = {
+  cwd: string;
+  gitRoot?: string;
+  repository?: string;
+  branch?: string;
+};
+
+export type SdkSessionMetadata = {
+  sessionId: string;
+  startTime: string;
+  modifiedTime: string;
+  summary?: string;
+  isRemote: boolean;
+  context?: SdkSessionContext;
+};
+
+export type SdkSessionEvent = {
+  id: string;
+  timestamp: string;
+  parentId: string | null;
+  ephemeral?: boolean;
+  type: string;
+  data: Record<string, unknown>;
+};
+
+export type SessionAnalytics = {
+  sessionsCreated: number;
+  sessionsResumed: number;
+  sessionsDestroyed: number;
+  compactionCount: number;
+  lifecycleEvents: Array<{
+    type: string;
+    sessionId: string;
+    metadata?: { startTime: string; modifiedTime: string; summary?: string };
+  }>;
+  lastUpdated: string;
+};
+
 /* ── Chat Attachment types (#141) ── */
 
 export type ChatAttachment = {

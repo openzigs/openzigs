@@ -57,10 +57,16 @@ class FailedAuthLimiter {
 
 const extractToken = (req: Request) => {
   const header = req.headers.authorization ?? "";
-  if (!header.startsWith("Bearer ")) {
-    return "";
+  if (header.startsWith("Bearer ")) {
+    return header.slice("Bearer ".length).trim();
   }
-  return header.slice("Bearer ".length).trim();
+  // Fallback: accept token as query param for media elements (img/video/audio)
+  // that cannot send Authorization headers.
+  const qToken = req.query?.token;
+  if (typeof qToken === "string" && qToken) {
+    return qToken;
+  }
+  return "";
 };
 
 const resolveRole = (config: AuthConfig): Role => {

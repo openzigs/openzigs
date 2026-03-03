@@ -22,6 +22,7 @@ import type {
 } from "./types.js";
 import { DEFAULT_VOICE_CONFIG, AVAILABLE_LOCAL_VOICES } from "./types.js";
 import { translatePacingTags, hasPacingTags } from "./pacing-translator.js";
+import { normalizeForTTS } from "./tts-text-normalizer.js";
 
 const DEFAULT_LOCAL_VOICE = "af_heart";
 const LOCAL_VOICE_IDS = new Set(AVAILABLE_LOCAL_VOICES.map((voice) => voice.id));
@@ -366,8 +367,13 @@ export class VoiceService {
 
     const startTime = Date.now();
 
+    // Normalize acronyms/abbreviations for F5-TTS pronunciation.
+    // F5-TTS treats uppercase dotted letters (K.F.C.) as spelled-out;
+    // lowercase words are pronounced as words (npm → "nuhpm").
+    const normalizedText = normalizeForTTS(text);
+
     const payload = {
-      text,
+      text: normalizedText,
       clips: clips.map((c) => ({
         emotion: c.emotion,
         ref_audio_path: c.refAudioPath,
@@ -375,17 +381,38 @@ export class VoiceService {
       })),
       steps: params?.steps ?? 8,
       method: params?.method ?? "rk4",
-      cfg_strength: params?.cfgStrength ?? 2.0,
+      cfg_strength: params?.cfgStrength ?? 1.0,
       sway_sampling_coef: params?.swayCoef ?? -1.0,
       speed: params?.speed ?? 1.0,
       seed: params?.seed ?? null,
     };
 
-    const resp = await fetch(`${this.sidecarUrl}/f5tts`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
+    let resp: Response;
+    try {
+      // Dynamically import undici's Agent to override Node.js fetch's default
+      // 5-min headersTimeout (sidecar blocks on synchronous MLX inference).
+      let fetchOpts: RequestInit & Record<string, unknown> = {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(600_000), // 10 min
+      };
+      try {
+        // Use variable to prevent TypeScript from resolving the module at compile time
+        const mod = "undici";
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { Agent } = await (import(mod) as Promise<any>);
+        fetchOpts = { ...fetchOpts, dispatcher: new Agent({ headersTimeout: 600_000, bodyTimeout: 600_000 }) };
+      } catch {
+        // undici not available as explicit module — rely on AbortSignal timeout
+      }
+      resp = await fetch(`${this.sidecarUrl}/f5tts`, fetchOpts as RequestInit);
+    } catch (fetchErr) {
+      const cause = fetchErr instanceof Error && fetchErr.cause
+        ? ` (${fetchErr.cause instanceof Error ? fetchErr.cause.message : String(fetchErr.cause)})`
+        : "";
+      throw new Error(`F5-TTS fetch failed${cause}`);
+    }
 
     if (!resp.ok) {
       const errorBody = await resp.text().catch(() => "");
@@ -671,9 +698,10 @@ function generateSilenceWav(durationMs: number): Buffer {
 }
 
 /**
- * Concatenate multiple WAV buffers into a single WAV file.
+ * Concatenate multiple WAV buffers into a single WAV file with crossfade.
  * The first buffer's header (sample rate, channels) is used for the output.
  * Subsequent buffers have their headers stripped and raw PCM data appended.
+ * A short crossfade is applied at each boundary to eliminate splice artifacts.
  *
  * Handles non-standard headers (e.g. with metadata chunks between the fmt and
  * data subchunks) by searching for the "data" marker rather than assuming a
@@ -682,6 +710,10 @@ function generateSilenceWav(durationMs: number): Buffer {
 function concatenateWavBuffers(buffers: Buffer[]): Buffer {
   if (buffers.length === 0) return Buffer.alloc(0);
   if (buffers.length === 1) return buffers[0];
+
+  // 20ms crossfade in samples (matches Python sidecar's crossfade duration)
+  const CROSSFADE_SAMPLES = Math.round(WAV_SAMPLE_RATE * 0.02);
+  const BYTES_PER_SAMPLE = WAV_BITS_PER_SAMPLE / 8; // 2 bytes for 16-bit
 
   /** Search for the "data" subchunk and return the offset of the first PCM byte. */
   function findDataOffset(buf: Buffer): number {
@@ -699,7 +731,21 @@ function concatenateWavBuffers(buffers: Buffer[]): Buffer {
     return buf.subarray(findDataOffset(buf));
   });
 
-  const totalPcmSize = pcmChunks.reduce((sum, chunk) => sum + chunk.length, 0);
+  // Calculate total output size accounting for crossfade overlap between adjacent chunks.
+  // Each crossfade reduces the total by CROSSFADE_SAMPLES * BYTES_PER_SAMPLE.
+  const crossfadeBytes = CROSSFADE_SAMPLES * BYTES_PER_SAMPLE;
+  let totalPcmSize = 0;
+  for (let i = 0; i < pcmChunks.length; i++) {
+    totalPcmSize += pcmChunks[i].length;
+    // Subtract crossfade overlap for every boundary where both sides have enough data
+    if (i > 0) {
+      const prevLen = pcmChunks[i - 1].length;
+      const currLen = pcmChunks[i].length;
+      if (prevLen >= crossfadeBytes && currLen >= crossfadeBytes) {
+        totalPcmSize -= crossfadeBytes;
+      }
+    }
+  }
 
   // Use the first buffer's detected data offset so the output header is correct
   // even when the first buffer has non-standard extra subchunks before "data".
@@ -715,11 +761,45 @@ function concatenateWavBuffers(buffers: Buffer[]): Buffer {
   // Update data chunk size at the field immediately before the PCM region
   output.writeUInt32LE(totalPcmSize, firstDataOffset - 4);
 
-  // Append PCM data
+  // Append PCM data with crossfade blending at boundaries
   let offset = firstDataOffset;
-  for (const chunk of pcmChunks) {
-    chunk.copy(output, offset);
-    offset += chunk.length;
+  for (let i = 0; i < pcmChunks.length; i++) {
+    const chunk = pcmChunks[i];
+    if (chunk.length === 0) continue;
+
+    if (i === 0) {
+      // First chunk: copy entirely
+      chunk.copy(output, offset);
+      offset += chunk.length;
+    } else {
+      const prevLen = pcmChunks[i - 1].length;
+      if (prevLen >= crossfadeBytes && chunk.length >= crossfadeBytes) {
+        // Apply linear crossfade: blend the tail of previous chunk with head of current
+        // Rewind write offset by crossfadeBytes to overwrite the tail with the blended region
+        offset -= crossfadeBytes;
+
+        for (let s = 0; s < CROSSFADE_SAMPLES; s++) {
+          const bytePos = s * BYTES_PER_SAMPLE;
+          // Read 16-bit signed samples
+          const prevSample = output.readInt16LE(offset + bytePos);
+          const currSample = chunk.readInt16LE(bytePos);
+          // Linear crossfade: fade out previous, fade in current
+          const t = s / CROSSFADE_SAMPLES;
+          const blended = Math.round(prevSample * (1 - t) + currSample * t);
+          // Clamp to int16 range
+          output.writeInt16LE(Math.max(-32768, Math.min(32767, blended)), offset + bytePos);
+        }
+        offset += crossfadeBytes;
+
+        // Copy the rest of the current chunk (after the crossfade region)
+        chunk.copy(output, offset, crossfadeBytes);
+        offset += chunk.length - crossfadeBytes;
+      } else {
+        // Chunks too short for crossfade — just append
+        chunk.copy(output, offset);
+        offset += chunk.length;
+      }
+    }
   }
 
   return output;

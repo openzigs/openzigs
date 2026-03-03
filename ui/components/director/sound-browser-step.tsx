@@ -18,8 +18,23 @@ import {
   Plus,
   Upload,
   FolderOpen,
+  Disc3,
 } from "lucide-react";
 import type { SelectedAsset } from "./types";
+
+type GalleryAudioAsset = {
+  id: string;
+  type: "audio";
+  filename: string;
+  file_path: string;
+  mime_type: string;
+  file_size_bytes: number | null;
+  duration_seconds: number | null;
+  prompt: string | null;
+  source: string;
+  tags: string[] | null;
+  created_at: string;
+};
 
 interface SoundBrowserStepProps {
   selected: SelectedAsset | null;
@@ -52,7 +67,7 @@ export const SoundBrowserStep = ({ selected, onSelect }: SoundBrowserStepProps) 
   const [source, setSource] = useState<"all" | "local" | "pixabay" | "jamendo">("all");
   const [type, setType] = useState<"" | "music" | "sfx">("");
   const [playing, setPlaying] = useState<string | null>(null);
-  const [tab, setTab] = useState<"search" | "upload">("search");
+  const [tab, setTab] = useState<"search" | "upload" | "gallery">("search");
   const [uploadPath, setUploadPath] = useState("");
   const [uploadName, setUploadName] = useState("");
   const [uploadType, setUploadType] = useState<"music" | "sfx" | "voiceover">("music");
@@ -74,6 +89,23 @@ export const SoundBrowserStep = ({ selected, onSelect }: SoundBrowserStepProps) 
     enabled: query.length > 0,
     staleTime: 30_000,
   });
+
+  const galleryQuery = useQuery({
+    queryKey: ["gallery-assets", "audio"],
+    queryFn: () =>
+      fetchJson<{ assets: GalleryAudioAsset[]; total: number }>(
+        "/api/queue/assets?type=audio&limit=50",
+      ),
+    enabled: tab === "gallery",
+    staleTime: 30_000,
+  });
+
+  function galleryFileUrl(filename: string): string {
+    const base = process.env.NEXT_PUBLIC_OPENZIGS_API_BASE ?? "";
+    const token = process.env.NEXT_PUBLIC_OPENZIGS_TOKEN ?? "";
+    const url = `${base}/api/queue/assets/file/${encodeURIComponent(filename)}`;
+    return token ? `${url}?token=${encodeURIComponent(token)}` : url;
+  }
 
   const downloadMutation = useMutation({
     mutationFn: (asset: AssetResult) =>
@@ -295,6 +327,17 @@ export const SoundBrowserStep = ({ selected, onSelect }: SoundBrowserStepProps) 
           <Upload className="h-3.5 w-3.5" />
           Upload
         </button>
+        <button
+          onClick={() => setTab("gallery")}
+          className={`flex-1 flex items-center justify-center gap-1.5 rounded-lg py-2 text-sm font-medium transition-colors ${
+            tab === "gallery"
+              ? "bg-background text-foreground shadow-sm"
+              : "text-muted-foreground hover:text-foreground"
+          }`}
+        >
+          <Disc3 className="h-3.5 w-3.5" />
+          Gallery
+        </button>
       </div>
 
       {/* Search Tab */}
@@ -460,6 +503,110 @@ export const SoundBrowserStep = ({ selected, onSelect }: SoundBrowserStepProps) 
         </div>
       )}
         </>
+      )}
+
+      {/* Gallery Tab */}
+      {tab === "gallery" && (
+        <div className="space-y-1.5 max-h-[420px] overflow-y-auto rounded-xl">
+          {galleryQuery.isLoading && (
+            <div className="flex items-center justify-center py-8">
+              <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+              <span className="ml-2 text-sm text-muted-foreground">Loading gallery…</span>
+            </div>
+          )}
+
+          {galleryQuery.data && galleryQuery.data.assets.length === 0 && (
+            <div className="text-center py-8">
+              <Disc3 className="h-10 w-10 text-muted-foreground/30 mx-auto mb-2" />
+              <p className="text-sm text-muted-foreground">No audio assets in gallery</p>
+              <p className="text-xs text-muted-foreground/60 mt-1">
+                Generate or upload audio in the Gallery first
+              </p>
+            </div>
+          )}
+
+          {galleryQuery.data?.assets.map((asset) => {
+            const isSelected = selected?.id === asset.id;
+            const audioUrl = galleryFileUrl(asset.filename);
+            return (
+              <div
+                key={asset.id}
+                className={`flex items-center gap-3 px-4 py-2.5 rounded-xl border transition-colors cursor-pointer ${
+                  isSelected
+                    ? "border-primary/50 bg-primary/5"
+                    : "border-transparent hover:bg-muted/50"
+                }`}
+                onClick={() => {
+                  if (selected?.id === asset.id) {
+                    onSelect(null);
+                  } else {
+                    onSelect({
+                      id: asset.id,
+                      name: asset.filename,
+                      source: "gallery",
+                      type: "music",
+                      filePath: asset.file_path,
+                      duration: asset.duration_seconds ?? undefined,
+                      previewUrl: audioUrl,
+                      license: "Gallery",
+                    });
+                  }
+                }}
+              >
+                {/* Play/Pause */}
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    togglePlay(asset.id, audioUrl);
+                  }}
+                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-muted hover:bg-primary/20 transition-colors"
+                >
+                  {playing === asset.id ? (
+                    <Pause className="h-3.5 w-3.5 text-foreground" />
+                  ) : (
+                    <Play className="h-3.5 w-3.5 text-foreground ml-0.5" />
+                  )}
+                </button>
+
+                {playing === asset.id && (
+                  <audio
+                    src={audioUrl}
+                    autoPlay
+                    onEnded={() => setPlaying(null)}
+                    className="hidden"
+                  />
+                )}
+
+                {/* Info */}
+                <div className="flex-1 min-w-0">
+                  <span className="text-sm text-foreground truncate block">{asset.filename}</span>
+                  <div className="flex items-center gap-2 mt-0.5">
+                    <span className="text-xs text-muted-foreground">
+                      {formatDuration(asset.duration_seconds ?? undefined)}
+                    </span>
+                    <span className="text-xs text-muted-foreground/40">•</span>
+                    <span className="text-xs text-muted-foreground capitalize">{asset.source}</span>
+                    {asset.tags?.slice(0, 2).map((tag) => (
+                      <span
+                        key={tag}
+                        className="inline-flex items-center gap-0.5 text-[10px] text-muted-foreground bg-muted px-1.5 py-0.5 rounded"
+                      >
+                        <Tag className="h-2.5 w-2.5" />
+                        {tag}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+
+                {isSelected ? (
+                  <Check className="h-4 w-4 text-primary shrink-0" />
+                ) : (
+                  <Plus className="h-4 w-4 text-muted-foreground shrink-0" />
+                )}
+              </div>
+            );
+          })}
+        </div>
       )}
 
       {/* Upload Tab */}
