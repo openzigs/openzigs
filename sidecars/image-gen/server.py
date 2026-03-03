@@ -69,7 +69,7 @@ def verify_token(authorization: Optional[str] = Header(None)) -> None:
 
 
 # ── Version ────────────────────────────────────────────────────
-SIDECAR_VERSION = "3.1.0"  # Bump on every deploy to verify Mac Mini is current
+SIDECAR_VERSION = "3.2.0"  # Bump on every deploy to verify Mac Mini is current
 
 # ── Logging ────────────────────────────────────────────────────
 logging.basicConfig(
@@ -1333,6 +1333,11 @@ def _materialize_network_training(req: TrainRequest) -> str:
     char_id = req.character_id or "unknown"
     train_dir = os.path.join(tempfile.gettempdir(), "openzigs-training", char_id)
     data_dir = os.path.join(train_dir, "data")
+    # CRITICAL: wipe data dir so leftover images from previous runs don't
+    # inflate the dataset count (mflux auto-discovers all images in the dir).
+    if os.path.isdir(data_dir):
+        import shutil
+        shutil.rmtree(data_dir)
     os.makedirs(data_dir, exist_ok=True)
 
     cfg = req.train_config or {}
@@ -1409,10 +1414,6 @@ def _materialize_network_training(req: TrainRequest) -> str:
             "save_frequency": max(1, num_epochs // 4) if num_epochs > 4 else num_epochs,
             "output_path": lora_output,
         },
-        "monitoring": {
-            "plot_frequency": 1,
-            "generate_image_frequency": max(1, num_epochs // 4) if num_epochs > 4 else num_epochs,
-        },
         "lora_layers": {
             "targets": [
                 {"module_path": "layers.{block}.attention.to_q", "blocks": {"start": 15, "end": 30}, "rank": lora_rank},
@@ -1428,10 +1429,13 @@ def _materialize_network_training(req: TrainRequest) -> str:
 
     num_photos = len(req.photos or [])
     total_steps = num_epochs * num_photos
+    # Verify data dir contains exactly the photos we wrote (no leftovers)
+    actual_images = [f for f in os.listdir(data_dir) if f.lower().endswith(('.jpg', '.jpeg', '.png', '.webp'))]
     log.info(
         f"[train] Materialized {num_photos} photos + config at {config_path} "
         f"(num_epochs={num_epochs}, total_steps={total_steps}, "
-        f"quantize={config['quantize']}, lora_rank={lora_rank}, model={model})"
+        f"quantize={config['quantize']}, lora_rank={lora_rank}, model={model}, "
+        f"actual_images_in_dir={len(actual_images)})"
     )
     return config_path
 
