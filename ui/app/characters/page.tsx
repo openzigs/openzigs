@@ -74,7 +74,7 @@ export default function CharactersPage() {
   const [dragFileCount, setDragFileCount] = useState(0);
 
   // Training config
-  const [trainSteps, setTrainSteps] = useState(1000);
+  const [trainSteps, setTrainSteps] = useState(9);
   const [trainLR, setTrainLR] = useState(0.0001);
   const [trainRank, setTrainRank] = useState(4);
 
@@ -485,12 +485,12 @@ export default function CharactersPage() {
                 <div className="space-y-4">
                   <div className="grid grid-cols-3 gap-4">
                     <div>
-                      <label className="text-xs font-medium text-muted-foreground">Training Steps</label>
+                      <label className="text-xs font-medium text-muted-foreground">Inference Steps</label>
                       <input
                         type="number"
-                        min={100}
-                        max={5000}
-                        step={100}
+                        min={1}
+                        max={50}
+                        step={1}
                         value={trainSteps}
                         onChange={(e) => setTrainSteps(parseInt(e.target.value))}
                         className="mt-1 w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm"

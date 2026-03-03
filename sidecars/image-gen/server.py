@@ -1518,18 +1518,50 @@ async def train_status():
 
 
 def _find_trained_lora(dir_path: str) -> Optional[str]:
-    """Find a trained .safetensors LoRA file in the output directory."""
+    """Find a trained .safetensors LoRA adapter in the output directory.
+
+    mflux-train saves checkpoints as zip files containing the adapter
+    safetensors inside (e.g. checkpoints/0000011_checkpoint.zip with
+    0000011_adapter.safetensors inside).  We extract the adapter to a
+    stable path so mflux can load it at inference time.
+    """
+    import zipfile
+
     try:
+        # 1. Check for an already-extracted .safetensors
         for root, _dirs, files in os.walk(dir_path):
             for f in files:
-                if f.endswith(".safetensors"):
+                if f.endswith(".safetensors") and "adapter" in f:
                     return os.path.join(root, f)
+
+        # 2. Find the latest checkpoint zip and extract the adapter
+        checkpoint_zips: list[str] = []
         for root, _dirs, files in os.walk(dir_path):
             for f in files:
                 if f.endswith(".zip") and "checkpoint" in f:
-                    return os.path.join(root, f)
-    except Exception:
-        pass
+                    checkpoint_zips.append(os.path.join(root, f))
+        if not checkpoint_zips:
+            log.warning(f"[train] No checkpoint zips found in {dir_path}")
+            return None
+
+        # Sort to get the latest checkpoint (highest iteration number)
+        checkpoint_zips.sort()
+        latest_zip = checkpoint_zips[-1]
+        log.info(f"[train] Extracting adapter from checkpoint: {latest_zip}")
+
+        with zipfile.ZipFile(latest_zip, "r") as zf:
+            adapter_names = [n for n in zf.namelist() if n.endswith("_adapter.safetensors")]
+            if not adapter_names:
+                log.error(f"[train] No adapter.safetensors found inside {latest_zip}: {zf.namelist()}")
+                return None
+            adapter_name = adapter_names[0]
+            extract_path = os.path.join(dir_path, adapter_name)
+            with zf.open(adapter_name) as src, open(extract_path, "wb") as dst:
+                dst.write(src.read())
+            log.info(f"[train] Extracted adapter to {extract_path}")
+            return extract_path
+    except Exception as e:
+        log.error(f"[train] Error finding/extracting LoRA adapter: {e}")
     return None
 
 
@@ -1562,6 +1594,16 @@ def _bg_train(config_path: str) -> None:
 
         if rc == 0:
             log.info("[train] Training completed successfully")
+            # Log output directory contents for diagnostics
+            if _train_output_dir:
+                try:
+                    all_files = []
+                    for root, _d, fnames in os.walk(_train_output_dir):
+                        for fn in fnames:
+                            all_files.append(os.path.join(root, fn))
+                    log.info(f"[train] Output dir contents ({len(all_files)} files): {all_files}")
+                except Exception:
+                    pass
         else:
             err_msg = "\n".join(last_lines) if last_lines else f"exit code {rc}"
             _train_error = err_msg
