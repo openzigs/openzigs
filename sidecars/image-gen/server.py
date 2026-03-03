@@ -1400,6 +1400,9 @@ def _materialize_network_training(req: TrainRequest) -> str:
     #   - quantize=8 is REQUIRED for 32GB Macs (model is ~31GB unquantized)
     #   - Only train attention layers (to_q/k/v) on upper blocks (15-30)
     #   - timestep_low/high constrain noise schedule for turbo model
+    #   - MUST satisfy: timestep_high <= steps (mflux validation)
+    ts_high = min(9, steps)
+    ts_low = min(4, ts_high)
     config: dict[str, Any] = {
         "model": model,
         "seed": 42,
@@ -1410,8 +1413,8 @@ def _materialize_network_training(req: TrainRequest) -> str:
         "training_loop": {
             "num_epochs": num_epochs,
             "batch_size": 1,
-            "timestep_low": 4,
-            "timestep_high": 9,
+            "timestep_low": ts_low,
+            "timestep_high": ts_high,
         },
         "optimizer": {
             "name": "AdamW",

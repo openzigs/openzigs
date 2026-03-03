@@ -10,12 +10,14 @@ import path from "node:path";
 import os from "node:os";
 import { logger } from "../logging/logger.js";
 import type { CharacterRepository, CharacterCreate, CharacterUpdate } from "../characters/character-repository.js";
+import type { CopilotWrapperService } from "../copilot/copilot-wrapper.js";
 import type { Server as SocketIOServer } from "socket.io";
 
 // ── Types ───────────────────────────────────────────────────
 
 export interface CharacterRouterDeps {
   characterRepo: CharacterRepository;
+  copilot?: CopilotWrapperService;
 }
 
 // ── Socket.IO (injected after server init via setCharacterIO) ─
@@ -65,7 +67,7 @@ const upload = multer({
 
 // ── Factory ─────────────────────────────────────────────────
 
-export function createCharacterRouter({ characterRepo }: CharacterRouterDeps): Router {
+export function createCharacterRouter({ characterRepo, copilot }: CharacterRouterDeps): Router {
   const router = Router();
 
   // ── Startup: reset any characters stuck in "training" from a previous server run ──
@@ -122,6 +124,7 @@ export function createCharacterRouter({ characterRepo }: CharacterRouterDeps): R
 
       const input: CharacterCreate = {
         name: body.name.trim(),
+        description: typeof body.description === "string" ? body.description.trim() : "",
         triggerWord: body.triggerWord.trim(),
         referencePhotos: body.referencePhotos ?? [],
         loraScale: body.loraScale ?? 0.8,
@@ -325,17 +328,24 @@ export function createCharacterRouter({ characterRepo }: CharacterRouterDeps): R
       const steps = typeof overrides.steps === "number" ? overrides.steps : 9;
       const learningRate = typeof overrides.learningRate === "number" ? overrides.learningRate : 1e-4;
       const loraRank = typeof overrides.loraRank === "number" ? overrides.loraRank : 8;
-      const numEpochs = typeof overrides.numEpochs === "number" ? overrides.numEpochs : 1;
+      const numEpochs = typeof overrides.numEpochs === "number" ? overrides.numEpochs : 10;
 
-      // Read photos as base64 for sending to remote sidecar
+      // Build per-image prompt: use per-image caption if available,
+      // fall back to character description, then generic trigger-word prompt
+      const fallbackPrompt = character.description
+        ? `A photo of ${character.triggerWord}, ${character.description}`
+        : `A photo of ${character.triggerWord}`;
+
       const photos: Array<{ image_base64: string; filename: string; prompt: string }> = [];
       for (const photoPath of character.referencePhotos) {
         try {
           const data = await fs.readFile(photoPath);
+          const filename = path.basename(photoPath);
+          const caption = character.photoCaptions[filename];
           photos.push({
             image_base64: data.toString("base64"),
-            filename: path.basename(photoPath),
-            prompt: `A photo of ${character.triggerWord}`,
+            filename,
+            prompt: caption || fallbackPrompt,
           });
         } catch (err) {
           logger.warn(`[Characters] Skipping unreadable photo: ${photoPath}`);
@@ -407,6 +417,145 @@ export function createCharacterRouter({ characterRepo }: CharacterRouterDeps): R
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       res.status(500).json({ error: msg });
+    }
+  });
+
+  // ── POST /:id/ai-enhance — Auto-generate captions & suggest optimal params ──
+  router.post("/:id/ai-enhance", async (req, res) => {
+    try {
+      const character = characterRepo.getById(req.params.id);
+      if (!character) {
+        res.status(404).json({ error: "Character not found" });
+        return;
+      }
+
+      const triggerWord = character.triggerWord;
+      const desc = character.description;
+
+      if (!desc) {
+        res.status(400).json({
+          error: "Please set a character description first (e.g. 'a husky dog with blue eyes'). The description is needed to generate meaningful training captions.",
+        });
+        return;
+      }
+
+      const photoCount = character.referencePhotos.length;
+      const filenames = character.referencePhotos.map((p) => path.basename(p));
+
+      if (!copilot) {
+        // Fallback when copilot is unavailable — use simple varied templates
+        const captions: Record<string, string> = {};
+        for (let i = 0; i < filenames.length; i++) {
+          captions[filenames[i]] = `A photo of ${triggerWord}, ${desc}`;
+        }
+        const suggestedEpochs = Math.max(5, Math.min(30, Math.round(150 / Math.max(1, photoCount))));
+        res.json({
+          captions,
+          params: { epochs: suggestedEpochs, steps: 9, learningRate: 1e-4, loraRank: 8, loraScale: 0.85 },
+          totalSteps: suggestedEpochs * photoCount,
+        });
+        return;
+      }
+
+      // Use the Copilot LLM to generate unique captions and suggest parameters
+      const conversationId = `ai-enhance-${character.id}-${Date.now()}`;
+      const systemMessage = `You are an expert at LoRA training for image generation models. You help create optimal training captions and parameters for Flux-based LoRA fine-tuning.
+
+IMPORTANT RULES:
+- Every caption MUST start with the exact trigger word "${triggerWord}" so the model learns to associate it with the subject.
+- Every caption must be unique and describe the subject differently.
+- Vary framing (close-up, portrait, full body, 3/4 view, profile), lighting (natural, studio, golden hour, overcast, backlit), setting (indoor, outdoor, park, studio backdrop), and quality descriptors.
+- Keep captions concise (10-25 words each).
+- Respond ONLY with valid JSON, no markdown fencing, no explanation.`;
+
+      const userMessage = `Subject: "${desc}"
+Trigger word: "${triggerWord}"
+Number of reference photos: ${photoCount}
+Photo filenames: ${JSON.stringify(filenames)}
+
+Generate a JSON object with two keys:
+
+1. "captions": an object mapping each filename to a unique training caption. Each caption must start with "${triggerWord}" and describe the subject in a different way (different framing, lighting, angle, setting, quality tags). Make every caption genuinely different — vary sentence structure, word order, and descriptive elements.
+
+2. "params": an object with optimal LoRA training parameters for this subject:
+   - "epochs": number of full passes (consider ${photoCount} photos — aim for 100-200 total steps)
+   - "steps": inference steps during training (4-9 for distilled Flux models)
+   - "learningRate": float (typically 1e-4 for LoRA)
+   - "loraRank": 4, 8, 16, or 32 (consider subject complexity: simple styles→4, faces/animals→8, complex scenes→16)
+   - "loraScale": inference-time LoRA strength (0.7-1.0)
+
+Also include "reasoning": a brief explanation of why you chose those parameters.
+
+Return only the raw JSON object.`;
+
+      let fullResponse = "";
+      try {
+        for await (const chunk of copilot.chat(userMessage, {
+          conversationId,
+          systemMessage: { mode: "replace", content: systemMessage },
+          tools: [],
+          availableTools: [],
+        })) {
+          fullResponse += chunk;
+        }
+      } finally {
+        await copilot.destroySession(conversationId).catch(() => {});
+      }
+
+      // Parse the LLM response — strip markdown fences if present
+      let cleaned = fullResponse.trim();
+      const jsonMatch = cleaned.match(/```(?:json)?\s*([\s\S]*?)```/);
+      if (jsonMatch) {
+        cleaned = jsonMatch[1].trim();
+      }
+
+      let parsed: {
+        captions?: Record<string, string>;
+        params?: { epochs?: number; steps?: number; learningRate?: number; loraRank?: number; loraScale?: number };
+        reasoning?: string;
+      };
+      try {
+        parsed = JSON.parse(cleaned);
+      } catch {
+        logger.warn(`[Characters] AI enhance: failed to parse LLM response, falling back. Raw: ${cleaned.slice(0, 500)}`);
+        // Fallback if JSON parsing fails
+        const captions: Record<string, string> = {};
+        for (const fn of filenames) {
+          captions[fn] = `${triggerWord}, ${desc}`;
+        }
+        const suggestedEpochs = Math.max(5, Math.min(30, Math.round(150 / Math.max(1, photoCount))));
+        res.json({
+          captions,
+          params: { epochs: suggestedEpochs, steps: 9, learningRate: 1e-4, loraRank: 8, loraScale: 0.85 },
+          totalSteps: suggestedEpochs * photoCount,
+        });
+        return;
+      }
+
+      // Merge parsed results with safe defaults
+      const captions: Record<string, string> = {};
+      for (const fn of filenames) {
+        const llmCaption = parsed.captions?.[fn];
+        captions[fn] = llmCaption && llmCaption.trim() ? llmCaption.trim() : `${triggerWord}, ${desc}`;
+      }
+
+      const params = {
+        epochs: Math.max(1, Math.min(100, parsed.params?.epochs ?? Math.round(150 / Math.max(1, photoCount)))),
+        steps: Math.max(1, Math.min(50, parsed.params?.steps ?? 9)),
+        learningRate: Math.max(1e-6, Math.min(0.01, parsed.params?.learningRate ?? 1e-4)),
+        loraRank: [4, 8, 16, 32].includes(parsed.params?.loraRank ?? 0) ? parsed.params!.loraRank! : 8,
+        loraScale: Math.max(0.1, Math.min(1.5, parsed.params?.loraScale ?? 0.85)),
+      };
+
+      const totalSteps = params.epochs * photoCount;
+
+      logger.info(`[Characters] AI enhance for '${character.name}': ${Object.keys(captions).length} captions, ${totalSteps} total steps. ${parsed.reasoning ?? ""}`);
+
+      res.json({ captions, params, totalSteps, reasoning: parsed.reasoning });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      logger.error(`[Characters] AI enhance failed: ${msg}`);
+      res.status(500).json({ error: "AI enhance failed" });
     }
   });
 

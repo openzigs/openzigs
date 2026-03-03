@@ -17,8 +17,10 @@ export type CharacterStatus = "pending" | "training" | "ready" | "failed";
 export interface CharacterProfile {
   id: string;
   name: string;
+  description: string;
   triggerWord: string;
   referencePhotos: string[];
+  photoCaptions: Record<string, string>;
   trainedLoraPath: string | null;
   loraScale: number;
   trainingConfig: Record<string, unknown> | null;
@@ -30,16 +32,20 @@ export interface CharacterProfile {
 
 export interface CharacterCreate {
   name: string;
+  description?: string;
   triggerWord: string;
   referencePhotos?: string[];
+  photoCaptions?: Record<string, string>;
   loraScale?: number;
   trainingConfig?: Record<string, unknown>;
 }
 
 export interface CharacterUpdate {
   name?: string;
+  description?: string;
   triggerWord?: string;
   referencePhotos?: string[];
+  photoCaptions?: Record<string, string>;
   trainedLoraPath?: string | null;
   loraScale?: number;
   trainingConfig?: Record<string, unknown> | null;
@@ -50,8 +56,10 @@ export interface CharacterUpdate {
 type StoredCharacter = {
   id: string;
   name: string;
+  description: string | null;
   trigger_word: string;
   reference_photos: string;
+  photo_captions: string | null;
   trained_lora_path: string | null;
   lora_scale: number;
   training_config: string | null;
@@ -74,6 +82,7 @@ export class CharacterRepository {
       CREATE TABLE IF NOT EXISTS character_profiles (
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL UNIQUE,
+        description TEXT NOT NULL DEFAULT '',
         trigger_word TEXT NOT NULL,
         reference_photos TEXT NOT NULL DEFAULT '[]',
         trained_lora_path TEXT,
@@ -85,6 +94,20 @@ export class CharacterRepository {
         updated_at TEXT NOT NULL
       )
     `);
+
+    // Runtime migration: add description column for existing tables
+    try {
+      this.db.exec(`ALTER TABLE character_profiles ADD COLUMN description TEXT NOT NULL DEFAULT ''`);
+    } catch {
+      // Column already exists
+    }
+
+    // Runtime migration: add photo_captions column for per-image training prompts
+    try {
+      this.db.exec(`ALTER TABLE character_profiles ADD COLUMN photo_captions TEXT NOT NULL DEFAULT '{}'`);
+    } catch {
+      // Column already exists
+    }
   }
 
   create(input: CharacterCreate): CharacterProfile {
@@ -94,14 +117,16 @@ export class CharacterRepository {
     this.db
       .prepare(
         `INSERT INTO character_profiles
-           (id, name, trigger_word, reference_photos, lora_scale, training_config, status, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
+           (id, name, description, trigger_word, reference_photos, photo_captions, lora_scale, training_config, status, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
       )
       .run(
         id,
         input.name,
+        input.description ?? "",
         input.triggerWord,
         JSON.stringify(input.referencePhotos ?? []),
+        JSON.stringify(input.photoCaptions ?? {}),
         input.loraScale ?? 0.8,
         input.trainingConfig ? JSON.stringify(input.trainingConfig) : null,
         now,
@@ -138,8 +163,10 @@ export class CharacterRepository {
 
     const now = this.clock().toISOString();
     const name = input.name ?? existing.name;
+    const description = input.description ?? existing.description;
     const triggerWord = input.triggerWord ?? existing.triggerWord;
     const referencePhotos = input.referencePhotos ?? existing.referencePhotos;
+    const photoCaptions = input.photoCaptions ?? existing.photoCaptions;
     const trainedLoraPath = input.trainedLoraPath !== undefined ? input.trainedLoraPath : existing.trainedLoraPath;
     const loraScale = input.loraScale ?? existing.loraScale;
     const trainingConfig = input.trainingConfig !== undefined ? input.trainingConfig : existing.trainingConfig;
@@ -149,15 +176,17 @@ export class CharacterRepository {
     this.db
       .prepare(
         `UPDATE character_profiles
-         SET name = ?, trigger_word = ?, reference_photos = ?,
-             trained_lora_path = ?, lora_scale = ?, training_config = ?,
+         SET name = ?, description = ?, trigger_word = ?, reference_photos = ?,
+             photo_captions = ?, trained_lora_path = ?, lora_scale = ?, training_config = ?,
              status = ?, error_message = ?, updated_at = ?
          WHERE id = ?`,
       )
       .run(
         name,
+        description,
         triggerWord,
         JSON.stringify(referencePhotos),
+        JSON.stringify(photoCaptions),
         trainedLoraPath,
         loraScale,
         trainingConfig ? JSON.stringify(trainingConfig) : null,
@@ -180,8 +209,10 @@ export class CharacterRepository {
       return {
         id: row.id,
         name: row.name,
+        description: row.description ?? "",
         triggerWord: row.trigger_word,
         referencePhotos: JSON.parse(row.reference_photos) as string[],
+        photoCaptions: row.photo_captions ? (JSON.parse(row.photo_captions) as Record<string, string>) : {},
         trainedLoraPath: row.trained_lora_path,
         loraScale: row.lora_scale,
         trainingConfig: row.training_config ? (JSON.parse(row.training_config) as Record<string, unknown>) : null,
@@ -195,8 +226,10 @@ export class CharacterRepository {
       return {
         id: row.id,
         name: row.name,
+        description: row.description ?? "",
         triggerWord: row.trigger_word,
         referencePhotos: [],
+        photoCaptions: {},
         trainedLoraPath: row.trained_lora_path,
         loraScale: row.lora_scale,
         trainingConfig: null,

@@ -893,7 +893,7 @@ app.use("/api/gallery", authMiddleware, galleryRouter);
 // Character API routes (LoRA character profiles + training)
 const characterRepo = new CharacterRepository(db);
 characterRepo.migrate();
-const characterRouter = createCharacterRouter({ characterRepo });
+const characterRouter = createCharacterRouter({ characterRepo, copilot });
 app.use("/api/characters", authMiddleware, characterRouter);
 
 // Files API routes (Workbench file management)

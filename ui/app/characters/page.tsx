@@ -17,6 +17,8 @@ import {
   CheckCircle,
   AlertCircle,
   Clock,
+  Sparkles,
+  Info,
 } from "lucide-react";
 
 // ── Types ───────────────────────────────────────────────────
@@ -24,8 +26,10 @@ import {
 interface CharacterProfile {
   id: string;
   name: string;
+  description: string;
   triggerWord: string;
   referencePhotos: string[];
+  photoCaptions: Record<string, string>;
   trainedLoraPath: string | null;
   loraScale: number;
   trainingConfig: Record<string, unknown> | null;
@@ -67,6 +71,7 @@ export default function CharactersPage() {
   const [showCreate, setShowCreate] = useState(false);
   const [createName, setCreateName] = useState("");
   const [createTrigger, setCreateTrigger] = useState("");
+  const [createDescription, setCreateDescription] = useState("");
   const [createScale, setCreateScale] = useState(0.8);
   const [selectedChar, setSelectedChar] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<CharacterProfile | null>(null);
@@ -76,7 +81,8 @@ export default function CharactersPage() {
   // Training config
   const [trainSteps, setTrainSteps] = useState(9);
   const [trainLR, setTrainLR] = useState(0.0001);
-  const [trainRank, setTrainRank] = useState(4);
+  const [trainRank, setTrainRank] = useState(8);
+  const [trainEpochs, setTrainEpochs] = useState(10);
 
   // ── Queries ───────────────────────────────────────────
   const charactersQuery = useQuery({
@@ -90,7 +96,7 @@ export default function CharactersPage() {
 
   // ── Mutations ─────────────────────────────────────────
   const createMutation = useMutation({
-    mutationFn: (data: { name: string; triggerWord: string; loraScale: number }) =>
+    mutationFn: (data: { name: string; description: string; triggerWord: string; loraScale: number }) =>
       fetchJson<CharacterProfile>("/api/characters", {
         method: "POST",
         body: JSON.stringify(data),
@@ -101,6 +107,7 @@ export default function CharactersPage() {
       setShowCreate(false);
       setCreateName("");
       setCreateTrigger("");
+      setCreateDescription("");
       setCreateScale(0.8);
       setSelectedChar(char.id);
     },
@@ -144,10 +151,10 @@ export default function CharactersPage() {
   });
 
   const trainMutation = useMutation({
-    mutationFn: (data: { id: string; steps: number; learningRate: number; loraRank: number }) =>
+    mutationFn: (data: { id: string; steps: number; learningRate: number; loraRank: number; numEpochs: number }) =>
       fetchJson<{ ok: boolean; message: string }>(`/api/characters/${data.id}/train`, {
         method: "POST",
-        body: JSON.stringify({ steps: data.steps, learningRate: data.learningRate, loraRank: data.loraRank }),
+        body: JSON.stringify({ steps: data.steps, learningRate: data.learningRate, loraRank: data.loraRank, numEpochs: data.numEpochs }),
       }),
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["characters"] });
@@ -157,7 +164,7 @@ export default function CharactersPage() {
   });
 
   const updateMutation = useMutation({
-    mutationFn: ({ id, ...data }: { id: string; loraScale?: number; name?: string; triggerWord?: string }) =>
+    mutationFn: ({ id, ...data }: { id: string; loraScale?: number; name?: string; triggerWord?: string; description?: string; photoCaptions?: Record<string, string> }) =>
       fetchJson<CharacterProfile>(`/api/characters/${id}`, {
         method: "PUT",
         body: JSON.stringify(data),
@@ -169,12 +176,35 @@ export default function CharactersPage() {
     onError: (err) => showToast(err.message, "error"),
   });
 
+  const aiEnhanceMutation = useMutation({
+    mutationFn: (id: string) =>
+      fetchJson<{ captions: Record<string, string>; params: { epochs: number; steps: number; learningRate: number; loraRank: number; loraScale: number }; totalSteps: number; reasoning?: string }>(
+        `/api/characters/${id}/ai-enhance`,
+        { method: "POST" },
+      ),
+    onSuccess: (data, id) => {
+      // Apply captions
+      updateMutation.mutate({ id, photoCaptions: data.captions });
+      // Apply suggested params to form
+      setTrainEpochs(data.params.epochs);
+      setTrainSteps(data.params.steps);
+      setTrainLR(data.params.learningRate);
+      setTrainRank(data.params.loraRank);
+      const msg = data.reasoning
+        ? `AI enhanced: ${Object.keys(data.captions).length} captions, ~${data.totalSteps} steps. ${data.reasoning}`
+        : `AI enhanced: ${Object.keys(data.captions).length} captions generated, ~${data.totalSteps} total training steps`;
+      showToast(msg, "success");
+    },
+    onError: (err) => showToast(err.message, "error"),
+  });
+
   // ── Handlers ──────────────────────────────────────────
   function handleCreate(e: React.FormEvent) {
     e.preventDefault();
     if (!createName.trim() || !createTrigger.trim()) return;
     createMutation.mutate({
       name: createName.trim(),
+      description: createDescription.trim(),
       triggerWord: createTrigger.trim(),
       loraScale: createScale,
     });
@@ -269,6 +299,19 @@ export default function CharactersPage() {
                   Unique token to trigger character identity in prompts
                 </p>
               </div>
+            </div>
+            <div>
+              <label className="text-sm font-medium">Description</label>
+              <input
+                type="text"
+                value={createDescription}
+                onChange={(e) => setCreateDescription(e.target.value)}
+                placeholder="e.g. a husky dog with blue eyes"
+                className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+              />
+              <p className="mt-1 text-xs text-muted-foreground">
+                Describes what the character looks like — used in training prompts for better LoRA quality
+              </p>
             </div>
             <div>
               <label className="text-sm font-medium">LoRA Scale: {createScale}</label>
@@ -379,6 +422,21 @@ export default function CharactersPage() {
                     <div>
                       <span className="text-muted-foreground">Status:</span> {statusBadge(selected.status)}
                     </div>
+                    <div className="col-span-2">
+                      <span className="text-muted-foreground">Description:</span>{" "}
+                      <input
+                        type="text"
+                        value={selected.description}
+                        onChange={(e) =>
+                          updateMutation.mutate({ id: selected.id, description: e.target.value })
+                        }
+                        placeholder="e.g. a husky dog with blue eyes"
+                        className="w-full rounded border border-border bg-background px-2 py-0.5 text-xs"
+                      />
+                      <p className="mt-0.5 text-[10px] text-muted-foreground">
+                        Used in training prompts so the LoRA learns what the trigger word represents
+                      </p>
+                    </div>
                     <div>
                       <span className="text-muted-foreground">LoRA Scale:</span>{" "}
                       <input
@@ -414,23 +472,39 @@ export default function CharactersPage() {
                 </div>
               </SectionCard>
 
-              {/* Reference Photos */}
+              {/* Reference Photos with Captions */}
               <SectionCard title={`Reference Photos (${selected.referencePhotos.length})`}>
                 <div className="space-y-4">
                   {selected.referencePhotos.length > 0 && (
-                    <div className="grid grid-cols-3 gap-3 sm:grid-cols-4 md:grid-cols-5">
-                      {selected.referencePhotos.map((photo, i) => (
-                        <div
-                          key={i}
-                          className="group relative aspect-square overflow-hidden rounded-lg border border-border bg-muted"
-                        >
-                          <img
-                            src={photoUrl(selected.id, photo)}
-                            alt={`Reference ${i + 1}`}
-                            className="h-full w-full object-cover"
-                          />
-                        </div>
-                      ))}
+                    <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4">
+                      {selected.referencePhotos.map((photo, i) => {
+                        const filename = photo.split("/").pop() ?? "";
+                        const caption = selected.photoCaptions?.[filename] ?? "";
+                        return (
+                          <div key={i} className="space-y-1">
+                            <div className="group relative aspect-square overflow-hidden rounded-lg border border-border bg-muted">
+                              <img
+                                src={photoUrl(selected.id, photo)}
+                                alt={`Reference ${i + 1}`}
+                                className="h-full w-full object-cover"
+                              />
+                              <div className="absolute bottom-0 left-0 right-0 bg-black/60 px-1.5 py-0.5 text-[9px] text-white/80 truncate">
+                                {filename}
+                              </div>
+                            </div>
+                            <input
+                              type="text"
+                              value={caption}
+                              onChange={(e) => {
+                                const updated = { ...selected.photoCaptions, [filename]: e.target.value };
+                                updateMutation.mutate({ id: selected.id, photoCaptions: updated });
+                              }}
+                              placeholder="Caption for training..."
+                              className="w-full rounded border border-border bg-background px-1.5 py-0.5 text-[10px] placeholder:text-muted-foreground/50"
+                            />
+                          </div>
+                        );
+                      })}
                     </div>
                   )}
                   {/* Drag-and-drop upload zone */}
@@ -483,9 +557,61 @@ export default function CharactersPage() {
               {/* Training Controls */}
               <SectionCard title="LoRA Training">
                 <div className="space-y-4">
-                  <div className="grid grid-cols-3 gap-4">
+                  {/* AI Enhance Button */}
+                  <div className="flex items-center gap-3">
+                    <button
+                      onClick={() => aiEnhanceMutation.mutate(selected.id)}
+                      disabled={aiEnhanceMutation.isPending || !selected.description || selected.referencePhotos.length === 0}
+                      className="inline-flex items-center gap-2 rounded-md border border-purple-500/30 bg-purple-500/10 px-3 py-1.5 text-xs font-medium text-purple-700 hover:bg-purple-500/20 disabled:opacity-50 dark:text-purple-300"
+                    >
+                      {aiEnhanceMutation.isPending ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <Sparkles className="h-3.5 w-3.5" />
+                      )}
+                      AI Enhance
+                    </button>
+                    <span className="text-[10px] text-muted-foreground">
+                      {!selected.description
+                        ? "Set a description first to enable AI enhance"
+                        : "Uses AI to generate unique per-photo captions and recommend optimal training parameters"}
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
                     <div>
-                      <label className="text-xs font-medium text-muted-foreground">Inference Steps</label>
+                      <label className="inline-flex items-center gap-1 text-xs font-medium text-muted-foreground">
+                        Epochs
+                        <span className="group relative cursor-help">
+                          <Info className="h-3 w-3 opacity-50" />
+                          <span className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-1 w-56 -translate-x-1/2 rounded-md bg-popover px-3 py-2 text-[10px] leading-snug text-popover-foreground shadow-md border border-border opacity-0 transition-opacity group-hover:opacity-100">
+                            Number of full passes over all reference photos. Total training steps = epochs × photo count. Recommended: 10–20 for most subjects, more for complex characters.
+                          </span>
+                        </span>
+                      </label>
+                      <input
+                        type="number"
+                        min={1}
+                        max={100}
+                        step={1}
+                        value={trainEpochs}
+                        onChange={(e) => setTrainEpochs(parseInt(e.target.value))}
+                        className="mt-1 w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm"
+                      />
+                      <p className="mt-0.5 text-[10px] text-muted-foreground">
+                        ~{trainEpochs * (selected.referencePhotos.length || 1)} total steps
+                      </p>
+                    </div>
+                    <div>
+                      <label className="inline-flex items-center gap-1 text-xs font-medium text-muted-foreground">
+                        Inference Steps
+                        <span className="group relative cursor-help">
+                          <Info className="h-3 w-3 opacity-50" />
+                          <span className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-1 w-56 -translate-x-1/2 rounded-md bg-popover px-3 py-2 text-[10px] leading-snug text-popover-foreground shadow-md border border-border opacity-0 transition-opacity group-hover:opacity-100">
+                            Denoising steps during training&apos;s internal image generation. For z-image-turbo (distilled model), 4–9 steps is ideal. Higher values are slower with diminishing returns.
+                          </span>
+                        </span>
+                      </label>
                       <input
                         type="number"
                         min={1}
@@ -497,7 +623,15 @@ export default function CharactersPage() {
                       />
                     </div>
                     <div>
-                      <label className="text-xs font-medium text-muted-foreground">Learning Rate</label>
+                      <label className="inline-flex items-center gap-1 text-xs font-medium text-muted-foreground">
+                        Learning Rate
+                        <span className="group relative cursor-help">
+                          <Info className="h-3 w-3 opacity-50" />
+                          <span className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-1 w-56 -translate-x-1/2 rounded-md bg-popover px-3 py-2 text-[10px] leading-snug text-popover-foreground shadow-md border border-border opacity-0 transition-opacity group-hover:opacity-100">
+                            How aggressively LoRA weights update per step. 1e-4 (0.0001) is standard. Too high → artifacts/overfitting. Too low → LoRA learns nothing.
+                          </span>
+                        </span>
+                      </label>
                       <input
                         type="number"
                         min={0.00001}
@@ -509,14 +643,22 @@ export default function CharactersPage() {
                       />
                     </div>
                     <div>
-                      <label className="text-xs font-medium text-muted-foreground">LoRA Rank</label>
+                      <label className="inline-flex items-center gap-1 text-xs font-medium text-muted-foreground">
+                        LoRA Rank
+                        <span className="group relative cursor-help">
+                          <Info className="h-3 w-3 opacity-50" />
+                          <span className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-1 w-56 -translate-x-1/2 rounded-md bg-popover px-3 py-2 text-[10px] leading-snug text-popover-foreground shadow-md border border-border opacity-0 transition-opacity group-hover:opacity-100">
+                            Dimensionality of LoRA adapter. Higher → more expressive but uses more memory. 8 for faces/animals, 16 for complex subjects, 4 for simple styles.
+                          </span>
+                        </span>
+                      </label>
                       <select
                         value={trainRank}
                         onChange={(e) => setTrainRank(parseInt(e.target.value))}
                         className="mt-1 w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm"
                       >
-                        <option value={4}>4 (default)</option>
-                        <option value={8}>8</option>
+                        <option value={4}>4</option>
+                        <option value={8}>8 (default)</option>
                         <option value={16}>16</option>
                         <option value={32}>32</option>
                       </select>
@@ -529,6 +671,7 @@ export default function CharactersPage() {
                         steps: trainSteps,
                         learningRate: trainLR,
                         loraRank: trainRank,
+                        numEpochs: trainEpochs,
                       })
                     }
                     disabled={
