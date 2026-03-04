@@ -86,6 +86,7 @@ export type CommentRule = {
   max_triggers_total: number | null;
   trigger_count: number;
   auto_tag: string | null;
+  model: string | null;
   created_at: string;
   updated_at: string;
 };

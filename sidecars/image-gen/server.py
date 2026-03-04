@@ -20,6 +20,8 @@ Endpoints:
     POST /generate-controlnet — Generate with ControlNet conditioning (Canny/Depth)
     POST /train              — Start DreamBooth LoRA training
     GET  /train-status       — Check training job status
+    GET  /train-checkpoints  — List checkpoint zips available for a character
+    POST /train-resume       — Resume training from a specific checkpoint zip
     POST /model              — Load or switch the active model
     POST /unload             — Unload the current model to free RAM
     GET  /health             — Readiness probe (returns model status)
@@ -1424,7 +1426,7 @@ def _materialize_network_training(req: TrainRequest) -> str:
             "learning_rate": cfg.get("learning_rate", 1e-4),
         },
         "checkpoint": {
-            "save_frequency": max(1, num_epochs // 4) if num_epochs > 4 else num_epochs,
+            "save_frequency": max(1, num_epochs // 5) if num_epochs > 5 else num_epochs,
             "output_path": lora_output,
         },
         "lora_layers": {
@@ -1524,8 +1526,18 @@ async def train_status():
     """Check the status of the current training job."""
     # Check if training produced output files
     lora_path = None
-    if _train_output_dir and not _training:
-        lora_path = _find_trained_lora(_train_output_dir)
+    checkpoint_count = 0
+    if _train_output_dir:
+        # Count checkpoint zips even while training (progress indicator)
+        try:
+            for root, _dirs, files in os.walk(_train_output_dir):
+                for f in files:
+                    if f.endswith(".zip") and "checkpoint" in f:
+                        checkpoint_count += 1
+        except Exception:
+            pass
+        if not _training:
+            lora_path = _find_trained_lora(_train_output_dir)
 
     return {
         "training": _training,
@@ -1533,7 +1545,72 @@ async def train_status():
         "error": _train_error,
         "output_dir": _train_output_dir,
         "lora_path": lora_path,
+        "checkpoint_count": checkpoint_count,
     }
+
+
+@app.get("/train-checkpoints", dependencies=[Depends(verify_token)])
+async def list_train_checkpoints(character_id: str):
+    """List checkpoint zip files available for a given character_id.
+
+    Returns checkpoints sorted newest-first so the client can offer the user
+    a choice of which iteration to resume from, or just pick the latest.
+    """
+    train_dir = os.path.join(tempfile.gettempdir(), "openzigs-training", character_id)
+    zips: list[dict] = []
+    if os.path.isdir(train_dir):
+        for root, _dirs, files in os.walk(train_dir):
+            for f in files:
+                if f.endswith(".zip") and "checkpoint" in f:
+                    full_path = os.path.join(root, f)
+                    try:
+                        size = os.path.getsize(full_path)
+                    except OSError:
+                        size = 0
+                    zips.append({"path": full_path, "name": f, "size": size})
+    # Sort by name descending (checkpoint names are zero-padded iteration numbers)
+    zips.sort(key=lambda z: z["name"], reverse=True)
+    return {"character_id": character_id, "checkpoints": zips, "train_dir": train_dir}
+
+
+class ResumeTrainRequest(BaseModel):
+    """Request body for resuming training from a checkpoint zip."""
+    checkpoint_path: str = Field(..., description="Absolute path to a checkpoint .zip file on this machine")
+    output_dir: Optional[str] = Field(None, description="Override output directory (defaults to sibling of checkpoint)")
+
+
+@app.post("/train-resume", response_model=TrainResponse, dependencies=[Depends(verify_token)])
+async def resume_train_lora(req: ResumeTrainRequest, background_tasks: BackgroundTasks):
+    """Resume LoRA training from an existing checkpoint zip.
+
+    Uses ``mflux-train --resume /path/to/checkpoint.zip``.
+    The original data folder must still be present on this machine
+    (mflux requires it to continue training).
+    """
+    global _training, _train_error, _train_output_dir
+
+    if _training:
+        raise HTTPException(status_code=409, detail="A training job is already in progress")
+
+    if not os.path.isfile(req.checkpoint_path):
+        raise HTTPException(status_code=400, detail=f"Checkpoint not found: {req.checkpoint_path}")
+    if not req.checkpoint_path.endswith(".zip"):
+        raise HTTPException(status_code=400, detail="checkpoint_path must be a .zip file")
+
+    # Output dir defaults to the lora/ directory that is a sibling of the checkpoints/ folder
+    lora_output = req.output_dir or os.path.dirname(os.path.dirname(req.checkpoint_path))
+
+    _training = True
+    _train_error = None
+    _train_output_dir = lora_output
+    background_tasks.add_task(_bg_train_resume, req.checkpoint_path)
+
+    log.info(f"[train] Resuming training from checkpoint: {req.checkpoint_path}")
+    return TrainResponse(
+        status="accepted",
+        message=f"Resuming training from {os.path.basename(req.checkpoint_path)}",
+        output_dir=lora_output,
+    )
 
 
 def _find_trained_lora(dir_path: str) -> Optional[str]:
@@ -1584,6 +1661,73 @@ def _find_trained_lora(dir_path: str) -> Optional[str]:
     return None
 
 
+def _bg_train_resume(checkpoint_path: str) -> None:
+    """Background task: resume mflux-train from a checkpoint zip."""
+    import subprocess
+
+    global _training, _train_process, _train_error
+    try:
+        log.info(f"[train] Spawning mflux-train --resume {checkpoint_path}")
+        _train_process = subprocess.Popen(
+            ["mflux-train", "--resume", checkpoint_path],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+        )
+        last_lines: list[str] = []
+        assert _train_process.stdout is not None
+        for line in _train_process.stdout:
+            line = line.rstrip()
+            if line:
+                log.info(f"[mflux-train] {line}")
+                last_lines.append(line)
+                if len(last_lines) > 20:
+                    last_lines.pop(0)
+        _train_process.wait()
+        rc = _train_process.returncode
+        if rc != 0:
+            err_msg = "\n".join(last_lines) if last_lines else f"exit code {rc}"
+            _train_error = err_msg
+            log.error(f"[train] Resume training failed with exit code {rc}")
+        else:
+            log.info("[train] Resumed training completed successfully")
+    except Exception as e:
+        _train_error = str(e)
+        log.error(f"[train] Resume training error: {e}")
+    finally:
+        _training = False
+        _train_process = None
+        gc.collect()
+        try:
+            import mlx.core as mx
+            mx.clear_cache()
+        except Exception:
+            pass
+
+
+def _cleanup_training_data(config_path: str) -> None:
+    """Remove training input images and config after training completes.
+
+    Keeps the output LoRA checkpoints (in the lora/ subdirectory) but removes
+    the data/ directory and config file to reclaim disk space.  On commodity
+    hardware with limited SSDs, training images can add up fast.
+    """
+    try:
+        train_dir = os.path.dirname(config_path)
+        data_dir = os.path.join(train_dir, "data")
+        if os.path.isdir(data_dir):
+            import shutil
+            shutil.rmtree(data_dir)
+            log.info(f"[train] Cleaned up training data: {data_dir}")
+        # Remove the config file itself
+        if os.path.isfile(config_path):
+            os.remove(config_path)
+            log.info(f"[train] Removed training config: {config_path}")
+    except Exception as e:
+        log.warning(f"[train] Failed to clean up training data: {e}")
+
+
 def _bg_train(config_path: str) -> None:
     """Background task: run mflux-train subprocess."""
     import subprocess
@@ -1623,6 +1767,8 @@ def _bg_train(config_path: str) -> None:
                     log.info(f"[train] Output dir contents ({len(all_files)} files): {all_files}")
                 except Exception:
                     pass
+            # Clean up training input data (images + config) to reclaim disk
+            _cleanup_training_data(config_path)
         else:
             err_msg = "\n".join(last_lines) if last_lines else f"exit code {rc}"
             _train_error = err_msg

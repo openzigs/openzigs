@@ -4,6 +4,7 @@ import { useState, useCallback, useRef, useEffect, useMemo, type SyntheticEvent 
 import { RefreshCw, Loader2, Image, Clock, Type, Upload, PenLine, Mic, Play, Pause, Volume2, Sparkles, Wand2 } from "lucide-react";
 import { fetchJson, buildMediaUrl } from "@/lib/api";
 import { useActivity } from "@/lib/activity-context";
+import { InlineModelPicker } from "@/components/model-picker-select";
 import type { InspectorState, DirectorManifest, TimelineEntry } from "../types";
 import { FramingPanel } from "./framing-panel";
 import { NarrationEditor, type NarrationDirective, type VoicePreset } from "./narration-editor";
@@ -72,6 +73,7 @@ export function SceneInspector({ inspector, manifest, draftId, onManifestUpdate 
   const [enhancingImage, setEnhancingImage] = useState(false);
   const [suggestingParams, setSuggestingParams] = useState(false);
   const [addingDirectives, setAddingDirectives] = useState(false);
+  const [llmModel, setLlmModel] = useState("");
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const bgFileInputRef = useRef<HTMLInputElement>(null);
@@ -253,7 +255,7 @@ export function SceneInspector({ inspector, manifest, draftId, onManifestUpdate 
         reasoning: string;
       }>("/api/admin/director/voice/analyze-params", {
         method: "POST",
-        body: JSON.stringify({ text: scriptText }),
+        body: JSON.stringify({ text: scriptText, ...(llmModel ? { model: llmModel } : {}) }),
       });
       setF5Params({
         speed: result.speed,
@@ -268,7 +270,7 @@ export function SceneInspector({ inspector, manifest, draftId, onManifestUpdate 
       done();
       setSuggestingParams(false);
     }
-  }, [scriptText, startActivity]);
+  }, [scriptText, llmModel, startActivity]);
 
   const handleAddDirectives = useCallback(async () => {
     if (!scriptText.trim()) return;
@@ -282,6 +284,7 @@ export function SceneInspector({ inspector, manifest, draftId, onManifestUpdate 
           body: JSON.stringify({
             text: scriptText,
             engine: selectedEngine === "auto" ? undefined : selectedEngine,
+            ...(llmModel ? { model: llmModel } : {}),
           }),
         },
       );
@@ -302,7 +305,7 @@ export function SceneInspector({ inspector, manifest, draftId, onManifestUpdate 
       done();
       setAddingDirectives(false);
     }
-  }, [scriptText, selectedEngine, startActivity, draftId, updateTimelineEntry]);
+  }, [scriptText, selectedEngine, llmModel, startActivity, draftId, updateTimelineEntry]);
 
   const handleEnhancePrompt = useCallback(async () => {
     if (!editPrompt.trim()) return;
@@ -313,7 +316,7 @@ export function SceneInspector({ inspector, manifest, draftId, onManifestUpdate 
         `/api/admin/director/scenes/${inspector.sceneIndex}/enhance-prompt`,
         {
           method: "POST",
-          body: JSON.stringify({ prompt: editPrompt }),
+          body: JSON.stringify({ prompt: editPrompt, ...(llmModel ? { model: llmModel } : {}) }),
         },
       );
       setEditPrompt(result.enhanced_prompt);
@@ -323,7 +326,7 @@ export function SceneInspector({ inspector, manifest, draftId, onManifestUpdate 
       done();
       setEnhancingPrompt(false);
     }
-  }, [editPrompt, inspector.sceneIndex, startActivity]);
+  }, [editPrompt, inspector.sceneIndex, llmModel, startActivity]);
 
   const handleImg2Img = useCallback(async () => {
     if (inspector.sceneIndex === null || !img2imgPrompt.trim() || !manifest) return;
@@ -386,6 +389,7 @@ export function SceneInspector({ inspector, manifest, draftId, onManifestUpdate 
             draftId,
             videoDurationSec: lastVideoDuration,
             currentScript: entry?.scriptText,
+            ...(llmModel ? { model: llmModel } : {}),
           }),
         },
       );
@@ -399,7 +403,7 @@ export function SceneInspector({ inspector, manifest, draftId, onManifestUpdate 
       done();
       setRewritingScript(false);
     }
-  }, [inspector.sceneIndex, manifest, draftId, lastVideoDuration, entry?.scriptText, updateTimelineEntry, startActivity]);
+  }, [inspector.sceneIndex, manifest, draftId, llmModel, lastVideoDuration, entry?.scriptText, updateTimelineEntry, startActivity]);
 
   const handleScriptSave = useCallback(
     async (newScript: string) => {
@@ -475,9 +479,13 @@ export function SceneInspector({ inspector, manifest, draftId, onManifestUpdate 
         <h3 className="text-sm font-semibold text-foreground">
           Scene {inspector.sceneIndex !== null ? inspector.sceneIndex + 1 : "—"}
         </h3>
-        <span className="rounded bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground uppercase">
-          {entry.type.replace("_", " ")}
-        </span>
+        <div className="flex items-center gap-2">
+          <label className="text-[10px] text-muted-foreground">AI Model</label>
+          <InlineModelPicker value={llmModel} onChange={setLlmModel} />
+          <span className="rounded bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground uppercase">
+            {entry.type.replace("_", " ")}
+          </span>
+        </div>
       </div>
 
       {/* Image preview (visual scenes) */}

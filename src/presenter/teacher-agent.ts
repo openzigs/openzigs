@@ -14,6 +14,7 @@ import type { CopilotWrapper } from "../copilot/copilot-wrapper.js";
 import type { PresentationRepository, PresentationRow } from "./presentation-repository.js";
 import type { KnowledgeIngestionService } from "../knowledge/knowledge-service.js";
 import { logger } from "../logging/logger.js";
+import { getUserSelectedModel } from "../config/user-model.js";
 
 export interface TeacherAgentDeps {
   copilotWrapper: CopilotWrapper;
@@ -127,9 +128,11 @@ export class TeacherAgent {
       payload.question,
     );
 
+    const teacherModel = await getUserSelectedModel();
     yield* this.copilot.chat(sections.join("\n"), {
       systemMessage: { mode: "replace", content: systemPrompt },
       tools: [],
+      ...(teacherModel ? { model: teacherModel } : {}),
     });
   }
 

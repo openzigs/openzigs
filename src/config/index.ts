@@ -195,6 +195,7 @@ export type ImageGenAppConfig = {
   mode?: "local" | "network";
   networkNodeUrl?: string;
   networkNodeToken?: string;
+  trainingTimeoutHours?: number;
 };
 
 export type MusicGenAppConfig = {

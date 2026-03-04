@@ -10,8 +10,9 @@ import path from "node:path";
 import os from "node:os";
 import { logger } from "../logging/logger.js";
 import type { CharacterRepository, CharacterCreate, CharacterUpdate } from "../characters/character-repository.js";
-import type { CopilotWrapperService } from "../copilot/copilot-wrapper.js";
+import type { CopilotWrapperService, SdkAttachment } from "../copilot/copilot-wrapper.js";
 import type { Server as SocketIOServer } from "socket.io";
+import { getUserSelectedModel } from "../config/user-model.js";
 
 // ── Types ───────────────────────────────────────────────────
 
@@ -328,7 +329,7 @@ export function createCharacterRouter({ characterRepo, copilot }: CharacterRoute
       const steps = typeof overrides.steps === "number" ? overrides.steps : 9;
       const learningRate = typeof overrides.learningRate === "number" ? overrides.learningRate : 1e-4;
       const loraRank = typeof overrides.loraRank === "number" ? overrides.loraRank : 16;
-      const numEpochs = typeof overrides.numEpochs === "number" ? overrides.numEpochs : 50;
+      const numEpochs = typeof overrides.numEpochs === "number" ? overrides.numEpochs : 30;
 
       // Build per-image prompt: use per-image caption if available,
       // fall back to character description, then generic trigger-word prompt
@@ -420,7 +421,106 @@ export function createCharacterRouter({ characterRepo, copilot }: CharacterRoute
     }
   });
 
-  // ── POST /:id/ai-enhance — Auto-generate captions & suggest optimal params ──
+  // ── GET /:id/checkpoints — List resumable checkpoints on the sidecar ──
+  router.get("/:id/checkpoints", async (req, res) => {
+    try {
+      const character = characterRepo.getById(req.params.id);
+      if (!character) {
+        res.status(404).json({ error: "Character not found" });
+        return;
+      }
+      const sidecarUrl = await getImageGenSidecarUrl();
+      if (!sidecarUrl) {
+        res.status(503).json({ error: "Image generation sidecar not configured" });
+        return;
+      }
+      const token = await getImageGenToken();
+      const headers: Record<string, string> = {};
+      if (token) headers["Authorization"] = `Bearer ${token}`;
+
+      const response = await fetch(
+        `${sidecarUrl}/train-checkpoints?character_id=${encodeURIComponent(req.params.id)}`,
+        { headers },
+      );
+      if (!response.ok) {
+        const text = await response.text();
+        res.status(502).json({ error: `Sidecar error: ${text}` });
+        return;
+      }
+      const data = await response.json();
+      res.json(data);
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  // ── POST /:id/resume-training — Resume training from a checkpoint ──
+  router.post("/:id/resume-training", async (req, res) => {
+    try {
+      const character = characterRepo.getById(req.params.id);
+      if (!character) {
+        res.status(404).json({ error: "Character not found" });
+        return;
+      }
+      if (character.status === "training") {
+        res.status(409).json({ error: "Character is already training" });
+        return;
+      }
+
+      const { checkpoint_path } = req.body as { checkpoint_path?: string };
+      if (!checkpoint_path || typeof checkpoint_path !== "string") {
+        res.status(400).json({ error: "checkpoint_path is required" });
+        return;
+      }
+
+      const sidecarUrl = await getImageGenSidecarUrl();
+      if (!sidecarUrl) {
+        res.status(503).json({ error: "Image generation sidecar not configured" });
+        return;
+      }
+      const token = await getImageGenToken();
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (token) headers["Authorization"] = `Bearer ${token}`;
+
+      const response = await fetch(`${sidecarUrl}/train-resume`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ checkpoint_path }),
+      });
+
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(`Sidecar returned ${response.status}: ${text}`);
+      }
+
+      const result = await response.json() as { status: string; message: string; output_dir?: string };
+
+      characterRepo.update(character.id, {
+        status: "training",
+        errorMessage: null,
+      });
+      _io?.emit("character:training:start", { characterId: character.id, characterName: character.name });
+
+      // Resume polling — will pick up completion just like a fresh training run
+      pollTrainingStatus(
+        character.id,
+        character.name,
+        sidecarUrl,
+        token,
+        result.output_dir ?? null,
+        characterRepo,
+      );
+
+      logger.info(`[Characters] Resumed training for '${character.name}' (${character.id}) from ${checkpoint_path}`);
+      res.json({ ok: true, message: result.message });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  // ── POST /:id/ai-enhance — Auto-generate captions via vision (one image per request) ──
   router.post("/:id/ai-enhance", async (req, res) => {
     try {
       const character = characterRepo.getById(req.params.id);
@@ -442,116 +542,111 @@ export function createCharacterRouter({ characterRepo, copilot }: CharacterRoute
       const photoCount = character.referencePhotos.length;
       const filenames = character.referencePhotos.map((p) => path.basename(p));
 
+      // Determine model: body override → user config → copilot default
+      const bodyModel = typeof (req.body as Record<string, unknown>)?.model === "string"
+        ? (req.body as Record<string, unknown>).model as string
+        : undefined;
+      const resolvedModel = bodyModel ?? await getUserSelectedModel();
+
       if (!copilot) {
         // Fallback when copilot is unavailable — use simple varied templates
+        const variedSuffixes = [
+          `portrait, natural lighting, sharp focus`,
+          `close-up, studio lighting, detailed`,
+          `full body, outdoor setting, natural environment`,
+          `side profile, soft lighting, bokeh background`,
+          `3/4 view, golden hour lighting, warm tones`,
+          `looking at camera, overcast lighting, high detail`,
+          `candid pose, indoor setting, ambient light`,
+          `low angle shot, dynamic pose, vibrant colors`,
+          `overhead view, clean background, crisp focus`,
+          `backlit, dramatic lighting, silhouette detail`,
+        ];
         const captions: Record<string, string> = {};
         for (let i = 0; i < filenames.length; i++) {
-          captions[filenames[i]] = `A photo of ${triggerWord}, ${desc}`;
+          const suffix = variedSuffixes[i % variedSuffixes.length];
+          captions[filenames[i]] = `${triggerWord}, ${desc}, ${suffix}`;
         }
-        const suggestedEpochs = Math.max(5, Math.min(30, Math.round(150 / Math.max(1, photoCount))));
-        res.json({
-          captions,
-          params: { epochs: suggestedEpochs, steps: 9, learningRate: 1e-4, loraRank: 8, loraScale: 0.85 },
-          totalSteps: suggestedEpochs * photoCount,
-        });
+        res.json({ captions, totalSteps: photoCount * 50 });
         return;
       }
 
-      // Use the Copilot LLM to generate unique captions and suggest parameters
-      const conversationId = `ai-enhance-${character.id}-${Date.now()}`;
-      const systemMessage = `You are an expert at LoRA training for image generation models. You help create optimal training captions and parameters for Flux-based LoRA fine-tuning.
-
-IMPORTANT RULES:
-- Every caption MUST start with the exact trigger word "${triggerWord}" so the model learns to associate it with the subject.
-- Every caption must be unique and describe the subject differently.
-- Vary framing (close-up, portrait, full body, 3/4 view, profile), lighting (natural, studio, golden hour, overcast, backlit), setting (indoor, outdoor, park, studio backdrop), and quality descriptors.
-- Keep captions concise (10-25 words each).
-- Respond ONLY with valid JSON, no markdown fencing, no explanation.`;
-
-      const userMessage = `Subject: "${desc}"
-Trigger word: "${triggerWord}"
-Number of reference photos: ${photoCount}
-Photo filenames: ${JSON.stringify(filenames)}
-
-Generate a JSON object with two keys:
-
-1. "captions": an object mapping each filename to a unique training caption. Each caption must start with "${triggerWord}" and describe the subject in a different way (different framing, lighting, angle, setting, quality tags). Make every caption genuinely different — vary sentence structure, word order, and descriptive elements.
-
-2. "params": an object with optimal LoRA training parameters for this subject:
-   - "epochs": number of full passes (consider ${photoCount} photos — aim for 100-200 total steps)
-   - "steps": inference steps during training (4-9 for distilled Flux models)
-   - "learningRate": float (typically 1e-4 for LoRA)
-   - "loraRank": 4, 8, 16, or 32 (consider subject complexity: simple styles→4, faces/animals→8, complex scenes→16)
-   - "loraScale": inference-time LoRA strength (0.7-1.0)
-
-Also include "reasoning": a brief explanation of why you chose those parameters.
-
-Return only the raw JSON object.`;
-
-      let fullResponse = "";
-      try {
-        for await (const chunk of copilot.chat(userMessage, {
-          conversationId,
-          systemMessage: { mode: "replace", content: systemMessage },
-          tools: [],
-          availableTools: [],
-        })) {
-          fullResponse += chunk;
+      // Verify which photos are accessible
+      const accessiblePhotos: { photoPath: string; filename: string }[] = [];
+      for (let i = 0; i < character.referencePhotos.length; i++) {
+        const photoPath = character.referencePhotos[i];
+        try {
+          await fs.access(photoPath);
+          accessiblePhotos.push({ photoPath, filename: filenames[i] });
+        } catch {
+          logger.warn(`[Characters] AI enhance: photo not accessible, skipping: ${photoPath}`);
         }
-      } finally {
-        await copilot.destroySession(conversationId).catch(() => {});
       }
 
-      // Parse the LLM response — strip markdown fences if present
-      let cleaned = fullResponse.trim();
-      const jsonMatch = cleaned.match(/```(?:json)?\s*([\s\S]*?)```/);
-      if (jsonMatch) {
-        cleaned = jsonMatch[1].trim();
-      }
-
-      let parsed: {
-        captions?: Record<string, string>;
-        params?: { epochs?: number; steps?: number; learningRate?: number; loraRank?: number; loraScale?: number };
-        reasoning?: string;
-      };
-      try {
-        parsed = JSON.parse(cleaned);
-      } catch {
-        logger.warn(`[Characters] AI enhance: failed to parse LLM response, falling back. Raw: ${cleaned.slice(0, 500)}`);
-        // Fallback if JSON parsing fails
-        const captions: Record<string, string> = {};
-        for (const fn of filenames) {
-          captions[fn] = `${triggerWord}, ${desc}`;
-        }
-        const suggestedEpochs = Math.max(5, Math.min(30, Math.round(150 / Math.max(1, photoCount))));
-        res.json({
-          captions,
-          params: { epochs: suggestedEpochs, steps: 9, learningRate: 1e-4, loraRank: 8, loraScale: 0.85 },
-          totalSteps: suggestedEpochs * photoCount,
-        });
+      if (accessiblePhotos.length === 0) {
+        res.status(400).json({ error: "No reference photos are accessible on disk" });
         return;
       }
 
-      // Merge parsed results with safe defaults
+      const modelLabel = resolvedModel ?? "default";
+      logger.info(`[Characters] AI enhance for '${character.name}': analyzing ${accessiblePhotos.length} photos one-by-one with model=${modelLabel}`);
+
+      // Process images one at a time to avoid overwhelming the model
       const captions: Record<string, string> = {};
-      for (const fn of filenames) {
-        const llmCaption = parsed.captions?.[fn];
-        captions[fn] = llmCaption && llmCaption.trim() ? llmCaption.trim() : `${triggerWord}, ${desc}`;
+
+      for (let i = 0; i < accessiblePhotos.length; i++) {
+        const { photoPath, filename } = accessiblePhotos[i];
+        const conversationId = `ai-enhance-${character.id}-${Date.now()}-${i}`;
+
+        const attachment: SdkAttachment = { type: "file", path: photoPath, displayName: filename };
+
+        const systemMsg = `You are a vision-capable AI analyzing a reference photo for LoRA training. Describe what you actually see in the attached image to create an accurate training caption.
+
+RULES:
+- Examine the attached image carefully and describe the actual visible content.
+- The caption MUST start with the exact trigger word "${triggerWord}".
+- Describe what you see: the subject, pose, framing, lighting, background, and notable visual details.
+- Keep the caption concise: 8-20 words.
+- Respond with ONLY the caption text — no JSON, no markdown, no explanation.`;
+
+        const userMsg = `Subject description: "${desc}"
+Trigger word: "${triggerWord}"
+
+Please look at the attached image (${filename}) and write a single training caption that accurately describes what you see. Start with "${triggerWord}".`;
+
+        let captionResponse = "";
+        try {
+          for await (const chunk of copilot.chat(userMsg, {
+            conversationId,
+            systemMessage: { mode: "replace", content: systemMsg },
+            tools: [],
+            availableTools: [],
+            attachments: [attachment],
+            ...(resolvedModel ? { model: resolvedModel } : {}),
+          })) {
+            captionResponse += chunk;
+          }
+        } catch (err) {
+          const errMsg = err instanceof Error ? err.message : String(err);
+          logger.warn(`[Characters] AI enhance: vision failed for ${filename}: ${errMsg}`);
+        } finally {
+          await copilot.destroySession(conversationId).catch(() => {});
+        }
+
+        // Clean up the response
+        let caption = captionResponse.trim();
+        // Remove quotes if wrapped
+        if ((caption.startsWith('"') && caption.endsWith('"')) || (caption.startsWith("'") && caption.endsWith("'"))) {
+          caption = caption.slice(1, -1).trim();
+        }
+        captions[filename] = caption || `${triggerWord}, ${desc}`;
+
+        logger.info(`[Characters] AI enhance: ${i + 1}/${accessiblePhotos.length} — ${filename}`);
       }
 
-      const params = {
-        epochs: Math.max(1, Math.min(100, parsed.params?.epochs ?? Math.round(150 / Math.max(1, photoCount)))),
-        steps: Math.max(1, Math.min(50, parsed.params?.steps ?? 9)),
-        learningRate: Math.max(1e-6, Math.min(0.01, parsed.params?.learningRate ?? 1e-4)),
-        loraRank: [4, 8, 16, 32].includes(parsed.params?.loraRank ?? 0) ? parsed.params!.loraRank! : 8,
-        loraScale: Math.max(0.1, Math.min(1.5, parsed.params?.loraScale ?? 0.85)),
-      };
+      logger.info(`[Characters] AI enhance for '${character.name}': ${Object.keys(captions).length} captions generated with model=${modelLabel}`);
 
-      const totalSteps = params.epochs * photoCount;
-
-      logger.info(`[Characters] AI enhance for '${character.name}': ${Object.keys(captions).length} captions, ${totalSteps} total steps. ${parsed.reasoning ?? ""}`);
-
-      res.json({ captions, params, totalSteps, reasoning: parsed.reasoning });
+      res.json({ captions, totalSteps: photoCount * 50, model: modelLabel });
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       logger.error(`[Characters] AI enhance failed: ${msg}`);
@@ -658,6 +753,21 @@ async function startRemoteTraining(
   }
 }
 
+async function getTrainingTimeoutMs(): Promise<number> {
+  const DEFAULT_HOURS = 8;
+  try {
+    const configPath = process.env.OPENZIGS_CONFIG_PATH
+      ?? path.join(os.homedir(), ".openzigs", "config.json");
+    const raw = await fs.readFile(configPath, "utf-8");
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const ig = parsed.imageGen as Record<string, unknown> | undefined;
+    const hours = typeof ig?.trainingTimeoutHours === "number" ? ig.trainingTimeoutHours : DEFAULT_HOURS;
+    return hours * 60 * 60 * 1000;
+  } catch {
+    return DEFAULT_HOURS * 60 * 60 * 1000;
+  }
+}
+
 function pollTrainingStatus(
   characterId: string,
   characterName: string,
@@ -667,7 +777,6 @@ function pollTrainingStatus(
   characterRepo: CharacterRepository,
 ): void {
   const pollIntervalMs = 15_000; // 15 seconds
-  const maxPollTimeMs = 4 * 60 * 60 * 1000; // 4 hours max
   const startTime = Date.now();
 
   const poll = async () => {
@@ -677,10 +786,39 @@ function pollTrainingStatus(
       return;
     }
 
-    if (Date.now() - startTime > maxPollTimeMs) {
+    const maxPollTimeMs = await getTrainingTimeoutMs();
+    const elapsed = Date.now() - startTime;
+    if (elapsed > maxPollTimeMs) {
+      const hours = Math.round(maxPollTimeMs / 3_600_000);
+      // On timeout, check if the sidecar has a usable partial checkpoint
+      try {
+        const headers: Record<string, string> = {};
+        if (token) headers["Authorization"] = `Bearer ${token}`;
+        const statusRes = await fetch(`${sidecarUrl}/train-status`, { headers });
+        if (statusRes.ok) {
+          const status = await statusRes.json() as {
+            training: boolean;
+            lora_path?: string;
+            checkpoint_count?: number;
+          };
+          if (status.lora_path) {
+            // Partial checkpoint is usable — mark as ready with a note
+            characterRepo.update(characterId, {
+              status: "ready",
+              trainedLoraPath: status.lora_path,
+              errorMessage: `Training timed out after ${hours}h but a partial checkpoint was saved and is usable. Results may improve with more training.`,
+            });
+            _io?.emit("character:training:complete", { characterId, characterName, partial: true });
+            logger.warn(`[Characters] Training timed out for ${characterId} but partial checkpoint is usable: ${status.lora_path}`);
+            return;
+          }
+        }
+      } catch {
+        // Could not reach sidecar — fall through to standard timeout error
+      }
       characterRepo.update(characterId, {
         status: "failed",
-        errorMessage: "Training timed out after 4 hours",
+        errorMessage: `Training timed out after ${hours} hours. The sidecar may still be training — check its logs. You can increase the timeout in config (imageGen.trainingTimeoutHours).`,
       });
       _io?.emit("character:training:failed", { characterId, characterName });
       logger.error(`[Characters] Training timed out for ${characterId}`);
@@ -744,4 +882,34 @@ function pollTrainingStatus(
   };
 
   setTimeout(poll, pollIntervalMs);
+}
+
+/**
+ * On server start, resume polling for any characters stuck in "training" status.
+ * This handles the case where the openzigs server restarted while the sidecar
+ * was still training — re-poll so we capture completion or partial results.
+ */
+export async function resumeStaleTrainingPolls(
+  characterRepo: CharacterRepository,
+): Promise<void> {
+  const stale = characterRepo.getByStatus("training");
+  if (stale.length === 0) return;
+
+  const sidecarUrl = await getImageGenSidecarUrl();
+  if (!sidecarUrl) {
+    logger.warn(`[Characters] ${stale.length} character(s) stuck in training but no sidecar configured — marking as failed`);
+    for (const c of stale) {
+      characterRepo.update(c.id, {
+        status: "failed",
+        errorMessage: "Server restarted during training and sidecar is not configured. Re-train when ready.",
+      });
+    }
+    return;
+  }
+
+  const token = await getImageGenToken();
+  for (const character of stale) {
+    logger.info(`[Characters] Resuming training poll for '${character.name}' (${character.id})`);
+    pollTrainingStatus(character.id, character.name, sidecarUrl, token, null, characterRepo);
+  }
 }

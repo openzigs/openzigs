@@ -75,7 +75,7 @@ import { MediaQueueRepository } from "./queue/media-queue-repository.js";
 import { QueueMaster } from "./queue/queue-master.js";
 import { createQueueRouter, createQueueCallbackRouter } from "./api/queue.js";
 import { createGalleryRouter } from "./api/gallery.js";
-import { createCharacterRouter, setCharacterIO } from "./api/characters.js";
+import { createCharacterRouter, setCharacterIO, resumeStaleTrainingPolls } from "./api/characters.js";
 import { CharacterRepository } from "./characters/character-repository.js";
 
 // Register built-in post-action types (create-github-issues, send-webhook, etc.)
@@ -960,6 +960,10 @@ const io = new SocketIOServer(httpServer, {
 setDirectorIO(io);
 // Bind Socket.IO to Character router for training progress events
 setCharacterIO(io);
+// Resume polling for any characters stuck in "training" after server restart
+resumeStaleTrainingPolls(characterRepo).catch((err) => {
+  logger.warn(`[Characters] Failed to resume stale training polls: ${err}`);
+});
 
 // Socket.IO auth middleware — validate Bearer token on connection
 const expectedToken = config.auth.token ?? "";

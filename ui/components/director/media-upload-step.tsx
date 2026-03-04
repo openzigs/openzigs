@@ -4,6 +4,7 @@ import { useState, useCallback, useRef, type ChangeEvent } from "react";
 import { Upload, X, FileVideo, FileText, FolderOpen, Plus, Loader2, BookOpen, Sparkles, Clock } from "lucide-react";
 import { fetchJson } from "@/lib/api";
 import { showToast } from "@/components/toast";
+import { InlineModelPicker } from "@/components/model-picker-select";
 import type { MediaFile, ProductionMode } from "./types";
 
 interface MediaUploadStepProps {
@@ -39,6 +40,7 @@ export const MediaUploadStep = ({
   const [uploadingScript, setUploadingScript] = useState(false);
   const [uploadingSource, setUploadingSource] = useState(false);
   const [enhancingInstructions, setEnhancingInstructions] = useState(false);
+  const [llmModel, setLlmModel] = useState("");
   const clipInputRef = useRef<HTMLInputElement>(null);
   const scriptInputRef = useRef<HTMLInputElement>(null);
   const sourceInputRef = useRef<HTMLInputElement>(null);
@@ -54,7 +56,7 @@ export const MediaUploadStep = ({
         "/api/admin/director/enhance-instructions",
         {
           method: "POST",
-          body: JSON.stringify({ raw_instructions: topic.trim(), mode }),
+          body: JSON.stringify({ raw_instructions: topic.trim(), mode, ...(llmModel ? { model: llmModel } : {}) }),
         }
       );
       onTopicChange(result.enhanced_instructions);
@@ -324,14 +326,17 @@ export const MediaUploadStep = ({
               <label className="text-xs font-medium text-muted-foreground">
                 Style &amp; Instructions <span className="text-muted-foreground/50">(optional)</span>
               </label>
-              <button
-                onClick={handleEnhanceInstructions}
-                disabled={enhancingInstructions || !topic.trim()}
-                className="flex items-center gap-1.5 rounded-lg border border-primary/30 bg-primary/5 px-3 py-1 text-xs font-semibold text-primary hover:bg-primary/10 disabled:opacity-50 transition"
-              >
-                {enhancingInstructions ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
-                AI Enhance
-              </button>
+              <div className="flex items-center gap-2">
+                <InlineModelPicker value={llmModel} onChange={setLlmModel} />
+                <button
+                  onClick={handleEnhanceInstructions}
+                  disabled={enhancingInstructions || !topic.trim()}
+                  className="flex items-center gap-1.5 rounded-lg border border-primary/30 bg-primary/5 px-3 py-1 text-xs font-semibold text-primary hover:bg-primary/10 disabled:opacity-50 transition"
+                >
+                  {enhancingInstructions ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
+                  AI Enhance
+                </button>
+              </div>
             </div>
             <textarea
               value={topic}

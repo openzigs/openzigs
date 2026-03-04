@@ -23,6 +23,7 @@ import type { TaskEngine } from "../tasks/task-engine.js";
 import type { PipelineStage } from "../tasks/types.js";
 import { PipelinePlanner } from "../tasks/pipeline-planner.js";
 import type { WebhookManager } from "../webhooks/webhook-manager.js";
+import { getUserSelectedModel } from "../config/user-model.js";
 import type { SentinelService } from "../sentinel/index.js";
 import type { KnowledgeIngestionService } from "../knowledge/index.js";
 import type { BrandVoiceService } from "../personality/brand-voice-service.js";
@@ -1376,6 +1377,7 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
       const promptNames = Array.isArray(body.promptNames)
         ? body.promptNames.filter((entry): entry is string => typeof entry === "string")
         : [];
+      const bodyModel = typeof body.model === "string" ? body.model.trim() : "";
 
       if (!message) {
         return res.status(400).json({ error: "message is required" });
@@ -1400,7 +1402,8 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
 
       try {
         let response = "";
-        for await (const chunk of copilot.chat(instructions, { model: "gpt-5-mini", tools: [] })) {
+        const nlModel = bodyModel || (await getUserSelectedModel() ?? "gpt-5-mini");
+        for await (const chunk of copilot.chat(instructions, { model: nlModel, tools: [] })) {
           response += chunk;
         }
 

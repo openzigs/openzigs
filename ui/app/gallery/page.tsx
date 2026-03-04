@@ -30,6 +30,7 @@ import {
   Clock,
   Sparkles,
 } from "lucide-react";
+import { InlineModelPicker } from "@/components/model-picker-select";
 
 // ── Types ───────────────────────────────────────────────────
 
@@ -1056,6 +1057,7 @@ function GalleryStudio({ onClose, onCreated }: { onClose: () => void; onCreated:
   const [form, setForm] = useState<StudioFormState>(() => ({ ...DEFAULT_FORM, imageProvider: "local" }));
   const [submitting, setSubmitting] = useState(false);
   const [enhancing, setEnhancing] = useState(false);
+  const [llmModel, setLlmModel] = useState("");
 
   // If admin mode is network/cloud, SDXL Turbo is unavailable — auto-reset model
   const turboAvailable = imageGenMode === "local" && form.imageProvider === "local";
@@ -1112,6 +1114,7 @@ function GalleryStudio({ onClose, onCreated }: { onClose: () => void; onCreated:
           model: isMusic ? "ace-step" : isVideo ? "ltx-2" : form.imageModel,
           mode: form.mode,
           seed: form.seed ? parseInt(form.seed, 10) : undefined,
+          ...(llmModel ? { llmModel } : {}),
           parameters: isMusic
             ? { duration_seconds: form.duration_seconds, music_steps: form.music_steps, instrumental: form.instrumental }
             : {
@@ -1337,14 +1340,17 @@ function GalleryStudio({ onClose, onCreated }: { onClose: () => void; onCreated:
       <div className="mb-4">
         <div className="mb-1 flex items-center justify-between">
           <label className="text-xs font-medium text-muted-foreground">Prompt</label>
-          <button
-            onClick={handleEnhancePrompt}
-            disabled={enhancing || !form.prompt.trim()}
-            className="flex items-center gap-1.5 rounded-lg border border-primary/30 bg-primary/5 px-3 py-1 text-xs font-semibold text-primary hover:bg-primary/10 disabled:opacity-50 transition"
-          >
-            {enhancing ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
-            AI Enhance
-          </button>
+          <div className="flex items-center gap-2">
+            <InlineModelPicker value={llmModel} onChange={setLlmModel} />
+            <button
+              onClick={handleEnhancePrompt}
+              disabled={enhancing || !form.prompt.trim()}
+              className="flex items-center gap-1.5 rounded-lg border border-primary/30 bg-primary/5 px-3 py-1 text-xs font-semibold text-primary hover:bg-primary/10 disabled:opacity-50 transition"
+            >
+              {enhancing ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
+              AI Enhance
+            </button>
+          </div>
         </div>
         <textarea
           value={form.prompt}

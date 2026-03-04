@@ -4,6 +4,7 @@ import { SocialRepository } from "./social-repository.js";
 import type { Contact, IncomingSocialMessage, SocialMessage, BrainResult } from "./types.js";
 import type { CopilotWrapperService } from "../../copilot/copilot-wrapper.js";
 import type { KnowledgeIngestionService } from "../../knowledge/index.js";
+import { getUserSelectedModel } from "../../config/user-model.js";
 
 export type SocialBrainOptions = {
   repository: SocialRepository;
@@ -13,6 +14,8 @@ export type SocialBrainOptions = {
   systemPrompt?: string;
   /** Brand voice prompt block injected into the system prompt for stylistic consistency */
   brandVoiceBlock?: string;
+  /** Override which LLM model to use. Falls back to user's selected model, then copilot default. */
+  model?: string;
 };
 
 const DEFAULT_SYSTEM_PROMPT = `You are a helpful social media assistant. You respond to direct messages from users.
@@ -50,6 +53,7 @@ export class SocialBrain extends EventEmitter {
   private systemPrompt!: string;
   private baseSystemPrompt: string;
   private brandVoiceBlock: string;
+  private model: string | undefined;
 
   constructor(opts: SocialBrainOptions) {
     super();
@@ -59,6 +63,7 @@ export class SocialBrain extends EventEmitter {
     this.confidenceThreshold = opts.confidenceThreshold ?? "medium";
     this.brandVoiceBlock = opts.brandVoiceBlock ?? "";
     this.baseSystemPrompt = opts.systemPrompt ?? DEFAULT_SYSTEM_PROMPT;
+    this.model = opts.model;
     this.rebuildSystemPrompt();
   }
 
@@ -66,6 +71,11 @@ export class SocialBrain extends EventEmitter {
   setBrandVoice(block: string): void {
     this.brandVoiceBlock = block;
     this.rebuildSystemPrompt();
+  }
+
+  /** Update the model used for LLM calls at runtime. */
+  setModel(model: string | undefined): void {
+    this.model = model;
   }
 
   private rebuildSystemPrompt(): void {
@@ -189,9 +199,13 @@ export class SocialBrain extends EventEmitter {
     let fullResponse = "";
     const conversationId = `social-brain-${Date.now()}`;
 
+    // Resolve model: explicit override → user's selected model → copilot default
+    const resolvedModel = this.model ?? await getUserSelectedModel();
+
     for await (const chunk of this.copilot.chat(prompt, {
       conversationId,
       systemMessage: { mode: "replace", content: this.systemPrompt },
+      ...(resolvedModel ? { model: resolvedModel } : {}),
     })) {
       fullResponse += chunk;
     }

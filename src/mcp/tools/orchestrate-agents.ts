@@ -246,8 +246,10 @@ export const createOrchestrateAgentsTools = ({
               aggregationInput,
             ].join("\n");
 
+            const { getUserSelectedModel } = await import("../../config/user-model.js");
+            const orchModel = await getUserSelectedModel();
             let aggregated = "";
-            for await (const chunk of copilot.chat(prompt, { tools: [] })) {
+            for await (const chunk of copilot.chat(prompt, { tools: [], ...(orchModel ? { model: orchModel } : {}) })) {
               aggregated += chunk;
             }
 

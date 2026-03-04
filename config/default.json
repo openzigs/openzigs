@@ -132,7 +132,8 @@
   "imageGen": {
     "mode": "local",
     "networkNodeUrl": "",
-    "networkNodeToken": ""
+    "networkNodeToken": "",
+    "trainingTimeoutHours": 8
   },
   "videoGen": {
     "mode": "local",

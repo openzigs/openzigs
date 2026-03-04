@@ -19,6 +19,7 @@ import {
   Clock,
   Sparkles,
   Info,
+  RotateCcw,
 } from "lucide-react";
 
 // ── Types ───────────────────────────────────────────────────
@@ -82,7 +83,15 @@ export default function CharactersPage() {
   const [trainSteps, setTrainSteps] = useState(9);
   const [trainLR, setTrainLR] = useState(0.0001);
   const [trainRank, setTrainRank] = useState(16);
-  const [trainEpochs, setTrainEpochs] = useState(50);
+  const [trainEpochs, setTrainEpochs] = useState(30);
+
+  // AI Enhance model selection dialog
+  const [showEnhanceDialog, setShowEnhanceDialog] = useState(false);
+  const [enhanceModel, setEnhanceModel] = useState<string>("");
+
+  // Resume training
+  const [showResumeDialog, setShowResumeDialog] = useState(false);
+  const [resumeCharId, setResumeCharId] = useState<string | null>(null);
 
   // ── Queries ───────────────────────────────────────────
   const charactersQuery = useQuery({
@@ -93,6 +102,14 @@ export default function CharactersPage() {
 
   const characters = charactersQuery.data?.characters ?? [];
   const selected = characters.find((c) => c.id === selectedChar) ?? null;
+
+  // Fetch available models for AI Enhance model picker
+  const modelsQuery = useQuery({
+    queryKey: ["models"],
+    queryFn: () => fetchJson<{ models: { id: string }[]; selectedModel?: string | null }>("/api/models"),
+    enabled: showEnhanceDialog,
+    staleTime: 30_000,
+  });
 
   // ── Mutations ─────────────────────────────────────────
   const createMutation = useMutation({
@@ -163,37 +180,54 @@ export default function CharactersPage() {
     onError: (err) => showToast(err.message, "error"),
   });
 
+  const resumeMutation = useMutation({
+    mutationFn: ({ id, checkpoint_path }: { id: string; checkpoint_path: string }) =>
+      fetchJson<{ ok: boolean; message: string }>(`/api/characters/${id}/resume-training`, {
+        method: "POST",
+        body: JSON.stringify({ checkpoint_path }),
+      }),
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["characters"] });
+      setShowResumeDialog(false);
+      showToast(data.message, "success");
+    },
+    onError: (err) => showToast(err.message, "error"),
+  });
+
+  const checkpointsQuery = useQuery({
+    queryKey: ["train-checkpoints", resumeCharId],
+    queryFn: () => fetchJson<{ character_id: string; checkpoints: Array<{ path: string; name: string; size: number }>; train_dir: string }>(
+      `/api/characters/${resumeCharId}/checkpoints`,
+    ),
+    enabled: showResumeDialog && !!resumeCharId,
+    staleTime: 30_000,
+  });
+
   const updateMutation = useMutation({
-    mutationFn: ({ id, ...data }: { id: string; loraScale?: number; name?: string; triggerWord?: string; description?: string; photoCaptions?: Record<string, string> }) =>
+    mutationFn: ({ id, silent: _silent, ...data }: { id: string; silent?: boolean; loraScale?: number; name?: string; triggerWord?: string; description?: string; photoCaptions?: Record<string, string> }) =>
       fetchJson<CharacterProfile>(`/api/characters/${id}`, {
         method: "PUT",
         body: JSON.stringify(data),
       }),
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: ["characters"] });
-      showToast("Character updated", "success");
+      if (!variables.silent) {
+        showToast("Character updated", "success");
+      }
     },
     onError: (err) => showToast(err.message, "error"),
   });
 
   const aiEnhanceMutation = useMutation({
-    mutationFn: (id: string) =>
-      fetchJson<{ captions: Record<string, string>; params: { epochs: number; steps: number; learningRate: number; loraRank: number; loraScale: number }; totalSteps: number; reasoning?: string }>(
+    mutationFn: ({ id, model }: { id: string; model?: string }) =>
+      fetchJson<{ captions: Record<string, string>; totalSteps: number; model?: string }>(
         `/api/characters/${id}/ai-enhance`,
-        { method: "POST" },
+        { method: "POST", body: JSON.stringify(model ? { model } : {}) },
       ),
-    onSuccess: (data, id) => {
-      // Apply captions
-      updateMutation.mutate({ id, photoCaptions: data.captions });
-      // Apply suggested params to form
-      setTrainEpochs(data.params.epochs);
-      setTrainSteps(data.params.steps);
-      setTrainLR(data.params.learningRate);
-      setTrainRank(data.params.loraRank);
-      const msg = data.reasoning
-        ? `AI enhanced: ${Object.keys(data.captions).length} captions, ~${data.totalSteps} steps. ${data.reasoning}`
-        : `AI enhanced: ${Object.keys(data.captions).length} captions generated, ~${data.totalSteps} total training steps`;
-      showToast(msg, "success");
+    onSuccess: (data, { id }) => {
+      // Apply captions only — training params are intentionally not changed by AI Enhance
+      updateMutation.mutate({ id, photoCaptions: data.captions, silent: true });
+      showToast(`AI enhanced: ${Object.keys(data.captions).length} captions generated (${data.model ?? "default"})`, "success");
     },
     onError: (err) => showToast(err.message, "error"),
   });
@@ -428,7 +462,7 @@ export default function CharactersPage() {
                         type="text"
                         value={selected.description}
                         onChange={(e) =>
-                          updateMutation.mutate({ id: selected.id, description: e.target.value })
+                          updateMutation.mutate({ id: selected.id, description: e.target.value, silent: true })
                         }
                         placeholder="e.g. a husky dog with blue eyes"
                         className="w-full rounded border border-border bg-background px-2 py-0.5 text-xs"
@@ -497,7 +531,7 @@ export default function CharactersPage() {
                               value={caption}
                               onChange={(e) => {
                                 const updated = { ...selected.photoCaptions, [filename]: e.target.value };
-                                updateMutation.mutate({ id: selected.id, photoCaptions: updated });
+                                updateMutation.mutate({ id: selected.id, photoCaptions: updated, silent: true });
                               }}
                               placeholder="Caption for training..."
                               className="w-full rounded border border-border bg-background px-1.5 py-0.5 text-[10px] placeholder:text-muted-foreground/50"
@@ -560,7 +594,10 @@ export default function CharactersPage() {
                   {/* AI Enhance Button */}
                   <div className="flex items-center gap-3">
                     <button
-                      onClick={() => aiEnhanceMutation.mutate(selected.id)}
+                      onClick={() => {
+                        setEnhanceModel("");
+                        setShowEnhanceDialog(true);
+                      }}
                       disabled={aiEnhanceMutation.isPending || !selected.description || selected.referencePhotos.length === 0}
                       className="inline-flex items-center gap-2 rounded-md border border-purple-500/30 bg-purple-500/10 px-3 py-1.5 text-xs font-medium text-purple-700 hover:bg-purple-500/20 disabled:opacity-50 dark:text-purple-300"
                     >
@@ -574,7 +611,7 @@ export default function CharactersPage() {
                     <span className="text-[10px] text-muted-foreground">
                       {!selected.description
                         ? "Set a description first to enable AI enhance"
-                        : "Uses AI to generate unique per-photo captions and recommend optimal training parameters"}
+                        : "Uses AI to generate unique varied captions for each photo (training params unchanged)"}
                     </span>
                   </div>
 
@@ -693,6 +730,15 @@ export default function CharactersPage() {
                       ⚠ Need at least 5 reference photos ({selected.referencePhotos.length}/5 uploaded)
                     </p>
                   )}
+                  {selected.status === "failed" && (
+                    <button
+                      onClick={() => { setResumeCharId(selected.id); setShowResumeDialog(true); }}
+                      className="flex items-center gap-1.5 text-xs font-medium text-amber-700 underline underline-offset-2 hover:text-amber-900 dark:text-amber-300 dark:hover:text-amber-100"
+                    >
+                      <RotateCcw className="h-3 w-3" />
+                      Resume from checkpoint
+                    </button>
+                  )}
                   {selected.status === "ready" && (
                     <p className="text-xs text-emerald-600 dark:text-emerald-400">
                       ✓ LoRA adapter trained and ready. Use trigger word &quot;{selected.triggerWord}&quot; in your prompts.
@@ -725,6 +771,124 @@ export default function CharactersPage() {
           onConfirm={() => deleteMutation.mutate(deleteTarget.id)}
           onCancel={() => setDeleteTarget(null)}
         />
+      )}
+
+      {/* Resume Training Dialog */}
+      {showResumeDialog && resumeCharId && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50" onClick={() => setShowResumeDialog(false)}>
+          <div
+            className="relative w-full max-w-sm rounded-2xl border border-border bg-card p-6 shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-label="Resume Training"
+          >
+            <h3 className="mb-1 text-sm font-semibold text-foreground">Resume Training</h3>
+            <p className="mb-4 text-xs text-muted-foreground">
+              Select a checkpoint to resume from. Training will continue from that point.
+            </p>
+
+            {checkpointsQuery.isLoading && (
+              <p className="mb-4 text-xs text-muted-foreground">Loading checkpoints…</p>
+            )}
+            {checkpointsQuery.isError && (
+              <p className="mb-4 text-xs text-red-500">Failed to load checkpoints. Is the image-gen sidecar running?</p>
+            )}
+            {checkpointsQuery.data && (
+              checkpointsQuery.data.checkpoints.length === 0 ? (
+                <p className="mb-4 text-xs text-amber-600">No checkpoints found on the sidecar. The training data may have been cleaned up.</p>
+              ) : (
+                <>
+                  <label className="mb-1.5 block text-xs font-medium text-muted-foreground">Checkpoint</label>
+                  <select
+                    id="resume-checkpoint-select"
+                    className="mb-4 w-full rounded-lg border border-border bg-background px-3 py-2 text-xs text-foreground"
+                    defaultValue={checkpointsQuery.data.checkpoints[0]?.path}
+                  >
+                    {checkpointsQuery.data.checkpoints.map((cp) => (
+                      <option key={cp.path} value={cp.path}>
+                        {cp.name} ({(cp.size / 1024 / 1024).toFixed(1)} MB)
+                      </option>
+                    ))}
+                  </select>
+                </>
+              )
+            )}
+
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => setShowResumeDialog(false)}
+                className="rounded-lg border border-border px-4 py-2 text-xs font-semibold text-muted-foreground hover:bg-muted"
+              >
+                Cancel
+              </button>
+              <button
+                disabled={resumeMutation.isPending || !checkpointsQuery.data?.checkpoints.length}
+                onClick={() => {
+                  const sel = document.getElementById("resume-checkpoint-select") as HTMLSelectElement | null;
+                  const checkpoint_path = sel?.value ?? checkpointsQuery.data?.checkpoints[0]?.path ?? "";
+                  if (!checkpoint_path) return;
+                  resumeMutation.mutate({ id: resumeCharId, checkpoint_path });
+                }}
+                className="flex items-center gap-1.5 rounded-lg bg-amber-600 px-4 py-2 text-xs font-semibold text-white hover:bg-amber-700 disabled:opacity-50"
+              >
+                {resumeMutation.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <RotateCcw className="h-3 w-3" />}
+                Resume
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* AI Enhance Model Confirmation */}
+      {showEnhanceDialog && selected && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50" onClick={() => setShowEnhanceDialog(false)}>
+          <div
+            className="relative w-full max-w-sm rounded-2xl border border-border bg-card p-6 shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-label="AI Enhance Settings"
+          >
+            <h3 className="mb-1 text-sm font-semibold text-foreground">AI Enhance</h3>
+            <p className="mb-4 text-xs text-muted-foreground">
+              Each photo will be analyzed individually using vision. This will make {selected.referencePhotos.length} model request{selected.referencePhotos.length !== 1 ? "s" : ""}.
+            </p>
+
+            <label className="mb-1.5 block text-xs font-medium text-muted-foreground">Model</label>
+            <select
+              value={enhanceModel}
+              onChange={(e) => setEnhanceModel(e.target.value)}
+              className="mb-4 w-full rounded-lg border border-border bg-background px-3 py-2 text-xs text-foreground"
+            >
+              <option value="">
+                Default{modelsQuery.data?.selectedModel ? ` (${modelsQuery.data.selectedModel})` : ""}
+              </option>
+              {(modelsQuery.data?.models ?? []).map((m) => (
+                <option key={m.id} value={m.id}>{m.id}</option>
+              ))}
+            </select>
+
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => setShowEnhanceDialog(false)}
+                className="rounded-lg border border-border px-4 py-2 text-xs font-semibold text-muted-foreground hover:bg-muted"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  setShowEnhanceDialog(false);
+                  aiEnhanceMutation.mutate({
+                    id: selected.id,
+                    ...(enhanceModel ? { model: enhanceModel } : {}),
+                  });
+                }}
+                className="rounded-lg bg-purple-600 px-4 py-2 text-xs font-semibold text-white hover:bg-purple-700"
+              >
+                Enhance
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </main>
   );

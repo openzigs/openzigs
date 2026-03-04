@@ -238,10 +238,12 @@ async function describeKeyframes(
     }
 
     const prompt = buildKeyframeVisionPrompt(labels);
+    const { getUserSelectedModel } = await import("../../config/user-model.js");
+    const visionModel = await getUserSelectedModel();
 
     try {
       const chunks: string[] = [];
-      const stream = copilot.chat(prompt, { tools: [], attachments });
+      const stream = copilot.chat(prompt, { tools: [], attachments, ...(visionModel ? { model: visionModel } : {}) });
 
       for await (const chunk of stream) {
         chunks.push(chunk);

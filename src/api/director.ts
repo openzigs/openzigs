@@ -42,6 +42,7 @@ import type { BrandVoiceService } from "../personality/brand-voice-service.js";
 import type { Server as SocketIOServer } from "socket.io";
 import { NARRATION_DIRECTIVES } from "../voice/pacing-translator.js";
 import { AVAILABLE_LOCAL_VOICES } from "../voice/types.js";
+import { getUserSelectedModel } from "../config/user-model.js";
 
 /** Late-bound Socket.IO reference for emitting activity events. */
 let _io: SocketIOServer | null = null;
@@ -2165,7 +2166,7 @@ Respond with ONLY a valid JSON array. No markdown, no explanation.`;
    */
   router.post("/enhance-instructions", async (req, res) => {
     try {
-      const { raw_instructions, mode } = req.body as { raw_instructions?: string; mode?: string };
+      const { raw_instructions, mode, model: bodyModel } = req.body as { raw_instructions?: string; mode?: string; model?: string };
 
       if (!raw_instructions?.trim()) {
         res.status(400).json({ error: "raw_instructions is required" });
@@ -2196,12 +2197,14 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
 
       const userMessage = `Enhance these style and instructions for my video project:\n\n"${raw_instructions.trim()}"`;
 
+      const enhanceModel = bodyModel || await getUserSelectedModel();
       let fullResponse = "";
       for await (const chunk of copilot.chat(userMessage, {
         conversationId,
         systemMessage: { mode: "replace", content: systemMessage },
         tools: [],
         availableTools: [],
+        ...(enhanceModel ? { model: enhanceModel } : {}),
       })) {
         fullResponse += chunk;
       }
@@ -2862,10 +2865,11 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
 
         // Ask LLM for clickbait text suggestions
         try {
+          const thumbModel = await getUserSelectedModel();
           const textChunks: string[] = [];
           const textStream = copilot.chat(
             `You are a YouTube clickbait expert. Given this video title: "${manifest.projectTitle}", suggest 2 short, bold, enticing text overlay lines for the thumbnail. ALL CAPS, max 25 chars per line. Respond with JSON: { "suggestedText": ["LINE1", "LINE2"] }`,
-            { tools: [] },
+            { tools: [], ...(thumbModel ? { model: thumbModel } : {}) },
           );
           for await (const chunk of textStream) textChunks.push(chunk);
           let jsonText = textChunks.join("").trim();
@@ -2914,10 +2918,11 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
 
         // Ask LLM for clickbait text suggestions
         try {
+          const thumbModel2 = await getUserSelectedModel();
           const textChunks: string[] = [];
           const textStream = copilot.chat(
             `You are a YouTube clickbait expert. Given this video title: "${manifest.projectTitle}", suggest 2 short, bold, enticing text overlay lines for the thumbnail. ALL CAPS, max 25 chars per line. Respond with JSON: { "suggestedText": ["LINE1", "LINE2"] }`,
-            { tools: [] },
+            { tools: [], ...(thumbModel2 ? { model: thumbModel2 } : {}) },
           );
           for await (const chunk of textStream) textChunks.push(chunk);
           let jsonText = textChunks.join("").trim();
@@ -3193,11 +3198,12 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
         return;
       }
 
-      const { draftId, videoDurationSec, currentScript, context } = req.body as {
+      const { draftId, videoDurationSec, currentScript, context, model: bodyModel } = req.body as {
         draftId?: string;
         videoDurationSec?: number;
         currentScript?: string;
         context?: string;
+        model?: string;
       };
 
       if (!draftId) {
@@ -3251,7 +3257,8 @@ ${videoDurationSec ? `Aim for narration that fills approximately ${videoDuration
 Keep the same tone and style as the surrounding scenes.
 Return ONLY the new narration text, no explanations or formatting.`;
 
-      const stream = copilot.chat(prompt, { tools: [] });
+      const rewriteModel = bodyModel || await getUserSelectedModel();
+      const stream = copilot.chat(prompt, { tools: [], ...(rewriteModel ? { model: rewriteModel } : {}) });
       const chunks: string[] = [];
       for await (const chunk of stream) {
         chunks.push(chunk);
@@ -3836,7 +3843,7 @@ Return ONLY the new narration text, no explanations or formatting.`;
    */
   router.post("/voice/analyze-params", async (req, res) => {
     try {
-      const { text } = req.body as { text?: string };
+      const { text, model: bodyModel } = req.body as { text?: string; model?: string };
       if (!text || typeof text !== "string" || text.trim().length === 0) {
         res.status(400).json({ error: "text is required" });
         return;
@@ -3865,6 +3872,7 @@ Consider these factors when recommending parameters:
 Respond ONLY with a bare JSON object — no markdown, no code fences:
 {"speed": number, "steps": number, "method": "euler"|"midpoint"|"rk4", "cfgStrength": number, "swayCoef": number, "reasoning": "One sentence explaining your choices"}`;
 
+      const ttsModel = bodyModel || await getUserSelectedModel();
       let fullResponse = "";
       for await (const chunk of copilot.chat(
         `Analyze this narration text and recommend optimal F5-TTS parameters:\n\n"${text.trim()}"`,
@@ -3873,6 +3881,7 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
           systemMessage: { mode: "replace", content: systemMessage },
           tools: [],
           availableTools: [],
+          ...(ttsModel ? { model: ttsModel } : {}),
         },
       )) {
         fullResponse += chunk;
@@ -3924,7 +3933,7 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
    */
   router.post("/voice/add-directives", async (req, res) => {
     try {
-      const { text, engine } = req.body as { text?: string; engine?: string };
+      const { text, engine, model: bodyModel } = req.body as { text?: string; engine?: string; model?: string };
       if (!text || typeof text !== "string" || text.trim().length === 0) {
         res.status(400).json({ error: "text is required" });
         return;
@@ -3974,6 +3983,7 @@ ${isF5 ? "6. Emotion tags should only change 1-3 times in a typical paragraph. D
 Respond ONLY with a bare JSON object — no markdown, no code fences:
 {"enhanced": "the original text with directives inserted", "reasoning": "Brief explanation of your choices"}`;
 
+      const directiveModel = bodyModel || await getUserSelectedModel();
       let fullResponse = "";
       for await (const chunk of copilot.chat(
         `Add narration directives to this script:\n\n"${text.trim()}"`,
@@ -3982,6 +3992,7 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
           systemMessage: { mode: "replace", content: systemMessage },
           tools: [],
           availableTools: [],
+          ...(directiveModel ? { model: directiveModel } : {}),
         },
       )) {
         fullResponse += chunk;
@@ -4026,7 +4037,7 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
    */
   router.post("/scenes/:sceneIndex/enhance-prompt", async (req, res) => {
     try {
-      const { prompt, context } = req.body as { prompt?: string; context?: string };
+      const { prompt, context, model: bodyModel } = req.body as { prompt?: string; context?: string; model?: string };
 
       if (!prompt || typeof prompt !== "string" || prompt.trim().length === 0) {
         res.status(400).json({ error: "prompt is required" });
@@ -4050,6 +4061,7 @@ ${context ? `\nContext about the overall video: ${context}` : ""}
 Respond ONLY with a bare JSON object — no markdown, no code fences:
 {"thinking": "One sentence explaining what you improved", "enhanced_prompt": "The enhanced prompt string"}`;
 
+      const sceneModel = bodyModel || await getUserSelectedModel();
       let fullResponse = "";
       for await (const chunk of copilot.chat(
         `Enhance this image generation prompt:\n\n"${prompt.trim()}"`,
@@ -4058,6 +4070,7 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
           systemMessage: { mode: "replace", content: systemMessage },
           tools: [],
           availableTools: [],
+          ...(sceneModel ? { model: sceneModel } : {}),
         },
       )) {
         fullResponse += chunk;
@@ -4189,7 +4202,7 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
    */
   router.post("/enhance-overview", async (req, res) => {
     try {
-      const { overview } = req.body as { overview?: string };
+      const { overview, model: bodyModel } = req.body as { overview?: string; model?: string };
 
       if (!overview || typeof overview !== "string" || overview.trim().length === 0) {
         res.status(400).json({ error: "overview is required" });
@@ -4211,6 +4224,7 @@ Your job: take a rough hero reel overview description and enhance it into a clea
 Respond ONLY with a bare JSON object — no markdown, no code fences:
 {"enhanced_overview": "The improved overview string"}`;
 
+      const overviewModel = bodyModel || await getUserSelectedModel();
       let fullResponse = "";
       for await (const chunk of copilot.chat(
         `Enhance this hero reel overview description:\n\n"${overview.trim()}"`,
@@ -4219,6 +4233,7 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
           systemMessage: { mode: "replace", content: systemMessage },
           tools: [],
           availableTools: [],
+          ...(overviewModel ? { model: overviewModel } : {}),
         },
       )) {
         fullResponse += chunk;
@@ -4380,10 +4395,11 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
         const conversationId = `describe-inspiration-images-${Date.now()}`;
         try {
           const imageList = extractedImages.map((img, i) => `${i}: "${img.description}"`).join("\n");
+          const descModel = await getUserSelectedModel();
           let descResponse = "";
           for await (const chunk of copilot.chat(
             `Given these image references from a document, write a concise visual description (1 sentence) for each that would be useful for a hero reel video. If the alt text is already descriptive, refine it. If it's just a filename, infer from context.\n\nImages:\n${imageList}\n\nDocument context (first 1000 chars):\n${extractedText.slice(0, 1000)}\n\nRespond with a JSON array of strings, one description per image. No markdown fences.`,
-            { conversationId, tools: [], availableTools: [] },
+            { conversationId, tools: [], availableTools: [], ...(descModel ? { model: descModel } : {}) },
           )) {
             descResponse += chunk;
           }

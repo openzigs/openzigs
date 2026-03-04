@@ -395,6 +395,7 @@ const JobForm = ({ existing, onClose }: { existing: ScheduledJob | null; onClose
         body: JSON.stringify({
           message,
           promptNames: prompts.map((p) => p.name),
+          ...(model ? { model } : {}),
         }),
       }),
     onSuccess: ({ suggestion }) => {

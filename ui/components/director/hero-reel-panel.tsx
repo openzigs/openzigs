@@ -5,6 +5,7 @@ import { Sparkles, Loader2, Play, CheckCircle2, XCircle, ImagePlus, X, FileText,
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { fetchJson } from "@/lib/api";
 import { showToast } from "@/components/toast";
+import { InlineModelPicker } from "@/components/model-picker-select";
 
 type HeroReelJobResponse = { produceJobId: string };
 type HeroReelJobStatus = {
@@ -63,6 +64,7 @@ type SearchHit = {
 export const HeroReelPanel = () => {
   const [overview, setOverview] = useState("");
   const [enhancingOverview, setEnhancingOverview] = useState(false);
+  const [llmModel, setLlmModel] = useState("");
   const [produceJobId, setProduceJobId] = useState<string | null>(null);
   const [phase, setPhase] = useState<"idle" | "generating" | "complete" | "failed">("idle");
   const [imageModel, setImageModel] = useState<ImageModel>("flux-schnell");
@@ -100,7 +102,7 @@ export const HeroReelPanel = () => {
         "/api/admin/director/enhance-overview",
         {
           method: "POST",
-          body: JSON.stringify({ overview }),
+          body: JSON.stringify({ overview, ...(llmModel ? { model: llmModel } : {}) }),
         },
       );
       setOverview(result.enhanced_overview);
@@ -109,7 +111,7 @@ export const HeroReelPanel = () => {
     } finally {
       setEnhancingOverview(false);
     }
-  }, [overview]);
+  }, [overview, llmModel]);
 
   const handleAddImages = useCallback(async (files: FileList) => {
     const newImages: UserImage[] = Array.from(files)
@@ -383,18 +385,21 @@ export const HeroReelPanel = () => {
             1. Presentation Overview &amp; Tone{" "}
             <span className="text-muted-foreground/50">(optional)</span>
           </label>
-          <button
-            onClick={handleEnhanceOverview}
-            disabled={enhancingOverview || !overview.trim() || phase === "generating"}
-            className="flex items-center gap-1 rounded border border-primary/30 bg-primary/5 px-2 py-0.5 text-[10px] font-medium text-primary hover:bg-primary/10 disabled:opacity-50 transition"
-          >
-            {enhancingOverview ? (
-              <Loader2 className="h-2.5 w-2.5 animate-spin" />
-            ) : (
-              <Sparkles className="h-2.5 w-2.5" />
-            )}
-            AI Enhance
-          </button>
+          <div className="flex items-center gap-2">
+            <InlineModelPicker value={llmModel} onChange={setLlmModel} />
+            <button
+              onClick={handleEnhanceOverview}
+              disabled={enhancingOverview || !overview.trim() || phase === "generating"}
+              className="flex items-center gap-1 rounded border border-primary/30 bg-primary/5 px-2 py-0.5 text-[10px] font-medium text-primary hover:bg-primary/10 disabled:opacity-50 transition"
+            >
+              {enhancingOverview ? (
+                <Loader2 className="h-2.5 w-2.5 animate-spin" />
+              ) : (
+                <Sparkles className="h-2.5 w-2.5" />
+              )}
+              AI Enhance
+            </button>
+          </div>
         </div>
         <textarea
           value={overview}

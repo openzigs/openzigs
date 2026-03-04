@@ -10,6 +10,7 @@ import type {
   PresentationRow,
   QuizCacheRow,
 } from "./presentation-repository.js";
+import { getUserSelectedModel } from "../config/user-model.js";
 
 export interface QuizGeneratorDeps {
   copilotWrapper: CopilotWrapper;
@@ -107,9 +108,11 @@ export class QuizGenerator {
       context,
     ].join("\n");
 
+    const quizModel = await getUserSelectedModel();
     let fullResponse = "";
     for await (const token of this.copilot.chat(prompt, {
       tools: [],
+      ...(quizModel ? { model: quizModel } : {}),
       systemMessage: {
         mode: "replace",
         content:
