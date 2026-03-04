@@ -877,6 +877,9 @@ async def generate(req: GenerateRequest):
     if _loading:
         raise HTTPException(status_code=409, detail="A model is currently being loaded")
 
+    # Stop training if active — can't run both (each needs ~28GB unified memory)
+    _stop_training_for_inference()
+
     # ── Lazy load / model switch ───────────────────────────────
     requested_model = req.model or (_model_name if _model_loaded else _default_model)
     if requested_model not in MODEL_REGISTRY:
@@ -966,6 +969,9 @@ async def img2img(req: Img2ImgRequest):
         raise HTTPException(status_code=503, detail="Server not ready")
     if _loading:
         raise HTTPException(status_code=409, detail="A model is currently being loaded")
+
+    # Stop training if active — can't run both (each needs ~28GB unified memory)
+    _stop_training_for_inference()
 
     # ── Resolve source image to a local path ───────────────────
     tmp_file = None
@@ -1091,6 +1097,9 @@ async def kontext_edit(req: KontextRequest):
     if _loading:
         raise HTTPException(status_code=409, detail="A model is currently being loaded")
 
+    # Stop training if active — can't run both (each needs ~28GB unified memory)
+    _stop_training_for_inference()
+
     # ── Resolve source image to a local path ───────────────────
     tmp_file = None
     if req.image:
@@ -1211,6 +1220,9 @@ async def generate_controlnet(req: ControlNetRequest):
     if _loading:
         raise HTTPException(status_code=409, detail="A model is currently being loaded")
 
+    # Stop training if active — can't run both (each needs ~28GB unified memory)
+    _stop_training_for_inference()
+
     if not os.path.isfile(req.controlnet_image_path):
         raise HTTPException(status_code=400, detail=f"Control image not found: {req.controlnet_image_path}")
 
@@ -1317,9 +1329,66 @@ class TrainResponse(BaseModel):
 
 # Training state
 _training: bool = False
+_train_paused: bool = False
 _train_process: Any = None
 _train_error: Optional[str] = None
 _train_output_dir: Optional[str] = None
+
+
+def _stop_training_for_inference() -> bool:
+    """If a training job is running, kill it to free memory for inference.
+
+    mflux-train is a separate process with its own ~28GB model in unified
+    memory.  Running it simultaneously with inference would double memory usage
+    and crash on memory-constrained Macs.  Training saves checkpoints so it
+    can always be resumed later via /train-resume.
+
+    Returns True if training was stopped, False if no training was active.
+    """
+    import signal as _signal
+
+    global _training, _train_paused, _train_process, _train_error
+
+    if not _training or _train_process is None:
+        return False
+
+    pid = _train_process.pid
+    log.warning(
+        f"[train] Stopping training (pid={pid}) to free memory for inference. "
+        f"Training can be resumed from the latest checkpoint via /train-resume."
+    )
+
+    try:
+        # If paused (SIGSTOP), resume first so it can be terminated cleanly
+        if _train_paused:
+            try:
+                _train_process.send_signal(_signal.SIGCONT)
+            except Exception:
+                pass
+
+        _train_process.terminate()  # SIGTERM — gives mflux a chance to flush
+        try:
+            _train_process.wait(timeout=10)
+        except Exception:
+            _train_process.kill()  # SIGKILL if it didn't exit
+            _train_process.wait(timeout=5)
+    except Exception as e:
+        log.error(f"[train] Failed to stop training process: {e}")
+
+    _training = False
+    _train_paused = False
+    _train_process = None
+    _train_error = "Training stopped to free memory for image generation. Resume from checkpoint when ready."
+
+    gc.collect()
+    try:
+        import mlx.core as mx
+        mx.clear_cache()
+        log.info(f"[train] Memory reclaimed after stopping training (active={mx.metal.get_active_memory()//1024//1024}MB)")
+    except Exception:
+        pass
+
+    return True
 
 
 def _materialize_network_training(req: TrainRequest) -> str:
@@ -1477,6 +1546,11 @@ async def train_lora(req: TrainRequest, background_tasks: BackgroundTasks):
     if _training:
         raise HTTPException(status_code=409, detail="A training job is already in progress")
 
+    # Unload any loaded inference model to free memory for training
+    if _model_loaded:
+        log.info("[train] Unloading inference model to free memory for training")
+        _unload_model()
+
     # Determine config path
     if req.train_config_path:
         # Local mode — config file on this machine
@@ -1541,12 +1615,51 @@ async def train_status():
 
     return {
         "training": _training,
+        "paused": _train_paused,
         "process_alive": _train_process is not None and _train_process.poll() is None if _train_process else False,
         "error": _train_error,
         "output_dir": _train_output_dir,
         "lora_path": lora_path,
         "checkpoint_count": checkpoint_count,
     }
+
+
+@app.post("/train-pause", dependencies=[Depends(verify_token)])
+async def pause_training():
+    """Pause the active training process (SIGSTOP)."""
+    import signal as _signal
+
+    global _train_paused
+    if not _training or _train_process is None:
+        raise HTTPException(status_code=409, detail="No training job is currently running")
+    if _train_paused:
+        return {"ok": True, "message": "Training is already paused"}
+    try:
+        _train_process.send_signal(_signal.SIGSTOP)
+        _train_paused = True
+        log.info("[train] Training paused (SIGSTOP)")
+        return {"ok": True, "message": "Training paused"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to pause training: {e}")
+
+
+@app.post("/train-unpause", dependencies=[Depends(verify_token)])
+async def unpause_training():
+    """Resume a paused training process (SIGCONT)."""
+    import signal as _signal
+
+    global _train_paused
+    if not _training or _train_process is None:
+        raise HTTPException(status_code=409, detail="No training job is currently running")
+    if not _train_paused:
+        return {"ok": True, "message": "Training is not paused"}
+    try:
+        _train_process.send_signal(_signal.SIGCONT)
+        _train_paused = False
+        log.info("[train] Training resumed (SIGCONT)")
+        return {"ok": True, "message": "Training resumed"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to resume training: {e}")
 
 
 @app.get("/train-checkpoints", dependencies=[Depends(verify_token)])
@@ -1591,6 +1704,11 @@ async def resume_train_lora(req: ResumeTrainRequest, background_tasks: Backgroun
 
     if _training:
         raise HTTPException(status_code=409, detail="A training job is already in progress")
+
+    # Unload any loaded inference model to free memory for training
+    if _model_loaded:
+        log.info("[train] Unloading inference model to free memory for training resume")
+        _unload_model()
 
     if not os.path.isfile(req.checkpoint_path):
         raise HTTPException(status_code=400, detail=f"Checkpoint not found: {req.checkpoint_path}")
@@ -1665,7 +1783,7 @@ def _bg_train_resume(checkpoint_path: str) -> None:
     """Background task: resume mflux-train from a checkpoint zip."""
     import subprocess
 
-    global _training, _train_process, _train_error
+    global _training, _train_paused, _train_process, _train_error
     try:
         log.info(f"[train] Spawning mflux-train --resume {checkpoint_path}")
         _train_process = subprocess.Popen(
@@ -1697,6 +1815,7 @@ def _bg_train_resume(checkpoint_path: str) -> None:
         log.error(f"[train] Resume training error: {e}")
     finally:
         _training = False
+        _train_paused = False
         _train_process = None
         gc.collect()
         try:
@@ -1732,7 +1851,7 @@ def _bg_train(config_path: str) -> None:
     """Background task: run mflux-train subprocess."""
     import subprocess
 
-    global _training, _train_process, _train_error
+    global _training, _train_paused, _train_process, _train_error
     try:
         log.info(f"[train] Spawning mflux-train --config {config_path}")
         _train_process = subprocess.Popen(
@@ -1778,6 +1897,7 @@ def _bg_train(config_path: str) -> None:
         log.error(f"[train] Training error: {e}")
     finally:
         _training = False
+        _train_paused = False
         _train_process = None
         # Reclaim VRAM after training
         gc.collect()
@@ -1799,6 +1919,8 @@ async def generate_async(req: AsyncGenerateRequest, background_tasks: Background
         raise HTTPException(status_code=503, detail="Server not ready")
     if _loading or _generating:
         raise HTTPException(status_code=409, detail="Server is busy with another generation")
+    # Stop training if active — can't run both (each needs ~28GB unified memory)
+    _stop_training_for_inference()
     requested_model = req.model or (_model_name if _model_loaded else _default_model)
     if requested_model not in MODEL_REGISTRY:
         raise HTTPException(status_code=400, detail=f"Unknown model: {requested_model}")
@@ -1827,6 +1949,8 @@ async def img2img_async(req: AsyncImg2ImgRequest, background_tasks: BackgroundTa
         raise HTTPException(status_code=503, detail="Server not ready")
     if _loading or _generating:
         raise HTTPException(status_code=409, detail="Server is busy with another generation")
+    # Stop training if active — can't run both (each needs ~28GB unified memory)
+    _stop_training_for_inference()
     tmp_path: Optional[str] = None
     if req.image:
         try:

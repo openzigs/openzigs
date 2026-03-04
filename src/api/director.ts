@@ -4331,62 +4331,177 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
         }
       }
 
-      // For PDFs, render each page to a PNG to capture embedded images/diagrams
+      // For PDFs, extract embedded images using pdfimages (poppler).
+      // Falls back to page rendering via ImageMagick if pdfimages is unavailable.
       if (ext === ".pdf") {
         const { execFile } = await import("node:child_process");
         const { promisify } = await import("node:util");
         const execFileAsync = promisify(execFile);
         const osMod = await import("node:os");
+        const imgDir = pathMod.join(osMod.homedir(), ".openzigs", "director", "images");
+        await fs.mkdir(imgDir, { recursive: true });
 
-        // Check if ImageMagick is available
-        let hasMagick = false;
+        let hasPdfImages = false;
         try {
-          await execFileAsync("magick", ["--version"]);
-          hasMagick = true;
+          await execFileAsync("pdfimages", ["-v"]);
+          hasPdfImages = true;
         } catch {
-          logger.debug("[Director API] ImageMagick not available for PDF page rendering");
+          logger.debug("[Director API] pdfimages (poppler) not available");
         }
 
-        if (hasMagick) {
-          // Identify how many pages the PDF has
-          let pageCount = 0;
+        if (hasPdfImages) {
+          // Extract actual embedded images from the PDF
+          const tmpDir = pathMod.join(osMod.tmpdir(), `openzigs-pdfimg-${Date.now()}`);
+          await fs.mkdir(tmpDir, { recursive: true });
           try {
-            const { stdout } = await execFileAsync("magick", ["identify", inputPath]);
-            pageCount = stdout.trim().split("\n").length;
-          } catch (err) {
-            logger.warn(`[Director API] Failed to identify PDF pages: ${err instanceof Error ? err.message : String(err)}`);
-          }
+            const prefix = pathMod.join(tmpDir, "img");
+            // -png renders all images as PNG; -j keeps JPEG images as JPEG
+            await execFileAsync("pdfimages", ["-j", inputPath, prefix]);
+            const tmpFiles = await fs.readdir(tmpDir);
+            const imageFiles = tmpFiles
+              .filter((f) => /\.(png|jpg|jpeg|ppm|pbm|tiff)$/i.test(f))
+              .sort();
 
-          if (pageCount > 0) {
-            // Cap to 10 pages to avoid excessive processing
-            const maxPages = Math.min(pageCount, 10);
-            const imgDir = pathMod.join(osMod.homedir(), ".openzigs", "director", "images");
-            await fs.mkdir(imgDir, { recursive: true });
+            // Filter out tiny images (icons, bullets, etc.) — keep only substantive ones
+            let idx = 0;
+            for (const imgFile of imageFiles) {
+              const srcPath = pathMod.join(tmpDir, imgFile);
+              const stat = await fs.stat(srcPath);
+              // Skip images smaller than 5KB (likely icons/decorations)
+              if (stat.size < 5120) continue;
 
-            for (let i = 0; i < maxPages; i++) {
-              try {
-                const outName = `insp-pdf-${Date.now()}-page${i + 1}.png`;
-                const outPath = pathMod.join(imgDir, outName);
-                await execFileAsync("magick", [
-                  "-density", "200",
-                  "-quality", "90",
-                  `${inputPath}[${i}]`,
-                  "-flatten",
-                  "-resize", "1536x1536>",
-                  outPath,
-                ]);
-                extractedImages.push({
-                  path: outPath,
-                  description: `PDF page ${i + 1}`,
-                });
-              } catch (err) {
-                logger.warn(`[Director API] PDF page ${i + 1} render failed: ${err instanceof Error ? err.message : String(err)}`);
+              idx++;
+              if (idx > 30) break; // Cap at 30 embedded images
+              const outExt = pathMod.extname(imgFile).toLowerCase() === ".jpg" ? ".jpg" : ".png";
+              const outName = `insp-pdf-embed-${Date.now()}-${idx}${outExt}`;
+              const outPath = pathMod.join(imgDir, outName);
+
+              // For PPM/PBM files, convert to PNG via ImageMagick if available
+              if (/\.(ppm|pbm)$/i.test(imgFile)) {
+                try {
+                  await execFileAsync("magick", [srcPath, outPath]);
+                } catch {
+                  continue; // skip unconvertible formats
+                }
+              } else {
+                await fs.copyFile(srcPath, outPath);
               }
+
+              extractedImages.push({
+                path: outPath,
+                description: `Embedded image ${idx} from PDF`,
+              });
             }
             if (extractedImages.length > 0) {
-              logger.info(`[Director API] Extracted ${extractedImages.length} page image(s) from PDF`);
+              logger.info(`[Director API] Extracted ${extractedImages.length} embedded image(s) from PDF via pdfimages`);
+            }
+          } catch (err) {
+            logger.warn(`[Director API] pdfimages extraction failed: ${err instanceof Error ? err.message : String(err)}`);
+          } finally {
+            await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+          }
+        }
+
+        // Fallback: if no embedded images found, render pages as screenshots
+        if (extractedImages.length === 0) {
+          let hasMagick = false;
+          try {
+            await execFileAsync("magick", ["--version"]);
+            hasMagick = true;
+          } catch {
+            logger.debug("[Director API] ImageMagick not available for PDF page rendering");
+          }
+
+          if (hasMagick) {
+            let pageCount = 0;
+            try {
+              const { stdout } = await execFileAsync("magick", ["identify", inputPath]);
+              pageCount = stdout.trim().split("\n").length;
+            } catch (err) {
+              logger.warn(`[Director API] Failed to identify PDF pages: ${err instanceof Error ? err.message : String(err)}`);
+            }
+
+            if (pageCount > 0) {
+              const maxPages = Math.min(pageCount, 10);
+              for (let i = 0; i < maxPages; i++) {
+                try {
+                  const outName = `insp-pdf-${Date.now()}-page${i + 1}.png`;
+                  const outPath = pathMod.join(imgDir, outName);
+                  await execFileAsync("magick", [
+                    "-density", "200",
+                    "-quality", "90",
+                    `${inputPath}[${i}]`,
+                    "-flatten",
+                    "-resize", "1536x1536>",
+                    outPath,
+                  ]);
+                  extractedImages.push({
+                    path: outPath,
+                    description: `PDF page ${i + 1}`,
+                  });
+                } catch (err) {
+                  logger.warn(`[Director API] PDF page ${i + 1} render failed: ${err instanceof Error ? err.message : String(err)}`);
+                }
+              }
+              if (extractedImages.length > 0) {
+                logger.info(`[Director API] Extracted ${extractedImages.length} page image(s) from PDF (fallback)`);
+              }
             }
           }
+        }
+      }
+
+      // For DOCX files, extract embedded images from the word/media/ directory
+      if (ext === ".docx") {
+        const { execFile } = await import("node:child_process");
+        const { promisify } = await import("node:util");
+        const execFileAsync = promisify(execFile);
+        const osMod = await import("node:os");
+        const imgDir = pathMod.join(osMod.homedir(), ".openzigs", "director", "images");
+        await fs.mkdir(imgDir, { recursive: true });
+
+        const tmpDir = pathMod.join(osMod.tmpdir(), `openzigs-docximg-${Date.now()}`);
+        await fs.mkdir(tmpDir, { recursive: true });
+        try {
+          // DOCX is a ZIP archive — extract word/media/* which contains embedded images
+          await execFileAsync("unzip", ["-j", "-o", inputPath, "word/media/*", "-d", tmpDir]);
+          const tmpFiles = await fs.readdir(tmpDir);
+          const imageFiles = tmpFiles
+            .filter((f) => /\.(png|jpg|jpeg|gif|bmp|tiff|emf|wmf|svg)$/i.test(f))
+            .sort();
+
+          let idx = 0;
+          for (const imgFile of imageFiles) {
+            const srcPath = pathMod.join(tmpDir, imgFile);
+            const stat = await fs.stat(srcPath);
+            // Skip tiny images (decorations/bullets) under 5KB
+            if (stat.size < 5120) continue;
+            // Skip EMF/WMF vector formats that can't be displayed as-is
+            if (/\.(emf|wmf)$/i.test(imgFile)) continue;
+
+            idx++;
+            if (idx > 30) break;
+            const outExt = pathMod.extname(imgFile).toLowerCase();
+            const outName = `insp-docx-${Date.now()}-${idx}${outExt}`;
+            const outPath = pathMod.join(imgDir, outName);
+            await fs.copyFile(srcPath, outPath);
+
+            extractedImages.push({
+              path: outPath,
+              description: `Embedded image ${idx} from document`,
+            });
+          }
+          if (extractedImages.length > 0) {
+            logger.info(`[Director API] Extracted ${extractedImages.length} embedded image(s) from DOCX`);
+          }
+        } catch (err) {
+          // unzip returns exit code 11 if no matching files found — not an error
+          const msg = err instanceof Error ? err.message : String(err);
+          if (!msg.includes("filename not matched")) {
+            logger.debug(`[Director API] DOCX image extraction: ${msg}`);
+          }
+        } finally {
+          await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
         }
       }
 

@@ -3,7 +3,7 @@
 import { useState, useCallback, useRef, type ChangeEvent } from "react";
 import { Sparkles, Loader2, Play, CheckCircle2, XCircle, ImagePlus, X, FileText, Upload, Wifi, WifiOff, Music, Library, Globe, Pause, Check } from "lucide-react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { fetchJson } from "@/lib/api";
+import { fetchJson, buildMediaUrl } from "@/lib/api";
 import { showToast } from "@/components/toast";
 import { InlineModelPicker } from "@/components/model-picker-select";
 
@@ -80,6 +80,9 @@ export const HeroReelPanel = () => {
   const imageInputRef = useRef<HTMLInputElement>(null);
   const inspirationInputRef = useRef<HTMLInputElement>(null);
   const musicFileInputRef = useRef<HTMLInputElement>(null);
+  const [imageDragOver, setImageDragOver] = useState(false);
+  const [inspirationDragOver, setInspirationDragOver] = useState(false);
+  const [musicDragOver, setMusicDragOver] = useState(false);
 
   // Check sidecar health to discover available models
   const sidecarHealthQuery = useQuery({
@@ -193,7 +196,7 @@ export const HeroReelPanel = () => {
         const newImages: UserImage[] = result.images.map((img, i) => ({
           id: `insp-${Date.now()}-${i}`,
           file: new File([], img.path.split("/").pop() ?? "image"),
-          previewUrl: img.url ?? "",
+          previewUrl: img.url ? buildMediaUrl(img.url) : "",
           description: img.description,
           uploadedPath: img.path,
         }));
@@ -446,7 +449,18 @@ export const HeroReelPanel = () => {
         </div>
 
         {userImages.length > 0 ? (
-          <div className="space-y-2">
+          <div
+            className={`space-y-2 rounded-xl border-2 border-dashed p-1 transition ${
+              imageDragOver ? "border-primary/60 bg-primary/5" : "border-transparent"
+            }`}
+            onDragOver={(e) => { e.preventDefault(); setImageDragOver(true); }}
+            onDragLeave={() => setImageDragOver(false)}
+            onDrop={(e) => {
+              e.preventDefault();
+              setImageDragOver(false);
+              if (e.dataTransfer.files.length > 0) handleAddImages(e.dataTransfer.files);
+            }}
+          >
             {userImages.map((img) => (
               <div
                 key={img.id}
@@ -487,7 +501,18 @@ export const HeroReelPanel = () => {
         ) : (
           <div
             onClick={() => imageInputRef.current?.click()}
-            className="flex cursor-pointer items-center justify-center gap-2 rounded-xl border-2 border-dashed border-border bg-card/50 px-4 py-6 text-xs text-muted-foreground hover:border-primary/30 hover:bg-card transition"
+            onDragOver={(e) => { e.preventDefault(); setImageDragOver(true); }}
+            onDragLeave={() => setImageDragOver(false)}
+            onDrop={(e) => {
+              e.preventDefault();
+              setImageDragOver(false);
+              if (e.dataTransfer.files.length > 0) handleAddImages(e.dataTransfer.files);
+            }}
+            className={`flex cursor-pointer items-center justify-center gap-2 rounded-xl border-2 border-dashed px-4 py-6 text-xs transition ${
+              imageDragOver
+                ? "border-primary/60 bg-primary/10 text-primary"
+                : "border-border bg-card/50 text-muted-foreground hover:border-primary/30 hover:bg-card"
+            }`}
           >
             <ImagePlus className="h-4 w-4" />
             <span>Drop images here or click to browse — AI will fill any gaps</span>
@@ -517,8 +542,26 @@ export const HeroReelPanel = () => {
               {inspirationResult && (
                 <p className="text-[10px] text-muted-foreground">
                   {inspirationResult.text ? `${inspirationResult.text.length.toLocaleString()} chars extracted` : "No text"}
-                  {inspirationResult.images.length > 0 && ` · ${inspirationResult.images.length} image(s) found`}
+                  {inspirationResult.images.length > 0 && ` · ${inspirationResult.images.length} image(s) added`}
                 </p>
+              )}
+              {inspirationResult && inspirationResult.images.length > 0 && (
+                <div className="mt-2 flex flex-wrap gap-1">
+                  {inspirationResult.images.slice(0, 10).map((img, i) => (
+                    <img
+                      key={i}
+                      src={img.url ? buildMediaUrl(img.url) : ""}
+                      alt={img.description}
+                      title={img.description}
+                      className="h-10 w-10 rounded object-cover border border-border"
+                    />
+                  ))}
+                  {inspirationResult.images.length > 10 && (
+                    <div className="flex h-10 w-10 items-center justify-center rounded border border-border bg-muted text-[10px] text-muted-foreground">
+                      +{inspirationResult.images.length - 10}
+                    </div>
+                  )}
+                </div>
               )}
             </div>
             {processingInspiration ? (
@@ -538,7 +581,19 @@ export const HeroReelPanel = () => {
         ) : (
           <div
             onClick={() => inspirationInputRef.current?.click()}
-            className="flex cursor-pointer items-center justify-center gap-2 rounded-xl border-2 border-dashed border-border bg-card/50 px-4 py-6 text-xs text-muted-foreground hover:border-primary/30 hover:bg-card transition"
+            onDragOver={(e) => { e.preventDefault(); setInspirationDragOver(true); }}
+            onDragLeave={() => setInspirationDragOver(false)}
+            onDrop={(e) => {
+              e.preventDefault();
+              setInspirationDragOver(false);
+              const file = e.dataTransfer.files?.[0];
+              if (file) handleInspirationFile(file);
+            }}
+            className={`flex cursor-pointer items-center justify-center gap-2 rounded-xl border-2 border-dashed px-4 py-6 text-xs transition ${
+              inspirationDragOver
+                ? "border-primary/60 bg-primary/10 text-primary"
+                : "border-border bg-card/50 text-muted-foreground hover:border-primary/30 hover:bg-card"
+            }`}
           >
             <Upload className="h-4 w-4" />
             <span>Upload a markdown, PDF, image, or document as inspiration</span>
@@ -621,7 +676,19 @@ export const HeroReelPanel = () => {
                 <button
                   onClick={() => musicFileInputRef.current?.click()}
                   disabled={musicUploadMutation.isPending || phase === "generating"}
-                  className="w-full flex items-center justify-center gap-2 rounded-lg border-2 border-dashed border-border bg-card/50 px-4 py-5 text-xs text-muted-foreground hover:border-primary/30 hover:bg-card transition disabled:opacity-50"
+                  onDragOver={(e) => { e.preventDefault(); setMusicDragOver(true); }}
+                  onDragLeave={() => setMusicDragOver(false)}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    setMusicDragOver(false);
+                    const file = e.dataTransfer.files?.[0];
+                    if (file) musicUploadMutation.mutate(file);
+                  }}
+                  className={`w-full flex items-center justify-center gap-2 rounded-lg border-2 border-dashed px-4 py-5 text-xs transition disabled:opacity-50 ${
+                    musicDragOver
+                      ? "border-primary/60 bg-primary/10 text-primary"
+                      : "border-border bg-card/50 text-muted-foreground hover:border-primary/30 hover:bg-card"
+                  }`}
                 >
                   {musicUploadMutation.isPending ? (
                     <Loader2 className="h-4 w-4 animate-spin" />

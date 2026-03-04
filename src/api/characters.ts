@@ -520,6 +520,62 @@ export function createCharacterRouter({ characterRepo, copilot }: CharacterRoute
     }
   });
 
+  // ── POST /:id/pause-training — Pause active training (SIGSTOP via sidecar) ──
+  router.post("/:id/pause-training", async (req, res) => {
+    try {
+      const character = characterRepo.getById(req.params.id);
+      if (!character) { res.status(404).json({ error: "Character not found" }); return; }
+      if (character.status !== "training") {
+        res.status(409).json({ error: "Character is not currently training" });
+        return;
+      }
+      const sidecarUrl = await getImageGenSidecarUrl();
+      if (!sidecarUrl) { res.status(503).json({ error: "Image generation sidecar not configured" }); return; }
+      const token = await getImageGenToken();
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (token) headers["Authorization"] = `Bearer ${token}`;
+      const response = await fetch(`${sidecarUrl}/train-pause`, { method: "POST", headers });
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(`Sidecar returned ${response.status}: ${text}`);
+      }
+      const result = await response.json() as { ok: boolean; message: string };
+      _io?.emit("character:training:paused", { characterId: character.id });
+      res.json(result);
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  // ── POST /:id/unpause-training — Unpause training (SIGCONT via sidecar) ──
+  router.post("/:id/unpause-training", async (req, res) => {
+    try {
+      const character = characterRepo.getById(req.params.id);
+      if (!character) { res.status(404).json({ error: "Character not found" }); return; }
+      if (character.status !== "training") {
+        res.status(409).json({ error: "Character is not currently training" });
+        return;
+      }
+      const sidecarUrl = await getImageGenSidecarUrl();
+      if (!sidecarUrl) { res.status(503).json({ error: "Image generation sidecar not configured" }); return; }
+      const token = await getImageGenToken();
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (token) headers["Authorization"] = `Bearer ${token}`;
+      const response = await fetch(`${sidecarUrl}/train-unpause`, { method: "POST", headers });
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(`Sidecar returned ${response.status}: ${text}`);
+      }
+      const result = await response.json() as { ok: boolean; message: string };
+      _io?.emit("character:training:resumed", { characterId: character.id });
+      res.json(result);
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      res.status(500).json({ error: msg });
+    }
+  });
+
   // ── POST /:id/ai-enhance — Auto-generate captions via vision (one image per request) ──
   router.post("/:id/ai-enhance", async (req, res) => {
     try {

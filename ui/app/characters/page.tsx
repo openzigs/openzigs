@@ -20,6 +20,8 @@ import {
   Sparkles,
   Info,
   RotateCcw,
+  Pause,
+  Play,
 } from "lucide-react";
 
 // ── Types ───────────────────────────────────────────────────
@@ -92,6 +94,7 @@ export default function CharactersPage() {
   // Resume training
   const [showResumeDialog, setShowResumeDialog] = useState(false);
   const [resumeCharId, setResumeCharId] = useState<string | null>(null);
+  const [trainingPaused, setTrainingPaused] = useState(false);
 
   // ── Queries ───────────────────────────────────────────
   const charactersQuery = useQuery({
@@ -189,7 +192,20 @@ export default function CharactersPage() {
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["characters"] });
       setShowResumeDialog(false);
+      setTrainingPaused(false);
       showToast(data.message, "success");
+    },
+    onError: (err) => showToast(err.message, "error"),
+  });
+
+  const pauseMutation = useMutation({
+    mutationFn: ({ id, paused }: { id: string; paused: boolean }) =>
+      fetchJson<{ ok: boolean; message: string }>(
+        `/api/characters/${id}/${paused ? "pause" : "unpause"}-training`,
+        { method: "POST" },
+      ),
+    onSuccess: (_data, variables) => {
+      setTrainingPaused(variables.paused);
     },
     onError: (err) => showToast(err.message, "error"),
   });
@@ -725,6 +741,25 @@ export default function CharactersPage() {
                     )}
                     {selected.status === "training" ? "Training in Progress..." : "Start Training"}
                   </button>
+                  {selected.status === "training" && (
+                    <button
+                      onClick={() =>
+                        pauseMutation.mutate({ id: selected.id, paused: !trainingPaused })
+                      }
+                      disabled={pauseMutation.isPending}
+                      className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-2 text-sm font-medium text-foreground hover:bg-muted disabled:opacity-50"
+                      title={trainingPaused ? "Resume training" : "Pause training"}
+                    >
+                      {pauseMutation.isPending ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : trainingPaused ? (
+                        <Play className="h-4 w-4" />
+                      ) : (
+                        <Pause className="h-4 w-4" />
+                      )}
+                      {trainingPaused ? "Resume" : "Pause"}
+                    </button>
+                  )}
                   {selected.referencePhotos.length < 5 && (
                     <p className="text-xs text-amber-600 dark:text-amber-400">
                       ⚠ Need at least 5 reference photos ({selected.referencePhotos.length}/5 uploaded)
