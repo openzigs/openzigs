@@ -5,7 +5,6 @@
 
 import { Router } from "express";
 import fs from "node:fs/promises";
-import { existsSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { logger } from "../logging/logger.js";
@@ -195,11 +194,9 @@ export const createQueueRouter = ({ queueMaster, repo, characterRepo }: QueueRou
         // Check if the trigger word appears in the prompt (case-insensitive, word boundary)
         const regex = new RegExp(`\\b${char.triggerWord.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i");
         if (regex.test(prompt)) {
-          // Verify the LoRA file still exists on disk
-          if (!existsSync(char.trainedLoraPath)) {
-            logger.warn(`[QueueAPI] Character "${char.name}" trigger word "${char.triggerWord}" matched but LoRA file missing: ${char.trainedLoraPath}`);
-            continue;
-          }
+          // Note: the LoRA path is on the image-gen sidecar's filesystem (which may be
+          // a remote network node), so we cannot existsSync it here. The sidecar will
+          // error if the path is invalid. Only skip if the path looks obviously empty.
           loraPaths.push(char.trainedLoraPath);
           loraScales.push(char.loraScale);
           logger.info(`[QueueAPI] Auto-injecting LoRA for character "${char.name}" (trigger: ${char.triggerWord}, scale: ${char.loraScale})`);
