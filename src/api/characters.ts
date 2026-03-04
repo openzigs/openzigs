@@ -185,6 +185,31 @@ export function createCharacterRouter({ characterRepo, copilot }: CharacterRoute
         // Best-effort cleanup; DB record is still removed
       }
 
+      // Best-effort: remove training output (LoRA checkpoints + adapter) from the
+      // image-gen sidecar (mac mini).  Do not let a sidecar failure block the delete.
+      try {
+        const sidecarUrl = await getImageGenSidecarUrl();
+        const sidecarToken = await getImageGenToken();
+        if (sidecarUrl) {
+          const cleanupRes = await fetch(`${sidecarUrl}/train-data`, {
+            method: "DELETE",
+            headers: {
+              "Content-Type": "application/json",
+              ...(sidecarToken ? { Authorization: `Bearer ${sidecarToken}` } : {}),
+            },
+            body: JSON.stringify({ character_id: req.params.id }),
+          });
+          const cleanupBody = await cleanupRes.json().catch(() => ({}));
+          logger.info(
+            `[Characters] Sidecar train-data cleanup for '${character.name}' (${req.params.id}): ${JSON.stringify(cleanupBody)}`
+          );
+        }
+      } catch (cleanupErr) {
+        logger.warn(
+          `[Characters] Could not clean up sidecar training files for '${character.name}' (${req.params.id}): ${cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr)}`
+        );
+      }
+
       characterRepo.delete(req.params.id);
       logger.info(`[Characters] Deleted character '${character.name}' (${character.id})`);
       res.json({ ok: true });
@@ -328,7 +353,7 @@ export function createCharacterRouter({ characterRepo, copilot }: CharacterRoute
       const overrides = req.body as Record<string, unknown>;
       const steps = typeof overrides.steps === "number" ? overrides.steps : 9;
       const learningRate = typeof overrides.learningRate === "number" ? overrides.learningRate : 1e-4;
-      const loraRank = typeof overrides.loraRank === "number" ? overrides.loraRank : 16;
+      const loraRank = typeof overrides.loraRank === "number" ? overrides.loraRank : 8;
       const numEpochs = typeof overrides.numEpochs === "number" ? overrides.numEpochs : 30;
 
       // Build per-image prompt: use per-image caption if available,

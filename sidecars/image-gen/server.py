@@ -1479,13 +1479,14 @@ def _materialize_network_training(req: TrainRequest) -> str:
     num_epochs = int(cfg.get("num_epochs", 1))
 
     # Build the correct mflux training config format
-    # Based on official z-image-turbo example config from mflux repo (2026):
+    # Matches the official z-image-turbo example config from the mflux repo:
+    #   https://github.com/filipstrand/mflux/blob/main/src/mflux/models/z_image/README.md
+    #   - Only Q/K/V attention layers on UPPER blocks (15-30) with rank 8
+    #   - Z-Image uses a single-stream DiT — layer names differ from Flux.1
     #   - quantize=8 is REQUIRED for 32GB Macs (model is ~31GB unquantized)
-    #   - Train ALL blocks (0-30), not just upper — lower blocks encode structure/identity
-    #   - Include cap_embedder (text→trigger word association) and feed_forward layers
-    #   - all_final_layer is needed so the generation pipeline can reproduce the subject
     #   - timestep_low/high constrain noise schedule for turbo model
     #   - MUST satisfy: timestep_high <= steps (mflux validation)
+    #   - monitoring.generate_image_frequency produces sample images during training
     ts_high = min(9, steps)
     ts_low = min(4, ts_high)
     config: dict[str, Any] = {
@@ -1510,17 +1511,15 @@ def _materialize_network_training(req: TrainRequest) -> str:
             "save_frequency": max(1, num_epochs // 5) if num_epochs > 5 else num_epochs,
             "output_path": lora_output,
         },
+        "monitoring": {
+            "plot_frequency": 1,
+            "generate_image_frequency": max(1, num_epochs // 5) if num_epochs > 5 else num_epochs,
+        },
         "lora_layers": {
             "targets": [
-                {"module_path": "layers.{block}.attention.to_q", "blocks": {"start": 0, "end": 30}, "rank": lora_rank},
-                {"module_path": "layers.{block}.attention.to_k", "blocks": {"start": 0, "end": 30}, "rank": lora_rank},
-                {"module_path": "layers.{block}.attention.to_v", "blocks": {"start": 0, "end": 30}, "rank": lora_rank},
-                {"module_path": "layers.{block}.attention.to_out.0", "blocks": {"start": 0, "end": 30}, "rank": lora_rank},
-                {"module_path": "layers.{block}.feed_forward.w1", "blocks": {"start": 0, "end": 30}, "rank": lora_rank},
-                {"module_path": "layers.{block}.feed_forward.w2", "blocks": {"start": 0, "end": 30}, "rank": lora_rank},
-                {"module_path": "layers.{block}.feed_forward.w3", "blocks": {"start": 0, "end": 30}, "rank": lora_rank},
-                {"module_path": "cap_embedder.1", "rank": lora_rank},
-                {"module_path": "all_final_layer.2-1.linear", "rank": lora_rank},
+                {"module_path": "layers.{block}.attention.to_q", "blocks": {"start": 15, "end": 30}, "rank": lora_rank},
+                {"module_path": "layers.{block}.attention.to_k", "blocks": {"start": 15, "end": 30}, "rank": lora_rank},
+                {"module_path": "layers.{block}.attention.to_v", "blocks": {"start": 15, "end": 30}, "rank": lora_rank},
             ]
         },
     }
@@ -1915,6 +1914,58 @@ def _bg_train_resume(checkpoint_path: str) -> None:
             mx.clear_cache()
         except Exception:
             pass
+
+
+class DeleteTrainDataRequest(BaseModel):
+    """Request body for deleting all training output for a character."""
+    character_id: str = Field(..., description="Character UUID whose training files should be removed")
+
+
+@app.delete("/train-data", dependencies=[Depends(verify_token)])
+async def delete_train_data(req: DeleteTrainDataRequest):
+    """Delete all training output for a character on this machine.
+
+    Removes the entire ``~/.openzigs/training/{character_id}/`` directory
+    (LoRA checkpoints, adapter, any residual data).  Also checks the legacy
+    macOS temp dir (``$TMPDIR/openzigs-training/{character_id}/``) and removes
+    it if present.
+
+    Returns ``{"removed": true, "paths": [...]}`` on success or
+    ``{"removed": false, "reason": "..."}`` if nothing was found.
+    """
+    import shutil as _shutil
+    import tempfile
+
+    if not req.character_id or "/" in req.character_id or ".." in req.character_id:
+        raise HTTPException(status_code=400, detail="Invalid character_id")
+
+    removed_paths: list[str] = []
+
+    # Persistent training dir
+    persistent_dir = os.path.join(_TRAINING_BASE_DIR, req.character_id)
+    if os.path.isdir(persistent_dir):
+        try:
+            _shutil.rmtree(persistent_dir)
+            removed_paths.append(persistent_dir)
+            log.info(f"[train-data] Removed persistent training dir: {persistent_dir}")
+        except Exception as exc:
+            log.error(f"[train-data] Failed to remove {persistent_dir}: {exc}")
+            raise HTTPException(status_code=500, detail=f"Failed to remove {persistent_dir}: {exc}")
+
+    # Legacy macOS temp dir (may not exist after a reboot, but clean up when present)
+    legacy_dir = os.path.join(tempfile.gettempdir(), "openzigs-training", req.character_id)
+    if os.path.isdir(legacy_dir):
+        try:
+            _shutil.rmtree(legacy_dir)
+            removed_paths.append(legacy_dir)
+            log.info(f"[train-data] Removed legacy temp training dir: {legacy_dir}")
+        except Exception as exc:
+            log.warning(f"[train-data] Could not remove legacy dir {legacy_dir}: {exc}")
+            # Non-fatal — temp dirs are ephemeral
+
+    if removed_paths:
+        return {"removed": True, "paths": removed_paths}
+    return {"removed": False, "reason": f"No training data found for character {req.character_id}"}
 
 
 def _cleanup_training_data(config_path: str) -> None:
