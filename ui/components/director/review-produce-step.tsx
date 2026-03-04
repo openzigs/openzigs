@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import Link from "next/link";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import { fetchJson } from "@/lib/api";
@@ -58,6 +59,7 @@ type ProduceJobStatus = {
   visionAnalysisEnabled?: boolean;
   processingTimeMs?: number;
   progressLog?: Array<{ phase: string; message: string; timestamp: number }>;
+  draftId?: string;
 };
 
 type RenderResponse = {
@@ -90,6 +92,7 @@ export const ReviewProduceStep = ({
   const router = useRouter();
   const [phase, setPhase] = useState<"review" | "producing" | "produced" | "rendering">("review");
   const [produceJobId, setProduceJobId] = useState<string | null>(null);
+  const [completedDraftId, setCompletedDraftId] = useState<string | null>(null);
   const [renderProgress, setRenderProgress] = useState(0);
   const [renderStatus, setRenderStatus] = useState<string | null>(null);
   const [framesInfo, setFramesInfo] = useState<string | null>(null);
@@ -251,6 +254,7 @@ export const ReviewProduceStep = ({
         tokensUsed: data.tokensUsed ?? 0,
       };
       onManifestGenerated(summary);
+      if (data.draftId) setCompletedDraftId(data.draftId);
       setPhase("produced");
       showToast("Production manifest generated", "success");
     } else if (data.status === "failed") {
@@ -766,26 +770,41 @@ export const ReviewProduceStep = ({
             Start Render
           </button>
 
-          <button
-            onClick={async () => {
-              if (!produceJobQuery.data?.manifest) return;
-              const manifest = produceJobQuery.data.manifest;
-              const title = (manifest as Record<string, unknown>).projectTitle as string || "Untitled";
-              const res = await fetchJson<{ id: string }>("/api/admin/director/drafts", {
-                method: "POST",
-                body: JSON.stringify({
-                  title,
-                  manifest,
-                  productionMode: state.mode ?? "presentation",
-                }),
-              });
-              router.push(`/director/studio/${res.id}`);
-            }}
-            className="w-full flex items-center justify-center gap-2 rounded-xl border border-border text-sm text-foreground py-3 hover:bg-muted/50 transition"
-          >
-            <PenTool className="h-4 w-4" />
-            Open in Studio
-          </button>
+          {completedDraftId && (
+            <div className="flex items-center gap-2 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-2.5 text-sm">
+              <CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0" />
+              <span className="text-emerald-300">Saved to Drafts —</span>
+              <Link
+                href={`/director/studio/${completedDraftId}`}
+                className="text-primary hover:underline font-medium"
+              >
+                Open in Studio →
+              </Link>
+            </div>
+          )}
+
+          {!completedDraftId && (
+            <button
+              onClick={async () => {
+                if (!produceJobQuery.data?.manifest) return;
+                const manifest = produceJobQuery.data.manifest;
+                const title = (manifest as Record<string, unknown>).projectTitle as string || "Untitled";
+                const res = await fetchJson<{ id: string }>("/api/admin/director/drafts", {
+                  method: "POST",
+                  body: JSON.stringify({
+                    title,
+                    manifest,
+                    productionMode: state.mode ?? "presentation",
+                  }),
+                });
+                router.push(`/director/studio/${res.id}`);
+              }}
+              className="w-full flex items-center justify-center gap-2 rounded-xl border border-border text-sm text-foreground py-3 hover:bg-muted/50 transition"
+            >
+              <PenTool className="h-4 w-4" />
+              Open in Studio
+            </button>
+          )}
         </div>
       )}
 

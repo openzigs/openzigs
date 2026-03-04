@@ -5,7 +5,7 @@
 
 // ── Job Types ─────────────────────────────────────────────────
 
-export type MediaJobType = "txt2img" | "img2img" | "txt2video" | "img2video" | "tts" | "txt2music";
+export type MediaJobType = "txt2img" | "img2img" | "txt2video" | "img2video" | "tts" | "txt2music" | "voice2voice";
 
 export type MediaJobStatus = "pending" | "dispatched" | "processing" | "complete" | "failed";
 
@@ -21,6 +21,7 @@ export function targetNodeForJobType(type: MediaJobType): TargetNode {
     case "img2video":
     case "tts":
     case "txt2music":
+    case "voice2voice":
       return "m2-pro";
   }
 }
@@ -39,6 +40,8 @@ export function defaultModelForJobType(type: MediaJobType): string {
       return "f5-tts";
     case "txt2music":
       return "ace-step";
+    case "voice2voice":
+      return "rvc-v2";
   }
 }
 
@@ -81,6 +84,22 @@ export interface MediaJobPayload {
   lora_paths?: string[];
   /** Scale factor for each LoRA adapter */
   lora_scales?: number[];
+  /** Gallery asset ID of the source audio for voice2voice */
+  source_asset_id?: string;
+  /** RVC voice model name for voice conversion */
+  voice_model?: string;
+  /** Semitone pitch shift for RVC (default 0) */
+  pitch_shift?: number;
+  /** RVC feature index rate 0–1 (default 0.75) */
+  index_rate?: number;
+  /** RVC median filter radius (default 3) */
+  filter_radius?: number;
+  /** Final vocal volume multiplier (default 1.0) */
+  vocal_volume?: number;
+  /** Final instrumental volume multiplier (default 1.0) */
+  instrumental_volume?: number;
+  /** Output audio format (default "wav") */
+  output_format?: string;
 }
 
 // ── Stored Job ────────────────────────────────────────────────
@@ -175,6 +194,8 @@ export interface QueueConfig {
    * resets it to 'pending' for retry. Default: 45 minutes.
    */
   dispatchTimeoutMs?: number;
+  /** Music Studio voice2voice sidecar node config. */
+  musicStudio?: WorkerNodeConfig;
 }
 
 // ── Constants ─────────────────────────────────────────────────

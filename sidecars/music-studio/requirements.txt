@@ -1,0 +1,30 @@
+# Music Studio Sidecar — Dependencies
+# Issue #388: Voice2Voice pipeline (Demucs + RVC + mixdown)
+
+# Core ML
+torch>=2.1.0
+torchaudio>=2.1.0
+
+# Stem separation
+demucs>=4.0.0
+
+# RVC voice conversion
+librosa>=0.10.0
+soundfile>=0.12.0
+numpy>=1.24.0
+scipy>=1.11.0
+praat-parselmouth>=0.4.3
+pyworld>=0.3.4
+
+# F0 detection (optional — improves pitch tracking)
+torchcrepe>=0.0.20
+
+# Mixdown
+pydub>=0.25.1
+
+# Sidecar HTTP server
+fastapi>=0.110.0
+uvicorn[standard]>=0.27.0
+
+# Audio format support (requires system ffmpeg)
+# brew install ffmpeg

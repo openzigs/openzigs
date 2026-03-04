@@ -201,6 +201,7 @@ The OpenZigs UI is a **Next.js** application with a navigation bar providing acc
 | **Post-Actions** | `/admin/post-actions` | Create and manage custom post-action types for pipeline stages |
 | **Webhooks** | `/admin/webhooks` | Create and manage inbound webhooks for external integrations |
 | **Gallery** | `/gallery` | Asset gallery for generated images, videos, and audio; inline creation studio for txt2img, img2img, txt2video, img2video, txt2music |
+| **Music Studio** | `/music-studio` | AI Voice2Voice pipeline — stem separation, voice conversion, and mixdown with DAW waveform visualization |
 | **Director** | `/director` | AI video production wizard, blog-to-YouTube, and timeline studio |
 | **Director Studio** | `/director/studio/[id]` | Full timeline editor with player preview, scene inspector, and drag-and-drop reordering |
 
@@ -5505,6 +5506,25 @@ curl -X POST http://localhost:3000/api/queue/jobs \
   }'
 ```
 
+**Submit a voice2voice job:**
+```bash
+curl -X POST http://localhost:3000/api/queue/jobs \
+  -H "Content-Type: application/json" \
+  -d '{
+    "type": "voice2voice",
+    "payload": {
+      "prompt": "Voice conversion: artist_name",
+      "source_asset_id": "<gallery-asset-id>",
+      "voice_model": "artist_name",
+      "pitch_shift": 0,
+      "index_rate": 0.75,
+      "vocal_volume": 1.0,
+      "instrumental_volume": 1.0,
+      "output_format": "wav"
+    }
+  }'
+```
+
 **Check queue stats:**
 ```bash
 curl http://localhost:3000/api/queue/jobs/stats
@@ -5535,6 +5555,53 @@ QUEUE_CALLBACK_URL=http://192.168.1.50:3000/api/queue/complete
 ```
 
 If unset, the server auto-detects the first non-loopback IPv4 via `os.networkInterfaces()` and logs the resolved URL at startup. **Note:** For local sidecars (music sidecar on `localhost`), `QueueMaster` automatically rewrites the callback URL to use `localhost` so the sidecar can reach back without relying on the LAN IP.
+
+### Music Studio
+
+Navigate to **http://localhost:3001/music-studio** to access the AI Music Studio.
+
+The Music Studio provides a full **Voice2Voice pipeline** that converts the vocal timbre of any audio track using RVC (Retrieval-based Voice Conversion) v2 models. The pipeline runs in three stages:
+
+1. **Stem Separation** — Demucs v4 (`htdemucs_ft`) separates vocals from instrumentals
+2. **Voice Conversion** — RVC v2 converts the isolated vocals using a trained voice model
+3. **Final Mixdown** — pydub recombines the converted vocals with the instrumental stem
+
+#### Using Music Studio
+
+1. **Load audio tracks** — Click any audio asset in the "Audio Assets" panel to load it into the waveform viewer. You can load multiple tracks for comparison.
+2. **Select source** — Choose the source audio track from the "Source Track" dropdown in the control panel.
+3. **Choose voice model** — Select an RVC voice model (or type a model name). Models are stored in `~/.openzigs/rvc-models/<model_name>/`.
+4. **Adjust pitch** — Use the pitch shift slider (-12 to +12 semitones) to transpose the vocals.
+5. **Advanced settings** — Expand to fine-tune index rate, filter radius, vocal/instrumental volumes, and output format.
+6. **Submit** — Click "Start Voice2Voice" to queue the job. Pipeline progress is shown in real-time with stage indicators.
+
+#### Waveform DAW View
+
+The waveform viewer uses **wavesurfer.js v7** to render interactive audio waveforms:
+- **Transport controls** — Play/Pause/Restart with synchronized multi-track playback
+- **Per-track mute** — Solo or mute individual tracks
+- **Interactive seeking** — Click anywhere on a waveform to seek to that position
+- **Multi-track support** — Load source, result, and comparison tracks simultaneously
+
+#### Music Studio Sidecar Setup
+
+The Music Studio requires a Python sidecar running on port 5010:
+
+```bash
+cd sidecars/music-studio
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+python server.py
+```
+
+**RVC voice models** must be placed at `~/.openzigs/rvc-models/<model_name>/`:
+```
+~/.openzigs/rvc-models/
+  artist_name/
+    artist_name.pth      # Model weights
+    artist_name.index     # Feature index (optional)
+```
 
 **Polling fallback for asymmetric networks:** If callback delivery fails (e.g., router AP/client isolation where the worker Mac cannot reach the primary Mac), the system automatically falls back to polling. Every tick, `QueueMaster` polls `GET /job-result/{job_id}` on any worker with a job dispatched more than 3 minutes ago. FluxQ stores results in memory for up to 100 jobs; results are deleted after the primary Mac acknowledges them. This means jobs will always complete even if push callbacks are blocked at the network layer.
 

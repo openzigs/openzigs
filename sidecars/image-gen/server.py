@@ -50,6 +50,18 @@ from fastapi.responses import Response
 from PIL import Image
 from pydantic import BaseModel, Field
 
+# ── Persistent Training Directory ──────────────────────────────
+# Training output MUST be persistent — NOT in /tmp or tempfile.gettempdir().
+# macOS aggressively cleans /var/folders/.../T/ and will delete trained LoRA
+# adapters after a reboot.  Use ~/.openzigs/training/ instead.
+_TRAINING_BASE_DIR = os.path.join(os.path.expanduser("~"), ".openzigs", "training")
+
+def _get_training_dir(character_id: str) -> str:
+    """Return persistent training directory for a character."""
+    d = os.path.join(_TRAINING_BASE_DIR, character_id)
+    os.makedirs(d, exist_ok=True)
+    return d
+
 # ── Token Authentication ───────────────────────────────────────
 # When FLUXQ_SECRET_TOKEN is set, all mutating endpoints require
 # Authorization: Bearer <token>.  Health/models remain public.
@@ -1402,7 +1414,7 @@ def _materialize_network_training(req: TrainRequest) -> str:
     Returns the path to the generated config JSON.
     """
     char_id = req.character_id or "unknown"
-    train_dir = os.path.join(tempfile.gettempdir(), "openzigs-training", char_id)
+    train_dir = _get_training_dir(char_id)
     data_dir = os.path.join(train_dir, "data")
     # CRITICAL: wipe data dir so leftover images from previous runs don't
     # inflate the dataset count (mflux auto-discovers all images in the dir).
@@ -1668,14 +1680,28 @@ async def list_train_checkpoints(character_id: str):
 
     Returns checkpoints sorted newest-first so the client can offer the user
     a choice of which iteration to resume from, or just pick the latest.
+    Checks both the persistent training dir and the legacy temp dir.
     """
-    train_dir = os.path.join(tempfile.gettempdir(), "openzigs-training", character_id)
+    train_dir = _get_training_dir(character_id)
+    # Also check the legacy temp dir in case training ran before the persistent
+    # dir was introduced (avoids losing checkpoints on sidecar upgrades).
+    legacy_temp_dir = os.path.join(tempfile.gettempdir(), "openzigs-training", character_id)
+    search_dirs = {train_dir}
+    if os.path.isdir(legacy_temp_dir):
+        search_dirs.add(legacy_temp_dir)
+
     zips: list[dict] = []
-    if os.path.isdir(train_dir):
-        for root, _dirs, files in os.walk(train_dir):
+    seen: set[str] = set()
+    for search_dir in search_dirs:
+        if not os.path.isdir(search_dir):
+            continue
+        for root, _dirs, files in os.walk(search_dir):
             for f in files:
                 if f.endswith(".zip") and "checkpoint" in f:
                     full_path = os.path.join(root, f)
+                    if full_path in seen:
+                        continue
+                    seen.add(full_path)
                     try:
                         size = os.path.getsize(full_path)
                     except OSError:
@@ -1684,6 +1710,72 @@ async def list_train_checkpoints(character_id: str):
     # Sort by name descending (checkpoint names are zero-padded iteration numbers)
     zips.sort(key=lambda z: z["name"], reverse=True)
     return {"character_id": character_id, "checkpoints": zips, "train_dir": train_dir}
+
+
+class RecoverTrainRequest(BaseModel):
+    """Request body for rescuing a trained LoRA adapter from any checkpoint."""
+    character_id: str = Field(..., description="Character UUID whose LoRA adapter to recover")
+    checkpoint_path: Optional[str] = Field(None, description="Specific checkpoint .zip path; latest is used if omitted")
+
+
+@app.post("/train-recover", dependencies=[Depends(verify_token)])
+async def recover_trained_lora(req: RecoverTrainRequest):
+    """Extract a LoRA adapter from a checkpoint zip and save it permanently.
+
+    Searches the persistent training dir *and* the legacy macOS temp dir for
+    checkpoint zips belonging to this character.  Extracts the adapter
+    ``_adapter.safetensors`` from the selected (or newest) checkpoint into
+    ``~/.openzigs/training/{character_id}/`` so it survives reboots.
+
+    Returns ``{"lora_path": "<absolute path>"}`` on success.
+    """
+    import zipfile
+
+    persistent_dir = _get_training_dir(req.character_id)
+    legacy_temp_dir = os.path.join(
+        tempfile.gettempdir(), "openzigs-training", req.character_id
+    )
+
+    # Build a sorted list of candidate checkpoint zips from both locations
+    candidate_zips: list[str] = []
+    for search_dir in (persistent_dir, legacy_temp_dir):
+        if not os.path.isdir(search_dir):
+            continue
+        for root, _dirs, files in os.walk(search_dir):
+            for f in files:
+                if f.endswith(".zip") and "checkpoint" in f:
+                    candidate_zips.append(os.path.join(root, f))
+
+    if req.checkpoint_path:
+        if not os.path.isfile(req.checkpoint_path):
+            raise HTTPException(status_code=404, detail=f"Checkpoint not found: {req.checkpoint_path}")
+        target_zip = req.checkpoint_path
+    elif candidate_zips:
+        candidate_zips.sort()
+        target_zip = candidate_zips[-1]  # highest iteration number
+    else:
+        raise HTTPException(status_code=404, detail=f"No checkpoint zips found for character {req.character_id}")
+
+    log.info(f"[train-recover] Extracting adapter from {target_zip} -> {persistent_dir}")
+    try:
+        with zipfile.ZipFile(target_zip, "r") as zf:
+            adapter_names = [n for n in zf.namelist() if n.endswith("_adapter.safetensors")]
+            if not adapter_names:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"No *_adapter.safetensors inside {os.path.basename(target_zip)}. Contents: {zf.namelist()[:10]}",
+                )
+            adapter_name = adapter_names[0]
+            dest_path = os.path.join(persistent_dir, os.path.basename(adapter_name))
+            with zf.open(adapter_name) as src, open(dest_path, "wb") as dst:
+                dst.write(src.read())
+            log.info(f"[train-recover] Saved adapter to {dest_path}")
+            return {"lora_path": dest_path, "source_checkpoint": target_zip}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        log.error(f"[train-recover] Failed: {exc}")
+        raise HTTPException(status_code=500, detail=str(exc))
 
 
 class ResumeTrainRequest(BaseModel):

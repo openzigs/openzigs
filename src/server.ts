@@ -4,6 +4,7 @@ import { createServer } from "node:http";
 import { createRequire } from "node:module";
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import fs from "node:fs/promises";
+import { statSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { Server as SocketIOServer } from "socket.io";
@@ -629,6 +630,32 @@ if (renderOrchestrator) {
         db.prepare(
           `UPDATE director_renders SET output_path = ?, status = 'complete', updated_at = ? WHERE job_id = ?`,
         ).run(result.outputPath, now, result.jobId);
+
+        // Register the rendered video in the media gallery so it shows up under Videos.
+        try {
+          const alreadyIndexed = mediaQueueRepo.listAssets({ type: "video", source: "director" })
+            .some((a) => a.file_path === result.outputPath);
+          if (!alreadyIndexed) {
+            const fileStat = statSync(result.outputPath);
+            const filename = path.basename(result.outputPath);
+            const draftRow = db
+              .prepare(`SELECT d.title FROM director_renders r JOIN director_drafts d ON d.id = r.draft_id WHERE r.job_id = ?`)
+              .get(result.jobId) as { title: string } | undefined;
+            mediaQueueRepo.createAsset({
+              type: "video",
+              filename,
+              filePath: result.outputPath,
+              mimeType: "video/mp4",
+              fileSizeBytes: fileStat.size,
+              prompt: draftRow?.title,
+              source: "director",
+              jobId: result.jobId,
+            });
+            logger.info(`[Director] Registered render ${result.jobId} in gallery (${filename})`);
+          }
+        } catch (galleryErr) {
+          logger.warn(`[Director] Failed to register render in gallery: ${galleryErr instanceof Error ? galleryErr.message : String(galleryErr)}`);
+        }
       }
 
       const row = db
@@ -883,7 +910,12 @@ app.use("/api/tasks", authMiddleware, tasksRouter);
 // POST results to /api/queue/complete without an Authorization header.
 const queueCallbackRouter = createQueueCallbackRouter({ queueMaster, repo: mediaQueueRepo });
 app.use("/api/queue", express.json({ limit: "50mb" }), queueCallbackRouter);
-const queueRouter = createQueueRouter({ queueMaster, repo: mediaQueueRepo });
+
+// Character repo needed early — queue router uses it for auto-LoRA injection
+const characterRepo = new CharacterRepository(db);
+characterRepo.migrate();
+
+const queueRouter = createQueueRouter({ queueMaster, repo: mediaQueueRepo, characterRepo });
 app.use("/api/queue", authMiddleware, queueRouter);
 
 // Gallery API routes (AI prompt enhancement)
@@ -891,8 +923,6 @@ const galleryRouter = createGalleryRouter({ copilot, toolRegistry });
 app.use("/api/gallery", authMiddleware, galleryRouter);
 
 // Character API routes (LoRA character profiles + training)
-const characterRepo = new CharacterRepository(db);
-characterRepo.migrate();
 const characterRouter = createCharacterRouter({ characterRepo, copilot });
 app.use("/api/characters", authMiddleware, characterRouter);
 
@@ -1740,6 +1770,9 @@ httpServer.listen(port, "0.0.0.0", () => {
     });
     queueMaster.on("job:dispatched", (job) => {
       io.emit("queue:job:dispatched", { jobId: job.id, type: job.type });
+    });
+    queueMaster.on("job:progress", (jobId, progress) => {
+      io.emit("queue:job:progress", { jobId, ...progress });
     });
 
     // Notify Telegram when an entire project's queue is complete

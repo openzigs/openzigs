@@ -24,6 +24,8 @@ interface SceneEffectsPanelProps {
   isImageScene: boolean;
   onEffectsChange: (effects: EffectDef[]) => void;
   onKenBurnsChange?: (kenBurns: KenBurnsParams) => void;
+  /** Called when a preset or reset applies both effects + kenBurns atomically. */
+  onPresetApply?: (effects: EffectDef[], kenBurns?: KenBurnsParams) => void;
 }
 
 // ── Presets ───────────────────────────────────────────────────
@@ -148,6 +150,7 @@ export function SceneEffectsPanel({
   isImageScene,
   onEffectsChange,
   onKenBurnsChange,
+  onPresetApply,
 }: SceneEffectsPanelProps) {
   const [showGranular, setShowGranular] = useState(false);
   const [showKenBurns, setShowKenBurns] = useState(false);
@@ -165,12 +168,17 @@ export function SceneEffectsPanel({
     (presetId: string) => {
       const preset = PRESETS.find((p) => p.id === presetId);
       if (!preset) return;
-      onEffectsChange(preset.effects);
-      if (preset.kenBurns && onKenBurnsChange && isImageScene) {
-        onKenBurnsChange(preset.kenBurns);
+      const newKenBurns = preset.kenBurns && isImageScene ? preset.kenBurns : undefined;
+      if (onPresetApply) {
+        onPresetApply(preset.effects, newKenBurns);
+      } else {
+        onEffectsChange(preset.effects);
+        if (newKenBurns && onKenBurnsChange) {
+          onKenBurnsChange(newKenBurns);
+        }
       }
     },
-    [onEffectsChange, onKenBurnsChange, isImageScene],
+    [onEffectsChange, onKenBurnsChange, onPresetApply, isImageScene],
   );
 
   const handleFilterChange = useCallback(
@@ -220,18 +228,23 @@ export function SceneEffectsPanel({
   }, [effects, onEffectsChange]);
 
   const handleResetAll = useCallback(() => {
-    onEffectsChange([]);
-    if (onKenBurnsChange && isImageScene) {
-      onKenBurnsChange({
-        scaleFrom: 1.0,
-        scaleTo: 1.15,
-        translateXFrom: 0,
-        translateXTo: -10,
-        translateYFrom: 0,
-        translateYTo: -5,
-      });
+    const resetKenBurns: KenBurnsParams = {
+      scaleFrom: 1.0,
+      scaleTo: 1.15,
+      translateXFrom: 0,
+      translateXTo: -10,
+      translateYFrom: 0,
+      translateYTo: -5,
+    };
+    if (onPresetApply) {
+      onPresetApply([], isImageScene ? resetKenBurns : undefined);
+    } else {
+      onEffectsChange([]);
+      if (onKenBurnsChange && isImageScene) {
+        onKenBurnsChange(resetKenBurns);
+      }
     }
-  }, [onEffectsChange, onKenBurnsChange, isImageScene]);
+  }, [onEffectsChange, onKenBurnsChange, onPresetApply, isImageScene]);
 
   const handleKenBurnsChange = useCallback(
     (key: keyof KenBurnsParams, value: number) => {

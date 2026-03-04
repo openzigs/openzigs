@@ -144,7 +144,7 @@ export class MediaQueueRepository {
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS media_assets (
         id TEXT PRIMARY KEY,
-        type TEXT NOT NULL CHECK(type IN ('image','video','audio')),
+        type TEXT NOT NULL CHECK(type IN ('image','video','audio','scene')),
         filename TEXT NOT NULL,
         file_path TEXT NOT NULL,
         mime_type TEXT NOT NULL,
@@ -179,8 +179,8 @@ export class MediaQueueRepository {
         "SELECT sql FROM sqlite_master WHERE type='table' AND name='media_assets'"
       ).get() as { sql: string } | undefined;
       if (!row) return false;
-      // Rebuild if the old CHECK doesn't include 'ingested' or columns are missing
-      return !row.sql.includes("'ingested'") || !row.sql.includes("source_url") || !row.sql.includes("artist");
+      // Rebuild if the old CHECK doesn't include 'ingested' or 'scene', or columns are missing
+      return !row.sql.includes("'ingested'") || !row.sql.includes("source_url") || !row.sql.includes("artist") || !row.sql.includes("'scene'");
     })();
 
     if (needsRebuild) {
@@ -189,7 +189,7 @@ export class MediaQueueRepository {
         ALTER TABLE media_assets RENAME TO media_assets_old;
         CREATE TABLE media_assets (
           id TEXT PRIMARY KEY,
-          type TEXT NOT NULL CHECK(type IN ('image','video','audio')),
+          type TEXT NOT NULL CHECK(type IN ('image','video','audio','scene')),
           filename TEXT NOT NULL,
           file_path TEXT NOT NULL,
           mime_type TEXT NOT NULL,
@@ -401,7 +401,7 @@ export class MediaQueueRepository {
   // ── Media Assets CRUD ─────────────────────────────────────
 
   createAsset(input: {
-    type: "image" | "video" | "audio";
+    type: "image" | "video" | "audio" | "scene";
     filename: string;
     filePath: string;
     mimeType: string;

@@ -24,12 +24,13 @@ export interface QueueMasterEvents {
   "job:dispatched": [job: MediaJob, node: TargetNode];
   "job:complete": [job: MediaJob];
   "job:failed": [job: MediaJob, error: string];
+  "job:progress": [jobId: string, progress: { stage?: string; progress?: number; message?: string }];
   "project:complete": [projectId: string, total: number];
 }
 
 /** Aggregated status of all worker nodes. */
 export interface NodeStatus {
-  node: TargetNode | "music";
+  node: TargetNode | "music" | "music-studio";
   reachable: boolean;
   is_busy: boolean;
   loaded_model: string | null;
@@ -47,6 +48,8 @@ export class QueueMaster extends EventEmitter {
   private m2ProStatus: WorkerStatus = { is_busy: false, loaded_model: null };
   /** Independent status tracking for the music sidecar (separate service from video). */
   private musicStatus: WorkerStatus = { is_busy: false, loaded_model: null };
+  /** Independent status tracking for the music-studio voice2voice sidecar. */
+  private musicStudioStatus: WorkerStatus = { is_busy: false, loaded_model: null };
 
   constructor(repo: MediaQueueRepository, config: QueueConfig) {
     super();
@@ -324,6 +327,7 @@ export class QueueMaster extends EventEmitter {
       await this.processNode("mac-mini");
       await this.processNode("m2-pro");
       await this.processMusicJobs();
+      await this.processMusicStudioJobs();
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       logger.warn(`[QueueMaster] Tick error: ${msg}`);
@@ -585,6 +589,62 @@ export class QueueMaster extends EventEmitter {
     }
   }
 
+  // ── Music Studio Sidecar (voice2voice pipeline) ──────────
+
+  private async processMusicStudioJobs(): Promise<void> {
+    if (this.musicStudioStatus.is_busy) {
+      logger.debug("[QueueMaster] Music-studio sidecar busy, skipping");
+      return;
+    }
+
+    // Poll sidecar health
+    try {
+      const nodeConfig = await this.getMusicStudioNodeConfig();
+      const headers: Record<string, string> = {};
+      if (nodeConfig.token) headers["Authorization"] = `Bearer ${nodeConfig.token}`;
+
+      const res = await fetch(`${nodeConfig.url}/health`, {
+        headers,
+        signal: AbortSignal.timeout(5_000),
+      });
+      if (!res.ok) throw new Error(`Status check failed: ${res.status}`);
+
+      const data = await res.json() as Record<string, unknown>;
+      this.musicStudioStatus = {
+        is_busy: !!(data.is_busy as boolean),
+        loaded_model: (data.loaded_model as string) ?? null,
+      };
+    } catch {
+      logger.debug("[QueueMaster] Music-studio sidecar unreachable, skipping voice2voice jobs");
+      return;
+    }
+
+    if (this.musicStudioStatus.is_busy) {
+      logger.debug("[QueueMaster] Music-studio sidecar busy, skipping");
+      return;
+    }
+
+    // Get pending voice2voice jobs
+    const pending = this.repo.getPendingJobsForModel("m2-pro", "rvc-v2", 1);
+    if (pending.length === 0) return;
+
+    const job = pending[0];
+    try {
+      this.repo.markDispatched(job.id);
+      this.musicStudioStatus = { ...this.musicStudioStatus, is_busy: true };
+      this.emit("job:dispatched", job, "m2-pro" as TargetNode);
+      logger.info(`[QueueMaster] Dispatching voice2voice job ${job.id} → music-studio sidecar`);
+
+      await this.dispatchMusicStudioJob(job);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.warn(`[QueueMaster] Failed to dispatch music-studio job ${job.id}: ${msg}`);
+      this.repo.markFailed(job.id, msg);
+    } finally {
+      this.musicStudioStatus = { ...this.musicStudioStatus, is_busy: false };
+    }
+  }
+
   // ── Worker Communication ──────────────────────────────────
 
   private async getWorkerStatus(nodeConfig: WorkerNodeConfig, node: TargetNode): Promise<WorkerStatus> {
@@ -768,6 +828,83 @@ export class QueueMaster extends EventEmitter {
     return { url: "http://localhost:5009" };
   }
 
+  private async dispatchMusicStudioJob(job: MediaJob): Promise<void> {
+    const nodeConfig = await this.getMusicStudioNodeConfig();
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (nodeConfig.token) headers["Authorization"] = `Bearer ${nodeConfig.token}`;
+
+    let callbackUrl = this.config.callbackUrl;
+    const sidecarHost = new URL(nodeConfig.url).hostname;
+    if (sidecarHost === "localhost" || sidecarHost === "127.0.0.1") {
+      const parsed = new URL(this.config.callbackUrl);
+      parsed.hostname = "localhost";
+      callbackUrl = parsed.toString();
+    }
+
+    // Build progress_url by replacing /complete with /progress in the callback URL
+    const progressUrl = callbackUrl.replace(/\/complete\/?$/, "/progress");
+
+    const body: Record<string, unknown> = {
+      job_id: job.id,
+      source_asset_id: job.payload.source_asset_id,
+      voice_model: job.payload.voice_model,
+      pitch_shift: job.payload.pitch_shift ?? 0,
+      index_rate: job.payload.index_rate ?? 0.75,
+      filter_radius: job.payload.filter_radius ?? 3,
+      vocal_volume: job.payload.vocal_volume ?? 1.0,
+      instrumental_volume: job.payload.instrumental_volume ?? 1.0,
+      output_format: job.payload.output_format ?? "wav",
+      callback_url: callbackUrl,
+      progress_url: progressUrl,
+    };
+
+    const res = await fetch(`${nodeConfig.url}/generate`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(10_000),
+    });
+
+    if (res.status !== 202 && !res.ok) {
+      const text = await res.text().catch(() => "");
+      throw new Error(`Music-studio sidecar /generate returned ${res.status}: ${text}`);
+    }
+  }
+
+  /**
+   * Returns the WorkerNodeConfig for the music-studio voice2voice sidecar
+   * by reading musicStudio from ~/.openzigs/config.json.
+   */
+  private async getMusicStudioNodeConfig(): Promise<WorkerNodeConfig> {
+    // Check QueueConfig first (may be set from default.json)
+    if (this.config.musicStudio?.url) {
+      return this.config.musicStudio;
+    }
+    try {
+      const cfgPath = path.join(os.homedir(), ".openzigs", "config.json");
+      const raw = await fs.readFile(cfgPath, "utf-8");
+      const cfg = JSON.parse(raw) as Record<string, unknown>;
+      const ms = cfg.musicStudio as Record<string, unknown> | undefined;
+      if (typeof ms?.networkNodeUrl === "string" && ms.networkNodeUrl) {
+        return {
+          url: ms.networkNodeUrl,
+          token: typeof ms.networkNodeToken === "string" ? ms.networkNodeToken : undefined,
+        };
+      }
+    } catch {
+      // config unreadable — fall through
+    }
+    // Default: music-studio sidecar on localhost:5010
+    return { url: "http://localhost:5010" };
+  }
+
+  // ── Progress Reporting ────────────────────────────────────
+
+  reportProgress(jobId: string, progress: { stage?: string; progress?: number; message?: string }): void {
+    this.emit("job:progress", jobId, progress);
+    logger.debug(`[QueueMaster] Job ${jobId} progress: stage=${progress.stage} ${progress.progress ?? ""}% ${progress.message ?? ""}`);
+  }
+
   // ── Job Completion (called by webhook or directly) ───────
 
   async handleJobCompletion(
@@ -790,6 +927,9 @@ export class QueueMaster extends EventEmitter {
     }
     if (job.type === "txt2music") {
       this.musicStatus = { ...this.musicStatus, is_busy: false };
+    }
+    if (job.type === "voice2voice") {
+      this.musicStudioStatus = { ...this.musicStudioStatus, is_busy: false };
     }
 
     if (result.error) {

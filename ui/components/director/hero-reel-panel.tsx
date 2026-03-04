@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useCallback, useRef, type ChangeEvent } from "react";
+import Link from "next/link";
 import { Sparkles, Loader2, Play, CheckCircle2, XCircle, ImagePlus, X, FileText, Upload, Wifi, WifiOff, Music, Library, Globe, Pause, Check } from "lucide-react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { fetchJson, buildMediaUrl } from "@/lib/api";
@@ -13,6 +14,7 @@ type HeroReelJobStatus = {
   elapsedMs?: number;
   error?: string;
   manifest?: Record<string, unknown>;
+  draftId?: string;
 };
 
 type SidecarHealth = {
@@ -67,6 +69,7 @@ export const HeroReelPanel = () => {
   const [llmModel, setLlmModel] = useState("");
   const [produceJobId, setProduceJobId] = useState<string | null>(null);
   const [phase, setPhase] = useState<"idle" | "generating" | "complete" | "failed">("idle");
+  const [completedDraftId, setCompletedDraftId] = useState<string | null>(null);
   const [imageModel, setImageModel] = useState<ImageModel>("flux-schnell");
   const [userImages, setUserImages] = useState<UserImage[]>([]);
   const [uploadingImages, setUploadingImages] = useState(false);
@@ -81,6 +84,7 @@ export const HeroReelPanel = () => {
   const inspirationInputRef = useRef<HTMLInputElement>(null);
   const musicFileInputRef = useRef<HTMLInputElement>(null);
   const [imageDragOver, setImageDragOver] = useState(false);
+  const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
   const [inspirationDragOver, setInspirationDragOver] = useState(false);
   const [musicDragOver, setMusicDragOver] = useState(false);
 
@@ -318,6 +322,7 @@ export const HeroReelPanel = () => {
   // Transition on completion
   if (jobStatusQuery.data?.status === "complete" && phase === "generating") {
     setPhase("complete");
+    if (jobStatusQuery.data.draftId) setCompletedDraftId(jobStatusQuery.data.draftId);
     showToast("Hero Reel storyboard generated!", "success");
   }
   if (jobStatusQuery.data?.status === "failed" && phase === "generating") {
@@ -467,11 +472,22 @@ export const HeroReelPanel = () => {
                 className="flex items-start gap-3 rounded-lg border border-border bg-card p-2"
               >
                 {img.previewUrl ? (
-                  <img
-                    src={img.previewUrl}
-                    alt={img.description}
-                    className="h-16 w-16 flex-shrink-0 rounded-md object-cover"
-                  />
+                  <button
+                    type="button"
+                    className="group relative h-16 w-16 flex-shrink-0 overflow-hidden rounded-md"
+                    onClick={() => setLightboxSrc(img.previewUrl)}
+                  >
+                    <img
+                      src={img.previewUrl}
+                      alt={img.description}
+                      className="h-full w-full object-cover transition-transform duration-200 group-hover:scale-105"
+                    />
+                    <div className="absolute inset-0 flex items-center justify-center bg-black/0 transition group-hover:bg-black/30">
+                      <span className="rounded-full bg-black/70 px-1.5 py-0.5 text-[9px] font-medium text-white opacity-0 transition group-hover:opacity-100">
+                        Preview
+                      </span>
+                    </div>
+                  </button>
                 ) : (
                   <div className="flex h-16 w-16 flex-shrink-0 items-center justify-center rounded-md bg-muted">
                     <ImagePlus className="h-5 w-5 text-muted-foreground" />
@@ -888,9 +904,23 @@ export const HeroReelPanel = () => {
         )}
 
         {phase === "complete" && (
-          <div className="flex items-center gap-2 text-sm text-emerald-400">
-            <CheckCircle2 className="h-4 w-4" />
-            Hero Reel storyboard generated successfully!
+          <div className="space-y-2">
+            <div className="flex items-center gap-2 text-sm text-emerald-400">
+              <CheckCircle2 className="h-4 w-4" />
+              Hero Reel storyboard generated successfully!
+            </div>
+            {completedDraftId && (
+              <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                <Check className="h-3 w-3 text-emerald-400" />
+                Saved to Drafts —{" "}
+                <Link
+                  href={`/director/studio/${completedDraftId}`}
+                  className="text-primary hover:underline font-medium"
+                >
+                  Open in Studio →
+                </Link>
+              </div>
+            )}
           </div>
         )}
 
@@ -912,6 +942,28 @@ export const HeroReelPanel = () => {
           </div>
         )}
       </div>
+
+      {/* Image Lightbox */}
+      {lightboxSrc && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/90"
+          onClick={() => setLightboxSrc(null)}
+        >
+          <div className="relative max-h-[90vh] max-w-[90vw]" onClick={(e) => e.stopPropagation()}>
+            <button
+              onClick={() => setLightboxSrc(null)}
+              className="absolute -right-3 -top-3 z-10 rounded-full border border-border bg-card p-2 shadow-lg hover:bg-muted"
+            >
+              <X className="h-4 w-4" />
+            </button>
+            <img
+              src={lightboxSrc}
+              alt="Image preview"
+              className="max-h-[85vh] max-w-[85vw] rounded-lg object-contain shadow-2xl"
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 };

@@ -4073,7 +4073,7 @@ Generates stylized YouTube thumbnails for rendered videos:
 
 ## Distributed Media Queue, Worker Nodes & Asset Gallery (Epic #325)
 
-A **push-based media generation queue** that routes image, video, and music jobs to VRAM-aware worker nodes, persists results as gallery assets, and exposes a full-featured UI for browsing, creating, and managing media assets.
+A **push-based media generation queue** that routes image, video, music, and voice conversion jobs to VRAM-aware worker nodes, persists results as gallery assets, and exposes a full-featured UI for browsing, creating, and managing media assets.
 
 ### Architecture
 
@@ -4082,7 +4082,7 @@ graph TB
     subgraph UI["Gallery UI (Next.js)"]
         STATS[Queue Stats Bar<br/>Pending · Dispatched · Processing · Complete · Failed]
         GRID[Asset Grid<br/>Type/Source Filters · Lightbox Preview]
-        STUDIO[Gallery Studio<br/>5 modes: txt2img · img2img · txt2video · img2video · txt2music]
+        STUDIO[Gallery Studio<br/>6 modes: txt2img · img2img · txt2video · img2video · txt2music · voice2voice]
     end
 
     subgraph Backend["Express Server"]
@@ -4095,6 +4095,7 @@ graph TB
         MINI[Mac Mini<br/>FLUX.1 (Schnell)<br/>:5005]
         M2PRO[M2 Pro Sidecar<br/>LTX-2 (8-bit MLX)<br/>:5007]
         MUSIC[Music Sidecar<br/>ACE-Step 1.5<br/>:5009]
+        V2V[Music Studio Sidecar<br/>Demucs + RVC v2<br/>:5010]
     end
 
     STUDIO -->|POST /api/queue/jobs| QAPI
@@ -4103,9 +4104,12 @@ graph TB
     QM -->|POST /generate| MINI
     QM -->|POST /generate| M2PRO
     QM -->|POST /generate| MUSIC
+    QM -->|POST /generate| V2V
     MINI -->|POST /api/queue/complete| QAPI
     M2PRO -->|POST /api/queue/complete| QAPI
     MUSIC -->|POST /api/queue/complete| QAPI
+    V2V -->|POST /api/queue/complete| QAPI
+    V2V -->|POST /api/queue/progress| QAPI
     GRID -->|GET /api/queue/assets| QAPI
 
     style UI fill:#0d2137,stroke:#16213e,color:#fff
@@ -4124,6 +4128,7 @@ Push-based orchestrator that polls pending jobs on a configurable tick interval 
 | `txt2video` | `m2-pro` | `ltx-2` | 768×512 |
 | `img2video` | `m2-pro` | `ltx-2` | 768×512 |
 | `txt2music` | `music` (independent) | `ace-step` | 30s duration |
+| `voice2voice` | `music-studio` (independent) | `rvc-v2` | — |
 
 **Dispatch flow:**
 1. `tick()` queries `getPendingByNode(node)` → oldest pending job
@@ -4133,9 +4138,11 @@ Push-based orchestrator that polls pending jobs on a configurable tick interval 
 
 **Music jobs** are dispatched independently of the M2 Pro VRAM coordination — the music sidecar runs on its own process (port 5009) and has a dedicated `processMusicJobs()` tick. For local sidecars (URL is `localhost`/`127.0.0.1`), the callback URL is rewritten to use `localhost` instead of the LAN IP to avoid network timeouts.
 
+**Voice2Voice jobs** use the Music Studio sidecar (port 5010) — a FastAPI service that orchestrates a 3-stage pipeline: (1) Demucs v4 stem separation, (2) RVC v2 voice conversion, (3) pydub mixdown. The sidecar reports granular progress via `POST /api/queue/progress`, which the QueueMaster re-emits as `job:progress` Socket.IO events for real-time UI updates. The sidecar has its own `processMusicStudioJobs()` tick and independent busy state.
+
 **Stale result recovery:** `pollForStaleResults()` runs every tick and checks dispatched jobs older than 3 minutes. For each stale job, it polls the worker's `/job-result/<id>` endpoint. If the result is available, it's processed as if the callback had arrived — this recovers jobs where the callback POST failed.
 
-**Events:** `job:dispatched`, `job:complete`, `job:failed`, `project:complete`
+**Events:** `job:dispatched`, `job:complete`, `job:failed`, `job:progress`, `project:complete`
 
 ### Media Queue Repository (`src/queue/media-queue-repository.ts`)
 
@@ -4358,8 +4365,55 @@ The Gallery page at `/gallery` provides:
 | Route | Component | Purpose |
 |---|---|---|
 | `/gallery` | `gallery/page.tsx` | Asset Gallery + Gallery Studio |
+| `/music-studio` | `music-studio/page.tsx` | AI Music Studio — Voice2Voice pipeline with DAW waveform view |
 
-### Tracking: [Epic #325](https://github.com/mgcronin/openzigs/issues/325), [Epic #335](https://github.com/mgcronin/openzigs/issues/335)
+### Tracking: [Epic #325](https://github.com/mgcronin/openzigs/issues/325), [Epic #335](https://github.com/mgcronin/openzigs/issues/335), [Epic #380](https://github.com/mgcronin/openzigs/issues/380)
+
+## Music Studio — Voice2Voice Pipeline (Epic #380)
+
+### Overview
+
+The Music Studio extends the Gallery's media generation capabilities with a full **voice-to-voice conversion pipeline**. Users select a source audio track from the gallery, choose an RVC voice model, adjust pitch and mix parameters, and submit a `voice2voice` queue job. The pipeline runs in 3 stages on a dedicated FastAPI sidecar (port 5010):
+
+1. **Stem Separation** (Demucs v4) — Separates vocals from instrumentals using Meta's `htdemucs_ft` model
+2. **Voice Conversion** (RVC v2) — Converts vocal timbre using a pre-trained Retrieval-based Voice Conversion model
+3. **Final Mixdown** (pydub) — Recombines converted vocals with the instrumental stem, with volume controls and normalization
+
+### Architecture
+
+```mermaid
+graph LR
+    UI[Music Studio UI<br/>wavesurfer.js DAW] -->|POST /api/queue/jobs<br/>type: voice2voice| QM[QueueMaster]
+    QM -->|POST /generate| SIDECAR[Music Studio Sidecar<br/>FastAPI :5010]
+    SIDECAR -->|Stage 1| DEMUCS[Demucs v4<br/>Stem Separation]
+    DEMUCS --> RVC[RVC v2<br/>Voice Conversion]
+    RVC --> MIX[pydub<br/>Final Mixdown]
+    SIDECAR -->|POST /progress| QAPI[Queue API]
+    QAPI -->|Socket.IO| UI
+    SIDECAR -->|POST /complete| QAPI
+```
+
+### Components
+
+| Component | Path | Description |
+|---|---|---|
+| Queue Types | `src/queue/types.ts` | `voice2voice` job type, V2V payload fields, `musicStudio` config |
+| Queue Master | `src/queue/queue-master.ts` | `processMusicStudioJobs()`, `dispatchMusicStudioJob()`, `reportProgress()` |
+| Queue API | `src/api/queue.ts` | `POST /progress` webhook for granular pipeline updates |
+| Socket.IO | `src/server.ts` | `queue:job:progress` event broadcast |
+| Music Studio Page | `ui/app/music-studio/page.tsx` | Main page with waveform DAW, control panel, pipeline status |
+| WaveformTrack | `ui/components/music-studio/WaveformTrack.tsx` | wavesurfer.js v7 single-track waveform with Timeline and Hover plugins |
+| MultiTrackView | `ui/components/music-studio/MultiTrackView.tsx` | Multi-track DAW with transport controls, per-track mute/remove |
+| EffectsRack | `ui/components/music-studio/EffectsRack.tsx` | 10-band EQ, reverb, stereo pan, playback speed, compressor, distortion |
+| SpectrogramView | `ui/components/music-studio/SpectrogramView.tsx` | FFT-based frequency spectrogram visualization |
+| ControlPanel | `ui/components/music-studio/ControlPanel.tsx` | Voice model selection, pitch, mix parameters |
+| PipelineStatus | `ui/components/music-studio/PipelineStatus.tsx` | Real-time 3-stage progress visualization |
+| Sidecar Server | `sidecars/music-studio/server.py` | FastAPI orchestrator (port 5010) |
+| Stem Separation | `sidecars/music-studio/extract_vocals.py` | Demucs v4 vocal/instrumental separation |
+| Voice Conversion | `sidecars/music-studio/apply_rvc.py` | RVC v2 voice conversion |
+| Mixdown | `sidecars/music-studio/mix_audio.py` | pydub vocal + instrumental mixdown |
+
+### Tracking: [Epic #380](https://github.com/mgcronin/openzigs/issues/380)
 
 ## Character Lab — LoRA Training & Identity Consistency (Epic #374)
 

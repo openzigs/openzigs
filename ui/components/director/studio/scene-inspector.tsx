@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useCallback, useRef, useEffect, useMemo, type SyntheticEvent } from "react";
-import { RefreshCw, Loader2, Image, Clock, Type, Upload, PenLine, Mic, Play, Pause, Volume2, Sparkles, Wand2 } from "lucide-react";
+import { RefreshCw, Loader2, Image, Clock, Type, Upload, PenLine, Mic, Play, Pause, Volume2, Sparkles, Wand2, Trash2, ImagePlus, Save, FolderOpen, X, Layers } from "lucide-react";
 import { fetchJson, buildMediaUrl } from "@/lib/api";
 import { useActivity } from "@/lib/activity-context";
 import { InlineModelPicker } from "@/components/model-picker-select";
@@ -18,6 +18,7 @@ interface SceneInspectorProps {
   manifest: DirectorManifest | null;
   draftId: string;
   onManifestUpdate: (manifest: DirectorManifest) => void;
+  onDeleteScene?: (sceneIndex: number) => void;
 }
 
 interface UploadResult {
@@ -38,7 +39,7 @@ interface VoiceEngine {
   active: boolean;
 }
 
-export function SceneInspector({ inspector, manifest, draftId, onManifestUpdate }: SceneInspectorProps) {
+export function SceneInspector({ inspector, manifest, draftId, onManifestUpdate, onDeleteScene }: SceneInspectorProps) {
   const { startActivity } = useActivity();
   const [editPrompt, setEditPrompt] = useState("");
   const [regenerating, setRegenerating] = useState(false);
@@ -78,6 +79,18 @@ export function SceneInspector({ inspector, manifest, draftId, onManifestUpdate 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const bgFileInputRef = useRef<HTMLInputElement>(null);
   const fps = manifest?.composition?.fps ?? 30;
+
+  // Gallery image picker state
+  const [showGalleryPicker, setShowGalleryPicker] = useState(false);
+  const [galleryImages, setGalleryImages] = useState<Array<{ id: string; filename: string; source: string; prompt: string | null }>>([]);
+  const [loadingGallery, setLoadingGallery] = useState(false);
+
+  // Save/Load scene state
+  const [savingScene, setSavingScene] = useState(false);
+  const [showScenePicker, setShowScenePicker] = useState(false);
+  const [savedScenes, setSavedScenes] = useState<Array<{ id: string; prompt: string | null; created_at: string; generation_params: Record<string, unknown> | null }>>([]);
+  const [loadingScenes, setLoadingScenes] = useState(false);
+  const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
 
   // Derive entry from the live manifest so updates (re-record, regenerate, etc.)
   // are immediately reflected instead of using the stale inspector snapshot.
@@ -458,6 +471,111 @@ export function SceneInspector({ inspector, manifest, draftId, onManifestUpdate 
     [manifest, draftId, updateTimelineEntry],
   );
 
+  const handleOpenGalleryPicker = useCallback(async () => {
+    setShowGalleryPicker(true);
+    setLoadingGallery(true);
+    try {
+      const data = await fetchJson<{ assets: Array<{ id: string; filename: string; file_path: string; source: string; prompt: string | null }> }>(
+        "/api/queue/assets?type=image&limit=50",
+      );
+      setGalleryImages(data.assets.map((a) => ({ id: a.id, filename: a.filename, source: a.source, prompt: a.prompt })));
+    } catch {
+      setGalleryImages([]);
+    } finally {
+      setLoadingGallery(false);
+    }
+  }, []);
+
+  const handlePickGalleryImage = useCallback(
+    async (asset: { id: string; filename: string; source: string }) => {
+      if (inspector.sceneIndex === null || !manifest) return;
+      setShowGalleryPicker(false);
+
+      // Copy the gallery image into the director assets folder so it's self-contained
+      try {
+        const result = await fetchJson<{ filePath: string }>(
+          `/api/admin/director/scenes/${inspector.sceneIndex}/replace-from-gallery`,
+          {
+            method: "POST",
+            body: JSON.stringify({ draftId, assetId: asset.id }),
+          },
+        );
+        updateTimelineEntry((e) => ({ ...e, src: result.filePath }));
+        // Persist
+        const updated = updateTimelineEntry((e) => ({ ...e, src: result.filePath }));
+        if (updated) {
+          await fetchJson(`/api/admin/director/drafts/${draftId}`, {
+            method: "PUT",
+            body: JSON.stringify({ manifest: updated }),
+          });
+        }
+      } catch (err) {
+        console.error("Gallery pick failed:", err);
+        // Fallback: use the gallery file URL directly
+        const base = process.env.NEXT_PUBLIC_OPENZIGS_API_BASE ?? "";
+        const fileEndpoint = asset.source === "director"
+          ? `${base}/api/queue/assets/${asset.id}/file`
+          : `${base}/api/queue/assets/file/${encodeURIComponent(asset.filename)}`;
+
+        updateTimelineEntry((e) => ({ ...e, src: fileEndpoint }));
+      }
+    },
+    [inspector.sceneIndex, manifest, draftId, updateTimelineEntry],
+  );
+
+  const handleSaveSceneToGallery = useCallback(async () => {
+    if (!entry) return;
+    setSavingScene(true);
+    try {
+      await fetchJson("/api/queue/assets/scenes", {
+        method: "POST",
+        body: JSON.stringify({ scene: entry, title: entry.title || entry.scriptText?.slice(0, 50) || "Saved scene", draftId }),
+      });
+    } catch (err) {
+      console.error("Save scene failed:", err);
+    } finally {
+      setSavingScene(false);
+    }
+  }, [entry, draftId]);
+
+  const handleOpenScenePicker = useCallback(async () => {
+    setShowScenePicker(true);
+    setLoadingScenes(true);
+    try {
+      const data = await fetchJson<{ assets: Array<{ id: string; prompt: string | null; created_at: string; generation_params: Record<string, unknown> | null }> }>(
+        "/api/queue/assets?type=scene&limit=50",
+      );
+      setSavedScenes(data.assets);
+    } catch {
+      setSavedScenes([]);
+    } finally {
+      setLoadingScenes(false);
+    }
+  }, []);
+
+  const handleLoadSceneFromGallery = useCallback(
+    async (sceneAssetId: string) => {
+      if (inspector.sceneIndex === null || !manifest) return;
+      setShowScenePicker(false);
+      try {
+        const data = await fetchJson<{ scene: Record<string, unknown> }>(
+          `/api/queue/assets/scenes/${sceneAssetId}/data`,
+        );
+        if (!data.scene) return;
+
+        // Replace current scene with loaded data, preserving startAtFrame
+        const loadedScene = data.scene as TimelineEntry;
+        updateTimelineEntry((e) => ({
+          ...loadedScene,
+          startAtFrame: e.startAtFrame,
+        }));
+      } catch (err) {
+        console.error("Load scene failed:", err);
+      }
+    },
+    [inspector.sceneIndex, manifest, updateTimelineEntry],
+  );
+
   if (!entry) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-2 text-muted-foreground">
@@ -485,17 +603,32 @@ export function SceneInspector({ inspector, manifest, draftId, onManifestUpdate 
           <span className="rounded bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground uppercase">
             {entry.type.replace("_", " ")}
           </span>
+          {isVisualScene && onDeleteScene && inspector.sceneIndex !== null && (
+            <button
+              onClick={() => onDeleteScene(inspector.sceneIndex!)}
+              className="rounded p-1 text-muted-foreground hover:bg-red-500/10 hover:text-red-600 transition"
+              title="Delete scene"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </button>
+          )}
         </div>
       </div>
 
       {/* Image preview (visual scenes) */}
       {entry.src && (
-        <div className="overflow-hidden rounded-lg border border-border">
+        <div className="group relative overflow-hidden rounded-lg border border-border">
           <img
             src={buildMediaUrl(`/api/admin/director/files/${encodeURIComponent(entry.src.split("/").pop() ?? "")}`)}
             alt="Scene"
-            className="w-full object-cover"
+            className="w-full cursor-zoom-in object-cover"
+            onClick={() => setLightboxSrc(buildMediaUrl(`/api/admin/director/files/${encodeURIComponent(entry.src!.split("/").pop() ?? "")}`))}
           />
+          <div className="absolute inset-0 flex items-center justify-center opacity-0 transition group-hover:opacity-100">
+            <span className="rounded-full bg-black/60 px-3 py-1 text-[11px] font-medium text-white">
+              Click to expand
+            </span>
+          </div>
         </div>
       )}
 
@@ -514,12 +647,18 @@ export function SceneInspector({ inspector, manifest, draftId, onManifestUpdate 
 
       {/* Background image preview (intro/outro cards) */}
       {isCardWithBackground && backgroundSrc && (
-        <div className="overflow-hidden rounded-lg border border-border">
+        <div className="group relative overflow-hidden rounded-lg border border-border">
           <img
             src={buildMediaUrl(`/api/admin/director/files/${encodeURIComponent(backgroundSrc.split("/").pop() ?? "")}`)}
             alt="Background"
-            className="w-full object-cover"
+            className="w-full cursor-zoom-in object-cover"
+            onClick={() => setLightboxSrc(buildMediaUrl(`/api/admin/director/files/${encodeURIComponent(backgroundSrc!.split("/").pop() ?? "")}`) )}
           />
+          <div className="absolute inset-0 flex items-center justify-center opacity-0 transition group-hover:opacity-100">
+            <span className="rounded-full bg-black/60 px-3 py-1 text-[11px] font-medium text-white">
+              Click to expand
+            </span>
+          </div>
         </div>
       )}
 
@@ -1030,6 +1169,58 @@ export function SceneInspector({ inspector, manifest, draftId, onManifestUpdate 
             )}
             Upload Replacement Image/Video
           </button>
+          <button
+            onClick={handleOpenGalleryPicker}
+            className="mt-1.5 flex w-full items-center justify-center gap-1.5 rounded-md border border-primary/30 bg-primary/5 px-3 py-1.5 text-xs font-medium text-primary hover:bg-primary/10 transition"
+          >
+            <ImagePlus className="h-3.5 w-3.5" />
+            Pick from Gallery
+          </button>
+        </div>
+      )}
+
+      {/* Gallery Image Picker Modal */}
+      {showGalleryPicker && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={() => setShowGalleryPicker(false)}>
+          <div className="mx-4 max-h-[80vh] w-full max-w-2xl overflow-hidden rounded-2xl border border-border bg-card shadow-xl" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between border-b border-border px-4 py-3">
+              <h3 className="text-sm font-semibold text-foreground">Pick from Gallery</h3>
+              <button onClick={() => setShowGalleryPicker(false)} className="rounded p-1 text-muted-foreground hover:bg-muted transition">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="overflow-y-auto p-4" style={{ maxHeight: "calc(80vh - 56px)" }}>
+              {loadingGallery ? (
+                <div className="flex items-center justify-center py-12">
+                  <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                </div>
+              ) : galleryImages.length === 0 ? (
+                <p className="py-8 text-center text-sm text-muted-foreground">No images in gallery.</p>
+              ) : (
+                <div className="grid grid-cols-3 gap-3">
+                  {galleryImages.map((img) => {
+                    const base = process.env.NEXT_PUBLIC_OPENZIGS_API_BASE ?? "";
+                    const token = process.env.NEXT_PUBLIC_OPENZIGS_TOKEN ?? "";
+                    const imgUrl = img.source === "director"
+                      ? `${base}/api/queue/assets/${img.id}/file${token ? `?token=${encodeURIComponent(token)}` : ""}`
+                      : `${base}/api/queue/assets/file/${encodeURIComponent(img.filename)}${token ? `?token=${encodeURIComponent(token)}` : ""}`;
+                    return (
+                      <button
+                        key={img.id}
+                        onClick={() => handlePickGalleryImage(img)}
+                        className="group overflow-hidden rounded-lg border border-border hover:border-primary transition"
+                      >
+                        <img src={imgUrl} alt={img.prompt ?? img.filename} className="aspect-square w-full object-cover" loading="lazy" />
+                        {img.prompt && (
+                          <p className="truncate px-2 py-1 text-[10px] text-muted-foreground">{img.prompt}</p>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       )}
 
@@ -1069,6 +1260,13 @@ export function SceneInspector({ inspector, manifest, draftId, onManifestUpdate 
           }}
           onKenBurnsChange={(kenBurns) => {
             updateTimelineEntry((e) => ({ ...e, kenBurns }));
+          }}
+          onPresetApply={(effects, kenBurns) => {
+            updateTimelineEntry((e) => ({
+              ...e,
+              effects,
+              ...(kenBurns !== undefined ? { kenBurns } : {}),
+            }));
           }}
         />
       )}
@@ -1118,6 +1316,115 @@ export function SceneInspector({ inspector, manifest, draftId, onManifestUpdate 
             updateTimelineEntry((e) => ({ ...e, textOverlays: overlays }));
           }}
         />
+      )}
+
+      {/* Save / Load Scene */}
+      {isVisualScene && (
+        <div className="rounded-lg border border-border p-3">
+          <p className="mb-2 text-[11px] font-medium text-foreground">Scene Library</p>
+          <div className="flex gap-2">
+            <button
+              onClick={handleSaveSceneToGallery}
+              disabled={savingScene}
+              className="flex flex-1 items-center justify-center gap-1.5 rounded-md border border-border bg-background px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted transition disabled:opacity-50"
+            >
+              {savingScene ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+              Save to Gallery
+            </button>
+            <button
+              onClick={handleOpenScenePicker}
+              className="flex flex-1 items-center justify-center gap-1.5 rounded-md border border-primary/30 bg-primary/5 px-3 py-1.5 text-xs font-medium text-primary hover:bg-primary/10 transition"
+            >
+              <FolderOpen className="h-3.5 w-3.5" />
+              Load from Gallery
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Image Lightbox */}
+      {lightboxSrc && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/90" onClick={() => setLightboxSrc(null)}>
+          <div className="relative max-h-[90vh] max-w-[90vw]" onClick={(e) => e.stopPropagation()}>
+            <button
+              onClick={() => setLightboxSrc(null)}
+              className="absolute -right-3 -top-3 z-10 rounded-full border border-border bg-card p-2 shadow-lg hover:bg-muted"
+            >
+              <X className="h-4 w-4" />
+            </button>
+            <img src={lightboxSrc} alt="Scene preview" className="max-h-[85vh] max-w-[85vw] rounded-lg object-contain shadow-2xl" />
+            {onDeleteScene && inspector.sceneIndex !== null && (
+              <div className="absolute bottom-3 right-3">
+                <button
+                  onClick={() => { onDeleteScene(inspector.sceneIndex!); setLightboxSrc(null); }}
+                  className="flex items-center gap-1.5 rounded-lg bg-red-600/90 px-3 py-1.5 text-xs font-medium text-white shadow hover:bg-red-700"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                  Delete Scene
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Scene Picker Modal */}
+      {showScenePicker && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={() => setShowScenePicker(false)}>
+          <div className="mx-4 max-h-[80vh] w-full max-w-lg overflow-hidden rounded-2xl border border-border bg-card shadow-xl" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between border-b border-border px-4 py-3">
+              <h3 className="text-sm font-semibold text-foreground">Load Saved Scene</h3>
+              <button onClick={() => setShowScenePicker(false)} className="rounded p-1 text-muted-foreground hover:bg-muted transition">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="overflow-y-auto p-4" style={{ maxHeight: "calc(80vh - 56px)" }}>
+              {loadingScenes ? (
+                <div className="flex items-center justify-center py-12">
+                  <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                </div>
+              ) : savedScenes.length === 0 ? (
+                <p className="py-8 text-center text-sm text-muted-foreground">No saved scenes yet.</p>
+              ) : (
+                <div className="grid grid-cols-2 gap-3">
+                  {savedScenes.map((scene) => {
+                    const previewSrc = scene.generation_params?.previewSrc as string | undefined;
+                    const previewUrl = previewSrc
+                      ? buildMediaUrl(`/api/admin/director/files/${encodeURIComponent(previewSrc.split("/").pop() ?? "")}`)
+                      : null;
+                    return (
+                      <button
+                        key={scene.id}
+                        onClick={() => handleLoadSceneFromGallery(scene.id)}
+                        className="group overflow-hidden rounded-xl border border-border text-left hover:border-primary hover:shadow-md transition"
+                      >
+                        <div className="aspect-video w-full overflow-hidden bg-muted">
+                          {previewUrl ? (
+                            <img
+                              src={previewUrl}
+                              alt={scene.prompt ?? "Scene preview"}
+                              className="h-full w-full object-cover transition-transform duration-200 group-hover:scale-105"
+                            />
+                          ) : (
+                            <div className="flex h-full w-full items-center justify-center">
+                              <Layers className="h-8 w-8 text-muted-foreground/40" />
+                            </div>
+                          )}
+                        </div>
+                        <div className="p-2.5">
+                          <p className="line-clamp-2 text-xs font-medium text-foreground">{scene.prompt || "Untitled scene"}</p>
+                          <p className="mt-1 text-[10px] text-muted-foreground">
+                            {new Date(scene.created_at).toLocaleDateString()} {new Date(scene.created_at).toLocaleTimeString()}
+                          </p>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

@@ -3184,6 +3184,84 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
   });
 
   /**
+   * POST /scenes/:sceneIndex/replace-from-gallery — copy a gallery image into the
+   * director assets folder and use it as the scene's visual.
+   * Body: { draftId, assetId }
+   */
+  router.post("/scenes/:sceneIndex/replace-from-gallery", async (req, res) => {
+    try {
+      const sceneIndex = Number.parseInt(req.params.sceneIndex, 10);
+      if (!Number.isFinite(sceneIndex) || sceneIndex < 0) {
+        res.status(400).json({ error: "Invalid scene index" });
+        return;
+      }
+
+      const { draftId, assetId } = req.body as { draftId?: string; assetId?: string };
+      if (!assetId || typeof assetId !== "string") {
+        res.status(400).json({ error: "assetId is required" });
+        return;
+      }
+
+      const db = getDatabase();
+      const asset = db.prepare("SELECT * FROM media_assets WHERE id = ?").get(assetId) as { file_path: string } | undefined;
+      if (!asset || !asset.file_path) {
+        res.status(404).json({ error: "Asset not found" });
+        return;
+      }
+
+      const sourcePath = String(asset.file_path);
+      const fsMod = await import("node:fs");
+      const pathMod = await import("node:path");
+      const osMod = await import("node:os");
+
+      if (!fsMod.existsSync(sourcePath)) {
+        res.status(404).json({ error: "Asset file not found on disk" });
+        return;
+      }
+
+      // Copy into director images dir
+      const imageDir = pathMod.join(osMod.homedir(), ".openzigs", "director", "images");
+      fsMod.mkdirSync(imageDir, { recursive: true });
+      const ext = pathMod.extname(sourcePath) || ".png";
+      const destFilename = `gallery-${Date.now()}${ext}`;
+      const destPath = pathMod.join(imageDir, destFilename);
+      fsMod.copyFileSync(sourcePath, destPath);
+
+      // Update draft if provided
+      if (draftId) {
+        const db = getDatabase();
+        const row = db.prepare("SELECT manifest FROM director_drafts WHERE id = ?")
+          .get(draftId) as { manifest: string } | undefined;
+
+        if (row) {
+          try {
+            const manifest = JSON.parse(row.manifest);
+            if (Array.isArray(manifest.timeline)) {
+              const scenes = manifest.timeline.filter(
+                (e: { type: string }) => e.type === "image_scene" || e.type === "video_clip",
+              );
+              if (scenes[sceneIndex]) {
+                scenes[sceneIndex].src = destPath;
+                const now = new Date().toISOString();
+                db.prepare("UPDATE director_drafts SET manifest = ?, updated_at = ? WHERE id = ?")
+                  .run(JSON.stringify(manifest), now, draftId);
+              }
+            }
+          } catch {
+            logger.warn(`[Director API] Failed to update draft ${draftId} scene ${sceneIndex}`);
+          }
+        }
+      }
+
+      res.json({ filePath: destPath });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      logger.error(`[Director API] POST /scenes/:sceneIndex/replace-from-gallery failed: ${msg}`);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  /**
    * POST /scenes/:sceneIndex/rewrite-script — use LLM to rewrite narration after
    * a scene's visual asset has been replaced (e.g. image → video swap).
    *

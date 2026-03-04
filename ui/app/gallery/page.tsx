@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useSocket } from "@/lib/socket-context";
 import { fetchJson } from "@/lib/api";
@@ -29,6 +30,8 @@ import {
   ChevronRight,
   Clock,
   Sparkles,
+  Layers,
+  Clapperboard,
 } from "lucide-react";
 import { InlineModelPicker } from "@/components/model-picker-select";
 
@@ -36,7 +39,7 @@ import { InlineModelPicker } from "@/components/model-picker-select";
 
 interface GalleryAsset {
   id: string;
-  type: "image" | "video" | "audio";
+  type: "image" | "video" | "audio" | "scene";
   filename: string;
   file_path: string;
   mime_type: string;
@@ -94,9 +97,29 @@ function fileUrl(filename: string): string {
   return token ? `${url}?token=${encodeURIComponent(token)}` : url;
 }
 
-function fileDownloadUrl(filename: string): string {
-  const url = fileUrl(filename);
+/** Returns the playback URL for any asset, using the ID-based endpoint for
+ *  "director" assets whose files live outside the gallery directory. */
+function assetUrl(asset: GalleryAsset): string {
+  const base = process.env.NEXT_PUBLIC_OPENZIGS_API_BASE ?? "";
+  const token = process.env.NEXT_PUBLIC_OPENZIGS_TOKEN ?? "";
+  if (asset.source === "director") {
+    const url = `${base}/api/queue/assets/${asset.id}/file`;
+    return token ? `${url}?token=${encodeURIComponent(token)}` : url;
+  }
+  return fileUrl(asset.filename);
+}
+
+function fileDownloadUrl(asset: GalleryAsset): string {
+  const url = assetUrl(asset);
   return url.includes("?") ? `${url}&download=1` : `${url}?download=1`;
+}
+
+function directorFileUrl(filePath: string): string {
+  const base = process.env.NEXT_PUBLIC_OPENZIGS_API_BASE ?? "";
+  const token = process.env.NEXT_PUBLIC_OPENZIGS_TOKEN ?? "";
+  const filename = filePath.split("/").pop() ?? "";
+  const url = `${base}/api/admin/director/files/${encodeURIComponent(filename)}`;
+  return token ? `${url}?token=${encodeURIComponent(token)}` : url;
 }
 
 function formatBytes(bytes: number | null): string {
@@ -111,6 +134,7 @@ function typeIcon(type: string) {
     case "image": return <ImageIcon className="h-4 w-4" />;
     case "video": return <Video className="h-4 w-4" />;
     case "audio": return <Music className="h-4 w-4" />;
+    case "scene": return <Layers className="h-4 w-4" />;
     default: return <ImageIcon className="h-4 w-4" />;
   }
 }
@@ -294,9 +318,45 @@ export default function GalleryPage() {
 
   const handleDownload = (asset: GalleryAsset) => {
     const a = document.createElement("a");
-    a.href = fileDownloadUrl(asset.filename);
+    a.href = fileDownloadUrl(asset);
     a.download = asset.filename;
     a.click();
+  };
+
+  const router = useRouter();
+  const [openingInStudio, setOpeningInStudio] = useState<string | null>(null);
+
+  const handleOpenInStudio = async (asset: GalleryAsset) => {
+    if (asset.type !== "scene") return;
+    const draftId = asset.generation_params?.draftId as string | undefined;
+    if (draftId) {
+      router.push(`/director/studio/${draftId}`);
+      return;
+    }
+    // No draft recorded — create a new one from this scene's data
+    setOpeningInStudio(asset.id);
+    try {
+      const sceneData = await fetchJson<{ scene: Record<string, unknown> }>(
+        `/api/queue/assets/scenes/${asset.id}/data`,
+      );
+      const scene = sceneData.scene;
+      const dur = (scene.durationInFrames as number | undefined) ?? (scene.duration as number | undefined) ?? 150;
+      const manifest = {
+        projectTitle: asset.prompt || "Loaded Scene",
+        composition: { width: 1920, height: 1080, fps: 30, durationInFrames: dur },
+        timeline: [scene],
+        audio: {},
+      };
+      const draft = await fetchJson<{ id: string }>("/api/admin/director/drafts", {
+        method: "POST",
+        body: JSON.stringify({ title: asset.prompt || "Loaded Scene", manifest, productionMode: "presentation" }),
+      });
+      router.push(`/director/studio/${draft.id}`);
+    } catch (err) {
+      showToast(`Failed to open in Studio: ${err instanceof Error ? err.message : String(err)}`, "error");
+    } finally {
+      setOpeningInStudio(null);
+    }
   };
 
   return (
@@ -434,6 +494,7 @@ export default function GalleryPage() {
             <option value="image">Images</option>
             <option value="video">Videos</option>
             <option value="audio">Audio</option>
+            <option value="scene">Scenes</option>
           </select>
           <select
             value={sourceFilter}
@@ -507,6 +568,8 @@ export default function GalleryPage() {
                 onDelete={() => handleDelete(asset)}
                 onTag={() => handleAddTag(asset)}
                 onDownload={() => handleDownload(asset)}
+                onOpenInStudio={asset.type === "scene" ? () => void handleOpenInStudio(asset) : undefined}
+                openingInStudio={openingInStudio === asset.id}
               />
             ))}
           </div>
@@ -520,6 +583,8 @@ export default function GalleryPage() {
                 onDelete={() => handleDelete(asset)}
                 onTag={() => handleAddTag(asset)}
                 onDownload={() => handleDownload(asset)}
+                onOpenInStudio={asset.type === "scene" ? () => void handleOpenInStudio(asset) : undefined}
+                openingInStudio={openingInStudio === asset.id}
               />
             ))}
           </div>
@@ -528,7 +593,12 @@ export default function GalleryPage() {
 
       {/* Preview Lightbox */}
       {previewAsset && (
-        <PreviewLightbox asset={previewAsset} onClose={() => setPreviewAsset(null)} />
+        <PreviewLightbox
+          asset={previewAsset}
+          onClose={() => setPreviewAsset(null)}
+          onOpenInStudio={previewAsset.type === "scene" ? () => void handleOpenInStudio(previewAsset) : undefined}
+          openingInStudio={openingInStudio === previewAsset.id}
+        />
       )}
 
       {pendingDelete && (
@@ -555,14 +625,21 @@ function AssetCard({
   onDelete,
   onTag,
   onDownload,
+  onOpenInStudio,
+  openingInStudio,
 }: {
   asset: GalleryAsset;
   onPreview: () => void;
   onDelete: () => void;
   onTag: () => void;
   onDownload: () => void;
+  onOpenInStudio?: () => void;
+  openingInStudio?: boolean;
 }) {
-  const url = fileUrl(asset.filename);
+  const url = assetUrl(asset);
+  const scenePreviewUrl = asset.type === "scene" && asset.generation_params?.previewSrc
+    ? directorFileUrl(asset.generation_params.previewSrc as string)
+    : null;
 
   return (
     <div onClick={onPreview} className="group relative cursor-pointer overflow-hidden rounded-2xl border border-border bg-card">
@@ -579,6 +656,17 @@ function AssetCard({
               </div>
             </div>
           </div>
+        ) : asset.type === "scene" ? (
+          scenePreviewUrl ? (
+            <img src={scenePreviewUrl} alt={asset.prompt ?? "Scene"} className="aspect-square w-full object-cover" loading="lazy" />
+          ) : (
+            <div className="flex aspect-square flex-col items-center justify-center gap-3 bg-muted px-4">
+              <Layers className="h-10 w-10 text-muted-foreground/50" />
+              <span className="text-xs font-medium text-muted-foreground text-center line-clamp-2">
+                {asset.prompt || "Saved Scene"}
+              </span>
+            </div>
+          )
         ) : (
           <div className="flex aspect-square flex-col items-center justify-center gap-3 bg-muted px-4">
             <Music className="h-10 w-10 text-muted-foreground/50" />
@@ -598,6 +686,16 @@ function AssetCard({
 
       {/* Overlay actions */}
       <div className="absolute right-2 top-2 flex gap-1 opacity-0 transition group-hover:opacity-100">
+        {onOpenInStudio && (
+          <button
+            onClick={(e) => { e.stopPropagation(); onOpenInStudio(); }}
+            className="rounded-lg bg-black/60 p-1.5 text-white hover:bg-black/80 disabled:opacity-50"
+            title="Edit in Director Studio"
+            disabled={openingInStudio}
+          >
+            {openingInStudio ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Clapperboard className="h-3.5 w-3.5" />}
+          </button>
+        )}
         <button
           onClick={(e) => { e.stopPropagation(); onPreview(); }}
           className="rounded-lg bg-black/60 p-1.5 text-white hover:bg-black/80"
@@ -669,14 +767,21 @@ function AssetListRow({
   onDelete,
   onTag,
   onDownload,
+  onOpenInStudio,
+  openingInStudio,
 }: {
   asset: GalleryAsset;
   onPreview: () => void;
   onDelete: () => void;
   onTag: () => void;
   onDownload: () => void;
+  onOpenInStudio?: () => void;
+  openingInStudio?: boolean;
 }) {
-  const url = fileUrl(asset.filename);
+  const url = assetUrl(asset);
+  const scenePreviewUrl = asset.type === "scene" && asset.generation_params?.previewSrc
+    ? directorFileUrl(asset.generation_params.previewSrc as string)
+    : null;
 
   return (
     <div className="flex items-center gap-4 py-3 px-1 hover:bg-muted/40 rounded-lg transition">
@@ -688,6 +793,14 @@ function AssetListRow({
           <div className="relative h-full w-full bg-muted flex items-center justify-center">
             <Video className="h-5 w-5 text-muted-foreground" />
           </div>
+        ) : asset.type === "scene" ? (
+          scenePreviewUrl ? (
+            <img src={scenePreviewUrl} alt={asset.prompt ?? "Scene"} className="h-full w-full object-cover" loading="lazy" />
+          ) : (
+            <div className="flex h-full w-full items-center justify-center">
+              <Layers className="h-5 w-5 text-muted-foreground" />
+            </div>
+          )
         ) : (
           <div className="flex h-full w-full items-center justify-center">
             <Music className="h-5 w-5 text-muted-foreground" />
@@ -728,6 +841,16 @@ function AssetListRow({
 
       {/* Actions */}
       <div className="flex-shrink-0 flex items-center gap-1.5">
+        {onOpenInStudio && (
+          <button
+            onClick={(e) => { e.stopPropagation(); onOpenInStudio(); }}
+            className="rounded-lg border border-border p-1.5 text-muted-foreground hover:bg-muted disabled:opacity-50"
+            title="Edit in Director Studio"
+            disabled={openingInStudio}
+          >
+            {openingInStudio ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Clapperboard className="h-3.5 w-3.5" />}
+          </button>
+        )}
         <button
           onClick={(e) => { e.stopPropagation(); onPreview(); }}
           className="rounded-lg border border-border p-1.5 text-muted-foreground hover:bg-muted"
@@ -763,8 +886,16 @@ function AssetListRow({
 
 // ── Preview Lightbox ────────────────────────────────────────
 
-function PreviewLightbox({ asset, onClose }: { asset: GalleryAsset; onClose: () => void }) {
-  const url = fileUrl(asset.filename);
+function PreviewLightbox({ asset, onClose, onOpenInStudio, openingInStudio }: {
+  asset: GalleryAsset;
+  onClose: () => void;
+  onOpenInStudio?: () => void;
+  openingInStudio?: boolean;
+}) {
+  const url = assetUrl(asset);
+  const scenePreviewUrl = asset.type === "scene" && asset.generation_params?.previewSrc
+    ? directorFileUrl(asset.generation_params.previewSrc as string)
+    : null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm" onClick={onClose}>
@@ -783,6 +914,20 @@ function PreviewLightbox({ asset, onClose }: { asset: GalleryAsset; onClose: () 
           <img src={url} alt={asset.prompt ?? ""} className="max-h-[80vh] rounded-lg object-contain" />
         ) : asset.type === "video" ? (
           <video src={url} controls autoPlay className="max-h-[80vh] rounded-lg" />
+        ) : asset.type === "scene" ? (
+          <div className="flex flex-col items-center gap-4">
+            {scenePreviewUrl ? (
+              <img src={scenePreviewUrl} alt={asset.prompt ?? "Scene"} className="max-h-[60vh] rounded-lg object-contain" />
+            ) : (
+              <div className="flex flex-col items-center gap-3 py-8 px-12">
+                <Layers className="h-16 w-16 text-muted-foreground" />
+                <p className="text-sm font-medium text-foreground">Saved Scene</p>
+              </div>
+            )}
+            {asset.prompt && (
+              <p className="text-xs text-muted-foreground text-center max-w-sm">{asset.prompt}</p>
+            )}
+          </div>
         ) : (
           <div className="flex flex-col items-center gap-4 py-8 px-12">
             <Music className="h-16 w-16 text-muted-foreground" />
@@ -806,15 +951,27 @@ function PreviewLightbox({ asset, onClose }: { asset: GalleryAsset; onClose: () 
                 {asset.model && <span>{asset.model}</span>}
               </div>
             </div>
-            <a
-              href={fileDownloadUrl(asset.filename)}
-              download={asset.filename}
-              className="flex-shrink-0 flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <Download className="h-3.5 w-3.5" />
-              Download
-            </a>
+            <div className="flex flex-shrink-0 items-center gap-2">
+              {onOpenInStudio && (
+                <button
+                  onClick={(e) => { e.stopPropagation(); onOpenInStudio(); }}
+                  disabled={openingInStudio}
+                  className="flex items-center gap-1.5 rounded-lg border border-primary/50 bg-primary/10 px-3 py-1.5 text-xs font-medium text-primary hover:bg-primary/20 disabled:opacity-50"
+                >
+                  {openingInStudio ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Clapperboard className="h-3.5 w-3.5" />}
+                  Edit in Studio
+                </button>
+              )}
+              <a
+                href={fileDownloadUrl(asset)}
+                download={asset.filename}
+                className="flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <Download className="h-3.5 w-3.5" />
+                Download
+              </a>
+            </div>
           </div>
         </div>
       </div>
