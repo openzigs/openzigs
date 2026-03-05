@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import {
   SlidersHorizontal,
   Zap,
@@ -8,6 +8,7 @@ import {
   ChevronDown,
   ChevronUp,
 } from "lucide-react";
+import { useAudioEffectsChain } from "@/hooks/useAudioEffectsChain";
 
 // ── EQ Bands ────────────────────────────────────────────────
 
@@ -94,9 +95,21 @@ function EqBandSlider({
 export function EffectsRack({
   effects,
   onChange,
+  audioContext,
+  sourceNode,
 }: EffectsRackProps) {
   const [expanded, setExpanded] = useState(false);
   const [activeSection, setActiveSection] = useState<string | null>(null);
+
+  // Wire real-time Web Audio effects chain
+  const { connectSource } = useAudioEffectsChain(audioContext ?? null, effects);
+
+  // When sourceNode becomes available, connect it into the chain
+  useEffect(() => {
+    if (sourceNode && audioContext) {
+      connectSource(sourceNode);
+    }
+  }, [sourceNode, audioContext, connectSource]);
 
   const updateField = useCallback(
     <K extends keyof EffectsState>(key: K, value: EffectsState[K]) => {

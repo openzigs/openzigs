@@ -83,6 +83,77 @@ install_gptsovits_deps() {
 
 install_gptsovits_deps
 
+# ── Optional Music Studio sidecar setup ──────────────────────────────────────
+install_music_studio() {
+  local MS_DIR
+  MS_DIR="$(cd "$(dirname "$0")" && pwd)/sidecars/music-studio"
+
+  if [ ! -f "$MS_DIR/server.py" ]; then
+    return  # Music Studio sidecar not present
+  fi
+
+  echo ""
+  echo "=== Music Studio Sidecar Setup ==="
+  echo "Setting up Python venv and installing dependencies for Voice2Voice & Remix Lab."
+  echo ""
+
+  local VENV_DIR="$MS_DIR/.venv"
+  local PY=""
+
+  # Find a suitable Python >= 3.10
+  for candidate in python3.12 python3.11 python3.10 python3; do
+    if command -v "$candidate" >/dev/null 2>&1; then
+      PY="$candidate"
+      break
+    fi
+  done
+
+  if [ -z "$PY" ]; then
+    echo "  Warning: Python 3.10+ not found — skipping Music Studio setup."
+    echo "    Install Python and run: cd sidecars/music-studio && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt"
+    return
+  fi
+
+  if [ ! -d "$VENV_DIR" ]; then
+    echo "  Creating venv with $PY..."
+    "$PY" -m venv "$VENV_DIR"
+  fi
+
+  local VENV_PY="$VENV_DIR/bin/python"
+  echo "  Installing Python dependencies (this may take a while on first run)..."
+  "$VENV_PY" -m pip install --upgrade pip --quiet 2>/dev/null
+  "$VENV_PY" -m pip install -r "$MS_DIR/requirements.txt" --quiet 2>&1 | tail -5
+
+  # Ensure required host tools
+  local host_missing=""
+  command -v ffmpeg >/dev/null 2>&1 || host_missing="ffmpeg"
+  command -v fluidsynth >/dev/null 2>&1 || host_missing="$host_missing fluidsynth"
+
+  if [ -n "$host_missing" ]; then
+    echo "  Warning: Missing host tools:$host_missing"
+    if command -v brew >/dev/null 2>&1; then
+      printf "    Install with Homebrew? [Y/n]: "
+      read -r install_host
+      if [ -z "$install_host" ] || [ "$install_host" = "y" ] || [ "$install_host" = "Y" ]; then
+        # shellcheck disable=SC2086
+        brew install $host_missing || true
+      fi
+    else
+      echo "    Install manually: brew install$host_missing (or apt-get)"
+    fi
+  fi
+
+  # Create voice references and remix directories
+  mkdir -p "$HOME/.openzigs/voice-references"
+  mkdir -p "$HOME/.openzigs/remix"
+  mkdir -p "$HOME/.openzigs/remix-references"
+
+  echo "  Music Studio sidecar ready"
+  echo "    Start: cd sidecars/music-studio && .venv/bin/python server.py"
+}
+
+install_music_studio
+
 install_dir="$HOME/.openzigs"
 
 if [ -d "$install_dir" ]; then

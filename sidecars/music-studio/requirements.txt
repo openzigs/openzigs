@@ -1,5 +1,5 @@
 # Music Studio Sidecar — Dependencies
-# Issue #388: Voice2Voice pipeline (Demucs + RVC + mixdown)
+# Issue #388/#403: Voice2Voice pipeline (Demucs + Seed-VC + mixdown)
 
 # Core ML
 torch>=2.1.0
@@ -8,23 +8,40 @@ torchaudio>=2.1.0
 # Stem separation
 demucs>=4.0.0
 
-# RVC voice conversion
+# Audio processing (shared by Seed-VC, remix, and mastering)
 librosa>=0.10.0
 soundfile>=0.12.0
 numpy>=1.24.0
 scipy>=1.11.0
-praat-parselmouth>=0.4.3
-pyworld>=0.3.4
 
-# F0 detection (optional — improves pitch tracking)
-torchcrepe>=0.0.20
+# Seed-VC: zero-shot voice conversion (replaces RVC)
+huggingface_hub>=0.20.0
+transformers>=4.40.0
+einops>=0.8.0
+munch>=4.0.0
+pyyaml>=6.0
 
 # Mixdown
 pydub>=0.25.1
 
+# Remix Lab: Note transcription (Audio → MIDI)
+# basic-pitch>=0.3.0  # requires tensorflow-macos which has no Python 3.13 build; skip for now
+
+# Remix Lab: SoundFont synthesis (MIDI → Audio)
+pyfluidsynth>=1.3.0
+mido>=1.3.0
+
+# Remix Lab: DSP effects (Reverb, Chorus, Compression, etc.)
+pedalboard>=0.9.0
+
+# Remix Lab: Auto-mastering (EQ matching + LUFS normalization)
+matchering>=2.0.0
+pyloudnorm>=0.1.1
+
 # Sidecar HTTP server
 fastapi>=0.110.0
 uvicorn[standard]>=0.27.0
+python-multipart>=0.0.6
 
-# Audio format support (requires system ffmpeg)
-# brew install ffmpeg
+# Audio format support (requires system ffmpeg + fluid-synth)
+# brew install ffmpeg fluid-synth

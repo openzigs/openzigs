@@ -4095,7 +4095,7 @@ graph TB
         MINI[Mac Mini<br/>FLUX.1 (Schnell)<br/>:5005]
         M2PRO[M2 Pro Sidecar<br/>LTX-2 (8-bit MLX)<br/>:5007]
         MUSIC[Music Sidecar<br/>ACE-Step 1.5<br/>:5009]
-        V2V[Music Studio Sidecar<br/>Demucs + RVC v2<br/>:5010]
+        V2V[Music Studio Sidecar<br/>Demucs + RVC v2 + Remix<br/>:5010]
     end
 
     STUDIO -->|POST /api/queue/jobs| QAPI
@@ -4365,19 +4365,34 @@ The Gallery page at `/gallery` provides:
 | Route | Component | Purpose |
 |---|---|---|
 | `/gallery` | `gallery/page.tsx` | Asset Gallery + Gallery Studio |
-| `/music-studio` | `music-studio/page.tsx` | AI Music Studio — Voice2Voice pipeline with DAW waveform view |
+| `/music-studio` | `music-studio/page.tsx` | AI Music Studio — Voice2Voice pipeline + Smart Remix Lab with DAW waveform view |
 
-### Tracking: [Epic #325](https://github.com/mgcronin/openzigs/issues/325), [Epic #335](https://github.com/mgcronin/openzigs/issues/335), [Epic #380](https://github.com/mgcronin/openzigs/issues/380)
+### Tracking: [Epic #325](https://github.com/mgcronin/openzigs/issues/325), [Epic #335](https://github.com/mgcronin/openzigs/issues/335), [Epic #380](https://github.com/mgcronin/openzigs/issues/380), [Epic #389](https://github.com/mgcronin/openzigs/issues/389)
 
-## Music Studio — Voice2Voice Pipeline (Epic #380)
+## Music Studio — Voice2Voice Pipeline & Smart Remix Lab (Epic #380, #389, #402)
 
 ### Overview
 
-The Music Studio extends the Gallery's media generation capabilities with a full **voice-to-voice conversion pipeline**. Users select a source audio track from the gallery, choose an RVC voice model, adjust pitch and mix parameters, and submit a `voice2voice` queue job. The pipeline runs in 3 stages on a dedicated FastAPI sidecar (port 5010):
+The Music Studio extends the Gallery's media generation capabilities with a full **voice-to-voice conversion pipeline**. Users select a source audio track from the gallery, choose a voice reference clip, adjust pitch and mix parameters, and submit a `voice2voice` queue job. The pipeline runs in 3 stages on a dedicated FastAPI sidecar (port 5010):
 
 1. **Stem Separation** (Demucs v4) — Separates vocals from instrumentals using Meta's `htdemucs_ft` model
-2. **Voice Conversion** (RVC v2) — Converts vocal timbre using a pre-trained Retrieval-based Voice Conversion model
+2. **Voice Conversion** (Seed-VC) — Zero-shot voice conversion using a short reference audio clip (1–25 seconds). Supports both singing (44.1 kHz, F0-conditioned) and speech (22 kHz) modes. Models auto-download from HuggingFace (`Plachta/Seed-VC`).
 3. **Final Mixdown** (pydub) — Recombines converted vocals with the instrumental stem, with volume controls and normalization
+
+### Voice Reference System
+
+Voice references are short audio clips (1–25 seconds) that define the target voice timbre. The sidecar provides full CRUD:
+
+| Endpoint | Method | Description |
+|---|---|---|
+| `/voice-references` | GET | List all references (id, name, duration, created) |
+| `/voice-references/upload` | POST | Upload + auto-trim/normalize reference audio |
+| `/voice-references/{id}` | GET | Get reference metadata |
+| `/voice-references/{id}/audio` | GET | Stream reference audio file |
+| `/voice-references/{id}` | PATCH | Rename reference |
+| `/voice-references/{id}` | DELETE | Delete reference + audio file |
+
+References are stored at `~/.openzigs/voice-references/{uuid}/` with metadata JSON + audio file.
 
 ### Architecture
 
@@ -4386,12 +4401,31 @@ graph LR
     UI[Music Studio UI<br/>wavesurfer.js DAW] -->|POST /api/queue/jobs<br/>type: voice2voice| QM[QueueMaster]
     QM -->|POST /generate| SIDECAR[Music Studio Sidecar<br/>FastAPI :5010]
     SIDECAR -->|Stage 1| DEMUCS[Demucs v4<br/>Stem Separation]
-    DEMUCS --> RVC[RVC v2<br/>Voice Conversion]
-    RVC --> MIX[pydub<br/>Final Mixdown]
+    DEMUCS --> SEEDVC[Seed-VC<br/>Zero-Shot Voice Conversion]
+    SEEDVC --> MIX[pydub<br/>Final Mixdown]
     SIDECAR -->|POST /progress| QAPI[Queue API]
     QAPI -->|Socket.IO| UI
     SIDECAR -->|POST /complete| QAPI
 ```
+
+### Web Audio Effects Chain
+
+The EffectsRack UI connects to a real-time Web Audio processing chain via the `useAudioEffectsChain` hook:
+
+```
+Source → 10-Band EQ → StereoPanner → Compressor → Distortion → [Dry + Reverb] → Master → Destination
+```
+
+| Node | Type | Description |
+|---|---|---|
+| 10-Band EQ | BiquadFilterNode × 10 | Low shelf + 8 peaking + high shelf |
+| Stereo Pan | StereoPannerNode | Full L/R placement |
+| Compressor | DynamicsCompressorNode | Threshold, ratio, attack, release |
+| Distortion | WaveShaperNode | Adjustable curve amount |
+| Reverb | ConvolverNode | Synthetic impulse response with wet/dry mix |
+| Master | GainNode | Output volume control |
+
+Effects are updated in real-time via React state → `useEffect` parameter sync.
 
 ### Components
 
@@ -4405,15 +4439,79 @@ graph LR
 | WaveformTrack | `ui/components/music-studio/WaveformTrack.tsx` | wavesurfer.js v7 single-track waveform with Timeline and Hover plugins |
 | MultiTrackView | `ui/components/music-studio/MultiTrackView.tsx` | Multi-track DAW with transport controls, per-track mute/remove |
 | EffectsRack | `ui/components/music-studio/EffectsRack.tsx` | 10-band EQ, reverb, stereo pan, playback speed, compressor, distortion |
+| useAudioEffectsChain | `ui/hooks/useAudioEffectsChain.ts` | Web Audio API real-time effects chain hook |
 | SpectrogramView | `ui/components/music-studio/SpectrogramView.tsx` | FFT-based frequency spectrogram visualization |
-| ControlPanel | `ui/components/music-studio/ControlPanel.tsx` | Voice model selection, pitch, mix parameters |
+| ControlPanel | `ui/components/music-studio/ControlPanel.tsx` | Voice reference selection, mode toggle, pitch, mix parameters |
 | PipelineStatus | `ui/components/music-studio/PipelineStatus.tsx` | Real-time 3-stage progress visualization |
-| Sidecar Server | `sidecars/music-studio/server.py` | FastAPI orchestrator (port 5010) |
+| Sidecar Server | `sidecars/music-studio/server.py` | FastAPI orchestrator (port 5010) with voice reference CRUD |
 | Stem Separation | `sidecars/music-studio/extract_vocals.py` | Demucs v4 vocal/instrumental separation |
-| Voice Conversion | `sidecars/music-studio/apply_rvc.py` | RVC v2 voice conversion |
+| Voice Conversion | `sidecars/music-studio/apply_seedvc.py` | Seed-VC zero-shot voice conversion wrapper |
 | Mixdown | `sidecars/music-studio/mix_audio.py` | pydub vocal + instrumental mixdown |
+| Admin Proxy | `src/api/admin.ts` | Voice reference proxy routes to sidecar |
 
-### Tracking: [Epic #380](https://github.com/mgcronin/openzigs/issues/380)
+### Smart Remix Lab Pipeline (Epic #389, #402)
+
+The Smart Remix Lab extends the Music Studio with an AI-powered remix pipeline that enables zero-experience users to upload a song, split it into 6 stems, selectively replace instruments while preserving melody, apply vibe presets, and auto-master the final track. Mastered tracks can be saved back to the gallery.
+
+#### Remix Pipeline Stages
+
+1. **6-Stem Separation** (Demucs `htdemucs_6s`) — Splits audio into vocals, bass, drums, guitar, piano, other
+2. **Audio Analysis** (librosa) — BPM detection and musical key estimation (Krumhansl-Schmuckler)
+3. **Instrument Replacement** (basic-pitch → pyfluidsynth → pedalboard) — Converts stem audio to MIDI via ML, re-synthesizes through SoundFont (.sf2), applies DSP effects
+4. **Vibe Mixing** (smart_mix.py) — Applies preset EQ/compression/reverb profiles with automatic headroom gain staging (−3 dB per doubling of active stems)
+5. **Auto-Mastering** (finalize.py) — Masters using matchering (reference-based) or ITU-R BS.1770 LUFS normalization via pyloudnorm (fallback to −14 LUFS) with brick-wall limiter
+
+#### Architecture
+
+```mermaid
+graph LR
+    UI[SmartRemixLab UI<br/>Tab in Music Studio] -->|POST /api/queue/jobs<br/>type: remix_analyze| QM[QueueMaster]
+    UI -->|POST /api/queue/jobs<br/>type: remix_replace| QM
+    UI -->|POST /api/queue/jobs<br/>type: remix_master| QM
+    QM -->|POST /remix/analyze| SC[Music Studio Sidecar<br/>FastAPI :5010]
+    QM -->|POST /remix/replace-stem| SC
+    QM -->|POST /remix/master| SC
+    SC -->|analyze| DEMUCS6[Demucs htdemucs_6s<br/>6-Stem Split]
+    SC -->|replace| BP[basic-pitch → MIDI<br/>pyfluidsynth → Audio<br/>pedalboard → DSP]
+    SC -->|master| PYLOUD[pyloudnorm ITU-R BS.1770<br/>LUFS Normalization]
+    SC -->|POST /progress| QAPI[Queue API]
+    QAPI -->|Socket.IO| UI
+    SC -->|POST /complete| QAPI
+```
+
+#### Queue Job Types
+
+| Job Type | Model | Sidecar Endpoint | Description |
+|---|---|---|---|
+| `remix_analyze` | `htdemucs_6s` | `POST /remix/analyze` | 6-stem separation + BPM/key analysis |
+| `remix_replace` | `basic-pitch` | `POST /remix/replace-stem` | Melody-preserving instrument replacement |
+| `remix_master` | `matchering` | `POST /remix/master` | Auto-mastering with reference track |
+
+All remix job types route to `m2-pro` via `targetNodeForJobType()`. Remix jobs reuse the existing `MediaQueueRepository` and `QueueMaster` infrastructure — they are dispatched via the extended `processMusicStudioJobs()` method which delegates to `dispatchRemixJob()`.
+
+#### Melody Preservation Engine
+
+The instrument replacement pipeline preserves the original melody through a 4-step process:
+
+1. **Audio → MIDI** — `basic-pitch` (Spotify ML model) extracts pitch, onset, and duration from the source stem
+2. **Velocity Normalization** — MIDI note velocities are normalized to a consistent range
+3. **MIDI → Audio** — `pyfluidsynth` renders the MIDI through a SoundFont (.sf2) instrument sample
+4. **DSP Post-processing** — `pedalboard` applies gain staging, EQ, reverb, and limiter to match the original stem's character
+
+SoundFonts are loaded from `~/.openzigs/soundfonts/` and mapped by instrument ID (e.g., `electric_guitar`, `synth_pad`, `brass`).
+
+#### Components (Remix-specific)
+
+| Component | Path | Description |
+|---|---|---|
+| SmartRemixLab UI | `ui/components/music-studio/SmartRemixLab.tsx` | Full remix UI: analysis, stem dashboard, replace modal, vibe panel, mastering, gallery save |
+| Track Analyzer | `sidecars/music-studio/analyze_track.py` | 6-stem Demucs split + librosa BPM/key detection |
+| Instrument Replacer | `sidecars/music-studio/replace_instrument.py` | basic-pitch → MIDI → pyfluidsynth → pedalboard pipeline |
+| Vibe Mixer | `sidecars/music-studio/smart_mix.py` | 4 vibe presets with headroom gain staging (−3 dB/doubling) |
+| Auto-Mastering | `sidecars/music-studio/finalize.py` | pyloudnorm ITU-R BS.1770 LUFS −14 normalization + brick-wall limiter |
+| Sidecar Endpoints | `sidecars/music-studio/server.py` | `/remix/analyze`, `/remix/replace-stem`, `/remix/master`, voice reference CRUD |
+
+### Tracking: [Epic #380](https://github.com/mgcronin/openzigs/issues/380), [Epic #389](https://github.com/mgcronin/openzigs/issues/389), [Epic #402](https://github.com/mgcronin/openzigs/issues/402)
 
 ## Character Lab — LoRA Training & Identity Consistency (Epic #374)
 

@@ -10,9 +10,12 @@ import { ControlPanel, type Voice2VoiceParams } from "@/components/music-studio/
 import { PipelineStatus } from "@/components/music-studio/PipelineStatus";
 import { EffectsRack, DEFAULT_EFFECTS, type EffectsState } from "@/components/music-studio/EffectsRack";
 import { SpectrogramView } from "@/components/music-studio/SpectrogramView";
-import { Music, Disc3 } from "lucide-react";
+import { SmartRemixLab } from "@/components/music-studio/SmartRemixLab";
+import { Music, Disc3, Wand2 } from "lucide-react";
 
 // ── Types ───────────────────────────────────────────────────
+
+type StudioTab = "voice2voice" | "remix";
 
 interface GalleryAsset {
   id: string;
@@ -47,6 +50,7 @@ export default function MusicStudioPage() {
   const [tracks, setTracks] = useState<Track[]>([]);
   const [effects, setEffects] = useState<EffectsState>({ ...DEFAULT_EFFECTS });
   const [spectrogramUrl, setSpectrogramUrl] = useState<string | null>(null);
+  const [tab, setTab] = useState<StudioTab>("voice2voice");
 
   // Fetch audio assets from the gallery
   const { data: assetsData } = useQuery({
@@ -73,12 +77,12 @@ export default function MusicStudioPage() {
         body: JSON.stringify({
           type: "voice2voice",
           payload: {
-            prompt: `Voice conversion: ${params.voice_model}`,
+            prompt: `Voice conversion (Seed-VC)`,
             source_asset_id: params.source_asset_id,
-            voice_model: params.voice_model,
+            voice_reference_id: params.voice_reference_id,
             pitch_shift: params.pitch_shift,
-            index_rate: params.index_rate,
-            filter_radius: params.filter_radius,
+            diffusion_steps: params.diffusion_steps,
+            f0_condition: params.f0_condition,
             vocal_volume: params.vocal_volume,
             instrumental_volume: params.instrumental_volume,
             output_format: params.output_format,
@@ -180,11 +184,44 @@ export default function MusicStudioPage() {
         <div>
           <h1 className="text-2xl font-bold text-white">Music Studio</h1>
           <p className="text-sm text-zinc-400">
-            AI Voice2Voice pipeline — stem separation, voice conversion &amp; mixdown
+            AI Voice2Voice pipeline &amp; Smart Remix Lab
           </p>
         </div>
       </div>
 
+      {/* Tab Switcher */}
+      <div className="flex gap-1 rounded-lg border border-zinc-700 bg-zinc-900 p-1">
+        <button
+          onClick={() => setTab("voice2voice")}
+          className={`flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition ${
+            tab === "voice2voice"
+              ? "bg-indigo-600 text-white"
+              : "text-zinc-400 hover:text-zinc-200"
+          }`}
+        >
+          <Disc3 className="h-4 w-4" />
+          Voice2Voice
+        </button>
+        <button
+          onClick={() => setTab("remix")}
+          className={`flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition ${
+            tab === "remix"
+              ? "bg-indigo-600 text-white"
+              : "text-zinc-400 hover:text-zinc-200"
+          }`}
+        >
+          <Wand2 className="h-4 w-4" />
+          AI Remix Lab
+        </button>
+      </div>
+
+      {/* Remix Lab Tab */}
+      {tab === "remix" && (
+        <SmartRemixLab audioAssets={audioAssets} />
+      )}
+
+      {/* Voice2Voice Tab */}
+      {tab === "voice2voice" && (
       <div className="grid gap-6 lg:grid-cols-3">
         {/* Left Column: DAW + Pipeline Status */}
         <div className="space-y-6 lg:col-span-2">
@@ -271,6 +308,7 @@ export default function MusicStudioPage() {
           </SectionCard>
         </div>
       </div>
+      )}
     </main>
   );
 }
