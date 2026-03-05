@@ -16,6 +16,7 @@ pkill -f "$PROJECT_ROOT/ui.*next.*dev" || true
 pkill -f "$PROJECT_ROOT/sidecars/image-gen/server.py" || true
 pkill -f "$PROJECT_ROOT/sidecars/audio/server.py" || true
 pkill -f "$PROJECT_ROOT/sidecars/music/server.py" || true
+pkill -f "$PROJECT_ROOT/sidecars/music-studio/server.py" || true
 pkill -f "$PROJECT_ROOT.*api_v2.py" || true
 
 # Final deterministic sweep: kill any OpenZigs-rooted node/tsx/pnpm/next/python
@@ -74,6 +75,13 @@ fi
 PID=$(lsof -ti:5009 2>/dev/null || true)
 if [ -n "$PID" ]; then
   echo "[clean-start] Killing process on port 5009 (PID $PID)"
+  kill -9 $PID || true
+fi
+
+# Kill processes on port 5010 (music-studio sidecar)
+PID=$(lsof -ti:5010 2>/dev/null || true)
+if [ -n "$PID" ]; then
+  echo "[clean-start] Killing process on port 5010 (PID $PID)"
   kill -9 $PID || true
 fi
 
@@ -259,6 +267,45 @@ if [ "${OPENZIGS_START_MUSIC_SIDECAR:-0}" = "1" ]; then
   fi
 fi
 
+# Optional: start music-studio sidecar (demucs stem separation, Seed-VC voice2voice, default enabled)
+# Set OPENZIGS_START_MUSIC_STUDIO_SIDECAR=0 to disable. Requires project venv with
+# demucs, basic-pitch, matchering, and seed-vc deps installed (see sidecars/music-studio/requirements.txt).
+MUSIC_STUDIO_SIDECAR_PID=""
+if [ "${OPENZIGS_START_MUSIC_STUDIO_SIDECAR:-1}" != "0" ]; then
+  MUSIC_STUDIO_DIR="$PROJECT_ROOT/sidecars/music-studio"
+  MUSIC_STUDIO_LOG="$PROJECT_ROOT/.openzigs-music-studio-sidecar.log"
+  MUSIC_STUDIO_PORT="${MUSIC_STUDIO_PORT:-5010}"
+
+  if [ -x "$MUSIC_STUDIO_DIR/.venv/bin/python" ]; then
+    MUSIC_STUDIO_PY="$MUSIC_STUDIO_DIR/.venv/bin/python"
+  elif [ -x "$PROJECT_ROOT/.venv/bin/python" ]; then
+    MUSIC_STUDIO_PY="$PROJECT_ROOT/.venv/bin/python"
+  else
+    MUSIC_STUDIO_PY="python3"
+  fi
+
+  if [ -f "$MUSIC_STUDIO_DIR/server.py" ]; then
+    # Ensure venv has all deps (python-multipart etc.) before starting
+    if [ -f "$MUSIC_STUDIO_DIR/requirements.txt" ] && [ -x "$MUSIC_STUDIO_DIR/.venv/bin/pip" ]; then
+      echo "[clean-start] Syncing music-studio venv deps..."
+      "$MUSIC_STUDIO_DIR/.venv/bin/pip" install -q -r "$MUSIC_STUDIO_DIR/requirements.txt" 2>/dev/null || true
+    fi
+
+    echo "[clean-start] Starting music-studio sidecar (demucs/Seed-VC/matchering, port=$MUSIC_STUDIO_PORT)"
+    (
+      cd "$MUSIC_STUDIO_DIR"
+      "$MUSIC_STUDIO_PY" server.py --port "$MUSIC_STUDIO_PORT" > "$MUSIC_STUDIO_LOG" 2>&1
+    ) &
+    MUSIC_STUDIO_SIDECAR_PID=$!
+
+    echo "[clean-start] Music-studio sidecar logs: $MUSIC_STUDIO_LOG"
+    echo "[clean-start] Probing music-studio sidecar health in background..."
+    start_health_probe "Music-studio sidecar (port $MUSIC_STUDIO_PORT)" "http://127.0.0.1:${MUSIC_STUDIO_PORT}/health" 15 1
+  else
+    echo "[clean-start] WARNING: music-studio sidecar server not found at $MUSIC_STUDIO_DIR/server.py"
+  fi
+fi
+
 # Optional: start local audio sidecar (default enabled)
 # The audio sidecar starts in lazy mode — no models loaded until first TTS/STT request.
 # Comment out this block if you don't need local TTS/STT.
@@ -322,6 +369,9 @@ cleanup() {
   if [ -n "${MUSIC_SIDECAR_PID:-}" ]; then
     kill -9 "$MUSIC_SIDECAR_PID" 2>/dev/null || true
   fi
+  if [ -n "${MUSIC_STUDIO_SIDECAR_PID:-}" ]; then
+    kill -9 "$MUSIC_STUDIO_SIDECAR_PID" 2>/dev/null || true
+  fi
   if [ -n "${TAIL_PID:-}" ]; then
     kill -9 "$TAIL_PID" 2>/dev/null || true
   fi
@@ -334,6 +384,7 @@ cleanup() {
   pkill -f "sidecars/image-gen/server.py" || true
   pkill -f "sidecars/audio/server.py" || true
   pkill -f "sidecars/music/server.py" || true
+  pkill -f "sidecars/music-studio/server.py" || true
   pkill -f "api_v2.py" || true
 }
 

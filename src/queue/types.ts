@@ -5,11 +5,20 @@
 
 // ── Job Types ─────────────────────────────────────────────────
 
-export type MediaJobType = "txt2img" | "img2img" | "txt2video" | "img2video" | "tts" | "txt2music" | "voice2voice";
+export type MediaJobType = "txt2img" | "img2img" | "txt2video" | "img2video" | "tts" | "txt2music" | "voice2voice" | "remix_analyze" | "remix_replace" | "remix_master";
 
 export type MediaJobStatus = "pending" | "dispatched" | "processing" | "complete" | "failed";
 
-export type TargetNode = "mac-mini" | "m2-pro";
+export type TargetNode = "mac-mini" | "m2-pro" | "local";
+
+/** Audio/music job types that have dedicated dispatch handlers and must NOT be dispatched via the video worker. */
+export const AUDIO_JOB_TYPES: ReadonlySet<MediaJobType> = new Set<MediaJobType>([
+  "txt2music",
+  "voice2voice",
+  "remix_analyze",
+  "remix_replace",
+  "remix_master",
+]);
 
 /** Determine which worker node handles a given job type. */
 export function targetNodeForJobType(type: MediaJobType): TargetNode {
@@ -21,8 +30,12 @@ export function targetNodeForJobType(type: MediaJobType): TargetNode {
     case "img2video":
     case "tts":
     case "txt2music":
-    case "voice2voice":
       return "m2-pro";
+    case "voice2voice":
+    case "remix_analyze":
+    case "remix_replace":
+    case "remix_master":
+      return "local";
   }
 }
 
@@ -41,7 +54,13 @@ export function defaultModelForJobType(type: MediaJobType): string {
     case "txt2music":
       return "ace-step";
     case "voice2voice":
-      return "rvc-v2";
+      return "seed-vc";
+    case "remix_analyze":
+      return "htdemucs_6s";
+    case "remix_replace":
+      return "basic-pitch";
+    case "remix_master":
+      return "matchering";
   }
 }
 
@@ -86,13 +105,19 @@ export interface MediaJobPayload {
   lora_scales?: number[];
   /** Gallery asset ID of the source audio for voice2voice */
   source_asset_id?: string;
-  /** RVC voice model name for voice conversion */
+  /** Voice reference ID for Seed-VC zero-shot voice conversion */
+  voice_reference_id?: string;
+  /** Seed-VC diffusion steps (default 25, use 30-50 for singing) */
+  diffusion_steps?: number;
+  /** Whether to condition on f0 pitch (true for singing, false for speech) */
+  f0_condition?: boolean;
+  /** Voice model name (legacy RVC compat) */
   voice_model?: string;
-  /** Semitone pitch shift for RVC (default 0) */
+  /** Semitone pitch shift (default 0) */
   pitch_shift?: number;
-  /** RVC feature index rate 0–1 (default 0.75) */
+  /** Feature index rate 0–1 (default 0.75, legacy RVC) */
   index_rate?: number;
-  /** RVC median filter radius (default 3) */
+  /** Median filter radius (default 3, legacy RVC) */
   filter_radius?: number;
   /** Final vocal volume multiplier (default 1.0) */
   vocal_volume?: number;
@@ -100,6 +125,26 @@ export interface MediaJobPayload {
   instrumental_volume?: number;
   /** Output audio format (default "wav") */
   output_format?: string;
+
+  // ── Remix Lab fields ───────────────────────────────────────
+  /** Path to an isolated stem WAV for instrument replacement */
+  source_stem_url?: string;
+  /** Target instrument ID (e.g. "80s_analog_synth") */
+  target_instrument_id?: string;
+  /** Detected BPM of source track */
+  original_bpm?: number;
+  /** Detected key of source track (e.g. "C major") */
+  original_key?: string;
+  /** Mapping: stem_name → WAV file path for mix & master */
+  stem_paths?: Record<string, string>;
+  /** Mapping: stem_name → volume (0.0–2.0) */
+  volumes?: Record<string, number>;
+  /** Mapping: stem_name → muted boolean */
+  muted?: Record<string, boolean>;
+  /** Vibe preset for smart mix: punchy_pop, warm_lofi, cinematic_wide, raw */
+  vibe?: string;
+  /** Device to use for analysis (cpu / mps / cuda) */
+  device?: string;
 }
 
 // ── Stored Job ────────────────────────────────────────────────

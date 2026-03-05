@@ -341,7 +341,18 @@ export class Scheduler extends EventEmitter {
     if (this.taskEngine && job.actionType === "prompt") {
       try {
         const promptName = (job.actionPayload as Record<string, unknown>).promptName as string | undefined;
-        const variables = ((job.actionPayload as Record<string, unknown>).variables ?? {}) as Record<string, string>;
+        const userVariables = ((job.actionPayload as Record<string, unknown>).variables ?? {}) as Record<string, string>;
+
+        // Built-in dynamic variables resolved at execution time.
+        // User-defined values take precedence over built-ins.
+        const builtinVariables: Record<string, string> = {
+          today: now.toISOString().slice(0, 10),
+          now: now.toISOString(),
+          day_of_week: now.toLocaleDateString("en-US", { weekday: "long" }),
+          month: now.toLocaleDateString("en-US", { month: "long" }),
+          year: String(now.getFullYear()),
+        };
+        const variables = { ...builtinVariables, ...userVariables };
 
         // Resolve the saved prompt template (with stages if configured)
         let resolvedPrompt: string | null = null;

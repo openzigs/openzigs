@@ -214,7 +214,11 @@ export default function SchedulerPage() {
                 {job.actionPayload && Object.keys(job.actionPayload).length > 0 && (
                   <pre className="mt-2 whitespace-pre-wrap break-words font-mono text-xs text-muted-foreground">
                     {job.actionType === "prompt" && job.actionPayload.promptName
-                      ? `Prompt: ${job.actionPayload.promptName}`
+                      ? `Prompt: ${job.actionPayload.promptName}${
+                          job.actionPayload.variables && typeof job.actionPayload.variables === "object" && Object.keys(job.actionPayload.variables as Record<string, string>).length > 0
+                            ? `\nVariables: ${Object.entries(job.actionPayload.variables as Record<string, string>).map(([k, v]) => `${k}=${v}`).join(", ")}`
+                            : ""
+                        }`
                       : JSON.stringify(job.actionPayload, null, 2).slice(0, 200)}
                   </pre>
                 )}
@@ -278,6 +282,11 @@ const JobForm = ({ existing, onClose }: { existing: ScheduledJob | null; onClose
   const [autoApproveTools, setAutoApproveTools] = useState<string[]>(
     existing?.autoApproveTools ?? []
   );
+  const [templateVars, setTemplateVars] = useState<Record<string, string>>(
+    (existing?.actionType === "prompt" && existing?.actionPayload?.variables
+      ? (existing.actionPayload.variables as Record<string, string>)
+      : {})
+  );
 
   // Fetch prompts for the dropdown
   const promptsQuery = useQuery({
@@ -285,6 +294,31 @@ const JobForm = ({ existing, onClose }: { existing: ScheduledJob | null; onClose
     queryFn: () => fetchJson<{ prompts: SavedPrompt[] }>("/api/admin/prompts"),
   });
   const prompts = promptsQuery.data?.prompts ?? [];
+
+  // Extract {{variable}} names from the selected prompt template
+  const BUILTIN_VARS = ["today", "now", "day_of_week", "month", "year"];
+  const detectedVars = useMemo(() => {
+    if (actionType !== "prompt" || !promptName) return [];
+    const selected = prompts.find((p) => p.name === promptName);
+    if (!selected?.template) return [];
+    const names = new Set<string>();
+    for (const match of selected.template.matchAll(/\{\{(\w+)\}\}/g)) {
+      names.add(match[1]);
+    }
+    return Array.from(names);
+  }, [actionType, promptName, prompts]);
+
+  // When prompt changes, preserve existing variable values and add empty entries for new ones
+  useEffect(() => {
+    if (detectedVars.length === 0) return;
+    setTemplateVars((prev) => {
+      const next = { ...prev };
+      for (const v of detectedVars) {
+        if (!(v in next)) next[v] = "";
+      }
+      return next;
+    });
+  }, [detectedVars]);
 
   const modelsQuery = useQuery({
     queryKey: ["models"],
@@ -427,7 +461,14 @@ const JobForm = ({ existing, onClose }: { existing: ScheduledJob | null; onClose
     let actionPayload: Record<string, unknown>;
     if (actionType === "prompt") {
       if (!promptName) { showToast("Select a prompt for this job.", "error"); return; }
-      actionPayload = { promptName };
+      // Include only non-empty variable values
+      const vars: Record<string, string> = {};
+      for (const [k, v] of Object.entries(templateVars)) {
+        if (v.trim()) vars[k] = v.trim();
+      }
+      actionPayload = Object.keys(vars).length > 0
+        ? { promptName, variables: vars }
+        : { promptName };
     } else if (actionType === "pipeline") {
       if (pipelineStages.length < 2) { showToast("Pipeline needs at least 2 stages.", "error"); return; }
       actionPayload = { stages: pipelineStages };
@@ -578,6 +619,7 @@ const JobForm = ({ existing, onClose }: { existing: ScheduledJob | null; onClose
         </Field>
 
         {actionType === "prompt" ? (
+          <>
           <Field label="Linked Prompt" hint="The saved prompt to execute on each run.">
             <select
               className="w-full rounded-lg border border-border bg-card text-foreground px-3 py-2 text-sm"
@@ -598,6 +640,35 @@ const JobForm = ({ existing, onClose }: { existing: ScheduledJob | null; onClose
               </p>
             )}
           </Field>
+          {detectedVars.length > 0 && (
+            <Field
+              label="Template Variables"
+              hint={`Set values for {{variables}} in this prompt. Built-in dynamic variables (${BUILTIN_VARS.join(", ")}) auto-resolve at run time if left empty.`}
+            >
+              <div className="space-y-2 rounded-lg border border-border bg-muted/30 p-3">
+                {detectedVars.map((varName) => (
+                  <div key={varName} className="flex items-center gap-2">
+                    <code className="min-w-[120px] shrink-0 rounded bg-primary/10 px-2 py-1 font-mono text-xs text-primary">
+                      {`{{${varName}}}`}
+                    </code>
+                    <input
+                      type="text"
+                      className="w-full rounded-lg border border-border bg-card text-foreground px-3 py-1.5 text-sm"
+                      placeholder={BUILTIN_VARS.includes(varName) ? `(auto: resolved at run time)` : `Value for ${varName}`}
+                      value={templateVars[varName] ?? ""}
+                      onChange={(e) =>
+                        setTemplateVars((prev) => ({ ...prev, [varName]: e.target.value }))
+                      }
+                    />
+                    {BUILTIN_VARS.includes(varName) && (
+                      <span className="shrink-0 text-[10px] text-emerald-500">dynamic</span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </Field>
+          )}
+          </>
         ) : actionType === "pipeline" ? (
           <PipelineSection
             pipelineStages={pipelineStages}

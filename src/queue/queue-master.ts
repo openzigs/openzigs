@@ -12,6 +12,7 @@ import path from "node:path";
 import { EventEmitter } from "node:events";
 import { logger } from "../logging/logger.js";
 import type { MediaQueueRepository } from "./media-queue-repository.js";
+import { AUDIO_JOB_TYPES } from "./types.js";
 import type {
   MediaJob,
   QueueConfig,
@@ -50,6 +51,8 @@ export class QueueMaster extends EventEmitter {
   private musicStatus: WorkerStatus = { is_busy: false, loaded_model: null };
   /** Independent status tracking for the music-studio voice2voice sidecar. */
   private musicStudioStatus: WorkerStatus = { is_busy: false, loaded_model: null };
+  /** Counter to rate-limit repeated sidecar-unreachable warnings. */
+  private musicStudioUnreachableCount = 0;
 
   constructor(repo: MediaQueueRepository, config: QueueConfig) {
     super();
@@ -444,7 +447,9 @@ export class QueueMaster extends EventEmitter {
       this.macMiniStatus = { ...this.macMiniStatus, is_busy: false };
     }
 
-    const pending = this.repo.getPendingJobs("mac-mini", 1);
+    // Audio/music jobs (including remix) are handled by processMusicJobs() / processMusicStudioJobs() — exclude them here.
+    const pending = this.repo.getPendingJobs("mac-mini", 5)
+      .filter(j => !AUDIO_JOB_TYPES.has(j.type));
     if (pending.length === 0) return;
 
     // Poll FluxQ status to check if it's healthy (only when not already busy)
@@ -500,17 +505,17 @@ export class QueueMaster extends EventEmitter {
     }
 
     // VRAM-aware: prioritize jobs matching currently loaded model
-    // Music jobs are handled separately by processMusicJobs() — exclude them here.
+    // Audio/music jobs are handled by processMusicJobs() / processMusicStudioJobs() — exclude them here.
     let pending: MediaJob[] = [];
     if (this.m2ProStatus.loaded_model) {
       pending = this.repo.getPendingJobsForModel("m2-pro", this.m2ProStatus.loaded_model, 5)
-        .filter(j => j.type !== "txt2music");
+        .filter(j => !AUDIO_JOB_TYPES.has(j.type));
     }
 
-    // If no jobs match loaded model, get any pending non-music job
+    // If no jobs match loaded model, get any pending non-audio job
     if (pending.length === 0) {
       pending = this.repo.getPendingJobs("m2-pro", 5)
-        .filter(j => j.type !== "txt2music");
+        .filter(j => !AUDIO_JOB_TYPES.has(j.type));
     }
 
     if (pending.length === 0) return;
@@ -614,8 +619,13 @@ export class QueueMaster extends EventEmitter {
         is_busy: !!(data.is_busy as boolean),
         loaded_model: (data.loaded_model as string) ?? null,
       };
+      this.musicStudioUnreachableCount = 0;
     } catch {
-      logger.debug("[QueueMaster] Music-studio sidecar unreachable, skipping voice2voice jobs");
+      this.musicStudioUnreachableCount++;
+      // Only log every 10th attempt (~30s) to avoid spamming the log
+      if (this.musicStudioUnreachableCount === 1 || this.musicStudioUnreachableCount % 10 === 0) {
+        logger.warn(`[QueueMaster] Music-studio sidecar unreachable (port 5010) — skipping remix/voice2voice jobs. Start with: cd sidecars/music-studio && .venv/bin/python server.py --port 5010`);
+      }
       return;
     }
 
@@ -625,17 +635,34 @@ export class QueueMaster extends EventEmitter {
     }
 
     // Get pending voice2voice jobs
-    const pending = this.repo.getPendingJobsForModel("m2-pro", "rvc-v2", 1);
-    if (pending.length === 0) return;
+    const pending = this.repo.getPendingJobsForModel("local", "seed-vc", 1);
 
-    const job = pending[0];
+    // Also check pending remix jobs (routed to local since the sidecar runs locally)
+    const remixModels = ["htdemucs_6s", "basic-pitch", "matchering"] as const;
+    let remixPending: MediaJob[] = [];
+    if (pending.length === 0) {
+      for (const model of remixModels) {
+        remixPending = this.repo.getPendingJobsForModel("local", model, 1);
+        if (remixPending.length > 0) break;
+      }
+    }
+
+    const allPending = pending.length > 0 ? pending : remixPending;
+    if (allPending.length === 0) return;
+
+    const job = allPending[0];
+    const isRemix = job.type.startsWith("remix_");
     try {
       this.repo.markDispatched(job.id);
       this.musicStudioStatus = { ...this.musicStudioStatus, is_busy: true };
-      this.emit("job:dispatched", job, "m2-pro" as TargetNode);
-      logger.info(`[QueueMaster] Dispatching voice2voice job ${job.id} → music-studio sidecar`);
+      this.emit("job:dispatched", job, "local" as TargetNode);
+      logger.info(`[QueueMaster] Dispatching ${job.type} job ${job.id} → music-studio sidecar`);
 
-      await this.dispatchMusicStudioJob(job);
+      if (isRemix) {
+        await this.dispatchRemixJob(job);
+      } else {
+        await this.dispatchMusicStudioJob(job);
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       logger.warn(`[QueueMaster] Failed to dispatch music-studio job ${job.id}: ${msg}`);
@@ -847,10 +874,10 @@ export class QueueMaster extends EventEmitter {
     const body: Record<string, unknown> = {
       job_id: job.id,
       source_asset_id: job.payload.source_asset_id,
-      voice_model: job.payload.voice_model,
+      voice_reference_id: job.payload.voice_reference_id,
+      diffusion_steps: job.payload.diffusion_steps ?? 25,
+      f0_condition: job.payload.f0_condition ?? false,
       pitch_shift: job.payload.pitch_shift ?? 0,
-      index_rate: job.payload.index_rate ?? 0.75,
-      filter_radius: job.payload.filter_radius ?? 3,
       vocal_volume: job.payload.vocal_volume ?? 1.0,
       instrumental_volume: job.payload.instrumental_volume ?? 1.0,
       output_format: job.payload.output_format ?? "wav",
@@ -868,6 +895,73 @@ export class QueueMaster extends EventEmitter {
     if (res.status !== 202 && !res.ok) {
       const text = await res.text().catch(() => "");
       throw new Error(`Music-studio sidecar /generate returned ${res.status}: ${text}`);
+    }
+  }
+
+  /** Dispatch a remix job (analyze / replace / master) to the music-studio sidecar. */
+  private async dispatchRemixJob(job: MediaJob): Promise<void> {
+    const nodeConfig = await this.getMusicStudioNodeConfig();
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (nodeConfig.token) headers["Authorization"] = `Bearer ${nodeConfig.token}`;
+
+    let callbackUrl = this.config.callbackUrl;
+    const sidecarHost = new URL(nodeConfig.url).hostname;
+    if (sidecarHost === "localhost" || sidecarHost === "127.0.0.1") {
+      const parsed = new URL(this.config.callbackUrl);
+      parsed.hostname = "localhost";
+      callbackUrl = parsed.toString();
+    }
+    const progressUrl = callbackUrl.replace(/\/complete\/?$/, "/progress");
+
+    // Map job type to sidecar endpoint
+    const endpointMap: Record<string, string> = {
+      remix_analyze: "/remix/analyze",
+      remix_replace: "/remix/replace-stem",
+      remix_master: "/remix/master",
+    };
+    const endpoint = endpointMap[job.type];
+    if (!endpoint) throw new Error(`Unknown remix job type: ${job.type}`);
+
+    const body: Record<string, unknown> = {
+      job_id: job.id,
+      callback_url: callbackUrl,
+      progress_url: progressUrl,
+    };
+
+    // Add type-specific fields from payload
+    if (job.type === "remix_analyze") {
+      body.source_asset_id = job.payload.source_asset_id;
+      body.device = job.payload.device ?? "cpu";
+      // Resolve the actual file path from the asset record so the sidecar
+      // doesn't have to guess the filename from the UUID.
+      if (job.payload.source_asset_id) {
+        const asset = this.repo.getAsset(job.payload.source_asset_id as string);
+        if (asset?.file_path) {
+          body.source_path = asset.file_path;
+        }
+      }
+    } else if (job.type === "remix_replace") {
+      body.source_stem_url = job.payload.source_stem_url;
+      body.target_instrument_id = job.payload.target_instrument_id;
+      body.original_bpm = job.payload.original_bpm;
+      body.original_key = job.payload.original_key;
+    } else if (job.type === "remix_master") {
+      body.stem_paths = job.payload.stem_paths;
+      body.volumes = job.payload.volumes;
+      body.muted = job.payload.muted;
+      body.vibe = job.payload.vibe ?? "raw";
+    }
+
+    const res = await fetch(`${nodeConfig.url}${endpoint}`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(10_000),
+    });
+
+    if (res.status !== 202 && !res.ok) {
+      const text = await res.text().catch(() => "");
+      throw new Error(`Music-studio sidecar ${endpoint} returned ${res.status}: ${text}`);
     }
   }
 
@@ -928,7 +1022,7 @@ export class QueueMaster extends EventEmitter {
     if (job.type === "txt2music") {
       this.musicStatus = { ...this.musicStatus, is_busy: false };
     }
-    if (job.type === "voice2voice") {
+    if (job.type === "voice2voice" || job.type.startsWith("remix_")) {
       this.musicStudioStatus = { ...this.musicStudioStatus, is_busy: false };
     }
 

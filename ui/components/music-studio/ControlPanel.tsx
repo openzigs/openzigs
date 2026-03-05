@@ -5,6 +5,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { fetchJson } from "@/lib/api";
 import { Loader2, Send, SlidersHorizontal, Upload, Trash2, Mic, Play, Pause } from "lucide-react";
 import { showToast } from "@/components/toast";
+import { VoiceRecorder } from "./VoiceRecorder";
 
 interface VoiceReference {
   id: string;
@@ -116,6 +117,14 @@ export function ControlPanel({ audioAssets, onSubmit, isProcessing }: ControlPan
       const file = e.target.files?.[0];
       if (file) uploadMut.mutate(file);
       if (fileInputRef.current) fileInputRef.current.value = "";
+    },
+    [uploadMut]
+  );
+
+  const handleRecordingSave = useCallback(
+    (blob: Blob, name: string) => {
+      const file = new File([blob], `${name}.webm`, { type: blob.type });
+      uploadMut.mutate(file);
     },
     [uploadMut]
   );
@@ -282,6 +291,11 @@ export function ControlPanel({ audioAssets, onSubmit, isProcessing }: ControlPan
             )}
             Upload
           </button>
+        </div>
+
+        {/* Voice Recorder */}
+        <div className="mt-3">
+          <VoiceRecorder onSave={handleRecordingSave} isSaving={uploadMut.isPending} />
         </div>
       </div>
 

@@ -16,7 +16,7 @@ import type { CharacterRepository } from "../characters/character-repository.js"
 
 // ── Helpers ─────────────────────────────────────────────────
 
-const VALID_JOB_TYPES: MediaJobType[] = ["txt2img", "img2img", "txt2video", "img2video", "tts", "txt2music", "voice2voice"];
+const VALID_JOB_TYPES: MediaJobType[] = ["txt2img", "img2img", "txt2video", "img2video", "tts", "txt2music", "voice2voice", "remix_analyze", "remix_replace", "remix_master"];
 
 const GALLERY_DIR = path.join(os.homedir(), ".openzigs", "gallery");
 
@@ -63,7 +63,7 @@ export const createQueueCallbackRouter = ({ queueMaster, repo }: QueueRouterOpti
 
   callbackRouter.post("/complete", async (req, res) => {
     try {
-      const { job_id, status, media_base64, media_type, metadata, error } = req.body;
+      const { job_id, status, media_base64, media_type, metadata, error, ...extraFields } = req.body;
 
       logger.info(
         `[QueueAPI] /complete called — job_id=${job_id ?? "(missing)"} status=${status ?? "(missing)"} ` +
@@ -125,6 +125,7 @@ export const createQueueCallbackRouter = ({ queueMaster, repo }: QueueRouterOpti
         media_type: undefined,
         metadata: {
           ...((metadata as Record<string, unknown>) ?? {}),
+          ...(extraFields as Record<string, unknown>),
           result_url: resultUrl,
           gallery_asset_id: galleryAssetId,
         },
@@ -222,7 +223,13 @@ export const createQueueRouter = ({ queueMaster, repo, characterRepo }: QueueRou
         return;
       }
 
-      if (!payload || typeof payload !== "object" || !payload.prompt) {
+      // Remix jobs don't require a prompt — only a payload object
+      const isRemixJob = type.startsWith("remix_");
+      if (!payload || typeof payload !== "object") {
+        res.status(400).json({ error: "payload is required" });
+        return;
+      }
+      if (!isRemixJob && !payload.prompt) {
         res.status(400).json({ error: "payload.prompt is required" });
         return;
       }
@@ -658,13 +665,13 @@ export const createQueueRouter = ({ queueMaster, repo, characterRepo }: QueueRou
 
   // ── POST /nodes/switch — Switch active model domain ─────
   // Unloads the competing node and optionally preloads a model.
-  // Body: { targetNode: "mac-mini"|"m2-pro", model?: "flux-schnell" }
+  // Body: { targetNode: "mac-mini"|"m2-pro"|"local", model?: "flux-schnell" }
   router.post("/nodes/switch", async (req, res) => {
     try {
       const { targetNode, model } = req.body as { targetNode?: string; model?: string };
 
-      if (!targetNode || (targetNode !== "mac-mini" && targetNode !== "m2-pro")) {
-        res.status(400).json({ error: "targetNode must be 'mac-mini' or 'm2-pro'" });
+      if (!targetNode || (targetNode !== "mac-mini" && targetNode !== "m2-pro" && targetNode !== "local")) {
+        res.status(400).json({ error: "targetNode must be 'mac-mini', 'm2-pro', or 'local'" });
         return;
       }
 

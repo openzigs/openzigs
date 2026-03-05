@@ -122,6 +122,8 @@ export function WaveformTrack({
 
     ws.on("error", (err: Error) => {
       const msg = err?.message ?? "Failed to load audio";
+      // Ignore abort errors (triggered by cleanup/unmount)
+      if (msg.includes("abort") || msg.includes("AbortError")) return;
       setError(msg);
       setIsLoading(false);
       onError?.(msg);
@@ -139,7 +141,8 @@ export function WaveformTrack({
 
   useEffect(() => {
     if (wavesurferRef.current) {
-      wavesurferRef.current.setVolume(muted ? 0 : volume);
+      const clamped = Math.min(1, Math.max(0, volume));
+      wavesurferRef.current.setVolume(muted ? 0 : clamped);
     }
   }, [muted, volume]);
 
