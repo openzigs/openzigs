@@ -610,9 +610,35 @@ export const ChatView = () => {
       {/* Messages */}
       <main className="min-h-0 flex flex-1 flex-col gap-4 overflow-y-auto p-5">
         {messages.length === 0 && !thinking && (
-          <div className="flex flex-1 flex-col items-center justify-center gap-3 text-muted-foreground">
+          <div className="flex flex-1 flex-col items-center justify-center gap-4 text-muted-foreground">
             <Bot className="h-12 w-12 opacity-30" />
             <p className="text-sm">Send a message to start chatting with OpenZigs.</p>
+            {typeof window !== "undefined" && !localStorage.getItem("openzigs:skills-onboarded") && (
+              <div className="w-full max-w-md rounded-xl border border-border bg-muted/30 p-4 text-xs">
+                <p className="mb-2 font-semibold text-foreground">6 skills loaded</p>
+                <div className="grid grid-cols-2 gap-1 text-muted-foreground">
+                  <span>🎬 Media Director</span>
+                  <span>🎵 Remix Engineer</span>
+                  <span>📡 Platform Manager</span>
+                  <span>✍️ Content Creator</span>
+                  <span>📚 Knowledge Curator</span>
+                  <span>🛡️ System Operator</span>
+                </div>
+                <p className="mt-2 text-muted-foreground">
+                  Type <code className="rounded bg-muted px-1">!</code> to browse skills, or just describe what you need.
+                </p>
+                <button
+                  type="button"
+                  className="mt-2 text-[10px] text-muted-foreground/60 hover:text-muted-foreground"
+                  onClick={() => {
+                    localStorage.setItem("openzigs:skills-onboarded", "true");
+                    window.location.reload();
+                  }}
+                >
+                  Dismiss
+                </button>
+              </div>
+            )}
           </div>
         )}
 
@@ -750,7 +776,7 @@ export const ChatView = () => {
                   ? "Connecting…"
                   : showConnecting
                     ? "Almost ready…"
-                    : "Type a message… (/ prompts · # tools · @ models)"
+                    : "Type a message… (/ prompts · # tools · @ models · ! skills)"
               }
               rows={2}
               onKeyDown={(e) => {

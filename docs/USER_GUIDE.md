@@ -239,12 +239,13 @@ The chat input features trigger-based autocomplete for fast access to tools, sav
 | `/` | Prompts | Saved prompt templates from the Library |
 | `#` | Tools | All enabled MCP tools by name |
 | `@` | Models | Available Copilot models |
+| `!` | Skills | Available AI skill personas with descriptions |
 
 **Keyboard shortcuts:**
 
 | Key | Action |
 |-----|--------|
-| `/`, `#`, `@` | Open autocomplete (after whitespace or at start of input) |
+| `/`, `#`, `@`, `!` | Open autocomplete (after whitespace or at start of input) |
 | ↑ / ↓ | Navigate the autocomplete list |
 | Enter | Select the highlighted item |
 | Escape | Dismiss the popover |
@@ -304,6 +305,47 @@ The admin page at `/admin` consolidates all configuration:
 ![Admin tools with global approval lock toggles — 🔓 unlocked, 🔒 locked](images/admin-tools-global-lock.png)
 
 - **Environment** — Status grid showing which environment variables are configured vs. missing.
+
+### Skills
+
+Skills are specialized AI personas loaded into your agent sessions. Each skill brings domain expertise, tool knowledge, and behavioral rules that guide the AI's behavior. Skills are distinct from tools (callable functions) and custom agents (explicit personas) — they are passive context injection that tells the AI *how* to approach specific domains.
+
+#### Available Skills
+
+| Skill | Description | Key Tools |
+|-------|-------------|-----------|
+| **Media Director** | Orchestrates image, video, and audio generation across GPU worker nodes | `submit-media-job`, `get-job-status`, `query-gallery-assets`, `manage-characters` |
+| **Remix Engineer** | Manages the Smart Remix Lab pipeline — stem separation, instrument replacement, mastering | `remix-session-manager`, `get-job-status`, `query-gallery-assets` |
+| **Platform Manager** | Scheduling automation, social media publishing, knowledge base management | `schedule-job`, `submit-media-job`, `query-gallery-assets`, `search-knowledge` |
+| **Content Creator** | Multi-format content repurposing with brand voice enforcement and TTS | `manage-brand-voice`, `synthesize-speech`, `blog-to-video`, `create-short` |
+| **Knowledge Curator** | Knowledge base ingestion, RAG search, presentation management, quiz generation | `manage-knowledge-base`, `manage-presentations`, `search-knowledge` |
+| **System Operator** | Platform monitoring, Sentinel SRE daemon, webhook management, node health | `sentinel-control`, `manage-webhooks`, `get-job-status` |
+
+#### Skills Page
+
+Navigate to **Automation → Skills** in the sidebar to view all loaded skills. Each skill card shows:
+
+- **Icon and name** with a "Loaded" status indicator
+- **Description** extracted from the SKILL.md file
+- **Tool badges** showing which tools the skill uses
+- **Behavioral rules count**
+- **"Try It" prompts** — clickable example prompts that navigate to Chat with the prompt pre-filled
+
+Click a skill card to expand its detail view showing the full tool list, stats, and all example prompts.
+
+#### Using Skills in Chat
+
+Type `!` in the chat input to open the skills autocomplete. Selecting a skill inserts a contextual primer like `[Using Media Director skill]` that signals your intent to the AI.
+
+You don't *need* to explicitly invoke a skill — all skills are always loaded into every session. The `!` trigger is a discoverability feature that helps you learn what capabilities exist.
+
+#### Creating Custom Skills
+
+Power users can create additional skills by:
+
+1. Creating a directory under `src/skills/<skill-name>/`
+2. Adding a `SKILL.md` markdown file with Identity, Capabilities, Tool Routing Rules, Domain Rules, and Error Recovery sections
+3. Adding the directory path to `skillDirectories` in the CopilotWrapper configuration
 
 ### Library (Saved Prompts)
 

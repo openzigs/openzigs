@@ -3,7 +3,7 @@
 import { useEffect, useRef } from "react";
 import { Command } from "cmdk";
 import * as Popover from "@radix-ui/react-popover";
-import { Hash, Slash, AtSign } from "lucide-react";
+import { Hash, Slash, AtSign, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { TriggerKind, UseAutocompleteReturn } from "./use-autocomplete";
 
@@ -19,12 +19,14 @@ const TRIGGER_ICON: Record<TriggerKind, React.ReactNode> = {
   commands: <Slash className="h-3.5 w-3.5" />,
   tools: <Hash className="h-3.5 w-3.5" />,
   models: <AtSign className="h-3.5 w-3.5" />,
+  skills: <Sparkles className="h-3.5 w-3.5" />,
 };
 
 const TRIGGER_LABEL: Record<TriggerKind, string> = {
   commands: "Prompts",
   tools: "Tools",
   models: "Models",
+  skills: "Skills",
 };
 
 /**

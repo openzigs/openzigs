@@ -598,6 +598,7 @@ Wraps `@github/copilot-sdk`'s `CopilotClient`. Responsibilities:
 | **Session Resumption** | Internal | On first call with a `conversationId`, attempts `client.resumeSession()` to restore persisted SDK state, falling back to `createSession({ sessionId })` for deterministic session IDs. |
 | **Infinite Sessions** | Config | When `infiniteSessions.enabled` is true, the SDK automatically compacts context at configurable thresholds (`backgroundCompactionThreshold`, `bufferExhaustionThreshold`), preventing context window exhaustion in long conversations. |
 | **Model Selection** | `listModels()` | Proxies `client.listModels()` to enumerate available models (e.g., `gpt-4.1`, `claude-sonnet-4`). |
+| **Skill Directories** | Constructor `skillDirectories` option | Paths to directories containing `SKILL.md` files. Passed to `createSession()` to inject domain expertise into every session. See [Skill System](#skill-system-srcskills) below. |
 | **Tool Limit Control** | `setMaxToolsPerRequest(n)` / `getMaxToolsPerRequest()` | Get or set the maximum number of tools sent per LLM request (range: 1-128). Changes take effect on the next `chat()` call. |
 | **Tool Dispatch** | Internal | When the SDK invokes a tool, the handler calls the `ToolDefinition.handler()` — which may call a native MCP server subprocess or execute locally. ALWAYS_ON_TOOLS (7 tools) are guaranteed inclusion before filling remaining slots. |
 | **Retry Logic** | Internal | Automatic retries with exponential backoff for rate-limit (429) and timeout errors. Clears auth on 401. |
@@ -688,8 +689,8 @@ The Models API (`GET /api/models`) is enriched with `contextWindow` from `MODEL_
 
 Central registry for every tool the agent can invoke. Each tool has:
 
-- **`name`** — Unique identifier (`read-file`, `web-search`, `shell-execute`, `social-post`, `pinterest-boards`).
-- **`category`** — One of `filesystem`, `search`, `browser`, `shell`, `productivity`, `social`, `documents`.
+- **`name`** — Unique identifier (`read-file`, `web-search`, `shell-execute`, `social-post`, `query-gallery-assets`, `submit-media-job`, etc.).
+- **`category`** — One of `filesystem`, `search`, `browser`, `shell`, `productivity`, `social`, `documents`, `knowledge`.
 - **`riskLevel`** — `low`, `medium`, or `high`.
 - **`enabled`** — Boolean, persisted to `config/tools.json`.
 
@@ -726,6 +727,59 @@ sequenceDiagram
     AQ-->>Hook: { approved: true }
     Hook-->>SDK: { permissionDecision: "allow" }
 ```
+
+### Skill System (`src/skills/`)
+
+Skills are SKILL.md markdown files organized in named subdirectories under `src/skills/`. They are loaded via the Copilot SDK's `skillDirectories` configuration and injected into every session's context, providing the LLM with domain-specific expertise.
+
+#### Architecture
+
+```
+src/skills/
+├── media-director/SKILL.md      — Image/video/audio generation orchestration
+├── remix-engineer/SKILL.md      — Smart Remix Lab pipeline management
+├── platform-manager/SKILL.md    — Scheduling, social, knowledge distribution
+├── content-creator/SKILL.md     — Multi-format content production
+├── knowledge-curator/SKILL.md   — RAG knowledge base and presentations
+└── system-operator/SKILL.md     — Sentinel monitoring, webhooks, node health
+```
+
+#### How Skills Work
+
+1. **Loading**: `CopilotWrapper` accepts `skillDirectories: string[]` in its constructor options. These paths are passed to the Copilot SDK's `createSession()` call.
+2. **Injection**: The SDK reads each `SKILL.md` file and injects its content into the session's system context alongside built-in instructions.
+3. **Behavior**: The LLM reads the injected skill rules and follows them when the user's request falls within that skill's domain. Skills define tool routing rules (which custom tools to use vs. built-in tools), domain-specific constraints, and error recovery procedures.
+4. **Discovery**: The `/api/admin/skills` endpoint serves skill metadata (name, description, tools, examples) parsed from the SKILL.md files. The UI's `/skills` page renders this as a skill catalog.
+
+#### Skills vs. Custom Agents vs. Tools
+
+| Concept | What it is | How it works | When to use |
+|---------|-----------|-------------|-------------|
+| **Skill** | Passive domain expertise | SKILL.md injected into session context | Always loaded; guides LLM behavior within a domain |
+| **Custom Agent** | Named sub-persona | `@agent-name` mention spawns a focused session | Explicit delegation to a specialized identity |
+| **Tool** | Callable function | `defineTool()` registered in ToolRegistry | Discrete operations the LLM invokes programmatically |
+
+#### Agent Architecture Custom Tools
+
+12 custom tools wrap proprietary OpenZigs functions that the LLM cannot access via built-in Bash/Read/Edit:
+
+| Tool | Category | Risk | Wraps |
+|------|----------|------|-------|
+| `query-gallery-assets` | productivity | low | `MediaQueueRepository.listAssets()` / `getAsset()` |
+| `submit-media-job` | productivity | high | `MediaQueueRepository.createJob()` + QueueMaster dispatch |
+| `get-job-status` | productivity | low | `MediaQueueRepository.getJob()` + `QueueMaster.getNodeStatuses()` |
+| `manage-characters` | productivity | low | `CharacterRepository` CRUD |
+| `remix-session-manager` | productivity | high | Multi-step remix pipeline (analyze → replace → master) |
+| `manage-brand-voice` | productivity | medium | `BrandVoiceService` CRUD + LLM analysis |
+| `synthesize-speech` | productivity | low | `VoiceService.synthesize()` |
+| `manage-presentations` | knowledge | low | `PresentationRepository` + `QuizGenerator` + `TeacherAgent` |
+| `manage-knowledge-base` | knowledge | medium | `KnowledgeIngestionService` write operations |
+| `manage-webhooks` | productivity | high | `WebhookManager` CRUD |
+| `sentinel-control` | productivity | medium | `SentinelService` monitoring + toggle |
+
+#### Deterministic Tool Router (`src/routing/tool-router.ts`)
+
+Maps user intents to expected tool sequences via keyword/pattern matching. Used by Tier 3A workflow routing tests to validate agentic behavior without requiring LLM inference. Supports scenarios: character LoRA video + music, remix pipeline, scheduled content pipeline, and gallery search.
 
 ### Productivity Engine (`src/productivity/`)
 
@@ -4698,3 +4752,43 @@ The Gallery Studio (`ui/app/gallery/page.tsx`) adds:
 | `/characters` | `characters/page.tsx` | Character Lab (CRUD, photos, training) |
 
 ### Tracking: [Epic #374](https://github.com/mgcronin/openzigs/issues/374)
+
+---
+
+## Autonomous Agent Testing Architecture
+
+### Three-Tier Testing Pyramid
+
+All agent-related code follows a three-tier testing strategy executed via `vitest`:
+
+| Tier | Scope | Location | What it validates |
+|------|-------|----------|-------------------|
+| **Tier 1** | Schema Validation | `src/mcp/tools/__tests__/schema-validation.test.ts` | Every tool has valid JSON Schema, kebab-case name, description, category, risk level, Zod schema, and handler |
+| **Tier 2** | Execution Mocks | `src/mcp/tools/__tests__/*.test.ts` (per-tool) | Handler logic with mocked dependencies — verifies correct service calls, error handling, and response shape |
+| **Tier 3A** | Workflow Routing | `src/mcp/tools/__tests__/workflow-routing.test.ts` | User prompts map to expected tool call sequences via deterministic router (`src/routing/tool-router.ts`) |
+
+#### Tier 1: Schema Validation
+
+Dynamically discovers all registered tools by instantiating each `create*Tools()` factory with stub dependencies. Validates structural invariants:
+- JSON Schema is a valid object with `type: "object"` and `properties`
+- Tool name follows `kebab-case` convention
+- Description is between 10–200 characters
+- Category and riskLevel match allowed enums
+- `zodSchema` and `handler` are present
+
+#### Tier 2: Execution Mocks
+
+Each tool group has dedicated mock tests that:
+- Create mock objects implementing the service interface (e.g., `MockMediaQueueRepo`)
+- Exercise each action/sub-command (e.g., `list`, `get`, `analyze`, `create`)
+- Assert the handler returns correct data and calls the right service methods
+- Test edge cases: not found, missing required args, invalid input
+
+#### Tier 3A: Deterministic Workflow Routing
+
+Uses `routeToToolSequence(prompt)` to validate that natural language intents resolve to the correct ordered sequence of tool calls. Tests cover three core workflow scenarios:
+1. **Character LoRA video + music** — Trains LoRA, generates video, composes soundtrack
+2. **Remix pipeline** — Analyzes audio, replaces stems, applies mastering
+3. **Scheduled content pipeline** — Creates brand voice, schedules media generation
+
+### Tracking: [Epic #394](https://github.com/mgcronin/openzigs/issues/394)

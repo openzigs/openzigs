@@ -91,6 +91,7 @@ type SessionCreateConfig = {
   provider?: ProviderConfig;
   customAgents?: CustomAgentDefinition[];
   mcpServers?: Record<string, NativeMcpServerDefinition>;
+  skillDirectories?: string[];
   onUserInputRequest?: (
     request: { question: string; choices?: string[]; allowFreeform?: boolean },
     context: { sessionId: string }
@@ -373,6 +374,8 @@ export type CopilotWrapperOptions = {
   customAgents?: CustomAgentDefinition[];
   /** Default native MCP server definitions passed to every SDK session. */
   nativeMcpServers?: Record<string, NativeMcpServerDefinition>;
+  /** Directories containing SKILL.md files for agent persona injection. */
+  skillDirectories?: string[];
 };
 
 const defaultAuthPath = () => path.join(os.homedir(), ".openzigs", "auth.json");
@@ -547,6 +550,7 @@ export class CopilotWrapperService extends EventEmitter implements CopilotWrappe
   private defaultWorkingDirectory?: string;
   private customAgentsConfig: CustomAgentDefinition[];
   private nativeMcpServersConfig: Record<string, NativeMcpServerDefinition>;
+  private skillDirectoriesConfig: string[];
   private sessionCache = new Map<string, CopilotSessionLike>();
   private sessionConfigSignatures = new Map<string, string>();
   private sessionCreationPromises = new Map<string, Promise<CopilotSessionLike>>();
@@ -580,7 +584,8 @@ export class CopilotWrapperService extends EventEmitter implements CopilotWrappe
     provider,
     defaultWorkingDirectory,
     customAgents,
-    nativeMcpServers
+    nativeMcpServers,
+    skillDirectories,
   }: CopilotWrapperOptions = {}) {
     super();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -602,6 +607,7 @@ export class CopilotWrapperService extends EventEmitter implements CopilotWrappe
     this.defaultWorkingDirectory = defaultWorkingDirectory;
     this.customAgentsConfig = customAgents ?? [];
     this.nativeMcpServersConfig = nativeMcpServers ?? {};
+    this.skillDirectoriesConfig = skillDirectories ?? [];
   }
 
   setMaxToolsPerRequest(n: number): void {
@@ -650,6 +656,10 @@ export class CopilotWrapperService extends EventEmitter implements CopilotWrappe
 
   getNativeMcpServers(): Record<string, NativeMcpServerDefinition> {
     return { ...this.nativeMcpServersConfig };
+  }
+
+  getSkillDirectories(): string[] {
+    return [...this.skillDirectoriesConfig];
   }
 
   setNativeMcpServers(servers: Record<string, NativeMcpServerDefinition>): void {
@@ -1030,6 +1040,7 @@ export class CopilotWrapperService extends EventEmitter implements CopilotWrappe
       ...(this.providerConfig ? { provider: this.providerConfig } : {}),
       ...(mergedAgents.length > 0 ? { customAgents: mergedAgents } : {}),
       ...(Object.keys(sdkMcpServers).length > 0 ? { mcpServers: sdkMcpServers } : {}),
+      ...(this.skillDirectoriesConfig.length > 0 ? { skillDirectories: this.skillDirectoriesConfig } : {}),
       ...(effectiveHooks ? {
         hooks: {
           ...effectiveHooks,

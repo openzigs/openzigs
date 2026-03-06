@@ -6,6 +6,12 @@ import { useAutocomplete, type AutocompleteItem, type TriggerKind } from "./use-
 import { AutocompletePopover } from "./autocomplete-popover";
 import type { ToolInfo, SavedPrompt, ModelInfo } from "@/lib/types";
 
+export type SkillInfo = {
+  name: string;
+  displayName: string;
+  description: string;
+};
+
 export type SmartTextareaProps = Omit<
   React.TextareaHTMLAttributes<HTMLTextAreaElement>,
   "onChange" | "value"
@@ -20,6 +26,8 @@ export type SmartTextareaProps = Omit<
   prompts?: SavedPrompt[];
   /** Available models for @ trigger. */
   models?: ModelInfo[];
+  /** Available skills for ! trigger. */
+  skills?: SkillInfo[];
 };
 
 /**
@@ -35,7 +43,7 @@ export type SmartTextareaProps = Omit<
  * are forwarded.
  */
 export const SmartTextarea = forwardRef<HTMLTextAreaElement, SmartTextareaProps>(
-  ({ value, onValueChange, tools, prompts, models, className, onKeyDown, ...rest }, ref) => {
+  ({ value, onValueChange, tools, prompts, models, skills, className, onKeyDown, ...rest }, ref) => {
     // Stable ref object for the autocomplete hook
     const stableRef = useMemo(() => ({ current: null as HTMLTextAreaElement | null }), []);
     const mergedRef = useCallback(
@@ -84,8 +92,19 @@ export const SmartTextarea = forwardRef<HTMLTextAreaElement, SmartTextareaProps>
         }
       }
 
+      if (skills) {
+        for (const skill of skills) {
+          result.push({
+            value: `[Using ${skill.displayName} skill] `,
+            label: skill.displayName,
+            description: skill.description,
+            kind: "skills" as TriggerKind,
+          });
+        }
+      }
+
       return result;
-    }, [tools, prompts, models]);
+    }, [tools, prompts, models, skills]);
 
     const autocomplete = useAutocomplete({
       items,
