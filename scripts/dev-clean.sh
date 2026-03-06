@@ -270,11 +270,15 @@ fi
 # Optional: start music-studio sidecar (demucs stem separation, Seed-VC voice2voice, default enabled)
 # Set OPENZIGS_START_MUSIC_STUDIO_SIDECAR=0 to disable. Requires project venv with
 # demucs, basic-pitch, matchering, and seed-vc deps installed (see sidecars/music-studio/requirements.txt).
+# NOTE: Unlike image-gen/audio, music-studio does not cache heavy models between jobs
+# (Demucs loads per-call and is freed immediately). The idle-timeout here logs a warning
+# after inactivity but does not unload anything — the process footprint is ~200-400MB.
 MUSIC_STUDIO_SIDECAR_PID=""
 if [ "${OPENZIGS_START_MUSIC_STUDIO_SIDECAR:-1}" != "0" ]; then
   MUSIC_STUDIO_DIR="$PROJECT_ROOT/sidecars/music-studio"
   MUSIC_STUDIO_LOG="$PROJECT_ROOT/.openzigs-music-studio-sidecar.log"
   MUSIC_STUDIO_PORT="${MUSIC_STUDIO_PORT:-5010}"
+  MUSIC_STUDIO_IDLE_TIMEOUT="${MUSIC_STUDIO_IDLE_TIMEOUT:-600}"
 
   if [ -x "$MUSIC_STUDIO_DIR/.venv/bin/python" ]; then
     MUSIC_STUDIO_PY="$MUSIC_STUDIO_DIR/.venv/bin/python"
@@ -294,7 +298,7 @@ if [ "${OPENZIGS_START_MUSIC_STUDIO_SIDECAR:-1}" != "0" ]; then
     echo "[clean-start] Starting music-studio sidecar (demucs/Seed-VC/matchering, port=$MUSIC_STUDIO_PORT)"
     (
       cd "$MUSIC_STUDIO_DIR"
-      "$MUSIC_STUDIO_PY" server.py --port "$MUSIC_STUDIO_PORT" > "$MUSIC_STUDIO_LOG" 2>&1
+      "$MUSIC_STUDIO_PY" server.py --port "$MUSIC_STUDIO_PORT" --idle-timeout "$MUSIC_STUDIO_IDLE_TIMEOUT" > "$MUSIC_STUDIO_LOG" 2>&1
     ) &
     MUSIC_STUDIO_SIDECAR_PID=$!
 

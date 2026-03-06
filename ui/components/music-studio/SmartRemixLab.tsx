@@ -41,6 +41,8 @@ interface StemState {
   muted: boolean;
   /** If a replacement has been generated, store the path here. */
   replacedPath?: string;
+  /** The instrument ID used for the replacement. */
+  replacedInstrumentId?: string;
   /** Whether AI replace is in progress. */
   replacing?: boolean;
 }
@@ -132,9 +134,13 @@ export function SmartRemixLab({ audioAssets }: SmartRemixLabProps) {
 
   // ── Stem Playback ─────────────────────────────────────────
   const wsRefs = useRef<Map<string, WaveSurfer | null>>(new Map());
+  const wsRefCache = useRef<Map<string, React.MutableRefObject<WaveSurfer | null>>>(new Map());
   const isSyncingRef = useRef(false);
+  const syncRAFRef = useRef<number | null>(null);
+  const pendingSyncRef = useRef<{ stemName: string; progress: number } | null>(null);
+  const isPlayingRef = useRef(false);
+  const timeDisplayRef = useRef<HTMLSpanElement>(null);
   const [isPlaying, setIsPlaying] = useState(false);
-  const [currentTime, setCurrentTime] = useState(0);
   const [totalDuration, setTotalDuration] = useState(0);
 
   // ── Analyze Mutation ────────────────────────────────────
@@ -198,11 +204,11 @@ export function SmartRemixLab({ audioAssets }: SmartRemixLabProps) {
         `Replacing ${stemName ?? "stem"} with ${variables.instrumentId}...`,
         "success"
       );
-      // Mark the stem as replacing
+      // Mark the stem as replacing and store the instrument id
       setStems((prev) =>
         prev.map((s) =>
           s.path === variables.stemPath
-            ? { ...s, replacing: true }
+            ? { ...s, replacing: true, replacedInstrumentId: variables.instrumentId }
             : s
         )
       );
@@ -479,6 +485,11 @@ export function SmartRemixLab({ audioAssets }: SmartRemixLabProps) {
         try { ws?.destroy(); } catch { /* ignore */ }
       });
       wsRefs.current.clear();
+      wsRefCache.current.clear();
+      if (syncRAFRef.current != null) {
+        cancelAnimationFrame(syncRAFRef.current);
+        syncRAFRef.current = null;
+      }
     };
   }, []);
 
@@ -489,36 +500,67 @@ export function SmartRemixLab({ audioAssets }: SmartRemixLabProps) {
   }, []);
 
   const getWsRef = useCallback((stemName: string) => {
-    return {
+    const cached = wsRefCache.current.get(stemName);
+    if (cached) return cached;
+
+    const ref = {
       get current() { return wsRefs.current.get(stemName) ?? null; },
       set current(ws: WaveSurfer | null) {
         wsRefs.current.set(stemName, ws ?? null);
         if (ws) {
           ws.on("seeking", (time: number) => {
-            if (isSyncingRef.current) return;
-            isSyncingRef.current = true;
+            if (isSyncingRef.current || isPlayingRef.current) return;
             const dur = ws.getDuration();
-            if (dur > 0) {
-              const progress = time / dur;
-              wsRefs.current.forEach((otherWs, name) => {
-                if (name !== stemName && otherWs) otherWs.seekTo(progress);
+            if (dur <= 0) return;
+            const progress = time / dur;
+            // Coalesce rapid seeking events via rAF — at most one sync per frame
+            pendingSyncRef.current = { stemName, progress };
+            if (syncRAFRef.current == null) {
+              syncRAFRef.current = requestAnimationFrame(() => {
+                syncRAFRef.current = null;
+                const pending = pendingSyncRef.current;
+                if (!pending) return;
+                pendingSyncRef.current = null;
+                isSyncingRef.current = true;
+                wsRefs.current.forEach((otherWs, name) => {
+                  if (name !== pending.stemName && otherWs) otherWs.seekTo(pending.progress);
+                });
+                isSyncingRef.current = false;
               });
             }
-            isSyncingRef.current = false;
           });
         }
       },
     } as React.MutableRefObject<WaveSurfer | null>;
+
+    wsRefCache.current.set(stemName, ref);
+    return ref;
   }, []);
 
   const playAll = useCallback(() => {
+    // Flush any pending seek sync before playing to prevent stuck playback
+    if (syncRAFRef.current != null) {
+      cancelAnimationFrame(syncRAFRef.current);
+      syncRAFRef.current = null;
+    }
+    const pending = pendingSyncRef.current;
+    if (pending) {
+      pendingSyncRef.current = null;
+      isSyncingRef.current = true;
+      wsRefs.current.forEach((otherWs, name) => {
+        if (name !== pending.stemName && otherWs) otherWs.seekTo(pending.progress);
+      });
+      isSyncingRef.current = false;
+    }
     wsRefs.current.forEach((ws) => ws?.play());
     setIsPlaying(true);
+    isPlayingRef.current = true;
   }, []);
 
   const pauseAll = useCallback(() => {
     wsRefs.current.forEach((ws) => ws?.pause());
     setIsPlaying(false);
+    isPlayingRef.current = false;
   }, []);
 
   const togglePlayback = useCallback(() => {
@@ -528,11 +570,16 @@ export function SmartRemixLab({ audioAssets }: SmartRemixLabProps) {
 
   const seekToStart = useCallback(() => {
     wsRefs.current.forEach((ws) => ws?.seekTo(0));
-    setCurrentTime(0);
+    if (timeDisplayRef.current) timeDisplayRef.current.textContent = "0:00";
   }, []);
 
   const handleTimeUpdate = useCallback((time: number) => {
-    setCurrentTime(time);
+    // Update the parent time display directly via ref — avoids re-rendering all stems
+    if (timeDisplayRef.current) {
+      const m = Math.floor(time / 60);
+      const s = Math.floor(time % 60);
+      timeDisplayRef.current.textContent = `${m}:${s.toString().padStart(2, "0")}`;
+    }
   }, []);
 
   const handleWsReady = useCallback((dur: number) => {
@@ -568,8 +615,13 @@ export function SmartRemixLab({ audioAssets }: SmartRemixLabProps) {
     setStems([]);
     setMasterResult(null);
     wsRefs.current.clear();
+    wsRefCache.current.clear();
+    if (syncRAFRef.current != null) {
+      cancelAnimationFrame(syncRAFRef.current);
+      syncRAFRef.current = null;
+    }
     setIsPlaying(false);
-    setCurrentTime(0);
+    if (timeDisplayRef.current) timeDisplayRef.current.textContent = "0:00";
     setTotalDuration(0);
     analyzeMut.mutate(selectedAssetId);
   }, [selectedAssetId, analyzeMut]);
@@ -785,8 +837,11 @@ export function SmartRemixLab({ audioAssets }: SmartRemixLabProps) {
                   <Play className="h-4 w-4" />
                 )}
               </button>
+              <span ref={timeDisplayRef} className="font-mono text-sm text-zinc-400">
+                0:00
+              </span>
               <span className="font-mono text-sm text-zinc-400">
-                {formatTime(currentTime)} / {formatTime(totalDuration)}
+                {` / ${formatTime(totalDuration)}`}
               </span>
             </div>
 
@@ -867,7 +922,7 @@ export function SmartRemixLab({ audioAssets }: SmartRemixLabProps) {
                     {/* Replaced indicator */}
                     {stem.replacedPath && !stem.replacing && (
                       <span className="text-xs text-emerald-400">
-                        ✓ Replaced
+                        ✓ {INSTRUMENT_OPTIONS.find((i) => i.id === stem.replacedInstrumentId)?.label ?? "Replaced"}
                       </span>
                     )}
                   </div>
@@ -875,7 +930,11 @@ export function SmartRemixLab({ audioAssets }: SmartRemixLabProps) {
                   {/* Waveform */}
                   <WaveformTrack
                     url={buildStemUrl(stem.replacedPath ?? stem.path)}
-                    label={stem.name}
+                    label={
+                      stem.replacedInstrumentId
+                        ? `${stem.name} → ${INSTRUMENT_OPTIONS.find((i) => i.id === stem.replacedInstrumentId)?.label ?? stem.name}`
+                        : stem.name
+                    }
                     color={waveColors.wave}
                     progressColor={waveColors.progress}
                     height={48}

@@ -15,6 +15,7 @@ Port: 5010 (default)
 
 import asyncio
 import base64
+import gc
 import json
 import logging
 import os
@@ -95,6 +96,30 @@ worker_state = {
 # Job progress tracking: job_id → { stage, progress, message, status, result }
 job_progress: dict[str, dict] = {}
 MAX_STORED_JOBS = 50
+
+# Idle tracking — updated after every job completion.
+_last_job_time: float = 0.0
+_idle_timeout = float(os.environ.get("MUSIC_STUDIO_IDLE_TIMEOUT", "0"))
+
+
+def _post_job_cleanup() -> None:
+    """Free PyTorch cached memory and run Python GC after each job.
+
+    Demucs loads its model per-call (not cached between jobs), so there is no
+    persistent model to unload.  Running gc + MPS/CUDA cache flush ensures
+    any leftover tensor memory is returned to the OS promptly.
+    """
+    global _last_job_time
+    _last_job_time = time.monotonic()
+    try:
+        import torch
+        if torch.backends.mps.is_available():
+            torch.mps.empty_cache()
+        elif torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except Exception:  # noqa: BLE001
+        pass
+    gc.collect()
 
 
 def cleanup_old_jobs():
@@ -392,12 +417,15 @@ async def process_job(req: GenerateRequest):
 @app.get("/health")
 async def health():
     """Health check — also returns busy status for queue master polling."""
+    idle_secs = (time.monotonic() - _last_job_time) if _last_job_time > 0 else None
     return {
         "status": "ok",
         "is_busy": worker_state["is_busy"],
         "loaded_model": worker_state["loaded_model"],
         "current_job_id": worker_state["current_job_id"],
         "device": DEVICE,
+        "idle_seconds": round(idle_secs, 1) if idle_secs is not None else None,
+        "idle_timeout": _idle_timeout if _idle_timeout > 0 else None,
     }
 
 
@@ -830,6 +858,7 @@ async def _run_remix_analyze(req: RemixAnalyzeRequest):
         worker_state["is_busy"] = False
         worker_state["current_job_id"] = None
         cleanup_old_jobs()
+        _post_job_cleanup()
 
 
 async def _run_remix_replace(req: RemixReplaceStemRequest):
@@ -932,6 +961,7 @@ async def _run_remix_replace(req: RemixReplaceStemRequest):
         worker_state["is_busy"] = False
         worker_state["current_job_id"] = None
         cleanup_old_jobs()
+        _post_job_cleanup()
 
 
 async def _run_remix_master(req: RemixMasterRequest):
@@ -1065,6 +1095,7 @@ async def _run_remix_master(req: RemixMasterRequest):
         worker_state["is_busy"] = False
         worker_state["current_job_id"] = None
         cleanup_old_jobs()
+        _post_job_cleanup()
 
 
 @app.post("/remix/analyze", status_code=202)
@@ -1151,7 +1182,20 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Music Studio Sidecar")
     parser.add_argument("--port", type=int, default=5010, help="Port (default: 5010)")
     parser.add_argument("--host", default="0.0.0.0", help="Host (default: 0.0.0.0)")
+    parser.add_argument(
+        "--idle-timeout",
+        type=float,
+        default=float(os.environ.get("MUSIC_STUDIO_IDLE_TIMEOUT", "0")),
+        help=(
+            "Seconds of inactivity before logging an idle warning "
+            "(0 = disabled, env: MUSIC_STUDIO_IDLE_TIMEOUT). "
+            "Unlike image-gen/audio, music-studio does not hold models in RAM "
+            "between jobs, so this is informational only."
+        ),
+    )
     args = parser.parse_args()
+
+    _idle_timeout = args.idle_timeout
 
     logger.info(f"Starting Music Studio sidecar on {args.host}:{args.port}")
     logger.info(f"Gallery dir: {GALLERY_DIR}")

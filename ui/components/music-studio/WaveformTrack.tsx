@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useEffect, useState, useCallback } from "react";
+import { useRef, useEffect, useState, useCallback, memo } from "react";
 import WaveSurfer from "wavesurfer.js";
 import TimelinePlugin from "wavesurfer.js/dist/plugins/timeline.esm.js";
 import HoverPlugin from "wavesurfer.js/dist/plugins/hover.esm.js";
@@ -37,7 +37,7 @@ interface WaveformTrackProps {
   wsRef?: React.MutableRefObject<WaveSurfer | null>;
 }
 
-export function WaveformTrack({
+export const WaveformTrack = memo(function WaveformTrack({
   url,
   label,
   color = "#6366f1",
@@ -55,10 +55,18 @@ export function WaveformTrack({
 }: WaveformTrackProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const wavesurferRef = useRef<WaveSurfer | null>(null);
+  const timeDisplayRef = useRef<HTMLSpanElement>(null);
+  const onTimeUpdateRef = useRef(onTimeUpdate);
+  onTimeUpdateRef.current = onTimeUpdate;
   const [duration, setDuration] = useState(0);
-  const [currentTime, setCurrentTime] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  const formatTime = useCallback((t: number) => {
+    const m = Math.floor(t / 60);
+    const s = Math.floor(t % 60);
+    return `${m}:${s.toString().padStart(2, "0")}`;
+  }, []);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -101,6 +109,7 @@ export function WaveformTrack({
       cursorColor: "#f59e0b",
       normalize: true,
       interact: true,
+      dragToSeek: { debounceTime: 200 },
       plugins,
     });
 
@@ -116,8 +125,12 @@ export function WaveformTrack({
     });
 
     ws.on("timeupdate", (time: number) => {
-      setCurrentTime(time);
-      onTimeUpdate?.(time);
+      // Update time display directly via DOM ref — avoids React re-render per tick
+      if (timeDisplayRef.current) {
+        timeDisplayRef.current.textContent =
+          `${formatTime(time)} / ${formatTime(ws.getDuration())}`;
+      }
+      onTimeUpdateRef.current?.(time);
     });
 
     ws.on("error", (err: Error) => {
@@ -156,23 +169,17 @@ export function WaveformTrack({
     }
   }, [playbackRate]);
 
-  const formatTime = useCallback((t: number) => {
-    const m = Math.floor(t / 60);
-    const s = Math.floor(t % 60);
-    return `${m}:${s.toString().padStart(2, "0")}`;
-  }, []);
-
   return (
     <div className="rounded-lg border border-zinc-800 bg-zinc-950 p-3">
       <div className="mb-2 flex items-center justify-between">
         <span className="text-xs font-medium text-zinc-400">{label}</span>
         <div className="flex items-center gap-2">
-          <span className="font-mono text-xs text-zinc-500">
+          <span ref={timeDisplayRef} className="font-mono text-xs text-zinc-500">
             {error
               ? "error"
               : isLoading
                 ? "loading..."
-                : `${formatTime(currentTime)} / ${formatTime(duration)}`}
+                : `0:00 / ${formatTime(duration)}`}
           </span>
           {onRemove && (
             <button
@@ -196,4 +203,4 @@ export function WaveformTrack({
       )}
     </div>
   );
-}
+});

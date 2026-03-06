@@ -397,19 +397,28 @@ export class QueueMaster extends EventEmitter {
    */
   private recoverStuckJobs(): void {
     const timeoutMs = this.config.dispatchTimeoutMs ?? 45 * 60 * 1000; // 45 min default
+    // Local sidecar jobs (remix/voice2voice) shouldn't be stuck more than 15 min —
+    // Demucs stem separation of a full track takes ~2-5 min in the worst case.
+    const localTimeoutMs = Math.min(timeoutMs, 15 * 60 * 1000);
     const dispatched = this.repo.listJobs({ status: "dispatched", limit: 50 });
-    const cutoff = Date.now() - timeoutMs;
+    const now = Date.now();
 
     for (const job of dispatched) {
-      if (job.dispatchedAt && job.dispatchedAt.getTime() < cutoff) {
-        const ageMin = Math.round((Date.now() - job.dispatchedAt.getTime()) / 60_000);
+      if (!job.dispatchedAt) continue;
+      const isLocal = job.targetNode === "local";
+      const cutoff = now - (isLocal ? localTimeoutMs : timeoutMs);
+      if (job.dispatchedAt.getTime() < cutoff) {
+        const ageMin = Math.round((now - job.dispatchedAt.getTime()) / 60_000);
         logger.warn(
           `[QueueMaster] Job ${job.id} stuck in dispatched for ${ageMin}min — resetting for retry`,
         );
         this.repo.markFailed(job.id, `Dispatch timeout after ${ageMin}min (worker may have restarted)`);
-        // Clear the in-memory busy flag for the relevant node
+        // Clear the in-memory busy flag for the relevant node/sidecar
         if (job.targetNode === "mac-mini") {
           this.macMiniStatus = { ...this.macMiniStatus, is_busy: false };
+        } else if (job.targetNode === "local") {
+          // "local" covers remix_* and voice2voice — all handled by music-studio sidecar
+          this.musicStudioStatus = { ...this.musicStudioStatus, is_busy: false };
         } else {
           this.m2ProStatus = { ...this.m2ProStatus, is_busy: false };
         }
