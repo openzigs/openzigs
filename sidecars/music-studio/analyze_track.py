@@ -160,6 +160,10 @@ def analyze_track(
     gc.collect()
 
     # ── Step 2: 6-stem separation with Demucs ──
+    # Enable CPU fallback for MPS ops not yet implemented in Metal kernels.
+    if device == "mps":
+        os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
+
     logger.info(f"Loading model {model_name} on {device}...")
     model = get_model(model_name)
 

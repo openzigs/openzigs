@@ -146,7 +146,6 @@ export function SmartRemixLab({ audioAssets }: SmartRemixLabProps) {
           type: "remix_analyze",
           payload: {
             source_asset_id: assetId,
-            device: "cpu",
           },
         }),
       });

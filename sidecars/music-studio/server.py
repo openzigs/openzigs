@@ -54,7 +54,33 @@ VOICE_REFS_DIR = os.environ.get(
 
 AUTH_TOKEN: Optional[str] = os.environ.get("MUSIC_STUDIO_AUTH_TOKEN")
 
-DEVICE = os.environ.get("MUSIC_STUDIO_DEVICE", "cpu")
+
+def _resolve_device() -> str:
+    """Auto-detect compute device.
+
+    Priority:
+      1. MUSIC_STUDIO_DEVICE env var (explicit override)
+      2. MPS on Apple Silicon (if torch is installed and MPS is available)
+      3. CPU fallback
+    """
+    if env_device := os.environ.get("MUSIC_STUDIO_DEVICE"):
+        return env_device
+    try:
+        import torch
+        if torch.backends.mps.is_available():
+            return "mps"
+    except ImportError:
+        pass
+    return "cpu"
+
+
+DEVICE = _resolve_device()
+
+# Enable CPU fallback for MPS ops not yet fully supported by Metal kernels.
+# Without this, certain Demucs / Seed-VC ops will raise a NotImplementedError
+# instead of gracefully falling back to CPU.
+if DEVICE == "mps":
+    os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
 
 # ── State ────────────────────────────────────────────────────
 
@@ -734,7 +760,7 @@ async def _run_remix_analyze(req: RemixAnalyzeRequest):
 
         result = await loop.run_in_executor(
             None, _analyze, source_path, stems_dir,
-            "htdemucs_6s", req.device,
+            "htdemucs_6s", DEVICE,
         )
 
         report_progress(

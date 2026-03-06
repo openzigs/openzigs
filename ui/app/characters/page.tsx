@@ -210,6 +210,19 @@ export default function CharactersPage() {
     onError: (err) => showToast(err.message, "error"),
   });
 
+  const recoverMutation = useMutation({
+    mutationFn: (id: string) =>
+      fetchJson<{ ok: boolean; recovered: boolean; message: string; loraPath?: string }>(
+        `/api/characters/${id}/recover-training`,
+        { method: "POST" },
+      ),
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["characters"] });
+      showToast(data.message, data.recovered ? "success" : "info");
+    },
+    onError: (err) => showToast(err.message, "error"),
+  });
+
   const checkpointsQuery = useQuery({
     queryKey: ["train-checkpoints", resumeCharId],
     queryFn: () => fetchJson<{ character_id: string; checkpoints: Array<{ path: string; name: string; size: number }>; train_dir: string }>(
@@ -764,6 +777,21 @@ export default function CharactersPage() {
                     <p className="text-xs text-amber-600 dark:text-amber-400">
                       ⚠ Need at least 5 reference photos ({selected.referencePhotos.length}/5 uploaded)
                     </p>
+                  )}
+                  {(selected.status === "failed" || selected.status === "training") && (
+                    <button
+                      onClick={() => recoverMutation.mutate(selected.id)}
+                      disabled={recoverMutation.isPending}
+                      className="flex items-center gap-1.5 text-xs font-medium text-sky-700 underline underline-offset-2 hover:text-sky-900 dark:text-sky-300 dark:hover:text-sky-100 disabled:opacity-50"
+                      title="Check whether training completed on the sidecar and recover the LoRA if so"
+                    >
+                      {recoverMutation.isPending ? (
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                      ) : (
+                        <CheckCircle className="h-3 w-3" />
+                      )}
+                      Check if complete
+                    </button>
                   )}
                   {selected.status === "failed" && (
                     <button

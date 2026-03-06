@@ -1607,22 +1607,39 @@ async def train_lora(req: TrainRequest, background_tasks: BackgroundTasks):
 
 
 @app.get("/train-status")
-async def train_status():
-    """Check the status of the current training job."""
+async def train_status(character_id: Optional[str] = None):
+    """Check the status of the current training job.
+
+    Accepts an optional ``character_id`` query param so the caller can
+    discover a trained LoRA even after this sidecar was restarted
+    (in-memory ``_train_output_dir`` is lost on restart).
+    """
     # Check if training produced output files
     lora_path = None
     checkpoint_count = 0
+
+    # Determine which directories to search for checkpoints / LoRA
+    search_dirs: list[str] = []
     if _train_output_dir:
-        # Count checkpoint zips even while training (progress indicator)
+        search_dirs.append(_train_output_dir)
+    if character_id:
+        char_dir = _get_training_dir(character_id)
+        # Also check lora/ subdir (where mflux writes checkpoints)
+        lora_subdir = os.path.join(char_dir, "lora")
+        for d in (char_dir, lora_subdir):
+            if os.path.isdir(d) and d not in search_dirs:
+                search_dirs.append(d)
+
+    for search_dir in search_dirs:
         try:
-            for root, _dirs, files in os.walk(_train_output_dir):
+            for root, _dirs, files in os.walk(search_dir):
                 for f in files:
                     if f.endswith(".zip") and "checkpoint" in f:
                         checkpoint_count += 1
         except Exception:
             pass
-        if not _training:
-            lora_path = _find_trained_lora(_train_output_dir)
+        if not _training and lora_path is None:
+            lora_path = _find_trained_lora(search_dir)
 
     return {
         "training": _training,
@@ -1871,11 +1888,69 @@ def _find_trained_lora(dir_path: str) -> Optional[str]:
 
 
 def _bg_train_resume(checkpoint_path: str) -> None:
-    """Background task: resume mflux-train from a checkpoint zip."""
-    import subprocess
+    """Background task: resume mflux-train from a checkpoint zip.
 
-    global _training, _train_paused, _train_process, _train_error
+    Handles the common case where training already completed but the calling
+    server missed the completion event (client detached, server restarted).
+    In that scenario the data directory was cleaned up post-training, so
+    ``mflux-train --resume`` would fail with *Data folder not found*.  We
+    detect this by checking whether an adapter already exists in the output
+    directory — if so, we skip re-training entirely.
+
+    If the data directory is genuinely missing but no adapter exists yet, we
+    re-create a minimal placeholder so mflux can at least parse the manifest
+    and finish any remaining epochs.
+    """
+    import subprocess
+    import zipfile
+
+    global _training, _train_paused, _train_process, _train_error, _train_output_dir
     try:
+        # ── Pre-check: is there already a trained LoRA adapter? ────────
+        # The checkpoint lives under the character's training dir.
+        # e.g. ~/.openzigs/training/{char_id}/lora/checkpoints/0000011_checkpoint.zip
+        checkpoint_dir = os.path.dirname(checkpoint_path)
+        output_base = os.path.dirname(checkpoint_dir)  # the lora/ dir
+        existing_lora = _find_trained_lora(output_base)
+        if existing_lora:
+            log.info(
+                f"[train] LoRA adapter already exists at {existing_lora} — "
+                f"skipping resume (training was already complete)"
+            )
+            _train_output_dir = output_base
+            return  # _training will be reset in finally
+
+        # ── Ensure the data directory referenced in the manifest exists ──
+        try:
+            with zipfile.ZipFile(checkpoint_path, "r") as zf:
+                if "manifest.json" in zf.namelist():
+                    manifest = json.loads(zf.read("manifest.json"))
+                    data_root = manifest.get("data_root") or manifest.get("data")
+                    if data_root and not os.path.isdir(data_root):
+                        # Also check next to checkpoint (mflux fallback)
+                        alt_data = os.path.join(os.path.dirname(checkpoint_path), "data")
+                        if not os.path.isdir(alt_data):
+                            log.warning(
+                                f"[train] Data directory missing ({data_root}), "
+                                f"creating placeholder at {alt_data} for resume"
+                            )
+                            os.makedirs(alt_data, exist_ok=True)
+                            # Write a minimal placeholder image + caption so mflux
+                            # can enumerate at least one data item.
+                            placeholder_img = os.path.join(alt_data, "placeholder.jpg")
+                            placeholder_txt = os.path.join(alt_data, "placeholder.txt")
+                            try:
+                                img = Image.new("RGB", (512, 512), color=(128, 128, 128))
+                                img.save(placeholder_img, format="JPEG")
+                            except Exception:
+                                # Fallback: write a tiny valid JPEG
+                                with open(placeholder_img, "wb") as fp:
+                                    fp.write(b"\xff\xd8\xff\xe0" + b"\x00" * 100 + b"\xff\xd9")
+                            with open(placeholder_txt, "w") as fp:
+                                fp.write("placeholder")
+        except Exception as exc:
+            log.warning(f"[train] Could not inspect checkpoint manifest: {exc}")
+
         log.info(f"[train] Spawning mflux-train --resume {checkpoint_path}")
         _train_process = subprocess.Popen(
             ["mflux-train", "--resume", checkpoint_path],
@@ -2029,8 +2104,12 @@ def _bg_train(config_path: str) -> None:
                     log.info(f"[train] Output dir contents ({len(all_files)} files): {all_files}")
                 except Exception:
                     pass
-            # Clean up training input data (images + config) to reclaim disk
-            _cleanup_training_data(config_path)
+            # NOTE: We intentionally do NOT clean up training data here.
+            # The data directory is needed if the calling server missed the
+            # completion event (client detached, server restart) and later
+            # tries to resume from a checkpoint.  Data is cleaned up via
+            # the explicit DELETE /train-data endpoint when the character
+            # is confirmed as 'ready' by the orchestrator.
         else:
             err_msg = "\n".join(last_lines) if last_lines else f"exit code {rc}"
             _train_error = err_msg

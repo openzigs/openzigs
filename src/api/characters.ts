@@ -545,6 +545,73 @@ export function createCharacterRouter({ characterRepo, copilot }: CharacterRoute
     }
   });
 
+  // ── POST /:id/recover-training — Check sidecar for a completed LoRA after a poll timeout ──
+  router.post("/:id/recover-training", async (req, res) => {
+    try {
+      const character = characterRepo.getById(req.params.id);
+      if (!character) { res.status(404).json({ error: "Character not found" }); return; }
+
+      const sidecarUrl = await getImageGenSidecarUrl();
+      if (!sidecarUrl) { res.status(503).json({ error: "Image generation sidecar not configured" }); return; }
+      const token = await getImageGenToken();
+      const headers: Record<string, string> = {};
+      if (token) headers["Authorization"] = `Bearer ${token}`;
+
+      const statusRes = await fetch(`${sidecarUrl}/train-status?character_id=${encodeURIComponent(character.id)}`, { headers });
+      if (!statusRes.ok) {
+        res.status(502).json({ error: `Sidecar returned HTTP ${statusRes.status}` });
+        return;
+      }
+
+      const status = await statusRes.json() as {
+        training: boolean;
+        error?: string;
+        lora_path?: string;
+      };
+
+      if (status.training) {
+        // Still training — restart polling so the server captures completion
+        characterRepo.update(character.id, { status: "training", errorMessage: null });
+        pollTrainingStatus(character.id, character.name, sidecarUrl, token, null, characterRepo);
+        res.json({ ok: true, recovered: false, message: "Training is still in progress — polling restarted." });
+        return;
+      }
+
+      if (status.lora_path) {
+        characterRepo.update(character.id, {
+          status: "ready",
+          trainedLoraPath: status.lora_path,
+          errorMessage: null,
+        });
+        _io?.emit("character:training:complete", { characterId: character.id, characterName: character.name });
+        // Clean up training data since we've confirmed the character is ready
+        try {
+          const cleanupHeaders: Record<string, string> = { "Content-Type": "application/json" };
+          if (token) cleanupHeaders["Authorization"] = `Bearer ${token}`;
+          await fetch(`${sidecarUrl}/train-data`, {
+            method: "DELETE",
+            headers: cleanupHeaders,
+            body: JSON.stringify({ character_id: character.id }),
+          });
+        } catch { /* non-critical */ }
+        logger.info(`[Characters] Recovered training for '${character.name}' (${character.id}): ${status.lora_path}`);
+        res.json({ ok: true, recovered: true, loraPath: status.lora_path, message: "Training was already complete — character marked as ready." });
+        return;
+      }
+
+      res.json({
+        ok: false,
+        recovered: false,
+        message: status.error
+          ? `Training failed on sidecar: ${status.error}`
+          : "No trained LoRA found on the sidecar. You may need to re-train or resume from a checkpoint.",
+      });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      res.status(500).json({ error: msg });
+    }
+  });
+
   // ── POST /:id/pause-training — Pause active training (SIGSTOP via sidecar) ──
   router.post("/:id/pause-training", async (req, res) => {
     try {
@@ -875,7 +942,7 @@ function pollTrainingStatus(
       try {
         const headers: Record<string, string> = {};
         if (token) headers["Authorization"] = `Bearer ${token}`;
-        const statusRes = await fetch(`${sidecarUrl}/train-status`, { headers });
+        const statusRes = await fetch(`${sidecarUrl}/train-status?character_id=${encodeURIComponent(characterId)}`, { headers });
         if (statusRes.ok) {
           const status = await statusRes.json() as {
             training: boolean;
@@ -910,7 +977,7 @@ function pollTrainingStatus(
       const headers: Record<string, string> = {};
       if (token) headers["Authorization"] = `Bearer ${token}`;
 
-      const response = await fetch(`${sidecarUrl}/train-status`, { headers });
+      const response = await fetch(`${sidecarUrl}/train-status?character_id=${encodeURIComponent(characterId)}`, { headers });
       if (!response.ok) {
         logger.warn(`[Characters] Train status poll failed: HTTP ${response.status}`);
         setTimeout(poll, pollIntervalMs);
@@ -946,6 +1013,19 @@ function pollTrainingStatus(
         });
         _io?.emit("character:training:complete", { characterId, characterName });
         logger.info(`[Characters] Remote training complete for ${characterId}: ${status.lora_path}`);
+
+        // Clean up training data on the sidecar now that the character is confirmed ready
+        try {
+          const cleanupHeaders: Record<string, string> = { "Content-Type": "application/json" };
+          if (token) cleanupHeaders["Authorization"] = `Bearer ${token}`;
+          await fetch(`${sidecarUrl}/train-data`, {
+            method: "DELETE",
+            headers: cleanupHeaders,
+            body: JSON.stringify({ character_id: characterId }),
+          });
+        } catch {
+          // Non-critical — data will be cleaned up eventually
+        }
       } else {
         characterRepo.update(characterId, {
           status: "failed",

@@ -60,6 +60,10 @@ def extract_vocals(
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
 
+    # Enable CPU fallback for MPS ops not yet implemented in Metal kernels.
+    if device == "mps":
+        os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
+
     logger.info(f"Loading model {model_name} on {device}...")
     model = get_model(model_name)
 
@@ -109,6 +113,12 @@ def extract_vocals(
 
     logger.info(f"Vocals saved to: {vocals_path}")
     logger.info(f"Instrumental saved to: {no_vocals_path}")
+
+    # Release MPS memory back to the pool
+    try:
+        torch.mps.empty_cache()
+    except Exception:
+        pass
 
     return {"vocals": vocals_path, "no_vocals": no_vocals_path}
 

@@ -124,11 +124,13 @@ def apply_seedvc(
             "--f0-condition", str(f0_condition),
             "--auto-f0-adjust", str(auto_f0_adjust),
             "--semi-tone-shift", str(pitch_shift),
-            "--fp16", "True" if device != "cpu" else "False",
+            "--fp16", "True" if device == "cuda" else "False",
         ]
 
         env = os.environ.copy()
         env["HF_HUB_CACHE"] = os.path.join(seed_vc_path, "checkpoints", "hf_cache")
+        if device == "mps":
+            env.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
 
         logger.info(f"Executing: {' '.join(cmd)}")
 
@@ -145,7 +147,7 @@ def apply_seedvc(
             logger.error(f"Seed-VC stderr: {result.stderr}")
             raise RuntimeError(
                 f"Seed-VC inference failed (exit {result.returncode}): "
-                f"{result.stderr[:500]}"
+                f"{result.stderr[-2000:]}"
             )
 
         if result.stdout:
