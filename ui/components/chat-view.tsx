@@ -24,7 +24,7 @@ import {
 } from "@/components/ui/dialog";
 import { Send, Loader2, Bot, User, AlertCircle, Trash2 } from "lucide-react";
 import { ChatMarkdown } from "@/components/chat-markdown";
-import { SmartTextarea } from "@/components/smart-textarea";
+import { SmartTextarea, type SkillInfo } from "@/components/smart-textarea";
 import { FileAttachmentButton, FileDropZone, AttachmentBar } from "@/components/file-attachment";
 import { VoiceMicButton } from "@/components/voice/voice-mic-button";
 import { ReasoningEffortSelector, ProviderBadge } from "@/components/reasoning-effort-selector";
@@ -74,6 +74,8 @@ export const ChatView = () => {
   const [fallbackWarning, setFallbackWarning] = useState(false);
   const [tools, setTools] = useState<ToolInfo[]>([]);
   const [prompts, setPrompts] = useState<SavedPrompt[]>([]);
+  const [skills, setSkills] = useState<SkillInfo[]>([]);
+  const [bannerDismissed, setBannerDismissed] = useState(true);
   const [history, setHistory] = useState<string[]>([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
   const [draftInput, setDraftInput] = useState("");
@@ -199,8 +201,22 @@ export const ChatView = () => {
         // Prompts not available
       }
     };
+    const loadSkills = async () => {
+      try {
+        const data = await fetchJson<{ skills: SkillInfo[] }>("/api/admin/skills");
+        setSkills(data.skills ?? []);
+      } catch {
+        // Skills not available
+      }
+    };
     void loadTools();
     void loadPrompts();
+    void loadSkills();
+  }, []);
+
+  // Read banner-dismissed from localStorage after mount (avoids SSR hydration mismatch)
+  useEffect(() => {
+    setBannerDismissed(localStorage.getItem("openzigs:skills-onboarded") === "true");
   }, []);
 
   // Socket events
@@ -613,16 +629,13 @@ export const ChatView = () => {
           <div className="flex flex-1 flex-col items-center justify-center gap-4 text-muted-foreground">
             <Bot className="h-12 w-12 opacity-30" />
             <p className="text-sm">Send a message to start chatting with OpenZigs.</p>
-            {typeof window !== "undefined" && !localStorage.getItem("openzigs:skills-onboarded") && (
+            {!bannerDismissed && skills.length > 0 && (
               <div className="w-full max-w-md rounded-xl border border-border bg-muted/30 p-4 text-xs">
-                <p className="mb-2 font-semibold text-foreground">6 skills loaded</p>
+                <p className="mb-2 font-semibold text-foreground">{skills.length} skill{skills.length !== 1 ? "s" : ""} loaded</p>
                 <div className="grid grid-cols-2 gap-1 text-muted-foreground">
-                  <span>🎬 Media Director</span>
-                  <span>🎵 Remix Engineer</span>
-                  <span>📡 Platform Manager</span>
-                  <span>✍️ Content Creator</span>
-                  <span>📚 Knowledge Curator</span>
-                  <span>🛡️ System Operator</span>
+                  {skills.map((s) => (
+                    <span key={s.name}>{s.displayName}</span>
+                  ))}
                 </div>
                 <p className="mt-2 text-muted-foreground">
                   Type <code className="rounded bg-muted px-1">!</code> to browse skills, or just describe what you need.
@@ -632,7 +645,7 @@ export const ChatView = () => {
                   className="mt-2 text-[10px] text-muted-foreground/60 hover:text-muted-foreground"
                   onClick={() => {
                     localStorage.setItem("openzigs:skills-onboarded", "true");
-                    window.location.reload();
+                    setBannerDismissed(true);
                   }}
                 >
                   Dismiss
@@ -771,6 +784,7 @@ export const ChatView = () => {
               tools={tools}
               prompts={prompts}
               models={models}
+              skills={skills}
               placeholder={
                 !connected
                   ? "Connecting…"

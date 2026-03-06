@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { fetchJson } from "@/lib/api";
 import {
   Film, Music, Radio, PenTool, BookOpen, Shield,
   ChevronDown, ChevronRight, ExternalLink, Sparkles,
@@ -148,8 +149,7 @@ export default function SkillsPage() {
   const router = useRouter();
 
   useEffect(() => {
-    fetch("/api/admin/skills")
-      .then((res) => res.json())
+    fetchJson<{ skills: SkillMetadata[] }>("/api/admin/skills")
       .then((data) => {
         setSkills(data.skills ?? []);
         setLoading(false);

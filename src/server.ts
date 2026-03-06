@@ -322,6 +322,29 @@ const getDisabledNativeMcpToolNames = (): Set<string> => {
   return disabled;
 };
 
+// Discover skill directories — each subdirectory of src/skills/ that contains a SKILL.md
+const resolvedSkillDirectories: string[] = [];
+try {
+  const skillsRoot = path.resolve(process.cwd(), "src", "skills");
+  const entries = await fs.readdir(skillsRoot, { withFileTypes: true });
+  for (const entry of entries) {
+    if (entry.isDirectory()) {
+      const skillMdPath = path.join(skillsRoot, entry.name, "SKILL.md");
+      try {
+        await fs.access(skillMdPath);
+        resolvedSkillDirectories.push(path.join(skillsRoot, entry.name));
+      } catch {
+        // No SKILL.md in this directory — skip
+      }
+    }
+  }
+  if (resolvedSkillDirectories.length > 0) {
+    logger.info(`Loaded ${resolvedSkillDirectories.length} skill directories`);
+  }
+} catch {
+  // src/skills/ doesn't exist — no skills configured
+}
+
 const copilot = new CopilotWrapperService({
   toolRegistry,
   maxToolsPerRequest: config.session?.maxToolsPerRequest ?? 30,
@@ -332,6 +355,7 @@ const copilot = new CopilotWrapperService({
   defaultWorkingDirectory: config.copilot?.defaultWorkingDirectory ?? undefined,
   customAgents: resolvedCustomAgents,
   nativeMcpServers: resolvedNativeMcpServers,
+  skillDirectories: resolvedSkillDirectories,
 });
 copilotRef = copilot;
 
