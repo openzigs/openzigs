@@ -392,6 +392,76 @@ Internet → Cloudflare Edge → cloudflared sidecar → http://agent:3000 (Dock
 
 ---
 
+## Python AI Sidecars
+
+OpenZigs ships with a suite of optional **local Python FastAPI services** that run as separate processes on the host machine (not inside Docker). All sidecars are optimised for **Apple Silicon (MLX / Metal)** and communicate with the agent over localhost HTTP.
+
+Sidecars are selected at install time and can be added later by re-running `install.sh`.
+
+### Sidecar Reference
+
+| Sidecar | Port | Key Models / Stack | ~Disk | Python | Features |
+|---|---|---|---|---|---|
+| **audio** | 5006 | lightning-whisper-mlx (distil-large-v3), mlx-audio (Kokoro-82M) | ~2 GB | 3.10+ | Whisper STT, Kokoro TTS, Voice input/output |
+| **image-gen** | 5005 | MFLUX ≥ 0.16.1, Flux.1 Schnell / Dev | ~20–23 GB per model | 3.10+ | AI image generation, LoRA (DreamBooth), ControlNet (Canny/Depth) |
+| **music** | 5009 | ACE-Step 1.5 (Apple Silicon fork) via `uv` | ~10–15 GB | **3.11.x only** | AI music generation from text + lyrics |
+| **music-studio** | 5010 | PyTorch (MPS), Demucs v4, Seed-VC, matchering | ~5 GB | 3.10+ | Stem separation, Voice-to-Voice, AI Remix Lab, mastering |
+| **worker** | 5007 | mlx, mlx-video (GitHub) | ~10 GB | 3.10+ | LTX-Video generation (M2 Pro+ recommended, 32+ GB RAM) |
+| **GPT-SoVITS** | dynamic | GPT-SoVITS (via `scripts/setup-gptsovits.sh`) | ~4 GB | bundled | Voice cloning Engine B — custom voice models from short clips |
+
+> **Note:** `music` requires Python **3.11.x exactly** plus the `uv` package manager and a separate clone of [`clockworksquirrel/ace-step-apple-silicon`](https://github.com/clockworksquirrel/ace-step-apple-silicon). `music-studio` requires system packages `ffmpeg` and `fluidsynth` (`brew install ffmpeg fluidsynth`).
+
+### Feature-to-Sidecar Mapping
+
+| UI Feature / Tool | Required Sidecar |
+|---|---|
+| Voice input (mic → transcription) | audio (5006) |
+| Text-to-Speech output | audio (5006) |
+| AI image generation | image-gen (5005) |
+| Flux.1 LoRA / ControlNet | image-gen (5005) |
+| AI music from text / lyrics | music (5009) |
+| Stem separation (vocals / drums / bass / other) | music-studio (5010) |
+| Voice-to-Voice conversion | music-studio (5010) |
+| AI Remix Lab (instrument replace, FX, mastering) | music-studio (5010) |
+| Video generation | worker (5007) |
+| Voice cloning (Engine B) | GPT-SoVITS |
+
+### System Diagram — AI Sidecar Layer
+
+```
+┌─────────────────── Host Machine (Apple Silicon) ──────────────────────┐
+│                                                                        │
+│  ┌─────────────────────────────────────────────────────────────────┐  │
+│  │  Docker Compose Network                                         │  │
+│  │  agent:3000  ─── postgres ─── redis ─── cloudflared            │  │
+│  └──────────────────────┬──────────────────────────────────────────┘  │
+│                         │ localhost HTTP                              │
+│         ┌───────────────┼───────────────┐                            │
+│         ▼               ▼               ▼                            │
+│  ┌─────────────┐ ┌─────────────┐ ┌─────────────┐                    │
+│  │ audio :5006 │ │ image-gen   │ │ worker :5007│                    │
+│  │ Whisper STT │ │ :5005       │ │ LTX-Video   │                    │
+│  │ Kokoro TTS  │ │ MFLUX/Flux.1│ │ MLX-Video   │                    │
+│  └─────────────┘ └─────────────┘ └─────────────┘                    │
+│                                                                        │
+│  ┌─────────────────────┐   ┌─────────────────────┐                   │
+│  │ music :5009         │   │ music-studio :5010   │                   │
+│  │ ACE-Step 1.5        │   │ Demucs + Seed-VC     │                   │
+│  │ Python 3.11.x + uv  │   │ Remix Lab + mastering│                   │
+│  └─────────────────────┘   └─────────────────────┘                   │
+│                                                                        │
+│  ┌─────────────────────────────────────────────────┐                  │
+│  │ GPT-SoVITS  (~/.openzigs/sidecars/gptsovits/)   │                  │
+│  │ Voice cloning Engine B                          │                  │
+│  │ Installed via scripts/setup-gptsovits.sh        │                  │
+│  └─────────────────────────────────────────────────┘                  │
+└────────────────────────────────────────────────────────────────────────┘
+```
+
+All sidecars are stateless HTTP servers. The agent's MCP tool layer routes capability requests (`generate-image`, `transcribe-audio`, `generate-music`, `voice-convert`, `separate-stems`) to the appropriate sidecar via the tool registry (`src/mcp/tool-registry.ts`).
+
+---
+
 ## MCP Host Architecture
 
 OpenZigs acts as an **MCP Host** — it orchestrates multiple external MCP servers to extend its capabilities beyond built-in tools.
