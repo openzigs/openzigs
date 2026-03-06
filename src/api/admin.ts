@@ -1159,6 +1159,7 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
           tags: Array.isArray(body.tags) ? (body.tags as string[]) : undefined,
           preferredTools: Array.isArray(body.preferredTools) ? (body.preferredTools as string[]) : undefined,
           stages: Array.isArray(body.stages) ? (body.stages as PipelineStage[]) : undefined,
+          suggestedSkill: typeof body.suggestedSkill === "string" ? body.suggestedSkill : undefined,
         });
         return res.status(201).json(prompt);
       } catch (error) {
@@ -1177,6 +1178,7 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
           tags: Array.isArray(body.tags) ? (body.tags as string[]) : undefined,
           preferredTools: Array.isArray(body.preferredTools) ? (body.preferredTools as string[]) : (body.preferredTools === null ? null : undefined),
           stages: Array.isArray(body.stages) ? (body.stages as PipelineStage[]) : (body.stages === null ? null : undefined),
+          suggestedSkill: typeof body.suggestedSkill === "string" ? body.suggestedSkill : (body.suggestedSkill === null ? null : undefined),
         });
         return res.json(updated);
       } catch (error) {

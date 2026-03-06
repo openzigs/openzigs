@@ -308,44 +308,177 @@ The admin page at `/admin` consolidates all configuration:
 
 ### Skills
 
-Skills are specialized AI personas loaded into your agent sessions. Each skill brings domain expertise, tool knowledge, and behavioral rules that guide the AI's behavior. Skills are distinct from tools (callable functions) and custom agents (explicit personas) — they are passive context injection that tells the AI *how* to approach specific domains.
+Skills are the easiest way to use OpenZigs. They are specialized AI personas that give the agent domain expertise, tool routing knowledge, and behavioral rules — so **you don't need to know which tools to use**. Just describe what you want in natural language, and the skill handles tool selection, error recovery, and workflow orchestration automatically.
+
+Skills follow the [agentskills.io](https://agentskills.io) open standard and are defined as `SKILL.md` files with YAML frontmatter. They are loaded into every agent session via the Copilot SDK's `skillDirectories` configuration.
+
+#### Skills vs. Tools vs. Prompts
+
+Understanding when to use each:
+
+| Feature | What it is | Who it's for | When to use |
+|---------|-----------|-------------|-------------|
+| **Skills** | Passive AI personas always loaded into sessions | Everyone | Always — skills activate automatically when your request matches their domain |
+| **Tools** | Specific callable functions (e.g., `submit-media-job`) | Power users | When you need fine-grained control over a specific operation |
+| **Prompts (Library)** | Reusable templates with variables | Everyone | When you repeat the same workflow often |
+| **Prompts + Skills** | Templates paired with a Suggested Skill | Recommended | Best of both worlds — repeatable workflows with domain expertise |
+
+**Key insight**: Skills abstract away tool knowledge. A prompt like "Create a thumbnail for my video" requires knowing tool names (`submit-media-job`, `manage-characters`, `query-gallery-assets`). With skills, just type that sentence — the Media Director skill knows which tools to call and in what order.
 
 #### Available Skills
 
-| Skill | Description | Key Tools |
-|-------|-------------|-----------|
-| **Media Director** | Orchestrates image, video, and audio generation across GPU worker nodes | `submit-media-job`, `get-job-status`, `query-gallery-assets`, `manage-characters` |
-| **Remix Engineer** | Manages the Smart Remix Lab pipeline — stem separation, instrument replacement, mastering | `remix-session-manager`, `get-job-status`, `query-gallery-assets` |
-| **Platform Manager** | Scheduling automation, social media publishing, knowledge base management | `schedule-job`, `submit-media-job`, `query-gallery-assets`, `search-knowledge` |
-| **Content Creator** | Multi-format content repurposing with brand voice enforcement and TTS | `manage-brand-voice`, `synthesize-speech`, `blog-to-video`, `create-short` |
-| **Knowledge Curator** | Knowledge base ingestion, RAG search, presentation management, quiz generation | `manage-knowledge-base`, `manage-presentations`, `search-knowledge` |
-| **System Operator** | Platform monitoring, Sentinel SRE daemon, webhook management, node health | `sentinel-control`, `manage-webhooks`, `get-job-status` |
+| Skill | Description | Example Prompts |
+|-------|-------------|-----------------|
+| **Media Director** 🎬 | Creates images (Flux), videos (LTX-2), audio (F5-TTS), music (ACE-Step). Handles character LoRA identity. | "Create a 4-second cyberpunk video" / "Generate a portrait with character Alex" / "Show images from this week" |
+| **Remix Engineer** 🎵 | Audio stem separation, AI instrument replacement, and auto-mastering via the Remix Lab pipeline. | "Remix my track — replace drums with strings" / "Analyze stems of yesterday's upload" / "Master with a warm lofi vibe" |
+| **Platform Manager** 📡 | Scheduling, social media publishing (Instagram, Twitter, LinkedIn, YouTube, Facebook, Reddit), knowledge base ops. | "Schedule a daily Instagram post at 9am" / "Publish the latest image to Twitter" / "List all scheduled jobs" |
+| **Content Creator** ✍️ | Blog-to-video, voiceovers (54+ voices), YouTube Shorts, brand voice enforcement. | "Convert this blog to a narrated video" / "Create a Short from the latest upload" / "Use the warm female voice" |
+| **Knowledge Curator** 📚 | RAG knowledge base ingestion, semantic search, presentation management, quiz generation. | "Ingest this article" / "Search for machine learning content" / "Generate a quiz for chapter 3" |
+| **System Operator** 🛡️ | Sentinel SRE monitoring, webhook management, worker node health, system diagnostics. | "Check all worker node health" / "Show the latest Sentinel digest" / "Create a CI/CD webhook" |
+
+#### Usage Examples
+
+##### Example 1: Creating a Social Media Campaign (Platform Manager + Content Creator)
+
+```
+You: Create a motivational image with a sunrise background, add the text
+"New beginnings start now", then schedule it to post to Instagram and
+Twitter every Monday at 8am.
+```
+
+What happens behind the scenes:
+1. **Media Director** skill activates → calls `submit-media-job` with a Flux image generation job
+2. **Platform Manager** skill activates → calls `schedule-job` with cron `0 8 * * 1`
+3. The AI chains social publishing tools for Instagram and Twitter into the scheduled job
+4. You get confirmation with the schedule and a preview of the generated image
+
+##### Example 2: Remixing a Track (Remix Engineer)
+
+```
+You: Take my latest audio upload and remix it — replace the drums with
+a marimba and the bass with strings. Then master it with a cinematic vibe.
+```
+
+What happens:
+1. **Remix Engineer** skill activates → calls `query-gallery-assets` to find latest audio
+2. Calls `remix-session-manager` with `action: "analyze"` to separate 6 stems
+3. Calls `remix-session-manager` with `action: "replace_stem"` for drums → marimba
+4. Calls `remix-session-manager` with `action: "replace_stem"` for bass → strings
+5. Calls `remix-session-manager` with `action: "master"` with vibe `cinematic_wide`
+6. Reports completion with the mastered audio file
+
+##### Example 3: Building a Knowledge Base (Knowledge Curator)
+
+```
+You: Ingest this YouTube video about React Server Components, then create
+a quiz about the key concepts.
+```
+
+What happens:
+1. **Knowledge Curator** skill activates → calls `ingest-youtube` to download and transcribe
+2. Calls `manage-knowledge-base` to ingest the transcript
+3. Calls `manage-presentations` with `action: "generate_quiz"` for the content
+4. Returns the quiz questions for review
+
+##### Example 4: Error Recovery in Action (Media Director)
+
+```
+You: Generate a 4K portrait of character Luna
+```
+
+If the worker node is busy:
+1. Media Director calls `submit-media-job` → fails with "worker busy"
+2. Skill retries once after 5 seconds
+3. If still busy, calls `get-job-status` with `include_node_status: true` to check alternatives
+4. Tries a different available node
+5. If no nodes available, reports the situation: "All GPU nodes are currently busy. The Mac Mini queue has 3 jobs ahead. Estimated wait: ~5 minutes. Shall I schedule this for when a node is free?"
 
 #### Skills Page
 
 Navigate to **Automation → Skills** in the sidebar to view all loaded skills. Each skill card shows:
 
 - **Icon and name** with a "Loaded" status indicator
-- **Description** extracted from the SKILL.md file
-- **Tool badges** showing which tools the skill uses
+- **Description** extracted from the SKILL.md frontmatter
+- **Tool badges** showing the `allowed-tools` the skill uses
 - **Behavioral rules count**
 - **"Try It" prompts** — clickable example prompts that navigate to Chat with the prompt pre-filled
+- **Ask AI button** — get help understanding skills from the AI assistant
 
 Click a skill card to expand its detail view showing the full tool list, stats, and all example prompts.
 
 #### Using Skills in Chat
 
-Type `!` in the chat input to open the skills autocomplete. Selecting a skill inserts a contextual primer like `[Using Media Director skill]` that signals your intent to the AI.
+**Automatic activation**: Skills are always loaded. Just describe what you want — the AI activates the right skill automatically based on your request.
 
-You don't *need* to explicitly invoke a skill — all skills are always loaded into every session. The `!` trigger is a discoverability feature that helps you learn what capabilities exist.
+**`!` trigger**: Type `!` in the chat input to open the skills autocomplete picker. This is a discoverability feature that shows all available skills with descriptions. Selecting a skill inserts a contextual primer.
+
+**`/skill-name` syntax**: Use `/media-director` or `/remix-engineer` in your prompt to explicitly tell the AI to use a specific skill's expertise for the task.
+
+**IntelliSense hints**: The chat placeholder reads `/ prompts, # tools, @ models, ! skills` to remind you of all available triggers.
+
+#### Pairing Skills with Library Prompts
+
+The most powerful combination is pairing a Library prompt with a Suggested Skill:
+
+1. Open the **Library** at `/library`
+2. Create or edit a prompt
+3. In the **Suggested Skill** dropdown, select the appropriate skill
+4. Save the prompt
+
+Now when this prompt is used (via `/` IntelliSense or the scheduler), the AI activates the selected skill's full domain expertise. This is **simpler than Preferred Tools** — you don't need to know tool names.
+
+**Example**: A "Weekly Social Post" prompt with Suggested Skill set to "Platform Manager":
+- Template: `Create a motivational image about {{topic}} and schedule it to post to {{platforms}} next {{day}} at {{time}}.`
+- The Platform Manager skill handles all tool routing (image generation, scheduling, social publishing)
+- The user just fills in the variables
+
+#### Error Recovery
+
+All skills include autonomous retry behavior following a consistent pattern:
+
+1. **First failure**: Automatic retry after a brief wait (5 seconds)
+2. **Second failure**: Try an alternative approach (different tool, different parameters, different node)
+3. **Third failure**: Stop and report to the user with:
+   - What was attempted
+   - Why it failed
+   - Suggested remediation steps
+
+The AI **never silently fails** — it always explains what happened and what was tried. This is enforced in every skill's Error Recovery section.
 
 #### Creating Custom Skills
 
-Power users can create additional skills by:
+Custom skills follow the [agentskills.io specification](https://agentskills.io/specification):
 
-1. Creating a directory under `src/skills/<skill-name>/`
-2. Adding a `SKILL.md` markdown file with Identity, Capabilities, Tool Routing Rules, Domain Rules, and Error Recovery sections
-3. Adding the directory path to `skillDirectories` in the CopilotWrapper configuration
+1. Create a directory: `src/skills/<skill-name>/`
+2. Add a `SKILL.md` file with YAML frontmatter:
+
+```yaml
+---
+name: my-skill-name
+description: What the skill does and when to use it. Include keywords for task matching.
+allowed-tools: tool-a tool-b tool-c
+---
+```
+
+3. Write the Markdown body with these recommended sections:
+   - **Identity** — Who is this AI persona?
+   - **Core Capabilities** — What can it do?
+   - **Tool Routing Rules** — Which custom tools vs. built-in tools to use
+   - **Domain Rules** — Numbered behavioral constraints
+   - **Error Recovery** — Failure handling with autonomous retry behavior
+
+4. Optionally add subdirectories:
+   - `scripts/` — Executable scripts the skill can run
+   - `references/` — Additional documentation loaded on-demand
+   - `assets/` — Static resources (schemas, templates)
+
+5. Restart the server — skills auto-discover from `src/skills/*/SKILL.md`
+
+**Best practices**:
+- Keep `SKILL.md` under 500 lines (< 5,000 tokens)
+- Move detailed references to `references/` files
+- Use specific keywords in the `description` field for accurate task matching
+- The `allowed-tools` field pre-approves tools the skill may use
 
 ### Library (Saved Prompts)
 

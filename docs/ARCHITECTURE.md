@@ -730,34 +730,86 @@ sequenceDiagram
 
 ### Skill System (`src/skills/`)
 
-Skills are SKILL.md markdown files organized in named subdirectories under `src/skills/`. They are loaded via the Copilot SDK's `skillDirectories` configuration and injected into every session's context, providing the LLM with domain-specific expertise.
+Skills are `SKILL.md` markdown files following the [agentskills.io specification](https://agentskills.io/specification) — an open standard for portable AI agent capabilities. Each file contains YAML frontmatter (name, description, allowed-tools) and a Markdown body with domain-specific instructions. Skills are loaded via the Copilot SDK's `skillDirectories` configuration and injected into every session's context.
+
+#### Specification Compliance
+
+Skills follow the agentskills.io open standard:
+
+| Feature | Status | Details |
+|---------|--------|---------|
+| YAML Frontmatter | Implemented | `name`, `description`, `allowed-tools` fields |
+| Progressive Disclosure | Implemented | Metadata (~100 tokens) loaded at startup; full instructions on activation |
+| `allowed-tools` | Implemented | Pre-approved tools listed in frontmatter |
+| `scripts/` directory | Supported | Executable scripts the skill can invoke |
+| `references/` directory | Supported | On-demand reference docs for complex domains |
+| `assets/` directory | Supported | Static resources (schemas, templates) |
+| Name validation | Implemented | Lowercase, hyphens, matches directory name |
 
 #### Architecture
 
 ```
 src/skills/
-├── media-director/SKILL.md      — Image/video/audio generation orchestration
-├── remix-engineer/SKILL.md      — Smart Remix Lab pipeline management
-├── platform-manager/SKILL.md    — Scheduling, social, knowledge distribution
-├── content-creator/SKILL.md     — Multi-format content production
-├── knowledge-curator/SKILL.md   — RAG knowledge base and presentations
-└── system-operator/SKILL.md     — Sentinel monitoring, webhooks, node health
+├── media-director/
+│   └── SKILL.md              — Image/video/audio generation orchestration
+├── remix-engineer/
+│   └── SKILL.md              — Smart Remix Lab pipeline management
+├── platform-manager/
+│   └── SKILL.md              — Scheduling, social, knowledge distribution
+├── content-creator/
+│   └── SKILL.md              — Multi-format content production
+├── knowledge-curator/
+│   └── SKILL.md              — RAG knowledge base and presentations
+└── system-operator/
+    └── SKILL.md              — Sentinel monitoring, webhooks, node health
+```
+
+Each `SKILL.md` has this structure:
+
+```yaml
+---
+name: media-director
+description: Orchestrates image generation... Use when asked to create visual content.
+allowed-tools: query-gallery-assets submit-media-job get-job-status manage-characters
+---
+
+# Skill: Media Director
+
+## Identity           — Who is this AI persona
+## Core Capabilities  — What it can do
+## Tool Routing Rules — Which custom tools vs. built-in tools to use
+## Domain Rules       — Numbered behavioral constraints
+## Error Recovery     — Failure handling + autonomous retry behavior
 ```
 
 #### How Skills Work
 
-1. **Loading**: `CopilotWrapper` accepts `skillDirectories: string[]` in its constructor options. These paths are passed to the Copilot SDK's `createSession()` call.
-2. **Injection**: The SDK reads each `SKILL.md` file and injects its content into the session's system context alongside built-in instructions.
-3. **Behavior**: The LLM reads the injected skill rules and follows them when the user's request falls within that skill's domain. Skills define tool routing rules (which custom tools to use vs. built-in tools), domain-specific constraints, and error recovery procedures.
-4. **Discovery**: The `/api/admin/skills` endpoint serves skill metadata (name, description, tools, examples) parsed from the SKILL.md files. The UI's `/skills` page renders this as a skill catalog.
+1. **Discovery**: `src/mcp/server.ts` auto-discovers skill directories by scanning `src/skills/*/SKILL.md` at startup.
+2. **Loading**: `CopilotWrapper` accepts `skillDirectories: string[]` in its constructor. These paths are passed to the SDK's `createSession()`.
+3. **Injection**: The SDK reads each `SKILL.md` and injects its content into the session's system context alongside built-in instructions.
+4. **Activation**: Skills activate automatically when the user's request matches the skill's domain (based on the `description` field keywords). Users can also explicitly invoke via `!` trigger in chat or `/skill-name` in their prompt.
+5. **Metadata API**: The `/api/admin/skills` endpoint serves parsed skill metadata (from YAML frontmatter + body) for the UI's `/skills` catalog page.
+6. **Library Integration**: `SavedPrompt.suggestedSkill` pairs a Library prompt with a skill, providing automatic domain expertise when the prompt is used.
 
-#### Skills vs. Custom Agents vs. Tools
+#### Autonomous Error Recovery
+
+All skills follow a consistent retry pattern:
+
+1. **First failure**: Retry the same operation once after a 5-second wait
+2. **Second failure**: Try an alternative approach (different tool, different parameters, different node)
+3. **Third failure**: Stop and report to the user with what was tried and suggested remediation
+
+This is enforced in each skill's Error Recovery section and is a key differentiator from raw tool usage.
+
+#### Skills vs. Custom Agents vs. Tools vs. Prompts
 
 | Concept | What it is | How it works | When to use |
 |---------|-----------|-------------|-------------|
-| **Skill** | Passive domain expertise | SKILL.md injected into session context | Always loaded; guides LLM behavior within a domain |
+| **Skill** | Passive domain expertise | SKILL.md injected into session context; always active | The default way to use OpenZigs — just describe what you want |
+| **Prompt + Skill** | Reusable template paired with expertise | `suggestedSkill` on `SavedPrompt` | For repeated workflows with domain expertise |
 | **Custom Agent** | Named sub-persona | `@agent-name` mention spawns a focused session | Explicit delegation to a specialized identity |
-| **Tool** | Callable function | `defineTool()` registered in ToolRegistry | Discrete operations the LLM invokes programmatically |
+| **Tool** | Callable function | `defineTool()` registered in ToolRegistry | Fine-grained control over specific operations |
+| **Prompt + Tools** | Template with explicit tool scoping | `preferredTools` on `SavedPrompt` | For power users who want tool-level control |
 
 #### Agent Architecture Custom Tools
 

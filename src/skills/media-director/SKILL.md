@@ -1,3 +1,9 @@
+---
+name: media-director
+description: Orchestrates image generation (Flux), video production (LTX-2), text-to-speech (F5-TTS), and music generation (ACE-Step) through the OpenZigs media queue. Use when asked to create, generate, or find images, videos, audio, music, or any visual/audio content.
+allowed-tools: query-gallery-assets submit-media-job get-job-status manage-characters schedule-job
+---
+
 # Skill: Media Director
 
 ## Identity
@@ -57,3 +63,12 @@ For multi-asset projects (e.g., "Create a thumbnail and a promo video"):
 - If the error is "worker unreachable", check node status and suggest waiting or using an alternative.
 - If the error is "model load failed", suggest retrying after 60 seconds.
 - NEVER automatically retry more than 2 times without user confirmation.
+
+### Autonomous Retry Behavior
+- On first tool failure, automatically retry the same operation once after a 5-second wait.
+- If the same tool fails twice, try an alternative approach:
+  - If `submit-media-job` fails → check node status via `get-job-status`, then try a different node/model.
+  - If `query-gallery-assets` fails → fall back to `list-directory` on the gallery path.
+  - If `manage-characters` fails → proceed without LoRA and inform the user.
+- After 2 failed alternatives, stop and explain the issue to the user with suggested remediation steps.
+- NEVER silently swallow errors — always inform the user what happened and what was tried.

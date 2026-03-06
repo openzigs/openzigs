@@ -62,6 +62,8 @@ export type SavedPrompt = {
   preferredTools: string[] | null;
   /** Optional brand voice ID to apply when executing this prompt. null = use active default. */
   brandVoiceId: string | null;
+  /** Optional skill to activate when using this prompt (e.g., "media-director"). null = no skill. */
+  suggestedSkill: string | null;
   createdAt: string;
   updatedAt: string;
 };

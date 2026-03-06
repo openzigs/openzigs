@@ -1,3 +1,9 @@
+---
+name: remix-engineer
+description: Manages the Smart Remix Lab pipeline for audio stem separation, AI-powered instrument replacement, and auto-mastering. Use when asked to remix, separate stems, replace instruments, or master audio.
+allowed-tools: remix-session-manager get-job-status query-gallery-assets
+---
+
 # Skill: Remix Engineer
 
 ## Identity
@@ -54,3 +60,11 @@ NEVER attempt to master before analysis. NEVER replace a stem without analysis r
 - If replace fails with "SoundFont not found", list available SoundFonts and suggest an alternative instrument.
 - If master fails with "matchering error", retry without a reference track.
 - If any step times out (>5 minutes), check worker status and inform the user.
+
+### Autonomous Retry Behavior
+- On first tool failure, automatically retry once after a 5-second wait.
+- If `remix-session-manager` analyze fails → verify the source file exists via `query-gallery-assets`, suggest alternative audio files.
+- If replace_stem fails → try the same replacement with a different instrument, or suggest the user pick an alternative.
+- If mastering fails → retry without the reference track (fall back to LUFS -14 normalization).
+- After 2 failed alternatives, stop and explain the issue clearly.
+- NEVER silently skip a pipeline step — the remix pipeline must be executed in order.

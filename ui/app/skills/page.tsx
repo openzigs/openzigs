@@ -7,6 +7,8 @@ import {
   Film, Music, Radio, PenTool, BookOpen, Shield,
   ChevronDown, ChevronRight, ExternalLink, Sparkles,
 } from "lucide-react";
+import { AskAiPanel, AskAiButton } from "@/components/ask-ai/AskAiPanel";
+import { PAGE_CONTEXTS } from "@/components/ask-ai/page-contexts";
 
 type SkillMetadata = {
   name: string;
@@ -146,6 +148,7 @@ export default function SkillsPage() {
   const [skills, setSkills] = useState<SkillMetadata[]>([]);
   const [loading, setLoading] = useState(true);
   const [expandedSkill, setExpandedSkill] = useState<string | null>(null);
+  const [askAiOpen, setAskAiOpen] = useState(false);
   const router = useRouter();
 
   useEffect(() => {
@@ -164,12 +167,15 @@ export default function SkillsPage() {
 
   return (
     <div className="mx-auto max-w-4xl px-6 py-10">
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold text-foreground">Skills</h1>
-        <p className="mt-2 text-muted-foreground">
-          Skills are specialized AI personas loaded into your agent sessions. Each skill brings
-          domain expertise, tool knowledge, and behavioral rules that guide the AI.
-        </p>
+      <div className="mb-8 flex items-end justify-between">
+        <div>
+          <h1 className="text-3xl font-bold text-foreground">Skills</h1>
+          <p className="mt-2 text-muted-foreground">
+            Skills are specialized AI personas loaded into your agent sessions. Each skill brings
+            domain expertise, tool knowledge, and behavioral rules that guide the AI.
+          </p>
+        </div>
+        <AskAiButton onClick={() => setAskAiOpen(true)} />
       </div>
 
       {loading ? (
@@ -209,6 +215,8 @@ export default function SkillsPage() {
           constraints. Type <code>!</code> in the chat to browse skills, or just describe what you need.
         </p>
       </div>
+
+      <AskAiPanel pageContext={PAGE_CONTEXTS["skills"]} open={askAiOpen} onClose={() => setAskAiOpen(false)} />
     </div>
   );
 }

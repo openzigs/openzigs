@@ -11,7 +11,16 @@ export interface SkillMetadata {
   loaded: boolean;
   examples: string[];
   skillMdPath: string;
+  allowedTools: string[];
   content?: string;
+}
+
+interface Frontmatter {
+  name?: string;
+  description?: string;
+  "allowed-tools"?: string;
+  license?: string;
+  compatibility?: string;
 }
 
 const SKILL_ICONS: Record<string, string> = {
@@ -21,32 +30,6 @@ const SKILL_ICONS: Record<string, string> = {
   "content-creator": "\u{270D}\uFE0F",
   "knowledge-curator": "\u{1F4DA}",
   "system-operator": "\u{1F6E1}\uFE0F",
-};
-
-const SKILL_TOOLS: Record<string, string[]> = {
-  "media-director": [
-    "query-gallery-assets", "submit-media-job", "get-job-status",
-    "manage-characters", "schedule-job",
-  ],
-  "remix-engineer": [
-    "remix-session-manager", "get-job-status", "query-gallery-assets",
-  ],
-  "platform-manager": [
-    "schedule-job", "query-gallery-assets", "submit-media-job",
-    "get-job-status", "search-knowledge", "ingest-youtube",
-  ],
-  "content-creator": [
-    "manage-brand-voice", "synthesize-speech", "submit-media-job",
-    "query-gallery-assets", "blog-to-video", "create-short", "produce-video",
-  ],
-  "knowledge-curator": [
-    "manage-knowledge-base", "manage-presentations", "search-knowledge",
-    "ingest-youtube", "markitdown-convert",
-  ],
-  "system-operator": [
-    "sentinel-control", "get-job-status", "manage-webhooks",
-    "list-jobs", "list-secrets",
-  ],
 };
 
 const SKILL_EXAMPLES: Record<string, string[]> = {
@@ -82,8 +65,34 @@ const SKILL_EXAMPLES: Record<string, string[]> = {
   ],
 };
 
-function extractDescription(content: string): string {
-  const lines = content.split("\n");
+function parseFrontmatter(content: string): { frontmatter: Frontmatter; body: string } {
+  const trimmed = content.trimStart();
+  if (!trimmed.startsWith("---")) {
+    return { frontmatter: {}, body: content };
+  }
+  const endIdx = trimmed.indexOf("---", 3);
+  if (endIdx === -1) {
+    return { frontmatter: {}, body: content };
+  }
+  const yamlBlock = trimmed.slice(3, endIdx).trim();
+  const body = trimmed.slice(endIdx + 3).trim();
+  const fm: Frontmatter = {};
+  for (const line of yamlBlock.split("\n")) {
+    const colonIdx = line.indexOf(":");
+    if (colonIdx === -1) continue;
+    const key = line.slice(0, colonIdx).trim();
+    const val = line.slice(colonIdx + 1).trim();
+    if (key === "name") fm.name = val;
+    else if (key === "description") fm.description = val;
+    else if (key === "allowed-tools") fm["allowed-tools"] = val;
+    else if (key === "license") fm.license = val;
+    else if (key === "compatibility") fm.compatibility = val;
+  }
+  return { frontmatter: fm, body };
+}
+
+function extractDescriptionFromBody(body: string): string {
+  const lines = body.split("\n");
   for (const line of lines) {
     const trimmed = line.trim();
     if (trimmed.startsWith("You are") || trimmed.startsWith("You're")) {
@@ -123,19 +132,28 @@ export async function loadSkillMetadata(
   for (const dir of skillDirectories) {
     const skillMdPath = path.join(dir, "SKILL.md");
     try {
-      const content = await fs.readFile(skillMdPath, "utf-8");
+      const raw = await fs.readFile(skillMdPath, "utf-8");
       const dirName = path.basename(dir);
+      const { frontmatter, body } = parseFrontmatter(raw);
+
+      const allowedTools = frontmatter["allowed-tools"]
+        ? frontmatter["allowed-tools"].split(/\s+/).filter(Boolean)
+        : [];
+
+      const description = frontmatter.description || extractDescriptionFromBody(body);
+
       skills.push({
-        name: dirName,
-        displayName: toDisplayName(dirName),
-        description: extractDescription(content),
+        name: frontmatter.name || dirName,
+        displayName: toDisplayName(frontmatter.name || dirName),
+        description,
         icon: SKILL_ICONS[dirName] ?? "\u{1F916}",
-        tools: SKILL_TOOLS[dirName] ?? [],
-        rulesCount: countRules(content),
+        tools: allowedTools,
+        allowedTools,
+        rulesCount: countRules(body),
         loaded: true,
         examples: SKILL_EXAMPLES[dirName] ?? [],
         skillMdPath: path.relative(process.cwd(), skillMdPath),
-        ...(includeContent ? { content } : {}),
+        ...(includeContent ? { content: raw } : {}),
       });
     } catch {
       // SKILL.md not found or unreadable — skip
