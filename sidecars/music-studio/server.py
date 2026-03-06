@@ -410,6 +410,7 @@ async def process_job(req: GenerateRequest):
         worker_state["is_busy"] = False
         worker_state["current_job_id"] = None
         cleanup_old_jobs()
+        _post_job_cleanup()
 
 
 # ── Endpoints ────────────────────────────────────────────────

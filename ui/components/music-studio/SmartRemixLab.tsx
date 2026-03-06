@@ -730,6 +730,8 @@ export function SmartRemixLab({ audioAssets }: SmartRemixLabProps) {
 
   return (
     <div className="space-y-6">
+      <h2 className="text-xl font-semibold text-white">AI Remix Lab</h2>
+
       {/* Track Selection + Analyze */}
       <SectionCard title="Track Analysis">
         <div className="space-y-4">
@@ -739,7 +741,7 @@ export function SmartRemixLab({ audioAssets }: SmartRemixLabProps) {
                 htmlFor="remix-asset-select"
                 className="mb-1 block text-xs font-medium text-zinc-400"
               >
-                Source Audio
+                Choose a track from your gallery to analyze
               </label>
               <select
                 id="remix-asset-select"
@@ -1028,8 +1030,7 @@ export function SmartRemixLab({ audioAssets }: SmartRemixLabProps) {
       )}
 
       {/* Vibe Panel + Mix & Master */}
-      {stems.length > 0 && (
-        <SectionCard title="Auto-Mastering Vibe">
+      <SectionCard title="Auto-Mastering Vibe">
           <div className="space-y-4">
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
               {VIBE_OPTIONS.map((v) => (
@@ -1103,7 +1104,6 @@ export function SmartRemixLab({ audioAssets }: SmartRemixLabProps) {
             </div>
           </div>
         </SectionCard>
-      )}
     </div>
   );
 }

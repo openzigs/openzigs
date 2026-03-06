@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useEffect, useCallback } from "react";
+import { useRef, useEffect, useCallback, useState } from "react";
 import type { EffectsState } from "@/components/music-studio/EffectsRack";
 
 const EQ_FREQUENCIES = [32, 64, 125, 250, 500, 1000, 2000, 4000, 8000, 16000];
@@ -60,6 +60,7 @@ export function useAudioEffectsChain(
 ) {
   const nodesRef = useRef<AudioNodes | null>(null);
   const connectedSourceRef = useRef<AudioNode | null>(null);
+  const [isReady, setIsReady] = useState(false);
 
   // Build node graph once when audioContext becomes available
   useEffect(() => {
@@ -122,6 +123,7 @@ export function useAudioEffectsChain(
       reverbConvolver,
       masterGain,
     };
+    setIsReady(true);
 
     return () => {
       // Tear down on unmount
@@ -140,6 +142,7 @@ export function useAudioEffectsChain(
       }
       nodesRef.current = null;
       connectedSourceRef.current = null;
+      setIsReady(false);
     };
   }, [audioContext]);
 
@@ -196,5 +199,5 @@ export function useAudioEffectsChain(
     []
   );
 
-  return { connectSource, isReady: !!nodesRef.current };
+  return { connectSource, isReady };
 }

@@ -126,7 +126,7 @@ def _normalize_lufs(
     # Brick-wall limiter to prevent clipping
     peak = float(np.max(np.abs(data)))
     if peak > 0.99:
-        # Apply soft-knee limiting rather than hard clip
+        # Apply hard clip ceiling at 0.99 FS to prevent clipping
         ceiling = 0.99
         data = np.where(
             np.abs(data) > ceiling,

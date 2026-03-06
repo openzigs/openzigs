@@ -1,14 +1,16 @@
 # Music Studio Sidecar
 
-Voice2Voice pipeline sidecar for the OpenZigs media queue system.
+Voice2Voice pipeline and Smart Remix Lab sidecar for the OpenZigs media queue system.
 
 ## Architecture
 
 3-stage pipeline running on Apple Silicon (CPU or MPS):
 
 1. **Stem Separation** (Demucs v4) — Separates vocals from instrumentals
-2. **Voice Conversion** (RVC v2) — Converts vocal timbre using a trained voice model
+2. **Voice Conversion** (Seed-VC) — Zero-shot vocal timbre conversion using a reference audio clip
 3. **Final Mixdown** (pydub) — Recombines converted vocals with the instrumental
+
+> **Note:** The legacy `apply_rvc.py` and `rvc_infer.py` files contain placeholder stubs and are not used by the production pipeline. The active implementation uses `apply_seedvc.py` (Seed-VC zero-shot conversion).
 
 ## Setup
 
@@ -22,18 +24,17 @@ pip install -r requirements.txt
 ### System Dependencies
 
 ```bash
-brew install ffmpeg   # Required by pydub for audio format conversion
+brew install ffmpeg       # Required by pydub for audio format conversion
+brew install fluidsynth   # Required for MIDI/soundfont support
 ```
 
-### RVC Voice Models
+### Voice Reference Files
 
-Place RVC v2 model files in `~/.openzigs/rvc-models/<model_name>/`:
+Place short reference audio clips (3–10 seconds) in `~/.openzigs/voice-references/`:
 
 ```
-~/.openzigs/rvc-models/
-  artist_name/
-    artist_name.pth      # Model weights
-    artist_name.index     # Feature index (optional but recommended)
+~/.openzigs/voice-references/
+  artist_name.wav       # 3-10s reference clip for Seed-VC zero-shot conversion
 ```
 
 ## Running

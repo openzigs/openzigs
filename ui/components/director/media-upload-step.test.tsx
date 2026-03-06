@@ -9,6 +9,9 @@ vi.mock("@/lib/api", () => ({
 vi.mock("@/components/toast", () => ({
   showToast: vi.fn(),
 }));
+vi.mock("@/components/model-picker-select", () => ({
+  InlineModelPicker: () => null,
+}));
 
 const defaultProps = {
   mode: "presentation" as const,
