@@ -23,6 +23,7 @@ import type { TaskEngine } from "../tasks/task-engine.js";
 import type { PipelineStage } from "../tasks/types.js";
 import { PipelinePlanner } from "../tasks/pipeline-planner.js";
 import type { WebhookManager } from "../webhooks/webhook-manager.js";
+import { getUserSelectedModel } from "../config/user-model.js";
 import type { SentinelService } from "../sentinel/index.js";
 import type { KnowledgeIngestionService } from "../knowledge/index.js";
 import type { BrandVoiceService } from "../personality/brand-voice-service.js";
@@ -1376,6 +1377,7 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
       const promptNames = Array.isArray(body.promptNames)
         ? body.promptNames.filter((entry): entry is string => typeof entry === "string")
         : [];
+      const bodyModel = typeof body.model === "string" ? body.model.trim() : "";
 
       if (!message) {
         return res.status(400).json({ error: "message is required" });
@@ -1400,7 +1402,8 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
 
       try {
         let response = "";
-        for await (const chunk of copilot.chat(instructions, { model: "gpt-5-mini", tools: [] })) {
+        const nlModel = bodyModel || (await getUserSelectedModel() ?? "gpt-5-mini");
+        for await (const chunk of copilot.chat(instructions, { model: nlModel, tools: [] })) {
           response += chunk;
         }
 
@@ -3025,6 +3028,154 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return res.json({ ok: false, error: message });
+    }
+  });
+
+  // ── Music Studio Sidecar Proxy ──────────────────────────────
+
+  /** Resolve sidecar base URL from user config. */
+  async function musicStudioBaseUrl(): Promise<string> {
+    const userConfig = await readUserConfig(defaultConfigPath());
+    const ms = (userConfig.musicStudio ?? {}) as Record<string, unknown>;
+    return ((ms.networkNodeUrl as string) || "http://localhost:5010").replace(/\/$/, "");
+  }
+
+  router.get("/music-studio/models", async (_req, res) => {
+    try {
+      const baseUrl = await musicStudioBaseUrl();
+      const response = await fetch(`${baseUrl}/models`, {
+        signal: AbortSignal.timeout(5000),
+      });
+      if (!response.ok) {
+        return res.status(502).json({ error: `Sidecar returned HTTP ${response.status}` });
+      }
+      const data = await response.json() as Record<string, unknown>;
+      return res.json(data);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return res.status(502).json({ models: [], voice_references: [], error: message });
+    }
+  });
+
+  // ── Voice Reference Proxy Routes ───────────────────────────
+
+  router.get("/music-studio/voice-references", async (_req, res) => {
+    try {
+      const baseUrl = await musicStudioBaseUrl();
+      const response = await fetch(`${baseUrl}/voice-references`, {
+        signal: AbortSignal.timeout(5000),
+      });
+      if (!response.ok) {
+        return res.status(502).json({ error: `Sidecar HTTP ${response.status}` });
+      }
+      const data = await response.json() as Record<string, unknown>;
+      return res.json(data);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return res.status(502).json({ references: [], error: message });
+    }
+  });
+
+  router.post("/music-studio/voice-references/upload", async (req, res) => {
+    try {
+      const baseUrl = await musicStudioBaseUrl();
+      // Forward the multipart body directly to the sidecar
+      const contentType = req.headers["content-type"] ?? "";
+      const chunks: Buffer[] = [];
+      for await (const chunk of req) {
+        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      }
+      const body = Buffer.concat(chunks);
+
+      const response = await fetch(`${baseUrl}/voice-references/upload`, {
+        method: "POST",
+        headers: { "content-type": contentType },
+        body,
+        signal: AbortSignal.timeout(30_000),
+      });
+      if (!response.ok) {
+        const text = await response.text();
+        return res.status(response.status).json({ error: text });
+      }
+      const data = await response.json() as Record<string, unknown>;
+      return res.json(data);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return res.status(502).json({ error: message });
+    }
+  });
+
+  router.get("/music-studio/voice-references/:refId", async (req, res) => {
+    try {
+      const baseUrl = await musicStudioBaseUrl();
+      const response = await fetch(`${baseUrl}/voice-references/${encodeURIComponent(req.params.refId)}`, {
+        signal: AbortSignal.timeout(5000),
+      });
+      if (!response.ok) {
+        return res.status(response.status).json({ error: `Sidecar HTTP ${response.status}` });
+      }
+      const data = await response.json() as Record<string, unknown>;
+      return res.json(data);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return res.status(502).json({ error: message });
+    }
+  });
+
+  router.get("/music-studio/voice-references/:refId/audio", async (req, res) => {
+    try {
+      const baseUrl = await musicStudioBaseUrl();
+      const response = await fetch(`${baseUrl}/voice-references/${encodeURIComponent(req.params.refId)}/audio`, {
+        signal: AbortSignal.timeout(30_000),
+      });
+      if (!response.ok) {
+        return res.status(response.status).json({ error: `Sidecar HTTP ${response.status}` });
+      }
+      res.setHeader("Content-Type", response.headers.get("content-type") ?? "audio/wav");
+      const arrayBuf = await response.arrayBuffer();
+      return res.send(Buffer.from(arrayBuf));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return res.status(502).json({ error: message });
+    }
+  });
+
+  router.patch("/music-studio/voice-references/:refId", async (req, res) => {
+    try {
+      const baseUrl = await musicStudioBaseUrl();
+      const { name } = req.body as { name?: string };
+      const url = new URL(`${baseUrl}/voice-references/${encodeURIComponent(req.params.refId)}`);
+      if (name) url.searchParams.set("name", name);
+      const response = await fetch(url.toString(), {
+        method: "PATCH",
+        signal: AbortSignal.timeout(5000),
+      });
+      if (!response.ok) {
+        return res.status(response.status).json({ error: `Sidecar HTTP ${response.status}` });
+      }
+      const data = await response.json() as Record<string, unknown>;
+      return res.json(data);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return res.status(502).json({ error: message });
+    }
+  });
+
+  router.delete("/music-studio/voice-references/:refId", async (req, res) => {
+    try {
+      const baseUrl = await musicStudioBaseUrl();
+      const response = await fetch(`${baseUrl}/voice-references/${encodeURIComponent(req.params.refId)}`, {
+        method: "DELETE",
+        signal: AbortSignal.timeout(5000),
+      });
+      if (!response.ok) {
+        return res.status(response.status).json({ error: `Sidecar HTTP ${response.status}` });
+      }
+      const data = await response.json() as Record<string, unknown>;
+      return res.json(data);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return res.status(502).json({ error: message });
     }
   });
 

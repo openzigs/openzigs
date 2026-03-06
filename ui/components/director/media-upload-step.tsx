@@ -1,9 +1,10 @@
 "use client";
 
 import { useState, useCallback, useRef, type ChangeEvent } from "react";
-import { Upload, X, FileVideo, FileText, FolderOpen, Plus, Loader2, BookOpen, Sparkles } from "lucide-react";
+import { Upload, X, FileVideo, FileText, FolderOpen, Plus, Loader2, BookOpen, Sparkles, Clock } from "lucide-react";
 import { fetchJson } from "@/lib/api";
 import { showToast } from "@/components/toast";
+import { InlineModelPicker } from "@/components/model-picker-select";
 import type { MediaFile, ProductionMode } from "./types";
 
 interface MediaUploadStepProps {
@@ -12,10 +13,12 @@ interface MediaUploadStepProps {
   scriptFile: MediaFile | null;
   topic: string;
   sourceFiles: MediaFile[];
+  imageClipDurationSeconds: number;
   onClipsChange: (clips: MediaFile[]) => void;
   onScriptChange: (file: MediaFile | null) => void;
   onTopicChange: (topic: string) => void;
   onSourceFilesChange: (files: MediaFile[]) => void;
+  onImageClipDurationChange: (seconds: number) => void;
 }
 
 export const MediaUploadStep = ({
@@ -24,10 +27,12 @@ export const MediaUploadStep = ({
   scriptFile,
   topic,
   sourceFiles,
+  imageClipDurationSeconds,
   onClipsChange,
   onScriptChange,
   onTopicChange,
   onSourceFilesChange,
+  onImageClipDurationChange,
 }: MediaUploadStepProps) => {
   const [pathInput, setPathInput] = useState("");
   const [sourcePathInput, setSourcePathInput] = useState("");
@@ -35,6 +40,7 @@ export const MediaUploadStep = ({
   const [uploadingScript, setUploadingScript] = useState(false);
   const [uploadingSource, setUploadingSource] = useState(false);
   const [enhancingInstructions, setEnhancingInstructions] = useState(false);
+  const [llmModel, setLlmModel] = useState("");
   const clipInputRef = useRef<HTMLInputElement>(null);
   const scriptInputRef = useRef<HTMLInputElement>(null);
   const sourceInputRef = useRef<HTMLInputElement>(null);
@@ -50,7 +56,7 @@ export const MediaUploadStep = ({
         "/api/admin/director/enhance-instructions",
         {
           method: "POST",
-          body: JSON.stringify({ raw_instructions: topic.trim(), mode }),
+          body: JSON.stringify({ raw_instructions: topic.trim(), mode, ...(llmModel ? { model: llmModel } : {}) }),
         }
       );
       onTopicChange(result.enhanced_instructions);
@@ -320,14 +326,17 @@ export const MediaUploadStep = ({
               <label className="text-xs font-medium text-muted-foreground">
                 Style &amp; Instructions <span className="text-muted-foreground/50">(optional)</span>
               </label>
-              <button
-                onClick={handleEnhanceInstructions}
-                disabled={enhancingInstructions || !topic.trim()}
-                className="flex items-center gap-1.5 rounded-lg border border-primary/30 bg-primary/5 px-3 py-1 text-xs font-semibold text-primary hover:bg-primary/10 disabled:opacity-50 transition"
-              >
-                {enhancingInstructions ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
-                AI Enhance
-              </button>
+              <div className="flex items-center gap-2">
+                <InlineModelPicker value={llmModel} onChange={setLlmModel} />
+                <button
+                  onClick={handleEnhanceInstructions}
+                  disabled={enhancingInstructions || !topic.trim()}
+                  className="flex items-center gap-1.5 rounded-lg border border-primary/30 bg-primary/5 px-3 py-1 text-xs font-semibold text-primary hover:bg-primary/10 disabled:opacity-50 transition"
+                >
+                  {enhancingInstructions ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
+                  AI Enhance
+                </button>
+              </div>
             </div>
             <textarea
               value={topic}
@@ -350,6 +359,34 @@ export const MediaUploadStep = ({
               <li>&bull; Text-to-Speech synthesizes per-scene voiceover</li>
               <li>&bull; Ken Burns animations and crossfade transitions are applied automatically</li>
             </ul>
+          </div>
+
+          {/* Default Asset Pacing (Image Assets Only) */}
+          <div className="rounded-xl border border-border bg-card px-4 py-3 space-y-2">
+            <div className="flex items-center gap-2">
+              <Clock className="h-4 w-4 text-primary" />
+              <h3 className="text-sm font-semibold text-foreground">Default Asset Pacing (Image Assets Only)</h3>
+            </div>
+            <div className="flex items-center gap-3">
+              <label htmlFor="imageClipDuration" className="text-xs text-muted-foreground whitespace-nowrap">
+                Image Clip Duration (seconds)
+              </label>
+              <input
+                id="imageClipDuration"
+                type="number"
+                min={1}
+                max={10}
+                value={imageClipDurationSeconds}
+                onChange={(e) => {
+                  const val = Math.max(1, Math.min(10, Number(e.target.value) || 3));
+                  onImageClipDurationChange(val);
+                }}
+                className="w-20 rounded-lg border border-border bg-background px-3 py-1.5 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
+              />
+            </div>
+            <p className="text-[11px] text-muted-foreground/60">
+              Set the default time static image assets will appear on screen when building the storyboard.
+            </p>
           </div>
         </div>
       ) : (

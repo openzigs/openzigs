@@ -8,8 +8,13 @@
  */
 
 import React from "react";
-import { AbsoluteFill, Audio, Sequence } from "remotion";
+import { AbsoluteFill, Audio, Sequence, useCurrentFrame, interpolate } from "remotion";
 import { KenBurns } from "./KenBurns";
+
+interface EffectDef {
+  type: string;
+  params?: Record<string, unknown>;
+}
 
 export interface ImageSceneSegmentProps {
   /** Path to the generated image */
@@ -29,27 +34,82 @@ export interface ImageSceneSegmentProps {
     translateYFrom?: number;
     translateYTo?: number;
   };
+  /** Visual effects applied to this scene */
+  effects?: EffectDef[];
 }
 
-/**
- * ImageSceneSegment — renders a single scene in a Mode C presentation.
- *
- * Each scene consists of:
- * 1. A static image animated with the Ken Burns effect (zoom + pan)
- * 2. An optional voiceover audio track synced to the scene
- *
- * The Ken Burns defaults produce a gentle zoom-in with subtle drift,
- * suitable for documentary-style presentations.
- */
 export const ImageSceneSegment: React.FC<ImageSceneSegmentProps> = ({
   src,
   durationInFrames,
   voiceover,
   voiceoverVolume = 1,
   kenBurns = {},
+  effects = [],
 }) => {
+  const frame = useCurrentFrame();
+
+  // Process effects into CSS filter/opacity values
+  let opacity = 1;
+  const filterParts: string[] = [];
+
+  for (const effect of effects) {
+    switch (effect.type) {
+      case "fadeIn": {
+        const dur = (effect.params?.durationFrames as number) ?? 15;
+        opacity *= interpolate(frame, [0, dur], [0, 1], { extrapolateRight: "clamp" });
+        break;
+      }
+      case "fadeOut": {
+        const dur = (effect.params?.durationFrames as number) ?? 15;
+        opacity *= interpolate(frame, [durationInFrames - dur, durationInFrames], [1, 0], {
+          extrapolateLeft: "clamp",
+          extrapolateRight: "clamp",
+        });
+        break;
+      }
+      case "blur": {
+        const amount = (effect.params?.amount as number) ?? 5;
+        filterParts.push(`blur(${amount}px)`);
+        break;
+      }
+      case "grayscale":
+        filterParts.push("grayscale(1)");
+        break;
+      case "brightness": {
+        const val = (effect.params?.value as number) ?? 1;
+        filterParts.push(`brightness(${val})`);
+        break;
+      }
+      case "contrast": {
+        const val = (effect.params?.value as number) ?? 1;
+        filterParts.push(`contrast(${val})`);
+        break;
+      }
+      case "saturate": {
+        const val = (effect.params?.value as number) ?? 1;
+        filterParts.push(`saturate(${val})`);
+        break;
+      }
+      case "sepia": {
+        const val = (effect.params?.value as number) ?? 0;
+        filterParts.push(`sepia(${val})`);
+        break;
+      }
+      case "hueRotate": {
+        const deg = (effect.params?.degrees as number) ?? 0;
+        filterParts.push(`hue-rotate(${deg}deg)`);
+        break;
+      }
+    }
+  }
+
   return (
-    <AbsoluteFill>
+    <AbsoluteFill
+      style={{
+        opacity,
+        filter: filterParts.length > 0 ? filterParts.join(" ") : undefined,
+      }}
+    >
       <KenBurns
         src={src}
         durationInFrames={durationInFrames}

@@ -2,10 +2,10 @@
  * Director Mode — Shared types for the wizard UI.
  */
 
-export type ProductionMode = "highlight" | "script" | "presentation" | "shorts";
+export type ProductionMode = "highlight" | "script" | "presentation" | "shorts" | "hero-reel";
 
 export type ImageProvider = "auto" | "local" | "cloud";
-export type ImageModel = "sdxl-turbo" | "flux-schnell" | "flux";
+export type ImageModel = "sdxl-turbo" | "flux-schnell" | "flux" | "flux-dev";
 
 export interface VisualAsset {
   name: string;
@@ -56,6 +56,8 @@ export interface WizardState {
   renderSettings: RenderSettings;
   /** Step 6 — brand voice to apply (null = use active default) */
   brandVoiceId: string | null;
+  /** Step 2 — image clip duration in seconds for presentation storyboards (1-10, default 3) */
+  imageClipDurationSeconds: number;
   /** Step 6 (populated after production) */
   manifest: DirectorManifestSummary | null;
   renderJobId: string | null;
@@ -160,6 +162,7 @@ export function createInitialState(): WizardState {
     quizEnabled: false,
     renderSettings: { quality: "standard", codec: "h264", crf: 23 },
     brandVoiceId: null,
+    imageClipDurationSeconds: 3,
     manifest: null,
     renderJobId: null,
   };

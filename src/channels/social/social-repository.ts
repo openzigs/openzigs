@@ -132,6 +132,13 @@ export class SocialRepository {
         cached_at        TEXT NOT NULL
       );
     `);
+
+    // Runtime migration: add model column to comment_automation_rules
+    try {
+      this.db.exec(`ALTER TABLE comment_automation_rules ADD COLUMN model TEXT DEFAULT NULL`);
+    } catch {
+      // Column already exists
+    }
   }
 
   // ── Contacts CRUD ───────────────────────────────────────────────────
@@ -309,13 +316,13 @@ export class SocialRepository {
       .prepare(
         `INSERT INTO comment_automation_rules
          (id, name, platform, enabled, post_ids, keywords, regex, comment_reply_template,
-          dm_template, dm_delay_seconds, max_triggers_per_user, max_triggers_total, trigger_count, auto_tag, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)`
+          dm_template, dm_delay_seconds, max_triggers_per_user, max_triggers_total, trigger_count, auto_tag, model, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?)`
       )
       .run(
         id, rule.name, rule.platform, rule.enabled, rule.post_ids, rule.keywords,
         rule.regex, rule.comment_reply_template, rule.dm_template, rule.dm_delay_seconds,
-        rule.max_triggers_per_user, rule.max_triggers_total, rule.auto_tag, now, now
+        rule.max_triggers_per_user, rule.max_triggers_total, rule.auto_tag, rule.model ?? null, now, now
       );
     return this.db.prepare("SELECT * FROM comment_automation_rules WHERE id = ?").get(id) as CommentRule;
   }
@@ -342,7 +349,7 @@ export class SocialRepository {
     const sets: string[] = ["updated_at = ?"];
     const params: unknown[] = [now];
 
-    const allowed = ["name", "platform", "enabled", "post_ids", "keywords", "regex", "comment_reply_template", "dm_template", "dm_delay_seconds", "max_triggers_per_user", "max_triggers_total", "auto_tag"];
+    const allowed = ["name", "platform", "enabled", "post_ids", "keywords", "regex", "comment_reply_template", "dm_template", "dm_delay_seconds", "max_triggers_per_user", "max_triggers_total", "auto_tag", "model"];
     for (const [key, value] of Object.entries(updates)) {
       if (value !== undefined && allowed.includes(key)) {
         sets.push(`${key} = ?`);

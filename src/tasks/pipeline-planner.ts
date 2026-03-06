@@ -1,6 +1,7 @@
 import type { CopilotWrapper } from "../copilot/copilot-wrapper.js";
 import type { PipelineNode, PipelineDefinition } from "./types.js";
 import { validatePipeline } from "./pipeline-schema.js";
+import { getUserSelectedModel } from "../config/user-model.js";
 
 export type PlannerResult = {
   /** The generated pipeline definition. */
@@ -125,8 +126,9 @@ export class PipelinePlanner {
     const prompt = `${PLANNER_SYSTEM_PROMPT}${toolContext}\n\nUser goal:\n${goal}`;
 
     let response = "";
+    const plannerModel = options?.model ?? await getUserSelectedModel();
     for await (const chunk of this.copilot.chat(prompt, {
-      model: options?.model ?? "gpt-5-mini",
+      ...(plannerModel ? { model: plannerModel } : {}),
       tools: [],
     })) {
       response += chunk;

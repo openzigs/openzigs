@@ -296,4 +296,87 @@ describe("MediaQueueRepository", () => {
       expect(asset!.generation_params).toEqual({ width: 768, height: 512, fps: 24 });
     });
   });
+
+  // ── Remix Lab Jobs ────────────────────────────────────────
+
+  describe("remix jobs", () => {
+    it("creates remix_analyze jobs targeting local", () => {
+      const job = repo.createJob({
+        type: "remix_analyze",
+        payload: { prompt: "", source_asset_id: "asset-123", device: "cpu" },
+      });
+
+      expect(job.targetNode).toBe("local");
+      expect(job.requiredModel).toBe("htdemucs_6s");
+      expect(job.status).toBe("pending");
+    });
+
+    it("creates remix_replace jobs targeting local", () => {
+      const job = repo.createJob({
+        type: "remix_replace",
+        payload: {
+          prompt: "",
+          source_stem_url: "/path/to/stem.wav",
+          target_instrument_id: "grand_piano",
+        },
+      });
+
+      expect(job.targetNode).toBe("local");
+      expect(job.requiredModel).toBe("basic-pitch");
+    });
+
+    it("creates remix_master jobs targeting local", () => {
+      const job = repo.createJob({
+        type: "remix_master",
+        payload: {
+          prompt: "",
+          stem_paths: { vocals: "/v.wav", drums: "/d.wav" },
+          volumes: { vocals: 1.0, drums: 0.8 },
+          muted: { vocals: false, drums: false },
+          vibe: "warm_lofi",
+        },
+      });
+
+      expect(job.targetNode).toBe("local");
+      expect(job.requiredModel).toBe("matchering");
+    });
+
+    it("getPendingJobsForModel finds remix_analyze jobs", () => {
+      repo.createJob({
+        type: "remix_analyze",
+        payload: { prompt: "", source_asset_id: "a1" },
+      });
+      repo.createJob({
+        type: "voice2voice",
+        payload: { prompt: "v2v", source_asset_id: "a2" },
+      });
+
+      const analyzeJobs = repo.getPendingJobsForModel("local", "htdemucs_6s");
+      expect(analyzeJobs).toHaveLength(1);
+      expect(analyzeJobs[0].type).toBe("remix_analyze");
+
+      const v2vJobs = repo.getPendingJobsForModel("local", "seed-vc");
+      expect(v2vJobs).toHaveLength(1);
+      expect(v2vJobs[0].type).toBe("voice2voice");
+    });
+
+    it("stores remix payload fields through JSON round-trip", () => {
+      const job = repo.createJob({
+        type: "remix_master",
+        payload: {
+          prompt: "",
+          stem_paths: { vocals: "/v.wav", bass: "/b.wav" },
+          volumes: { vocals: 1.2, bass: 0.9 },
+          muted: { vocals: false, bass: true },
+          vibe: "cinematic_wide",
+        },
+      });
+
+      const fetched = repo.getJob(job.id)!;
+      expect(fetched.payload.stem_paths).toEqual({ vocals: "/v.wav", bass: "/b.wav" });
+      expect(fetched.payload.volumes).toEqual({ vocals: 1.2, bass: 0.9 });
+      expect(fetched.payload.muted).toEqual({ vocals: false, bass: true });
+      expect(fetched.payload.vibe).toBe("cinematic_wide");
+    });
+  });
 });

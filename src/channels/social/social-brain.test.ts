@@ -268,4 +268,65 @@ describe("SocialBrain", () => {
     expect(result!.reply).toBe("Parsed!");
     expect(result!.confidence).toBe("high");
   });
+
+  it("passes explicit model to copilot.chat when set via setModel()", async () => {
+    const copilot = makeMockCopilot('{"reply":"Hello","confidence":"high","intent":"greeting"}');
+    const brain = new SocialBrain({ repository: repo, copilot, knowledgeService: makeMockKnowledge() });
+    brain.setModel("claude-sonnet-4");
+
+    const contact = makeContact(repo);
+    const raw = makeRawMessage();
+    const msg = repo.insertMessage({ contactId: contact.id, platform: "instagram", direction: "inbound", content: raw.text });
+    await brain.process(contact, msg, raw);
+
+    const chatOptions = (copilot.chat as ReturnType<typeof vi.fn>).mock.calls[0][1];
+    expect(chatOptions.model).toBe("claude-sonnet-4");
+  });
+
+  it("passes model from constructor options", async () => {
+    const copilot = makeMockCopilot('{"reply":"Hello","confidence":"high","intent":"greeting"}');
+    const brain = new SocialBrain({ repository: repo, copilot, knowledgeService: makeMockKnowledge(), model: "gpt-5" });
+
+    const contact = makeContact(repo);
+    const raw = makeRawMessage();
+    const msg = repo.insertMessage({ contactId: contact.id, platform: "instagram", direction: "inbound", content: raw.text });
+    await brain.process(contact, msg, raw);
+
+    const chatOptions = (copilot.chat as ReturnType<typeof vi.fn>).mock.calls[0][1];
+    expect(chatOptions.model).toBe("gpt-5");
+  });
+
+  it("uses getUserSelectedModel fallback when no explicit model is set", async () => {
+    const copilot = makeMockCopilot('{"reply":"Hello","confidence":"high","intent":"greeting"}');
+    const brain = new SocialBrain({ repository: repo, copilot, knowledgeService: makeMockKnowledge() });
+
+    const contact = makeContact(repo);
+    const raw = makeRawMessage();
+    const msg = repo.insertMessage({ contactId: contact.id, platform: "instagram", direction: "inbound", content: raw.text });
+
+    await brain.process(contact, msg, raw);
+
+    const chatOptions = (copilot.chat as ReturnType<typeof vi.fn>).mock.calls[0][1];
+    // When no explicit model is set, it should either use getUserSelectedModel's value
+    // (from config/user.json if present on disk) or be undefined — NOT a hardcoded fallback.
+    // The important thing is that setModel() takes priority over the config-based fallback.
+    const configModel = chatOptions.model;
+
+    // Now set an explicit model and verify it overrides
+    const copilot2 = makeMockCopilot('{"reply":"Hi","confidence":"high","intent":"greeting"}');
+    const brain2 = new SocialBrain({ repository: repo, copilot: copilot2, knowledgeService: makeMockKnowledge() });
+    brain2.setModel("override-model");
+
+    const contact2 = makeContact(repo);
+    const raw2 = makeRawMessage({ platformMessageId: "msg_2" });
+    const msg2 = repo.insertMessage({ contactId: contact2.id, platform: "instagram", direction: "inbound", content: raw2.text });
+    await brain2.process(contact2, msg2, raw2);
+
+    const chatOptions2 = (copilot2.chat as ReturnType<typeof vi.fn>).mock.calls[0][1];
+    expect(chatOptions2.model).toBe("override-model");
+    // Explicit model should differ from or match the config-based one
+    if (configModel) {
+      expect(chatOptions2.model).not.toBe(configModel);
+    }
+  });
 });

@@ -10,12 +10,13 @@ import os from "node:os";
 import { logger } from "../logging/logger.js";
 import type { QueueMaster } from "../queue/queue-master.js";
 import type { MediaQueueRepository } from "../queue/media-queue-repository.js";
-import type { CreateMediaJobInput, MediaJobType, MediaJobStatus, TargetNode } from "../queue/types.js";
+import type { CreateMediaJobInput, MediaJobType, MediaJobStatus, TargetNode, MediaJobPayload } from "../queue/types.js";
 import { MAX_VIDEO_FRAMES, MAX_VIDEO_DURATION_SEC, DEFAULT_VIDEO_FPS } from "../queue/types.js";
+import type { CharacterRepository } from "../characters/character-repository.js";
 
 // ── Helpers ─────────────────────────────────────────────────
 
-const VALID_JOB_TYPES: MediaJobType[] = ["txt2img", "img2img", "txt2video", "img2video", "tts", "txt2music"];
+const VALID_JOB_TYPES: MediaJobType[] = ["txt2img", "img2img", "txt2video", "img2video", "tts", "txt2music", "voice2voice", "remix_analyze", "remix_replace", "remix_master"];
 
 const GALLERY_DIR = path.join(os.homedir(), ".openzigs", "gallery");
 
@@ -47,6 +48,7 @@ function assetTypeFromMime(mime: string): "image" | "video" | "audio" {
 export interface QueueRouterOptions {
   queueMaster: QueueMaster;
   repo: MediaQueueRepository;
+  characterRepo?: CharacterRepository;
 }
 
 /**
@@ -61,11 +63,11 @@ export const createQueueCallbackRouter = ({ queueMaster, repo }: QueueRouterOpti
 
   callbackRouter.post("/complete", async (req, res) => {
     try {
-      const { job_id, status, media_base64, media_type, metadata, error } = req.body;
+      const { job_id, status, media_base64, media_type, file_path, metadata, error, ...extraFields } = req.body;
 
       logger.info(
         `[QueueAPI] /complete called — job_id=${job_id ?? "(missing)"} status=${status ?? "(missing)"} ` +
-        `has_media=${!!media_base64} media_type=${media_type ?? "(none)"} ` +
+        `has_media=${!!media_base64} has_file=${!!file_path} media_type=${media_type ?? "(none)"} ` +
         `body_keys=${Object.keys(req.body ?? {}).join(",") || "(empty)"}`,
       );
 
@@ -85,7 +87,43 @@ export const createQueueCallbackRouter = ({ queueMaster, repo }: QueueRouterOpti
       let resultUrl = "";
       let galleryAssetId: string | undefined;
 
-      if (media_base64 && media_type) {
+      // File-based callback: sidecar already wrote the file to gallery dir
+      if (file_path && media_type) {
+        const resolved = path.resolve(String(file_path));
+        // Security: ensure file is within gallery dir
+        if (!resolved.startsWith(path.resolve(GALLERY_DIR))) {
+          logger.warn(`[QueueAPI] /complete rejected — file_path outside gallery: ${file_path}`);
+          res.status(400).json({ error: "file_path must be within gallery directory" });
+          return;
+        }
+
+        const filename = path.basename(resolved);
+        const stat = await fs.stat(resolved);
+        resultUrl = `/api/queue/assets/file/${filename}`;
+
+        const job = repo.getJob(job_id);
+        const assetType = assetTypeFromMime(media_type);
+
+        galleryAssetId = repo.createAsset({
+          type: assetType,
+          filename,
+          filePath: resolved,
+          mimeType: media_type,
+          fileSizeBytes: stat.size,
+          width: (metadata?.width as number) ?? undefined,
+          height: (metadata?.height as number) ?? undefined,
+          durationSeconds: (metadata?.duration as number) ?? undefined,
+          prompt: job?.payload?.prompt,
+          model: (metadata?.model as string) ?? job?.requiredModel,
+          generationParams: metadata as Record<string, unknown> | undefined,
+          source: "generated",
+          jobId: job_id,
+          projectId: job?.projectId ?? undefined,
+        });
+
+        logger.info(`[QueueAPI] Asset saved (file-based): ${galleryAssetId} (${filename}, ${stat.size} bytes)`);
+      } else if (media_base64 && media_type) {
+        // Legacy base64 callback (kept for backward compat with other sidecars)
         await ensureGalleryDir();
         const ext = mimeToExtension(media_type);
         const filename = `${job_id}${ext}`;
@@ -94,7 +132,6 @@ export const createQueueCallbackRouter = ({ queueMaster, repo }: QueueRouterOpti
         await fs.writeFile(filePath, buffer);
         resultUrl = `/api/queue/assets/file/${filename}`;
 
-        // Get the job to pull metadata for the asset record
         const job = repo.getJob(job_id);
         const assetType = assetTypeFromMime(media_type);
 
@@ -123,6 +160,7 @@ export const createQueueCallbackRouter = ({ queueMaster, repo }: QueueRouterOpti
         media_type: undefined,
         metadata: {
           ...((metadata as Record<string, unknown>) ?? {}),
+          ...(extraFields as Record<string, unknown>),
           result_url: resultUrl,
           gallery_asset_id: galleryAssetId,
         },
@@ -141,11 +179,74 @@ export const createQueueCallbackRouter = ({ queueMaster, repo }: QueueRouterOpti
     }
   });
 
+  // ── POST /progress — Granular pipeline progress updates (no auth — called by sidecars) ──
+  callbackRouter.post("/progress", (req, res) => {
+    try {
+      const { job_id, stage, progress, message } = req.body as {
+        job_id?: string;
+        stage?: string;
+        progress?: number;
+        message?: string;
+      };
+
+      if (!job_id) {
+        res.status(400).json({ error: "job_id is required" });
+        return;
+      }
+
+      queueMaster.reportProgress(job_id, { stage, progress, message });
+      res.json({ ok: true });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.warn(`[QueueAPI] Progress webhook failed: ${msg}`);
+      res.status(500).json({ error: msg });
+    }
+  });
+
   return callbackRouter;
 };
 
-export const createQueueRouter = ({ queueMaster, repo }: QueueRouterOptions): Router => {
+export const createQueueRouter = ({ queueMaster, repo, characterRepo }: QueueRouterOptions): Router => {
   const router = Router();
+
+  /**
+   * Auto-inject LoRA adapters when a prompt contains a trained character's trigger word.
+   * Only injects if the caller hasn't already set lora_paths (explicit wins over auto).
+   */
+  function injectCharacterLora(payload: MediaJobPayload): void {
+    if (!characterRepo) return;
+    if (payload.lora_paths && payload.lora_paths.length > 0) return;
+
+    const prompt = String(payload.prompt ?? "");
+    if (!prompt) return;
+
+    try {
+      const readyCharacters = characterRepo.getByStatus("ready");
+      const loraPaths: string[] = [];
+      const loraScales: number[] = [];
+
+      for (const char of readyCharacters) {
+        if (!char.trainedLoraPath || !char.triggerWord) continue;
+        // Check if the trigger word appears in the prompt (case-insensitive, word boundary)
+        const regex = new RegExp(`\\b${char.triggerWord.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i");
+        if (regex.test(prompt)) {
+          // Note: the LoRA path is on the image-gen sidecar's filesystem (which may be
+          // a remote network node), so we cannot existsSync it here. The sidecar will
+          // error if the path is invalid. Only skip if the path looks obviously empty.
+          loraPaths.push(char.trainedLoraPath);
+          loraScales.push(char.loraScale);
+          logger.info(`[QueueAPI] Auto-injecting LoRA for character "${char.name}" (trigger: ${char.triggerWord}, scale: ${char.loraScale})`);
+        }
+      }
+
+      if (loraPaths.length > 0) {
+        payload.lora_paths = loraPaths;
+        payload.lora_scales = loraScales;
+      }
+    } catch (err) {
+      logger.warn(`[QueueAPI] Character LoRA auto-injection failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
 
   // ── POST /jobs — Submit a new media generation job ──────
   router.post("/jobs", (req, res) => {
@@ -157,7 +258,13 @@ export const createQueueRouter = ({ queueMaster, repo }: QueueRouterOptions): Ro
         return;
       }
 
-      if (!payload || typeof payload !== "object" || !payload.prompt) {
+      // Remix jobs don't require a prompt — only a payload object
+      const isRemixJob = type.startsWith("remix_");
+      if (!payload || typeof payload !== "object") {
+        res.status(400).json({ error: "payload is required" });
+        return;
+      }
+      if (!isRemixJob && !payload.prompt) {
         res.status(400).json({ error: "payload.prompt is required" });
         return;
       }
@@ -176,6 +283,11 @@ export const createQueueRouter = ({ queueMaster, repo }: QueueRouterOptions): Ro
           });
           return;
         }
+      }
+
+      // Automatically inject character LoRA when trigger word detected in prompt
+      if (type === "txt2img" || type === "img2img") {
+        injectCharacterLora(payload);
       }
 
       const job = repo.createJob({
@@ -325,6 +437,25 @@ export const createQueueRouter = ({ queueMaster, repo }: QueueRouterOptions): Ro
     }
   });
 
+  // ── PATCH /assets/:id/rename — Rename an asset ──────────
+  router.patch("/assets/:id/rename", (req, res) => {
+    try {
+      const { filename } = req.body;
+      if (!filename || typeof filename !== "string") {
+        res.status(400).json({ error: "filename is required" });
+        return;
+      }
+      const safeName = path.basename(filename);
+      const asset = repo.getAsset(req.params.id);
+      if (!asset) { res.status(404).json({ error: "Asset not found" }); return; }
+      repo.renameAsset(req.params.id, safeName);
+      res.json({ ok: true, filename: safeName });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      res.status(500).json({ error: msg });
+    }
+  });
+
   // ── POST /assets/upload — Upload a file directly to gallery ──
   router.post("/assets/upload", async (req, res) => {
     try {
@@ -384,6 +515,102 @@ export const createQueueRouter = ({ queueMaster, repo }: QueueRouterOptions): Ro
       res.sendFile(resolved);
     } catch {
       res.status(404).json({ error: "File not found" });
+    }
+  });
+
+  // ── GET /assets/:id/file — Serve any gallery asset by ID (supports external paths) ──
+  router.get("/assets/:id/file", async (req, res) => {
+    try {
+      const asset = repo.getAsset(req.params.id);
+      if (!asset) { res.status(404).json({ error: "Asset not found" }); return; }
+
+      const filePath = asset.file_path as string;
+      // Restrict to paths within the user's home dir to prevent SSRF/path traversal
+      const resolved = path.resolve(filePath);
+      const homeDir = path.resolve(os.homedir());
+      if (!resolved.startsWith(homeDir)) {
+        res.status(403).json({ error: "Access denied" });
+        return;
+      }
+
+      await fs.access(resolved);
+      res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
+      const safeName = path.basename(resolved);
+      if (req.query.download === "1") {
+        res.setHeader("Content-Disposition", `attachment; filename="${safeName}"`);
+      }
+      res.sendFile(resolved);
+    } catch {
+      res.status(404).json({ error: "File not found" });
+    }
+  });
+
+  // ── POST /assets/scenes — Save a scene (TimelineEntry JSON) as a gallery asset ──
+  router.post("/assets/scenes", async (req, res) => {
+    try {
+      const { scene, title, draftId } = req.body as { scene?: Record<string, unknown>; title?: string; draftId?: string };
+      if (!scene || typeof scene !== "object") {
+        res.status(400).json({ error: "scene object is required" });
+        return;
+      }
+
+      const sceneDir = path.join(os.homedir(), ".openzigs", "gallery", "scenes");
+      await fs.mkdir(sceneDir, { recursive: true });
+
+      const filename = `scene-${Date.now()}.json`;
+      const filePath = path.join(sceneDir, filename);
+      await fs.writeFile(filePath, JSON.stringify(scene, null, 2), "utf-8");
+
+      const generationParams: Record<string, unknown> = {};
+      if (scene.src && typeof scene.src === "string") {
+        generationParams.previewSrc = scene.src;
+      }
+      if (draftId && typeof draftId === "string") {
+        generationParams.draftId = draftId;
+      }
+
+      const id = repo.createAsset({
+        type: "scene",
+        filename,
+        filePath,
+        mimeType: "application/json",
+        fileSizeBytes: Buffer.byteLength(JSON.stringify(scene)),
+        source: "director",
+        prompt: title || (scene.title as string) || (scene.scriptText as string)?.slice(0, 100) || "Saved scene",
+        tags: ["scene"],
+        ...(Object.keys(generationParams).length > 0 ? { generationParams } : {}),
+      });
+
+      res.json({ id, filename, filePath });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      logger.error(`[Queue API] POST /assets/scenes failed: ${msg}`);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  // ── GET /assets/scenes/:id/data — Load a saved scene's JSON data ──
+  router.get("/assets/scenes/:id/data", async (req, res) => {
+    try {
+      const asset = repo.getAsset(req.params.id);
+      if (!asset || asset.type !== "scene") {
+        res.status(404).json({ error: "Scene not found" });
+        return;
+      }
+
+      const filePath = asset.file_path as string;
+      const resolved = path.resolve(filePath);
+      const homeDir = path.resolve(os.homedir());
+      if (!resolved.startsWith(homeDir)) {
+        res.status(403).json({ error: "Access denied" });
+        return;
+      }
+
+      const content = await fs.readFile(resolved, "utf-8");
+      const scene = JSON.parse(content);
+      res.json({ scene, asset });
+    } catch {
+      res.status(404).json({ error: "Scene file not found" });
     }
   });
 
@@ -492,13 +719,13 @@ export const createQueueRouter = ({ queueMaster, repo }: QueueRouterOptions): Ro
 
   // ── POST /nodes/switch — Switch active model domain ─────
   // Unloads the competing node and optionally preloads a model.
-  // Body: { targetNode: "mac-mini"|"m2-pro", model?: "flux-schnell" }
+  // Body: { targetNode: "mac-mini"|"m2-pro"|"local", model?: "flux-schnell" }
   router.post("/nodes/switch", async (req, res) => {
     try {
       const { targetNode, model } = req.body as { targetNode?: string; model?: string };
 
-      if (!targetNode || (targetNode !== "mac-mini" && targetNode !== "m2-pro")) {
-        res.status(400).json({ error: "targetNode must be 'mac-mini' or 'm2-pro'" });
+      if (!targetNode || (targetNode !== "mac-mini" && targetNode !== "m2-pro" && targetNode !== "local")) {
+        res.status(400).json({ error: "targetNode must be 'mac-mini', 'm2-pro', or 'local'" });
         return;
       }
 

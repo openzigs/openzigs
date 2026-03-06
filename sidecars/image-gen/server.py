@@ -16,11 +16,16 @@ Usage:
     python server.py [--port 5005] [--host 127.0.0.1]
 
 Endpoints:
-    POST /generate   — Generate an image from a text prompt
-    POST /model      — Load or switch the active model
-    POST /unload     — Unload the current model to free RAM
-    GET  /health     — Readiness probe (returns model status)
-    GET  /models     — List available models
+    POST /generate           — Generate an image from a text prompt (with optional LoRA)
+    POST /generate-controlnet — Generate with ControlNet conditioning (Canny/Depth)
+    POST /train              — Start DreamBooth LoRA training
+    GET  /train-status       — Check training job status
+    GET  /train-checkpoints  — List checkpoint zips available for a character
+    POST /train-resume       — Resume training from a specific checkpoint zip
+    POST /model              — Load or switch the active model
+    POST /unload             — Unload the current model to free RAM
+    GET  /health             — Readiness probe (returns model status)
+    GET  /models             — List available models
 """
 
 from __future__ import annotations
@@ -45,6 +50,18 @@ from fastapi.responses import Response
 from PIL import Image
 from pydantic import BaseModel, Field
 
+# ── Persistent Training Directory ──────────────────────────────
+# Training output MUST be persistent — NOT in /tmp or tempfile.gettempdir().
+# macOS aggressively cleans /var/folders/.../T/ and will delete trained LoRA
+# adapters after a reboot.  Use ~/.openzigs/training/ instead.
+_TRAINING_BASE_DIR = os.path.join(os.path.expanduser("~"), ".openzigs", "training")
+
+def _get_training_dir(character_id: str) -> str:
+    """Return persistent training directory for a character."""
+    d = os.path.join(_TRAINING_BASE_DIR, character_id)
+    os.makedirs(d, exist_ok=True)
+    return d
+
 # ── Token Authentication ───────────────────────────────────────
 # When FLUXQ_SECRET_TOKEN is set, all mutating endpoints require
 # Authorization: Bearer <token>.  Health/models remain public.
@@ -64,6 +81,9 @@ def verify_token(authorization: Optional[str] = Header(None)) -> None:
     if not hmac.compare_digest(parts[1], _secret_token):
         raise HTTPException(status_code=403, detail="Invalid token")
 
+
+# ── Version ────────────────────────────────────────────────────
+SIDECAR_VERSION = os.environ.get("SIDECAR_VERSION", "3.4.0")  # Bump on every deploy to verify Mac Mini is current
 
 # ── Logging ────────────────────────────────────────────────────
 logging.basicConfig(
@@ -102,6 +122,15 @@ MODEL_REGISTRY: dict[str, dict] = {
         "recommended_height": 1024,
         "description": "FLUX.1 Kontext — text-guided semantic image editing via MFLUX",
     },
+    "z-image-turbo": {
+        "mflux_alias": "z-image-turbo",
+        "model_class": "z-image",
+        "default_steps": 4,
+        "default_guidance": 0.0,
+        "recommended_width": 1280,
+        "recommended_height": 720,
+        "description": "Z-Image Turbo — fast distilled model (trainable, LoRA-compatible)",
+    },
 }
 
 # ── Global State ───────────────────────────────────────────────
@@ -116,6 +145,7 @@ _default_model: str = "flux-schnell"
 _preload_at_startup: bool = False
 _quantization: Optional[int] = 4    # MLX quantization bits: 4, 8, or None
 _generating: bool = False           # True while an async background generation is running
+_active_lora_paths: list[str] = []  # Currently loaded LoRA adapter paths
 
 # ── Job Result Store ───────────────────────────────────────────
 # In-memory ring buffer of completed/failed job results.  When the callback
@@ -136,24 +166,47 @@ def _store_result(job_id: str, payload: dict) -> None:
             del _job_results[oldest]
 
 
-def _create_mflux_model(model_key: str) -> Any:
-    """Instantiate an MFLUX model for the given registry key."""
+def _create_mflux_model(model_key: str, lora_paths: Optional[list[str]] = None, lora_scales: Optional[list[float]] = None) -> Any:
+    """Instantiate an MFLUX model for the given registry key, optionally with LoRA adapters."""
     spec = MODEL_REGISTRY[model_key]
     model_class = spec.get("model_class", "txt2img")
 
     start = time.monotonic()
+
+    # Build LoRA kwargs if provided
+    lora_kwargs: dict[str, Any] = {}
+    if lora_paths:
+        # Validate all paths exist
+        for lp in lora_paths:
+            if not os.path.isfile(lp):
+                raise ValueError(f"LoRA file not found: {lp}")
+        lora_kwargs["lora_paths"] = lora_paths
+        if lora_scales:
+            lora_kwargs["lora_scales"] = lora_scales
 
     if model_class == "kontext":
         from mflux.models.flux.variants.kontext.flux_kontext import Flux1Kontext
 
         log.info(f"Loading MFLUX Kontext model (quantize={_quantization}) ...")
         model = Flux1Kontext(quantize=_quantization)
+    elif model_class == "z-image":
+        from mflux.models.z_image.variants.z_image import ZImage
+        from mflux.models.common.config.model_config import ModelConfig
+
+        lora_info = f", lora={len(lora_paths)} adapters" if lora_paths else ""
+        log.info(f"Loading ZImage model '{model_key}' (quantize={_quantization}{lora_info}) ...")
+        model = ZImage(
+            quantize=_quantization,
+            model_config=ModelConfig.from_name(spec["mflux_alias"]),
+            **lora_kwargs,
+        )
     else:
         from mflux.models.flux.variants.txt2img.flux import Flux1
 
         alias = spec["mflux_alias"]
-        log.info(f"Loading MFLUX model '{model_key}' (alias={alias}, quantize={_quantization}) ...")
-        model = Flux1.from_name(alias, quantize=_quantization)
+        lora_info = f", lora={len(lora_paths)} adapters" if lora_paths else ""
+        log.info(f"Loading MFLUX model '{model_key}' (alias={alias}, quantize={_quantization}{lora_info}) ...")
+        model = Flux1.from_name(alias, quantize=_quantization, **lora_kwargs)
 
     elapsed = time.monotonic() - start
     log.info(f"MFLUX model '{model_key}' ready in {elapsed:.1f}s "
@@ -161,11 +214,22 @@ def _create_mflux_model(model_key: str) -> Any:
     return model
 
 
+def _extract_pil_image(result: Any) -> "Image.Image":
+    """Normalize generate_image return value to a PIL Image.
+
+    Flux1 returns GeneratedImage (with .image attribute),
+    ZImage returns PIL.Image.Image directly.
+    """
+    if isinstance(result, Image.Image):
+        return result
+    return result.image
+
+
 # ── Model lifecycle helpers ────────────────────────────────────
 
 def _unload_model() -> None:
     """Unload the current model and free memory."""
-    global _model, _model_name, _model_loaded
+    global _model, _model_name, _model_loaded, _active_lora_paths
 
     if _model is not None:
         model = _model_name or "unknown"
@@ -177,7 +241,7 @@ def _unload_model() -> None:
         # clear_cache() flushes it so unified memory is actually returned to the OS.
         try:
             import mlx.core as mx
-            mx.metal.clear_cache()
+            mx.clear_cache()
             log.info(f"MLX Metal cache cleared (active={mx.metal.get_active_memory()//1024//1024}MB, cache={mx.metal.get_cache_memory()//1024//1024}MB)")
         except Exception as e:
             log.warning(f"Could not clear MLX Metal cache: {e}")
@@ -185,17 +249,19 @@ def _unload_model() -> None:
 
     _model_loaded = False
     _model_name = None
+    _active_lora_paths = []
 
 
-def _load_model(model_key: str) -> float:
+def _load_model(model_key: str, lora_paths: Optional[list[str]] = None, lora_scales: Optional[list[float]] = None) -> float:
     """Load a model, unloading any existing one first.
 
     Returns the time taken to load in seconds (0.0 if already loaded).
     """
-    global _model, _model_name, _model_loaded, _loading, _last_used
+    global _model, _model_name, _model_loaded, _loading, _last_used, _active_lora_paths
 
-    if _model_loaded and _model_name == model_key:
-        return 0.0  # Already loaded
+    # If LoRA paths changed, need to reload even if same model
+    if _model_loaded and _model_name == model_key and (lora_paths or []) == (_active_lora_paths or []):
+        return 0.0  # Already loaded with same config
 
     _loading = True
     try:
@@ -203,10 +269,11 @@ def _load_model(model_key: str) -> float:
             _unload_model()
 
         start = time.monotonic()
-        _model = _create_mflux_model(model_key)
+        _model = _create_mflux_model(model_key, lora_paths=lora_paths, lora_scales=lora_scales)
         elapsed = time.monotonic() - start
         _model_name = model_key
         _model_loaded = True
+        _active_lora_paths = lora_paths or []
         _last_used = time.monotonic()
         return elapsed
     finally:
@@ -282,14 +349,16 @@ def _bg_generate(
     steps: Optional[int],
     guidance: float,
     seed: int,
+    lora_paths: Optional[list[str]] = None,
+    lora_scales: Optional[list[float]] = None,
 ) -> None:
     """Sync background task: run txt2img and POST callback to openzigs."""
     global _last_used, _generating
     _generating = True
     try:
-        if not _model_loaded or _model_name != requested_model:
+        if not _model_loaded or _model_name != requested_model or (lora_paths or []) != (_active_lora_paths or []):
             log.info(f"[async] Lazy-loading '{requested_model}' for job {job_id}")
-            _load_model(requested_model)
+            _load_model(requested_model, lora_paths=lora_paths, lora_scales=lora_scales)
         spec = MODEL_REGISTRY[requested_model]
         w = (width // 16) * 16
         h = (height // 16) * 16
@@ -304,7 +373,7 @@ def _bg_generate(
         _last_used = time.monotonic()
         log.info(f"[async] generate done in {elapsed:.1f}s job={job_id}")
         buf = io.BytesIO()
-        result.image.save(buf, format="PNG", optimize=True)
+        _extract_pil_image(result).save(buf, format="PNG", optimize=True)
         media_b64 = base64.b64encode(buf.getvalue()).decode("ascii")
         _post_callback(job_id, callback_url, {
             "job_id": job_id,
@@ -362,7 +431,7 @@ def _bg_img2img(
         _last_used = time.monotonic()
         log.info(f"[async] img2img done in {elapsed:.1f}s job={job_id}")
         buf = io.BytesIO()
-        result.image.save(buf, format="PNG", optimize=True)
+        _extract_pil_image(result).save(buf, format="PNG", optimize=True)
         media_b64 = base64.b64encode(buf.getvalue()).decode("ascii")
         _post_callback(job_id, callback_url, {
             "job_id": job_id,
@@ -421,7 +490,7 @@ def _bg_kontext(
         _last_used = time.monotonic()
         log.info(f"[async] kontext done in {elapsed:.1f}s job={job_id}")
         buf = io.BytesIO()
-        result.image.save(buf, format="PNG", optimize=True)
+        _extract_pil_image(result).save(buf, format="PNG", optimize=True)
         media_b64 = base64.b64encode(buf.getvalue()).decode("ascii")
         _post_callback(job_id, callback_url, {
             "job_id": job_id,
@@ -489,6 +558,15 @@ class GenerateRequest(BaseModel):
         default=None,
         description="Random seed for reproducibility",
     )
+    # LoRA character consistency fields
+    lora_paths: Optional[list[str]] = Field(
+        default=None,
+        description="Paths to LoRA adapter .safetensors files",
+    )
+    lora_scales: Optional[list[float]] = Field(
+        default=None,
+        description="Scale factor for each LoRA adapter (default: 1.0 each)",
+    )
 
 
 class HealthResponse(BaseModel):
@@ -503,6 +581,7 @@ class HealthResponse(BaseModel):
     recommended_width: int = 1024
     recommended_height: int = 576
     available_models: list[str] = []
+    version: str = SIDECAR_VERSION
 
 
 class Img2ImgRequest(BaseModel):
@@ -683,7 +762,7 @@ async def lifespan(app: FastAPI):
         log.info(f"Model '{_default_model}' preloaded in {elapsed:.1f}s")
 
     log.info(
-        f"Sidecar ready — {'preloaded' if _preload_at_startup else 'lazy'} mode "
+        f"Sidecar v{SIDECAR_VERSION} ready — {'preloaded' if _preload_at_startup else 'lazy'} mode "
         f"({'model loaded' if _model_loaded else 'no model loaded'}, device=mlx, "
         f"default_model={_default_model}, "
         f"idle_timeout={'disabled' if _idle_timeout <= 0 else f'{_idle_timeout:.0f}s'})"
@@ -737,6 +816,7 @@ async def health():
         recommended_width=spec.get("recommended_width", 1024),
         recommended_height=spec.get("recommended_height", 576),
         available_models=list(MODEL_REGISTRY.keys()),
+        version=SIDECAR_VERSION,
     )
 
 
@@ -809,6 +889,9 @@ async def generate(req: GenerateRequest):
     if _loading:
         raise HTTPException(status_code=409, detail="A model is currently being loaded")
 
+    # Stop training if active — can't run both (each needs ~28GB unified memory)
+    _stop_training_for_inference()
+
     # ── Lazy load / model switch ───────────────────────────────
     requested_model = req.model or (_model_name if _model_loaded else _default_model)
     if requested_model not in MODEL_REGISTRY:
@@ -817,9 +900,14 @@ async def generate(req: GenerateRequest):
             detail=f"Unknown model: {requested_model}. Available: {list(MODEL_REGISTRY.keys())}",
         )
 
-    if not _model_loaded or _model_name != requested_model:
+    # Check if LoRA config changed (requires reload)
+    needs_reload = not _model_loaded or _model_name != requested_model
+    if not needs_reload and req.lora_paths:
+        needs_reload = (req.lora_paths or []) != (_active_lora_paths or [])
+
+    if needs_reload:
         log.info(f"Lazy-loading model '{requested_model}' for generation request ...")
-        load_time = _load_model(requested_model)
+        load_time = _load_model(requested_model, lora_paths=req.lora_paths, lora_scales=req.lora_scales)
         log.info(f"Model '{requested_model}' ready in {load_time:.1f}s")
 
     assert _model is not None
@@ -849,8 +937,7 @@ async def generate(req: GenerateRequest):
             width=width,
             guidance=guidance,
         )
-        # GeneratedImage.image is a PIL.Image.Image
-        pil_image = result.image
+        pil_image = _extract_pil_image(result)
     except Exception as e:
         log.error(f"Generation failed: {e}")
         raise HTTPException(status_code=500, detail=f"Generation failed: {str(e)}")
@@ -894,6 +981,9 @@ async def img2img(req: Img2ImgRequest):
         raise HTTPException(status_code=503, detail="Server not ready")
     if _loading:
         raise HTTPException(status_code=409, detail="A model is currently being loaded")
+
+    # Stop training if active — can't run both (each needs ~28GB unified memory)
+    _stop_training_for_inference()
 
     # ── Resolve source image to a local path ───────────────────
     tmp_file = None
@@ -968,7 +1058,7 @@ async def img2img(req: Img2ImgRequest):
             image_path=source_path,
             image_strength=effective_strength,
         )
-        pil_image = result.image
+        pil_image = _extract_pil_image(result)
     except Exception as e:
         log.error(f"img2img failed: {e}")
         raise HTTPException(status_code=500, detail=f"img2img failed: {str(e)}")
@@ -1018,6 +1108,9 @@ async def kontext_edit(req: KontextRequest):
         raise HTTPException(status_code=503, detail="Server not ready")
     if _loading:
         raise HTTPException(status_code=409, detail="A model is currently being loaded")
+
+    # Stop training if active — can't run both (each needs ~28GB unified memory)
+    _stop_training_for_inference()
 
     # ── Resolve source image to a local path ───────────────────
     tmp_file = None
@@ -1077,7 +1170,7 @@ async def kontext_edit(req: KontextRequest):
             guidance=guidance,
             image_path=source_path,
         )
-        pil_image = result.image
+        pil_image = _extract_pil_image(result)
     except Exception as e:
         log.error(f"kontext failed: {e}")
         raise HTTPException(status_code=500, detail=f"kontext editing failed: {str(e)}")
@@ -1105,6 +1198,970 @@ async def kontext_edit(req: KontextRequest):
     )
 
 
+# ── ControlNet Endpoint ────────────────────────────────────────
+
+class ControlNetRequest(BaseModel):
+    """Request body for ControlNet-guided image generation."""
+
+    prompt: str = Field(..., min_length=1, max_length=2000)
+    controlnet_image_path: str = Field(..., description="Path to the control image (pose/edge map)")
+    controlnet_strength: float = Field(default=0.4, ge=0.0, le=1.0, description="ControlNet influence strength")
+    control_type: str = Field(default="canny", description="Control type: 'canny' or 'depth'")
+    save_canny: bool = Field(default=False, description="Whether to save the extracted canny edge map")
+    model: Optional[str] = Field(default=None)
+    width: int = Field(default=1024, ge=256, le=2048)
+    height: int = Field(default=1024, ge=256, le=2048)
+    steps: Optional[int] = Field(default=None, ge=1, le=50)
+    guidance_scale: Optional[float] = Field(default=None, ge=0.0, le=20.0)
+    seed: Optional[int] = Field(default=None)
+    lora_paths: Optional[list[str]] = Field(default=None)
+    lora_scales: Optional[list[float]] = Field(default=None)
+
+
+@app.post("/generate-controlnet", response_class=Response, dependencies=[Depends(verify_token)])
+async def generate_controlnet(req: ControlNetRequest):
+    """Generate an image using ControlNet conditioning (Canny edge or Depth).
+
+    The controlnet_image_path should point to a reference image. MFLUX will
+    extract Canny edges automatically and condition the generation on them.
+    """
+    global _last_used
+
+    if not _ready:
+        raise HTTPException(status_code=503, detail="Server not ready")
+    if _loading:
+        raise HTTPException(status_code=409, detail="A model is currently being loaded")
+
+    # Stop training if active — can't run both (each needs ~28GB unified memory)
+    _stop_training_for_inference()
+
+    if not os.path.isfile(req.controlnet_image_path):
+        raise HTTPException(status_code=400, detail=f"Control image not found: {req.controlnet_image_path}")
+
+    requested_model = req.model or (_model_name if _model_loaded else _default_model)
+    if requested_model not in MODEL_REGISTRY:
+        raise HTTPException(status_code=400, detail=f"Unknown model: {requested_model}")
+
+    # Reload if model or LoRA config changed
+    needs_reload = not _model_loaded or _model_name != requested_model
+    if not needs_reload and req.lora_paths:
+        needs_reload = (req.lora_paths or []) != (_active_lora_paths or [])
+    if needs_reload:
+        load_time = _load_model(requested_model, lora_paths=req.lora_paths, lora_scales=req.lora_scales)
+        log.info(f"Model '{requested_model}' ready in {load_time:.1f}s")
+
+    assert _model is not None
+
+    width = (req.width // 16) * 16
+    height = (req.height // 16) * 16
+    spec = MODEL_REGISTRY[requested_model]
+    steps = req.steps or spec["default_steps"]
+    guidance = req.guidance_scale if req.guidance_scale is not None else spec["default_guidance"]
+    seed = req.seed if req.seed is not None else random.randint(0, 2**32 - 1)
+
+    log.info(
+        f"ControlNet generate: prompt='{req.prompt[:80]}...' "
+        f"control={req.control_type} strength={req.controlnet_strength} "
+        f"model={_model_name} size={width}x{height}"
+    )
+    start = time.monotonic()
+
+    try:
+        result = _model.generate_image(
+            seed=seed,
+            prompt=req.prompt,
+            num_inference_steps=steps,
+            height=height,
+            width=width,
+            guidance=guidance,
+            controlnet_image_path=req.controlnet_image_path,
+            controlnet_strength=req.controlnet_strength,
+            controlnet_save_canny=req.save_canny,
+        )
+        pil_image = _extract_pil_image(result)
+    except Exception as e:
+        log.error(f"ControlNet generation failed: {e}")
+        raise HTTPException(status_code=500, detail=f"ControlNet generation failed: {str(e)}")
+
+    elapsed = time.monotonic() - start
+    _last_used = time.monotonic()
+    log.info(f"ControlNet generated in {elapsed:.1f}s ({width}x{height})")
+
+    buf = io.BytesIO()
+    pil_image.save(buf, format="PNG", optimize=True)
+    png_bytes = buf.getvalue()
+
+    return Response(
+        content=png_bytes,
+        media_type="image/png",
+        headers={
+            "X-Generation-Time": f"{elapsed:.2f}s",
+            "X-Image-Size": f"{width}x{height}",
+            "X-Model": _model_name or "unknown",
+            "X-Seed": str(seed),
+            "X-Control-Type": req.control_type,
+            "X-Control-Strength": str(req.controlnet_strength),
+        },
+    )
+
+
+# ── Training Endpoint ──────────────────────────────────────────
+
+
+class TrainPhotoItem(BaseModel):
+    """A training photo sent as base64 with its prompt."""
+
+    image_base64: str = Field(..., description="Base64-encoded image data")
+    filename: str = Field(..., description="Original filename (for extension detection)")
+    prompt: str = Field(..., description="Caption / prompt for this image")
+
+
+class TrainRequest(BaseModel):
+    """Request body for DreamBooth LoRA training via mflux-train.
+
+    Supports two modes:
+    - **Local mode**: provide `train_config_path` pointing to a JSON file on this machine.
+    - **Network mode**: provide `train_config` (inline JSON) + `photos` (base64 images).
+      The sidecar writes photos to a temp directory and builds the config automatically.
+    """
+
+    train_config_path: Optional[str] = Field(None, description="Path to a local training config JSON file")
+    train_config: Optional[dict] = Field(None, description="Inline training config (trigger_word, model, etc.)")
+    photos: Optional[list[TrainPhotoItem]] = Field(None, description="Base64-encoded training photos (network mode)")
+    character_id: Optional[str] = Field(None, description="Character ID for organizing output")
+
+
+class TrainResponse(BaseModel):
+    """Response from the training endpoint."""
+
+    status: str
+    message: str
+    output_dir: Optional[str] = None
+
+
+# Training state
+_training: bool = False
+_train_paused: bool = False
+_train_process: Any = None
+_train_error: Optional[str] = None
+_train_output_dir: Optional[str] = None
+
+
+def _stop_training_for_inference() -> bool:
+    """If a training job is running, kill it to free memory for inference.
+
+    mflux-train is a separate process with its own ~28GB model in unified
+    memory.  Running it simultaneously with inference would double memory usage
+    and crash on memory-constrained Macs.  Training saves checkpoints so it
+    can always be resumed later via /train-resume.
+
+    Returns True if training was stopped, False if no training was active.
+    """
+    import signal as _signal
+
+    global _training, _train_paused, _train_process, _train_error
+
+    if not _training or _train_process is None:
+        return False
+
+    pid = _train_process.pid
+    log.warning(
+        f"[train] Stopping training (pid={pid}) to free memory for inference. "
+        f"Training can be resumed from the latest checkpoint via /train-resume."
+    )
+
+    try:
+        # If paused (SIGSTOP), resume first so it can be terminated cleanly
+        if _train_paused:
+            try:
+                _train_process.send_signal(_signal.SIGCONT)
+            except Exception:
+                pass
+
+        _train_process.terminate()  # SIGTERM — gives mflux a chance to flush
+        try:
+            _train_process.wait(timeout=10)
+        except Exception:
+            _train_process.kill()  # SIGKILL if it didn't exit
+            _train_process.wait(timeout=5)
+    except Exception as e:
+        log.error(f"[train] Failed to stop training process: {e}")
+
+    _training = False
+    _train_paused = False
+    _train_process = None
+    _train_error = "Training stopped to free memory for image generation. Resume from checkpoint when ready."
+
+    gc.collect()
+    try:
+        import mlx.core as mx
+        mx.clear_cache()
+        log.info(f"[train] Memory reclaimed after stopping training (active={mx.metal.get_active_memory()//1024//1024}MB)")
+    except Exception:
+        pass
+
+    return True
+
+
+def _materialize_network_training(req: TrainRequest) -> str:
+    """Write base64 photos + prompt .txt files to disk and generate an mflux
+    training config file in the correct format.
+
+    mflux expects:
+      data/  — directory with image.jpg + image.txt (prompt) pairs
+      config.json — references data path and has training_loop/optimizer/checkpoint/lora_layers
+
+    Returns the path to the generated config JSON.
+    """
+    char_id = req.character_id or "unknown"
+    train_dir = _get_training_dir(char_id)
+    data_dir = os.path.join(train_dir, "data")
+    # CRITICAL: wipe data dir so leftover images from previous runs don't
+    # inflate the dataset count (mflux auto-discovers all images in the dir).
+    if os.path.isdir(data_dir):
+        import shutil
+        shutil.rmtree(data_dir)
+    os.makedirs(data_dir, exist_ok=True)
+
+    cfg = req.train_config or {}
+    trigger_word = cfg.get("trigger_word", "TOK")
+    lora_rank = int(cfg.get("lora_rank", 8))
+    steps = int(cfg.get("steps", 9))
+
+    # Max training image dimension — larger images cause OOM on 32GB Macs.
+    # Z-Image Turbo native res is 1280x720; we cap at 720px longest edge
+    # to keep VAE encoding within Metal buffer limits.
+    max_dim = int(cfg.get("max_image_dim", 720))
+
+    # Write each photo + matching .txt prompt file
+    # Always convert to JPEG via PIL — handles HEIC, WebP, PNG, and
+    # any other format that might arrive from iPhone or web uploads.
+    # Resizes to fit within max_dim to prevent Metal OOM during training.
+    for i, photo in enumerate(req.photos or []):
+        safe_stem = f"{i:04d}"
+        photo_path = os.path.join(data_dir, f"{safe_stem}.jpg")
+        txt_path = os.path.join(data_dir, f"{safe_stem}.txt")
+        img_bytes = base64.b64decode(photo.image_base64, validate=True)
+        try:
+            import io as _io
+            pil_img = Image.open(_io.BytesIO(img_bytes)).convert("RGB")
+            # Resize if larger than max_dim — critical for 32GB Metal allocation limit
+            w, h = pil_img.size
+            if max(w, h) > max_dim:
+                scale = max_dim / max(w, h)
+                new_w = int(w * scale) // 16 * 16  # Must be divisible by 16
+                new_h = int(h * scale) // 16 * 16
+                pil_img = pil_img.resize((new_w, new_h), Image.LANCZOS)
+                log.info(f"[train] Resized {safe_stem}.jpg from {w}x{h} → {new_w}x{new_h}")
+            pil_img.save(photo_path, format="JPEG", quality=95)
+            log.info(f"[train] Wrote {safe_stem}.jpg ({pil_img.width}x{pil_img.height}) + prompt")
+        except Exception as conv_err:
+            log.warning(f"[train] PIL conversion failed for photo {i}, writing raw bytes: {conv_err}")
+            with open(photo_path, "wb") as f:
+                f.write(img_bytes)
+        # Prompt text includes the trigger word — trigger word IS the prompt mechanism in mflux
+        prompt = photo.prompt if photo.prompt else f"A photo of {trigger_word}"
+        with open(txt_path, "w") as f:
+            f.write(prompt)
+
+    lora_output = os.path.join(train_dir, "lora")
+    # CRITICAL: Do NOT pre-create this directory.  mflux's _resolve_output_path
+    # appends a timestamp suffix when the directory already exists, which causes
+    # us to look for checkpoints in the wrong path.  If a previous training run
+    # left a directory here, wipe it so mflux creates a fresh one at the exact
+    # path we record in _train_output_dir.
+    if os.path.isdir(lora_output):
+        import shutil as _sh
+        _sh.rmtree(lora_output)
+
+    # Resolve training model — Flux1 is no longer supported, default to z-image-turbo
+    model = cfg.get("model", "z-image-turbo")
+    num_epochs = int(cfg.get("num_epochs", 1))
+
+    # Build the correct mflux training config format
+    # Matches the official z-image-turbo example config from the mflux repo:
+    #   https://github.com/filipstrand/mflux/blob/main/src/mflux/models/z_image/README.md
+    #   - Only Q/K/V attention layers on UPPER blocks (15-30) with rank 8
+    #   - Z-Image uses a single-stream DiT — layer names differ from Flux.1
+    #   - quantize=8 is REQUIRED for 32GB Macs (model is ~31GB unquantized)
+    #   - timestep_low/high constrain noise schedule for turbo model
+    #   - MUST satisfy: timestep_high <= steps (mflux validation)
+    #   - monitoring.generate_image_frequency produces sample images during training
+    ts_high = min(9, steps)
+    ts_low = min(4, ts_high)
+    config: dict[str, Any] = {
+        "model": model,
+        "seed": 42,
+        "steps": steps,
+        "guidance": 0.0,
+        "quantize": int(cfg.get("quantize", 8)),
+        "max_resolution": 1024,
+        "data": data_dir,
+        "training_loop": {
+            "num_epochs": num_epochs,
+            "batch_size": 1,
+            "timestep_low": ts_low,
+            "timestep_high": ts_high,
+        },
+        "optimizer": {
+            "name": "AdamW",
+            "learning_rate": cfg.get("learning_rate", 1e-4),
+        },
+        "checkpoint": {
+            "save_frequency": max(1, num_epochs // 5) if num_epochs > 5 else num_epochs,
+            "output_path": lora_output,
+        },
+        "monitoring": {
+            "plot_frequency": 1,
+            "generate_image_frequency": max(1, num_epochs // 5) if num_epochs > 5 else num_epochs,
+        },
+        "lora_layers": {
+            "targets": [
+                {"module_path": "layers.{block}.attention.to_q", "blocks": {"start": 15, "end": 30}, "rank": lora_rank},
+                {"module_path": "layers.{block}.attention.to_k", "blocks": {"start": 15, "end": 30}, "rank": lora_rank},
+                {"module_path": "layers.{block}.attention.to_v", "blocks": {"start": 15, "end": 30}, "rank": lora_rank},
+            ]
+        },
+    }
+
+    config_path = os.path.join(train_dir, "train-config.json")
+    with open(config_path, "w") as f:
+        json.dump(config, f, indent=2)
+
+    num_photos = len(req.photos or [])
+    total_steps = num_epochs * num_photos
+    # Verify data dir contains exactly the photos we wrote (no leftovers)
+    actual_images = [f for f in os.listdir(data_dir) if f.lower().endswith(('.jpg', '.jpeg', '.png', '.webp'))]
+    log.info(
+        f"[train] Materialized {num_photos} photos + config at {config_path} "
+        f"(num_epochs={num_epochs}, total_steps={total_steps}, "
+        f"quantize={config['quantize']}, lora_rank={lora_rank}, model={model}, "
+        f"actual_images_in_dir={len(actual_images)})"
+    )
+    return config_path
+
+
+@app.post("/train", response_model=TrainResponse, dependencies=[Depends(verify_token)])
+async def train_lora(req: TrainRequest, background_tasks: BackgroundTasks):
+    """Start LoRA DreamBooth training using mflux-train.
+
+    Fires off the training subprocess in the background.
+    Poll GET /train-status for progress.
+
+    Two modes:
+    - Local: provide `train_config_path` (path to JSON on this machine)
+    - Network: provide `train_config` + `photos` (inline config + base64 images)
+    """
+    global _training, _train_error, _train_output_dir
+
+    if _training:
+        raise HTTPException(status_code=409, detail="A training job is already in progress")
+
+    # Unload any loaded inference model to free memory for training
+    if _model_loaded:
+        log.info("[train] Unloading inference model to free memory for training")
+        _unload_model()
+
+    # Determine config path
+    if req.train_config_path:
+        # Local mode — config file on this machine
+        if not os.path.isfile(req.train_config_path):
+            raise HTTPException(status_code=400, detail=f"Config file not found: {req.train_config_path}")
+        config_path = req.train_config_path
+    elif req.train_config and req.photos:
+        # Network mode — materialize photos + config
+        try:
+            config_path = _materialize_network_training(req)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Failed to materialize training data: {e}")
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail="Provide either 'train_config_path' (local) or 'train_config' + 'photos' (network)",
+        )
+
+    # Validate config JSON
+    try:
+        with open(config_path, "r") as f:
+            config = json.load(f)
+        if "data" not in config:
+            raise HTTPException(status_code=400, detail="Training config must contain 'data' path")
+        if "training_loop" not in config:
+            raise HTTPException(status_code=400, detail="Training config must contain 'training_loop'")
+        if "lora_layers" not in config:
+            raise HTTPException(status_code=400, detail="Training config must contain 'lora_layers'")
+    except json.JSONDecodeError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid JSON in config: {e}")
+
+    _training = True
+    _train_error = None
+    _train_output_dir = config.get("checkpoint", {}).get("output_path")
+    background_tasks.add_task(_bg_train, config_path)
+
+    log.info(f"[train] Started LoRA training with config: {config_path}")
+    return TrainResponse(
+        status="accepted",
+        message="Training started in background",
+        output_dir=_train_output_dir,
+    )
+
+
+@app.get("/train-status")
+async def train_status(character_id: Optional[str] = None):
+    """Check the status of the current training job.
+
+    Accepts an optional ``character_id`` query param so the caller can
+    discover a trained LoRA even after this sidecar was restarted
+    (in-memory ``_train_output_dir`` is lost on restart).
+    """
+    # Check if training produced output files
+    lora_path = None
+    checkpoint_count = 0
+
+    # Determine which directories to search for checkpoints / LoRA
+    search_dirs: list[str] = []
+    if _train_output_dir:
+        search_dirs.append(_train_output_dir)
+    if character_id:
+        char_dir = _get_training_dir(character_id)
+        # Also check lora/ subdir (where mflux writes checkpoints)
+        lora_subdir = os.path.join(char_dir, "lora")
+        for d in (char_dir, lora_subdir):
+            if os.path.isdir(d) and d not in search_dirs:
+                search_dirs.append(d)
+
+    for search_dir in search_dirs:
+        try:
+            for root, _dirs, files in os.walk(search_dir):
+                for f in files:
+                    if f.endswith(".zip") and "checkpoint" in f:
+                        checkpoint_count += 1
+        except Exception:
+            pass
+        if not _training and lora_path is None:
+            lora_path = _find_trained_lora(search_dir)
+
+    # Also check the permanent loras directory for a relocated adapter
+    if lora_path is None and character_id:
+        relocated = os.path.join(_LORAS_DIR, f"{character_id}_adapter.safetensors")
+        if os.path.isfile(relocated):
+            lora_path = relocated
+
+    return {
+        "training": _training,
+        "paused": _train_paused,
+        "process_alive": _train_process is not None and _train_process.poll() is None if _train_process else False,
+        "error": _train_error,
+        "output_dir": _train_output_dir,
+        "lora_path": lora_path,
+        "checkpoint_count": checkpoint_count,
+    }
+
+
+@app.post("/train-pause", dependencies=[Depends(verify_token)])
+async def pause_training():
+    """Pause the active training process (SIGSTOP)."""
+    import signal as _signal
+
+    global _train_paused
+    if not _training or _train_process is None:
+        raise HTTPException(status_code=409, detail="No training job is currently running")
+    if _train_paused:
+        return {"ok": True, "message": "Training is already paused"}
+    try:
+        _train_process.send_signal(_signal.SIGSTOP)
+        _train_paused = True
+        log.info("[train] Training paused (SIGSTOP)")
+        return {"ok": True, "message": "Training paused"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to pause training: {e}")
+
+
+@app.post("/train-unpause", dependencies=[Depends(verify_token)])
+async def unpause_training():
+    """Resume a paused training process (SIGCONT)."""
+    import signal as _signal
+
+    global _train_paused
+    if not _training or _train_process is None:
+        raise HTTPException(status_code=409, detail="No training job is currently running")
+    if not _train_paused:
+        return {"ok": True, "message": "Training is not paused"}
+    try:
+        _train_process.send_signal(_signal.SIGCONT)
+        _train_paused = False
+        log.info("[train] Training resumed (SIGCONT)")
+        return {"ok": True, "message": "Training resumed"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to resume training: {e}")
+
+
+@app.get("/train-checkpoints", dependencies=[Depends(verify_token)])
+async def list_train_checkpoints(character_id: str):
+    """List checkpoint zip files available for a given character_id.
+
+    Returns checkpoints sorted newest-first so the client can offer the user
+    a choice of which iteration to resume from, or just pick the latest.
+    Checks both the persistent training dir and the legacy temp dir.
+    """
+    train_dir = _get_training_dir(character_id)
+    # Also check the legacy temp dir in case training ran before the persistent
+    # dir was introduced (avoids losing checkpoints on sidecar upgrades).
+    legacy_temp_dir = os.path.join(tempfile.gettempdir(), "openzigs-training", character_id)
+    search_dirs = {train_dir}
+    if os.path.isdir(legacy_temp_dir):
+        search_dirs.add(legacy_temp_dir)
+
+    zips: list[dict] = []
+    seen: set[str] = set()
+    for search_dir in search_dirs:
+        if not os.path.isdir(search_dir):
+            continue
+        for root, _dirs, files in os.walk(search_dir):
+            for f in files:
+                if f.endswith(".zip") and "checkpoint" in f:
+                    full_path = os.path.join(root, f)
+                    if full_path in seen:
+                        continue
+                    seen.add(full_path)
+                    try:
+                        size = os.path.getsize(full_path)
+                    except OSError:
+                        size = 0
+                    zips.append({"path": full_path, "name": f, "size": size})
+    # Sort by name descending (checkpoint names are zero-padded iteration numbers)
+    zips.sort(key=lambda z: z["name"], reverse=True)
+    return {"character_id": character_id, "checkpoints": zips, "train_dir": train_dir}
+
+
+class RecoverTrainRequest(BaseModel):
+    """Request body for rescuing a trained LoRA adapter from any checkpoint."""
+    character_id: str = Field(..., description="Character UUID whose LoRA adapter to recover")
+    checkpoint_path: Optional[str] = Field(None, description="Specific checkpoint .zip path; latest is used if omitted")
+
+
+@app.post("/train-recover", dependencies=[Depends(verify_token)])
+async def recover_trained_lora(req: RecoverTrainRequest):
+    """Extract a LoRA adapter from a checkpoint zip and save it permanently.
+
+    Searches the persistent training dir *and* the legacy macOS temp dir for
+    checkpoint zips belonging to this character.  Extracts the adapter
+    ``_adapter.safetensors`` from the selected (or newest) checkpoint into
+    ``~/.openzigs/training/{character_id}/`` so it survives reboots.
+
+    Returns ``{"lora_path": "<absolute path>"}`` on success.
+    """
+    import zipfile
+
+    persistent_dir = _get_training_dir(req.character_id)
+    legacy_temp_dir = os.path.join(
+        tempfile.gettempdir(), "openzigs-training", req.character_id
+    )
+
+    # Build a sorted list of candidate checkpoint zips from both locations
+    candidate_zips: list[str] = []
+    for search_dir in (persistent_dir, legacy_temp_dir):
+        if not os.path.isdir(search_dir):
+            continue
+        for root, _dirs, files in os.walk(search_dir):
+            for f in files:
+                if f.endswith(".zip") and "checkpoint" in f:
+                    candidate_zips.append(os.path.join(root, f))
+
+    if req.checkpoint_path:
+        if not os.path.isfile(req.checkpoint_path):
+            raise HTTPException(status_code=404, detail=f"Checkpoint not found: {req.checkpoint_path}")
+        target_zip = req.checkpoint_path
+    elif candidate_zips:
+        candidate_zips.sort()
+        target_zip = candidate_zips[-1]  # highest iteration number
+    else:
+        raise HTTPException(status_code=404, detail=f"No checkpoint zips found for character {req.character_id}")
+
+    log.info(f"[train-recover] Extracting adapter from {target_zip} -> {persistent_dir}")
+    try:
+        with zipfile.ZipFile(target_zip, "r") as zf:
+            adapter_names = [n for n in zf.namelist() if n.endswith("_adapter.safetensors")]
+            if not adapter_names:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"No *_adapter.safetensors inside {os.path.basename(target_zip)}. Contents: {zf.namelist()[:10]}",
+                )
+            adapter_name = adapter_names[0]
+            dest_path = os.path.join(persistent_dir, os.path.basename(adapter_name))
+            with zf.open(adapter_name) as src, open(dest_path, "wb") as dst:
+                dst.write(src.read())
+            log.info(f"[train-recover] Saved adapter to {dest_path}")
+            return {"lora_path": dest_path, "source_checkpoint": target_zip}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        log.error(f"[train-recover] Failed: {exc}")
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+class ResumeTrainRequest(BaseModel):
+    """Request body for resuming training from a checkpoint zip."""
+    checkpoint_path: str = Field(..., description="Absolute path to a checkpoint .zip file on this machine")
+    output_dir: Optional[str] = Field(None, description="Override output directory (defaults to sibling of checkpoint)")
+
+
+@app.post("/train-resume", response_model=TrainResponse, dependencies=[Depends(verify_token)])
+async def resume_train_lora(req: ResumeTrainRequest, background_tasks: BackgroundTasks):
+    """Resume LoRA training from an existing checkpoint zip.
+
+    Uses ``mflux-train --resume /path/to/checkpoint.zip``.
+    The original data folder must still be present on this machine
+    (mflux requires it to continue training).
+    """
+    global _training, _train_error, _train_output_dir
+
+    if _training:
+        raise HTTPException(status_code=409, detail="A training job is already in progress")
+
+    # Unload any loaded inference model to free memory for training
+    if _model_loaded:
+        log.info("[train] Unloading inference model to free memory for training resume")
+        _unload_model()
+
+    if not os.path.isfile(req.checkpoint_path):
+        raise HTTPException(status_code=400, detail=f"Checkpoint not found: {req.checkpoint_path}")
+    if not req.checkpoint_path.endswith(".zip"):
+        raise HTTPException(status_code=400, detail="checkpoint_path must be a .zip file")
+
+    # Output dir defaults to the lora/ directory that is a sibling of the checkpoints/ folder
+    lora_output = req.output_dir or os.path.dirname(os.path.dirname(req.checkpoint_path))
+
+    _training = True
+    _train_error = None
+    _train_output_dir = lora_output
+    background_tasks.add_task(_bg_train_resume, req.checkpoint_path)
+
+    log.info(f"[train] Resuming training from checkpoint: {req.checkpoint_path}")
+    return TrainResponse(
+        status="accepted",
+        message=f"Resuming training from {os.path.basename(req.checkpoint_path)}",
+        output_dir=lora_output,
+    )
+
+
+def _find_trained_lora(dir_path: str) -> Optional[str]:
+    """Find a trained .safetensors LoRA adapter in the output directory.
+
+    mflux-train saves checkpoints as zip files containing the adapter
+    safetensors inside (e.g. checkpoints/0000011_checkpoint.zip with
+    0000011_adapter.safetensors inside).  We extract the adapter to a
+    stable path so mflux can load it at inference time.
+    """
+    import zipfile
+
+    try:
+        # 1. Check for an already-extracted .safetensors
+        for root, _dirs, files in os.walk(dir_path):
+            for f in files:
+                if f.endswith(".safetensors") and "adapter" in f:
+                    return os.path.join(root, f)
+
+        # 2. Find the latest checkpoint zip and extract the adapter
+        checkpoint_zips: list[str] = []
+        for root, _dirs, files in os.walk(dir_path):
+            for f in files:
+                if f.endswith(".zip") and "checkpoint" in f:
+                    checkpoint_zips.append(os.path.join(root, f))
+        if not checkpoint_zips:
+            log.warning(f"[train] No checkpoint zips found in {dir_path}")
+            return None
+
+        # Sort to get the latest checkpoint (highest iteration number)
+        checkpoint_zips.sort()
+        latest_zip = checkpoint_zips[-1]
+        log.info(f"[train] Extracting adapter from checkpoint: {latest_zip}")
+
+        with zipfile.ZipFile(latest_zip, "r") as zf:
+            adapter_names = [n for n in zf.namelist() if n.endswith("_adapter.safetensors")]
+            if not adapter_names:
+                log.error(f"[train] No adapter.safetensors found inside {latest_zip}: {zf.namelist()}")
+                return None
+            adapter_name = adapter_names[0]
+            extract_path = os.path.join(dir_path, adapter_name)
+            with zf.open(adapter_name) as src, open(extract_path, "wb") as dst:
+                dst.write(src.read())
+            log.info(f"[train] Extracted adapter to {extract_path}")
+            return extract_path
+    except Exception as e:
+        log.error(f"[train] Error finding/extracting LoRA adapter: {e}")
+    return None
+
+
+def _bg_train_resume(checkpoint_path: str) -> None:
+    """Background task: resume mflux-train from a checkpoint zip.
+
+    Handles the common case where training already completed but the calling
+    server missed the completion event (client detached, server restarted).
+    In that scenario the data directory was cleaned up post-training, so
+    ``mflux-train --resume`` would fail with *Data folder not found*.  We
+    detect this by checking whether an adapter already exists in the output
+    directory — if so, we skip re-training entirely.
+
+    If the data directory is genuinely missing but no adapter exists yet, we
+    re-create a minimal placeholder so mflux can at least parse the manifest
+    and finish any remaining epochs.
+    """
+    import subprocess
+    import zipfile
+
+    global _training, _train_paused, _train_process, _train_error, _train_output_dir
+    try:
+        # ── Pre-check: is there already a trained LoRA adapter? ────────
+        # The checkpoint lives under the character's training dir.
+        # e.g. ~/.openzigs/training/{char_id}/lora/checkpoints/0000011_checkpoint.zip
+        checkpoint_dir = os.path.dirname(checkpoint_path)
+        output_base = os.path.dirname(checkpoint_dir)  # the lora/ dir
+        existing_lora = _find_trained_lora(output_base)
+        if existing_lora:
+            log.info(
+                f"[train] LoRA adapter already exists at {existing_lora} — "
+                f"skipping resume (training was already complete)"
+            )
+            _train_output_dir = output_base
+            return  # _training will be reset in finally
+
+        # ── Ensure the data directory referenced in the manifest exists ──
+        try:
+            with zipfile.ZipFile(checkpoint_path, "r") as zf:
+                if "manifest.json" in zf.namelist():
+                    manifest = json.loads(zf.read("manifest.json"))
+                    data_root = manifest.get("data_root") or manifest.get("data")
+                    if data_root and not os.path.isdir(data_root):
+                        # Also check next to checkpoint (mflux fallback)
+                        alt_data = os.path.join(os.path.dirname(checkpoint_path), "data")
+                        if not os.path.isdir(alt_data):
+                            log.warning(
+                                f"[train] Data directory missing ({data_root}), "
+                                f"creating placeholder at {alt_data} for resume"
+                            )
+                            os.makedirs(alt_data, exist_ok=True)
+                            # Write a minimal placeholder image + caption so mflux
+                            # can enumerate at least one data item.
+                            placeholder_img = os.path.join(alt_data, "placeholder.jpg")
+                            placeholder_txt = os.path.join(alt_data, "placeholder.txt")
+                            try:
+                                img = Image.new("RGB", (512, 512), color=(128, 128, 128))
+                                img.save(placeholder_img, format="JPEG")
+                            except Exception:
+                                # Fallback: write a tiny valid JPEG
+                                with open(placeholder_img, "wb") as fp:
+                                    fp.write(b"\xff\xd8\xff\xe0" + b"\x00" * 100 + b"\xff\xd9")
+                            with open(placeholder_txt, "w") as fp:
+                                fp.write("placeholder")
+        except Exception as exc:
+            log.warning(f"[train] Could not inspect checkpoint manifest: {exc}")
+
+        log.info(f"[train] Spawning mflux-train --resume {checkpoint_path}")
+        _train_process = subprocess.Popen(
+            ["mflux-train", "--resume", checkpoint_path],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+        )
+        last_lines: list[str] = []
+        assert _train_process.stdout is not None
+        for line in _train_process.stdout:
+            line = line.rstrip()
+            if line:
+                log.info(f"[mflux-train] {line}")
+                last_lines.append(line)
+                if len(last_lines) > 20:
+                    last_lines.pop(0)
+        _train_process.wait()
+        rc = _train_process.returncode
+        if rc != 0:
+            err_msg = "\n".join(last_lines) if last_lines else f"exit code {rc}"
+            _train_error = err_msg
+            log.error(f"[train] Resume training failed with exit code {rc}")
+        else:
+            log.info("[train] Resumed training completed successfully")
+    except Exception as e:
+        _train_error = str(e)
+        log.error(f"[train] Resume training error: {e}")
+    finally:
+        _training = False
+        _train_paused = False
+        _train_process = None
+        gc.collect()
+        try:
+            import mlx.core as mx
+            mx.clear_cache()
+        except Exception:
+            pass
+
+
+class DeleteTrainDataRequest(BaseModel):
+    """Request body for deleting all training output for a character."""
+    character_id: str = Field(..., description="Character UUID whose training files should be removed")
+
+
+_LORAS_DIR = os.path.join(os.path.expanduser("~"), ".openzigs", "loras")
+
+
+def _relocate_adapter(character_id: str, search_dir: str) -> Optional[str]:
+    """Move the first adapter .safetensors out of the training dir into the
+    permanent ``~/.openzigs/loras/`` directory so it survives cleanup.
+
+    Returns the new absolute path, or None if no adapter was found.
+    """
+    import shutil as _sh
+
+    for root, _dirs, files in os.walk(search_dir):
+        for f in files:
+            if f.endswith(".safetensors") and "adapter" in f:
+                src = os.path.join(root, f)
+                os.makedirs(_LORAS_DIR, exist_ok=True)
+                dest = os.path.join(_LORAS_DIR, f"{character_id}_adapter.safetensors")
+                _sh.move(src, dest)
+                log.info(f"[train-data] Relocated adapter {src} -> {dest}")
+                return dest
+    return None
+
+
+@app.delete("/train-data", dependencies=[Depends(verify_token)])
+async def delete_train_data(req: DeleteTrainDataRequest):
+    """Delete all training output for a character on this machine.
+
+    Before removing the training directory, relocates any extracted adapter
+    ``.safetensors`` to ``~/.openzigs/loras/`` so inference can still load it.
+
+    Returns ``{"removed": true, "paths": [...], "lora_path": "..."}`` on
+    success or ``{"removed": false, "reason": "..."}`` if nothing was found.
+    """
+    import shutil as _shutil
+    import tempfile
+
+    if not req.character_id or "/" in req.character_id or ".." in req.character_id:
+        raise HTTPException(status_code=400, detail="Invalid character_id")
+
+    removed_paths: list[str] = []
+    relocated_lora: Optional[str] = None
+
+    # Persistent training dir
+    persistent_dir = os.path.join(_TRAINING_BASE_DIR, req.character_id)
+    if os.path.isdir(persistent_dir):
+        # Relocate adapter before nuking the directory
+        relocated_lora = _relocate_adapter(req.character_id, persistent_dir)
+        try:
+            _shutil.rmtree(persistent_dir)
+            removed_paths.append(persistent_dir)
+            log.info(f"[train-data] Removed persistent training dir: {persistent_dir}")
+        except Exception as exc:
+            log.error(f"[train-data] Failed to remove {persistent_dir}: {exc}")
+            raise HTTPException(status_code=500, detail=f"Failed to remove {persistent_dir}: {exc}")
+
+    # Legacy macOS temp dir (may not exist after a reboot, but clean up when present)
+    legacy_dir = os.path.join(tempfile.gettempdir(), "openzigs-training", req.character_id)
+    if os.path.isdir(legacy_dir):
+        if relocated_lora is None:
+            relocated_lora = _relocate_adapter(req.character_id, legacy_dir)
+        try:
+            _shutil.rmtree(legacy_dir)
+            removed_paths.append(legacy_dir)
+            log.info(f"[train-data] Removed legacy temp training dir: {legacy_dir}")
+        except Exception as exc:
+            log.warning(f"[train-data] Could not remove legacy dir {legacy_dir}: {exc}")
+            # Non-fatal — temp dirs are ephemeral
+
+    if removed_paths:
+        return {"removed": True, "paths": removed_paths, "lora_path": relocated_lora}
+    return {"removed": False, "reason": f"No training data found for character {req.character_id}"}
+
+
+def _cleanup_training_data(config_path: str) -> None:
+    """Remove training input images and config after training completes.
+
+    Keeps the output LoRA checkpoints (in the lora/ subdirectory) but removes
+    the data/ directory and config file to reclaim disk space.  On commodity
+    hardware with limited SSDs, training images can add up fast.
+    """
+    try:
+        train_dir = os.path.dirname(config_path)
+        data_dir = os.path.join(train_dir, "data")
+        if os.path.isdir(data_dir):
+            import shutil
+            shutil.rmtree(data_dir)
+            log.info(f"[train] Cleaned up training data: {data_dir}")
+        # Remove the config file itself
+        if os.path.isfile(config_path):
+            os.remove(config_path)
+            log.info(f"[train] Removed training config: {config_path}")
+    except Exception as e:
+        log.warning(f"[train] Failed to clean up training data: {e}")
+
+
+def _bg_train(config_path: str) -> None:
+    """Background task: run mflux-train subprocess."""
+    import subprocess
+
+    global _training, _train_paused, _train_process, _train_error
+    try:
+        log.info(f"[train] Spawning mflux-train --config {config_path}")
+        _train_process = subprocess.Popen(
+            ["mflux-train", "--config", config_path],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,  # Merge stderr into stdout for unified streaming
+            text=True,
+            bufsize=1,  # Line-buffered
+        )
+        # Stream output line-by-line so progress appears in sidecar logs in real time
+        last_lines: list[str] = []
+        assert _train_process.stdout is not None
+        for line in _train_process.stdout:
+            line = line.rstrip()
+            if line:
+                log.info(f"[mflux-train] {line}")
+                last_lines.append(line)
+                if len(last_lines) > 20:
+                    last_lines.pop(0)
+        _train_process.wait()
+        rc = _train_process.returncode
+
+        if rc == 0:
+            log.info("[train] Training completed successfully")
+            # Log output directory contents for diagnostics
+            if _train_output_dir:
+                try:
+                    all_files = []
+                    for root, _d, fnames in os.walk(_train_output_dir):
+                        for fn in fnames:
+                            all_files.append(os.path.join(root, fn))
+                    log.info(f"[train] Output dir contents ({len(all_files)} files): {all_files}")
+                except Exception:
+                    pass
+            # NOTE: We intentionally do NOT clean up training data here.
+            # The data directory is needed if the calling server missed the
+            # completion event (client detached, server restart) and later
+            # tries to resume from a checkpoint.  Data is cleaned up via
+            # the explicit DELETE /train-data endpoint when the character
+            # is confirmed as 'ready' by the orchestrator.
+        else:
+            err_msg = "\n".join(last_lines) if last_lines else f"exit code {rc}"
+            _train_error = err_msg
+            log.error(f"[train] Training failed with exit code {rc}")
+    except Exception as e:
+        _train_error = str(e)
+        log.error(f"[train] Training error: {e}")
+    finally:
+        _training = False
+        _train_paused = False
+        _train_process = None
+        # Reclaim VRAM after training
+        gc.collect()
+        try:
+            import mlx.core as mx
+            mx.clear_cache()
+        except Exception:
+            pass
+
+
 @app.post("/generate-async", status_code=202, dependencies=[Depends(verify_token)])
 async def generate_async(req: AsyncGenerateRequest, background_tasks: BackgroundTasks):
     """Async txt2img — returns 202 immediately, POSTs result to callback_url.
@@ -1116,6 +2173,8 @@ async def generate_async(req: AsyncGenerateRequest, background_tasks: Background
         raise HTTPException(status_code=503, detail="Server not ready")
     if _loading or _generating:
         raise HTTPException(status_code=409, detail="Server is busy with another generation")
+    # Stop training if active — can't run both (each needs ~28GB unified memory)
+    _stop_training_for_inference()
     requested_model = req.model or (_model_name if _model_loaded else _default_model)
     if requested_model not in MODEL_REGISTRY:
         raise HTTPException(status_code=400, detail=f"Unknown model: {requested_model}")
@@ -1127,6 +2186,7 @@ async def generate_async(req: AsyncGenerateRequest, background_tasks: Background
         req.job_id, req.callback_url,
         req.prompt, requested_model,
         req.width, req.height, req.steps, guidance, seed,
+        req.lora_paths, req.lora_scales,
     )
     log.info(f"[async] generate job={req.job_id} accepted, callback={req.callback_url}")
     return {"job_id": req.job_id, "status": "accepted"}
@@ -1143,6 +2203,8 @@ async def img2img_async(req: AsyncImg2ImgRequest, background_tasks: BackgroundTa
         raise HTTPException(status_code=503, detail="Server not ready")
     if _loading or _generating:
         raise HTTPException(status_code=409, detail="Server is busy with another generation")
+    # Stop training if active — can't run both (each needs ~28GB unified memory)
+    _stop_training_for_inference()
     tmp_path: Optional[str] = None
     if req.image:
         try:

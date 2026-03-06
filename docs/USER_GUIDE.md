@@ -201,6 +201,7 @@ The OpenZigs UI is a **Next.js** application with a navigation bar providing acc
 | **Post-Actions** | `/admin/post-actions` | Create and manage custom post-action types for pipeline stages |
 | **Webhooks** | `/admin/webhooks` | Create and manage inbound webhooks for external integrations |
 | **Gallery** | `/gallery` | Asset gallery for generated images, videos, and audio; inline creation studio for txt2img, img2img, txt2video, img2video, txt2music |
+| **Music Studio** | `/music-studio` | AI Voice2Voice pipeline &amp; Smart Remix Lab — stem separation, voice conversion, instrument replacement, and auto-mastering |
 | **Director** | `/director` | AI video production wizard, blog-to-YouTube, and timeline studio |
 | **Director Studio** | `/director/studio/[id]` | Full timeline editor with player preview, scene inspector, and drag-and-drop reordering |
 
@@ -571,6 +572,7 @@ The scheduler at `/scheduler` manages cron-based automated jobs:
 
 - **Create** jobs with name, cron expression, and action (prompt, shell command, pipeline, or custom).
 - **Prompt linking** — link a job to a saved prompt from the Library.
+- **Template variable injection** — set values for `{{variables}}` in the linked prompt directly from the scheduler form. See [Template Variables in Scheduled Jobs](#template-variables-in-scheduled-jobs) below.
 - **Model selection** — optionally choose a model override per prompt or pipeline job.
 - **AI Scheduler Assistant** — describe the schedule in plain English and auto-fill fields (uses `gpt-5-mini`).
 - **Cron preview** — visual breakdown of minute, hour, day, month, weekday fields.
@@ -580,6 +582,52 @@ The scheduler at `/scheduler` manages cron-based automated jobs:
 
 ![New Job form — Pipeline action type with model selector and wizard/manual chooser](images/scheduler-pipeline-new-job.png)
 - **Live execution events** via Socket.IO — see when jobs fire in real time.
+
+#### Template Variables in Scheduled Jobs
+
+Saved prompts can contain `{{variable}}` placeholders (e.g., `"Write a {{topic}} report for {{today}}"`). When you link a prompt to a scheduled job and that prompt contains variables, the scheduler form automatically detects them and displays input fields — one per variable — directly below the prompt selector.
+
+**How it works:**
+
+1. Select **Prompt** as the action type.
+2. Choose a saved prompt from the **Linked Prompt** dropdown.
+3. If the prompt contains `{{variable}}` placeholders, a **Template Variables** section appears.
+4. Enter a static value for each variable, or leave it empty to use a built-in dynamic value (see below).
+5. Save the job — variable values are stored in `actionPayload.variables` and applied on every run.
+
+**Editing an existing job:** Variable values are pre-populated when you open a job for editing, so you can update them without recreating the job.
+
+**Job list display:** Configured variable values are shown in the job card alongside the prompt name (e.g., `Prompt: daily-report  Variables: topic=AI news`).
+
+##### Built-In Dynamic Variables
+
+The scheduler automatically resolves several dynamic variables at execution time. These are injected into every prompt job run — you do not need to set them in the scheduler form. If you *do* provide a value for a built-in variable in the form, your value takes precedence.
+
+| Variable | Resolved value | Example |
+|---|---|---|
+| `{{today}}` | Current date in `YYYY-MM-DD` format | `2026-03-04` |
+| `{{now}}` | Current date and time in ISO 8601 format | `2026-03-04T14:30:00.000Z` |
+| `{{day_of_week}}` | Full weekday name | `Tuesday` |
+| `{{month}}` | Full month name | `March` |
+| `{{year}}` | Four-digit year | `2026` |
+
+**Example prompt using built-in variables:**
+
+```
+Write a {{topic}} summary for {{today}} ({{day_of_week}}).
+Focus on developments from the past 24 hours.
+```
+
+Scheduled with `topic = "AI news"`, this renders at run time as:
+
+```
+Write a AI news summary for 2026-03-04 (Tuesday).
+Focus on developments from the past 24 hours.
+```
+
+No manual date management needed — the job stays evergreen across runs.
+
+> **Built-in variable indicators:** In the scheduler form, built-in dynamic variables are labelled with a green **dynamic** badge and show an `(auto: resolved at run time)` placeholder. Leave them empty to use the auto-resolved value, or enter a static override to fix the value.
 
 #### Multi-Model Agent Chaining
 
@@ -5380,13 +5428,85 @@ Click **Create Asset** on the Gallery page to open the inline creation studio. F
 
 | Mode | Description | Key Controls |
 |---|---|---|
-| **Text → Image** | Generate an image from a text prompt | Width, Height, Steps, Guidance, Seed |
+| **Text → Image** | Generate an image from a text prompt | Width, Height, Steps, Guidance, Seed, Character (LoRA), ControlNet Strength |
 | **Image → Image** | Transform an uploaded image with a prompt | Source image upload, Strength (0–1), Steps, Guidance |
 | **Text → Video** | Generate a 4-second video clip from a text prompt | Frames (max 97), FPS, computed Duration display |
 | **Image → Video** | Animate an uploaded image with a motion prompt | Source image upload, Frames, FPS, Duration |
 | **Text → Music** | Generate music from a text description | Duration (10–300s), Inference Steps (8–27, default 20), Instrumental toggle, Lyrics textarea, Seed |
 
 All jobs are submitted to the queue via **Submit to Queue** and processed by the appropriate worker node.
+
+### Character Lab (LoRA Training & Identity Consistency)
+
+The Character Lab lets you create persistent character identities backed by LoRA (Low-Rank Adaptation) fine-tuning. Once trained, characters can be injected into any image generation to maintain consistent identity across shots.
+
+**Navigate to Studio → Characters** (or `/characters`).
+
+#### Creating a Character
+
+1. Click **+ New Character**
+2. Fill in:
+   - **Character Name** — A human-readable label (e.g., "Alice")
+   - **Trigger Word** — A unique token used in prompts to activate the character identity (e.g., `ALICE_TOK`). Use ALL_CAPS with `_TOK` suffix by convention.
+   - **LoRA Scale** — Controls how strongly the character identity is applied (0.1–1.5, default 0.8). Higher values = stronger likeness but may reduce prompt flexibility.
+3. Click **Create**
+
+#### Uploading Reference Photos
+
+Select a character from the list, then use the **Upload Photos** button in the detail panel. Requirements:
+
+- **Minimum 5 photos** required before training can begin
+- **Maximum 20 photos** per upload batch
+- **Maximum 20 MB** per photo
+- Accepted formats: JPEG, PNG, WebP
+- Use varied angles, lighting, and expressions for best results
+
+#### Training a LoRA
+
+Once you have at least 5 reference photos uploaded:
+
+1. Configure training parameters in the detail panel:
+   - **Training Steps** — Number of fine-tuning iterations (default: 1000). More steps = stronger identity but risk of overfitting.
+   - **Learning Rate** — Optimizer step size (default: 0.0001). Lower values train more carefully.
+   - **LoRA Rank** — Dimension of the LoRA adapter (default: 4). Higher rank captures more detail but uses more VRAM.
+2. Click **Start Training**
+3. The character status changes through: `pending` → `training` → `ready` (or `failed`)
+
+Training runs as a background subprocess using `mflux-train` (DreamBooth method). Progress is monitored automatically — the character status updates when training completes.
+
+#### Using Characters in Gallery Studio
+
+Once a character reaches **ready** status, it appears in the Gallery Studio's **Character** dropdown:
+
+1. Open **Gallery → Create Asset**
+2. Select your character from the **Character** dropdown
+3. Include the character's trigger word in your prompt (e.g., "A photo of ALICE_TOK standing in a garden")
+4. Optionally adjust **ControlNet Strength** (0–1) for pose control
+5. Submit to queue — the LoRA weights are automatically injected during generation
+
+#### Character API
+
+```bash
+# List all characters
+curl http://localhost:3000/api/characters
+
+# Create a character
+curl -X POST http://localhost:3000/api/characters \
+  -H "Content-Type: application/json" \
+  -d '{"name": "Alice", "triggerWord": "ALICE_TOK", "loraScale": 0.8}'
+
+# Upload reference photos
+curl -X POST http://localhost:3000/api/characters/<id>/photos \
+  -F "photos=@photo1.jpg" -F "photos=@photo2.jpg"
+
+# Start training
+curl -X POST http://localhost:3000/api/characters/<id>/train \
+  -H "Content-Type: application/json" \
+  -d '{"steps": 1000, "learningRate": 0.0001, "loraRank": 4}'
+
+# Delete a character
+curl -X DELETE http://localhost:3000/api/characters/<id>
+```
 
 ### Queue API Examples
 
@@ -5433,6 +5553,25 @@ curl -X POST http://localhost:3000/api/queue/jobs \
   }'
 ```
 
+**Submit a voice2voice job:**
+```bash
+curl -X POST http://localhost:3000/api/queue/jobs \
+  -H "Content-Type: application/json" \
+  -d '{
+    "type": "voice2voice",
+    "payload": {
+      "prompt": "Voice conversion: artist_name",
+      "source_asset_id": "<gallery-asset-id>",
+      "voice_model": "artist_name",
+      "pitch_shift": 0,
+      "index_rate": 0.75,
+      "vocal_volume": 1.0,
+      "instrumental_volume": 1.0,
+      "output_format": "wav"
+    }
+  }'
+```
+
 **Check queue stats:**
 ```bash
 curl http://localhost:3000/api/queue/jobs/stats
@@ -5464,6 +5603,77 @@ QUEUE_CALLBACK_URL=http://192.168.1.50:3000/api/queue/complete
 
 If unset, the server auto-detects the first non-loopback IPv4 via `os.networkInterfaces()` and logs the resolved URL at startup. **Note:** For local sidecars (music sidecar on `localhost`), `QueueMaster` automatically rewrites the callback URL to use `localhost` so the sidecar can reach back without relying on the LAN IP.
 
+### Music Studio
+
+Navigate to **http://localhost:3001/music-studio** to access the AI Music Studio.
+
+The Music Studio provides a full **Voice2Voice pipeline** that converts the vocal timbre of any audio track using [Seed-VC](https://github.com/Plachtaa/seed-vc) — a zero-shot voice conversion model that requires no training. The pipeline runs in three stages:
+
+1. **Stem Separation** — Demucs v4 (`htdemucs_ft`) separates vocals from instrumentals
+2. **Voice Conversion** — Seed-VC converts the isolated vocals using a short reference audio clip (1–25 seconds)
+3. **Final Mixdown** — pydub recombines the converted vocals with the instrumental stem
+
+Seed-VC supports both **speech** and **singing voice** conversion modes. Models are automatically downloaded from HuggingFace (`Plachta/Seed-VC`) on first use — no manual model setup required.
+
+#### Voice Reference Management
+
+Before running Voice2Voice, upload one or more **voice references** — short audio clips (1–25 seconds) of the target voice:
+
+1. **Upload** — In the Voice2Voice control panel, click "Upload Reference" and select an audio file. Give it a descriptive name (e.g., "Deep Baritone", "Soprano Opera").
+2. **Preview** — Click the play button next to any reference to audition it.
+3. **Manage** — Rename or delete references from the control panel. References are stored at `~/.openzigs/voice-references/`.
+
+Voice references are automatically trimmed and normalized on upload to ensure consistent quality.
+
+#### Using Music Studio
+
+1. **Load audio tracks** — Click any audio asset in the "Audio Assets" panel to load it into the waveform viewer. You can load multiple tracks for comparison.
+2. **Select source** — Choose the source audio track from the "Source Track" dropdown in the control panel.
+3. **Select voice reference** — Choose a previously uploaded voice reference clip.
+4. **Choose mode** — Toggle between **Singing** (preserves pitch contour, 44.1 kHz) and **Speech** (natural spoken voice, 22 kHz).
+5. **Adjust pitch** — Use the pitch shift slider (-12 to +12 semitones) to transpose the vocals.
+6. **Advanced settings** — Expand to adjust diffusion steps (higher = better quality, slower), vocal/instrumental volumes, and output format.
+7. **Submit** — Click "Start Voice2Voice" to queue the job. Pipeline progress is shown in real-time with stage indicators.
+
+#### Waveform DAW View
+
+The waveform viewer uses **wavesurfer.js v7** to render interactive audio waveforms:
+- **Transport controls** — Play/Pause/Restart with synchronized multi-track playback
+- **Per-track mute** — Solo or mute individual tracks
+- **Interactive seeking** — Click anywhere on a waveform to seek to that position
+- **Multi-track support** — Load source, result, and comparison tracks simultaneously
+
+#### Real-Time Effects Chain
+
+The **Effects Rack** provides a live Web Audio processing chain applied during playback:
+
+- **10-Band EQ** — Low shelf, 8 peaking bands, high shelf for precise tonal shaping
+- **Stereo Pan** — Full left/right stereo placement
+- **Compressor** — Dynamics compression with threshold, ratio, attack, and release controls
+- **Distortion** — Waveshaper-based overdrive/saturation
+- **Reverb** — Convolution reverb with synthetic impulse response and wet/dry mix
+- **Speed Control** — Playback rate adjustment with vibe-based presets (Chill, Normal, Hype, Hyper)
+
+All effects are processed in real-time via the Web Audio API — changes are heard instantly without re-rendering.
+
+#### Music Studio Sidecar Setup
+
+The Music Studio requires a Python sidecar running on port 5010:
+
+```bash
+# Automated setup (recommended)
+./install.sh   # Includes Music Studio venv + dependency installation
+
+# Manual setup
+cd sidecars/music-studio
+python3.10 -m venv .venv    # Python 3.10+ required
+source .venv/bin/activate
+pip install -r requirements.txt
+python server.py
+```
+
+Seed-VC models (~2 GB) are downloaded automatically from HuggingFace on first voice conversion request. No manual model placement is needed.
+
 **Polling fallback for asymmetric networks:** If callback delivery fails (e.g., router AP/client isolation where the worker Mac cannot reach the primary Mac), the system automatically falls back to polling. Every tick, `QueueMaster` polls `GET /job-result/{job_id}` on any worker with a job dispatched more than 3 minutes ago. FluxQ stores results in memory for up to 100 jobs; results are deleted after the primary Mac acknowledges them. This means jobs will always complete even if push callbacks are blocked at the network layer.
 
 Configure worker endpoints in `config/default.json` under the `queue` section:
@@ -5479,6 +5689,73 @@ Configure worker endpoints in `config/default.json` under the `queue` section:
   }
 }
 ```
+
+#### Smart Remix Lab
+
+The Music Studio page has a second tab — **AI Remix Lab** — that lets you upload any audio track, split it into 6 stems, analyze BPM/key, replace individual instruments using AI, and auto-master the final mix.
+
+##### How It Works
+
+1. **Analyze & Split** — Select an audio asset from the gallery and click "Analyze & Split". The sidecar runs Demucs `htdemucs_6s` to separate the track into **6 stems**: vocals, drums, bass, guitar, piano, and other. It also detects BPM (via librosa tempo) and musical key (via Krumhansl-Schmuckler profiles).
+
+2. **Stem Dashboard** — Each stem appears as a row with:
+   - **Volume slider** (0–200%) — Adjust the stem's level in the final mix
+   - **Mute toggle** — Completely exclude a stem
+   - **AI Replace** — Open a modal to replace the stem's instrument with one of 10 SoundFont-based instruments
+
+3. **AI Replace** — The melody preservation engine:
+   - Extracts MIDI from the audio stem using basic-pitch
+   - Renders the MIDI using a SoundFont via FluidSynth
+   - Applies post-processing (Chorus + Reverb) via Pedalboard
+   - Preserves the original melody while changing the instrument timbre
+
+4. **Vibe Panel** — Choose an auto-mastering preset:
+   - **Punchy Pop** — Hard compression on drums/bass, bright vocal EQ
+   - **Warm Lo-Fi** — Low-pass filter + subtle saturation
+   - **Cinematic & Wide** — Lush reverb + stereo chorus
+   - **Raw** — No processing, clean volume-only mix
+
+5. **Mix & Master** — Combines all stems with your volume/mute/vibe settings. The mixer applies automatic headroom gain staging (−3 dB per doubling of active stems) to prevent clipping, then auto-masters using matchering (reference-based) or ITU-R BS.1770 LUFS normalization (fallback to −14 LUFS for streaming platforms) with a brick-wall limiter.
+
+6. **Save to Gallery** — After mastering, click "Save to Gallery" to upload the final mix back to your audio assets for use in other pipelines (Voice2Voice, Director, etc.).
+
+##### Available Instruments for AI Replace
+
+| ID | Label |
+|---|---|
+| `80s_analog_synth` | 80s Analog Synth |
+| `slap_bass` | Slap Bass |
+| `grand_piano` | Grand Piano |
+| `electric_guitar` | Electric Guitar |
+| `acoustic_guitar` | Acoustic Guitar |
+| `strings_ensemble` | Strings Ensemble |
+| `brass_section` | Brass Section |
+| `flute` | Flute |
+| `organ` | Organ |
+| `marimba` | Marimba |
+
+##### SoundFont Setup
+
+Place `.sf2` files in `~/.openzigs/soundfonts/`:
+```
+~/.openzigs/soundfonts/
+  80s_analog_synth.sf2
+  slap_bass.sf2
+  grand_piano.sf2
+  ...
+```
+
+##### Reference Tracks for Auto-Mastering
+
+Place reference WAV files in `~/.openzigs/remix-references/` for matchering:
+```
+~/.openzigs/remix-references/
+  punchy_pop.wav
+  warm_lofi.wav
+  cinematic_wide.wav
+```
+
+If no reference file is found for the selected vibe, the system falls back to LUFS normalization at -14 LUFS.
 
 ### Worker Sidecar Setup (M2 Pro)
 

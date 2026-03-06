@@ -57,7 +57,7 @@ export class MediaQueueRepository {
         id TEXT PRIMARY KEY,
         type TEXT NOT NULL CHECK(type IN ('txt2img','img2img','txt2video','img2video','tts','txt2music')),
         required_model TEXT NOT NULL,
-        target_node TEXT NOT NULL CHECK(target_node IN ('mac-mini','m2-pro')),
+        target_node TEXT NOT NULL CHECK(target_node IN ('mac-mini','m2-pro','local')),
         payload TEXT NOT NULL,
         status TEXT NOT NULL DEFAULT 'pending'
           CHECK(status IN ('pending','dispatched','processing','complete','failed')),
@@ -102,9 +102,115 @@ export class MediaQueueRepository {
         ALTER TABLE media_jobs RENAME TO media_jobs_old;
         CREATE TABLE media_jobs (
           id TEXT PRIMARY KEY,
-          type TEXT NOT NULL CHECK(type IN ('txt2img','img2img','txt2video','img2video','tts','txt2music')),
+          type TEXT NOT NULL CHECK(type IN ('txt2img','img2img','txt2video','img2video','tts','txt2music','voice2voice','remix_analyze','remix_replace','remix_master')),
           required_model TEXT NOT NULL,
-          target_node TEXT NOT NULL CHECK(target_node IN ('mac-mini','m2-pro')),
+          target_node TEXT NOT NULL CHECK(target_node IN ('mac-mini','m2-pro','local')),
+          payload TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'pending'
+            CHECK(status IN ('pending','dispatched','processing','complete','failed')),
+          result_url TEXT,
+          result_metadata TEXT,
+          project_id TEXT,
+          gallery_asset_id TEXT,
+          priority INTEGER NOT NULL DEFAULT 0,
+          retries INTEGER NOT NULL DEFAULT 0,
+          max_retries INTEGER NOT NULL DEFAULT 3,
+          error TEXT,
+          retry_after TEXT,
+          created_at TEXT NOT NULL,
+          dispatched_at TEXT,
+          completed_at TEXT
+        );
+        INSERT INTO media_jobs (
+          id, type, required_model, target_node, payload, status,
+          result_url, result_metadata, project_id, gallery_asset_id,
+          priority, retries, max_retries, error, retry_after,
+          created_at, dispatched_at, completed_at
+        ) SELECT
+          id, type, required_model, target_node, payload, status,
+          result_url, result_metadata, project_id, gallery_asset_id,
+          priority, retries, max_retries, error, retry_after,
+          created_at, dispatched_at, completed_at
+        FROM media_jobs_old;
+        DROP TABLE media_jobs_old;
+        CREATE INDEX IF NOT EXISTS idx_media_jobs_status ON media_jobs(status);
+        CREATE INDEX IF NOT EXISTS idx_media_jobs_target ON media_jobs(target_node, status);
+        CREATE INDEX IF NOT EXISTS idx_media_jobs_project ON media_jobs(project_id);
+        COMMIT;
+      `);
+    }
+
+    // ── media_jobs CHECK constraint migration: add remix + v2v types ──
+    const needsRemixRebuild = (() => {
+      const row = this.db.prepare(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='media_jobs'"
+      ).get() as { sql: string } | undefined;
+      if (!row) return false;
+      return !row.sql.includes("'remix_analyze'");
+    })();
+
+    if (needsRemixRebuild) {
+      this.db.exec(`
+        BEGIN;
+        ALTER TABLE media_jobs RENAME TO media_jobs_old;
+        CREATE TABLE media_jobs (
+          id TEXT PRIMARY KEY,
+          type TEXT NOT NULL CHECK(type IN ('txt2img','img2img','txt2video','img2video','tts','txt2music','voice2voice','remix_analyze','remix_replace','remix_master')),
+          required_model TEXT NOT NULL,
+          target_node TEXT NOT NULL CHECK(target_node IN ('mac-mini','m2-pro','local')),
+          payload TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'pending'
+            CHECK(status IN ('pending','dispatched','processing','complete','failed')),
+          result_url TEXT,
+          result_metadata TEXT,
+          project_id TEXT,
+          gallery_asset_id TEXT,
+          priority INTEGER NOT NULL DEFAULT 0,
+          retries INTEGER NOT NULL DEFAULT 0,
+          max_retries INTEGER NOT NULL DEFAULT 3,
+          error TEXT,
+          retry_after TEXT,
+          created_at TEXT NOT NULL,
+          dispatched_at TEXT,
+          completed_at TEXT
+        );
+        INSERT INTO media_jobs (
+          id, type, required_model, target_node, payload, status,
+          result_url, result_metadata, project_id, gallery_asset_id,
+          priority, retries, max_retries, error, retry_after,
+          created_at, dispatched_at, completed_at
+        ) SELECT
+          id, type, required_model, target_node, payload, status,
+          result_url, result_metadata, project_id, gallery_asset_id,
+          priority, retries, max_retries, error, retry_after,
+          created_at, dispatched_at, completed_at
+        FROM media_jobs_old;
+        DROP TABLE media_jobs_old;
+        CREATE INDEX IF NOT EXISTS idx_media_jobs_status ON media_jobs(status);
+        CREATE INDEX IF NOT EXISTS idx_media_jobs_target ON media_jobs(target_node, status);
+        CREATE INDEX IF NOT EXISTS idx_media_jobs_project ON media_jobs(project_id);
+        COMMIT;
+      `);
+    }
+
+    // ── media_jobs CHECK constraint migration: add 'local' target_node ──
+    const needsLocalNodeRebuild = (() => {
+      const row = this.db.prepare(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='media_jobs'"
+      ).get() as { sql: string } | undefined;
+      if (!row) return false;
+      return !row.sql.includes("'local'");
+    })();
+
+    if (needsLocalNodeRebuild) {
+      this.db.exec(`
+        BEGIN;
+        ALTER TABLE media_jobs RENAME TO media_jobs_old;
+        CREATE TABLE media_jobs (
+          id TEXT PRIMARY KEY,
+          type TEXT NOT NULL CHECK(type IN ('txt2img','img2img','txt2video','img2video','tts','txt2music','voice2voice','remix_analyze','remix_replace','remix_master')),
+          required_model TEXT NOT NULL,
+          target_node TEXT NOT NULL CHECK(target_node IN ('mac-mini','m2-pro','local')),
           payload TEXT NOT NULL,
           status TEXT NOT NULL DEFAULT 'pending'
             CHECK(status IN ('pending','dispatched','processing','complete','failed')),
@@ -144,7 +250,7 @@ export class MediaQueueRepository {
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS media_assets (
         id TEXT PRIMARY KEY,
-        type TEXT NOT NULL CHECK(type IN ('image','video','audio')),
+        type TEXT NOT NULL CHECK(type IN ('image','video','audio','scene')),
         filename TEXT NOT NULL,
         file_path TEXT NOT NULL,
         mime_type TEXT NOT NULL,
@@ -179,8 +285,8 @@ export class MediaQueueRepository {
         "SELECT sql FROM sqlite_master WHERE type='table' AND name='media_assets'"
       ).get() as { sql: string } | undefined;
       if (!row) return false;
-      // Rebuild if the old CHECK doesn't include 'ingested' or columns are missing
-      return !row.sql.includes("'ingested'") || !row.sql.includes("source_url") || !row.sql.includes("artist");
+      // Rebuild if the old CHECK doesn't include 'ingested' or 'scene', or columns are missing
+      return !row.sql.includes("'ingested'") || !row.sql.includes("source_url") || !row.sql.includes("artist") || !row.sql.includes("'scene'");
     })();
 
     if (needsRebuild) {
@@ -189,7 +295,7 @@ export class MediaQueueRepository {
         ALTER TABLE media_assets RENAME TO media_assets_old;
         CREATE TABLE media_assets (
           id TEXT PRIMARY KEY,
-          type TEXT NOT NULL CHECK(type IN ('image','video','audio')),
+          type TEXT NOT NULL CHECK(type IN ('image','video','audio','scene')),
           filename TEXT NOT NULL,
           file_path TEXT NOT NULL,
           mime_type TEXT NOT NULL,
@@ -401,7 +507,7 @@ export class MediaQueueRepository {
   // ── Media Assets CRUD ─────────────────────────────────────
 
   createAsset(input: {
-    type: "image" | "video" | "audio";
+    type: "image" | "video" | "audio" | "scene";
     filename: string;
     filePath: string;
     mimeType: string;
@@ -474,5 +580,11 @@ export class MediaQueueRepository {
     const now = this.clock().toISOString();
     this.db.prepare("UPDATE media_assets SET tags = ?, updated_at = ? WHERE id = ?")
       .run(JSON.stringify(tags), now, id);
+  }
+
+  renameAsset(id: string, newFilename: string): boolean {
+    const now = this.clock().toISOString();
+    return this.db.prepare("UPDATE media_assets SET filename = ?, updated_at = ? WHERE id = ?")
+      .run(newFilename, now, id).changes > 0;
   }
 }

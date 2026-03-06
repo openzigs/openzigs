@@ -468,7 +468,7 @@ describe("Queue API router", () => {
       const { app } = buildApp();
       const res = await request(app).post("/q/jobs").send({ type: "txt2img" });
       expect(res.status).toBe(400);
-      expect(res.body.error).toContain("payload.prompt");
+      expect(res.body.error).toContain("payload");
     });
 
     it("accepts img2video with valid frame count", async () => {

@@ -9,6 +9,7 @@ import { PlayerPreview } from "./player-preview";
 import { SceneInspector } from "./scene-inspector";
 import { CaptionStylePanel } from "./caption-style-panel";
 import { TimelineTracks } from "./timeline-tracks";
+import { AudioManager } from "./audio-manager";
 import { Plus } from "lucide-react";
 import type {
   DraftFull,
@@ -207,6 +208,100 @@ export function StudioLayout({ draftId }: { draftId: string }) {
   const hasIntro = draft?.manifest?.timeline?.some((e) => e.type === "intro_card") ?? false;
   const hasOutro = draft?.manifest?.timeline?.some((e) => e.type === "outro_card") ?? false;
 
+  const handleAddScene = useCallback(() => {
+    if (!draft?.manifest) return;
+    const fps = draft.manifest.composition?.fps ?? 30;
+    const timeline = draft.manifest.timeline ?? [];
+    const sceneDuration = fps * 3; // 3 seconds default
+
+    // Insert after the currently selected scene, or at the end of scenes
+    const visualTypes = new Set(["image_scene", "video_clip"]);
+    let insertAfterIdx = -1;
+    if (inspector.sceneIndex !== null) {
+      let sceneCount = 0;
+      for (let i = 0; i < timeline.length; i++) {
+        if (visualTypes.has(timeline[i].type)) {
+          if (sceneCount === inspector.sceneIndex) {
+            insertAfterIdx = i;
+            break;
+          }
+          sceneCount++;
+        }
+      }
+    }
+    if (insertAfterIdx < 0) {
+      // Find last visual scene
+      for (let i = timeline.length - 1; i >= 0; i--) {
+        if (visualTypes.has(timeline[i].type)) { insertAfterIdx = i; break; }
+      }
+    }
+
+    const insertAt = insertAfterIdx >= 0 ? insertAfterIdx + 1 : timeline.length;
+    const prevEnd = insertAfterIdx >= 0
+      ? (timeline[insertAfterIdx].startAtFrame ?? 0) + (timeline[insertAfterIdx].duration ?? timeline[insertAfterIdx].durationInFrames ?? fps * 3)
+      : 0;
+
+    const newScene: TimelineEntry = {
+      type: "image_scene",
+      title: "New Scene",
+      scriptText: "",
+      startAtFrame: prevEnd,
+      duration: sceneDuration,
+    };
+
+    const updated = [...timeline];
+    updated.splice(insertAt, 0, newScene);
+
+    // Recalculate startAtFrame for entries after the insertion
+    let frame = 0;
+    for (const entry of updated) {
+      entry.startAtFrame = frame;
+      frame += entry.duration ?? entry.durationInFrames ?? fps * 3;
+    }
+
+    handleManifestUpdate({ ...draft.manifest, timeline: updated });
+  }, [draft, inspector.sceneIndex, handleManifestUpdate]);
+
+  const handleDeleteScene = useCallback(
+    (sceneIndex: number) => {
+      if (!draft?.manifest) return;
+      const fps = draft.manifest.composition?.fps ?? 30;
+      const timeline = draft.manifest.timeline ?? [];
+      const visualTypes = new Set(["image_scene", "video_clip"]);
+
+      let targetIdx = -1;
+      let sceneCount = 0;
+      for (let i = 0; i < timeline.length; i++) {
+        if (visualTypes.has(timeline[i].type)) {
+          if (sceneCount === sceneIndex) { targetIdx = i; break; }
+          sceneCount++;
+        }
+      }
+      if (targetIdx < 0) return;
+
+      const updated = timeline.filter((_, i) => i !== targetIdx);
+
+      // Recalculate startAtFrame
+      let frame = 0;
+      for (const entry of updated) {
+        entry.startAtFrame = frame;
+        frame += entry.duration ?? entry.durationInFrames ?? fps * 3;
+      }
+
+      handleManifestUpdate({ ...draft.manifest, timeline: updated });
+      // Clear inspector if deleted scene was selected
+      if (inspector.sceneIndex === sceneIndex) {
+        setInspector({ sceneIndex: null, entry: null });
+      } else if (inspector.sceneIndex !== null && inspector.sceneIndex > sceneIndex) {
+        setInspector((prev) => ({
+          sceneIndex: (prev.sceneIndex ?? 1) - 1,
+          entry: prev.entry,
+        }));
+      }
+    },
+    [draft, inspector.sceneIndex, handleManifestUpdate],
+  );
+
   const handleAddIntro = useCallback(() => {
     if (!draft?.manifest || hasIntro) return;
     const fps = draft.manifest.composition?.fps ?? 30;
@@ -313,6 +408,39 @@ export function StudioLayout({ draftId }: { draftId: string }) {
     playerRef.current?.seekTo(frame);
   }, []);
 
+  const handleReorderScenes = useCallback(
+    (fromIndex: number, toIndex: number) => {
+      if (!draft?.manifest) return;
+      const timeline = draft.manifest.timeline ?? [];
+      const fps = draft.manifest.composition?.fps ?? 30;
+
+      // Collect visual scene timeline indices
+      const visualTypes = new Set(["image_scene", "video_clip", "title_card", "intro_card", "outro_card"]);
+      const sceneIndices: number[] = [];
+      for (let i = 0; i < timeline.length; i++) {
+        if (visualTypes.has(timeline[i].type)) sceneIndices.push(i);
+      }
+      if (fromIndex < 0 || fromIndex >= sceneIndices.length || toIndex < 0 || toIndex >= sceneIndices.length) return;
+
+      const updated = [...timeline];
+      const fromTlIdx = sceneIndices[fromIndex];
+      const toTlIdx = sceneIndices[toIndex];
+      const [moved] = updated.splice(fromTlIdx, 1);
+      const insertAt = toTlIdx > fromTlIdx ? toTlIdx : toTlIdx;
+      updated.splice(insertAt, 0, moved);
+
+      // Recalculate startAtFrame for all entries
+      let frame = 0;
+      for (const entry of updated) {
+        entry.startAtFrame = frame;
+        frame += entry.duration ?? entry.durationInFrames ?? fps * 3;
+      }
+
+      handleManifestUpdate({ ...draft.manifest, timeline: updated });
+    },
+    [draft, handleManifestUpdate],
+  );
+
   const totalFrames = draft?.manifest?.timeline
     ? draft.manifest.timeline.reduce((max: number, e: TimelineEntry) => {
         const end = (e.startAtFrame ?? 0) + (e.duration ?? e.durationInFrames ?? 0);
@@ -391,6 +519,7 @@ export function StudioLayout({ draftId }: { draftId: string }) {
             manifest={draft.manifest}
             draftId={draftId}
             onManifestUpdate={handleManifestUpdate}
+            onDeleteScene={handleDeleteScene}
           />
 
           {/* Global caption settings */}
@@ -399,6 +528,34 @@ export function StudioLayout({ draftId }: { draftId: string }) {
               <CaptionStylePanel
                 manifest={draft.manifest}
                 onManifestUpdate={handleManifestUpdate}
+              />
+            </div>
+          )}
+
+          {/* Audio / Music management */}
+          {draft.manifest && (
+            <div className="mt-4">
+              <AudioManager
+                music={draft.manifest.audioLayer?.music ? {
+                  track: draft.manifest.audioLayer.music.track ?? "",
+                  volume: draft.manifest.audioLayer.music.volume ?? 0.3,
+                  loop: draft.manifest.audioLayer.music.loop ?? true,
+                } : null}
+                onMusicChange={(music) => {
+                  if (!draft.manifest) return;
+                  handleManifestUpdate({
+                    ...draft.manifest,
+                    audioLayer: {
+                      ...draft.manifest.audioLayer,
+                      music: music ? {
+                        track: music.track,
+                        volume: music.volume,
+                        loop: music.loop,
+                      } : null,
+                    },
+                  });
+                }}
+                fps={draft.manifest.composition?.fps ?? 30}
               />
             </div>
           )}
@@ -426,6 +583,14 @@ export function StudioLayout({ draftId }: { draftId: string }) {
             <Plus className="h-3 w-3" />
             {hasOutro ? "Outro added" : "Add Outro"}
           </button>
+          <div className="mx-1 h-4 w-px bg-border" />
+          <button
+            onClick={handleAddScene}
+            className="flex items-center gap-1 rounded px-2 py-0.5 text-[11px] font-medium text-blue-600 hover:bg-blue-500/10 transition"
+          >
+            <Plus className="h-3 w-3" />
+            Add Scene
+          </button>
         </div>
         <TimelineTracks
           tracks={tracks}
@@ -435,6 +600,7 @@ export function StudioLayout({ draftId }: { draftId: string }) {
           onSelectScene={handleSelectScene}
           onSeek={handleSeek}
           manifest={draft.manifest}
+          onReorderScenes={handleReorderScenes}
         />
       </div>
     </div>

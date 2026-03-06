@@ -392,6 +392,76 @@ Internet → Cloudflare Edge → cloudflared sidecar → http://agent:3000 (Dock
 
 ---
 
+## Python AI Sidecars
+
+OpenZigs ships with a suite of optional **local Python FastAPI services** that run as separate processes on the host machine (not inside Docker). All sidecars are optimised for **Apple Silicon (MLX / Metal)** and communicate with the agent over localhost HTTP.
+
+Sidecars are selected at install time and can be added later by re-running `install.sh`.
+
+### Sidecar Reference
+
+| Sidecar | Port | Key Models / Stack | ~Disk | Python | Features |
+|---|---|---|---|---|---|
+| **audio** | 5006 | lightning-whisper-mlx (distil-large-v3), mlx-audio (Kokoro-82M) | ~2 GB | 3.10+ | Whisper STT, Kokoro TTS, Voice input/output |
+| **image-gen** | 5005 | MFLUX ≥ 0.16.1, Flux.1 Schnell / Dev | ~20–23 GB per model | 3.10+ | AI image generation, LoRA (DreamBooth), ControlNet (Canny/Depth) |
+| **music** | 5009 | ACE-Step 1.5 (Apple Silicon fork) via `uv` | ~10–15 GB | **3.11.x only** | AI music generation from text + lyrics |
+| **music-studio** | 5010 | PyTorch (MPS), Demucs v4, Seed-VC, matchering | ~5 GB | 3.10+ | Stem separation, Voice-to-Voice, AI Remix Lab, mastering |
+| **worker** | 5007 | mlx, mlx-video (GitHub) | ~10 GB | 3.10+ | LTX-Video generation (M2 Pro+ recommended, 32+ GB RAM) |
+| **GPT-SoVITS** | dynamic | GPT-SoVITS (via `scripts/setup-gptsovits.sh`) | ~4 GB | bundled | Voice cloning Engine B — custom voice models from short clips |
+
+> **Note:** `music` requires Python **3.11.x exactly** plus the `uv` package manager and a separate clone of [`clockworksquirrel/ace-step-apple-silicon`](https://github.com/clockworksquirrel/ace-step-apple-silicon). `music-studio` requires system packages `ffmpeg` and `fluidsynth` (`brew install ffmpeg fluidsynth`).
+
+### Feature-to-Sidecar Mapping
+
+| UI Feature / Tool | Required Sidecar |
+|---|---|
+| Voice input (mic → transcription) | audio (5006) |
+| Text-to-Speech output | audio (5006) |
+| AI image generation | image-gen (5005) |
+| Flux.1 LoRA / ControlNet | image-gen (5005) |
+| AI music from text / lyrics | music (5009) |
+| Stem separation (vocals / drums / bass / other) | music-studio (5010) |
+| Voice-to-Voice conversion | music-studio (5010) |
+| AI Remix Lab (instrument replace, FX, mastering) | music-studio (5010) |
+| Video generation | worker (5007) |
+| Voice cloning (Engine B) | GPT-SoVITS |
+
+### System Diagram — AI Sidecar Layer
+
+```
+┌─────────────────── Host Machine (Apple Silicon) ──────────────────────┐
+│                                                                        │
+│  ┌─────────────────────────────────────────────────────────────────┐  │
+│  │  Docker Compose Network                                         │  │
+│  │  agent:3000  ─── postgres ─── redis ─── cloudflared            │  │
+│  └──────────────────────┬──────────────────────────────────────────┘  │
+│                         │ localhost HTTP                              │
+│         ┌───────────────┼───────────────┐                            │
+│         ▼               ▼               ▼                            │
+│  ┌─────────────┐ ┌─────────────┐ ┌─────────────┐                    │
+│  │ audio :5006 │ │ image-gen   │ │ worker :5007│                    │
+│  │ Whisper STT │ │ :5005       │ │ LTX-Video   │                    │
+│  │ Kokoro TTS  │ │ MFLUX/Flux.1│ │ MLX-Video   │                    │
+│  └─────────────┘ └─────────────┘ └─────────────┘                    │
+│                                                                        │
+│  ┌─────────────────────┐   ┌─────────────────────┐                   │
+│  │ music :5009         │   │ music-studio :5010   │                   │
+│  │ ACE-Step 1.5        │   │ Demucs + Seed-VC     │                   │
+│  │ Python 3.11.x + uv  │   │ Remix Lab + mastering│                   │
+│  └─────────────────────┘   └─────────────────────┘                   │
+│                                                                        │
+│  ┌─────────────────────────────────────────────────┐                  │
+│  │ GPT-SoVITS  (~/.openzigs/sidecars/gptsovits/)   │                  │
+│  │ Voice cloning Engine B                          │                  │
+│  │ Installed via scripts/setup-gptsovits.sh        │                  │
+│  └─────────────────────────────────────────────────┘                  │
+└────────────────────────────────────────────────────────────────────────┘
+```
+
+All sidecars are stateless HTTP servers. The agent's MCP tool layer routes capability requests (`generate-image`, `transcribe-audio`, `generate-music`, `voice-convert`, `separate-stems`) to the appropriate sidecar via the tool registry (`src/mcp/tool-registry.ts`).
+
+---
+
 ## MCP Host Architecture
 
 OpenZigs acts as an **MCP Host** — it orchestrates multiple external MCP servers to extend its capabilities beyond built-in tools.
@@ -4073,7 +4143,7 @@ Generates stylized YouTube thumbnails for rendered videos:
 
 ## Distributed Media Queue, Worker Nodes & Asset Gallery (Epic #325)
 
-A **push-based media generation queue** that routes image, video, and music jobs to VRAM-aware worker nodes, persists results as gallery assets, and exposes a full-featured UI for browsing, creating, and managing media assets.
+A **push-based media generation queue** that routes image, video, music, and voice conversion jobs to VRAM-aware worker nodes, persists results as gallery assets, and exposes a full-featured UI for browsing, creating, and managing media assets.
 
 ### Architecture
 
@@ -4082,7 +4152,7 @@ graph TB
     subgraph UI["Gallery UI (Next.js)"]
         STATS[Queue Stats Bar<br/>Pending · Dispatched · Processing · Complete · Failed]
         GRID[Asset Grid<br/>Type/Source Filters · Lightbox Preview]
-        STUDIO[Gallery Studio<br/>5 modes: txt2img · img2img · txt2video · img2video · txt2music]
+        STUDIO[Gallery Studio<br/>6 modes: txt2img · img2img · txt2video · img2video · txt2music · voice2voice]
     end
 
     subgraph Backend["Express Server"]
@@ -4095,6 +4165,7 @@ graph TB
         MINI[Mac Mini<br/>FLUX.1 (Schnell)<br/>:5005]
         M2PRO[M2 Pro Sidecar<br/>LTX-2 (8-bit MLX)<br/>:5007]
         MUSIC[Music Sidecar<br/>ACE-Step 1.5<br/>:5009]
+        V2V[Music Studio Sidecar<br/>Demucs + RVC v2 + Remix<br/>:5010]
     end
 
     STUDIO -->|POST /api/queue/jobs| QAPI
@@ -4103,9 +4174,12 @@ graph TB
     QM -->|POST /generate| MINI
     QM -->|POST /generate| M2PRO
     QM -->|POST /generate| MUSIC
+    QM -->|POST /generate| V2V
     MINI -->|POST /api/queue/complete| QAPI
     M2PRO -->|POST /api/queue/complete| QAPI
     MUSIC -->|POST /api/queue/complete| QAPI
+    V2V -->|POST /api/queue/complete| QAPI
+    V2V -->|POST /api/queue/progress| QAPI
     GRID -->|GET /api/queue/assets| QAPI
 
     style UI fill:#0d2137,stroke:#16213e,color:#fff
@@ -4124,6 +4198,7 @@ Push-based orchestrator that polls pending jobs on a configurable tick interval 
 | `txt2video` | `m2-pro` | `ltx-2` | 768×512 |
 | `img2video` | `m2-pro` | `ltx-2` | 768×512 |
 | `txt2music` | `music` (independent) | `ace-step` | 30s duration |
+| `voice2voice` | `music-studio` (independent) | `rvc-v2` | — |
 
 **Dispatch flow:**
 1. `tick()` queries `getPendingByNode(node)` → oldest pending job
@@ -4133,9 +4208,11 @@ Push-based orchestrator that polls pending jobs on a configurable tick interval 
 
 **Music jobs** are dispatched independently of the M2 Pro VRAM coordination — the music sidecar runs on its own process (port 5009) and has a dedicated `processMusicJobs()` tick. For local sidecars (URL is `localhost`/`127.0.0.1`), the callback URL is rewritten to use `localhost` instead of the LAN IP to avoid network timeouts.
 
+**Voice2Voice jobs** use the Music Studio sidecar (port 5010) — a FastAPI service that orchestrates a 3-stage pipeline: (1) Demucs v4 stem separation, (2) RVC v2 voice conversion, (3) pydub mixdown. The sidecar reports granular progress via `POST /api/queue/progress`, which the QueueMaster re-emits as `job:progress` Socket.IO events for real-time UI updates. The sidecar has its own `processMusicStudioJobs()` tick and independent busy state.
+
 **Stale result recovery:** `pollForStaleResults()` runs every tick and checks dispatched jobs older than 3 minutes. For each stale job, it polls the worker's `/job-result/<id>` endpoint. If the result is available, it's processed as if the callback had arrived — this recovers jobs where the callback POST failed.
 
-**Events:** `job:dispatched`, `job:complete`, `job:failed`, `project:complete`
+**Events:** `job:dispatched`, `job:complete`, `job:failed`, `job:progress`, `project:complete`
 
 ### Media Queue Repository (`src/queue/media-queue-repository.ts`)
 
@@ -4346,7 +4423,7 @@ The Gallery page at `/gallery` provides:
 - **Asset Grid** — Filterable by type (Images, Videos, Audio) and source (Generated, Uploaded, Director). Each asset card shows thumbnail, metadata overlay, and action buttons (preview, download, tag, delete)
 - **Preview Lightbox** — Full-screen modal for viewing images and playing videos
 - **Gallery Studio** — Inline asset creation panel with 5 modes:
-  - **Text → Image** — Prompt, dimensions, steps, guidance, seed
+  - **Text → Image** — Prompt, dimensions, steps, guidance, seed, character (LoRA) dropdown, ControlNet strength
   - **Image → Image** — Upload source image + prompt + strength slider
   - **Text → Video** — Prompt, frames (max 97), FPS, computed duration (4s cinematic B-roll badge)
   - **Image → Video** — Upload source image + motion prompt (4s cinematic B-roll badge)
@@ -4358,5 +4435,266 @@ The Gallery page at `/gallery` provides:
 | Route | Component | Purpose |
 |---|---|---|
 | `/gallery` | `gallery/page.tsx` | Asset Gallery + Gallery Studio |
+| `/music-studio` | `music-studio/page.tsx` | AI Music Studio — Voice2Voice pipeline + Smart Remix Lab with DAW waveform view |
 
-### Tracking: [Epic #325](https://github.com/mgcronin/openzigs/issues/325), [Epic #335](https://github.com/mgcronin/openzigs/issues/335)
+### Tracking: [Epic #325](https://github.com/mgcronin/openzigs/issues/325), [Epic #335](https://github.com/mgcronin/openzigs/issues/335), [Epic #380](https://github.com/mgcronin/openzigs/issues/380), [Epic #389](https://github.com/mgcronin/openzigs/issues/389)
+
+## Music Studio — Voice2Voice Pipeline & Smart Remix Lab (Epic #380, #389, #402)
+
+### Overview
+
+The Music Studio extends the Gallery's media generation capabilities with a full **voice-to-voice conversion pipeline**. Users select a source audio track from the gallery, choose a voice reference clip, adjust pitch and mix parameters, and submit a `voice2voice` queue job. The pipeline runs in 3 stages on a dedicated FastAPI sidecar (port 5010):
+
+1. **Stem Separation** (Demucs v4) — Separates vocals from instrumentals using Meta's `htdemucs_ft` model
+2. **Voice Conversion** (Seed-VC) — Zero-shot voice conversion using a short reference audio clip (1–25 seconds). Supports both singing (44.1 kHz, F0-conditioned) and speech (22 kHz) modes. Models auto-download from HuggingFace (`Plachta/Seed-VC`).
+3. **Final Mixdown** (pydub) — Recombines converted vocals with the instrumental stem, with volume controls and normalization
+
+### Voice Reference System
+
+Voice references are short audio clips (1–25 seconds) that define the target voice timbre. The sidecar provides full CRUD:
+
+| Endpoint | Method | Description |
+|---|---|---|
+| `/voice-references` | GET | List all references (id, name, duration, created) |
+| `/voice-references/upload` | POST | Upload + auto-trim/normalize reference audio |
+| `/voice-references/{id}` | GET | Get reference metadata |
+| `/voice-references/{id}/audio` | GET | Stream reference audio file |
+| `/voice-references/{id}` | PATCH | Rename reference |
+| `/voice-references/{id}` | DELETE | Delete reference + audio file |
+
+References are stored at `~/.openzigs/voice-references/{uuid}/` with metadata JSON + audio file.
+
+### Architecture
+
+```mermaid
+graph LR
+    UI[Music Studio UI<br/>wavesurfer.js DAW] -->|POST /api/queue/jobs<br/>type: voice2voice| QM[QueueMaster]
+    QM -->|POST /generate| SIDECAR[Music Studio Sidecar<br/>FastAPI :5010]
+    SIDECAR -->|Stage 1| DEMUCS[Demucs v4<br/>Stem Separation]
+    DEMUCS --> SEEDVC[Seed-VC<br/>Zero-Shot Voice Conversion]
+    SEEDVC --> MIX[pydub<br/>Final Mixdown]
+    SIDECAR -->|POST /progress| QAPI[Queue API]
+    QAPI -->|Socket.IO| UI
+    SIDECAR -->|POST /complete| QAPI
+```
+
+### Web Audio Effects Chain
+
+The EffectsRack UI connects to a real-time Web Audio processing chain via the `useAudioEffectsChain` hook:
+
+```
+Source → 10-Band EQ → StereoPanner → Compressor → Distortion → [Dry + Reverb] → Master → Destination
+```
+
+| Node | Type | Description |
+|---|---|---|
+| 10-Band EQ | BiquadFilterNode × 10 | Low shelf + 8 peaking + high shelf |
+| Stereo Pan | StereoPannerNode | Full L/R placement |
+| Compressor | DynamicsCompressorNode | Threshold, ratio, attack, release |
+| Distortion | WaveShaperNode | Adjustable curve amount |
+| Reverb | ConvolverNode | Synthetic impulse response with wet/dry mix |
+| Master | GainNode | Output volume control |
+
+Effects are updated in real-time via React state → `useEffect` parameter sync.
+
+### Components
+
+| Component | Path | Description |
+|---|---|---|
+| Queue Types | `src/queue/types.ts` | `voice2voice` job type, V2V payload fields, `musicStudio` config |
+| Queue Master | `src/queue/queue-master.ts` | `processMusicStudioJobs()`, `dispatchMusicStudioJob()`, `reportProgress()` |
+| Queue API | `src/api/queue.ts` | `POST /progress` webhook for granular pipeline updates |
+| Socket.IO | `src/server.ts` | `queue:job:progress` event broadcast |
+| Music Studio Page | `ui/app/music-studio/page.tsx` | Main page with waveform DAW, control panel, pipeline status |
+| WaveformTrack | `ui/components/music-studio/WaveformTrack.tsx` | wavesurfer.js v7 single-track waveform with Timeline and Hover plugins |
+| MultiTrackView | `ui/components/music-studio/MultiTrackView.tsx` | Multi-track DAW with transport controls, per-track mute/remove |
+| EffectsRack | `ui/components/music-studio/EffectsRack.tsx` | 10-band EQ, reverb, stereo pan, playback speed, compressor, distortion |
+| useAudioEffectsChain | `ui/hooks/useAudioEffectsChain.ts` | Web Audio API real-time effects chain hook |
+| SpectrogramView | `ui/components/music-studio/SpectrogramView.tsx` | FFT-based frequency spectrogram visualization |
+| ControlPanel | `ui/components/music-studio/ControlPanel.tsx` | Voice reference selection, mode toggle, pitch, mix parameters |
+| PipelineStatus | `ui/components/music-studio/PipelineStatus.tsx` | Real-time 3-stage progress visualization |
+| Sidecar Server | `sidecars/music-studio/server.py` | FastAPI orchestrator (port 5010) with voice reference CRUD |
+| Stem Separation | `sidecars/music-studio/extract_vocals.py` | Demucs v4 vocal/instrumental separation |
+| Voice Conversion | `sidecars/music-studio/apply_seedvc.py` | Seed-VC zero-shot voice conversion wrapper |
+| Mixdown | `sidecars/music-studio/mix_audio.py` | pydub vocal + instrumental mixdown |
+| Admin Proxy | `src/api/admin.ts` | Voice reference proxy routes to sidecar |
+
+### Smart Remix Lab Pipeline (Epic #389, #402)
+
+The Smart Remix Lab extends the Music Studio with an AI-powered remix pipeline that enables zero-experience users to upload a song, split it into 6 stems, selectively replace instruments while preserving melody, apply vibe presets, and auto-master the final track. Mastered tracks can be saved back to the gallery.
+
+#### Remix Pipeline Stages
+
+1. **6-Stem Separation** (Demucs `htdemucs_6s`) — Splits audio into vocals, bass, drums, guitar, piano, other
+2. **Audio Analysis** (librosa) — BPM detection and musical key estimation (Krumhansl-Schmuckler)
+3. **Instrument Replacement** (basic-pitch → pyfluidsynth → pedalboard) — Converts stem audio to MIDI via ML, re-synthesizes through SoundFont (.sf2), applies DSP effects
+4. **Vibe Mixing** (smart_mix.py) — Applies preset EQ/compression/reverb profiles with automatic headroom gain staging (−3 dB per doubling of active stems)
+5. **Auto-Mastering** (finalize.py) — Masters using matchering (reference-based) or ITU-R BS.1770 LUFS normalization via pyloudnorm (fallback to −14 LUFS) with brick-wall limiter
+
+#### Architecture
+
+```mermaid
+graph LR
+    UI[SmartRemixLab UI<br/>Tab in Music Studio] -->|POST /api/queue/jobs<br/>type: remix_analyze| QM[QueueMaster]
+    UI -->|POST /api/queue/jobs<br/>type: remix_replace| QM
+    UI -->|POST /api/queue/jobs<br/>type: remix_master| QM
+    QM -->|POST /remix/analyze| SC[Music Studio Sidecar<br/>FastAPI :5010]
+    QM -->|POST /remix/replace-stem| SC
+    QM -->|POST /remix/master| SC
+    SC -->|analyze| DEMUCS6[Demucs htdemucs_6s<br/>6-Stem Split]
+    SC -->|replace| BP[basic-pitch → MIDI<br/>pyfluidsynth → Audio<br/>pedalboard → DSP]
+    SC -->|master| PYLOUD[pyloudnorm ITU-R BS.1770<br/>LUFS Normalization]
+    SC -->|POST /progress| QAPI[Queue API]
+    QAPI -->|Socket.IO| UI
+    SC -->|POST /complete| QAPI
+```
+
+#### Queue Job Types
+
+| Job Type | Model | Sidecar Endpoint | Description |
+|---|---|---|---|
+| `remix_analyze` | `htdemucs_6s` | `POST /remix/analyze` | 6-stem separation + BPM/key analysis |
+| `remix_replace` | `basic-pitch` | `POST /remix/replace-stem` | Melody-preserving instrument replacement |
+| `remix_master` | `matchering` | `POST /remix/master` | Auto-mastering with reference track |
+
+All remix job types route to `m2-pro` via `targetNodeForJobType()`. Remix jobs reuse the existing `MediaQueueRepository` and `QueueMaster` infrastructure — they are dispatched via the extended `processMusicStudioJobs()` method which delegates to `dispatchRemixJob()`.
+
+#### Melody Preservation Engine
+
+The instrument replacement pipeline preserves the original melody through a 4-step process:
+
+1. **Audio → MIDI** — `basic-pitch` (Spotify ML model) extracts pitch, onset, and duration from the source stem
+2. **Velocity Normalization** — MIDI note velocities are normalized to a consistent range
+3. **MIDI → Audio** — `pyfluidsynth` renders the MIDI through a SoundFont (.sf2) instrument sample
+4. **DSP Post-processing** — `pedalboard` applies gain staging, EQ, reverb, and limiter to match the original stem's character
+
+SoundFonts are loaded from `~/.openzigs/soundfonts/` and mapped by instrument ID (e.g., `electric_guitar`, `synth_pad`, `brass`).
+
+#### Components (Remix-specific)
+
+| Component | Path | Description |
+|---|---|---|
+| SmartRemixLab UI | `ui/components/music-studio/SmartRemixLab.tsx` | Full remix UI: analysis, stem dashboard, replace modal, vibe panel, mastering, gallery save |
+| Track Analyzer | `sidecars/music-studio/analyze_track.py` | 6-stem Demucs split + librosa BPM/key detection |
+| Instrument Replacer | `sidecars/music-studio/replace_instrument.py` | basic-pitch → MIDI → pyfluidsynth → pedalboard pipeline |
+| Vibe Mixer | `sidecars/music-studio/smart_mix.py` | 4 vibe presets with headroom gain staging (−3 dB/doubling) |
+| Auto-Mastering | `sidecars/music-studio/finalize.py` | pyloudnorm ITU-R BS.1770 LUFS −14 normalization + brick-wall limiter |
+| Sidecar Endpoints | `sidecars/music-studio/server.py` | `/remix/analyze`, `/remix/replace-stem`, `/remix/master`, voice reference CRUD |
+
+### Tracking: [Epic #380](https://github.com/mgcronin/openzigs/issues/380), [Epic #389](https://github.com/mgcronin/openzigs/issues/389), [Epic #402](https://github.com/mgcronin/openzigs/issues/402)
+
+## Character Lab — LoRA Training & Identity Consistency (Epic #374)
+
+### Overview
+
+The Character Lab provides a complete pipeline for creating persistent character identities using LoRA (Low-Rank Adaptation) fine-tuning. Characters are trained from reference photos using DreamBooth, producing compact LoRA adapters that can be injected into any Flux image generation for consistent identity across shots.
+
+### Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                      Character Lab UI                           │
+│                    /characters (Next.js)                         │
+│  ┌─────────────┐  ┌──────────────────┐  ┌────────────────────┐ │
+│  │ Character    │  │ Detail Panel     │  │ Training Controls  │ │
+│  │ List         │  │ (photos, scale)  │  │ (steps, LR, rank) │ │
+│  └──────┬──────┘  └────────┬─────────┘  └─────────┬──────────┘ │
+└─────────┼──────────────────┼──────────────────────┼────────────┘
+          │                  │                      │
+          ▼                  ▼                      ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                  Characters API Router                          │
+│            /api/characters (Express.js)                          │
+│  CRUD  │  Photo Upload (multer)  │  Training (mflux-train)     │
+└────────┼─────────────────────────┼──────────────────────────────┘
+         │                         │
+         ▼                         ▼
+┌──────────────────┐    ┌────────────────────────────────────────┐
+│ CharacterRepo    │    │ Image Gen Sidecar (FastAPI, port 5005) │
+│ (SQLite)         │    │ ├─ /generate      (LoRA-aware)         │
+│ character_       │    │ ├─ /generate-controlnet (Canny/Depth)  │
+│   profiles       │    │ ├─ /train         (DreamBooth)         │
+│                  │    │ └─ /train-status                       │
+└──────────────────┘    └────────────────────────────────────────┘
+```
+
+### Data Model
+
+**Table: `character_profiles`** (SQLite, `~/.openzigs/openzigs.db`)
+
+| Column | Type | Description |
+|---|---|---|
+| `id` | TEXT PK | UUID |
+| `name` | TEXT UNIQUE | Human-readable character name |
+| `trigger_word` | TEXT | Unique token for prompt activation (e.g., `ALICE_TOK`) |
+| `reference_photos` | TEXT (JSON) | Array of photo filenames |
+| `trained_lora_path` | TEXT | Path to trained `.safetensors` LoRA adapter |
+| `lora_scale` | REAL | LoRA injection strength (0.1–1.5) |
+| `training_config` | TEXT (JSON) | Training hyperparameters (steps, LR, rank) |
+| `status` | TEXT | `pending` \| `training` \| `ready` \| `failed` |
+| `error_message` | TEXT | Error details if training failed |
+| `created_at` | TEXT | ISO 8601 timestamp |
+| `updated_at` | TEXT | ISO 8601 timestamp |
+
+**Repository:** `src/characters/character-repository.ts` — full CRUD with `migrate()`, type exports for `CharacterProfile` and `CharacterStatus`.
+
+### File Layout
+
+```
+~/.openzigs/characters/
+  └─ {character-id}/
+     ├─ photos/          # Reference photos (JPEG/PNG/WebP)
+     ├─ lora/            # Trained LoRA adapter (.safetensors)
+     └─ train-config.json  # DreamBooth training configuration
+```
+
+### API Endpoints
+
+**Router:** `src/api/characters.ts`, mounted at `/api/characters` with auth middleware.
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/` | List all characters |
+| `GET` | `/:id` | Get character by ID |
+| `POST` | `/` | Create character (name, triggerWord, loraScale) |
+| `PUT` | `/:id` | Update character (name, triggerWord, loraScale) |
+| `DELETE` | `/:id` | Delete character + all files |
+| `POST` | `/:id/photos` | Upload reference photos (multer, max 20 files, 20MB each) |
+| `GET` | `/:id/photos/:filename` | Serve a reference photo (path traversal protected) |
+| `DELETE` | `/:id/photos` | Delete all photos for a character |
+| `POST` | `/:id/train` | Start LoRA training (requires ≥5 photos) |
+
+### Image Gen Sidecar Extensions
+
+The MFLUX sidecar (`sidecars/image-gen/server.py`) was extended with:
+
+- **LoRA-aware model loading** — `Flux1.from_name()` accepts `lora_paths` and `lora_scales`. The model is reloaded when LoRA configuration changes.
+- **`/generate-controlnet`** — ControlNet generation with Canny or Depth control types. Supports LoRA injection alongside ControlNet.
+- **`/train`** — Spawns `mflux-train` subprocess for DreamBooth training. Accepts config JSON with `instance_prompt`, `instance_images_dir`, `lora_rank`, `learning_rate`, `num_steps`, `output_dir`.
+- **`/train-status`** — Returns current training state and process status.
+
+### ImageGenService Integration
+
+`src/video/generators/image-gen-service.ts` — `ImageGenOptions` extended with:
+- `loraPaths?: string[]` — Paths to LoRA `.safetensors` files
+- `loraScales?: number[]` — Per-LoRA injection strengths
+- `controlnetImagePath?: string` — Path to ControlNet reference image
+- `controlnetStrength?: number` — ControlNet conditioning strength
+- `controlType?: "canny" | "depth"` — ControlNet type
+
+`generateLocal()` auto-dispatches to `/generate-controlnet` when ControlNet params are present.
+
+### Gallery Studio Integration
+
+The Gallery Studio (`ui/app/gallery/page.tsx`) adds:
+- **Character dropdown** — Lists all "ready" characters, conditionally rendered when trained characters exist
+- **ControlNet Strength slider** — Appears when a character is selected (0–1 range)
+- **Payload injection** — Automatically includes `lora_paths`, `lora_scales`, and `controlnet_strength` in the job payload when a character is selected
+
+### Route Map Update
+
+| Route | Component | Purpose |
+|---|---|---|
+| `/characters` | `characters/page.tsx` | Character Lab (CRUD, photos, training) |
+
+### Tracking: [Epic #374](https://github.com/mgcronin/openzigs/issues/374)

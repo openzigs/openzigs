@@ -49,13 +49,19 @@ await new Promise((resolve) => {
 const proxy = createServer((req, res) => {
   const pathname = (req.url ?? "").split("?")[0];
 
-  // Route /api/* directly to the Express backend, bypassing Next.js rewrites.
-  // Next.js's internal http-proxy has a ~2-minute default timeout which kills
-  // long-running endpoints like /api/admin/director/produce (10+ minutes for
-  // image generation).  Direct proxying to Express has no such limit.
-  const isApiRoute = pathname.startsWith("/api/");
-  const targetPort = isApiRoute ? BACKEND_PORT : NEXT_PORT;
-  const targetHost = isApiRoute ? BACKEND_HOST : "127.0.0.1";
+  // Route /api/*, /socket.io/, and /peerjs/ directly to the Express backend,
+  // bypassing Next.js rewrites.  This avoids two problems:
+  //  1. Next.js's internal http-proxy has a ~2-minute default timeout which
+  //     kills long-running endpoints like /api/admin/director/produce.
+  //  2. When the backend is down, Next.js's rewrite proxy logs noisy
+  //     ECONNREFUSED stack traces for every Socket.IO poll.  Routing here
+  //     instead returns a clean 502.
+  const isBackendRoute =
+    pathname.startsWith("/api/") ||
+    pathname.startsWith("/socket.io") ||
+    pathname.startsWith("/peerjs");
+  const targetPort = isBackendRoute ? BACKEND_PORT : NEXT_PORT;
+  const targetHost = isBackendRoute ? BACKEND_HOST : "127.0.0.1";
 
   const proxyReq = httpRequest(
     {
@@ -64,20 +70,25 @@ const proxy = createServer((req, res) => {
       path: req.url,
       method: req.method,
       headers: req.headers,
-      // Disable timeout for API routes — endpoints like /produce run for 10+ min
-      timeout: isApiRoute ? 0 : 120_000,
+      // Disable timeout for backend routes — endpoints like /produce run for 10+ min
+      timeout: isBackendRoute ? 0 : 120_000,
     },
     (proxyRes) => {
       res.writeHead(proxyRes.statusCode ?? 502, proxyRes.headers);
       proxyRes.pipe(res);
     },
   );
-  // Also disable socket timeout on the client side for long API requests
-  if (isApiRoute) {
+  // Also disable socket timeout on the client side for long backend requests
+  if (isBackendRoute) {
     req.socket.setTimeout(0);
     res.setTimeout(0);
   }
-  proxyReq.on("error", () => {
+  proxyReq.on("error", (err) => {
+    // Only log non-ECONNREFUSED errors — backend being down during dev is
+    // normal (e.g. restarting) and Socket.IO polls retry automatically.
+    if (err.code !== "ECONNREFUSED") {
+      console.error(`Proxy error for ${req.url}:`, err.message);
+    }
     if (!res.headersSent) res.writeHead(502).end("Bad Gateway");
   });
   req.pipe(proxyReq);

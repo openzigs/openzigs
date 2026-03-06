@@ -156,4 +156,35 @@ describe("PipelinePlanner", () => {
     const options = (chatSpy.mock.calls[0] as unknown[])[1];
     expect(options).toMatchObject({ model: "o4-mini" });
   });
+
+  it("falls back to getUserSelectedModel when no explicit model is passed", async () => {
+    // Mock getUserSelectedModel to return a specific model
+    vi.mock("../config/user-model.js", () => ({
+      getUserSelectedModel: vi.fn().mockResolvedValue("claude-sonnet-4"),
+    }));
+
+    // Re-import to get the mocked version
+    const { PipelinePlanner: FreshPlanner } = await import("./pipeline-planner.js");
+
+    const chatSpy = vi.fn(async function* () {
+      yield JSON.stringify({
+        rationale: "User model fallback",
+        pipeline: {
+          stages: [
+            { type: "prompt", name: "a", prompt: "Step A", tools: null },
+            { type: "prompt", name: "b", prompt: "Step B", tools: null },
+          ],
+        },
+      });
+    });
+
+    const mockCopilot = { chat: chatSpy } as unknown as CopilotWrapper;
+    const planner = new FreshPlanner(mockCopilot);
+    await planner.plan("Plan something");
+
+    const options = (chatSpy.mock.calls[0] as unknown[])[1] as Record<string, unknown>;
+    expect(options.model).toBe("claude-sonnet-4");
+
+    vi.restoreAllMocks();
+  });
 });

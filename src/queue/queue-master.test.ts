@@ -52,6 +52,7 @@ function makeRepo() {
     markFailed: vi.fn(),
     isProjectComplete: vi.fn(() => ({ complete: false, total: 0 })),
     createAsset: vi.fn(() => "asset-1"),
+    getAsset: vi.fn(() => null),
   };
 }
 
@@ -462,6 +463,109 @@ describe("QueueMaster", () => {
 
       await qm.tick();
       expect(repo.markDispatched).toHaveBeenCalledWith("music-1");
+    });
+  });
+
+  // ── Remix Job Dispatch ────────────────────────────────────
+
+  describe("remix dispatch", () => {
+    it("dispatches remix_analyze jobs via music-studio sidecar", async () => {
+      const analyzeJob = makeJob({
+        id: "remix-a-1",
+        type: "remix_analyze",
+        requiredModel: "htdemucs_6s",
+        targetNode: "local",
+        payload: { prompt: "", source_asset_id: "asset-42", device: "cpu" },
+      });
+
+      repo.getPendingJobs.mockReturnValue([]);
+      repo.getPendingJobsForModel.mockImplementation((_node: string, model: string) =>
+        model === "htdemucs_6s" ? [analyzeJob] : []
+      );
+      repo.listJobs.mockReturnValue([]);
+
+      // mac-mini health
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ is_busy: false, model: null, model_loaded: false }),
+      })
+      // m2-pro health
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ is_busy: false, loaded_model: null }),
+      })
+      // Music-studio sidecar health
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ is_busy: false, loaded_model: null }),
+      })
+      // Remix dispatch to /remix/analyze
+      .mockResolvedValueOnce({
+        status: 202,
+        ok: true,
+      });
+
+      await qm.tick();
+      expect(repo.markDispatched).toHaveBeenCalledWith("remix-a-1");
+
+      // Verify correct endpoint was called
+      const lastFetchCall = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
+      expect(lastFetchCall[0]).toContain("/remix/analyze");
+      const body = JSON.parse(lastFetchCall[1]?.body as string);
+      expect(body.job_id).toBe("remix-a-1");
+      expect(body.source_asset_id).toBe("asset-42");
+    });
+
+    it("dispatches remix_master jobs via music-studio sidecar", async () => {
+      const masterJob = makeJob({
+        id: "remix-m-1",
+        type: "remix_master",
+        requiredModel: "matchering",
+        targetNode: "local",
+        payload: {
+          prompt: "",
+          stem_paths: { vocals: "/v.wav", drums: "/d.wav" },
+          volumes: { vocals: 1.0, drums: 0.8 },
+          muted: { vocals: false, drums: false },
+          vibe: "warm_lofi",
+        },
+      });
+
+      repo.getPendingJobs.mockReturnValue([]);
+      repo.getPendingJobsForModel.mockImplementation((_node: string, model: string) =>
+        model === "matchering" ? [masterJob] : []
+      );
+      repo.listJobs.mockReturnValue([]);
+
+      // mac-mini health
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ is_busy: false, model: null, model_loaded: false }),
+      })
+      // m2-pro health
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ is_busy: false, loaded_model: null }),
+      })
+      // Music-studio sidecar health
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ is_busy: false, loaded_model: null }),
+      })
+      // Remix dispatch to /remix/master
+      .mockResolvedValueOnce({
+        status: 202,
+        ok: true,
+      });
+
+      await qm.tick();
+      expect(repo.markDispatched).toHaveBeenCalledWith("remix-m-1");
+
+      const lastFetchCall = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
+      expect(lastFetchCall[0]).toContain("/remix/master");
+      const body = JSON.parse(lastFetchCall[1]?.body as string);
+      expect(body.vibe).toBe("warm_lofi");
+      expect(body.stem_paths).toEqual({ vocals: "/v.wav", drums: "/d.wav" });
     });
   });
 });

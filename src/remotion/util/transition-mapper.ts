@@ -9,8 +9,13 @@
 import { linearTiming, type TransitionPresentation } from "@remotion/transitions";
 import { fade } from "@remotion/transitions/fade";
 import { wipe } from "@remotion/transitions/wipe";
+import { slide } from "@remotion/transitions/slide";
+import { flip } from "@remotion/transitions/flip";
+import { clockWipe } from "@remotion/transitions/clock-wipe";
 
-export type ManifestTransitionStyle = "crossfade" | "wipe-left" | "wipe-right" | "dissolve" | "cut";
+export type ManifestTransitionStyle =
+  | "crossfade" | "wipe-left" | "wipe-right" | "dissolve" | "cut"
+  | "slide" | "flip" | "clock-wipe";
 
 export interface MappedTransition {
   presentation: TransitionPresentation<Record<string, unknown>>;
@@ -23,11 +28,13 @@ export interface MappedTransition {
  *
  * @param style - The manifest transition style
  * @param durationInFrames - Duration of the transition in frames
+ * @param dimensions - Width/height needed for clockWipe
  * @returns MappedTransition with presentation, timing, and duration — or null for "cut"
  */
 export function mapTransition(
   style: ManifestTransitionStyle,
   durationInFrames: number,
+  dimensions?: { width: number; height: number },
 ): MappedTransition | null {
   // "cut" = no transition, just a hard cut
   if (style === "cut" || durationInFrames <= 0) {
@@ -45,7 +52,6 @@ export function mapTransition(
       };
 
     case "dissolve":
-      // Dissolve is effectively a fade in video editing
       return {
         presentation: fade() as TransitionPresentation<Record<string, unknown>>,
         timing,
@@ -62,6 +68,31 @@ export function mapTransition(
     case "wipe-right":
       return {
         presentation: wipe({ direction: "from-right" }) as TransitionPresentation<Record<string, unknown>>,
+        timing,
+        durationInFrames,
+      };
+
+    case "slide":
+      return {
+        presentation: slide({ direction: "from-right" }) as TransitionPresentation<Record<string, unknown>>,
+        timing,
+        durationInFrames,
+      };
+
+    case "flip":
+      return {
+        presentation: flip() as TransitionPresentation<Record<string, unknown>>,
+        timing,
+        durationInFrames,
+      };
+
+    case "clock-wipe":
+      return {
+        // clockWipe returns TransitionPresentation<ClockWipeProps>; widen via unknown
+        presentation: clockWipe({
+          width: dimensions?.width ?? 1920,
+          height: dimensions?.height ?? 1080,
+        }) as unknown as TransitionPresentation<Record<string, unknown>>,
         timing,
         durationInFrames,
       };

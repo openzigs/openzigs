@@ -151,8 +151,16 @@ export const createApp = (config: AppConfig, options: CreateAppOptions = {}): Ex
     ...(!trustProxy && { validate: { xForwardedForHeader: false } }),
   }));
 
-  app.use(express.json({ limit: "1mb" }));
-  app.use(express.urlencoded({ extended: true, limit: "1mb" }));
+  // /api/queue uses a higher limit (50mb) registered in server.ts for image callbacks;
+  // skip the global 1mb parser for that prefix so it isn't rejected here first.
+  app.use((req, res, next) => {
+    if (req.path.startsWith("/api/queue")) return next();
+    express.json({ limit: "1mb" })(req, res, next);
+  });
+  app.use((req, res, next) => {
+    if (req.path.startsWith("/api/queue")) return next();
+    express.urlencoded({ extended: true, limit: "1mb" })(req, res, next);
+  });
 
   const authMiddleware = createAuthMiddleware(config.auth);
 

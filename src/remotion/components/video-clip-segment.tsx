@@ -47,6 +47,7 @@ export const VideoClipSegment: React.FC<VideoClipSegmentProps> = ({
   let blur = 0;
   let grayscale = 0;
   let playbackRate = 1;
+  const cssFilters: string[] = [];
 
   for (const effect of effects) {
     switch (effect.type) {
@@ -90,8 +91,32 @@ export const VideoClipSegment: React.FC<VideoClipSegmentProps> = ({
       }
       case "speedRamp": {
         const factor = (effect.params?.factor as number) ?? 1;
-        // Clamp to Remotion's supported range (0.0625 to 16)
         playbackRate = Math.max(0.0625, Math.min(16, factor));
+        break;
+      }
+      case "brightness": {
+        const val = (effect.params?.value as number) ?? 1;
+        cssFilters.push(`brightness(${val})`);
+        break;
+      }
+      case "contrast": {
+        const val = (effect.params?.value as number) ?? 1;
+        cssFilters.push(`contrast(${val})`);
+        break;
+      }
+      case "saturate": {
+        const val = (effect.params?.value as number) ?? 1;
+        cssFilters.push(`saturate(${val})`);
+        break;
+      }
+      case "sepia": {
+        const val = (effect.params?.value as number) ?? 0;
+        cssFilters.push(`sepia(${val})`);
+        break;
+      }
+      case "hueRotate": {
+        const deg = (effect.params?.degrees as number) ?? 0;
+        cssFilters.push(`hue-rotate(${deg}deg)`);
         break;
       }
     }
@@ -100,6 +125,7 @@ export const VideoClipSegment: React.FC<VideoClipSegmentProps> = ({
   const filterParts: string[] = [];
   if (blur > 0) filterParts.push(`blur(${blur}px)`);
   if (grayscale > 0) filterParts.push(`grayscale(${grayscale})`);
+  filterParts.push(...cssFilters);
 
   return (
     <AbsoluteFill style={{ opacity }}>

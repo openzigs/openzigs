@@ -187,7 +187,9 @@ export const createHooksConfig = ({
     },
 
     onErrorOccurred: async (input: HookErrorInput) => {
-      log.error(`SDK session error: ${input.error} (context=${input.errorContext ?? "none"}, recoverable=${input.recoverable ?? false})`);
+      // SDK types say `error` is string, but at runtime it can be an object
+      const errStr = typeof input.error === "string" ? input.error : JSON.stringify(input.error);
+      log.error(`SDK session error: ${errStr} (context=${input.errorContext ?? "none"}, recoverable=${input.recoverable ?? false})`);
       return {
         errorHandling: input.recoverable ? "retry" as const : "abort" as const,
       };

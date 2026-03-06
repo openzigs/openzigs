@@ -103,6 +103,10 @@ function adaptTimelineEntry(entry: TimelineEntry, outputDir: string): TimelineIt
           translateYFrom: entry.kenBurns?.translateYFrom ?? 0,
           translateYTo: entry.kenBurns?.translateYTo ?? -5,
         },
+        effects: (entry.effects ?? []).map((e) => ({
+          type: e.type,
+          params: { ...e } as Record<string, unknown>,
+        })),
         textOverlays: (entry.textOverlays ?? []).map((o) => ({
           id: o.id,
           text: o.text,

@@ -216,6 +216,7 @@ export const createSocialRouter = (opts: SocialRouterOptions): Router => {
     max_triggers_per_user: z.number().int().min(1).max(100).default(1),
     max_triggers_total: z.number().int().min(1).nullable().default(null),
     auto_tag: z.string().nullable().default(null),
+    model: z.string().max(255).nullable().default(null),
   });
 
   router.post("/rules", (req, res) => {
@@ -257,6 +258,7 @@ export const createSocialRouter = (opts: SocialRouterOptions): Router => {
     max_triggers_per_user: z.number().int().min(0).optional(),
     max_triggers_total: z.number().int().min(0).optional(),
     auto_tag: z.string().max(255).optional(),
+    model: z.string().max(255).nullable().optional(),
   }).strict();
 
   router.patch("/rules/:id", (req, res) => {

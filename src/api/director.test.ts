@@ -1815,6 +1815,34 @@ describe("Director API router", () => {
       expect(res.status).toBe(400);
       expect(res.body.error).toContain("clips");
     });
+
+    it("rejects hero-reel mode without heroReelOverview", async () => {
+      const { app } = buildApp();
+      const res = await request(app)
+        .post("/director/produce")
+        .send({ mode: "hero-reel" });
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain("heroReelOverview");
+    });
+
+    it("rejects hero-reel mode with empty heroReelOverview", async () => {
+      const { app } = buildApp();
+      const res = await request(app)
+        .post("/director/produce")
+        .send({ mode: "hero-reel", heroReelOverview: "   " });
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain("heroReelOverview");
+    });
+
+    it("accepts hero-reel as a valid mode", async () => {
+      const { app } = buildApp();
+      const res = await request(app)
+        .post("/director/produce")
+        .send({ mode: "hero-reel", heroReelOverview: "Create an energetic brand montage" });
+      // 202 means the job was accepted (pipeline runs in background)
+      expect(res.status).toBe(202);
+      expect(res.body.produceJobId).toBeDefined();
+    });
   });
 
   // ── POST /scenes/regenerate - additional ───────────────

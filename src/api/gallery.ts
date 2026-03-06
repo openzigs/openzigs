@@ -6,6 +6,7 @@ import { Router } from "express";
 import { logger } from "../logging/logger.js";
 import type { CopilotWrapperService } from "../copilot/copilot-wrapper.js";
 import type { ToolRegistry } from "../mcp/tool-registry.js";
+import { getUserSelectedModel } from "../config/user-model.js";
 
 // ── Types ───────────────────────────────────────────────────
 
@@ -14,6 +15,7 @@ interface EnhancePromptRequest {
   model: string;
   mode: string;
   seed?: number;
+  llmModel?: string;
   parameters: {
     width?: number;
     height?: number;
@@ -91,12 +93,14 @@ export const createGalleryRouter = ({ copilot, toolRegistry }: GalleryRouterOpti
       // Stream the response from the LLM
       const conversationId = `enhance-prompt-${Date.now()}`;
       let fullResponse = "";
+      const galleryModel = body.llmModel || await getUserSelectedModel();
 
       for await (const chunk of copilot.chat(userMessage, {
         conversationId,
         systemMessage: { mode: "replace", content: systemContent },
         tools,
         availableTools: ["web-search"],
+        ...(galleryModel ? { model: galleryModel } : {}),
       })) {
         fullResponse += chunk;
       }

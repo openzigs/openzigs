@@ -10,6 +10,7 @@ import { FileSidebar } from "@/components/workbench/file-sidebar";
 import { ImportDocumentDialog } from "@/components/workbench/import-document-dialog";
 import { Save, FileText, Circle, FileUp } from "lucide-react";
 import { showToast } from "@/components/toast";
+import { AskAiPanel, AskAiButton, PAGE_CONTEXTS } from "@/components/ask-ai";
 
 const DEFAULT_ROOT = process.env.NEXT_PUBLIC_WORKBENCH_ROOT ?? ".";
 
@@ -22,6 +23,7 @@ export default function WorkbenchPage() {
   const [dirty, setDirty] = useState(false);
   const [localContent, setLocalContent] = useState("# Welcome to the Workbench\n\nStart writing or open a file from the sidebar.");
   const [importOpen, setImportOpen] = useState(false);
+  const [askAiOpen, setAskAiOpen] = useState(false);
 
   // Fetch file content when a file is selected
   const { isFetching } = useQuery({
@@ -155,6 +157,7 @@ export default function WorkbenchPage() {
             )}
           </div>
           <div className="flex items-center gap-2">
+            <AskAiButton onClick={() => setAskAiOpen(true)} />
             <button
               onClick={() => setImportOpen(true)}
               className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold text-muted-foreground transition hover:bg-muted hover:text-foreground"
@@ -209,6 +212,7 @@ export default function WorkbenchPage() {
         rootDir={DEFAULT_ROOT}
         onImport={handleImportComplete}
       />
+      <AskAiPanel pageContext={PAGE_CONTEXTS["workbench"]} open={askAiOpen} onClose={() => setAskAiOpen(false)} />
     </div>
   );
 }

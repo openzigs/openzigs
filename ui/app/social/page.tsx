@@ -3,9 +3,11 @@
 import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { fetchJson } from "@/lib/api";
+import { AskAiPanel, AskAiButton, PAGE_CONTEXTS } from "@/components/ask-ai";
 import { SectionCard } from "@/components/section-card";
 import { ToastContainer, showToast } from "@/components/toast";
 import { ConfirmDialog } from "@/components/confirm-dialog";
+import { InlineModelPicker } from "@/components/model-picker-select";
 import {
   useSocialStats,
   useSocialContacts,
@@ -29,14 +31,18 @@ type Tab = "dashboard" | "crm" | "automations" | "activity" | "settings";
 
 export default function SocialBrainPage() {
   const [activeTab, setActiveTab] = useState<Tab>("dashboard");
+  const [askAiOpen, setAskAiOpen] = useState(false);
 
   return (
     <main className="mx-auto max-w-6xl px-6 pb-12 pt-4">
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold">Social Brain</h1>
-        <p className="text-sm text-muted-foreground">
-          Unified inbox, CRM, and automated response engine for social platforms.
-        </p>
+      <div className="mb-6 flex items-end justify-between">
+        <div>
+          <h1 className="text-2xl font-bold">Social Brain</h1>
+          <p className="text-sm text-muted-foreground">
+            Unified inbox, CRM, and automated response engine for social platforms.
+          </p>
+        </div>
+        <AskAiButton onClick={() => setAskAiOpen(true)} />
       </div>
 
       {/* Tab navigation */}
@@ -63,6 +69,7 @@ export default function SocialBrainPage() {
       {activeTab === "settings" && <SettingsTab />}
 
       <ToastContainer />
+      <AskAiPanel pageContext={PAGE_CONTEXTS["social"]} open={askAiOpen} onClose={() => setAskAiOpen(false)} />
     </main>
   );
 }
@@ -469,6 +476,7 @@ function AutomationsTab() {
                   <p className="text-xs text-muted-foreground mt-1">
                     DM: &quot;{rule.dm_template.slice(0, 80)}{rule.dm_template.length > 80 ? "..." : ""}&quot;
                     {rule.dm_delay_seconds > 0 ? ` (${rule.dm_delay_seconds}s delay)` : ""}
+                    {rule.model ? ` · Model: ${rule.model}` : ""}
                   </p>
                 </div>
                 <div className="flex gap-2">
@@ -517,6 +525,7 @@ function RuleForm({ onSubmit }: { onSubmit: (data: Partial<CommentRule>) => void
   const [dmDelay, setDmDelay] = useState(0);
   const [maxPerUser, setMaxPerUser] = useState(1);
   const [autoTag, setAutoTag] = useState("");
+  const [ruleModel, setRuleModel] = useState("");
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -530,6 +539,7 @@ function RuleForm({ onSubmit }: { onSubmit: (data: Partial<CommentRule>) => void
       dm_delay_seconds: dmDelay,
       max_triggers_per_user: maxPerUser,
       auto_tag: autoTag || null,
+      model: ruleModel || null,
     });
   };
 
@@ -587,6 +597,13 @@ function RuleForm({ onSubmit }: { onSubmit: (data: Partial<CommentRule>) => void
             placeholder="lead"
             className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm" />
         </div>
+      </div>
+      <div>
+        <label className="text-xs font-medium text-muted-foreground">LLM Model Override</label>
+        <div className="mt-1">
+          <InlineModelPicker value={ruleModel} onChange={setRuleModel} className="w-full" />
+        </div>
+        <p className="text-[10px] text-muted-foreground mt-0.5">Leave as Default to use the system-wide model</p>
       </div>
       <button type="submit" className="rounded-md bg-primary px-4 py-2 text-sm text-primary-foreground">
         Create Rule

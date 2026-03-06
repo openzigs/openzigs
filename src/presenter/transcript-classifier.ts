@@ -7,6 +7,7 @@
 
 import type { CopilotWrapper } from "../copilot/copilot-wrapper.js";
 import type { PresentationRow } from "./presentation-repository.js";
+import { getUserSelectedModel } from "../config/user-model.js";
 
 export interface ChapterDefinition {
   title: string;
@@ -86,9 +87,11 @@ export class TranscriptClassifier {
       "Return ONLY the JSON array, no prose, no code fences.",
     ].join("\n");
 
+    const classifyModel = await getUserSelectedModel();
     let raw = "";
     for await (const token of this.copilot.chat(prompt, {
       tools: [],
+      ...(classifyModel ? { model: classifyModel } : {}),
       systemMessage: {
         mode: "replace",
         content: "You are a transcript classifier. Return ONLY a JSON array of integers.",

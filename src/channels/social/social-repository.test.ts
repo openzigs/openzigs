@@ -163,6 +163,7 @@ describe("SocialRepository", () => {
         max_triggers_per_user: 1,
         max_triggers_total: null,
         auto_tag: "lead-ebook",
+        model: null,
       });
 
       const rules = repo.listRules();
@@ -185,6 +186,7 @@ describe("SocialRepository", () => {
         max_triggers_per_user: 1,
         max_triggers_total: null,
         auto_tag: null,
+        model: null,
       });
 
       const updated = repo.updateRule(rule.id, { name: "Updated", enabled: 0 });
@@ -206,6 +208,7 @@ describe("SocialRepository", () => {
         max_triggers_per_user: 1,
         max_triggers_total: null,
         auto_tag: null,
+        model: null,
       });
 
       expect(repo.deleteRule(rule.id)).toBe(true);
@@ -226,6 +229,7 @@ describe("SocialRepository", () => {
         max_triggers_per_user: 1,
         max_triggers_total: null,
         auto_tag: null,
+        model: null,
       });
 
       repo.incrementRuleTriggerCount(rule.id);
@@ -251,6 +255,7 @@ describe("SocialRepository", () => {
         max_triggers_per_user: 1,
         max_triggers_total: null,
         auto_tag: null,
+        model: null,
       });
 
       repo.insertAutomationLog({
@@ -285,6 +290,7 @@ describe("SocialRepository", () => {
         max_triggers_per_user: 1,
         max_triggers_total: null,
         auto_tag: null,
+        model: null,
       });
 
       repo.insertAutomationLog({

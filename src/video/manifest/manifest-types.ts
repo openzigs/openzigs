@@ -71,7 +71,12 @@ export type VideoEffect =
   | { type: "fadeOut"; durationFrames: number }
   | { type: "blur"; amount: number; startFrame: number; endFrame: number }
   | { type: "grayscale" }
-  | { type: "speedRamp"; factor: number; startFrame: number; endFrame: number };
+  | { type: "speedRamp"; factor: number; startFrame: number; endFrame: number }
+  | { type: "brightness"; value: number }
+  | { type: "contrast"; value: number }
+  | { type: "saturate"; value: number }
+  | { type: "sepia"; value: number }
+  | { type: "hueRotate"; degrees: number };
 
 // ── Timeline Entries ──────────────────────────────────────────
 export interface VideoClipEntry {
@@ -129,7 +134,7 @@ export interface TitleCardEntry {
 export interface TransitionEntry {
   type: "transition";
   /** Transition style */
-  style: "crossfade" | "wipe-left" | "wipe-right" | "dissolve" | "cut";
+  style: "crossfade" | "wipe-left" | "wipe-right" | "dissolve" | "cut" | "slide" | "flip" | "clock-wipe";
   /** Duration of transition in frames */
   duration: number;
   /** Frame number where transition starts (overlaps adjacent clips) */
@@ -159,6 +164,8 @@ export interface ImageSceneEntry {
     translateYFrom?: number;
     translateYTo?: number;
   };
+  /** Visual effects applied to this scene */
+  effects?: VideoEffect[];
   /** Text overlays rendered on top of this scene */
   textOverlays?: TextOverlay[];
   /**
@@ -217,7 +224,7 @@ export interface ManifestMetadata {
   generatedAt: string;
   llmModel: string;
   llmTokensUsed: number;
-  productionMode: "highlight" | "script" | "presentation";
+  productionMode: "highlight" | "script" | "presentation" | "hero-reel";
   /** Whether Presenter Mode pop quizzes should be enabled for this render. */
   presenterQuizEnabled?: boolean;
   /** Source clips used (empty array for presentation mode) */

@@ -40,6 +40,7 @@ function createRule(repo: SocialRepository, overrides: Partial<Omit<CommentRule,
     max_triggers_per_user: 3,
     max_triggers_total: null,
     auto_tag: null,
+    model: null,
     ...overrides,
   });
 }
