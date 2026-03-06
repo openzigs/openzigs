@@ -220,6 +220,9 @@ def smart_mix(
     for name, path in stem_paths.items():
         if muted.get(name, False):
             continue
+        if not os.path.isfile(path):
+            logger.warning(f"Stem file missing, skipping: {name} ({path})")
+            continue
         data, sr = sf.read(path, dtype="float32")
         if data.ndim == 1:
             data = data.reshape(-1, 1)
@@ -249,6 +252,10 @@ def smart_mix(
     for name, path in stem_paths.items():
         if muted.get(name, False):
             logger.info(f"  Skipping muted stem: {name}")
+            continue
+
+        if not os.path.isfile(path):
+            logger.warning(f"  Skipping missing stem: {name} ({path})")
             continue
 
         vol = volumes.get(name, 1.0)

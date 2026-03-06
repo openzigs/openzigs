@@ -584,18 +584,28 @@ export function createCharacterRouter({ characterRepo, copilot }: CharacterRoute
           errorMessage: null,
         });
         _io?.emit("character:training:complete", { characterId: character.id, characterName: character.name });
-        // Clean up training data since we've confirmed the character is ready
+        // Clean up training data since we've confirmed the character is ready.
+        // The DELETE relocates the adapter to ~/.openzigs/loras/ and returns the new path.
+        let finalLoraPath = status.lora_path;
         try {
           const cleanupHeaders: Record<string, string> = { "Content-Type": "application/json" };
           if (token) cleanupHeaders["Authorization"] = `Bearer ${token}`;
-          await fetch(`${sidecarUrl}/train-data`, {
+          const cleanupRes = await fetch(`${sidecarUrl}/train-data`, {
             method: "DELETE",
             headers: cleanupHeaders,
             body: JSON.stringify({ character_id: character.id }),
           });
+          if (cleanupRes.ok) {
+            const cleanupBody = await cleanupRes.json() as { lora_path?: string };
+            if (cleanupBody.lora_path) {
+              finalLoraPath = cleanupBody.lora_path;
+              characterRepo.update(character.id, { trainedLoraPath: finalLoraPath });
+              logger.info(`[Characters] Updated LoRA path for ${character.id}: ${finalLoraPath}`);
+            }
+          }
         } catch { /* non-critical */ }
-        logger.info(`[Characters] Recovered training for '${character.name}' (${character.id}): ${status.lora_path}`);
-        res.json({ ok: true, recovered: true, loraPath: status.lora_path, message: "Training was already complete — character marked as ready." });
+        logger.info(`[Characters] Recovered training for '${character.name}' (${character.id}): ${finalLoraPath}`);
+        res.json({ ok: true, recovered: true, loraPath: finalLoraPath, message: "Training was already complete — character marked as ready." });
         return;
       }
 
@@ -902,14 +912,16 @@ async function startRemoteTraining(
 }
 
 async function getTrainingTimeoutMs(): Promise<number> {
-  const DEFAULT_HOURS = 8;
+  const DEFAULT_HOURS = 12; // minimum for realistic LoRA jobs
   try {
     const configPath = process.env.OPENZIGS_CONFIG_PATH
       ?? path.join(os.homedir(), ".openzigs", "config.json");
     const raw = await fs.readFile(configPath, "utf-8");
     const parsed = JSON.parse(raw) as Record<string, unknown>;
     const ig = parsed.imageGen as Record<string, unknown> | undefined;
-    const hours = typeof ig?.trainingTimeoutHours === "number" ? ig.trainingTimeoutHours : DEFAULT_HOURS;
+    let hours = typeof ig?.trainingTimeoutHours === "number" ? ig.trainingTimeoutHours : DEFAULT_HOURS;
+    // never allow less than 12h to avoid premature timeouts from impatient clients
+    if (hours < DEFAULT_HOURS) hours = DEFAULT_HOURS;
     return hours * 60 * 60 * 1000;
   } catch {
     return DEFAULT_HOURS * 60 * 60 * 1000;
@@ -1014,15 +1026,23 @@ function pollTrainingStatus(
         _io?.emit("character:training:complete", { characterId, characterName });
         logger.info(`[Characters] Remote training complete for ${characterId}: ${status.lora_path}`);
 
-        // Clean up training data on the sidecar now that the character is confirmed ready
+        // Clean up training data on the sidecar now that the character is confirmed ready.
+        // The DELETE relocates the adapter to ~/.openzigs/loras/ and returns the new path.
         try {
           const cleanupHeaders: Record<string, string> = { "Content-Type": "application/json" };
           if (token) cleanupHeaders["Authorization"] = `Bearer ${token}`;
-          await fetch(`${sidecarUrl}/train-data`, {
+          const cleanupRes = await fetch(`${sidecarUrl}/train-data`, {
             method: "DELETE",
             headers: cleanupHeaders,
             body: JSON.stringify({ character_id: characterId }),
           });
+          if (cleanupRes.ok) {
+            const cleanupBody = await cleanupRes.json() as { lora_path?: string };
+            if (cleanupBody.lora_path) {
+              characterRepo.update(characterId, { trainedLoraPath: cleanupBody.lora_path });
+              logger.info(`[Characters] Updated LoRA path for ${characterId}: ${cleanupBody.lora_path}`);
+            }
+          }
         } catch {
           // Non-critical — data will be cleaned up eventually
         }

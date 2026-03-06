@@ -28,9 +28,11 @@ import { VoiceLabPanel } from "@/components/voice-lab/voice-lab-panel";
 import { BrandVoicePanel } from "@/components/admin/brand-voice-panel";
 import { ToastContainer, showToast } from "@/components/toast";
 import { RotateCw } from "lucide-react";
+import { AskAiPanel, AskAiButton, PAGE_CONTEXTS } from "@/components/ask-ai";
 
 export default function AdminPage() {
   const [restarting, setRestarting] = useState(false);
+  const [askAiOpen, setAskAiOpen] = useState(false);
 
   const toolsQuery = useQuery({
     queryKey: ["tools"],
@@ -62,15 +64,18 @@ export default function AdminPage() {
             Channels, MCP servers, tool controls, and environment at a glance.
           </p>
         </div>
-        <button
-          className="flex items-center gap-2 rounded-xl border border-border bg-card px-4 py-2.5 text-sm font-semibold text-foreground transition hover:border-primary/30 hover:bg-primary/5 disabled:opacity-40"
-          onClick={handleRestart}
-          disabled={restarting}
-          title="Restart the backend server (applies pending config changes)"
-        >
-          <RotateCw className={`h-4 w-4 ${restarting ? "animate-spin" : ""}`} />
-          {restarting ? "Restarting…" : "Restart Server"}
-        </button>
+        <div className="flex items-center gap-3">
+          <AskAiButton onClick={() => setAskAiOpen(true)} />
+          <button
+            className="flex items-center gap-2 rounded-xl border border-border bg-card px-4 py-2.5 text-sm font-semibold text-foreground transition hover:border-primary/30 hover:bg-primary/5 disabled:opacity-40"
+            onClick={handleRestart}
+            disabled={restarting}
+            title="Restart the backend server (applies pending config changes)"
+          >
+            <RotateCw className={`h-4 w-4 ${restarting ? "animate-spin" : ""}`} />
+            {restarting ? "Restarting…" : "Restart Server"}
+          </button>
+        </div>
       </header>
 
       <div className="flex flex-col gap-8">
@@ -164,6 +169,7 @@ export default function AdminPage() {
       </div>
 
       <ToastContainer />
+      <AskAiPanel pageContext={PAGE_CONTEXTS["admin"]} open={askAiOpen} onClose={() => setAskAiOpen(false)} />
     </main>
   );
 }

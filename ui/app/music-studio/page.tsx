@@ -1,8 +1,9 @@
 "use client";
 
-import { useState, useCallback } from "react";
-import { useQuery, useMutation } from "@tanstack/react-query";
-import { fetchJson } from "@/lib/api";
+import { useState, useCallback, useEffect, useRef } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { fetchJson, buildMediaUrl } from "@/lib/api";
+import { useSocket } from "@/lib/socket-context";
 import { SectionCard } from "@/components/section-card";
 import { ToastContainer, showToast } from "@/components/toast";
 import { MultiTrackView } from "@/components/music-studio/MultiTrackView";
@@ -11,7 +12,8 @@ import { PipelineStatus } from "@/components/music-studio/PipelineStatus";
 import { EffectsRack, DEFAULT_EFFECTS, type EffectsState } from "@/components/music-studio/EffectsRack";
 import { SpectrogramView } from "@/components/music-studio/SpectrogramView";
 import { SmartRemixLab } from "@/components/music-studio/SmartRemixLab";
-import { Music, Disc3, Wand2 } from "lucide-react";
+import { Music, Disc3, Wand2, Pencil, Check, X } from "lucide-react";
+import { AskAiPanel, AskAiButton, PAGE_CONTEXTS } from "@/components/ask-ai";
 
 // ── Types ───────────────────────────────────────────────────
 
@@ -51,6 +53,31 @@ export default function MusicStudioPage() {
   const [effects, setEffects] = useState<EffectsState>({ ...DEFAULT_EFFECTS });
   const [spectrogramUrl, setSpectrogramUrl] = useState<string | null>(null);
   const [tab, setTab] = useState<StudioTab>("voice2voice");
+  const [askAiOpen, setAskAiOpen] = useState(false);
+  const [renamingAssetId, setRenamingAssetId] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState("");
+  const { socket } = useSocket();
+  const queryClient = useQueryClient();
+  const activeJobRef = useRef(activeJobId);
+  activeJobRef.current = activeJobId;
+
+  // Background notification: listen for V2V job completion even when user
+  // has navigated away from the pipeline status area or the page lost focus.
+  useEffect(() => {
+    if (!socket) return;
+
+    const onGlobalComplete = (data: { jobId: string; type?: string; resultUrl?: string }) => {
+      if (data.type !== "voice2voice") return;
+      // Only notify if this is NOT already being handled by PipelineStatus
+      if (activeJobRef.current === data.jobId) return;
+      showToast(`Voice2Voice job complete! Result ready in Audio Assets.`, "success");
+      // Refresh the asset list so the new result appears
+      void queryClient.invalidateQueries({ queryKey: ["gallery-audio-assets"] });
+    };
+
+    socket.on("queue:job:complete", onGlobalComplete);
+    return () => { socket.off("queue:job:complete", onGlobalComplete); };
+  }, [socket, queryClient]);
 
   // Fetch audio assets from the gallery
   const { data: assetsData } = useQuery({
@@ -113,13 +140,14 @@ export default function MusicStudioPage() {
       setActiveJobId(null);
 
       if (result.resultUrl) {
-        // Add the result as a track
+        // Add the result as a track (use buildMediaUrl for auth token)
+        const url = buildMediaUrl(result.resultUrl);
         setTracks((prev) => [
           ...prev,
           {
             id: `result-${Date.now()}`,
             label: "V2V Result",
-            url: result.resultUrl!,
+            url,
             color: "#10b981",
             progressColor: "#34d399",
             muted: false,
@@ -129,9 +157,11 @@ export default function MusicStudioPage() {
       }
       if (result.galleryAssetId) {
         showToast(`Result saved as asset ${result.galleryAssetId}`, "info");
+        // Refresh gallery so the new asset appears immediately
+        void queryClient.invalidateQueries({ queryKey: ["gallery-audio-assets"] });
       }
     },
-    []
+    [queryClient]
   );
 
   const handlePipelineError = useCallback((error: string) => {
@@ -139,9 +169,36 @@ export default function MusicStudioPage() {
     setActiveJobId(null);
   }, []);
 
+  // Rename an asset
+  const renameAsset = useMutation({
+    mutationFn: async ({ id, filename }: { id: string; filename: string }) => {
+      await fetchJson(`/api/queue/assets/${id}/rename`, {
+        method: "PATCH",
+        body: JSON.stringify({ filename }),
+      });
+    },
+    onSuccess: () => {
+      showToast("Asset renamed", "success");
+      setRenamingAssetId(null);
+      void queryClient.invalidateQueries({ queryKey: ["gallery-audio-assets"] });
+    },
+    onError: (err) => {
+      showToast(`Rename failed: ${err instanceof Error ? err.message : String(err)}`, "error");
+    },
+  });
+
+  const handleRenameSubmit = useCallback(
+    (assetId: string) => {
+      if (renameValue.trim()) {
+        renameAsset.mutate({ id: assetId, filename: renameValue.trim() });
+      }
+    },
+    [renameValue, renameAsset]
+  );
+
   // Load audio asset into waveform viewer
   const loadAssetAsTrack = useCallback((assetId: string, filename: string) => {
-    const url = `/api/queue/assets/file/${filename}`;
+    const url = buildMediaUrl(`/api/queue/assets/file/${filename}`);
     const exists = tracks.some((t) => t.url === url);
     if (exists) {
       showToast("Track already loaded", "info");
@@ -186,6 +243,9 @@ export default function MusicStudioPage() {
           <p className="text-sm text-zinc-400">
             AI Voice2Voice pipeline &amp; Smart Remix Lab
           </p>
+        </div>
+        <div className="ml-auto">
+          <AskAiButton onClick={() => setAskAiOpen(true)} />
         </div>
       </div>
 
@@ -266,24 +326,52 @@ export default function MusicStudioPage() {
             {(assetsData?.assets ?? []).length > 0 ? (
               <div className="max-h-64 space-y-1 overflow-y-auto">
                 {(assetsData?.assets ?? []).map((asset) => (
-                  <button
+                  <div
                     key={asset.id}
-                    onClick={() => loadAssetAsTrack(asset.id, asset.filename)}
-                    className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-sm hover:bg-zinc-800"
+                    className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm hover:bg-zinc-800"
                   >
-                    <Music className="h-4 w-4 shrink-0 text-indigo-400" />
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-zinc-200">{asset.filename}</p>
-                      {asset.prompt && (
-                        <p className="truncate text-xs text-zinc-500">{asset.prompt}</p>
-                      )}
-                    </div>
-                    {asset.duration_seconds != null && (
-                      <span className="shrink-0 font-mono text-xs text-zinc-500">
-                        {Math.floor(asset.duration_seconds / 60)}:{String(Math.floor(asset.duration_seconds % 60)).padStart(2, "0")}
-                      </span>
+                    {renamingAssetId === asset.id ? (
+                      <div className="flex flex-1 items-center gap-2">
+                        <input
+                          type="text"
+                          value={renameValue}
+                          onChange={(e) => setRenameValue(e.target.value)}
+                          onKeyDown={(e) => { if (e.key === "Enter") handleRenameSubmit(asset.id); if (e.key === "Escape") setRenamingAssetId(null); }}
+                          className="flex-1 rounded border border-zinc-600 bg-zinc-900 px-2 py-1 text-sm text-zinc-200 outline-none focus:border-indigo-500"
+                          autoFocus
+                        />
+                        <button onClick={() => handleRenameSubmit(asset.id)} className="text-emerald-400 hover:text-emerald-300"><Check className="h-4 w-4" /></button>
+                        <button onClick={() => setRenamingAssetId(null)} className="text-zinc-400 hover:text-zinc-300"><X className="h-4 w-4" /></button>
+                      </div>
+                    ) : (
+                      <>
+                        <button
+                          onClick={() => loadAssetAsTrack(asset.id, asset.filename)}
+                          className="flex min-w-0 flex-1 items-center gap-3 text-left"
+                        >
+                          <Music className="h-4 w-4 shrink-0 text-indigo-400" />
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate text-zinc-200">{asset.filename}</p>
+                            {asset.prompt && (
+                              <p className="truncate text-xs text-zinc-500">{asset.prompt}</p>
+                            )}
+                          </div>
+                        </button>
+                        {asset.duration_seconds != null && (
+                          <span className="shrink-0 font-mono text-xs text-zinc-500">
+                            {Math.floor(asset.duration_seconds / 60)}:{String(Math.floor(asset.duration_seconds % 60)).padStart(2, "0")}
+                          </span>
+                        )}
+                        <button
+                          onClick={(e) => { e.stopPropagation(); setRenamingAssetId(asset.id); setRenameValue(asset.filename); }}
+                          className="shrink-0 text-zinc-500 hover:text-zinc-300"
+                          title="Rename"
+                        >
+                          <Pencil className="h-3.5 w-3.5" />
+                        </button>
+                      </>
                     )}
-                  </button>
+                  </div>
                 ))}
               </div>
             ) : (
@@ -309,6 +397,7 @@ export default function MusicStudioPage() {
         </div>
       </div>
       )}
+      <AskAiPanel pageContext={PAGE_CONTEXTS["music-studio"]} open={askAiOpen} onClose={() => setAskAiOpen(false)} />
     </main>
   );
 }

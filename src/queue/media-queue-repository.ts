@@ -581,4 +581,10 @@ export class MediaQueueRepository {
     this.db.prepare("UPDATE media_assets SET tags = ?, updated_at = ? WHERE id = ?")
       .run(JSON.stringify(tags), now, id);
   }
+
+  renameAsset(id: string, newFilename: string): boolean {
+    const now = this.clock().toISOString();
+    return this.db.prepare("UPDATE media_assets SET filename = ?, updated_at = ? WHERE id = ?")
+      .run(newFilename, now, id).changes > 0;
+  }
 }

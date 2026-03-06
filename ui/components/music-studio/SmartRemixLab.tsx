@@ -127,7 +127,8 @@ export function SmartRemixLab({ audioAssets }: SmartRemixLabProps) {
   const [masterResult, setMasterResult] = useState<string | null>(null);
   const [analyzeJobId, setAnalyzeJobId] = useState<string | null>(null);
   const [gallerySaving, setGallerySaving] = useState(false);
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [quickMixJobId, setQuickMixJobId] = useState<string | null>(null);
+  const pollRef = useRef<Set<ReturnType<typeof setInterval>>>(new Set());
 
   // ── Stem Playback ─────────────────────────────────────────
   const wsRefs = useRef<Map<string, WaveSurfer | null>>(new Map());
@@ -258,6 +259,48 @@ export function SmartRemixLab({ audioAssets }: SmartRemixLabProps) {
     },
   });
 
+  // ── Save Mix Mutation (quick mix, no mastering) ─────────
+  const saveMixMut = useMutation({
+    mutationFn: async () => {
+      const stemPaths: Record<string, string> = {};
+      const volumes: Record<string, number> = {};
+      const muted: Record<string, boolean> = {};
+
+      for (const stem of stems) {
+        stemPaths[stem.name] = stem.replacedPath ?? stem.path;
+        volumes[stem.name] = stem.volume;
+        muted[stem.name] = stem.muted;
+      }
+
+      const res = await fetchJson<MediaJob>("/api/queue/jobs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type: "remix_master",
+          payload: {
+            stem_paths: stemPaths,
+            volumes,
+            muted,
+            vibe,
+            skip_mastering: true,
+          },
+        }),
+      });
+      return res;
+    },
+    onSuccess: (job) => {
+      showToast("Saving mix to gallery...", "success");
+      setQuickMixJobId(job.id);
+      pollForQuickMixResult(job.id);
+    },
+    onError: (err) => {
+      showToast(
+        `Save mix failed: ${err instanceof Error ? err.message : String(err)}`,
+        "error"
+      );
+    },
+  });
+
   // ── Polling ─────────────────────────────────────────────
 
   const pollForResult = useCallback(
@@ -272,6 +315,7 @@ export function SmartRemixLab({ audioAssets }: SmartRemixLabProps) {
 
           if (job.status === "complete") {
             clearInterval(interval);
+            pollRef.current.delete(interval);
             setAnalyzeJobId(null);
             // Fetch the analysis result from the sidecar status
             // The result is stored in resultMetadata by the callback handler
@@ -297,6 +341,7 @@ export function SmartRemixLab({ audioAssets }: SmartRemixLabProps) {
             );
           } else if (job.status === "failed") {
             clearInterval(interval);
+            pollRef.current.delete(interval);
             setAnalyzeJobId(null);
             showToast("Track analysis failed", "error");
           }
@@ -305,8 +350,9 @@ export function SmartRemixLab({ audioAssets }: SmartRemixLabProps) {
         }
       }, 3_000);
 
+      pollRef.current.add(interval);
       // Cleanup after 10 minutes max
-      setTimeout(() => clearInterval(interval), 600_000);
+      setTimeout(() => { clearInterval(interval); pollRef.current.delete(interval); }, 600_000);
     },
     []
   );
@@ -323,6 +369,7 @@ export function SmartRemixLab({ audioAssets }: SmartRemixLabProps) {
 
           if (job.status === "complete") {
             clearInterval(interval);
+            pollRef.current.delete(interval);
             const meta = job.resultMetadata ?? {};
             const replacedPath =
               (meta.replaced_stem_path as string) ?? "";
@@ -341,6 +388,7 @@ export function SmartRemixLab({ audioAssets }: SmartRemixLabProps) {
             showToast("Instrument replacement complete!", "success");
           } else if (job.status === "failed") {
             clearInterval(interval);
+            pollRef.current.delete(interval);
             setStems((prev) =>
               prev.map((s) =>
                 s.path === stemPath
@@ -355,7 +403,8 @@ export function SmartRemixLab({ audioAssets }: SmartRemixLabProps) {
         }
       }, 3_000);
 
-      setTimeout(() => clearInterval(interval), 600_000);
+      pollRef.current.add(interval);
+      setTimeout(() => { clearInterval(interval); pollRef.current.delete(interval); }, 600_000);
     },
     []
   );
@@ -373,6 +422,7 @@ export function SmartRemixLab({ audioAssets }: SmartRemixLabProps) {
 
         if (job.status === "complete") {
           clearInterval(interval);
+          pollRef.current.delete(interval);
           setMasterJobId(null);
           if (job.resultUrl) {
             setMasterResult(job.resultUrl);
@@ -380,6 +430,7 @@ export function SmartRemixLab({ audioAssets }: SmartRemixLabProps) {
           showToast("Mix & Master complete!", "success");
         } else if (job.status === "failed") {
           clearInterval(interval);
+          pollRef.current.delete(interval);
           setMasterJobId(null);
           showToast("Mix & Master failed", "error");
         }
@@ -387,14 +438,47 @@ export function SmartRemixLab({ audioAssets }: SmartRemixLabProps) {
         // Keep polling
       }
     }, 3_000);
-    pollRef.current = interval;
-    setTimeout(() => clearInterval(interval), 600_000);
+    pollRef.current.add(interval);
+    setTimeout(() => { clearInterval(interval); pollRef.current.delete(interval); }, 600_000);
   }, []);
 
-  // Cleanup intervals on unmount
+  const pollForQuickMixResult = useCallback((jobId: string) => {
+    const interval = setInterval(async () => {
+      try {
+        const job = await fetchJson<{
+          id: string;
+          status: string;
+          resultMetadata?: Record<string, unknown>;
+        }>(`/api/queue/jobs/${jobId}`);
+
+        if (job.status === "complete") {
+          clearInterval(interval);
+          pollRef.current.delete(interval);
+          setQuickMixJobId(null);
+          showToast("Mix saved to gallery!", "success");
+        } else if (job.status === "failed") {
+          clearInterval(interval);
+          pollRef.current.delete(interval);
+          setQuickMixJobId(null);
+          showToast("Save mix failed", "error");
+        }
+      } catch {
+        // Keep polling
+      }
+    }, 3_000);
+    pollRef.current.add(interval);
+    setTimeout(() => { clearInterval(interval); pollRef.current.delete(interval); }, 600_000);
+  }, []);
+
+  // Cleanup all polling intervals + WaveSurfer instances on unmount
   useEffect(() => {
     return () => {
-      if (pollRef.current) clearInterval(pollRef.current);
+      pollRef.current.forEach((id) => clearInterval(id));
+      pollRef.current.clear();
+      wsRefs.current.forEach((ws) => {
+        try { ws?.destroy(); } catch { /* ignore */ }
+      });
+      wsRefs.current.clear();
     };
   }, []);
 
@@ -512,6 +596,14 @@ export function SmartRemixLab({ audioAssets }: SmartRemixLabProps) {
     masterMut.mutate();
   }, [stems, masterMut]);
 
+  const handleSaveMix = useCallback(() => {
+    if (stems.length === 0) {
+      showToast("Analyze a track first", "error");
+      return;
+    }
+    saveMixMut.mutate();
+  }, [stems, saveMixMut]);
+
   const handleSaveToGallery = useCallback(async () => {
     if (!masterResult) return;
     setGallerySaving(true);
@@ -520,17 +612,28 @@ export function SmartRemixLab({ audioAssets }: SmartRemixLabProps) {
       const audioRes = await fetch(mediaUrl);
       if (!audioRes.ok) throw new Error(`Failed to fetch master audio (${audioRes.status})`);
       const blob = await audioRes.blob();
-      const form = new FormData();
-      form.append("file", blob, "remix-master.wav");
-      form.append("type", "audio");
-      form.append("prompt", `Remix master (${vibe})`);
+      const arrayBuffer = await blob.arrayBuffer();
+      const base64 = btoa(
+        new Uint8Array(arrayBuffer).reduce(
+          (data, byte) => data + String.fromCharCode(byte),
+          "",
+        ),
+      );
       const apiBase =
         process.env.NEXT_PUBLIC_OPENZIGS_API_BASE ?? "http://localhost:3000";
       const token = process.env.NEXT_PUBLIC_OPENZIGS_TOKEN ?? "";
       const res = await fetch(`${apiBase}/api/queue/assets/upload`, {
         method: "POST",
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-        body: form,
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          filename: "remix-master.wav",
+          data_base64: base64,
+          mime_type: "audio/wav",
+          tags: ["remix", vibe],
+        }),
       });
       if (!res.ok) {
         const text = await res.text();
@@ -571,6 +674,7 @@ export function SmartRemixLab({ audioAssets }: SmartRemixLabProps) {
 
   const isAnalyzing = analyzeMut.isPending || !!analyzeJobId;
   const isMastering = masterMut.isPending || !!masterJobId;
+  const isSavingMix = saveMixMut.isPending || !!quickMixJobId;
 
   return (
     <div className="space-y-6">
@@ -785,6 +889,22 @@ export function SmartRemixLab({ audioAssets }: SmartRemixLabProps) {
                 </div>
               );
             })}
+
+            {/* Save current mix (no mastering) */}
+            <div className="flex justify-end pt-2">
+              <button
+                onClick={handleSaveMix}
+                disabled={isSavingMix}
+                className="flex items-center gap-2 rounded-lg bg-zinc-700 px-4 py-2 text-sm font-medium text-zinc-200 transition hover:bg-zinc-600 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {isSavingMix ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Save className="h-4 w-4" />
+                )}
+                {isSavingMix ? "Saving Mix..." : "Save Mix"}
+              </button>
+            </div>
           </div>
         </SectionCard>
       )}

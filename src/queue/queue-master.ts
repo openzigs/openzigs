@@ -961,6 +961,9 @@ export class QueueMaster extends EventEmitter {
       body.volumes = job.payload.volumes;
       body.muted = job.payload.muted;
       body.vibe = job.payload.vibe ?? "raw";
+      if (job.payload.skip_mastering) {
+        body.skip_mastering = true;
+      }
     }
 
     const res = await fetch(`${nodeConfig.url}${endpoint}`, {

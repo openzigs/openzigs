@@ -277,21 +277,23 @@ def run_pipeline(req: GenerateRequest):
 
         report_progress(job_id, "mixdown", 100, "Mixdown complete", progress_url)
 
-        # Read the final output for callback
-        with open(output_path, "rb") as f:
-            media_bytes = f.read()
+        # Copy output to gallery dir (avoids base64-encoding multi-MB files)
+        os.makedirs(GALLERY_DIR, exist_ok=True)
+        gallery_filename = f"{job_id}.{output_ext}"
+        gallery_path = os.path.join(GALLERY_DIR, gallery_filename)
+        shutil.copy2(output_path, gallery_path)
+        file_size = os.path.getsize(gallery_path)
 
-        media_base64 = base64.b64encode(media_bytes).decode("ascii")
         media_type = "audio/mpeg" if output_ext == "mp3" else "audio/wav"
 
         return {
-            "media_base64": media_base64,
+            "file_path": gallery_path,
             "media_type": media_type,
             "metadata": {
                 "voice_model": req.voice_model,
                 "pitch_shift": req.pitch_shift,
                 "output_format": req.output_format,
-                "duration": len(media_bytes),
+                "file_size": file_size,
             },
         }
 
@@ -326,13 +328,13 @@ async def process_job(req: GenerateRequest):
             "completed_at": time.time(),
         }
 
-        # POST result to callback
+        # POST result to callback (file-based — only sends path, not content)
         if req.callback_url:
             try:
                 data = json.dumps({
                     "job_id": job_id,
                     "status": "complete",
-                    "media_base64": result["media_base64"],
+                    "file_path": result["file_path"],
                     "media_type": result["media_type"],
                     "metadata": result["metadata"],
                 }).encode()
@@ -723,6 +725,10 @@ class RemixMasterRequest(BaseModel):
         default="raw",
         description="Vibe preset: punchy_pop, warm_lofi, cinematic_wide, raw"
     )
+    skip_mastering: bool = Field(
+        default=False,
+        description="If true, mix stems only (no auto-mastering). Used for quick save."
+    )
     callback_url: Optional[str] = None
     progress_url: Optional[str] = None
 
@@ -961,34 +967,44 @@ async def _run_remix_master(req: RemixMasterRequest):
             req.vibe, mixed_path,
         )
 
-        report_progress(
-            job_id, "mastering", 60,
-            "Auto-mastering...",
-            req.progress_url,
-        )
+        if req.skip_mastering:
+            # Quick mix mode — skip auto-mastering, save mixed output directly
+            report_progress(
+                job_id, "complete", 100,
+                "Quick mix complete",
+                req.progress_url,
+            )
+            master_path = mixed_path
+        else:
+            report_progress(
+                job_id, "mastering", 60,
+                "Auto-mastering...",
+                req.progress_url,
+            )
 
-        master_path = os.path.join(
-            output_dir, "remixed_master.wav"
-        )
-        await loop.run_in_executor(
-            None, _finalize,
-            mixed_path, master_path, req.vibe,
-        )
+            master_path = os.path.join(
+                output_dir, "remixed_master.wav"
+            )
+            await loop.run_in_executor(
+                None, _finalize,
+                mixed_path, master_path, req.vibe,
+            )
 
-        report_progress(
-            job_id, "complete", 100,
-            "Mix & master complete",
-            req.progress_url,
-        )
+            report_progress(
+                job_id, "complete", 100,
+                "Mix & master complete",
+                req.progress_url,
+            )
 
-        # Read result for callback
-        with open(master_path, "rb") as f:
-            media_bytes = f.read()
-
-        media_base64 = base64.b64encode(media_bytes).decode("ascii")
+        # Copy master to gallery dir (avoids base64-encoding multi-MB files)
+        os.makedirs(GALLERY_DIR, exist_ok=True)
+        gallery_filename = f"{job_id}.wav"
+        gallery_path = os.path.join(GALLERY_DIR, gallery_filename)
+        shutil.copy2(master_path, gallery_path)
 
         result = {
             "master_path": master_path,
+            "file_path": gallery_path,
             "media_type": "audio/wav",
         }
         job_progress[job_id] = {
@@ -1007,7 +1023,7 @@ async def _run_remix_master(req: RemixMasterRequest):
                     "job_id": job_id,
                     "status": "complete",
                     "type": "remix_master",
-                    "media_base64": media_base64,
+                    "file_path": gallery_path,
                     "media_type": "audio/wav",
                     "metadata": {
                         "vibe": req.vibe,

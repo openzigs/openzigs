@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { fetchJson } from "@/lib/api";
+import { AskAiPanel, AskAiButton, PAGE_CONTEXTS } from "@/components/ask-ai";
 import { SectionCard } from "@/components/section-card";
 import { ToastContainer, showToast } from "@/components/toast";
 import { ConfirmDialog } from "@/components/confirm-dialog";
@@ -30,14 +31,18 @@ type Tab = "dashboard" | "crm" | "automations" | "activity" | "settings";
 
 export default function SocialBrainPage() {
   const [activeTab, setActiveTab] = useState<Tab>("dashboard");
+  const [askAiOpen, setAskAiOpen] = useState(false);
 
   return (
     <main className="mx-auto max-w-6xl px-6 pb-12 pt-4">
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold">Social Brain</h1>
-        <p className="text-sm text-muted-foreground">
-          Unified inbox, CRM, and automated response engine for social platforms.
-        </p>
+      <div className="mb-6 flex items-end justify-between">
+        <div>
+          <h1 className="text-2xl font-bold">Social Brain</h1>
+          <p className="text-sm text-muted-foreground">
+            Unified inbox, CRM, and automated response engine for social platforms.
+          </p>
+        </div>
+        <AskAiButton onClick={() => setAskAiOpen(true)} />
       </div>
 
       {/* Tab navigation */}
@@ -64,6 +69,7 @@ export default function SocialBrainPage() {
       {activeTab === "settings" && <SettingsTab />}
 
       <ToastContainer />
+      <AskAiPanel pageContext={PAGE_CONTEXTS["social"]} open={askAiOpen} onClose={() => setAskAiOpen(false)} />
     </main>
   );
 }

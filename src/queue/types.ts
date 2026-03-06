@@ -143,6 +143,8 @@ export interface MediaJobPayload {
   muted?: Record<string, boolean>;
   /** Vibe preset for smart mix: punchy_pop, warm_lofi, cinematic_wide, raw */
   vibe?: string;
+  /** Skip auto-mastering; just mix stems and save to gallery */
+  skip_mastering?: boolean;
   /** Device to use for analysis (cpu / mps / cuda) */
   device?: string;
 }

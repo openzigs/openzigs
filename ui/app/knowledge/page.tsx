@@ -14,11 +14,13 @@ import {
   useConvertFiles,
 } from "@/lib/hooks/use-knowledge";
 import type { KnowledgeDocument } from "@/lib/types";
+import { AskAiPanel, AskAiButton, PAGE_CONTEXTS } from "@/components/ask-ai";
 
 export default function KnowledgePage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [activeSearch, setActiveSearch] = useState("");
   const [activeTab, setActiveTab] = useState<"overview" | "documents" | "search" | "converters">("overview");
+  const [askAiOpen, setAskAiOpen] = useState(false);
 
   const statsQuery = useKnowledgeStats();
   const docsQuery = useKnowledgeDocuments();
@@ -108,12 +110,15 @@ export default function KnowledgePage() {
 
   return (
     <main className="mx-auto max-w-5xl px-6 py-10 lg:px-12">
-      <header className="mb-8">
-        <p className="text-sm uppercase tracking-[0.3em] text-muted-foreground">OpenZigs</p>
-        <h1 className="mt-1 text-3xl font-semibold text-foreground">Knowledge Manager</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Manage your local knowledge base for semantic RAG search.
-        </p>
+      <header className="mb-8 flex items-end justify-between">
+        <div>
+          <p className="text-sm uppercase tracking-[0.3em] text-muted-foreground">OpenZigs</p>
+          <h1 className="mt-1 text-3xl font-semibold text-foreground">Knowledge Manager</h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Manage your local knowledge base for semantic RAG search.
+          </p>
+        </div>
+        <AskAiButton onClick={() => setAskAiOpen(true)} />
       </header>
 
       {/* Search Bar */}
@@ -366,6 +371,7 @@ export default function KnowledgePage() {
       )}
 
       <ToastContainer />
+      <AskAiPanel pageContext={PAGE_CONTEXTS["knowledge"]} open={askAiOpen} onClose={() => setAskAiOpen(false)} />
     </main>
   );
 }

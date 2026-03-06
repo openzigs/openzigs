@@ -10,6 +10,7 @@ import { ToastContainer, showToast } from "@/components/toast";
 import { PipelineEditor, type BackendPipelineNode } from "@/components/pipeline/pipeline-editor";
 import { WorkflowWizard } from "@/components/pipeline/workflow-wizard";
 import { ToolMultiSelect, type ToolOption } from "@/components/pipeline/tool-multi-select";
+import { AskAiPanel, AskAiButton, PAGE_CONTEXTS } from "@/components/ask-ai";
 
 const FALLBACK_MODEL_IDS = [
   "gpt-5-mini",
@@ -36,6 +37,7 @@ export default function SchedulerPage() {
   const { socket } = useSocket();
   const [editingJob, setEditingJob] = useState<ScheduledJob | null>(null);
   const [showForm, setShowForm] = useState(false);
+  const [askAiOpen, setAskAiOpen] = useState(false);
 
   const jobsQuery = useQuery({
     queryKey: ["jobs"],
@@ -121,12 +123,15 @@ export default function SchedulerPage() {
 
   return (
     <main className="mx-auto max-w-4xl px-6 py-10 lg:px-12">
-      <header className="mb-8">
-        <p className="text-sm uppercase tracking-[0.3em] text-muted-foreground">OpenZigs</p>
-        <h1 className="mt-1 text-3xl font-semibold text-foreground">Scheduler</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Schedule recurring prompts, shell commands, and custom actions.
-        </p>
+      <header className="mb-8 flex items-end justify-between">
+        <div>
+          <p className="text-sm uppercase tracking-[0.3em] text-muted-foreground">OpenZigs</p>
+          <h1 className="mt-1 text-3xl font-semibold text-foreground">Scheduler</h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Schedule recurring prompts, shell commands, and custom actions.
+          </p>
+        </div>
+        <AskAiButton onClick={() => setAskAiOpen(true)} />
       </header>
 
       <div className="mb-6 flex justify-end">
@@ -248,6 +253,7 @@ export default function SchedulerPage() {
         )}
       </SectionCard>
       <ToastContainer />
+      <AskAiPanel pageContext={PAGE_CONTEXTS["scheduler"]} open={askAiOpen} onClose={() => setAskAiOpen(false)} />
     </main>
   );
 }

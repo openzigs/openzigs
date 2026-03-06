@@ -133,7 +133,7 @@
     "mode": "local",
     "networkNodeUrl": "",
     "networkNodeToken": "",
-    "trainingTimeoutHours": 8
+    "trainingTimeoutHours": 12
   },
   "videoGen": {
     "mode": "local",

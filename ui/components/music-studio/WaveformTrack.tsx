@@ -129,10 +129,14 @@ export function WaveformTrack({
       onError?.(msg);
     });
 
-    ws.load(url);
+    void ws.load(url).catch((err: Error) => {
+      if (err?.name !== "AbortError" && !err?.message?.toLowerCase().includes("abort")) {
+        // Non-abort load errors are handled via the "error" event above
+      }
+    });
 
     return () => {
-      ws.destroy();
+      try { ws.destroy(); } catch { /* ignore any synchronous throws */ }
       wavesurferRef.current = null;
       if (wsRef) wsRef.current = null;
     };

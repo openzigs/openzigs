@@ -34,6 +34,7 @@ import {
   Clapperboard,
 } from "lucide-react";
 import { InlineModelPicker } from "@/components/model-picker-select";
+import { AskAiPanel, AskAiButton, PAGE_CONTEXTS } from "@/components/ask-ai";
 
 // ── Types ───────────────────────────────────────────────────
 
@@ -164,6 +165,7 @@ export default function GalleryPage() {
   const [previewAsset, setPreviewAsset] = useState<GalleryAsset | null>(null);
   const [showStudio, setShowStudio] = useState(false);
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
+  const [askAiOpen, setAskAiOpen] = useState(false);
 
   // ── Queries ─────────────────────────────────────────
 
@@ -361,12 +363,15 @@ export default function GalleryPage() {
 
   return (
     <main className="mx-auto max-w-6xl px-6 py-10 lg:px-12">
-      <header className="mb-8">
-        <p className="text-sm uppercase tracking-[0.3em] text-muted-foreground">OpenZigs</p>
-        <h1 className="mt-1 text-3xl font-semibold text-foreground">Asset Gallery</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Browse, manage, and create media assets — images, videos, and audio from the generation queue.
-        </p>
+      <header className="mb-8 flex items-end justify-between">
+        <div>
+          <p className="text-sm uppercase tracking-[0.3em] text-muted-foreground">OpenZigs</p>
+          <h1 className="mt-1 text-3xl font-semibold text-foreground">Asset Gallery</h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Browse, manage, and create media assets — images, videos, and audio from the generation queue.
+          </p>
+        </div>
+        <AskAiButton onClick={() => setAskAiOpen(true)} />
       </header>
 
       {/* Queue Stats Bar */}
@@ -613,6 +618,7 @@ export default function GalleryPage() {
       )}
 
       <ToastContainer />
+      <AskAiPanel pageContext={PAGE_CONTEXTS["gallery"]} open={askAiOpen} onClose={() => setAskAiOpen(false)} />
     </main>
   );
 }

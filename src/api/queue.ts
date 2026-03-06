@@ -63,11 +63,11 @@ export const createQueueCallbackRouter = ({ queueMaster, repo }: QueueRouterOpti
 
   callbackRouter.post("/complete", async (req, res) => {
     try {
-      const { job_id, status, media_base64, media_type, metadata, error, ...extraFields } = req.body;
+      const { job_id, status, media_base64, media_type, file_path, metadata, error, ...extraFields } = req.body;
 
       logger.info(
         `[QueueAPI] /complete called — job_id=${job_id ?? "(missing)"} status=${status ?? "(missing)"} ` +
-        `has_media=${!!media_base64} media_type=${media_type ?? "(none)"} ` +
+        `has_media=${!!media_base64} has_file=${!!file_path} media_type=${media_type ?? "(none)"} ` +
         `body_keys=${Object.keys(req.body ?? {}).join(",") || "(empty)"}`,
       );
 
@@ -87,7 +87,43 @@ export const createQueueCallbackRouter = ({ queueMaster, repo }: QueueRouterOpti
       let resultUrl = "";
       let galleryAssetId: string | undefined;
 
-      if (media_base64 && media_type) {
+      // File-based callback: sidecar already wrote the file to gallery dir
+      if (file_path && media_type) {
+        const resolved = path.resolve(String(file_path));
+        // Security: ensure file is within gallery dir
+        if (!resolved.startsWith(path.resolve(GALLERY_DIR))) {
+          logger.warn(`[QueueAPI] /complete rejected — file_path outside gallery: ${file_path}`);
+          res.status(400).json({ error: "file_path must be within gallery directory" });
+          return;
+        }
+
+        const filename = path.basename(resolved);
+        const stat = await fs.stat(resolved);
+        resultUrl = `/api/queue/assets/file/${filename}`;
+
+        const job = repo.getJob(job_id);
+        const assetType = assetTypeFromMime(media_type);
+
+        galleryAssetId = repo.createAsset({
+          type: assetType,
+          filename,
+          filePath: resolved,
+          mimeType: media_type,
+          fileSizeBytes: stat.size,
+          width: (metadata?.width as number) ?? undefined,
+          height: (metadata?.height as number) ?? undefined,
+          durationSeconds: (metadata?.duration as number) ?? undefined,
+          prompt: job?.payload?.prompt,
+          model: (metadata?.model as string) ?? job?.requiredModel,
+          generationParams: metadata as Record<string, unknown> | undefined,
+          source: "generated",
+          jobId: job_id,
+          projectId: job?.projectId ?? undefined,
+        });
+
+        logger.info(`[QueueAPI] Asset saved (file-based): ${galleryAssetId} (${filename}, ${stat.size} bytes)`);
+      } else if (media_base64 && media_type) {
+        // Legacy base64 callback (kept for backward compat with other sidecars)
         await ensureGalleryDir();
         const ext = mimeToExtension(media_type);
         const filename = `${job_id}${ext}`;
@@ -96,7 +132,6 @@ export const createQueueCallbackRouter = ({ queueMaster, repo }: QueueRouterOpti
         await fs.writeFile(filePath, buffer);
         resultUrl = `/api/queue/assets/file/${filename}`;
 
-        // Get the job to pull metadata for the asset record
         const job = repo.getJob(job_id);
         const assetType = assetTypeFromMime(media_type);
 
@@ -396,6 +431,25 @@ export const createQueueRouter = ({ queueMaster, repo, characterRepo }: QueueRou
       if (!Array.isArray(tags)) { res.status(400).json({ error: "tags must be an array" }); return; }
       repo.updateAssetTags(req.params.id, tags);
       res.json({ ok: true });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  // ── PATCH /assets/:id/rename — Rename an asset ──────────
+  router.patch("/assets/:id/rename", (req, res) => {
+    try {
+      const { filename } = req.body;
+      if (!filename || typeof filename !== "string") {
+        res.status(400).json({ error: "filename is required" });
+        return;
+      }
+      const safeName = path.basename(filename);
+      const asset = repo.getAsset(req.params.id);
+      if (!asset) { res.status(404).json({ error: "Asset not found" }); return; }
+      repo.renameAsset(req.params.id, safeName);
+      res.json({ ok: true, filename: safeName });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       res.status(500).json({ error: msg });

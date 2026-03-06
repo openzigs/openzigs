@@ -54,9 +54,14 @@ export function SpectrogramView({
       setIsLoading(false);
     });
 
-    ws.load(url);
+    void ws.load(url).catch((err: Error) => {
+      if (err?.name !== "AbortError" && !err?.message?.toLowerCase().includes("abort")) {
+        setError(err?.message ?? "Failed to load audio");
+        setIsLoading(false);
+      }
+    });
 
-    return () => ws.destroy();
+    return () => { try { ws.destroy(); } catch { /* ignore any synchronous throws */ } };
   }, [url, height, fftSamples]);
 
   return (

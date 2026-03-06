@@ -13,6 +13,7 @@ import { WorkflowWizard } from "@/components/pipeline/workflow-wizard";
 import { ToolMultiSelect, type ToolOption } from "@/components/pipeline/tool-multi-select";
 import { ImportWizard } from "@/components/library/import-wizard";
 import { ChevronDown, ChevronUp, Download, FileUp, Zap, Wrench, PenTool } from "lucide-react";
+import { AskAiPanel, AskAiButton, PAGE_CONTEXTS } from "@/components/ask-ai";
 
 export default function LibraryPage() {
   const queryClient = useQueryClient();
@@ -20,6 +21,7 @@ export default function LibraryPage() {
   const [editingPrompt, setEditingPrompt] = useState<SavedPrompt | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [showImportWizard, setShowImportWizard] = useState(false);
+  const [askAiOpen, setAskAiOpen] = useState(false);
   const [tools, setTools] = useState<ToolInfo[]>([]);
   const [models, setModels] = useState<ModelInfo[]>([]);
 
@@ -129,12 +131,15 @@ export default function LibraryPage() {
 
   return (
     <main className="mx-auto max-w-4xl px-6 py-10 lg:px-12">
-      <header className="mb-8">
-        <p className="text-sm uppercase tracking-[0.3em] text-muted-foreground">OpenZigs</p>
-        <h1 className="mt-1 text-3xl font-semibold text-foreground">Prompt Library</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Create, edit, and manage reusable prompt templates.
-        </p>
+      <header className="mb-8 flex items-end justify-between">
+        <div>
+          <p className="text-sm uppercase tracking-[0.3em] text-muted-foreground">OpenZigs</p>
+          <h1 className="mt-1 text-3xl font-semibold text-foreground">Prompt Library</h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Create, edit, and manage reusable prompt templates.
+          </p>
+        </div>
+        <AskAiButton onClick={() => setAskAiOpen(true)} />
       </header>
 
       {/* Search + New */}
@@ -265,6 +270,7 @@ export default function LibraryPage() {
       </SectionCard>
       {showImportWizard && <ImportWizard onClose={() => setShowImportWizard(false)} />}
       <ToastContainer />
+      <AskAiPanel pageContext={PAGE_CONTEXTS["library"]} open={askAiOpen} onClose={() => setAskAiOpen(false)} />
     </main>
   );
 }

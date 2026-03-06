@@ -140,7 +140,7 @@ def apply_seedvc(
             env=env,
             capture_output=True,
             text=True,
-            timeout=600,
+            timeout=3600,
         )
 
         if result.returncode != 0:

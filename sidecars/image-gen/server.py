@@ -1641,6 +1641,12 @@ async def train_status(character_id: Optional[str] = None):
         if not _training and lora_path is None:
             lora_path = _find_trained_lora(search_dir)
 
+    # Also check the permanent loras directory for a relocated adapter
+    if lora_path is None and character_id:
+        relocated = os.path.join(_LORAS_DIR, f"{character_id}_adapter.safetensors")
+        if os.path.isfile(relocated):
+            lora_path = relocated
+
     return {
         "training": _training,
         "paused": _train_paused,
@@ -1996,17 +2002,38 @@ class DeleteTrainDataRequest(BaseModel):
     character_id: str = Field(..., description="Character UUID whose training files should be removed")
 
 
+_LORAS_DIR = os.path.join(os.path.expanduser("~"), ".openzigs", "loras")
+
+
+def _relocate_adapter(character_id: str, search_dir: str) -> Optional[str]:
+    """Move the first adapter .safetensors out of the training dir into the
+    permanent ``~/.openzigs/loras/`` directory so it survives cleanup.
+
+    Returns the new absolute path, or None if no adapter was found.
+    """
+    import shutil as _sh
+
+    for root, _dirs, files in os.walk(search_dir):
+        for f in files:
+            if f.endswith(".safetensors") and "adapter" in f:
+                src = os.path.join(root, f)
+                os.makedirs(_LORAS_DIR, exist_ok=True)
+                dest = os.path.join(_LORAS_DIR, f"{character_id}_adapter.safetensors")
+                _sh.move(src, dest)
+                log.info(f"[train-data] Relocated adapter {src} -> {dest}")
+                return dest
+    return None
+
+
 @app.delete("/train-data", dependencies=[Depends(verify_token)])
 async def delete_train_data(req: DeleteTrainDataRequest):
     """Delete all training output for a character on this machine.
 
-    Removes the entire ``~/.openzigs/training/{character_id}/`` directory
-    (LoRA checkpoints, adapter, any residual data).  Also checks the legacy
-    macOS temp dir (``$TMPDIR/openzigs-training/{character_id}/``) and removes
-    it if present.
+    Before removing the training directory, relocates any extracted adapter
+    ``.safetensors`` to ``~/.openzigs/loras/`` so inference can still load it.
 
-    Returns ``{"removed": true, "paths": [...]}`` on success or
-    ``{"removed": false, "reason": "..."}`` if nothing was found.
+    Returns ``{"removed": true, "paths": [...], "lora_path": "..."}`` on
+    success or ``{"removed": false, "reason": "..."}`` if nothing was found.
     """
     import shutil as _shutil
     import tempfile
@@ -2015,10 +2042,13 @@ async def delete_train_data(req: DeleteTrainDataRequest):
         raise HTTPException(status_code=400, detail="Invalid character_id")
 
     removed_paths: list[str] = []
+    relocated_lora: Optional[str] = None
 
     # Persistent training dir
     persistent_dir = os.path.join(_TRAINING_BASE_DIR, req.character_id)
     if os.path.isdir(persistent_dir):
+        # Relocate adapter before nuking the directory
+        relocated_lora = _relocate_adapter(req.character_id, persistent_dir)
         try:
             _shutil.rmtree(persistent_dir)
             removed_paths.append(persistent_dir)
@@ -2030,6 +2060,8 @@ async def delete_train_data(req: DeleteTrainDataRequest):
     # Legacy macOS temp dir (may not exist after a reboot, but clean up when present)
     legacy_dir = os.path.join(tempfile.gettempdir(), "openzigs-training", req.character_id)
     if os.path.isdir(legacy_dir):
+        if relocated_lora is None:
+            relocated_lora = _relocate_adapter(req.character_id, legacy_dir)
         try:
             _shutil.rmtree(legacy_dir)
             removed_paths.append(legacy_dir)
@@ -2039,7 +2071,7 @@ async def delete_train_data(req: DeleteTrainDataRequest):
             # Non-fatal — temp dirs are ephemeral
 
     if removed_paths:
-        return {"removed": True, "paths": removed_paths}
+        return {"removed": True, "paths": removed_paths, "lora_path": relocated_lora}
     return {"removed": False, "reason": f"No training data found for character {req.character_id}"}
 
 

@@ -8,20 +8,27 @@ import { ShortsPanel } from "@/components/director/shorts-panel";
 import { DraftsPanel } from "@/components/director/drafts-panel";
 import { HeroReelPanel } from "@/components/director/hero-reel-panel";
 import { ToastContainer } from "@/components/toast";
+import { AskAiPanel, AskAiButton, PAGE_CONTEXTS } from "@/components/ask-ai";
 
 type DirectorTab = "wizard" | "blog" | "shorts" | "drafts" | "hero-reel";
 
 export default function DirectorPage() {
   const [tab, setTab] = useState<DirectorTab>("wizard");
+  const [askAiOpen, setAskAiOpen] = useState(false);
 
   return (
     <main className="mx-auto flex h-[calc(100vh-4rem)] max-w-4xl flex-col px-6 py-10 lg:px-12">
       <header className="mb-4 shrink-0">
         <p className="text-sm uppercase tracking-[0.3em] text-muted-foreground">OpenZigs</p>
-        <h1 className="mt-1 text-3xl font-semibold text-foreground">Director Mode</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Produce AI-directed videos from raw clips, text documents, or blog posts.
-        </p>
+        <div className="flex items-end justify-between">
+          <div>
+            <h1 className="mt-1 text-3xl font-semibold text-foreground">Director Mode</h1>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Produce AI-directed videos from raw clips, text documents, or blog posts.
+            </p>
+          </div>
+          <AskAiButton onClick={() => setAskAiOpen(true)} />
+        </div>
       </header>
 
       {/* Tab Navigation */}
@@ -91,6 +98,7 @@ export default function DirectorPage() {
         {tab === "hero-reel" && <HeroReelPanel />}
       </div>
       <ToastContainer />
+      <AskAiPanel pageContext={PAGE_CONTEXTS["director"]} open={askAiOpen} onClose={() => setAskAiOpen(false)} />
     </main>
   );
 }

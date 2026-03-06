@@ -55,19 +55,83 @@ SOUNDFONT_MAP: dict[str, str] = {
     "marimba": "marimba.sf2",
 }
 
+# General MIDI program numbers for fallback when individual SF2s aren't available.
+# Uses a single GM SoundFont with the appropriate program change.
+GM_PROGRAM_MAP: dict[str, int] = {
+    "80s_analog_synth": 81,     # Lead 2 (sawtooth)
+    "slap_bass": 36,            # Slap Bass 1
+    "grand_piano": 0,           # Acoustic Grand Piano
+    "electric_guitar": 27,      # Electric Guitar (clean)
+    "acoustic_guitar": 25,      # Acoustic Guitar (steel)
+    "strings_ensemble": 48,     # String Ensemble 1
+    "brass_section": 61,        # Brass Section
+    "flute": 73,                # Flute
+    "organ": 19,                # Church Organ
+    "marimba": 12,              # Marimba
+}
 
-def get_soundfont_path(instrument_id: str) -> str:
+# Known free General MIDI SoundFont to download as fallback
+_GM_SOUNDFONT_FILENAME = "FluidR3_GM.sf2"
+_GM_SOUNDFONT_URL = (
+    "https://keymusician01.s3.amazonaws.com/FluidR3_GM.sf2"
+)
+
+
+def _download_gm_soundfont() -> str:
+    """Download a free General MIDI SoundFont if none exists locally."""
+    from urllib.request import urlopen, Request
+
+    sf_path = os.path.join(SOUNDFONT_DIR, _GM_SOUNDFONT_FILENAME)
+    if os.path.isfile(sf_path):
+        return sf_path
+
+    os.makedirs(SOUNDFONT_DIR, exist_ok=True)
+
+    # Check if any .sf2 file already exists that we can use
+    for f in os.listdir(SOUNDFONT_DIR):
+        if f.lower().endswith(".sf2"):
+            logger.info(f"Found existing GM SoundFont: {f}")
+            return os.path.join(SOUNDFONT_DIR, f)
+
+    logger.info(
+        f"Downloading General MIDI SoundFont to {sf_path} "
+        f"(one-time setup, ~30 MB)..."
+    )
+    tmp_path = sf_path + ".tmp"
+    try:
+        req = Request(_GM_SOUNDFONT_URL, headers={"User-Agent": "openzigs/1.0"})
+        with urlopen(req, timeout=120) as resp, open(tmp_path, "wb") as out:
+            while True:
+                chunk = resp.read(65536)
+                if not chunk:
+                    break
+                out.write(chunk)
+        os.rename(tmp_path, sf_path)
+        logger.info(f"SoundFont downloaded: {sf_path}")
+    except Exception:
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+        raise
+
+    return sf_path
+
+
+def get_soundfont_path(instrument_id: str) -> tuple[str, int]:
     """Resolve the absolute path to a .sf2 SoundFont file.
+
+    Returns a tuple of (sf2_path, gm_program_number).
+    If an instrument-specific .sf2 exists, returns (path, 0).
+    Otherwise falls back to a General MIDI SoundFont with the
+    appropriate program number.
 
     Parameters:
         instrument_id (str): Key from SOUNDFONT_MAP.
 
     Returns:
-        str: Absolute path to the .sf2 file.
+        tuple[str, int]: (path to .sf2 file, GM program number)
 
     Raises:
         ValueError: If the instrument_id is unknown.
-        FileNotFoundError: If the .sf2 file doesn't exist on disk.
     """
     if instrument_id not in SOUNDFONT_MAP:
         available = ", ".join(sorted(SOUNDFONT_MAP.keys()))
@@ -76,13 +140,19 @@ def get_soundfont_path(instrument_id: str) -> str:
             f"Available: {available}"
         )
 
+    # Try instrument-specific SoundFont first
     sf2_path = os.path.join(SOUNDFONT_DIR, SOUNDFONT_MAP[instrument_id])
-    if not os.path.isfile(sf2_path):
-        raise FileNotFoundError(
-            f"SoundFont not found: {sf2_path}. "
-            f"Place the .sf2 file in {SOUNDFONT_DIR}/"
-        )
-    return sf2_path
+    if os.path.isfile(sf2_path):
+        return sf2_path, 0
+
+    # Fall back to a General MIDI SoundFont
+    logger.info(
+        f"Instrument SF2 not found ({SOUNDFONT_MAP[instrument_id]}), "
+        f"falling back to General MIDI SoundFont"
+    )
+    gm_path = _download_gm_soundfont()
+    program = GM_PROGRAM_MAP.get(instrument_id, 0)
+    return gm_path, program
 
 
 # ── Step 1: Audio → MIDI via basic-pitch ─────────────────────
@@ -145,6 +215,7 @@ def midi_to_audio(
     soundfont_path: str,
     output_path: str,
     sample_rate: int = 44100,
+    program: int = 0,
 ) -> str:
     """Synthesize a MIDI file using a SoundFont via FluidSynth.
 
@@ -153,6 +224,7 @@ def midi_to_audio(
         soundfont_path (str): Path to the .sf2 SoundFont file.
         output_path (str): Output WAV path.
         sample_rate (int): Output sample rate.
+        program (int): GM program number (0-127) for instrument selection.
 
     Returns:
         str: Path to the synthesized WAV file.
@@ -186,7 +258,7 @@ def midi_to_audio(
     # Initialize FluidSynth
     fs = fluidsynth.Synth(samplerate=float(sample_rate))
     sfid = fs.sfload(soundfont_path)
-    fs.program_select(0, sfid, 0, 0)
+    fs.program_select(0, sfid, 0, program)
 
     # Parse MIDI and calculate total duration
     mid = mido.MidiFile(midi_path)
@@ -336,7 +408,7 @@ def replace_instrument(
             f"Source stem not found: {source_stem_path}"
         )
 
-    sf2_path = get_soundfont_path(target_instrument_id)
+    sf2_path, gm_program = get_soundfont_path(target_instrument_id)
 
     with tempfile.TemporaryDirectory(
         prefix="remix-replace-"
@@ -347,7 +419,7 @@ def replace_instrument(
 
         # Step 2: MIDI → Audio (new instrument)
         raw_synth_path = os.path.join(tmpdir, "raw_synth.wav")
-        midi_to_audio(midi_path, sf2_path, raw_synth_path)
+        midi_to_audio(midi_path, sf2_path, raw_synth_path, program=gm_program)
 
         # Step 3: Post-process (Reverb + Chorus)
         post_process(raw_synth_path, output_path)
