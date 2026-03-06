@@ -83,7 +83,7 @@ def verify_token(authorization: Optional[str] = Header(None)) -> None:
 
 
 # ── Version ────────────────────────────────────────────────────
-SIDECAR_VERSION = "3.4.0"  # Bump on every deploy to verify Mac Mini is current
+SIDECAR_VERSION = os.environ.get("SIDECAR_VERSION", "3.4.0")  # Bump on every deploy to verify Mac Mini is current
 
 # ── Logging ────────────────────────────────────────────────────
 logging.basicConfig(
