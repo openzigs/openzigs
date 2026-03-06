@@ -871,9 +871,20 @@ export class QueueMaster extends EventEmitter {
     // Build progress_url by replacing /complete with /progress in the callback URL
     const progressUrl = callbackUrl.replace(/\/complete\/?$/, "/progress");
 
+    // Resolve actual file path from media_assets so the sidecar doesn't have to
+    // guess the filename from the UUID (asset filenames are not always UUID-based).
+    let sourcePath: string | undefined;
+    if (job.payload.source_asset_id) {
+      const asset = this.repo.getAsset(job.payload.source_asset_id as string);
+      if (typeof asset?.file_path === "string") {
+        sourcePath = asset.file_path;
+      }
+    }
+
     const body: Record<string, unknown> = {
       job_id: job.id,
       source_asset_id: job.payload.source_asset_id,
+      ...(sourcePath && { source_path: sourcePath }),
       voice_reference_id: job.payload.voice_reference_id,
       diffusion_steps: job.payload.diffusion_steps ?? 25,
       f0_condition: job.payload.f0_condition ?? false,
