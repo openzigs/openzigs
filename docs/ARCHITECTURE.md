@@ -2588,6 +2588,7 @@ flowchart TB
 | `TaskWorker` | `src/tasks/task-worker.ts` | Background polling loop, dequeues tasks, calls `CopilotWrapper.chat()` |
 | `spawn_agent` tool | `src/mcp/tools/agent-tools.ts` | MCP tool the LLM calls to create child tasks |
 | `NotificationDispatcher` | `src/tasks/notification-dispatcher.ts` | Routes completion alerts to the originating channel |
+| `MediaNotificationService` | `src/queue/media-notification-service.ts` | Opt-in Telegram notifications for media queue jobs and video renders |
 | Task API | `src/api/tasks.ts` | REST endpoints: list, get, cancel, stats |
 
 ### Execution Scenarios
@@ -4368,6 +4369,28 @@ Push-based orchestrator that polls pending jobs on a configurable tick interval 
 **Stale result recovery:** `pollForStaleResults()` runs every tick and checks dispatched jobs older than 3 minutes. For each stale job, it polls the worker's `/job-result/<id>` endpoint. If the result is available, it's processed as if the callback had arrived — this recovers jobs where the callback POST failed.
 
 **Events:** `job:dispatched`, `job:complete`, `job:failed`, `job:progress`, `project:complete`
+
+### Media Notification Service (`src/queue/media-notification-service.ts`)
+
+Instanced once at server start; wires event listeners onto `QueueMaster` and `RenderOrchestrator` to deliver opt-in Telegram push notifications for long-running async operations.
+
+**Covered surfaces:**
+- `QueueMaster` `job:complete` / `job:failed` — image/video/music generation jobs
+- `RenderOrchestrator` `render:complete` / `render:failed` — Director video renders
+- Character training — polled via `pollTrainingStatus()` → `sendTrainingTelegramNotification()`
+
+**Opt-in fields (per-job):**
+
+| Field | Type | Description |
+|---|---|---|
+| `notifyViaTelegram` | boolean | Whether to send a Telegram message on completion/failure |
+| `telegramChatId` | string \| null | Target chat; falls back to `config.channels.telegram.adminUserId` |
+
+**Flow:**
+1. Client sets `notify_via_telegram: true` in the job creation request (UI toggle or agent tool call)
+2. The flag is persisted in the `media_jobs` SQLite row (`notify_via_telegram INTEGER`, `telegram_chat_id TEXT`)
+3. On the terminal event, `MediaNotificationService` checks the flag, resolves the chat ID, then calls `ChannelManager.getChannel("telegram").sendMessage()`
+4. Gracefully degrades if Telegram is not configured or not connected — no crash, warn-level log
 
 ### Media Queue Repository (`src/queue/media-queue-repository.ts`)
 

@@ -5641,6 +5641,37 @@ Internal filesystem paths are stripped from error responses. 500 errors return a
 
 ---
 
+## Telegram Notifications for Async Jobs
+
+Long-running jobs — image/video/music generation, video renders, and LoRA character training — can send you a Telegram message when they finish or fail, even if you've closed the browser tab.
+
+### How to Enable
+
+Toggle the **Notify via Telegram** switch (paper-plane icon) that appears near the submit button for each supported surface:
+
+| Surface | Location |
+|---|---|
+| Gallery Studio / Media generation | In the generation form, next to the submit button |
+| Music Studio — Smart Remix Lab | Below the Analyze button |
+| Director Mode — Review & Produce | Between the vision analysis toggle and the render quality settings |
+| Characters — LoRA Training | Next to the Start Training button |
+
+The toggle is off by default. Enable it for individual jobs as needed.
+
+### Requirements
+
+1. A Telegram bot must be configured: `TELEGRAM_BOT_TOKEN` environment variable (or `channels.telegram.botToken` in `~/.openzigs/config.json`).
+2. The bot must have sent at least one message to the target chat, or `channels.telegram.adminUserId` must be set as the fallback destination.
+
+### Agentic Use
+
+When asking the AI agent to generate media, you can request a notification:
+> "Create a 4-second video of a sunset and send me a Telegram when it's done."
+
+The agent will automatically set `notify_via_telegram: true` on the job (see the Media Director and Remix Engineer skill guides).
+
+---
+
 ## Media Queue & Asset Gallery
 
 The Media Queue is a push-based distributed job system for generating images, videos, and music across networked GPU nodes. Jobs are dispatched to workers asynchronously — the worker accepts the job immediately (HTTP 202) and POSTs a completion callback back to the primary Mac when done. The Asset Gallery provides a visual interface for browsing, filtering, and managing all generated and uploaded media.

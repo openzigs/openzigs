@@ -37,6 +37,8 @@ function makeJob(overrides: Partial<MediaJob> = {}): MediaJob {
     createdAt: new Date(),
     dispatchedAt: null,
     completedAt: null,
+    notifyViaTelegram: false,
+    telegramChatId: null,
     ...overrides,
   };
 }

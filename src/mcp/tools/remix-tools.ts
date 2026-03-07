@@ -16,6 +16,8 @@ const remixSessionSchema = z.object({
     .describe("Replacement instrument"),
   vibe: z.enum(["punchy_pop", "warm_lofi", "cinematic_wide", "raw"]).optional().describe("Mastering vibe preset"),
   reference_track_path: z.string().optional().describe("Reference audio path for mastering tonal matching"),
+  notify_via_telegram: z.boolean().optional().describe("Send a Telegram notification when the job completes or fails"),
+  telegram_chat_id: z.string().optional().describe("Telegram chat ID to notify (uses configured admin chat ID if omitted)"),
 });
 
 export type RemixToolsOptions = {
@@ -44,6 +46,8 @@ export const createRemixTools = ({ mediaQueueRepo }: RemixToolsOptions): ToolDef
           },
           vibe: { type: "string", enum: ["punchy_pop", "warm_lofi", "cinematic_wide", "raw"] },
           reference_track_path: { type: "string" },
+          notify_via_telegram: { type: "boolean", description: "Send a Telegram notification when the job completes or fails" },
+          telegram_chat_id: { type: "string", description: "Telegram chat ID to notify (uses configured admin chat ID if omitted)" },
         },
         required: ["action"],
       },
@@ -71,6 +75,8 @@ export const createRemixTools = ({ mediaQueueRepo }: RemixToolsOptions): ToolDef
                   device: "cpu",
                 },
                 model: "htdemucs_6s",
+                notifyViaTelegram: input.notify_via_telegram,
+                telegramChatId: input.telegram_chat_id,
               });
               return {
                 text: JSON.stringify({ job_id: job.id, status: job.status, action: "analyze" }),
@@ -114,6 +120,8 @@ export const createRemixTools = ({ mediaQueueRepo }: RemixToolsOptions): ToolDef
                   original_key: meta?.key as string | undefined,
                 },
                 model: "basic-pitch",
+                notifyViaTelegram: input.notify_via_telegram,
+                telegramChatId: input.telegram_chat_id,
               });
               return {
                 text: JSON.stringify({
@@ -145,6 +153,8 @@ export const createRemixTools = ({ mediaQueueRepo }: RemixToolsOptions): ToolDef
                   vibe: input.vibe ?? "raw",
                 },
                 model: "matchering",
+                notifyViaTelegram: input.notify_via_telegram,
+                telegramChatId: input.telegram_chat_id,
               });
               return {
                 text: JSON.stringify({

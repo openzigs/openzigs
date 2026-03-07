@@ -72,3 +72,9 @@ For multi-asset projects (e.g., "Create a thumbnail and a promo video"):
   - If `manage-characters` fails → proceed without LoRA and inform the user.
 - After 2 failed alternatives, stop and explain the issue to the user with suggested remediation steps.
 - NEVER silently swallow errors — always inform the user what happened and what was tried.
+
+## Telegram Notifications
+- Any `submit-media-job` call can include `notify_via_telegram: true` to send the user a Telegram message when the job completes or fails.
+- Optionally pass `telegram_chat_id` to route to a specific chat; otherwise the admin chat ID is used as fallback.
+- When a user says "send me a Telegram when done" or similar, always set `notify_via_telegram: true` on the job submission.
+- You do NOT need to poll `get-job-status` when notifications are enabled — the system will push the update automatically.

@@ -7,6 +7,7 @@ import { buildMediaUrl } from "@/lib/api";
 import { SectionCard } from "@/components/section-card";
 import { ToastContainer, showToast } from "@/components/toast";
 import { ConfirmDialog } from "@/components/confirm-dialog";
+import { TelegramNotifyToggle } from "@/components/telegram-notify-toggle";
 import {
   User,
   Plus,
@@ -86,6 +87,7 @@ export default function CharactersPage() {
   const [trainLR, setTrainLR] = useState(0.0001);
   const [trainRank, setTrainRank] = useState(16);
   const [trainEpochs, setTrainEpochs] = useState(50);
+  const [trainNotifyViaTelegram, setTrainNotifyViaTelegram] = useState(false);
 
   // AI Enhance model selection dialog
   const [showEnhanceDialog, setShowEnhanceDialog] = useState(false);
@@ -171,10 +173,10 @@ export default function CharactersPage() {
   });
 
   const trainMutation = useMutation({
-    mutationFn: (data: { id: string; steps: number; learningRate: number; loraRank: number; numEpochs: number }) =>
+    mutationFn: (data: { id: string; steps: number; learningRate: number; loraRank: number; numEpochs: number; notifyViaTelegram?: boolean }) =>
       fetchJson<{ ok: boolean; message: string }>(`/api/characters/${data.id}/train`, {
         method: "POST",
-        body: JSON.stringify({ steps: data.steps, learningRate: data.learningRate, loraRank: data.loraRank, numEpochs: data.numEpochs }),
+        body: JSON.stringify({ steps: data.steps, learningRate: data.learningRate, loraRank: data.loraRank, numEpochs: data.numEpochs, notifyViaTelegram: data.notifyViaTelegram }),
       }),
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["characters"] });
@@ -738,6 +740,7 @@ export default function CharactersPage() {
                         learningRate: trainLR,
                         loraRank: trainRank,
                         numEpochs: trainEpochs,
+                        notifyViaTelegram: trainNotifyViaTelegram || undefined,
                       })
                     }
                     disabled={
@@ -754,6 +757,12 @@ export default function CharactersPage() {
                     )}
                     {selected.status === "training" ? "Training in Progress..." : "Start Training"}
                   </button>
+                  <TelegramNotifyToggle
+                    compact
+                    checked={trainNotifyViaTelegram}
+                    onChange={setTrainNotifyViaTelegram}
+                    disabled={trainMutation.isPending || selected.status === "training"}
+                  />
                   {selected.status === "training" && (
                     <button
                       onClick={() =>

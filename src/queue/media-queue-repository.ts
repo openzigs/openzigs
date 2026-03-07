@@ -36,6 +36,8 @@ const toJob = (row: StoredMediaJob): MediaJob => ({
   createdAt: new Date(row.created_at),
   dispatchedAt: row.dispatched_at ? new Date(row.dispatched_at) : null,
   completedAt: row.completed_at ? new Date(row.completed_at) : null,
+  notifyViaTelegram: row.notify_via_telegram === 1,
+  telegramChatId: row.telegram_chat_id,
 });
 
 // ── Repository ────────────────────────────────────────────────
@@ -336,6 +338,15 @@ export class MediaQueueRepository {
     if (!assetCols.includes("knowledge_category")) {
       this.db.exec("ALTER TABLE media_assets ADD COLUMN knowledge_category TEXT NOT NULL DEFAULT 'media'");
     }
+
+    // ── Telegram notification columns (additive migration, Issue #414) ──
+    const jobCols = (this.db.prepare("PRAGMA table_info(media_jobs)").all() as Array<{ name: string }>).map((c) => c.name);
+    if (!jobCols.includes("notify_via_telegram")) {
+      this.db.exec("ALTER TABLE media_jobs ADD COLUMN notify_via_telegram INTEGER NOT NULL DEFAULT 0");
+    }
+    if (!jobCols.includes("telegram_chat_id")) {
+      this.db.exec("ALTER TABLE media_jobs ADD COLUMN telegram_chat_id TEXT");
+    }
   }
 
   // ── Media Jobs CRUD ───────────────────────────────────────
@@ -347,8 +358,8 @@ export class MediaQueueRepository {
     const targetNode = targetNodeForJobType(input.type);
 
     const stmt = this.db.prepare(`
-      INSERT INTO media_jobs (id, type, required_model, target_node, payload, status, project_id, priority, created_at)
-      VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?)
+      INSERT INTO media_jobs (id, type, required_model, target_node, payload, status, project_id, priority, created_at, notify_via_telegram, telegram_chat_id)
+      VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?)
     `);
 
     stmt.run(
@@ -360,6 +371,8 @@ export class MediaQueueRepository {
       input.projectId ?? null,
       input.priority ?? 0,
       now,
+      input.notifyViaTelegram ? 1 : 0,
+      input.telegramChatId ?? null,
     );
 
     return this.getJob(id)!;

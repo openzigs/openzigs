@@ -33,6 +33,8 @@ const submitMediaJobSchema = z.object({
   duration_seconds: z.number().optional().describe("Duration in seconds (music generation)"),
   lyrics: z.string().optional().describe("Lyrics for vocal music generation"),
   instrumental: z.boolean().optional().describe("Generate instrumental-only music"),
+  notify_via_telegram: z.boolean().optional().describe("Send a Telegram notification when the job completes or fails"),
+  telegram_chat_id: z.string().optional().describe("Telegram chat ID to notify (uses configured admin chat ID if omitted)"),
 });
 
 const getJobStatusSchema = z.object({
@@ -75,6 +77,8 @@ export const createMediaQueueTools = ({
           duration_seconds: { type: "number" },
           lyrics: { type: "string" },
           instrumental: { type: "boolean" },
+          notify_via_telegram: { type: "boolean", description: "Send a Telegram notification when the job completes or fails" },
+          telegram_chat_id: { type: "string", description: "Telegram chat ID to notify (uses configured admin chat ID if omitted)" },
         },
         required: ["type"],
       },
@@ -109,6 +113,8 @@ export const createMediaQueueTools = ({
             model,
             projectId: input.project_id,
             priority: input.priority ?? 0,
+            notifyViaTelegram: input.notify_via_telegram,
+            telegramChatId: input.telegram_chat_id,
           });
 
           return {

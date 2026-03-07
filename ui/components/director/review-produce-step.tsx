@@ -29,6 +29,7 @@ import {
 import type { WizardState, RenderJobStatus, DirectorManifestSummary, RenderSettings, RenderQuality, ImageProvider, ImageModel } from "./types";
 import { QUALITY_PRESETS } from "./types";
 import type { ModelInfo } from "@/lib/types";
+import { TelegramNotifyToggle } from "@/components/telegram-notify-toggle";
 
 interface ReviewProduceStepProps {
   state: WizardState;
@@ -98,6 +99,7 @@ export const ReviewProduceStep = ({
   const [framesInfo, setFramesInfo] = useState<string | null>(null);
   const [enableVisionAnalysis, setEnableVisionAnalysis] = useState(true);
   const [produceElapsedSec, setProduceElapsedSec] = useState(0);
+  const [notifyViaTelegram, setNotifyViaTelegram] = useState(false);
 
   // Fetch available models for the model picker
   const modelsQuery = useQuery({
@@ -203,6 +205,7 @@ export const ReviewProduceStep = ({
             visualAssets: visualAssets.length > 0 ? visualAssets : undefined,
             brandVoiceId: state.brandVoiceId || undefined,
             imageClipDurationSeconds: state.imageClipDurationSeconds,
+            notifyViaTelegram: notifyViaTelegram || undefined,
           }),
         });
       }
@@ -218,6 +221,7 @@ export const ReviewProduceStep = ({
           model: state.model || undefined,
           enableVisionAnalysis,
           brandVoiceId: state.brandVoiceId || undefined,
+          notifyViaTelegram: notifyViaTelegram || undefined,
         }),
       });
     },
@@ -274,6 +278,7 @@ export const ReviewProduceStep = ({
           codec: state.renderSettings.codec,
           crf: state.renderSettings.crf,
           quality: state.renderSettings.quality,
+          notifyViaTelegram: notifyViaTelegram || undefined,
         }),
       }),
     onSuccess: (data) => {
@@ -634,6 +639,14 @@ export const ReviewProduceStep = ({
                 }`}
               />
             </button>
+          </div>
+
+          {/* Telegram Notification Toggle */}
+          <div className="flex items-center justify-between rounded-xl border border-border bg-card px-4 py-3">
+            <TelegramNotifyToggle
+              checked={notifyViaTelegram}
+              onChange={setNotifyViaTelegram}
+            />
           </div>
 
           <div className="flex items-center gap-2">

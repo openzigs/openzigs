@@ -3530,12 +3530,14 @@ Return ONLY the new narration text, no explanations or formatting.`;
         return;
       }
 
-      const { manifest, codec, crf, quality, draftId } = req.body as {
+      const { manifest, codec, crf, quality, draftId, notifyViaTelegram, telegramChatId } = req.body as {
         manifest: unknown;
         codec?: string;
         crf?: number;
         quality?: "draft" | "standard" | "high" | "lossless";
         draftId?: string;
+        notifyViaTelegram?: boolean;
+        telegramChatId?: string;
       };
       if (!manifest || typeof manifest !== "object") {
         res.status(400).json({ error: "manifest object is required" });
@@ -3554,6 +3556,8 @@ Return ONLY the new narration text, no explanations or formatting.`;
 
       const jobId = await renderOrchestrator.submit({
         manifest: manifest as import("../video/manifest/manifest-types.js").DirectorManifest,
+        notifyViaTelegram,
+        telegramChatId,
       });
 
       // Store quality metadata on the job for logging/display

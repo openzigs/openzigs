@@ -68,6 +68,8 @@ export class RenderOrchestrator extends EventEmitter {
       updatedAt: now,
       durationSec: null,
       fileSizeBytes: null,
+      notifyViaTelegram: request.notifyViaTelegram ?? false,
+      telegramChatId: request.telegramChatId ?? null,
     };
 
     this.jobs.set(jobId, job);

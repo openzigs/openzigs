@@ -75,9 +75,10 @@ import { RoomManager } from "./presenter/room-manager.js";
 import { ExpressPeerServer } from "peer";
 import { MediaQueueRepository } from "./queue/media-queue-repository.js";
 import { QueueMaster } from "./queue/queue-master.js";
+import { MediaNotificationService } from "./queue/media-notification-service.js";
 import { createQueueRouter, createQueueCallbackRouter } from "./api/queue.js";
 import { createGalleryRouter } from "./api/gallery.js";
-import { createCharacterRouter, setCharacterIO, resumeStaleTrainingPolls } from "./api/characters.js";
+import { createCharacterRouter, setCharacterIO, setCharacterChannelManager, resumeStaleTrainingPolls } from "./api/characters.js";
 import { CharacterRepository } from "./characters/character-repository.js";
 
 // Register built-in post-action types (create-github-issues, send-webhook, etc.)
@@ -1199,6 +1200,8 @@ const io = new SocketIOServer(httpServer, {
 setDirectorIO(io);
 // Bind Socket.IO to Character router for training progress events
 setCharacterIO(io);
+// Wire ChannelManager into Character router for opt-in Telegram training notifications (Issue #415)
+setCharacterChannelManager(channelManager, config.channels?.telegram?.adminUserId || undefined);
 // Resume polling for any characters stuck in "training" after server restart
 resumeStaleTrainingPolls(characterRepo).catch((err) => {
   logger.warn(`[Characters] Failed to resume stale training polls: ${err}`);
@@ -1616,6 +1619,14 @@ new NotificationDispatcher({
   channelManager,
   sessionManager,
   io,
+});
+
+// Wire MediaNotificationService — per-job opt-in Telegram notifications (Issue #414)
+new MediaNotificationService({
+  queueMaster,
+  renderOrchestrator,
+  channelManager,
+  fallbackChatId: config.channels?.telegram?.adminUserId || undefined,
 });
 
 // Forward ALL task lifecycle events to Socket.IO for real-time graph updates

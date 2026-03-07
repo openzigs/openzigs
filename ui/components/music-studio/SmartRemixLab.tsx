@@ -8,6 +8,7 @@ import { SectionCard } from "@/components/section-card";
 import { showToast } from "@/components/toast";
 import type WaveSurfer from "wavesurfer.js";
 import { WaveformTrack } from "./WaveformTrack";
+import { TelegramNotifyToggle } from "@/components/telegram-notify-toggle";
 import {
   Wand2,
   Volume2,
@@ -130,6 +131,7 @@ export function SmartRemixLab({ audioAssets }: SmartRemixLabProps) {
   const [analyzeJobId, setAnalyzeJobId] = useState<string | null>(null);
   const [gallerySaving, setGallerySaving] = useState(false);
   const [quickMixJobId, setQuickMixJobId] = useState<string | null>(null);
+  const [notifyViaTelegram, setNotifyViaTelegram] = useState(false);
   const pollRef = useRef<Set<ReturnType<typeof setInterval>>>(new Set());
 
   // ── Stem Playback ─────────────────────────────────────────
@@ -154,6 +156,7 @@ export function SmartRemixLab({ audioAssets }: SmartRemixLabProps) {
           payload: {
             source_asset_id: assetId,
           },
+          notify_via_telegram: notifyViaTelegram || undefined,
         }),
       });
       return res;
@@ -248,6 +251,7 @@ export function SmartRemixLab({ audioAssets }: SmartRemixLabProps) {
             muted,
             vibe,
           },
+          notify_via_telegram: notifyViaTelegram || undefined,
         }),
       });
       return res;
@@ -290,6 +294,7 @@ export function SmartRemixLab({ audioAssets }: SmartRemixLabProps) {
             vibe,
             skip_mastering: true,
           },
+          notify_via_telegram: notifyViaTelegram || undefined,
         }),
       });
       return res;
@@ -770,6 +775,15 @@ export function SmartRemixLab({ audioAssets }: SmartRemixLabProps) {
               )}
               {isAnalyzing ? "Analyzing..." : "Analyze & Split"}
             </button>
+          </div>
+
+          {/* Telegram Notification Toggle */}
+          <div className="flex items-center justify-between rounded-lg border border-zinc-700 bg-zinc-900/50 px-3 py-2">
+            <TelegramNotifyToggle
+              checked={notifyViaTelegram}
+              onChange={setNotifyViaTelegram}
+              compact
+            />
           </div>
 
           {/* Analysis Progress */}

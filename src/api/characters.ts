@@ -13,6 +13,7 @@ import type { CharacterRepository, CharacterCreate, CharacterUpdate } from "../c
 import type { CopilotWrapperService, SdkAttachment } from "../copilot/copilot-wrapper.js";
 import type { Server as SocketIOServer } from "socket.io";
 import { getUserSelectedModel } from "../config/user-model.js";
+import type { ChannelManager } from "../channels/channel-manager.js";
 
 // ── Types ───────────────────────────────────────────────────
 
@@ -25,6 +26,14 @@ export interface CharacterRouterDeps {
 let _io: SocketIOServer | null = null;
 export function setCharacterIO(io: SocketIOServer): void {
   _io = io;
+}
+
+// ── Channel manager (injected for Telegram training notifications) ─
+let _channelManager: ChannelManager | null = null;
+let _fallbackChatId: string | undefined;
+export function setCharacterChannelManager(mgr: ChannelManager, fallbackChatId?: string): void {
+  _channelManager = mgr;
+  _fallbackChatId = fallbackChatId;
 }
 
 // ── In-flight training cancellation flags ────────────────────
@@ -355,6 +364,8 @@ export function createCharacterRouter({ characterRepo, copilot }: CharacterRoute
       const learningRate = typeof overrides.learningRate === "number" ? overrides.learningRate : 1e-4;
       const loraRank = typeof overrides.loraRank === "number" ? overrides.loraRank : 16;
       const numEpochs = typeof overrides.numEpochs === "number" ? overrides.numEpochs : 50;
+      const notifyViaTelegram = overrides.notifyViaTelegram === true;
+      const telegramChatId = typeof overrides.telegramChatId === "string" ? overrides.telegramChatId : undefined;
 
       // Build per-image prompt: use per-image caption if available,
       // fall back to character description, then generic trigger-word prompt
@@ -402,7 +413,7 @@ export function createCharacterRouter({ characterRepo, copilot }: CharacterRoute
       });
 
       // POST to the image-gen sidecar's /train endpoint
-      startRemoteTraining(character.id, sidecarUrl, trainConfig, photos, characterRepo);
+      startRemoteTraining(character.id, sidecarUrl, trainConfig, photos, characterRepo, notifyViaTelegram, telegramChatId);
 
       logger.info(`[Characters] Started LoRA training for '${character.name}' (${character.id}) via ${sidecarUrl}`);
       res.json({
@@ -859,6 +870,24 @@ async function getImageGenToken(): Promise<string> {
   return "";
 }
 
+// ── Telegram notification helper for training events ──────────────────────
+function sendTrainingTelegramNotification(
+  characterId: string,
+  characterName: string,
+  outcome: "complete" | "failed",
+  chatId: string,
+  message?: string,
+): void {
+  const telegram = _channelManager?.getChannel("telegram");
+  if (!telegram || !telegram.isConnected()) return;
+  const text = outcome === "complete"
+    ? `✅ *LoRA training complete* for character *${characterName}*. Ready to use!`
+    : `❌ *LoRA training failed* for character *${characterName}*${message ? `\n${message}` : ""}. Please check the logs.`;
+  telegram.sendMessage(chatId, { text, markdown: true }).catch((err: unknown) => {
+    logger.warn(`[Characters] Failed to send training Telegram notification for ${characterId}: ${err instanceof Error ? err.message : String(err)}`);
+  });
+}
+
 // ── Remote Training Manager ─────────────────────────────────
 
 async function startRemoteTraining(
@@ -867,6 +896,8 @@ async function startRemoteTraining(
   trainConfig: Record<string, unknown>,
   photos: Array<{ image_base64: string; filename: string; prompt: string }>,
   characterRepo: CharacterRepository,
+  notifyViaTelegram = false,
+  telegramChatId?: string,
 ): Promise<void> {
   const token = await getImageGenToken();
 
@@ -900,7 +931,7 @@ async function startRemoteTraining(
     _io?.emit("character:training:start", { characterId, characterName });
 
     // Start polling for completion
-    pollTrainingStatus(characterId, characterName, sidecarUrl, token, result.output_dir ?? null, characterRepo);
+    pollTrainingStatus(characterId, characterName, sidecarUrl, token, result.output_dir ?? null, characterRepo, notifyViaTelegram, telegramChatId);
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
     characterRepo.update(characterId, {
@@ -935,6 +966,8 @@ function pollTrainingStatus(
   token: string,
   _outputDir: string | null,
   characterRepo: CharacterRepository,
+  notifyViaTelegram = false,
+  telegramChatId?: string,
 ): void {
   const pollIntervalMs = 15_000; // 15 seconds
   const startTime = Date.now();
@@ -969,6 +1002,10 @@ function pollTrainingStatus(
               errorMessage: `Training timed out after ${hours}h but a partial checkpoint was saved and is usable. Results may improve with more training.`,
             });
             _io?.emit("character:training:complete", { characterId, characterName, partial: true });
+            if (notifyViaTelegram) {
+              const chatId = telegramChatId ?? _fallbackChatId;
+              if (chatId) sendTrainingTelegramNotification(characterId, characterName, "complete", chatId);
+            }
             logger.warn(`[Characters] Training timed out for ${characterId} but partial checkpoint is usable: ${status.lora_path}`);
             return;
           }
@@ -981,6 +1018,10 @@ function pollTrainingStatus(
         errorMessage: `Training timed out after ${hours} hours. The sidecar may still be training — check its logs. You can increase the timeout in config (imageGen.trainingTimeoutHours).`,
       });
       _io?.emit("character:training:failed", { characterId, characterName });
+      if (notifyViaTelegram) {
+        const chatId = telegramChatId ?? _fallbackChatId;
+        if (chatId) sendTrainingTelegramNotification(characterId, characterName, "failed", chatId, `Timed out after ${hours}h`);
+      }
       logger.error(`[Characters] Training timed out for ${characterId}`);
       return;
     }
@@ -1016,6 +1057,10 @@ function pollTrainingStatus(
           errorMessage: status.error,
         });
         _io?.emit("character:training:failed", { characterId, characterName });
+        if (notifyViaTelegram) {
+          const chatId = telegramChatId ?? _fallbackChatId;
+          if (chatId) sendTrainingTelegramNotification(characterId, characterName, "failed", chatId, status.error);
+        }
         logger.error(`[Characters] Remote training failed for ${characterId}: ${status.error}`);
       } else if (status.lora_path) {
         characterRepo.update(characterId, {
@@ -1024,6 +1069,10 @@ function pollTrainingStatus(
           errorMessage: null,
         });
         _io?.emit("character:training:complete", { characterId, characterName });
+        if (notifyViaTelegram) {
+          const chatId = telegramChatId ?? _fallbackChatId;
+          if (chatId) sendTrainingTelegramNotification(characterId, characterName, "complete", chatId);
+        }
         logger.info(`[Characters] Remote training complete for ${characterId}: ${status.lora_path}`);
 
         // Clean up training data on the sidecar now that the character is confirmed ready.
@@ -1052,6 +1101,10 @@ function pollTrainingStatus(
           errorMessage: "Training completed but no LoRA adapter found in output directory",
         });
         _io?.emit("character:training:failed", { characterId, characterName });
+        if (notifyViaTelegram) {
+          const chatId = telegramChatId ?? _fallbackChatId;
+          if (chatId) sendTrainingTelegramNotification(characterId, characterName, "failed", chatId, "No LoRA adapter found");
+        }
         logger.error(`[Characters] Remote training completed but no LoRA found for ${characterId}`);
       }
     } catch (error) {
