@@ -32,6 +32,7 @@ const replyToCommentSchema = z.object({
 const searchVideosSchema = z.object({
   query: z.string().describe("Search query"),
   max_results: z.number().min(1).max(50).optional(),
+  order: z.enum(["date", "rating", "relevance", "title", "viewCount"]).optional().describe("Sort order (default: relevance)"),
 });
 
 const getChannelAnalyticsSchema = z.object({
@@ -120,7 +121,7 @@ export const createYouTubeTools = (options: YouTubeToolsOptions): ToolDefinition
     {
       name: "youtube-search-videos",
       description: "Search for YouTube videos.",
-      inputSchema: { type: "object", properties: { query: { type: "string" }, max_results: { type: "number" } }, required: ["query"] },
+      inputSchema: { type: "object", properties: { query: { type: "string" }, max_results: { type: "number" }, order: { type: "string", enum: ["date", "rating", "relevance", "title", "viewCount"], description: "Sort order (default: relevance)" } }, required: ["query"] },
       zodSchema: searchVideosSchema,
       category: "social",
       riskLevel: "low",

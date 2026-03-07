@@ -31,6 +31,7 @@ const SKILL_ICONS: Record<string, string> = {
   "knowledge-curator": "\u{1F4DA}",
   "system-operator": "\u{1F6E1}\uFE0F",
   "pinterest-marketer": "\u{1F4CC}",
+  "research-synthesizer": "\u{1F52C}",
 };
 
 const SKILL_EXAMPLES: Record<string, string[]> = {
@@ -68,6 +69,11 @@ const SKILL_EXAMPLES: Record<string, string[]> = {
     "Find trending Pinterest keywords and create optimized pins",
     "Audit my top pins for SEO and annotation coverage",
     "Repurpose this blog post as Pinterest content",
+  ],
+  "research-synthesizer": [
+    "Research the top AI coding assistants in 2026 with 8 web articles and 5 YouTube videos",
+    "Compare cloud hosting providers from a cost perspective and generate comparison images",
+    "Write a comprehensive report on renewable energy trends using web and YouTube sources",
   ],
 };
 

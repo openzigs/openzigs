@@ -45,6 +45,7 @@ import { createKnowledgeManagementTools } from "./tools/knowledge-management-too
 import { createWebhookTools } from "./tools/webhook-tools.js";
 import { createSentinelTools } from "./tools/sentinel-tools.js";
 import { createPinterestSeoTools } from "./tools/pinterest-seo-tools.js";
+import { createDraftMediaTools } from "./tools/draft-media-tools.js";
 import { ToolRegistry, type ToolDefinition } from "./tool-registry.js";
 import type { LocalMcpServerManager } from "./local-mcp-server-manager.js";
 import { AuditLogger } from "../logging/audit-logger.js";
@@ -714,4 +715,8 @@ export const registerMcpTools = (toolRegistry: ToolRegistry, options: RegisterMc
     const sentTools = createSentinelTools({ sentinelService: options.sentinelService });
     for (const tool of sentTools) { registerTool(tool); }
   }
+
+  // ── Draft Media Tools (Research Synthesis Engine) ──
+  const draftMediaTools = createDraftMediaTools();
+  for (const tool of draftMediaTools) { registerTool(tool); }
 };

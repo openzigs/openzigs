@@ -339,6 +339,7 @@ Understanding when to use each:
 | **Content Creator** ✍️ | Blog-to-video, voiceovers (54+ voices), YouTube Shorts, brand voice enforcement. | "Convert this blog to a narrated video" / "Create a Short from the latest upload" / "Use the warm female voice" |
 | **Knowledge Curator** 📚 | RAG knowledge base ingestion, semantic search, presentation management, quiz generation. | "Ingest this article" / "Search for machine learning content" / "Generate a quiz for chapter 3" |
 | **System Operator** 🛡️ | Sentinel SRE monitoring, webhook management, worker node health, system diagnostics. | "Check all worker node health" / "Show the latest Sentinel digest" / "Create a CI/CD webhook" |
+| **Research Synthesizer** 🔬 | Autonomous web + YouTube research, inline-cited document synthesis, optional media generation. | "Research the top AI coding assistants in 2026" / "Compare cloud providers with images" / "Write a report on renewable energy trends" |
 
 #### Usage Examples
 
@@ -5736,6 +5737,94 @@ The **Pinterest SEO** section on the Admin page (`/admin`) shows:
 ### Weekly Digest (Telegram)
 
 When Telegram is configured, the `PinterestDigestService` can send a weekly performance digest with impressions, pin clicks, saves, and engagement metrics. Trigger via scheduled job or directly from chat.
+
+---
+
+## Research & Content Synthesis Engine
+
+The Research & Content Synthesis Engine enables autonomous multi-source research, inline-cited document generation, and optional media creation — all orchestrated by the **Research Synthesizer** skill (🔬).
+
+### Quick Start
+
+1. Navigate to `/workbench`.
+2. Click the **Research** button (🔬 microscope icon) in the toolbar.
+
+![Workbench toolbar with Research button](images/workbench-research-button.png)
+
+3. Fill the Research & Generate dialog:
+
+| Field | Required | Description |
+|---|---|---|
+| **Topic** | Yes | The research subject (e.g., "AI coding assistants in 2026") |
+| **Slant / Angle** | No | Editorial perspective (e.g., "from a cost perspective") |
+| **Web articles** | No | Number of web sources to research (1–20, default 5) |
+| **YouTube videos** | No | Number of YouTube sources to research (0–20, default 3) |
+| **Generate images** | No | Create AI-generated illustrations for the document |
+| **Generate video** | No | Create an AI-generated summary video |
+
+![Research & Generate dialog with topic, slant, and media options](images/workbench-research-dialog-filled.png)
+
+4. Click **Generate**. The agent executes a 6-phase autonomous workflow.
+
+### Workflow Phases
+
+| Phase | What happens | Tools used |
+|---|---|---|
+| 1. Parameter Extraction | Parses topic, slant, source counts from your request | — |
+| 2. Web Research | Searches and reads web articles on the topic | `web-search` |
+| 3. YouTube Research | Finds and analyzes relevant YouTube videos | `youtube-search-videos`, `youtube-get-video-details` |
+| 4. Content Synthesis | Produces a structured, inline-cited Markdown document | `write-file` |
+| 5. Media Generation | (Optional) Generates images/video based on document content | `submit-media-job`, `get-job-status`, `save-draft-media` |
+| 6. Bibliography & Save | Appends a numbered bibliography and saves to disk | `write-file` |
+
+### MCP Tools
+
+| Tool | Risk | Description |
+|---|---|---|
+| `save-draft-media` | 🟡 medium | Copies generated media (images, video, audio) to `~/.openzigs/files/drafts/<project_id>/` |
+
+The skill also uses `web-search`, `youtube-search-videos`, `youtube-get-video-details`, `submit-media-job`, `get-job-status`, `query-gallery-assets`, `read-file`, and `write-file`.
+
+### YouTube Order Parameter
+
+The `youtube-search-videos` tool now supports an `order` parameter for controlling result sorting:
+
+| Value | Description |
+|---|---|
+| `relevance` | (default) Best match for query |
+| `date` | Newest first |
+| `viewCount` | Most viewed first |
+| `rating` | Highest rated first |
+| `title` | Alphabetical by title |
+
+### Example Prompts
+
+```
+Research the top AI coding assistants in 2026 with 8 web articles
+and 5 YouTube videos.
+```
+
+```
+Compare cloud hosting providers from a cost perspective and generate
+comparison images.
+```
+
+```
+Write a comprehensive report on renewable energy trends using web and
+YouTube sources, then generate a summary video.
+```
+
+### Draft Media Storage
+
+Generated media from research sessions is saved to:
+```
+~/.openzigs/files/drafts/<project_id>/
+    ├── ai-coding-assistants-hero.png
+    ├── comparison-chart.png
+    └── summary-video.mp4
+```
+
+If no `project_id` is specified, files save to `~/.openzigs/files/drafts/default/`.
 
 ---
 

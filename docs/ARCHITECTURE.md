@@ -599,6 +599,30 @@ Four native MCP tools for Pinterest SEO powered by the Pinterest API v5. Registe
 - `ui/components/admin/pinterest-panel.tsx` — Admin panel showing connection status, account stats, trending keywords
 - Admin API routes: `GET /api/admin/pinterest/status`, `/trends`, `/stats`
 
+#### Research & Content Synthesis Tools
+
+**Source:** `src/mcp/tools/draft-media-tools.ts` (built-in, no sidecar)
+
+One native MCP tool for saving generated media to project-scoped draft directories. Registered via `createDraftMediaTools()` factory in `src/mcp/server.ts`.
+
+| Tool | Risk | Description |
+|---|---|---|
+| `save-draft-media` | 🟡 medium | Copies generated images, videos, or audio to `~/.openzigs/files/drafts/<project_id>/` with sanitized filenames |
+
+**YouTube `order` Extension:** The `youtube-search-videos` tool (proxied through the YouTube MCP sidecar) now accepts an `order` parameter (`date`, `rating`, `relevance`, `title`, `viewCount`) passed through to the YouTube Data API v3 `search.list` endpoint.
+
+**Data Flow:**
+```
+Workbench UI → ResearchGenerateDialog → Socket.IO "chat:message" { skill: "research-synthesizer" }
+→ Copilot SDK → Research Synthesizer Skill → web-search → youtube-search-videos
+→ Content Synthesis → write-file → (optional) submit-media-job → save-draft-media
+```
+
+**Supporting Components:**
+- `src/skills/research-synthesizer/SKILL.md` — 6-phase autonomous research + synthesis skill (Parameter Extraction → Web Research → YouTube Research → Content Synthesis → Media Generation → Bibliography & Save)
+- `ui/components/workbench/research-generate-dialog.tsx` — Workbench dialog for configuring research parameters (topic, slant, source counts, media toggles)
+- `src/skills/skill-loader.ts` — Icon mapping (🔬) and example prompts for the skill
+
 ---
 
 ## Component Breakdown
@@ -1867,6 +1891,7 @@ Logs are queryable via `GET /api/logs` with filters for `category`, `level`, `si
 | `update-job` | productivity | 🟡 medium | Update a scheduled job's cron expression or action. |
 | `delete-job` | productivity | 🟡 medium | Delete a scheduled job. |
 | `toggle-job` | productivity | 🟡 medium | Enable or disable a scheduled job. |
+| `save-draft-media` | productivity | 🟡 medium | Copy generated media to project draft directory (`~/.openzigs/files/drafts/`). |
 
 ### Agent Chaining Tools
 
@@ -1932,7 +1957,7 @@ Each social platform has a dedicated set of tools backed by its native MCP serve
 | `youtube-get-video-details` | social | 🟢 low | Get video details by ID. |
 | `youtube-get-video-comments` | social | 🟢 low | Get video comment threads. |
 | `youtube-reply-to-comment` | social | 🟡 medium | Reply to a YouTube comment (requires OAuth). |
-| `youtube-search-videos` | social | 🟢 low | Search YouTube videos. |
+| `youtube-search-videos` | social | 🟢 low | Search YouTube videos. Supports `order` param (date, rating, relevance, title, viewCount). |
 | `youtube-get-channel-analytics` | social | 🟢 low | Get channel analytics. |
 | `youtube-upload-video` | social | 🔴 high | Upload a video file to YouTube via resumable upload (requires OAuth, 1600 quota units). |
 

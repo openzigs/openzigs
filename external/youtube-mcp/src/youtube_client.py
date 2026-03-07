@@ -73,8 +73,8 @@ class YouTubeClient:
     async def reply_to_comment(self, parent_id: str, text: str) -> dict:
         return await self._request("POST", "comments", use_oauth=True, params={"part": "snippet"}, json={"snippet": {"parentId": parent_id, "textOriginal": text}})
 
-    async def search_videos(self, query: str, max_results: int = 10) -> dict:
-        return await self._request("GET", "search", params={"part": "snippet", "q": query, "maxResults": str(max_results), "type": "video"})
+    async def search_videos(self, query: str, max_results: int = 10, order: str = "relevance") -> dict:
+        return await self._request("GET", "search", params={"part": "snippet", "q": query, "maxResults": str(max_results), "type": "video", "order": order})
 
     async def get_channel_analytics(self) -> dict:
         """Get channel statistics (uses Data API, not Analytics API)."""
