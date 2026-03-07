@@ -54,6 +54,8 @@ const ENV_CHECKS = [
   "FACEBOOK_PAGE_TOKEN",
   "PINTEREST_APP_ID",
   "PINTEREST_APP_SECRET",
+  "PINTEREST_ACCESS_TOKEN",
+  "PINTEREST_AD_ACCOUNT_ID",
   "GOOGLE_OAUTH_CREDENTIALS",
   "GITHUB_PERSONAL_ACCESS_TOKEN",
   "JDBC_URL",
@@ -3205,6 +3207,81 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       logger.error(`Failed to load skill content for '${req.params.name}': ${message}`);
+      return res.status(500).json({ error: message });
+    }
+  });
+
+  // ── Pinterest SEO Routes ─────────────────────────────────────────────────
+
+  router.get("/pinterest/status", async (_req, res) => {
+    const token = process.env.PINTEREST_ACCESS_TOKEN;
+    if (!token) {
+      return res.json({ connected: false, message: "PINTEREST_ACCESS_TOKEN not configured" });
+    }
+    try {
+      const apiRes = await fetch("https://api.pinterest.com/v5/user_account", {
+        headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
+      });
+      if (!apiRes.ok) {
+        return res.json({ connected: false, message: `Pinterest API error: ${apiRes.status}` });
+      }
+      const profile = await apiRes.json();
+      return res.json({ connected: true, profile });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return res.json({ connected: false, message });
+    }
+  });
+
+  router.get("/pinterest/trends", async (req, res) => {
+    const token = process.env.PINTEREST_ACCESS_TOKEN;
+    if (!token) {
+      return res.status(400).json({ error: "PINTEREST_ACCESS_TOKEN not configured" });
+    }
+    const region = typeof req.query.region === "string" ? req.query.region : "US";
+    const limit = typeof req.query.limit === "string" ? req.query.limit : "10";
+    try {
+      const url = new URL(`https://api.pinterest.com/v5/trends/keywords/${encodeURIComponent(region)}/top/growing`);
+      url.searchParams.set("limit", limit);
+      const apiRes = await fetch(url.toString(), {
+        headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
+      });
+      if (!apiRes.ok) {
+        const body = await apiRes.text();
+        return res.status(apiRes.status).json({ error: body });
+      }
+      const data = await apiRes.json();
+      return res.json(data);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return res.status(500).json({ error: message });
+    }
+  });
+
+  router.get("/pinterest/stats", async (req, res) => {
+    const token = process.env.PINTEREST_ACCESS_TOKEN;
+    if (!token) {
+      return res.status(400).json({ error: "PINTEREST_ACCESS_TOKEN not configured" });
+    }
+    const days = typeof req.query.days === "string" ? parseInt(req.query.days, 10) : 7;
+    const endDate = new Date().toISOString().split("T")[0];
+    const startDate = new Date(Date.now() - days * 86_400_000).toISOString().split("T")[0];
+    try {
+      const url = new URL("https://api.pinterest.com/v5/user_account/analytics");
+      url.searchParams.set("start_date", startDate);
+      url.searchParams.set("end_date", endDate);
+      url.searchParams.set("metric_types", "IMPRESSION,PIN_CLICK,OUTBOUND_CLICK,SAVE,ENGAGEMENT");
+      const apiRes = await fetch(url.toString(), {
+        headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
+      });
+      if (!apiRes.ok) {
+        const body = await apiRes.text();
+        return res.status(apiRes.status).json({ error: body });
+      }
+      const data = await apiRes.json();
+      return res.json({ start_date: startDate, end_date: endDate, data });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       return res.status(500).json({ error: message });
     }
   });

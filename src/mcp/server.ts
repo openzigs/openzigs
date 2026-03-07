@@ -44,6 +44,7 @@ import { createPresenterTools } from "./tools/presenter-tools.js";
 import { createKnowledgeManagementTools } from "./tools/knowledge-management-tools.js";
 import { createWebhookTools } from "./tools/webhook-tools.js";
 import { createSentinelTools } from "./tools/sentinel-tools.js";
+import { createPinterestSeoTools } from "./tools/pinterest-seo-tools.js";
 import { ToolRegistry, type ToolDefinition } from "./tool-registry.js";
 import type { LocalMcpServerManager } from "./local-mcp-server-manager.js";
 import { AuditLogger } from "../logging/audit-logger.js";
@@ -480,6 +481,12 @@ export const registerMcpTools = (toolRegistry: ToolRegistry, options: RegisterMc
     pinterestSidecarUrl: options.pinterestSidecarUrl,
   });
   for (const tool of socialTools) {
+    registerTool(tool);
+  }
+
+  // ── Pinterest SEO Tools ──
+  const pinterestSeoTools = createPinterestSeoTools();
+  for (const tool of pinterestSeoTools) {
     registerTool(tool);
   }
 

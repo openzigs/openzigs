@@ -26,6 +26,7 @@ import { PresenterConfigPanel } from "@/components/admin/presenter-config-panel"
 import { VoiceConfigPanel } from "@/components/admin/voice-config-panel";
 import { VoiceLabPanel } from "@/components/voice-lab/voice-lab-panel";
 import { BrandVoicePanel } from "@/components/admin/brand-voice-panel";
+import { PinterestPanel } from "@/components/admin/pinterest-panel";
 import { ToastContainer, showToast } from "@/components/toast";
 import { RotateCw } from "lucide-react";
 import { AskAiPanel, AskAiButton, PAGE_CONTEXTS } from "@/components/ask-ai";
@@ -129,6 +130,10 @@ export default function AdminPage() {
 
         <SectionCard title="Music Generation Node" defaultOpen={false}>
           <MusicGenPanel />
+        </SectionCard>
+
+        <SectionCard title="Pinterest SEO" defaultOpen={false}>
+          <PinterestPanel />
         </SectionCard>
 
         <SectionCard title="Custom Agents" defaultOpen={false}>

@@ -109,6 +109,10 @@ GOOGLE_APPLICATION_CREDENTIALS=/path/to/your/service-account-key.json
 # REDDIT_USERNAME=your-reddit-username
 # REDDIT_PASSWORD=your-reddit-password
 
+# ── Optional: Pinterest SEO ──
+# PINTEREST_ACCESS_TOKEN=your-pinterest-api-v5-token
+# PINTEREST_AD_ACCOUNT_ID=your-pinterest-ad-account-id
+
 # ── Optional: Personal Assistant MCP Servers ──
 # GMAIL_OAUTH_PATH=~/.gmail-mcp/gcp-oauth.keys.json
 # GITHUB_PERSONAL_ACCESS_TOKEN=ghp_your_token_here
@@ -5669,6 +5673,69 @@ When asking the AI agent to generate media, you can request a notification:
 > "Create a 4-second video of a sunset and send me a Telegram when it's done."
 
 The agent will automatically set `notify_via_telegram: true` on the job (see the Media Director and Remix Engineer skill guides).
+
+---
+
+## Pinterest SEO Engine
+
+The Pinterest SEO Engine provides tools for trend discovery, keyword research, account analytics, and pin-level SEO analysis — including extraction of Pinterest's hidden annotation keywords that drive algorithmic distribution.
+
+### Environment Variables
+
+| Variable | Required | Description |
+|---|---|---|
+| `PINTEREST_ACCESS_TOKEN` | Yes | Pinterest API v5 bearer token |
+| `PINTEREST_AD_ACCOUNT_ID` | For keyword metrics | Pinterest ad account ID for keyword volume data |
+
+### MCP Tools
+
+| Tool | Description |
+|---|---|
+| `pinterest-trends` | Fetch trending keywords by region with WoW/MoM/YoY growth and 52-week time series |
+| `pinterest-keyword-metrics` | Get search volume, competition level, and bid ranges for specific keywords |
+| `pinterest-analytics` | Account-level metrics (impressions, saves, clicks) or top-performing pins over a date range |
+| `pinterest-seo-analyze` | Analyze individual pins or batches: extracts annotation keywords, calculates a Pin Score (0–100), and generates SEO recommendations |
+
+### Pin Score
+
+The Pin Score is a composite 0–100 metric based on:
+- **Title** (0–20 pts): Present and ≤100 characters
+- **Description** (0–25 pts): 100–500 characters for full credit
+- **Link** (10 pts): Destination URL present
+- **Alt text** (10 pts): Accessibility text present
+- **Media type** (5 pts): Image or video
+- **Annotation density** (0–30 pts): 5+ annotation keywords = full credit
+
+### Annotation Keywords
+
+Pinterest assigns hidden "interest" keywords to every pin — these annotations drive the recommendation algorithm. The `pinterest-seo-analyze` tool extracts them via three resilient strategies (PWS data, script tags, meta tags). Including annotation keywords in your pin description significantly increases reach.
+
+### Pinterest Marketer Skill
+
+The **Pinterest Marketer** skill (`📌`) orchestrates multi-step Pinterest workflows:
+
+1. **Trend-Driven Campaign** — Discover trends → research keywords → generate optimized pin descriptions
+2. **Blog-to-Pin Repurposing** — Read article content → extract key points → create pin-ready copy with SEO keywords
+3. **SEO Audit** — Analyze existing pins → identify optimization gaps → generate improvement recommendations
+4. **Competitor Analysis** — Analyze competitor pins → extract their annotation keywords → find content gaps
+
+Example chat:
+```
+Use the pinterest-marketer skill to run a trend campaign for "home office decor" in the US market.
+```
+
+### Admin Panel
+
+The **Pinterest SEO** section on the Admin page (`/admin`) shows:
+- **Connection status** — Whether `PINTEREST_ACCESS_TOKEN` is configured
+- **Account stats** — Impressions, clicks, saves, engagement (last 30 days)
+- **Trending keywords** — Current top trends with growth percentages
+
+![Pinterest SEO Admin Panel](images/pinterest-seo-panel-expanded.png)
+
+### Weekly Digest (Telegram)
+
+When Telegram is configured, the `PinterestDigestService` can send a weekly performance digest with impressions, pin clicks, saves, and engagement metrics. Trigger via scheduled job or directly from chat.
 
 ---
 

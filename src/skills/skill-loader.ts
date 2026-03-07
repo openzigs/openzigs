@@ -30,6 +30,7 @@ const SKILL_ICONS: Record<string, string> = {
   "content-creator": "\u{270D}\uFE0F",
   "knowledge-curator": "\u{1F4DA}",
   "system-operator": "\u{1F6E1}\uFE0F",
+  "pinterest-marketer": "\u{1F4CC}",
 };
 
 const SKILL_EXAMPLES: Record<string, string[]> = {
@@ -62,6 +63,11 @@ const SKILL_EXAMPLES: Record<string, string[]> = {
     "Check the health of all worker nodes",
     "Show me the latest Sentinel digest",
     "Create a webhook for CI/CD deployments",
+  ],
+  "pinterest-marketer": [
+    "Find trending Pinterest keywords and create optimized pins",
+    "Audit my top pins for SEO and annotation coverage",
+    "Repurpose this blog post as Pinterest content",
   ],
 };
 

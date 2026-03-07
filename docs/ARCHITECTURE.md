@@ -578,6 +578,27 @@ All servers use **official platform APIs** (no scraping or unofficial endpoints)
 
 The `DmDispatcher` (`src/channels/social/dm-dispatcher.ts`) routes DM sends and comment replies to the correct MCP server, translating Social Brain's platform-agnostic calls into platform-specific tool invocations.
 
+#### Pinterest SEO Tools
+
+**Source:** `src/mcp/tools/pinterest-seo-tools.ts` (built-in, no sidecar)
+
+Four native MCP tools for Pinterest SEO powered by the Pinterest API v5. Registered via `createPinterestSeoTools()` factory in `src/mcp/server.ts`.
+
+| Tool | Risk | Description |
+|---|---|---|
+| `pinterest-trends` | 🟢 low | Trending keywords by region with growth metrics and 52-week time series |
+| `pinterest-keyword-metrics` | 🟢 low | Search volume and competition for specific keywords (requires ad account) |
+| `pinterest-analytics` | 🟢 low | Account-level metrics or top-performing pins over a date range |
+| `pinterest-seo-analyze` | 🟡 medium | Pin SEO analysis: annotation keyword extraction, Pin Score (0–100), recommendations |
+
+**Annotation Extraction:** `pinterest-seo-analyze` uses a multi-strategy approach to extract Pinterest's hidden annotation/interest keywords from pin HTML (`__PWS_DATA__` global → `<script type="application/json">` tags → `<meta>` tags). Strategies are tried in order; first one with results wins.
+
+**Supporting Components:**
+- `src/skills/pinterest-marketer/SKILL.md` — Autonomous skill for multi-step Pinterest workflows (trend campaigns, blog-to-pin, SEO audits, competitor analysis)
+- `src/queue/pinterest-digest-service.ts` — Weekly Telegram digest (impressions, clicks, saves, engagement)
+- `ui/components/admin/pinterest-panel.tsx` — Admin panel showing connection status, account stats, trending keywords
+- Admin API routes: `GET /api/admin/pinterest/status`, `/trends`, `/stats`
+
 ---
 
 ## Component Breakdown
