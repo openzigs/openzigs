@@ -548,6 +548,7 @@ registerMcpTools(toolRegistry, {
   socialRepository,
   socialHandoffManager: socialHandoff,
   mediaQueueRepo,
+  queueMaster,
   channelManager,
   notificationChatId: config.channels?.telegram?.adminUserId || undefined,
 });

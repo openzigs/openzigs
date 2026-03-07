@@ -14,6 +14,8 @@ export const ALWAYS_ON_TOOLS = new Set([
   "query-gallery-assets",
   "submit-media-job",
   "get-job-status",
+  "save-draft-media",
+  "send-notification",
 ]);
 
 /**
