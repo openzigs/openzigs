@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll } from "vitest";
-import Ajv from "ajv";
+import { Ajv } from "ajv";
 import { createGalleryTools } from "../gallery-tools.js";
 import { createMediaQueueTools } from "../media-queue-tools.js";
 import { createCharacterTools } from "../character-tools.js";

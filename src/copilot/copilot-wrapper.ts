@@ -344,6 +344,8 @@ export interface CopilotWrapper {
   getSessionAnalytics(): SessionAnalytics;
   /** Reset session analytics counters. */
   resetSessionAnalytics(): void;
+  /** Get configured skill directories for SKILL.md persona injection. */
+  getSkillDirectories?(): string[];
 }
 
 export type CopilotWrapperOptions = {

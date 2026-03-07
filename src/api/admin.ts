@@ -3185,7 +3185,7 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
   // ── Skills API ──
   router.get("/skills", async (_req, res) => {
     try {
-      const dirs = copilot?.getSkillDirectories() ?? [];
+      const dirs = copilot?.getSkillDirectories?.() ?? [];
       const skills = await loadSkillMetadata(dirs);
       return res.json({ skills });
     } catch (error) {
@@ -3197,7 +3197,7 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
 
   router.get("/skills/:name", async (req, res) => {
     try {
-      const dirs = copilot?.getSkillDirectories() ?? [];
+      const dirs = copilot?.getSkillDirectories?.() ?? [];
       const skills = await loadSkillMetadata(dirs, true);
       const skill = skills.find((s) => s.name === req.params.name);
       if (!skill) return res.status(404).json({ error: "Skill not found" });

@@ -180,6 +180,9 @@ importers:
       '@vitest/coverage-v8':
         specifier: ^2.1.9
         version: 2.1.9(vitest@2.1.9(@types/node@22.19.13)(jsdom@28.1.0(@noble/hashes@1.8.0))(terser@5.46.0))
+      ajv:
+        specifier: ^8.18.0
+        version: 8.18.0
       eslint:
         specifier: ^8.57.1
         version: 8.57.1
