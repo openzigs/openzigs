@@ -146,4 +146,67 @@ describe("ResearchGenerateDialog", () => {
     expect(articleInput.value).toBe("5");
     expect(youtubeInput.value).toBe("3");
   });
+
+  it("renders Notify via Telegram checkbox", () => {
+    render(
+      <ResearchGenerateDialog open={true} onOpenChange={() => {}} />,
+      { wrapper },
+    );
+    expect(screen.getByText("Notify via Telegram")).toBeInTheDocument();
+  });
+
+  it("includes telegram notification instruction in prompt when checked", () => {
+    render(
+      <ResearchGenerateDialog open={true} onOpenChange={() => {}} />,
+      { wrapper },
+    );
+
+    fireEvent.change(screen.getByLabelText(/topic/i), { target: { value: "AI Trends" } });
+
+    const telegramCheckbox = screen.getByText("Notify via Telegram").closest("label")!.querySelector("input")!;
+    fireEvent.click(telegramCheckbox);
+
+    fireEvent.click(screen.getByRole("button", { name: /generate/i }));
+
+    const emitCall = mockSocket.emit.mock.calls[0];
+    expect(emitCall[1].content).toContain("Telegram notification");
+  });
+
+  it("does not include telegram notification instruction when unchecked", () => {
+    render(
+      <ResearchGenerateDialog open={true} onOpenChange={() => {}} />,
+      { wrapper },
+    );
+
+    fireEvent.change(screen.getByLabelText(/topic/i), { target: { value: "AI Trends" } });
+    fireEvent.click(screen.getByRole("button", { name: /generate/i }));
+
+    const emitCall = mockSocket.emit.mock.calls[0];
+    expect(emitCall[1].content).not.toContain("Telegram notification");
+  });
+
+  it("calls onSubmitted callback after emitting the research request", () => {
+    const onSubmitted = vi.fn();
+    render(
+      <ResearchGenerateDialog open={true} onOpenChange={() => {}} onSubmitted={onSubmitted} />,
+      { wrapper },
+    );
+
+    fireEvent.change(screen.getByLabelText(/topic/i), { target: { value: "AI Agents" } });
+    fireEvent.click(screen.getByRole("button", { name: /generate/i }));
+
+    expect(mockSocket.emit).toHaveBeenCalledWith("chat:message", expect.anything());
+    expect(onSubmitted).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not throw when onSubmitted is not provided", () => {
+    expect(() => {
+      render(
+        <ResearchGenerateDialog open={true} onOpenChange={() => {}} />,
+        { wrapper },
+      );
+      fireEvent.change(screen.getByLabelText(/topic/i), { target: { value: "Test" } });
+      fireEvent.click(screen.getByRole("button", { name: /generate/i }));
+    }).not.toThrow();
+  });
 });

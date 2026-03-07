@@ -226,6 +226,7 @@ export default function WorkbenchPage() {
       <ResearchGenerateDialog
         open={researchOpen}
         onOpenChange={setResearchOpen}
+        onSubmitted={() => setAskAiOpen(true)}
       />
       <AskAiPanel pageContext={PAGE_CONTEXTS["workbench"]} open={askAiOpen} onClose={() => setAskAiOpen(false)} />
     </div>

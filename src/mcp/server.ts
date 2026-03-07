@@ -46,6 +46,7 @@ import { createWebhookTools } from "./tools/webhook-tools.js";
 import { createSentinelTools } from "./tools/sentinel-tools.js";
 import { createPinterestSeoTools } from "./tools/pinterest-seo-tools.js";
 import { createDraftMediaTools } from "./tools/draft-media-tools.js";
+import { createNotificationTools } from "./tools/notification-tools.js";
 import { ToolRegistry, type ToolDefinition } from "./tool-registry.js";
 import type { LocalMcpServerManager } from "./local-mcp-server-manager.js";
 import { AuditLogger } from "../logging/audit-logger.js";
@@ -117,6 +118,10 @@ export type McpServerOptions = {
   webhookManager?: import("../webhooks/webhook-manager.js").WebhookManager;
   /** Sentinel Service for SRE monitoring. */
   sentinelService?: import("../sentinel/sentinel-service.js").SentinelService;
+  /** Channel Manager for send-notification tool (Telegram outbound). */
+  channelManager?: import("../channels/channel-manager.js").ChannelManager;
+  /** Telegram admin chat ID for send-notification tool. */
+  notificationChatId?: string;
 };
 
 export type RegisterMcpToolsOptions = Pick<
@@ -158,6 +163,8 @@ export type RegisterMcpToolsOptions = Pick<
   | "teacherAgent"
   | "webhookManager"
   | "sentinelService"
+  | "channelManager"
+  | "notificationChatId"
 >;
 
 const readFileSchema = z.object({ path: z.string() });
@@ -719,4 +726,13 @@ export const registerMcpTools = (toolRegistry: ToolRegistry, options: RegisterMc
   // ── Draft Media Tools (Research Synthesis Engine) ──
   const draftMediaTools = createDraftMediaTools();
   for (const tool of draftMediaTools) { registerTool(tool); }
+
+  // ── Notification Tool (Telegram outbound, used by research-synthesizer skill) ──
+  if (options.channelManager) {
+    const notifTools = createNotificationTools({
+      channelManager: options.channelManager,
+      fallbackChatId: options.notificationChatId,
+    });
+    for (const tool of notifTools) { registerTool(tool); }
+  }
 };

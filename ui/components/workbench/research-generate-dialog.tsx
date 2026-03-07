@@ -17,6 +17,7 @@ import {
   AlertCircle,
   Image as ImageIcon,
   Video,
+  BellRing,
 } from "lucide-react";
 
 export type ResearchParams = {
@@ -26,11 +27,14 @@ export type ResearchParams = {
   youtubeCount: number;
   generateImages: boolean;
   generateVideo: boolean;
+  notifyTelegram: boolean;
 };
 
 type ResearchGenerateDialogProps = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** Called immediately after the research request is emitted, before the dialog closes. */
+  onSubmitted?: () => void;
 };
 
 function buildResearchPrompt(params: ResearchParams): string {
@@ -49,6 +53,9 @@ function buildResearchPrompt(params: ResearchParams): string {
   if (params.generateVideo) {
     parts.push("Generate a short summary video for the document.");
   }
+  if (params.notifyTelegram) {
+    parts.push("When the document is saved, send a Telegram notification confirming the title and file path.");
+  }
   parts.push(
     "Include inline citations [1], [2], etc. and a bibliography at the end. Save the final document to the Workbench files directory.",
   );
@@ -58,6 +65,7 @@ function buildResearchPrompt(params: ResearchParams): string {
 export const ResearchGenerateDialog = ({
   open,
   onOpenChange,
+  onSubmitted,
 }: ResearchGenerateDialogProps) => {
   const { socket, connected } = useSocket();
   const [topic, setTopic] = useState("");
@@ -66,6 +74,7 @@ export const ResearchGenerateDialog = ({
   const [youtubeCount, setYoutubeCount] = useState(3);
   const [generateImages, setGenerateImages] = useState(false);
   const [generateVideo, setGenerateVideo] = useState(false);
+  const [notifyTelegram, setNotifyTelegram] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -84,12 +93,14 @@ export const ResearchGenerateDialog = ({
       youtubeCount,
       generateImages,
       generateVideo,
+      notifyTelegram,
     });
 
     try {
       socket.emit("chat:message", {
         content: `[Using Research Synthesizer skill] ${prompt}`,
       });
+      onSubmitted?.();
       setSubmitting(false);
       onOpenChange(false);
       // Reset form
@@ -99,11 +110,12 @@ export const ResearchGenerateDialog = ({
       setYoutubeCount(3);
       setGenerateImages(false);
       setGenerateVideo(false);
+      setNotifyTelegram(false);
     } catch {
       setError("Failed to send research request. Check connection.");
       setSubmitting(false);
     }
-  }, [isValid, socket, connected, topic, slant, articleCount, youtubeCount, generateImages, generateVideo, onOpenChange]);
+  }, [isValid, socket, connected, topic, slant, articleCount, youtubeCount, generateImages, generateVideo, notifyTelegram, onOpenChange, onSubmitted]);
 
   const handleOpenChange = useCallback(
     (nextOpen: boolean) => {
@@ -197,7 +209,7 @@ export const ResearchGenerateDialog = ({
           </div>
 
           {/* Toggles */}
-          <div className="flex items-center gap-6">
+          <div className="flex flex-wrap items-center gap-6">
             <label className="flex cursor-pointer items-center gap-2 text-xs font-medium text-foreground">
               <input
                 type="checkbox"
@@ -217,6 +229,16 @@ export const ResearchGenerateDialog = ({
               />
               <Video className="h-3.5 w-3.5 text-muted-foreground" />
               Generate Video
+            </label>
+            <label className="flex cursor-pointer items-center gap-2 text-xs font-medium text-foreground">
+              <input
+                type="checkbox"
+                checked={notifyTelegram}
+                onChange={(e) => setNotifyTelegram(e.target.checked)}
+                className="h-4 w-4 rounded border-border text-primary focus:ring-primary/50"
+              />
+              <BellRing className="h-3.5 w-3.5 text-muted-foreground" />
+              Notify via Telegram
             </label>
           </div>
         </div>

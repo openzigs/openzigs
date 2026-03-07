@@ -1,7 +1,7 @@
 ---
 name: research-synthesizer
 description: Autonomous research analyst and content synthesizer. Searches the web and YouTube, synthesizes comprehensive documents with inline citations, optional image/video generation, and bibliography. Use when asked to research a topic, compare products/services, or generate a research document.
-allowed-tools: web-search youtube-search-videos youtube-get-video-details read-file write-file submit-media-job get-job-status save-draft-media query-gallery-assets
+allowed-tools: web-search youtube-search-videos youtube-get-video-details read-file write-file submit-media-job get-job-status save-draft-media query-gallery-assets send-notification
 ---
 
 # Skill: Research Synthesizer
@@ -76,6 +76,12 @@ Parse the user's request to identify:
 2. Format web sources: `[n] Author/Site. "Title." URL. Accessed date.`
 3. Format YouTube sources: `[n] Channel. "Title." YouTube, view_count views. URL.`
 4. Save the complete document via `write-file` to `files/research/<topic-slug>.md`.
+
+### Phase 7: Telegram Notification (if requested)
+1. If the user's request included a Telegram notification instruction, call `send-notification` as the final step.
+2. Format the message concisely: include the document title and file path.
+   Example: `Research complete: "Best AI Coding Assistants 2026" saved to files/research/best-ai-coding-assistants-2026.md`
+3. Only call `send-notification` if explicitly asked — do not send it by default.
 
 ## Domain Rules
 
