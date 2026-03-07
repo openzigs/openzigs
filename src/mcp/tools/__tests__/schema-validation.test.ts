@@ -137,9 +137,9 @@ describe("Tier 1: Tool Schema Validation", () => {
         expect(tool.name).toMatch(KEBAB_CASE_RE);
       });
 
-      it("description is non-empty and under 500 chars", () => {
+      it("description is non-empty and under 200 chars", () => {
         expect(tool.description.length).toBeGreaterThan(0);
-        expect(tool.description.length).toBeLessThanOrEqual(500);
+        expect(tool.description.length).toBeLessThanOrEqual(200);
       });
 
       it("has valid category", () => {

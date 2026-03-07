@@ -18,7 +18,6 @@ describe("Tier 2: submit-media-job handler", () => {
   };
 
   let submitHandler: (args: Record<string, unknown>) => Promise<{ text: string; isError?: boolean }>;
-  let statusHandler: (args: Record<string, unknown>) => Promise<{ text: string; isError?: boolean }>;
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -27,7 +26,6 @@ describe("Tier 2: submit-media-job handler", () => {
       queueMaster: mockQM as never,
     });
     submitHandler = tools.find((t) => t.name === "submit-media-job")!.handler;
-    statusHandler = tools.find((t) => t.name === "get-job-status")!.handler;
   });
 
   it("submits a valid txt2img job", async () => {

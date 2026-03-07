@@ -65,8 +65,8 @@ export const createKnowledgeManagementTools = ({
               return { text: JSON.stringify(stats, null, 2) };
             }
             case "list_documents": {
-              const stats = await knowledgeService.getStats();
-              return { text: JSON.stringify(stats, null, 2) };
+              const docs = knowledgeService.listDocuments();
+              return { text: JSON.stringify(docs, null, 2) };
             }
             default:
               return { text: `Unknown action: ${input.action}`, isError: true };

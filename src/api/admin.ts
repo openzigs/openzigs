@@ -3190,7 +3190,7 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
       return res.json({ skills });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      logger.error({ err: error }, "Failed to load skills");
+      logger.error(`Failed to load skills: ${message}`);
       return res.status(500).json({ error: message });
     }
   });
@@ -3204,6 +3204,7 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
       return res.json(skill);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      logger.error(`Failed to load skill content for '${req.params.name}': ${message}`);
       return res.status(500).json({ error: message });
     }
   });

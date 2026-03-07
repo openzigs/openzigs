@@ -1,5 +1,4 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import path from "node:path";
 
 vi.mock("node:fs/promises", () => ({
   default: {
@@ -8,7 +7,7 @@ vi.mock("node:fs/promises", () => ({
 }));
 
 import fs from "node:fs/promises";
-import { loadSkillMetadata, type SkillMetadata } from "./skill-loader.js";
+import { loadSkillMetadata } from "./skill-loader.js";
 
 const readFileMock = vi.mocked(fs.readFile);
 
