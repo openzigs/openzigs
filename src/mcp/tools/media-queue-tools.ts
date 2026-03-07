@@ -53,7 +53,7 @@ export const createMediaQueueTools = ({
     {
       name: "submit-media-job",
       description:
-        "Submit a media generation job to the OpenZigs queue. Supports image (txt2img, img2img), video (txt2video, img2video), TTS, music (txt2music), voice conversion (voice2voice), and remix operations. Jobs are automatically routed to the correct hardware worker node.",
+        "Submit a media job to the OpenZigs queue. Supports image (txt2img, img2img), video, TTS, music (txt2music), voice conversion, and remix. Jobs are routed to the correct worker node.",
       inputSchema: {
         type: "object",
         properties: {

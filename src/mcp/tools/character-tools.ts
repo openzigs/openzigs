@@ -16,7 +16,7 @@ export const createCharacterTools = ({ characterRepo }: CharacterToolsOptions): 
     {
       name: "manage-characters",
       description:
-        "Manage Character Lab LoRA identities. List available characters, check training status, get trigger words for image generation. Characters with 'ready' status have trained LoRA adapters that are auto-injected when their trigger word appears in image generation prompts.",
+        "Manage Character Lab LoRA identities. List characters, check training status, get trigger words. Ready characters auto-inject their LoRA adapter when their trigger word appears in image prompts.",
       inputSchema: {
         type: "object",
         properties: {
