@@ -276,6 +276,15 @@ export class SessionManager {
     }
   }
 
+  /** Shallow-merge patch into an existing session's metadata field. */
+  async patchMetadata(id: string, patch: Record<string, unknown>): Promise<void> {
+    const session = await this.getSession(id);
+    await this.updateSession({
+      ...session,
+      metadata: { ...session.metadata, ...patch },
+    });
+  }
+
   private async updateSession(session: Session) {
     await fs.writeFile(this.sessionPath(session.id), JSON.stringify(serializeSession(session), null, 2), "utf-8");
   }

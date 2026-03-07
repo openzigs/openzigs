@@ -272,6 +272,13 @@ export class MessageRouter {
     const active = sessions.find((s) => !s.metadata?.ended);
     if (active) {
       this.userSessions.set(key, active.id);
+      // Keep the session's chatId in sync with the current socket connection.
+      // The chatId changes on every reconnect; stale chatIds cause requestUserInput
+      // to silently return a blank answer, making the LLM fall back to plain-text
+      // choice prompts instead of the interactive UserInputPrompt widget.
+      if (message.chatId && active.metadata?.chatId !== message.chatId) {
+        void this.sessionManager.patchMetadata(active.id, { chatId: message.chatId }).catch(() => {});
+      }
       return active.id;
     }
 

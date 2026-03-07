@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { memo, useState, useCallback } from "react";
 import { Download, X, ZoomIn, Loader2 } from "lucide-react";
 
 const AUTH_TOKEN = process.env.NEXT_PUBLIC_OPENZIGS_TOKEN ?? "";
@@ -19,7 +19,7 @@ type ChatImageBlockProps = {
  *
  * Resolves relative `/api/...` paths against the configured API base.
  */
-export const ChatImageBlock = ({ src, alt }: ChatImageBlockProps) => {
+export const ChatImageBlock = memo(function ChatImageBlock({ src, alt }: ChatImageBlockProps) {
   const [lightboxOpen, setLightboxOpen] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState(false);
@@ -141,4 +141,4 @@ export const ChatImageBlock = ({ src, alt }: ChatImageBlockProps) => {
       )}
     </>
   );
-};
+});

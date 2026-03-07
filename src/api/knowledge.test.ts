@@ -271,7 +271,7 @@ describe("Knowledge API router", () => {
       const { app, ks } = buildApp();
       const res = await request(app).post("/knowledge/search").send({ query: "test", limit: 200 });
       expect(res.status).toBe(200);
-      expect(ks.search).toHaveBeenCalledWith("test", 50);
+      expect(ks.search).toHaveBeenCalledWith("test", 50, expect.any(Object));
     });
   });
 

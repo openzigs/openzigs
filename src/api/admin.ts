@@ -31,6 +31,7 @@ import { SentinelConfigSchema, readStatusMarkdown } from "../sentinel/index.js";
 import { TemplateService } from "../productivity/template-service.js";
 import { CopilotNativeMcpTester, type NativeMcpDiscoveredTool, type NativeMcpTester } from "../mcp/native-mcp-test-service.js";
 import { AVAILABLE_VOICES } from "../voice/types.js";
+import { loadSkillMetadata } from "../skills/skill-loader.js";
 
 type EnvEntry = {
   name: string;
@@ -1158,6 +1159,7 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
           tags: Array.isArray(body.tags) ? (body.tags as string[]) : undefined,
           preferredTools: Array.isArray(body.preferredTools) ? (body.preferredTools as string[]) : undefined,
           stages: Array.isArray(body.stages) ? (body.stages as PipelineStage[]) : undefined,
+          suggestedSkill: typeof body.suggestedSkill === "string" ? body.suggestedSkill : undefined,
         });
         return res.status(201).json(prompt);
       } catch (error) {
@@ -1176,6 +1178,7 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
           tags: Array.isArray(body.tags) ? (body.tags as string[]) : undefined,
           preferredTools: Array.isArray(body.preferredTools) ? (body.preferredTools as string[]) : (body.preferredTools === null ? null : undefined),
           stages: Array.isArray(body.stages) ? (body.stages as PipelineStage[]) : (body.stages === null ? null : undefined),
+          suggestedSkill: typeof body.suggestedSkill === "string" ? body.suggestedSkill : (body.suggestedSkill === null ? null : undefined),
         });
         return res.json(updated);
       } catch (error) {
@@ -3176,6 +3179,33 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return res.status(502).json({ error: message });
+    }
+  });
+
+  // ── Skills API ──
+  router.get("/skills", async (_req, res) => {
+    try {
+      const dirs = copilot?.getSkillDirectories?.() ?? [];
+      const skills = await loadSkillMetadata(dirs);
+      return res.json({ skills });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      logger.error(`Failed to load skills: ${message}`);
+      return res.status(500).json({ error: message });
+    }
+  });
+
+  router.get("/skills/:name", async (req, res) => {
+    try {
+      const dirs = copilot?.getSkillDirectories?.() ?? [];
+      const skills = await loadSkillMetadata(dirs, true);
+      const skill = skills.find((s) => s.name === req.params.name);
+      if (!skill) return res.status(404).json({ error: "Skill not found" });
+      return res.json(skill);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      logger.error(`Failed to load skill content for '${req.params.name}': ${message}`);
+      return res.status(500).json({ error: message });
     }
   });
 

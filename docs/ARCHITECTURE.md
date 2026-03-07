@@ -598,6 +598,7 @@ Wraps `@github/copilot-sdk`'s `CopilotClient`. Responsibilities:
 | **Session Resumption** | Internal | On first call with a `conversationId`, attempts `client.resumeSession()` to restore persisted SDK state, falling back to `createSession({ sessionId })` for deterministic session IDs. |
 | **Infinite Sessions** | Config | When `infiniteSessions.enabled` is true, the SDK automatically compacts context at configurable thresholds (`backgroundCompactionThreshold`, `bufferExhaustionThreshold`), preventing context window exhaustion in long conversations. |
 | **Model Selection** | `listModels()` | Proxies `client.listModels()` to enumerate available models (e.g., `gpt-4.1`, `claude-sonnet-4`). |
+| **Skill Directories** | Constructor `skillDirectories` option | Paths to directories containing `SKILL.md` files. Passed to `createSession()` to inject domain expertise into every session. See [Skill System](#skill-system-srcskills) below. |
 | **Tool Limit Control** | `setMaxToolsPerRequest(n)` / `getMaxToolsPerRequest()` | Get or set the maximum number of tools sent per LLM request (range: 1-128). Changes take effect on the next `chat()` call. |
 | **Tool Dispatch** | Internal | When the SDK invokes a tool, the handler calls the `ToolDefinition.handler()` — which may call a native MCP server subprocess or execute locally. ALWAYS_ON_TOOLS (7 tools) are guaranteed inclusion before filling remaining slots. |
 | **Retry Logic** | Internal | Automatic retries with exponential backoff for rate-limit (429) and timeout errors. Clears auth on 401. |
@@ -688,8 +689,8 @@ The Models API (`GET /api/models`) is enriched with `contextWindow` from `MODEL_
 
 Central registry for every tool the agent can invoke. Each tool has:
 
-- **`name`** — Unique identifier (`read-file`, `web-search`, `shell-execute`, `social-post`, `pinterest-boards`).
-- **`category`** — One of `filesystem`, `search`, `browser`, `shell`, `productivity`, `social`, `documents`.
+- **`name`** — Unique identifier (`read-file`, `web-search`, `shell-execute`, `social-post`, `query-gallery-assets`, `submit-media-job`, etc.).
+- **`category`** — One of `filesystem`, `search`, `browser`, `shell`, `productivity`, `social`, `documents`, `knowledge`.
 - **`riskLevel`** — `low`, `medium`, or `high`.
 - **`enabled`** — Boolean, persisted to `config/tools.json`.
 
@@ -726,6 +727,111 @@ sequenceDiagram
     AQ-->>Hook: { approved: true }
     Hook-->>SDK: { permissionDecision: "allow" }
 ```
+
+### Skill System (`src/skills/`)
+
+Skills are `SKILL.md` markdown files following the [agentskills.io specification](https://agentskills.io/specification) — an open standard for portable AI agent capabilities. Each file contains YAML frontmatter (name, description, allowed-tools) and a Markdown body with domain-specific instructions. Skills are loaded via the Copilot SDK's `skillDirectories` configuration and injected into every session's context.
+
+#### Specification Compliance
+
+Skills follow the agentskills.io open standard:
+
+| Feature | Status | Details |
+|---------|--------|---------|
+| YAML Frontmatter | Implemented | `name`, `description`, `allowed-tools` fields |
+| Progressive Disclosure | Implemented | Metadata (~100 tokens) loaded at startup; full instructions on activation |
+| `allowed-tools` | Implemented | Pre-approved tools listed in frontmatter |
+| `scripts/` directory | Supported | Executable scripts the skill can invoke |
+| `references/` directory | Supported | On-demand reference docs for complex domains |
+| `assets/` directory | Supported | Static resources (schemas, templates) |
+| Name validation | Implemented | Lowercase, hyphens, matches directory name |
+
+#### Architecture
+
+```
+src/skills/
+├── media-director/
+│   └── SKILL.md              — Image/video/audio generation orchestration
+├── remix-engineer/
+│   └── SKILL.md              — Smart Remix Lab pipeline management
+├── platform-manager/
+│   └── SKILL.md              — Scheduling, social, knowledge distribution
+├── content-creator/
+│   └── SKILL.md              — Multi-format content production
+├── knowledge-curator/
+│   └── SKILL.md              — RAG knowledge base and presentations
+└── system-operator/
+    └── SKILL.md              — Sentinel monitoring, webhooks, node health
+```
+
+Each `SKILL.md` has this structure:
+
+```yaml
+---
+name: media-director
+description: Orchestrates image generation... Use when asked to create visual content.
+allowed-tools: query-gallery-assets submit-media-job get-job-status manage-characters
+---
+
+# Skill: Media Director
+
+## Identity           — Who is this AI persona
+## Core Capabilities  — What it can do
+## Tool Routing Rules — Which custom tools vs. built-in tools to use
+## Domain Rules       — Numbered behavioral constraints
+## Error Recovery     — Failure handling + autonomous retry behavior
+```
+
+#### How Skills Work
+
+1. **Discovery**: `src/mcp/server.ts` auto-discovers skill directories by scanning `src/skills/*/SKILL.md` at startup.
+2. **Loading**: `CopilotWrapper` accepts `skillDirectories: string[]` in its constructor. These paths are passed to the SDK's `createSession()`.
+3. **Injection**: The SDK reads each `SKILL.md` and injects its content into the session's system context alongside built-in instructions.
+4. **Activation**: Skills activate automatically when the user's request matches the skill's domain (based on the `description` field keywords). Users can also explicitly invoke via `!` trigger in chat or `/skill-name` in their prompt.
+5. **Metadata API**: The `/api/admin/skills` endpoint serves parsed skill metadata (from YAML frontmatter + body) for the UI's `/skills` catalog page.
+6. **Library Integration**: `SavedPrompt.suggestedSkill` pairs a Library prompt with a skill, providing automatic domain expertise when the prompt is used.
+
+#### Autonomous Error Recovery
+
+All skills follow a consistent retry pattern:
+
+1. **First failure**: Retry the same operation once after a 5-second wait
+2. **Second failure**: Try an alternative approach (different tool, different parameters, different node)
+3. **Third failure**: Stop and report to the user with what was tried and suggested remediation
+
+This is enforced in each skill's Error Recovery section and is a key differentiator from raw tool usage.
+
+#### Skills vs. Custom Agents vs. Tools vs. Prompts
+
+| Concept | What it is | How it works | When to use |
+|---------|-----------|-------------|-------------|
+| **Skill** | Passive domain expertise | SKILL.md injected into session context; always active | The default way to use OpenZigs — just describe what you want |
+| **Prompt + Skill** | Reusable template paired with expertise | `suggestedSkill` on `SavedPrompt` | For repeated workflows with domain expertise |
+| **Custom Agent** | Named sub-persona | `@agent-name` mention spawns a focused session | Explicit delegation to a specialized identity |
+| **Tool** | Callable function | `defineTool()` registered in ToolRegistry | Fine-grained control over specific operations |
+| **Prompt + Tools** | Template with explicit tool scoping | `preferredTools` on `SavedPrompt` | For power users who want tool-level control |
+
+#### Agent Architecture Custom Tools
+
+12 custom tools wrap proprietary OpenZigs functions that the LLM cannot access via built-in Bash/Read/Edit:
+
+| Tool | Category | Risk | Wraps |
+|------|----------|------|-------|
+| `query-gallery-assets` | productivity | low | `MediaQueueRepository.listAssets()` / `getAsset()` |
+| `submit-media-job` | productivity | high | `MediaQueueRepository.createJob()` + QueueMaster dispatch |
+| `get-job-status` | productivity | low | `MediaQueueRepository.getJob()` + `QueueMaster.getNodeStatuses()` |
+| `manage-characters` | productivity | low | `CharacterRepository` CRUD |
+| `remix-session-manager` | productivity | high | Multi-step remix pipeline (analyze → replace → master) |
+| `manage-brand-voice` | productivity | medium | `BrandVoiceService` CRUD + LLM analysis |
+| `synthesize-speech` | productivity | low | `VoiceService.synthesize()` |
+| `manage-presentations` | knowledge | low | `PresentationRepository` + `QuizGenerator` + `TeacherAgent` |
+| `manage-knowledge-base` | knowledge | medium | `KnowledgeIngestionService` write operations |
+| `manage-webhooks` | productivity | high | `WebhookManager` CRUD |
+| `sentinel-control` | productivity | medium | `SentinelService` monitoring + toggle |
+
+#### Deterministic Tool Router (`src/routing/tool-router.ts`)
+
+Maps user intents to expected tool sequences via keyword/pattern matching. Used by Tier 3A workflow routing tests to validate agentic behavior without requiring LLM inference. Supports scenarios: character LoRA video + music, remix pipeline, scheduled content pipeline, and gallery search.
 
 ### Productivity Engine (`src/productivity/`)
 
@@ -3451,7 +3557,56 @@ The `resolveModelName()` function handles model name normalization:
 - **Knowledge directory**: `~/.openzigs/knowledge/` (user-managed files)
 - **LanceDB database**: `~/.openzigs/knowledge-db/` (vector + FTS indexes, auto-created)
 - **Document metadata**: `~/.openzigs/knowledge-db/documents.json` (persisted across restarts)
-- **Table**: `knowledge_chunks` (columns: `id`, `documentId`, `text`, `sectionHeading`, `sourcePath`, `chunkIndex`, `vector`)
+- **Table**: `knowledge_chunks` (columns: `id`, `documentId`, `text`, `sectionHeading`, `sourcePath`, `chunkIndex`, `vector`, `visibility`, `category`, `mediaUrl`)
+
+### Visibility & Access Control
+
+Every document and chunk in the knowledge base has a **visibility level** that determines where it can be surfaced:
+
+| Level | Description | Use Cases |
+|---|---|---|
+| **`public`** | Safe to return everywhere, including social media auto-replies | Gallery assets, published social posts |
+| **`internal`** | Visible to the user in chat/admin, NOT shared externally | Personal documents, presentations, system events |
+| **`private`** | Restricted to admin contexts only | Sensitive config, credentials |
+
+**Access control by context:**
+- **Regular chat search**: All visibility levels except `private`
+- **Social Brain auto-replies**: Only `public` content (prevents internal data leaking into social responses)
+- **Admin/system tools**: Full access
+
+### Content Categories
+
+Documents are tagged with categories for faceted filtering:
+
+| Category | Description | Examples |
+|---|---|---|
+| `document` | Traditional knowledge files | Markdown, PDF, code, spreadsheets |
+| `media` | Gallery assets (auto-ingested) | Generated images, videos, audio, music |
+| `presentation` | Presentation transcripts | Director renders, Presenter mode content |
+| `social` | Social media interactions | Auto-replies, social posts |
+| `system` | Scheduler runs, system events | Job execution results, audit entries |
+| `conversation` | Chat history (future) | — |
+
+### Automatic RAG Ingestion
+
+The system automatically ingests content from all subsystems:
+
+| Source | Trigger | Category | Visibility | Details |
+|---|---|---|---|---|
+| **Gallery assets** | Job completion, upload, cloud generation | `media` | `public` | Rich text with prompt, model, tags, and media URL for inline playback |
+| **Presentations** | Director render completion | `presentation` | `internal` | Transcript + chapters + metadata |
+| **Director renders** | Render completion | `media` | `internal` | Narration text from timeline |
+| **Social replies** | Social Brain auto-reply | `social` | `internal` | Incoming message + generated reply |
+| **Scheduler jobs** | Job execution | `system` | `internal` | Job name + output |
+
+Gallery asset deletion automatically removes the corresponding RAG documents.
+
+### Inline Media Rendering
+
+When the AI retrieves media assets from the knowledge base, it can format them for inline rendering in chat:
+- **Images**: `![description](/api/queue/assets/{id}/file)` → rendered by `ChatImageBlock`
+- **Audio**: `[🎵 filename](/api/queue/assets/{id}/file)` → rendered by `ChatAudioBlock` (inline player)
+- **Video**: `[🎬 filename](/api/queue/assets/{id}/file)` → rendered by `ChatVideoBlock` (preview + lightbox)
 
 ### Tracking: [Epic #215](https://github.com/mgcronin/openzigs/issues/215)
 
@@ -4698,3 +4853,43 @@ The Gallery Studio (`ui/app/gallery/page.tsx`) adds:
 | `/characters` | `characters/page.tsx` | Character Lab (CRUD, photos, training) |
 
 ### Tracking: [Epic #374](https://github.com/mgcronin/openzigs/issues/374)
+
+---
+
+## Autonomous Agent Testing Architecture
+
+### Three-Tier Testing Pyramid
+
+All agent-related code follows a three-tier testing strategy executed via `vitest`:
+
+| Tier | Scope | Location | What it validates |
+|------|-------|----------|-------------------|
+| **Tier 1** | Schema Validation | `src/mcp/tools/__tests__/schema-validation.test.ts` | Every tool has valid JSON Schema, kebab-case name, description, category, risk level, Zod schema, and handler |
+| **Tier 2** | Execution Mocks | `src/mcp/tools/__tests__/*.test.ts` (per-tool) | Handler logic with mocked dependencies — verifies correct service calls, error handling, and response shape |
+| **Tier 3A** | Workflow Routing | `src/mcp/tools/__tests__/workflow-routing.test.ts` | User prompts map to expected tool call sequences via deterministic router (`src/routing/tool-router.ts`) |
+
+#### Tier 1: Schema Validation
+
+Dynamically discovers all registered tools by instantiating each `create*Tools()` factory with stub dependencies. Validates structural invariants:
+- JSON Schema is a valid object with `type: "object"` and `properties`
+- Tool name follows `kebab-case` convention
+- Description is between 10–200 characters
+- Category and riskLevel match allowed enums
+- `zodSchema` and `handler` are present
+
+#### Tier 2: Execution Mocks
+
+Each tool group has dedicated mock tests that:
+- Create mock objects implementing the service interface (e.g., `MockMediaQueueRepo`)
+- Exercise each action/sub-command (e.g., `list`, `get`, `analyze`, `create`)
+- Assert the handler returns correct data and calls the right service methods
+- Test edge cases: not found, missing required args, invalid input
+
+#### Tier 3A: Deterministic Workflow Routing
+
+Uses `routeToToolSequence(prompt)` to validate that natural language intents resolve to the correct ordered sequence of tool calls. Tests cover three core workflow scenarios:
+1. **Character LoRA video + music** — Trains LoRA, generates video, composes soundtrack
+2. **Remix pipeline** — Analyzes audio, replaces stems, applies mastering
+3. **Scheduled content pipeline** — Creates brand voice, schedules media generation
+
+### Tracking: [Epic #394](https://github.com/mgcronin/openzigs/issues/394)

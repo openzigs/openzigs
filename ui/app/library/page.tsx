@@ -12,7 +12,7 @@ import { PipelineEditor, type BackendPipelineNode, type AvailablePrompt } from "
 import { WorkflowWizard } from "@/components/pipeline/workflow-wizard";
 import { ToolMultiSelect, type ToolOption } from "@/components/pipeline/tool-multi-select";
 import { ImportWizard } from "@/components/library/import-wizard";
-import { ChevronDown, ChevronUp, Download, FileUp, Zap, Wrench, PenTool } from "lucide-react";
+import { ChevronDown, ChevronUp, Download, FileUp, Zap, Wrench, PenTool, Sparkles } from "lucide-react";
 import { AskAiPanel, AskAiButton, PAGE_CONTEXTS } from "@/components/ask-ai";
 
 export default function LibraryPage() {
@@ -259,6 +259,12 @@ export default function LibraryPage() {
                       {prompt.preferredTools.length} tool{prompt.preferredTools.length !== 1 ? "s" : ""}
                     </span>
                   )}
+                  {prompt.suggestedSkill && (
+                    <span className="inline-flex items-center gap-1 rounded-full bg-violet-500/10 px-2 py-0.5 text-[10px] font-semibold text-violet-600 dark:text-violet-400">
+                      <Sparkles className="h-2.5 w-2.5" />
+                      {prompt.suggestedSkill}
+                    </span>
+                  )}
                 </div>
                 <p className="mt-2 text-[11px] text-muted-foreground">
                   Updated {new Date(prompt.updatedAt).toLocaleDateString()}
@@ -310,6 +316,9 @@ const PromptForm = ({
     existing?.preferredTools ?? null
   );
 
+  // Suggested skill state
+  const [suggestedSkill, setSuggestedSkill] = useState<string | null>(existing?.suggestedSkill ?? null);
+
   // Brand voice state
   const [brandVoiceId, setBrandVoiceId] = useState<string | null>(existing?.brandVoiceId ?? null);
   const voicesQuery = useQuery({
@@ -358,6 +367,7 @@ const PromptForm = ({
       stages: pipelineStages.length > 0 ? pipelineStages : null,
       preferredTools: preferredTools,
       brandVoiceId: brandVoiceId,
+      suggestedSkill: suggestedSkill,
     });
   };
 
@@ -477,6 +487,30 @@ const PromptForm = ({
             </p>
           </div>
         )}
+
+        {/* Suggested Skill */}
+        <div className="space-y-1">
+          <label className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
+            <Sparkles className="h-3.5 w-3.5" />
+            Suggested Skill
+          </label>
+          <select
+            value={suggestedSkill ?? ""}
+            onChange={(e) => setSuggestedSkill(e.target.value || null)}
+            className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-foreground"
+          >
+            <option value="">None</option>
+            <option value="media-director">Media Director</option>
+            <option value="remix-engineer">Remix Engineer</option>
+            <option value="platform-manager">Platform Manager</option>
+            <option value="content-creator">Content Creator</option>
+            <option value="knowledge-curator">Knowledge Curator</option>
+            <option value="system-operator">System Operator</option>
+          </select>
+          <p className="text-[11px] text-muted-foreground/60">
+            When this prompt is used, the AI activates the selected skill for domain-specific expertise. Skills abstract away tool knowledge — you describe what you want, and the skill handles tool selection.
+          </p>
+        </div>
 
         {/* Pipeline Stages — collapsible progressive disclosure */}
         <div className="rounded-xl border border-primary/20 overflow-hidden">

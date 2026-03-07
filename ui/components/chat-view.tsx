@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { useSocket } from "@/lib/socket-context";
 import { fetchJson } from "@/lib/api";
@@ -24,7 +24,7 @@ import {
 } from "@/components/ui/dialog";
 import { Send, Loader2, Bot, User, AlertCircle, Trash2 } from "lucide-react";
 import { ChatMarkdown } from "@/components/chat-markdown";
-import { SmartTextarea } from "@/components/smart-textarea";
+import { SmartTextarea, type SkillInfo } from "@/components/smart-textarea";
 import { FileAttachmentButton, FileDropZone, AttachmentBar } from "@/components/file-attachment";
 import { VoiceMicButton } from "@/components/voice/voice-mic-button";
 import { ReasoningEffortSelector, ProviderBadge } from "@/components/reasoning-effort-selector";
@@ -74,6 +74,8 @@ export const ChatView = () => {
   const [fallbackWarning, setFallbackWarning] = useState(false);
   const [tools, setTools] = useState<ToolInfo[]>([]);
   const [prompts, setPrompts] = useState<SavedPrompt[]>([]);
+  const [skills, setSkills] = useState<SkillInfo[]>([]);
+  const [bannerDismissed, setBannerDismissed] = useState(true);
   const [history, setHistory] = useState<string[]>([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
   const [draftInput, setDraftInput] = useState("");
@@ -199,8 +201,22 @@ export const ChatView = () => {
         // Prompts not available
       }
     };
+    const loadSkills = async () => {
+      try {
+        const data = await fetchJson<{ skills: SkillInfo[] }>("/api/admin/skills");
+        setSkills(data.skills ?? []);
+      } catch {
+        // Skills not available
+      }
+    };
     void loadTools();
     void loadPrompts();
+    void loadSkills();
+  }, []);
+
+  // Read banner-dismissed from localStorage after mount (avoids SSR hydration mismatch)
+  useEffect(() => {
+    setBannerDismissed(localStorage.getItem("openzigs:skills-onboarded") === "true");
   }, []);
 
   // Socket events
@@ -442,6 +458,16 @@ export const ChatView = () => {
     resetStuckTimer();
   }, [input, chatId, socket, selectedModel, sending, connected, nextId, resetStuckTimer, attachments, reasoningEffort]);
 
+  // Quick-reply: send a choice directly (used by interactive choice pills in ChatMarkdown)
+  const sendQuickReply = useCallback((text: string) => {
+    if (!text || !socket || sending || !connected || !chatId) return;
+    setMessages((prev) => [...prev, { id: nextId(), role: "user", content: text }]);
+    socket.emit("chat:message", { content: text, model: selectedModel || undefined });
+    setSending(true);
+    setThinking(true);
+    resetStuckTimer();
+  }, [socket, sending, connected, chatId, selectedModel, nextId, resetStuckTimer]);
+
   const handleInputResponse = useCallback(
     (answer: string, wasFreeform: boolean) => {
       if (!socket || !activeInputRequest) return;
@@ -507,6 +533,14 @@ export const ChatView = () => {
 
   // Allow sending while connected to socket, show connecting state if no chatId yet
   const inputDisabled = sending || !!activeInputRequest;
+
+  // Index of the last assistant message — used to enable interactive choice pills only on it
+  const lastAssistantIdx = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].role === "assistant") return i;
+    }
+    return -1;
+  }, [messages]);
   const showConnecting = connected && !chatId;
 
   // Voice: handle captured voice query (submit as chat message)
@@ -610,13 +644,36 @@ export const ChatView = () => {
       {/* Messages */}
       <main className="min-h-0 flex flex-1 flex-col gap-4 overflow-y-auto p-5">
         {messages.length === 0 && !thinking && (
-          <div className="flex flex-1 flex-col items-center justify-center gap-3 text-muted-foreground">
+          <div className="flex flex-1 flex-col items-center justify-center gap-4 text-muted-foreground">
             <Bot className="h-12 w-12 opacity-30" />
             <p className="text-sm">Send a message to start chatting with OpenZigs.</p>
+            {!bannerDismissed && skills.length > 0 && (
+              <div className="w-full max-w-md rounded-xl border border-border bg-muted/30 p-4 text-xs">
+                <p className="mb-2 font-semibold text-foreground">{skills.length} skill{skills.length !== 1 ? "s" : ""} loaded</p>
+                <div className="grid grid-cols-2 gap-1 text-muted-foreground">
+                  {skills.map((s) => (
+                    <span key={s.name}>{s.displayName}</span>
+                  ))}
+                </div>
+                <p className="mt-2 text-muted-foreground">
+                  Type <code className="rounded bg-muted px-1">!</code> to browse skills, or just describe what you need.
+                </p>
+                <button
+                  type="button"
+                  className="mt-2 text-[10px] text-muted-foreground/60 hover:text-muted-foreground"
+                  onClick={() => {
+                    localStorage.setItem("openzigs:skills-onboarded", "true");
+                    setBannerDismissed(true);
+                  }}
+                >
+                  Dismiss
+                </button>
+              </div>
+            )}
           </div>
         )}
 
-        {messages.map((msg) => (
+        {messages.map((msg, msgIdx) => (
           <div
             key={msg.id}
             className={cn(
@@ -658,6 +715,11 @@ export const ChatView = () => {
                 <ChatMarkdown
                   content={msg.content}
                   isStreaming={streamRef.current?.id === msg.id}
+                  onChoiceSelect={
+                    msgIdx === lastAssistantIdx && !sending && !thinking
+                      ? sendQuickReply
+                      : undefined
+                  }
                 />
               ) : (
                 msg.content
@@ -745,12 +807,13 @@ export const ChatView = () => {
               tools={tools}
               prompts={prompts}
               models={models}
+              skills={skills}
               placeholder={
                 !connected
                   ? "Connecting…"
                   : showConnecting
                     ? "Almost ready…"
-                    : "Type a message… (/ prompts · # tools · @ models)"
+                    : "Type a message… (/ prompts · # tools · @ models · ! skills)"
               }
               rows={2}
               onKeyDown={(e) => {

@@ -45,6 +45,7 @@ import { registerBuiltinPostActions } from "./tasks/post-actions.js";
 import { CustomPostActionManager } from "./tasks/custom-post-actions.js";
 import { SentinelService, SentinelConfigSchema } from "./sentinel/index.js";
 import { KnowledgeIngestionService } from "./knowledge/index.js";
+import type { KnowledgeCategory, KnowledgeVisibility } from "./knowledge/index.js";
 import { createKnowledgeRouter } from "./api/knowledge.js";
 import { VoiceService } from "./voice/index.js";
 import { createVoiceRouter } from "./api/voice.js";
@@ -322,6 +323,29 @@ const getDisabledNativeMcpToolNames = (): Set<string> => {
   return disabled;
 };
 
+// Discover skill directories — each subdirectory of src/skills/ that contains a SKILL.md
+const resolvedSkillDirectories: string[] = [];
+try {
+  const skillsRoot = path.resolve(process.cwd(), "src", "skills");
+  const entries = await fs.readdir(skillsRoot, { withFileTypes: true });
+  for (const entry of entries) {
+    if (entry.isDirectory()) {
+      const skillMdPath = path.join(skillsRoot, entry.name, "SKILL.md");
+      try {
+        await fs.access(skillMdPath);
+        resolvedSkillDirectories.push(path.join(skillsRoot, entry.name));
+      } catch {
+        // No SKILL.md in this directory — skip
+      }
+    }
+  }
+  if (resolvedSkillDirectories.length > 0) {
+    logger.info(`Loaded ${resolvedSkillDirectories.length} skill directories`);
+  }
+} catch {
+  // src/skills/ doesn't exist — no skills configured
+}
+
 const copilot = new CopilotWrapperService({
   toolRegistry,
   maxToolsPerRequest: config.session?.maxToolsPerRequest ?? 30,
@@ -332,6 +356,7 @@ const copilot = new CopilotWrapperService({
   defaultWorkingDirectory: config.copilot?.defaultWorkingDirectory ?? undefined,
   customAgents: resolvedCustomAgents,
   nativeMcpServers: resolvedNativeMcpServers,
+  skillDirectories: resolvedSkillDirectories,
 });
 copilotRef = copilot;
 
@@ -632,6 +657,7 @@ if (renderOrchestrator) {
         ).run(result.outputPath, now, result.jobId);
 
         // Register the rendered video in the media gallery so it shows up under Videos.
+        let directorAssetId: string | undefined;
         try {
           const alreadyIndexed = mediaQueueRepo.listAssets({ type: "video", source: "director" })
             .some((a) => a.file_path === result.outputPath);
@@ -641,7 +667,7 @@ if (renderOrchestrator) {
             const draftRow = db
               .prepare(`SELECT d.title FROM director_renders r JOIN director_drafts d ON d.id = r.draft_id WHERE r.job_id = ?`)
               .get(result.jobId) as { title: string } | undefined;
-            mediaQueueRepo.createAsset({
+            directorAssetId = mediaQueueRepo.createAsset({
               type: "video",
               filename,
               filePath: result.outputPath,
@@ -651,10 +677,33 @@ if (renderOrchestrator) {
               source: "director",
               jobId: result.jobId,
             });
-            logger.info(`[Director] Registered render ${result.jobId} in gallery (${filename})`);
+            logger.info(`[Director] Registered render ${result.jobId} in gallery (${filename}, asset ${directorAssetId})`);
           }
         } catch (galleryErr) {
           logger.warn(`[Director] Failed to register render in gallery: ${galleryErr instanceof Error ? galleryErr.message : String(galleryErr)}`);
+        }
+
+        // If gallery asset was created, use ingestAsset for full AI analysis
+        // (Whisper transcription + vision keyframes). Otherwise fall back to narration text.
+        if (directorAssetId) {
+          const draftRow = db
+            .prepare(`SELECT d.title FROM director_renders r JOIN director_drafts d ON d.id = r.draft_id WHERE r.job_id = ?`)
+            .get(result.jobId) as { title: string } | undefined;
+          void knowledgeService.ingestAsset({
+            id: directorAssetId,
+            type: "video",
+            filename: path.basename(result.outputPath),
+            filePath: result.outputPath,
+            prompt: draftRow?.title,
+            source: "director",
+            tags: ["director"],
+            visibility: "internal",
+            category: "media",
+          }).catch((err) => {
+            logger.warn(`[Director] Knowledge ingest via asset failed: ${err instanceof Error ? err.message : String(err)}`);
+          });
+          logger.info(`[Director] Ingested render via gallery asset for ${result.jobId}`);
+          return;
         }
       }
 
@@ -681,7 +730,10 @@ if (renderOrchestrator) {
       if (narrationLines.length === 0) return;
 
       const text = `Video: ${row.title}\n\n${narrationLines.join("\n\n")}`;
-      await knowledgeService.ingestText(`render:${row.id}`, row.title, text);
+      await knowledgeService.ingestText(`render:${row.id}`, row.title, text, {
+        visibility: "internal",
+        category: "media",
+      });
       logger.info(`[Director] Ingested render knowledge for draft "${row.title}"`);
     } catch (err) {
       logger.warn(`[Director] Failed to ingest render knowledge: ${err instanceof Error ? err.message : String(err)}`);
@@ -805,7 +857,8 @@ app.get("/api/invite/redeem", async (req, res) => {
 });
 
 // ── Post-Render Ingestion Hook (Presenter Mode) ──
-// When Director Mode finishes rendering, auto-index the presentation into SQLite.
+// When Director Mode finishes rendering, auto-index the presentation into SQLite
+// and register the rendered video in the media gallery.
 renderOrchestrator.on("render:complete", (result: { jobId: string; outputPath: string | null; durationSec: number | null }) => {
   const job = renderOrchestrator.getJob(result.jobId);
   if (!job || !result.outputPath) return;
@@ -856,17 +909,69 @@ renderOrchestrator.on("render:complete", (result: { jobId: string; outputPath: s
         });
       }
 
-      // Index the transcript into the RAG knowledge base so the teacher agent
-      // can retrieve precise passage text via the knowledge tool.
-      const transcriptText = scriptSegments
-        .map((s) => s.text)
-        .filter(Boolean)
-        .join(" ");
-      if (transcriptText.trim()) {
-        void knowledgeService.ingestText(inserted.id, inserted.title, transcriptText).catch((error) => {
+      // Register the presentation video in the media gallery (source: "director")
+      let galleryAssetId: string | undefined;
+      try {
+        const alreadyIndexed = mediaQueueRepo.listAssets({ type: "video", source: "director" })
+          .some((a) => a.file_path === result.outputPath);
+        if (!alreadyIndexed) {
+          const fileStat = statSync(result.outputPath!);
+          galleryAssetId = mediaQueueRepo.createAsset({
+            type: "video",
+            filename: path.basename(result.outputPath!),
+            filePath: result.outputPath!,
+            mimeType: "video/mp4",
+            fileSizeBytes: fileStat.size,
+            durationSeconds: durationSec || undefined,
+            prompt: inserted.title,
+            source: "director",
+            tags: ["presentation", mode],
+          });
+          logger.info(`[PresenterIngestion] Registered presentation "${inserted.title}" in gallery (asset ${galleryAssetId})`);
+        }
+      } catch (galleryErr) {
+        logger.warn(`[PresenterIngestion] Failed to register in gallery: ${galleryErr instanceof Error ? galleryErr.message : String(galleryErr)}`);
+      }
+
+      // Ingest into knowledge — if we have a gallery asset, use ingestAsset for full
+      // AI analysis (Whisper transcription + vision keyframes). Otherwise fall back to
+      // plain transcript text.
+      if (galleryAssetId) {
+        void knowledgeService.ingestAsset({
+          id: galleryAssetId,
+          type: "video",
+          filename: path.basename(result.outputPath!),
+          filePath: result.outputPath!,
+          prompt: inserted.title,
+          source: "director",
+          durationSeconds: durationSec || undefined,
+          tags: ["presentation", mode],
+          visibility: "internal",
+          category: "media",
+        }).catch((error) => {
           const msg = error instanceof Error ? error.message : String(error);
-          logger.warn(`[PresenterIngestion] Knowledge ingest failed for ${inserted.id}: ${msg}`);
+          logger.warn(`[PresenterIngestion] Knowledge ingest via asset failed for ${inserted.id}: ${msg}`);
         });
+      } else {
+        // Fallback: ingest the script transcript directly
+        const transcriptParts = [
+          `## Presentation: ${inserted.title}`,
+          `Duration: ${Math.round(durationSec)}s`,
+          `Mode: ${mode}`,
+          `Chapters: ${chapters.length}`,
+          "",
+          ...scriptSegments.filter((s) => s.text).map((s) => s.text),
+        ];
+        const transcriptText = transcriptParts.join("\n");
+        if (transcriptText.trim()) {
+          void knowledgeService.ingestText(inserted.id, inserted.title, transcriptText, {
+            visibility: "internal",
+            category: "presentation",
+          }).catch((error) => {
+            const msg = error instanceof Error ? error.message : String(error);
+            logger.warn(`[PresenterIngestion] Knowledge ingest failed for ${inserted.id}: ${msg}`);
+          });
+        }
       }
 
       logger.info(`[PresenterIngestion] Indexed presentation "${manifest.projectTitle}" (${result.jobId})`);
@@ -877,10 +982,114 @@ renderOrchestrator.on("render:complete", (result: { jobId: string; outputPath: s
   })();
 });
 
-// Start the Knowledge Ingestion Service in the background
+// Start the Knowledge Ingestion Service, then back-fill existing gallery assets
 void knowledgeService.start()
-  .then(() => {
+  .then(async () => {
     logger.info("Knowledge Ingestion Service started");
+
+    // Helper: build ingestAsset args from a raw DB row.
+    // Pass withFilePath=false for the fast metadata-only pass; true to trigger AI analysis.
+    type RawAsset = ReturnType<typeof mediaQueueRepo.listAssets>[0];
+    const buildArgs = (rawAsset: RawAsset, withFilePath: boolean) => {
+      let tags: string[] = [];
+      if (rawAsset.tags) {
+        try {
+          const parsed = JSON.parse(String(rawAsset.tags));
+          tags = Array.isArray(parsed) ? parsed : [String(parsed)];
+        } catch {
+          // Plain string value (e.g. "scene") — treat as single tag
+          tags = [String(rawAsset.tags)];
+        }
+      }
+      return {
+        id: String(rawAsset.id),
+        type: rawAsset.type as "image" | "video" | "audio" | "scene",
+        filename: String(rawAsset.filename),
+        filePath: withFilePath ? (rawAsset.file_path as string | undefined) : undefined,
+        prompt: rawAsset.prompt as string | undefined,
+        model: rawAsset.model as string | undefined,
+        tags,
+        source: String(rawAsset.source ?? "generated"),
+        durationSeconds: rawAsset.duration_seconds as number | undefined,
+        width: rawAsset.width as number | undefined,
+        height: rawAsset.height as number | undefined,
+        visibility: ((rawAsset.knowledge_visibility as string | undefined) ?? "public") as KnowledgeVisibility,
+        category: ((rawAsset.knowledge_category as string | undefined) ?? "media") as KnowledgeCategory,
+      };
+    };
+
+    // ── Orphan cleanup: remove knowledge docs whose gallery asset no longer exists ──
+    try {
+      const galleryIds = new Set(mediaQueueRepo.listAssets({ limit: 100_000 }).map((a) => String(a.id)));
+      for (const doc of knowledgeService.listDocuments()) {
+        if (doc.assetId && !galleryIds.has(doc.assetId)) {
+          await knowledgeService.removeAsset(doc.assetId);
+          logger.info(`[Gallery] Removed orphaned knowledge doc for deleted asset ${doc.assetId}`);
+        }
+      }
+    } catch (err) {
+      logger.warn(`[Gallery] Orphan cleanup failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`);
+    }
+
+    // ── Classify gallery assets into work queues ──
+    const allAssets = mediaQueueRepo.listAssets({ limit: 10_000 });
+    const docMap = new Map(knowledgeService.listDocuments().map((d) => [d.id, d]));
+    const neverIndexed: RawAsset[] = [];
+    const needsAiUpgrade: RawAsset[] = [];
+
+    for (const rawAsset of allAssets) {
+      const docId = `asset:${rawAsset.id as string}`;
+      const existing = docMap.get(docId);
+      const filePath = rawAsset.file_path as string | undefined;
+      if (!existing) {
+        neverIndexed.push(rawAsset);
+      } else if (existing.status === "indexed" && !existing.hasAiAnalysis && filePath) {
+        needsAiUpgrade.push(rawAsset);
+      }
+    }
+
+    // ── Phase 1: sync metadata-only ingest for never-indexed assets (fast, no AI) ──
+    if (neverIndexed.length > 0) {
+      let ingested = 0;
+      for (const rawAsset of neverIndexed) {
+        try {
+          await knowledgeService.ingestAsset(buildArgs(rawAsset, false));
+          ingested++;
+        } catch (err) {
+          logger.warn(`[Gallery] Back-fill failed for asset ${rawAsset.id as string}: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
+      logger.info(`[Gallery] Back-filled ${ingested} new assets (metadata-only)`);
+    }
+
+    // ── Phase 2: background AI upgrade queue (throttled, non-blocking) ──
+    // Includes newly-ingested assets the converter can analyse plus previously
+    // indexed entries that never received AI analysis.
+    const upgradeQueue: RawAsset[] = [
+      ...neverIndexed.filter((a) => a.file_path && knowledgeService.canConvertFile(String(a.file_path))),
+      ...needsAiUpgrade,
+    ];
+
+    if (upgradeQueue.length > 0) {
+      logger.info(`[Gallery] Queuing ${upgradeQueue.length} asset(s) for background AI analysis`);
+      void (async () => {
+        let upgraded = 0;
+        for (const rawAsset of upgradeQueue) {
+          // Throttle: 2 s between converter invocations so Whisper/OCR sidecars aren't hammered
+          await new Promise<void>((resolve) => setTimeout(resolve, 2_000));
+          try {
+            await knowledgeService.ingestAsset(buildArgs(rawAsset, true));
+            upgraded++;
+            if (upgraded % 10 === 0 || upgraded === upgradeQueue.length) {
+              logger.info(`[Gallery] AI upgrade progress: ${upgraded}/${upgradeQueue.length}`);
+            }
+          } catch (err) {
+            logger.warn(`[Gallery] AI upgrade failed for asset ${rawAsset.id as string}: ${err instanceof Error ? err.message : String(err)}`);
+          }
+        }
+        logger.info(`[Gallery] AI upgrade complete: ${upgraded}/${upgradeQueue.length} asset(s) upgraded`);
+      })();
+    }
   })
   .catch((error) => {
     const details = error instanceof Error ? error.message : String(error);
@@ -908,14 +1117,14 @@ app.use("/api/tasks", authMiddleware, tasksRouter);
 // Media Queue API routes (push-based distributed queue + gallery)
 // Callback route is mounted WITHOUT auth — remote workers (Mac Mini, FluxQ)
 // POST results to /api/queue/complete without an Authorization header.
-const queueCallbackRouter = createQueueCallbackRouter({ queueMaster, repo: mediaQueueRepo });
+const queueCallbackRouter = createQueueCallbackRouter({ queueMaster, repo: mediaQueueRepo, knowledgeService });
 app.use("/api/queue", express.json({ limit: "50mb" }), queueCallbackRouter);
 
 // Character repo needed early — queue router uses it for auto-LoRA injection
 const characterRepo = new CharacterRepository(db);
 characterRepo.migrate();
 
-const queueRouter = createQueueRouter({ queueMaster, repo: mediaQueueRepo, characterRepo });
+const queueRouter = createQueueRouter({ queueMaster, repo: mediaQueueRepo, characterRepo, knowledgeService });
 app.use("/api/queue", authMiddleware, queueRouter);
 
 // Gallery API routes (AI prompt enhancement)
@@ -1371,7 +1580,25 @@ const sanitizeStringFields = (obj: unknown): unknown => {
   }
   return obj;
 };
-socialBrain.on("reply", (data: unknown) => io.emit("social:reply", sanitizeStringFields(data)));
+socialBrain.on("reply", (data: unknown) => {
+  io.emit("social:reply", sanitizeStringFields(data));
+
+  // Ingest social replies into RAG for conversation history
+  const reply = data as { platform?: string; contactName?: string; reply?: string; incomingText?: string };
+  if (reply.reply) {
+    const text = [
+      `## Social Reply — ${reply.platform ?? "unknown"} → ${reply.contactName ?? "unknown"}`,
+      `Incoming: ${reply.incomingText ?? "(no text)"}`,
+      `Reply: ${reply.reply}`,
+    ].join("\n");
+    void knowledgeService.ingestText(
+      `social:reply:${Date.now()}`,
+      `Social reply to ${reply.contactName ?? "unknown"}`,
+      text,
+      { visibility: "internal", category: "social" },
+    ).catch(() => {});
+  }
+});
 socialBrain.on("escalate", (data: unknown) => io.emit("social:escalate", sanitizeStringFields(data)));
 socialHandoff.on("escalated", (data: unknown) => io.emit("social:handoff:created", sanitizeStringFields(data)));
 socialHandoff.on("resolved", (data: unknown) => io.emit("social:handoff:resolved", sanitizeStringFields(data)));
@@ -1444,6 +1671,25 @@ toolRegistry.on("tool:toggled", (payload) => {
 
 scheduler.on("job:executed", (result) => {
   io.emit("job:executed", result);
+
+  // Ingest scheduler execution results into RAG for historical retrieval
+  const execResult = result as { jobId?: string; jobName?: string; output?: string; timestamp?: string };
+  if (execResult.jobId && execResult.output) {
+    const text = [
+      `## Scheduled Job Execution: ${execResult.jobName ?? execResult.jobId}`,
+      `Executed: ${execResult.timestamp ?? new Date().toISOString()}`,
+      "",
+      execResult.output,
+    ].join("\n");
+    void knowledgeService.ingestText(
+      `scheduler:${execResult.jobId}:${Date.now()}`,
+      `Job: ${execResult.jobName ?? execResult.jobId}`,
+      text,
+      { visibility: "internal", category: "system" },
+    ).catch((err) => {
+      logger.warn(`[Scheduler] RAG ingest failed: ${err instanceof Error ? err.message : String(err)}`);
+    });
+  }
 });
 
 sidecarManager.on("sidecar:started", (status) => {

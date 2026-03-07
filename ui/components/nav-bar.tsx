@@ -44,6 +44,7 @@ const NAV_GROUPS: NavGroup[] = [
     icon: <Zap className="h-3.5 w-3.5" />,
     items: [
       { href: "/library", label: "Library" },
+      { href: "/skills", label: "Skills" },
       { href: "/scheduler", label: "Scheduler" },
       { href: "/tasks", label: "Tasks" },
     ],

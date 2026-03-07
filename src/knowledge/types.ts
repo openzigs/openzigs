@@ -12,6 +12,20 @@ export type KnowledgeSourceType = "markdown" | "text" | "pdf" | "docx" | "xlsx" 
 /** Status of a document in the knowledge base. */
 export type DocumentStatus = "pending" | "processing" | "indexed" | "failed";
 
+/**
+ * Visibility controls which contexts can surface a document in search results.
+ * - `public`  — Safe to return everywhere, including social media auto-replies.
+ * - `internal`— Visible to the user in chat/admin but NOT shared externally.
+ * - `private` — Restricted to admin contexts only (sensitive config, credentials).
+ */
+export type KnowledgeVisibility = "public" | "internal" | "private";
+
+/**
+ * Category tags for faceted search and filtering.
+ * Enables queries like "show me all media" or "find presentations about X".
+ */
+export type KnowledgeCategory = "document" | "media" | "presentation" | "social" | "system" | "conversation";
+
 /** A raw source document before chunking. */
 export type KnowledgeDocument = {
   /** Unique document ID (deterministic hash of file path). */
@@ -38,6 +52,16 @@ export type KnowledgeDocument = {
   createdAt: string;
   /** Error message if status is "failed". */
   error?: string;
+  /** Visibility level for access control. Defaults to "internal". */
+  visibility?: KnowledgeVisibility;
+  /** Content category for faceted filtering. */
+  category?: KnowledgeCategory;
+  /** Serving URL for media assets (images/audio/video). */
+  mediaUrl?: string;
+  /** Gallery asset ID (for gallery → RAG link). */
+  assetId?: string;
+  /** True when the converter pipeline (OCR/Whisper/vision) ran successfully for this asset. */
+  hasAiAnalysis?: boolean;
 };
 
 /** A single chunk produced by the chunker. */
@@ -62,6 +86,12 @@ export type KnowledgeChunk = {
   timestampEnd?: number;
   /** Document content type hint for multimodal retrieval. */
   documentType?: KnowledgeSourceType;
+  /** Visibility level for access control filtering. */
+  visibility?: KnowledgeVisibility;
+  /** Content category for faceted filtering. */
+  category?: KnowledgeCategory;
+  /** Serving URL for media assets. */
+  mediaUrl?: string;
 };
 
 /** A search result returned from the vector store. */
@@ -86,6 +116,20 @@ export type KnowledgeSearchResult = {
   documentType?: KnowledgeSourceType;
   /** Whether this document has persisted keyframe images available. */
   hasKeyframes?: boolean;
+  /** Visibility level for access control filtering. */
+  visibility?: KnowledgeVisibility;
+  /** Content category. */
+  category?: KnowledgeCategory;
+  /** Serving URL for media assets (enables inline playback in chat). */
+  mediaUrl?: string;
+};
+
+/** Options for filtering knowledge search results. */
+export type KnowledgeSearchFilter = {
+  /** Only include results with this visibility (or less restrictive). */
+  visibility?: KnowledgeVisibility;
+  /** Only include results from these categories. */
+  categories?: KnowledgeCategory[];
 };
 
 /** A persisted keyframe image from a video document. */
@@ -167,6 +211,18 @@ export const DEFAULT_KNOWLEDGE_CONFIG: KnowledgeConfig = {
   mediaModel: "base.en",
   minScore: 0.65,
   searchMode: "hybrid",
+};
+
+/** Options for ingesting virtual (non-file) documents. */
+export type IngestVirtualOptions = {
+  /** Visibility level. Defaults to "internal". */
+  visibility?: KnowledgeVisibility;
+  /** Content category. Defaults to "document". */
+  category?: KnowledgeCategory;
+  /** Serving URL for media assets (stored in each chunk for retrieval). */
+  mediaUrl?: string;
+  /** Gallery asset ID for linking back to gallery. */
+  assetId?: string;
 };
 
 /** Events emitted by the KnowledgeIngestionService. */

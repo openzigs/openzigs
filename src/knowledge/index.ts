@@ -22,6 +22,10 @@ export type {
   DocumentStatus,
   KeyframeManifest,
   KeyframeEntry,
+  KnowledgeVisibility,
+  KnowledgeCategory,
+  KnowledgeSearchFilter,
+  IngestVirtualOptions,
 } from "./types.js";
 export { DEFAULT_KNOWLEDGE_CONFIG } from "./types.js";
 export { classifyQuery } from "./query-classifier.js";

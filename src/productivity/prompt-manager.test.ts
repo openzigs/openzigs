@@ -384,4 +384,71 @@ describe("PromptManager", () => {
     expect(u2.stages![0].name).toBe("new-stage"); // unchanged
     expect(u2.preferredTools).toEqual(["shell-execute"]);
   });
+
+  // ── suggestedSkill ──
+
+  it("creates a prompt with suggestedSkill", () => {
+    const prompt = pm.create({
+      name: "skill-prompt",
+      template: "Generate a video about {{topic}}",
+      suggestedSkill: "media-director",
+    });
+
+    expect(prompt.suggestedSkill).toBe("media-director");
+
+    const found = pm.getById(prompt.id);
+    expect(found!.suggestedSkill).toBe("media-director");
+  });
+
+  it("creates a prompt without suggestedSkill (null by default)", () => {
+    const prompt = pm.create({ name: "no-skill", template: "plain" });
+    expect(prompt.suggestedSkill).toBeNull();
+  });
+
+  it("updates suggestedSkill on a prompt", () => {
+    const prompt = pm.create({ name: "updatable-skill", template: "text" });
+    expect(prompt.suggestedSkill).toBeNull();
+
+    const updated = pm.update(prompt.id, { suggestedSkill: "remix-engineer" });
+    expect(updated.suggestedSkill).toBe("remix-engineer");
+  });
+
+  it("clears suggestedSkill by setting null", () => {
+    const prompt = pm.create({
+      name: "clearable-skill",
+      template: "text",
+      suggestedSkill: "platform-manager",
+    });
+    expect(prompt.suggestedSkill).toBe("platform-manager");
+
+    const updated = pm.update(prompt.id, { suggestedSkill: null });
+    expect(updated.suggestedSkill).toBeNull();
+  });
+
+  it("creates a prompt with suggestedSkill, preferredTools, and stages together", () => {
+    const prompt = pm.create({
+      name: "full-combo",
+      template: "Full featured prompt",
+      suggestedSkill: "content-creator",
+      preferredTools: ["manage-brand-voice", "synthesize-speech"],
+      stages: [{ name: "s1", prompt: "Step one" }],
+    });
+
+    expect(prompt.suggestedSkill).toBe("content-creator");
+    expect(prompt.preferredTools).toEqual(["manage-brand-voice", "synthesize-speech"]);
+    expect(prompt.stages).toHaveLength(1);
+  });
+
+  it("updates suggestedSkill independently of other fields", () => {
+    const prompt = pm.create({
+      name: "independent-skill",
+      template: "text",
+      preferredTools: ["web-search"],
+      suggestedSkill: "media-director",
+    });
+
+    const updated = pm.update(prompt.id, { suggestedSkill: "system-operator" });
+    expect(updated.suggestedSkill).toBe("system-operator");
+    expect(updated.preferredTools).toEqual(["web-search"]);
+  });
 });

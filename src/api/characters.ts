@@ -353,8 +353,8 @@ export function createCharacterRouter({ characterRepo, copilot }: CharacterRoute
       const overrides = req.body as Record<string, unknown>;
       const steps = typeof overrides.steps === "number" ? overrides.steps : 9;
       const learningRate = typeof overrides.learningRate === "number" ? overrides.learningRate : 1e-4;
-      const loraRank = typeof overrides.loraRank === "number" ? overrides.loraRank : 8;
-      const numEpochs = typeof overrides.numEpochs === "number" ? overrides.numEpochs : 30;
+      const loraRank = typeof overrides.loraRank === "number" ? overrides.loraRank : 16;
+      const numEpochs = typeof overrides.numEpochs === "number" ? overrides.numEpochs : 50;
 
       // Build per-image prompt: use per-image caption if available,
       // fall back to character description, then generic trigger-word prompt

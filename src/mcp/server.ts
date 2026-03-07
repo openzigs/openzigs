@@ -34,6 +34,16 @@ import { createYouTubeTools } from "./tools/youtube-tools.js";
 import { createLinkedInTools } from "./tools/linkedin-tools.js";
 import { createRedditTools } from "./tools/reddit-tools.js";
 import { createIngestYouTubeTools } from "./tools/ingest-youtube-tools.js";
+import { createGalleryTools } from "./tools/gallery-tools.js";
+import { createMediaQueueTools } from "./tools/media-queue-tools.js";
+import { createCharacterTools } from "./tools/character-tools.js";
+import { createRemixTools } from "./tools/remix-tools.js";
+import { createBrandVoiceTools } from "./tools/brand-voice-tools.js";
+import { createVoiceTools } from "./tools/voice-tools.js";
+import { createPresenterTools } from "./tools/presenter-tools.js";
+import { createKnowledgeManagementTools } from "./tools/knowledge-management-tools.js";
+import { createWebhookTools } from "./tools/webhook-tools.js";
+import { createSentinelTools } from "./tools/sentinel-tools.js";
 import { ToolRegistry, type ToolDefinition } from "./tool-registry.js";
 import type { LocalMcpServerManager } from "./local-mcp-server-manager.js";
 import { AuditLogger } from "../logging/audit-logger.js";
@@ -89,6 +99,22 @@ export type McpServerOptions = {
   socialHandoffManager?: import("../channels/social/handoff-manager.js").HandoffManager;
   /** Media Queue Repository for ingest-youtube tool cataloging. */
   mediaQueueRepo?: import("../queue/media-queue-repository.js").MediaQueueRepository;
+  /** QueueMaster for job dispatch and node status. */
+  queueMaster?: import("../queue/queue-master.js").QueueMaster;
+  /** Character Repository for Character Lab LoRA management. */
+  characterRepo?: import("../characters/character-repository.js").CharacterRepository;
+  /** Brand Voice Service for voice profile management. */
+  brandVoiceService?: import("../personality/brand-voice-service.js").BrandVoiceService;
+  /** Presentation Repository for Presenter Mode. */
+  presentationRepo?: import("../presenter/presentation-repository.js").PresentationRepository;
+  /** Quiz Generator for Presenter Mode. */
+  quizGenerator?: import("../presenter/quiz-generator.js").QuizGenerator;
+  /** Teacher Agent for Presenter Mode Q&A. */
+  teacherAgent?: import("../presenter/teacher-agent.js").TeacherAgent;
+  /** Webhook Manager for inbound webhook management. */
+  webhookManager?: import("../webhooks/webhook-manager.js").WebhookManager;
+  /** Sentinel Service for SRE monitoring. */
+  sentinelService?: import("../sentinel/sentinel-service.js").SentinelService;
 };
 
 export type RegisterMcpToolsOptions = Pick<
@@ -122,6 +148,14 @@ export type RegisterMcpToolsOptions = Pick<
   | "socialRepository"
   | "socialHandoffManager"
   | "mediaQueueRepo"
+  | "queueMaster"
+  | "characterRepo"
+  | "brandVoiceService"
+  | "presentationRepo"
+  | "quizGenerator"
+  | "teacherAgent"
+  | "webhookManager"
+  | "sentinelService"
 >;
 
 const readFileSchema = z.object({ path: z.string() });
@@ -613,5 +647,64 @@ export const registerMcpTools = (toolRegistry: ToolRegistry, options: RegisterMc
     for (const tool of ingestTools) {
       registerTool(tool);
     }
+  }
+
+  // ── Agent Architecture Tools (Epic #394) ──
+
+  if (options.mediaQueueRepo) {
+    const galleryTools = createGalleryTools({ mediaQueueRepo: options.mediaQueueRepo });
+    for (const tool of galleryTools) { registerTool(tool); }
+  }
+
+  if (options.mediaQueueRepo && options.queueMaster) {
+    const mqTools = createMediaQueueTools({
+      mediaQueueRepo: options.mediaQueueRepo,
+      queueMaster: options.queueMaster,
+    });
+    for (const tool of mqTools) { registerTool(tool); }
+  }
+
+  if (options.characterRepo) {
+    const charTools = createCharacterTools({ characterRepo: options.characterRepo });
+    for (const tool of charTools) { registerTool(tool); }
+  }
+
+  if (options.mediaQueueRepo) {
+    const remixTools = createRemixTools({ mediaQueueRepo: options.mediaQueueRepo });
+    for (const tool of remixTools) { registerTool(tool); }
+  }
+
+  if (options.brandVoiceService) {
+    const bvTools = createBrandVoiceTools({ brandVoiceService: options.brandVoiceService });
+    for (const tool of bvTools) { registerTool(tool); }
+  }
+
+  if (options.voiceService) {
+    const voiceTools = createVoiceTools({ voiceService: options.voiceService });
+    for (const tool of voiceTools) { registerTool(tool); }
+  }
+
+  if (options.presentationRepo && options.quizGenerator && options.teacherAgent) {
+    const presTools = createPresenterTools({
+      presentationRepo: options.presentationRepo,
+      quizGenerator: options.quizGenerator,
+      teacherAgent: options.teacherAgent,
+    });
+    for (const tool of presTools) { registerTool(tool); }
+  }
+
+  if (options.knowledgeService) {
+    const kmTools = createKnowledgeManagementTools({ knowledgeService: options.knowledgeService });
+    for (const tool of kmTools) { registerTool(tool); }
+  }
+
+  if (options.webhookManager) {
+    const whTools = createWebhookTools({ webhookManager: options.webhookManager });
+    for (const tool of whTools) { registerTool(tool); }
+  }
+
+  if (options.sentinelService) {
+    const sentTools = createSentinelTools({ sentinelService: options.sentinelService });
+    for (const tool of sentTools) { registerTool(tool); }
   }
 };

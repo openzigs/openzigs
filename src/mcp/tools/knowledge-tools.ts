@@ -8,13 +8,19 @@
 
 import * as z from "zod";
 import type { ToolDefinition } from "../tool-registry.js";
-import type { KnowledgeIngestionService } from "../../knowledge/index.js";
+import type { KnowledgeIngestionService, KnowledgeCategory, KnowledgeVisibility } from "../../knowledge/index.js";
 
 const searchKnowledgeSchema = z.object({
   query: z.string().describe("Semantic search query to find relevant knowledge"),
   limit: z.number().int().min(1).max(50).optional().describe("Maximum number of results (default: 10)"),
   mode: z.enum(["vector", "fts", "hybrid"]).optional().describe(
     "Search mode: 'vector' (semantic similarity), 'fts' (keyword match), 'hybrid' (combined, default)",
+  ),
+  category: z.enum(["document", "media", "presentation", "social", "system", "conversation"]).optional().describe(
+    "Filter by content category. Use 'media' to find images, videos, audio, and music from the gallery.",
+  ),
+  visibility: z.enum(["public", "internal", "private"]).optional().describe(
+    "Filter by visibility level. 'public' = safe for external sharing, 'internal' = user only.",
   ),
 });
 
@@ -31,11 +37,14 @@ export const createKnowledgeTools = (options: KnowledgeToolsOptions): ToolDefini
     name: "search-knowledge",
     description:
       "Search the local knowledge base using semantic similarity, keyword match, or hybrid (combined). " +
-      "Returns relevant text chunks from indexed documents (markdown, code, text files, etc.) " +
-      "stored in the knowledge directory. Use this to find relevant context, documentation, " +
-      "notes, or code snippets from the user's personal knowledge base. " +
-      "Supports three modes: 'hybrid' (default — combines semantic + keyword for best results), " +
-      "'vector' (pure semantic similarity), and 'fts' (keyword/full-text search).",
+      "Returns relevant text chunks from indexed documents, media assets (images, videos, audio, music), " +
+      "presentations, social media interactions, and system events. " +
+      "Use this to find relevant context, gallery assets (songs, images, videos), documentation, " +
+      "notes, or code snippets from the user's knowledge base. " +
+      "When results include media assets, use the provided media URL to show/play them inline. " +
+      "For audio: use [🎵 filename](url). For video: use [🎬 filename](url). For images: use ![alt](url). " +
+      "Supports category filtering: 'media' for gallery assets, 'document' for files, " +
+      "'presentation' for presentations, 'social' for social interactions, 'system' for scheduled jobs.",
     inputSchema: {
       type: "object",
       properties: {
@@ -52,6 +61,16 @@ export const createKnowledgeTools = (options: KnowledgeToolsOptions): ToolDefini
           enum: ["vector", "fts", "hybrid"],
           description: "Search mode: 'vector' (semantic), 'fts' (keyword), 'hybrid' (combined, default)",
         },
+        category: {
+          type: "string",
+          enum: ["document", "media", "presentation", "social", "system", "conversation"],
+          description: "Filter by content category. Use 'media' to find gallery assets.",
+        },
+        visibility: {
+          type: "string",
+          enum: ["public", "internal", "private"],
+          description: "Filter by visibility level.",
+        },
       },
       required: ["query"],
     },
@@ -63,8 +82,16 @@ export const createKnowledgeTools = (options: KnowledgeToolsOptions): ToolDefini
       const limit = input.limit ?? 10;
       const mode = input.mode as import("../../knowledge/types.js").KnowledgeSearchMode | undefined;
 
+      const filter: import("../../knowledge/types.js").KnowledgeSearchFilter = {};
+      if (input.category) filter.categories = [input.category as KnowledgeCategory];
+      if (input.visibility) filter.visibility = input.visibility as KnowledgeVisibility;
+      const hasFilter = Object.keys(filter).length > 0;
+
       try {
-        const results = await knowledgeService.search(input.query, limit, { mode });
+        const results = await knowledgeService.search(input.query, limit, {
+          mode,
+          filter: hasFilter ? filter : undefined,
+        });
 
         if (results.length === 0) {
           return {
@@ -87,9 +114,11 @@ export const createKnowledgeTools = (options: KnowledgeToolsOptions): ToolDefini
         }
 
         const modeLabel = mode ?? "hybrid";
+        const filterLabel = input.category ? ` [category: ${input.category}]` : "";
         const formatted = results.map((result, i) => {
           const heading = result.sectionHeading ? ` (${result.sectionHeading})` : "";
           const score = Math.round(result.score * 100);
+          const catLabel = result.category ? ` [${result.category}]` : "";
           const hasKeyframes = keyframeAvailability.get(result.documentId);
           const keyframeNote = hasKeyframes
             ? `\nKeyframe images available for this video. ` +
@@ -97,16 +126,23 @@ export const createKnowledgeTools = (options: KnowledgeToolsOptions): ToolDefini
               `![description](/api/admin/knowledge/keyframes/${result.documentId}/{frameIndex}) ` +
               `where frameIndex is 0-based. List frames via GET /api/admin/knowledge/keyframes/${result.documentId}`
             : "";
+
+          // Include media URL instructions for gallery assets
+          const mediaNote = result.mediaUrl
+            ? `\nMedia URL: ${result.mediaUrl} — Use this to show/play the asset inline.`
+            : "";
+
           return [
-            `--- Result ${i + 1} [${score}% relevance] ---`,
+            `--- Result ${i + 1} [${score}% relevance]${catLabel} ---`,
             `Source: ${result.sourcePath}${heading}`,
             ...(keyframeNote ? [keyframeNote] : []),
+            ...(mediaNote ? [mediaNote] : []),
             "",
             result.text,
           ].join("\n");
         });
 
-        const header = `Found ${results.length} result(s) for "${input.query}" (${modeLabel} search):`;
+        const header = `Found ${results.length} result(s) for "${input.query}" (${modeLabel} search)${filterLabel}:`;
         return { text: [header, "", ...formatted].join("\n") };
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);

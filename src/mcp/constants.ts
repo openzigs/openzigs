@@ -11,6 +11,9 @@ export const ALWAYS_ON_TOOLS = new Set([
   "list-secrets",
   "get-secret",
   "ingest-youtube",
+  "query-gallery-assets",
+  "submit-media-job",
+  "get-job-status",
 ]);
 
 /**

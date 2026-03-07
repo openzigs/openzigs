@@ -14,6 +14,8 @@ export type SavedPrompt = {
   stages: PipelineStage[] | null;
   /** Optional brand voice ID to apply when executing this prompt. null = use active default. */
   brandVoiceId: string | null;
+  /** Optional skill name to activate when using this prompt (e.g., "media-director"). null = no skill. */
+  suggestedSkill: string | null;
   createdAt: Date;
   updatedAt: Date;
 };
@@ -29,6 +31,8 @@ export type CreatePromptInput = {
   stages?: PipelineStage[];
   /** Optional brand voice ID to apply when executing this prompt. */
   brandVoiceId?: string;
+  /** Optional skill name to activate when using this prompt. */
+  suggestedSkill?: string;
 };
 
 export type UpdatePromptInput = {
@@ -42,6 +46,8 @@ export type UpdatePromptInput = {
   stages?: PipelineStage[] | null;
   /** Set to a voice ID to assign a brand voice, or null to clear. */
   brandVoiceId?: string | null;
+  /** Set to a skill name to suggest a skill, or null to clear. */
+  suggestedSkill?: string | null;
 };
 
 type StoredPrompt = {
@@ -53,6 +59,7 @@ type StoredPrompt = {
   preferred_tools: string | null;
   stages: string | null;
   brand_voice_id: string | null;
+  suggested_skill: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -66,6 +73,7 @@ const toPrompt = (row: StoredPrompt): SavedPrompt => ({
   preferredTools: row.preferred_tools ? (JSON.parse(row.preferred_tools) as string[]) : null,
   stages: row.stages ? (JSON.parse(row.stages) as PipelineStage[]) : null,
   brandVoiceId: row.brand_voice_id ?? null,
+  suggestedSkill: row.suggested_skill ?? null,
   createdAt: new Date(row.created_at),
   updatedAt: new Date(row.updated_at),
 });
@@ -128,6 +136,11 @@ export class PromptManager {
     if (!columns.some((c) => c.name === "brand_voice_id")) {
       this.db.exec("ALTER TABLE saved_prompts ADD COLUMN brand_voice_id TEXT DEFAULT NULL");
     }
+
+    // Add 'suggested_skill' column — optional skill to activate
+    if (!columns.some((c) => c.name === "suggested_skill")) {
+      this.db.exec("ALTER TABLE saved_prompts ADD COLUMN suggested_skill TEXT DEFAULT NULL");
+    }
   }
 
   create(input: CreatePromptInput): SavedPrompt {
@@ -137,10 +150,10 @@ export class PromptManager {
 
     this.db
       .prepare(
-        `INSERT INTO saved_prompts (id, name, template, description, tags, preferred_tools, stages, brand_voice_id, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO saved_prompts (id, name, template, description, tags, preferred_tools, stages, brand_voice_id, suggested_skill, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
-      .run(id, input.name, input.template, input.description ?? "", tags, input.preferredTools ? JSON.stringify(input.preferredTools) : null, input.stages ? JSON.stringify(input.stages) : null, input.brandVoiceId ?? null, now, now);
+      .run(id, input.name, input.template, input.description ?? "", tags, input.preferredTools ? JSON.stringify(input.preferredTools) : null, input.stages ? JSON.stringify(input.stages) : null, input.brandVoiceId ?? null, input.suggestedSkill ?? null, now, now);
 
     return this.getById(id)!;
   }
@@ -196,13 +209,14 @@ export class PromptManager {
       ? (input.stages ? JSON.stringify(input.stages) : null)
       : (existing.stages ? JSON.stringify(existing.stages) : null);
     const brandVoiceId = input.brandVoiceId !== undefined ? (input.brandVoiceId || null) : existing.brandVoiceId;
+    const suggestedSkill = input.suggestedSkill !== undefined ? (input.suggestedSkill || null) : existing.suggestedSkill;
 
     this.db
       .prepare(
-        `UPDATE saved_prompts SET name = ?, template = ?, description = ?, tags = ?, preferred_tools = ?, stages = ?, brand_voice_id = ?, updated_at = ?
+        `UPDATE saved_prompts SET name = ?, template = ?, description = ?, tags = ?, preferred_tools = ?, stages = ?, brand_voice_id = ?, suggested_skill = ?, updated_at = ?
          WHERE id = ?`
       )
-      .run(name, template, description, tags, preferredTools, stages, brandVoiceId, now, id);
+      .run(name, template, description, tags, preferredTools, stages, brandVoiceId, suggestedSkill, now, id);
 
     return this.getById(id)!;
   }

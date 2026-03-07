@@ -7,6 +7,7 @@ export const TRIGGER_CHARS = {
   "/": "commands" as const,
   "#": "tools" as const,
   "@": "models" as const,
+  "!": "skills" as const,
 };
 
 export type TriggerKind = (typeof TRIGGER_CHARS)[keyof typeof TRIGGER_CHARS];
