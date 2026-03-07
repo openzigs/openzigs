@@ -87,8 +87,10 @@ describe("ResearchGenerateDialog", () => {
     fireEvent.click(screen.getByRole("button", { name: /generate/i }));
 
     expect(mockSocket.emit).toHaveBeenCalledWith("chat:message", expect.objectContaining({
+      content: expect.stringContaining("[Using Research Synthesizer skill]"),
+    }));
+    expect(mockSocket.emit).toHaveBeenCalledWith("chat:message", expect.objectContaining({
       content: expect.stringContaining("Best LLMs 2026"),
-      skill: "research-synthesizer",
     }));
     expect(onOpenChange).toHaveBeenCalledWith(false);
   });

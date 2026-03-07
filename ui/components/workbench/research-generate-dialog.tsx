@@ -88,8 +88,7 @@ export const ResearchGenerateDialog = ({
 
     try {
       socket.emit("chat:message", {
-        content: prompt,
-        skill: "research-synthesizer",
+        content: `[Using Research Synthesizer skill] ${prompt}`,
       });
       setSubmitting(false);
       onOpenChange(false);
