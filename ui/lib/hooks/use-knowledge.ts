@@ -87,6 +87,24 @@ export const useConverters = () =>
     queryFn: () => fetchJson<{ converters: ConverterInfo[] }>("/api/admin/knowledge/converters"),
   });
 
+/** Update visibility and/or category metadata for a knowledge document. */
+export const useUpdateDocumentMeta = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ documentId, visibility, category }: { documentId: string; visibility: string; category: string }) =>
+      fetchJson<{ ok: boolean; visibility: string; category: string }>(
+        `/api/admin/knowledge/documents/${encodeURIComponent(documentId)}`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({ visibility, category }),
+        }
+      ),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["knowledge"] });
+    },
+  });
+};
+
 /** Convert files by path — copies them into the knowledge directory + indexes. */
 export const useConvertFiles = () => {
   const queryClient = useQueryClient();

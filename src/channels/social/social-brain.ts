@@ -188,7 +188,11 @@ export class SocialBrain extends EventEmitter {
 
   private async searchKnowledge(query: string): Promise<string[]> {
     try {
-      const results = await this.knowledgeService.search(query, 5, { mode: "hybrid" });
+      // Only surface public content in social auto-replies to prevent leaking internal data
+      const results = await this.knowledgeService.search(query, 5, {
+        mode: "hybrid",
+        filter: { visibility: "public" },
+      });
       return results.map((r) => r.text);
     } catch {
       return [];

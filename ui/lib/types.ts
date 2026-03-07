@@ -526,6 +526,10 @@ export type KnowledgeDocument = {
   indexedAt: string | null;
   createdAt: string;
   error?: string;
+  visibility?: string;
+  category?: string;
+  mediaUrl?: string;
+  assetId?: string;
 };
 
 export type KnowledgeSearchResult = {

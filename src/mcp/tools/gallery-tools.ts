@@ -22,7 +22,7 @@ export const createGalleryTools = ({ mediaQueueRepo }: GalleryToolsOptions): Too
     {
       name: "query-gallery-assets",
       description:
-        "Search and filter media assets in the OpenZigs Gallery database. Returns matching images, videos, and audio files with metadata including prompt, model, file path, and generation parameters. Use this to find existing media before generating new content.",
+        "Search and filter media assets in the OpenZigs Gallery database. Returns matching images, videos, and audio files with metadata including prompt, model, file path, and generation parameters. Use this to find existing media before generating new content. When displaying results to the user, use the result_url field to embed media inline: for images use ![description](result_url), for audio use [🎵 filename](result_url), for video use [🎬 filename](result_url).",
       inputSchema: {
         type: "object",
         properties: {

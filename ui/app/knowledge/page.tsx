@@ -1,8 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import { SectionCard } from "@/components/section-card";
 import { ToastContainer, showToast } from "@/components/toast";
+import { fetchJson } from "@/lib/api";
 import {
   useKnowledgeStats,
   useKnowledgeDocuments,
@@ -12,6 +13,7 @@ import {
   useDeleteDocument,
   useConverters,
   useConvertFiles,
+  useUpdateDocumentMeta,
 } from "@/lib/hooks/use-knowledge";
 import type { KnowledgeDocument } from "@/lib/types";
 import { AskAiPanel, AskAiButton, PAGE_CONTEXTS } from "@/components/ask-ai";
@@ -28,6 +30,7 @@ export default function KnowledgePage() {
   const reindexAll = useReindexAll();
   const reindexDoc = useReindexDocument();
   const deleteDoc = useDeleteDocument();
+  const updateDocMeta = useUpdateDocumentMeta();
   const convertersQuery = useConverters();
   const convertFiles = useConvertFiles();
 
@@ -204,40 +207,71 @@ export default function KnowledgePage() {
               {documents.map((doc) => (
                 <div
                   key={doc.id}
-                  className="flex items-center justify-between rounded-xl border border-border bg-card p-3"
+                  className="rounded-xl border border-border bg-card p-3"
                 >
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-medium text-foreground">{doc.relativePath}</p>
-                    <div className="mt-1 flex items-center gap-2 text-[11px] text-muted-foreground">
-                      <span className={`inline-block rounded-full px-2 py-0.5 text-[10px] font-semibold ${statusColor(doc.status)}`}>
-                        {doc.status}
-                      </span>
-                      <span>{doc.sourceType}</span>
-                      <span>{formatBytes(doc.sizeBytes)}</span>
-                      <span>{doc.chunkCount} chunks</span>
-                      {doc.error && (
-                        <span className="truncate text-red-500" title={doc.error}>
-                          Error: {doc.error}
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <p className="truncate text-sm font-medium text-foreground">{doc.relativePath}</p>
+                        {doc.assetId && (
+                          <span className="inline-block rounded-full bg-sky-500/10 px-2 py-0.5 text-[10px] font-semibold text-sky-600 dark:text-sky-400">
+                            Gallery Asset
+                          </span>
+                        )}
+                      </div>
+                      <div className="mt-1 flex items-center gap-2 text-[11px] text-muted-foreground flex-wrap">
+                        <span className={`inline-block rounded-full px-2 py-0.5 text-[10px] font-semibold ${statusColor(doc.status)}`}>
+                          {doc.status}
                         </span>
-                      )}
+                        <span>{doc.sourceType}</span>
+                        <span>{formatBytes(doc.sizeBytes)}</span>
+                        <span>{doc.chunkCount} chunks</span>
+                        {doc.error && (
+                          <span className="truncate text-red-500" title={doc.error}>
+                            Error: {doc.error}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    <div className="flex shrink-0 gap-2">
+                      <button
+                        onClick={() => handleReindexDoc(doc)}
+                        disabled={reindexDoc.isPending}
+                        className="rounded-lg border border-primary/30 px-3 py-1.5 text-xs font-semibold text-primary hover:bg-primary/5"
+                      >
+                        Re-index
+                      </button>
+                      <button
+                        onClick={() => handleDeleteDoc(doc)}
+                        disabled={deleteDoc.isPending}
+                        className="rounded-lg border border-destructive/30 px-3 py-1.5 text-xs font-semibold text-destructive hover:bg-destructive/5"
+                      >
+                        Remove
+                      </button>
                     </div>
                   </div>
-                  <div className="ml-3 flex shrink-0 gap-2">
-                    <button
-                      onClick={() => handleReindexDoc(doc)}
-                      disabled={reindexDoc.isPending}
-                      className="rounded-lg border border-primary/30 px-3 py-1.5 text-xs font-semibold text-primary hover:bg-primary/5"
-                    >
-                      Re-index
-                    </button>
-                    <button
-                      onClick={() => handleDeleteDoc(doc)}
-                      disabled={deleteDoc.isPending}
-                      className="rounded-lg border border-destructive/30 px-3 py-1.5 text-xs font-semibold text-destructive hover:bg-destructive/5"
-                    >
-                      Remove
-                    </button>
-                  </div>
+                  {/* Knowledge classification labels */}
+                  <DocKnowledgeLabels
+                    doc={doc}
+                    onUpdate={(visibility, category) => {
+                      if (doc.assetId) {
+                        // Gallery asset — update via queue API so chunks are re-ingested
+                        fetchJson(`/api/queue/assets/${doc.assetId}/knowledge`, {
+                          method: "PATCH",
+                          body: JSON.stringify({ visibility, category }),
+                        }).then(() => showToast("Classification updated", "success"))
+                          .catch((err: Error) => showToast(`Failed: ${err.message}`, "error"));
+                      } else {
+                        updateDocMeta.mutate(
+                          { documentId: doc.id, visibility, category },
+                          {
+                            onSuccess: () => showToast("Classification updated", "success"),
+                            onError: (err) => showToast(`Failed: ${err.message}`, "error"),
+                          }
+                        );
+                      }
+                    }}
+                  />
                 </div>
               ))}
             </div>
@@ -373,6 +407,106 @@ export default function KnowledgePage() {
       <ToastContainer />
       <AskAiPanel pageContext={PAGE_CONTEXTS["knowledge"]} open={askAiOpen} onClose={() => setAskAiOpen(false)} />
     </main>
+  );
+}
+
+/* ── Doc Knowledge Labels ── */
+
+const VISIBILITY_OPTIONS = [
+  { value: "public", label: "Public", color: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400", dot: "bg-emerald-500" },
+  { value: "internal", label: "Internal", color: "bg-sky-500/10 text-sky-700 dark:text-sky-400", dot: "bg-sky-500" },
+  { value: "private", label: "Private", color: "bg-slate-500/10 text-slate-600 dark:text-slate-400", dot: "bg-slate-400" },
+] as const;
+
+const DOC_CATEGORY_OPTIONS = [
+  { value: "media", label: "Media" },
+  { value: "document", label: "Document" },
+  { value: "presentation", label: "Presentation" },
+  { value: "social", label: "Social" },
+  { value: "system", label: "System" },
+  { value: "conversation", label: "Conversation" },
+] as const;
+
+function DocKnowledgeLabels({
+  doc,
+  onUpdate,
+}: {
+  doc: KnowledgeDocument;
+  onUpdate: (visibility: string, category: string) => void;
+}) {
+  const [visOpen, setVisOpen] = useState(false);
+  const [catOpen, setCatOpen] = useState(false);
+  const visRef = useRef<HTMLDivElement>(null);
+  const catRef = useRef<HTMLDivElement>(null);
+
+  const visibility = doc.visibility ?? "internal";
+  const category = doc.category ?? "document";
+  const visOption = VISIBILITY_OPTIONS.find((v) => v.value === visibility) ?? VISIBILITY_OPTIONS[1];
+
+  useEffect(() => {
+    if (!visOpen && !catOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (visRef.current && !visRef.current.contains(e.target as Node)) setVisOpen(false);
+      if (catRef.current && !catRef.current.contains(e.target as Node)) setCatOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [visOpen, catOpen]);
+
+  return (
+    <div className="mt-2 flex flex-wrap items-center gap-1.5">
+      <span className="text-[9px] font-bold uppercase tracking-wide text-muted-foreground">AI:</span>
+      {/* Visibility picker */}
+      <div className="relative" ref={visRef}>
+        <button
+          onClick={() => { setVisOpen((v) => !v); setCatOpen(false); }}
+          className={`flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold hover:opacity-80 ${visOption.color}`}
+          title="AI Visibility"
+        >
+          <span className={`h-1.5 w-1.5 rounded-full ${visOption.dot}`} />
+          {visOption.label}
+        </button>
+        {visOpen && (
+          <div className="absolute left-0 top-full z-[200] mt-1 min-w-[110px] rounded-lg border border-border bg-card p-1 shadow-lg">
+            <p className="mb-1 px-2 text-[9px] font-bold uppercase tracking-wide text-muted-foreground">AI Visibility</p>
+            {VISIBILITY_OPTIONS.map((opt) => (
+              <button
+                key={opt.value}
+                onClick={() => { onUpdate(opt.value, category); setVisOpen(false); }}
+                className={`flex w-full items-center gap-2 rounded-md px-2 py-1 text-left text-[11px] hover:bg-muted ${visibility === opt.value ? "font-semibold" : ""}`}
+              >
+                <span className={`h-1.5 w-1.5 rounded-full ${opt.dot}`} />
+                {opt.label}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+      {/* Category picker */}
+      <div className="relative" ref={catRef}>
+        <button
+          onClick={() => { setCatOpen((v) => !v); setVisOpen(false); }}
+          className="flex items-center gap-1 rounded-full bg-violet-500/10 px-2 py-0.5 text-[10px] font-semibold text-violet-700 hover:opacity-80 dark:text-violet-400"
+          title="AI Category"
+        >
+          {DOC_CATEGORY_OPTIONS.find((c) => c.value === category)?.label ?? category}
+        </button>
+        {catOpen && (
+          <div className="absolute left-0 top-full z-[200] mt-1 min-w-[120px] rounded-lg border border-border bg-card p-1 shadow-lg">
+            <p className="mb-1 px-2 text-[9px] font-bold uppercase tracking-wide text-muted-foreground">AI Category</p>
+            {DOC_CATEGORY_OPTIONS.map((opt) => (
+              <button
+                key={opt.value}
+                onClick={() => { onUpdate(visibility, opt.value); setCatOpen(false); }}
+                className={`w-full rounded-md px-2 py-1 text-left text-[11px] hover:bg-muted ${category === opt.value ? "font-semibold" : ""}`}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 

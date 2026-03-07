@@ -39,16 +39,18 @@ vi.mock("./embedder.js", () => ({
   shutdownEmbedder: vi.fn().mockResolvedValue(undefined),
 }));
 
-vi.mock("./lancedb-store.js", () => ({
-  LanceDBStore: vi.fn(() => ({
+vi.mock("./lancedb-store.js", () => {
+  const MockLanceDBStore = vi.fn(() => ({
     initialize: vi.fn().mockResolvedValue(undefined),
     close: vi.fn().mockResolvedValue(undefined),
     addChunks: vi.fn().mockResolvedValue(undefined),
     deleteByDocumentId: vi.fn().mockResolvedValue(undefined),
     countChunks: vi.fn().mockResolvedValue(0),
     searchByMode: vi.fn().mockResolvedValue([]),
-  })),
-}));
+  }));
+  MockLanceDBStore.buildFilterClause = vi.fn().mockReturnValue(undefined);
+  return { LanceDBStore: MockLanceDBStore };
+});
 
 vi.mock("./converters/index.js", () => ({
   createDefaultRegistry: vi.fn().mockResolvedValue({
@@ -164,6 +166,7 @@ describe("KnowledgeIngestionService", () => {
         expect.any(Number),
         expect.any(String),
         expect.any(Number),
+        undefined,
       );
     });
   });
@@ -371,13 +374,13 @@ describe("KnowledgeIngestionService", () => {
     it("passes mode override to store", async () => {
       const store = getStore();
       await service.search("query", 5, { mode: "fts" });
-      expect(store.searchByMode).toHaveBeenCalledWith("query", 5, "fts", expect.any(Number));
+      expect(store.searchByMode).toHaveBeenCalledWith("query", 5, "fts", expect.any(Number), undefined);
     });
 
     it("passes minScore override to store", async () => {
       const store = getStore();
       await service.search("query", 5, { minScore: 0.8 });
-      expect(store.searchByMode).toHaveBeenCalledWith("query", 5, expect.any(String), 0.8);
+      expect(store.searchByMode).toHaveBeenCalledWith("query", 5, expect.any(String), 0.8, undefined);
     });
   });
 
@@ -585,13 +588,13 @@ describe("KnowledgeIngestionService", () => {
     it("passes keyword mode override", async () => {
       const store = getStore();
       await service.search("test query", 5, { mode: "keyword" as import("./types.js").KnowledgeSearchMode });
-      expect(store.searchByMode).toHaveBeenCalledWith("test query", 5, "keyword", expect.any(Number));
+      expect(store.searchByMode).toHaveBeenCalledWith("test query", 5, "keyword", expect.any(Number), undefined);
     });
 
     it("uses default maxResults when limit not provided", async () => {
       const store = getStore();
       await service.search("query");
-      expect(store.searchByMode).toHaveBeenCalledWith("query", expect.any(Number), "hybrid", expect.any(Number));
+      expect(store.searchByMode).toHaveBeenCalledWith("query", expect.any(Number), "hybrid", expect.any(Number), undefined);
     });
   });
 });

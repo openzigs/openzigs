@@ -327,6 +327,15 @@ export class MediaQueueRepository {
         COMMIT;
       `);
     }
+
+    // ── knowledge metadata columns (additive migration) ──
+    const assetCols = (this.db.prepare("PRAGMA table_info(media_assets)").all() as Array<{ name: string }>).map((c) => c.name);
+    if (!assetCols.includes("knowledge_visibility")) {
+      this.db.exec("ALTER TABLE media_assets ADD COLUMN knowledge_visibility TEXT NOT NULL DEFAULT 'public'");
+    }
+    if (!assetCols.includes("knowledge_category")) {
+      this.db.exec("ALTER TABLE media_assets ADD COLUMN knowledge_category TEXT NOT NULL DEFAULT 'media'");
+    }
   }
 
   // ── Media Jobs CRUD ───────────────────────────────────────
@@ -586,5 +595,18 @@ export class MediaQueueRepository {
     const now = this.clock().toISOString();
     return this.db.prepare("UPDATE media_assets SET filename = ?, updated_at = ? WHERE id = ?")
       .run(newFilename, now, id).changes > 0;
+  }
+
+  updateAssetDescription(id: string, prompt: string): boolean {
+    const now = this.clock().toISOString();
+    return this.db.prepare("UPDATE media_assets SET prompt = ?, updated_at = ? WHERE id = ?")
+      .run(prompt, now, id).changes > 0;
+  }
+
+  updateAssetKnowledgeMeta(id: string, visibility: string, category: string): boolean {
+    const now = this.clock().toISOString();
+    return this.db.prepare(
+      "UPDATE media_assets SET knowledge_visibility = ?, knowledge_category = ?, updated_at = ? WHERE id = ?",
+    ).run(visibility, category, now, id).changes > 0;
   }
 }

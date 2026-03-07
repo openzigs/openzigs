@@ -3557,7 +3557,56 @@ The `resolveModelName()` function handles model name normalization:
 - **Knowledge directory**: `~/.openzigs/knowledge/` (user-managed files)
 - **LanceDB database**: `~/.openzigs/knowledge-db/` (vector + FTS indexes, auto-created)
 - **Document metadata**: `~/.openzigs/knowledge-db/documents.json` (persisted across restarts)
-- **Table**: `knowledge_chunks` (columns: `id`, `documentId`, `text`, `sectionHeading`, `sourcePath`, `chunkIndex`, `vector`)
+- **Table**: `knowledge_chunks` (columns: `id`, `documentId`, `text`, `sectionHeading`, `sourcePath`, `chunkIndex`, `vector`, `visibility`, `category`, `mediaUrl`)
+
+### Visibility & Access Control
+
+Every document and chunk in the knowledge base has a **visibility level** that determines where it can be surfaced:
+
+| Level | Description | Use Cases |
+|---|---|---|
+| **`public`** | Safe to return everywhere, including social media auto-replies | Gallery assets, published social posts |
+| **`internal`** | Visible to the user in chat/admin, NOT shared externally | Personal documents, presentations, system events |
+| **`private`** | Restricted to admin contexts only | Sensitive config, credentials |
+
+**Access control by context:**
+- **Regular chat search**: All visibility levels except `private`
+- **Social Brain auto-replies**: Only `public` content (prevents internal data leaking into social responses)
+- **Admin/system tools**: Full access
+
+### Content Categories
+
+Documents are tagged with categories for faceted filtering:
+
+| Category | Description | Examples |
+|---|---|---|
+| `document` | Traditional knowledge files | Markdown, PDF, code, spreadsheets |
+| `media` | Gallery assets (auto-ingested) | Generated images, videos, audio, music |
+| `presentation` | Presentation transcripts | Director renders, Presenter mode content |
+| `social` | Social media interactions | Auto-replies, social posts |
+| `system` | Scheduler runs, system events | Job execution results, audit entries |
+| `conversation` | Chat history (future) | — |
+
+### Automatic RAG Ingestion
+
+The system automatically ingests content from all subsystems:
+
+| Source | Trigger | Category | Visibility | Details |
+|---|---|---|---|---|
+| **Gallery assets** | Job completion, upload, cloud generation | `media` | `public` | Rich text with prompt, model, tags, and media URL for inline playback |
+| **Presentations** | Director render completion | `presentation` | `internal` | Transcript + chapters + metadata |
+| **Director renders** | Render completion | `media` | `internal` | Narration text from timeline |
+| **Social replies** | Social Brain auto-reply | `social` | `internal` | Incoming message + generated reply |
+| **Scheduler jobs** | Job execution | `system` | `internal` | Job name + output |
+
+Gallery asset deletion automatically removes the corresponding RAG documents.
+
+### Inline Media Rendering
+
+When the AI retrieves media assets from the knowledge base, it can format them for inline rendering in chat:
+- **Images**: `![description](/api/queue/assets/{id}/file)` → rendered by `ChatImageBlock`
+- **Audio**: `[🎵 filename](/api/queue/assets/{id}/file)` → rendered by `ChatAudioBlock` (inline player)
+- **Video**: `[🎬 filename](/api/queue/assets/{id}/file)` → rendered by `ChatVideoBlock` (preview + lightbox)
 
 ### Tracking: [Epic #215](https://github.com/mgcronin/openzigs/issues/215)
 

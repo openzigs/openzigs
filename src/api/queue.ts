@@ -13,6 +13,7 @@ import type { MediaQueueRepository } from "../queue/media-queue-repository.js";
 import type { CreateMediaJobInput, MediaJobType, MediaJobStatus, TargetNode, MediaJobPayload } from "../queue/types.js";
 import { MAX_VIDEO_FRAMES, MAX_VIDEO_DURATION_SEC, DEFAULT_VIDEO_FPS } from "../queue/types.js";
 import type { CharacterRepository } from "../characters/character-repository.js";
+import type { KnowledgeIngestionService } from "../knowledge/index.js";
 
 // ── Helpers ─────────────────────────────────────────────────
 
@@ -49,6 +50,7 @@ export interface QueueRouterOptions {
   queueMaster: QueueMaster;
   repo: MediaQueueRepository;
   characterRepo?: CharacterRepository;
+  knowledgeService?: KnowledgeIngestionService;
 }
 
 /**
@@ -58,7 +60,7 @@ export interface QueueRouterOptions {
  * Safety: the handler validates that job_id matches an existing dispatched
  * job via queueMaster.handleJobCompletion; unknown job IDs are rejected.
  */
-export const createQueueCallbackRouter = ({ queueMaster, repo }: QueueRouterOptions): Router => {
+export const createQueueCallbackRouter = ({ queueMaster, repo, knowledgeService }: QueueRouterOptions): Router => {
   const callbackRouter = Router();
 
   callbackRouter.post("/complete", async (req, res) => {
@@ -171,6 +173,30 @@ export const createQueueCallbackRouter = ({ queueMaster, repo }: QueueRouterOpti
         repo.markComplete(job_id, resultUrl, metadata as Record<string, unknown>, galleryAssetId);
       }
 
+      // Ingest the new asset into the RAG knowledge base
+      if (galleryAssetId && knowledgeService) {
+        const asset = repo.getAsset(galleryAssetId);
+        if (asset) {
+          const job = repo.getJob(job_id);
+          const tags = asset.tags ? JSON.parse(String(asset.tags)) as string[] : [];
+          void knowledgeService.ingestAsset({
+            id: galleryAssetId,
+            type: asset.type as "image" | "video" | "audio" | "scene",
+            filename: String(asset.filename),
+            filePath: asset.file_path as string | undefined,
+            prompt: job?.payload?.prompt ?? (asset.prompt as string | undefined),
+            model: (asset.model as string | undefined),
+            tags,
+            source: String(asset.source ?? "generated"),
+            durationSeconds: asset.duration_seconds as number | undefined,
+            width: asset.width as number | undefined,
+            height: asset.height as number | undefined,
+          }).catch((err) => {
+            logger.warn(`[QueueAPI] RAG ingest failed for asset ${galleryAssetId}: ${err instanceof Error ? err.message : String(err)}`);
+          });
+        }
+      }
+
       res.json({ ok: true, asset_id: galleryAssetId, result_url: resultUrl });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -206,7 +232,7 @@ export const createQueueCallbackRouter = ({ queueMaster, repo }: QueueRouterOpti
   return callbackRouter;
 };
 
-export const createQueueRouter = ({ queueMaster, repo, characterRepo }: QueueRouterOptions): Router => {
+export const createQueueRouter = ({ queueMaster, repo, characterRepo, knowledgeService }: QueueRouterOptions): Router => {
   const router = Router();
 
   /**
@@ -416,6 +442,13 @@ export const createQueueRouter = ({ queueMaster, repo, characterRepo }: QueueRou
       const filePath = asset.file_path as string;
       try { await fs.unlink(filePath); } catch { /* file may already be gone */ }
 
+      // Remove from RAG knowledge base
+      if (knowledgeService) {
+        void knowledgeService.removeAsset(req.params.id).catch((err) => {
+          logger.warn(`[QueueAPI] RAG removal failed for asset ${req.params.id}: ${err instanceof Error ? err.message : String(err)}`);
+        });
+      }
+
       repo.deleteAsset(req.params.id);
       res.json({ ok: true });
     } catch (err) {
@@ -437,6 +470,59 @@ export const createQueueRouter = ({ queueMaster, repo, characterRepo }: QueueRou
     }
   });
 
+  // ── PATCH /assets/:id/knowledge — Update RAG visibility/category ──
+  router.patch("/assets/:id/knowledge", async (req, res) => {
+    try {
+      const { visibility, category } = req.body as { visibility?: string; category?: string };
+      const VALID_VISIBILITY = ["public", "internal", "private"];
+      const VALID_CATEGORY = ["media", "document", "presentation", "social", "system", "conversation"];
+
+      if (visibility && !VALID_VISIBILITY.includes(visibility)) {
+        res.status(400).json({ error: `visibility must be one of: ${VALID_VISIBILITY.join(", ")}` });
+        return;
+      }
+      if (category && !VALID_CATEGORY.includes(category)) {
+        res.status(400).json({ error: `category must be one of: ${VALID_CATEGORY.join(", ")}` });
+        return;
+      }
+
+      const asset = repo.getAsset(req.params.id);
+      if (!asset) { res.status(404).json({ error: "Asset not found" }); return; }
+
+      const newVisibility = visibility ?? String(asset.knowledge_visibility ?? "public");
+      const newCategory = category ?? String(asset.knowledge_category ?? "media");
+
+      repo.updateAssetKnowledgeMeta(req.params.id, newVisibility, newCategory);
+
+      // Re-ingest into RAG with updated metadata
+      if (knowledgeService) {
+        const tags = asset.tags ? JSON.parse(String(asset.tags)) as string[] : [];
+        void knowledgeService.ingestAsset({
+          id: req.params.id,
+          type: asset.type as "image" | "video" | "audio" | "scene",
+          filename: String(asset.filename),
+          filePath: asset.file_path as string | undefined,
+          prompt: asset.prompt as string | undefined,
+          model: asset.model as string | undefined,
+          tags,
+          source: String(asset.source ?? "generated"),
+          durationSeconds: asset.duration_seconds as number | undefined,
+          width: asset.width as number | undefined,
+          height: asset.height as number | undefined,
+          visibility: newVisibility as import("../knowledge/types.js").KnowledgeVisibility,
+          category: newCategory as import("../knowledge/types.js").KnowledgeCategory,
+        }).catch((err) => {
+          logger.warn(`[QueueAPI] RAG re-ingest failed for ${req.params.id}: ${err instanceof Error ? err.message : String(err)}`);
+        });
+      }
+
+      res.json({ ok: true, visibility: newVisibility, category: newCategory });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      res.status(500).json({ error: msg });
+    }
+  });
+
   // ── PATCH /assets/:id/rename — Rename an asset ──────────
   router.patch("/assets/:id/rename", (req, res) => {
     try {
@@ -450,6 +536,45 @@ export const createQueueRouter = ({ queueMaster, repo, characterRepo }: QueueRou
       if (!asset) { res.status(404).json({ error: "Asset not found" }); return; }
       repo.renameAsset(req.params.id, safeName);
       res.json({ ok: true, filename: safeName });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  // ── PATCH /assets/:id/description — Update asset description/prompt ──
+  router.patch("/assets/:id/description", async (req, res) => {
+    try {
+      const { prompt } = req.body as { prompt?: string };
+      if (typeof prompt !== "string") {
+        res.status(400).json({ error: "prompt is required" });
+        return;
+      }
+      const asset = repo.getAsset(req.params.id);
+      if (!asset) { res.status(404).json({ error: "Asset not found" }); return; }
+      repo.updateAssetDescription(req.params.id, prompt);
+      // Re-ingest into RAG with updated description
+      if (knowledgeService) {
+        const tags = asset.tags ? JSON.parse(String(asset.tags)) as string[] : [];
+        void knowledgeService.ingestAsset({
+          id: req.params.id,
+          type: asset.type as "image" | "video" | "audio" | "scene",
+          filename: String(asset.filename),
+          filePath: asset.file_path as string | undefined,
+          prompt: prompt || undefined,
+          model: asset.model as string | undefined,
+          tags,
+          source: String(asset.source ?? "generated"),
+          durationSeconds: asset.duration_seconds as number | undefined,
+          width: asset.width as number | undefined,
+          height: asset.height as number | undefined,
+          visibility: asset.knowledge_visibility as import("../knowledge/types.js").KnowledgeVisibility | undefined,
+          category: asset.knowledge_category as import("../knowledge/types.js").KnowledgeCategory | undefined,
+        }).catch((err) => {
+          logger.warn(`[QueueAPI] RAG re-ingest failed after description update for ${req.params.id}: ${err instanceof Error ? err.message : String(err)}`);
+        });
+      }
+      res.json({ ok: true, prompt });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       res.status(500).json({ error: msg });
@@ -483,6 +608,20 @@ export const createQueueRouter = ({ queueMaster, repo, characterRepo }: QueueRou
         projectId,
         tags,
       });
+
+      // Ingest uploaded asset into RAG
+      if (knowledgeService) {
+        void knowledgeService.ingestAsset({
+          id: assetId,
+          type: assetType,
+          filename: safeName,
+          filePath,
+          tags: Array.isArray(tags) ? tags : undefined,
+          source: "uploaded",
+        }).catch((err) => {
+          logger.warn(`[QueueAPI] RAG ingest failed for uploaded asset ${assetId}: ${err instanceof Error ? err.message : String(err)}`);
+        });
+      }
 
       res.status(201).json({ id: assetId, file_path: filePath });
     } catch (err) {
@@ -580,6 +719,21 @@ export const createQueueRouter = ({ queueMaster, repo, characterRepo }: QueueRou
         tags: ["scene"],
         ...(Object.keys(generationParams).length > 0 ? { generationParams } : {}),
       });
+
+      // Ingest scene into RAG
+      if (knowledgeService) {
+        void knowledgeService.ingestAsset({
+          id,
+          type: "scene",
+          filename,
+          filePath,
+          prompt: title || (scene.title as string) || "Saved scene",
+          source: "director",
+          tags: ["scene"],
+        }).catch((err) => {
+          logger.warn(`[QueueAPI] RAG ingest failed for scene ${id}: ${err instanceof Error ? err.message : String(err)}`);
+        });
+      }
 
       res.json({ id, filename, filePath });
     } catch (error) {
@@ -681,6 +835,24 @@ export const createQueueRouter = ({ queueMaster, repo, characterRepo }: QueueRou
       });
 
       logger.info(`[QueueAPI] Cloud image generated: ${filename} via ${result.provider} in ${result.generationTimeMs}ms → asset ${assetId}`);
+
+      // Ingest into RAG
+      if (knowledgeService) {
+        void knowledgeService.ingestAsset({
+          id: assetId,
+          type: "image",
+          filename,
+          filePath: result.filePath,
+          prompt: prompt.trim(),
+          model: modelLabel,
+          source: "generated",
+          width: result.width || undefined,
+          height: result.height || undefined,
+        }).catch((err) => {
+          logger.warn(`[QueueAPI] RAG ingest failed for cloud image ${assetId}: ${err instanceof Error ? err.message : String(err)}`);
+        });
+      }
+
       res.status(201).json({ assetId, provider: result.provider, model: modelLabel, filename });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);

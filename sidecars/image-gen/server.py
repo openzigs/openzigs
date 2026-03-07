@@ -1425,7 +1425,7 @@ def _materialize_network_training(req: TrainRequest) -> str:
 
     cfg = req.train_config or {}
     trigger_word = cfg.get("trigger_word", "TOK")
-    lora_rank = int(cfg.get("lora_rank", 8))
+    lora_rank = int(cfg.get("lora_rank", 16))
     steps = int(cfg.get("steps", 9))
 
     # Max training image dimension — larger images cause OOM on 32GB Macs.
@@ -1479,11 +1479,13 @@ def _materialize_network_training(req: TrainRequest) -> str:
     num_epochs = int(cfg.get("num_epochs", 1))
 
     # Build the correct mflux training config format
-    # Matches the official z-image-turbo example config from the mflux repo:
-    #   https://github.com/filipstrand/mflux/blob/main/src/mflux/models/z_image/README.md
-    #   - Only Q/K/V attention layers on UPPER blocks (15-30) with rank 8
-    #   - Z-Image uses a single-stream DiT — layer names differ from Flux.1
-    #   - quantize=8 is REQUIRED for 32GB Macs (model is ~31GB unquantized)
+    # Matches the official mflux training example:
+    #   https://github.com/filipstrand/mflux/blob/main/src/mflux/models/common/training/_example/train.json
+    #   - ALL transformer blocks (0-30) with rank 16 for subject fidelity
+    #   - 9 module targets: Q/K/V/output attention + FFN (w1/w2/w3) + cap_embedder + final_layer
+    #   - cap_embedder.1 is CRITICAL: maps trigger word → visual concept
+    #   - feed_forward layers learn visual patterns between attention ops
+    #   - quantize=8 for 32GB Macs (model is ~31GB unquantized)
     #   - timestep_low/high constrain noise schedule for turbo model
     #   - MUST satisfy: timestep_high <= steps (mflux validation)
     #   - monitoring.generate_image_frequency produces sample images during training
@@ -1517,9 +1519,15 @@ def _materialize_network_training(req: TrainRequest) -> str:
         },
         "lora_layers": {
             "targets": [
-                {"module_path": "layers.{block}.attention.to_q", "blocks": {"start": 15, "end": 30}, "rank": lora_rank},
-                {"module_path": "layers.{block}.attention.to_k", "blocks": {"start": 15, "end": 30}, "rank": lora_rank},
-                {"module_path": "layers.{block}.attention.to_v", "blocks": {"start": 15, "end": 30}, "rank": lora_rank},
+                {"module_path": "layers.{block}.attention.to_q", "blocks": {"start": 0, "end": 30}, "rank": lora_rank},
+                {"module_path": "layers.{block}.attention.to_k", "blocks": {"start": 0, "end": 30}, "rank": lora_rank},
+                {"module_path": "layers.{block}.attention.to_v", "blocks": {"start": 0, "end": 30}, "rank": lora_rank},
+                {"module_path": "layers.{block}.attention.to_out.0", "blocks": {"start": 0, "end": 30}, "rank": lora_rank},
+                {"module_path": "layers.{block}.feed_forward.w1", "blocks": {"start": 0, "end": 30}, "rank": lora_rank},
+                {"module_path": "layers.{block}.feed_forward.w2", "blocks": {"start": 0, "end": 30}, "rank": lora_rank},
+                {"module_path": "layers.{block}.feed_forward.w3", "blocks": {"start": 0, "end": 30}, "rank": lora_rank},
+                {"module_path": "cap_embedder.1", "rank": lora_rank},
+                {"module_path": "all_final_layer.2-1.linear", "rank": lora_rank},
             ]
         },
     }

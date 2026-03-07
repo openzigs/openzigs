@@ -29,6 +29,10 @@ import type {
   KnowledgeSourceType,
   KnowledgeChunk,
   KeyframeManifest,
+  KnowledgeSearchFilter,
+  IngestVirtualOptions,
+  KnowledgeVisibility,
+  KnowledgeCategory,
 } from "./types.js";
 import { DEFAULT_KNOWLEDGE_CONFIG } from "./types.js";
 import { multimodalSearch, type MultimodalSearchResult, type MultimodalSearchOptions } from "./multimodal-retriever.js";
@@ -46,6 +50,8 @@ export type KnowledgeServiceOptions = {
 
 type IndexFileOptions = {
   force?: boolean;
+  visibility?: KnowledgeVisibility;
+  category?: KnowledgeCategory;
 };
 
 /** File extension → source type mapping. */
@@ -131,6 +137,8 @@ export class KnowledgeIngestionService extends EventEmitter {
   private audioSidecarUrl?: string;
   /** CopilotWrapper for vision-based keyframe description. */
   private copilot?: CopilotWrapper;
+  /** Serialises concurrent saveDocumentMetadata calls — prevents tmp-rename races. */
+  private metadataSaveChain: Promise<void> = Promise.resolve();
 
   constructor(options: KnowledgeServiceOptions = {}) {
     super();
@@ -219,12 +227,17 @@ export class KnowledgeIngestionService extends EventEmitter {
   async search(
     query: string,
     limit?: number,
-    options?: { mode?: import("./types.js").KnowledgeSearchMode; minScore?: number },
+    options?: {
+      mode?: import("./types.js").KnowledgeSearchMode;
+      minScore?: number;
+      filter?: KnowledgeSearchFilter;
+    },
   ): Promise<KnowledgeSearchResult[]> {
     const maxResults = limit ?? this.config.maxResults;
     const mode = options?.mode ?? this.config.searchMode ?? "hybrid";
     const minScore = options?.minScore ?? this.config.minScore ?? 0;
-    return this.store.searchByMode(query, maxResults, mode, minScore);
+    const sqlFilter = LanceDBStore.buildFilterClause(options?.filter);
+    return this.store.searchByMode(query, maxResults, mode, minScore, sqlFilter);
   }
 
   /**
@@ -289,6 +302,30 @@ export class KnowledgeIngestionService extends EventEmitter {
   }
 
   /**
+   * Update visibility and/or category metadata for a document and re-index it.
+   * For virtual docs (gallery assets), use ingestAsset instead.
+   */
+  async updateDocumentMeta(documentId: string, visibility: KnowledgeVisibility, category: KnowledgeCategory): Promise<void> {
+    const doc = this.documents.get(documentId);
+    if (!doc) {
+      throw new Error(`Document not found: ${documentId}`);
+    }
+    if (doc.filePath.startsWith("[virtual:")) {
+      // Virtual/in-memory document — update in place and re-embed with updated meta
+      doc.visibility = visibility;
+      doc.category = category;
+      // Delete stale chunks and re-store with new meta
+      await this.store.deleteByDocumentId(documentId);
+      // We don't store original text for virtual docs, so we can only update the
+      // document metadata here; the chunks will be re-created on the next full ingest.
+      void this.saveDocumentMetadata();
+    } else {
+      // File-based document — re-index with new visibility/category
+      await this.indexFile(doc.filePath, { force: true, visibility, category });
+    }
+  }
+
+  /**
    * Force re-index all documents.
    */
   async reindexAll(): Promise<void> {
@@ -319,9 +356,16 @@ export class KnowledgeIngestionService extends EventEmitter {
    * Ingest raw text directly into the knowledge base without needing a file on disk.
    * Used for virtual documents like presentation transcripts.
    */
-  async ingestText(documentId: string, title: string, text: string): Promise<void> {
+  async ingestText(
+    documentId: string,
+    title: string,
+    text: string,
+    options?: IngestVirtualOptions,
+  ): Promise<void> {
     const virtualPath = `[virtual:${documentId}]`;
     const contentHash = this.hashContent(text);
+    const visibility: KnowledgeVisibility = options?.visibility ?? "internal";
+    const category: KnowledgeCategory = options?.category ?? "document";
 
     // Skip if already indexed with the same content.
     const existing = this.documents.get(documentId);
@@ -345,6 +389,10 @@ export class KnowledgeIngestionService extends EventEmitter {
       chunkCount: 0,
       indexedAt: null,
       createdAt: existing?.createdAt ?? new Date().toISOString(),
+      visibility,
+      category,
+      mediaUrl: options?.mediaUrl,
+      assetId: options?.assetId,
     };
     this.documents.set(documentId, doc);
 
@@ -358,6 +406,9 @@ export class KnowledgeIngestionService extends EventEmitter {
       for (const chunk of chunks) {
         embeddedChunks.push({
           ...chunk,
+          visibility,
+          category,
+          mediaUrl: options?.mediaUrl,
           vector: await generateEmbedding(chunk.text),
         });
       }
@@ -370,7 +421,7 @@ export class KnowledgeIngestionService extends EventEmitter {
       doc.error = undefined;
 
       this.emitEvent({ type: "document:indexed", document: doc });
-      logger.debug(`[Knowledge] Ingested text "${title}" as virtual doc (${embeddedChunks.length} chunks)`);
+      logger.debug(`[Knowledge] Ingested text "${title}" [${visibility}/${category}] (${embeddedChunks.length} chunks)`);
 
       void this.saveDocumentMetadata();
     } catch (error) {
@@ -381,6 +432,123 @@ export class KnowledgeIngestionService extends EventEmitter {
       logger.error(`[Knowledge] Failed to ingest text "${title}": ${msg}`);
       throw error;
     }
+  }
+
+  /**
+   * Ingest a gallery media asset into the knowledge base.
+   * Creates a rich text representation with metadata for semantic search.
+   *
+   * When `filePath` is provided and a converter is available, the actual media
+   * content is analysed (Copilot vision for images/video keyframes, Whisper
+   * transcription for audio/video) and merged with the metadata block so that
+   * semantic search can find assets by their **content**, not just their prompt.
+   */
+  async ingestAsset(asset: {
+    id: string;
+    type: "image" | "video" | "audio" | "scene";
+    filename: string;
+    filePath?: string;
+    prompt?: string;
+    model?: string;
+    tags?: string[];
+    source?: string;
+    durationSeconds?: number;
+    width?: number;
+    height?: number;
+    visibility?: KnowledgeVisibility;
+    category?: KnowledgeCategory;
+  }): Promise<void> {
+    const docId = `asset:${asset.id}`;
+    const mediaUrl = `/api/queue/assets/${asset.id}/file`;
+
+    // ── 1. Build the metadata header ──
+    const parts: string[] = [
+      `## Gallery Asset: ${asset.filename}`,
+      `Type: ${asset.type}`,
+      `Source: ${asset.source ?? "unknown"}`,
+    ];
+
+    if (asset.prompt) parts.push(`Prompt: ${asset.prompt}`);
+    if (asset.model) parts.push(`Model: ${asset.model}`);
+    if (asset.tags && asset.tags.length > 0) parts.push(`Tags: ${asset.tags.join(", ")}`);
+    if (asset.durationSeconds) parts.push(`Duration: ${Math.round(asset.durationSeconds)}s`);
+    if (asset.width && asset.height) parts.push(`Dimensions: ${asset.width}x${asset.height}`);
+    parts.push(`Media URL: ${mediaUrl}`);
+
+    if (asset.type === "audio") {
+      parts.push(`\nTo play this audio, use: [🎵 ${asset.filename}](${mediaUrl})`);
+    } else if (asset.type === "video") {
+      parts.push(`\nTo show this video, use: [🎬 ${asset.filename}](${mediaUrl})`);
+    } else if (asset.type === "image") {
+      parts.push(`\nTo show this image, use: ![${asset.prompt || asset.filename}](${mediaUrl})`);
+    }
+
+    // ── 2. Run AI analysis via converter pipeline when possible ──
+    let conversionMetadata: Record<string, unknown> | undefined;
+    let hadAiAnalysis = false;
+    if (
+      asset.filePath &&
+      asset.type !== "scene" &&
+      this.converterRegistry?.canConvert(asset.filePath)
+    ) {
+      try {
+        const result = await this.converterRegistry.convert(asset.filePath);
+        if (result.success && result.text.trim()) {
+          hadAiAnalysis = true;
+          parts.push("");
+          parts.push("---");
+          parts.push(`## AI Analysis (${result.converter})`);
+          parts.push(result.text);
+          conversionMetadata = result.metadata;
+          logger.info(
+            `[Knowledge] AI analysis for asset "${asset.filename}" via ${result.converter} (${result.text.length} chars)`,
+          );
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        logger.warn(`[Knowledge] AI analysis failed for asset "${asset.filename}": ${msg}`);
+      }
+    }
+
+    // ── 3. Ingest combined text ──
+    const text = parts.join("\n");
+    await this.ingestText(docId, `${asset.type}: ${asset.filename}`, text, {
+      visibility: asset.visibility ?? "public",
+      category: asset.category ?? "media",
+      mediaUrl,
+      assetId: asset.id,
+    });
+
+    // ── 4. Persist keyframes if the converter extracted them (video) ──
+    if (conversionMetadata) {
+      await this.persistKeyframes(docId, asset.filename, conversionMetadata);
+    }
+
+    // ── 5. Persist hasAiAnalysis flag on the stored doc ──
+    if (hadAiAnalysis) {
+      const freshDoc = this.documents.get(docId);
+      if (freshDoc) {
+        freshDoc.hasAiAnalysis = true;
+        void this.saveDocumentMetadata();
+      }
+    }
+
+    logger.info(`[Knowledge] Ingested gallery asset "${asset.filename}" (${asset.type}) → ${docId}`);
+  }
+
+  /**
+   * Remove a gallery asset from the knowledge base.
+   */
+  async removeAsset(assetId: string): Promise<void> {
+    const docId = `asset:${assetId}`;
+    const doc = this.documents.get(docId);
+    if (!doc) return;
+
+    await this.store.deleteByDocumentId(docId);
+    this.documents.delete(docId);
+    this.emitEvent({ type: "document:deleted", documentId: docId, filePath: doc.filePath });
+    void this.saveDocumentMetadata();
+    logger.info(`[Knowledge] Removed gallery asset from RAG: ${assetId}`);
   }
 
   /**
@@ -395,6 +563,14 @@ export class KnowledgeIngestionService extends EventEmitter {
    */
   getConverterInfo(): Array<{ name: string; extensions: string[]; available: boolean; reason?: string }> {
     return this.converterRegistry?.listConverters() ?? [];
+  }
+
+  /**
+   * Returns true if the converter pipeline can analyse the given file.
+   * Used by the startup backfill to decide which assets to queue for AI upgrade.
+   */
+  canConvertFile(filePath: string): boolean {
+    return this.converterRegistry?.canConvert(filePath) ?? false;
   }
 
   /**
@@ -505,9 +681,13 @@ export class KnowledgeIngestionService extends EventEmitter {
       }
     }
 
-    // Clean up documents that no longer exist on disk
+    // Clean up documents that no longer exist on disk.
+    // Skip virtual documents (gallery assets, presenter transcripts, etc.) —
+    // their filePath is "[virtual:…]" which will never appear in the file list.
+    // Virtual doc cleanup is handled separately (orphan cleanup in server.ts).
     let staleRemoved = 0;
     for (const [docId, doc] of this.documents) {
+      if (doc.filePath.startsWith("[virtual:")) continue;
       const exists = files.includes(doc.filePath);
       if (!exists) {
         await this.store.deleteByDocumentId(docId);
@@ -624,6 +804,9 @@ export class KnowledgeIngestionService extends EventEmitter {
       chunkCount: 0,
       indexedAt: null,
       createdAt: existingFast?.createdAt ?? new Date().toISOString(),
+      // Preserve existing visibility/category, overridden by explicit options
+      visibility: options.visibility ?? existingFast?.visibility ?? "internal",
+      category: options.category ?? existingFast?.category ?? "document",
     };
     this.documents.set(documentId, doc);
 
@@ -640,6 +823,8 @@ export class KnowledgeIngestionService extends EventEmitter {
         embeddedChunks.push({
           ...chunk,
           vector: await generateEmbedding(chunk.text),
+          visibility: doc.visibility,
+          category: doc.category,
         });
       }
 
@@ -954,17 +1139,22 @@ export class KnowledgeIngestionService extends EventEmitter {
    * Persist the current document metadata to a sidecar JSON file.
    *
    * Uses atomic write-to-temp-then-rename to prevent corruption.
+   * Calls are serialised through `metadataSaveChain` to prevent concurrent
+   * invocations racing on the same `.tmp` path (ENOENT on the second rename).
    */
-  private async saveDocumentMetadata(): Promise<void> {
-    try {
-      await fs.mkdir(path.dirname(this.metadataPath), { recursive: true });
-      const entries = Array.from(this.documents.values());
-      const tmpPath = this.metadataPath + ".tmp";
-      await fs.writeFile(tmpPath, JSON.stringify(entries, null, 2), "utf-8");
-      await fs.rename(tmpPath, this.metadataPath);
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
-      logger.warn(`[Knowledge] Failed to persist document metadata: ${msg}`);
-    }
+  private saveDocumentMetadata(): Promise<void> {
+    this.metadataSaveChain = this.metadataSaveChain.then(async () => {
+      try {
+        await fs.mkdir(path.dirname(this.metadataPath), { recursive: true });
+        const entries = Array.from(this.documents.values());
+        const tmpPath = this.metadataPath + ".tmp";
+        await fs.writeFile(tmpPath, JSON.stringify(entries, null, 2), "utf-8");
+        await fs.rename(tmpPath, this.metadataPath);
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        logger.warn(`[Knowledge] Failed to persist document metadata: ${msg}`);
+      }
+    });
+    return this.metadataSaveChain;
   }
 }

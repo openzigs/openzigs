@@ -12,7 +12,7 @@
 
 import * as lancedb from "@lancedb/lancedb";
 import { getEmbeddingDim, generateEmbedding } from "./embedder.js";
-import type { KnowledgeChunk, KnowledgeSearchResult, KnowledgeSearchMode } from "./types.js";
+import type { KnowledgeChunk, KnowledgeSearchResult, KnowledgeSearchMode, KnowledgeSearchFilter } from "./types.js";
 import { logger } from "../logging/logger.js";
 
 /**
@@ -57,6 +57,8 @@ export class LanceDBStore {
 
       if (tableNames.includes(TABLE_NAME)) {
         this.table = await this.db.openTable(TABLE_NAME);
+        // Migrate schema: add new columns if they don't exist yet.
+        await this.migrateSchema();
       }
       // Table is created lazily on first addChunks call
 
@@ -66,6 +68,42 @@ export class LanceDBStore {
       const msg = error instanceof Error ? error.message : String(error);
       logger.error(`[KnowledgeStore] Failed to initialize LanceDB: ${msg}`);
       throw error;
+    }
+  }
+
+  /**
+   * Migrate an existing table to include new schema columns.
+   * Uses LanceDB's `addColumns` to backfill missing columns with safe defaults,
+   * so existing data is preserved and new rows can include the full schema.
+   */
+  private async migrateSchema(): Promise<void> {
+    if (!this.table) return;
+
+    try {
+      const schema = await this.table.schema();
+      const existingFields = new Set(schema.fields.map((f: { name: string }) => f.name));
+
+      const newColumns: Array<{ name: string; valueSql: string }> = [];
+
+      if (!existingFields.has("visibility")) {
+        newColumns.push({ name: "visibility", valueSql: "'internal'" });
+      }
+      if (!existingFields.has("category")) {
+        newColumns.push({ name: "category", valueSql: "'document'" });
+      }
+      if (!existingFields.has("mediaUrl")) {
+        newColumns.push({ name: "mediaUrl", valueSql: "''" });
+      }
+
+      if (newColumns.length === 0) return;
+
+      await this.table.addColumns(newColumns);
+      logger.info(
+        `[KnowledgeStore] Schema migrated — added columns: ${newColumns.map((c) => c.name).join(", ")}`,
+      );
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      logger.warn(`[KnowledgeStore] Schema migration failed (non-fatal): ${msg}`);
     }
   }
 
@@ -88,6 +126,9 @@ export class LanceDBStore {
         chunkIndex: chunk.chunkIndex,
         sourcePath: chunk.sourcePath,
         sectionHeading: chunk.sectionHeading ?? "",
+        visibility: chunk.visibility ?? "internal",
+        category: chunk.category ?? "document",
+        mediaUrl: chunk.mediaUrl ?? "",
         vector: chunk.vector ?? await generateEmbedding(chunk.text),
       })),
     );
@@ -150,19 +191,22 @@ export class LanceDBStore {
    * @param query - The search query text.
    * @param limit - Maximum number of results to return.
    * @param minScore - Minimum similarity score (0–1) to include. 0 = no threshold.
+   * @param filter - Optional SQL WHERE clause for pre-filtering (e.g. visibility/category).
    * @returns Ranked search results with similarity scores.
    */
-  async search(query: string, limit: number = 10, minScore: number = 0): Promise<KnowledgeSearchResult[]> {
+  async search(query: string, limit: number = 10, minScore: number = 0, filter?: string): Promise<KnowledgeSearchResult[]> {
     if (!this.table) return [];
     await this.ensureInitialized();
 
     try {
       const queryVector = await generateEmbedding(query);
-      const results = await this.table
+      let builder = this.table
         .vectorSearch(queryVector)
-        .distanceType(DISTANCE_TYPE)
-        .limit(limit)
-        .toArray();
+        .distanceType(DISTANCE_TYPE);
+      if (filter) {
+        builder = builder.where(filter);
+      }
+      const results = await builder.limit(limit).toArray();
 
       return this.mapResults(results, minScore);
     } catch (error) {
@@ -179,38 +223,42 @@ export class LanceDBStore {
    * @param query - The keyword search query.
    * @param limit - Maximum number of results to return.
    * @param minScore - Minimum score to include. 0 = no threshold.
+   * @param filter - Optional SQL WHERE clause for pre-filtering.
    * @returns Ranked search results.
    */
-  async fullTextSearch(query: string, limit: number = 10, minScore: number = 0): Promise<KnowledgeSearchResult[]> {
+  async fullTextSearch(query: string, limit: number = 10, minScore: number = 0, filter?: string): Promise<KnowledgeSearchResult[]> {
     if (!this.table) return [];
     await this.ensureInitialized();
 
     if (!this.ftsIndexCreated) {
       logger.debug("[KnowledgeStore] FTS index not available, falling back to vector search");
-      return this.search(query, limit, minScore);
+      return this.search(query, limit, minScore, filter);
     }
 
     try {
-      const results = await this.table
-        .search(query, "fts")
-        .limit(limit)
-        .toArray();
+      let builder = this.table.search(query, "fts");
+      if (filter) {
+        builder = builder.where(filter);
+      }
+      const results = await builder.limit(limit).toArray();
 
       return results.map((row: Record<string, unknown>, idx: number) => ({
         text: String(row.text ?? ""),
         sourcePath: String(row.sourcePath ?? ""),
-        // FTS results don't have a cosine distance — use rank-based score
         score: typeof row._score === "number"
           ? Math.min(1, row._score as number)
           : 1 - idx / (results.length || 1),
         sectionHeading: row.sectionHeading ? String(row.sectionHeading) : undefined,
         documentId: String(row.documentId ?? ""),
         chunkIndex: typeof row.chunkIndex === "number" ? row.chunkIndex : 0,
+        visibility: row.visibility ? String(row.visibility) as import("./types.js").KnowledgeVisibility : undefined,
+        category: row.category ? String(row.category) as import("./types.js").KnowledgeCategory : undefined,
+        mediaUrl: row.mediaUrl ? String(row.mediaUrl) : undefined,
       })).filter((r) => minScore <= 0 || r.score >= minScore);
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       logger.warn(`[KnowledgeStore] FTS search failed, falling back to vector: ${msg}`);
-      return this.search(query, limit, minScore);
+      return this.search(query, limit, minScore, filter);
     }
   }
 
@@ -226,21 +274,21 @@ export class LanceDBStore {
    * @param minScore - Minimum score to include. 0 = no threshold.
    * @returns Re-ranked search results combining both strategies.
    */
-  async hybridSearch(query: string, limit: number = 10, minScore: number = 0): Promise<KnowledgeSearchResult[]> {
+  async hybridSearch(query: string, limit: number = 10, minScore: number = 0, filter?: string): Promise<KnowledgeSearchResult[]> {
     if (!this.table) return [];
     await this.ensureInitialized();
 
     // If no FTS index, just do vector search
     if (!this.ftsIndexCreated) {
-      return this.search(query, limit, minScore);
+      return this.search(query, limit, minScore, filter);
     }
 
     try {
       // Run both searches in parallel, fetch more candidates than needed for fusion
       const candidateLimit = Math.min(limit * 3, 50);
       const [vectorResults, ftsResults] = await Promise.all([
-        this.search(query, candidateLimit),
-        this.fullTextSearch(query, candidateLimit),
+        this.search(query, candidateLimit, 0, filter),
+        this.fullTextSearch(query, candidateLimit, 0, filter),
       ]);
 
       // Reciprocal Rank Fusion — merge results by chunk ID
@@ -282,7 +330,7 @@ export class LanceDBStore {
       const msg = error instanceof Error ? error.message : String(error);
       logger.error(`[KnowledgeStore] Hybrid search failed: ${msg}`);
       // Fall back to pure vector search
-      return this.search(query, limit, minScore);
+      return this.search(query, limit, minScore, filter);
     }
   }
 
@@ -294,15 +342,16 @@ export class LanceDBStore {
     limit: number = 10,
     mode: KnowledgeSearchMode = "hybrid",
     minScore: number = 0,
+    filter?: string,
   ): Promise<KnowledgeSearchResult[]> {
     switch (mode) {
       case "fts":
-        return this.fullTextSearch(query, limit, minScore);
+        return this.fullTextSearch(query, limit, minScore, filter);
       case "hybrid":
-        return this.hybridSearch(query, limit, minScore);
+        return this.hybridSearch(query, limit, minScore, filter);
       case "vector":
       default:
-        return this.search(query, limit, minScore);
+        return this.search(query, limit, minScore, filter);
     }
   }
 
@@ -369,6 +418,27 @@ export class LanceDBStore {
     this.ftsIndexCreated = false;
   }
 
+  /**
+   * Build a SQL WHERE clause from a KnowledgeSearchFilter.
+   * Returns undefined if no filter conditions are specified.
+   */
+  static buildFilterClause(filter?: KnowledgeSearchFilter): string | undefined {
+    if (!filter) return undefined;
+    const conditions: string[] = [];
+
+    if (filter.visibility) {
+      const vis = filter.visibility.replace(/'/g, "''");
+      conditions.push(`(visibility = '${vis}' OR visibility IS NULL)`);
+    }
+
+    if (filter.categories && filter.categories.length > 0) {
+      const catList = filter.categories.map((c) => `'${c.replace(/'/g, "''")}'`).join(", ");
+      conditions.push(`(category IN (${catList}) OR category IS NULL)`);
+    }
+
+    return conditions.length > 0 ? conditions.join(" AND ") : undefined;
+  }
+
   private async ensureInitialized(): Promise<void> {
     if (!this.initialized) {
       await this.initialize();
@@ -384,14 +454,15 @@ export class LanceDBStore {
       .map((row) => ({
         text: String(row.text ?? ""),
         sourcePath: String(row.sourcePath ?? ""),
-        // Cosine distance ranges 0 (identical) to 2 (opposite).
-        // Convert to similarity: 1 - (distance / 2) gives 0–1 range.
         score: typeof row._distance === "number"
           ? Math.max(0, 1 - (row._distance as number) / 2)
           : 0,
         sectionHeading: row.sectionHeading ? String(row.sectionHeading) : undefined,
         documentId: String(row.documentId ?? ""),
         chunkIndex: typeof row.chunkIndex === "number" ? row.chunkIndex : 0,
+        visibility: row.visibility ? String(row.visibility) as import("./types.js").KnowledgeVisibility : undefined,
+        category: row.category ? String(row.category) as import("./types.js").KnowledgeCategory : undefined,
+        mediaUrl: row.mediaUrl ? String(row.mediaUrl) : undefined,
       }))
       .filter((r) => minScore <= 0 || r.score >= minScore);
   }

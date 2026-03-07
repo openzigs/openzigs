@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { useSocket } from "@/lib/socket-context";
 import { fetchJson } from "@/lib/api";
@@ -458,6 +458,16 @@ export const ChatView = () => {
     resetStuckTimer();
   }, [input, chatId, socket, selectedModel, sending, connected, nextId, resetStuckTimer, attachments, reasoningEffort]);
 
+  // Quick-reply: send a choice directly (used by interactive choice pills in ChatMarkdown)
+  const sendQuickReply = useCallback((text: string) => {
+    if (!text || !socket || sending || !connected || !chatId) return;
+    setMessages((prev) => [...prev, { id: nextId(), role: "user", content: text }]);
+    socket.emit("chat:message", { content: text, model: selectedModel || undefined });
+    setSending(true);
+    setThinking(true);
+    resetStuckTimer();
+  }, [socket, sending, connected, chatId, selectedModel, nextId, resetStuckTimer]);
+
   const handleInputResponse = useCallback(
     (answer: string, wasFreeform: boolean) => {
       if (!socket || !activeInputRequest) return;
@@ -523,6 +533,14 @@ export const ChatView = () => {
 
   // Allow sending while connected to socket, show connecting state if no chatId yet
   const inputDisabled = sending || !!activeInputRequest;
+
+  // Index of the last assistant message — used to enable interactive choice pills only on it
+  const lastAssistantIdx = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].role === "assistant") return i;
+    }
+    return -1;
+  }, [messages]);
   const showConnecting = connected && !chatId;
 
   // Voice: handle captured voice query (submit as chat message)
@@ -655,7 +673,7 @@ export const ChatView = () => {
           </div>
         )}
 
-        {messages.map((msg) => (
+        {messages.map((msg, msgIdx) => (
           <div
             key={msg.id}
             className={cn(
@@ -697,6 +715,11 @@ export const ChatView = () => {
                 <ChatMarkdown
                   content={msg.content}
                   isStreaming={streamRef.current?.id === msg.id}
+                  onChoiceSelect={
+                    msgIdx === lastAssistantIdx && !sending && !thinking
+                      ? sendQuickReply
+                      : undefined
+                  }
                 />
               ) : (
                 msg.content

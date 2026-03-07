@@ -62,7 +62,12 @@ export const createKnowledgeRouter = ({ knowledgeService }: KnowledgeRouterOptio
   // ── POST /search — Semantic search over the knowledge base ──
   router.post("/search", async (req, res) => {
     try {
-      const body = req.body as { query?: string; limit?: number };
+      const body = req.body as {
+        query?: string;
+        limit?: number;
+        category?: string;
+        visibility?: string;
+      };
       const query = typeof body.query === "string" ? body.query.trim() : "";
       const limit = typeof body.limit === "number" ? Math.min(body.limit, 50) : 10;
 
@@ -71,7 +76,18 @@ export const createKnowledgeRouter = ({ knowledgeService }: KnowledgeRouterOptio
         return;
       }
 
-      const results = await knowledgeService.search(query, limit);
+      const filter: import("../knowledge/types.js").KnowledgeSearchFilter = {};
+      if (body.category) {
+        filter.categories = [body.category as import("../knowledge/types.js").KnowledgeCategory];
+      }
+      if (body.visibility) {
+        filter.visibility = body.visibility as import("../knowledge/types.js").KnowledgeVisibility;
+      }
+      const hasFilter = Object.keys(filter).length > 0;
+
+      const results = await knowledgeService.search(query, limit, {
+        filter: hasFilter ? filter : undefined,
+      });
       res.json({ results, query, count: results.length });
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
@@ -110,6 +126,41 @@ export const createKnowledgeRouter = ({ knowledgeService }: KnowledgeRouterOptio
       const { documentId } = req.params;
       await knowledgeService.deleteDocument(documentId);
       res.json({ ok: true, documentId });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  // ── PATCH /documents/:documentId — Update visibility and/or category ──
+  router.patch("/documents/:documentId", async (req, res) => {
+    try {
+      const { documentId } = req.params;
+      const { visibility, category } = req.body as { visibility?: string; category?: string };
+
+      const VALID_VISIBILITY = ["public", "internal", "private"];
+      const VALID_CATEGORY = ["media", "document", "presentation", "social", "system", "conversation"];
+
+      if (visibility && !VALID_VISIBILITY.includes(visibility)) {
+        res.status(400).json({ error: `visibility must be one of: ${VALID_VISIBILITY.join(", ")}` });
+        return;
+      }
+      if (category && !VALID_CATEGORY.includes(category)) {
+        res.status(400).json({ error: `category must be one of: ${VALID_CATEGORY.join(", ")}` });
+        return;
+      }
+
+      const doc = knowledgeService.listDocuments().find((d) => d.id === documentId);
+      if (!doc) {
+        res.status(404).json({ error: "Document not found" });
+        return;
+      }
+
+      const newVisibility = (visibility ?? doc.visibility ?? "internal") as import("../knowledge/types.js").KnowledgeVisibility;
+      const newCategory = (category ?? doc.category ?? "document") as import("../knowledge/types.js").KnowledgeCategory;
+
+      await knowledgeService.updateDocumentMeta(documentId, newVisibility, newCategory);
+      res.json({ ok: true, visibility: newVisibility, category: newCategory });
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       res.status(500).json({ error: msg });

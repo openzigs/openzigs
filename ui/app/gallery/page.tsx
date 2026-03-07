@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useSocket } from "@/lib/socket-context";
@@ -32,6 +32,8 @@ import {
   Sparkles,
   Layers,
   Clapperboard,
+  Pencil,
+  Check,
 } from "lucide-react";
 import { InlineModelPicker } from "@/components/model-picker-select";
 import { AskAiPanel, AskAiButton, PAGE_CONTEXTS } from "@/components/ask-ai";
@@ -59,6 +61,8 @@ interface GalleryAsset {
   tags: string[] | null;
   created_at: string;
   updated_at: string;
+  knowledge_visibility: "public" | "internal" | "private";
+  knowledge_category: "media" | "document" | "presentation" | "social" | "system" | "conversation";
 }
 
 interface QueueStats {
@@ -288,6 +292,45 @@ export default function GalleryPage() {
       showToast("Tags updated", "success");
     },
     onError: (err) => showToast(`Failed: ${err.message}`, "error"),
+  });
+
+  const knowledgeMutation = useMutation({
+    mutationFn: ({ id, visibility, category }: { id: string; visibility: string; category: string }) =>
+      fetchJson(`/api/queue/assets/${id}/knowledge`, {
+        method: "PATCH",
+        body: JSON.stringify({ visibility, category }),
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["gallery-assets"] });
+      showToast("Knowledge label updated", "success");
+    },
+    onError: (err) => showToast(`Failed: ${err.message}`, "error"),
+  });
+
+  const renameMutation = useMutation({
+    mutationFn: ({ id, filename }: { id: string; filename: string }) =>
+      fetchJson(`/api/queue/assets/${id}/rename`, {
+        method: "PATCH",
+        body: JSON.stringify({ filename }),
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["gallery-assets"] });
+      showToast("Asset renamed", "success");
+    },
+    onError: (err) => showToast(`Rename failed: ${err.message}`, "error"),
+  });
+
+  const descriptionMutation = useMutation({
+    mutationFn: ({ id, prompt }: { id: string; prompt: string }) =>
+      fetchJson(`/api/queue/assets/${id}/description`, {
+        method: "PATCH",
+        body: JSON.stringify({ prompt }),
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["gallery-assets"] });
+      showToast("Description updated", "success");
+    },
+    onError: (err) => showToast(`Update failed: ${err.message}`, "error"),
   });
 
   const [pendingDelete, setPendingDelete] = useState<GalleryAsset | null>(null);
@@ -575,6 +618,9 @@ export default function GalleryPage() {
                 onDownload={() => handleDownload(asset)}
                 onOpenInStudio={asset.type === "scene" ? () => void handleOpenInStudio(asset) : undefined}
                 openingInStudio={openingInStudio === asset.id}
+                onKnowledgeChange={(vis, cat) => knowledgeMutation.mutate({ id: asset.id, visibility: vis, category: cat })}
+                onRename={(filename) => renameMutation.mutate({ id: asset.id, filename })}
+                onDescription={(prompt) => descriptionMutation.mutate({ id: asset.id, prompt })}
               />
             ))}
           </div>
@@ -590,6 +636,9 @@ export default function GalleryPage() {
                 onDownload={() => handleDownload(asset)}
                 onOpenInStudio={asset.type === "scene" ? () => void handleOpenInStudio(asset) : undefined}
                 openingInStudio={openingInStudio === asset.id}
+                onKnowledgeChange={(vis, cat) => knowledgeMutation.mutate({ id: asset.id, visibility: vis, category: cat })}
+                onRename={(filename) => renameMutation.mutate({ id: asset.id, filename })}
+                onDescription={(prompt) => descriptionMutation.mutate({ id: asset.id, prompt })}
               />
             ))}
           </div>
@@ -623,6 +672,107 @@ export default function GalleryPage() {
   );
 }
 
+// ── Knowledge Labels ────────────────────────────────────────
+
+const VISIBILITY_OPTIONS = [
+  { value: "public", label: "Public", color: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400", dot: "bg-emerald-500" },
+  { value: "internal", label: "Internal", color: "bg-sky-500/10 text-sky-700 dark:text-sky-400", dot: "bg-sky-500" },
+  { value: "private", label: "Private", color: "bg-slate-500/10 text-slate-600 dark:text-slate-400", dot: "bg-slate-400" },
+] as const;
+
+const CATEGORY_OPTIONS = [
+  { value: "media", label: "Media" },
+  { value: "document", label: "Document" },
+  { value: "presentation", label: "Presentation" },
+  { value: "social", label: "Social" },
+  { value: "system", label: "System" },
+  { value: "conversation", label: "Conversation" },
+] as const;
+
+function KnowledgeLabels({
+  visibility,
+  category,
+  onChange,
+  compact = false,
+}: {
+  visibility: string;
+  category: string;
+  onChange: (visibility: string, category: string) => void;
+  compact?: boolean;
+}) {
+  const [visOpen, setVisOpen] = useState(false);
+  const [catOpen, setCatOpen] = useState(false);
+  const visRef = useRef<HTMLDivElement>(null);
+  const catRef = useRef<HTMLDivElement>(null);
+  const visOption = VISIBILITY_OPTIONS.find((v) => v.value === visibility) ?? VISIBILITY_OPTIONS[1];
+
+  // Close dropdowns when clicking outside
+  useEffect(() => {
+    if (!visOpen && !catOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (visRef.current && !visRef.current.contains(e.target as Node)) setVisOpen(false);
+      if (catRef.current && !catRef.current.contains(e.target as Node)) setCatOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [visOpen, catOpen]);
+
+  return (
+    <div className={`flex flex-wrap items-center gap-1.5 ${compact ? "mt-1" : "mt-1.5"}`} onClick={(e) => e.stopPropagation()}>
+      {/* Visibility picker */}
+      <div className="relative" ref={visRef}>
+        <button
+          onClick={() => { setVisOpen((v) => !v); setCatOpen(false); }}
+          className={`flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold transition-opacity hover:opacity-80 ${visOption.color}`}
+          title="RAG Visibility — controls who can see this in AI searches"
+        >
+          <span className={`h-1.5 w-1.5 rounded-full ${visOption.dot}`} />
+          {visOption.label}
+        </button>
+        {visOpen && (
+          <div className="absolute left-0 top-full z-[200] mt-1 min-w-[110px] rounded-lg border border-border bg-card p-1 shadow-lg">
+            <p className="mb-1 px-2 text-[9px] font-bold uppercase tracking-wide text-muted-foreground">AI Visibility</p>
+            {VISIBILITY_OPTIONS.map((opt) => (
+              <button
+                key={opt.value}
+                onClick={() => { onChange(opt.value, category); setVisOpen(false); }}
+                className={`flex w-full items-center gap-2 rounded-md px-2 py-1 text-left text-[11px] hover:bg-muted ${visibility === opt.value ? "font-semibold" : ""}`}
+              >
+                <span className={`h-1.5 w-1.5 rounded-full ${opt.dot}`} />
+                {opt.label}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+      {/* Category picker */}
+      <div className="relative" ref={catRef}>
+        <button
+          onClick={() => { setCatOpen((v) => !v); setVisOpen(false); }}
+          className="flex items-center gap-1 rounded-full bg-violet-500/10 px-2 py-0.5 text-[10px] font-semibold text-violet-700 transition-opacity hover:opacity-80 dark:text-violet-400"
+          title="RAG Category — organizes this item in the AI knowledge base"
+        >
+          {CATEGORY_OPTIONS.find((c) => c.value === category)?.label ?? category}
+        </button>
+        {catOpen && (
+          <div className="absolute left-0 top-full z-[200] mt-1 min-w-[120px] rounded-lg border border-border bg-card p-1 shadow-lg">
+            <p className="mb-1 px-2 text-[9px] font-bold uppercase tracking-wide text-muted-foreground">AI Category</p>
+            {CATEGORY_OPTIONS.map((opt) => (
+              <button
+                key={opt.value}
+                onClick={() => { onChange(visibility, opt.value); setCatOpen(false); }}
+                className={`w-full rounded-md px-2 py-1 text-left text-[11px] hover:bg-muted ${category === opt.value ? "font-semibold" : ""}`}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ── Asset Card ──────────────────────────────────────────────
 
 function AssetCard({
@@ -633,6 +783,9 @@ function AssetCard({
   onDownload,
   onOpenInStudio,
   openingInStudio,
+  onKnowledgeChange,
+  onRename,
+  onDescription,
 }: {
   asset: GalleryAsset;
   onPreview: () => void;
@@ -641,16 +794,31 @@ function AssetCard({
   onDownload: () => void;
   onOpenInStudio?: () => void;
   openingInStudio?: boolean;
+  onKnowledgeChange: (visibility: string, category: string) => void;
+  onRename: (filename: string) => void;
+  onDescription: (prompt: string) => void;
 }) {
+  const [editing, setEditing] = useState(false);
+  const [editName, setEditName] = useState(asset.filename);
+  const [editDesc, setEditDesc] = useState(asset.prompt ?? "");
   const url = assetUrl(asset);
   const scenePreviewUrl = asset.type === "scene" && asset.generation_params?.previewSrc
     ? directorFileUrl(asset.generation_params.previewSrc as string)
     : null;
 
+  const commitEdit = (e: React.MouseEvent | React.FormEvent) => {
+    e.stopPropagation();
+    const trimName = editName.trim();
+    const trimDesc = editDesc.trim();
+    if (trimName && trimName !== asset.filename) onRename(trimName);
+    if (trimDesc !== (asset.prompt ?? "")) onDescription(trimDesc);
+    setEditing(false);
+  };
+
   return (
-    <div onClick={onPreview} className="group relative cursor-pointer overflow-hidden rounded-2xl border border-border bg-card">
+    <div onClick={onPreview} className="group relative z-0 cursor-pointer rounded-2xl border border-border bg-card hover:z-10">
       {/* Thumbnail */}
-      <div className="block w-full">
+      <div className="block w-full overflow-hidden rounded-t-2xl">
         {asset.type === "image" ? (
           <img src={url} alt={asset.prompt ?? asset.filename} className="aspect-square w-full object-cover" loading="lazy" />
         ) : asset.type === "video" ? (
@@ -742,9 +910,42 @@ function AssetCard({
               {asset.model}
             </span>
           )}
+          <button
+            onClick={(e) => { e.stopPropagation(); if (!editing) { setEditName(asset.filename); setEditDesc(asset.prompt ?? ""); } setEditing((v) => !v); }}
+            className="ml-auto rounded p-0.5 text-muted-foreground hover:text-foreground"
+            title="Edit name and description"
+          >
+            {editing ? <Check className="h-3 w-3 text-primary" /> : <Pencil className="h-3 w-3" />}
+          </button>
         </div>
-        {asset.prompt && (
-          <p className="mt-1.5 line-clamp-2 text-xs text-muted-foreground">{asset.prompt}</p>
+        {editing ? (
+          <form onSubmit={commitEdit} onClick={(e) => e.stopPropagation()} className="mt-1.5 flex flex-col gap-1.5">
+            <input
+              autoFocus
+              value={editName}
+              onChange={(e) => setEditName(e.target.value)}
+              placeholder="File name"
+              className="w-full rounded border border-border bg-muted px-2 py-1 text-xs text-foreground"
+            />
+            <textarea
+              value={editDesc}
+              onChange={(e) => setEditDesc(e.target.value)}
+              placeholder="Description (prompt)"
+              rows={2}
+              className="w-full rounded border border-border bg-muted px-2 py-1 text-xs text-foreground resize-none"
+            />
+            <div className="flex gap-1.5">
+              <button type="submit" className="rounded bg-primary px-2 py-0.5 text-[10px] font-semibold text-primary-foreground">Save</button>
+              <button type="button" onClick={(e) => { e.stopPropagation(); setEditing(false); }} className="rounded border border-border px-2 py-0.5 text-[10px] font-semibold text-muted-foreground">Cancel</button>
+            </div>
+          </form>
+        ) : (
+          <>
+            <p className="mt-1 truncate text-[10px] text-muted-foreground/60">{asset.filename}</p>
+            {asset.prompt && (
+              <p className="mt-0.5 line-clamp-2 text-xs text-muted-foreground">{asset.prompt}</p>
+            )}
+          </>
         )}
         {asset.tags && asset.tags.length > 0 && (
           <div className="mt-1.5 flex flex-wrap gap-1">
@@ -755,6 +956,12 @@ function AssetCard({
             ))}
           </div>
         )}
+        {/* Knowledge labels */}
+        <KnowledgeLabels
+          visibility={asset.knowledge_visibility ?? "public"}
+          category={asset.knowledge_category ?? "media"}
+          onChange={onKnowledgeChange}
+        />
         <div className="mt-2 flex items-center justify-between text-[10px] text-muted-foreground">
           <span>{formatBytes(asset.file_size_bytes)}</span>
           {asset.duration_seconds && <span>{asset.duration_seconds.toFixed(1)}s</span>}
@@ -775,6 +982,9 @@ function AssetListRow({
   onDownload,
   onOpenInStudio,
   openingInStudio,
+  onKnowledgeChange,
+  onRename,
+  onDescription,
 }: {
   asset: GalleryAsset;
   onPreview: () => void;
@@ -783,14 +993,29 @@ function AssetListRow({
   onDownload: () => void;
   onOpenInStudio?: () => void;
   openingInStudio?: boolean;
+  onKnowledgeChange: (visibility: string, category: string) => void;
+  onRename: (filename: string) => void;
+  onDescription: (prompt: string) => void;
 }) {
+  const [editing, setEditing] = useState(false);
+  const [editName, setEditName] = useState(asset.filename);
+  const [editDesc, setEditDesc] = useState(asset.prompt ?? "");
   const url = assetUrl(asset);
   const scenePreviewUrl = asset.type === "scene" && asset.generation_params?.previewSrc
     ? directorFileUrl(asset.generation_params.previewSrc as string)
     : null;
 
+  const commitEdit = (e: React.MouseEvent | React.FormEvent) => {
+    e.stopPropagation();
+    const trimName = editName.trim();
+    const trimDesc = editDesc.trim();
+    if (trimName && trimName !== asset.filename) onRename(trimName);
+    if (trimDesc !== (asset.prompt ?? "")) onDescription(trimDesc);
+    setEditing(false);
+  };
+
   return (
-    <div className="flex items-center gap-4 py-3 px-1 hover:bg-muted/40 rounded-lg transition">
+    <div className="relative z-0 flex items-center gap-4 py-3 px-1 hover:z-10 hover:bg-muted/40 rounded-lg transition">
       {/* Thumbnail */}
       <button onClick={onPreview} className="flex-shrink-0 h-14 w-14 rounded-lg overflow-hidden border border-border bg-muted">
         {asset.type === "image" ? (
@@ -825,24 +1050,54 @@ function AssetListRow({
 
       {/* Info */}
       <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2">
-          <span className="text-xs font-medium text-foreground truncate">{asset.filename}</span>
-          {sourceBadge(asset.source)}
-          {asset.model && (
-            <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
-              {asset.model}
-            </span>
-          )}
-        </div>
-        {asset.prompt && (
-          <p className="mt-0.5 text-xs text-muted-foreground truncate">{asset.prompt}</p>
+        {editing ? (
+          <form onSubmit={commitEdit} onClick={(e) => e.stopPropagation()} className="flex flex-col gap-1">
+            <input
+              autoFocus
+              value={editName}
+              onChange={(e) => setEditName(e.target.value)}
+              placeholder="File name"
+              className="w-full rounded border border-border bg-muted px-2 py-1 text-xs text-foreground"
+            />
+            <input
+              value={editDesc}
+              onChange={(e) => setEditDesc(e.target.value)}
+              placeholder="Description (prompt)"
+              className="w-full rounded border border-border bg-muted px-2 py-1 text-xs text-foreground"
+            />
+            <div className="flex gap-1">
+              <button type="submit" className="rounded bg-primary px-2 py-0.5 text-[10px] font-semibold text-primary-foreground">Save</button>
+              <button type="button" onClick={(e) => { e.stopPropagation(); setEditing(false); }} className="rounded border border-border px-2 py-0.5 text-[10px] font-semibold text-muted-foreground">Cancel</button>
+            </div>
+          </form>
+        ) : (
+          <>
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-medium text-foreground truncate">{asset.filename}</span>
+                  {sourceBadge(asset.source)}
+              {asset.model && (
+                <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
+                  {asset.model}
+                </span>
+              )}
+            </div>
+            {asset.prompt && (
+              <p className="mt-0.5 text-xs text-muted-foreground truncate">{asset.prompt}</p>
+            )}
+            <div className="mt-0.5 flex items-center gap-3 text-[10px] text-muted-foreground">
+              {formatBytes(asset.file_size_bytes)}
+              {asset.width && asset.height && <span>{asset.width}×{asset.height}</span>}
+              {asset.duration_seconds && <span>{asset.duration_seconds.toFixed(1)}s</span>}
+              <span>{new Date(asset.created_at).toLocaleDateString()}</span>
+            </div>
+            <KnowledgeLabels
+              visibility={asset.knowledge_visibility ?? "public"}
+              category={asset.knowledge_category ?? "media"}
+              onChange={onKnowledgeChange}
+              compact
+            />
+          </>
         )}
-        <div className="mt-0.5 flex items-center gap-3 text-[10px] text-muted-foreground">
-          {formatBytes(asset.file_size_bytes)}
-          {asset.width && asset.height && <span>{asset.width}×{asset.height}</span>}
-          {asset.duration_seconds && <span>{asset.duration_seconds.toFixed(1)}s</span>}
-          <span>{new Date(asset.created_at).toLocaleDateString()}</span>
-        </div>
       </div>
 
       {/* Actions */}
@@ -857,6 +1112,13 @@ function AssetListRow({
             {openingInStudio ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Clapperboard className="h-3.5 w-3.5" />}
           </button>
         )}
+        <button
+          onClick={(e) => { e.stopPropagation(); if (!editing) { setEditName(asset.filename); setEditDesc(asset.prompt ?? ""); } setEditing((v) => !v); }}
+          className="rounded-lg border border-border p-1.5 text-muted-foreground hover:bg-muted"
+          title={editing ? "Save changes" : "Edit name and description"}
+        >
+          {editing ? <Check className="h-3.5 w-3.5 text-primary" /> : <Pencil className="h-3.5 w-3.5" />}
+        </button>
         <button
           onClick={(e) => { e.stopPropagation(); onPreview(); }}
           className="rounded-lg border border-border p-1.5 text-muted-foreground hover:bg-muted"

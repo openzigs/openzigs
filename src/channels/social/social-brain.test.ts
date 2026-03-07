@@ -122,7 +122,10 @@ describe("SocialBrain", () => {
     const msg = repo.insertMessage({ contactId: contact.id, platform: "instagram", direction: "inbound", content: raw.text });
     await brain.process(contact, msg, raw);
 
-    expect(knowledge.search).toHaveBeenCalledWith(raw.text, 5, { mode: "hybrid" });
+    expect(knowledge.search).toHaveBeenCalledWith(raw.text, 5, {
+      mode: "hybrid",
+      filter: { visibility: "public" },
+    });
     const promptArg = (copilot.chat as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
     expect(promptArg).toContain("Widget Pro");
     expect(promptArg).toContain("$99");

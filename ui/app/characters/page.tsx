@@ -84,8 +84,8 @@ export default function CharactersPage() {
   // Training config
   const [trainSteps, setTrainSteps] = useState(9);
   const [trainLR, setTrainLR] = useState(0.0001);
-  const [trainRank, setTrainRank] = useState(8);
-  const [trainEpochs, setTrainEpochs] = useState(30);
+  const [trainRank, setTrainRank] = useState(16);
+  const [trainEpochs, setTrainEpochs] = useState(50);
 
   // AI Enhance model selection dialog
   const [showEnhanceDialog, setShowEnhanceDialog] = useState(false);

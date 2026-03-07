@@ -5061,6 +5061,69 @@ Example AI interaction:
 >
 > **AI**: *(automatically calls search-knowledge with "deployment rollback procedures")* Based on your knowledge base, the deployment guide at `docs/deployment.md` describes the following rollback procedure…
 
+### Automatic Content Ingestion
+
+The knowledge base automatically ingests content from across the platform — you don't need to manually copy files. Everything the system creates is searchable:
+
+| Content Type | When Ingested | What's Stored |
+|---|---|---|
+| **Gallery assets** (images, videos, audio, music) | When a media job completes, file is uploaded, or cloud image is generated | Prompt, model, tags, filename, media URL for inline playback |
+| **Presentations** | When a Director render completes | Transcript text, chapters, duration, mode |
+| **Director narration** | When a render finishes | Narration lines from the timeline |
+| **Social media replies** | When Social Brain sends an auto-reply | Incoming message + generated reply |
+| **Scheduled job results** | When a scheduled job executes | Job name, timestamp, output |
+
+When you **delete** a gallery asset, it's automatically removed from the knowledge base too.
+
+### Content Categories & Filtering
+
+The `search-knowledge` tool supports two additional optional parameters for targeted search:
+
+- **`category`**: Filter by content type — `"media"`, `"document"`, `"presentation"`, `"social"`, `"system"`, `"conversation"`
+- **`visibility`**: Filter by access level — `"public"`, `"internal"`, `"private"`
+
+**Example: Finding songs in the knowledge base**
+
+> **You**: Show me all the songs I've generated.
+>
+> **AI**: *(calls search-knowledge with query "songs music audio", category "media")* Here are your generated audio tracks:
+>
+> 🎵 **cinematic-electronic-dark.mp3** — "cinematic, electronic, dark" (ace-step)
+> [Inline audio player appears]
+>
+> 🎵 **matchering.mp3** — "ambient electronic" (ace-step)
+> [Inline audio player appears]
+
+**Example: Finding images by prompt**
+
+> **You**: Show me the logo images I created for CIMIQ.
+>
+> **AI**: *(calls search-knowledge with query "CIMIQ logo", category "media")* Here are your CIMIQ logo images:
+>
+> ![CIMIQ logo](generated image appears inline)
+
+### Visibility & Privacy
+
+To prevent sensitive data from leaking into social media auto-replies, the knowledge base has three visibility levels:
+
+| Level | Chat Access | Social Auto-Reply Access | Example Content |
+|---|---|---|---|
+| **Public** | ✅ | ✅ | Gallery assets, published content |
+| **Internal** | ✅ | ❌ | Personal documents, presentations, system events |
+| **Private** | Admin only | ❌ | Sensitive configuration, credentials |
+
+Social Brain auto-replies **only** search public content, ensuring your private documents and system events never appear in social media responses.
+
+### Inline Media Playback in Chat
+
+When the AI finds media assets from the knowledge base, it can render them inline:
+
+- **Images**: Displayed directly with click-to-expand lightbox and download
+- **Audio**: Compact inline player with play/pause, progress bar, and download
+- **Video**: Preview thumbnail with play overlay, click opens full-size lightbox with controls
+
+This means you can ask "play me that song I generated" and hear it right in the chat interface.
+
 ### Knowledge Manager UI
 
 Navigate to **Knowledge** in the top nav bar to access the Knowledge Manager page.
