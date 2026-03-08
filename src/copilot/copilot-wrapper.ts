@@ -728,6 +728,14 @@ export class CopilotWrapperService extends EventEmitter implements CopilotWrappe
     let toolList = options?.tools ?? this.toolRegistry?.listEnabledTools() ?? [];
     const perCallToolCallback = options?.onToolCall;
 
+    // When availableTools is specified (skill scoping or explicit client filter),
+    // pre-filter tool definitions to only those in the allow-list.
+    // This prevents sending 128 definitions when the skill only needs 14.
+    if (options?.availableTools && options.availableTools.length > 0) {
+      const scopedSet = new Set(options.availableTools);
+      toolList = toolList.filter((t) => scopedSet.has(t.name));
+    }
+
     // Enforce maxToolsPerRequest: if we exceed the cap, keep always-on core tools
     // and fill the remaining slots with the rest.
     if (toolList.length > this.maxToolsPerRequest) {

@@ -12,7 +12,11 @@ const mocks = vi.hoisted(() => ({
   readFile: vi.fn(),
   mkdir: vi.fn(),
   writeFile: vi.fn(),
+  copyFile: vi.fn(),
   join: vi.fn((...args: string[]) => args.join("/")),
+  basename: vi.fn((p: string) => p.split("/").pop() || p),
+  extname: vi.fn((p: string) => { const m = p.match(/\.[^./]+$/); return m ? m[0] : ""; }),
+  isAbsolute: vi.fn((p: string) => p.startsWith("/")),
   homedir: vi.fn(() => "/mock-home"),
   storyboardGenerate: vi.fn(),
   imageGenInitialize: vi.fn(),
@@ -26,15 +30,19 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("node:fs/promises", () => ({
-  default: { readFile: mocks.readFile, mkdir: mocks.mkdir, writeFile: mocks.writeFile },
+  default: { readFile: mocks.readFile, mkdir: mocks.mkdir, writeFile: mocks.writeFile, copyFile: mocks.copyFile },
   readFile: mocks.readFile,
   mkdir: mocks.mkdir,
   writeFile: mocks.writeFile,
+  copyFile: mocks.copyFile,
 }));
 
 vi.mock("node:path", () => ({
-  default: { join: mocks.join },
+  default: { join: mocks.join, basename: mocks.basename, extname: mocks.extname, isAbsolute: mocks.isAbsolute },
   join: mocks.join,
+  basename: mocks.basename,
+  extname: mocks.extname,
+  isAbsolute: mocks.isAbsolute,
 }));
 
 vi.mock("node:os", () => ({
@@ -174,6 +182,7 @@ describe("createVideoTools", () => {
       mocks.readFile.mockResolvedValue("Some document text");
       mocks.mkdir.mockResolvedValue(undefined);
       mocks.writeFile.mockResolvedValue(undefined);
+      mocks.copyFile.mockResolvedValue(undefined);
       mocks.storyboardGenerate.mockResolvedValue(mockStoryboard);
       mocks.imageGenInitialize.mockResolvedValue(undefined);
       mocks.imageGenGenerateImage.mockResolvedValue({ filePath: "/mock-home/images/generated.png" });

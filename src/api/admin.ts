@@ -64,6 +64,7 @@ const ENV_CHECKS = [
   "FACEBOOK_APP_ID",
   "FACEBOOK_APP_SECRET",
   "INSTAGRAM_BUSINESS_ACCOUNT_ID",
+  "YOUTUBE_API_KEY",
 ] as const;
 
 /**
@@ -168,10 +169,13 @@ const upsertEnvFile = async (envPath: string, updates: Record<string, string>): 
     return line;
   });
 
-  // Append new keys
+  // Append new keys — only add the section header if it isn't already present
   if (remaining.size > 0) {
-    updatedLines.push("");
-    updatedLines.push("# MCP Credentials");
+    const alreadyHasSection = updatedLines.some((l) => l.trim() === "# MCP Credentials");
+    if (!alreadyHasSection) {
+      updatedLines.push("");
+      updatedLines.push("# MCP Credentials");
+    }
     for (const [key, value] of remaining) {
       updatedLines.push(`${key}=${value}`);
     }

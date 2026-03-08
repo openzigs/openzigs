@@ -128,6 +128,12 @@ export class WebChatChannel implements MessageChannel {
     }
   }
 
+  /** Broadcast an approval request to ALL connected web clients (used for ephemeral sessions). */
+  broadcastApprovalRequest(request: ApprovalRequest): void {
+    if (!this.connected) return;
+    this.io.emit("approval:request", request);
+  }
+
   /**
    * Send an interactive user input request to the client and wait for a response.
    * Returns a Promise that resolves with the user's answer or rejects on timeout.

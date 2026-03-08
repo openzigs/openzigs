@@ -551,6 +551,7 @@ registerMcpTools(toolRegistry, {
   queueMaster,
   channelManager,
   notificationChatId: config.channels?.telegram?.adminUserId || undefined,
+  audioSidecarUrl: resolveSidecarUrl("audio", "AUDIO_SIDECAR_URL", 5006),
 });
 
 // ── Task Background Worker ──
@@ -1985,6 +1986,19 @@ if (webConfig?.enabled !== false) {
     if (approval.channelType !== "web" || !approval.sessionId) {
       return;
     }
+    const approvalPayload = {
+      id: approval.id,
+      tool: approval.tool,
+      args: approval.args,
+      riskLevel: approval.riskLevel,
+      explanation: approval.explanation,
+      preview: approval.preview
+    };
+    // Ephemeral sessions lack a session-manager record; broadcast to all web clients.
+    if (approval.sessionId === "ephemeral") {
+      webChatChannel.broadcastApprovalRequest(approvalPayload);
+      return;
+    }
     try {
       const session = await sessionManager.getSession(approval.sessionId);
       const chatId = typeof session.metadata.chatId === "string" ? session.metadata.chatId : undefined;
@@ -1992,14 +2006,7 @@ if (webConfig?.enabled !== false) {
         logger.warn(`Missing chatId for web approval ${approval.id}`);
         return;
       }
-      await webChatChannel.sendApprovalRequest(chatId, {
-        id: approval.id,
-        tool: approval.tool,
-        args: approval.args,
-        riskLevel: approval.riskLevel,
-        explanation: approval.explanation,
-        preview: approval.preview
-      });
+      await webChatChannel.sendApprovalRequest(chatId, approvalPayload);
     } catch (error) {
       const details = error instanceof Error ? error.message : String(error);
       logger.error(`Failed to send web approval: ${details}`);
@@ -2038,9 +2045,10 @@ httpServer.listen(port, "0.0.0.0", () => {
     // Notify Telegram when an entire project's queue is complete
     queueMaster.on("project:complete", (projectId: string, total: number) => {
       const telegram = channelManager.getChannel("telegram");
-      if (telegram) {
+      const chatId = config.channels?.telegram?.adminUserId;
+      if (telegram && chatId) {
         const text = `✅ Project "${projectId}" — all ${total} media jobs complete. Assets ready in Gallery.`;
-        void telegram.sendMessage("broadcast", { text }).catch((err: unknown) => {
+        void telegram.sendMessage(chatId, { text }).catch((err: unknown) => {
           const msg = err instanceof Error ? err.message : String(err);
           logger.warn(`[QueueMaster] Telegram notification failed: ${msg}`);
         });

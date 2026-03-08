@@ -207,9 +207,50 @@ export const createVideoTools = ({ copilot, voiceService }: VideoToolsOptions): 
             },
           };
 
+          // Auto-save manifest to drafts directory
+          const DRAFTS_BASE = path.join(os.homedir(), ".openzigs", "files", "drafts");
+          const projectSlug = storyboard.title
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/g, "-")
+            .replace(/^-+|-+$/g, "")
+            .slice(0, 80);
+          const projectDir = path.join(DRAFTS_BASE, projectSlug);
+          await fs.mkdir(projectDir, { recursive: true });
+
+          const manifestPath = path.join(projectDir, "manifest.json");
+          const manifestJson = JSON.stringify(manifest, null, 2);
+          await fs.writeFile(manifestPath, manifestJson, "utf-8");
+
+          // Persist as a director draft in SQLite so it appears in the Studio UI
+          const { getDatabase } = await import("../../productivity/database.js");
+          const db = getDatabase();
+          const draftId = nanoid();
+          const now = new Date().toISOString();
+          const draftTitle = storyboard.title || "Untitled Presentation";
+          db.prepare(
+            `INSERT INTO director_drafts (id, title, manifest, thumbnail, production_mode, created_at, updated_at, status)
+             VALUES (?, ?, ?, ?, ?, ?, ?, 'draft')`,
+          ).run(draftId, draftTitle, manifestJson, null, "presentation", now, now);
+
+          // Copy scene images into the drafts project directory
+          const scenePaths: string[] = [];
+          for (const entry of timeline) {
+            if (entry.type === "image_scene") {
+              const imgEntry = entry as import("../../video/manifest/manifest-types.js").ImageSceneEntry;
+              if (imgEntry.src) {
+                const destImg = path.join(projectDir, path.basename(imgEntry.src));
+                await fs.copyFile(imgEntry.src, destImg).catch(() => {});
+                scenePaths.push(destImg);
+              }
+            }
+          }
+
           return {
             text: JSON.stringify({
               mode: "presentation",
+              draftId,
+              manifestPath,
+              projectDir,
               manifest,
               storyboard: {
                 title: storyboard.title,
@@ -231,6 +272,11 @@ export const createVideoTools = ({ copilot, voiceService }: VideoToolsOptions): 
               })),
               tokensUsed: storyboard.tokensUsed,
               totalDuration: currentFrame / fps,
+              savedToDrafts: {
+                manifestPath,
+                projectDir,
+                sceneImages: scenePaths,
+              },
             }, null, 2),
           };
         }

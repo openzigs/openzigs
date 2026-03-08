@@ -152,7 +152,23 @@ export class MessageRouter {
     // SDK handles multi-turn context natively; only send the current user message
     const prompt = this.buildPrompt(message.content);
     // Build system message from personality config for SDK-level injection
-    const systemMessage = this.buildSystemMessage();
+    let systemMessage = this.buildSystemMessage();
+
+    // Inject autonomous execution guardrail for skill-prefixed messages
+    if (message.content.startsWith("[Using ") && message.content.includes(" skill]")) {
+      const autonomousGuardrail =
+        "AUTONOMOUS EXECUTION MODE — CRITICAL RULES:\n" +
+        "1. You MUST complete ALL numbered steps by calling tools. Do NOT output text until the FINAL step says to respond.\n" +
+        "2. ANY text response (even 'I will now...') PERMANENTLY ENDS the session. You CANNOT resume.\n" +
+        "3. If a tool fails, skip that step and IMMEDIATELY proceed to the next numbered step by calling the next tool.\n" +
+        "4. NEVER ask the user questions or request confirmation. Execute autonomously.\n" +
+        "5. Call tools in batches of 1-10 per step. Wait for results, then proceed to the next step.";
+      if (systemMessage) {
+        systemMessage = { ...systemMessage, content: systemMessage.content + "\n\n" + autonomousGuardrail };
+      } else {
+        systemMessage = { mode: "append", content: autonomousGuardrail };
+      }
+    }
 
     let response = "";
     try {
@@ -247,13 +263,16 @@ export class MessageRouter {
 
   /**
    * Resolve SDK-native availableTools from a caller-provided allowedTools list.
-   * Merges ALWAYS_ON_TOOLS into the list. Returns undefined when no scoping is needed.
+   * When the client sends an explicit tool list (e.g. skill-scoped from the research dialog),
+   * trust it as-is — don't merge ALWAYS_ON_TOOLS which would add unwanted tools like
+   * browser-navigate and shell-execute into skill-scoped sessions.
+   * Returns undefined when no scoping is needed (all tools available).
    */
   private resolveAvailableTools(allowedTools?: string[]): string[] | undefined {
-    if (!allowedTools) {
+    if (!allowedTools || allowedTools.length === 0) {
       return undefined;
     }
-    return [...new Set([...allowedTools, ...ALWAYS_ON_TOOLS])];
+    return [...new Set(allowedTools)];
   }
 
   private async getOrCreateSessionId(message: IncomingMessage): Promise<string> {

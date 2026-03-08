@@ -11,6 +11,7 @@ import {
   DialogDescription,
   DialogFooter,
 } from "@/components/ui/dialog";
+import { ModelPickerSelect, useModelsQuery } from "@/components/model-picker-select";
 import {
   Microscope,
   Loader2,
@@ -38,28 +39,56 @@ type ResearchGenerateDialogProps = {
 };
 
 function buildResearchPrompt(params: ResearchParams): string {
-  const parts: string[] = [
-    `Research and write a comprehensive document about: "${params.topic}".`,
-  ];
-  if (params.slant) {
-    parts.push(`Angle/slant: ${params.slant}.`);
+  // Build an explicit step-by-step execution plan that the model must follow.
+  // Using numbered steps prevents the model from stopping mid-workflow.
+  const steps: string[] = [];
+  let step = 1;
+
+  steps.push(`TOPIC: "${params.topic}"${params.slant ? ` | ANGLE: ${params.slant}` : ""}`);
+  steps.push("");
+  steps.push("Execute ALL steps below using tool calls. Do NOT output any text until the final step says to respond.");
+  steps.push("");
+
+  // Phase 2: Web research
+  steps.push(`STEP ${step}: Call web-search ${Math.min(params.articleCount, 3)} times with different query angles about the topic. Wait for results.`);
+  step++;
+
+  // Phase 3: YouTube
+  if (params.youtubeCount > 0) {
+    steps.push(`STEP ${step}: Call youtube-search-videos with order "viewCount" and max_results ${params.youtubeCount}. Wait for results.`);
+    step++;
+    steps.push(`STEP ${step}: For each YouTube result, call ingest-youtube with format "audio" to download. Wait for all downloads.`);
+    step++;
+    steps.push(`STEP ${step}: For each downloaded audio file, call transcribe-audio with the filename. Wait for transcripts. These are auto-saved to Knowledge.`);
+    step++;
   }
-  parts.push(
-    `Use ${params.articleCount} web articles and ${params.youtubeCount} YouTube videos as sources (sort YouTube by viewCount for authority).`,
-  );
+
+  // Phase 4: Write document (MUST come before images)
+  steps.push(`STEP ${step}: Synthesize ALL research into a comprehensive Markdown document (minimum 2000 words, 6+ sections, comparison tables, direct quotes with citations [1],[2]). Call write-file to save it to ~/.openzigs/research/<topic-slug>.md. This is the PRIMARY deliverable.`);
+  step++;
+
+  // Phase 5: Images (optional)
   if (params.generateImages) {
-    parts.push("Generate original supporting images using Flux for key sections.");
+    steps.push(`STEP ${step}: Call submit-media-job up to 3 times with type "txt2img" for supporting images. Do NOT pass a model parameter. Then call get-job-status once per job. If still pending, skip and continue.`);
+    step++;
   }
+
+  // Phase 7: Video (optional)
   if (params.generateVideo) {
-    parts.push("Generate a short summary video for the document.");
+    steps.push(`STEP ${step}: Call produce-video with mode "presentation", sourceType "markdown", and inputFile set to the document path from the write-file step. Wait for completion. The video is auto-saved to drafts.`);
+    step++;
   }
+
+  // Phase 8: Notification (optional)
   if (params.notifyTelegram) {
-    parts.push("When the document is saved, send a Telegram notification confirming the title and file path.");
+    steps.push(`STEP ${step}: Call send-notification with a message like "Research complete: <title> saved to <path>".`);
+    step++;
   }
-  parts.push(
-    "Include inline citations [1], [2], etc. and a bibliography at the end. Save the final document to the Workbench files directory.",
-  );
-  return parts.join(" ");
+
+  // Final step: respond
+  steps.push(`STEP ${step}: NOW output a brief summary of what was completed (document path, video path if created, image count, etc.).`);
+
+  return steps.join("\n");
 }
 
 export const ResearchGenerateDialog = ({
@@ -68,8 +97,10 @@ export const ResearchGenerateDialog = ({
   onSubmitted,
 }: ResearchGenerateDialogProps) => {
   const { socket, connected } = useSocket();
+  const modelsQuery = useModelsQuery(open);
   const [topic, setTopic] = useState("");
   const [slant, setSlant] = useState("");
+  const [model, setModel] = useState("claude-sonnet-4.6");
   const [articleCount, setArticleCount] = useState(5);
   const [youtubeCount, setYoutubeCount] = useState(3);
   const [generateImages, setGenerateImages] = useState(false);
@@ -99,6 +130,14 @@ export const ResearchGenerateDialog = ({
     try {
       socket.emit("chat:message", {
         content: `[Using Research Synthesizer skill] ${prompt}`,
+        // Pass the user-selected model (default: claude-sonnet-4.6 which reliably follows autonomous multi-step instructions)
+        model: model || "claude-sonnet-4.6",
+        tools: [
+          "web-search", "youtube-search-videos", "youtube-get-video-details",
+          "read-file", "write-file", "submit-media-job", "get-job-status",
+          "save-draft-media", "query-gallery-assets", "send-notification",
+          "produce-video", "ingest-youtube", "transcribe-audio",
+        ],
       });
       onSubmitted?.();
       setSubmitting(false);
@@ -106,6 +145,7 @@ export const ResearchGenerateDialog = ({
       // Reset form
       setTopic("");
       setSlant("");
+      setModel("claude-sonnet-4.6");
       setArticleCount(5);
       setYoutubeCount(3);
       setGenerateImages(false);
@@ -115,7 +155,7 @@ export const ResearchGenerateDialog = ({
       setError("Failed to send research request. Check connection.");
       setSubmitting(false);
     }
-  }, [isValid, socket, connected, topic, slant, articleCount, youtubeCount, generateImages, generateVideo, notifyTelegram, onOpenChange, onSubmitted]);
+  }, [isValid, socket, connected, topic, slant, model, articleCount, youtubeCount, generateImages, generateVideo, notifyTelegram, onOpenChange, onSubmitted]);
 
   const handleOpenChange = useCallback(
     (nextOpen: boolean) => {
@@ -174,6 +214,23 @@ export const ResearchGenerateDialog = ({
               placeholder="e.g. developer productivity, cost comparison"
               className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
             />
+          </div>
+
+          {/* LLM Model */}
+          <div>
+            <label htmlFor="rg-model" className="mb-1 block text-xs font-medium text-foreground">
+              LLM Model
+            </label>
+            <ModelPickerSelect
+              value={model}
+              onChange={setModel}
+              modelsData={modelsQuery.data}
+              className="w-full"
+              size="sm"
+            />
+            <p className="mt-0.5 text-[10px] text-muted-foreground">
+              claude-sonnet-4.6 recommended for autonomous research workflows
+            </p>
           </div>
 
           {/* Counts */}

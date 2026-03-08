@@ -47,6 +47,7 @@ import { createSentinelTools } from "./tools/sentinel-tools.js";
 import { createPinterestSeoTools } from "./tools/pinterest-seo-tools.js";
 import { createDraftMediaTools } from "./tools/draft-media-tools.js";
 import { createNotificationTools } from "./tools/notification-tools.js";
+import { createTranscribeAudioTools } from "./tools/transcribe-audio-tools.js";
 import { ToolRegistry, type ToolDefinition } from "./tool-registry.js";
 import type { LocalMcpServerManager } from "./local-mcp-server-manager.js";
 import { AuditLogger } from "../logging/audit-logger.js";
@@ -122,6 +123,8 @@ export type McpServerOptions = {
   channelManager?: import("../channels/channel-manager.js").ChannelManager;
   /** Telegram admin chat ID for send-notification tool. */
   notificationChatId?: string;
+  /** Audio sidecar URL for transcribe-audio tool. */
+  audioSidecarUrl?: string;
 };
 
 export type RegisterMcpToolsOptions = Pick<
@@ -165,6 +168,7 @@ export type RegisterMcpToolsOptions = Pick<
   | "sentinelService"
   | "channelManager"
   | "notificationChatId"
+  | "audioSidecarUrl"
 >;
 
 const readFileSchema = z.object({ path: z.string() });
@@ -734,5 +738,14 @@ export const registerMcpTools = (toolRegistry: ToolRegistry, options: RegisterMc
       fallbackChatId: options.notificationChatId,
     });
     for (const tool of notifTools) { registerTool(tool); }
+  }
+
+  // ── Transcribe Audio Tool (Whisper STT via audio sidecar) ──
+  if (options.audioSidecarUrl) {
+    const transcribeTools = createTranscribeAudioTools({
+      audioSidecarUrl: options.audioSidecarUrl,
+      knowledgeService: options.knowledgeService,
+    });
+    for (const tool of transcribeTools) { registerTool(tool); }
   }
 };

@@ -528,10 +528,8 @@ describe("MessageRouter", () => {
     // Should include explicitly allowed tools
     expect(capturedAvailableTools).toContain("web-search");
     expect(capturedAvailableTools).toContain("linkedin-post");
-    // Should include always-on tools merged in
-    expect(capturedAvailableTools).toContain("read-file");
-    expect(capturedAvailableTools).toContain("spawn-agent");
-    expect(capturedAvailableTools).toContain("shell-execute");
+    // Should NOT merge ALWAYS_ON_TOOLS — client-specified tools are trusted as-is
+    expect(capturedAvailableTools).toHaveLength(2);
   });
 
   it("does not scope tools when allowedTools not provided", async () => {

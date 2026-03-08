@@ -16,6 +16,8 @@ export const ALWAYS_ON_TOOLS = new Set([
   "get-job-status",
   "save-draft-media",
   "send-notification",
+  "produce-video",
+  "transcribe-audio",
 ]);
 
 /**
@@ -33,4 +35,10 @@ export const INTERACTIVE_CHAT_AUTO_APPROVE_TOOLS = [
   "get-secret",
   "write-file",
   "ingest-youtube",
+  "submit-media-job",
+  "get-job-status",
+  "save-draft-media",
+  "send-notification",
+  "produce-video",
+  "transcribe-audio",
 ];
