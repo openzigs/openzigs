@@ -148,6 +148,7 @@ export class WebChatChannel implements MessageChannel {
     return new Promise<UserInputResponse>((resolve) => {
       const timer = setTimeout(() => {
         this.pendingInputRequests.delete(requestId);
+        socket.emit("user_input_timeout", { requestId });
         resolve({ answer: "", wasFreeform: false });
       }, this.userInputTimeoutMs);
 
@@ -158,6 +159,7 @@ export class WebChatChannel implements MessageChannel {
         choices: request.choices,
         allowFreeform: request.allowFreeform ?? true,
         preview: request.preview,
+        timeout: this.userInputTimeoutMs,
       });
     });
   }

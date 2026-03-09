@@ -28,7 +28,7 @@ import { MessageRouter } from "./routing/index.js";
 import { SessionManager } from "./sessions/index.js";
 import { CloudflareTunnel } from "./tunnel/index.js";
 import { createModelsRouter } from "./api/models.js";
-import { createAdminRouter } from "./api/admin.js";
+import { createAdminRouter, pinterestOAuthStates, exchangePinterestCode, refreshPinterestToken } from "./api/admin.js";
 import { createTasksRouter } from "./api/tasks.js";
 import { createFilesRouter } from "./api/files.js";
 import { launchChrome, killChrome } from "./browser/chrome-launcher.js";
@@ -56,6 +56,7 @@ import { createDirectorRouter, setDirectorIO } from "./api/director.js";
 import { createAudioRouter } from "./api/audio.js";
 import { createPresenterRouter } from "./api/presenter.js";
 import { createSocialRouter } from "./api/social.js";
+import { createPinterestRouter } from "./api/pinterest.js";
 import { SocialRepository } from "./channels/social/social-repository.js";
 import { SocialIngestionService, InstagramAdapter, FacebookAdapter, TwitterAdapter, LinkedInAdapter } from "./channels/social/social-ingestion.js";
 import { SocialBrain } from "./channels/social/social-brain.js";
@@ -535,7 +536,6 @@ registerMcpTools(toolRegistry, {
   linkedinSidecarUrl: resolveSidecarUrl("linkedin", "MCP_LINKEDIN_URL", 5101),
   twitterSidecarUrl: resolveSidecarUrl("twitter", "MCP_TWITTER_URL", 5102),
   facebookSidecarUrl: resolveSidecarUrl("facebook", "MCP_FACEBOOK_URL", 5103),
-  pinterestSidecarUrl: resolveSidecarUrl("pinterest", "MCP_PINTEREST_URL", 5104),
   markitdownSidecarUrl: resolveSidecarUrl("markitdown", "MCP_MARKITDOWN_URL", 5301),
   gmailSidecarUrl: resolveSidecarUrl("gmail", "MCP_GMAIL_URL", 5302),
   databaseSidecarUrl: resolveSidecarUrl("database", "MCP_DATABASE_URL", 5303),
@@ -596,6 +596,43 @@ const socialRouter = createSocialRouter({
   brandVoiceService,
 });
 app.use("/api/social", authMiddleware, socialRouter);
+
+// Pinterest OAuth callback — no auth middleware (redirected from Pinterest)
+// MUST be registered before the /api/pinterest router mount to avoid auth middleware intercept
+app.get("/api/pinterest/oauth/callback", async (req, res) => {
+  const code = typeof req.query.code === "string" ? req.query.code : "";
+  const state = typeof req.query.state === "string" ? req.query.state : "";
+  const error = typeof req.query.error === "string" ? req.query.error : "";
+
+  if (error) {
+    logger.warn(`Pinterest OAuth denied: ${error}`);
+    return res.redirect(`${uiOrigin}/admin?pinterest_oauth=error&message=${encodeURIComponent(error)}`);
+  }
+
+  if (!code || !state) {
+    return res.redirect(`${uiOrigin}/admin?pinterest_oauth=error&message=${encodeURIComponent("Missing code or state")}`);
+  }
+
+  // Validate CSRF state
+  if (!pinterestOAuthStates.has(state)) {
+    logger.warn("Pinterest OAuth state mismatch — possible CSRF");
+    return res.redirect(`${uiOrigin}/admin?pinterest_oauth=error&message=${encodeURIComponent("Invalid state parameter")}`);
+  }
+  pinterestOAuthStates.delete(state);
+
+  const result = await exchangePinterestCode(code);
+  if (!result.ok) {
+    logger.error(`Pinterest OAuth token exchange failed: ${result.error}`);
+    return res.redirect(`${uiOrigin}/admin?pinterest_oauth=error&message=${encodeURIComponent(result.error ?? "Token exchange failed")}`);
+  }
+
+  logger.info("Pinterest OAuth flow completed successfully");
+  return res.redirect(`${uiOrigin}/admin?pinterest_oauth=success`);
+});
+
+// Pinterest Reports API routes (after callback so it doesn't intercept the OAuth redirect)
+const pinterestRouter = createPinterestRouter();
+app.use("/api/pinterest", authMiddleware, pinterestRouter);
 
 // Vault API routes
 const vaultRouter = createVaultRouter({ vaultService });
@@ -2016,6 +2053,31 @@ if (webConfig?.enabled !== false) {
 
 httpServer.listen(port, "0.0.0.0", () => {
   logger.info(`OpenZigs server listening on port ${port} (0.0.0.0)`);
+
+  // Pinterest OAuth: auto-refresh token if expiry is within 7 days
+  const checkPinterestRefresh = async () => {
+    const expiresAt = process.env.PINTEREST_TOKEN_EXPIRES_AT;
+    const refreshToken = process.env.PINTEREST_REFRESH_TOKEN;
+    if (!expiresAt || !refreshToken) return;
+    const expiresMs = new Date(expiresAt).getTime();
+    const sevenDays = 7 * 24 * 60 * 60 * 1000;
+    if (Date.now() > expiresMs - sevenDays) {
+      logger.info("Pinterest token expiring within 7 days — auto-refreshing…");
+      try {
+        const result = await refreshPinterestToken();
+        if (result.ok) {
+          logger.info(`Pinterest token auto-refreshed, new expiry: ${result.expiresAt}`);
+        } else {
+          logger.warn(`Pinterest auto-refresh failed: ${result.error}`);
+        }
+      } catch (err) {
+        logger.warn(`Pinterest auto-refresh error: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+  };
+  void checkPinterestRefresh();
+  // Check daily
+  setInterval(() => void checkPinterestRefresh(), 24 * 60 * 60 * 1000);
 
   // Start the media queue push loop
   if (process.env.QUEUE_ENABLED !== "false") {

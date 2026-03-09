@@ -119,44 +119,78 @@ describe("social-media-tools", () => {
   });
 
   describe("pinterest-boards handler", () => {
-    it("returns error when sidecar not configured", async () => {
-      const tools = createSocialMediaTools({});
-      const handler = tools.find((t) => t.name === "pinterest-boards")!.handler;
-      const result = await handler({ action: "list" });
-      expect(result.isError).toBe(true);
+    it("returns error when no token configured", async () => {
+      const origToken = process.env.PINTEREST_ACCESS_TOKEN;
+      delete process.env.PINTEREST_ACCESS_TOKEN;
+      try {
+        const tools = createSocialMediaTools({});
+        const handler = tools.find((t) => t.name === "pinterest-boards")!.handler;
+        const result = await handler({ action: "list" });
+        expect(result.isError).toBe(true);
+        expect(result.text).toContain("PINTEREST_ACCESS_TOKEN");
+      } finally {
+        if (origToken !== undefined) process.env.PINTEREST_ACCESS_TOKEN = origToken;
+      }
     });
 
-    it("returns board data on success", async () => {
+    it("calls Pinterest API v5 directly when token exists", async () => {
+      const origToken = process.env.PINTEREST_ACCESS_TOKEN;
+      process.env.PINTEREST_ACCESS_TOKEN = "test-token";
       global.fetch = vi.fn().mockResolvedValue({
         ok: true,
-        json: () => Promise.resolve({ result: JSON.stringify([{ id: "1", name: "Board" }]) }),
+        text: () => Promise.resolve(JSON.stringify({ items: [] })),
       });
-
-      const tools = createSocialMediaTools({ pinterestSidecarUrl: "http://localhost:5004" });
-      const handler = tools.find((t) => t.name === "pinterest-boards")!.handler;
-      const result = await handler({ action: "list" });
-      expect(result.isError).toBeUndefined();
+      try {
+        const tools = createSocialMediaTools({});
+        const handler = tools.find((t) => t.name === "pinterest-boards")!.handler;
+        const result = await handler({ action: "list" });
+        expect(result.isError).toBeUndefined();
+        expect(global.fetch).toHaveBeenCalledWith(
+          expect.stringContaining("api.pinterest.com/v5/boards"),
+          expect.objectContaining({ method: "GET" }),
+        );
+      } finally {
+        if (origToken !== undefined) process.env.PINTEREST_ACCESS_TOKEN = origToken;
+        else delete process.env.PINTEREST_ACCESS_TOKEN;
+      }
     });
   });
 
   describe("pinterest-pins handler", () => {
-    it("returns error when sidecar not configured", async () => {
-      const tools = createSocialMediaTools({});
-      const handler = tools.find((t) => t.name === "pinterest-pins")!.handler;
-      const result = await handler({ action: "list" });
-      expect(result.isError).toBe(true);
+    it("returns error when no token configured", async () => {
+      const origToken = process.env.PINTEREST_ACCESS_TOKEN;
+      delete process.env.PINTEREST_ACCESS_TOKEN;
+      try {
+        const tools = createSocialMediaTools({});
+        const handler = tools.find((t) => t.name === "pinterest-pins")!.handler;
+        const result = await handler({ action: "list", boardId: "123" });
+        expect(result.isError).toBe(true);
+        expect(result.text).toContain("PINTEREST_ACCESS_TOKEN");
+      } finally {
+        if (origToken !== undefined) process.env.PINTEREST_ACCESS_TOKEN = origToken;
+      }
     });
 
-    it("returns pin data on success", async () => {
+    it("calls Pinterest API v5 directly when token exists", async () => {
+      const origToken = process.env.PINTEREST_ACCESS_TOKEN;
+      process.env.PINTEREST_ACCESS_TOKEN = "test-token";
       global.fetch = vi.fn().mockResolvedValue({
         ok: true,
-        json: () => Promise.resolve({ result: JSON.stringify([{ id: "1", title: "Pin" }]) }),
+        text: () => Promise.resolve(JSON.stringify({ items: [] })),
       });
-
-      const tools = createSocialMediaTools({ pinterestSidecarUrl: "http://localhost:5004" });
-      const handler = tools.find((t) => t.name === "pinterest-pins")!.handler;
-      const result = await handler({ action: "list" });
-      expect(result.isError).toBeUndefined();
+      try {
+        const tools = createSocialMediaTools({});
+        const handler = tools.find((t) => t.name === "pinterest-pins")!.handler;
+        const result = await handler({ action: "list", boardId: "123" });
+        expect(result.isError).toBeUndefined();
+        expect(global.fetch).toHaveBeenCalledWith(
+          expect.stringContaining("api.pinterest.com/v5/boards/123/pins"),
+          expect.objectContaining({ method: "GET" }),
+        );
+      } finally {
+        if (origToken !== undefined) process.env.PINTEREST_ACCESS_TOKEN = origToken;
+        else delete process.env.PINTEREST_ACCESS_TOKEN;
+      }
     });
   });
 });

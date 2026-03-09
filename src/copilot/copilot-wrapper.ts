@@ -778,7 +778,7 @@ export class CopilotWrapperService extends EventEmitter implements CopilotWrappe
           }
           const result = await tool.handler(args as Record<string, unknown>);
           if (result.isError) {
-            throw new Error(result.text);
+            return `[Tool Error] ${result.text}`;
           }
           return result.text;
         }

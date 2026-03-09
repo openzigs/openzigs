@@ -2557,7 +2557,6 @@ This mounts the source directory for live-reload inside the container.
 ### Persistence
 
 - **Session data and auth tokens** are stored in `~/.openzigs/` on the host (mounted as a Docker volume).
-- **Pinterest OAuth tokens** are persisted in the `pinterest-tokens` Docker volume.
 - **SQLite database** (prompts, jobs) is stored inside the agent container at the configured path. Data survives container restarts via the `~/.openzigs/` mount.
 
 ---
@@ -4083,7 +4082,6 @@ All configuration lives in `config/default.json`. Environment variables are inte
 | `MCP_LINKEDIN_URL` | `http://linkedin-mcp-server:5101` | LinkedIn MCP sidecar URL. |
 | `MCP_TWITTER_URL` | `http://twitter-mcp-server:5102` | Twitter/X MCP sidecar URL. |
 | `MCP_FACEBOOK_URL` | `http://facebook-mcp-server:5103` | Facebook MCP sidecar URL. |
-| `MCP_PINTEREST_URL` | `http://pinterest-mcp-server:5104` | Pinterest MCP sidecar URL. |
 | `MCP_WORD_URL` | `http://word-mcp-server:5201` | Office Word MCP sidecar URL. |
 | `MCP_MARKITDOWN_URL` | `http://markitdown-mcp-server:5301` | MarkItDown file converter URL. |
 | `MCP_GMAIL_URL` | `http://gmail-mcp-server:5302` | Gmail MCP sidecar URL. |
@@ -5704,11 +5702,57 @@ The agent will automatically set `notify_via_telegram: true` on the job (see the
 
 The Pinterest SEO Engine provides tools for trend discovery, keyword research, account analytics, and pin-level SEO analysis — including extraction of Pinterest's hidden annotation keywords that drive algorithmic distribution.
 
+### Getting Your Pinterest API Credentials
+
+Because OpenZigs is self-hosted, **each user must register their own Pinterest developer app** and generate their own access token. There is no shared OAuth flow — the token in your `.env` authenticates as your personal Pinterest account.
+
+#### Step 1 — Create a Pinterest App
+
+1. Go to [developers.pinterest.com/apps](https://developers.pinterest.com/apps) and sign in
+2. Click **Create app** → give it a name (e.g. "OpenZigs") and set the app type to **Web**
+3. Your app starts in **Trial access** mode, which is enough for initial setup
+
+#### Step 2 — Generate an Access Token (Trial)
+
+1. Inside your app, click **Generate token**
+2. On the scopes page, enable **all available scopes** (read + write for all entities):
+   - `ads:read` / `ads:write`
+   - `billing:read` / `billing:write`
+   - `biz_access:read` / `biz_access:write`
+   - `boards:read` / `boards:write` / `boards:read_secret` / `boards:write_secret`
+   - `catalogs:read` / `catalogs:write`
+   - `pins:read` / `pins:write` / `pins:read_secret` / `pins:write_secret`
+   - `user_accounts:read` / `user_accounts:write`
+3. Copy the generated `pina_...` token into your `.env`:
+   ```
+   PINTEREST_ACCESS_TOKEN=pina_YOUR_TOKEN_HERE
+   ```
+4. Trial tokens expire after **24 hours** — regenerate as needed until you upgrade to Standard access
+
+#### Step 3 — Apply for Standard (Extended) Access
+
+Trial access rate-limits most endpoints. To remove these limits and get persistent tokens:
+
+1. In your app dashboard, click **Upgrade access**
+2. Fill in the form:
+   - **Video demo**: Record a short video showing: OpenZigs authenticating with your Pinterest token, running the Pinterest tools in chat, and rendering analytics in the dashboard. Use `.mp4`, under 2 GB.
+   - **App name**: Your app name (e.g. "OpenZigs")
+   - **Company name**: Your name or company
+   - **Company website**: Your instance URL or personal site
+   - **Privacy policy**: Link to your privacy policy (required — add one if self-hosting)
+   - **App purpose**: "Tool for internal use, Automation"
+   - **Use cases**: Check **Pin creation & scheduling** and **Reporting**
+3. Submit and wait for Pinterest review (typically a few business days)
+
+Once approved, your app gets Standard tier access with higher rate limits and non-expiring tokens.
+
+> **Note:** Pinterest's API access tiers (Trial → Standard → Advanced) are tied to your developer app registration, not to OpenZigs itself. Every OpenZigs user must complete this process for their own Pinterest account.
+
 ### Environment Variables
 
 | Variable | Required | Description |
 |---|---|---|
-| `PINTEREST_ACCESS_TOKEN` | Yes | Pinterest API v5 bearer token |
+| `PINTEREST_ACCESS_TOKEN` | Yes | Pinterest API v5 bearer token (`pina_...`) |
 | `PINTEREST_AD_ACCOUNT_ID` | For keyword metrics | Pinterest ad account ID for keyword volume data |
 
 ### MCP Tools
@@ -5719,6 +5763,8 @@ The Pinterest SEO Engine provides tools for trend discovery, keyword research, a
 | `pinterest-keyword-metrics` | Get search volume, competition level, and bid ranges for specific keywords |
 | `pinterest-analytics` | Account-level metrics (impressions, saves, clicks) or top-performing pins over a date range |
 | `pinterest-seo-analyze` | Analyze individual pins or batches: extracts annotation keywords, calculates a Pin Score (0–100), and generates SEO recommendations |
+| `pinterest-boards` | List all boards on your Pinterest account (via API v5 direct) |
+| `pinterest-pins` | List pins on a specific board or all account pins (via API v5 direct) |
 
 ### Pin Score
 
@@ -5743,10 +5789,32 @@ The **Pinterest Marketer** skill (`📌`) orchestrates multi-step Pinterest work
 3. **SEO Audit** — Analyze existing pins → identify optimization gaps → generate improvement recommendations
 4. **Competitor Analysis** — Analyze competitor pins → extract their annotation keywords → find content gaps
 
-Example chat:
+Example chats:
 ```
-Use the pinterest-marketer skill to run a trend campaign for "home office decor" in the US market.
+[Using Pinterest Marketer skill] Use the pinterest-trends tool to find trending topics related to home decor for the US market. Show me the full results.
 ```
+
+```
+[Using Pinterest Marketer skill] Use the pinterest-keyword-metrics tool to get search volume data for these keywords: "home office decor", "minimalist bedroom", "boho living room". Country: US.
+```
+
+```
+[Using Pinterest Marketer skill] Use the pinterest-analytics tool to get account analytics for the last 30 days. Show impressions, engagements, and top pin performance.
+```
+
+```
+[Using Pinterest Marketer skill] Use the pinterest-seo-analyze tool to analyze this pin for SEO: https://www.pinterest.com/pin/1106478202218332610/ — score its title, description, and hashtags.
+```
+
+```
+[Using Pinterest Marketer skill] Run Workflow 2: Blog-to-Pin Repurposing. Extract content from this blog post: https://sawsonskates.com/easy-diy-bedside-table/ — then find matching Pinterest trends and keywords. Generate 3 pin title/description variants optimized for Pinterest SEO.
+```
+
+```
+[Using Pinterest Marketer skill] Generate a Pinterest pin image using submit-media-job. Create a 1000x1500 pin image with this prompt: "Minimalist home office workspace with white desk, indoor plant, and natural lighting — Pinterest aesthetic, overhead shot". Use txt2img type.
+```
+
+> **Note**: Reports are automatically saved to `~/.openzigs/pinterest-reports/` as Markdown files with timestamps.
 
 ### Admin Panel
 

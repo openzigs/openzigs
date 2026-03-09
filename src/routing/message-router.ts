@@ -205,6 +205,11 @@ export class MessageRouter {
       ) {
         resolvedAllowedTools = await this.resolveSkillTools(message.content);
       }
+      // Also detect #tool-name prefix (tool auto-complete from UI) and resolve
+      // the owning skill's tools so the tool makes it past the budget cap.
+      if (!resolvedAllowedTools) {
+        resolvedAllowedTools = await this.resolveToolPrefixSkill(message.content);
+      }
       const availableTools = this.resolveAvailableTools(resolvedAllowedTools);
 
       // Build auto-approve list: start with the standard interactive chat list,
@@ -319,6 +324,33 @@ export class MessageRouter {
 
     if (!skill || skill.allowedTools.length === 0) return undefined;
     return skill.allowedTools;
+  }
+
+  /**
+   * Detect a #tool-name prefix in the message and resolve the owning skill's
+   * allowed-tools. This ensures that when a user explicitly selects a tool via
+   * the UI auto-complete (#tool-name), the tool is included in the session even
+   * if it would normally be dropped by the tool budget cap.
+   */
+  private async resolveToolPrefixSkill(content: string): Promise<string[] | undefined> {
+    const match = content.match(/^#([a-z0-9-]+)\b/i);
+    if (!match) return undefined;
+
+    const toolName = match[1].toLowerCase();
+    const skillDirs = this.copilot.getSkillDirectories?.() ?? [];
+    if (skillDirs.length === 0) return [toolName];
+
+    const skills = await loadSkillMetadata(skillDirs);
+    const owningSkill = skills.find((s) =>
+      s.allowedTools.some((t) => t.toLowerCase() === toolName),
+    );
+
+    if (owningSkill && owningSkill.allowedTools.length > 0) {
+      return owningSkill.allowedTools;
+    }
+
+    // Tool not part of any skill — include it alone so it survives the budget cap.
+    return [toolName];
   }
 
   private async getOrCreateSessionId(message: IncomingMessage): Promise<string> {

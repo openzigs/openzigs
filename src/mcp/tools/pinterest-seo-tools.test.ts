@@ -8,6 +8,12 @@ import {
 } from "./pinterest-seo-tools.js";
 import type { ToolDefinition } from "../tool-registry.js";
 
+vi.mock("node:fs", () => ({
+  default: { mkdirSync: vi.fn(), writeFileSync: vi.fn() },
+  mkdirSync: vi.fn(),
+  writeFileSync: vi.fn(),
+}));
+
 describe("Pinterest SEO Tools", () => {
   let tools: ToolDefinition[];
   let toolMap: Map<string, ToolDefinition>;
@@ -98,9 +104,9 @@ describe("Pinterest SEO Tools", () => {
 
       const tool = toolMap.get("pinterest-trends")!;
       const result = await tool.handler({});
-      const parsed = JSON.parse(result.text);
-      expect(parsed.trends).toHaveLength(1);
-      expect(parsed.trends[0].keyword).toBe("summer nails");
+      expect(result.text).toContain("# Pinterest Trends Report");
+      expect(result.text).toContain("summer nails");
+      expect(result.text).toContain("Report saved to");
     });
 
     it("returns error when PINTEREST_ACCESS_TOKEN missing", async () => {
@@ -193,9 +199,8 @@ describe("Pinterest SEO Tools", () => {
       await tool.handler({ keywords: ["summer", "nails"], country: "US" });
 
       const calledUrl = fetchMock.mock.calls[0][0] as string;
-      expect(calledUrl).toContain("keyword=summer");
-      expect(calledUrl).toContain("keyword=nails");
-      expect(calledUrl).toContain("country=US");
+      expect(calledUrl).toContain("keywords=summer%2Cnails");
+      expect(calledUrl).toContain("country_code=US");
     });
 
     it("includes ad account ID in URL path", async () => {
@@ -385,11 +390,10 @@ describe("Pinterest SEO Tools", () => {
         include_annotations: false,
       });
       expect(result.isError).toBeUndefined();
-      const parsed = JSON.parse(result.text);
-      expect(parsed.pin_id).toBe("123456789");
-      expect(parsed.title).toBe("Test Pin");
-      expect(parsed.api_data_available).toBe(true);
-      expect(parsed.pin_score).toBeGreaterThan(0);
+      expect(result.text).toContain("# Pinterest SEO Analysis Report");
+      expect(result.text).toContain("123456789");
+      expect(result.text).toContain("Test Pin");
+      expect(result.text).toContain("Report saved to");
     });
 
     it("analyzes a pin by URL", async () => {
@@ -413,8 +417,7 @@ describe("Pinterest SEO Tools", () => {
         url: "https://www.pinterest.com/pin/987654321/",
         include_annotations: false,
       });
-      const parsed = JSON.parse(result.text);
-      expect(parsed.pin_id).toBe("987654321");
+      expect(result.text).toContain("987654321");
     });
 
     it("returns error for invalid URL format", async () => {
@@ -449,11 +452,11 @@ describe("Pinterest SEO Tools", () => {
         pin_ids: ["111", "222", "333"],
         include_annotations: false,
       });
-      const parsed = JSON.parse(result.text);
-      expect(Array.isArray(parsed)).toBe(true);
-      expect(parsed).toHaveLength(3);
-      expect(parsed[0].pin_id).toBe("111");
-      expect(parsed[2].pin_id).toBe("333");
+      expect(result.text).toContain("# Pinterest SEO Analysis Report");
+      expect(result.text).toContain("111");
+      expect(result.text).toContain("222");
+      expect(result.text).toContain("333");
+      expect(result.text).toContain("**Pins analyzed:** 3");
     });
 
     it("works without token (API-only fields are null)", async () => {
@@ -472,9 +475,8 @@ describe("Pinterest SEO Tools", () => {
         pin_id: "123",
         include_annotations: false,
       });
-      const parsed = JSON.parse(result.text);
-      expect(parsed.api_data_available).toBe(false);
-      expect(parsed.pin_score).toBe(0);
+      expect(result.text).toContain("**Data Source** | None");
+      expect(result.text).toContain("**Pin Score** | **0/100**");
     });
   });
 

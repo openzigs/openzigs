@@ -2,6 +2,7 @@ import { Router } from "express";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { randomUUID } from "node:crypto";
 import multer from "multer";
 import { z } from "zod";
 import { loadConfig, customAgentSchema, mcpServerConfigSchema, nativeMcpServersSchema } from "../config/index.js";
@@ -37,6 +38,131 @@ type EnvEntry = {
   name: string;
   configured: boolean;
 };
+
+// ── Pinterest OAuth state ──────────────────────────────────────────────────
+/** CSRF state tokens for pending Pinterest OAuth flows (short-lived, single-user) */
+export const pinterestOAuthStates = new Map<string, number>();
+
+/** Refresh the Pinterest access token using the stored refresh token. */
+export async function refreshPinterestToken(): Promise<{ ok: boolean; expiresAt?: string; error?: string }> {
+  const appId = (process.env.PINTEREST_APP_ID ?? "").trim();
+  const appSecret = (process.env.PINTEREST_APP_SECRET ?? "").trim();
+  const refreshToken = (process.env.PINTEREST_REFRESH_TOKEN ?? "").trim();
+
+  if (!appId || !appSecret || !refreshToken) {
+    return { ok: false, error: "Missing PINTEREST_APP_ID, PINTEREST_APP_SECRET, or PINTEREST_REFRESH_TOKEN" };
+  }
+
+  const basic = Buffer.from(`${appId}:${appSecret}`).toString("base64");
+  const tokenRes = await fetch("https://api.pinterest.com/v5/oauth/token", {
+    method: "POST",
+    headers: {
+      Authorization: `Basic ${basic}`,
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
+    body: new URLSearchParams({
+      grant_type: "refresh_token",
+      refresh_token: refreshToken,
+    }).toString(),
+  });
+
+  if (!tokenRes.ok) {
+    const errText = await tokenRes.text();
+    return { ok: false, error: `Pinterest token refresh failed (${tokenRes.status}): ${errText}` };
+  }
+
+  const tokenData = (await tokenRes.json()) as {
+    access_token: string;
+    refresh_token?: string;
+    expires_in: number;
+    refresh_token_expires_in?: number;
+  };
+
+  const expiresAt = new Date(Date.now() + tokenData.expires_in * 1000).toISOString();
+  const envPath = defaultEnvPath();
+  const updates: Record<string, string> = {
+    PINTEREST_ACCESS_TOKEN: tokenData.access_token,
+    PINTEREST_TOKEN_EXPIRES_AT: expiresAt,
+  };
+  if (tokenData.refresh_token) {
+    updates.PINTEREST_REFRESH_TOKEN = tokenData.refresh_token;
+    process.env.PINTEREST_REFRESH_TOKEN = tokenData.refresh_token;
+  }
+  await upsertEnvFile(envPath, updates);
+  process.env.PINTEREST_ACCESS_TOKEN = tokenData.access_token;
+  process.env.PINTEREST_TOKEN_EXPIRES_AT = expiresAt;
+
+  logger.info(`Pinterest access token refreshed, expires at ${expiresAt}`);
+  return { ok: true, expiresAt };
+}
+
+/** Exchange a Pinterest authorization code for access + refresh tokens. */
+export async function exchangePinterestCode(code: string): Promise<{
+  ok: boolean;
+  accessToken?: string;
+  refreshToken?: string;
+  expiresAt?: string;
+  scope?: string;
+  error?: string;
+}> {
+  const appId = (process.env.PINTEREST_APP_ID ?? "").trim();
+  const appSecret = (process.env.PINTEREST_APP_SECRET ?? "").trim();
+
+  if (!appId || !appSecret) {
+    return { ok: false, error: "PINTEREST_APP_ID and PINTEREST_APP_SECRET must be configured" };
+  }
+
+  const backendPort = Number(process.env.PORT ?? 3000);
+  const redirectUri = `http://localhost:${backendPort}/api/pinterest/oauth/callback`;
+  const basic = Buffer.from(`${appId}:${appSecret}`).toString("base64");
+
+  const tokenRes = await fetch("https://api.pinterest.com/v5/oauth/token", {
+    method: "POST",
+    headers: {
+      Authorization: `Basic ${basic}`,
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
+    body: new URLSearchParams({
+      grant_type: "authorization_code",
+      code,
+      redirect_uri: redirectUri,
+      continuous_refresh: "true",
+    }).toString(),
+  });
+
+  if (!tokenRes.ok) {
+    const errText = await tokenRes.text();
+    return { ok: false, error: `Pinterest token exchange failed (${tokenRes.status}): ${errText}` };
+  }
+
+  const tokenData = (await tokenRes.json()) as {
+    access_token: string;
+    refresh_token: string;
+    expires_in: number;
+    refresh_token_expires_in: number;
+    scope: string;
+  };
+
+  const expiresAt = new Date(Date.now() + tokenData.expires_in * 1000).toISOString();
+  const envPath = defaultEnvPath();
+  await upsertEnvFile(envPath, {
+    PINTEREST_ACCESS_TOKEN: tokenData.access_token,
+    PINTEREST_REFRESH_TOKEN: tokenData.refresh_token,
+    PINTEREST_TOKEN_EXPIRES_AT: expiresAt,
+  });
+  process.env.PINTEREST_ACCESS_TOKEN = tokenData.access_token;
+  process.env.PINTEREST_REFRESH_TOKEN = tokenData.refresh_token;
+  process.env.PINTEREST_TOKEN_EXPIRES_AT = expiresAt;
+
+  logger.info(`Pinterest OAuth completed — token expires at ${expiresAt}, scopes: ${tokenData.scope}`);
+  return {
+    ok: true,
+    accessToken: tokenData.access_token,
+    refreshToken: tokenData.refresh_token,
+    expiresAt,
+    scope: tokenData.scope,
+  };
+}
 
 const ENV_CHECKS = [
   "BRAVE_API_KEY",
@@ -3216,6 +3342,151 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
   });
 
   // ── Pinterest SEO Routes ─────────────────────────────────────────────────
+
+  /** GET /api/admin/pinterest/credentials — return masked Pinterest credentials */
+  router.get("/pinterest/credentials", (_req, res) => {
+    const token = (process.env.PINTEREST_ACCESS_TOKEN ?? "").trim();
+    const adAccountId = (process.env.PINTEREST_AD_ACCOUNT_ID ?? "").trim();
+    const refreshToken = (process.env.PINTEREST_REFRESH_TOKEN ?? "").trim();
+    const expiresAt = (process.env.PINTEREST_TOKEN_EXPIRES_AT ?? "").trim();
+    const appId = (process.env.PINTEREST_APP_ID ?? "").trim();
+    const appSecret = (process.env.PINTEREST_APP_SECRET ?? "").trim();
+    res.json({
+      accessToken: token ? `${token.slice(0, 8)}…${token.slice(-4)}` : "",
+      adAccountId,
+      configured: !!token,
+      hasRefreshToken: !!refreshToken,
+      expiresAt: expiresAt || null,
+      oauthConfigured: !!(appId && appSecret),
+    });
+  });
+
+  /** POST /api/admin/pinterest/credentials — save Pinterest credentials to .env */
+  router.post("/pinterest/credentials", async (req, res) => {
+    const body = req.body as Record<string, unknown>;
+    const accessToken = typeof body.accessToken === "string" ? body.accessToken.trim() : "";
+    const adAccountId = typeof body.adAccountId === "string" ? body.adAccountId.trim() : "";
+
+    if (!accessToken) {
+      return res.status(400).json({ error: "accessToken is required" });
+    }
+
+    try {
+      const envPath = defaultEnvPath();
+      const updates: Record<string, string> = { PINTEREST_ACCESS_TOKEN: accessToken };
+      if (adAccountId) {
+        updates.PINTEREST_AD_ACCOUNT_ID = adAccountId;
+      }
+      await upsertEnvFile(envPath, updates);
+
+      // Update process.env immediately so tools work without restart
+      process.env.PINTEREST_ACCESS_TOKEN = accessToken;
+      if (adAccountId) {
+        process.env.PINTEREST_AD_ACCOUNT_ID = adAccountId;
+      }
+
+      logger.info("Updated Pinterest credentials via admin UI");
+      return res.json({ ok: true });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return res.status(500).json({ error: message });
+    }
+  });
+
+  /** POST /api/admin/pinterest/app-credentials — save Pinterest App ID + Secret for OAuth */
+  router.post("/pinterest/app-credentials", async (req, res) => {
+    const body = req.body as Record<string, unknown>;
+    const appId = typeof body.appId === "string" ? body.appId.trim() : "";
+    const appSecret = typeof body.appSecret === "string" ? body.appSecret.trim() : "";
+
+    if (!appId || !appSecret) {
+      return res.status(400).json({ error: "appId and appSecret are required" });
+    }
+
+    try {
+      const envPath = defaultEnvPath();
+      await upsertEnvFile(envPath, { PINTEREST_APP_ID: appId, PINTEREST_APP_SECRET: appSecret });
+      process.env.PINTEREST_APP_ID = appId;
+      process.env.PINTEREST_APP_SECRET = appSecret;
+      logger.info("Updated Pinterest OAuth app credentials via admin UI");
+      return res.json({ ok: true });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return res.status(500).json({ error: message });
+    }
+  });
+
+  /** GET /api/admin/pinterest/oauth/authorize — generate Pinterest OAuth URL */
+  router.get("/pinterest/oauth/authorize", (_req, res) => {
+    const appId = (process.env.PINTEREST_APP_ID ?? "").trim();
+    if (!appId) {
+      return res.status(400).json({ error: "PINTEREST_APP_ID not configured. Set your App ID first." });
+    }
+
+    const backendPort = Number(process.env.PORT ?? 3000);
+    const redirectUri = `http://localhost:${backendPort}/api/pinterest/oauth/callback`;
+
+    // CSRF state token
+    const state = randomUUID();
+    // Store in module-level map (short-lived, single-user self-hosted app)
+    pinterestOAuthStates.set(state, Date.now());
+    // Clean stale states older than 10 minutes
+    for (const [k, ts] of pinterestOAuthStates) {
+      if (Date.now() - ts > 600_000) pinterestOAuthStates.delete(k);
+    }
+
+    const scopes = [
+      "ads:read", "ads:write",
+      "boards:read", "boards:write", "boards:read_secret", "boards:write_secret",
+      "catalogs:read", "catalogs:write",
+      "pins:read", "pins:write", "pins:read_secret", "pins:write_secret",
+      "user_accounts:read", "user_accounts:write",
+      "billing:read", "billing:write",
+      "biz_access:read", "biz_access:write",
+    ];
+
+    const params = new URLSearchParams({
+      client_id: appId,
+      redirect_uri: redirectUri,
+      response_type: "code",
+      scope: scopes.join(","),
+      state,
+    });
+
+    const authUrl = `https://www.pinterest.com/oauth/?${params.toString()}`;
+    return res.json({ authUrl, state });
+  });
+
+  /** POST /api/admin/pinterest/oauth/refresh — manually trigger token refresh */
+  router.post("/pinterest/oauth/refresh", async (_req, res) => {
+    try {
+      const result = await refreshPinterestToken();
+      return res.json(result);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return res.status(500).json({ error: message });
+    }
+  });
+
+  /** POST /api/admin/pinterest/oauth/disconnect — clear all Pinterest OAuth tokens */
+  router.post("/pinterest/oauth/disconnect", async (_req, res) => {
+    try {
+      const envPath = defaultEnvPath();
+      await upsertEnvFile(envPath, {
+        PINTEREST_ACCESS_TOKEN: "",
+        PINTEREST_REFRESH_TOKEN: "",
+        PINTEREST_TOKEN_EXPIRES_AT: "",
+      });
+      delete process.env.PINTEREST_ACCESS_TOKEN;
+      delete process.env.PINTEREST_REFRESH_TOKEN;
+      delete process.env.PINTEREST_TOKEN_EXPIRES_AT;
+      logger.info("Pinterest OAuth disconnected via admin UI");
+      return res.json({ ok: true });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return res.status(500).json({ error: message });
+    }
+  });
 
   router.get("/pinterest/status", async (_req, res) => {
     const token = process.env.PINTEREST_ACCESS_TOKEN;

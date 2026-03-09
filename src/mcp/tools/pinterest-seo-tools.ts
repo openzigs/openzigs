@@ -1,4 +1,7 @@
 import * as z from "zod";
+import fs from "node:fs";
+import path from "node:path";
+import os from "node:os";
 import type { ToolDefinition } from "../tool-registry.js";
 
 // ── Shared constants ────────────────────────────────────────────────────────
@@ -140,8 +143,261 @@ async function pinterestApiFetch(
     return { text: `Pinterest API error (${res.status}): ${errorBody}`, isError: true };
   }
 
-  const data = await res.json();
-  return { text: JSON.stringify(data, null, 2) };
+  const rawBody = await res.text();
+  if (!rawBody.trim()) {
+    return { text: `Pinterest API returned empty response (${res.status})`, isError: true };
+  }
+  try {
+    const data = JSON.parse(rawBody) as unknown;
+    return { text: JSON.stringify(data, null, 2) };
+  } catch {
+    return { text: `Pinterest API returned non-JSON response (${res.status}): ${rawBody.slice(0, 500)}`, isError: true };
+  }
+}
+
+// ── Report saving ───────────────────────────────────────────────────────────
+
+const REPORTS_DIR = path.join(os.homedir(), ".openzigs", "pinterest-reports");
+
+function ensureReportsDir(): void {
+  fs.mkdirSync(REPORTS_DIR, { recursive: true });
+}
+
+function saveReport(filename: string, content: string): string {
+  ensureReportsDir();
+  const filePath = path.join(REPORTS_DIR, filename);
+  fs.writeFileSync(filePath, content, "utf-8");
+  return filePath;
+}
+
+/** Save structured JSON alongside markdown for UI consumption. */
+function saveReportJson(basename: string, data: unknown): void {
+  ensureReportsDir();
+  const filePath = path.join(REPORTS_DIR, `${basename}.json`);
+  fs.writeFileSync(filePath, JSON.stringify(data, null, 2), "utf-8");
+}
+
+function timestamp(): string {
+  return new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+}
+
+// ── Markdown formatters ─────────────────────────────────────────────────────
+
+function formatPct(val: unknown): string {
+  if (val == null || val === "—") return "—";
+  const n = Number(val);
+  if (isNaN(n)) return String(val);
+  return `${n >= 0 ? "+" : ""}${(n * 100).toFixed(1)}%`;
+}
+
+function formatTrendsMarkdown(data: Record<string, unknown>): string {
+  const trends = (data as { trends?: Array<Record<string, unknown>> }).trends ?? [];
+
+  // Build structured data for UI consumption
+  const structured = trends.map((t, i) => {
+    const timeSeries = t.time_series as Record<string, unknown> | undefined;
+    return {
+      rank: i + 1,
+      keyword: String(t.keyword ?? t.query ?? "—"),
+      wow: timeSeries?.weekly_change ?? t.wow_change ?? null,
+      mom: timeSeries?.monthly_change ?? t.mom_change ?? null,
+      yoy: timeSeries?.yearly_change ?? t.yoy_change ?? null,
+    };
+  });
+
+  const lines: string[] = [
+    `# Pinterest Trends Report`,
+    ``,
+    `**Generated:** ${new Date().toISOString()}`,
+    `**Keywords returned:** ${trends.length}`,
+    ``,
+  ];
+
+  // Top 10 highlights
+  if (structured.length > 0) {
+    const topGrowing = [...structured].filter(t => t.yoy != null).sort((a, b) => Number(b.yoy ?? 0) - Number(a.yoy ?? 0)).slice(0, 5);
+    if (topGrowing.length > 0) {
+      lines.push(`## Top Growing (YoY)`, ``);
+      for (const t of topGrowing) {
+        lines.push(`- **${t.keyword}** — YoY: ${formatPct(t.yoy)}, MoM: ${formatPct(t.mom)}, WoW: ${formatPct(t.wow)}`);
+      }
+      lines.push(``);
+    }
+  }
+
+  lines.push(`## All Trending Keywords`, ``);
+  lines.push(`| # | Keyword | WoW | MoM | YoY |`);
+  lines.push(`|---|---------|-----|-----|-----|`);
+  for (const t of structured) {
+    lines.push(`| ${t.rank} | ${t.keyword} | ${formatPct(t.wow)} | ${formatPct(t.mom)} | ${formatPct(t.yoy)} |`);
+  }
+
+  if (trends.length === 0) {
+    lines.push(``, `_No trending keywords returned._`);
+  }
+
+  lines.push(``, `---`, ``, `<details>`, `<summary>Raw API Response</summary>`, ``, "```json", JSON.stringify(data, null, 2), "```", ``, `</details>`);
+  return lines.join("\n");
+}
+
+function formatKeywordMetricsMarkdown(data: Record<string, unknown>, keywords: string[]): string {
+  const items = (data as { data?: Array<Record<string, unknown>> }).data ?? [];
+  const lines: string[] = [
+    `# Pinterest Keyword Metrics Report`,
+    ``,
+    `**Generated:** ${new Date().toISOString()}`,
+    `**Keywords queried:** ${keywords.join(", ")}`,
+    `**Results returned:** ${items.length}`,
+    ``,
+    `## Keyword Metrics`,
+    ``,
+    `| Keyword | Monthly Searches | Competition |`,
+    `|---------|-----------------|-------------|`,
+  ];
+
+  for (const item of items) {
+    const kw = item.keyword ?? "—";
+    const metrics = item.metrics as Record<string, unknown> | undefined;
+    const searches = metrics?.monthly_search ?? metrics?.search_volume ?? "—";
+    const competition = metrics?.competition ?? "—";
+    lines.push(`| ${kw} | ${searches} | ${competition} |`);
+  }
+
+  if (items.length === 0) {
+    lines.push(``, `_No keyword data returned._`);
+  }
+
+  lines.push(``, `---`, ``, `<details>`, `<summary>Raw API Response</summary>`, ``, "```json", JSON.stringify(data, null, 2), "```", ``, `</details>`);
+  return lines.join("\n");
+}
+
+function formatAnalyticsMarkdown(data: Record<string, unknown>, action: string): string {
+  const lines: string[] = [
+    `# Pinterest Analytics Report`,
+    ``,
+    `**Generated:** ${new Date().toISOString()}`,
+    `**Action:** ${action}`,
+    ``,
+  ];
+
+  if (action === "account_summary") {
+    const allData = data.all as Record<string, unknown> | undefined;
+    const summary = (allData?.summary_metrics ?? data.summary_metrics ?? data) as Record<string, unknown>;
+
+    // Summary totals at the top
+    lines.push(`## Summary Totals`, ``);
+    lines.push(`| Metric | Total |`);
+    lines.push(`|--------|-------|`);
+    for (const [k, v] of Object.entries(summary)) {
+      lines.push(`| ${k.replace(/_/g, " ")} | **${v}** |`);
+    }
+    lines.push(``);
+
+    const dailyMetrics = (allData?.daily_metrics ?? data.daily_metrics) as Array<Record<string, unknown>> | undefined;
+    if (dailyMetrics && Array.isArray(dailyMetrics)) {
+      // Filter to only days with activity
+      const activeDays = dailyMetrics.filter((day) => {
+        const m = day.metrics as Record<string, unknown> | undefined;
+        if (!m) return false;
+        return Object.values(m).some((v) => typeof v === "number" && v > 0);
+      });
+
+      if (activeDays.length > 0) {
+        lines.push(`## Daily Breakdown (days with activity)`, ``);
+        lines.push(`| Date | Impressions | Saves | Pin Clicks | Engagement |`);
+        lines.push(`|------|------------|-------|-----------|-----------|`);
+        for (const day of activeDays) {
+          const metrics = day.metrics as Record<string, unknown> | undefined;
+          lines.push(`| ${day.date ?? "—"} | ${metrics?.IMPRESSION ?? 0} | ${metrics?.SAVE ?? 0} | ${metrics?.PIN_CLICK ?? 0} | ${metrics?.ENGAGEMENT ?? 0} |`);
+        }
+      } else {
+        lines.push(`_No days with activity in this date range._`);
+      }
+    }
+  } else {
+    lines.push(`## Top Pins`, ``);
+    const pinsData = (data as Record<string, unknown>).pins as Record<string, unknown>[] | undefined;
+    const pins = Array.isArray(data) ? data : pinsData ?? [];
+    if (Array.isArray(pins) && pins.length > 0) {
+      lines.push(`| # | Pin ID | Impressions | Saves | Clicks |`);
+      lines.push(`|---|--------|------------|-------|--------|`);
+      for (let i = 0; i < pins.length; i++) {
+        const pin = pins[i] as Record<string, unknown>;
+        const metrics = pin.metrics as Record<string, unknown> | undefined;
+        const pinId = pin.pin_id ?? pin.id ?? "—";
+        lines.push(`| ${i + 1} | ${pinId} | ${metrics?.IMPRESSION ?? 0} | ${metrics?.SAVE ?? 0} | ${metrics?.PIN_CLICK ?? 0} |`);
+      }
+    } else {
+      lines.push(`_No pins found with metrics in this date range._`);
+    }
+  }
+
+  lines.push(``, `---`, ``, `<details>`, `<summary>Raw API Response</summary>`, ``, "```json", JSON.stringify(data, null, 2), "```", ``, `</details>`);
+  return lines.join("\n");
+}
+
+function formatSeoAnalysisMarkdown(results: PinAnalysis | PinAnalysis[]): string {
+  const items = Array.isArray(results) ? results : [results];
+  const lines: string[] = [
+    `# Pinterest SEO Analysis Report`,
+    ``,
+    `**Generated:** ${new Date().toISOString()}`,
+    `**Pins analyzed:** ${items.length}`,
+    ``,
+  ];
+
+  for (const pin of items) {
+    lines.push(`## Pin: ${pin.pin_id}`);
+    lines.push(``);
+    lines.push(`| Field | Value |`);
+    lines.push(`|-------|-------|`);
+    lines.push(`| **Title** | ${pin.title ?? "—"} |`);
+    lines.push(`| **Description** | ${pin.description?.slice(0, 200) ?? "—"} |`);
+    lines.push(`| **Link** | ${pin.link ?? "—"} |`);
+    lines.push(`| **Media Type** | ${pin.media_type ?? "—"} |`);
+    lines.push(`| **Pin Score** | **${pin.pin_score}/100** ${pin.pin_score >= 70 ? "✅" : pin.pin_score >= 40 ? "⚠️" : "❌"} |`);
+    lines.push(`| **Data Source** | ${pin.api_data_available ? "API" : pin.html_data_available ? "HTML scrape" : "None"} |`);
+
+    if (pin.annotations.length > 0) {
+      lines.push(`| **Annotations** | ${pin.annotations.join(", ")} |`);
+    } else {
+      lines.push(`| **Annotations** | None found |`);
+    }
+    lines.push(``);
+
+    // Pin metrics (90d/lifetime) if available
+    if (pin.pin_metrics) {
+      const metrics90d = pin.pin_metrics["90d"] as Record<string, unknown> | undefined;
+      const lifetime = pin.pin_metrics.lifetime_metrics as Record<string, unknown> | undefined;
+      if (metrics90d || lifetime) {
+        lines.push(`### Performance Metrics`);
+        lines.push(``);
+        lines.push(`| Metric | 90-Day | Lifetime |`);
+        lines.push(`|--------|--------|----------|`);
+        const metricKeys = ["impression", "pin_click", "clickthrough", "save", "reaction", "comment"];
+        for (const k of metricKeys) {
+          const d90 = metrics90d?.[k] ?? "—";
+          const lt = lifetime?.[k] ?? "—";
+          if (d90 !== "—" || lt !== "—") {
+            lines.push(`| ${k.replace(/_/g, " ")} | ${d90} | ${lt} |`);
+          }
+        }
+        lines.push(``);
+      }
+    }
+
+    if (pin.seo_recommendations.length > 0) {
+      lines.push(`### Recommendations`);
+      lines.push(``);
+      for (const rec of pin.seo_recommendations) {
+        lines.push(`- ${rec}`);
+      }
+      lines.push(``);
+    }
+  }
+
+  lines.push(`---`, ``, `<details>`, `<summary>Raw JSON Data</summary>`, ``, "```json", JSON.stringify(items, null, 2), "```", ``, `</details>`);
+  return lines.join("\n");
 }
 
 /**
@@ -418,11 +674,21 @@ export function createPinterestSeoTools(): ToolDefinition[] {
         if (input.limit) params.set("limit", String(input.limit));
         if (input.normalize_against_group) params.set("normalize_against_group", "true");
 
-        return pinterestApiFetch(
+        const result = await pinterestApiFetch(
           `/trends/keywords/${encodeURIComponent(input.region)}/top/${encodeURIComponent(input.trend_type)}`,
           token,
           params,
         );
+
+        if (result.isError) return result;
+
+        const data = JSON.parse(result.text);
+        const md = formatTrendsMarkdown(data);
+        const ts = timestamp();
+        const baseName = `trends-${input.region}-${input.trend_type}-${ts}`;
+        const filePath = saveReport(`${baseName}.md`, md);
+        saveReportJson(baseName, { type: "trends", region: input.region, trend_type: input.trend_type, generated: new Date().toISOString(), data });
+        return { text: `${md}\n\n---\n_Report saved to ${filePath}_` };
       },
     },
 
@@ -464,16 +730,25 @@ export function createPinterestSeoTools(): ToolDefinition[] {
         }
 
         const params = new URLSearchParams();
-        params.set("country", input.country);
-        for (const kw of input.keywords) {
-          params.append("keyword", kw);
-        }
+        params.set("country_code", input.country);
+        params.set("keywords", input.keywords.join(","));
 
-        return pinterestApiFetch(
+        const result = await pinterestApiFetch(
           `/ad_accounts/${encodeURIComponent(adAccountId)}/keywords/metrics`,
           token,
           params,
         );
+
+        if (result.isError) return result;
+
+        const data = JSON.parse(result.text);
+        const md = formatKeywordMetricsMarkdown(data, input.keywords);
+        const slug = input.keywords.slice(0, 3).join("-").replace(/\s+/g, "-").toLowerCase();
+        const ts = timestamp();
+        const baseName = `keyword-metrics-${slug}-${ts}`;
+        const filePath = saveReport(`${baseName}.md`, md);
+        saveReportJson(baseName, { type: "keyword-metrics", keywords: input.keywords, country: input.country, generated: new Date().toISOString(), data });
+        return { text: `${md}\n\n---\n_Report saved to ${filePath}_` };
       },
     },
 
@@ -545,7 +820,16 @@ export function createPinterestSeoTools(): ToolDefinition[] {
           params.set("sort_by", input.sort_by);
         }
 
-        return pinterestApiFetch(endpoint, token, params);
+        return pinterestApiFetch(endpoint, token, params).then((result) => {
+          if (result.isError) return result;
+          const data = JSON.parse(result.text);
+          const md = formatAnalyticsMarkdown(data, input.action);
+          const ts = timestamp();
+          const baseName = `analytics-${input.action}-${ts}`;
+          const filePath = saveReport(`${baseName}.md`, md);
+          saveReportJson(baseName, { type: "analytics", action: input.action, start_date: input.start_date, end_date: input.end_date, generated: new Date().toISOString(), data });
+          return { text: `${md}\n\n---\n_Report saved to ${filePath}_` };
+        });
       },
     },
 
@@ -624,9 +908,13 @@ export function createPinterestSeoTools(): ToolDefinition[] {
           results.push(analysis);
         }
 
-        return {
-          text: JSON.stringify(results.length === 1 ? results[0] : results, null, 2),
-        };
+        const analysisData = results.length === 1 ? results[0] : results;
+        const md = formatSeoAnalysisMarkdown(analysisData);
+        const ts = timestamp();
+        const baseName = `seo-analysis-${pinIds[0]}-${ts}`;
+        const filePath = saveReport(`${baseName}.md`, md);
+        saveReportJson(baseName, { type: "seo-analysis", pin_ids: pinIds, generated: new Date().toISOString(), data: results });
+        return { text: `${md}\n\n---\n_Report saved to ${filePath}_` };
       },
     },
   ];
@@ -645,6 +933,61 @@ interface PinAnalysis {
   annotation_count: number;
   seo_recommendations: string[];
   api_data_available: boolean;
+  html_data_available?: boolean;
+  pin_metrics?: Record<string, unknown> | null;
+}
+
+/**
+ * Extract pin metadata (title, description, link, image) from Pinterest HTML page.
+ * Used as fallback when the API can't return data (e.g., pins you don't own).
+ */
+function extractMetadataFromHtml(html: string): Record<string, unknown> | null {
+  const meta: Record<string, unknown> = {};
+  let found = false;
+
+  // og:title
+  const titleMatch = html.match(/<meta\s+(?:property|name)="og:title"[^>]*?content="([^"]+)"/i);
+  if (titleMatch?.[1]) { meta.title = titleMatch[1]; found = true; }
+
+  // og:description
+  const descMatch = html.match(/<meta\s+(?:property|name)="og:description"[^>]*?content="([^"]+)"/i);
+  if (descMatch?.[1]) { meta.description = descMatch[1]; found = true; }
+
+  // pinterestapp:pinimage (or og:image)
+  const imgMatch = html.match(/<meta\s+(?:property|name)="(?:pinterestapp:pinimage|og:image)"[^>]*?content="([^"]+)"/i);
+  if (imgMatch?.[1]) {
+    meta.media = { media_type: "image", images: { original: { url: imgMatch[1] } } };
+    found = true;
+  }
+
+  // pinterestapp:source (link)
+  const linkMatch = html.match(/<meta\s+(?:property|name)="pinterestapp:source"[^>]*?content="([^"]+)"/i);
+  if (linkMatch?.[1]) { meta.link = linkMatch[1]; found = true; }
+
+  // Also try __PWS_DATA__ for richer data
+  const pwsMatch = html.match(/__PWS_DATA__\s*=\s*({[\s\S]*?});\s*<\/script>/);
+  if (pwsMatch?.[1]) {
+    try {
+      const pws = JSON.parse(pwsMatch[1]);
+      const traverse = (obj: unknown): void => {
+        if (!obj || typeof obj !== "object") return;
+        if (Array.isArray(obj)) { for (const item of obj) traverse(item); return; }
+        const rec = obj as Record<string, unknown>;
+        // Look for pin-level data with title/description
+        if (rec.title && typeof rec.title === "string" && rec.description !== undefined && !meta.title) {
+          meta.title = rec.title;
+          if (rec.description) meta.description = rec.description;
+          if (rec.link) meta.link = rec.link;
+          if (rec.alt_text) meta.alt_text = rec.alt_text;
+          found = true;
+        }
+        for (const val of Object.values(rec)) traverse(val);
+      };
+      traverse(pws);
+    } catch { /* ignore parse errors */ }
+  }
+
+  return found ? meta : null;
 }
 
 async function analyzeSinglePin(
@@ -652,58 +995,70 @@ async function analyzeSinglePin(
   token: string | undefined,
   options: { includeAnnotations: boolean },
 ): Promise<PinAnalysis> {
-  // Phase 1: API data (if token available)
+  // Phase 1: API data (if token available) — includes 90d/lifetime metrics
   let apiData: Record<string, unknown> | null = null;
   if (token) {
     try {
-      const res = await fetch(`${PINTEREST_API_BASE}/pins/${encodeURIComponent(pinId)}`, {
-        headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
-      });
+      const res = await fetch(
+        `${PINTEREST_API_BASE}/pins/${encodeURIComponent(pinId)}?pin_metrics=true`,
+        { headers: { Authorization: `Bearer ${token}`, Accept: "application/json" } },
+      );
       if (res.ok) apiData = (await res.json()) as Record<string, unknown>;
     } catch {
       // API fetch failed — continue with browser-only analysis
     }
   }
 
-  // Phase 2: Browser-based annotation extraction
+  // Phase 2: Browser-based scraping — annotations AND metadata fallback
   let annotations: string[] = [];
+  let htmlMetadata: Record<string, unknown> | null = null;
   if (options.includeAnnotations) {
     try {
       const pinUrl = `https://www.pinterest.com/pin/${encodeURIComponent(pinId)}/`;
       const res = await fetch(pinUrl, {
         headers: {
           "User-Agent":
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-          Accept: "text/html",
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+          Accept: "text/html,application/xhtml+xml",
         },
       });
       if (res.ok) {
         const html = await res.text();
         annotations = extractAnnotationsFromHtml(html);
+        // When API didn't return data, extract metadata from HTML
+        if (!apiData) {
+          htmlMetadata = extractMetadataFromHtml(html);
+        }
       }
     } catch {
       // Browser fetch failed — proceed with API-only analysis
     }
   }
 
+  // Use HTML metadata as fallback when API fails (e.g., analyzing other users' pins)
+  const effectiveData = apiData ?? htmlMetadata;
+
   // Phase 3: Calculate Pin Score
-  const pinScore = calculatePinScore(apiData, annotations);
+  const pinScore = calculatePinScore(effectiveData, annotations);
 
   // Phase 4: SEO recommendations
-  const seoRecommendations = generateSeoRecommendations(apiData, annotations);
+  const seoRecommendations = generateSeoRecommendations(effectiveData, annotations);
 
-  const media = apiData?.media as Record<string, unknown> | undefined;
+  const media = effectiveData?.media as Record<string, unknown> | undefined;
+  const pinMetrics = apiData?.pin_metrics as Record<string, unknown> | undefined;
 
   return {
     pin_id: pinId,
-    title: (apiData?.title as string) ?? null,
-    description: (apiData?.description as string) ?? null,
-    link: (apiData?.link as string) ?? null,
+    title: (effectiveData?.title as string) ?? null,
+    description: (effectiveData?.description as string) ?? null,
+    link: (effectiveData?.link as string) ?? null,
     media_type: (media?.media_type as string) ?? null,
     pin_score: pinScore,
     annotations,
     annotation_count: annotations.length,
     seo_recommendations: seoRecommendations,
     api_data_available: !!apiData,
+    html_data_available: !!htmlMetadata,
+    pin_metrics: pinMetrics ?? null,
   };
 }

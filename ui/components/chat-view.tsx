@@ -270,6 +270,8 @@ export const ChatView = () => {
       resetStuckTimer();
       setThinking(false);
       setActiveTool(null);
+      // Clear any orphaned user input dialog (server-side timeout may have resolved it)
+      setActiveInputRequest(null);
 
       if (!streamRef.current) {
         const id = `stream-${Date.now()}`;
@@ -331,6 +333,14 @@ export const ChatView = () => {
       setActiveInputRequest(data);
     };
 
+    const onUserInputTimeout = (data: { requestId: string }) => {
+      setActiveInputRequest((prev) =>
+        prev?.requestId === data.requestId ? null : prev
+      );
+      setThinking(true);
+      resetStuckTimer();
+    };
+
     const onCompactionStart = () => {
       showToast("Context compaction started — summarizing older messages", "info");
       setSessionStatus((prev) => prev ? { ...prev, compactionActive: true } : prev);
@@ -372,6 +382,7 @@ export const ChatView = () => {
     socket.on("session:status", onSessionStatus);
     socket.on("provider:info", onProviderInfo);
     socket.on("user_input_request", onUserInputRequest);
+    socket.on("user_input_timeout", onUserInputTimeout);
     socket.on("compaction:start", onCompactionStart);
     socket.on("compaction:complete", onCompactionComplete);
 
@@ -404,6 +415,7 @@ export const ChatView = () => {
       socket.off("session:status", onSessionStatus);
       socket.off("provider:info", onProviderInfo);
       socket.off("user_input_request", onUserInputRequest);
+      socket.off("user_input_timeout", onUserInputTimeout);
       socket.off("compaction:start", onCompactionStart);
       socket.off("compaction:complete", onCompactionComplete);
     };

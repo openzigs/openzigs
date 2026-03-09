@@ -27,6 +27,7 @@ const mocks = vi.hoisted(() => ({
   producerProduce: vi.fn(),
   assetManagerInitialize: vi.fn(),
   assetManagerSearch: vi.fn(),
+  dbRun: vi.fn(),
 }));
 
 vi.mock("node:fs/promises", () => ({
@@ -85,6 +86,12 @@ vi.mock("../../video/assets/asset-manager.js", () => ({
     initialize: mocks.assetManagerInitialize,
     search: mocks.assetManagerSearch,
   })),
+}));
+
+vi.mock("../../productivity/database.js", () => ({
+  getDatabase: () => ({
+    prepare: () => ({ run: mocks.dbRun }),
+  }),
 }));
 
 function createMockCopilot() {

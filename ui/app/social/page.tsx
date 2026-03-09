@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { fetchJson } from "@/lib/api";
 import { AskAiPanel, AskAiButton, PAGE_CONTEXTS } from "@/components/ask-ai";
@@ -118,6 +119,18 @@ function DashboardTab() {
           </div>
         )}
       </SectionCard>
+
+      {/* Pinterest Analytics link */}
+      <Link
+        href="/social/pinterest"
+        className="flex items-center justify-between rounded-xl border border-border bg-card p-4 transition hover:border-primary/30 hover:shadow-sm"
+      >
+        <div>
+          <p className="text-sm font-semibold">Pinterest Analytics</p>
+          <p className="text-xs text-muted-foreground">View SEO reports, keyword metrics, trends, and pin analysis.</p>
+        </div>
+        <span className="text-xs text-muted-foreground">&rarr;</span>
+      </Link>
     </div>
   );
 }
