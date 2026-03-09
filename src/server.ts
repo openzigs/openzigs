@@ -74,6 +74,8 @@ import { generateThumbnail } from "./presenter/thumbnail-generator.js";
 import { TeacherAgent } from "./presenter/teacher-agent.js";
 import { QuizGenerator } from "./presenter/quiz-generator.js";
 import { RenderOrchestrator } from "./video/render-orchestrator.js";
+import { TrimWorker } from "./video/trim-worker.js";
+import { AnalyzeWorker } from "./video/analyze-worker.js";
 import { RoomManager } from "./presenter/room-manager.js";
 import { ExpressPeerServer } from "peer";
 import { MediaQueueRepository } from "./queue/media-queue-repository.js";
@@ -81,6 +83,7 @@ import { QueueMaster } from "./queue/queue-master.js";
 import { MediaNotificationService } from "./queue/media-notification-service.js";
 import { createQueueRouter, createQueueCallbackRouter } from "./api/queue.js";
 import { createGalleryRouter } from "./api/gallery.js";
+import { createStudioRouter } from "./api/studio.js";
 import { createCharacterRouter, setCharacterIO, setCharacterChannelManager, resumeStaleTrainingPolls } from "./api/characters.js";
 import { CharacterRepository } from "./characters/character-repository.js";
 
@@ -538,6 +541,19 @@ socialBrain.on("escalated_message", async ({ contact, raw }) => {
   await socialHandoff.forwardToThread(contact, raw.text);
 });
 
+const trimWorker = new TrimWorker();
+const analyzeWorker = new AnalyzeWorker({
+  visionChat: async (opts) => {
+    const prompt = `${opts.systemPrompt}\n\n${opts.userContent.map(c => c.type === "text" ? c.text : "[image]").join("\n")}`;
+    let result = "";
+    for await (const chunk of copilot.chat(prompt)) {
+      result += chunk;
+    }
+    return result;
+  },
+  audioSidecarUrl: process.env.OPENZIGS_AUDIO_SIDECAR_URL ?? "http://localhost:5006",
+});
+
 registerMcpTools(toolRegistry, {
   allowedDirs: allowedDirs.length > 0 ? allowedDirs : [process.cwd(), os.tmpdir(), os.homedir(), "/tmp", "/private/tmp"],
   shellAllowlist: (process.env.OPENZIGS_SHELL_ALLOWLIST ?? "git,find,ls,cat,head,tail,grep,wc,echo,pwd,mkdir,cp,mv,rm,which,date,curl,bash,sh,java,javac,python3,node,pip,brew").split(",").map(s => s.trim()).filter(Boolean),
@@ -570,6 +586,8 @@ registerMcpTools(toolRegistry, {
   channelManager,
   notificationChatId: config.channels?.telegram?.adminUserId || undefined,
   audioSidecarUrl: resolveSidecarUrl("audio", "AUDIO_SIDECAR_URL", 5006),
+  trimWorker,
+  analyzeWorker,
 });
 
 // ── Task Background Worker ──
@@ -1195,6 +1213,10 @@ app.use("/api/queue", authMiddleware, queueRouter);
 const galleryRouter = createGalleryRouter({ copilot, toolRegistry });
 app.use("/api/gallery", authMiddleware, galleryRouter);
 
+// Studio API routes (screen recording upload, video trimming, AI analysis)
+const studioRouter = createStudioRouter({ trimWorker, analyzeWorker, mediaQueueRepo });
+app.use("/api/studio", authMiddleware, studioRouter);
+
 // Character API routes (LoRA character profiles + training)
 const characterRouter = createCharacterRouter({ characterRepo, copilot });
 app.use("/api/characters", authMiddleware, characterRouter);
@@ -1674,6 +1696,16 @@ commentRuleEngine.on("rule_triggered", (data: unknown) => io.emit("social:rule:t
 renderOrchestrator.on("render:progress", (data: unknown) => io.emit("render:progress", data));
 renderOrchestrator.on("render:complete", (data: unknown) => io.emit("render:complete", data));
 renderOrchestrator.on("render:failed", (data: unknown) => io.emit("render:failed", data));
+
+// Wire Studio Workers → Socket.IO event forwarding
+trimWorker.on("trim:queued", (data: unknown) => io.emit("trim:queued", data));
+trimWorker.on("trim:processing", (data: unknown) => io.emit("trim:processing", data));
+trimWorker.on("trim:complete", (data: unknown) => io.emit("trim:complete", data));
+trimWorker.on("trim:failed", (data: unknown) => io.emit("trim:failed", data));
+analyzeWorker.on("analyze:queued", (data: unknown) => io.emit("analyze:queued", data));
+analyzeWorker.on("analyze:progress", (data: unknown) => io.emit("analyze:progress", data));
+analyzeWorker.on("analyze:complete", (data: unknown) => io.emit("analyze:complete", data));
+analyzeWorker.on("analyze:failed", (data: unknown) => io.emit("analyze:failed", data));
 
 // Wire NotificationDispatcher now that we have the Socket.IO server
 // (side-effect: registers event listeners on TaskEngine)

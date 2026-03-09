@@ -236,7 +236,7 @@ The frontend is a **Next.js 14 App Router** application in the `ui/` directory. 
 | `/scheduler` | `scheduler/page.tsx` | Cron job CRUD with action types, prompt linking, model overrides, AI assist, live execution events |
 | `/tasks` | `task-dashboard.tsx` | Background task queue, status filters, cancel, recursive child expansion, real-time updates |
 | `/social` | `social/page.tsx` | Social Brain — unified inbox, CRM, automation rules, AI auto-reply |
-| `/director` | `director/page.tsx` | Director Mode — Video Wizard tab (production pipeline) + Blog to YouTube tab (blog conversion) + My Drafts tab (browse/reopen saved drafts) |
+| `/director` | `director/page.tsx` | Director Mode — Video Wizard tab (production pipeline) + Blog to YouTube tab (blog conversion) + My Drafts tab (browse/reopen saved drafts) + Capture & Trim tab (screen recorder, video trimmer, AI auto-cut) |
 | `/director/studio/[id]` | `director/studio/[id]/page.tsx` | Timeline Studio — @remotion/player preview, multi-track timeline, scene inspector, save/auto-save, render history |
 | `/workbench` | `workbench/page.tsx` | Rich Markdown editor (MDXEditor) with file sidebar, live file system CRUD, Cmd/Ctrl+S save |
 
@@ -316,7 +316,10 @@ ui/
 │           ├── scene-inspector.tsx # Per-scene property editor
 │           ├── studio-toolbar.tsx  # Save + Renders + Render actions with dirty indicator
 │           ├── render-history.tsx  # Render history dropdown with status/progress/download
-│           └── framing-panel.tsx   # 9:16 horizontal crop offset slider
+│           ├── framing-panel.tsx   # 9:16 horizontal crop offset slider
+│           ├── screen-recorder.tsx # In-app screen capture (MediaRecorder + getDisplayMedia)
+│           ├── video-trimmer.tsx   # Visual trim timeline with AI-suggested cuts
+│           └── capture-and-trim-panel.tsx # Composite panel: recorder + gallery + trimmer
 └── lib/
     ├── api.ts              # Shared fetchJson utility + API_BASE
     ├── types.ts            # All shared TypeScript types
@@ -5090,3 +5093,117 @@ Uses `routeToToolSequence(prompt)` to validate that natural language intents res
 3. **Scheduled content pipeline** — Creates brand voice, schedules media generation
 
 ### Tracking: [Epic #394](https://github.com/mgcronin/openzigs/issues/394)
+
+---
+
+## Studio Mode: Screen Capture, Trim & AI Auto-Cut
+
+### Overview
+
+Studio Mode extends the Director page with in-app screen recording, lossless video trimming via FFmpeg, and AI-powered redundancy detection using the Vision LLM and Whisper STT. All operations integrate with the existing gallery asset system and are exposed as MCP tools for agentic workflows.
+
+### Architecture
+
+```
+┌─────────────────────────────────────────────────┐
+│  UI (Next.js)                                   │
+│  ┌──────────────┐ ┌──────────────┐              │
+│  │ScreenRecorder│ │ VideoTrimmer │              │
+│  │(MediaRecorder │ │(timeline +   │              │
+│  │+getDisplayMe-│ │ AI suggest)  │              │
+│  │ dia)         │ │              │              │
+│  └──────┬───────┘ └──────┬───────┘              │
+│         │upload          │trim / analyze        │
+└─────────┼────────────────┼──────────────────────┘
+          │                │
+    ┌─────▼────────────────▼─────┐
+    │  Studio Router              │
+    │  POST /api/studio/upload   │
+    │  POST /api/studio/trim     │
+    │  POST /api/studio/analyze  │
+    │  GET  /api/studio/trim/:id │
+    │  GET  /api/studio/analyze/ │
+    └─────┬──────────┬───────────┘
+          │          │
+    ┌─────▼────┐ ┌──▼──────────┐
+    │TrimWorker│ │AnalyzeWorker│
+    │(FFmpeg   │ │(FFmpeg frame│
+    │ stream   │ │ extract +   │
+    │ copy)    │ │ Whisper STT │
+    └──────────┘ │ + Vision LLM│
+                 └─────────────┘
+```
+
+### Backend Components
+
+#### TrimWorker (`src/video/trim-worker.ts`)
+
+EventEmitter-based worker that performs lossless FFmpeg trimming:
+
+| Feature | Detail |
+|---|---|
+| **Method** | FFmpeg stream copy (`-c copy`) — no re-encoding, near-instant |
+| **Concurrency** | Configurable `maxConcurrent` (default 2), automatic queue advancement |
+| **Job Lifecycle** | `queued → processing → complete / failed` |
+| **Output** | Trimmed file saved to `~/.openzigs/gallery/` with `_trimmed_` suffix |
+| **Events** | `trim:queued`, `trim:processing`, `trim:complete`, `trim:failed` |
+| **Container Support** | Detects `.webm` and skips `-movflags +faststart` (MP4-only flag) |
+
+#### AnalyzeWorker (`src/video/analyze-worker.ts`)
+
+Multi-stage AI analysis pipeline:
+
+1. **Frame Extraction** — FFmpeg at 1fps, 320px width, JPEG output
+2. **Audio Transcription** — Extracts 16kHz WAV, sends to Whisper STT sidecar (`POST /transcribe`)
+3. **Vision LLM Analysis** — Batches frames (default 60/batch) with transcript context, asks LLM to identify redundant/low-quality segments
+4. **Cut Merging** — Consolidates overlapping/adjacent suggested cuts
+
+Returns `SuggestedCut[]` with `{ startTime, endTime, reason, confidence }`.
+
+#### Studio Router (`src/api/studio.ts`)
+
+Express router mounted at `/api/studio` with Zod request validation:
+
+| Endpoint | Purpose |
+|---|---|
+| `POST /trim` | Submit trim job (assetId + startTime + endTime) |
+| `GET /trim/:jobId` | Poll trim job status |
+| `POST /analyze` | Submit AI analysis job (assetId) |
+| `GET /analyze/:jobId` | Poll analysis status + suggested cuts |
+| `POST /upload-recording` | Save raw screen recording blob to gallery |
+
+#### MCP Tools (`src/mcp/tools/studio-tools.ts`)
+
+| Tool | Risk Level | Timeout | Description |
+|---|---|---|---|
+| `trim-video` | medium | 120s | Lossless trim of gallery video asset |
+| `analyze-video-redundancy` | low | 300s | AI frame + transcript analysis for redundant segments |
+
+### Frontend Components
+
+#### ScreenRecorder (`ui/components/director/studio/screen-recorder.tsx`)
+
+Uses `navigator.mediaDevices.getDisplayMedia` + `MediaRecorder` API:
+
+- **Audio Sources**: System audio (via `getDisplayMedia({ audio: true })`) and microphone (via `getUserMedia`)
+- **VU Meter**: Real-time volume visualization using `AudioContext` + `AnalyserNode`
+- **States**: `idle → requesting → recording → paused → stopped → uploading`
+- **Output**: WebM (VP9 + Opus), uploaded to gallery via `/api/studio/upload-recording`
+
+#### VideoTrimmer (`ui/components/director/studio/video-trimmer.tsx`)
+
+Visual timeline editor with AI integration:
+
+- **Dual-Handle Slider**: Draggable start/end handles on a proportional timeline
+- **Precise Inputs**: Manual start/end time fields (seconds)
+- **AI Suggested Cuts**: Red overlay markers from `analyze-video-redundancy`, clickable to apply
+- **Real-Time Updates**: Socket.IO events for trim completion/failure
+
+### Socket.IO Events
+
+All worker events are forwarded to connected clients via Socket.IO in `server.ts`:
+
+- `trim:queued`, `trim:processing`, `trim:complete`, `trim:failed`
+- `analyze:queued`, `analyze:progress`, `analyze:complete`, `analyze:failed`
+
+### Tracking: [Epic #438](https://github.com/mgcronin/openzigs/issues/438)

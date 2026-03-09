@@ -206,7 +206,7 @@ The OpenZigs UI is a **Next.js** application with a navigation bar providing acc
 | **Webhooks** | `/admin/webhooks` | Create and manage inbound webhooks for external integrations |
 | **Gallery** | `/gallery` | Asset gallery for generated images, videos, and audio; inline creation studio for txt2img, img2img, txt2video, img2video, txt2music |
 | **Music Studio** | `/music-studio` | AI Voice2Voice pipeline &amp; Smart Remix Lab — stem separation, voice conversion, instrument replacement, and auto-mastering |
-| **Director** | `/director` | AI video production wizard, blog-to-YouTube, and timeline studio |
+| **Director** | `/director` | AI video production wizard, blog-to-YouTube, timeline studio, and capture & trim |
 | **Director Studio** | `/director/studio/[id]` | Full timeline editor with player preview, scene inspector, and drag-and-drop reordering |
 
 ### Chat
@@ -1081,6 +1081,54 @@ curl -H "Authorization: Bearer <token>" http://localhost:3000/api/tasks/<id>/chi
 # Cancel a task
 curl -X POST -H "Authorization: Bearer <token>" http://localhost:3000/api/tasks/<id>/cancel
 ```
+
+---
+
+### Studio: Capture & Trim
+
+The **Capture & Trim** tab in Director Mode provides a complete screen recording and video editing workflow directly in the browser.
+
+#### Screen Recording
+
+1. Navigate to **Director** → click the **Capture & Trim** tab.
+2. Click **Start Recording** — your browser will prompt you to select a screen, window, or tab to share.
+3. **Audio options:**
+   - **System Audio** — captures the audio output of the shared tab/window (browser support varies).
+   - **Microphone** — captures your microphone for voiceover narration.
+   - Both can be enabled simultaneously. A VU meter shows real-time audio levels.
+4. Use **Pause** / **Resume** during the recording as needed.
+5. Click **Stop** when finished. A preview of the recorded video appears.
+6. Click **Upload to Gallery** to save the recording. It will appear in the gallery with a `screen-recording` tag.
+
+> **macOS Note:** On macOS, you may need to grant Screen Recording permission to your browser in System Settings → Privacy & Security → Screen Recording.
+
+#### Video Trimming
+
+1. After uploading a recording (or selecting any video from the gallery grid), the **Video Trimmer** panel appears.
+2. **Timeline scrubber:** Drag the blue start/end handles to define the trim region. The preview player loops the selected segment.
+3. **Precise input:** Enter exact start and end times (in seconds) in the input fields for frame-accurate trimming.
+4. Click **Play Selection** to preview the trimmed segment in a loop.
+5. Click **Export Cut** to perform the trim. The operation is lossless (FFmpeg stream copy — no re-encoding) and near-instant.
+6. The trimmed clip is automatically added to the gallery.
+
+#### AI Auto-Cut (Redundancy Detection)
+
+1. With a video loaded in the trimmer, click **Ask AI** to analyze the video for redundant or low-quality segments.
+2. The AI pipeline:
+   - Extracts frames at 1fps and sends them to the **Vision LLM** in batches.
+   - Extracts the audio track and transcribes it via **Whisper STT**.
+   - The LLM identifies dead air, repeated content, shaky footage, and other issues.
+3. **Red markers** appear on the timeline representing suggested cuts, each with a reason and confidence score.
+4. Click any marker to auto-populate the trim handles with that segment.
+5. Review and **Export Cut** to remove the unwanted section, or ignore the suggestion.
+
+#### Agentic Workflow (Chat-Based)
+
+You can also use Studio tools from the chat interface via the **Media Director** skill:
+
+- **"Analyze my latest screen recording for redundant sections"** → The AI calls `analyze-video-redundancy` and returns suggested cuts.
+- **"Trim the first 30 seconds from video X"** → The AI calls `trim-video` with the specified times.
+- **"Clean up my recording — remove dead air and repeated sections"** → The AI runs analysis first, then trims the suggested cuts sequentially.
 
 ---
 

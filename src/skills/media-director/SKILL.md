@@ -1,7 +1,7 @@
 ---
 name: media-director
 description: Orchestrates image generation (Flux), video production (LTX-2), text-to-speech (F5-TTS), and music generation (ACE-Step) through the OpenZigs media queue. Use when asked to create, generate, or find images, videos, audio, music, or any visual/audio content.
-allowed-tools: query-gallery-assets submit-media-job get-job-status manage-characters schedule-job
+allowed-tools: query-gallery-assets submit-media-job get-job-status manage-characters schedule-job trim-video analyze-video-redundancy
 ---
 
 # Skill: Media Director
@@ -57,6 +57,12 @@ For multi-asset projects (e.g., "Create a thumbnail and a promo video"):
 2. Poll each job separately via `get-job-status`.
 3. Report progress to the user after each completion.
 4. When all jobs complete, summarize the project with asset links.
+
+### Video Editing
+1. **Trimming**: Use `trim-video` to extract a segment from any gallery video asset. Supply the gallery `assetId` plus `startTime` and `endTime` in seconds. The trim is lossless (FFmpeg stream copy) and the result is automatically added to the gallery.
+2. **AI Redundancy Analysis**: Use `analyze-video-redundancy` to have the Vision LLM analyze frames and audio transcript for redundant or low-quality segments. Returns an array of `suggestedCuts` with `startTime`, `endTime`, `reason`, and `confidence`.
+3. **Recommended Workflow**: First call `analyze-video-redundancy` on a raw video, then apply `trim-video` to keep the best segments based on the suggestions.
+4. Screen recordings uploaded via the Studio UI are tagged `screen-recording` in the gallery — use `query-gallery-assets` with `tags: ["screen-recording"]` to find them.
 
 ## Error Recovery
 - If a job fails, check the error message from `get-job-status`.
