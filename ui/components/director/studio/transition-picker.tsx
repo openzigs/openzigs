@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback } from "react";
-import { ArrowRightLeft } from "lucide-react";
+import { ArrowRightLeft, Info } from "lucide-react";
 
 // ── Types ──────────────────────────────────────────────────────
 export type TransitionStyle =
@@ -18,17 +18,18 @@ interface TransitionOption {
   value: TransitionStyle;
   label: string;
   icon: string;
+  hint: string;
 }
 
 const TRANSITION_OPTIONS: TransitionOption[] = [
-  { value: "cut", label: "Cut", icon: "✂️" },
-  { value: "crossfade", label: "Crossfade", icon: "🔀" },
-  { value: "dissolve", label: "Dissolve", icon: "💫" },
-  { value: "wipe-left", label: "Wipe Left", icon: "◀" },
-  { value: "wipe-right", label: "Wipe Right", icon: "▶" },
-  { value: "slide", label: "Slide", icon: "📥" },
-  { value: "flip", label: "Flip", icon: "🔄" },
-  { value: "clock-wipe", label: "Clock Wipe", icon: "🕐" },
+  { value: "cut", label: "Cut", icon: "✂️", hint: "Instant switch between scenes — no transition effect" },
+  { value: "crossfade", label: "Crossfade", icon: "🔀", hint: "Both scenes overlap, fading from one to the other" },
+  { value: "dissolve", label: "Dissolve", icon: "💫", hint: "Gradual blend where one scene dissolves into the next" },
+  { value: "wipe-left", label: "Wipe Left", icon: "◀", hint: "Next scene slides in from right, pushing the current scene left" },
+  { value: "wipe-right", label: "Wipe Right", icon: "▶", hint: "Next scene slides in from left, pushing the current scene right" },
+  { value: "slide", label: "Slide", icon: "📥", hint: "Next scene slides down over the current scene" },
+  { value: "flip", label: "Flip", icon: "🔄", hint: "3D card-flip rotation revealing the next scene" },
+  { value: "clock-wipe", label: "Clock Wipe", icon: "🕐", hint: "Circular sweep like a clock hand revealing the next scene" },
 ];
 
 const DURATION_OPTIONS = [
@@ -62,9 +63,21 @@ export function TransitionPicker({
 
   return (
     <div className="rounded-lg border border-border p-3" data-testid="transition-picker">
-      <div className="mb-2 flex items-center gap-1.5">
-        <ArrowRightLeft className="h-3.5 w-3.5 text-muted-foreground" />
-        <p className="text-[11px] font-medium text-foreground">Transition</p>
+      <div className="mb-2 flex items-center justify-between">
+        <div className="flex items-center gap-1.5">
+          <ArrowRightLeft className="h-3.5 w-3.5 text-muted-foreground" />
+          <p className="text-[11px] font-medium text-foreground">Transition</p>
+        </div>
+        <a
+          href="https://en.wikipedia.org/wiki/Film_transition"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="flex items-center gap-0.5 text-[9px] text-muted-foreground hover:text-primary transition"
+          title="Learn about film transitions"
+        >
+          <Info className="h-3 w-3" />
+          <span>Learn more</span>
+        </a>
       </div>
 
       {/* Style grid */}
@@ -78,6 +91,7 @@ export function TransitionPicker({
                 ? "bg-primary text-primary-foreground"
                 : "bg-muted/50 text-muted-foreground hover:bg-muted"
             }`}
+            title={opt.hint}
             data-testid={`transition-${opt.value}`}
           >
             <span className="text-sm">{opt.icon}</span>

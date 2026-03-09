@@ -185,7 +185,7 @@ export interface ImageSceneEntry {
 
 export interface IntroCardEntry {
   type: "intro_card";
-  title: string;
+  title?: string;
   subtitle?: string;
   backgroundSrc?: string;
   enhancedBackgroundSrc?: string;
@@ -197,7 +197,7 @@ export interface IntroCardEntry {
 
 export interface OutroCardEntry {
   type: "outro_card";
-  title: string;
+  title?: string;
   subtitle?: string;
   backgroundSrc?: string;
   enhancedBackgroundSrc?: string;

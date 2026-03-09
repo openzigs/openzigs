@@ -57,7 +57,7 @@ function buildResearchPrompt(params: ResearchParams): string {
   if (params.youtubeCount > 0) {
     steps.push(`STEP ${step}: Call youtube-search-videos with order "viewCount" and max_results ${params.youtubeCount}. Wait for results.`);
     step++;
-    steps.push(`STEP ${step}: For each YouTube result, call ingest-youtube with format "audio" to download. Wait for all downloads.`);
+    steps.push(`STEP ${step}: For each YouTube result, call ingest-youtube with format "audio" and catalogInGallery false to download. Wait for all downloads.`);
     step++;
     steps.push(`STEP ${step}: For each downloaded audio file, call transcribe-audio with the filename. Wait for transcripts. These are auto-saved to Knowledge.`);
     step++;
@@ -67,13 +67,13 @@ function buildResearchPrompt(params: ResearchParams): string {
   steps.push(`STEP ${step}: Synthesize ALL research into a comprehensive Markdown document (minimum 2000 words, 6+ sections, comparison tables, direct quotes with citations [1],[2]). Call write-file to save it to ~/.openzigs/research/<topic-slug>.md. This is the PRIMARY deliverable.`);
   step++;
 
-  // Phase 5: Images (optional)
-  if (params.generateImages) {
+  // Phase 5: Images (optional — skip if video is also requested since produce-video generates its own images)
+  if (params.generateImages && !params.generateVideo) {
     steps.push(`STEP ${step}: Call submit-media-job up to 3 times with type "txt2img" for supporting images. Do NOT pass a model parameter. Then call get-job-status once per job. If still pending, skip and continue.`);
     step++;
   }
 
-  // Phase 7: Video (optional)
+  // Phase 7: Video (optional — generates its own images from the storyboard)
   if (params.generateVideo) {
     steps.push(`STEP ${step}: Call produce-video with mode "presentation", sourceType "markdown", and inputFile set to the document path from the write-file step. Wait for completion. The video is auto-saved to drafts.`);
     step++;

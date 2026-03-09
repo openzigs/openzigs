@@ -126,7 +126,7 @@ export const ImageSceneEntrySchema = z.object({
 
 export const IntroCardEntrySchema = z.object({
   type: z.literal("intro_card"),
-  title: z.string().min(1),
+  title: z.string().optional(),
   subtitle: z.string().optional(),
   backgroundSrc: z.string().optional(),
   enhancedBackgroundSrc: z.string().optional(),
@@ -138,7 +138,7 @@ export const IntroCardEntrySchema = z.object({
 
 export const OutroCardEntrySchema = z.object({
   type: z.literal("outro_card"),
-  title: z.string().min(1),
+  title: z.string().optional(),
   subtitle: z.string().optional(),
   backgroundSrc: z.string().optional(),
   enhancedBackgroundSrc: z.string().optional(),

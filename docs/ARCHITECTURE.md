@@ -645,7 +645,7 @@ Wraps `@github/copilot-sdk`'s `CopilotClient`. Responsibilities:
 | **Model Selection** | `listModels()` | Proxies `client.listModels()` to enumerate available models (e.g., `gpt-4.1`, `claude-sonnet-4`). |
 | **Skill Directories** | Constructor `skillDirectories` option | Paths to directories containing `SKILL.md` files. Passed to `createSession()` to inject domain expertise into every session. See [Skill System](#skill-system-srcskills) below. |
 | **Tool Limit Control** | `setMaxToolsPerRequest(n)` / `getMaxToolsPerRequest()` | Get or set the maximum number of tools sent per LLM request (range: 1-128). Changes take effect on the next `chat()` call. |
-| **Tool Dispatch** | Internal | When the SDK invokes a tool, the handler calls the `ToolDefinition.handler()` — which may call a native MCP server subprocess or execute locally. ALWAYS_ON_TOOLS (7 tools) are guaranteed inclusion before filling remaining slots. |
+| **Tool Dispatch** | Internal | When the SDK invokes a tool, the handler calls the `ToolDefinition.handler()` — which may call a native MCP server subprocess or execute locally. ESSENTIAL_TOOLS (6 tools) are guaranteed inclusion; CONTEXTUAL_TOOLS fill next; remaining slots go to other tools. See [Tool Management Pipeline](#tool-management-pipeline-srcmcpconstantsts-srccopilotcopilot-wrappersets). |
 | **Retry Logic** | Internal | Automatic retries with exponential backoff for rate-limit (429) and timeout errors. Clears auth on 401. |
 | **Handler Cleanup** | Internal | Per-call event handlers (`assistant.message_delta`, `session.idle`) are unsubscribed in a `finally` block after each `chat()` call, preventing handler accumulation on reused sessions. |
 | **File Attachments** | `chat({ attachments })` | Passes `SdkAttachment[]` (file, directory, or selection references) alongside the prompt. The SDK reads file contents and provides them as context to the model. |
@@ -772,6 +772,61 @@ sequenceDiagram
     AQ-->>Hook: { approved: true }
     Hook-->>SDK: { permissionDecision: "allow" }
 ```
+
+### Tool Management Pipeline (`src/mcp/constants.ts`, `src/copilot/copilot-wrapper.ts`)
+
+Tools flow through a multi-stage pipeline that balances capability with context efficiency. Following the OpenAI best practice of keeping initially available tools under 20 per request, the system uses tiered prioritization and skill-aware scoping.
+
+#### Tiered Tool Categories
+
+Tools are split into three tiers defined in `src/mcp/constants.ts`:
+
+| Tier | Set | Count | Always Included? | Purpose |
+|------|-----|-------|-------------------|---------|
+| **Essential** | `ESSENTIAL_TOOLS` | 6 | Yes — every session | Core capabilities: `read-file`, `list-directory`, `web-search`, `shell-execute`, `spawn-agent`, `orchestrate-agents` |
+| **Contextual** | `CONTEXTUAL_TOOLS` | 12 | When budget allows | Media, knowledge, secrets: `browser-navigate`, `search-knowledge`, `list-secrets`, `get-secret`, `ingest-youtube`, `query-gallery-assets`, `submit-media-job`, `get-job-status`, `save-draft-media`, `send-notification`, `produce-video`, `transcribe-audio` |
+| **Combined** | `ALWAYS_ON_TOOLS` | 18 | Backward-compatible union | Union of Essential + Contextual; used by `ToolRegistry.listEnabledTools()` |
+
+#### End-to-End Flow
+
+```
+1. Registration    ToolRegistry stores all discovered tools (built-in, Docker, native MCP)
+2. Enabled filter  listEnabledTools() returns enabled tools + ALWAYS_ON_TOOLS
+3. Skill scoping   If availableTools provided → filter to skill set + ESSENTIAL_TOOLS
+4. Budget cap      If count > maxToolsPerRequest → tiered priority:
+                     a. Essential tools (always)
+                     b. Contextual tools (fill next)
+                     c. Everything else (remaining slots)
+5. SDK wrapping    defineTool() for each surviving tool
+6. Hook gating     onPreToolUse checks approval queue per-call
+```
+
+#### Skill-Aware Tool Scoping
+
+When a skill prefix is detected in a message (e.g., `[Using Research Synthesizer skill]`), the `MessageRouter` automatically:
+
+1. **Parses** the skill name from the prefix
+2. **Loads** skill metadata via `loadSkillMetadata()` to find `allowedTools`
+3. **Scopes** the session to `skill.allowedTools` — only those tools (plus `ESSENTIAL_TOOLS`) are sent to the LLM
+4. **Auto-approves** the skill's tools so they don't block on the approval queue during interactive use
+
+This replaces the previous behavior where typing a skill prefix in the main chat sent **all** enabled tools (50+), hitting the `maxToolsPerRequest` cap and flooding the LLM context with irrelevant tool definitions.
+
+#### Skill Auto-Approval
+
+The approval pipeline has four priority levels in `onPreToolUse`:
+
+| Priority | Check | Result |
+|----------|-------|--------|
+| P0 | Tool disabled by admin | **Deny** |
+| P1 | Global approval lock | **Approval queue** (cannot bypass) |
+| P2 | Auto-approve list (per-task or per-session) | **Allow** + audit log |
+| P3 | High-risk tool (`riskLevel: "high"`) | **Approval queue** |
+| P4 | Everything else | **Allow** |
+
+**Interactive chat:** `INTERACTIVE_CHAT_AUTO_APPROVE_TOOLS` (12 tools) + the active skill's `allowedTools` are merged into the auto-approve list. Since the user is the human-in-the-loop, skill tools are trusted during interactive sessions.
+
+**Background tasks:** When a task declares `allowedTools` (e.g., from a skill-scoped pipeline stage), those tools are merged into `autoApproveTools` so autonomous execution isn't blocked by approval queues.
 
 ### Skill System (`src/skills/`)
 
@@ -910,8 +965,9 @@ Routes an `IncomingMessage` from any channel through a pipeline:
 2. **Session Resolution** — Finds or creates a session for the `(channelType, userId)` pair.
 3. **Session Touch** — Calls `sessionManager.resumeSession()` to update `lastActiveAt` (history is retained for admin/audit views).
 4. **System Message Construction** — `buildSystemMessage()` reads the personality config and produces a `SystemMessageConfig` with `content` (the personality text) and `mode` (`"append"` to merge with SDK defaults, or `"replace"` to fully override). If personality is disabled, no system message is sent.
-5. **Tool Scoping** — `resolveAvailableTools()` resolves per-message tool allowlists into `string[]` (tool names), which the SDK filters natively via `availableTools`. Replaces the previous `ToolDefinition[]` filtering approach.
-6. **LLM Call** — Streams the prompt through `CopilotWrapper.chat()` with `conversationId: sessionId`, `systemMessage`, `availableTools`, and `onUserInputRequest`, forwarding chunks to the channel if a `RouteOptions.onChunk` callback is provided. The SDK handles multi-turn context natively; only the current user message is sent as the prompt.
+5. **Tool Scoping** — `resolveAvailableTools()` resolves per-message tool allowlists into `string[]` (tool names), which the SDK filters natively via `availableTools`. When a skill prefix is detected (e.g., `[Using X skill]`) but no explicit tools were passed, the router auto-resolves the skill's `allowedTools` via `resolveSkillTools()`.
+6. **Auto-Approval** — Interactive chat sessions merge `INTERACTIVE_CHAT_AUTO_APPROVE_TOOLS` with the active skill's tools (if any), so skill tool calls don't block on the approval queue.
+7. **LLM Call** — Streams the prompt through `CopilotWrapper.chat()` with `conversationId: sessionId`, `systemMessage`, `availableTools`, `autoApproveTools`, and `onUserInputRequest`, forwarding chunks to the channel if a `RouteOptions.onChunk` callback is provided. The SDK handles multi-turn context natively; only the current user message is sent as the prompt.
 7. **Persistence** — Appends the user message and assistant response to the session's JSONL log for admin views and auditing.
 8. **Session Clear** — `clearUserSession()` also calls `copilot.destroySession()` to free the cached SDK session.
 

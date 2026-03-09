@@ -152,11 +152,22 @@ export class TaskWorker extends EventEmitter {
       // buildSessionConfig closure — this survives JSON-RPC boundaries
       // (AsyncLocalStorage context is lost when the SDK's hooks handler
       // runs in the I/O event context of the subprocess pipe).
+      // When a task explicitly declares allowedTools (skill-scoped), merge them
+      // into the auto-approve list so skill tools aren't blocked by the approval
+      // queue during autonomous background execution.
+      const effectiveAutoApprove = task.autoApproveTools
+        ? task.allowedTools
+          ? [...new Set([...task.autoApproveTools, ...task.allowedTools])]
+          : task.autoApproveTools
+        : task.allowedTools
+          ? [...task.allowedTools]
+          : undefined;
+
       for await (const chunk of this.copilot.chat(prompt, {
         model: task.model ?? undefined,
         reasoningEffort: task.reasoningEffort ?? undefined,
         availableTools,
-        autoApproveTools: task.autoApproveTools ?? undefined,
+        autoApproveTools: effectiveAutoApprove,
         onToolCall: (toolName, args) => {
           this.log.info(`TaskWorker tool call [${task.id}]: ${toolName}(${JSON.stringify(args).slice(0, 200)})`);
           toolCallLog.push({ tool: toolName, timestamp: Date.now() });

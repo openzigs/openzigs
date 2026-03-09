@@ -53,6 +53,10 @@ export function FramingPanel({ offset, onChange, fitMode = "cover", onFitModeCha
 
       {/* Fit mode toggle */}
       {onFitModeChange && (
+        <>
+        <p className="mb-1.5 text-[9px] text-muted-foreground">
+          Choose how horizontal (16:9) footage fits a vertical (9:16) frame
+        </p>
         <div className="mb-3 flex gap-1 rounded-md bg-muted p-0.5">
           <button
             onClick={() => onFitModeChange("contain")}
@@ -79,6 +83,7 @@ export function FramingPanel({ offset, onChange, fitMode = "cover", onFitModeCha
             Crop
           </button>
         </div>
+        </>
       )}
 
       {/* Visual preview of crop region */}

@@ -118,7 +118,7 @@ export const createVideoTools = ({ copilot, voiceService }: VideoToolsOptions): 
 
           for (const scene of storyboard.scenes) {
             const imageResult = await imageService.generateImage(scene.imagePrompt, {
-              provider: imageProvider ?? "auto",
+              provider: imageProvider ?? "local",
               localModel: imageModel,
               width: imageWidth,
               height: imageHeight,
@@ -163,6 +163,7 @@ export const createVideoTools = ({ copilot, voiceService }: VideoToolsOptions): 
               duration: durationInFrames,
               voiceover: sceneVoiceoverPath,
               voiceoverVolume: 1.0,
+              scriptText: scene.voiceover || undefined,
               kenBurns: {
                 scaleFrom: 1.0,
                 scaleTo: 1.15,

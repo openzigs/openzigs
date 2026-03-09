@@ -178,6 +178,8 @@ export type KnowledgeConfig = {
   enabled: boolean;
   /** Directory to watch for knowledge files. Defaults to ~/.openzigs/knowledge. */
   directory: string;
+  /** Additional directories to watch and index. Paths may use ~ for home. */
+  additionalDirectories: string[];
   /** Maximum chunk size in characters. */
   chunkSize: number;
   /** Overlap between consecutive chunks in characters. */
@@ -202,6 +204,7 @@ export type KnowledgeConfig = {
 export const DEFAULT_KNOWLEDGE_CONFIG: KnowledgeConfig = {
   enabled: true,
   directory: "",  // Resolved at runtime to ~/.openzigs/knowledge
+  additionalDirectories: ["~/.openzigs/research"],
   chunkSize: 1000,
   chunkOverlap: 200,
   maxResults: 10,

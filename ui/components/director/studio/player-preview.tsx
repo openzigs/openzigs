@@ -313,6 +313,7 @@ function TitleCardPreview({
   const title = scene.title as string | undefined;
   const subtitle = scene.subtitle as string | undefined;
   const ctaText = scene.ctaText as string | undefined;
+  const isOutro = scene.type === "outro_card";
 
   return (
     <div
@@ -321,12 +322,15 @@ function TitleCardPreview({
         ? { aspectRatio: "9/16", height: "100%", maxHeight: "100%" }
         : { width: "100%", height: "100%" }}
     >
-      {bgSrc ? (
+      {bgSrc && !isOutro ? (
         <img src={bgSrc} alt="Card background" className="absolute inset-0 h-full w-full object-cover" />
       ) : (
         <div className="absolute inset-0 bg-gradient-to-br from-slate-900 to-slate-800" />
       )}
       <div className="relative z-10 flex flex-col items-center gap-3 px-8 text-center">
+        {bgSrc && isOutro && (
+          <img src={bgSrc} alt="Card visual" className="max-w-[70%] object-contain" style={{ maxHeight: 120 }} />
+        )}
         {title && (
           <h2 className="text-2xl font-bold text-white drop-shadow-lg">{title}</h2>
         )}
@@ -336,7 +340,7 @@ function TitleCardPreview({
         {ctaText && (
           <p className="text-sm text-white/60 italic">{ctaText}</p>
         )}
-        {!title && !subtitle && (
+        {!title && !subtitle && !(bgSrc && isOutro) && (
           <p className="text-sm text-white/40">{String(scene.type).replace(/_/g, " ")}</p>
         )}
       </div>

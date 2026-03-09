@@ -19,6 +19,7 @@ interface SceneInspectorProps {
   draftId: string;
   onManifestUpdate: (manifest: DirectorManifest) => void;
   onDeleteScene?: (sceneIndex: number) => void;
+  onRemoveCard?: (cardType: "intro_card" | "outro_card") => void;
 }
 
 interface UploadResult {
@@ -39,7 +40,7 @@ interface VoiceEngine {
   active: boolean;
 }
 
-export function SceneInspector({ inspector, manifest, draftId, onManifestUpdate, onDeleteScene }: SceneInspectorProps) {
+export function SceneInspector({ inspector, manifest, draftId, onManifestUpdate, onDeleteScene, onRemoveCard }: SceneInspectorProps) {
   const { startActivity } = useActivity();
   const [editPrompt, setEditPrompt] = useState("");
   const [regenerating, setRegenerating] = useState(false);
@@ -189,6 +190,45 @@ export function SceneInspector({ inspector, manifest, draftId, onManifestUpdate,
       return updated;
     },
     [inspector.sceneIndex, manifest, entry?.type, onManifestUpdate],
+  );
+
+  /**
+   * Duration change handler — updates the target entry's duration then resequences
+   * all startAtFrame values so subsequent scenes shift rather than leaving a gap.
+   */
+  const handleDurationChange = useCallback(
+    (frames: number) => {
+      if (!manifest) return;
+      const timeline = (manifest.timeline ?? []).map((e) => ({ ...e }));
+      const visualTypes = new Set(["image_scene", "video_clip"]);
+      const targetType = entry?.type;
+
+      let targetIdx = -1;
+      if (targetType === "intro_card" || targetType === "outro_card") {
+        targetIdx = timeline.findIndex((e) => e.type === targetType);
+      } else if (inspector.sceneIndex !== null) {
+        let sceneCount = 0;
+        for (let i = 0; i < timeline.length; i++) {
+          if (visualTypes.has(timeline[i].type)) {
+            if (sceneCount === inspector.sceneIndex) { targetIdx = i; break; }
+            sceneCount++;
+          }
+        }
+      }
+      if (targetIdx < 0) return;
+
+      timeline[targetIdx] = { ...timeline[targetIdx], duration: frames, durationInFrames: frames };
+
+      // Resequence all startAtFrame values
+      let frame = 0;
+      for (const e of timeline) {
+        e.startAtFrame = frame;
+        frame += (e.duration ?? e.durationInFrames ?? (fps * 3));
+      }
+
+      onManifestUpdate({ ...manifest, timeline });
+    },
+    [manifest, fps, entry?.type, inspector.sceneIndex, onManifestUpdate],
   );
 
   const handleReRecord = useCallback(async () => {
@@ -612,6 +652,15 @@ export function SceneInspector({ inspector, manifest, draftId, onManifestUpdate,
               <Trash2 className="h-3.5 w-3.5" />
             </button>
           )}
+          {isCardWithBackground && onRemoveCard && (
+            <button
+              onClick={() => onRemoveCard(entry.type as "intro_card" | "outro_card")}
+              className="rounded p-1 text-muted-foreground hover:bg-red-500/10 hover:text-red-600 transition"
+              title={`Remove ${entry.type === "intro_card" ? "intro" : "outro"} card`}
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </button>
+          )}
         </div>
       </div>
 
@@ -681,7 +730,24 @@ export function SceneInspector({ inspector, manifest, draftId, onManifestUpdate,
       </div>
 
       {/* Title (for title/intro/outro cards) */}
-      {entry.title && (
+      {isCardWithBackground && (
+        <div className="flex items-start gap-1.5">
+          <Type className="mt-2 h-3.5 w-3.5 text-muted-foreground" />
+          <div className="flex-1">
+            <p className="text-[10px] text-muted-foreground">Title</p>
+            <input
+              type="text"
+              value={entry.title ?? ""}
+              onChange={(e) => {
+                updateTimelineEntry((ent) => ({ ...ent, title: e.target.value }));
+              }}
+              className="w-full rounded-md border border-border bg-background px-2 py-1 text-xs text-foreground focus:border-primary focus:outline-none"
+              placeholder="Enter title"
+            />
+          </div>
+        </div>
+      )}
+      {entry.title && !isCardWithBackground && (
         <div className="flex items-start gap-1.5">
           <Type className="mt-0.5 h-3.5 w-3.5 text-muted-foreground" />
           <div>
@@ -1239,13 +1305,11 @@ export function SceneInspector({ inspector, manifest, draftId, onManifestUpdate,
       )}
 
       {/* Duration Control */}
-      {isVisualScene && (
+      {(isVisualScene || isCardWithBackground) && (
         <DurationControl
           durationFrames={dur}
           fps={fps}
-          onDurationChange={(frames) => {
-            updateTimelineEntry((e) => ({ ...e, duration: frames, durationInFrames: frames }));
-          }}
+          onDurationChange={handleDurationChange}
         />
       )}
 

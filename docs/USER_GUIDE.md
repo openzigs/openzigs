@@ -421,6 +421,17 @@ Click a skill card to expand its detail view showing the full tool list, stats, 
 
 **IntelliSense hints**: The chat placeholder reads `/ prompts, # tools, @ models, ! skills` to remind you of all available triggers.
 
+#### Skill-Aware Tool Scoping & Auto-Approval
+
+When you use a skill (via `!` trigger or `[Using X skill]` prefix), OpenZigs automatically:
+
+- **Scopes tools** — Only the skill's declared `allowed-tools` (plus 6 essential tools) are sent to the LLM, preventing context window bloat from irrelevant tool definitions
+- **Auto-approves skill tools** — The skill's tools are merged into the auto-approve list for the session, so you won't be prompted to approve every tool call during skill-driven workflows
+
+This means a skill like Research Synthesizer with 13 tools sends ~19 total tools (13 skill + 6 essential) instead of the full 90+ set, staying well under the recommended 20-tool threshold for optimal LLM performance.
+
+**Background tasks** inherit the same behavior — when a pipeline stage or scheduled job uses a skill's `allowedTools`, those tools are auto-approved for autonomous execution.
+
 #### Pairing Skills with Library Prompts
 
 The most powerful combination is pairing a Library prompt with a Suggested Skill:
@@ -1411,13 +1422,24 @@ Each tool schema consumes **~100-300 tokens** in the model's context window. Wit
 
 The Copilot SDK itself has **no hard tool limit**, but the underlying models do (e.g., OpenAI supports up to 128 functions per request).
 
-### Always-On Tools
+### Tiered Tool Priority
 
-**7 critical tools** are always included regardless of the cap:
+Tools are organized into tiers for intelligent budget management:
 
-`read-file`, `list-directory`, `web-search`, `browser-navigate`, `shell-execute`, `spawn-agent`, `orchestrate-agents`
+**Essential Tools (6)** — always included in every session:
 
-These tools are essential for core agent functionality and will never be silently dropped.
+`read-file`, `list-directory`, `web-search`, `shell-execute`, `spawn-agent`, `orchestrate-agents`
+
+**Contextual Tools (12)** — included when budget allows, dropped when skills are active:
+
+`browser-navigate`, `search-knowledge`, `list-secrets`, `get-secret`, `ingest-youtube`, `query-gallery-assets`, `submit-media-job`, `get-job-status`, `save-draft-media`, `send-notification`, `produce-video`, `transcribe-audio`
+
+When the tool count exceeds `maxToolsPerRequest`, the cap is enforced with tiered priority:
+1. Essential tools are kept first (always)
+2. Contextual tools fill next
+3. All other tools fill remaining slots
+
+This means with the default cap of 30, you get 6 essential + 12 contextual + 12 other tools — a significant improvement over the previous flat approach that used 18 always-on slots leaving only 12 for everything else.
 
 ### Admin UI
 
@@ -1436,7 +1458,7 @@ The setting is persisted to `~/.openzigs/config.json` under `session.maxToolsPer
 ```bash
 # Read current session config
 curl -H "Authorization: Bearer <token>" http://localhost:3000/api/admin/session/config
-# Response: { "maxToolsPerRequest": 30, "totalTools": 91, "alwaysOnCount": 7 }
+# Response: { "maxToolsPerRequest": 30, "totalTools": 91, "alwaysOnCount": 18, "essentialCount": 6 }
 
 # Update the tool limit
 curl -X PUT -H "Authorization: Bearer <token>" \
@@ -1462,12 +1484,12 @@ Beyond the global tool limit, OpenZigs supports **per-entity tool scoping** — 
 
 ### How It Works
 
-Each entity (job, prompt, or message) can declare an allowlist of tool names. When the entity executes, only those tools (plus the 7 always-on tools) are sent to the LLM. If no allowlist is set, the full enabled toolset is used as before.
+Each entity (job, prompt, or message) can declare an allowlist of tool names. When the entity executes, only those tools (plus the 6 essential tools) are sent to the LLM. If no allowlist is set, the full enabled toolset is used as before.
 
 **Resolution algorithm:**
 
 1. Start with the entity's tool allowlist (e.g., `["web-search", "read-file"]`).
-2. Merge in the 7 always-on tools (`read-file`, `list-directory`, `web-search`, `browser-navigate`, `shell-execute`, `spawn-agent`, `orchestrate-agents`).
+2. Merge in the 6 essential tools (`read-file`, `list-directory`, `web-search`, `shell-execute`, `spawn-agent`, `orchestrate-agents`).
 3. Filter to only tools currently enabled in the `ToolRegistry`.
 4. Pass the resulting set to the LLM — no other tools are visible.
 
@@ -5481,8 +5503,9 @@ Hey {{username}}! Saw your comment on our post about "{{post_caption}}". Check y
 | Gmail auth errors | Missing or expired OAuth credentials. | Re-run `npx @gongrzhe/server-gmail-autoauth-mcp auth`. Ensure `gcp-oauth.keys.json` is in `~/.gmail-mcp/`. |
 | `db-query` returns "connection refused" | Database MCP server not running or JDBC_URL incorrect. | Check `JDBC_URL` env var and ensure the database is reachable from Docker. |
 | GitHub tools return 401 | Invalid or expired PAT. | Regenerate your GitHub Personal Access Token and update `GITHUB_PERSONAL_ACCESS_TOKEN`. |
-| Agent not using expected tools | `maxToolsPerRequest` too low; tool got excluded. | Increase the tool limit in Admin → Task Engine → Tool Limit slider or via `PUT /api/admin/session/config`. Check if the tool should be added to ALWAYS_ON_TOOLS. |
-| Model hallucinating tool calls | Too many tools sent, or model calling a tool that was excluded. | Reduce `maxToolsPerRequest` or switch to a stronger model (e.g., `gpt-4.1`). |
+| Agent not using expected tools | `maxToolsPerRequest` too low; tool got excluded. | Increase the tool limit in Admin → Task Engine → Tool Limit slider or via `PUT /api/admin/session/config`. Use skills to auto-scope tools, or check if the tool should be added to ESSENTIAL_TOOLS. |
+| Model hallucinating tool calls | Too many tools sent, or model calling a tool that was excluded. | Reduce `maxToolsPerRequest`, use skill-scoped sessions, or switch to a stronger model (e.g., `gpt-4.1`). OpenAI recommends under 20 tools per request for best accuracy. |
+| Skill tools requiring approval | Skill's tools not in auto-approve list. | Use the `!` trigger or `[Using X skill]` prefix — skill tools are auto-approved during interactive sessions. For background tasks, ensure the task's `allowedTools` includes the skill's tools. |
 | MarkItDown returns empty content | File not accessible inside container. | Ensure the file path is within the mounted volume (`/workdir` inside the container). |
 | Voice TTS not working | Missing Google Cloud credentials. | Set `GOOGLE_APPLICATION_CREDENTIALS` env var to your service account JSON key file path. See [Enabling Voice Features](#enabling-voice-features). |
 | Wake word not responding | Web Speech API not supported in browser. | Use Chrome, Edge, or Brave. Firefox does not support the Web Speech API. |

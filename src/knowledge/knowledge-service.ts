@@ -156,6 +156,8 @@ export class KnowledgeIngestionService extends EventEmitter {
       ...DEFAULT_KNOWLEDGE_CONFIG,
       ...sanitizedConfig,
       directory: knowledgeDir,
+      additionalDirectories: (sanitizedConfig.additionalDirectories ?? DEFAULT_KNOWLEDGE_CONFIG.additionalDirectories)
+        .map((d) => resolveKnowledgeDirectory(d)),
     };
 
     this.dbPath = path.join(os.homedir(), ".openzigs", "knowledge-db");
@@ -173,9 +175,16 @@ export class KnowledgeIngestionService extends EventEmitter {
 
     logger.info(`[Knowledge] Starting Knowledge Ingestion Service...`);
     logger.info(`[Knowledge] Knowledge directory: ${this.config.directory}`);
+    if (this.config.additionalDirectories.length > 0) {
+      logger.info(`[Knowledge] Additional directories: ${this.config.additionalDirectories.join(", ")}`);
+    }
 
     // Ensure the knowledge directory exists
     await fs.mkdir(this.config.directory, { recursive: true });
+    // Ensure additional directories exist
+    for (const dir of this.config.additionalDirectories) {
+      await fs.mkdir(dir, { recursive: true });
+    }
 
     // Initialize converter registry (auto-detects available converters)
     this.converterRegistry = await createDefaultRegistry({
@@ -660,7 +669,9 @@ export class KnowledgeIngestionService extends EventEmitter {
    */
   private async scanDirectory(options: IndexFileOptions = {}): Promise<void> {
     const startTime = Date.now();
-    const files = await this.collectFiles(this.config.directory);
+    const allDirs = [this.config.directory, ...this.config.additionalDirectories];
+    const fileArrays = await Promise.all(allDirs.map((d) => this.collectFiles(d)));
+    const files = fileArrays.flat();
 
     this.emitEvent({
       type: "indexing:started",
@@ -862,7 +873,8 @@ export class KnowledgeIngestionService extends EventEmitter {
    * Start the chokidar file watcher.
    */
   private startWatcher(): void {
-    this.watcher = watch(this.config.directory, {
+    const watchPaths = [this.config.directory, ...this.config.additionalDirectories];
+    this.watcher = watch(watchPaths, {
       persistent: true,
       ignoreInitial: true,
       depth: 10,

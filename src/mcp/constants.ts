@@ -1,12 +1,27 @@
-/** Core tools that are always included regardless of maxToolsPerRequest filtering. */
-export const ALWAYS_ON_TOOLS = new Set([
+/**
+ * Essential tools that are ALWAYS included in every session, regardless of
+ * maxToolsPerRequest filtering or skill scoping. These are the fundamental
+ * capabilities every agent needs: file I/O, search, execution, delegation.
+ *
+ * Best practice (OpenAI): "Aim for fewer than 20 functions at the start of
+ * a turn." Keeping this set small (~6) leaves room for skill-specific and
+ * contextual tools within a typical 20–30 tool budget.
+ */
+export const ESSENTIAL_TOOLS = new Set([
   "read-file",
   "list-directory",
   "web-search",
-  "browser-navigate",
   "shell-execute",
   "spawn-agent",
   "orchestrate-agents",
+]);
+
+/**
+ * Contextual tools included when budget allows but not essential for every
+ * session. Dropped in favour of skill-specific tools when the cap is tight.
+ */
+export const CONTEXTUAL_TOOLS = new Set([
+  "browser-navigate",
   "search-knowledge",
   "list-secrets",
   "get-secret",
@@ -19,6 +34,9 @@ export const ALWAYS_ON_TOOLS = new Set([
   "produce-video",
   "transcribe-audio",
 ]);
+
+/** Combined set — backward-compatible union of ESSENTIAL + CONTEXTUAL. */
+export const ALWAYS_ON_TOOLS = new Set([...ESSENTIAL_TOOLS, ...CONTEXTUAL_TOOLS]);
 
 /**
  * High-risk tools that are auto-approved during interactive chat sessions.

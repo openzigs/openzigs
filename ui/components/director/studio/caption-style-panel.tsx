@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import { Subtitles, Eye, EyeOff } from "lucide-react";
 import type { DirectorManifest, TimelineEntry } from "../types";
 
@@ -97,10 +97,41 @@ export function CaptionStylePanel({ manifest, onManifestUpdate }: CaptionStylePa
   // Preserve word timings across off/on toggles so re-enabling doesn't lose them
   const savedWords = useRef<unknown[]>([]);
 
+  // Fingerprint of scene durations & positions — used to detect when word timings need re-derivation
+  const sceneDurationFingerprint = useMemo(() => {
+    if (!manifest.timeline) return "";
+    return manifest.timeline
+      .filter((e) => e.type !== "overlay" && e.type !== "transition")
+      .map((e) => `${e.startAtFrame ?? 0}:${(e.duration ?? (e as Record<string, unknown>).durationInFrames) ?? 0}`)
+      .join("|");
+  }, [manifest.timeline]);
+
+  const prevFingerprint = useRef(sceneDurationFingerprint);
+
   const enabled = !!captionOverlay;
   const currentStyle = captionProps?.style ?? "karaoke";
   const currentPosition = captionProps?.position ?? "bottom";
   const currentFontSize = captionProps?.fontSize ?? 56;
+
+  // Re-derive word timings when scene durations or positions change
+  useEffect(() => {
+    if (sceneDurationFingerprint === prevFingerprint.current) return;
+    prevFingerprint.current = sceneDurationFingerprint;
+    if (!enabled || !manifest.timeline) return;
+
+    const freshWords = deriveWordTimings(manifest);
+    if (freshWords.length === 0) return;
+    savedWords.current = freshWords;
+    // Inline overlay update to avoid circular dep on updateOverlayProps
+    const timeline = manifest.timeline.map((e) => {
+      if (e.type === "overlay" && (e as Record<string, unknown>).component === "SmartCaptions") {
+        const existing = (e as Record<string, unknown>).props as Record<string, unknown> | undefined;
+        return { ...e, props: { ...existing, words: freshWords } };
+      }
+      return e;
+    });
+    onManifestUpdate({ ...manifest, timeline });
+  }, [sceneDurationFingerprint, enabled, manifest, onManifestUpdate]);
 
   const updateOverlayProps = useCallback(
     (updates: Record<string, unknown>) => {
@@ -131,8 +162,10 @@ export function CaptionStylePanel({ manifest, onManifestUpdate }: CaptionStylePa
       );
       onManifestUpdate({ ...manifest, timeline });
     } else {
-      // Re-add a SmartCaptions overlay, restoring saved word timings if available
+      // Re-add a SmartCaptions overlay — compute duration from visual segments only
+      const visualTypes = new Set(["video_clip", "title_card", "image_scene", "intro_card", "outro_card"]);
       const totalFrames = manifest.timeline.reduce((max, e) => {
+        if (!visualTypes.has(e.type)) return max;
         const dur = (e.duration as number | undefined) ?? ((e as Record<string, unknown>).durationInFrames as number | undefined) ?? 0;
         const end = (e.startAtFrame ?? 0) + dur;
         return Math.max(max, end);
@@ -143,7 +176,7 @@ export function CaptionStylePanel({ manifest, onManifestUpdate }: CaptionStylePa
         props: {
           // Restore saved words from this session, or re-derive from scene
           // scriptText so re-enabling after a page reload still has timings.
-          words: savedWords.current.length > 0 ? savedWords.current : deriveWordTimings(manifest),
+          words: deriveWordTimings(manifest),
           style: "karaoke",
           fontSize: 80,
           fontColor: "#ffffff",

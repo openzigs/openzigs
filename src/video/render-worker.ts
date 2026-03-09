@@ -55,9 +55,12 @@ function emitProgress(jobId: string, pct: number, framesRendered: number, totalF
 }
 
 // ── Helpers ───────────────────────────────────────────────────
+const VISUAL_SEGMENT_TYPES = new Set(["video_clip", "title_card", "image_scene", "intro_card", "outro_card"]);
+
 function calcTotalFrames(manifest: DirectorManifest): number {
   let max = 0;
   for (const entry of manifest.timeline) {
+    if (!VISUAL_SEGMENT_TYPES.has(entry.type)) continue;
     const end = entry.startAtFrame + ("duration" in entry ? (entry.duration ?? 0) : 0);
     if (end > max) max = end;
   }
