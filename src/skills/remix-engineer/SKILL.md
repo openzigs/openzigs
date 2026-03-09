@@ -68,3 +68,8 @@ NEVER attempt to master before analysis. NEVER replace a stem without analysis r
 - If mastering fails → retry without the reference track (fall back to LUFS -14 normalization).
 - After 2 failed alternatives, stop and explain the issue clearly.
 - NEVER silently skip a pipeline step — the remix pipeline must be executed in order.
+
+## Telegram Notifications
+- Any `remix-session-manager` call (analyze, replace_stem, master) can include `notify_via_telegram: true` to send a Telegram message on completion or failure.
+- Optionally pass `telegram_chat_id` to target a specific chat; omit it to use the admin fallback.
+- When the user requests a notification on completion, set `notify_via_telegram: true` on the **master** step (final step of the pipeline).

@@ -578,6 +578,51 @@ All servers use **official platform APIs** (no scraping or unofficial endpoints)
 
 The `DmDispatcher` (`src/channels/social/dm-dispatcher.ts`) routes DM sends and comment replies to the correct MCP server, translating Social Brain's platform-agnostic calls into platform-specific tool invocations.
 
+#### Pinterest SEO Tools
+
+**Source:** `src/mcp/tools/pinterest-seo-tools.ts` (built-in, no sidecar)
+
+Four native MCP tools for Pinterest SEO powered by the Pinterest API v5. Registered via `createPinterestSeoTools()` factory in `src/mcp/server.ts`.
+
+| Tool | Risk | Description |
+|---|---|---|
+| `pinterest-trends` | 🟢 low | Trending keywords by region with growth metrics and 52-week time series |
+| `pinterest-keyword-metrics` | 🟢 low | Search volume and competition for specific keywords (requires ad account) |
+| `pinterest-analytics` | 🟢 low | Account-level metrics or top-performing pins over a date range |
+| `pinterest-seo-analyze` | 🟡 medium | Pin SEO analysis: annotation keyword extraction, Pin Score (0–100), recommendations |
+
+**Annotation Extraction:** `pinterest-seo-analyze` uses a multi-strategy approach to extract Pinterest's hidden annotation/interest keywords from pin HTML (`__PWS_DATA__` global → `<script type="application/json">` tags → `<meta>` tags). Strategies are tried in order; first one with results wins.
+
+**Supporting Components:**
+- `src/skills/pinterest-marketer/SKILL.md` — Autonomous skill for multi-step Pinterest workflows (trend campaigns, blog-to-pin, SEO audits, competitor analysis)
+- `src/queue/pinterest-digest-service.ts` — Weekly Telegram digest (impressions, clicks, saves, engagement)
+- `ui/components/admin/pinterest-panel.tsx` — Admin panel showing connection status, account stats, trending keywords
+- Admin API routes: `GET /api/admin/pinterest/status`, `/trends`, `/stats`
+
+#### Research & Content Synthesis Tools
+
+**Source:** `src/mcp/tools/draft-media-tools.ts` (built-in, no sidecar)
+
+One native MCP tool for saving generated media to project-scoped draft directories. Registered via `createDraftMediaTools()` factory in `src/mcp/server.ts`.
+
+| Tool | Risk | Description |
+|---|---|---|
+| `save-draft-media` | 🟡 medium | Copies generated images, videos, or audio to `~/.openzigs/files/drafts/<project_id>/` with sanitized filenames |
+
+**YouTube `order` Extension:** The `youtube-search-videos` tool (proxied through the YouTube MCP sidecar) now accepts an `order` parameter (`date`, `rating`, `relevance`, `title`, `viewCount`) passed through to the YouTube Data API v3 `search.list` endpoint.
+
+**Data Flow:**
+```
+Workbench UI → ResearchGenerateDialog → Socket.IO "chat:message" { skill: "research-synthesizer" }
+→ Copilot SDK → Research Synthesizer Skill → web-search → youtube-search-videos
+→ Content Synthesis → write-file → (optional) submit-media-job → save-draft-media
+```
+
+**Supporting Components:**
+- `src/skills/research-synthesizer/SKILL.md` — 6-phase autonomous research + synthesis skill (Parameter Extraction → Web Research → YouTube Research → Content Synthesis → Media Generation → Bibliography & Save)
+- `ui/components/workbench/research-generate-dialog.tsx` — Workbench dialog for configuring research parameters (topic, slant, source counts, media toggles)
+- `src/skills/skill-loader.ts` — Icon mapping (🔬) and example prompts for the skill
+
 ---
 
 ## Component Breakdown
@@ -600,7 +645,7 @@ Wraps `@github/copilot-sdk`'s `CopilotClient`. Responsibilities:
 | **Model Selection** | `listModels()` | Proxies `client.listModels()` to enumerate available models (e.g., `gpt-4.1`, `claude-sonnet-4`). |
 | **Skill Directories** | Constructor `skillDirectories` option | Paths to directories containing `SKILL.md` files. Passed to `createSession()` to inject domain expertise into every session. See [Skill System](#skill-system-srcskills) below. |
 | **Tool Limit Control** | `setMaxToolsPerRequest(n)` / `getMaxToolsPerRequest()` | Get or set the maximum number of tools sent per LLM request (range: 1-128). Changes take effect on the next `chat()` call. |
-| **Tool Dispatch** | Internal | When the SDK invokes a tool, the handler calls the `ToolDefinition.handler()` — which may call a native MCP server subprocess or execute locally. ALWAYS_ON_TOOLS (7 tools) are guaranteed inclusion before filling remaining slots. |
+| **Tool Dispatch** | Internal | When the SDK invokes a tool, the handler calls the `ToolDefinition.handler()` — which may call a native MCP server subprocess or execute locally. ESSENTIAL_TOOLS (6 tools) are guaranteed inclusion; CONTEXTUAL_TOOLS fill next; remaining slots go to other tools. See [Tool Management Pipeline](#tool-management-pipeline-srcmcpconstantsts-srccopilotcopilot-wrappersets). |
 | **Retry Logic** | Internal | Automatic retries with exponential backoff for rate-limit (429) and timeout errors. Clears auth on 401. |
 | **Handler Cleanup** | Internal | Per-call event handlers (`assistant.message_delta`, `session.idle`) are unsubscribed in a `finally` block after each `chat()` call, preventing handler accumulation on reused sessions. |
 | **File Attachments** | `chat({ attachments })` | Passes `SdkAttachment[]` (file, directory, or selection references) alongside the prompt. The SDK reads file contents and provides them as context to the model. |
@@ -727,6 +772,61 @@ sequenceDiagram
     AQ-->>Hook: { approved: true }
     Hook-->>SDK: { permissionDecision: "allow" }
 ```
+
+### Tool Management Pipeline (`src/mcp/constants.ts`, `src/copilot/copilot-wrapper.ts`)
+
+Tools flow through a multi-stage pipeline that balances capability with context efficiency. Following the OpenAI best practice of keeping initially available tools under 20 per request, the system uses tiered prioritization and skill-aware scoping.
+
+#### Tiered Tool Categories
+
+Tools are split into three tiers defined in `src/mcp/constants.ts`:
+
+| Tier | Set | Count | Always Included? | Purpose |
+|------|-----|-------|-------------------|---------|
+| **Essential** | `ESSENTIAL_TOOLS` | 6 | Yes — every session | Core capabilities: `read-file`, `list-directory`, `web-search`, `shell-execute`, `spawn-agent`, `orchestrate-agents` |
+| **Contextual** | `CONTEXTUAL_TOOLS` | 12 | When budget allows | Media, knowledge, secrets: `browser-navigate`, `search-knowledge`, `list-secrets`, `get-secret`, `ingest-youtube`, `query-gallery-assets`, `submit-media-job`, `get-job-status`, `save-draft-media`, `send-notification`, `produce-video`, `transcribe-audio` |
+| **Combined** | `ALWAYS_ON_TOOLS` | 18 | Backward-compatible union | Union of Essential + Contextual; used by `ToolRegistry.listEnabledTools()` |
+
+#### End-to-End Flow
+
+```
+1. Registration    ToolRegistry stores all discovered tools (built-in, Docker, native MCP)
+2. Enabled filter  listEnabledTools() returns enabled tools + ALWAYS_ON_TOOLS
+3. Skill scoping   If availableTools provided → filter to skill set + ESSENTIAL_TOOLS
+4. Budget cap      If count > maxToolsPerRequest → tiered priority:
+                     a. Essential tools (always)
+                     b. Contextual tools (fill next)
+                     c. Everything else (remaining slots)
+5. SDK wrapping    defineTool() for each surviving tool
+6. Hook gating     onPreToolUse checks approval queue per-call
+```
+
+#### Skill-Aware Tool Scoping
+
+When a skill prefix is detected in a message (e.g., `[Using Research Synthesizer skill]`), the `MessageRouter` automatically:
+
+1. **Parses** the skill name from the prefix
+2. **Loads** skill metadata via `loadSkillMetadata()` to find `allowedTools`
+3. **Scopes** the session to `skill.allowedTools` — only those tools (plus `ESSENTIAL_TOOLS`) are sent to the LLM
+4. **Auto-approves** the skill's tools so they don't block on the approval queue during interactive use
+
+This replaces the previous behavior where typing a skill prefix in the main chat sent **all** enabled tools (50+), hitting the `maxToolsPerRequest` cap and flooding the LLM context with irrelevant tool definitions.
+
+#### Skill Auto-Approval
+
+The approval pipeline has four priority levels in `onPreToolUse`:
+
+| Priority | Check | Result |
+|----------|-------|--------|
+| P0 | Tool disabled by admin | **Deny** |
+| P1 | Global approval lock | **Approval queue** (cannot bypass) |
+| P2 | Auto-approve list (per-task or per-session) | **Allow** + audit log |
+| P3 | High-risk tool (`riskLevel: "high"`) | **Approval queue** |
+| P4 | Everything else | **Allow** |
+
+**Interactive chat:** `INTERACTIVE_CHAT_AUTO_APPROVE_TOOLS` (12 tools) + the active skill's `allowedTools` are merged into the auto-approve list. Since the user is the human-in-the-loop, skill tools are trusted during interactive sessions.
+
+**Background tasks:** When a task declares `allowedTools` (e.g., from a skill-scoped pipeline stage), those tools are merged into `autoApproveTools` so autonomous execution isn't blocked by approval queues.
 
 ### Skill System (`src/skills/`)
 
@@ -865,10 +965,11 @@ Routes an `IncomingMessage` from any channel through a pipeline:
 2. **Session Resolution** — Finds or creates a session for the `(channelType, userId)` pair.
 3. **Session Touch** — Calls `sessionManager.resumeSession()` to update `lastActiveAt` (history is retained for admin/audit views).
 4. **System Message Construction** — `buildSystemMessage()` reads the personality config and produces a `SystemMessageConfig` with `content` (the personality text) and `mode` (`"append"` to merge with SDK defaults, or `"replace"` to fully override). If personality is disabled, no system message is sent.
-5. **Tool Scoping** — `resolveAvailableTools()` resolves per-message tool allowlists into `string[]` (tool names), which the SDK filters natively via `availableTools`. Replaces the previous `ToolDefinition[]` filtering approach.
-6. **LLM Call** — Streams the prompt through `CopilotWrapper.chat()` with `conversationId: sessionId`, `systemMessage`, `availableTools`, and `onUserInputRequest`, forwarding chunks to the channel if a `RouteOptions.onChunk` callback is provided. The SDK handles multi-turn context natively; only the current user message is sent as the prompt.
-7. **Persistence** — Appends the user message and assistant response to the session's JSONL log for admin views and auditing.
-8. **Session Clear** — `clearUserSession()` also calls `copilot.destroySession()` to free the cached SDK session.
+5. **Tool Scoping** — `resolveAvailableTools()` resolves per-message tool allowlists into `string[]` (tool names), which the SDK filters natively via `availableTools`. When a skill prefix is detected (e.g., `[Using X skill]`) but no explicit tools were passed, the router auto-resolves the skill's `allowedTools` via `resolveSkillTools()`.
+6. **Auto-Approval** — Interactive chat sessions merge `INTERACTIVE_CHAT_AUTO_APPROVE_TOOLS` with the active skill's tools (if any), so skill tool calls don't block on the approval queue.
+7. **LLM Call** — Streams the prompt through `CopilotWrapper.chat()` with `conversationId: sessionId`, `systemMessage`, `availableTools`, `autoApproveTools`, and `onUserInputRequest`, forwarding chunks to the channel if a `RouteOptions.onChunk` callback is provided. The SDK handles multi-turn context natively; only the current user message is sent as the prompt.
+8. **Persistence** — Appends the user message and assistant response to the session's JSONL log for admin views and auditing.
+9. **Session Clear** — `clearUserSession()` also calls `copilot.destroySession()` to free the cached SDK session.
 
 ### Session Manager (`src/sessions/session-manager.ts`)
 
@@ -1846,6 +1947,7 @@ Logs are queryable via `GET /api/logs` with filters for `category`, `level`, `si
 | `update-job` | productivity | 🟡 medium | Update a scheduled job's cron expression or action. |
 | `delete-job` | productivity | 🟡 medium | Delete a scheduled job. |
 | `toggle-job` | productivity | 🟡 medium | Enable or disable a scheduled job. |
+| `save-draft-media` | productivity | 🟡 medium | Copy generated media to project draft directory (`~/.openzigs/files/drafts/`). |
 
 ### Agent Chaining Tools
 
@@ -1911,7 +2013,7 @@ Each social platform has a dedicated set of tools backed by its native MCP serve
 | `youtube-get-video-details` | social | 🟢 low | Get video details by ID. |
 | `youtube-get-video-comments` | social | 🟢 low | Get video comment threads. |
 | `youtube-reply-to-comment` | social | 🟡 medium | Reply to a YouTube comment (requires OAuth). |
-| `youtube-search-videos` | social | 🟢 low | Search YouTube videos. |
+| `youtube-search-videos` | social | 🟢 low | Search YouTube videos. Supports `order` param (date, rating, relevance, title, viewCount). |
 | `youtube-get-channel-analytics` | social | 🟢 low | Get channel analytics. |
 | `youtube-upload-video` | social | 🔴 high | Upload a video file to YouTube via resumable upload (requires OAuth, 1600 quota units). |
 
@@ -2588,6 +2690,7 @@ flowchart TB
 | `TaskWorker` | `src/tasks/task-worker.ts` | Background polling loop, dequeues tasks, calls `CopilotWrapper.chat()` |
 | `spawn_agent` tool | `src/mcp/tools/agent-tools.ts` | MCP tool the LLM calls to create child tasks |
 | `NotificationDispatcher` | `src/tasks/notification-dispatcher.ts` | Routes completion alerts to the originating channel |
+| `MediaNotificationService` | `src/queue/media-notification-service.ts` | Opt-in Telegram notifications for media queue jobs and video renders |
 | Task API | `src/api/tasks.ts` | REST endpoints: list, get, cancel, stats |
 
 ### Execution Scenarios
@@ -4368,6 +4471,28 @@ Push-based orchestrator that polls pending jobs on a configurable tick interval 
 **Stale result recovery:** `pollForStaleResults()` runs every tick and checks dispatched jobs older than 3 minutes. For each stale job, it polls the worker's `/job-result/<id>` endpoint. If the result is available, it's processed as if the callback had arrived — this recovers jobs where the callback POST failed.
 
 **Events:** `job:dispatched`, `job:complete`, `job:failed`, `job:progress`, `project:complete`
+
+### Media Notification Service (`src/queue/media-notification-service.ts`)
+
+Instanced once at server start; wires event listeners onto `QueueMaster` and `RenderOrchestrator` to deliver opt-in Telegram push notifications for long-running async operations.
+
+**Covered surfaces:**
+- `QueueMaster` `job:complete` / `job:failed` — image/video/music generation jobs
+- `RenderOrchestrator` `render:complete` / `render:failed` — Director video renders
+- Character training — polled via `pollTrainingStatus()` → `sendTrainingTelegramNotification()`
+
+**Opt-in fields (per-job):**
+
+| Field | Type | Description |
+|---|---|---|
+| `notifyViaTelegram` | boolean | Whether to send a Telegram message on completion/failure |
+| `telegramChatId` | string \| null | Target chat; falls back to `config.channels.telegram.adminUserId` |
+
+**Flow:**
+1. Client sets `notify_via_telegram: true` in the job creation request (UI toggle or agent tool call)
+2. The flag is persisted in the `media_jobs` SQLite row (`notify_via_telegram INTEGER`, `telegram_chat_id TEXT`)
+3. On the terminal event, `MediaNotificationService` checks the flag, resolves the chat ID, then calls `ChannelManager.getChannel("telegram").sendMessage()`
+4. Gracefully degrades if Telegram is not configured or not connected — no crash, warn-level log
 
 ### Media Queue Repository (`src/queue/media-queue-repository.ts`)
 

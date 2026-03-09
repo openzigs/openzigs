@@ -22,6 +22,7 @@ const ingestYouTubeSchema = z.object({
   title: z.string().optional().describe("Optional title/description for the gallery entry"),
   artist: z.string().optional().describe("Optional artist name for audio tracks"),
   tags: z.array(z.string()).optional().describe("Optional tags for gallery cataloging"),
+  catalogInGallery: z.boolean().optional().describe("Whether to register the downloaded file in the Gallery database. Defaults to true. Set to false when downloading audio purely for transcription (e.g. research workflows)."),
 });
 
 type IngestArgs = z.infer<typeof ingestYouTubeSchema>;
@@ -50,6 +51,7 @@ export const createIngestYouTubeTools = ({ repo }: IngestYouTubeToolsOptions): T
           title: { type: "string", description: "Optional title for the gallery entry" },
           artist: { type: "string", description: "Optional artist name for audio tracks" },
           tags: { type: "array", items: { type: "string" }, description: "Optional tags" },
+          catalogInGallery: { type: "boolean", description: "Whether to register in Gallery DB. Defaults to true. Set to false for research/transcription-only downloads." },
         },
         required: ["url", "format"],
       },
@@ -57,7 +59,8 @@ export const createIngestYouTubeTools = ({ repo }: IngestYouTubeToolsOptions): T
       category: "productivity",
       riskLevel: "high",
       handler: async (args) => {
-        const { url, format, title, artist, tags } = args as IngestArgs;
+        const { url, format, title, artist, tags, catalogInGallery } = args as IngestArgs;
+        const shouldCatalog = catalogInGallery !== false;
 
         // Validate URL is a plausible media URL (prevent command injection)
         if (!isValidMediaUrl(url)) {
@@ -94,9 +97,9 @@ export const createIngestYouTubeTools = ({ repo }: IngestYouTubeToolsOptions): T
 
         try {
           if (format === "audio") {
-            return await downloadAudio(url, safeTitle, timestamp, artist, tags, metadata, repo);
+            return await downloadAudio(url, safeTitle, timestamp, artist, tags, metadata, repo, shouldCatalog);
           } else {
-            return await downloadVideo(url, safeTitle, timestamp, artist, tags, metadata, repo);
+            return await downloadVideo(url, safeTitle, timestamp, artist, tags, metadata, repo, shouldCatalog);
           }
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
@@ -155,6 +158,7 @@ async function downloadAudio(
   tags: string[] | undefined,
   metadata: VideoMetadata,
   repo: MediaQueueRepository,
+  catalogInGallery: boolean,
 ): Promise<{ text: string; isError?: boolean }> {
   // Use a base path without extension — yt-dlp will append the intermediate
   // extension, then ffmpeg will write the final .mp3 alongside it.
@@ -183,27 +187,31 @@ async function downloadAudio(
   const actualFilename = path.basename(actualPath);
   const stat = await fs.stat(actualPath);
 
-  const assetId = repo.createAsset({
-    type: "audio",
-    filename: actualFilename,
-    filePath: actualPath,
-    mimeType: "audio/mp3",
-    fileSizeBytes: stat.size,
-    durationSeconds: metadata.duration,
-    prompt: metadata.title,
-    source: "ingested",
-    sourceUrl: url,
-    artist: artist ?? metadata.uploader,
-    tags: tags ?? ["youtube", "audio"],
-  });
+  let assetId: string | undefined;
+  if (catalogInGallery) {
+    assetId = repo.createAsset({
+      type: "audio",
+      filename: actualFilename,
+      filePath: actualPath,
+      mimeType: "audio/mp3",
+      fileSizeBytes: stat.size,
+      durationSeconds: metadata.duration,
+      prompt: metadata.title,
+      source: "ingested",
+      sourceUrl: url,
+      artist: artist ?? metadata.uploader,
+      tags: tags ?? ["youtube", "audio"],
+    });
+  }
 
   return {
-    text: `Audio downloaded and cataloged in Gallery.\n` +
+    text: `Audio downloaded${catalogInGallery ? " and cataloged in Gallery" : ""}.\n` +
       `• File: ${actualFilename}\n` +
+      `• Path: ${actualPath}\n` +
       `• Size: ${(stat.size / (1024 * 1024)).toFixed(1)} MB\n` +
       `• Duration: ${metadata.duration ? `${Math.floor(metadata.duration / 60)}m ${Math.floor(metadata.duration % 60)}s` : "unknown"}\n` +
       `• Artist: ${artist ?? metadata.uploader ?? "unknown"}\n` +
-      `• Gallery ID: ${assetId}`,
+      (assetId ? `• Gallery ID: ${assetId}` : "• Gallery: skipped"),
   };
 }
 
@@ -215,6 +223,7 @@ async function downloadVideo(
   tags: string[] | undefined,
   metadata: VideoMetadata,
   repo: MediaQueueRepository,
+  catalogInGallery: boolean,
 ): Promise<{ text: string; isError?: boolean }> {
   const outputFilename = `${timestamp}-${safeTitle}.mp4`;
   const outputPath = path.join(GALLERY_DIR, outputFilename);
@@ -243,26 +252,29 @@ async function downloadVideo(
   const actualFilename = path.basename(actualPath);
   const stat = await fs.stat(actualPath);
 
-  const assetId = repo.createAsset({
-    type: "video",
-    filename: actualFilename,
-    filePath: actualPath,
-    mimeType: "video/mp4",
-    fileSizeBytes: stat.size,
-    durationSeconds: metadata.duration,
-    prompt: metadata.title,
-    source: "ingested",
-    sourceUrl: url,
-    artist: artist ?? metadata.uploader,
-    tags: tags ?? ["youtube", "video"],
-  });
+  let assetId: string | undefined;
+  if (catalogInGallery) {
+    assetId = repo.createAsset({
+      type: "video",
+      filename: actualFilename,
+      filePath: actualPath,
+      mimeType: "video/mp4",
+      fileSizeBytes: stat.size,
+      durationSeconds: metadata.duration,
+      prompt: metadata.title,
+      source: "ingested",
+      sourceUrl: url,
+      artist: artist ?? metadata.uploader,
+      tags: tags ?? ["youtube", "video"],
+    });
+  }
 
   return {
-    text: `Video downloaded and cataloged in Gallery.\n` +
+    text: `Video downloaded${catalogInGallery ? " and cataloged in Gallery" : ""}.\n` +
       `• File: ${actualFilename}\n` +
       `• Size: ${(stat.size / (1024 * 1024)).toFixed(1)} MB\n` +
       `• Duration: ${metadata.duration ? `${Math.floor(metadata.duration / 60)}m ${Math.floor(metadata.duration % 60)}s` : "unknown"}\n` +
-      `• Gallery ID: ${assetId}`,
+      (assetId ? `• Gallery ID: ${assetId}` : "• Gallery: skipped"),
   };
 }
 

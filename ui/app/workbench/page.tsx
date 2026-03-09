@@ -8,7 +8,8 @@ import { cn } from "@/lib/utils";
 import { ForwardRefEditor } from "@/components/workbench/forward-ref-editor";
 import { FileSidebar } from "@/components/workbench/file-sidebar";
 import { ImportDocumentDialog } from "@/components/workbench/import-document-dialog";
-import { Save, FileText, Circle, FileUp } from "lucide-react";
+import { ResearchGenerateDialog } from "@/components/workbench/research-generate-dialog";
+import { Save, FileText, Circle, FileUp, Microscope } from "lucide-react";
 import { showToast } from "@/components/toast";
 import { AskAiPanel, AskAiButton, PAGE_CONTEXTS } from "@/components/ask-ai";
 
@@ -23,6 +24,7 @@ export default function WorkbenchPage() {
   const [dirty, setDirty] = useState(false);
   const [localContent, setLocalContent] = useState("# Welcome to the Workbench\n\nStart writing or open a file from the sidebar.");
   const [importOpen, setImportOpen] = useState(false);
+  const [researchOpen, setResearchOpen] = useState(false);
   const [askAiOpen, setAskAiOpen] = useState(false);
 
   // Fetch file content when a file is selected
@@ -159,6 +161,14 @@ export default function WorkbenchPage() {
           <div className="flex items-center gap-2">
             <AskAiButton onClick={() => setAskAiOpen(true)} />
             <button
+              onClick={() => setResearchOpen(true)}
+              className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold text-muted-foreground transition hover:bg-muted hover:text-foreground"
+              title="Research & Generate — autonomous research and content synthesis"
+            >
+              <Microscope className="h-3.5 w-3.5" />
+              Research
+            </button>
+            <button
               onClick={() => setImportOpen(true)}
               className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold text-muted-foreground transition hover:bg-muted hover:text-foreground"
               title="Import document (Word, PDF, etc.)"
@@ -211,6 +221,12 @@ export default function WorkbenchPage() {
         onOpenChange={setImportOpen}
         rootDir={DEFAULT_ROOT}
         onImport={handleImportComplete}
+      />
+      {/* Research & Generate Dialog */}
+      <ResearchGenerateDialog
+        open={researchOpen}
+        onOpenChange={setResearchOpen}
+        onSubmitted={() => setAskAiOpen(true)}
       />
       <AskAiPanel pageContext={PAGE_CONTEXTS["workbench"]} open={askAiOpen} onClose={() => setAskAiOpen(false)} />
     </div>

@@ -71,5 +71,33 @@ describe("youtube-tools", () => {
       expect(mgr.callTool).toHaveBeenCalled();
       expect(result.text).toBe('{"videoId":"abc"}');
     });
+
+    it("passes order parameter to youtube-search-videos", async () => {
+      const mgr = createMockLocalServerManager({ callResult: { text: '{"items":[]}' } });
+      const tools = createYouTubeTools({ localServerManager: mgr as never });
+      const handler = tools.find((t) => t.name === "youtube-search-videos")!.handler;
+      await handler({ query: "AI tools", order: "viewCount" });
+      expect(mgr.callTool).toHaveBeenCalledWith("youtube", "yt_search_videos", { query: "AI tools", order: "viewCount" });
+    });
+
+    it("youtube-search-videos works without order parameter", async () => {
+      const mgr = createMockLocalServerManager({ callResult: { text: '{"items":[]}' } });
+      const tools = createYouTubeTools({ localServerManager: mgr as never });
+      const handler = tools.find((t) => t.name === "youtube-search-videos")!.handler;
+      const result = await handler({ query: "test" });
+      expect(result.isError).toBeUndefined();
+      expect(mgr.callTool).toHaveBeenCalledWith("youtube", "yt_search_videos", { query: "test" });
+    });
+  });
+
+  describe("youtube-search-videos schema", () => {
+    it("inputSchema includes order property with valid enum", () => {
+      const tools = createYouTubeTools({});
+      const searchTool = tools.find((t) => t.name === "youtube-search-videos")!;
+      const props = searchTool.inputSchema.properties as Record<string, { enum?: string[] }>;
+      const orderProp = props.order;
+      expect(orderProp).toBeDefined();
+      expect(orderProp.enum).toEqual(["date", "rating", "relevance", "title", "viewCount"]);
+    });
   });
 });

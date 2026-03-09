@@ -170,6 +170,8 @@ export interface StoredMediaJob {
   created_at: string;
   dispatched_at: string | null;
   completed_at: string | null;
+  notify_via_telegram: number;  // 0 or 1 (SQLite boolean)
+  telegram_chat_id: string | null;
 }
 
 /** Domain-level media job (parsed from stored row). */
@@ -192,6 +194,8 @@ export interface MediaJob {
   createdAt: Date;
   dispatchedAt: Date | null;
   completedAt: Date | null;
+  notifyViaTelegram: boolean;
+  telegramChatId: string | null;
 }
 
 // ── Create Job Input ──────────────────────────────────────────
@@ -202,6 +206,8 @@ export interface CreateMediaJobInput {
   model?: string;
   projectId?: string;
   priority?: number;
+  notifyViaTelegram?: boolean;
+  telegramChatId?: string;
 }
 
 // ── Worker Status ─────────────────────────────────────────────

@@ -277,7 +277,7 @@ export const createQueueRouter = ({ queueMaster, repo, characterRepo, knowledgeS
   // ── POST /jobs — Submit a new media generation job ──────
   router.post("/jobs", (req, res) => {
     try {
-      const { type, payload, model, projectId, priority } = req.body as Partial<CreateMediaJobInput>;
+      const { type, payload, model, projectId, priority, notifyViaTelegram, telegramChatId } = req.body as Partial<CreateMediaJobInput>;
 
       if (!type || !VALID_JOB_TYPES.includes(type)) {
         res.status(400).json({ error: `Invalid job type. Must be one of: ${VALID_JOB_TYPES.join(", ")}` });
@@ -322,6 +322,8 @@ export const createQueueRouter = ({ queueMaster, repo, characterRepo, knowledgeS
         model,
         projectId: projectId ?? undefined,
         priority: priority ?? 0,
+        notifyViaTelegram: notifyViaTelegram ?? undefined,
+        telegramChatId: telegramChatId ?? undefined,
       });
 
       logger.info(`[QueueAPI] Job created: ${job.id} (${job.type} → ${job.targetNode})`);

@@ -28,7 +28,7 @@ import { MessageRouter } from "./routing/index.js";
 import { SessionManager } from "./sessions/index.js";
 import { CloudflareTunnel } from "./tunnel/index.js";
 import { createModelsRouter } from "./api/models.js";
-import { createAdminRouter } from "./api/admin.js";
+import { createAdminRouter, pinterestOAuthStates, exchangePinterestCode, refreshPinterestToken } from "./api/admin.js";
 import { createTasksRouter } from "./api/tasks.js";
 import { createFilesRouter } from "./api/files.js";
 import { launchChrome, killChrome } from "./browser/chrome-launcher.js";
@@ -56,6 +56,7 @@ import { createDirectorRouter, setDirectorIO } from "./api/director.js";
 import { createAudioRouter } from "./api/audio.js";
 import { createPresenterRouter } from "./api/presenter.js";
 import { createSocialRouter } from "./api/social.js";
+import { createPinterestRouter } from "./api/pinterest.js";
 import { SocialRepository } from "./channels/social/social-repository.js";
 import { SocialIngestionService, InstagramAdapter, FacebookAdapter, TwitterAdapter, LinkedInAdapter } from "./channels/social/social-ingestion.js";
 import { SocialBrain } from "./channels/social/social-brain.js";
@@ -75,9 +76,10 @@ import { RoomManager } from "./presenter/room-manager.js";
 import { ExpressPeerServer } from "peer";
 import { MediaQueueRepository } from "./queue/media-queue-repository.js";
 import { QueueMaster } from "./queue/queue-master.js";
+import { MediaNotificationService } from "./queue/media-notification-service.js";
 import { createQueueRouter, createQueueCallbackRouter } from "./api/queue.js";
 import { createGalleryRouter } from "./api/gallery.js";
-import { createCharacterRouter, setCharacterIO, resumeStaleTrainingPolls } from "./api/characters.js";
+import { createCharacterRouter, setCharacterIO, setCharacterChannelManager, resumeStaleTrainingPolls } from "./api/characters.js";
 import { CharacterRepository } from "./characters/character-repository.js";
 
 // Register built-in post-action types (create-github-issues, send-webhook, etc.)
@@ -534,7 +536,6 @@ registerMcpTools(toolRegistry, {
   linkedinSidecarUrl: resolveSidecarUrl("linkedin", "MCP_LINKEDIN_URL", 5101),
   twitterSidecarUrl: resolveSidecarUrl("twitter", "MCP_TWITTER_URL", 5102),
   facebookSidecarUrl: resolveSidecarUrl("facebook", "MCP_FACEBOOK_URL", 5103),
-  pinterestSidecarUrl: resolveSidecarUrl("pinterest", "MCP_PINTEREST_URL", 5104),
   markitdownSidecarUrl: resolveSidecarUrl("markitdown", "MCP_MARKITDOWN_URL", 5301),
   gmailSidecarUrl: resolveSidecarUrl("gmail", "MCP_GMAIL_URL", 5302),
   databaseSidecarUrl: resolveSidecarUrl("database", "MCP_DATABASE_URL", 5303),
@@ -547,6 +548,10 @@ registerMcpTools(toolRegistry, {
   socialRepository,
   socialHandoffManager: socialHandoff,
   mediaQueueRepo,
+  queueMaster,
+  channelManager,
+  notificationChatId: config.channels?.telegram?.adminUserId || undefined,
+  audioSidecarUrl: resolveSidecarUrl("audio", "AUDIO_SIDECAR_URL", 5006),
 });
 
 // ── Task Background Worker ──
@@ -591,6 +596,43 @@ const socialRouter = createSocialRouter({
   brandVoiceService,
 });
 app.use("/api/social", authMiddleware, socialRouter);
+
+// Pinterest OAuth callback — no auth middleware (redirected from Pinterest)
+// MUST be registered before the /api/pinterest router mount to avoid auth middleware intercept
+app.get("/api/pinterest/oauth/callback", async (req, res) => {
+  const code = typeof req.query.code === "string" ? req.query.code : "";
+  const state = typeof req.query.state === "string" ? req.query.state : "";
+  const error = typeof req.query.error === "string" ? req.query.error : "";
+
+  if (error) {
+    logger.warn(`Pinterest OAuth denied: ${error}`);
+    return res.redirect(`${uiOrigin}/admin?pinterest_oauth=error&message=${encodeURIComponent(error)}`);
+  }
+
+  if (!code || !state) {
+    return res.redirect(`${uiOrigin}/admin?pinterest_oauth=error&message=${encodeURIComponent("Missing code or state")}`);
+  }
+
+  // Validate CSRF state
+  if (!pinterestOAuthStates.has(state)) {
+    logger.warn("Pinterest OAuth state mismatch — possible CSRF");
+    return res.redirect(`${uiOrigin}/admin?pinterest_oauth=error&message=${encodeURIComponent("Invalid state parameter")}`);
+  }
+  pinterestOAuthStates.delete(state);
+
+  const result = await exchangePinterestCode(code);
+  if (!result.ok) {
+    logger.error(`Pinterest OAuth token exchange failed: ${result.error}`);
+    return res.redirect(`${uiOrigin}/admin?pinterest_oauth=error&message=${encodeURIComponent(result.error ?? "Token exchange failed")}`);
+  }
+
+  logger.info("Pinterest OAuth flow completed successfully");
+  return res.redirect(`${uiOrigin}/admin?pinterest_oauth=success`);
+});
+
+// Pinterest Reports API routes (after callback so it doesn't intercept the OAuth redirect)
+const pinterestRouter = createPinterestRouter();
+app.use("/api/pinterest", authMiddleware, pinterestRouter);
 
 // Vault API routes
 const vaultRouter = createVaultRouter({ vaultService });
@@ -1199,6 +1241,8 @@ const io = new SocketIOServer(httpServer, {
 setDirectorIO(io);
 // Bind Socket.IO to Character router for training progress events
 setCharacterIO(io);
+// Wire ChannelManager into Character router for opt-in Telegram training notifications (Issue #415)
+setCharacterChannelManager(channelManager, config.channels?.telegram?.adminUserId || undefined);
 // Resume polling for any characters stuck in "training" after server restart
 resumeStaleTrainingPolls(characterRepo).catch((err) => {
   logger.warn(`[Characters] Failed to resume stale training polls: ${err}`);
@@ -1618,6 +1662,14 @@ new NotificationDispatcher({
   io,
 });
 
+// Wire MediaNotificationService — per-job opt-in Telegram notifications (Issue #414)
+new MediaNotificationService({
+  queueMaster,
+  renderOrchestrator,
+  channelManager,
+  fallbackChatId: config.channels?.telegram?.adminUserId || undefined,
+});
+
 // Forward ALL task lifecycle events to Socket.IO for real-time graph updates
 for (const event of ["task:queued", "task:running", "task:completed", "task:failed", "task:cancelled"] as const) {
   taskEngine.on(event, (task: import("./tasks/types.js").AgentTask) => {
@@ -1971,6 +2023,19 @@ if (webConfig?.enabled !== false) {
     if (approval.channelType !== "web" || !approval.sessionId) {
       return;
     }
+    const approvalPayload = {
+      id: approval.id,
+      tool: approval.tool,
+      args: approval.args,
+      riskLevel: approval.riskLevel,
+      explanation: approval.explanation,
+      preview: approval.preview
+    };
+    // Ephemeral sessions lack a session-manager record; broadcast to all web clients.
+    if (approval.sessionId === "ephemeral") {
+      webChatChannel.broadcastApprovalRequest(approvalPayload);
+      return;
+    }
     try {
       const session = await sessionManager.getSession(approval.sessionId);
       const chatId = typeof session.metadata.chatId === "string" ? session.metadata.chatId : undefined;
@@ -1978,14 +2043,7 @@ if (webConfig?.enabled !== false) {
         logger.warn(`Missing chatId for web approval ${approval.id}`);
         return;
       }
-      await webChatChannel.sendApprovalRequest(chatId, {
-        id: approval.id,
-        tool: approval.tool,
-        args: approval.args,
-        riskLevel: approval.riskLevel,
-        explanation: approval.explanation,
-        preview: approval.preview
-      });
+      await webChatChannel.sendApprovalRequest(chatId, approvalPayload);
     } catch (error) {
       const details = error instanceof Error ? error.message : String(error);
       logger.error(`Failed to send web approval: ${details}`);
@@ -1995,6 +2053,31 @@ if (webConfig?.enabled !== false) {
 
 httpServer.listen(port, "0.0.0.0", () => {
   logger.info(`OpenZigs server listening on port ${port} (0.0.0.0)`);
+
+  // Pinterest OAuth: auto-refresh token if expiry is within 7 days
+  const checkPinterestRefresh = async () => {
+    const expiresAt = process.env.PINTEREST_TOKEN_EXPIRES_AT;
+    const refreshToken = process.env.PINTEREST_REFRESH_TOKEN;
+    if (!expiresAt || !refreshToken) return;
+    const expiresMs = new Date(expiresAt).getTime();
+    const sevenDays = 7 * 24 * 60 * 60 * 1000;
+    if (Date.now() > expiresMs - sevenDays) {
+      logger.info("Pinterest token expiring within 7 days — auto-refreshing…");
+      try {
+        const result = await refreshPinterestToken();
+        if (result.ok) {
+          logger.info(`Pinterest token auto-refreshed, new expiry: ${result.expiresAt}`);
+        } else {
+          logger.warn(`Pinterest auto-refresh failed: ${result.error}`);
+        }
+      } catch (err) {
+        logger.warn(`Pinterest auto-refresh error: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+  };
+  void checkPinterestRefresh();
+  // Check daily
+  setInterval(() => void checkPinterestRefresh(), 24 * 60 * 60 * 1000);
 
   // Start the media queue push loop
   if (process.env.QUEUE_ENABLED !== "false") {
@@ -2024,9 +2107,10 @@ httpServer.listen(port, "0.0.0.0", () => {
     // Notify Telegram when an entire project's queue is complete
     queueMaster.on("project:complete", (projectId: string, total: number) => {
       const telegram = channelManager.getChannel("telegram");
-      if (telegram) {
+      const chatId = config.channels?.telegram?.adminUserId;
+      if (telegram && chatId) {
         const text = `✅ Project "${projectId}" — all ${total} media jobs complete. Assets ready in Gallery.`;
-        void telegram.sendMessage("broadcast", { text }).catch((err: unknown) => {
+        void telegram.sendMessage(chatId, { text }).catch((err: unknown) => {
           const msg = err instanceof Error ? err.message : String(err);
           logger.warn(`[QueueMaster] Telegram notification failed: ${msg}`);
         });

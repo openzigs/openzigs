@@ -33,11 +33,11 @@ const POSITION_OPTIONS: { value: OverlayPosition; label: string }[] = [
   { value: "top-third", label: "Upper Third" },
 ];
 
-const ANIMATION_OPTIONS: { value: OverlayAnimation; label: string }[] = [
-  { value: "fade-in", label: "Fade In" },
-  { value: "slide-up", label: "Slide Up" },
-  { value: "typewriter", label: "Typewriter" },
-  { value: "none", label: "None" },
+const ANIMATION_OPTIONS: { value: OverlayAnimation; label: string; hint: string }[] = [
+  { value: "fade-in", label: "Fade In", hint: "Text gradually appears from transparent to opaque" },
+  { value: "slide-up", label: "Slide Up", hint: "Text slides upward into position" },
+  { value: "typewriter", label: "Typewriter", hint: "Characters appear one by one, like being typed" },
+  { value: "none", label: "None", hint: "Text appears instantly with no animation" },
 ];
 
 function generateId(): string {
@@ -179,6 +179,7 @@ export function TextOverlayEditor({
                             ? "bg-primary text-primary-foreground"
                             : "bg-muted/50 text-muted-foreground hover:bg-muted"
                         }`}
+                        title={opt.hint}
                         data-testid={`overlay-anim-${opt.value}`}
                       >
                         {opt.label}

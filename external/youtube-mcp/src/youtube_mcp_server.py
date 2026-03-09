@@ -38,7 +38,7 @@ class YouTubeMCPServer:
                 Tool(name="yt_get_video_details", description="Get detailed info for a video (stats, description, duration)", inputSchema={"type": "object", "properties": {"video_id": {"type": "string"}}, "required": ["video_id"]}),
                 Tool(name="yt_get_video_comments", description="Get top comments on a video", inputSchema={"type": "object", "properties": {"video_id": {"type": "string"}, "max_results": {"type": "integer", "default": 20}}, "required": ["video_id"]}),
                 Tool(name="yt_reply_to_comment", description="Reply to a YouTube comment (requires OAuth)", inputSchema={"type": "object", "properties": {"parent_id": {"type": "string", "description": "Comment ID to reply to"}, "text": {"type": "string"}}, "required": ["parent_id", "text"]}),
-                Tool(name="yt_search_videos", description="Search YouTube videos by query", inputSchema={"type": "object", "properties": {"query": {"type": "string"}, "max_results": {"type": "integer", "default": 10}}, "required": ["query"]}),
+                Tool(name="yt_search_videos", description="Search YouTube videos by query", inputSchema={"type": "object", "properties": {"query": {"type": "string"}, "max_results": {"type": "integer", "default": 10}, "order": {"type": "string", "enum": ["date", "rating", "relevance", "title", "viewCount"], "default": "relevance", "description": "Sort order for results"}}, "required": ["query"]}),
                 Tool(name="yt_get_channel_analytics", description="Get channel statistics (views, subscribers, video count)", inputSchema={"type": "object", "properties": {}}),
                 Tool(
                     name="yt_upload_video",
@@ -80,7 +80,7 @@ class YouTubeMCPServer:
                 elif name == "yt_reply_to_comment":
                     data = await client.reply_to_comment(arguments["parent_id"], arguments["text"])
                 elif name == "yt_search_videos":
-                    data = await client.search_videos(arguments["query"], arguments.get("max_results", 10))
+                    data = await client.search_videos(arguments["query"], arguments.get("max_results", 10), arguments.get("order", "relevance"))
                 elif name == "yt_get_channel_analytics":
                     data = await client.get_channel_analytics()
                 elif name == "yt_upload_video":

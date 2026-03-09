@@ -9,6 +9,7 @@ import type { PersonalityManager } from "../personality/personality-manager.js";
 import type { BrandVoiceService } from "../personality/brand-voice-service.js";
 import type { TaskEngine } from "../tasks/task-engine.js";
 import { ALWAYS_ON_TOOLS, INTERACTIVE_CHAT_AUTO_APPROVE_TOOLS } from "../mcp/constants.js";
+import { loadSkillMetadata } from "../skills/skill-loader.js";
 import { setActiveChatContext, clearActiveChatContext } from "../mcp/tools/agent-tools.js";
 import { setActiveOrchestrateContext, clearActiveOrchestrateContext } from "../mcp/tools/orchestrate-agents.js";
 import { setActiveWizardContext, clearActiveWizardContext } from "../mcp/tools/wizard-tools.js";
@@ -152,7 +153,23 @@ export class MessageRouter {
     // SDK handles multi-turn context natively; only send the current user message
     const prompt = this.buildPrompt(message.content);
     // Build system message from personality config for SDK-level injection
-    const systemMessage = this.buildSystemMessage();
+    let systemMessage = this.buildSystemMessage();
+
+    // Inject autonomous execution guardrail for skill-prefixed messages
+    if (message.content.startsWith("[Using ") && message.content.includes(" skill]")) {
+      const autonomousGuardrail =
+        "AUTONOMOUS EXECUTION MODE — CRITICAL RULES:\n" +
+        "1. You MUST complete ALL numbered steps by calling tools. Do NOT output text until the FINAL step says to respond.\n" +
+        "2. ANY text response (even 'I will now...') PERMANENTLY ENDS the session. You CANNOT resume.\n" +
+        "3. If a tool fails, skip that step and IMMEDIATELY proceed to the next numbered step by calling the next tool.\n" +
+        "4. NEVER ask the user questions or request confirmation. Execute autonomously.\n" +
+        "5. Call tools in batches of 1-10 per step. Wait for results, then proceed to the next step.";
+      if (systemMessage) {
+        systemMessage = { ...systemMessage, content: systemMessage.content + "\n\n" + autonomousGuardrail };
+      } else {
+        systemMessage = { mode: "append", content: autonomousGuardrail };
+      }
+    }
 
     let response = "";
     try {
@@ -176,11 +193,35 @@ export class MessageRouter {
       });
 
       // Resolve SDK-native tool scoping: pass tool name strings instead of filtering ToolDefinition arrays.
-      const availableTools = this.resolveAvailableTools(options?.allowedTools);
+      // When a skill prefix is detected but no explicit allowedTools were passed
+      // (e.g. user typed "[Using X skill]" in main chat rather than using a
+      // dedicated dialog), auto-resolve the skill's allowed-tools to scope the
+      // session and prevent the full tool surface from flooding the context.
+      let resolvedAllowedTools = options?.allowedTools;
+      if (
+        !resolvedAllowedTools &&
+        message.content.startsWith("[Using ") &&
+        message.content.includes(" skill]")
+      ) {
+        resolvedAllowedTools = await this.resolveSkillTools(message.content);
+      }
+      // Also detect #tool-name prefix (tool auto-complete from UI) and resolve
+      // the owning skill's tools so the tool makes it past the budget cap.
+      if (!resolvedAllowedTools) {
+        resolvedAllowedTools = await this.resolveToolPrefixSkill(message.content);
+      }
+      const availableTools = this.resolveAvailableTools(resolvedAllowedTools);
+
+      // Build auto-approve list: start with the standard interactive chat list,
+      // then merge the skill's tools so skill tool calls don't block on approval.
+      const autoApproveTools = resolvedAllowedTools
+        ? [...new Set([...INTERACTIVE_CHAT_AUTO_APPROVE_TOOLS, ...resolvedAllowedTools])]
+        : [...INTERACTIVE_CHAT_AUTO_APPROVE_TOOLS];
 
       // Interactive chat sessions auto-approve high-risk tools.
       // The user is the human-in-the-loop — they initiated the request,
       // so forcing an approval-queue round-trip is just friction.
+      // When using skills, the skill's tools are also auto-approved.
       // N.B. autoApproveTools is closure-based (captured in buildSessionConfig),
       // NOT AsyncLocalStorage — the latter is lost across JSON-RPC boundaries.
       for await (const chunk of this.copilot.chat(prompt, {
@@ -193,7 +234,7 @@ export class MessageRouter {
         attachments: options?.attachments,
         workingDirectory: options?.workingDirectory,
         reasoningEffort: options?.reasoningEffort,
-        autoApproveTools: INTERACTIVE_CHAT_AUTO_APPROVE_TOOLS,
+        autoApproveTools,
       })) {
         response += chunk;
         if (options?.onChunk) {
@@ -247,13 +288,69 @@ export class MessageRouter {
 
   /**
    * Resolve SDK-native availableTools from a caller-provided allowedTools list.
-   * Merges ALWAYS_ON_TOOLS into the list. Returns undefined when no scoping is needed.
+   * When the client sends an explicit tool list (e.g. skill-scoped from the research dialog),
+   * trust it as-is — don't merge ALWAYS_ON_TOOLS which would add unwanted tools like
+   * browser-navigate and shell-execute into skill-scoped sessions.
+   * ESSENTIAL_TOOLS merging happens in the CopilotWrapper chat() method.
+   * Returns undefined when no scoping is needed (all tools available).
    */
   private resolveAvailableTools(allowedTools?: string[]): string[] | undefined {
-    if (!allowedTools) {
+    if (!allowedTools || allowedTools.length === 0) {
       return undefined;
     }
-    return [...new Set([...allowedTools, ...ALWAYS_ON_TOOLS])];
+    return [...new Set(allowedTools)];
+  }
+
+  /**
+   * Parse a skill prefix from the message and resolve the skill's allowed-tools.
+   * Message format: "[Using <Display Name> skill] <prompt>"
+   * Returns the skill's allowedTools or undefined if the skill can't be resolved.
+   */
+  private async resolveSkillTools(content: string): Promise<string[] | undefined> {
+    const match = content.match(/^\[Using (.+?) skill\]/);
+    if (!match) return undefined;
+
+    const skillDisplayName = match[1].toLowerCase();
+    const skillDirs = this.copilot.getSkillDirectories?.() ?? [];
+    if (skillDirs.length === 0) return undefined;
+
+    const skills = await loadSkillMetadata(skillDirs);
+    const skill = skills.find(
+      (s) =>
+        s.displayName.toLowerCase() === skillDisplayName ||
+        s.name.toLowerCase() === skillDisplayName ||
+        s.name.replace(/-/g, " ").toLowerCase() === skillDisplayName,
+    );
+
+    if (!skill || skill.allowedTools.length === 0) return undefined;
+    return skill.allowedTools;
+  }
+
+  /**
+   * Detect a #tool-name prefix in the message and resolve the owning skill's
+   * allowed-tools. This ensures that when a user explicitly selects a tool via
+   * the UI auto-complete (#tool-name), the tool is included in the session even
+   * if it would normally be dropped by the tool budget cap.
+   */
+  private async resolveToolPrefixSkill(content: string): Promise<string[] | undefined> {
+    const match = content.match(/^#([a-z0-9-]+)\b/i);
+    if (!match) return undefined;
+
+    const toolName = match[1].toLowerCase();
+    const skillDirs = this.copilot.getSkillDirectories?.() ?? [];
+    if (skillDirs.length === 0) return [toolName];
+
+    const skills = await loadSkillMetadata(skillDirs);
+    const owningSkill = skills.find((s) =>
+      s.allowedTools.some((t) => t.toLowerCase() === toolName),
+    );
+
+    if (owningSkill && owningSkill.allowedTools.length > 0) {
+      return owningSkill.allowedTools;
+    }
+
+    // Tool not part of any skill — include it alone so it survives the budget cap.
+    return [toolName];
   }
 
   private async getOrCreateSessionId(message: IncomingMessage): Promise<string> {

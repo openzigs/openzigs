@@ -337,6 +337,15 @@ The Workbench is a rich Markdown editor with a file browser for drafting and edi
 - Full Markdown editing with live preview
 - File browser for navigating the workspace
 - AI-assisted writing and editing via the main chat
+- **Research & Generate**: Autonomous research and content synthesis — searches the web and YouTube, synthesizes a document with inline citations, and optionally generates supporting images/video
+
+## Research & Generate
+Click the "Research" button in the toolbar to open the Research & Generate dialog. Enter a topic, optional slant/angle, source counts (web articles and YouTube videos), and toggle image/video generation. The Research Synthesizer skill will autonomously:
+1. Search the web for top-ranking articles
+2. Search YouTube for high-view-count videos on the topic
+3. Synthesize a comprehensive Markdown document with inline citations
+4. (Optional) Generate supporting images and video
+5. Save the document to the Workbench files directory
 
 ## Tips
 - Use the file browser to open and edit any text file in the workspace
@@ -345,7 +354,9 @@ The Workbench is a rich Markdown editor with a file browser for drafting and edi
 
 If you don't know the answer, say so honestly.`,
     starters: [
+      "How do I use Research & Generate?",
       "How do I edit files in the workbench?",
+      "Research the top AI coding tools for 2026",
       "Does the workbench support code syntax highlighting?",
     ],
   },

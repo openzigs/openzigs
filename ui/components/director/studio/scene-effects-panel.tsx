@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useCallback, useMemo } from "react";
-import { Sparkles, RotateCcw, ChevronDown } from "lucide-react";
+import { Sparkles, RotateCcw, ChevronDown, Info } from "lucide-react";
 
 // ── Effect Types ──────────────────────────────────────────────
 interface EffectDef {
@@ -122,15 +122,16 @@ interface FilterSlider {
   defaultValue: number;
   unit: string;
   paramKey: string;
+  hint?: string;
 }
 
 const FILTER_SLIDERS: FilterSlider[] = [
-  { type: "brightness", label: "Brightness", min: 0.5, max: 2.0, step: 0.05, defaultValue: 1.0, unit: "", paramKey: "value" },
-  { type: "contrast", label: "Contrast", min: 0.5, max: 2.0, step: 0.05, defaultValue: 1.0, unit: "", paramKey: "value" },
-  { type: "saturate", label: "Saturation", min: 0, max: 3.0, step: 0.05, defaultValue: 1.0, unit: "", paramKey: "value" },
-  { type: "sepia", label: "Sepia", min: 0, max: 1.0, step: 0.05, defaultValue: 0, unit: "", paramKey: "value" },
-  { type: "blur", label: "Blur", min: 0, max: 20, step: 0.5, defaultValue: 0, unit: "px", paramKey: "amount" },
-  { type: "hueRotate", label: "Hue Rotate", min: 0, max: 360, step: 5, defaultValue: 0, unit: "°", paramKey: "degrees" },
+  { type: "brightness", label: "Brightness", min: 0.5, max: 2.0, step: 0.05, defaultValue: 1.0, unit: "", paramKey: "value", hint: "Lightens or darkens the image. 1.0 = original" },
+  { type: "contrast", label: "Contrast", min: 0.5, max: 2.0, step: 0.05, defaultValue: 1.0, unit: "", paramKey: "value", hint: "Increases or decreases the difference between light and dark areas" },
+  { type: "saturate", label: "Saturation", min: 0, max: 3.0, step: 0.05, defaultValue: 1.0, unit: "", paramKey: "value", hint: "Color intensity. 0 = grayscale, 1.0 = original, higher = vivid" },
+  { type: "sepia", label: "Sepia", min: 0, max: 1.0, step: 0.05, defaultValue: 0, unit: "", paramKey: "value", hint: "Warm brownish tone reminiscent of aged photographs" },
+  { type: "blur", label: "Blur", min: 0, max: 20, step: 0.5, defaultValue: 0, unit: "px", paramKey: "amount", hint: "Gaussian blur — softens the image. Higher = more blurry" },
+  { type: "hueRotate", label: "Hue Rotate", min: 0, max: 360, step: 5, defaultValue: 0, unit: "°", paramKey: "degrees", hint: "Shifts all colors around the color wheel (e.g. 180° inverts warm/cool)" },
 ];
 
 function getEffectValue(effects: EffectDef[], type: string, paramKey: string, defaultValue: number): number {
@@ -273,9 +274,23 @@ export function SceneEffectsPanel({
         </button>
       </div>
 
+      <p className="mb-2 text-[9px] text-muted-foreground/70 italic">Effects are applied in the final render, not in the preview player.</p>
+
       {/* Presets */}
       <div className="mb-3">
-        <p className="mb-1.5 text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Presets</p>
+        <div className="mb-1.5 flex items-center justify-between">
+          <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Presets</p>
+          <a
+            href="https://developer.mozilla.org/en-US/docs/Web/CSS/filter-function"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-0.5 text-[9px] text-muted-foreground hover:text-primary transition"
+            title="Learn about CSS image filters"
+          >
+            <Info className="h-3 w-3" />
+            <span>Learn more</span>
+          </a>
+        </div>
         <div className="grid grid-cols-4 gap-1" data-testid="effects-presets">
           {PRESETS.map((preset) => (
             <button
@@ -293,6 +308,11 @@ export function SceneEffectsPanel({
             </button>
           ))}
         </div>
+        {activePreset !== "none" && activePreset !== "custom" && (
+          <p className="mt-1.5 text-[9px] text-muted-foreground italic">
+            {PRESETS.find((p) => p.id === activePreset)?.description}
+          </p>
+        )}
       </div>
 
       {/* Quick toggles */}
@@ -341,7 +361,7 @@ export function SceneEffectsPanel({
             const value = getEffectValue(effects, slider.type, slider.paramKey, slider.defaultValue);
             return (
               <div key={slider.type} className="flex items-center gap-2">
-                <label className="w-16 shrink-0 text-[10px] text-muted-foreground">{slider.label}</label>
+                <label className="w-16 shrink-0 text-[10px] text-muted-foreground" title={slider.hint}>{slider.label}</label>
                 <input
                   type="range"
                   min={slider.min}
@@ -366,12 +386,24 @@ export function SceneEffectsPanel({
         <>
           <button
             onClick={() => setShowKenBurns(!showKenBurns)}
-            className="mb-2 flex w-full items-center gap-1 text-[10px] font-medium text-muted-foreground hover:text-foreground transition"
+            className="mb-1 flex w-full items-center gap-1 text-[10px] font-medium text-muted-foreground hover:text-foreground transition"
             data-testid="toggle-ken-burns"
           >
             <ChevronDown className={`h-3 w-3 transition-transform ${showKenBurns ? "rotate-0" : "-rotate-90"}`} />
             Ken Burns (Zoom & Pan)
           </button>
+          <div className="mb-2 flex items-center gap-1">
+            <p className="text-[9px] text-muted-foreground">Slow zoom & pan across still images to create a sense of motion</p>
+            <a
+              href="https://en.wikipedia.org/wiki/Ken_Burns_effect"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="shrink-0"
+              title="Learn about the Ken Burns effect"
+            >
+              <Info className="h-3 w-3 text-muted-foreground hover:text-primary transition" />
+            </a>
+          </div>
           {showKenBurns && (
             <div className="space-y-2" data-testid="ken-burns-controls">
               {[

@@ -20,6 +20,10 @@ export interface RenderJob {
   durationSec: number | null;
   /** File size of the rendered output in bytes (set on completion). */
   fileSizeBytes: number | null;
+  /** Whether to send a Telegram notification when this render completes. */
+  notifyViaTelegram: boolean;
+  /** Telegram chat ID to notify (falls back to configured adminUserId if null). */
+  telegramChatId: string | null;
 }
 
 export interface RenderProgress {
@@ -35,6 +39,10 @@ export interface RenderRequest {
   manifest: DirectorManifest;
   /** Override the output directory (default: ~/.openzigs/renders/{jobId}/) */
   outputDir?: string;
+  /** Whether to send a Telegram notification when the render completes. */
+  notifyViaTelegram?: boolean;
+  /** Telegram chat ID to notify (falls back to configured adminUserId if null). */
+  telegramChatId?: string;
 }
 
 export interface RenderResult {

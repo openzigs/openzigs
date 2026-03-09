@@ -11,7 +11,6 @@ type SocialMediaOptions = {
   linkedinSidecarUrl?: string;
   twitterSidecarUrl?: string;
   facebookSidecarUrl?: string;
-  pinterestSidecarUrl?: string;
 };
 
 const postContentSchema = z.object({
@@ -51,6 +50,93 @@ const pinterestPinsSchema = z.object({
   altText: z.string().optional(),
   pageSize: z.number().optional(),
 });
+
+// ── Direct Pinterest API v5 helpers ──
+
+const PINTEREST_API_BASE = "https://api.pinterest.com/v5";
+
+async function pinterestApiFetch(
+  path: string,
+  method: "GET" | "POST" = "GET",
+  body?: Record<string, unknown>,
+): Promise<{ text: string; isError?: boolean }> {
+  const token = process.env.PINTEREST_ACCESS_TOKEN;
+  if (!token) {
+    return { text: "PINTEREST_ACCESS_TOKEN not set in environment.", isError: true };
+  }
+  const url = `${PINTEREST_API_BASE}${path}`;
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${token}`,
+    "Content-Type": "application/json",
+  };
+  const res = await fetch(url, {
+    method,
+    headers,
+    ...(body ? { body: JSON.stringify(body) } : {}),
+  });
+  const text = await res.text();
+  if (!res.ok) {
+    return { text: `Pinterest API error ${res.status}: ${text}`, isError: true };
+  }
+  return { text };
+}
+
+async function handlePinterestBoardsDirect(
+  input: z.infer<typeof pinterestBoardsSchema>,
+): Promise<{ text: string; isError?: boolean }> {
+  switch (input.action) {
+    case "list": {
+      const size = input.pageSize ?? 25;
+      return pinterestApiFetch(`/boards?page_size=${size}`);
+    }
+    case "create": {
+      if (!input.name) return { text: "Board name is required for create.", isError: true };
+      return pinterestApiFetch("/boards", "POST", {
+        name: input.name,
+        description: input.description ?? "",
+        privacy: input.privacy ?? "PUBLIC",
+      });
+    }
+    case "get": {
+      if (!input.boardId) return { text: "boardId is required for get.", isError: true };
+      return pinterestApiFetch(`/boards/${input.boardId}`);
+    }
+    default:
+      return { text: `Unknown action: ${input.action}`, isError: true };
+  }
+}
+
+async function handlePinterestPinsDirect(
+  input: z.infer<typeof pinterestPinsSchema>,
+): Promise<{ text: string; isError?: boolean }> {
+  switch (input.action) {
+    case "list": {
+      if (!input.boardId) return { text: "boardId is required for list.", isError: true };
+      const size = input.pageSize ?? 25;
+      return pinterestApiFetch(`/boards/${input.boardId}/pins?page_size=${size}`);
+    }
+    case "create": {
+      if (!input.boardId) return { text: "boardId is required for create.", isError: true };
+      const body: Record<string, unknown> = {
+        board_id: input.boardId,
+        title: input.title ?? "",
+        description: input.description ?? "",
+        link: input.link ?? "",
+        alt_text: input.altText ?? "",
+      };
+      if (input.imageUrl) {
+        body.media_source = { source_type: "image_url", url: input.imageUrl };
+      }
+      return pinterestApiFetch("/pins", "POST", body);
+    }
+    case "get": {
+      if (!input.pinId) return { text: "pinId is required for get.", isError: true };
+      return pinterestApiFetch(`/pins/${input.pinId}`);
+    }
+    default:
+      return { text: `Unknown action: ${input.action}`, isError: true };
+  }
+}
 
 const callSidecar = async (
   baseUrl: string | undefined,
@@ -95,8 +181,6 @@ const getSidecarUrl = (
       return options.twitterSidecarUrl;
     case "facebook":
       return options.facebookSidecarUrl;
-    case "pinterest":
-      return options.pinterestSidecarUrl;
     default:
       return undefined;
   }
@@ -214,13 +298,7 @@ export const createSocialMediaTools = (options: SocialMediaOptions): ToolDefinit
       source: "pinterest",
       handler: async (args) => {
         const input = args as z.infer<typeof pinterestBoardsSchema>;
-        const url = options.pinterestSidecarUrl;
-        const methodMap: Record<string, string> = {
-          list: "pinterest_boards_list",
-          create: "pinterest_boards_create",
-          get: "pinterest_boards_get",
-        };
-        return callSidecar(url, methodMap[input.action] ?? input.action, input);
+        return handlePinterestBoardsDirect(input);
       },
     },
     {
@@ -251,13 +329,7 @@ export const createSocialMediaTools = (options: SocialMediaOptions): ToolDefinit
       source: "pinterest",
       handler: async (args) => {
         const input = args as z.infer<typeof pinterestPinsSchema>;
-        const url = options.pinterestSidecarUrl;
-        const methodMap: Record<string, string> = {
-          list: "pinterest_pins_list",
-          create: "pinterest_pins_create",
-          get: "pinterest_pins_get",
-        };
-        return callSidecar(url, methodMap[input.action] ?? input.action, input);
+        return handlePinterestPinsDirect(input);
       },
     },
   ];

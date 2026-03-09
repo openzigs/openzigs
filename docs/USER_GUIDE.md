@@ -109,6 +109,10 @@ GOOGLE_APPLICATION_CREDENTIALS=/path/to/your/service-account-key.json
 # REDDIT_USERNAME=your-reddit-username
 # REDDIT_PASSWORD=your-reddit-password
 
+# ── Optional: Pinterest SEO ──
+# PINTEREST_ACCESS_TOKEN=your-pinterest-api-v5-token
+# PINTEREST_AD_ACCOUNT_ID=your-pinterest-ad-account-id
+
 # ── Optional: Personal Assistant MCP Servers ──
 # GMAIL_OAUTH_PATH=~/.gmail-mcp/gcp-oauth.keys.json
 # GITHUB_PERSONAL_ACCESS_TOKEN=ghp_your_token_here
@@ -335,6 +339,7 @@ Understanding when to use each:
 | **Content Creator** ✍️ | Blog-to-video, voiceovers (54+ voices), YouTube Shorts, brand voice enforcement. | "Convert this blog to a narrated video" / "Create a Short from the latest upload" / "Use the warm female voice" |
 | **Knowledge Curator** 📚 | RAG knowledge base ingestion, semantic search, presentation management, quiz generation. | "Ingest this article" / "Search for machine learning content" / "Generate a quiz for chapter 3" |
 | **System Operator** 🛡️ | Sentinel SRE monitoring, webhook management, worker node health, system diagnostics. | "Check all worker node health" / "Show the latest Sentinel digest" / "Create a CI/CD webhook" |
+| **Research Synthesizer** 🔬 | Autonomous web + YouTube research, inline-cited document synthesis, optional media generation. | "Research the top AI coding assistants in 2026" / "Compare cloud providers with images" / "Write a report on renewable energy trends" |
 
 #### Usage Examples
 
@@ -415,6 +420,17 @@ Click a skill card to expand its detail view showing the full tool list, stats, 
 **`/skill-name` syntax**: Use `/media-director` or `/remix-engineer` in your prompt to explicitly tell the AI to use a specific skill's expertise for the task.
 
 **IntelliSense hints**: The chat placeholder reads `/ prompts, # tools, @ models, ! skills` to remind you of all available triggers.
+
+#### Skill-Aware Tool Scoping & Auto-Approval
+
+When you use a skill (via `!` trigger or `[Using X skill]` prefix), OpenZigs automatically:
+
+- **Scopes tools** — Only the skill's declared `allowed-tools` (plus 6 essential tools) are sent to the LLM, preventing context window bloat from irrelevant tool definitions
+- **Auto-approves skill tools** — The skill's tools are merged into the auto-approve list for the session, so you won't be prompted to approve every tool call during skill-driven workflows
+
+This means a skill like Research Synthesizer with 13 tools sends ~19 total tools (13 skill + 6 essential) instead of the full 90+ set, staying well under the recommended 20-tool threshold for optimal LLM performance.
+
+**Background tasks** inherit the same behavior — when a pipeline stage or scheduled job uses a skill's `allowedTools`, those tools are auto-approved for autonomous execution.
 
 #### Pairing Skills with Library Prompts
 
@@ -1406,13 +1422,24 @@ Each tool schema consumes **~100-300 tokens** in the model's context window. Wit
 
 The Copilot SDK itself has **no hard tool limit**, but the underlying models do (e.g., OpenAI supports up to 128 functions per request).
 
-### Always-On Tools
+### Tiered Tool Priority
 
-**7 critical tools** are always included regardless of the cap:
+Tools are organized into tiers for intelligent budget management:
 
-`read-file`, `list-directory`, `web-search`, `browser-navigate`, `shell-execute`, `spawn-agent`, `orchestrate-agents`
+**Essential Tools (6)** — always included in every session:
 
-These tools are essential for core agent functionality and will never be silently dropped.
+`read-file`, `list-directory`, `web-search`, `shell-execute`, `spawn-agent`, `orchestrate-agents`
+
+**Contextual Tools (12)** — included when budget allows, dropped when skills are active:
+
+`browser-navigate`, `search-knowledge`, `list-secrets`, `get-secret`, `ingest-youtube`, `query-gallery-assets`, `submit-media-job`, `get-job-status`, `save-draft-media`, `send-notification`, `produce-video`, `transcribe-audio`
+
+When the tool count exceeds `maxToolsPerRequest`, the cap is enforced with tiered priority:
+1. Essential tools are kept first (always)
+2. Contextual tools fill next
+3. All other tools fill remaining slots
+
+This means with the default cap of 30, you get 6 essential + 12 contextual + 12 other tools — a significant improvement over the previous flat approach that used 18 always-on slots leaving only 12 for everything else.
 
 ### Admin UI
 
@@ -1431,7 +1458,7 @@ The setting is persisted to `~/.openzigs/config.json` under `session.maxToolsPer
 ```bash
 # Read current session config
 curl -H "Authorization: Bearer <token>" http://localhost:3000/api/admin/session/config
-# Response: { "maxToolsPerRequest": 30, "totalTools": 91, "alwaysOnCount": 7 }
+# Response: { "maxToolsPerRequest": 30, "totalTools": 91, "alwaysOnCount": 18, "essentialCount": 6 }
 
 # Update the tool limit
 curl -X PUT -H "Authorization: Bearer <token>" \
@@ -1457,12 +1484,12 @@ Beyond the global tool limit, OpenZigs supports **per-entity tool scoping** — 
 
 ### How It Works
 
-Each entity (job, prompt, or message) can declare an allowlist of tool names. When the entity executes, only those tools (plus the 7 always-on tools) are sent to the LLM. If no allowlist is set, the full enabled toolset is used as before.
+Each entity (job, prompt, or message) can declare an allowlist of tool names. When the entity executes, only those tools (plus the 6 essential tools) are sent to the LLM. If no allowlist is set, the full enabled toolset is used as before.
 
 **Resolution algorithm:**
 
 1. Start with the entity's tool allowlist (e.g., `["web-search", "read-file"]`).
-2. Merge in the 7 always-on tools (`read-file`, `list-directory`, `web-search`, `browser-navigate`, `shell-execute`, `spawn-agent`, `orchestrate-agents`).
+2. Merge in the 6 essential tools (`read-file`, `list-directory`, `web-search`, `shell-execute`, `spawn-agent`, `orchestrate-agents`).
 3. Filter to only tools currently enabled in the `ToolRegistry`.
 4. Pass the resulting set to the LLM — no other tools are visible.
 
@@ -2530,7 +2557,6 @@ This mounts the source directory for live-reload inside the container.
 ### Persistence
 
 - **Session data and auth tokens** are stored in `~/.openzigs/` on the host (mounted as a Docker volume).
-- **Pinterest OAuth tokens** are persisted in the `pinterest-tokens` Docker volume.
 - **SQLite database** (prompts, jobs) is stored inside the agent container at the configured path. Data survives container restarts via the `~/.openzigs/` mount.
 
 ---
@@ -4056,7 +4082,6 @@ All configuration lives in `config/default.json`. Environment variables are inte
 | `MCP_LINKEDIN_URL` | `http://linkedin-mcp-server:5101` | LinkedIn MCP sidecar URL. |
 | `MCP_TWITTER_URL` | `http://twitter-mcp-server:5102` | Twitter/X MCP sidecar URL. |
 | `MCP_FACEBOOK_URL` | `http://facebook-mcp-server:5103` | Facebook MCP sidecar URL. |
-| `MCP_PINTEREST_URL` | `http://pinterest-mcp-server:5104` | Pinterest MCP sidecar URL. |
 | `MCP_WORD_URL` | `http://word-mcp-server:5201` | Office Word MCP sidecar URL. |
 | `MCP_MARKITDOWN_URL` | `http://markitdown-mcp-server:5301` | MarkItDown file converter URL. |
 | `MCP_GMAIL_URL` | `http://gmail-mcp-server:5302` | Gmail MCP sidecar URL. |
@@ -5476,8 +5501,9 @@ Hey {{username}}! Saw your comment on our post about "{{post_caption}}". Check y
 | Gmail auth errors | Missing or expired OAuth credentials. | Re-run `npx @gongrzhe/server-gmail-autoauth-mcp auth`. Ensure `gcp-oauth.keys.json` is in `~/.gmail-mcp/`. |
 | `db-query` returns "connection refused" | Database MCP server not running or JDBC_URL incorrect. | Check `JDBC_URL` env var and ensure the database is reachable from Docker. |
 | GitHub tools return 401 | Invalid or expired PAT. | Regenerate your GitHub Personal Access Token and update `GITHUB_PERSONAL_ACCESS_TOKEN`. |
-| Agent not using expected tools | `maxToolsPerRequest` too low; tool got excluded. | Increase the tool limit in Admin → Task Engine → Tool Limit slider or via `PUT /api/admin/session/config`. Check if the tool should be added to ALWAYS_ON_TOOLS. |
-| Model hallucinating tool calls | Too many tools sent, or model calling a tool that was excluded. | Reduce `maxToolsPerRequest` or switch to a stronger model (e.g., `gpt-4.1`). |
+| Agent not using expected tools | `maxToolsPerRequest` too low; tool got excluded. | Increase the tool limit in Admin → Task Engine → Tool Limit slider or via `PUT /api/admin/session/config`. Use skills to auto-scope tools, or check if the tool should be added to ESSENTIAL_TOOLS. |
+| Model hallucinating tool calls | Too many tools sent, or model calling a tool that was excluded. | Reduce `maxToolsPerRequest`, use skill-scoped sessions, or switch to a stronger model (e.g., `gpt-4.1`). OpenAI recommends under 20 tools per request for best accuracy. |
+| Skill tools requiring approval | Skill's tools not in auto-approve list. | Use the `!` trigger or `[Using X skill]` prefix — skill tools are auto-approved during interactive sessions. For background tasks, ensure the task's `allowedTools` includes the skill's tools. |
 | MarkItDown returns empty content | File not accessible inside container. | Ensure the file path is within the mounted volume (`/workdir` inside the container). |
 | Voice TTS not working | Missing Google Cloud credentials. | Set `GOOGLE_APPLICATION_CREDENTIALS` env var to your service account JSON key file path. See [Enabling Voice Features](#enabling-voice-features). |
 | Wake word not responding | Web Speech API not supported in browser. | Use Chrome, Edge, or Brave. Firefox does not support the Web Speech API. |
@@ -5638,6 +5664,258 @@ Webhook URLs are validated before fetch:
 ### Error Redaction
 
 Internal filesystem paths are stripped from error responses. 500 errors return a generic "Internal server error" message to prevent information disclosure.
+
+---
+
+## Telegram Notifications for Async Jobs
+
+Long-running jobs — image/video/music generation, video renders, and LoRA character training — can send you a Telegram message when they finish or fail, even if you've closed the browser tab.
+
+### How to Enable
+
+Toggle the **Notify via Telegram** switch (paper-plane icon) that appears near the submit button for each supported surface:
+
+| Surface | Location |
+|---|---|
+| Gallery Studio / Media generation | In the generation form, next to the submit button |
+| Music Studio — Smart Remix Lab | Below the Analyze button |
+| Director Mode — Review & Produce | Between the vision analysis toggle and the render quality settings |
+| Characters — LoRA Training | Next to the Start Training button |
+
+The toggle is off by default. Enable it for individual jobs as needed.
+
+### Requirements
+
+1. A Telegram bot must be configured: `TELEGRAM_BOT_TOKEN` environment variable (or `channels.telegram.botToken` in `~/.openzigs/config.json`).
+2. The bot must have sent at least one message to the target chat, or `channels.telegram.adminUserId` must be set as the fallback destination.
+
+### Agentic Use
+
+When asking the AI agent to generate media, you can request a notification:
+> "Create a 4-second video of a sunset and send me a Telegram when it's done."
+
+The agent will automatically set `notify_via_telegram: true` on the job (see the Media Director and Remix Engineer skill guides).
+
+---
+
+## Pinterest SEO Engine
+
+The Pinterest SEO Engine provides tools for trend discovery, keyword research, account analytics, and pin-level SEO analysis — including extraction of Pinterest's hidden annotation keywords that drive algorithmic distribution.
+
+### Getting Your Pinterest API Credentials
+
+Because OpenZigs is self-hosted, **each user must register their own Pinterest developer app** and generate their own access token. There is no shared OAuth flow — the token in your `.env` authenticates as your personal Pinterest account.
+
+#### Step 1 — Create a Pinterest App
+
+1. Go to [developers.pinterest.com/apps](https://developers.pinterest.com/apps) and sign in
+2. Click **Create app** → give it a name (e.g. "OpenZigs") and set the app type to **Web**
+3. Your app starts in **Trial access** mode, which is enough for initial setup
+
+#### Step 2 — Generate an Access Token (Trial)
+
+1. Inside your app, click **Generate token**
+2. On the scopes page, enable **all available scopes** (read + write for all entities):
+   - `ads:read` / `ads:write`
+   - `billing:read` / `billing:write`
+   - `biz_access:read` / `biz_access:write`
+   - `boards:read` / `boards:write` / `boards:read_secret` / `boards:write_secret`
+   - `catalogs:read` / `catalogs:write`
+   - `pins:read` / `pins:write` / `pins:read_secret` / `pins:write_secret`
+   - `user_accounts:read` / `user_accounts:write`
+3. Copy the generated `pina_...` token into your `.env`:
+   ```
+   PINTEREST_ACCESS_TOKEN=pina_YOUR_TOKEN_HERE
+   ```
+4. Trial tokens expire after **24 hours** — regenerate as needed until you upgrade to Standard access
+
+#### Step 3 — Apply for Standard (Extended) Access
+
+Trial access rate-limits most endpoints. To remove these limits and get persistent tokens:
+
+1. In your app dashboard, click **Upgrade access**
+2. Fill in the form:
+   - **Video demo**: Record a short video showing: OpenZigs authenticating with your Pinterest token, running the Pinterest tools in chat, and rendering analytics in the dashboard. Use `.mp4`, under 2 GB.
+   - **App name**: Your app name (e.g. "OpenZigs")
+   - **Company name**: Your name or company
+   - **Company website**: Your instance URL or personal site
+   - **Privacy policy**: Link to your privacy policy (required — add one if self-hosting)
+   - **App purpose**: "Tool for internal use, Automation"
+   - **Use cases**: Check **Pin creation & scheduling** and **Reporting**
+3. Submit and wait for Pinterest review (typically a few business days)
+
+Once approved, your app gets Standard tier access with higher rate limits and non-expiring tokens.
+
+> **Note:** Pinterest's API access tiers (Trial → Standard → Advanced) are tied to your developer app registration, not to OpenZigs itself. Every OpenZigs user must complete this process for their own Pinterest account.
+
+### Environment Variables
+
+| Variable | Required | Description |
+|---|---|---|
+| `PINTEREST_ACCESS_TOKEN` | Yes | Pinterest API v5 bearer token (`pina_...`) |
+| `PINTEREST_AD_ACCOUNT_ID` | For keyword metrics | Pinterest ad account ID for keyword volume data |
+
+### MCP Tools
+
+| Tool | Description |
+|---|---|
+| `pinterest-trends` | Fetch trending keywords by region with WoW/MoM/YoY growth and 52-week time series |
+| `pinterest-keyword-metrics` | Get search volume, competition level, and bid ranges for specific keywords |
+| `pinterest-analytics` | Account-level metrics (impressions, saves, clicks) or top-performing pins over a date range |
+| `pinterest-seo-analyze` | Analyze individual pins or batches: extracts annotation keywords, calculates a Pin Score (0–100), and generates SEO recommendations |
+| `pinterest-boards` | List all boards on your Pinterest account (via API v5 direct) |
+| `pinterest-pins` | List pins on a specific board or all account pins (via API v5 direct) |
+
+### Pin Score
+
+The Pin Score is a composite 0–100 metric based on:
+- **Title** (0–20 pts): Present and ≤100 characters
+- **Description** (0–25 pts): 100–500 characters for full credit
+- **Link** (10 pts): Destination URL present
+- **Alt text** (10 pts): Accessibility text present
+- **Media type** (5 pts): Image or video
+- **Annotation density** (0–30 pts): 5+ annotation keywords = full credit
+
+### Annotation Keywords
+
+Pinterest assigns hidden "interest" keywords to every pin — these annotations drive the recommendation algorithm. The `pinterest-seo-analyze` tool extracts them via three resilient strategies (PWS data, script tags, meta tags). Including annotation keywords in your pin description significantly increases reach.
+
+### Pinterest Marketer Skill
+
+The **Pinterest Marketer** skill (`📌`) orchestrates multi-step Pinterest workflows:
+
+1. **Trend-Driven Campaign** — Discover trends → research keywords → generate optimized pin descriptions
+2. **Blog-to-Pin Repurposing** — Read article content → extract key points → create pin-ready copy with SEO keywords
+3. **SEO Audit** — Analyze existing pins → identify optimization gaps → generate improvement recommendations
+4. **Competitor Analysis** — Analyze competitor pins → extract their annotation keywords → find content gaps
+
+Example chats:
+```
+[Using Pinterest Marketer skill] Use the pinterest-trends tool to find trending topics related to home decor for the US market. Show me the full results.
+```
+
+```
+[Using Pinterest Marketer skill] Use the pinterest-keyword-metrics tool to get search volume data for these keywords: "home office decor", "minimalist bedroom", "boho living room". Country: US.
+```
+
+```
+[Using Pinterest Marketer skill] Use the pinterest-analytics tool to get account analytics for the last 30 days. Show impressions, engagements, and top pin performance.
+```
+
+```
+[Using Pinterest Marketer skill] Use the pinterest-seo-analyze tool to analyze this pin for SEO: https://www.pinterest.com/pin/1106478202218332610/ — score its title, description, and hashtags.
+```
+
+```
+[Using Pinterest Marketer skill] Run Workflow 2: Blog-to-Pin Repurposing. Extract content from this blog post: https://sawsonskates.com/easy-diy-bedside-table/ — then find matching Pinterest trends and keywords. Generate 3 pin title/description variants optimized for Pinterest SEO.
+```
+
+```
+[Using Pinterest Marketer skill] Generate a Pinterest pin image using submit-media-job. Create a 1000x1500 pin image with this prompt: "Minimalist home office workspace with white desk, indoor plant, and natural lighting — Pinterest aesthetic, overhead shot". Use txt2img type.
+```
+
+> **Note**: Reports are automatically saved to `~/.openzigs/pinterest-reports/` as Markdown files with timestamps.
+
+### Admin Panel
+
+The **Pinterest SEO** section on the Admin page (`/admin`) shows:
+- **Connection status** — Whether `PINTEREST_ACCESS_TOKEN` is configured
+- **Account stats** — Impressions, clicks, saves, engagement (last 30 days)
+- **Trending keywords** — Current top trends with growth percentages
+
+![Pinterest SEO Admin Panel](images/pinterest-seo-panel-expanded.png)
+
+### Weekly Digest (Telegram)
+
+When Telegram is configured, the `PinterestDigestService` can send a weekly performance digest with impressions, pin clicks, saves, and engagement metrics. Trigger via scheduled job or directly from chat.
+
+---
+
+## Research & Content Synthesis Engine
+
+The Research & Content Synthesis Engine enables autonomous multi-source research, inline-cited document generation, and optional media creation — all orchestrated by the **Research Synthesizer** skill (🔬).
+
+### Quick Start
+
+1. Navigate to `/workbench`.
+2. Click the **Research** button (🔬 microscope icon) in the toolbar.
+
+![Workbench toolbar with Research button](images/workbench-research-button.png)
+
+3. Fill the Research & Generate dialog:
+
+| Field | Required | Description |
+|---|---|---|
+| **Topic** | Yes | The research subject (e.g., "AI coding assistants in 2026") |
+| **Slant / Angle** | No | Editorial perspective (e.g., "from a cost perspective") |
+| **Web articles** | No | Number of web sources to research (1–20, default 5) |
+| **YouTube videos** | No | Number of YouTube sources to research (0–20, default 3) |
+| **Generate images** | No | Create AI-generated illustrations for the document |
+| **Generate video** | No | Create an AI-generated summary video |
+
+![Research & Generate dialog with topic, slant, and media options](images/workbench-research-dialog-filled.png)
+
+4. Click **Generate**. The agent executes a 6-phase autonomous workflow.
+
+### Workflow Phases
+
+| Phase | What happens | Tools used |
+|---|---|---|
+| 1. Parameter Extraction | Parses topic, slant, source counts from your request | — |
+| 2. Web Research | Searches and reads web articles on the topic | `web-search` |
+| 3. YouTube Research | Finds and analyzes relevant YouTube videos | `youtube-search-videos`, `youtube-get-video-details` |
+| 4. Content Synthesis | Produces a structured, inline-cited Markdown document | `write-file` |
+| 5. Media Generation | (Optional) Generates images/video based on document content | `submit-media-job`, `get-job-status`, `save-draft-media` |
+| 6. Bibliography & Save | Appends a numbered bibliography and saves to disk | `write-file` |
+
+### MCP Tools
+
+| Tool | Risk | Description |
+|---|---|---|
+| `save-draft-media` | 🟡 medium | Copies generated media (images, video, audio) to `~/.openzigs/files/drafts/<project_id>/` |
+
+The skill also uses `web-search`, `youtube-search-videos`, `youtube-get-video-details`, `submit-media-job`, `get-job-status`, `query-gallery-assets`, `read-file`, and `write-file`.
+
+### YouTube Order Parameter
+
+The `youtube-search-videos` tool now supports an `order` parameter for controlling result sorting:
+
+| Value | Description |
+|---|---|
+| `relevance` | (default) Best match for query |
+| `date` | Newest first |
+| `viewCount` | Most viewed first |
+| `rating` | Highest rated first |
+| `title` | Alphabetical by title |
+
+### Example Prompts
+
+```
+Research the top AI coding assistants in 2026 with 8 web articles
+and 5 YouTube videos.
+```
+
+```
+Compare cloud hosting providers from a cost perspective and generate
+comparison images.
+```
+
+```
+Write a comprehensive report on renewable energy trends using web and
+YouTube sources, then generate a summary video.
+```
+
+### Draft Media Storage
+
+Generated media from research sessions is saved to:
+```
+~/.openzigs/files/drafts/<project_id>/
+    ├── ai-coding-assistants-hero.png
+    ├── comparison-chart.png
+    └── summary-video.mp4
+```
+
+If no `project_id` is specified, files save to `~/.openzigs/files/drafts/default/`.
 
 ---
 

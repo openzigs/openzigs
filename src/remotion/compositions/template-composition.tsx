@@ -8,7 +8,7 @@
  * drives the actual content.
  */
 
-import React from "react";
+import React, { useEffect, useState } from "react";
 import {
   AbsoluteFill,
   Sequence,
@@ -17,6 +17,8 @@ import {
   Loop,
   interpolate,
   useCurrentFrame,
+  delayRender,
+  continueRender,
 } from "remotion";
 import { TransitionSeries } from "@remotion/transitions";
 import type { CompositionInputProps, TimelineItem } from "../input-props";
@@ -342,6 +344,27 @@ const AudioLayer: React.FC<{ audio: CompositionInputProps["audio"]; timeline: Co
 };
 
 /**
+ * Load Google Fonts used by captions and overlays so SSR renders text properly.
+ */
+const FontLoader: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const [handle] = useState(() => delayRender("Loading fonts"));
+
+  useEffect(() => {
+    const link = document.createElement("link");
+    link.href = "https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700;800&display=swap";
+    link.rel = "stylesheet";
+    link.onload = () => continueRender(handle);
+    link.onerror = () => continueRender(handle);
+    document.head.appendChild(link);
+    return () => {
+      document.head.removeChild(link);
+    };
+  }, [handle]);
+
+  return <>{children}</>;
+};
+
+/**
  * The main template composition component.
  * Renders the complete timeline with TransitionSeries for smooth transitions.
  */
@@ -350,6 +373,7 @@ export const TemplateComposition: React.FC<CompositionInputProps> = (props) => {
   const { segments, overlays, transitions } = partitionTimeline(timeline);
 
   return (
+    <FontLoader>
     <AbsoluteFill style={{ backgroundColor: "#000000" }}>
       {/* Visual timeline with transitions */}
       {segments.length > 0 && (
@@ -422,17 +446,24 @@ export const TemplateComposition: React.FC<CompositionInputProps> = (props) => {
       )}
 
       {/* Overlays — positioned absolutely on top of the timeline */}
-      {overlays.map((overlay, i) => (
-        <Sequence
-          key={`overlay-${i}`}
-          from={overlay.startAtFrame}
-          durationInFrames={
-            "durationInFrames" in overlay ? overlay.durationInFrames : undefined
-          }
-        >
-          {renderOverlay(overlay, branding)}
-        </Sequence>
-      ))}
+      <AbsoluteFill style={{ zIndex: 10 }}>
+        {overlays.map((overlay, i) => {
+          // SmartCaptions word timings use absolute composition frame numbers,
+          // so always render from frame 0 to avoid offset mismatches.
+          const isSmartCaptions = overlay.type === "overlay" && overlay.component === "SmartCaptions";
+          return (
+            <Sequence
+              key={`overlay-${i}`}
+              from={isSmartCaptions ? 0 : overlay.startAtFrame}
+              durationInFrames={
+                "durationInFrames" in overlay ? overlay.durationInFrames : undefined
+              }
+            >
+              {renderOverlay(overlay, branding)}
+            </Sequence>
+          );
+        })}
+      </AbsoluteFill>
 
       {/* Persistent branding watermark */}
       {branding.logoUrl && (
@@ -446,5 +477,6 @@ export const TemplateComposition: React.FC<CompositionInputProps> = (props) => {
       {/* Audio layer */}
       <AudioLayer audio={audio} timeline={timeline} />
     </AbsoluteFill>
+    </FontLoader>
   );
 };

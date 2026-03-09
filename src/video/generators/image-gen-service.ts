@@ -186,19 +186,20 @@ export class ImageGenService {
       return this.generateLocal(prompt, width, height, options);
     }
 
-    // Auto mode: try cloud first, failover to local
+    // Auto mode: prefer local sidecar when configured (avoids unnecessary cloud costs),
+    // fall back to cloud only if local fails.
     try {
-      return await this.generateCloud(prompt, width, height, options);
-    } catch (cloudError) {
-      const msg = cloudError instanceof Error ? cloudError.message : String(cloudError);
-      logger.warn(`[ImageGenService] Cloud generation failed: ${msg} — falling back to local sidecar`);
+      return await this.generateLocal(prompt, width, height, options);
+    } catch (localError) {
+      const localMsg = localError instanceof Error ? localError.message : String(localError);
+      logger.warn(`[ImageGenService] Local generation failed: ${localMsg} — falling back to cloud`);
 
       try {
-        return await this.generateLocal(prompt, width, height, options);
-      } catch (localError) {
-        const localMsg = localError instanceof Error ? localError.message : String(localError);
+        return await this.generateCloud(prompt, width, height, options);
+      } catch (cloudError) {
+        const cloudMsg = cloudError instanceof Error ? cloudError.message : String(cloudError);
         throw new Error(
-          `Image generation failed on both providers. Cloud: ${msg}. Local: ${localMsg}`,
+          `Image generation failed on both providers. Local: ${localMsg}. Cloud: ${cloudMsg}`,
         );
       }
     }

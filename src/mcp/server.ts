@@ -44,6 +44,10 @@ import { createPresenterTools } from "./tools/presenter-tools.js";
 import { createKnowledgeManagementTools } from "./tools/knowledge-management-tools.js";
 import { createWebhookTools } from "./tools/webhook-tools.js";
 import { createSentinelTools } from "./tools/sentinel-tools.js";
+import { createPinterestSeoTools } from "./tools/pinterest-seo-tools.js";
+import { createDraftMediaTools } from "./tools/draft-media-tools.js";
+import { createNotificationTools } from "./tools/notification-tools.js";
+import { createTranscribeAudioTools } from "./tools/transcribe-audio-tools.js";
 import { ToolRegistry, type ToolDefinition } from "./tool-registry.js";
 import type { LocalMcpServerManager } from "./local-mcp-server-manager.js";
 import { AuditLogger } from "../logging/audit-logger.js";
@@ -77,7 +81,6 @@ export type McpServerOptions = {
   linkedinSidecarUrl?: string;
   twitterSidecarUrl?: string;
   facebookSidecarUrl?: string;
-  pinterestSidecarUrl?: string;
   markitdownSidecarUrl?: string;
   gmailSidecarUrl?: string;
   databaseSidecarUrl?: string;
@@ -115,6 +118,12 @@ export type McpServerOptions = {
   webhookManager?: import("../webhooks/webhook-manager.js").WebhookManager;
   /** Sentinel Service for SRE monitoring. */
   sentinelService?: import("../sentinel/sentinel-service.js").SentinelService;
+  /** Channel Manager for send-notification tool (Telegram outbound). */
+  channelManager?: import("../channels/channel-manager.js").ChannelManager;
+  /** Telegram admin chat ID for send-notification tool. */
+  notificationChatId?: string;
+  /** Audio sidecar URL for transcribe-audio tool. */
+  audioSidecarUrl?: string;
 };
 
 export type RegisterMcpToolsOptions = Pick<
@@ -134,7 +143,7 @@ export type RegisterMcpToolsOptions = Pick<
   | "linkedinSidecarUrl"
   | "twitterSidecarUrl"
   | "facebookSidecarUrl"
-  | "pinterestSidecarUrl"
+
   | "markitdownSidecarUrl"
   | "gmailSidecarUrl"
   | "databaseSidecarUrl"
@@ -156,6 +165,9 @@ export type RegisterMcpToolsOptions = Pick<
   | "teacherAgent"
   | "webhookManager"
   | "sentinelService"
+  | "channelManager"
+  | "notificationChatId"
+  | "audioSidecarUrl"
 >;
 
 const readFileSchema = z.object({ path: z.string() });
@@ -477,9 +489,15 @@ export const registerMcpTools = (toolRegistry: ToolRegistry, options: RegisterMc
     linkedinSidecarUrl: options.linkedinSidecarUrl,
     twitterSidecarUrl: options.twitterSidecarUrl,
     facebookSidecarUrl: options.facebookSidecarUrl,
-    pinterestSidecarUrl: options.pinterestSidecarUrl,
+
   });
   for (const tool of socialTools) {
+    registerTool(tool);
+  }
+
+  // ── Pinterest SEO Tools ──
+  const pinterestSeoTools = createPinterestSeoTools();
+  for (const tool of pinterestSeoTools) {
     registerTool(tool);
   }
 
@@ -706,5 +724,27 @@ export const registerMcpTools = (toolRegistry: ToolRegistry, options: RegisterMc
   if (options.sentinelService) {
     const sentTools = createSentinelTools({ sentinelService: options.sentinelService });
     for (const tool of sentTools) { registerTool(tool); }
+  }
+
+  // ── Draft Media Tools (Research Synthesis Engine) ──
+  const draftMediaTools = createDraftMediaTools();
+  for (const tool of draftMediaTools) { registerTool(tool); }
+
+  // ── Notification Tool (Telegram outbound, used by research-synthesizer skill) ──
+  if (options.channelManager) {
+    const notifTools = createNotificationTools({
+      channelManager: options.channelManager,
+      fallbackChatId: options.notificationChatId,
+    });
+    for (const tool of notifTools) { registerTool(tool); }
+  }
+
+  // ── Transcribe Audio Tool (Whisper STT via audio sidecar) ──
+  if (options.audioSidecarUrl) {
+    const transcribeTools = createTranscribeAudioTools({
+      audioSidecarUrl: options.audioSidecarUrl,
+      knowledgeService: options.knowledgeService,
+    });
+    for (const tool of transcribeTools) { registerTool(tool); }
   }
 };

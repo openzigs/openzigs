@@ -34,7 +34,8 @@ export const OutroCard: React.FC<
   const subtitleFontSize = isPortrait ? 22 : 28;
   const ctaFontSize = isPortrait ? 20 : 24;
   const containerWidth = isPortrait ? "90%" : "80%";
-  const logoHeight = isPortrait ? 40 : 50;
+  const logoSize = isPortrait ? 120 : 160;
+  const logoMaxWidth = isPortrait ? "60%" : "40%";
 
   // Entrance: fade in at start
   const entranceSpring = spring({ frame, fps, config: { damping: 18, stiffness: 80 } });
@@ -73,26 +74,15 @@ export const OutroCard: React.FC<
 
   return (
     <AbsoluteFill>
-      {/* Background */}
-      {backgroundSrc ? (
-        <Img
-          src={backgroundSrc}
-          style={{
-            width: "100%",
-            height: "100%",
-            objectFit: "cover",
-          }}
-        />
-      ) : (
-        <div style={{
-          width: "100%",
-          height: "100%",
-          background: "linear-gradient(135deg, #0f3460 0%, #16213e 50%, #1a1a2e 100%)",
-        }} />
-      )}
+      {/* Gradient background — always present */}
+      <div style={{
+        width: "100%",
+        height: "100%",
+        background: "linear-gradient(135deg, #0f3460 0%, #16213e 50%, #1a1a2e 100%)",
+      }} />
 
       {/* Dark overlay */}
-      <AbsoluteFill style={{ backgroundColor: "rgba(0,0,0,0.4)" }} />
+      <AbsoluteFill style={{ backgroundColor: "rgba(0,0,0,0.3)" }} />
 
       {/* Content */}
       <div
@@ -106,6 +96,18 @@ export const OutroCard: React.FC<
           width: containerWidth,
         }}
       >
+        {backgroundSrc && (
+          <div style={{ display: "flex", justifyContent: "center", marginBottom: (title || subtitle || ctaText) ? 24 : 0 }}>
+            <Img
+              src={backgroundSrc}
+              style={{
+                maxHeight: isPortrait ? 250 : 200,
+                maxWidth: isPortrait ? "80%" : "60%",
+                objectFit: "contain",
+              }}
+            />
+          </div>
+        )}
         <div
           style={{
             fontSize: titleFontSize,
@@ -169,11 +171,14 @@ export const OutroCard: React.FC<
             left: "50%",
             transform: "translateX(-50%)",
             opacity: logoOpacity * exitOpacity,
+            display: "flex",
+            justifyContent: "center",
+            alignItems: "center",
           }}
         >
           <Img
             src={logoSrc}
-            style={{ height: logoHeight, objectFit: "contain" }}
+            style={{ height: logoSize, width: "auto", maxWidth: logoMaxWidth, objectFit: "contain" }}
           />
         </div>
       )}

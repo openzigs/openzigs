@@ -12,12 +12,130 @@ import { resolveMediaPath, stageMediaFile } from "./media-resolver.js";
 import { logger } from "../logging/logger.js";
 
 /**
+ * Visual segment types that contribute to the composition duration.
+ * Overlays and transitions are layered on top and must not inflate total length.
+ */
+const VISUAL_SEGMENT_TYPES = new Set(["video_clip", "title_card", "image_scene", "intro_card", "outro_card"]);
+
+/**
+ * Derive word-level frame timings from scene scriptText fields.
+ * Used to ensure SmartCaptions word data is always fresh and correct
+ * at render time, matching the exact scene positions in the manifest.
+ */
+function deriveWordTimingsFromTimeline(
+  timeline: TimelineEntry[],
+  fps: number,
+  renderedPositions?: Map<number, number>,
+): Array<{ word: string; start: number; end: number }> {
+  const scenes = timeline
+    .filter((e) => e.type !== "overlay" && e.type !== "transition" && "scriptText" in e && (e as unknown as Record<string, unknown>).scriptText)
+    .sort((a, b) => a.startAtFrame - b.startAtFrame);
+
+  const results: Array<{ word: string; start: number; end: number }> = [];
+  const MIN_FRAMES = 4;
+
+  for (const scene of scenes) {
+    const scriptText = ((scene as unknown as Record<string, unknown>).scriptText as string)
+      .replace(/\[PAUSE:\s*[\d.]+s?\]/gi, "")
+      .replace(/\*/g, "");
+    const words = scriptText.split(/\s+/).filter((w) => w.length > 0);
+    if (words.length === 0) continue;
+
+    const sceneDuration = ("duration" in scene ? ((scene as unknown as Record<string, unknown>).duration as number) : null) ?? fps;
+    const startAtFrame = renderedPositions?.get(scene.startAtFrame) ?? scene.startAtFrame;
+    const totalChars = words.reduce((n, w) => n + w.length, 0);
+
+    const rawDurations = words.map((w) =>
+      Math.max(MIN_FRAMES, Math.round(sceneDuration * (w.length / totalChars))),
+    );
+    const rawTotal = rawDurations.reduce((a, b) => a + b, 0);
+    const scale = sceneDuration / rawTotal;
+    const durations = rawDurations.map((d) => Math.max(MIN_FRAMES, Math.round(d * scale)));
+    const durSum = durations.reduce((a, b) => a + b, 0);
+    durations[durations.length - 1] += sceneDuration - durSum;
+
+    let frame = startAtFrame;
+    for (let i = 0; i < words.length; i++) {
+      const end = Math.min(frame + durations[i], startAtFrame + sceneDuration);
+      results.push({ word: words[i], start: frame, end });
+      frame = end;
+    }
+  }
+
+  return results;
+}
+
+/**
+ * Find the transition between two adjacent segments.
+ * Mirrors the composition's findTransitionBetween logic.
+ */
+function findTransBetween(
+  transitions: TimelineItem[],
+  segA: TimelineItem,
+  segB: TimelineItem,
+): TimelineItem | undefined {
+  const segAEnd = segA.startAtFrame + ("durationInFrames" in segA ? (segA.durationInFrames ?? 0) : 0);
+  const segBStart = segB.startAtFrame;
+  const TOLERANCE = 30;
+  return transitions.find((t) => t.type === "transition" && Math.abs(t.startAtFrame - segAEnd) <= TOLERANCE)
+    ?? transitions.find((t) => t.type === "transition" && Math.abs(t.startAtFrame - segBStart) <= TOLERANCE)
+    ?? transitions.find((t) => t.type === "transition" && t.startAtFrame >= segA.startAtFrame && t.startAtFrame <= segBStart + TOLERANCE);
+}
+
+/**
+ * Compute the actual rendered start frame for each visual segment,
+ * accounting for TransitionSeries overlap where transitions "eat" frames
+ * from adjacent segments. Returns a Map from manifest startAtFrame → rendered frame.
+ */
+function computeRenderedLayout(adaptedTimeline: TimelineItem[]): Map<number, number> {
+  const segments: TimelineItem[] = [];
+  const transitions: TimelineItem[] = [];
+  for (const item of adaptedTimeline) {
+    if (!item?.type) continue;
+    switch (item.type) {
+      case "video_clip": case "title_card": case "image_scene": case "intro_card": case "outro_card":
+        segments.push(item);
+        break;
+      case "transition":
+        transitions.push(item);
+        break;
+    }
+  }
+  segments.sort((a, b) => a.startAtFrame - b.startAtFrame);
+
+  const positionMap = new Map<number, number>();
+  let renderedFrame = 0;
+
+  for (let i = 0; i < segments.length; i++) {
+    const seg = segments[i];
+    const dur = "durationInFrames" in seg ? (seg.durationInFrames ?? 90) : 90;
+    positionMap.set(seg.startAtFrame, renderedFrame);
+
+    if (i < segments.length - 1) {
+      const nextSeg = segments[i + 1];
+      const nextDur = "durationInFrames" in nextSeg ? (nextSeg.durationInFrames ?? 90) : 90;
+      const trans = findTransBetween(transitions, seg, nextSeg);
+      let overlap = 0;
+      if (trans && "durationInFrames" in trans) {
+        overlap = Math.min(trans.durationInFrames ?? 0, dur, nextDur);
+      }
+      renderedFrame += dur - overlap;
+    }
+  }
+
+  logger.info(`[Adapter] Rendered layout: ${segments.length} segments, total rendered frames=${renderedFrame}`);
+  return positionMap;
+}
+
+/**
  * Calculate the total composition duration in frames from the timeline.
- * This is the frame number of the last entry's end point.
+ * Only visual segments count — overlays and transitions are layered on top
+ * and must not inflate the total render duration.
  */
 function calculateDuration(timeline: TimelineEntry[], fps: number): number {
   let maxFrame = 0;
   for (const entry of timeline) {
+    if (!VISUAL_SEGMENT_TYPES.has(entry.type)) continue;
     const entryEnd = entry.startAtFrame + ("duration" in entry ? (entry.duration ?? 0) : 0);
     if (entryEnd > maxFrame) maxFrame = entryEnd;
   }
@@ -126,7 +244,7 @@ function adaptTimelineEntry(entry: TimelineEntry, outputDir: string): TimelineIt
     case "intro_card":
       return {
         type: "intro_card",
-        title: entry.title,
+        title: entry.title ?? "",
         subtitle: entry.subtitle,
         backgroundSrc: entry.enhancedBackgroundSrc
           ? resolveMediaPath(entry.enhancedBackgroundSrc, outputDir)
@@ -141,7 +259,7 @@ function adaptTimelineEntry(entry: TimelineEntry, outputDir: string): TimelineIt
     case "outro_card":
       return {
         type: "outro_card",
-        title: entry.title,
+        title: entry.title ?? "",
         subtitle: entry.subtitle,
         backgroundSrc: entry.enhancedBackgroundSrc
           ? resolveMediaPath(entry.enhancedBackgroundSrc, outputDir)
@@ -212,6 +330,44 @@ export function adaptManifest(manifest: DirectorManifest, outputDir: string): Co
   const { composition, timeline } = manifest;
   const durationInFrames = calculateDuration(timeline, composition.fps);
 
+  // Adapt entries and clamp overlay durations so they don't exceed visual content
+  const adaptedTimeline = timeline.map((entry) => {
+    const adapted = adaptTimelineEntry(entry, outputDir);
+    if (adapted.type === "overlay" && "durationInFrames" in adapted && adapted.durationInFrames != null) {
+      const maxDur = Math.max(0, durationInFrames - adapted.startAtFrame);
+      if (adapted.durationInFrames > maxDur) {
+        adapted.durationInFrames = maxDur;
+      }
+    }
+    if (adapted.type === "overlay") {
+      const wordsCount = Array.isArray((adapted.props as Record<string, unknown>)?.words)
+        ? ((adapted.props as Record<string, unknown>).words as unknown[]).length
+        : 0;
+      logger.info(`[Adapter] Overlay: component=${adapted.component}, from=${adapted.startAtFrame}, dur=${adapted.durationInFrames ?? "∞"}, wordsCount=${wordsCount}`);
+    }
+    return adapted;
+  });
+
+  // Compute actual rendered positions accounting for TransitionSeries overlaps.
+  // Transitions "eat" frames from adjacent segments, shifting all subsequent
+  // content earlier than the manifest's startAtFrame values would suggest.
+  const renderedLayout = computeRenderedLayout(adaptedTimeline);
+
+  // SmartCaptions word timings must use the rendered positions (not manifest
+  // positions) so captions align with the actual visual content.
+  for (const item of adaptedTimeline) {
+    if (item.type === "overlay" && item.component === "SmartCaptions") {
+      const freshWords = deriveWordTimingsFromTimeline(timeline, composition.fps, renderedLayout);
+      if (freshWords.length > 0) {
+        (item.props as Record<string, unknown>).words = freshWords;
+        logger.info(`[Adapter] SmartCaptions: re-derived ${freshWords.length} words, first=${freshWords[0].start}, last=${freshWords[freshWords.length - 1].end}`);
+      }
+      // Force overlay to start at frame 0 — word timings are absolute
+      item.startAtFrame = 0;
+      item.durationInFrames = durationInFrames;
+    }
+  }
+
   return {
     templateId: manifest.templateId,
     projectTitle: manifest.projectTitle,
@@ -219,7 +375,7 @@ export function adaptManifest(manifest: DirectorManifest, outputDir: string): Co
     height: composition.height,
     fps: composition.fps,
     durationInFrames,
-    timeline: timeline.map((entry) => adaptTimelineEntry(entry, outputDir)),
+    timeline: adaptedTimeline,
     audio: adaptAudio(manifest, outputDir),
     branding: adaptBranding(manifest),
   };

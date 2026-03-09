@@ -4,7 +4,7 @@ import path from "node:path";
 import fs from "node:fs/promises";
 import { CopilotClient, defineTool } from "@github/copilot-sdk";
 import type { ToolDefinition, ToolRegistry } from "../mcp/tool-registry.js";
-import { ALWAYS_ON_TOOLS } from "../mcp/constants.js";
+import { ALWAYS_ON_TOOLS, ESSENTIAL_TOOLS, CONTEXTUAL_TOOLS } from "../mcp/constants.js";
 import { TokenTracker } from "./token-tracker.js";
 import type { TokenUsage, TokenUsageEvent, CompactionEvent } from "./token-tracker.js";
 
@@ -728,13 +728,43 @@ export class CopilotWrapperService extends EventEmitter implements CopilotWrappe
     let toolList = options?.tools ?? this.toolRegistry?.listEnabledTools() ?? [];
     const perCallToolCallback = options?.onToolCall;
 
-    // Enforce maxToolsPerRequest: if we exceed the cap, keep always-on core tools
-    // and fill the remaining slots with the rest.
+    // When availableTools is specified (skill scoping or explicit client filter),
+    // pre-filter tool definitions to only those in the allow-list.
+    // Merge ESSENTIAL_TOOLS so skill sessions always retain core capabilities
+    // (file I/O, web search, shell, delegation) without the caller needing to
+    // declare them explicitly.
+    if (options?.availableTools && options.availableTools.length > 0) {
+      const scopedSet = new Set(options.availableTools);
+      for (const essential of ESSENTIAL_TOOLS) {
+        scopedSet.add(essential);
+      }
+      toolList = toolList.filter((t) => scopedSet.has(t.name));
+    }
+
+    // Enforce maxToolsPerRequest with tiered priority:
+    //   1. Essential tools (always included — ~6 tools)
+    //   2. Contextual always-on tools (included when budget allows)
+    //   3. Everything else (skill-specific, MCP, etc.)
     if (toolList.length > this.maxToolsPerRequest) {
-      const coreTools = toolList.filter((t) => ALWAYS_ON_TOOLS.has(t.name));
-      const otherTools = toolList.filter((t) => !ALWAYS_ON_TOOLS.has(t.name));
-      const remainingSlots = Math.max(0, this.maxToolsPerRequest - coreTools.length);
-      toolList = [...coreTools, ...otherTools.slice(0, remainingSlots)];
+      const essential = toolList.filter((t) => ESSENTIAL_TOOLS.has(t.name));
+      const contextual = toolList.filter(
+        (t) => CONTEXTUAL_TOOLS.has(t.name) && !ESSENTIAL_TOOLS.has(t.name),
+      );
+      const other = toolList.filter((t) => !ALWAYS_ON_TOOLS.has(t.name));
+
+      let budget = this.maxToolsPerRequest;
+      const result = [...essential];
+      budget -= essential.length;
+
+      const contextualSlice = contextual.slice(0, Math.max(0, budget));
+      result.push(...contextualSlice);
+      budget -= contextualSlice.length;
+
+      if (budget > 0) {
+        result.push(...other.slice(0, budget));
+      }
+
+      toolList = result;
     }
 
     const wrappedTools = toolList.map((tool) =>
@@ -748,7 +778,7 @@ export class CopilotWrapperService extends EventEmitter implements CopilotWrappe
           }
           const result = await tool.handler(args as Record<string, unknown>);
           if (result.isError) {
-            throw new Error(result.text);
+            return `[Tool Error] ${result.text}`;
           }
           return result.text;
         }

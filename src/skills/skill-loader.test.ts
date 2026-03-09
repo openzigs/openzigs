@@ -171,4 +171,59 @@ You are a test skill.
     const result = await loadSkillMetadata(["/fake/skills/media-director"]);
     expect(result[0].loaded).toBe(true);
   });
+
+  // ─── Research Synthesizer Skill Tests ──────────────────
+
+  const RESEARCH_SYNTHESIZER_MD = `---
+name: research-synthesizer
+description: Autonomous research analyst and content synthesizer. Searches the web and YouTube, synthesizes comprehensive documents with inline citations, optional image/video generation, and bibliography.
+allowed-tools: web-search youtube-search-videos youtube-get-video-details read-file write-file submit-media-job get-job-status save-draft-media query-gallery-assets
+---
+
+# Skill: Research Synthesizer
+
+## Identity
+You are the OpenZigs Research Synthesizer — an autonomous research analyst.
+
+## Domain Rules
+1. Every factual claim must have an inline citation.
+2. Use sequential numbering [1], [2], [3].
+3. Never fabricate sources.
+4. If insufficient sources are found, state the limitation.
+5. Default resolution: 1024x768 for comparison images.
+`;
+
+  it("parses research-synthesizer skill with correct allowed-tools", async () => {
+    readFileMock.mockResolvedValue(RESEARCH_SYNTHESIZER_MD);
+
+    const result = await loadSkillMetadata(["/fake/skills/research-synthesizer"]);
+    expect(result[0].name).toBe("research-synthesizer");
+    expect(result[0].allowedTools).toContain("web-search");
+    expect(result[0].allowedTools).toContain("youtube-search-videos");
+    expect(result[0].allowedTools).toContain("save-draft-media");
+    expect(result[0].allowedTools).toContain("query-gallery-assets");
+    expect(result[0].allowedTools).toHaveLength(9);
+  });
+
+  it("maps research-synthesizer icon to microscope emoji", async () => {
+    readFileMock.mockResolvedValue(RESEARCH_SYNTHESIZER_MD);
+
+    const result = await loadSkillMetadata(["/fake/skills/research-synthesizer"]);
+    expect(result[0].icon).toBe("\u{1F52C}");
+  });
+
+  it("extracts examples for research-synthesizer", async () => {
+    readFileMock.mockResolvedValue(RESEARCH_SYNTHESIZER_MD);
+
+    const result = await loadSkillMetadata(["/fake/skills/research-synthesizer"]);
+    expect(result[0].examples.length).toBe(3);
+    expect(result[0].examples[0]).toContain("AI coding assistants");
+  });
+
+  it("counts research-synthesizer rules correctly", async () => {
+    readFileMock.mockResolvedValue(RESEARCH_SYNTHESIZER_MD);
+
+    const result = await loadSkillMetadata(["/fake/skills/research-synthesizer"]);
+    expect(result[0].rulesCount).toBe(5);
+  });
 });

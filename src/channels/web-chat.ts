@@ -128,6 +128,12 @@ export class WebChatChannel implements MessageChannel {
     }
   }
 
+  /** Broadcast an approval request to ALL connected web clients (used for ephemeral sessions). */
+  broadcastApprovalRequest(request: ApprovalRequest): void {
+    if (!this.connected) return;
+    this.io.emit("approval:request", request);
+  }
+
   /**
    * Send an interactive user input request to the client and wait for a response.
    * Returns a Promise that resolves with the user's answer or rejects on timeout.
@@ -142,6 +148,7 @@ export class WebChatChannel implements MessageChannel {
     return new Promise<UserInputResponse>((resolve) => {
       const timer = setTimeout(() => {
         this.pendingInputRequests.delete(requestId);
+        socket.emit("user_input_timeout", { requestId });
         resolve({ answer: "", wasFreeform: false });
       }, this.userInputTimeoutMs);
 
@@ -152,6 +159,7 @@ export class WebChatChannel implements MessageChannel {
         choices: request.choices,
         allowFreeform: request.allowFreeform ?? true,
         preview: request.preview,
+        timeout: this.userInputTimeoutMs,
       });
     });
   }

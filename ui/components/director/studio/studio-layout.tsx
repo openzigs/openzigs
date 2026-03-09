@@ -10,7 +10,7 @@ import { SceneInspector } from "./scene-inspector";
 import { CaptionStylePanel } from "./caption-style-panel";
 import { TimelineTracks } from "./timeline-tracks";
 import { AudioManager } from "./audio-manager";
-import { Plus } from "lucide-react";
+import { Plus, X } from "lucide-react";
 import type {
   DraftFull,
   InspectorState,
@@ -334,25 +334,53 @@ export function StudioLayout({ draftId }: { draftId: string }) {
     const outroDuration = fps * 4; // 4 seconds
 
     const timeline = draft.manifest.timeline ?? [];
-    const lastFrame = timeline.reduce((max, e) => {
-      const end = (e.startAtFrame ?? 0) + (e.duration ?? e.durationInFrames ?? 0);
+
+    // Only look at visual scene entries — overlays and transitions are positioned
+    // relative to scenes and must not push the outro position further out.
+    const visualTypes = new Set(["image_scene", "video_clip", "title_card", "intro_card"]);
+    const lastSceneEnd = timeline.reduce((max, e) => {
+      if (!visualTypes.has(e.type)) return max;
+      const end = (e.startAtFrame ?? 0) + (e.duration ?? e.durationInFrames ?? fps * 3);
       return Math.max(max, end);
     }, 0);
 
     const outroEntry: TimelineEntry = {
       type: "outro_card",
       title: "Thanks for watching",
-      startAtFrame: lastFrame,
+      startAtFrame: lastSceneEnd,
       duration: outroDuration,
       animation: "fade-out",
     };
 
-    const updated: DirectorManifest = {
-      ...draft.manifest,
-      timeline: [...timeline, outroEntry],
-    };
-    handleManifestUpdate(updated);
+    handleManifestUpdate({ ...draft.manifest, timeline: [...timeline, outroEntry] });
   }, [draft, hasOutro, handleManifestUpdate]);
+
+  const handleRemoveCard = useCallback(
+    (cardType: "intro_card" | "outro_card") => {
+      if (!draft?.manifest) return;
+      const fps = draft.manifest.composition?.fps ?? 30;
+      const timeline = draft.manifest.timeline ?? [];
+      const cardIdx = timeline.findIndex((e) => e.type === cardType);
+      if (cardIdx < 0) return;
+
+      const updated = timeline.filter((_, i) => i !== cardIdx);
+
+      // Recalculate startAtFrame
+      let frame = 0;
+      for (const entry of updated) {
+        entry.startAtFrame = frame;
+        frame += entry.duration ?? entry.durationInFrames ?? fps * 3;
+      }
+
+      handleManifestUpdate({ ...draft.manifest, timeline: updated });
+      // Clear inspector if the removed card was selected
+      const selectedEntry = inspector.entry;
+      if (selectedEntry?.type === cardType) {
+        setInspector({ sceneIndex: null, entry: null });
+      }
+    },
+    [draft, inspector.entry, handleManifestUpdate],
+  );
 
   // Auto-save every 30 seconds when dirty
   useEffect(() => {
@@ -442,10 +470,14 @@ export function StudioLayout({ draftId }: { draftId: string }) {
   );
 
   const totalFrames = draft?.manifest?.timeline
-    ? draft.manifest.timeline.reduce((max: number, e: TimelineEntry) => {
-        const end = (e.startAtFrame ?? 0) + (e.duration ?? e.durationInFrames ?? 0);
-        return Math.max(max, end);
-      }, 0)
+    ? (() => {
+        const visualTypes = new Set(["image_scene", "video_clip", "title_card", "intro_card", "outro_card"]);
+        return draft.manifest.timeline.reduce((max: number, e: TimelineEntry) => {
+          if (!visualTypes.has(e.type)) return max;
+          const end = (e.startAtFrame ?? 0) + (e.duration ?? e.durationInFrames ?? 0);
+          return Math.max(max, end);
+        }, 0);
+      })()
     : 0;
 
   if (loading) {
@@ -520,6 +552,7 @@ export function StudioLayout({ draftId }: { draftId: string }) {
             draftId={draftId}
             onManifestUpdate={handleManifestUpdate}
             onDeleteScene={handleDeleteScene}
+            onRemoveCard={handleRemoveCard}
           />
 
           {/* Global caption settings */}
@@ -567,22 +600,40 @@ export function StudioLayout({ draftId }: { draftId: string }) {
         {/* Intro/Outro controls */}
         <div className="flex items-center gap-2 border-b border-border px-4 py-1.5">
           <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Cards</span>
-          <button
-            onClick={handleAddIntro}
-            disabled={hasIntro}
-            className="flex items-center gap-1 rounded px-2 py-0.5 text-[11px] font-medium text-emerald-600 hover:bg-emerald-500/10 transition disabled:opacity-40 disabled:cursor-not-allowed"
-          >
-            <Plus className="h-3 w-3" />
-            {hasIntro ? "Intro added" : "Add Intro"}
-          </button>
-          <button
-            onClick={handleAddOutro}
-            disabled={hasOutro}
-            className="flex items-center gap-1 rounded px-2 py-0.5 text-[11px] font-medium text-rose-600 hover:bg-rose-500/10 transition disabled:opacity-40 disabled:cursor-not-allowed"
-          >
-            <Plus className="h-3 w-3" />
-            {hasOutro ? "Outro added" : "Add Outro"}
-          </button>
+          {hasIntro ? (
+            <button
+              onClick={() => handleRemoveCard("intro_card")}
+              className="flex items-center gap-1 rounded px-2 py-0.5 text-[11px] font-medium text-emerald-600 hover:bg-red-500/10 hover:text-red-600 transition"
+            >
+              <X className="h-3 w-3" />
+              Remove Intro
+            </button>
+          ) : (
+            <button
+              onClick={handleAddIntro}
+              className="flex items-center gap-1 rounded px-2 py-0.5 text-[11px] font-medium text-emerald-600 hover:bg-emerald-500/10 transition"
+            >
+              <Plus className="h-3 w-3" />
+              Add Intro
+            </button>
+          )}
+          {hasOutro ? (
+            <button
+              onClick={() => handleRemoveCard("outro_card")}
+              className="flex items-center gap-1 rounded px-2 py-0.5 text-[11px] font-medium text-rose-600 hover:bg-red-500/10 hover:text-red-600 transition"
+            >
+              <X className="h-3 w-3" />
+              Remove Outro
+            </button>
+          ) : (
+            <button
+              onClick={handleAddOutro}
+              className="flex items-center gap-1 rounded px-2 py-0.5 text-[11px] font-medium text-rose-600 hover:bg-rose-500/10 transition"
+            >
+              <Plus className="h-3 w-3" />
+              Add Outro
+            </button>
+          )}
           <div className="mx-1 h-4 w-px bg-border" />
           <button
             onClick={handleAddScene}

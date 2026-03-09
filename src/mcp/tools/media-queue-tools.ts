@@ -14,10 +14,23 @@ const VALID_JOB_TYPES: MediaJobType[] = [
   "remix_analyze", "remix_replace", "remix_master",
 ];
 
+/** Models the FluxQ / worker sidecars actually recognise. */
+const KNOWN_MODELS = new Set([
+  "flux-schnell", "flux-dev", "flux-kontext", "z-image-turbo",
+  "ltx-2", "f5-tts", "ace-step", "seed-vc",
+  "htdemucs_6s", "basic-pitch", "matchering",
+]);
+
+/** Resolve the model to use: if the caller-supplied name isn't recognised, fall back to the type's default. */
+function resolveModel(type: MediaJobType, requested?: string): string {
+  if (requested && KNOWN_MODELS.has(requested)) return requested;
+  return defaultModelForJobType(type);
+}
+
 const submitMediaJobSchema = z.object({
   type: z.enum(VALID_JOB_TYPES as [MediaJobType, ...MediaJobType[]]),
   prompt: z.string().optional().describe("Generation prompt (required for most types)"),
-  model: z.string().optional().describe("Model override (auto-selected if omitted)"),
+  model: z.string().optional().describe("Model override — omit to use defaults. Valid: flux-schnell (txt2img), flux-kontext (img2img), ltx-2 (video), f5-tts (tts), ace-step (music)"),
   width: z.number().optional(),
   height: z.number().optional(),
   steps: z.number().optional(),
@@ -33,6 +46,8 @@ const submitMediaJobSchema = z.object({
   duration_seconds: z.number().optional().describe("Duration in seconds (music generation)"),
   lyrics: z.string().optional().describe("Lyrics for vocal music generation"),
   instrumental: z.boolean().optional().describe("Generate instrumental-only music"),
+  notify_via_telegram: z.boolean().optional().describe("Send a Telegram notification when the job completes or fails"),
+  telegram_chat_id: z.string().optional().describe("Telegram chat ID to notify (uses configured admin chat ID if omitted)"),
 });
 
 const getJobStatusSchema = z.object({
@@ -59,7 +74,7 @@ export const createMediaQueueTools = ({
         properties: {
           type: { type: "string", enum: VALID_JOB_TYPES },
           prompt: { type: "string" },
-          model: { type: "string" },
+          model: { type: "string", description: "Model override — omit to use defaults. Valid: flux-schnell (txt2img), flux-kontext (img2img), ltx-2 (video), f5-tts (tts), ace-step (music)" },
           width: { type: "number" },
           height: { type: "number" },
           steps: { type: "number" },
@@ -75,6 +90,8 @@ export const createMediaQueueTools = ({
           duration_seconds: { type: "number" },
           lyrics: { type: "string" },
           instrumental: { type: "boolean" },
+          notify_via_telegram: { type: "boolean", description: "Send a Telegram notification when the job completes or fails" },
+          telegram_chat_id: { type: "string", description: "Telegram chat ID to notify (uses configured admin chat ID if omitted)" },
         },
         required: ["type"],
       },
@@ -84,7 +101,7 @@ export const createMediaQueueTools = ({
       handler: async (args) => {
         try {
           const input = submitMediaJobSchema.parse(args);
-          const model = input.model ?? defaultModelForJobType(input.type);
+          const model = resolveModel(input.type, input.model);
           const targetNode = targetNodeForJobType(input.type);
 
           const job = mediaQueueRepo.createJob({
@@ -109,6 +126,8 @@ export const createMediaQueueTools = ({
             model,
             projectId: input.project_id,
             priority: input.priority ?? 0,
+            notifyViaTelegram: input.notify_via_telegram,
+            telegramChatId: input.telegram_chat_id,
           });
 
           return {
