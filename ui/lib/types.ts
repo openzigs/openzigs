@@ -566,3 +566,38 @@ export type KnowledgeConfig = {
   minScore: number;
   searchMode: KnowledgeSearchMode;
 };
+
+// ── Memory ──────────────────────────────────────────────────────────────
+
+export type MemoryCategory =
+  | "conventions"
+  | "patterns"
+  | "decisions"
+  | "preferences"
+  | "context";
+
+export type Memory = {
+  id: string;
+  category: MemoryCategory;
+  title: string;
+  content: string;
+  createdAt: string;
+  updatedAt: string;
+  sha: string;
+};
+
+export type MemoryConfig = {
+  enabled: boolean;
+  owner: string;
+  repo: string;
+  cacheTtlMs: number;
+};
+
+export type MemoryRepoStatus = {
+  connected: boolean;
+  owner: string;
+  repo: string;
+  memoryCount: number;
+  lastSynced: string | null;
+  error?: string;
+};

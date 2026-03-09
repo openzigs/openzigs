@@ -3715,6 +3715,78 @@ When the AI retrieves media assets from the knowledge base, it can format them f
 
 ---
 
+## Agent Memory — GitHub Repository-Backed Persistent Memory (Epic #334)
+
+### Overview
+
+The Agent Memory system provides **persistent, cross-session memory** backed by a private GitHub repository. Memories are structured markdown files stored in a dedicated repo (default: `openzigs-memory`) and automatically injected into Copilot SDK sessions as supplementary context, improving response quality over time.
+
+### Architecture
+
+| Component | Path | Purpose |
+|---|---|---|
+| `MemoryManager` | `src/memory/memory-manager.ts` | Core service — GitHub REST API client, CRUD operations, caching, session context builder |
+| `memory.ts` | `src/api/memory.ts` | Admin API router mounted at `/api/admin/memory` |
+| `MemoryPanel` | `ui/components/admin/memory-panel.tsx` | Admin UI — setup, CRUD, category filtering |
+| Config | `src/config/index.ts` (`MemoryAppConfig`) | `enabled`, `owner`, `repo`, `cacheTtlMs` |
+
+### Memory Categories
+
+| Category | Purpose |
+|---|---|
+| `conventions` | Coding standards, project rules, style guides |
+| `patterns` | Recurring architectural patterns and idioms |
+| `decisions` | Key technical decisions and their rationale |
+| `preferences` | User preferences, defaults, and workflow choices |
+| `context` | Project context, domain knowledge, business rules |
+
+### Storage Format
+
+Each memory is a markdown file with YAML frontmatter:
+
+```markdown
+---
+title: ESM Import Conventions
+createdAt: 2025-01-15T10:00:00Z
+updatedAt: 2025-01-20T14:30:00Z
+---
+
+Always use explicit `.js` extensions in TypeScript imports (ESM requirement).
+Prefer named exports over default exports for better tree-shaking.
+```
+
+Files are stored at `memories/{category}/{slug}.md` in the GitHub repository.
+
+### Session Injection
+
+When memory is enabled and connected, the `CopilotWrapperService.chat()` method calls `memoryManager.buildSessionContext()` and appends the result to the SDK session's `systemMessage` with mode `"append"`. This happens transparently on every chat call, with a TTL-based cache to minimize GitHub API calls.
+
+### API Endpoints
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/api/admin/memory/config` | Get config + connection status |
+| `PUT` | `/api/admin/memory/config` | Update config (enable/disable, owner, repo, cacheTtl) |
+| `POST` | `/api/admin/memory/setup` | Create the memory repository on GitHub |
+| `GET` | `/api/admin/memory/status` | Connection health check |
+| `GET` | `/api/admin/memory/categories` | List available categories |
+| `GET` | `/api/admin/memory/memories` | List all memories (optional `?category=` filter) |
+| `POST` | `/api/admin/memory/memories` | Create a new memory |
+| `GET` | `/api/admin/memory/memories/:id` | Get a single memory |
+| `PUT` | `/api/admin/memory/memories/:id` | Update a memory |
+| `DELETE` | `/api/admin/memory/memories/:id` | Delete a memory |
+
+### Setup Flow
+
+1. Configure `GITHUB_PERSONAL_ACCESS_TOKEN` in `.env` with `repo` scope
+2. Enable memory in Admin → Agent Memory panel
+3. Click "Create Memory Repository" — creates a private repo with directory structure
+4. Create memories via the admin UI or API
+
+### Tracking: [Epic #334](https://github.com/mgcronin/openzigs/issues/334)
+
+---
+
 ## Secret Vault & Browser Hardening
 
 ### Overview

@@ -567,6 +567,7 @@ export class CopilotWrapperService extends EventEmitter implements CopilotWrappe
   };
   private lifecycleUnsubscribe?: () => void; // retained for future teardown
   readonly tokenTracker = new TokenTracker();
+  private memoryContextProvider?: () => Promise<string | null>;
 
   constructor({
     client,
@@ -668,6 +669,11 @@ export class CopilotWrapperService extends EventEmitter implements CopilotWrappe
     this.nativeMcpServersConfig = { ...servers };
     // MCP server changes invalidate all cached sessions
     void this.clearAllSessions();
+  }
+
+  /** Set an async provider that returns memory context to inject into sessions. */
+  setMemoryContextProvider(provider: () => Promise<string | null>): void {
+    this.memoryContextProvider = provider;
   }
 
   async authenticate(): Promise<DeviceAuthInfo> {
@@ -785,12 +791,29 @@ export class CopilotWrapperService extends EventEmitter implements CopilotWrappe
       })
     );
 
+    // Inject memory context into system message when available
+    let effectiveSystemMessage = options?.systemMessage;
+    if (this.memoryContextProvider) {
+      try {
+        const memoryContext = await this.memoryContextProvider();
+        if (memoryContext) {
+          const existing = effectiveSystemMessage?.content ?? "";
+          const combined = existing
+            ? `${existing}\n\n${memoryContext}`
+            : memoryContext;
+          effectiveSystemMessage = { mode: effectiveSystemMessage?.mode ?? "append", content: combined };
+        }
+      } catch {
+        // Memory context is best-effort — don't block chat on failures
+      }
+    }
+
     const session = await this.getOrCreateSession(
       options?.conversationId,
       effectiveModel,
       wrappedTools,
       {
-        systemMessage: options?.systemMessage,
+        systemMessage: effectiveSystemMessage,
         availableTools: options?.availableTools,
         excludedTools: options?.excludedTools,
         onUserInputRequest: options?.onUserInputRequest,

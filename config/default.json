@@ -190,6 +190,12 @@
       }
     }
   },
+  "memory": {
+    "enabled": false,
+    "owner": "",
+    "repo": "openzigs-memory",
+    "cacheTtlMs": 300000
+  },
   "sentinel": {
     "enabled": false,
     "model": "gpt-4o-mini",

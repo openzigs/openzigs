@@ -51,6 +51,8 @@ import { VoiceService } from "./voice/index.js";
 import { createVoiceRouter } from "./api/voice.js";
 import { SecretVaultService } from "./vault/index.js";
 import { createVaultRouter } from "./api/vault.js";
+import { MemoryManager, createGitHubApiClient } from "./memory/memory-manager.js";
+import { createMemoryRouter } from "./api/memory.js";
 import { createAuthMiddleware } from "./auth/auth.js";
 import { createDirectorRouter, setDirectorIO } from "./api/director.js";
 import { createAudioRouter } from "./api/audio.js";
@@ -381,6 +383,22 @@ const knowledgeService = new KnowledgeIngestionService({
   copilot,
 });
 
+// ── Memory Manager ──
+const memoryConfig = config.memory;
+const ghToken = process.env.GITHUB_PERSONAL_ACCESS_TOKEN ?? "";
+const memoryManager = new MemoryManager(
+  {
+    enabled: memoryConfig?.enabled ?? false,
+    owner: memoryConfig?.owner ?? "",
+    repo: memoryConfig?.repo ?? "openzigs-memory",
+    cacheTtlMs: memoryConfig?.cacheTtlMs ?? 300000,
+  },
+  ghToken ? createGitHubApiClient(ghToken) : createGitHubApiClient(""),
+);
+
+// Wire memory context into Copilot sessions
+copilot.setMemoryContextProvider(() => memoryManager.buildSessionContext());
+
 // ── Secret Vault Service ──
 const vaultConfig = config.vault;
 const vaultService = new SecretVaultService({
@@ -637,6 +655,10 @@ app.use("/api/pinterest", authMiddleware, pinterestRouter);
 // Vault API routes
 const vaultRouter = createVaultRouter({ vaultService });
 app.use("/api/admin/vault", authMiddleware, vaultRouter);
+
+// Memory API routes
+const memoryRouter = createMemoryRouter({ memoryManager });
+app.use("/api/admin/memory", authMiddleware, memoryRouter);
 
 // Director Mode API routes
 const directorConfig = (config as Record<string, unknown>).director as {

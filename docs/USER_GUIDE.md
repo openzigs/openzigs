@@ -1408,6 +1408,83 @@ The lifecycle events timeline shows recent SDK lifecycle events (`session.create
 
 ---
 
+## Agent Memory
+
+The Agent Memory system gives OpenZigs **persistent, cross-session memory** backed by a private GitHub repository. Memories are automatically injected into every Copilot session, so the AI retains project knowledge, coding conventions, and preferences across conversations.
+
+### Setup
+
+1. **Configure GitHub token**: Add `GITHUB_PERSONAL_ACCESS_TOKEN` to your `.env` file with `repo` scope
+2. **Enable memory**: Open Admin → Agent Memory panel and click "Enable"
+3. **Create repository**: Click "Create Memory Repository" — this creates a private repo (default: `openzigs-memory`) in your GitHub account
+
+### Configuration
+
+Add to `~/.openzigs/config.json`:
+
+```json
+{
+  "memory": {
+    "enabled": true,
+    "owner": "your-github-username",
+    "repo": "openzigs-memory",
+    "cacheTtlMs": 300000
+  }
+}
+```
+
+| Setting | Default | Description |
+|---|---|---|
+| `enabled` | `false` | Enable/disable memory injection |
+| `owner` | `""` | GitHub username (auto-detected during setup) |
+| `repo` | `"openzigs-memory"` | Repository name |
+| `cacheTtlMs` | `300000` | Cache TTL in ms (5 minutes) |
+
+### Memory Categories
+
+| Category | Use For |
+|---|---|
+| **Conventions** | Coding standards, import rules, naming conventions |
+| **Patterns** | Architectural patterns, common idioms |
+| **Decisions** | Technical decisions and their rationale |
+| **Preferences** | Workflow preferences, tool choices, defaults |
+| **Context** | Project background, domain knowledge, business rules |
+
+### Admin UI
+
+The Agent Memory panel in the admin page provides:
+
+- **Status banner** — Shows connection status, memory count, and enable/disable toggle
+- **Repository setup** — One-click creation of the memory repository
+- **Category filters** — Filter memories by category
+- **CRUD operations** — Create, edit, and delete memories with inline editing
+- **Content preview** — Markdown content with truncated preview
+
+### How Memory Injection Works
+
+When memory is enabled and the repository is connected:
+1. On each `chat()` call, `buildSessionContext()` fetches memories (with TTL caching)
+2. Memories are formatted as a markdown summary grouped by category
+3. The summary is appended to the SDK session's `systemMessage` with mode `"append"`
+4. The AI receives memory context alongside the conversation, grounding responses in your project's established patterns
+
+### API Endpoints
+
+| Method | Endpoint | Description |
+|---|---|---|
+| `GET` | `/api/admin/memory/config` | Get config + connection status |
+| `PUT` | `/api/admin/memory/config` | Update config |
+| `POST` | `/api/admin/memory/setup` | Create the memory repository |
+| `GET` | `/api/admin/memory/status` | Connection health check |
+| `GET` | `/api/admin/memory/categories` | List available categories |
+| `GET` | `/api/admin/memory/memories` | List memories (optional `?category=` filter) |
+| `POST` | `/api/admin/memory/memories` | Create a memory |
+| `GET` | `/api/admin/memory/memories/:id` | Get a memory by path |
+| `PUT` | `/api/admin/memory/memories/:id` | Update a memory |
+| `DELETE` | `/api/admin/memory/memories/:id` | Delete a memory |
+
+---
+
 ## Tool Limit Configuration
 
 OpenZigs registers 90+ MCP tools, but sending all of them to the LLM in every request wastes context window tokens and can degrade response quality. The **tool limit** controls how many tools are included per LLM call.
