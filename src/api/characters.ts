@@ -972,6 +972,12 @@ function pollTrainingStatus(
   const pollIntervalMs = 15_000; // 15 seconds
   const startTime = Date.now();
 
+  const maybeNotify = (outcome: "complete" | "failed", message?: string) => {
+    if (!notifyViaTelegram) return;
+    const chatId = telegramChatId ?? _fallbackChatId;
+    if (chatId) sendTrainingTelegramNotification(characterId, characterName, outcome, chatId, message);
+  };
+
   const poll = async () => {
     // Stop polling if training was cancelled
     if (_cancelledTraining.has(characterId)) {
@@ -1002,10 +1008,7 @@ function pollTrainingStatus(
               errorMessage: `Training timed out after ${hours}h but a partial checkpoint was saved and is usable. Results may improve with more training.`,
             });
             _io?.emit("character:training:complete", { characterId, characterName, partial: true });
-            if (notifyViaTelegram) {
-              const chatId = telegramChatId ?? _fallbackChatId;
-              if (chatId) sendTrainingTelegramNotification(characterId, characterName, "complete", chatId);
-            }
+            maybeNotify("complete");
             logger.warn(`[Characters] Training timed out for ${characterId} but partial checkpoint is usable: ${status.lora_path}`);
             return;
           }
@@ -1018,10 +1021,7 @@ function pollTrainingStatus(
         errorMessage: `Training timed out after ${hours} hours. The sidecar may still be training — check its logs. You can increase the timeout in config (imageGen.trainingTimeoutHours).`,
       });
       _io?.emit("character:training:failed", { characterId, characterName });
-      if (notifyViaTelegram) {
-        const chatId = telegramChatId ?? _fallbackChatId;
-        if (chatId) sendTrainingTelegramNotification(characterId, characterName, "failed", chatId, `Timed out after ${hours}h`);
-      }
+      maybeNotify("failed", `Timed out after ${hours}h`);
       logger.error(`[Characters] Training timed out for ${characterId}`);
       return;
     }
@@ -1057,10 +1057,7 @@ function pollTrainingStatus(
           errorMessage: status.error,
         });
         _io?.emit("character:training:failed", { characterId, characterName });
-        if (notifyViaTelegram) {
-          const chatId = telegramChatId ?? _fallbackChatId;
-          if (chatId) sendTrainingTelegramNotification(characterId, characterName, "failed", chatId, status.error);
-        }
+        maybeNotify("failed", status.error);
         logger.error(`[Characters] Remote training failed for ${characterId}: ${status.error}`);
       } else if (status.lora_path) {
         characterRepo.update(characterId, {
@@ -1069,10 +1066,7 @@ function pollTrainingStatus(
           errorMessage: null,
         });
         _io?.emit("character:training:complete", { characterId, characterName });
-        if (notifyViaTelegram) {
-          const chatId = telegramChatId ?? _fallbackChatId;
-          if (chatId) sendTrainingTelegramNotification(characterId, characterName, "complete", chatId);
-        }
+        maybeNotify("complete");
         logger.info(`[Characters] Remote training complete for ${characterId}: ${status.lora_path}`);
 
         // Clean up training data on the sidecar now that the character is confirmed ready.
@@ -1101,10 +1095,7 @@ function pollTrainingStatus(
           errorMessage: "Training completed but no LoRA adapter found in output directory",
         });
         _io?.emit("character:training:failed", { characterId, characterName });
-        if (notifyViaTelegram) {
-          const chatId = telegramChatId ?? _fallbackChatId;
-          if (chatId) sendTrainingTelegramNotification(characterId, characterName, "failed", chatId, "No LoRA adapter found");
-        }
+        maybeNotify("failed", "No LoRA adapter found");
         logger.error(`[Characters] Remote training completed but no LoRA found for ${characterId}`);
       }
     } catch (error) {

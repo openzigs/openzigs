@@ -69,7 +69,7 @@ function buildResearchPrompt(params: ResearchParams): string {
 
   // Phase 5: Images (optional — skip if video is also requested since produce-video generates its own images)
   if (params.generateImages && !params.generateVideo) {
-    steps.push(`STEP ${step}: Call submit-media-job up to 3 times with type "txt2img" for supporting images. Do NOT pass a model parameter. Then call get-job-status once per job. If still pending, skip and continue.`);
+    steps.push(`STEP ${step}: Generate original supporting images — call submit-media-job up to 3 times with type "txt2img". Do NOT pass a model parameter. Then call get-job-status once per job. If still pending, skip and continue.`);
     step++;
   }
 
@@ -81,7 +81,7 @@ function buildResearchPrompt(params: ResearchParams): string {
 
   // Phase 8: Notification (optional)
   if (params.notifyTelegram) {
-    steps.push(`STEP ${step}: Call send-notification with a message like "Research complete: <title> saved to <path>".`);
+    steps.push(`STEP ${step}: Send a Telegram notification when done — call send-notification with a message like "Research complete: <title> saved to <path>".`);
     step++;
   }
 

@@ -113,7 +113,7 @@ export async function exchangePinterestCode(code: string): Promise<{
   }
 
   const backendPort = Number(process.env.PORT ?? 3000);
-  const redirectUri = `http://localhost:${backendPort}/api/pinterest/oauth/callback`;
+  const redirectUri = (process.env.PINTEREST_REDIRECT_URI ?? "").trim() || `http://localhost:${backendPort}/api/pinterest/oauth/callback`;
   const basic = Buffer.from(`${appId}:${appSecret}`).toString("base64");
 
   const tokenRes = await fetch("https://api.pinterest.com/v5/oauth/token", {
@@ -3424,7 +3424,7 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
     }
 
     const backendPort = Number(process.env.PORT ?? 3000);
-    const redirectUri = `http://localhost:${backendPort}/api/pinterest/oauth/callback`;
+    const redirectUri = (process.env.PINTEREST_REDIRECT_URI ?? "").trim() || `http://localhost:${backendPort}/api/pinterest/oauth/callback`;
 
     // CSRF state token
     const state = randomUUID();
@@ -3498,13 +3498,13 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
         headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
       });
       if (!apiRes.ok) {
-        return res.json({ connected: false, message: `Pinterest API error: ${apiRes.status}` });
+        return res.status(502).json({ connected: false, message: `Pinterest API error: ${apiRes.status}` });
       }
       const profile = await apiRes.json();
       return res.json({ connected: true, profile });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      return res.json({ connected: false, message });
+      return res.status(500).json({ connected: false, message });
     }
   });
 

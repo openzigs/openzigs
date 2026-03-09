@@ -968,8 +968,8 @@ Routes an `IncomingMessage` from any channel through a pipeline:
 5. **Tool Scoping** — `resolveAvailableTools()` resolves per-message tool allowlists into `string[]` (tool names), which the SDK filters natively via `availableTools`. When a skill prefix is detected (e.g., `[Using X skill]`) but no explicit tools were passed, the router auto-resolves the skill's `allowedTools` via `resolveSkillTools()`.
 6. **Auto-Approval** — Interactive chat sessions merge `INTERACTIVE_CHAT_AUTO_APPROVE_TOOLS` with the active skill's tools (if any), so skill tool calls don't block on the approval queue.
 7. **LLM Call** — Streams the prompt through `CopilotWrapper.chat()` with `conversationId: sessionId`, `systemMessage`, `availableTools`, `autoApproveTools`, and `onUserInputRequest`, forwarding chunks to the channel if a `RouteOptions.onChunk` callback is provided. The SDK handles multi-turn context natively; only the current user message is sent as the prompt.
-7. **Persistence** — Appends the user message and assistant response to the session's JSONL log for admin views and auditing.
-8. **Session Clear** — `clearUserSession()` also calls `copilot.destroySession()` to free the cached SDK session.
+8. **Persistence** — Appends the user message and assistant response to the session's JSONL log for admin views and auditing.
+9. **Session Clear** — `clearUserSession()` also calls `copilot.destroySession()` to free the cached SDK session.
 
 ### Session Manager (`src/sessions/session-manager.ts`)
 

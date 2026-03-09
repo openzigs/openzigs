@@ -97,7 +97,7 @@ describe("Pinterest SEO Tools", () => {
         "fetch",
         vi.fn().mockResolvedValue({
           ok: true,
-          json: () => Promise.resolve(mockTrendsResponse),
+          text: () => Promise.resolve(JSON.stringify(mockTrendsResponse)),
         }),
       );
       process.env.PINTEREST_ACCESS_TOKEN = "test-token";
@@ -137,7 +137,7 @@ describe("Pinterest SEO Tools", () => {
     it("passes region and trend_type as URL path params", async () => {
       const fetchMock = vi.fn().mockResolvedValue({
         ok: true,
-        json: () => Promise.resolve({ trends: [] }),
+        text: () => Promise.resolve(JSON.stringify({ trends: [] })),
       });
       vi.stubGlobal("fetch", fetchMock);
       process.env.PINTEREST_ACCESS_TOKEN = "test-token";
@@ -153,7 +153,7 @@ describe("Pinterest SEO Tools", () => {
     it("sets normalize_against_group when specified", async () => {
       const fetchMock = vi.fn().mockResolvedValue({
         ok: true,
-        json: () => Promise.resolve({ trends: [] }),
+        text: () => Promise.resolve(JSON.stringify({ trends: [] })),
       });
       vi.stubGlobal("fetch", fetchMock);
       process.env.PINTEREST_ACCESS_TOKEN = "test-token";
@@ -168,7 +168,7 @@ describe("Pinterest SEO Tools", () => {
     it("sends Authorization header with Bearer token", async () => {
       const fetchMock = vi.fn().mockResolvedValue({
         ok: true,
-        json: () => Promise.resolve({ trends: [] }),
+        text: () => Promise.resolve(JSON.stringify({ trends: [] })),
       });
       vi.stubGlobal("fetch", fetchMock);
       process.env.PINTEREST_ACCESS_TOKEN = "my-test-token";
@@ -189,7 +189,7 @@ describe("Pinterest SEO Tools", () => {
     it("sends keywords as query params", async () => {
       const fetchMock = vi.fn().mockResolvedValue({
         ok: true,
-        json: () => Promise.resolve({ data: [] }),
+        text: () => Promise.resolve(JSON.stringify({ data: [] })),
       });
       vi.stubGlobal("fetch", fetchMock);
       process.env.PINTEREST_ACCESS_TOKEN = "test-token";
@@ -206,7 +206,7 @@ describe("Pinterest SEO Tools", () => {
     it("includes ad account ID in URL path", async () => {
       const fetchMock = vi.fn().mockResolvedValue({
         ok: true,
-        json: () => Promise.resolve({ data: [] }),
+        text: () => Promise.resolve(JSON.stringify({ data: [] })),
       });
       vi.stubGlobal("fetch", fetchMock);
       process.env.PINTEREST_ACCESS_TOKEN = "test-token";
@@ -262,7 +262,7 @@ describe("Pinterest SEO Tools", () => {
     it("calls account endpoint for account_summary", async () => {
       const fetchMock = vi.fn().mockResolvedValue({
         ok: true,
-        json: () => Promise.resolve({ all: { summary_metrics: {} } }),
+        text: () => Promise.resolve(JSON.stringify({ all: { summary_metrics: {} } })),
       });
       vi.stubGlobal("fetch", fetchMock);
       process.env.PINTEREST_ACCESS_TOKEN = "test-token";
@@ -282,7 +282,7 @@ describe("Pinterest SEO Tools", () => {
     it("calls top_pins endpoint for top_pins action", async () => {
       const fetchMock = vi.fn().mockResolvedValue({
         ok: true,
-        json: () => Promise.resolve({ pins: [] }),
+        text: () => Promise.resolve(JSON.stringify({ pins: [] })),
       });
       vi.stubGlobal("fetch", fetchMock);
       process.env.PINTEREST_ACCESS_TOKEN = "test-token";
@@ -303,7 +303,7 @@ describe("Pinterest SEO Tools", () => {
     it("sends date range and metrics as query params", async () => {
       const fetchMock = vi.fn().mockResolvedValue({
         ok: true,
-        json: () => Promise.resolve({}),
+        text: () => Promise.resolve(JSON.stringify({})),
       });
       vi.stubGlobal("fetch", fetchMock);
       process.env.PINTEREST_ACCESS_TOKEN = "test-token";
@@ -325,7 +325,7 @@ describe("Pinterest SEO Tools", () => {
     it("uses default metrics when none specified", async () => {
       const fetchMock = vi.fn().mockResolvedValue({
         ok: true,
-        json: () => Promise.resolve({}),
+        text: () => Promise.resolve(JSON.stringify({})),
       });
       vi.stubGlobal("fetch", fetchMock);
       process.env.PINTEREST_ACCESS_TOKEN = "test-token";
