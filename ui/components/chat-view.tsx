@@ -22,7 +22,7 @@ import {
   DialogDescription,
   DialogFooter,
 } from "@/components/ui/dialog";
-import { Send, Loader2, Bot, User, AlertCircle, Trash2 } from "lucide-react";
+import { Send, Loader2, Bot, User, AlertCircle, Trash2, FileDown, Printer } from "lucide-react";
 import { ChatMarkdown } from "@/components/chat-markdown";
 import { SmartTextarea, type SkillInfo } from "@/components/smart-textarea";
 import { FileAttachmentButton, FileDropZone, AttachmentBar } from "@/components/file-attachment";
@@ -470,6 +470,39 @@ export const ChatView = () => {
     resetStuckTimer();
   }, [input, chatId, socket, selectedModel, sending, connected, nextId, resetStuckTimer, attachments, reasoningEffort]);
 
+  const saveAsMarkdown = useCallback((content: string) => {
+    const date = new Date().toISOString().slice(0, 10);
+    const slug = content.trim().split("\n")[0].replace(/^#+\s*/, "").replace(/[^a-z0-9]+/gi, "-").slice(0, 40).toLowerCase();
+    const blob = new Blob([content], { type: "text/markdown;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${slug || "message"}-${date}.md`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }, []);
+
+  const saveAsPdf = useCallback((msgId: string) => {
+    const el = document.querySelector(`[data-chat-msg-id="${msgId}"]`) as HTMLElement | null;
+    if (!el) return;
+    const html = el.innerHTML;
+    const win = window.open("", "_blank", "width=900,height=700");
+    if (!win) { showToast("Allow popups to use Save as PDF", "info"); return; }
+    win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Export</title><style>
+      body{font-family:system-ui,sans-serif;max-width:780px;margin:2rem auto;padding:1rem 2rem;line-height:1.7;color:#111;font-size:14px}
+      h1,h2,h3,h4{margin:1.2em 0 .4em;line-height:1.3}h1{font-size:1.6em}h2{font-size:1.3em}h3{font-size:1.1em}
+      p{margin:.5em 0}ul,ol{margin:.4em 0;padding-left:1.5em}li{margin:.2em 0}
+      pre{background:#f5f5f5;padding:1em;border-radius:4px;overflow:auto;font-size:12px}
+      code{background:#f0f0f0;padding:.1em .3em;border-radius:3px;font-size:12px}
+      table{border-collapse:collapse;width:100%;margin:.8em 0}th,td{border:1px solid #ccc;padding:.4em .7em;text-align:left}th{background:#f0f0f0}
+      blockquote{border-left:3px solid #ccc;margin:.6em 0;padding:.2em 1em;color:#555}
+      @media print{body{margin:0;padding:.5cm 1cm}}
+    </style></head><body>${html}</body></html>`);
+    win.document.close();
+    win.focus();
+    setTimeout(() => win.print(), 300);
+  }, []);
+
   // Quick-reply: send a choice directly (used by interactive choice pills in ChatMarkdown)
   const sendQuickReply = useCallback((text: string) => {
     if (!text || !socket || sending || !connected || !chatId) return;
@@ -689,7 +722,7 @@ export const ChatView = () => {
           <div
             key={msg.id}
             className={cn(
-              "flex items-start gap-3 animate-slide-in",
+              "group flex items-start gap-3 animate-slide-in",
               msg.role === "user" && "flex-row-reverse"
             )}
           >
@@ -724,19 +757,42 @@ export const ChatView = () => {
               )}
             >
               {msg.role === "assistant" ? (
-                <ChatMarkdown
-                  content={msg.content}
-                  isStreaming={streamRef.current?.id === msg.id}
-                  onChoiceSelect={
-                    msgIdx === lastAssistantIdx && !sending && !thinking
-                      ? sendQuickReply
-                      : undefined
-                  }
-                />
+                <div data-chat-msg-id={msg.id}>
+                  <ChatMarkdown
+                    content={msg.content}
+                    isStreaming={streamRef.current?.id === msg.id}
+                    onChoiceSelect={
+                      msgIdx === lastAssistantIdx && !sending && !thinking
+                        ? sendQuickReply
+                        : undefined
+                    }
+                  />
+                </div>
               ) : (
                 msg.content
               )}
             </div>
+            {/* Save actions — visible on hover for completed assistant messages */}
+            {msg.role === "assistant" && streamRef.current?.id !== msg.id && (
+              <div className="flex flex-col justify-end gap-0.5 pb-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                <button
+                  type="button"
+                  onClick={() => saveAsMarkdown(msg.content)}
+                  title="Save as Markdown"
+                  className="p-1.5 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  <FileDown className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => saveAsPdf(msg.id)}
+                  title="Save as PDF"
+                  className="p-1.5 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  <Printer className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            )}
           </div>
         ))}
 

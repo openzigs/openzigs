@@ -339,6 +339,12 @@ export class MediaQueueRepository {
       this.db.exec("ALTER TABLE media_assets ADD COLUMN knowledge_category TEXT NOT NULL DEFAULT 'media'");
     }
 
+    // ── folder column (additive migration, sub-folder support) ──
+    if (!assetCols.includes("folder")) {
+      this.db.exec("ALTER TABLE media_assets ADD COLUMN folder TEXT");
+      this.db.exec("CREATE INDEX IF NOT EXISTS idx_media_assets_folder ON media_assets(folder)");
+    }
+
     // ── Telegram notification columns (additive migration, Issue #414) ──
     const jobCols = (this.db.prepare("PRAGMA table_info(media_jobs)").all() as Array<{ name: string }>).map((c) => c.name);
     if (!jobCols.includes("notify_via_telegram")) {
@@ -493,12 +499,19 @@ export class MediaQueueRepository {
   }
 
   /** Count total assets matching optional filters (for pagination). */
-  countAssets(opts: { type?: string; source?: string; projectId?: string } = {}): number {
+  countAssets(opts: { type?: string; source?: string; projectId?: string; folder?: string } = {}): number {
     let sql = "SELECT COUNT(*) as c FROM media_assets WHERE 1=1";
     const params: unknown[] = [];
     if (opts.type) { sql += " AND type = ?"; params.push(opts.type); }
     if (opts.source) { sql += " AND source = ?"; params.push(opts.source); }
     if (opts.projectId) { sql += " AND project_id = ?"; params.push(opts.projectId); }
+    if (opts.folder !== undefined) {
+      if (opts.folder === "") {
+        sql += " AND (folder IS NULL OR folder = '')";
+      } else {
+        sql += " AND folder = ?"; params.push(opts.folder);
+      }
+    }
     return (this.db.prepare(sql).get(...params) as { c: number }).c;
   }
 
@@ -546,6 +559,7 @@ export class MediaQueueRepository {
     jobId?: string;
     projectId?: string;
     tags?: string[];
+    folder?: string;
   }): string {
     const id = randomUUID();
     const now = this.clock().toISOString();
@@ -553,8 +567,8 @@ export class MediaQueueRepository {
     this.db.prepare(`
       INSERT INTO media_assets (id, type, filename, file_path, mime_type, file_size_bytes,
         width, height, duration_seconds, prompt, model, generation_params,
-        source, source_url, artist, job_id, project_id, tags, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        source, source_url, artist, job_id, project_id, tags, folder, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       id, input.type, input.filename, input.filePath, input.mimeType,
       input.fileSizeBytes ?? null, input.width ?? null, input.height ?? null,
@@ -562,7 +576,7 @@ export class MediaQueueRepository {
       input.generationParams ? JSON.stringify(input.generationParams) : null,
       input.source, input.sourceUrl ?? null, input.artist ?? null,
       input.jobId ?? null, input.projectId ?? null,
-      input.tags ? JSON.stringify(input.tags) : null, now, now,
+      input.tags ? JSON.stringify(input.tags) : null, input.folder ?? null, now, now,
     );
 
     return id;
@@ -576,13 +590,20 @@ export class MediaQueueRepository {
     return row;
   }
 
-  listAssets(opts: { type?: string; source?: string; projectId?: string; limit?: number; offset?: number } = {}): Array<Record<string, unknown>> {
+  listAssets(opts: { type?: string; source?: string; projectId?: string; folder?: string; limit?: number; offset?: number } = {}): Array<Record<string, unknown>> {
     let sql = "SELECT * FROM media_assets WHERE 1=1";
     const params: unknown[] = [];
 
     if (opts.type) { sql += " AND type = ?"; params.push(opts.type); }
     if (opts.source) { sql += " AND source = ?"; params.push(opts.source); }
     if (opts.projectId) { sql += " AND project_id = ?"; params.push(opts.projectId); }
+    if (opts.folder !== undefined) {
+      if (opts.folder === "") {
+        sql += " AND (folder IS NULL OR folder = '')";
+      } else {
+        sql += " AND folder = ?"; params.push(opts.folder);
+      }
+    }
 
     sql += " ORDER BY created_at DESC LIMIT ? OFFSET ?";
     params.push(opts.limit ?? 50, opts.offset ?? 0);
@@ -621,5 +642,18 @@ export class MediaQueueRepository {
     return this.db.prepare(
       "UPDATE media_assets SET knowledge_visibility = ?, knowledge_category = ?, updated_at = ? WHERE id = ?",
     ).run(visibility, category, now, id).changes > 0;
+  }
+
+  updateAssetFolder(id: string, folder: string | null): boolean {
+    const now = this.clock().toISOString();
+    return this.db.prepare(
+      "UPDATE media_assets SET folder = ?, updated_at = ? WHERE id = ?",
+    ).run(folder, now, id).changes > 0;
+  }
+
+  listFolders(): Array<{ folder: string; count: number }> {
+    return (this.db.prepare(
+      "SELECT folder, COUNT(*) as count FROM media_assets WHERE folder IS NOT NULL AND folder != '' GROUP BY folder ORDER BY folder ASC"
+    ).all() as Array<{ folder: string; count: number }>);
   }
 }

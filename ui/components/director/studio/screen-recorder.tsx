@@ -13,8 +13,11 @@ import {
   Clock,
   Upload,
   AlertCircle,
+  FolderPlus,
+  Info,
 } from "lucide-react";
 import { showToast } from "@/components/toast";
+import { fetchJson } from "@/lib/api";
 
 type RecordingState = "idle" | "requesting" | "recording" | "paused" | "stopped" | "uploading";
 
@@ -40,6 +43,12 @@ export function ScreenRecorder({ onRecordingComplete }: ScreenRecorderProps) {
   const vuContextRef = useRef<AudioContext | null>(null);
   const vuAnalyserRef = useRef<AnalyserNode | null>(null);
   const vuAnimFrameRef = useRef<number>(0);
+  const mixAudioContextRef = useRef<AudioContext | null>(null);
+  const pausedElapsedRef = useRef(0);
+  // Continuation support
+  const priorChunksRef = useRef<Blob[]>([]);
+  const isContinuingRef = useRef(false);
+  const continuationElapsedRef = useRef(0);
 
   // ── VU Meter ──
   const [vuLevel, setVuLevel] = useState(0);
@@ -51,6 +60,7 @@ export function ScreenRecorder({ onRecordingComplete }: ScreenRecorderProps) {
       if (timerRef.current) clearInterval(timerRef.current);
       if (vuAnimFrameRef.current) cancelAnimationFrame(vuAnimFrameRef.current);
       if (vuContextRef.current) vuContextRef.current.close().catch(() => {});
+      if (mixAudioContextRef.current) mixAudioContextRef.current.close().catch(() => {});
       if (previewUrl) URL.revokeObjectURL(previewUrl);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -62,7 +72,7 @@ export function ScreenRecorder({ onRecordingComplete }: ScreenRecorderProps) {
   }, []);
 
   const startTimer = useCallback(() => {
-    startTimeRef.current = Date.now();
+    startTimeRef.current = Date.now() - pausedElapsedRef.current * 1000;
     timerRef.current = setInterval(() => {
       setElapsed(Math.floor((Date.now() - startTimeRef.current) / 1000));
     }, 250);
@@ -104,22 +114,53 @@ export function ScreenRecorder({ onRecordingComplete }: ScreenRecorderProps) {
     setState("requesting");
 
     try {
-      // Request screen capture
+      // Use simple boolean for audio — constraint objects can cause browsers to
+      // silently skip audio capture in getDisplayMedia.  systemAudio is a top-level
+      // DisplayMediaStreamOptions hint (Chrome 105+) for system-wide audio.
       const displayStream = await navigator.mediaDevices.getDisplayMedia({
         video: { frameRate: 30 },
         audio: includeAudio,
-      });
+        ...(includeAudio ? { systemAudio: "include" } : {}),
+      } as DisplayMediaStreamOptions);
+
+      // Warn when audio was requested but none captured (e.g. window/screen share
+      // instead of tab share, or user un-checked "Share audio" in the dialog).
+      if (includeAudio && displayStream.getAudioTracks().length === 0 && !includeMic) {
+        showToast("No audio captured — try sharing a browser tab instead of a window, or enable Microphone.", "info");
+      }
 
       let combinedStream = displayStream;
 
-      // Optionally add microphone
+      // Optionally add microphone — mix via Web Audio API so both audio sources
+      // are combined into one track (MediaRecorder only records one audio track).
       if (includeMic) {
         try {
           const micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-          const tracks = [...displayStream.getTracks(), ...micStream.getAudioTracks()];
-          combinedStream = new MediaStream(tracks);
-        } catch {
-          // Mic unavailable — proceed without it
+          const displayHasAudio = displayStream.getAudioTracks().length > 0;
+
+          if (displayHasAudio) {
+            const ctx = new AudioContext();
+            const dest = ctx.createMediaStreamDestination();
+            const displaySource = ctx.createMediaStreamSource(
+              new MediaStream(displayStream.getAudioTracks()),
+            );
+            const micSource = ctx.createMediaStreamSource(micStream);
+            displaySource.connect(dest);
+            micSource.connect(dest);
+            combinedStream = new MediaStream([
+              ...displayStream.getVideoTracks(),
+              ...dest.stream.getAudioTracks(),
+            ]);
+            mixAudioContextRef.current = ctx;
+          } else {
+            // No display audio — just add mic tracks to the stream
+            combinedStream = new MediaStream([
+              ...displayStream.getVideoTracks(),
+              ...micStream.getAudioTracks(),
+            ]);
+          }
+        } catch (micErr) {
+          showToast("Microphone access denied — recording without mic.", "info");
         }
       }
 
@@ -140,14 +181,21 @@ export function ScreenRecorder({ onRecordingComplete }: ScreenRecorderProps) {
 
       const recorder = new MediaRecorder(combinedStream, { mimeType });
       mediaRecorderRef.current = recorder;
-      chunksRef.current = [];
+      if (!isContinuingRef.current) {
+        chunksRef.current = [];
+      }
+      isContinuingRef.current = false;
 
       recorder.ondataavailable = (e) => {
         if (e.data.size > 0) chunksRef.current.push(e.data);
       };
 
       recorder.onstop = () => {
-        const blob = new Blob(chunksRef.current, { type: mimeType });
+        // Merge prior-session chunks (if continuing) with this session's chunks
+        const allChunks = [...priorChunksRef.current, ...chunksRef.current];
+        chunksRef.current = allChunks;
+        priorChunksRef.current = [];
+        const blob = new Blob(allChunks, { type: mimeType });
         const url = URL.createObjectURL(blob);
         if (previewUrl) URL.revokeObjectURL(previewUrl);
         setPreviewUrl(url);
@@ -163,6 +211,7 @@ export function ScreenRecorder({ onRecordingComplete }: ScreenRecorderProps) {
         }
       });
 
+      pausedElapsedRef.current = isContinuingRef.current ? continuationElapsedRef.current : 0;
       recorder.start(1000); // 1s timeslice
       setState("recording");
       startTimer();
@@ -181,6 +230,7 @@ export function ScreenRecorder({ onRecordingComplete }: ScreenRecorderProps) {
   const pauseRecording = useCallback(() => {
     if (mediaRecorderRef.current?.state === "recording") {
       mediaRecorderRef.current.pause();
+      pausedElapsedRef.current = Math.floor((Date.now() - startTimeRef.current) / 1000);
       setState("paused");
       stopTimer();
     }
@@ -200,16 +250,32 @@ export function ScreenRecorder({ onRecordingComplete }: ScreenRecorderProps) {
     }
     if (vuAnimFrameRef.current) cancelAnimationFrame(vuAnimFrameRef.current);
     if (vuContextRef.current) vuContextRef.current.close().catch(() => {});
+    if (mixAudioContextRef.current) { mixAudioContextRef.current.close().catch(() => {}); mixAudioContextRef.current = null; }
   }, []);
 
   const discardRecording = useCallback(() => {
     chunksRef.current = [];
+    priorChunksRef.current = [];
+    isContinuingRef.current = false;
     if (previewUrl) URL.revokeObjectURL(previewUrl);
     setPreviewUrl(null);
     setElapsed(0);
+    pausedElapsedRef.current = 0;
     setState("idle");
     setError(null);
   }, [previewUrl]);
+
+  const continueRecording = useCallback(() => {
+    // Stash the chunks from the previous session; new recording appends to them
+    priorChunksRef.current = [...chunksRef.current];
+    chunksRef.current = [];
+    isContinuingRef.current = true;
+    continuationElapsedRef.current = elapsed;
+    // Revoke current preview — a new combined one is generated on next stop
+    if (previewUrl) URL.revokeObjectURL(previewUrl);
+    setPreviewUrl(null);
+    startRecording();
+  }, [elapsed, previewUrl, startRecording]);
 
   const uploadRecording = useCallback(async () => {
     if (chunksRef.current.length === 0) return;
@@ -245,6 +311,104 @@ export function ScreenRecorder({ onRecordingComplete }: ScreenRecorderProps) {
       setState("stopped");
     }
   }, [onRecordingComplete, discardRecording]);
+
+  /** Upload to gallery then create a new Draft with the recording as first scene */
+  const saveRecordingToDraft = useCallback(async () => {
+    if (chunksRef.current.length === 0) return;
+    setState("uploading");
+
+    try {
+      const blob = new Blob(chunksRef.current, { type: "video/webm" });
+      const token = process.env.NEXT_PUBLIC_OPENZIGS_TOKEN ?? "";
+      const response = await fetch(
+        `${process.env.NEXT_PUBLIC_OPENZIGS_API_BASE ?? ""}/api/studio/upload-recording`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "video/webm",
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body: blob,
+        },
+      );
+
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({ error: "Upload failed" }));
+        throw new Error((data as { error?: string }).error ?? `Upload failed: ${response.status}`);
+      }
+
+      const result = await response.json() as { assetId: string; filename: string };
+
+      // Fetch the asset to get the file path for the manifest
+      const asset = await fetchJson<{ file_path: string; duration_seconds: number | null }>(
+        `/api/queue/assets/${result.assetId}`,
+      );
+
+      const fps = 30;
+      const durationFrames = Math.round((asset.duration_seconds ?? elapsed) * fps);
+      const manifest = {
+        projectTitle: `Recording ${new Date().toLocaleDateString()}`,
+        templateId: "highlight-16-9",
+        composition: { width: 1920, height: 1080, fps },
+        audioLayer: { music: null, voiceover: null },
+        timeline: [
+          {
+            type: "video_clip",
+            source: asset.file_path,
+            startAtFrame: 0,
+            duration: durationFrames,
+            scriptText: "",
+          },
+        ],
+      };
+
+      const draft = await fetchJson<{ id: string }>("/api/admin/director/drafts", {
+        method: "POST",
+        body: JSON.stringify({
+          title: manifest.projectTitle,
+          manifest,
+          productionMode: "highlight",
+        }),
+      });
+
+      showToast(`Draft created! Opening editor…`, "success");
+      onRecordingComplete?.(result.assetId, result.filename);
+      discardRecording();
+
+      // Navigate to draft studio
+      window.location.href = `/director/studio/${draft.id}`;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Failed to create draft";
+      showToast(msg, "error");
+      setState("stopped");
+    }
+  }, [onRecordingComplete, discardRecording, elapsed]);
+
+  // ── Keyboard Shortcuts ──
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      // Ignore if user is typing in an input/textarea
+      const tag = (e.target as HTMLElement)?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+
+      switch (e.key.toLowerCase()) {
+        case "r":
+          if (state === "idle") { e.preventDefault(); startRecording(); }
+          else if (state === "recording" || state === "paused") { e.preventDefault(); stopRecording(); }
+          break;
+        case "p":
+          if (state === "recording") { e.preventDefault(); pauseRecording(); }
+          else if (state === "paused") { e.preventDefault(); resumeRecording(); }
+          break;
+        case "escape":
+          if (state === "recording" || state === "paused") { e.preventDefault(); stopRecording(); }
+          else if (state === "stopped") { e.preventDefault(); discardRecording(); }
+          break;
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [state, startRecording, stopRecording, pauseRecording, resumeRecording, discardRecording]);
 
   const formatTime = (secs: number) => {
     const m = Math.floor(secs / 60).toString().padStart(2, "0");
@@ -403,6 +567,22 @@ export function ScreenRecorder({ onRecordingComplete }: ScreenRecorderProps) {
               Save to Gallery
             </button>
             <button
+              onClick={saveRecordingToDraft}
+              className="flex items-center justify-center gap-2 rounded bg-green-600 hover:bg-green-700 px-3 py-2 text-sm text-white font-medium transition"
+              title="Create a new Draft project with this recording"
+            >
+              <FolderPlus className="h-4 w-4" />
+              Save to Draft
+            </button>
+            <button
+              onClick={continueRecording}
+              className="flex items-center justify-center gap-2 rounded bg-yellow-600 hover:bg-yellow-700 px-3 py-2 text-sm text-white font-medium transition"
+              title="Keep existing recording and append a new capture to it"
+            >
+              <MonitorUp className="h-4 w-4" />
+              Continue
+            </button>
+            <button
               onClick={discardRecording}
               className="flex items-center justify-center gap-2 rounded bg-zinc-700 hover:bg-zinc-600 px-3 py-2 text-sm text-zinc-200 transition"
             >
@@ -419,11 +599,39 @@ export function ScreenRecorder({ onRecordingComplete }: ScreenRecorderProps) {
         )}
       </div>
 
-      {/* macOS hint */}
-      {state === "idle" && (
-        <p className="text-[10px] text-zinc-600 leading-tight">
-          macOS: Enable Screen Recording in System Settings → Privacy & Security for this browser.
-        </p>
+      {/* Cross-window recording info */}
+      {(state === "recording" || state === "paused") && (
+        <div className="flex items-start gap-2 rounded bg-blue-950/50 border border-blue-800 p-2">
+          <Info className="h-3.5 w-3.5 text-blue-400 mt-0.5 shrink-0" />
+          <p className="text-[10px] text-blue-300 leading-tight">
+            Recording in another window? Use the browser&apos;s <strong>Stop Sharing</strong> button (in the tab bar or system tray) to stop.
+            Keyboard shortcuts only work when this tab has focus.
+          </p>
+        </div>
+      )}
+
+      {/* macOS hint + Hotkeys */}
+      {(state === "idle" || state === "recording" || state === "paused") && (
+        <div className="space-y-1">
+          {state === "idle" && (
+            <p className="text-[10px] text-zinc-600 leading-tight">
+              macOS: Enable Screen Recording in System Settings → Privacy &amp; Security for this browser.
+            </p>
+          )}
+          <p className="text-[10px] text-zinc-600">
+            <kbd className="rounded bg-zinc-800 px-1 py-0.5 text-zinc-400">R</kbd>{" "}
+            {state === "idle" ? "Record" : "Stop"}
+            {" · "}
+            <kbd className="rounded bg-zinc-800 px-1 py-0.5 text-zinc-400">P</kbd>{" "}
+            {state === "paused" ? "Resume" : "Pause"}
+            {" · "}
+            <kbd className="rounded bg-zinc-800 px-1 py-0.5 text-zinc-400">Esc</kbd>{" "}
+            {state === "idle" ? "Discard" : "Stop"}
+            {(state === "recording" || state === "paused") && (
+              <span className="text-zinc-700"> (this tab only)</span>
+            )}
+          </p>
+        </div>
       )}
 
       {/* Hidden canvas for frame extraction */}

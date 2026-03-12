@@ -543,13 +543,12 @@ socialBrain.on("escalated_message", async ({ contact, raw }) => {
 
 const trimWorker = new TrimWorker();
 const analyzeWorker = new AnalyzeWorker({
-  visionChat: async (opts) => {
-    const prompt = `${opts.systemPrompt}\n\n${opts.userContent.map(c => c.type === "text" ? c.text : "[image]").join("\n")}`;
-    let result = "";
-    for await (const chunk of copilot.chat(prompt)) {
-      result += chunk;
-    }
-    return result;
+  chat: (prompt, options) => {
+    return copilot.chat(prompt, {
+      tools: [],
+      attachments: options?.attachments,
+      model: options?.model,
+    });
   },
   audioSidecarUrl: process.env.OPENZIGS_AUDIO_SIDECAR_URL ?? "http://localhost:5006",
 });
@@ -588,6 +587,7 @@ registerMcpTools(toolRegistry, {
   audioSidecarUrl: resolveSidecarUrl("audio", "AUDIO_SIDECAR_URL", 5006),
   trimWorker,
   analyzeWorker,
+  memoryManager,
 });
 
 // ── Task Background Worker ──

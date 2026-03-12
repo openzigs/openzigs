@@ -9,9 +9,11 @@ import {
 import type { ToolDefinition } from "../tool-registry.js";
 
 vi.mock("node:fs", () => ({
-  default: { mkdirSync: vi.fn(), writeFileSync: vi.fn() },
+  default: { mkdirSync: vi.fn(), writeFileSync: vi.fn(), existsSync: vi.fn().mockReturnValue(false), rmSync: vi.fn() },
   mkdirSync: vi.fn(),
   writeFileSync: vi.fn(),
+  existsSync: vi.fn().mockReturnValue(false),
+  rmSync: vi.fn(),
 }));
 
 describe("Pinterest SEO Tools", () => {
@@ -32,13 +34,17 @@ describe("Pinterest SEO Tools", () => {
   // ─── Factory Tests ──────────────────────────────────
 
   describe("createPinterestSeoTools", () => {
-    it("returns all 4 tools", () => {
-      expect(tools).toHaveLength(4);
+    it("returns all 8 tools", () => {
+      expect(tools).toHaveLength(8);
       const names = tools.map((t) => t.name);
+      expect(names).toContain("pinterest-list-boards");
       expect(names).toContain("pinterest-trends");
       expect(names).toContain("pinterest-keyword-metrics");
       expect(names).toContain("pinterest-analytics");
       expect(names).toContain("pinterest-seo-analyze");
+      expect(names).toContain("pinterest-create-pin");
+      expect(names).toContain("pinterest-pin-insights");
+      expect(names).toContain("pinterest-search-pins");
     });
 
     it("all tools have category 'social'", () => {
@@ -227,31 +233,50 @@ describe("Pinterest SEO Tools", () => {
       expect(result.text).toContain("PINTEREST_ACCESS_TOKEN");
     });
 
-    it("returns error when PINTEREST_AD_ACCOUNT_ID missing", async () => {
+    it("falls back to Google Suggest when PINTEREST_AD_ACCOUNT_ID missing", async () => {
+      // Mock Google Suggest response
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue({
+          ok: true,
+          text: () => Promise.resolve(JSON.stringify(["test", ["test result"], [], [], { "google:suggestrelevance": [800] }])),
+          json: () => Promise.resolve(["test", ["test result"], [], [], { "google:suggestrelevance": [800] }]),
+        }),
+      );
       process.env.PINTEREST_ACCESS_TOKEN = "test-token";
       delete process.env.PINTEREST_AD_ACCOUNT_ID;
 
       const tool = toolMap.get("pinterest-keyword-metrics")!;
       const result = await tool.handler({ keywords: ["test"] });
-      expect(result.isError).toBe(true);
-      expect(result.text).toContain("PINTEREST_AD_ACCOUNT_ID");
+      // Should NOT error — falls back to Google Suggest
+      expect(result.isError).toBeUndefined();
+      expect(result.text).toContain("Keyword Metrics");
+      expect(result.text).toContain("PINTEREST_AD_ACCOUNT_ID not configured");
     });
 
-    it("handles 500 server error", async () => {
-      vi.stubGlobal(
-        "fetch",
-        vi.fn().mockResolvedValue({
+    it("falls back gracefully on 500 server error", async () => {
+      const fetchMock = vi.fn()
+        // First call: Pinterest API 500
+        .mockResolvedValueOnce({
           ok: false,
           status: 500,
           text: () => Promise.resolve("Internal Server Error"),
-        }),
-      );
+        })
+        // Second call: Google Suggest fallback
+        .mockResolvedValueOnce({
+          ok: true,
+          text: () => Promise.resolve(JSON.stringify(["test", ["test idea"], [], [], { "google:suggestrelevance": [700] }])),
+          json: () => Promise.resolve(["test", ["test idea"], [], [], { "google:suggestrelevance": [700] }]),
+        });
+      vi.stubGlobal("fetch", fetchMock);
       process.env.PINTEREST_ACCESS_TOKEN = "test-token";
       process.env.PINTEREST_AD_ACCOUNT_ID = "ad-123";
 
       const tool = toolMap.get("pinterest-keyword-metrics")!;
       const result = await tool.handler({ keywords: ["test"] });
-      expect(result.isError).toBe(true);
+      // Should NOT hard error — falls back to other sources
+      expect(result.isError).toBeUndefined();
+      expect(result.text).toContain("Keyword Metrics");
       expect(result.text).toContain("500");
     });
   });
@@ -476,7 +501,7 @@ describe("Pinterest SEO Tools", () => {
         include_annotations: false,
       });
       expect(result.text).toContain("**Data Source** | None");
-      expect(result.text).toContain("**Pin Score** | **0/100**");
+      expect(result.text).toContain("**Pin Score** | N/A");
     });
   });
 
@@ -727,6 +752,56 @@ describe("Pinterest SEO Tools", () => {
       `;
       const annotations = extractAnnotationsFromHtml(html);
       expect(annotations).toContain("fallback topic");
+    });
+
+    it("extracts annotations from og:title pipe-separated keywords", () => {
+      const html = `
+        <html><head>
+        <meta content="Nail art inspiration | Polka dot nails, Nail designs, Spring nails" property="og:title"/>
+        </head><body></body></html>
+      `;
+      const annotations = extractAnnotationsFromHtml(html);
+      expect(annotations).toContain("Polka dot nails");
+      expect(annotations).toContain("Nail designs");
+      expect(annotations).toContain("Spring nails");
+    });
+
+    it("handles og:title with content-first attribute order", () => {
+      const html = `
+        <html><head>
+        <meta content="Great recipe | Italian, Pasta, Easy dinners" data-app="true" name="og:title" property="og:title"/>
+        </head><body></body></html>
+      `;
+      const annotations = extractAnnotationsFromHtml(html);
+      expect(annotations).toContain("Italian");
+      expect(annotations).toContain("Pasta");
+      expect(annotations).toContain("Easy dinners");
+    });
+
+    it("extracts meta tags with content-first attribute order", () => {
+      const html = `
+        <html><head>
+        <meta content="modern kitchen" property="article:tag"/>
+        <meta content="interior design" name="article:tag"/>
+        </head><body></body></html>
+      `;
+      const annotations = extractAnnotationsFromHtml(html);
+      expect(annotations).toContain("modern kitchen");
+      expect(annotations).toContain("interior design");
+    });
+
+    it("extracts interest categories from /ideas/ breadcrumb URLs (unauthenticated fallback)", () => {
+      const html = `
+        <html><body>
+        <a href="/ideas/diy-and-crafts/934876475639/">DIY And Crafts</a>
+        <a href="/ideas/home-decor/123456789/">Home Decor</a>
+        <a href="/ideas/diy-and-crafts/934876475639/">DIY And Crafts</a>
+        </body></html>
+      `;
+      const annotations = extractAnnotationsFromHtml(html);
+      expect(annotations).toContain("Diy And Crafts");
+      expect(annotations).toContain("Home Decor");
+      expect(annotations).toHaveLength(2);
     });
   });
 });

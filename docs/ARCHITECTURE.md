@@ -1,5 +1,48 @@
 # Architecture
 
+## Table of Contents
+
+- [High-Level Overview](#high-level-overview)
+- [Architecture Decision: Why Copilot SDK?](#architecture-decision-why-copilot-sdk)
+- [System Diagram](#system-diagram)
+- [UI Architecture](#ui-architecture)
+- [Cloudflare Tunnel (Sidecar Pattern)](#cloudflare-tunnel-sidecar-pattern)
+- [Python AI Sidecars](#python-ai-sidecars)
+- [MCP Host Architecture](#mcp-host-architecture)
+- [Component Breakdown](#component-breakdown)
+- [Voice Interface Layer](#voice-interface-layer)
+- [Director Mode (Video Production)](#director-mode-video-production)
+- [Advanced Director Mode (Voice Cloning & Visual Injection)](#advanced-director-mode-voice-cloning--visual-injection)
+- [Security Model](#security-model)
+- [MCP Tool Catalog](#mcp-tool-catalog)
+- [API Surface](#api-surface)
+- [Networking](#networking)
+- [Granular Tool Configuration](#granular-tool-configuration)
+- [Session & Context Management](#session--context-management)
+- [SDK Session History, Replay & Analytics](#sdk-session-history-replay--analytics-epic-334)
+- [Interactive Clarifications](#interactive-clarifications-onuserinputrequest)
+- [Human-in-the-Loop Execution](#human-in-the-loop-execution-detailed)
+- [Recursive Agent Chaining (Task Engine)](#recursive-agent-chaining-task-engine)
+- [Native Orchestration — Hierarchical Agents](#native-orchestration--hierarchical-agents)
+- [AI-Assisted Configuration & Enterprise Webhooks](#ai-assisted-configuration--enterprise-webhooks)
+- [UX 2.0: Advanced Workflow Builder](#ux-20-advanced-workflow-builder-epic-163)
+- [Template Portability & Sharing](#template-portability--sharing-epic-188)
+- [Sentinel — Autonomous System Monitor & SRE Agent](#sentinel--autonomous-system-monitor--sre-agent-epic-179--194)
+- [Local Knowledge Base — Markdown-First RAG](#local-knowledge-base--markdown-first-rag-epic-215)
+- [Agent Memory — GitHub Repository-Backed Persistent Memory](#agent-memory--github-repository-backed-persistent-memory-epic-334)
+- [Secret Vault & Browser Hardening](#secret-vault--browser-hardening)
+- [Presenter Mode (Interactive Playback, Blackboard & Quizzes)](#presenter-mode-interactive-playback-blackboard--quizzes)
+- [Multiplayer Presenter Mode — P2P Watch Party & Guest Invite](#multiplayer-presenter-mode--p2p-watch-party--guest-invite)
+- [Social Brain — Unified Social Inbox, CRM & AI Automation](#social-brain--unified-social-inbox-crm--ai-automation-epic-291)
+- [Director Mode Studio & Advanced Compositing](#director-mode-studio--advanced-compositing-epic-313)
+- [Distributed Media Queue, Worker Nodes & Asset Gallery](#distributed-media-queue-worker-nodes--asset-gallery-epic-325)
+- [Music Studio — Voice2Voice Pipeline & Smart Remix Lab](#music-studio--voice2voice-pipeline--smart-remix-lab-epic-380-389-402)
+- [Character Lab — LoRA Training & Identity Consistency](#character-lab--lora-training--identity-consistency-epic-374)
+- [Autonomous Agent Testing Architecture](#autonomous-agent-testing-architecture)
+- [Studio Mode: Screen Capture, Trim & AI Auto-Cut](#studio-mode-screen-capture-trim--ai-auto-cut)
+
+---
+
 ## High-Level Overview
 
 OpenZigs is a **local-first AI agent platform** built on top of the [GitHub Copilot SDK](https://github.com/github/copilot-sdk). It follows a "Safe Agent" philosophy:
@@ -3724,24 +3767,42 @@ When the AI retrieves media assets from the knowledge base, it can format them f
 
 The Agent Memory system provides **persistent, cross-session memory** backed by a private GitHub repository. Memories are structured markdown files stored in a dedicated repo (default: `openzigs-memory`) and automatically injected into Copilot SDK sessions as supplementary context, improving response quality over time.
 
+Agent Memory operates in two modes:
+
+1. **Automatic (LLM-driven)** — The AI proactively discovers and saves important facts during conversations using the `save-memory` MCP tool. When the user mentions their YouTube channel name, preferred video format, or social media schedule, the AI stores these for future sessions. This mirrors GitHub's native Copilot Memory design — the model decides what's worth remembering.
+
+2. **Manual** — Users create, edit, and delete memories via the Admin UI or API.
+
+Since OpenZigs is a standalone agent (not running inside VS Code), it cannot use VS Code's `.github/copilot-instructions.md` instruction files or GitHub's native Copilot Memory (which only applies to GitHub.com features). The Agent Memory system serves this purpose — it is OpenZigs' instruction and context memory system.
+
 ### Architecture
 
 | Component | Path | Purpose |
 |---|---|---|
 | `MemoryManager` | `src/memory/memory-manager.ts` | Core service — GitHub REST API client, CRUD operations, caching, session context builder |
+| `memory-tools.ts` | `src/mcp/tools/memory-tools.ts` | `save-memory` and `recall-memories` MCP tools (LLM-driven auto-memory) |
 | `memory.ts` | `src/api/memory.ts` | Admin API router mounted at `/api/admin/memory` |
 | `MemoryPanel` | `ui/components/admin/memory-panel.tsx` | Admin UI — setup, CRUD, category filtering |
 | Config | `src/config/index.ts` (`MemoryAppConfig`) | `enabled`, `owner`, `repo`, `cacheTtlMs` |
+
+### MCP Tools
+
+| Tool | Risk | Description |
+|---|---|---|
+| `save-memory` | Low | Save a fact, preference, or convention to persistent storage. Detects duplicates and updates existing memories. Auto-approved during interactive chat. |
+| `recall-memories` | Low | Search stored memories by category or keyword. Returns matching memories with metadata. |
+
+The `save-memory` tool is included in `INTERACTIVE_CHAT_AUTO_APPROVE_TOOLS` — no human approval needed during interactive chat. The system prompt instructs the LLM to proactively save facts it discovers about the user's preferences, workflows, accounts, and conventions.
 
 ### Memory Categories
 
 | Category | Purpose |
 |---|---|
-| `conventions` | Coding standards, project rules, style guides |
-| `patterns` | Recurring architectural patterns and idioms |
-| `decisions` | Key technical decisions and their rationale |
-| `preferences` | User preferences, defaults, and workflow choices |
-| `context` | Project context, domain knowledge, business rules |
+| `conventions` | Standards, naming rules, format requirements, posting schedules |
+| `patterns` | Recurring workflows, integration patterns, automation sequences |
+| `decisions` | Technology choices, trade-offs, strategy rationale |
+| `preferences` | User likes/dislikes, style choices, scheduling habits, format preferences |
+| `context` | Project context, domain knowledge, account details, business rules |
 
 ### Storage Format
 
@@ -3749,27 +3810,36 @@ Each memory is a markdown file with YAML frontmatter:
 
 ```markdown
 ---
-title: ESM Import Conventions
-createdAt: 2025-01-15T10:00:00Z
-updatedAt: 2025-01-20T14:30:00Z
+title: YouTube Channel Info
+createdAt: 2026-03-10T10:00:00Z
+updatedAt: 2026-03-10T14:30:00Z
 ---
 
-Always use explicit `.js` extensions in TypeScript imports (ESM requirement).
-Prefer named exports over default exports for better tree-shaking.
+Channel name is "TechReviews". Target audience is software developers.
+Preferred upload schedule: Tuesday and Thursday at 10am EST.
 ```
 
 Files are stored at `memories/{category}/{slug}.md` in the GitHub repository.
 
-### Session Injection
+### Session Injection Flow
 
-When memory is enabled and connected, the `CopilotWrapperService.chat()` method calls `memoryManager.buildSessionContext()` and appends the result to the SDK session's `systemMessage` with mode `"append"`. This happens transparently on every chat call, with a TTL-based cache to minimize GitHub API calls.
+```
+1. User sends message to chat
+2. CopilotWrapper.chat() calls memoryContextProvider()
+3. memoryManager.buildSessionContext() fetches memories (TTL-cached)
+4. Memories are formatted as markdown grouped by category
+5. Markdown is appended to SDK systemMessage (mode: "append")
+6. AI receives memory context + instruction to save new facts
+7. During conversation, AI may call save-memory to store discoveries
+8. New memories are available in the next session
+```
 
 ### API Endpoints
 
 | Method | Path | Description |
 |---|---|---|
 | `GET` | `/api/admin/memory/config` | Get config + connection status |
-| `PUT` | `/api/admin/memory/config` | Update config (enable/disable, owner, repo, cacheTtl) |
+| `PUT` | `/api/admin/memory/config` | Update config (persisted to `~/.openzigs/config.json`) |
 | `POST` | `/api/admin/memory/setup` | Create the memory repository on GitHub |
 | `GET` | `/api/admin/memory/status` | Connection health check |
 | `GET` | `/api/admin/memory/categories` | List available categories |
@@ -3784,7 +3854,8 @@ When memory is enabled and connected, the `CopilotWrapperService.chat()` method 
 1. Configure `GITHUB_PERSONAL_ACCESS_TOKEN` in `.env` with `repo` scope
 2. Enable memory in Admin → Agent Memory panel
 3. Click "Create Memory Repository" — creates a private repo with directory structure
-4. Create memories via the admin UI or API
+4. Start chatting — the AI will automatically save important facts it discovers
+5. Optionally create manual memories via the admin UI or API
 
 ### Tracking: [Epic #334](https://github.com/mgcronin/openzigs/issues/334)
 

@@ -444,10 +444,16 @@ export class MemoryManager extends EventEmitter {
       }
 
       const sections: string[] = [
-        "# Agent Memory — Repository Knowledge",
+        "# Agent Memory — Persistent Knowledge",
         "",
-        "The following are persistent memories learned from previous sessions.",
-        "Use these to maintain consistency and apply known conventions.",
+        "The following are persistent memories saved from previous sessions.",
+        "Use these to maintain consistency, apply known conventions, and personalise responses.",
+        "",
+        "**Important:** When you discover new facts about the user — their preferences,",
+        "workflows, account names, scheduling habits, brand guidelines, technology choices,",
+        "or project context — proactively use the `save-memory` tool to store them.",
+        "This helps you be smarter in future sessions. Do not ask permission to save",
+        "obvious preferences or factual information. Only save genuinely useful, specific facts.",
         "",
       ];
 

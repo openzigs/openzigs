@@ -25,6 +25,7 @@ const trimRequestSchema = z.object({
 
 const analyzeRequestSchema = z.object({
   assetId: z.string().min(1, "assetId is required"),
+  model: z.string().optional(),
 });
 
 // ── Factory ─────────────────────────────────────────────────
@@ -139,7 +140,7 @@ export const createStudioRouter = ({
         return;
       }
 
-      const { assetId } = parsed.data;
+      const { assetId, model } = parsed.data;
       const asset = mediaQueueRepo.getAsset(assetId);
       if (!asset) {
         res.status(404).json({ error: `Asset '${assetId}' not found` });
@@ -152,7 +153,7 @@ export const createStudioRouter = ({
         return;
       }
 
-      const jobId = await analyzeWorker.submit({ assetId, inputPath });
+      const jobId = await analyzeWorker.submit({ assetId, inputPath, model });
       res.json({ jobId, status: "queued" });
     } catch (err) {
       logger.error(`[StudioRouter] Analyze error: ${err}`);

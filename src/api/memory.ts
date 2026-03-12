@@ -11,6 +11,30 @@ import { Router } from "express";
 import type { Request, Response } from "express";
 import type { MemoryManager, MemoryCategory, MemoryConfig } from "../memory/memory-manager.js";
 import { MEMORY_CATEGORIES } from "../memory/memory-manager.js";
+import * as fs from "node:fs/promises";
+import * as path from "node:path";
+import * as os from "node:os";
+
+const defaultConfigPath = () => process.env.OPENZIGS_CONFIG_PATH
+  ?? path.join(os.homedir(), ".openzigs", "config.json");
+
+const readUserConfig = async (configPath: string): Promise<Record<string, unknown>> => {
+  try {
+    const raw = await fs.readFile(configPath, "utf-8");
+    return JSON.parse(raw) as Record<string, unknown>;
+  } catch (error) {
+    if (error instanceof Error && "code" in error && (error as { code?: string }).code === "ENOENT") {
+      return {};
+    }
+    throw error;
+  }
+};
+
+const writeUserConfig = async (configPath: string, data: Record<string, unknown>) => {
+  await fs.mkdir(path.dirname(configPath), { recursive: true, mode: 0o700 });
+  await fs.writeFile(configPath, JSON.stringify(data, null, 2), { encoding: "utf-8", mode: 0o600 });
+  await fs.chmod(configPath, 0o600);
+};
 
 export interface MemoryRouterDeps {
   memoryManager: MemoryManager;
@@ -43,6 +67,17 @@ export function createMemoryRouter({ memoryManager }: MemoryRouterDeps): Router 
       if (typeof cacheTtlMs === "number" && cacheTtlMs > 0) patch.cacheTtlMs = cacheTtlMs;
 
       memoryManager.updateConfig(patch);
+
+      // Persist to ~/.openzigs/config.json so config survives restarts
+      const configPath = defaultConfigPath();
+      const userConfig = await readUserConfig(configPath);
+      const existingMemory = (userConfig.memory && typeof userConfig.memory === "object")
+        ? (userConfig.memory as Record<string, unknown>)
+        : {};
+      Object.assign(existingMemory, patch);
+      userConfig.memory = existingMemory;
+      await writeUserConfig(configPath, userConfig);
+
       const config = memoryManager.getConfig();
       res.json({ config });
     } catch (err) {

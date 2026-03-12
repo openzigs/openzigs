@@ -45,18 +45,18 @@ vi.mock("node:fs", () => ({
 
 describe("AnalyzeWorker", () => {
   let worker: AnalyzeWorker;
-  let mockVisionChat: ReturnType<typeof vi.fn>;
+  let mockChat: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
     vi.clearAllMocks();
-    mockVisionChat = vi.fn().mockResolvedValue(
-      JSON.stringify([
+    mockChat = vi.fn().mockImplementation(async function* () {
+      yield JSON.stringify([
         { start: 5, end: 12, reason: "Repeated sentence" },
         { start: 30, end: 35, reason: "Dead space" },
-      ]),
-    );
+      ]);
+    });
     worker = new AnalyzeWorker({
-      visionChat: mockVisionChat,
+      chat: mockChat,
       maxFramesPerBatch: 10,
     });
   });
@@ -88,10 +88,10 @@ describe("AnalyzeWorker", () => {
     expect(worker.getJob("nonexistent")).toBeUndefined();
   });
 
-  it("calls visionChat with frames on job execution", async () => {
+  it("calls chat with frames on job execution", async () => {
     const id = await worker.submit({ assetId: "asset-1", inputPath: "/tmp/video.mp4" });
     await worker.waitForCompletion(id, 5000);
-    expect(mockVisionChat).toHaveBeenCalled();
+    expect(mockChat).toHaveBeenCalled();
   });
 
   it("emits analyze:complete with suggested cuts", async () => {
@@ -135,8 +135,11 @@ describe("AnalyzeWorker", () => {
     await expect(worker.waitForCompletion("unknown-id", 1000)).rejects.toThrow("not found");
   });
 
-  it("handles visionChat error gracefully", async () => {
-    mockVisionChat.mockRejectedValue(new Error("LLM unavailable"));
+  it("handles chat error gracefully", async () => {
+    // eslint-disable-next-line require-yield
+    mockChat.mockImplementation(async function* () {
+      throw new Error("LLM unavailable");
+    });
     const handler = vi.fn();
     worker.on("analyze:failed", handler);
     const id = await worker.submit({ assetId: "asset-1", inputPath: "/tmp/video.mp4" });

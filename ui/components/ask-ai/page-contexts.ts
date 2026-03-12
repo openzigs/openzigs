@@ -159,12 +159,53 @@ The Director is an AI video production wizard that creates multi-scene videos wi
 - Duration controls per scene (start time, duration)
 - Speech directives for narration tone/pacing
 
+## Capture & Trim (Studio Mode)
+The Capture & Trim tab provides in-browser screen recording and professional video editing tools.
+
+### Screen Recorder
+- Records screen with system audio (Chrome 105+) and optional microphone capture
+- Pause/Resume during recording
+- Preview before saving
+- **Save to Gallery**: Stores recording as a gallery asset for later use
+- **Save to Draft**: Creates a new Director Draft with the recording as the first scene → opens the Draft Studio editor
+- **Keyboard shortcuts**: R = start/stop recording, P = pause/resume, Esc = discard
+
+### Video Library
+- Browse all video files from the Gallery with visual thumbnails
+- Drag-and-drop upload zone — drop any video file to import it
+- Shows duration & "REC" badge for screen recordings
+- Auto-loads on page visit; click Refresh to update
+
+### Video Trimmer — Trim Mode
+- Set **In** and **Out** points using drag handles on the timeline, or press **I** and **O** keys at the current playhead position
+- Loop-preview the selected region
+- **Export Cut**: Trims the selection using FFmpeg lossless copy and saves to Gallery
+- Press **Space** to play/pause
+
+### Video Trimmer — Blade Mode
+- Switch to Blade mode to **split a video into multiple named clips**
+- Click on the timeline or press **B** to place split points at the playhead
+- Each clip segment can be renamed (click the edit icon)
+- **Export All Clips**: Queues all segments as separate FFmpeg trim jobs → each becomes a Gallery asset
+- Remove split points by hovering and clicking X
+- Press **Esc** to return to Trim mode
+
+### AI Smart Cut (Ask AI)
+- Click **Ask AI** to analyze the video for redundant, low-quality, or off-topic sections
+- The AI pipeline: FFmpeg frame extraction → Whisper speech-to-text → Vision LLM analysis → suggested removal regions
+- Suggested cuts appear as **red zones** on the timeline — each zone represents content the AI recommends removing
+- **Toggle** individual cuts on/off by clicking them in the timeline or the cuts list
+- **Apply All**: Exports a clean video with all enabled red zones removed (FFmpeg exports only the keep-regions)
+- Cuts list shows timestamps and the AI's reason for each suggestion
+
 ## Technologies
 - **Remotion**: React-based video rendering framework for final composition
 - **LTX-Video / Flux.1**: Visual generation per scene
 - **Google Cloud TTS**: Voice narration synthesis
 - **MusicGen**: Background music generation
 - **Whisper**: Audio transcription for caption timing
+- **FFmpeg**: Lossless video trimming and segment extraction
+- **MediaRecorder + getDisplayMedia**: In-browser screen capture with system audio
 
 ## Tips
 - Keep scenes 3-8 seconds for dynamic pacing
@@ -172,13 +213,17 @@ The Director is an AI video production wizard that creates multi-scene videos wi
 - "Blog to YouTube" works best with well-structured articles (H2 headers become natural scene breaks)
 - Regenerate individual scene visuals without rebuilding the whole video
 - The speech directive field accepts SSML-like hints: "upbeat", "dramatic pause", "whisper"
+- Use Blade mode to split a long recording into multiple clips, then name each one before exporting
+- AI Smart Cut works best on recordings longer than 30 seconds — short clips may not have enough content to analyze
+- After exporting clips, find them in the Gallery and add them to a Draft for full production workflow
 
 If you don't know the answer, say so honestly. Use the web-search tool for video production concepts or Remotion-specific questions.`,
     starters: [
       "How do I turn a blog post into a YouTube video?",
       "How do I adjust scene timing and transitions?",
-      "What makes a good narration script for short-form video?",
-      "How do I regenerate just one scene's visual?",
+      "How do I use the blade tool to split a video into clips?",
+      "How does the AI Smart Cut work?",
+      "How do I save a recording directly to a Draft?",
     ],
   },
 

@@ -28,6 +28,8 @@ export interface AnalyzeJob {
   status: "queued" | "extracting_frames" | "transcribing" | "analyzing" | "complete" | "failed";
   suggestedCuts: SuggestedCut[];
   error?: string;
+  /** Model to use for vision analysis. */
+  model?: string;
   createdAt: Date;
   completedAt?: Date;
 }
@@ -35,17 +37,28 @@ export interface AnalyzeJob {
 export interface AnalyzeRequest {
   assetId: string;
   inputPath: string;
+  /** Optional model override for vision analysis (passed through to Copilot SDK). */
+  model?: string;
 }
+
+/** Attachment sent alongside a chat prompt (mirrors SdkAttachment from copilot-wrapper). */
+export type AnalyzeAttachment = {
+  type: "file";
+  path: string;
+  displayName?: string;
+};
 
 export interface AnalyzeWorkerOptions {
   /**
-   * Function that sends a vision prompt (with images) to the LLM and returns the response text.
-   * This decouples the worker from the Copilot SDK.
+   * Chat function compatible with CopilotWrapper.chat() — sends a prompt with
+   * optional file attachments and model override, returns an async generator of
+   * response chunks. The Copilot SDK natively supports image file attachments
+   * for vision-capable models.
    */
-  visionChat: (opts: {
-    systemPrompt: string;
-    userContent: Array<{ type: "text"; text: string } | { type: "image_url"; image_url: { url: string } }>;
-  }) => Promise<string>;
+  chat: (
+    prompt: string,
+    options?: { attachments?: AnalyzeAttachment[]; model?: string; tools?: never[] },
+  ) => AsyncGenerator<string>;
   /** Audio sidecar URL for Whisper transcription (optional). */
   audioSidecarUrl?: string;
   /** Max frames to send per LLM batch (default: 60). */
@@ -80,13 +93,13 @@ export class AnalyzeWorker extends EventEmitter {
   private readonly queue: AnalyzeJob[] = [];
   private readonly jobs = new Map<string, AnalyzeJob>();
   private processing = false;
-  private readonly visionChat: AnalyzeWorkerOptions["visionChat"];
+  private readonly chat: AnalyzeWorkerOptions["chat"];
   private readonly audioSidecarUrl?: string;
   private readonly maxFramesPerBatch: number;
 
   constructor(options: AnalyzeWorkerOptions) {
     super();
-    this.visionChat = options.visionChat;
+    this.chat = options.chat;
     this.audioSidecarUrl = options.audioSidecarUrl;
     this.maxFramesPerBatch = options.maxFramesPerBatch ?? 60;
   }
@@ -99,6 +112,7 @@ export class AnalyzeWorker extends EventEmitter {
       assetId: request.assetId,
       status: "queued",
       suggestedCuts: [],
+      model: request.model,
       createdAt: new Date(),
     };
 
@@ -204,7 +218,7 @@ export class AnalyzeWorker extends EventEmitter {
         const batchFrames = framePaths.slice(start, start + this.maxFramesPerBatch);
         const batchOffset = start; // Seconds offset for this batch
 
-        const cuts = await this.analyzeFrameBatch(batchFrames, batchOffset, transcript);
+        const cuts = await this.analyzeFrameBatch(batchFrames, batchOffset, transcript, job.model);
         allCuts.push(...cuts);
 
         const progress = 50 + Math.round(((batch + 1) / batchCount) * 45);
@@ -291,41 +305,36 @@ export class AnalyzeWorker extends EventEmitter {
     return data.text ?? "";
   }
 
-  /** Send a batch of frames + transcript to the Vision LLM. */
+  /** Send a batch of frames + transcript to the Vision LLM via Copilot SDK file attachments. */
   private async analyzeFrameBatch(
     framePaths: string[],
     offsetSeconds: number,
     transcript: string,
+    model?: string,
   ): Promise<SuggestedCut[]> {
-    const content: Array<{ type: "text"; text: string } | { type: "image_url"; image_url: { url: string } }> = [];
+    // Build file attachments — the Copilot SDK natively handles image files for vision models
+    const attachments: AnalyzeAttachment[] = framePaths.map((fp, i) => ({
+      type: "file" as const,
+      path: fp,
+      displayName: `Frame at ${offsetSeconds + i}s`,
+    }));
 
-    // Add transcript context
+    // Build the text prompt with transcript context and frame labels
     const transcriptSection = transcript
       ? `Audio Transcript:\n${transcript}\n\n`
       : "No audio transcript available.\n\n";
-    content.push({
-      type: "text",
-      text: `${transcriptSection}Video frames follow (1 per second, starting at ${offsetSeconds}s):`,
-    });
 
-    // Add frames as base64 data URLs
-    for (let i = 0; i < framePaths.length; i++) {
-      const frameData = fs.readFileSync(framePaths[i]);
-      const base64 = frameData.toString("base64");
-      content.push({
-        type: "text",
-        text: `Frame at ${offsetSeconds + i}s:`,
-      });
-      content.push({
-        type: "image_url",
-        image_url: { url: `data:image/jpeg;base64,${base64}` },
-      });
+    const frameLabels = framePaths
+      .map((_, i) => `  ${i + 1}. Frame at ${offsetSeconds + i}s`)
+      .join("\n");
+
+    const prompt = `${VISION_SYSTEM_PROMPT}\n\n${transcriptSection}Video frames attached (1 per second, starting at ${offsetSeconds}s):\n${frameLabels}\n\nAnalyze ALL attached frames and return the JSON array of suggested cuts.`;
+
+    const chunks: string[] = [];
+    for await (const chunk of this.chat(prompt, { attachments, model, tools: [] })) {
+      chunks.push(chunk);
     }
-
-    const response = await this.visionChat({
-      systemPrompt: VISION_SYSTEM_PROMPT,
-      userContent: content,
-    });
+    const response = chunks.join("");
 
     return this.parseLLMResponse(response);
   }

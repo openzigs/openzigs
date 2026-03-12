@@ -155,8 +155,10 @@ export class MessageRouter {
     // Build system message from personality config for SDK-level injection
     let systemMessage = this.buildSystemMessage();
 
-    // Inject autonomous execution guardrail for skill-prefixed messages
-    if (message.content.startsWith("[Using ") && message.content.includes(" skill]")) {
+    // Inject autonomous execution guardrail + skill persona for skill-prefixed messages
+    let skillResolution: { tools: string[]; skillBody?: string } | undefined;
+    if (message.content.includes("[Using ") && message.content.includes(" skill]")) {
+      skillResolution = await this.resolveSkillTools(message.content);
       const autonomousGuardrail =
         "AUTONOMOUS EXECUTION MODE — CRITICAL RULES:\n" +
         "1. You MUST complete ALL numbered steps by calling tools. Do NOT output text until the FINAL step says to respond.\n" +
@@ -164,10 +166,14 @@ export class MessageRouter {
         "3. If a tool fails, skip that step and IMMEDIATELY proceed to the next numbered step by calling the next tool.\n" +
         "4. NEVER ask the user questions or request confirmation. Execute autonomously.\n" +
         "5. Call tools in batches of 1-10 per step. Wait for results, then proceed to the next step.";
+      // Combine skill body (SKILL.md workflows/routing/identity) with guardrails
+      const skillInjection = skillResolution?.skillBody
+        ? skillResolution.skillBody + "\n\n" + autonomousGuardrail
+        : autonomousGuardrail;
       if (systemMessage) {
-        systemMessage = { ...systemMessage, content: systemMessage.content + "\n\n" + autonomousGuardrail };
+        systemMessage = { ...systemMessage, content: systemMessage.content + "\n\n" + skillInjection };
       } else {
-        systemMessage = { mode: "append", content: autonomousGuardrail };
+        systemMessage = { mode: "append", content: skillInjection };
       }
     }
 
@@ -198,12 +204,8 @@ export class MessageRouter {
       // dedicated dialog), auto-resolve the skill's allowed-tools to scope the
       // session and prevent the full tool surface from flooding the context.
       let resolvedAllowedTools = options?.allowedTools;
-      if (
-        !resolvedAllowedTools &&
-        message.content.startsWith("[Using ") &&
-        message.content.includes(" skill]")
-      ) {
-        resolvedAllowedTools = await this.resolveSkillTools(message.content);
+      if (!resolvedAllowedTools && skillResolution) {
+        resolvedAllowedTools = skillResolution.tools;
       }
       // Also detect #tool-name prefix (tool auto-complete from UI) and resolve
       // the owning skill's tools so the tool makes it past the budget cap.
@@ -306,15 +308,15 @@ export class MessageRouter {
    * Message format: "[Using <Display Name> skill] <prompt>"
    * Returns the skill's allowedTools or undefined if the skill can't be resolved.
    */
-  private async resolveSkillTools(content: string): Promise<string[] | undefined> {
-    const match = content.match(/^\[Using (.+?) skill\]/);
+  private async resolveSkillTools(content: string): Promise<{ tools: string[]; skillBody?: string } | undefined> {
+    const match = content.match(/\[Using (.+?) skill\]/);
     if (!match) return undefined;
 
     const skillDisplayName = match[1].toLowerCase();
     const skillDirs = this.copilot.getSkillDirectories?.() ?? [];
     if (skillDirs.length === 0) return undefined;
 
-    const skills = await loadSkillMetadata(skillDirs);
+    const skills = await loadSkillMetadata(skillDirs, true);
     const skill = skills.find(
       (s) =>
         s.displayName.toLowerCase() === skillDisplayName ||
@@ -323,7 +325,22 @@ export class MessageRouter {
     );
 
     if (!skill || skill.allowedTools.length === 0) return undefined;
-    return skill.allowedTools;
+
+    // Extract the body (everything after frontmatter) for system prompt injection
+    let skillBody: string | undefined;
+    if (skill.content) {
+      const trimmed = skill.content.trimStart();
+      if (trimmed.startsWith("---")) {
+        const endIdx = trimmed.indexOf("---", 3);
+        if (endIdx !== -1) {
+          skillBody = trimmed.slice(endIdx + 3).trim();
+        }
+      } else {
+        skillBody = trimmed;
+      }
+    }
+
+    return { tools: skill.allowedTools, skillBody };
   }
 
   /**

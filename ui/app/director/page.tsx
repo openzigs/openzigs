@@ -18,7 +18,7 @@ export default function DirectorPage() {
   const [askAiOpen, setAskAiOpen] = useState(false);
 
   return (
-    <main className="mx-auto flex h-[calc(100vh-4rem)] max-w-4xl flex-col px-6 py-10 lg:px-12">
+    <main className={`mx-auto flex h-[calc(100vh-4rem)] flex-col px-6 py-10 lg:px-12 ${tab === "capture" ? "max-w-7xl" : "max-w-4xl"}`}>
       <header className="mb-4 shrink-0">
         <p className="text-sm uppercase tracking-[0.3em] text-muted-foreground">OpenZigs</p>
         <div className="flex items-end justify-between">
