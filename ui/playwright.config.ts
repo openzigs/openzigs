@@ -22,13 +22,13 @@ export default defineConfig({
     },
   ],
 
-  /* Start the dev server if not already running */
+  /* In CI: start Next.js directly (skip dev-server proxy — no WebSocket routing needed for E2E) */
   webServer: process.env.CI
     ? {
-        command: 'pnpm dev',
+        command: 'npx next dev --port 3101',
         url: 'http://localhost:3101',
-        reuseExistingServer: true,
-        timeout: 60_000,
+        reuseExistingServer: false,
+        timeout: 120_000,
       }
     : undefined,
 });
