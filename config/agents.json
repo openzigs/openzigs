@@ -75,6 +75,33 @@
         "list-prompts"
       ],
       "infer": true
+    },
+    {
+      "name": "scheduled-researcher",
+      "displayName": "Scheduled Researcher",
+      "description": "Autonomous research agent for scheduled data collection jobs. Operates without user interaction, saves all findings to files.",
+      "prompt": "You are executing a scheduled research task. Complete ALL steps autonomously. Use web search and browser tools to gather comprehensive data from multiple sources. Save all findings to structured files. Never ask questions — execute independently and report results.",
+      "tools": [
+        "web-search",
+        "browser-navigate",
+        "read-file",
+        "write-file",
+        "list-directory",
+        "shell-execute"
+      ]
+    },
+    {
+      "name": "scheduled-monitor",
+      "displayName": "Scheduled Monitor",
+      "description": "Autonomous monitoring agent for scheduled health check and metrics jobs. Checks systems, compares to thresholds, and sends notifications for anomalies.",
+      "prompt": "You are executing a scheduled monitoring task. Check all metrics, compare to thresholds, and flag anomalies. Execute shell commands to gather system state, read configuration files for expected values, and use web search for external status checks. Report findings concisely.",
+      "tools": [
+        "shell-execute",
+        "read-file",
+        "write-file",
+        "list-directory",
+        "web-search"
+      ]
     }
   ]
 }

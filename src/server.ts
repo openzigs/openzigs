@@ -4,7 +4,7 @@ import { createServer } from "node:http";
 import { createRequire } from "node:module";
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import fs from "node:fs/promises";
-import { statSync } from "node:fs";
+import { statSync, readFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { Server as SocketIOServer } from "socket.io";
@@ -28,7 +28,7 @@ import { MessageRouter } from "./routing/index.js";
 import { SessionManager } from "./sessions/index.js";
 import { CloudflareTunnel } from "./tunnel/index.js";
 import { createModelsRouter } from "./api/models.js";
-import { createAdminRouter, pinterestOAuthStates, exchangePinterestCode, refreshPinterestToken, ensurePinterestScheduledJob } from "./api/admin.js";
+import { createAdminRouter, pinterestOAuthStates, exchangePinterestCode, refreshPinterestToken, ensurePinterestScheduledJob, setAdminIO } from "./api/admin.js";
 import { createTasksRouter } from "./api/tasks.js";
 import { createFilesRouter } from "./api/files.js";
 import { launchChrome, killChrome } from "./browser/chrome-launcher.js";
@@ -68,6 +68,7 @@ import { PostContextService, InstagramApiClient, FacebookApiClient, TwitterApiCl
 import { DmDispatcher } from "./channels/social/dm-dispatcher.js";
 import { BrandVoiceRepository } from "./personality/brand-voice-repository.js";
 import { BrandVoiceService } from "./personality/brand-voice-service.js";
+import { PipelineTemplateManager } from "./productivity/pipeline-template-manager.js";
 import { PresentationRepository } from "./presenter/presentation-repository.js";
 import { detectChapters, computeQuizTimestamps } from "./presenter/chapter-detector.js";
 import { generateThumbnail } from "./presenter/thumbnail-generator.js";
@@ -215,6 +216,45 @@ const queueMaster = new QueueMaster(mediaQueueRepo, {
 const scheduler = new Scheduler({
   db,
   promptResolver: (name, variables) => promptManager.resolveWithStages(name, variables ?? {}),
+  skillResolver: (skillName) => {
+    for (const dir of resolvedSkillDirectories) {
+      const skillMdPath = path.join(dir, "SKILL.md");
+      try {
+        const raw = readFileSync(skillMdPath, "utf-8");
+        const dirName = path.basename(dir);
+        // Parse frontmatter to get name and allowed-tools
+        const trimmed = raw.trimStart();
+        let fmName = dirName;
+        let allowedToolsStr = "";
+        let body = raw;
+        if (trimmed.startsWith("---")) {
+          const endIdx = trimmed.indexOf("---", 3);
+          if (endIdx !== -1) {
+            const yamlBlock = trimmed.slice(3, endIdx).trim();
+            body = trimmed.slice(endIdx + 3).trim();
+            for (const line of yamlBlock.split("\n")) {
+              const colonIdx = line.indexOf(":");
+              if (colonIdx === -1) continue;
+              const key = line.slice(0, colonIdx).trim();
+              const val = line.slice(colonIdx + 1).trim();
+              if (key === "name") fmName = val;
+              else if (key === "allowed-tools") allowedToolsStr = val;
+            }
+          }
+        }
+        if (fmName === skillName || dirName === skillName) {
+          const allowedTools = allowedToolsStr.split(/\s+/).filter(Boolean);
+          return { body, allowedTools };
+        }
+      } catch {
+        continue;
+      }
+    }
+    return null;
+  },
+  allSkillNames: () => {
+    return resolvedSkillDirectories.map(dir => path.basename(dir));
+  },
   onExecute: async (job) => {
     if (job.actionType === "prompt") {
       const promptName = (job.actionPayload as Record<string, unknown>).promptName as string | undefined;
@@ -253,7 +293,7 @@ scheduler.startAll();
 
 // Auto-create the daily Pinterest job if a token is already configured
 if ((process.env.PINTEREST_ACCESS_TOKEN ?? "").trim()) {
-  ensurePinterestScheduledJob(scheduler);
+  ensurePinterestScheduledJob(scheduler, promptManager);
 }
 
 // ── MCP Sidecar Auto-Provisioning ──
@@ -597,7 +637,7 @@ registerMcpTools(toolRegistry, {
 
 // ── Task Background Worker ──
 const maxConcurrent = config.tasks?.maxConcurrent ?? 2;
-const taskWorker = new TaskWorker({ engine: taskEngine, copilot, maxConcurrent, taskRepository });
+const taskWorker = new TaskWorker({ engine: taskEngine, copilot, maxConcurrent, taskRepository, customAgentsConfig: resolvedCustomAgents });
 taskWorker.start();
 
 // ── Sentinel: Autonomous System Monitor ──
@@ -618,8 +658,12 @@ const webhookManager = new WebhookManager();
 const modelsRouter = createModelsRouter({ copilot });
 app.use("/api/models", authMiddleware, modelsRouter);
 
+// Pipeline Template Manager
+const pipelineTemplateManager = new PipelineTemplateManager(path.join(import.meta.dirname, "..", "config", "pipeline-templates.json"));
+await pipelineTemplateManager.load();
+
 // Admin API routes — gated behind auth
-const adminRouter = createAdminRouter({ toolRegistry, sidecarManager, localServerManager, promptManager, scheduler, personalityManager, sessionManager, copilot, taskWorker, taskEngine, webhookManager, customPostActionManager, sentinel, knowledgeService, brandVoiceService });
+const adminRouter = createAdminRouter({ toolRegistry, sidecarManager, localServerManager, promptManager, scheduler, personalityManager, sessionManager, copilot, taskWorker, taskEngine, webhookManager, customPostActionManager, sentinel, knowledgeService, brandVoiceService, pipelineTemplateManager });
 app.use("/api/admin", authMiddleware, adminRouter);
 
 // Knowledge Base API routes
@@ -668,7 +712,7 @@ app.get("/api/pinterest/oauth/callback", async (req, res) => {
   }
 
   // Auto-create the daily Pinterest job now that we have a token
-  ensurePinterestScheduledJob(scheduler);
+  ensurePinterestScheduledJob(scheduler, promptManager);
 
   logger.info("Pinterest OAuth flow completed successfully");
   return res.redirect(`${uiOrigin}/admin?pinterest_oauth=success`);
@@ -1291,6 +1335,8 @@ const io = new SocketIOServer(httpServer, {
 
 // Bind Socket.IO to Director router for real-time produce activity events
 setDirectorIO(io);
+// Bind Socket.IO to Admin router for skill update events
+setAdminIO(io);
 // Bind Socket.IO to Character router for training progress events
 setCharacterIO(io);
 // Wire ChannelManager into Character router for opt-in Telegram training notifications (Issue #415)

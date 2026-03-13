@@ -99,7 +99,12 @@ export type SchedulerOptions = {
     text: string;
     preferredTools: string[] | null;
     stages: PipelineStage[] | null;
+    suggestedSkill: string | null;
   } | null;
+  /** Resolve a skill name to its full SKILL.md body and allowed tools. */
+  skillResolver?: (skillName: string) => { body: string; allowedTools: string[] } | null;
+  /** Return all known skill names for computing disabledSkills lists. */
+  allSkillNames?: () => string[];
 };
 
 const toJob = (row: StoredJob): ScheduledJob => ({
@@ -134,9 +139,12 @@ export class Scheduler extends EventEmitter {
     text: string;
     preferredTools: string[] | null;
     stages: PipelineStage[] | null;
+    suggestedSkill: string | null;
   } | null;
+  private skillResolver?: (skillName: string) => { body: string; allowedTools: string[] } | null;
+  private allSkillNames?: () => string[];
 
-  constructor({ db, auditLogDir, clock, onExecute, taskEngine, promptResolver }: SchedulerOptions) {
+  constructor({ db, auditLogDir, clock, onExecute, taskEngine, promptResolver, skillResolver, allSkillNames }: SchedulerOptions) {
     super();
     this.db = db;
     this.clock = clock ?? (() => new Date());
@@ -144,6 +152,8 @@ export class Scheduler extends EventEmitter {
     this.onExecute = onExecute;
     this.taskEngine = taskEngine;
     this.promptResolver = promptResolver;
+    this.skillResolver = skillResolver;
+    this.allSkillNames = allSkillNames;
     this.migrateSchema();
   }
 
@@ -364,12 +374,28 @@ export class Scheduler extends EventEmitter {
         // Resolve the saved prompt template (with stages if configured)
         let resolvedPrompt: string | null = null;
         let pipelineStages: PipelineStage[] | null = null;
+        let suggestedSkill: string | null = null;
 
         if (promptName && this.promptResolver) {
           const resolved = this.promptResolver(promptName, variables);
           if (resolved) {
             resolvedPrompt = resolved.text;
             pipelineStages = resolved.stages;
+            suggestedSkill = resolved.suggestedSkill;
+          }
+        }
+
+        // Resolve skill: prompt's suggestedSkill or explicit job payload skillName
+        const jobSkillName = (job.actionPayload as Record<string, unknown>).skillName as string | undefined;
+        const effectiveSkillName = jobSkillName ?? suggestedSkill ?? null;
+        let skillBody: string | null = null;
+        let skillAllowedTools: string[] | null = null;
+
+        if (effectiveSkillName && this.skillResolver) {
+          const skill = this.skillResolver(effectiveSkillName);
+          if (skill) {
+            skillBody = skill.body;
+            skillAllowedTools = skill.allowedTools;
           }
         }
 
@@ -383,6 +409,22 @@ export class Scheduler extends EventEmitter {
               : `Execute scheduled job: "${job.name}"`))
         const context = `Scheduled job ID: ${job.id}\nAction: ${job.actionType}\nPrompt: ${promptName ?? "(none)"}\nPayload: ${JSON.stringify(job.actionPayload)}`;
 
+        // Merge tool scoping: job tools ∪ skill tools ∪ prompt tools
+        const mergedAllowedTools = (() => {
+          const tools = new Set<string>();
+          if (job.allowedTools) job.allowedTools.forEach(t => tools.add(t));
+          if (skillAllowedTools) skillAllowedTools.forEach(t => tools.add(t));
+          return tools.size > 0 ? [...tools] : undefined;
+        })();
+
+        // Compute disabledSkills: when a specific skill is activated, disable all others
+        const disabledSkills = effectiveSkillName && this.allSkillNames
+          ? this.allSkillNames().filter(s => s !== effectiveSkillName)
+          : undefined;
+
+        // Resolve custom agent from job payload
+        const agentName = (job.actionPayload as Record<string, unknown>).agentName as string | undefined;
+
         this.taskEngine.submit(
           {
             trigger: "cron",
@@ -390,10 +432,14 @@ export class Scheduler extends EventEmitter {
             context,
             model: job.model ?? undefined,
             reasoningEffort: job.reasoningEffort ?? undefined,
-            allowedTools: job.allowedTools ?? undefined,
+            allowedTools: mergedAllowedTools,
             autoApproveTools: job.autoApproveTools ?? undefined,
             pipeline: pipelineStages ? { stages: pipelineStages } : undefined,
             notifyOnComplete: true,
+            skillName: effectiveSkillName ?? undefined,
+            skillBody: skillBody ?? undefined,
+            disabledSkills,
+            agentName,
           },
           { mode: "background" }
         );

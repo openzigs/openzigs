@@ -1,0 +1,156 @@
+[
+  {
+    "id": "research-and-summarize",
+    "name": "Research & Summarize",
+    "description": "Two-stage pipeline: deep research on a topic, then produce a structured summary report.",
+    "icon": "🔬",
+    "tags": ["research", "writing"],
+    "suggestedSkill": null,
+    "template": "Research the topic: {{topic}}",
+    "stages": [
+      {
+        "name": "research",
+        "prompt": "Perform thorough research on the following topic. Gather information from multiple sources, verify claims, and collect relevant data points.\n\nTopic: {{topic}}\n\nFocus areas: {{focus_areas}}",
+        "tools": ["web-search", "browser-navigate", "read-file"],
+        "timeoutSeconds": 600
+      },
+      {
+        "name": "summarize",
+        "prompt": "Using the research gathered in the previous stage, create a well-structured summary report. Include key findings, supporting evidence, and actionable insights.\n\nFormat the report with clear sections, bullet points for key findings, and a conclusion.",
+        "tools": ["read-file", "write-file"],
+        "timeoutSeconds": 300
+      }
+    ],
+    "variables": [
+      { "key": "topic", "label": "Research Topic", "description": "The main topic to research", "required": true },
+      { "key": "focus_areas", "label": "Focus Areas", "description": "Specific aspects to focus on (comma-separated)", "required": false, "default": "key trends, recent developments, expert opinions" }
+    ]
+  },
+  {
+    "id": "code-review-pipeline",
+    "name": "Code Review Pipeline",
+    "description": "Three-stage pipeline: analyze code structure, identify issues, then generate a review report with recommendations.",
+    "icon": "🔍",
+    "tags": ["code", "review", "engineering"],
+    "suggestedSkill": null,
+    "template": "Review the code in {{repository_path}}",
+    "stages": [
+      {
+        "name": "analyze-structure",
+        "prompt": "Analyze the code structure in the repository at {{repository_path}}. Map out the architecture, key modules, dependencies, and design patterns used.",
+        "tools": ["read-file", "list-directory", "shell-execute"],
+        "timeoutSeconds": 300
+      },
+      {
+        "name": "identify-issues",
+        "prompt": "Based on the structural analysis, identify potential issues including:\n- Security vulnerabilities\n- Performance bottlenecks\n- Code smells and anti-patterns\n- Missing error handling\n- Test coverage gaps\n\nFocus on {{review_focus}}",
+        "tools": ["read-file", "shell-execute"],
+        "timeoutSeconds": 300
+      },
+      {
+        "name": "generate-report",
+        "prompt": "Compile a comprehensive code review report with:\n1. Executive summary\n2. Architecture overview\n3. Critical issues (with file:line references)\n4. Recommendations prioritized by impact\n5. Positive observations\n\nWrite the report to a markdown file.",
+        "tools": ["read-file", "write-file"],
+        "timeoutSeconds": 300
+      }
+    ],
+    "variables": [
+      { "key": "repository_path", "label": "Repository Path", "description": "Path to the code to review", "required": true },
+      { "key": "review_focus", "label": "Review Focus", "description": "Areas to focus the review on", "required": false, "default": "security, performance, maintainability" }
+    ]
+  },
+  {
+    "id": "content-creation",
+    "name": "Content Creation Pipeline",
+    "description": "Research trending topics, draft content, then polish and format for publication.",
+    "icon": "✍️",
+    "tags": ["content", "writing", "social"],
+    "suggestedSkill": null,
+    "template": "Create content about {{subject}} for {{platform}}",
+    "stages": [
+      {
+        "name": "trend-research",
+        "prompt": "Research current trends and popular content related to {{subject}} on {{platform}}. Identify what resonates with the audience, trending hashtags, and content gaps.",
+        "tools": ["web-search", "browser-navigate"],
+        "timeoutSeconds": 300
+      },
+      {
+        "name": "draft-content",
+        "prompt": "Based on the trend research, draft compelling content about {{subject}} optimized for {{platform}}. Match the tone and format that performs well on this platform. Include {{content_style}} elements.",
+        "tools": ["web-search"],
+        "timeoutSeconds": 300
+      },
+      {
+        "name": "polish-and-format",
+        "prompt": "Review and polish the drafted content. Ensure it:\n- Has a strong hook/opening\n- Is properly formatted for {{platform}}\n- Includes relevant hashtags/keywords\n- Has a clear call-to-action\n- Is within optimal length for the platform\n\nSave the final version to a file.",
+        "tools": ["write-file"],
+        "timeoutSeconds": 300
+      }
+    ],
+    "variables": [
+      { "key": "subject", "label": "Subject", "description": "Content topic or subject", "required": true },
+      { "key": "platform", "label": "Platform", "description": "Target platform (e.g., blog, Twitter, LinkedIn)", "required": true },
+      { "key": "content_style", "label": "Content Style", "description": "Style elements to include", "required": false, "default": "data-driven insights, expert quotes, visual descriptions" }
+    ]
+  },
+  {
+    "id": "competitive-analysis",
+    "name": "Competitive Analysis",
+    "description": "Analyze competitors: gather data, compare features, and produce a strategic report.",
+    "icon": "📊",
+    "tags": ["research", "business", "strategy"],
+    "suggestedSkill": null,
+    "template": "Analyze competitors for {{company_or_product}}",
+    "stages": [
+      {
+        "name": "gather-intelligence",
+        "prompt": "Research the competitive landscape for {{company_or_product}}. Identify top {{competitor_count}} competitors. For each, gather:\n- Key features and pricing\n- Market positioning\n- Recent news and developments\n- Strengths and weaknesses",
+        "tools": ["web-search", "browser-navigate"],
+        "timeoutSeconds": 600
+      },
+      {
+        "name": "comparative-analysis",
+        "prompt": "Create a detailed feature-by-feature comparison matrix. Analyze:\n- Feature parity and gaps\n- Pricing competitiveness\n- Market share estimates\n- Technology stack differences\n- User sentiment analysis",
+        "tools": ["web-search"],
+        "timeoutSeconds": 300
+      },
+      {
+        "name": "strategic-report",
+        "prompt": "Produce a strategic competitive analysis report with:\n1. Market landscape overview\n2. Competitor profiles\n3. Feature comparison matrix\n4. SWOT analysis for {{company_or_product}}\n5. Strategic recommendations\n6. Opportunity areas\n\nSave as a well-formatted markdown report.",
+        "tools": ["write-file"],
+        "timeoutSeconds": 300
+      }
+    ],
+    "variables": [
+      { "key": "company_or_product", "label": "Company/Product", "description": "Your company or product to analyze against competitors", "required": true },
+      { "key": "competitor_count", "label": "Number of Competitors", "description": "How many competitors to analyze", "required": false, "default": "5" }
+    ]
+  },
+  {
+    "id": "monitor-and-alert",
+    "name": "Monitor & Alert",
+    "description": "Two-stage monitoring pipeline: check a set of sources/metrics, then generate alerts for anomalies.",
+    "icon": "🔔",
+    "tags": ["monitoring", "ops", "automation"],
+    "suggestedSkill": null,
+    "template": "Monitor {{target}} and report on status",
+    "stages": [
+      {
+        "name": "check-sources",
+        "prompt": "Check the following monitoring targets and collect current status:\n\nTargets: {{target}}\nCheck type: {{check_type}}\n\nFor each target, record current state, any errors, response times, and notable changes since last check.",
+        "tools": ["web-search", "browser-navigate", "shell-execute"],
+        "timeoutSeconds": 300
+      },
+      {
+        "name": "evaluate-and-alert",
+        "prompt": "Evaluate the collected monitoring data. For any anomalies or issues found:\n1. Classify severity (critical/warning/info)\n2. Describe the issue clearly\n3. Suggest remediation steps\n4. Write a summary report\n\nIf everything is healthy, produce a brief all-clear status.",
+        "tools": ["write-file"],
+        "timeoutSeconds": 300
+      }
+    ],
+    "variables": [
+      { "key": "target", "label": "Monitor Target", "description": "URLs, services, or metrics to monitor", "required": true },
+      { "key": "check_type", "label": "Check Type", "description": "Type of monitoring check", "required": false, "default": "availability, performance, content changes" }
+    ]
+  }
+]

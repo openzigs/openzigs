@@ -530,4 +530,263 @@ describe("Scheduler", () => {
     const names = jobs.map((j) => j.name).sort();
     expect(names).toEqual(["first", "second"]);
   });
+
+  // ── Skill resolver tests ──
+
+  it("executeJob resolves skill from promptResolver suggestedSkill", async () => {
+    const submitSpy = vi.fn();
+    const mockTaskEngine = {
+      submit: submitSpy.mockReturnValue({ id: "task-1" }),
+    };
+
+    const skillScheduler = new Scheduler({
+      db,
+      clock: () => fixedNow,
+      auditLogDir: "/tmp/openzigs-test-audit",
+      promptResolver: (name: string) => {
+        if (name === "video-prompt") {
+          return {
+            text: "Create a video",
+            preferredTools: null,
+            stages: null,
+            suggestedSkill: "media-director",
+          };
+        }
+        return null;
+      },
+      skillResolver: (skillName: string) => {
+        if (skillName === "media-director") {
+          return {
+            body: "You are a media director.\n\nDirect media production.",
+            allowedTools: ["generate-video", "generate-image"],
+          };
+        }
+        return null;
+      },
+    });
+    skillScheduler.setTaskEngine(mockTaskEngine as never);
+
+    const job = skillScheduler.create({
+      name: "skill-test",
+      cronExpression: "0 9 * * *",
+      actionType: "prompt",
+      actionPayload: { promptName: "video-prompt" },
+    });
+
+    await skillScheduler.executeJob(job.id);
+
+    expect(submitSpy).toHaveBeenCalledOnce();
+    const [taskInput] = submitSpy.mock.calls[0];
+    expect(taskInput.skillName).toBe("media-director");
+    expect(taskInput.skillBody).toBe("You are a media director.\n\nDirect media production.");
+    // Skill tools should be merged into allowedTools
+    expect(taskInput.allowedTools).toContain("generate-video");
+    expect(taskInput.allowedTools).toContain("generate-image");
+
+    skillScheduler.stopAll();
+  });
+
+  it("executeJob uses explicit jobSkillName over suggestedSkill", async () => {
+    const submitSpy = vi.fn();
+    const mockTaskEngine = {
+      submit: submitSpy.mockReturnValue({ id: "task-2" }),
+    };
+
+    const skillScheduler = new Scheduler({
+      db,
+      clock: () => fixedNow,
+      auditLogDir: "/tmp/openzigs-test-audit",
+      promptResolver: (name: string) => {
+        if (name === "generic-prompt") {
+          return {
+            text: "Do something",
+            preferredTools: null,
+            stages: null,
+            suggestedSkill: "default-skill",
+          };
+        }
+        return null;
+      },
+      skillResolver: (skillName: string) => {
+        if (skillName === "override-skill") {
+          return { body: "Override skill body", allowedTools: ["special-tool"] };
+        }
+        if (skillName === "default-skill") {
+          return { body: "Default skill body", allowedTools: [] };
+        }
+        return null;
+      },
+    });
+    skillScheduler.setTaskEngine(mockTaskEngine as never);
+
+    const job = skillScheduler.create({
+      name: "override-test",
+      cronExpression: "0 9 * * *",
+      actionType: "prompt",
+      actionPayload: { promptName: "generic-prompt", skillName: "override-skill" },
+    });
+
+    await skillScheduler.executeJob(job.id);
+
+    const [taskInput] = submitSpy.mock.calls[0];
+    expect(taskInput.skillName).toBe("override-skill");
+    expect(taskInput.skillBody).toBe("Override skill body");
+
+    skillScheduler.stopAll();
+  });
+
+  it("executeJob merges job allowedTools with skill allowedTools", async () => {
+    const submitSpy = vi.fn();
+    const mockTaskEngine = {
+      submit: submitSpy.mockReturnValue({ id: "task-3" }),
+    };
+
+    const skillScheduler = new Scheduler({
+      db,
+      clock: () => fixedNow,
+      auditLogDir: "/tmp/openzigs-test-audit",
+      promptResolver: () => ({
+        text: "Go",
+        preferredTools: null,
+        stages: null,
+        suggestedSkill: "my-skill",
+      }),
+      skillResolver: () => ({
+        body: "Skill body",
+        allowedTools: ["skill-tool-a", "skill-tool-b"],
+      }),
+    });
+    skillScheduler.setTaskEngine(mockTaskEngine as never);
+
+    const job = skillScheduler.create({
+      name: "merge-test",
+      cronExpression: "0 9 * * *",
+      actionType: "prompt",
+      actionPayload: { promptName: "any" },
+      allowedTools: ["job-tool-x"],
+    });
+
+    await skillScheduler.executeJob(job.id);
+
+    const [taskInput] = submitSpy.mock.calls[0];
+    expect(taskInput.allowedTools).toContain("job-tool-x");
+    expect(taskInput.allowedTools).toContain("skill-tool-a");
+    expect(taskInput.allowedTools).toContain("skill-tool-b");
+
+    skillScheduler.stopAll();
+  });
+
+  it("executeJob computes disabledSkills when allSkillNames is provided", async () => {
+    const submitSpy = vi.fn();
+    const mockTaskEngine = {
+      submit: submitSpy.mockReturnValue({ id: "task-disabled-1" }),
+    };
+
+    const skillScheduler = new Scheduler({
+      db,
+      clock: () => fixedNow,
+      auditLogDir: "/tmp/openzigs-test-audit",
+      promptResolver: () => ({
+        text: "Do media",
+        preferredTools: null,
+        stages: null,
+        suggestedSkill: "media-director",
+      }),
+      skillResolver: (skillName: string) => {
+        if (skillName === "media-director") {
+          return { body: "Media body", allowedTools: ["generate-video"] };
+        }
+        return null;
+      },
+      allSkillNames: () => ["media-director", "content-creator", "knowledge-curator", "pinterest-marketer"],
+    });
+    skillScheduler.setTaskEngine(mockTaskEngine as never);
+
+    const job = skillScheduler.create({
+      name: "disabled-skills-test",
+      cronExpression: "0 9 * * *",
+      actionType: "prompt",
+      actionPayload: { promptName: "media-prompt" },
+    });
+
+    await skillScheduler.executeJob(job.id);
+
+    const [taskInput] = submitSpy.mock.calls[0];
+    expect(taskInput.disabledSkills).toEqual(
+      expect.arrayContaining(["content-creator", "knowledge-curator", "pinterest-marketer"])
+    );
+    expect(taskInput.disabledSkills).not.toContain("media-director");
+
+    skillScheduler.stopAll();
+  });
+
+  it("executeJob passes agentName from job payload", async () => {
+    const submitSpy = vi.fn();
+    const mockTaskEngine = {
+      submit: submitSpy.mockReturnValue({ id: "task-agent-1" }),
+    };
+
+    const agentScheduler = new Scheduler({
+      db,
+      clock: () => fixedNow,
+      auditLogDir: "/tmp/openzigs-test-audit",
+      promptResolver: () => ({
+        text: "Research topic",
+        preferredTools: null,
+        stages: null,
+        suggestedSkill: null,
+      }),
+    });
+    agentScheduler.setTaskEngine(mockTaskEngine as never);
+
+    const job = agentScheduler.create({
+      name: "agent-test",
+      cronExpression: "0 9 * * *",
+      actionType: "prompt",
+      actionPayload: { promptName: "research-prompt", agentName: "scheduled-researcher" },
+    });
+
+    await agentScheduler.executeJob(job.id);
+
+    const [taskInput] = submitSpy.mock.calls[0];
+    expect(taskInput.agentName).toBe("scheduled-researcher");
+
+    agentScheduler.stopAll();
+  });
+
+  it("executeJob does not set disabledSkills without allSkillNames", async () => {
+    const submitSpy = vi.fn();
+    const mockTaskEngine = {
+      submit: submitSpy.mockReturnValue({ id: "task-no-disabled" }),
+    };
+
+    const noAllSkillScheduler = new Scheduler({
+      db,
+      clock: () => fixedNow,
+      auditLogDir: "/tmp/openzigs-test-audit",
+      promptResolver: () => ({
+        text: "Run skill",
+        preferredTools: null,
+        stages: null,
+        suggestedSkill: "pinterest-marketer",
+      }),
+      skillResolver: () => ({ body: "Pin body", allowedTools: ["pin-tool"] }),
+      // No allSkillNames provided
+    });
+    noAllSkillScheduler.setTaskEngine(mockTaskEngine as never);
+
+    const job = noAllSkillScheduler.create({
+      name: "no-disabled-test",
+      cronExpression: "0 9 * * *",
+      actionType: "prompt",
+      actionPayload: { promptName: "pin-prompt" },
+    });
+
+    await noAllSkillScheduler.executeJob(job.id);
+
+    const [taskInput] = submitSpy.mock.calls[0];
+    expect(taskInput.disabledSkills).toBeUndefined();
+
+    noAllSkillScheduler.stopAll();
+  });
 });

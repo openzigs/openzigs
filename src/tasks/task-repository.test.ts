@@ -99,6 +99,58 @@ describe("TaskRepository", () => {
       expect(task.allowedTools).toBeNull();
     });
 
+    it("stores and retrieves skillName and skillBody", () => {
+      const task = repo.insert({
+        trigger: "cron",
+        goal: "Skill task",
+        skillName: "media-director",
+        skillBody: "You are a media director skill.\n\nDo media things.",
+      });
+
+      expect(task.skillName).toBe("media-director");
+      expect(task.skillBody).toBe("You are a media director skill.\n\nDo media things.");
+
+      const fetched = repo.getById(task.id);
+      expect(fetched!.skillName).toBe("media-director");
+      expect(fetched!.skillBody).toBe("You are a media director skill.\n\nDo media things.");
+    });
+
+    it("defaults skillName and skillBody to null", () => {
+      const task = repo.insert({
+        trigger: "chat",
+        goal: "No skill task",
+      });
+
+      expect(task.skillName).toBeNull();
+      expect(task.skillBody).toBeNull();
+    });
+
+    it("stores and retrieves disabledSkills and agentName", () => {
+      const task = repo.insert({
+        trigger: "cron",
+        goal: "Focused skill task",
+        disabledSkills: ["content-creator", "knowledge-curator"],
+        agentName: "scheduled-researcher",
+      });
+
+      expect(task.disabledSkills).toEqual(["content-creator", "knowledge-curator"]);
+      expect(task.agentName).toBe("scheduled-researcher");
+
+      const fetched = repo.getById(task.id);
+      expect(fetched!.disabledSkills).toEqual(["content-creator", "knowledge-curator"]);
+      expect(fetched!.agentName).toBe("scheduled-researcher");
+    });
+
+    it("defaults disabledSkills and agentName to null", () => {
+      const task = repo.insert({
+        trigger: "chat",
+        goal: "No extras",
+      });
+
+      expect(task.disabledSkills).toBeNull();
+      expect(task.agentName).toBeNull();
+    });
+
     it("sets depth from parent", () => {
       const parent = repo.insert({ trigger: "chat", goal: "Parent" });
       const child = repo.insert({
@@ -318,6 +370,75 @@ describe("TaskRepository", () => {
       // 60s window should include both s1 tasks
       expect(repo.countRecentBySession("s1", 60_000)).toBe(2);
       expect(repo.countRecentBySession("s2", 60_000)).toBe(1);
+    });
+  });
+
+  describe("findByJobName", () => {
+    it("finds tasks matching a job name in context JSON", () => {
+      repo.insert({
+        trigger: "cron",
+        goal: "Run daily report",
+        context: JSON.stringify({ jobName: "daily-report", jobId: "j1" }),
+      });
+      repo.insert({
+        trigger: "cron",
+        goal: "Run weekly digest",
+        context: JSON.stringify({ jobName: "weekly-digest", jobId: "j2" }),
+      });
+      repo.insert({
+        trigger: "cron",
+        goal: "Another daily report",
+        context: JSON.stringify({ jobName: "daily-report", jobId: "j1" }),
+      });
+
+      const results = repo.findByJobName("daily-report");
+      expect(results).toHaveLength(2);
+      expect(results.every((t) => t.goal.includes("daily report"))).toBe(true);
+    });
+
+    it("returns empty array when no tasks match", () => {
+      repo.insert({ trigger: "chat", goal: "No context" });
+      expect(repo.findByJobName("nonexistent")).toEqual([]);
+    });
+
+    it("respects the limit parameter", () => {
+      for (let i = 0; i < 5; i++) {
+        repo.insert({
+          trigger: "cron",
+          goal: `Task ${i}`,
+          context: JSON.stringify({ jobName: "my-job" }),
+        });
+      }
+      expect(repo.findByJobName("my-job", 3)).toHaveLength(3);
+    });
+
+    it("returns results ordered by most recent first", () => {
+      repo.insert({
+        trigger: "cron",
+        goal: "First",
+        context: JSON.stringify({ jobName: "ordered-job" }),
+      });
+      now = new Date("2026-02-09T13:00:00Z");
+      repo.insert({
+        trigger: "cron",
+        goal: "Second",
+        context: JSON.stringify({ jobName: "ordered-job" }),
+      });
+
+      const results = repo.findByJobName("ordered-job");
+      expect(results[0].goal).toBe("Second");
+      expect(results[1].goal).toBe("First");
+    });
+
+    it("sanitizes double quotes from job name to prevent injection", () => {
+      repo.insert({
+        trigger: "cron",
+        goal: "Safe task",
+        context: JSON.stringify({ jobName: "safe-job" }),
+      });
+      // Attempting injection via quotes should return nothing
+      const results = repo.findByJobName('safe-job" OR 1=1 --');
+      expect(results).toEqual([]);
     });
   });
 });

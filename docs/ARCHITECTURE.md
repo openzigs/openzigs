@@ -936,6 +936,12 @@ allowed-tools: query-gallery-assets submit-media-job get-job-status manage-chara
 4. **Activation**: Skills activate automatically when the user's request matches the skill's domain (based on the `description` field keywords). Users can also explicitly invoke via `!` trigger in chat or `/skill-name` in their prompt.
 5. **Metadata API**: The `/api/admin/skills` endpoint serves parsed skill metadata (from YAML frontmatter + body) for the UI's `/skills` catalog page.
 6. **Library Integration**: `SavedPrompt.suggestedSkill` pairs a Library prompt with a skill, providing automatic domain expertise when the prompt is used.
+7. **User Skills**: Custom skills created via the Skill Editor (`/admin/skills`) are stored in `~/.openzigs/skills/{name}/SKILL.md` and hot-reloaded via `copilot.addSkillDirectory()`.
+8. **Skills-First Automation**: When a scheduled job runs a prompt with `suggestedSkill`:
+   - The skill body is loaded and injected as a `systemMessage` prefix with autonomous guardrails.
+   - The skill's `allowed-tools` are merged with prompt/job tools.
+   - All other skills are disabled via `disabledSkills` for focused execution.
+   - Optional `agentName` from `actionPayload` resolves a custom agent persona from `config/agents.json`.
 
 #### Autonomous Error Recovery
 
@@ -3437,6 +3443,51 @@ POST /api/admin/templates/import { template, placeholders }
 3. **Success** — Confirmation with checkmark and prompt name.
 
 ### Tracking: [Epic #188](https://github.com/mgcronin/openzigs/issues/188)
+
+## Pipeline Template Library (Epic #446 → #456)
+
+### Overview
+
+The Pipeline Template Library provides reusable multi-stage prompt templates with typed variables, suggested skills, and preferred tools. Built-in templates ship with the application; users can create, edit, and delete custom templates that persist across restarts.
+
+### Architecture
+
+| Component | Path | Purpose |
+|-----------|------|---------|
+| `PipelineTemplateManager` | `src/productivity/pipeline-template-manager.ts` | CRUD manager merging built-in + user templates |
+| Built-in templates | `config/pipeline-templates.json` | 5 shipped templates (research, code-review, content, competitive-analysis, monitor-alert) |
+| User templates | `~/.openzigs/pipeline-templates.json` | User-created templates, persisted on create/update/delete |
+| API endpoints | `src/api/admin.ts` | REST CRUD at `/api/admin/pipeline-templates` |
+| Template Gallery | `ui/app/library/page.tsx` | Modal grid for browsing and instantiating templates |
+
+### Template Schema
+
+Each template contains:
+- **id** / **name** / **description** — Identity and display metadata
+- **icon** / **tags** — UI presentation (Lucide icon name, searchable tags)
+- **suggestedSkill** — Auto-attached skill when instantiated as a saved prompt
+- **template** — Default prompt body with `{{variable}}` interpolation placeholders
+- **stages[]** — Multi-stage pipeline definition (name, prompt template, tools, post-actions)
+- **variables[]** — Declared variables with name, label, description, and optional default values
+
+### Data Flow
+
+1. On server start, `PipelineTemplateManager.load()` reads `config/pipeline-templates.json` (built-in) and merges `~/.openzigs/pipeline-templates.json` (user overrides, keyed by `id`).
+2. User templates with matching IDs override built-in templates; unique user templates are appended.
+3. `create()` / `update()` / `remove()` mutate user templates and call `saveUserTemplates()` to persist.
+4. The UI Library page fetches `GET /api/admin/pipeline-templates`, displays a gallery grid, and on click creates a new saved prompt pre-populated with the template's stages, variables, and suggested skill.
+
+### API Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/admin/pipeline-templates` | List all templates (built-in + user) |
+| `GET` | `/api/admin/pipeline-templates/:id` | Get single template by ID |
+| `POST` | `/api/admin/pipeline-templates` | Create user template |
+| `PUT` | `/api/admin/pipeline-templates/:id` | Update user template |
+| `DELETE` | `/api/admin/pipeline-templates/:id` | Remove user template |
+
+### Tracking: [Issue #456](https://github.com/mgcronin/openzigs/issues/456)
 
 ## Sentinel — Autonomous System Monitor & SRE Agent (Epic #179 → #194)
 

@@ -29,6 +29,11 @@ export class TaskEngine extends EventEmitter {
     this.repository = repository;
   }
 
+  /** Expose repository for direct queries (e.g., execution history). */
+  getRepository(): TaskRepository {
+    return this.repository;
+  }
+
   /**
    * Submit a new task. Validates safety limits, inserts the task, and emits
    * the appropriate event based on mode.

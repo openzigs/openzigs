@@ -1108,4 +1108,224 @@ describe("TaskWorker", () => {
     expect(prompt).toContain("Q4 revenue: $5M");
     expect(prompt).toContain("autonomous agent");
   });
+
+  it("passes systemMessage with skill body when task has skillBody", async () => {
+    const mockCopilot = makeMockCopilot();
+    worker = new TaskWorker({
+      engine,
+      copilot: mockCopilot,
+      maxConcurrent: 1,
+      pollIntervalMs: 50,
+      log: silentLog,
+    });
+
+    engine.submit(
+      {
+        trigger: "cron",
+        goal: "Media production",
+        skillName: "media-director",
+        skillBody: "You are a media director.\n\nProduce media content professionally.",
+      },
+      { mode: "background" }
+    );
+
+    const donePromise = new Promise<void>((resolve) => {
+      worker.on("task:done", () => resolve());
+    });
+
+    worker.start();
+    await donePromise;
+
+    const chatOptions = mockCopilot.chat.mock.calls[0][1] as { systemMessage?: { mode: string; content: string } };
+    expect(chatOptions.systemMessage).toBeDefined();
+    expect(chatOptions.systemMessage!.mode).toBe("append");
+    expect(chatOptions.systemMessage!.content).toContain("You are a media director.");
+    expect(chatOptions.systemMessage!.content).toContain("AUTONOMOUS EXECUTION MODE");
+  });
+
+  it("does not pass systemMessage when task has no skillBody", async () => {
+    const mockCopilot = makeMockCopilot();
+    worker = new TaskWorker({
+      engine,
+      copilot: mockCopilot,
+      maxConcurrent: 1,
+      pollIntervalMs: 50,
+      log: silentLog,
+    });
+
+    engine.submit(
+      { trigger: "cron", goal: "No skill task" },
+      { mode: "background" }
+    );
+
+    const donePromise = new Promise<void>((resolve) => {
+      worker.on("task:done", () => resolve());
+    });
+
+    worker.start();
+    await donePromise;
+
+    const chatOptions = mockCopilot.chat.mock.calls[0][1] as { systemMessage?: unknown };
+    expect(chatOptions.systemMessage).toBeUndefined();
+  });
+
+  it("passes disabledSkills to chat when task has them", async () => {
+    const mockCopilot = makeMockCopilot();
+    worker = new TaskWorker({
+      engine,
+      copilot: mockCopilot,
+      maxConcurrent: 1,
+      pollIntervalMs: 50,
+      log: silentLog,
+    });
+
+    engine.submit(
+      {
+        trigger: "cron",
+        goal: "Focused execution",
+        skillName: "pinterest-marketer",
+        disabledSkills: ["content-creator", "knowledge-curator", "media-director"],
+      },
+      { mode: "background" }
+    );
+
+    const donePromise = new Promise<void>((resolve) => {
+      worker.on("task:done", () => resolve());
+    });
+
+    worker.start();
+    await donePromise;
+
+    const chatOptions = mockCopilot.chat.mock.calls[0][1] as { disabledSkills?: string[] };
+    expect(chatOptions.disabledSkills).toEqual(["content-creator", "knowledge-curator", "media-director"]);
+  });
+
+  it("does not pass disabledSkills when task has none", async () => {
+    const mockCopilot = makeMockCopilot();
+    worker = new TaskWorker({
+      engine,
+      copilot: mockCopilot,
+      maxConcurrent: 1,
+      pollIntervalMs: 50,
+      log: silentLog,
+    });
+
+    engine.submit(
+      { trigger: "cron", goal: "General task" },
+      { mode: "background" }
+    );
+
+    const donePromise = new Promise<void>((resolve) => {
+      worker.on("task:done", () => resolve());
+    });
+
+    worker.start();
+    await donePromise;
+
+    const chatOptions = mockCopilot.chat.mock.calls[0][1] as { disabledSkills?: string[] };
+    expect(chatOptions.disabledSkills).toBeUndefined();
+  });
+
+  it("resolves customAgents from agentName config", async () => {
+    const mockCopilot = makeMockCopilot();
+    worker = new TaskWorker({
+      engine,
+      copilot: mockCopilot,
+      maxConcurrent: 1,
+      pollIntervalMs: 50,
+      log: silentLog,
+      customAgentsConfig: [
+        {
+          name: "scheduled-researcher",
+          displayName: "Scheduled Researcher",
+          prompt: "You are a research agent.",
+          tools: ["web-search", "read-file"],
+        },
+      ],
+    });
+
+    engine.submit(
+      {
+        trigger: "cron",
+        goal: "Research task",
+        agentName: "scheduled-researcher",
+      },
+      { mode: "background" }
+    );
+
+    const donePromise = new Promise<void>((resolve) => {
+      worker.on("task:done", () => resolve());
+    });
+
+    worker.start();
+    await donePromise;
+
+    const chatOptions = mockCopilot.chat.mock.calls[0][1] as { customAgents?: Array<{ name: string }> };
+    expect(chatOptions.customAgents).toHaveLength(1);
+    expect(chatOptions.customAgents![0].name).toBe("scheduled-researcher");
+  });
+
+  it("does not pass customAgents when agentName is not set", async () => {
+    const mockCopilot = makeMockCopilot();
+    worker = new TaskWorker({
+      engine,
+      copilot: mockCopilot,
+      maxConcurrent: 1,
+      pollIntervalMs: 50,
+      log: silentLog,
+      customAgentsConfig: [
+        {
+          name: "scheduled-researcher",
+          displayName: "Scheduled Researcher",
+          prompt: "You are a research agent.",
+        },
+      ],
+    });
+
+    engine.submit(
+      { trigger: "cron", goal: "No agent task" },
+      { mode: "background" }
+    );
+
+    const donePromise = new Promise<void>((resolve) => {
+      worker.on("task:done", () => resolve());
+    });
+
+    worker.start();
+    await donePromise;
+
+    const chatOptions = mockCopilot.chat.mock.calls[0][1] as { customAgents?: unknown };
+    expect(chatOptions.customAgents).toBeUndefined();
+  });
+
+  it("ignores unknown agentName gracefully", async () => {
+    const mockCopilot = makeMockCopilot();
+    worker = new TaskWorker({
+      engine,
+      copilot: mockCopilot,
+      maxConcurrent: 1,
+      pollIntervalMs: 50,
+      log: silentLog,
+      customAgentsConfig: [],
+    });
+
+    engine.submit(
+      {
+        trigger: "cron",
+        goal: "Unknown agent",
+        agentName: "nonexistent-agent",
+      },
+      { mode: "background" }
+    );
+
+    const donePromise = new Promise<void>((resolve) => {
+      worker.on("task:done", () => resolve());
+    });
+
+    worker.start();
+    await donePromise;
+
+    const chatOptions = mockCopilot.chat.mock.calls[0][1] as { customAgents?: unknown };
+    expect(chatOptions.customAgents).toBeUndefined();
+  });
 });

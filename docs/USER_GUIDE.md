@@ -564,6 +564,31 @@ allowed-tools: tool-a tool-b tool-c
 - Use specific keywords in the `description` field for accurate task matching
 - The `allowed-tools` field pre-approves tools the skill may use
 
+#### Skill Editor (Admin UI)
+
+![Skill Editor](images/skill-editor.png)
+
+The Skill Editor at `/admin/skills` provides a visual interface for creating and managing user skills without editing files directly:
+
+- **Gallery view** — browse all loaded skills (built-in and user-created) with icons, descriptions, and tool badges.
+- **Create skills** — click "New Skill" to open the editor with a starter SKILL.md template. Enter a name, write the skill content, select allowed tools, and save.
+- **Edit user skills** — click any user-created skill to modify its content. Built-in skills are read-only.
+- **Live validation** — the editor validates SKILL.md frontmatter in real-time, checking for required `name` field and valid tool references.
+- **Delete** user skills with confirmation dialog.
+- **Real-time updates** — when skills are created, updated, or deleted, all connected clients receive a Socket.IO `skills:updated` event.
+
+User skills are stored in `~/.openzigs/skills/{name}/SKILL.md` and are hot-reloaded into active sessions via `copilot.addSkillDirectory()`.
+
+#### Suggested Skill on Prompts
+
+Saved prompts can specify a **Suggested Skill** — a skill that should be activated when the prompt executes. This is configured in the Library editor via the "Suggested Skill" dropdown. When a scheduled job runs a prompt with a suggested skill:
+
+1. The skill's `SKILL.md` content is loaded and injected as a system message prefix.
+2. The skill's `allowed-tools` are merged with the prompt's `preferredTools` and the job's `allowedTools`.
+3. All other skills are disabled for that execution via `disabledSkills`, ensuring focused tool routing.
+
+This enables **skills-first automation** — prompts carry domain expertise, not just instructions.
+
 ### Library (Saved Prompts)
 
 ![Library — saved prompt templates with variable highlighting](images/library-prompts.png)
@@ -579,7 +604,32 @@ The library at `/library` provides a visual interface for managing saved prompt 
 - **Use as System Prompt** — Apply any saved prompt as the active system instruction in the AI Personality panel.
 - **Export** — Download any prompt as a portable `.openzigs-template.json` file for sharing across instances.
 - **Import** — Upload a `.openzigs-template.json` file via the Import Wizard to add a shared template to your library.
+- **From Template** — Create a prompt from pre-built pipeline templates via the Pipeline Template Gallery.
+- **Schedule This Prompt** — Quick-link button to create a scheduled job pre-filled with the prompt's name, skill, and tool scoping.
+- **Template autocomplete** — Type `{{` in the template editor to trigger an autocomplete popup with built-in variables (`today`, `now`, `day_of_week`, `month`, `year`) and custom variables detected from the template.
+- **Live preview** — See how built-in variables resolve in real-time below the template editor.
+- **Validation warnings** — Unresolved `{{variables}}` that have no default value show amber warning badges.
 - **Delete** with confirmation.
+
+#### Pipeline Template Gallery
+
+![Library Page](images/library-page.png)
+
+The Pipeline Template Gallery provides ready-to-use multi-stage workflow templates. Click **From Template** in the Library page to open the gallery.
+
+**Built-in templates:**
+
+| Template | Stages | Description |
+|----------|--------|-------------|
+| 🔬 Research & Summarize | 2 | Deep research then structured summary report |
+| 🔍 Code Review Pipeline | 3 | Analyze structure, identify issues, generate report |
+| ✍️ Content Creation | 3 | Trend research, draft content, polish and format |
+| 📊 Competitive Analysis | 3 | Gather intelligence, compare features, strategic report |
+| 🔔 Monitor & Alert | 2 | Check sources, evaluate and generate alerts |
+
+Each template includes pre-configured stages with tool scoping, timeouts, and `{{variable}}` placeholders. Clicking a template creates a new saved prompt with all stages and variables pre-filled.
+
+**Custom templates** can be created via the API (`POST /api/admin/pipeline-templates`) and are stored in `~/.openzigs/pipeline-templates.json`.
 
 #### Pipeline Stages on Prompts
 
@@ -835,9 +885,14 @@ The scheduler at `/scheduler` manages cron-based automated jobs:
 - **Model selection** — optionally choose a model override per prompt or pipeline job.
 - **AI Scheduler Assistant** — describe the schedule in plain English and auto-fill fields (uses `gpt-5-mini`).
 - **Cron preview** — visual breakdown of minute, hour, day, month, weekday fields.
+- **Visual Cron Builder** — toggle between Simple mode (frequency presets, time picker, day-of-week toggles, "Next 3 Runs" preview) and Advanced mode (raw cron expression input).
+- **Skill selector** — choose a skill to activate for the job. Auto-populates from the linked prompt's `suggestedSkill`. Shows skill tool badges and icon.
 - **Enable/disable** individual jobs with toggle switches.
 - **Run Now** — trigger any job immediately with the ▶ Run button, bypassing the cron schedule.
+- **Dry-Run Preview** — structured preview showing resolved prompt, interpolated variables, skill info with token estimate, tool scoping, pipeline stages, and next execution times.
+- **Execution History** — expandable section on each job card showing recent task runs with status, duration, and links to task details.
 - **Auto-Approve Tools** — for prompt/shell/custom jobs, specify tool names that bypass approval gating. For **pipeline jobs**, auto-approve tools are **automatically derived** from the union of all stage-level tool restrictions — any tool a stage uses is auto-approved during scheduled runs.
+- **Create from Library** — navigate to `/scheduler?createFrom=promptName` to auto-fill the job form from a linked prompt, including skill, tools, and auto-approve configuration.
 
 ![New Job form — Pipeline action type with model selector and wizard/manual chooser](images/scheduler-pipeline-new-job.png)
 - **Live execution events** via Socket.IO — see when jobs fire in real time.

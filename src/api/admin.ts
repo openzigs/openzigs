@@ -13,7 +13,7 @@ import type { CopilotWrapper } from "../copilot/index.js";
 import type { ReasoningEffort, ProviderConfig, CustomAgentDefinition, NativeMcpServerDefinition } from "../copilot/index.js";
 import type { DockerSidecarManager } from "../mcp/docker-sidecar-manager.js";
 import type { LocalMcpServerManager } from "../mcp/local-mcp-server-manager.js";
-import type { PromptManager } from "../productivity/prompt-manager.js";
+import { type PromptManager, interpolateTemplate } from "../productivity/prompt-manager.js";
 import type { Scheduler } from "../productivity/scheduler.js";
 import type { PersonalityManager } from "../personality/personality-manager.js";
 import type { SessionManager } from "../sessions/session-manager.js";
@@ -33,11 +33,34 @@ import { TemplateService } from "../productivity/template-service.js";
 import { CopilotNativeMcpTester, type NativeMcpDiscoveredTool, type NativeMcpTester } from "../mcp/native-mcp-test-service.js";
 import { AVAILABLE_VOICES } from "../voice/types.js";
 import { loadSkillMetadata } from "../skills/skill-loader.js";
+import type { PipelineTemplateManager } from "../productivity/pipeline-template-manager.js";
+import type { Server as SocketIOServer } from "socket.io";
+
+let _adminIo: SocketIOServer | null = null;
+export function setAdminIO(io: SocketIOServer): void { _adminIo = io; }
 
 type EnvEntry = {
   name: string;
   configured: boolean;
 };
+
+// ── Cron field matcher (for dry-run next-runs computation) ──────────────────
+function matchCronField(field: string, value: number): boolean {
+  if (field === "*") return true;
+  return field.split(",").some((part) => {
+    if (part.includes("/")) {
+      const [base, step] = part.split("/");
+      const s = parseInt(step, 10);
+      const b = base === "*" ? 0 : parseInt(base, 10);
+      return (value - b) % s === 0 && value >= b;
+    }
+    if (part.includes("-")) {
+      const [lo, hi] = part.split("-").map(Number);
+      return value >= lo && value <= hi;
+    }
+    return parseInt(part, 10) === value;
+  });
+}
 
 // ── Pinterest OAuth state ──────────────────────────────────────────────────
 /** CSRF state tokens for pending Pinterest OAuth flows (short-lived, single-user) */
@@ -166,13 +189,39 @@ export async function exchangePinterestCode(code: string): Promise<{
 
 const PINTEREST_DAILY_JOB_NAME = "Daily Pinterest Trends & Metrics";
 
+const PINTEREST_DAILY_PROMPT_NAME = "Daily Pinterest Trends & Metrics";
+
+const PINTEREST_DAILY_PROMPT_TEMPLATE = {
+  name: PINTEREST_DAILY_PROMPT_NAME,
+  template:
+    "Fetch growing Pinterest trends for the {{region}} market using the pinterest-trends tool " +
+    "(region: {{region}}, trend_type: {{trend_type}}, limit: {{limit}}).\n\n" +
+    "Then run pinterest-content-ideas for the topic '{{topic}}' to discover keyword opportunities.\n\n" +
+    "Finally, for each active pin in the tracker, fetch its latest metrics from the Pinterest API " +
+    "and record a new snapshot.\n\n" +
+    "Save a brief summary of today's top trends and any new content ideas to a file.",
+  description: "Daily Pinterest trend discovery, content ideation, and pin metric snapshots",
+  tags: ["pinterest", "seo", "daily", "automated"],
+  preferredTools: ["pinterest-trends", "pinterest-content-ideas", "pinterest-related-keywords"] as string[],
+  suggestedSkill: "pinterest-marketer",
+};
+
 /**
- * Idempotently creates the daily Pinterest trends + snapshot job.
- * Called whenever a Pinterest access token is saved so the job is
- * always present when the integration is active. Safe to call multiple
- * times — exits immediately if the job already exists.
+ * Idempotently creates the daily Pinterest trends saved prompt + scheduled job.
+ * Called whenever a Pinterest access token is saved so the job is always present
+ * when the integration is active. Safe to call multiple times.
  */
-export function ensurePinterestScheduledJob(scheduler: Scheduler): void {
+export function ensurePinterestScheduledJob(scheduler: Scheduler, promptManager?: PromptManager): void {
+  // Ensure the saved prompt exists (if prompt manager is available)
+  if (promptManager && !promptManager.getByName(PINTEREST_DAILY_PROMPT_NAME)) {
+    try {
+      promptManager.create(PINTEREST_DAILY_PROMPT_TEMPLATE);
+      logger.info("[Pinterest] Created daily trends saved prompt");
+    } catch {
+      // Prompt may already exist from another call — safe to ignore
+    }
+  }
+
   if (scheduler.getByName(PINTEREST_DAILY_JOB_NAME)) return;
   try {
     scheduler.create({
@@ -181,19 +230,15 @@ export function ensurePinterestScheduledJob(scheduler: Scheduler): void {
       timezone: "America/New_York",
       actionType: "prompt",
       actionPayload: {
-        goal: "Fetch growing Pinterest trends for the US market using the pinterest-trends tool (region: US, trend_type: growing, limit: 20). " +
-          "Then run pinterest-content-ideas for the topic 'AI automation productivity' to discover keyword opportunities. " +
-          "Finally, for each active pin in the tracker at http://localhost:3000/api/pinterest/tracker/pins, " +
-          "fetch its latest metrics from the Pinterest API and record a new snapshot via POST /api/pinterest/tracker/pins/:pinId/snapshots. " +
-          "Save a brief summary of today's top trends and any new content ideas.",
+        promptName: PINTEREST_DAILY_PROMPT_NAME,
+        skillName: "pinterest-marketer",
+        variables: {
+          region: "US",
+          trend_type: "growing",
+          limit: "20",
+          topic: "AI automation productivity",
+        },
       },
-      allowedTools: [
-        "pinterest-trends",
-        "pinterest-content-ideas",
-        "web-search",
-        "read-file",
-        "shell-execute",
-      ],
       autoApproveTools: ["pinterest-trends", "pinterest-content-ideas"],
     });
     logger.info("[Pinterest] Created daily trends & metrics scheduled job");
@@ -468,6 +513,7 @@ export type AdminRouterOptions = {
   knowledgeService?: KnowledgeIngestionService;
   brandVoiceService?: BrandVoiceService;
   nativeMcpTester?: NativeMcpTester;
+  pipelineTemplateManager?: PipelineTemplateManager;
 };
 
 type SchedulerSuggestion = {
@@ -532,7 +578,7 @@ const parseReasoningEffort = (value: unknown): ReasoningEffort | undefined => {
     : undefined;
 };
 
-export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerManager, promptManager, scheduler, personalityManager, sessionManager, copilot, taskWorker, taskEngine, webhookManager, customPostActionManager, sentinel, brandVoiceService, nativeMcpTester }: AdminRouterOptions): Router => {
+export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerManager, promptManager, scheduler, personalityManager, sessionManager, copilot, taskWorker, taskEngine, webhookManager, customPostActionManager, sentinel, brandVoiceService, nativeMcpTester, pipelineTemplateManager }: AdminRouterOptions): Router => {
   const router = Router();
   const mcpTester = nativeMcpTester ?? new CopilotNativeMcpTester();
 
@@ -1417,8 +1463,69 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
 
   // ── Scheduled Jobs (Scheduler) ──
   if (scheduler) {
-    router.get("/jobs", (_req, res) => {
-      return res.json({ jobs: scheduler.list() });
+    router.get("/jobs", (req, res) => {
+      const jobs = scheduler.list();
+      const promptName = typeof req.query.promptName === "string" ? req.query.promptName : undefined;
+      if (promptName) {
+        const filtered = jobs.filter(j => {
+          const payload = j.actionPayload as Record<string, unknown>;
+          return payload.promptName === promptName;
+        });
+        return res.json({ jobs: filtered });
+      }
+      return res.json({ jobs });
+    });
+
+    // ── Automations (joined jobs + prompts + skills) ──
+    router.get("/automations", (_req, res) => {
+      const jobs = scheduler.list();
+      const automations = jobs.map((job) => {
+        const payload = job.actionPayload as Record<string, unknown> | undefined;
+        const promptNameVal = payload?.promptName as string | undefined;
+        const prompt = promptNameVal && promptManager ? promptManager.getByName(promptNameVal) : null;
+        const skillName = (payload?.skillName as string | undefined) ?? prompt?.suggestedSkill ?? null;
+
+        let lastExecution = null;
+        if (taskEngine) {
+          try {
+            const execs = taskEngine.getRepository().findByJobName(job.name, 1);
+            if (execs.length > 0) {
+              const ex = execs[0];
+              lastExecution = {
+                taskId: ex.id,
+                status: ex.status,
+                startedAt: ex.startedAt,
+                completedAt: ex.completedAt,
+                duration: ex.startedAt && ex.completedAt
+                  ? new Date(ex.completedAt).getTime() - new Date(ex.startedAt).getTime()
+                  : null,
+              };
+            }
+          } catch { /* ignore */ }
+        }
+
+        return {
+          job: {
+            id: job.id,
+            name: job.name,
+            cronExpression: job.cronExpression,
+            timezone: job.timezone,
+            enabled: job.enabled,
+            actionType: job.actionType,
+            runCount: job.runCount,
+            lastRunAt: job.lastRunAt,
+          },
+          prompt: prompt ? {
+            name: prompt.name,
+            suggestedSkill: prompt.suggestedSkill,
+            template: prompt.template.slice(0, 200),
+            stages: prompt.stages?.length ?? 0,
+          } : null,
+          skillName,
+          lastExecution,
+        };
+      });
+      return res.json({ automations });
     });
 
     router.get("/jobs/:id", (req, res) => {
@@ -1518,19 +1625,81 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
       const dryRun = req.query.dry_run === "true";
 
       if (dryRun) {
-        // Dry-run: return job config without executing or affecting run counts
+        // Dry-run: return full execution plan without executing
+        const preview: Record<string, unknown> = {
+          cronExpression: job.cronExpression,
+          timezone: job.timezone,
+          actionType: job.actionType,
+          actionPayload: job.actionPayload,
+          model: job.model,
+        };
+
+        // Resolve prompt + skill details for rich preview
+        if (job.actionType === "prompt" && typeof job.actionPayload.promptName === "string" && promptManager) {
+          const promptName = job.actionPayload.promptName;
+          const templateVars = typeof job.actionPayload.templateVars === "object" && job.actionPayload.templateVars
+            ? (job.actionPayload.templateVars as Record<string, string>)
+            : {};
+          const prompt = promptManager.getByName(promptName);
+          if (prompt) {
+            // Compute scheduled variables
+            const now = new Date();
+            const builtInVars: Record<string, string> = {
+              today: now.toISOString().slice(0, 10),
+              now: now.toISOString(),
+              day_of_week: now.toLocaleDateString("en-US", { weekday: "long" }),
+              month: now.toLocaleDateString("en-US", { month: "long" }),
+              year: String(now.getFullYear()),
+            };
+            const allVars = { ...builtInVars, ...templateVars };
+            const resolvedText = interpolateTemplate(prompt.template, allVars);
+            preview.resolvedGoal = resolvedText;
+            preview.skillName = prompt.suggestedSkill;
+            preview.allowedTools = prompt.preferredTools;
+            preview.pipeline = prompt.stages ? { stages: prompt.stages } : null;
+            preview.variables = allVars;
+          }
+        }
+
+        // Compute next run times
+        try {
+          const nextRuns: string[] = [];
+          const cursor = new Date();
+          cursor.setSeconds(0, 0);
+          cursor.setMinutes(cursor.getMinutes() + 1);
+          const parts = job.cronExpression.trim().split(/\s+/);
+          if (parts.length === 5) {
+            for (let i = 0; i < 525960 && nextRuns.length < 3; i++) {
+              const min = cursor.getMinutes();
+              const hour = cursor.getHours();
+              const dom = cursor.getDate();
+              const mon = cursor.getMonth() + 1;
+              const dow = cursor.getDay();
+              if (
+                matchCronField(parts[0], min) &&
+                matchCronField(parts[1], hour) &&
+                matchCronField(parts[2], dom) &&
+                matchCronField(parts[3], mon) &&
+                matchCronField(parts[4], dow)
+              ) {
+                nextRuns.push(cursor.toISOString());
+              }
+              cursor.setMinutes(cursor.getMinutes() + 1);
+            }
+          }
+          preview.nextRuns = nextRuns;
+        } catch {
+          // ignore cron parse errors
+        }
+
+        preview.autoApproveTools = job.autoApproveTools;
+
         return res.json({
           ok: true,
           dryRun: true,
           jobId: job.id,
           jobName: job.name,
-          preview: {
-            cronExpression: job.cronExpression,
-            timezone: job.timezone,
-            actionType: job.actionType,
-            actionPayload: job.actionPayload,
-            model: job.model,
-          },
+          preview,
         });
       }
 
@@ -1540,6 +1709,23 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         return res.status(500).json({ error: message });
+      }
+    });
+
+    // Execution history for a job (query tasks table by context.jobId)
+    router.get("/jobs/:id/history", (req, res) => {
+      const job = scheduler.getById(req.params.id);
+      if (!job) return res.status(404).json({ error: "Job not found" });
+
+      if (!taskEngine) return res.json({ executions: [] });
+
+      try {
+        const repo = taskEngine.getRepository();
+        const limit = Math.min(Math.max(parseInt(String(req.query.limit ?? "10"), 10) || 10, 1), 50);
+        const executions = repo.findByJobName(job.name, limit);
+        return res.json({ executions });
+      } catch {
+        return res.json({ executions: [] });
       }
     });
   }
@@ -1624,6 +1810,166 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         return res.status(400).json({ error: message });
+      }
+    });
+
+    // Extended plan: pipeline + skill recommendation + prompt template + schedule
+    router.post("/automation/plan", async (req, res) => {
+      const body = req.body as Record<string, unknown>;
+      const goal = typeof body.goal === "string" ? body.goal.trim() : "";
+      const model = typeof body.model === "string" ? body.model.trim() : undefined;
+
+      if (!goal) {
+        return res.status(400).json({ error: "goal is required" });
+      }
+
+      const availableTools = toolRegistry.listEnabledTools().map((t) => t.name);
+
+      try {
+        // 1. Get pipeline plan
+        const planner = new PipelinePlanner(copilot);
+        const pipelineResult = await planner.plan(goal, { availableTools, model: model || undefined });
+
+        // 2. Match best skill
+        const dirs = copilot?.getSkillDirectories?.() ?? [];
+        const skills = await loadSkillMetadata(dirs);
+        const goalLower = goal.toLowerCase();
+        let bestSkill: { name: string; confidence: number; reason: string } | null = null;
+        for (const sk of skills) {
+          const nameMatch = goalLower.includes(sk.name.replace(/-/g, " ")) || goalLower.includes(sk.name);
+          const descMatch = sk.description && goalLower.split(" ").some((w: string) => w.length > 3 && sk.description.toLowerCase().includes(w));
+          if (nameMatch) {
+            bestSkill = { name: sk.name, confidence: 0.9, reason: `Goal mentions ${sk.displayName}` };
+            break;
+          }
+          if (descMatch && (!bestSkill || bestSkill.confidence < 0.6)) {
+            bestSkill = { name: sk.name, confidence: 0.6, reason: `Goal overlaps with ${sk.displayName} domain` };
+          }
+        }
+
+        // 3. Generate prompt template suggestion
+        const variableHints = goal.match(/\b(region|topic|limit|keyword|query|date|platform|url)\b/gi) ?? [];
+        const variables: Record<string, string> = {};
+        for (const v of variableHints) variables[v.toLowerCase()] = "";
+
+        const promptSuggestion = {
+          name: goal.split(" ").slice(0, 5).join(" "),
+          template: goal,
+          variables,
+          preferredTools: bestSkill
+            ? skills.find((s) => s.name === bestSkill!.name)?.tools ?? []
+            : [],
+        };
+
+        // 4. Suggest schedule from goal text
+        let cronExpression: string | null = null;
+        let cronHumanReadable = "";
+        let timezone = "UTC";
+        if (/daily|every day|each day/i.test(goal)) {
+          cronExpression = "0 8 * * *";
+          cronHumanReadable = "Daily at 8:00 AM";
+        } else if (/weekday|week ?day|monday.?friday/i.test(goal)) {
+          cronExpression = "0 8 * * 1-5";
+          cronHumanReadable = "Weekdays at 8:00 AM";
+        } else if (/weekly|every week/i.test(goal)) {
+          cronExpression = "0 9 * * 1";
+          cronHumanReadable = "Weekly on Monday at 9:00 AM";
+        } else if (/monthly|every month/i.test(goal)) {
+          cronExpression = "0 9 1 * *";
+          cronHumanReadable = "Monthly on the 1st at 9:00 AM";
+        } else if (/hourly|every hour/i.test(goal)) {
+          cronExpression = "0 * * * *";
+          cronHumanReadable = "Every hour";
+        }
+        if (/eastern|ET\b|new.?york/i.test(goal)) timezone = "America/New_York";
+        else if (/pacific|PT\b|los.?angeles/i.test(goal)) timezone = "America/Los_Angeles";
+        else if (/central|CT\b|chicago/i.test(goal)) timezone = "America/Chicago";
+
+        return res.json({
+          ...pipelineResult,
+          skill: bestSkill,
+          prompt: promptSuggestion,
+          schedule: cronExpression ? {
+            cronExpression,
+            cronHumanReadable,
+            timezone,
+          } : null,
+          autoApproveTools: promptSuggestion.preferredTools.slice(0, 5),
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return res.status(400).json({ error: message });
+      }
+    });
+  }
+
+  // ── Pipeline Templates ──
+  if (pipelineTemplateManager) {
+    router.get("/pipeline-templates", async (_req, res) => {
+      try {
+        return res.json(pipelineTemplateManager.list());
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return res.status(500).json({ error: message });
+      }
+    });
+
+    router.get("/pipeline-templates/:id", async (req, res) => {
+      const template = pipelineTemplateManager.getById(req.params.id);
+      if (!template) return res.status(404).json({ error: "Template not found" });
+      return res.json(template);
+    });
+
+    router.post("/pipeline-templates", async (req, res) => {
+      const body = req.body as Record<string, unknown>;
+      const name = typeof body.name === "string" ? body.name.trim() : "";
+      if (!name) return res.status(400).json({ error: "name is required" });
+      try {
+        const template = await pipelineTemplateManager.create({
+          name,
+          description: typeof body.description === "string" ? body.description : "",
+          icon: typeof body.icon === "string" ? body.icon : "📋",
+          tags: Array.isArray(body.tags) ? body.tags.filter((t): t is string => typeof t === "string") : [],
+          suggestedSkill: typeof body.suggestedSkill === "string" ? body.suggestedSkill : null,
+          template: typeof body.template === "string" ? body.template : "",
+          stages: Array.isArray(body.stages) ? body.stages : [],
+          variables: Array.isArray(body.variables) ? body.variables : [],
+        });
+        return res.json(template);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return res.status(500).json({ error: message });
+      }
+    });
+
+    router.put("/pipeline-templates/:id", async (req, res) => {
+      const body = req.body as Record<string, unknown>;
+      const updates: Record<string, unknown> = {};
+      if (typeof body.name === "string") updates.name = body.name.trim();
+      if (typeof body.description === "string") updates.description = body.description;
+      if (typeof body.icon === "string") updates.icon = body.icon;
+      if (typeof body.template === "string") updates.template = body.template;
+      if (Array.isArray(body.tags)) updates.tags = body.tags;
+      if (Array.isArray(body.stages)) updates.stages = body.stages;
+      if (Array.isArray(body.variables)) updates.variables = body.variables;
+      try {
+        const template = await pipelineTemplateManager.update(req.params.id, updates as Partial<Record<string, unknown>>);
+        if (!template) return res.status(404).json({ error: "Template not found or is built-in" });
+        return res.json(template);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return res.status(500).json({ error: message });
+      }
+    });
+
+    router.delete("/pipeline-templates/:id", async (req, res) => {
+      try {
+        const removed = await pipelineTemplateManager.remove(req.params.id);
+        if (!removed) return res.status(404).json({ error: "Template not found or is built-in" });
+        return res.json({ success: true });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return res.status(500).json({ error: message });
       }
     });
   }
@@ -3377,6 +3723,104 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       logger.error(`Failed to load skill content for '${req.params.name}': ${message}`);
+      return res.status(500).json({ error: message });
+    }
+  });
+
+  // Skill write endpoints (user skills in ~/.openzigs/skills/)
+  const userSkillsDir = path.join(os.homedir(), ".openzigs", "skills");
+
+  router.post("/skills/validate", (req, res) => {
+    const body = req.body as Record<string, unknown>;
+    const content = typeof body.content === "string" ? body.content : "";
+    if (!content.trim()) return res.status(400).json({ error: "content is required" });
+
+    // Check frontmatter has name
+    const nameMatch = content.match(/^name:\s*(.+)$/m);
+    const toolsMatch = content.match(/^allowed-tools:\s*(.+)$/m);
+    const errors: string[] = [];
+    if (!nameMatch) errors.push("Missing 'name' in YAML frontmatter");
+    if (toolsMatch) {
+      const tools = toolsMatch[1].trim().split(/\s+/);
+      const available = new Set(toolRegistry.listEnabledTools().map((t) => t.name));
+      const invalid = tools.filter((t) => !available.has(t));
+      if (invalid.length) errors.push(`Unknown tools: ${invalid.join(", ")}`);
+    }
+    return res.json({ valid: errors.length === 0, errors, parsedName: nameMatch?.[1]?.trim() });
+  });
+
+  router.post("/skills", async (req, res) => {
+    const body = req.body as Record<string, unknown>;
+    const name = typeof body.name === "string" ? body.name.trim() : "";
+    const content = typeof body.content === "string" ? body.content : "";
+    if (!name || !content) return res.status(400).json({ error: "name and content are required" });
+
+    // Reject path-traversal characters
+    if (/[/\\.]/.test(name)) return res.status(400).json({ error: "Invalid skill name" });
+
+    try {
+      const skillDir = path.join(userSkillsDir, name);
+      await fs.mkdir(skillDir, { recursive: true });
+      await fs.writeFile(path.join(skillDir, "SKILL.md"), content, "utf-8");
+
+      // Hot-reload: add to copilot skill directories
+      if (copilot?.addSkillDirectory) {
+        copilot.addSkillDirectory(skillDir);
+      }
+
+      const skills = await loadSkillMetadata([skillDir], true);
+      _adminIo?.emit("skills:updated");
+      return res.json({ success: true, skill: skills[0] ?? null });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return res.status(500).json({ error: message });
+    }
+  });
+
+  router.put("/skills/:name", async (req, res) => {
+    const body = req.body as Record<string, unknown>;
+    const content = typeof body.content === "string" ? body.content : "";
+    const skillName = req.params.name;
+    if (!content) return res.status(400).json({ error: "content is required" });
+
+    // Check both built-in and user directories
+    const dirs = copilot?.getSkillDirectories?.() ?? [];
+    const builtInDir = dirs.find((d) => path.basename(d) === skillName && d.includes("src/skills"));
+    if (builtInDir) return res.status(403).json({ error: "Built-in skills are read-only" });
+
+    try {
+      const skillDir = path.join(userSkillsDir, skillName);
+      await fs.mkdir(skillDir, { recursive: true });
+      await fs.writeFile(path.join(skillDir, "SKILL.md"), content, "utf-8");
+
+      if (copilot?.addSkillDirectory) {
+        copilot.addSkillDirectory(skillDir);
+      }
+
+      const skills = await loadSkillMetadata([skillDir], true);
+      _adminIo?.emit("skills:updated");
+      return res.json({ success: true, skill: skills[0] ?? null });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return res.status(500).json({ error: message });
+    }
+  });
+
+  router.delete("/skills/:name", async (req, res) => {
+    const skillName = req.params.name;
+    if (/[/\\.]/.test(skillName)) return res.status(400).json({ error: "Invalid skill name" });
+
+    const dirs = copilot?.getSkillDirectories?.() ?? [];
+    const builtInDir = dirs.find((d) => path.basename(d) === skillName && d.includes("src/skills"));
+    if (builtInDir) return res.status(403).json({ error: "Cannot delete built-in skills" });
+
+    try {
+      const skillDir = path.join(userSkillsDir, skillName);
+      await fs.rm(skillDir, { recursive: true, force: true });
+      _adminIo?.emit("skills:updated");
+      return res.json({ success: true });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       return res.status(500).json({ error: message });
     }
   });

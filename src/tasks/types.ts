@@ -88,6 +88,14 @@ export type AgentTask = {
   startedAt: Date | null;
   completedAt: Date | null;
   spawnedBy: string | null;
+  /** Skill identifier activated for this task (e.g., "media-director"). null = no skill. */
+  skillName: string | null;
+  /** Full SKILL.md body content for system prompt injection. null = no skill body. */
+  skillBody: string | null;
+  /** Skill names disabled for this task (all except active skill). null = no filtering. */
+  disabledSkills: string[] | null;
+  /** Custom agent name for specialized task execution. null = default agent. */
+  agentName: string | null;
 };
 
 export type CreateTaskInput = {
@@ -109,6 +117,14 @@ export type CreateTaskInput = {
   pipeline?: PipelineDefinition;
   notifyOnComplete?: boolean;
   spawnedBy?: string;
+  /** Skill identifier to activate for this task (e.g., "media-director"). */
+  skillName?: string;
+  /** Full SKILL.md body content (frontmatter stripped) for system prompt injection. */
+  skillBody?: string;
+  /** Skill names to disable for focused execution. */
+  disabledSkills?: string[];
+  /** Custom agent name for specialized task execution. */
+  agentName?: string;
 };
 
 /** SQLite row shape for the agent_tasks table. */
@@ -136,6 +152,10 @@ export type StoredTask = {
   started_at: string | null;
   completed_at: string | null;
   spawned_by: string | null;
+  skill_name: string | null;
+  skill_body: string | null;
+  disabled_skills: string | null;
+  agent_name: string | null;
 };
 
 /** Recursion / safety limits for agent chaining. */
