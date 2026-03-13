@@ -50,6 +50,7 @@ import { createNotificationTools } from "./tools/notification-tools.js";
 import { createTranscribeAudioTools } from "./tools/transcribe-audio-tools.js";
 import { createStudioTools } from "./tools/studio-tools.js";
 import { createMemoryTools } from "./tools/memory-tools.js";
+import { createOutboxTools } from "./tools/outbox-tools.js";
 import { ToolRegistry, type ToolDefinition } from "./tool-registry.js";
 import type { LocalMcpServerManager } from "./local-mcp-server-manager.js";
 import { AuditLogger } from "../logging/audit-logger.js";
@@ -132,6 +133,8 @@ export type McpServerOptions = {
   analyzeWorker?: import("../video/analyze-worker.js").AnalyzeWorker;
   /** MemoryManager for save-memory / recall-memories tools. */
   memoryManager?: import("../memory/memory-manager.js").MemoryManager;
+  /** OutboxRepository for publishing queue tools. */
+  outboxRepo?: import("../outbox/outbox-repository.js").OutboxRepository;
 };
 
 export type RegisterMcpToolsOptions = Pick<
@@ -179,6 +182,7 @@ export type RegisterMcpToolsOptions = Pick<
   | "trimWorker"
   | "analyzeWorker"
   | "memoryManager"
+  | "outboxRepo"
 >;
 
 const readFileSchema = z.object({ path: z.string() });
@@ -701,6 +705,12 @@ export const registerMcpTools = (toolRegistry: ToolRegistry, options: RegisterMc
   if (options.mediaQueueRepo) {
     const remixTools = createRemixTools({ mediaQueueRepo: options.mediaQueueRepo });
     for (const tool of remixTools) { registerTool(tool); }
+  }
+
+  // ── Outbox Publishing Queue Tools (Epic #458) ──
+  if (options.outboxRepo) {
+    const outboxTools = createOutboxTools({ outboxRepo: options.outboxRepo });
+    for (const tool of outboxTools) { registerTool(tool); }
   }
 
   if (options.brandVoiceService) {

@@ -8,6 +8,7 @@ import { SocialRepository } from "../channels/social/social-repository.js";
 import { BrandVoiceRepository } from "../personality/brand-voice-repository.js";
 import { CharacterRepository } from "../characters/character-repository.js";
 import { PinterestTrackerRepository } from "../mcp/tools/pinterest-tracker.js";
+import { OutboxRepository } from "../outbox/outbox-repository.js";
 
 export type DatabaseOptions = {
   dbPath?: string;
@@ -54,6 +55,10 @@ export const getDatabase = (options: DatabaseOptions = {}): Database.Database =>
   // Run Pinterest Tracker migration (tracked_pins, snapshots, content_ideas)
   const pinterestTrackerRepo = new PinterestTrackerRepository(db);
   pinterestTrackerRepo.migrate();
+
+  // Run Outbox Queue migration (outbox_queue table)
+  const outboxRepo = new OutboxRepository(db);
+  outboxRepo.migrate();
 
   sharedDb = db;
   return db;

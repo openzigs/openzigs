@@ -80,6 +80,9 @@ import { AnalyzeWorker } from "./video/analyze-worker.js";
 import { RoomManager } from "./presenter/room-manager.js";
 import { ExpressPeerServer } from "peer";
 import { MediaQueueRepository } from "./queue/media-queue-repository.js";
+import { OutboxRepository } from "./outbox/outbox-repository.js";
+import { OutboxPoller } from "./outbox/outbox-poller.js";
+import { createOutboxRouter } from "./api/outbox.js";
 import { QueueMaster } from "./queue/queue-master.js";
 import { MediaNotificationService } from "./queue/media-notification-service.js";
 import { createQueueRouter, createQueueCallbackRouter } from "./api/queue.js";
@@ -160,6 +163,12 @@ const taskEngine = new TaskEngine({ repository: taskRepository });
 // ── Media Queue: Push-Based Distributed Queue ──
 const mediaQueueRepo = new MediaQueueRepository(db);
 mediaQueueRepo.migrate();
+
+// ── Outbox Publishing Queue (Epic #458) ──
+const outboxRepo = new OutboxRepository(db);
+outboxRepo.migrate();
+const outboxPoller = new OutboxPoller({ outboxRepo, taskEngine });
+outboxPoller.start();
 
 // Read user config for imageGen, videoGen, and musicGen network mode
 let imageGenNodeUrl = process.env.MAC_MINI_WORKER_URL ?? "http://localhost:5005";
@@ -633,6 +642,7 @@ registerMcpTools(toolRegistry, {
   trimWorker,
   analyzeWorker,
   memoryManager,
+  outboxRepo,
 });
 
 // ── Task Background Worker ──
@@ -725,6 +735,10 @@ app.use("/api/pinterest", authMiddleware, pinterestRouter);
 // Vault API routes
 const vaultRouter = createVaultRouter({ vaultService });
 app.use("/api/admin/vault", authMiddleware, vaultRouter);
+
+// Outbox API routes
+const outboxRouter = createOutboxRouter({ outboxRepo });
+app.use("/api/admin/outbox", authMiddleware, outboxRouter);
 
 // Memory API routes
 const memoryRouter = createMemoryRouter({ memoryManager });
@@ -2251,6 +2265,7 @@ httpServer.listen(port, "0.0.0.0", () => {
 const gracefulShutdown = () => {
   scheduler.stopAll();
   socialIngestion.stopAllPolling();
+  outboxPoller.stop();
   queueMaster.stop();
   closeDatabase();
   killChrome();

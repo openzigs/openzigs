@@ -32,6 +32,7 @@ const SKILL_ICONS: Record<string, string> = {
   "system-operator": "\u{1F6E1}\uFE0F",
   "pinterest-marketer": "\u{1F4CC}",
   "research-synthesizer": "\u{1F52C}",
+  "universal-publisher": "\u{1F4E4}",
 };
 
 const SKILL_EXAMPLES: Record<string, string[]> = {
@@ -74,6 +75,11 @@ const SKILL_EXAMPLES: Record<string, string[]> = {
     "Research the top AI coding assistants in 2026 with 8 web articles and 5 YouTube videos",
     "Compare cloud hosting providers from a cost perspective and generate comparison images",
     "Write a comprehensive report on renewable energy trends using web and YouTube sources",
+  ],
+  "universal-publisher": [
+    "Publish the next queued outbox item",
+    "Post the latest gallery image to Twitter with hashtags",
+    "Publish all pending outbox items for Pinterest",
   ],
 };
 

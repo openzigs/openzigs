@@ -35,9 +35,11 @@ import {
   Pencil,
   Check,
   FolderPlus,
+  Send,
 } from "lucide-react";
 import { InlineModelPicker } from "@/components/model-picker-select";
 import { AskAiPanel, AskAiButton, PAGE_CONTEXTS } from "@/components/ask-ai";
+import { AddToOutboxModal } from "@/components/add-to-outbox-modal";
 
 // ── Types ───────────────────────────────────────────────────
 
@@ -360,6 +362,7 @@ export default function GalleryPage() {
   });
 
   const [pendingDelete, setPendingDelete] = useState<GalleryAsset | null>(null);
+  const [outboxAsset, setOutboxAsset] = useState<GalleryAsset | null>(null);
 
   const handleDelete = (asset: GalleryAsset) => {
     setPendingDelete(asset);
@@ -697,6 +700,7 @@ export default function GalleryPage() {
                 onDelete={() => handleDelete(asset)}
                 onTag={() => handleAddTag(asset)}
                 onDownload={() => handleDownload(asset)}
+                onAddToOutbox={() => setOutboxAsset(asset)}
                 onOpenInStudio={asset.type === "scene" ? () => void handleOpenInStudio(asset) : undefined}
                 openingInStudio={openingInStudio === asset.id}
                 onKnowledgeChange={(vis, cat) => knowledgeMutation.mutate({ id: asset.id, visibility: vis, category: cat })}
@@ -717,6 +721,7 @@ export default function GalleryPage() {
                 onDelete={() => handleDelete(asset)}
                 onTag={() => handleAddTag(asset)}
                 onDownload={() => handleDownload(asset)}
+                onAddToOutbox={() => setOutboxAsset(asset)}
                 onOpenInStudio={asset.type === "scene" ? () => void handleOpenInStudio(asset) : undefined}
                 openingInStudio={openingInStudio === asset.id}
                 onKnowledgeChange={(vis, cat) => knowledgeMutation.mutate({ id: asset.id, visibility: vis, category: cat })}
@@ -748,6 +753,17 @@ export default function GalleryPage() {
           confirmLabel="Delete"
           onConfirm={confirmDelete}
           onCancel={cancelDelete}
+        />
+      )}
+
+      {outboxAsset && (
+        <AddToOutboxModal
+          open
+          onClose={() => setOutboxAsset(null)}
+          assetId={outboxAsset.id}
+          assetFilename={outboxAsset.filename}
+          assetType={outboxAsset.type === "scene" ? "image" : outboxAsset.type}
+          defaultContext={outboxAsset.prompt ?? ""}
         />
       )}
 
@@ -866,6 +882,7 @@ function AssetCard({
   onDelete,
   onTag,
   onDownload,
+  onAddToOutbox,
   onOpenInStudio,
   openingInStudio,
   onKnowledgeChange,
@@ -879,6 +896,7 @@ function AssetCard({
   onDelete: () => void;
   onTag: () => void;
   onDownload: () => void;
+  onAddToOutbox: () => void;
   onOpenInStudio?: () => void;
   openingInStudio?: boolean;
   onKnowledgeChange: (visibility: string, category: string) => void;
@@ -979,6 +997,13 @@ function AssetCard({
           title="Add Tag"
         >
           <Tag className="h-3.5 w-3.5" />
+        </button>
+        <button
+          onClick={(e) => { e.stopPropagation(); onAddToOutbox(); }}
+          className="rounded-lg bg-black/60 p-1.5 text-white hover:bg-black/80"
+          title="Add to Outbox"
+        >
+          <Send className="h-3.5 w-3.5" />
         </button>
         <button
           onClick={(e) => { e.stopPropagation(); onDelete(); }}
@@ -1082,6 +1107,7 @@ function AssetListRow({
   onDelete,
   onTag,
   onDownload,
+  onAddToOutbox,
   onOpenInStudio,
   openingInStudio,
   onKnowledgeChange,
@@ -1095,6 +1121,7 @@ function AssetListRow({
   onDelete: () => void;
   onTag: () => void;
   onDownload: () => void;
+  onAddToOutbox: () => void;
   onOpenInStudio?: () => void;
   openingInStudio?: boolean;
   onKnowledgeChange: (visibility: string, category: string) => void;
@@ -1256,6 +1283,13 @@ function AssetListRow({
           title="Add tag"
         >
           <Tag className="h-3.5 w-3.5" />
+        </button>
+        <button
+          onClick={(e) => { e.stopPropagation(); onAddToOutbox(); }}
+          className="rounded-lg border border-border p-1.5 text-muted-foreground hover:bg-muted"
+          title="Add to Outbox"
+        >
+          <Send className="h-3.5 w-3.5" />
         </button>
         <button
           onClick={(e) => { e.stopPropagation(); onDelete(); }}
