@@ -1,23 +1,24 @@
 "use client";
 
 import { useState } from "react";
-import { Film, Globe, FolderOpen, Scissors, Sparkles } from "lucide-react";
+import { Film, Globe, FolderOpen, Scissors, Sparkles, MonitorUp } from "lucide-react";
 import { DirectorWizard } from "@/components/director/director-wizard";
 import { BlogToVideoPanel } from "@/components/director/blog-to-video-panel";
 import { ShortsPanel } from "@/components/director/shorts-panel";
 import { DraftsPanel } from "@/components/director/drafts-panel";
 import { HeroReelPanel } from "@/components/director/hero-reel-panel";
+import { CaptureAndTrimPanel } from "@/components/director/studio/capture-and-trim-panel";
 import { ToastContainer } from "@/components/toast";
 import { AskAiPanel, AskAiButton, PAGE_CONTEXTS } from "@/components/ask-ai";
 
-type DirectorTab = "wizard" | "blog" | "shorts" | "drafts" | "hero-reel";
+type DirectorTab = "wizard" | "blog" | "shorts" | "drafts" | "hero-reel" | "capture";
 
 export default function DirectorPage() {
   const [tab, setTab] = useState<DirectorTab>("wizard");
   const [askAiOpen, setAskAiOpen] = useState(false);
 
   return (
-    <main className="mx-auto flex h-[calc(100vh-4rem)] max-w-4xl flex-col px-6 py-10 lg:px-12">
+    <main className={`mx-auto flex h-[calc(100vh-4rem)] flex-col px-6 py-10 lg:px-12 ${tab === "capture" ? "max-w-7xl" : "max-w-4xl"}`}>
       <header className="mb-4 shrink-0">
         <p className="text-sm uppercase tracking-[0.3em] text-muted-foreground">OpenZigs</p>
         <div className="flex items-end justify-between">
@@ -88,6 +89,17 @@ export default function DirectorPage() {
           <Sparkles className="h-4 w-4" />
           ✨ Hero Reel
         </button>
+        <button
+          onClick={() => setTab("capture")}
+          className={`flex items-center gap-1.5 px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+            tab === "capture"
+              ? "border-primary text-primary"
+              : "border-transparent text-muted-foreground hover:text-foreground"
+          }`}
+        >
+          <MonitorUp className="h-4 w-4" />
+          Capture &amp; Trim
+        </button>
       </div>
 
       <div className="min-h-0 flex-1">
@@ -96,6 +108,7 @@ export default function DirectorPage() {
         {tab === "shorts" && <ShortsPanel />}
         {tab === "drafts" && <DraftsPanel />}
         {tab === "hero-reel" && <HeroReelPanel />}
+        {tab === "capture" && <CaptureAndTrimPanel />}
       </div>
       <ToastContainer />
       <AskAiPanel pageContext={PAGE_CONTEXTS["director"]} open={askAiOpen} onClose={() => setAskAiOpen(false)} />

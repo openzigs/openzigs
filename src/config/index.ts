@@ -174,6 +174,13 @@ export type VaultAppConfig = {
   vaultPath?: string;
 };
 
+export type MemoryAppConfig = {
+  enabled?: boolean;
+  owner?: string;
+  repo?: string;
+  cacheTtlMs?: number;
+};
+
 export type VoiceAppConfig = {
   enabled?: boolean;
   provider?: "google" | "local";
@@ -250,6 +257,7 @@ export type AppConfig = {
   knowledge?: KnowledgeAppConfig;
   voice?: VoiceAppConfig;
   vault?: VaultAppConfig;
+  memory?: MemoryAppConfig;
 };
 
 const rateLimitSchema = z.object({
@@ -506,6 +514,12 @@ const appConfigSchema = z.object({
   vault: z.object({
     enabled: z.boolean().optional(),
     vaultPath: z.string().optional(),
+  }).optional(),
+  memory: z.object({
+    enabled: z.boolean().optional(),
+    owner: z.string().optional(),
+    repo: z.string().optional(),
+    cacheTtlMs: z.number().min(0).optional(),
   }).optional(),
 });
 

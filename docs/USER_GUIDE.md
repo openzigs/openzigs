@@ -1,5 +1,73 @@
 # User Guide
 
+## Table of Contents
+
+- [Prerequisites](#prerequisites)
+- [Installation](#installation)
+- [First-Time Authentication](#first-time-authentication)
+- [Using the Web UI](#using-the-web-ui)
+  - [Chat](#chat)
+  - [Smart Input (IntelliSense Autocomplete)](#smart-input-intellisense-autocomplete)
+  - [Approval Prompts](#approval-prompts)
+  - [Dashboard](#dashboard)
+  - [Admin](#admin)
+  - [Skills](#skills)
+  - [Library (Saved Prompts)](#library-saved-prompts)
+  - [Scheduler](#scheduler)
+  - [Workbench (Project Editor)](#workbench-project-editor)
+  - [Tasks (Background Agents)](#tasks-background-agents)
+  - [Visual Workflow Graph](#visual-workflow-graph)
+  - [Studio: Capture & Trim](#studio-capture--trim)
+- [Advanced: Agent Chaining Patterns](#advanced-agent-chaining-patterns)
+- [Session Lifecycle & Infinite Context](#session-lifecycle--infinite-context)
+- [Copilot SDK Session History & Analytics](#copilot-sdk-session-history--analytics)
+- [Agent Memory](#agent-memory)
+- [Tool Limit Configuration](#tool-limit-configuration)
+- [Per-Entity Tool Scoping](#per-entity-tool-scoping)
+- [Interactive Clarifications](#interactive-clarifications)
+- [Model Selection](#model-selection)
+- [File Attachments](#file-attachments)
+- [Reasoning Effort](#reasoning-effort)
+- [Context Fuel Gauge](#context-fuel-gauge)
+- [Session Context Bar](#session-context-bar)
+- [BYOK Provider (Bring Your Own Key)](#byok-provider-bring-your-own-key)
+- [Custom Agents (Hierarchical Sub-Agents)](#custom-agents-hierarchical-sub-agents)
+- [Native MCP Servers](#native-mcp-servers)
+- [Enabling and Disabling Tools](#enabling-and-disabling-tools)
+- [Connecting Telegram](#connecting-telegram)
+- [Connecting Discord](#connecting-discord)
+- [Chrome DevTools Setup](#chrome-devtools-setup)
+- [Enabling Voice Features](#enabling-voice-features)
+- [Docker Usage](#docker-usage)
+- [Cloudflare Tunnel](#cloudflare-tunnel)
+- [Productivity Tools](#productivity-tools)
+- [Social Media Tools](#social-media-tools)
+- [Document Intelligence Tools](#document-intelligence-tools)
+- [Personal Assistant Tools](#personal-assistant-tools)
+- [Granular Tool Control](#granular-tool-control)
+- [Director Mode (Video Production)](#director-mode-video-production)
+- [Director Studio & Advanced Compositing](#director-studio--advanced-compositing)
+- [Advanced Director Mode (Voice Cloning & Visual Injection)](#advanced-director-mode-voice-cloning--visual-injection)
+- [Presenter Mode (Interactive Playback & Quizzes)](#presenter-mode-interactive-playback--quizzes)
+- [Configuration Reference](#configuration-reference)
+- [Advanced Examples: Combining Capabilities](#advanced-examples-combining-capabilities)
+- [AI-Assisted Configuration (Workflow Wizard)](#ai-assisted-configuration-workflow-wizard)
+- [Dry-Run & Job Testing](#dry-run--job-testing)
+- [Enterprise Webhooks](#enterprise-webhooks)
+- [Self-Aware Documentation](#self-aware-documentation)
+- [Sentinel — Autonomous System Monitor](#sentinel--autonomous-system-monitor)
+- [Knowledge Manager — Local Knowledge Base (RAG)](#knowledge-manager--local-knowledge-base-rag)
+- [Social Brain — Unified Social Inbox & CRM](#social-brain--unified-social-inbox--crm)
+- [Troubleshooting](#troubleshooting)
+- [Secret Vault — Zero-Trust Credential Storage](#secret-vault--zero-trust-credential-storage)
+- [Security Hardening](#security-hardening)
+- [Telegram Notifications for Async Jobs](#telegram-notifications-for-async-jobs)
+- [Pinterest SEO Engine](#pinterest-seo-engine)
+- [Research & Content Synthesis Engine](#research--content-synthesis-engine)
+- [Media Queue & Asset Gallery](#media-queue--asset-gallery)
+
+---
+
 ## Prerequisites
 
 Before you begin, ensure the following are installed and available:
@@ -190,7 +258,7 @@ You only need to do this once. The token persists across restarts.
 
 ## Using the Web UI
 
-The OpenZigs UI is a **Next.js** application with a navigation bar providing access to five pages:
+The OpenZigs UI is a **Next.js** application with a navigation bar providing access to the following pages:
 
 | Page | URL | Purpose |
 |---|---|---|
@@ -206,7 +274,7 @@ The OpenZigs UI is a **Next.js** application with a navigation bar providing acc
 | **Webhooks** | `/admin/webhooks` | Create and manage inbound webhooks for external integrations |
 | **Gallery** | `/gallery` | Asset gallery for generated images, videos, and audio; inline creation studio for txt2img, img2img, txt2video, img2video, txt2music |
 | **Music Studio** | `/music-studio` | AI Voice2Voice pipeline &amp; Smart Remix Lab — stem separation, voice conversion, instrument replacement, and auto-mastering |
-| **Director** | `/director` | AI video production wizard, blog-to-YouTube, and timeline studio |
+| **Director** | `/director` | AI video production wizard, blog-to-YouTube, timeline studio, and capture & trim |
 | **Director Studio** | `/director/studio/[id]` | Full timeline editor with player preview, scene inspector, and drag-and-drop reordering |
 
 ### Chat
@@ -1084,6 +1152,107 @@ curl -X POST -H "Authorization: Bearer <token>" http://localhost:3000/api/tasks/
 
 ---
 
+### Studio: Capture & Trim
+
+The **Capture & Trim** tab in Director Mode provides a complete screen recording and video editing workflow directly in the browser. The layout features a two-column design: recorder and video library on the left, video trimmer on the right.
+
+#### Screen Recording
+
+1. Navigate to **Director** → click the **Capture & Trim** tab.
+2. Click **Start Recording** — your browser will prompt you to select a screen, window, or tab to share.
+3. **Audio options:**
+   - **System Audio** — captures the audio output of the shared tab/window. Uses Chrome's `systemAudio: "include"` API (Chrome 105+) for reliable system audio capture on macOS.
+   - **Microphone** — captures your microphone for voiceover narration.
+   - Both can be enabled simultaneously. A VU meter shows real-time audio levels.
+4. Use **Pause** / **Resume** during the recording as needed.
+5. Click **Stop** when finished. A preview of the recorded video appears.
+6. **Save options:**
+   - **Save to Gallery** — saves the recording as a gallery asset with a `screen-recording` tag.
+   - **Save to Draft** — uploads the recording AND creates a new Director Draft project with the recording as the first scene, then opens the Draft Studio editor.
+   - **Discard** — discards the recording without saving.
+
+**Keyboard shortcuts:**
+
+| Key | Action |
+|-----|--------|
+| `R` | Start/stop recording |
+| `P` | Pause or resume recording |
+| `Esc` | Discard recording (when stopped) |
+
+> **macOS Note:** On macOS, you may need to grant Screen Recording permission to your browser in System Settings → Privacy & Security → Screen Recording. After enabling, **quit and reopen Chrome** for the permission to take effect.
+
+#### Video Library
+
+The video library shows all video assets from your Gallery with visual thumbnail previews.
+
+- **Drag & drop upload** — drop any video file onto the upload zone to import it into the Gallery.
+- **Click to upload** — click the upload zone to open a file picker.
+- Videos show duration badges and "REC" tags for screen recordings.
+- Click any video to load it in the trimmer on the right.
+- The library auto-loads on page visit; click **Refresh** to update.
+
+#### Video Trimmer — Trim Mode
+
+The default editing mode for setting In/Out points and exporting a single clip.
+
+1. Select a video from the library (or record one). The **Video Trimmer** appears in the right column.
+2. **Timeline scrubber:** Drag the blue start/end handles to define the trim region.
+3. **Precise input:** Enter exact start and end times (in seconds) for frame-accurate trimming.
+4. Click **Loop** to preview the trimmed segment in a continuous loop.
+5. Click **Export Cut** to perform the trim. The operation is lossless (FFmpeg stream copy — no re-encoding) and near-instant.
+6. The trimmed clip is automatically added to the Gallery.
+
+**Keyboard shortcuts (Trim Mode):**
+
+| Key | Action |
+|-----|--------|
+| `Space` | Play / Pause video |
+| `I` | Set In point at current playhead position |
+| `O` | Set Out point at current playhead position |
+
+#### Video Trimmer — Blade Mode
+
+Switch to **Blade** mode to split a video into multiple named clips.
+
+1. Click the **Blade** toggle in the trimmer header (or switch from Trim mode).
+2. **Place split points** by clicking on the timeline or pressing **B** at the current playhead position.
+3. Split points appear as orange markers. Hover over a marker and click **X** to remove it.
+4. Each resulting clip segment is listed below the timeline with its time range and name.
+5. **Rename clips** by clicking the edit icon next to each segment name.
+6. Click **Export N Clips** to queue all segments as separate FFmpeg trim jobs. Each becomes a Gallery asset.
+
+**Keyboard shortcuts (Blade Mode):**
+
+| Key | Action |
+|-----|--------|
+| `Space` | Play / Pause video |
+| `B` | Split at playhead position |
+| `Esc` | Return to Trim mode |
+
+#### AI Smart Cut (Redundancy Detection)
+
+1. With a video loaded in the trimmer, click **Ask AI** to analyze the video for redundant or low-quality segments.
+2. The AI pipeline:
+   - Extracts frames at 1fps and sends them to the **Vision LLM** in batches.
+   - Extracts the audio track and transcribes it via **Whisper STT**.
+   - The LLM identifies dead air, repeated content, shaky footage, and other issues.
+3. **Red zones** appear on the timeline representing regions the AI recommends **removing**. Each zone includes a reason.
+4. **Toggle individual cuts** on/off by clicking them on the timeline or in the cuts list below. Disabled cuts turn gray and won't be removed.
+5. The cuts list shows an expandable panel with each suggestion's timestamp and reason. The count shows how many are enabled.
+6. Click **Apply All (N)** to export a clean video with all enabled red zones removed. The system inverts the removal regions into "keep" regions and exports each as a separate trim job using FFmpeg.
+
+> **Tip:** AI Smart Cut works best on recordings longer than 30 seconds. Short clips may not have enough content for the AI to analyze meaningfully.
+
+#### Agentic Workflow (Chat-Based)
+
+You can also use Studio tools from the chat interface via the **Media Director** skill:
+
+- **"Analyze my latest screen recording for redundant sections"** → The AI calls `analyze-video-redundancy` and returns suggested cuts.
+- **"Trim the first 30 seconds from video X"** → The AI calls `trim-video` with the specified times.
+- **"Clean up my recording — remove dead air and repeated sections"** → The AI runs analysis first, then trims the suggested cuts sequentially.
+
+---
+
 ## Advanced: Agent Chaining Patterns
 
 The **Recursive Agent Chaining** system lets you orchestrate multi-step, long-running workflows by composing background sub-agents. Under the hood, the agent uses the `spawn-agent` MCP tool to create independent `AgentTask` entries in the SQLite queue. Each task executes asynchronously via the `TaskWorker`, persists its result to the database, and notifies you when it completes — even if you close the browser.
@@ -1405,6 +1574,117 @@ The lifecycle events timeline shows recent SDK lifecycle events (`session.create
 | `GET` | `/api/admin/copilot-sessions/:sessionId/messages` | Get all events for a session (conversation replay). |
 | `GET` | `/api/admin/copilot-sessions/analytics` | Get session analytics counters and lifecycle events. |
 | `POST` | `/api/admin/copilot-sessions/analytics/reset` | Reset analytics counters. |
+
+---
+
+## Agent Memory
+
+The Agent Memory system gives OpenZigs **persistent, cross-session memory** backed by a private GitHub repository. Memories are automatically injected into every Copilot session, so the AI retains project knowledge, user preferences, and context across conversations.
+
+### How It Works
+
+Agent Memory operates in two modes:
+
+1. **Automatic (LLM-driven)** — The AI proactively saves important facts it discovers during conversations using the `save-memory` tool. For example, when you mention your YouTube channel name, preferred video format, or social media posting schedule, the AI stores these facts for future sessions. This mirrors how GitHub's native Copilot Memory works — the model decides what's worth remembering.
+
+2. **Manual** — You can create, edit, and delete memories directly from the Admin → Agent Memory panel. Use this for upfront configuration like brand guidelines, project context, or workflow rules.
+
+All memories are injected into the LLM's system prompt at the start of every session, making the AI smarter over time without you having to repeat yourself.
+
+### What Gets Remembered
+
+Agent Memory is especially valuable for OpenZigs' non-code workflows:
+
+| Use Case | Example Memories |
+|---|---|
+| **Social Media** | Account names, posting schedules, audience demographics, platform-specific formats |
+| **Video Production** | Preferred aspect ratios, intro/outro conventions, brand color palette |
+| **Scheduling** | Cron job patterns, timezone preferences, recurring task workflows |
+| **Brand Voice** | Tone rules, vocabulary preferences, formatting conventions |
+| **Project Context** | Business domain, technology stack, team conventions |
+
+### MCP Tools
+
+The AI has access to two memory tools during every conversation:
+
+| Tool | Description |
+|---|---|
+| `save-memory` | Save a fact, preference, or convention to persistent storage. The AI calls this proactively when it discovers important information. Duplicates are automatically detected — saving with an existing title updates the memory instead. |
+| `recall-memories` | Search stored memories by category or keyword. The AI uses this to look up specific facts when needed. |
+
+Both tools are low-risk and auto-approved during interactive chat — no approval prompts needed.
+
+### Setup
+
+1. **Configure GitHub token**: Add `GITHUB_PERSONAL_ACCESS_TOKEN` to your `.env` file with `repo` scope
+2. **Enable memory**: Open Admin → Agent Memory panel and click "Enable"
+3. **Create repository**: Click "Create Memory Repository" — this creates a private repo (default: `openzigs-memory`) in your GitHub account
+
+### Configuration
+
+Add to `~/.openzigs/config.json`:
+
+```json
+{
+  "memory": {
+    "enabled": true,
+    "owner": "your-github-username",
+    "repo": "openzigs-memory",
+    "cacheTtlMs": 300000
+  }
+}
+```
+
+| Setting | Default | Description |
+|---|---|---|
+| `enabled` | `false` | Enable/disable memory injection |
+| `owner` | `""` | GitHub username (auto-detected during setup) |
+| `repo` | `"openzigs-memory"` | Repository name |
+| `cacheTtlMs` | `300000` | Cache TTL in ms (5 minutes) |
+
+### Memory Categories
+
+| Category | Use For |
+|---|---|
+| **Conventions** | Standards, naming rules, format requirements, posting schedules |
+| **Patterns** | Recurring workflows, integration patterns, automation sequences |
+| **Decisions** | Technology choices, trade-offs, strategy rationale |
+| **Preferences** | User likes/dislikes, style choices, scheduling habits, format preferences |
+| **Context** | Project background, domain knowledge, account details, business rules |
+
+### Admin UI
+
+The Agent Memory panel in the admin page provides:
+
+- **Status banner** — Shows connection status, memory count, and enable/disable toggle
+- **Repository setup** — One-click creation of the memory repository
+- **Category filters** — Filter memories by category
+- **CRUD operations** — Create, edit, and delete memories with inline editing
+- **Content preview** — Markdown content with truncated preview
+
+### How Memory Injection Works
+
+When memory is enabled and the repository is connected:
+1. On each `chat()` call, `buildSessionContext()` fetches memories (with TTL caching)
+2. Memories are formatted as a markdown summary grouped by category
+3. The summary is appended to the SDK session's `systemMessage` with mode `"append"`
+4. The AI receives memory context alongside the conversation, plus instructions to proactively save new facts using `save-memory`
+5. During conversation, the AI may call `save-memory` to store newly discovered facts — these are available in the next session
+
+### API Endpoints
+
+| Method | Endpoint | Description |
+|---|---|---|
+| `GET` | `/api/admin/memory/config` | Get config + connection status |
+| `PUT` | `/api/admin/memory/config` | Update config (persisted to disk) |
+| `POST` | `/api/admin/memory/setup` | Create the memory repository |
+| `GET` | `/api/admin/memory/status` | Connection health check |
+| `GET` | `/api/admin/memory/categories` | List available categories |
+| `GET` | `/api/admin/memory/memories` | List memories (optional `?category=` filter) |
+| `POST` | `/api/admin/memory/memories` | Create a memory |
+| `GET` | `/api/admin/memory/memories/:id` | Get a memory by path |
+| `PUT` | `/api/admin/memory/memories/:id` | Update a memory |
+| `DELETE` | `/api/admin/memory/memories/:id` | Delete a memory |
 
 ---
 
@@ -5702,6 +5982,8 @@ The agent will automatically set `notify_via_telegram: true` on the job (see the
 
 The Pinterest SEO Engine provides tools for trend discovery, keyword research, account analytics, and pin-level SEO analysis — including extraction of Pinterest's hidden annotation keywords that drive algorithmic distribution.
 
+For a deep-dive into how the pipeline works under the hood, see [PINTEREST_SEO_ENGINE.md](PINTEREST_SEO_ENGINE.md).
+
 ### Getting Your Pinterest API Credentials
 
 Because OpenZigs is self-hosted, **each user must register their own Pinterest developer app** and generate their own access token. There is no shared OAuth flow — the token in your `.env` authenticates as your personal Pinterest account.
@@ -5753,7 +6035,9 @@ Once approved, your app gets Standard tier access with higher rate limits and no
 | Variable | Required | Description |
 |---|---|---|
 | `PINTEREST_ACCESS_TOKEN` | Yes | Pinterest API v5 bearer token (`pina_...`) |
-| `PINTEREST_AD_ACCOUNT_ID` | For keyword metrics | Pinterest ad account ID for keyword volume data |
+| `PINTEREST_AD_ACCOUNT_ID` | For Pinterest keyword metrics | Pinterest ad account ID for keyword volume buckets (e.g. "10K-100K") |
+| `DATAFORSEO_LOGIN` | For exact keyword volumes | DataForSEO account email. Provides precise monthly search volumes sourced from Google Ads data — the highest-fidelity volume source in the pipeline. |
+| `DATAFORSEO_PASSWORD` | For exact keyword volumes | DataForSEO API password. Without this, the tool falls back to Google Suggest signals (High/Medium/Low). |
 
 ### MCP Tools
 
@@ -5778,7 +6062,17 @@ The Pin Score is a composite 0–100 metric based on:
 
 ### Annotation Keywords
 
-Pinterest assigns hidden "interest" keywords to every pin — these annotations drive the recommendation algorithm. The `pinterest-seo-analyze` tool extracts them via three resilient strategies (PWS data, script tags, meta tags). Including annotation keywords in your pin description significantly increases reach.
+Pinterest assigns hidden "interest" keywords to every pin — these annotations drive the recommendation algorithm. The `pinterest-seo-analyze` tool extracts them via five resilient strategies tried in order: PWS data, script tags, meta tags, og-title suffix parsing, and `/ideas/` breadcrumb URL extraction (the only strategy that works on unauthenticated competitor pages). Including annotation keywords in your pin description significantly increases reach.
+
+### Keyword Volume Data (DataForSEO)
+
+Annotation keywords extracted from analyzed pins are automatically enriched with search volume data through a three-tier waterfall:
+
+1. **Pinterest Ads API** (requires `PINTEREST_AD_ACCOUNT_ID`) — Pinterest-native volume buckets
+2. **DataForSEO** (requires `DATAFORSEO_LOGIN` + `DATAFORSEO_PASSWORD`) — exact monthly search volumes from Google Ads data
+3. **Google Suggest** (free, no key required) — approximate High/Medium/Low signal as a fallback
+
+The Keyword Opportunities table in each SEO report shows which source provided each keyword's data. DataForSEO is recommended for precise volume numbers; without it the engine still functions using Google Suggest estimates.
 
 ### Pinterest Marketer Skill
 

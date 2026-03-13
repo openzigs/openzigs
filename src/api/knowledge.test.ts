@@ -21,11 +21,12 @@ vi.mock("node:fs/promises", () => ({
 function createMockKnowledgeService() {
   return {
     getStats: vi.fn().mockResolvedValue({ totalDocuments: 5, totalChunks: 100 }),
-    listDocuments: vi.fn(() => [{ id: "d1", name: "test.pdf" }]),
+    listDocuments: vi.fn((): Record<string, unknown>[] => [{ id: "d1", name: "test.pdf" }]),
     search: vi.fn().mockResolvedValue([{ chunk: "result", score: 0.9 }]),
     reindexAll: vi.fn().mockResolvedValue(undefined),
     reindexDocument: vi.fn().mockResolvedValue(undefined),
     deleteDocument: vi.fn().mockResolvedValue(undefined),
+    updateDocumentMeta: vi.fn().mockResolvedValue(undefined),
     getConfig: vi.fn(() => ({
       directory: "/tmp/knowledge",
       watchEnabled: true,
@@ -299,6 +300,156 @@ describe("Knowledge API router", () => {
       ks.deleteDocument.mockRejectedValue(new Error("Delete failed"));
       const res = await request(app).delete("/knowledge/documents/d1");
       expect(res.status).toBe(500);
+    });
+  });
+
+  // ── PATCH /documents/:documentId ────────────────────────────
+
+  describe("PATCH /documents/:documentId", () => {
+    it("updates visibility and category", async () => {
+      const { app, ks } = buildApp();
+      ks.updateDocumentMeta = vi.fn().mockResolvedValue(undefined);
+      ks.listDocuments.mockReturnValue([{ id: "d1", name: "test.pdf", visibility: "internal", category: "document" }]);
+      const res = await request(app).patch("/knowledge/documents/d1").send({ visibility: "public", category: "media" });
+      expect(res.status).toBe(200);
+      expect(res.body.ok).toBe(true);
+      expect(res.body.visibility).toBe("public");
+      expect(res.body.category).toBe("media");
+      expect(ks.updateDocumentMeta).toHaveBeenCalledWith("d1", "public", "media");
+    });
+
+    it("returns 404 for unknown document", async () => {
+      const { app, ks } = buildApp();
+      ks.listDocuments.mockReturnValue([]);
+      const res = await request(app).patch("/knowledge/documents/missing").send({ visibility: "public" });
+      expect(res.status).toBe(404);
+    });
+
+    it("rejects invalid visibility", async () => {
+      const { app } = buildApp();
+      const res = await request(app).patch("/knowledge/documents/d1").send({ visibility: "bad" });
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain("visibility");
+    });
+
+    it("rejects invalid category", async () => {
+      const { app } = buildApp();
+      const res = await request(app).patch("/knowledge/documents/d1").send({ category: "nope" });
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain("category");
+    });
+
+    it("uses defaults when only visibility provided", async () => {
+      const { app, ks } = buildApp();
+      ks.updateDocumentMeta = vi.fn().mockResolvedValue(undefined);
+      ks.listDocuments.mockReturnValue([{ id: "d1", visibility: "internal", category: "document" }]);
+      const res = await request(app).patch("/knowledge/documents/d1").send({ visibility: "private" });
+      expect(res.status).toBe(200);
+      expect(res.body.visibility).toBe("private");
+      expect(res.body.category).toBe("document");
+    });
+  });
+
+  // ── PUT /config (full happy-path with persistence) ──────────
+
+  describe("PUT /config (persistence)", () => {
+    it("updates directory and persists to config file", async () => {
+      const { app, ks } = buildApp();
+      ks.updateConfig.mockResolvedValue({
+        directory: "/new/knowledge",
+        watchEnabled: true,
+        mediaModel: "gpt-4o",
+        minScore: 0.3,
+        searchMode: "hybrid",
+      });
+      const res = await request(app).put("/knowledge/config").send({ directory: "/new/knowledge" });
+      expect(res.status).toBe(200);
+      expect(res.body.ok).toBe(true);
+      expect(res.body.config.directory).toBe("/new/knowledge");
+      expect(ks.updateConfig).toHaveBeenCalledWith({ directory: "/new/knowledge" });
+    });
+
+    it("updates mediaModel", async () => {
+      const { app, ks } = buildApp();
+      const res = await request(app).put("/knowledge/config").send({ mediaModel: "gpt-4o-mini" });
+      expect(res.status).toBe(200);
+      expect(ks.updateConfig).toHaveBeenCalledWith({ mediaModel: "gpt-4o-mini" });
+    });
+
+    it("updates minScore", async () => {
+      const { app, ks } = buildApp();
+      const res = await request(app).put("/knowledge/config").send({ minScore: 0.5 });
+      expect(res.status).toBe(200);
+      expect(ks.updateConfig).toHaveBeenCalledWith({ minScore: 0.5 });
+    });
+  });
+
+  // ── POST /search (filter branches) ──────────────────────────
+
+  describe("POST /search (filters)", () => {
+    it("passes category filter to service", async () => {
+      const { app, ks } = buildApp();
+      const res = await request(app).post("/knowledge/search").send({ query: "test", category: "media" });
+      expect(res.status).toBe(200);
+      expect(ks.search).toHaveBeenCalledWith(
+        "test", 10,
+        expect.objectContaining({ filter: { categories: ["media"] } }),
+      );
+    });
+
+    it("passes visibility filter to service", async () => {
+      const { app, ks } = buildApp();
+      const res = await request(app).post("/knowledge/search").send({ query: "test", visibility: "public" });
+      expect(res.status).toBe(200);
+      expect(ks.search).toHaveBeenCalledWith(
+        "test", 10,
+        expect.objectContaining({ filter: { visibility: "public" } }),
+      );
+    });
+
+    it("combines category and visibility filters", async () => {
+      const { app, ks } = buildApp();
+      const res = await request(app).post("/knowledge/search").send({ query: "test", category: "document", visibility: "internal" });
+      expect(res.status).toBe(200);
+      expect(ks.search).toHaveBeenCalledWith(
+        "test", 10,
+        expect.objectContaining({ filter: { categories: ["document"], visibility: "internal" } }),
+      );
+    });
+  });
+
+  // ── GET /keyframes/:documentId/:frameIndex (success) ────────
+
+  describe("GET /keyframes/:documentId/:frameIndex (success)", () => {
+    it("serves keyframe JPEG image", async () => {
+      const { app, ks } = buildApp();
+      ks.getKeyframeImagePath.mockResolvedValue("/tmp/keyframes/d1/kf_0.jpg");
+      const mfs = (await import("node:fs/promises")).default as unknown as Record<string, ReturnType<typeof vi.fn>>;
+      mfs.readFile.mockResolvedValueOnce(Buffer.from("fake-jpeg-data"));
+      const res = await request(app).get("/knowledge/keyframes/d1/0");
+      expect(res.status).toBe(200);
+      expect(res.headers["content-type"]).toContain("image/jpeg");
+    });
+  });
+
+  // ── POST /convert (edge cases) ──────────────────────────────
+
+  describe("POST /convert (edge cases)", () => {
+    it("resolves tilde paths", async () => {
+      const { app } = buildApp();
+      const res = await request(app).post("/knowledge/convert").send({ filePath: "~/docs/test.pdf" });
+      expect(res.status).toBe(200);
+      expect(res.body.ok).toBe(true);
+    });
+
+    it("handles copy failure gracefully", async () => {
+      const { app } = buildApp();
+      const mfs = (await import("node:fs/promises")).default as unknown as Record<string, ReturnType<typeof vi.fn>>;
+      mfs.copyFile.mockRejectedValueOnce(new Error("EACCES"));
+      const res = await request(app).post("/knowledge/convert").send({ filePath: "/tmp/test.pdf" });
+      expect(res.status).toBe(200);
+      // Individual result should have ok:false
+      expect(res.body.results[0].ok).toBe(false);
     });
   });
 });

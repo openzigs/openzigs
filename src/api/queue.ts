@@ -415,12 +415,24 @@ export const createQueueRouter = ({ queueMaster, repo, characterRepo, knowledgeS
       const type = req.query.type as string | undefined;
       const source = req.query.source as string | undefined;
       const projectId = req.query.projectId as string | undefined;
+      const folder = req.query.folder as string | undefined;
       const limit = req.query.limit ? Number(req.query.limit) : 50;
       const offset = req.query.offset ? Number(req.query.offset) : 0;
 
-      const assets = repo.listAssets({ type, source, projectId, limit, offset });
-      const total = repo.countAssets({ type, source, projectId });
+      const assets = repo.listAssets({ type, source, projectId, folder, limit, offset });
+      const total = repo.countAssets({ type, source, projectId, folder });
       res.json({ assets, total });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  // ── GET /assets/folders — List all folders with counts ──
+  router.get("/assets/folders", (_req, res) => {
+    try {
+      const folders = repo.listFolders();
+      res.json({ folders });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       res.status(500).json({ error: msg });
@@ -519,6 +531,25 @@ export const createQueueRouter = ({ queueMaster, repo, characterRepo, knowledgeS
       }
 
       res.json({ ok: true, visibility: newVisibility, category: newCategory });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  // ── PATCH /assets/:id/folder — Move asset to folder ────
+  router.patch("/assets/:id/folder", (req, res) => {
+    try {
+      const { folder } = req.body as { folder?: string | null };
+      if (folder !== null && folder !== undefined && typeof folder !== "string") {
+        res.status(400).json({ error: "folder must be a string or null" });
+        return;
+      }
+      const asset = repo.getAsset(req.params.id);
+      if (!asset) { res.status(404).json({ error: "Asset not found" }); return; }
+      const sanitized = folder ? folder.trim().replace(/[<>:"|?*]/g, "").slice(0, 100) : null;
+      repo.updateAssetFolder(req.params.id, sanitized);
+      res.json({ ok: true, folder: sanitized });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       res.status(500).json({ error: msg });

@@ -34,6 +34,7 @@ import {
   Clapperboard,
   Pencil,
   Check,
+  FolderPlus,
 } from "lucide-react";
 import { InlineModelPicker } from "@/components/model-picker-select";
 import { AskAiPanel, AskAiButton, PAGE_CONTEXTS } from "@/components/ask-ai";
@@ -59,6 +60,7 @@ interface GalleryAsset {
   job_id: string | null;
   project_id: string | null;
   tags: string[] | null;
+  folder: string | null;
   created_at: string;
   updated_at: string;
   knowledge_visibility: "public" | "internal" | "private";
@@ -170,15 +172,19 @@ export default function GalleryPage() {
   const [showStudio, setShowStudio] = useState(false);
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
   const [askAiOpen, setAskAiOpen] = useState(false);
+  const [folderFilter, setFolderFilter] = useState<string>("");
+  const [creatingFolder, setCreatingFolder] = useState(false);
+  const [newFolderName, setNewFolderName] = useState("");
 
   // ── Queries ─────────────────────────────────────────
 
   const assetsQuery = useQuery({
-    queryKey: ["gallery-assets", typeFilter, sourceFilter],
+    queryKey: ["gallery-assets", typeFilter, sourceFilter, folderFilter],
     queryFn: () => {
       const params = new URLSearchParams();
       if (typeFilter) params.set("type", typeFilter);
       if (sourceFilter) params.set("source", sourceFilter);
+      if (folderFilter) params.set("folder", folderFilter);
       params.set("limit", "100");
       return fetchJson<{ assets: GalleryAsset[]; total: number }>(`/api/queue/assets?${params.toString()}`);
     },
@@ -189,6 +195,12 @@ export default function GalleryPage() {
     queryKey: ["queue-stats"],
     queryFn: () => fetchJson<QueueStats>("/api/queue/jobs/stats"),
     refetchInterval: 5000,
+  });
+
+  const foldersQuery = useQuery({
+    queryKey: ["gallery-folders"],
+    queryFn: () => fetchJson<{ folders: { folder: string; count: number }[] }>("/api/queue/assets/folders"),
+    refetchInterval: 10000,
   });
 
   const nodesQuery = useQuery({
@@ -331,6 +343,20 @@ export default function GalleryPage() {
       showToast("Description updated", "success");
     },
     onError: (err) => showToast(`Update failed: ${err.message}`, "error"),
+  });
+
+  const folderMutation = useMutation({
+    mutationFn: ({ id, folder }: { id: string; folder: string | null }) =>
+      fetchJson(`/api/queue/assets/${id}/folder`, {
+        method: "PATCH",
+        body: JSON.stringify({ folder }),
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["gallery-assets"] });
+      queryClient.invalidateQueries({ queryKey: ["gallery-folders"] });
+      showToast("Folder updated", "success");
+    },
+    onError: (err) => showToast(`Folder update failed: ${err.message}`, "error"),
   });
 
   const [pendingDelete, setPendingDelete] = useState<GalleryAsset | null>(null);
@@ -555,6 +581,61 @@ export default function GalleryPage() {
             <option value="director">Director</option>
             <option value="ingested">Ingested</option>
           </select>
+          {/* Folder filter */}
+          <div className="flex items-center gap-1">
+            <select
+              value={folderFilter}
+              onChange={(e) => setFolderFilter(e.target.value)}
+              className="rounded-lg border border-border bg-card px-3 py-2 text-sm text-foreground"
+            >
+              <option value="">All Folders</option>
+              {(foldersQuery.data?.folders ?? []).map((f) => (
+                <option key={f.folder} value={f.folder}>
+                  {f.folder} ({f.count})
+                </option>
+              ))}
+            </select>
+            {!creatingFolder ? (
+              <button
+                onClick={() => setCreatingFolder(true)}
+                className="rounded-lg border border-border bg-card p-2 text-muted-foreground hover:bg-muted"
+                title="Create folder"
+              >
+                <FolderPlus className="h-4 w-4" />
+              </button>
+            ) : (
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  const name = newFolderName.trim();
+                  if (name) {
+                    setFolderFilter(name);
+                    setCreatingFolder(false);
+                    setNewFolderName("");
+                  }
+                }}
+                className="flex items-center gap-1"
+              >
+                <input
+                  autoFocus
+                  value={newFolderName}
+                  onChange={(e) => setNewFolderName(e.target.value)}
+                  placeholder="Folder name"
+                  className="w-32 rounded-lg border border-border bg-card px-2 py-1.5 text-sm text-foreground"
+                />
+                <button type="submit" className="rounded-lg bg-primary px-2 py-1.5 text-xs font-semibold text-primary-foreground">
+                  <Check className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setCreatingFolder(false); setNewFolderName(""); }}
+                  className="rounded-lg border border-border px-2 py-1.5 text-xs text-muted-foreground"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </form>
+            )}
+          </div>
         </div>
         <div className="flex-1" />
         {/* View toggle */}
@@ -597,7 +678,7 @@ export default function GalleryPage() {
       )}
 
       {/* Gallery Grid / List */}
-      <SectionCard title={`Assets (${assets.length})`}>
+      <SectionCard title={`Assets${folderFilter ? ` — ${folderFilter}` : ""} (${assets.length})`}>
         {assetsQuery.isLoading ? (
           <div className="flex items-center justify-center py-12">
             <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
@@ -621,6 +702,8 @@ export default function GalleryPage() {
                 onKnowledgeChange={(vis, cat) => knowledgeMutation.mutate({ id: asset.id, visibility: vis, category: cat })}
                 onRename={(filename) => renameMutation.mutate({ id: asset.id, filename })}
                 onDescription={(prompt) => descriptionMutation.mutate({ id: asset.id, prompt })}
+                onFolderChange={(folder) => folderMutation.mutate({ id: asset.id, folder })}
+                folders={(foldersQuery.data?.folders ?? []).map((f) => f.folder)}
               />
             ))}
           </div>
@@ -639,6 +722,8 @@ export default function GalleryPage() {
                 onKnowledgeChange={(vis, cat) => knowledgeMutation.mutate({ id: asset.id, visibility: vis, category: cat })}
                 onRename={(filename) => renameMutation.mutate({ id: asset.id, filename })}
                 onDescription={(prompt) => descriptionMutation.mutate({ id: asset.id, prompt })}
+                onFolderChange={(folder) => folderMutation.mutate({ id: asset.id, folder })}
+                folders={(foldersQuery.data?.folders ?? []).map((f) => f.folder)}
               />
             ))}
           </div>
@@ -786,6 +871,8 @@ function AssetCard({
   onKnowledgeChange,
   onRename,
   onDescription,
+  onFolderChange,
+  folders,
 }: {
   asset: GalleryAsset;
   onPreview: () => void;
@@ -797,6 +884,8 @@ function AssetCard({
   onKnowledgeChange: (visibility: string, category: string) => void;
   onRename: (filename: string) => void;
   onDescription: (prompt: string) => void;
+  onFolderChange: (folder: string | null) => void;
+  folders: string[];
 }) {
   const [editing, setEditing] = useState(false);
   const [editName, setEditName] = useState(asset.filename);
@@ -956,6 +1045,19 @@ function AssetCard({
             ))}
           </div>
         )}
+        {/* Folder */}
+        <div className="mt-1.5" onClick={(e) => e.stopPropagation()}>
+          <select
+            value={asset.folder ?? ""}
+            onChange={(e) => onFolderChange(e.target.value || null)}
+            className="w-full rounded border border-border bg-muted px-2 py-0.5 text-[10px] text-muted-foreground"
+          >
+            <option value="">No folder</option>
+            {folders.map((f) => (
+              <option key={f} value={f}>{f}</option>
+            ))}
+          </select>
+        </div>
         {/* Knowledge labels */}
         <KnowledgeLabels
           visibility={asset.knowledge_visibility ?? "public"}
@@ -985,6 +1087,8 @@ function AssetListRow({
   onKnowledgeChange,
   onRename,
   onDescription,
+  onFolderChange,
+  folders,
 }: {
   asset: GalleryAsset;
   onPreview: () => void;
@@ -996,6 +1100,8 @@ function AssetListRow({
   onKnowledgeChange: (visibility: string, category: string) => void;
   onRename: (filename: string) => void;
   onDescription: (prompt: string) => void;
+  onFolderChange: (folder: string | null) => void;
+  folders: string[];
 }) {
   const [editing, setEditing] = useState(false);
   const [editName, setEditName] = useState(asset.filename);
@@ -1089,6 +1195,17 @@ function AssetListRow({
               {asset.width && asset.height && <span>{asset.width}×{asset.height}</span>}
               {asset.duration_seconds && <span>{asset.duration_seconds.toFixed(1)}s</span>}
               <span>{new Date(asset.created_at).toLocaleDateString()}</span>
+              <select
+                value={asset.folder ?? ""}
+                onChange={(e) => { e.stopPropagation(); onFolderChange(e.target.value || null); }}
+                onClick={(e) => e.stopPropagation()}
+                className="rounded border border-border bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground"
+              >
+                <option value="">No folder</option>
+                {folders.map((f) => (
+                  <option key={f} value={f}>{f}</option>
+                ))}
+              </select>
             </div>
             <KnowledgeLabels
               visibility={asset.knowledge_visibility ?? "public"}

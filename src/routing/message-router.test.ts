@@ -607,4 +607,145 @@ describe("MessageRouter", () => {
     // Should have called destroySession with the session ID
     expect(copilot.destroyedSessions).toContain(sessionId);
   });
+
+  it("injects brand voice into system message", async () => {
+    const baseDir = await createTempDir();
+    cleanupDirs.push(baseDir);
+
+    const db = new Database(":memory:");
+    db.pragma("journal_mode = WAL");
+    const personalityManager = new PersonalityManager({ db });
+    personalityManager.update({ enabled: false });
+
+    const channelManager = new ChannelManager();
+    const telegram = new RecordingChannel("telegram");
+    await telegram.connect();
+    channelManager.register(telegram);
+
+    const sessionManager = new SessionManager({ baseDir });
+    const copilot = new FakeCopilot("branded reply");
+
+    const brandVoiceService = {
+      getActiveVoicePromptBlock: () => "[Brand Voice]\nAlways use casual, friendly tone. Avoid jargon.",
+    } as unknown as import("../personality/brand-voice-service.js").BrandVoiceService;
+
+    const router = new MessageRouter({
+      channelManager, sessionManager, copilot, personalityManager, brandVoiceService,
+    });
+
+    await router.route(baseMessage({ content: "Write a tweet" }));
+
+    expect(copilot.lastSystemMessage).toBeDefined();
+    expect(copilot.lastSystemMessage!.content).toContain("[Brand Voice]");
+    expect(copilot.lastSystemMessage!.content).toContain("casual, friendly tone");
+  });
+
+  it("tracks chat messages as tasks when taskEngine is provided", async () => {
+    const baseDir = await createTempDir();
+    cleanupDirs.push(baseDir);
+
+    const channelManager = new ChannelManager();
+    const telegram = new RecordingChannel("telegram");
+    await telegram.connect();
+    channelManager.register(telegram);
+
+    const sessionManager = new SessionManager({ baseDir });
+    const copilot = new FakeCopilot("task-tracked reply");
+
+    const submittedTasks: Array<{ goal: string; trigger: string }> = [];
+    const completedTasks: Array<{ id: string; result: string }> = [];
+    const taskEngine = {
+      submit: (params: { trigger: string; goal: string }) => {
+        const task = { id: `task-${submittedTasks.length + 1}`, ...params };
+        submittedTasks.push(params);
+        return task;
+      },
+      complete: (id: string, result: string) => {
+        completedTasks.push({ id, result });
+      },
+      fail: () => {},
+    } as unknown as import("../tasks/task-engine.js").TaskEngine;
+
+    const router = new MessageRouter({
+      channelManager, sessionManager, copilot, taskEngine,
+    });
+
+    await router.route(baseMessage({ content: "Summarize this document" }));
+
+    expect(submittedTasks).toHaveLength(1);
+    expect(submittedTasks[0].trigger).toBe("chat");
+    expect(submittedTasks[0].goal).toContain("Summarize this document");
+    expect(completedTasks).toHaveLength(1);
+    expect(completedTasks[0].result).toContain("task-tracked reply");
+  });
+
+  it("marks task as failed when copilot.chat throws", async () => {
+    const baseDir = await createTempDir();
+    cleanupDirs.push(baseDir);
+
+    const channelManager = new ChannelManager();
+    const telegram = new RecordingChannel("telegram");
+    await telegram.connect();
+    channelManager.register(telegram);
+
+    const sessionManager = new SessionManager({ baseDir });
+
+    const failingCopilot = {
+      ...new FakeCopilot("ok"),
+      chat: async function* () { // eslint-disable-line require-yield
+        throw new Error("Model unavailable");
+      },
+    } as unknown as CopilotWrapper;
+
+    const failedTasks: Array<{ id: string; error: string }> = [];
+    const taskEngine = {
+      submit: () => ({ id: "task-err" }),
+      complete: () => {},
+      fail: (id: string, error: string) => {
+        failedTasks.push({ id, error });
+      },
+    } as unknown as import("../tasks/task-engine.js").TaskEngine;
+
+    const router = new MessageRouter({
+      channelManager, sessionManager, copilot: failingCopilot, taskEngine,
+    });
+
+    await expect(router.route(baseMessage({ content: "Hello" }))).rejects.toThrow("Model unavailable");
+    expect(failedTasks).toHaveLength(1);
+    expect(failedTasks[0].error).toContain("Model unavailable");
+  });
+
+  it("throws when channel is not registered", async () => {
+    const baseDir = await createTempDir();
+    cleanupDirs.push(baseDir);
+
+    const channelManager = new ChannelManager();
+    const sessionManager = new SessionManager({ baseDir });
+    const copilot = new FakeCopilot("ok");
+    const router = new MessageRouter({ channelManager, sessionManager, copilot });
+
+    await expect(
+      router.route(baseMessage({ channelType: "unknown" as never }))
+    ).rejects.toThrow("Channel not registered");
+  });
+
+  it("open access mode allows all users", async () => {
+    const baseDir = await createTempDir();
+    cleanupDirs.push(baseDir);
+
+    const channelManager = new ChannelManager();
+    const telegram = new RecordingChannel("telegram");
+    await telegram.connect();
+    channelManager.register(telegram);
+
+    const sessionManager = new SessionManager({ baseDir });
+    const copilot = new FakeCopilot("open reply");
+    const router = new MessageRouter({
+      channelManager, sessionManager, copilot,
+      accessControl: { mode: "open", allowedUsers: [], blockedUsers: [] },
+    });
+
+    await router.route(baseMessage({ userId: "random-user" }));
+    expect(telegram.messages).toHaveLength(1);
+  });
 });

@@ -1,5 +1,48 @@
 # Architecture
 
+## Table of Contents
+
+- [High-Level Overview](#high-level-overview)
+- [Architecture Decision: Why Copilot SDK?](#architecture-decision-why-copilot-sdk)
+- [System Diagram](#system-diagram)
+- [UI Architecture](#ui-architecture)
+- [Cloudflare Tunnel (Sidecar Pattern)](#cloudflare-tunnel-sidecar-pattern)
+- [Python AI Sidecars](#python-ai-sidecars)
+- [MCP Host Architecture](#mcp-host-architecture)
+- [Component Breakdown](#component-breakdown)
+- [Voice Interface Layer](#voice-interface-layer)
+- [Director Mode (Video Production)](#director-mode-video-production)
+- [Advanced Director Mode (Voice Cloning & Visual Injection)](#advanced-director-mode-voice-cloning--visual-injection)
+- [Security Model](#security-model)
+- [MCP Tool Catalog](#mcp-tool-catalog)
+- [API Surface](#api-surface)
+- [Networking](#networking)
+- [Granular Tool Configuration](#granular-tool-configuration)
+- [Session & Context Management](#session--context-management)
+- [SDK Session History, Replay & Analytics](#sdk-session-history-replay--analytics-epic-334)
+- [Interactive Clarifications](#interactive-clarifications-onuserinputrequest)
+- [Human-in-the-Loop Execution](#human-in-the-loop-execution-detailed)
+- [Recursive Agent Chaining (Task Engine)](#recursive-agent-chaining-task-engine)
+- [Native Orchestration — Hierarchical Agents](#native-orchestration--hierarchical-agents)
+- [AI-Assisted Configuration & Enterprise Webhooks](#ai-assisted-configuration--enterprise-webhooks)
+- [UX 2.0: Advanced Workflow Builder](#ux-20-advanced-workflow-builder-epic-163)
+- [Template Portability & Sharing](#template-portability--sharing-epic-188)
+- [Sentinel — Autonomous System Monitor & SRE Agent](#sentinel--autonomous-system-monitor--sre-agent-epic-179--194)
+- [Local Knowledge Base — Markdown-First RAG](#local-knowledge-base--markdown-first-rag-epic-215)
+- [Agent Memory — GitHub Repository-Backed Persistent Memory](#agent-memory--github-repository-backed-persistent-memory-epic-334)
+- [Secret Vault & Browser Hardening](#secret-vault--browser-hardening)
+- [Presenter Mode (Interactive Playback, Blackboard & Quizzes)](#presenter-mode-interactive-playback-blackboard--quizzes)
+- [Multiplayer Presenter Mode — P2P Watch Party & Guest Invite](#multiplayer-presenter-mode--p2p-watch-party--guest-invite)
+- [Social Brain — Unified Social Inbox, CRM & AI Automation](#social-brain--unified-social-inbox-crm--ai-automation-epic-291)
+- [Director Mode Studio & Advanced Compositing](#director-mode-studio--advanced-compositing-epic-313)
+- [Distributed Media Queue, Worker Nodes & Asset Gallery](#distributed-media-queue-worker-nodes--asset-gallery-epic-325)
+- [Music Studio — Voice2Voice Pipeline & Smart Remix Lab](#music-studio--voice2voice-pipeline--smart-remix-lab-epic-380-389-402)
+- [Character Lab — LoRA Training & Identity Consistency](#character-lab--lora-training--identity-consistency-epic-374)
+- [Autonomous Agent Testing Architecture](#autonomous-agent-testing-architecture)
+- [Studio Mode: Screen Capture, Trim & AI Auto-Cut](#studio-mode-screen-capture-trim--ai-auto-cut)
+
+---
+
 ## High-Level Overview
 
 OpenZigs is a **local-first AI agent platform** built on top of the [GitHub Copilot SDK](https://github.com/github/copilot-sdk). It follows a "Safe Agent" philosophy:
@@ -236,7 +279,7 @@ The frontend is a **Next.js 14 App Router** application in the `ui/` directory. 
 | `/scheduler` | `scheduler/page.tsx` | Cron job CRUD with action types, prompt linking, model overrides, AI assist, live execution events |
 | `/tasks` | `task-dashboard.tsx` | Background task queue, status filters, cancel, recursive child expansion, real-time updates |
 | `/social` | `social/page.tsx` | Social Brain — unified inbox, CRM, automation rules, AI auto-reply |
-| `/director` | `director/page.tsx` | Director Mode — Video Wizard tab (production pipeline) + Blog to YouTube tab (blog conversion) + My Drafts tab (browse/reopen saved drafts) |
+| `/director` | `director/page.tsx` | Director Mode — Video Wizard tab (production pipeline) + Blog to YouTube tab (blog conversion) + My Drafts tab (browse/reopen saved drafts) + Capture & Trim tab (screen recorder, video trimmer, AI auto-cut) |
 | `/director/studio/[id]` | `director/studio/[id]/page.tsx` | Timeline Studio — @remotion/player preview, multi-track timeline, scene inspector, save/auto-save, render history |
 | `/workbench` | `workbench/page.tsx` | Rich Markdown editor (MDXEditor) with file sidebar, live file system CRUD, Cmd/Ctrl+S save |
 
@@ -316,7 +359,10 @@ ui/
 │           ├── scene-inspector.tsx # Per-scene property editor
 │           ├── studio-toolbar.tsx  # Save + Renders + Render actions with dirty indicator
 │           ├── render-history.tsx  # Render history dropdown with status/progress/download
-│           └── framing-panel.tsx   # 9:16 horizontal crop offset slider
+│           ├── framing-panel.tsx   # 9:16 horizontal crop offset slider
+│           ├── screen-recorder.tsx # In-app screen capture (MediaRecorder + getDisplayMedia)
+│           ├── video-trimmer.tsx   # Visual trim timeline with AI-suggested cuts
+│           └── capture-and-trim-panel.tsx # Composite panel: recorder + gallery + trimmer
 └── lib/
     ├── api.ts              # Shared fetchJson utility + API_BASE
     ├── types.ts            # All shared TypeScript types
@@ -3715,6 +3761,106 @@ When the AI retrieves media assets from the knowledge base, it can format them f
 
 ---
 
+## Agent Memory — GitHub Repository-Backed Persistent Memory (Epic #334)
+
+### Overview
+
+The Agent Memory system provides **persistent, cross-session memory** backed by a private GitHub repository. Memories are structured markdown files stored in a dedicated repo (default: `openzigs-memory`) and automatically injected into Copilot SDK sessions as supplementary context, improving response quality over time.
+
+Agent Memory operates in two modes:
+
+1. **Automatic (LLM-driven)** — The AI proactively discovers and saves important facts during conversations using the `save-memory` MCP tool. When the user mentions their YouTube channel name, preferred video format, or social media schedule, the AI stores these for future sessions. This mirrors GitHub's native Copilot Memory design — the model decides what's worth remembering.
+
+2. **Manual** — Users create, edit, and delete memories via the Admin UI or API.
+
+Since OpenZigs is a standalone agent (not running inside VS Code), it cannot use VS Code's `.github/copilot-instructions.md` instruction files or GitHub's native Copilot Memory (which only applies to GitHub.com features). The Agent Memory system serves this purpose — it is OpenZigs' instruction and context memory system.
+
+### Architecture
+
+| Component | Path | Purpose |
+|---|---|---|
+| `MemoryManager` | `src/memory/memory-manager.ts` | Core service — GitHub REST API client, CRUD operations, caching, session context builder |
+| `memory-tools.ts` | `src/mcp/tools/memory-tools.ts` | `save-memory` and `recall-memories` MCP tools (LLM-driven auto-memory) |
+| `memory.ts` | `src/api/memory.ts` | Admin API router mounted at `/api/admin/memory` |
+| `MemoryPanel` | `ui/components/admin/memory-panel.tsx` | Admin UI — setup, CRUD, category filtering |
+| Config | `src/config/index.ts` (`MemoryAppConfig`) | `enabled`, `owner`, `repo`, `cacheTtlMs` |
+
+### MCP Tools
+
+| Tool | Risk | Description |
+|---|---|---|
+| `save-memory` | Low | Save a fact, preference, or convention to persistent storage. Detects duplicates and updates existing memories. Auto-approved during interactive chat. |
+| `recall-memories` | Low | Search stored memories by category or keyword. Returns matching memories with metadata. |
+
+The `save-memory` tool is included in `INTERACTIVE_CHAT_AUTO_APPROVE_TOOLS` — no human approval needed during interactive chat. The system prompt instructs the LLM to proactively save facts it discovers about the user's preferences, workflows, accounts, and conventions.
+
+### Memory Categories
+
+| Category | Purpose |
+|---|---|
+| `conventions` | Standards, naming rules, format requirements, posting schedules |
+| `patterns` | Recurring workflows, integration patterns, automation sequences |
+| `decisions` | Technology choices, trade-offs, strategy rationale |
+| `preferences` | User likes/dislikes, style choices, scheduling habits, format preferences |
+| `context` | Project context, domain knowledge, account details, business rules |
+
+### Storage Format
+
+Each memory is a markdown file with YAML frontmatter:
+
+```markdown
+---
+title: YouTube Channel Info
+createdAt: 2026-03-10T10:00:00Z
+updatedAt: 2026-03-10T14:30:00Z
+---
+
+Channel name is "TechReviews". Target audience is software developers.
+Preferred upload schedule: Tuesday and Thursday at 10am EST.
+```
+
+Files are stored at `memories/{category}/{slug}.md` in the GitHub repository.
+
+### Session Injection Flow
+
+```
+1. User sends message to chat
+2. CopilotWrapper.chat() calls memoryContextProvider()
+3. memoryManager.buildSessionContext() fetches memories (TTL-cached)
+4. Memories are formatted as markdown grouped by category
+5. Markdown is appended to SDK systemMessage (mode: "append")
+6. AI receives memory context + instruction to save new facts
+7. During conversation, AI may call save-memory to store discoveries
+8. New memories are available in the next session
+```
+
+### API Endpoints
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/api/admin/memory/config` | Get config + connection status |
+| `PUT` | `/api/admin/memory/config` | Update config (persisted to `~/.openzigs/config.json`) |
+| `POST` | `/api/admin/memory/setup` | Create the memory repository on GitHub |
+| `GET` | `/api/admin/memory/status` | Connection health check |
+| `GET` | `/api/admin/memory/categories` | List available categories |
+| `GET` | `/api/admin/memory/memories` | List all memories (optional `?category=` filter) |
+| `POST` | `/api/admin/memory/memories` | Create a new memory |
+| `GET` | `/api/admin/memory/memories/:id` | Get a single memory |
+| `PUT` | `/api/admin/memory/memories/:id` | Update a memory |
+| `DELETE` | `/api/admin/memory/memories/:id` | Delete a memory |
+
+### Setup Flow
+
+1. Configure `GITHUB_PERSONAL_ACCESS_TOKEN` in `.env` with `repo` scope
+2. Enable memory in Admin → Agent Memory panel
+3. Click "Create Memory Repository" — creates a private repo with directory structure
+4. Start chatting — the AI will automatically save important facts it discovers
+5. Optionally create manual memories via the admin UI or API
+
+### Tracking: [Epic #334](https://github.com/mgcronin/openzigs/issues/334)
+
+---
+
 ## Secret Vault & Browser Hardening
 
 ### Overview
@@ -5018,3 +5164,117 @@ Uses `routeToToolSequence(prompt)` to validate that natural language intents res
 3. **Scheduled content pipeline** — Creates brand voice, schedules media generation
 
 ### Tracking: [Epic #394](https://github.com/mgcronin/openzigs/issues/394)
+
+---
+
+## Studio Mode: Screen Capture, Trim & AI Auto-Cut
+
+### Overview
+
+Studio Mode extends the Director page with in-app screen recording, lossless video trimming via FFmpeg, and AI-powered redundancy detection using the Vision LLM and Whisper STT. All operations integrate with the existing gallery asset system and are exposed as MCP tools for agentic workflows.
+
+### Architecture
+
+```
+┌─────────────────────────────────────────────────┐
+│  UI (Next.js)                                   │
+│  ┌──────────────┐ ┌──────────────┐              │
+│  │ScreenRecorder│ │ VideoTrimmer │              │
+│  │(MediaRecorder │ │(timeline +   │              │
+│  │+getDisplayMe-│ │ AI suggest)  │              │
+│  │ dia)         │ │              │              │
+│  └──────┬───────┘ └──────┬───────┘              │
+│         │upload          │trim / analyze        │
+└─────────┼────────────────┼──────────────────────┘
+          │                │
+    ┌─────▼────────────────▼─────┐
+    │  Studio Router              │
+    │  POST /api/studio/upload   │
+    │  POST /api/studio/trim     │
+    │  POST /api/studio/analyze  │
+    │  GET  /api/studio/trim/:id │
+    │  GET  /api/studio/analyze/ │
+    └─────┬──────────┬───────────┘
+          │          │
+    ┌─────▼────┐ ┌──▼──────────┐
+    │TrimWorker│ │AnalyzeWorker│
+    │(FFmpeg   │ │(FFmpeg frame│
+    │ stream   │ │ extract +   │
+    │ copy)    │ │ Whisper STT │
+    └──────────┘ │ + Vision LLM│
+                 └─────────────┘
+```
+
+### Backend Components
+
+#### TrimWorker (`src/video/trim-worker.ts`)
+
+EventEmitter-based worker that performs lossless FFmpeg trimming:
+
+| Feature | Detail |
+|---|---|
+| **Method** | FFmpeg stream copy (`-c copy`) — no re-encoding, near-instant |
+| **Concurrency** | Configurable `maxConcurrent` (default 2), automatic queue advancement |
+| **Job Lifecycle** | `queued → processing → complete / failed` |
+| **Output** | Trimmed file saved to `~/.openzigs/gallery/` with `_trimmed_` suffix |
+| **Events** | `trim:queued`, `trim:processing`, `trim:complete`, `trim:failed` |
+| **Container Support** | Detects `.webm` and skips `-movflags +faststart` (MP4-only flag) |
+
+#### AnalyzeWorker (`src/video/analyze-worker.ts`)
+
+Multi-stage AI analysis pipeline:
+
+1. **Frame Extraction** — FFmpeg at 1fps, 320px width, JPEG output
+2. **Audio Transcription** — Extracts 16kHz WAV, sends to Whisper STT sidecar (`POST /transcribe`)
+3. **Vision LLM Analysis** — Batches frames (default 60/batch) with transcript context, asks LLM to identify redundant/low-quality segments
+4. **Cut Merging** — Consolidates overlapping/adjacent suggested cuts
+
+Returns `SuggestedCut[]` with `{ startTime, endTime, reason, confidence }`.
+
+#### Studio Router (`src/api/studio.ts`)
+
+Express router mounted at `/api/studio` with Zod request validation:
+
+| Endpoint | Purpose |
+|---|---|
+| `POST /trim` | Submit trim job (assetId + startTime + endTime) |
+| `GET /trim/:jobId` | Poll trim job status |
+| `POST /analyze` | Submit AI analysis job (assetId) |
+| `GET /analyze/:jobId` | Poll analysis status + suggested cuts |
+| `POST /upload-recording` | Save raw screen recording blob to gallery |
+
+#### MCP Tools (`src/mcp/tools/studio-tools.ts`)
+
+| Tool | Risk Level | Timeout | Description |
+|---|---|---|---|
+| `trim-video` | medium | 120s | Lossless trim of gallery video asset |
+| `analyze-video-redundancy` | low | 300s | AI frame + transcript analysis for redundant segments |
+
+### Frontend Components
+
+#### ScreenRecorder (`ui/components/director/studio/screen-recorder.tsx`)
+
+Uses `navigator.mediaDevices.getDisplayMedia` + `MediaRecorder` API:
+
+- **Audio Sources**: System audio (via `getDisplayMedia({ audio: true })`) and microphone (via `getUserMedia`)
+- **VU Meter**: Real-time volume visualization using `AudioContext` + `AnalyserNode`
+- **States**: `idle → requesting → recording → paused → stopped → uploading`
+- **Output**: WebM (VP9 + Opus), uploaded to gallery via `/api/studio/upload-recording`
+
+#### VideoTrimmer (`ui/components/director/studio/video-trimmer.tsx`)
+
+Visual timeline editor with AI integration:
+
+- **Dual-Handle Slider**: Draggable start/end handles on a proportional timeline
+- **Precise Inputs**: Manual start/end time fields (seconds)
+- **AI Suggested Cuts**: Red overlay markers from `analyze-video-redundancy`, clickable to apply
+- **Real-Time Updates**: Socket.IO events for trim completion/failure
+
+### Socket.IO Events
+
+All worker events are forwarded to connected clients via Socket.IO in `server.ts`:
+
+- `trim:queued`, `trim:processing`, `trim:complete`, `trim:failed`
+- `analyze:queued`, `analyze:progress`, `analyze:complete`, `analyze:failed`
+
+### Tracking: [Epic #438](https://github.com/mgcronin/openzigs/issues/438)

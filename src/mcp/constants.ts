@@ -59,4 +59,5 @@ export const INTERACTIVE_CHAT_AUTO_APPROVE_TOOLS = [
   "send-notification",
   "produce-video",
   "transcribe-audio",
+  "save-memory",
 ];

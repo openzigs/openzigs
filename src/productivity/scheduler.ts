@@ -230,6 +230,13 @@ export class Scheduler extends EventEmitter {
     return rows.map(toJob);
   }
 
+  getByName(name: string): ScheduledJob | null {
+    const row = this.db
+      .prepare("SELECT * FROM scheduled_jobs WHERE name = ? LIMIT 1")
+      .get(name) as StoredJob | undefined;
+    return row ? toJob(row) : null;
+  }
+
   update(id: string, input: UpdateJobInput): ScheduledJob {
     const existing = this.getById(id);
     if (!existing) {
@@ -366,11 +373,14 @@ export class Scheduler extends EventEmitter {
           }
         }
 
+        const inlineGoal = (job.actionPayload as Record<string, unknown>).goal as string | undefined;
         const goal = resolvedPrompt
           ? resolvedPrompt
-          : (promptName
-            ? `Execute scheduled prompt: "${promptName}" (job: ${job.name})`
-            : `Execute scheduled job: "${job.name}"`);
+          : (inlineGoal
+            ? inlineGoal
+            : (promptName
+              ? `Execute scheduled prompt: "${promptName}" (job: ${job.name})`
+              : `Execute scheduled job: "${job.name}"`))
         const context = `Scheduled job ID: ${job.id}\nAction: ${job.actionType}\nPrompt: ${promptName ?? "(none)"}\nPayload: ${JSON.stringify(job.actionPayload)}`;
 
         this.taskEngine.submit(

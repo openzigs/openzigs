@@ -53,6 +53,11 @@ function createMockRepo() {
       return id;
     }),
     isProjectComplete: vi.fn(() => ({ complete: false, total: 3, completed: 1 })),
+    listFolders: vi.fn(() => [{ folder: "renders", count: 2 }, { folder: "exports", count: 1 }]),
+    updateAssetKnowledgeMeta: vi.fn(),
+    updateAssetFolder: vi.fn(),
+    renameAsset: vi.fn(),
+    updateAssetDescription: vi.fn(),
     _jobs: jobs,
     _assets: assets,
   };
@@ -66,6 +71,7 @@ function createMockQueueMaster() {
     ]),
     unloadNode: vi.fn().mockResolvedValue({ ok: true }),
     switchActiveNode: vi.fn().mockResolvedValue({ ok: true }),
+    reportProgress: vi.fn(),
     emit: vi.fn(),
   };
 }
@@ -633,6 +639,235 @@ describe("Queue API router", () => {
       const { app } = buildApp();
       const res = await request(app).get("/q/assets/file/missing.png");
       expect(res.status).toBe(404);
+    });
+  });
+
+  // ── GET /assets/folders ────────────────────────────────────
+
+  describe("GET /assets/folders", () => {
+    it("returns folder list", async () => {
+      const { app } = buildApp();
+      const res = await request(app).get("/q/assets/folders");
+      expect(res.status).toBe(200);
+      expect(res.body.folders).toHaveLength(2);
+      expect(res.body.folders[0].folder).toBe("renders");
+    });
+  });
+
+  // ── PATCH /assets/:id/knowledge ────────────────────────────
+
+  describe("PATCH /assets/:id/knowledge", () => {
+    it("returns 404 for unknown asset", async () => {
+      const { app } = buildApp();
+      const res = await request(app).patch("/q/assets/missing/knowledge").send({ visibility: "public" });
+      expect(res.status).toBe(404);
+    });
+
+    it("returns 400 for invalid visibility", async () => {
+      const { app, repo } = buildApp();
+      repo._assets.set("a1", { id: "a1", type: "image", filename: "test.png" });
+      const res = await request(app).patch("/q/assets/a1/knowledge").send({ visibility: "bogus" });
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain("visibility");
+    });
+
+    it("returns 400 for invalid category", async () => {
+      const { app, repo } = buildApp();
+      repo._assets.set("a1", { id: "a1", type: "image", filename: "test.png" });
+      const res = await request(app).patch("/q/assets/a1/knowledge").send({ category: "bogus" });
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain("category");
+    });
+
+    it("updates knowledge metadata", async () => {
+      const { app, repo } = buildApp();
+      repo._assets.set("a1", { id: "a1", type: "image", filename: "test.png" });
+      const res = await request(app).patch("/q/assets/a1/knowledge").send({ visibility: "internal", category: "document" });
+      expect(res.status).toBe(200);
+      expect(res.body.ok).toBe(true);
+      expect(res.body.visibility).toBe("internal");
+      expect(res.body.category).toBe("document");
+      expect(repo.updateAssetKnowledgeMeta).toHaveBeenCalledWith("a1", "internal", "document");
+    });
+  });
+
+  // ── PATCH /assets/:id/folder ───────────────────────────────
+
+  describe("PATCH /assets/:id/folder", () => {
+    it("returns 404 for unknown asset", async () => {
+      const { app } = buildApp();
+      const res = await request(app).patch("/q/assets/missing/folder").send({ folder: "test" });
+      expect(res.status).toBe(404);
+    });
+
+    it("moves asset to folder", async () => {
+      const { app, repo } = buildApp();
+      repo._assets.set("a1", { id: "a1", type: "image", filename: "test.png" });
+      const res = await request(app).patch("/q/assets/a1/folder").send({ folder: "renders" });
+      expect(res.status).toBe(200);
+      expect(res.body.folder).toBe("renders");
+      expect(repo.updateAssetFolder).toHaveBeenCalledWith("a1", "renders");
+    });
+
+    it("clears folder with null", async () => {
+      const { app, repo } = buildApp();
+      repo._assets.set("a1", { id: "a1", type: "image", filename: "test.png" });
+      const res = await request(app).patch("/q/assets/a1/folder").send({ folder: null });
+      expect(res.status).toBe(200);
+      expect(res.body.folder).toBeNull();
+    });
+  });
+
+  // ── PATCH /assets/:id/rename ───────────────────────────────
+
+  describe("PATCH /assets/:id/rename", () => {
+    it("returns 400 for missing filename", async () => {
+      const { app } = buildApp();
+      const res = await request(app).patch("/q/assets/a1/rename").send({});
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain("filename");
+    });
+
+    it("returns 404 for unknown asset", async () => {
+      const { app } = buildApp();
+      const res = await request(app).patch("/q/assets/missing/rename").send({ filename: "new.png" });
+      expect(res.status).toBe(404);
+    });
+
+    it("renames asset with sanitized basename", async () => {
+      const { app, repo } = buildApp();
+      repo._assets.set("a1", { id: "a1", type: "image", filename: "old.png" });
+      const res = await request(app).patch("/q/assets/a1/rename").send({ filename: "/dodgy/path/new.png" });
+      expect(res.status).toBe(200);
+      expect(res.body.filename).toBe("new.png");
+      expect(repo.renameAsset).toHaveBeenCalledWith("a1", "new.png");
+    });
+  });
+
+  // ── PATCH /assets/:id/description ──────────────────────────
+
+  describe("PATCH /assets/:id/description", () => {
+    it("returns 400 for missing prompt", async () => {
+      const { app } = buildApp();
+      const res = await request(app).patch("/q/assets/a1/description").send({});
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain("prompt");
+    });
+
+    it("returns 404 for unknown asset", async () => {
+      const { app } = buildApp();
+      const res = await request(app).patch("/q/assets/missing/description").send({ prompt: "A cat" });
+      expect(res.status).toBe(404);
+    });
+
+    it("updates description", async () => {
+      const { app, repo } = buildApp();
+      repo._assets.set("a1", { id: "a1", type: "image", filename: "test.png" });
+      const res = await request(app).patch("/q/assets/a1/description").send({ prompt: "Updated description" });
+      expect(res.status).toBe(200);
+      expect(res.body.prompt).toBe("Updated description");
+      expect(repo.updateAssetDescription).toHaveBeenCalledWith("a1", "Updated description");
+    });
+  });
+
+  // ── POST /assets/scenes ────────────────────────────────────
+
+  describe("POST /assets/scenes", () => {
+    it("returns 400 for missing scene", async () => {
+      const { app } = buildApp();
+      const res = await request(app).post("/q/assets/scenes").send({});
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain("scene");
+    });
+
+    it("saves scene asset", async () => {
+      const { app, repo } = buildApp();
+      const res = await request(app).post("/q/assets/scenes").send({
+        scene: { title: "Test Scene", scriptText: "Hello world" },
+        title: "My Scene",
+      });
+      expect(res.status).toBe(200);
+      expect(res.body.id).toBeDefined();
+      expect(repo.createAsset).toHaveBeenCalled();
+    });
+  });
+
+  // ── GET /assets/scenes/:id/data ────────────────────────────
+
+  describe("GET /assets/scenes/:id/data", () => {
+    it("returns 404 for non-scene asset", async () => {
+      const { app, repo } = buildApp();
+      repo._assets.set("a1", { id: "a1", type: "image", filename: "test.png" });
+      const res = await request(app).get("/q/assets/scenes/a1/data");
+      expect(res.status).toBe(404);
+    });
+
+    it("returns 404 for unknown asset", async () => {
+      const { app } = buildApp();
+      const res = await request(app).get("/q/assets/scenes/missing/data");
+      expect(res.status).toBe(404);
+    });
+  });
+
+  // ── GET /assets/:id/file ───────────────────────────────────
+
+  describe("GET /assets/:id/file", () => {
+    it("returns 404 for unknown asset", async () => {
+      const { app } = buildApp();
+      const res = await request(app).get("/q/assets/missing/file");
+      expect(res.status).toBe(404);
+    });
+
+    it("returns 403 for file outside home dir", async () => {
+      const { app, repo } = buildApp();
+      repo._assets.set("a1", { id: "a1", type: "image", filename: "evil.png", file_path: "/etc/passwd" });
+      const res = await request(app).get("/q/assets/a1/file");
+      expect(res.status).toBe(403);
+    });
+  });
+
+  // ── POST /callback/progress ────────────────────────────────
+
+  describe("POST /callback/progress", () => {
+    it("returns 400 for missing job_id", async () => {
+      const { app } = buildApp();
+      const res = await request(app).post("/q/callback/progress").send({});
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain("job_id");
+    });
+
+    it("reports progress", async () => {
+      const { app, queueMaster } = buildApp();
+      const res = await request(app).post("/q/callback/progress").send({
+        job_id: "j1",
+        stage: "rendering",
+        progress: 50,
+        message: "Halfway there",
+      });
+      expect(res.status).toBe(200);
+      expect(res.body.ok).toBe(true);
+      expect(queueMaster.reportProgress).toHaveBeenCalledWith("j1", {
+        stage: "rendering",
+        progress: 50,
+        message: "Halfway there",
+      });
+    });
+  });
+
+  // ── POST /image/generate ───────────────────────────────────
+
+  describe("POST /image/generate", () => {
+    it("returns 400 for missing prompt", async () => {
+      const { app } = buildApp();
+      const res = await request(app).post("/q/image/generate").send({});
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain("prompt");
+    });
+
+    it("returns 400 for empty prompt", async () => {
+      const { app } = buildApp();
+      const res = await request(app).post("/q/image/generate").send({ prompt: "   " });
+      expect(res.status).toBe(400);
     });
   });
 });

@@ -48,6 +48,8 @@ import { createPinterestSeoTools } from "./tools/pinterest-seo-tools.js";
 import { createDraftMediaTools } from "./tools/draft-media-tools.js";
 import { createNotificationTools } from "./tools/notification-tools.js";
 import { createTranscribeAudioTools } from "./tools/transcribe-audio-tools.js";
+import { createStudioTools } from "./tools/studio-tools.js";
+import { createMemoryTools } from "./tools/memory-tools.js";
 import { ToolRegistry, type ToolDefinition } from "./tool-registry.js";
 import type { LocalMcpServerManager } from "./local-mcp-server-manager.js";
 import { AuditLogger } from "../logging/audit-logger.js";
@@ -124,6 +126,12 @@ export type McpServerOptions = {
   notificationChatId?: string;
   /** Audio sidecar URL for transcribe-audio tool. */
   audioSidecarUrl?: string;
+  /** TrimWorker for studio trim-video tool. */
+  trimWorker?: import("../video/trim-worker.js").TrimWorker;
+  /** AnalyzeWorker for studio analyze-video-redundancy tool. */
+  analyzeWorker?: import("../video/analyze-worker.js").AnalyzeWorker;
+  /** MemoryManager for save-memory / recall-memories tools. */
+  memoryManager?: import("../memory/memory-manager.js").MemoryManager;
 };
 
 export type RegisterMcpToolsOptions = Pick<
@@ -168,6 +176,9 @@ export type RegisterMcpToolsOptions = Pick<
   | "channelManager"
   | "notificationChatId"
   | "audioSidecarUrl"
+  | "trimWorker"
+  | "analyzeWorker"
+  | "memoryManager"
 >;
 
 const readFileSchema = z.object({ path: z.string() });
@@ -746,5 +757,21 @@ export const registerMcpTools = (toolRegistry: ToolRegistry, options: RegisterMc
       knowledgeService: options.knowledgeService,
     });
     for (const tool of transcribeTools) { registerTool(tool); }
+  }
+
+  // ── Studio Tools (trim-video, analyze-video-redundancy) ──
+  if (options.trimWorker && options.analyzeWorker && options.mediaQueueRepo) {
+    const studioTools = createStudioTools({
+      trimWorker: options.trimWorker,
+      analyzeWorker: options.analyzeWorker,
+      mediaQueueRepo: options.mediaQueueRepo,
+    });
+    for (const tool of studioTools) { registerTool(tool); }
+  }
+
+  // ── Memory Tools (save-memory, recall-memories) ──
+  if (options.memoryManager) {
+    const memTools = createMemoryTools({ memoryManager: options.memoryManager });
+    for (const tool of memTools) { registerTool(tool); }
   }
 };

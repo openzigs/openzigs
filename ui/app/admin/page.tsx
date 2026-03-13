@@ -18,6 +18,7 @@ import { McpEditorPanel } from "@/components/admin/mcp-editor-panel";
 import { SentinelPanel } from "@/components/admin/sentinel-panel";
 import { KnowledgeConfigPanel } from "@/components/admin/knowledge-config-panel";
 import { VaultPanel } from "@/components/admin/vault-panel";
+import { MemoryPanel } from "@/components/admin/memory-panel";
 import { DirectorPanel } from "@/components/admin/director-panel";
 import { ImageGenPanel } from "@/components/admin/image-gen-panel";
 import { VideoGenPanel } from "@/components/admin/video-gen-panel";
@@ -110,6 +111,10 @@ export default function AdminPage() {
 
         <SectionCard title="Secret Vault" defaultOpen={false}>
           <VaultPanel />
+        </SectionCard>
+
+        <SectionCard title="Agent Memory" defaultOpen={false}>
+          <MemoryPanel />
         </SectionCard>
 
         <SectionCard title="Presenter Mode" defaultOpen={false}>
