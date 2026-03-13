@@ -16,6 +16,22 @@ vi.mock("node:fs", () => ({
   rmSync: vi.fn(),
 }));
 
+const mockAddContentIdea = vi.fn();
+const mockMigrate = vi.fn();
+
+vi.mock("../../productivity/database.js", () => ({
+  getDatabase: vi.fn(() => ({})),
+}));
+
+vi.mock("./pinterest-tracker.js", () => {
+  return {
+    PinterestTrackerRepository: class {
+      migrate() { mockMigrate(); }
+      addContentIdea(data: unknown) { mockAddContentIdea(data); }
+    },
+  };
+});
+
 describe("Pinterest SEO Tools", () => {
   let tools: ToolDefinition[];
   let toolMap: Map<string, ToolDefinition>;
@@ -34,8 +50,8 @@ describe("Pinterest SEO Tools", () => {
   // ─── Factory Tests ──────────────────────────────────
 
   describe("createPinterestSeoTools", () => {
-    it("returns all 8 tools", () => {
-      expect(tools).toHaveLength(8);
+    it("returns all 10 tools", () => {
+      expect(tools).toHaveLength(10);
       const names = tools.map((t) => t.name);
       expect(names).toContain("pinterest-list-boards");
       expect(names).toContain("pinterest-trends");
@@ -45,6 +61,8 @@ describe("Pinterest SEO Tools", () => {
       expect(names).toContain("pinterest-create-pin");
       expect(names).toContain("pinterest-pin-insights");
       expect(names).toContain("pinterest-search-pins");
+      expect(names).toContain("pinterest-content-ideas");
+      expect(names).toContain("pinterest-related-keywords");
     });
 
     it("all tools have category 'social'", () => {
@@ -802,6 +820,515 @@ describe("Pinterest SEO Tools", () => {
       expect(annotations).toContain("Diy And Crafts");
       expect(annotations).toContain("Home Decor");
       expect(annotations).toHaveLength(2);
+    });
+  });
+
+  // ─── pinterest-list-boards ─────────────────────────────────────────
+
+  describe("pinterest-list-boards", () => {
+    const callTool = (args: Record<string, unknown> = {}) =>
+      toolMap.get("pinterest-list-boards")!.handler(args);
+
+    it("returns error when token is not set", async () => {
+      const result = await callTool();
+      expect(result.isError).toBe(true);
+      expect(result.text).toContain("PINTEREST_ACCESS_TOKEN not configured");
+    });
+
+    it("returns boards as markdown table", async () => {
+      process.env.PINTEREST_ACCESS_TOKEN = "test-token";
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        text: () =>
+          Promise.resolve(
+            JSON.stringify({
+              items: [
+                { id: "b1", name: "Board One", pin_count: 42, privacy: "PUBLIC", description: "My first board" },
+                { id: "b2", name: "Board Two", pin_count: 10, privacy: "SECRET", description: null },
+              ],
+            }),
+          ),
+      });
+      const result = await callTool();
+      expect(result.isError).toBeUndefined();
+      expect(result.text).toContain("# Your Pinterest Boards");
+      expect(result.text).toContain("b1");
+      expect(result.text).toContain("Board One");
+      expect(result.text).toContain("42");
+      expect(result.text).toContain("b2");
+      expect(result.text).toContain("_2 boards found_");
+    });
+
+    it("returns message when no boards found", async () => {
+      process.env.PINTEREST_ACCESS_TOKEN = "test-token";
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({ items: [] })),
+      });
+      const result = await callTool();
+      expect(result.text).toContain("No boards found");
+    });
+
+    it("returns API error on fetch failure", async () => {
+      process.env.PINTEREST_ACCESS_TOKEN = "test-token";
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 401,
+        text: () => Promise.resolve("Unauthorized"),
+      });
+      const result = await callTool();
+      expect(result.isError).toBe(true);
+      expect(result.text).toContain("401");
+    });
+  });
+
+  // ─── pinterest-create-pin ──────────────────────────────────────────
+
+  describe("pinterest-create-pin", () => {
+    const callTool = (args: Record<string, unknown>) =>
+      toolMap.get("pinterest-create-pin")!.handler(args);
+
+    it("returns error when token is not set", async () => {
+      const result = await callTool({ board_id: "b1", title: "Test", description: "Desc", image_url: "https://example.com/img.jpg" });
+      expect(result.isError).toBe(true);
+      expect(result.text).toContain("PINTEREST_ACCESS_TOKEN not configured");
+    });
+
+    it("creates a pin with image_url", async () => {
+      process.env.PINTEREST_ACCESS_TOKEN = "test-token";
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        text: () =>
+          Promise.resolve(
+            JSON.stringify({
+              id: "pin-123",
+              board_id: "b1",
+              title: "Test Pin",
+              creative_type: "IMAGE",
+              media: { images: { "400x300": { url: "https://img.test/400.jpg" } } },
+            }),
+          ),
+      });
+      const result = await callTool({
+        board_id: "b1",
+        title: "Test Pin",
+        description: "A test pin description",
+        image_url: "https://example.com/image.jpg",
+        link: "https://example.com",
+        alt_text: "Alt text",
+      });
+      expect(result.isError).toBeUndefined();
+      expect(result.text).toContain("Pin Created Successfully");
+      expect(result.text).toContain("pin-123");
+      // Verify the fetch was called with POST /pins
+      const fetchCall = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+      expect(fetchCall[0]).toContain("/v5/pins");
+      const body = JSON.parse(fetchCall[1].body);
+      expect(body.board_id).toBe("b1");
+      expect(body.media_source.source_type).toBe("image_url");
+    });
+
+    it("returns error when image_path file not found", async () => {
+      process.env.PINTEREST_ACCESS_TOKEN = "test-token";
+      // fs.existsSync is mocked to return false
+      const result = await callTool({
+        board_id: "b1",
+        title: "Test",
+        description: "Desc",
+        image_path: "/nonexistent/image.png",
+      });
+      expect(result.isError).toBe(true);
+      expect(result.text).toContain("Image file not found");
+    });
+
+    it("handles API error response", async () => {
+      process.env.PINTEREST_ACCESS_TOKEN = "test-token";
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 400,
+        text: () => Promise.resolve("Bad Request: missing board_id"),
+      });
+      const result = await callTool({
+        board_id: "b1",
+        title: "Test",
+        description: "Desc",
+        image_url: "https://example.com/img.jpg",
+      });
+      expect(result.isError).toBe(true);
+      expect(result.text).toContain("400");
+    });
+  });
+
+  // ─── pinterest-pin-insights ────────────────────────────────────────
+
+  describe("pinterest-pin-insights", () => {
+    const callTool = (args: Record<string, unknown>) =>
+      toolMap.get("pinterest-pin-insights")!.handler(args);
+
+    it("returns error when token is not set", async () => {
+      const result = await callTool({ query: "test topic" });
+      expect(result.isError).toBe(true);
+      expect(result.text).toContain("PINTEREST_ACCESS_TOKEN not configured");
+    });
+
+    it("returns insights with trends and keyword data", async () => {
+      process.env.PINTEREST_ACCESS_TOKEN = "test-token";
+      globalThis.fetch = vi.fn()
+        .mockResolvedValueOnce({
+          // Trends API call
+          ok: true,
+          text: () =>
+            Promise.resolve(
+              JSON.stringify({
+                trends: [
+                  { keyword: "test topic ideas", pct_growth_wow: 5, pct_growth_mom: 10, pct_growth_yoy: 50 },
+                  { keyword: "unrelated", pct_growth_wow: 1, pct_growth_mom: 2, pct_growth_yoy: 3 },
+                ],
+              }),
+            ),
+        })
+        .mockResolvedValueOnce({
+          // Keyword metrics API call
+          ok: true,
+          text: () =>
+            Promise.resolve(
+              JSON.stringify([
+                { keyword: "test topic", search_volume: 1000, competition: "MEDIUM" },
+              ]),
+            ),
+        });
+      const result = await callTool({
+        query: "test topic",
+        include_trend_data: true,
+        include_keyword_metrics: true,
+      });
+      expect(result.isError).toBeUndefined();
+      expect(result.text).toContain("test topic");
+    });
+
+    it("returns insights without optional sections", async () => {
+      process.env.PINTEREST_ACCESS_TOKEN = "test-token";
+      const result = await callTool({
+        query: "minimal query",
+        include_trend_data: false,
+        include_keyword_metrics: false,
+        include_pin_analysis: false,
+      });
+      expect(result.isError).toBeUndefined();
+      expect(result.text).toContain("minimal query");
+    });
+  });
+
+  // ─── pinterest-search-pins ─────────────────────────────────────────
+
+  describe("pinterest-search-pins", () => {
+    const callTool = (args: Record<string, unknown>) =>
+      toolMap.get("pinterest-search-pins")!.handler(args);
+
+    it("returns error when token is not set", async () => {
+      const result = await callTool({ query: "test topic" });
+      expect(result.isError).toBe(true);
+      expect(result.text).toContain("PINTEREST_ACCESS_TOKEN not configured");
+    });
+
+    it("analyzes seed pins by ID", async () => {
+      process.env.PINTEREST_ACCESS_TOKEN = "test-token";
+      // Mock pin page fetch + trends + keyword metrics
+      globalThis.fetch = vi.fn()
+        .mockResolvedValueOnce({
+          // fetchPinPageData for pin-abc: the page HTML
+          ok: true,
+          text: () =>
+            Promise.resolve(
+              `<html><head>
+                <script id="__PWS_DATA__">window.__PWS_DATA__ = ${JSON.stringify({
+                  props: { initialReduxState: { pins: { "pin-abc": {
+                    id: "pin-abc", title: "Test Pin", description: "A great pin about nails",
+                    link: "https://example.com", repins: 100, board_url: "/user/board/",
+                    media: { images: { original: { url: "https://img.test/orig.jpg" } } },
+                  } } } },
+                })};</script>
+              </head><body></body></html>`,
+            ),
+        })
+        .mockResolvedValueOnce({
+          // trends API call
+          ok: true,
+          text: () => Promise.resolve(JSON.stringify({ trends: [] })),
+        })
+        .mockResolvedValueOnce({
+          // keyword metrics API call
+          ok: true,
+          text: () => Promise.resolve(JSON.stringify([])),
+        });
+      const result = await callTool({
+        query: "nails",
+        pin_ids: ["pin-abc"],
+        include_board_discovery: false,
+      });
+      expect(result.isError).toBeUndefined();
+      expect(result.text).toContain("nails");
+    });
+
+    it("handles empty seed pins gracefully", async () => {
+      process.env.PINTEREST_ACCESS_TOKEN = "test-token";
+      globalThis.fetch = vi.fn()
+        .mockResolvedValueOnce({
+          // trends API
+          ok: true,
+          text: () => Promise.resolve(JSON.stringify({ trends: [] })),
+        })
+        .mockResolvedValueOnce({
+          // keyword metrics
+          ok: true,
+          text: () => Promise.resolve(JSON.stringify([])),
+        });
+      const result = await callTool({ query: "test" });
+      expect(result.isError).toBeUndefined();
+      expect(result.text).toContain("test");
+    });
+  });
+
+  // ─── pinterest-content-ideas ────────────────────────
+
+  describe("pinterest-content-ideas", () => {
+    const callTool = (args: Record<string, unknown>) =>
+      toolMap.get("pinterest-content-ideas")!.handler(args);
+
+    /** Build a fetch mock for the content-ideas flow:
+     *  call 1: Pinterest trends API
+     *  call 2: Google Suggest (topic expansion)
+     *  call 3+: enrichKeywordMetrics calls (Pinterest ads + Google Suggest fallback)
+     */
+    function stubContentIdeasFetch(opts?: { trendsError?: boolean }) {
+      const trendResponse = opts?.trendsError
+        ? { ok: false, status: 403, text: () => Promise.resolve("Forbidden") }
+        : {
+            ok: true,
+            text: () =>
+              Promise.resolve(
+                JSON.stringify({
+                  trends: [
+                    { keyword: "home office setup", pct_growth_mom: 20, pct_growth_yoy: 50 },
+                    { keyword: "home office ideas", pct_growth_mom: 15, pct_growth_yoy: 30 },
+                  ],
+                }),
+              ),
+          };
+
+      const googleSuggestResponse = {
+        ok: true,
+        json: () =>
+          Promise.resolve([
+            "home office decor pinterest",
+            ["home office decor ideas", "home office decor diy", "small home office decor"],
+            [],
+            [],
+            { "google:suggestrelevance": [800, 600, 500] },
+          ]),
+      };
+
+      const googleSuggestFallback = {
+        ok: true,
+        json: () =>
+          Promise.resolve([
+            "home office",
+            ["home office", "home office decor"],
+            [],
+            [],
+            { "google:suggestrelevance": [900, 700] },
+          ]),
+      };
+
+      const fetchMock = vi.fn()
+        .mockResolvedValueOnce(trendResponse)       // Pinterest trends
+        .mockResolvedValueOnce(googleSuggestResponse) // Google Suggest expansion
+        .mockResolvedValue(googleSuggestFallback);    // Any remaining Google Suggest calls
+
+      vi.stubGlobal("fetch", fetchMock);
+      return fetchMock;
+    }
+
+    it("requires PINTEREST_ACCESS_TOKEN", async () => {
+      const result = await callTool({ topic: "home office decor" });
+      expect(result.isError).toBe(true);
+      expect(result.text).toContain("PINTEREST_ACCESS_TOKEN");
+    });
+
+    it("generates content ideas and returns markdown", async () => {
+      process.env.PINTEREST_ACCESS_TOKEN = "test-token";
+      mockAddContentIdea.mockClear();
+      stubContentIdeasFetch();
+
+      const result = await callTool({ topic: "home office decor" });
+      expect(result.isError).toBeUndefined();
+      expect(result.text).toContain("Pinterest Content Ideas");
+      expect(result.text).toContain("home office decor");
+      expect(result.text).toContain("saved to your Content Ideas tracker");
+    });
+
+    it("saves ideas to tracker DB", async () => {
+      process.env.PINTEREST_ACCESS_TOKEN = "test-token";
+      mockAddContentIdea.mockClear();
+      stubContentIdeasFetch();
+
+      await callTool({ topic: "home office decor", count: 3 });
+      expect(mockAddContentIdea).toHaveBeenCalled();
+      const call = mockAddContentIdea.mock.calls[0][0];
+      expect(call.topic).toBe("home office decor");
+      expect(call.status).toBe("new");
+      expect(call.suggested_title).toBeTruthy();
+    });
+
+    it("respects count parameter", async () => {
+      process.env.PINTEREST_ACCESS_TOKEN = "test-token";
+      mockAddContentIdea.mockClear();
+      stubContentIdeasFetch();
+
+      const result = await callTool({ topic: "home office decor", count: 2 });
+      expect(result.isError).toBeUndefined();
+      // Should cap at the requested count
+      expect(mockAddContentIdea.mock.calls.length).toBeLessThanOrEqual(2);
+    });
+
+    it("handles trends API error gracefully", async () => {
+      process.env.PINTEREST_ACCESS_TOKEN = "test-token";
+      stubContentIdeasFetch({ trendsError: true });
+
+      const result = await callTool({ topic: "home office decor" });
+      // Should still succeed with Google Suggest data alone
+      expect(result.isError).toBeUndefined();
+      expect(result.text).toContain("Pinterest Content Ideas");
+    });
+
+    it("uses custom region", async () => {
+      process.env.PINTEREST_ACCESS_TOKEN = "test-token";
+      const fetchMock = stubContentIdeasFetch();
+
+      await callTool({ topic: "home office", region: "GB" });
+      const firstCallUrl = fetchMock.mock.calls[0][0] as string;
+      expect(firstCallUrl).toContain("/GB/");
+    });
+
+    it("reports output includes region and topic metadata", async () => {
+      process.env.PINTEREST_ACCESS_TOKEN = "test-token";
+      stubContentIdeasFetch();
+
+      const result = await callTool({ topic: "nail art", region: "CA" });
+      expect(result.text).toContain("Region:** CA");
+    });
+  });
+
+  // ─── pinterest-related-keywords ─────────────────────
+
+  describe("pinterest-related-keywords", () => {
+    const callTool = (args: Record<string, unknown>) =>
+      toolMap.get("pinterest-related-keywords")!.handler(args);
+
+    /** Build a fetch mock for the related-keywords flow:
+     *  calls 1-5: Google Suggest for 5 variations
+     *  call 6: Pinterest autocomplete
+     *  calls 7+: enrichKeywordMetrics
+     */
+    function stubRelatedKeywordsFetch(opts?: { pinterestAcError?: boolean }) {
+      const makeSuggestResponse = (suggestions: string[]) => ({
+        ok: true,
+        json: () =>
+          Promise.resolve([
+            "query",
+            suggestions,
+            [],
+            [],
+            { "google:suggestrelevance": suggestions.map((_, i) => 900 - i * 100) },
+          ]),
+      });
+
+      const pinterestAcResponse = opts?.pinterestAcError
+        ? { ok: false, status: 500, text: () => Promise.resolve("error") }
+        : {
+            ok: true,
+            text: () =>
+              Promise.resolve(
+                JSON.stringify([
+                  { keyword: "home office decor modern" },
+                  { keyword: "home office decor minimalist" },
+                ]),
+              ),
+          };
+
+      const fetchMock = vi.fn()
+        // 5 Google Suggest calls for variations
+        .mockResolvedValueOnce(makeSuggestResponse(["home office decor ideas", "home office decor diy"]))
+        .mockResolvedValueOnce(makeSuggestResponse(["home office decor ideas pinterest"]))
+        .mockResolvedValueOnce(makeSuggestResponse(["home office decor inspiration board"]))
+        .mockResolvedValueOnce(makeSuggestResponse(["home office decor diy budget"]))
+        .mockResolvedValueOnce(makeSuggestResponse(["best home office decor 2025"]))
+        // Pinterest autocomplete
+        .mockResolvedValueOnce(pinterestAcResponse)
+        // Remaining calls (enrichKeywordMetrics Google Suggest fallback)
+        .mockResolvedValue(makeSuggestResponse(["home office", "home office setup"]));
+
+      vi.stubGlobal("fetch", fetchMock);
+      return fetchMock;
+    }
+
+    it("requires PINTEREST_ACCESS_TOKEN", async () => {
+      const result = await callTool({ seed: "home office decor" });
+      expect(result.isError).toBe(true);
+      expect(result.text).toContain("PINTEREST_ACCESS_TOKEN");
+    });
+
+    it("expands seed keyword and returns markdown table", async () => {
+      process.env.PINTEREST_ACCESS_TOKEN = "test-token";
+      stubRelatedKeywordsFetch();
+
+      const result = await callTool({ seed: "home office decor" });
+      expect(result.isError).toBeUndefined();
+      expect(result.text).toContain("Related Keywords");
+      expect(result.text).toContain("home office decor");
+      expect(result.text).toContain("| Keyword |");
+      expect(result.text).toContain("Suggested Pin Strategy");
+    });
+
+    it("includes Pinterest autocomplete keywords", async () => {
+      process.env.PINTEREST_ACCESS_TOKEN = "test-token";
+      stubRelatedKeywordsFetch();
+
+      const result = await callTool({ seed: "home office decor" });
+      expect(result.text).toContain("home office decor modern");
+    });
+
+    it("handles Pinterest autocomplete failure gracefully", async () => {
+      process.env.PINTEREST_ACCESS_TOKEN = "test-token";
+      stubRelatedKeywordsFetch({ pinterestAcError: true });
+
+      const result = await callTool({ seed: "home office decor" });
+      expect(result.isError).toBeUndefined();
+      expect(result.text).toContain("Related Keywords");
+    });
+
+    it("uses custom region", async () => {
+      process.env.PINTEREST_ACCESS_TOKEN = "test-token";
+      stubRelatedKeywordsFetch();
+
+      const result = await callTool({ seed: "home office", region: "DE" });
+      expect(result.text).toContain("Region:** DE");
+    });
+
+    it("includes opportunity scoring with stars", async () => {
+      process.env.PINTEREST_ACCESS_TOKEN = "test-token";
+      stubRelatedKeywordsFetch();
+
+      const result = await callTool({ seed: "home office decor" });
+      expect(result.text).toMatch(/[★☆]/);
+    });
+
+    it("saves report to file", async () => {
+      process.env.PINTEREST_ACCESS_TOKEN = "test-token";
+      stubRelatedKeywordsFetch();
+
+      const result = await callTool({ seed: "home office decor" });
+      expect(result.text).toContain("Report saved to");
     });
   });
 });

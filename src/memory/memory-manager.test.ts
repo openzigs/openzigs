@@ -1,6 +1,7 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   MemoryManager,
+  createGitHubApiClient,
   type GitHubApiClient,
   type MemoryConfig,
   type GitHubContent,
@@ -399,5 +400,141 @@ describe("MemoryManager", () => {
       expect(ctx).toContain("### ESM");
       expect(ctx).toContain("Use .js extensions");
     });
+  });
+});
+
+// ── createGitHubApiClient ──────────────────────────────────────────────
+
+describe("createGitHubApiClient", () => {
+  const originalFetch = globalThis.fetch;
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  function mockFetch(status: number, body: unknown, ok = status >= 200 && status < 300): void {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok,
+      status,
+      json: vi.fn().mockResolvedValue(body),
+      text: vi.fn().mockResolvedValue(typeof body === "string" ? body : JSON.stringify(body)),
+    }) as unknown as typeof fetch;
+  }
+
+  it("getAuthenticatedUser returns login", async () => {
+    mockFetch(200, { login: "octocat" });
+    const client = createGitHubApiClient("test-token");
+    const user = await client.getAuthenticatedUser();
+    expect(user.login).toBe("octocat");
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      "https://api.github.com/user",
+      expect.objectContaining({ headers: expect.objectContaining({ Authorization: "Bearer test-token" }) }),
+    );
+  });
+
+  it("getAuthenticatedUser throws on non-ok response", async () => {
+    mockFetch(401, "Unauthorized", false);
+    const client = createGitHubApiClient("bad-token");
+    await expect(client.getAuthenticatedUser()).rejects.toThrow("401");
+  });
+
+  it("getRepo returns repo info", async () => {
+    mockFetch(200, { full_name: "owner/repo" });
+    const client = createGitHubApiClient("tok");
+    const repo = await client.getRepo("owner", "repo");
+    expect(repo?.full_name).toBe("owner/repo");
+  });
+
+  it("getRepo returns null for 404", async () => {
+    mockFetch(404, null, false);
+    const client = createGitHubApiClient("tok");
+    const repo = await client.getRepo("owner", "missing");
+    expect(repo).toBeNull();
+  });
+
+  it("getRepo throws on server error", async () => {
+    mockFetch(500, "Server Error", false);
+    const client = createGitHubApiClient("tok");
+    await expect(client.getRepo("owner", "repo")).rejects.toThrow("500");
+  });
+
+  it("createRepo sends POST with correct body", async () => {
+    mockFetch(201, { full_name: "user/new-repo" });
+    const client = createGitHubApiClient("tok");
+    const repo = await client.createRepo("new-repo", true, "My desc");
+    expect(repo.full_name).toBe("user/new-repo");
+    const fetchCall = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    const body = JSON.parse(fetchCall[1].body as string);
+    expect(body.name).toBe("new-repo");
+    expect(body.private).toBe(true);
+    expect(body.description).toBe("My desc");
+  });
+
+  it("createRepo throws on failure with response text", async () => {
+    mockFetch(422, "Validation Failed", false);
+    const client = createGitHubApiClient("tok");
+    await expect(client.createRepo("bad", true, "")).rejects.toThrow("Validation Failed");
+  });
+
+  it("getContents returns content", async () => {
+    mockFetch(200, { name: "file.md", path: "memories/file.md", sha: "abc", type: "file" });
+    const client = createGitHubApiClient("tok");
+    const content = await client.getContents("owner", "repo", "memories/file.md");
+    expect(content).toEqual(expect.objectContaining({ name: "file.md" }));
+  });
+
+  it("getContents returns null for 404", async () => {
+    mockFetch(404, null, false);
+    const client = createGitHubApiClient("tok");
+    const content = await client.getContents("owner", "repo", "missing");
+    expect(content).toBeNull();
+  });
+
+  it("getContents throws on server error", async () => {
+    mockFetch(503, "Unavailable", false);
+    const client = createGitHubApiClient("tok");
+    await expect(client.getContents("owner", "repo", "path")).rejects.toThrow("503");
+  });
+
+  it("createOrUpdateFile sends PUT with base64 content", async () => {
+    mockFetch(200, { content: { sha: "newsha" } });
+    const client = createGitHubApiClient("tok");
+    const result = await client.createOrUpdateFile("owner", "repo", "path.md", "commit msg", "file content");
+    expect(result.content.sha).toBe("newsha");
+    const fetchCall = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    const body = JSON.parse(fetchCall[1].body as string);
+    expect(body.message).toBe("commit msg");
+    expect(Buffer.from(body.content, "base64").toString("utf-8")).toBe("file content");
+  });
+
+  it("createOrUpdateFile includes sha when updating", async () => {
+    mockFetch(200, { content: { sha: "updated" } });
+    const client = createGitHubApiClient("tok");
+    await client.createOrUpdateFile("owner", "repo", "path.md", "update", "content", "oldsha");
+    const fetchCall = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    const body = JSON.parse(fetchCall[1].body as string);
+    expect(body.sha).toBe("oldsha");
+  });
+
+  it("createOrUpdateFile throws on failure", async () => {
+    mockFetch(409, "Conflict", false);
+    const client = createGitHubApiClient("tok");
+    await expect(client.createOrUpdateFile("o", "r", "p", "m", "c")).rejects.toThrow("Conflict");
+  });
+
+  it("deleteFile sends DELETE with sha", async () => {
+    mockFetch(200, {});
+    const client = createGitHubApiClient("tok");
+    await client.deleteFile("owner", "repo", "path.md", "delete msg", "sha123");
+    const fetchCall = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(fetchCall[1].method).toBe("DELETE");
+    const body = JSON.parse(fetchCall[1].body as string);
+    expect(body.sha).toBe("sha123");
+  });
+
+  it("deleteFile throws on failure", async () => {
+    mockFetch(422, "Unprocessable", false);
+    const client = createGitHubApiClient("tok");
+    await expect(client.deleteFile("o", "r", "p", "m", "s")).rejects.toThrow("Unprocessable");
   });
 });

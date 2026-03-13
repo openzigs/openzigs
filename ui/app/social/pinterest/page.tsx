@@ -2,10 +2,10 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { fetchJson } from "@/lib/api";
 import { SectionCard } from "@/components/section-card";
-import { ToastContainer } from "@/components/toast";
+import { ToastContainer, showToast } from "@/components/toast";
 import {
   BarChart,
   Bar,
@@ -18,7 +18,25 @@ import {
   ResponsiveContainer,
   Cell,
 } from "recharts";
-import { ArrowLeft, TrendingUp, Search, BarChart3, FileText, ExternalLink } from "lucide-react";
+import {
+  ArrowLeft,
+  TrendingUp,
+  Search,
+  BarChart3,
+  FileText,
+  ExternalLink,
+  Lightbulb,
+  Target,
+  Eye,
+  MousePointerClick,
+  Bookmark,
+  Trash2,
+  Pause,
+  Play,
+  Archive,
+  Plus,
+  RefreshCw,
+} from "lucide-react";
 
 // ── Types ──
 
@@ -33,6 +51,52 @@ type ReportListItem = {
 type PinterestStatus = {
   connected: boolean;
   reportCount: number;
+};
+
+type TrackedPin = {
+  pin_id: string;
+  title: string | null;
+  topic: string | null;
+  board_id: string | null;
+  link: string | null;
+  initial_score: number | null;
+  created_at: string;
+  last_checked: string | null;
+  status: "active" | "paused" | "archived";
+};
+
+type PinSnapshot = {
+  id: number;
+  pin_id: string;
+  checked_at: string;
+  impressions: number;
+  pin_clicks: number;
+  saves: number;
+  outbound_clicks: number;
+  reactions: number;
+  comments: number;
+};
+
+type ContentIdea = {
+  id: number;
+  topic: string;
+  suggested_title: string;
+  suggested_description: string;
+  target_keywords: string;
+  difficulty: string;
+  estimated_volume: string;
+  source_data: string;
+  created_at: string;
+  status: "new" | "created" | "dismissed";
+  pin_id: string | null;
+};
+
+type PinSummary = {
+  pin: TrackedPin;
+  latest: PinSnapshot | null;
+  first: PinSnapshot | null;
+  totalSnapshots: number;
+  daysSinceCreated: number;
 };
 
 // ── Hooks ──
@@ -59,6 +123,36 @@ function usePinterestReport(filename: string | null) {
   });
 }
 
+function useTrackedPins() {
+  return useQuery<{ pins: TrackedPin[] }>({
+    queryKey: ["pinterest-tracked-pins"],
+    queryFn: () => fetchJson("/api/pinterest/tracker/pins"),
+  });
+}
+
+function usePinSnapshots(pinId: string | null) {
+  return useQuery<{ snapshots: PinSnapshot[] }>({
+    queryKey: ["pinterest-snapshots", pinId],
+    queryFn: () => fetchJson(`/api/pinterest/tracker/pins/${pinId}/snapshots`),
+    enabled: !!pinId,
+  });
+}
+
+function usePinSummary(pinId: string | null) {
+  return useQuery<PinSummary>({
+    queryKey: ["pinterest-pin-summary", pinId],
+    queryFn: () => fetchJson(`/api/pinterest/tracker/pins/${pinId}`),
+    enabled: !!pinId,
+  });
+}
+
+function useContentIdeas() {
+  return useQuery<{ ideas: ContentIdea[] }>({
+    queryKey: ["pinterest-content-ideas"],
+    queryFn: () => fetchJson("/api/pinterest/tracker/ideas"),
+  });
+}
+
 // ── Helpers ──
 
 const TYPE_LABELS: Record<string, string> = {
@@ -66,6 +160,10 @@ const TYPE_LABELS: Record<string, string> = {
   "keyword-metrics": "Keyword Metrics",
   analytics: "Analytics",
   "seo-analysis": "SEO Analysis",
+  "content-ideas": "Content Ideas",
+  "related-keywords": "Related Keywords",
+  "search-pins": "Search Pins",
+  "pin-insights": "Pin Insights",
 };
 
 const TYPE_COLORS: Record<string, string> = {
@@ -73,9 +171,15 @@ const TYPE_COLORS: Record<string, string> = {
   "keyword-metrics": "bg-blue-500/10 text-blue-600 dark:text-blue-400",
   analytics: "bg-green-500/10 text-green-600 dark:text-green-400",
   "seo-analysis": "bg-orange-500/10 text-orange-600 dark:text-orange-400",
+  "content-ideas": "bg-pink-500/10 text-pink-600 dark:text-pink-400",
+  "related-keywords": "bg-cyan-500/10 text-cyan-600 dark:text-cyan-400",
+  "search-pins": "bg-indigo-500/10 text-indigo-600 dark:text-indigo-400",
+  "pin-insights": "bg-amber-500/10 text-amber-600 dark:text-amber-400",
 };
 
 const CHART_COLORS = ["#8b5cf6", "#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#ec4899"];
+
+type TabId = "tracker" | "ideas" | "reports";
 
 function formatDate(dateStr: string) {
   try {
@@ -94,16 +198,13 @@ function formatDate(dateStr: string) {
 
 export default function PinterestAnalyticsPage() {
   const { data: status } = usePinterestStatus();
-  const { data: reportsData, isLoading } = usePinterestReports();
-  const [selectedReport, setSelectedReport] = useState<string | null>(null);
-  const [typeFilter, setTypeFilter] = useState<string>("all");
+  const [activeTab, setActiveTab] = useState<TabId>("tracker");
 
-  const reports = reportsData?.reports ?? [];
-  const filtered = typeFilter === "all" ? reports : reports.filter((r) => r.type === typeFilter);
-  const typeCounts = reports.reduce<Record<string, number>>((acc, r) => {
-    acc[r.type] = (acc[r.type] ?? 0) + 1;
-    return acc;
-  }, {});
+  const tabs: { id: TabId; label: string; icon: React.ReactNode }[] = [
+    { id: "tracker", label: "Pin Tracker", icon: <Target className="h-4 w-4" /> },
+    { id: "ideas", label: "Content Ideas", icon: <Lightbulb className="h-4 w-4" /> },
+    { id: "reports", label: "Reports", icon: <FileText className="h-4 w-4" /> },
+  ];
 
   return (
     <main className="mx-auto max-w-6xl px-6 pb-12 pt-4">
@@ -122,7 +223,7 @@ export default function PinterestAnalyticsPage() {
         <div>
           <h1 className="text-2xl font-bold">Pinterest Analytics</h1>
           <p className="text-sm text-muted-foreground">
-            View and analyze Pinterest SEO reports, keyword metrics, and trends.
+            Track pin performance, discover content ideas, and analyze SEO reports.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -135,12 +236,481 @@ export default function PinterestAnalyticsPage() {
           >
             {status?.connected ? "Pinterest Connected" : "Not Connected"}
           </span>
-          <span className="text-xs text-muted-foreground">{status?.reportCount ?? 0} reports</span>
         </div>
       </div>
 
+      {/* Tab navigation */}
+      <div className="mb-6 flex gap-1 rounded-xl bg-muted/50 p-1">
+        {tabs.map((tab) => (
+          <button
+            key={tab.id}
+            onClick={() => setActiveTab(tab.id)}
+            className={`flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition ${
+              activeTab === tab.id
+                ? "bg-background text-foreground shadow-sm"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            {tab.icon}
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Tab content */}
+      {activeTab === "tracker" && <PinTrackerTab />}
+      {activeTab === "ideas" && <ContentIdeasTab />}
+      {activeTab === "reports" && <ReportsTab />}
+
+      <ToastContainer />
+    </main>
+  );
+}
+
+// ── Pin Tracker Tab ──
+
+function PinTrackerTab() {
+  const { data, isLoading } = useTrackedPins();
+  const [selectedPin, setSelectedPin] = useState<string | null>(null);
+  const queryClient = useQueryClient();
+
+  const seedMutation = useMutation({
+    mutationFn: () => fetchJson("/api/pinterest/tracker/seed", { method: "POST" }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["pinterest-tracked-pins"] });
+      showToast("Demo data seeded — these are synthetic pins, not real Pinterest data", "success");
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: (pinId: string) => fetchJson(`/api/pinterest/tracker/pins/${pinId}`, { method: "DELETE" }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["pinterest-tracked-pins"] });
+      setSelectedPin(null);
+    },
+  });
+
+  const statusMutation = useMutation({
+    mutationFn: ({ pinId, status }: { pinId: string; status: string }) =>
+      fetchJson(`/api/pinterest/tracker/pins/${pinId}/status`, {
+        method: "PATCH",
+        body: JSON.stringify({ status }),
+      }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["pinterest-tracked-pins"] }),
+  });
+
+  const pins = data?.pins ?? [];
+
+  if (selectedPin) {
+    return <PinDetail pinId={selectedPin} onBack={() => setSelectedPin(null)} />;
+  }
+
+  if (isLoading) return <p className="text-sm text-muted-foreground">Loading tracked pins...</p>;
+
+  if (pins.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center py-20 text-center">
+        <Target className="mb-4 h-12 w-12 text-muted-foreground/30" />
+        <h2 className="text-lg font-semibold">No Pins Being Tracked</h2>
+        <p className="mt-2 max-w-sm text-sm text-muted-foreground">
+          Use the <code className="rounded bg-muted px-1">pinterest-seo-analyze</code> tool in Chat to analyze pins,
+          or seed demo data to explore the dashboard.
+        </p>
+        <p className="mt-1 text-xs text-muted-foreground/70">Demo data uses fake pin IDs for UI testing only.</p>
+        <button
+          onClick={() => seedMutation.mutate()}
+          disabled={seedMutation.isPending}
+          className="mt-4 flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 transition disabled:opacity-50"
+        >
+          <Plus className="h-4 w-4" />
+          {seedMutation.isPending ? "Seeding..." : "Seed Demo Data"}
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      {/* Summary row */}
+      <div className="grid grid-cols-4 gap-4">
+        <MetricCard label="Tracked Pins" value={pins.length} icon={<Target className="h-4 w-4 text-primary" />} />
+        <MetricCard label="Active" value={pins.filter((p) => p.status === "active").length} icon={<Play className="h-4 w-4 text-green-500" />} />
+        <MetricCard label="Paused" value={pins.filter((p) => p.status === "paused").length} icon={<Pause className="h-4 w-4 text-yellow-500" />} />
+        <MetricCard label="Archived" value={pins.filter((p) => p.status === "archived").length} icon={<Archive className="h-4 w-4 text-muted-foreground" />} />
+      </div>
+
+      {/* Pin list */}
+      <div className="space-y-2">
+        {pins.map((pin) => (
+          <div
+            key={pin.pin_id}
+            className="flex items-center gap-4 rounded-xl border border-border bg-card p-4 transition hover:border-primary/30 hover:shadow-sm"
+          >
+            <button
+              onClick={() => setSelectedPin(pin.pin_id)}
+              className="flex flex-1 items-center gap-4 text-left"
+            >
+              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                <Target className="h-5 w-5" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium text-foreground truncate">{pin.title ?? pin.pin_id}</p>
+                <div className="mt-0.5 flex items-center gap-2">
+                  {pin.topic && (
+                    <span className="rounded-full bg-purple-500/10 px-2 py-0.5 text-[10px] font-semibold text-purple-600 dark:text-purple-400">
+                      {pin.topic}
+                    </span>
+                  )}
+                  <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                    pin.status === "active" ? "bg-green-500/10 text-green-600 dark:text-green-400"
+                      : pin.status === "paused" ? "bg-yellow-500/10 text-yellow-600 dark:text-yellow-400"
+                        : "bg-muted text-muted-foreground"
+                  }`}>
+                    {pin.status}
+                  </span>
+                  {pin.initial_score != null && (
+                    <span className="text-[10px] text-muted-foreground">Score: {pin.initial_score}/100</span>
+                  )}
+                  {pin.last_checked && (
+                    <span className="text-[10px] text-muted-foreground">Last checked: {formatDate(pin.last_checked)}</span>
+                  )}
+                </div>
+              </div>
+            </button>
+            <div className="flex items-center gap-1">
+              {pin.status === "active" ? (
+                <button
+                  onClick={() => statusMutation.mutate({ pinId: pin.pin_id, status: "paused" })}
+                  className="rounded-lg p-2 text-muted-foreground hover:bg-muted hover:text-yellow-600 transition"
+                  title="Pause tracking"
+                >
+                  <Pause className="h-4 w-4" />
+                </button>
+              ) : (
+                <button
+                  onClick={() => statusMutation.mutate({ pinId: pin.pin_id, status: "active" })}
+                  className="rounded-lg p-2 text-muted-foreground hover:bg-muted hover:text-green-600 transition"
+                  title="Resume tracking"
+                >
+                  <Play className="h-4 w-4" />
+                </button>
+              )}
+              <button
+                onClick={() => deleteMutation.mutate(pin.pin_id)}
+                className="rounded-lg p-2 text-muted-foreground hover:bg-muted hover:text-red-500 transition"
+                title="Remove pin"
+              >
+                <Trash2 className="h-4 w-4" />
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <button
+        onClick={() => seedMutation.mutate()}
+        disabled={seedMutation.isPending}
+        className="flex items-center gap-2 rounded-lg border border-dashed border-border px-4 py-2 text-sm text-muted-foreground hover:text-foreground hover:border-primary/30 transition"
+      >
+        <RefreshCw className={`h-4 w-4 ${seedMutation.isPending ? "animate-spin" : ""}`} />
+        {seedMutation.isPending ? "Seeding..." : "Seed More Demo Data"}
+      </button>
+    </div>
+  );
+}
+
+// ── Pin Detail ──
+
+function PinDetail({ pinId, onBack }: { pinId: string; onBack: () => void }) {
+  const { data: summary } = usePinSummary(pinId);
+  const { data: snapshotsData } = usePinSnapshots(pinId);
+
+  const snapshots = snapshotsData?.snapshots ?? [];
+  // Reverse to show oldest→newest for charts
+  const chartData = [...snapshots].reverse().map((s) => ({
+    date: s.checked_at.slice(5, 10),
+    impressions: s.impressions,
+    clicks: s.pin_clicks,
+    saves: s.saves,
+    outbound: s.outbound_clicks,
+  }));
+
+  const latest = summary?.latest;
+  const first = summary?.first;
+
+  const delta = (current: number, initial: number) => {
+    const diff = current - initial;
+    if (diff === 0) return "—";
+    return diff > 0 ? `+${diff.toLocaleString()}` : diff.toLocaleString();
+  };
+
+  return (
+    <div className="space-y-6">
+      <button onClick={onBack} className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition">
+        <ArrowLeft className="h-4 w-4" /> Back to tracker
+      </button>
+
+      {summary && (
+        <>
+          <div>
+            <h2 className="text-lg font-bold">{summary.pin.title ?? summary.pin.pin_id}</h2>
+            <div className="mt-1 flex items-center gap-2">
+              {summary.pin.topic && (
+                <span className="rounded-full bg-purple-500/10 px-2 py-0.5 text-xs font-semibold text-purple-600 dark:text-purple-400">
+                  {summary.pin.topic}
+                </span>
+              )}
+              <span className="text-xs text-muted-foreground">{summary.totalSnapshots} snapshots over {summary.daysSinceCreated} days</span>
+            </div>
+          </div>
+
+          {/* Metric summary cards */}
+          <div className="grid grid-cols-4 gap-4">
+            <MetricCardDelta
+              label="Impressions"
+              current={latest?.impressions ?? 0}
+              delta={latest && first ? delta(latest.impressions, first.impressions) : "—"}
+              icon={<Eye className="h-4 w-4 text-purple-500" />}
+            />
+            <MetricCardDelta
+              label="Pin Clicks"
+              current={latest?.pin_clicks ?? 0}
+              delta={latest && first ? delta(latest.pin_clicks, first.pin_clicks) : "—"}
+              icon={<MousePointerClick className="h-4 w-4 text-blue-500" />}
+            />
+            <MetricCardDelta
+              label="Saves"
+              current={latest?.saves ?? 0}
+              delta={latest && first ? delta(latest.saves, first.saves) : "—"}
+              icon={<Bookmark className="h-4 w-4 text-green-500" />}
+            />
+            <MetricCardDelta
+              label="Outbound Clicks"
+              current={latest?.outbound_clicks ?? 0}
+              delta={latest && first ? delta(latest.outbound_clicks, first.outbound_clicks) : "—"}
+              icon={<ExternalLink className="h-4 w-4 text-amber-500" />}
+            />
+          </div>
+        </>
+      )}
+
+      {/* Performance chart */}
+      {chartData.length > 1 && (
+        <SectionCard title="Performance Over Time" defaultOpen>
+          <div className="h-72">
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={chartData} margin={{ left: 10, right: 10, top: 5, bottom: 5 }}>
+                <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
+                <XAxis dataKey="date" className="text-xs" tick={{ fontSize: 10 }} />
+                <YAxis className="text-xs" />
+                <Tooltip
+                  contentStyle={{ backgroundColor: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: "8px" }}
+                />
+                <Line type="monotone" dataKey="impressions" stroke="#8b5cf6" strokeWidth={2} dot={false} name="Impressions" />
+                <Line type="monotone" dataKey="clicks" stroke="#3b82f6" strokeWidth={2} dot={false} name="Pin Clicks" />
+                <Line type="monotone" dataKey="saves" stroke="#10b981" strokeWidth={2} dot={false} name="Saves" />
+                <Line type="monotone" dataKey="outbound" stroke="#f59e0b" strokeWidth={2} dot={false} name="Outbound Clicks" />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+          <div className="mt-2 flex items-center gap-4 text-xs text-muted-foreground">
+            <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-[#8b5cf6]" /> Impressions</span>
+            <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-[#3b82f6]" /> Clicks</span>
+            <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-[#10b981]" /> Saves</span>
+            <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-[#f59e0b]" /> Outbound</span>
+          </div>
+        </SectionCard>
+      )}
+    </div>
+  );
+}
+
+// ── Content Ideas Tab ──
+
+function ContentIdeasTab() {
+  const { data, isLoading } = useContentIdeas();
+  const queryClient = useQueryClient();
+
+  const dismissMutation = useMutation({
+    mutationFn: (id: number) =>
+      fetchJson(`/api/pinterest/tracker/ideas/${id}/status`, {
+        method: "PATCH",
+        body: JSON.stringify({ status: "dismissed" }),
+      }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["pinterest-content-ideas"] }),
+  });
+
+  const markCreatedMutation = useMutation({
+    mutationFn: (id: number) =>
+      fetchJson(`/api/pinterest/tracker/ideas/${id}/status`, {
+        method: "PATCH",
+        body: JSON.stringify({ status: "created" }),
+      }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["pinterest-content-ideas"] }),
+  });
+
+  const ideas = data?.ideas ?? [];
+  const newIdeas = ideas.filter((i) => i.status === "new");
+  const createdIdeas = ideas.filter((i) => i.status === "created");
+  const dismissedIdeas = ideas.filter((i) => i.status === "dismissed");
+
+  if (isLoading) return <p className="text-sm text-muted-foreground">Loading content ideas...</p>;
+
+  if (ideas.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center py-20 text-center">
+        <Lightbulb className="mb-4 h-12 w-12 text-muted-foreground/30" />
+        <h2 className="text-lg font-semibold">No Content Ideas Yet</h2>
+        <p className="mt-2 max-w-sm text-sm text-muted-foreground">
+          Use the <code className="rounded bg-muted px-1">pinterest-content-ideas</code> tool in Chat
+          to generate content ideas based on trending topics and keyword data.
+        </p>
+        <Link
+          href="/chat"
+          className="mt-4 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 transition"
+        >
+          Go to Chat
+        </Link>
+      </div>
+    );
+  }
+
+  const difficultyColor = (d: string) => {
+    if (d === "low") return "bg-green-500/10 text-green-600 dark:text-green-400";
+    if (d === "medium") return "bg-yellow-500/10 text-yellow-600 dark:text-yellow-400";
+    return "bg-red-500/10 text-red-600 dark:text-red-400";
+  };
+
+  const renderIdea = (idea: ContentIdea) => {
+    let keywords: string[] = [];
+    try { keywords = JSON.parse(idea.target_keywords) as string[]; } catch { /* ignore */ }
+
+    return (
+      <div
+        key={idea.id}
+        className="rounded-xl border border-border bg-card p-4 transition hover:border-primary/30"
+      >
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-medium text-foreground">{idea.suggested_title}</p>
+            <p className="mt-1 text-xs text-muted-foreground line-clamp-2">{idea.suggested_description}</p>
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${difficultyColor(idea.difficulty)}`}>
+                {idea.difficulty}
+              </span>
+              <span className="rounded-full bg-blue-500/10 px-2 py-0.5 text-[10px] font-semibold text-blue-600 dark:text-blue-400">
+                {idea.estimated_volume}
+              </span>
+              <span className="rounded-full bg-purple-500/10 px-2 py-0.5 text-[10px] font-semibold text-purple-600 dark:text-purple-400">
+                {idea.topic}
+              </span>
+            </div>
+            {keywords.length > 0 && (
+              <div className="mt-2 flex flex-wrap gap-1">
+                {keywords.map((kw, i) => (
+                  <span key={i} className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                    {kw}
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+          {idea.status === "new" && (
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => markCreatedMutation.mutate(idea.id)}
+                className="rounded-lg p-2 text-muted-foreground hover:bg-muted hover:text-green-600 transition"
+                title="Mark as created"
+              >
+                <Plus className="h-4 w-4" />
+              </button>
+              <button
+                onClick={() => dismissMutation.mutate(idea.id)}
+                className="rounded-lg p-2 text-muted-foreground hover:bg-muted hover:text-red-500 transition"
+                title="Dismiss"
+              >
+                <Trash2 className="h-4 w-4" />
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <div className="space-y-6">
+      {/* Summary */}
+      <div className="grid grid-cols-3 gap-4">
+        <MetricCard label="New Ideas" value={newIdeas.length} icon={<Lightbulb className="h-4 w-4 text-yellow-500" />} />
+        <MetricCard label="Created" value={createdIdeas.length} icon={<Plus className="h-4 w-4 text-green-500" />} />
+        <MetricCard label="Dismissed" value={dismissedIdeas.length} icon={<Trash2 className="h-4 w-4 text-muted-foreground" />} />
+      </div>
+
+      {newIdeas.length > 0 && (
+        <SectionCard title={`New Ideas (${newIdeas.length})`} defaultOpen>
+          <div className="space-y-3">{newIdeas.map(renderIdea)}</div>
+        </SectionCard>
+      )}
+
+      {createdIdeas.length > 0 && (
+        <SectionCard title={`Created (${createdIdeas.length})`} defaultOpen={false}>
+          <div className="space-y-3">{createdIdeas.map(renderIdea)}</div>
+        </SectionCard>
+      )}
+
+      {dismissedIdeas.length > 0 && (
+        <SectionCard title={`Dismissed (${dismissedIdeas.length})`} defaultOpen={false}>
+          <div className="space-y-3">{dismissedIdeas.map(renderIdea)}</div>
+        </SectionCard>
+      )}
+    </div>
+  );
+}
+
+// ── Reports Tab ──
+
+function ReportsTab() {
+  const { data: reportsData, isLoading } = usePinterestReports();
+  const [selectedReport, setSelectedReport] = useState<string | null>(null);
+  const [typeFilter, setTypeFilter] = useState<string>("all");
+
+  const reports = reportsData?.reports ?? [];
+  const filtered = typeFilter === "all" ? reports : reports.filter((r) => r.type === typeFilter);
+  const typeCounts = reports.reduce<Record<string, number>>((acc, r) => {
+    acc[r.type] = (acc[r.type] ?? 0) + 1;
+    return acc;
+  }, {});
+
+  if (isLoading) return <p className="text-sm text-muted-foreground">Loading reports...</p>;
+
+  if (reports.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center py-20 text-center">
+        <BarChart3 className="mb-4 h-12 w-12 text-muted-foreground/30" />
+        <h2 className="text-lg font-semibold">No Pinterest Reports Yet</h2>
+        <p className="mt-2 max-w-sm text-sm text-muted-foreground">
+          Use the Pinterest Marketer skill in Chat to generate trends, keyword metrics, analytics, and
+          SEO analysis reports. They&apos;ll appear here automatically.
+        </p>
+        <Link
+          href="/chat"
+          className="mt-4 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 transition"
+        >
+          Go to Chat
+        </Link>
+      </div>
+    );
+  }
+
+  if (selectedReport) {
+    return <ReportDetail filename={selectedReport} onBack={() => setSelectedReport(null)} />;
+  }
+
+  return (
+    <div className="space-y-4">
       {/* Type filter pills */}
-      <div className="mb-6 flex flex-wrap gap-2">
+      <div className="flex flex-wrap gap-2">
         <button
           onClick={() => setTypeFilter("all")}
           className={`rounded-full px-3 py-1.5 text-xs font-medium transition ${
@@ -149,51 +719,24 @@ export default function PinterestAnalyticsPage() {
         >
           All ({reports.length})
         </button>
-        {Object.entries(TYPE_LABELS).map(([key, label]) => (
-          <button
-            key={key}
-            onClick={() => setTypeFilter(key)}
-            className={`rounded-full px-3 py-1.5 text-xs font-medium transition ${
-              typeFilter === key ? "bg-primary text-primary-foreground" : TYPE_COLORS[key] + " hover:opacity-80"
-            }`}
-          >
-            {label} ({typeCounts[key] ?? 0})
-          </button>
-        ))}
+        {Object.entries(TYPE_LABELS).map(([key, label]) => {
+          const count = typeCounts[key] ?? 0;
+          if (count === 0) return null;
+          return (
+            <button
+              key={key}
+              onClick={() => setTypeFilter(key)}
+              className={`rounded-full px-3 py-1.5 text-xs font-medium transition ${
+                typeFilter === key ? "bg-primary text-primary-foreground" : TYPE_COLORS[key] + " hover:opacity-80"
+              }`}
+            >
+              {label} ({count})
+            </button>
+          );
+        })}
       </div>
 
-      {isLoading ? (
-        <p className="text-sm text-muted-foreground">Loading reports...</p>
-      ) : reports.length === 0 ? (
-        <EmptyState />
-      ) : selectedReport ? (
-        <ReportDetail filename={selectedReport} onBack={() => setSelectedReport(null)} />
-      ) : (
-        <ReportList reports={filtered} onSelect={setSelectedReport} />
-      )}
-
-      <ToastContainer />
-    </main>
-  );
-}
-
-// ── Empty State ──
-
-function EmptyState() {
-  return (
-    <div className="flex flex-col items-center justify-center py-20 text-center">
-      <BarChart3 className="mb-4 h-12 w-12 text-muted-foreground/30" />
-      <h2 className="text-lg font-semibold">No Pinterest Reports Yet</h2>
-      <p className="mt-2 max-w-sm text-sm text-muted-foreground">
-        Use the Pinterest Marketer skill in Chat to generate trends, keyword metrics, analytics, and
-        SEO analysis reports. They&apos;ll appear here automatically.
-      </p>
-      <Link
-        href="/chat"
-        className="mt-4 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 transition"
-      >
-        Go to Chat
-      </Link>
+      <ReportList reports={filtered} onSelect={setSelectedReport} />
     </div>
   );
 }
@@ -668,11 +1211,32 @@ function MarkdownReportView({ content }: { content: string }) {
 
 // ── Metric Card ──
 
-function MetricCard({ label, value }: { label: string; value: number }) {
+function MetricCard({ label, value, icon }: { label: string; value: number; icon?: React.ReactNode }) {
   return (
     <div className="rounded-lg border border-border bg-card p-4">
-      <p className="text-xs text-muted-foreground">{label}</p>
+      <div className="flex items-center justify-between">
+        <p className="text-xs text-muted-foreground">{label}</p>
+        {icon}
+      </div>
       <p className="text-2xl font-bold">{value.toLocaleString()}</p>
+    </div>
+  );
+}
+
+function MetricCardDelta({ label, current, delta, icon }: { label: string; current: number; delta: string; icon?: React.ReactNode }) {
+  const isPositive = delta.startsWith("+");
+  return (
+    <div className="rounded-lg border border-border bg-card p-4">
+      <div className="flex items-center justify-between">
+        <p className="text-xs text-muted-foreground">{label}</p>
+        {icon}
+      </div>
+      <p className="text-2xl font-bold">{current.toLocaleString()}</p>
+      {delta !== "—" && (
+        <p className={`text-xs font-medium ${isPositive ? "text-green-600 dark:text-green-400" : "text-red-500"}`}>
+          {delta} since first tracked
+        </p>
+      )}
     </div>
   );
 }

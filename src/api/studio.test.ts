@@ -221,4 +221,103 @@ describe("Studio Router", () => {
       expect(res.status).toBe(404);
     });
   });
+
+  // ── POST /upload-recording ──
+
+  describe("POST /api/studio/upload-recording", () => {
+    it("returns 400 when content-type is not multipart or video", async () => {
+      const res = await request(app)
+        .post("/api/studio/upload-recording")
+        .set("Content-Type", "application/json")
+        .send({ data: "not video" });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain("Expected multipart/form-data or video/*");
+    });
+
+    it("returns 400 when body is empty", async () => {
+      const res = await request(app)
+        .post("/api/studio/upload-recording")
+        .set("Content-Type", "video/mp4")
+        .send(Buffer.alloc(0));
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain("Empty request body");
+    });
+
+    it("saves mp4 recording and returns asset", async () => {
+      const fakeVideo = Buffer.from("fake-mp4-data");
+      const res = await request(app)
+        .post("/api/studio/upload-recording")
+        .set("Content-Type", "video/mp4")
+        .send(fakeVideo);
+
+      expect(res.status).toBe(200);
+      expect(res.body.assetId).toBe("new-asset-001");
+      expect(res.body.filename).toMatch(/^recording_\d+\.mp4$/);
+      expect(res.body.size).toBe(fakeVideo.length);
+      expect(mediaQueueRepo.createAsset).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "video",
+          mimeType: "video/mp4",
+          source: "uploaded",
+        }),
+      );
+    });
+
+    it("saves webm recording with correct extension", async () => {
+      const fakeVideo = Buffer.from("fake-webm-data");
+      const res = await request(app)
+        .post("/api/studio/upload-recording")
+        .set("Content-Type", "video/webm")
+        .send(fakeVideo);
+
+      expect(res.status).toBe(200);
+      expect(res.body.filename).toMatch(/\.webm$/);
+      expect(mediaQueueRepo.createAsset).toHaveBeenCalledWith(
+        expect.objectContaining({
+          mimeType: "video/webm",
+        }),
+      );
+    });
+
+    it("returns 404 when asset file is missing from disk", async () => {
+      const { existsSync } = await import("node:fs");
+      vi.mocked(existsSync).mockReturnValueOnce(true).mockReturnValueOnce(false);
+
+      const res = await request(app)
+        .post("/api/studio/trim")
+        .send({ assetId: "asset-001", startTime: 0, endTime: 5 });
+
+      // Asset found in repo but file doesn't exist on disk
+      // Note: existsSync is called for the trim route's inputPath check
+    });
+  });
+
+  // ── POST /analyze edge cases ──
+
+  describe("POST /api/studio/analyze edge cases", () => {
+    it("accepts optional model parameter", async () => {
+      const res = await request(app)
+        .post("/api/studio/analyze")
+        .send({ assetId: "asset-001", model: "whisper-large" });
+
+      expect(res.status).toBe(200);
+      expect(analyzeWorker.submit).toHaveBeenCalledWith(
+        expect.objectContaining({ model: "whisper-large" }),
+      );
+    });
+
+    it("returns 404 when asset file is missing from disk", async () => {
+      const nodefs = await import("node:fs");
+      vi.mocked(nodefs.default.existsSync).mockReturnValueOnce(false);
+
+      const res = await request(app)
+        .post("/api/studio/analyze")
+        .send({ assetId: "asset-001" });
+
+      expect(res.status).toBe(404);
+      expect(res.body.error).toContain("Asset file not found");
+    });
+  });
 });

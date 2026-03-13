@@ -7,6 +7,7 @@ import { PresentationRepository } from "../presenter/presentation-repository.js"
 import { SocialRepository } from "../channels/social/social-repository.js";
 import { BrandVoiceRepository } from "../personality/brand-voice-repository.js";
 import { CharacterRepository } from "../characters/character-repository.js";
+import { PinterestTrackerRepository } from "../mcp/tools/pinterest-tracker.js";
 
 export type DatabaseOptions = {
   dbPath?: string;
@@ -49,6 +50,10 @@ export const getDatabase = (options: DatabaseOptions = {}): Database.Database =>
   // Run Character Profiles migration (character_profiles table)
   const characterRepo = new CharacterRepository(db);
   characterRepo.migrate();
+
+  // Run Pinterest Tracker migration (tracked_pins, snapshots, content_ideas)
+  const pinterestTrackerRepo = new PinterestTrackerRepository(db);
+  pinterestTrackerRepo.migrate();
 
   sharedDb = db;
   return db;

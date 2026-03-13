@@ -72,31 +72,33 @@ describe("LanceDBStore", () => {
   let store: LanceDBStore;
 
   beforeEach(() => {
-    vi.clearAllMocks();
-    // Reset default behaviors after clearAllMocks
+    vi.restoreAllMocks();
+    // Reset default behaviors completely (including once stacks)
     const conn = getMockConnection();
     const tbl = getMockTable();
-    conn.tableNames.mockResolvedValue([]);
-    conn.openTable.mockResolvedValue(tbl);
-    conn.createTable.mockResolvedValue(tbl);
-    tbl.add.mockResolvedValue(undefined);
-    tbl.delete.mockResolvedValue(undefined);
-    tbl.createIndex.mockResolvedValue(undefined);
-    tbl.countRows.mockResolvedValue(0);
-    tbl._vectorSearchChain.distanceType.mockReturnThis();
-    tbl._vectorSearchChain.limit.mockReturnThis();
-    tbl._vectorSearchChain.toArray.mockResolvedValue([]);
-    tbl._ftsSearchChain.limit.mockReturnThis();
-    tbl._ftsSearchChain.toArray.mockResolvedValue([]);
-    tbl._selectChain.select.mockReturnThis();
-    tbl._selectChain.limit.mockReturnThis();
-    tbl._selectChain.toArray.mockResolvedValue([]);
-    tbl.vectorSearch.mockReturnValue(tbl._vectorSearchChain);
-    tbl.search.mockImplementation((_q: unknown, type?: string) => {
+    conn.tableNames.mockReset().mockResolvedValue([]);
+    conn.openTable.mockReset().mockResolvedValue(tbl);
+    conn.createTable.mockReset().mockResolvedValue(tbl);
+    tbl.add.mockReset().mockResolvedValue(undefined);
+    tbl.delete.mockReset().mockResolvedValue(undefined);
+    tbl.createIndex.mockReset().mockResolvedValue(undefined);
+    tbl.countRows.mockReset().mockResolvedValue(0);
+    tbl._vectorSearchChain.distanceType.mockReset().mockReturnThis();
+    tbl._vectorSearchChain.limit.mockReset().mockReturnThis();
+    tbl._vectorSearchChain.toArray.mockReset().mockResolvedValue([]);
+    tbl._ftsSearchChain.limit.mockReset().mockReturnThis();
+    tbl._ftsSearchChain.toArray.mockReset().mockResolvedValue([]);
+    tbl._selectChain.select.mockReset().mockReturnThis();
+    tbl._selectChain.limit.mockReset().mockReturnThis();
+    tbl._selectChain.toArray.mockReset().mockResolvedValue([]);
+    tbl.vectorSearch.mockReset().mockReturnValue(tbl._vectorSearchChain);
+    tbl.search.mockReset().mockImplementation((_q: unknown, type?: string) => {
       if (type === "fts") return tbl._ftsSearchChain;
       return tbl._selectChain;
     });
-    (lancedb.connect as any).mockResolvedValue(conn);
+    (lancedb.connect as any).mockReset().mockResolvedValue(conn);
+    (lancedb.Index.ivfPq as any).mockReset().mockReturnValue({});
+    (lancedb.Index.fts as any).mockReset().mockReturnValue({});
 
     store = new LanceDBStore({ dbPath: "/tmp/test-lance-db" });
   });
@@ -312,6 +314,221 @@ describe("LanceDBStore", () => {
       await store.close();
       const results = await store.search("test");
       expect(results).toEqual([]);
+    });
+  });
+
+  describe("hybridSearch", () => {
+    it("returns empty when table is null", async () => {
+      getMockConnection().tableNames.mockResolvedValueOnce([]);
+      await store.initialize();
+      const results = await store.hybridSearch("query");
+      expect(results).toEqual([]);
+    });
+
+    it("falls back to vector search when FTS index not created", async () => {
+      getMockConnection().tableNames.mockResolvedValueOnce(["knowledge_chunks"]);
+      await store.initialize();
+      // ftsIndexCreated is false by default (no addChunks called)
+      getMockTable()._vectorSearchChain.toArray.mockResolvedValueOnce([
+        { text: "vector only", sourcePath: "/f.txt", _distance: 0.2, documentId: "d1", chunkIndex: 0 },
+      ]);
+      const results = await store.hybridSearch("query");
+      expect(results).toHaveLength(1);
+      expect(results[0].text).toBe("vector only");
+    });
+
+    it("merges vector and FTS results via RRF", async () => {
+      getMockConnection().tableNames.mockResolvedValueOnce(["knowledge_chunks"]);
+      await store.initialize();
+
+      // Trigger FTS index creation by adding chunks
+      const chunks = [{ id: "c1", documentId: "d1", text: "test chunk", chunkIndex: 0, sourcePath: "/f.txt" }];
+      await store.addChunks(chunks);
+
+      // Now set up vector and FTS search results
+      // Vector finds d1 and d2, FTS finds d1 and d3
+      getMockTable()._vectorSearchChain.toArray
+        .mockResolvedValueOnce([  // vector search in hybridSearch
+          { text: "result A", sourcePath: "/a.txt", _distance: 0.1, documentId: "d1", chunkIndex: 0 },
+          { text: "result B", sourcePath: "/b.txt", _distance: 0.3, documentId: "d2", chunkIndex: 0 },
+        ]);
+      getMockTable()._ftsSearchChain.toArray
+        .mockResolvedValueOnce([]);
+      getMockTable()._vectorSearchChain.toArray
+        .mockResolvedValueOnce([  // fullTextSearch fallback to vector
+          { text: "result A", sourcePath: "/a.txt", _distance: 0.15, documentId: "d1", chunkIndex: 0 },
+          { text: "result C", sourcePath: "/c.txt", _distance: 0.5, documentId: "d3", chunkIndex: 0 },
+        ]);
+
+      const results = await store.hybridSearch("test", 10);
+      // d1 appears in both, should be ranked highest
+      expect(results.length).toBeGreaterThanOrEqual(1);
+      expect(results[0].documentId).toBe("d1");
+    });
+
+    it("applies minScore filter to hybrid results", async () => {
+      getMockConnection().tableNames.mockResolvedValueOnce(["knowledge_chunks"]);
+      await store.initialize();
+
+      // Enable FTS index
+      await store.addChunks([{ id: "c1", documentId: "d1", text: "test", chunkIndex: 0, sourcePath: "/f.txt" }]);
+
+      getMockTable()._vectorSearchChain.toArray
+        .mockResolvedValueOnce([
+          { text: "good", sourcePath: "/a.txt", _distance: 0.1, documentId: "d1", chunkIndex: 0 },
+          { text: "bad", sourcePath: "/b.txt", _distance: 1.8, documentId: "d2", chunkIndex: 0 },
+        ]);
+      getMockTable()._ftsSearchChain.toArray.mockResolvedValueOnce([]);
+      getMockTable()._vectorSearchChain.toArray.mockResolvedValueOnce([]);
+
+      const results = await store.hybridSearch("test", 10, 0.5);
+      // "bad" has distance 1.8 → score ~0.1, should be filtered out
+      expect(results.every((r) => r.score >= 0.5)).toBe(true);
+    });
+
+    it("falls back to vector search when hybridSearch RRF logic errors", async () => {
+      getMockConnection().tableNames.mockResolvedValueOnce(["knowledge_chunks"]);
+      await store.initialize();
+
+      // Enable FTS index
+      await store.addChunks([{ id: "c1", documentId: "d1", text: "test", chunkIndex: 0, sourcePath: "/f.txt" }]);
+
+      // Make the full text search builder throw when accessing chained methods
+      // This triggers an error inside Promise.all at the hybridSearch level
+      getMockTable().search.mockImplementationOnce(() => { throw new Error("FTS crashed"); });
+
+      // Fallback vector search should succeed
+      getMockTable()._vectorSearchChain.toArray
+        .mockResolvedValueOnce([  // fallback vector search
+          { text: "fallback", sourcePath: "/f.txt", _distance: 0.2, documentId: "d1", chunkIndex: 0 },
+        ]);
+
+      const results = await store.hybridSearch("test");
+      expect(results).toHaveLength(1);
+      expect(results[0].text).toBe("fallback");
+    });
+  });
+
+  describe("buildFilterClause", () => {
+    it("returns undefined when no filter provided", () => {
+      expect(LanceDBStore.buildFilterClause()).toBeUndefined();
+    });
+
+    it("returns undefined for empty filter object", () => {
+      expect(LanceDBStore.buildFilterClause({})).toBeUndefined();
+    });
+
+    it("builds visibility filter clause", () => {
+      const clause = LanceDBStore.buildFilterClause({ visibility: "public" });
+      expect(clause).toBe("(visibility = 'public' OR visibility IS NULL)");
+    });
+
+    it("escapes single quotes in visibility", () => {
+      const clause = LanceDBStore.buildFilterClause({ visibility: "it's" as never });
+      expect(clause).toContain("it''s");
+    });
+
+    it("builds categories filter clause", () => {
+      const clause = LanceDBStore.buildFilterClause({ categories: ["docs", "code"] });
+      expect(clause).toContain("IN ('docs', 'code')");
+      expect(clause).toContain("OR category IS NULL");
+    });
+
+    it("combines visibility and categories", () => {
+      const clause = LanceDBStore.buildFilterClause({
+        visibility: "private",
+        categories: ["api"],
+      });
+      expect(clause).toContain("visibility = 'private'");
+      expect(clause).toContain("AND");
+      expect(clause).toContain("IN ('api')");
+    });
+
+    it("escapes single quotes in categories", () => {
+      const clause = LanceDBStore.buildFilterClause({ categories: ["it's"] });
+      expect(clause).toContain("it''s");
+    });
+  });
+
+  describe("search - additional edge cases", () => {
+    it("maps results with missing fields to defaults", async () => {
+      getMockConnection().tableNames.mockResolvedValueOnce(["knowledge_chunks"]);
+      await store.initialize();
+
+      getMockTable()._vectorSearchChain.toArray.mockResolvedValueOnce([
+        { _distance: 0.3 },  // missing text, sourcePath, documentId, chunkIndex
+      ]);
+
+      const results = await store.search("query");
+      expect(results).toHaveLength(1);
+      expect(results[0].text).toBe("");
+      expect(results[0].sourcePath).toBe("");
+      expect(results[0].documentId).toBe("");
+      expect(results[0].chunkIndex).toBe(0);
+    });
+
+    it("maps results with visibility and category fields", async () => {
+      getMockConnection().tableNames.mockResolvedValueOnce(["knowledge_chunks"]);
+      await store.initialize();
+
+      getMockTable()._vectorSearchChain.toArray.mockResolvedValueOnce([
+        {
+          text: "secure doc",
+          sourcePath: "/s.txt",
+          _distance: 0.1,
+          documentId: "d1",
+          chunkIndex: 0,
+          visibility: "private",
+          category: "api",
+          mediaUrl: "https://example.com/img.png",
+          sectionHeading: "API Reference",
+        },
+      ]);
+
+      const results = await store.search("query");
+      expect(results).toHaveLength(1);
+      expect(results[0].visibility).toBe("private");
+      expect(results[0].category).toBe("api");
+      expect(results[0].mediaUrl).toBe("https://example.com/img.png");
+      expect(results[0].sectionHeading).toBe("API Reference");
+    });
+
+    it("handles missing _distance in results", async () => {
+      getMockConnection().tableNames.mockResolvedValueOnce(["knowledge_chunks"]);
+      await store.initialize();
+
+      getMockTable()._vectorSearchChain.toArray.mockResolvedValueOnce([
+        { text: "no distance", sourcePath: "/f.txt", documentId: "d1", chunkIndex: 0 },
+      ]);
+
+      const results = await store.search("query");
+      expect(results).toHaveLength(1);
+      expect(results[0].score).toBe(0);
+    });
+
+    it("search error falls back gracefully", async () => {
+      getMockConnection().tableNames.mockResolvedValueOnce(["knowledge_chunks"]);
+      await store.initialize();
+
+      getMockTable().vectorSearch.mockImplementationOnce(() => {
+        throw new Error("vector search failed");
+      });
+
+      const results = await store.search("query");
+      expect(results).toEqual([]);
+    });
+  });
+
+  describe("ensureFtsIndex error handling", () => {
+    it("continues when FTS index creation fails", async () => {
+      getMockConnection().tableNames.mockResolvedValueOnce([]);
+      await store.initialize();
+
+      getMockTable().createIndex.mockRejectedValueOnce(new Error("FTS not supported"));
+
+      const chunks = [{ id: "c1", documentId: "d1", text: "test", chunkIndex: 0, sourcePath: "/f.txt" }];
+      // Should not throw
+      await store.addChunks(chunks);
     });
   });
 });

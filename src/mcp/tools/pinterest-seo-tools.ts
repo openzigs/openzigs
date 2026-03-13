@@ -160,6 +160,17 @@ const pinterestSearchPinsSchema = z.object({
     .describe("Discover additional pins from the same boards as seed pins"),
 });
 
+const pinterestContentIdeasSchema = z.object({
+  topic: z.string().describe("Topic to generate content ideas for (e.g., 'home office decor', 'keto recipes')"),
+  region: z.enum(PINTEREST_REGIONS).default("US").describe("Region for trend data"),
+  count: z.number().int().min(1).max(10).optional().describe("Number of ideas to generate (default: 5, max: 10)"),
+});
+
+const pinterestRelatedKeywordsSchema = z.object({
+  seed: z.string().describe("Seed keyword to expand into related terms"),
+  region: z.enum(PINTEREST_REGIONS).default("US").describe("Region for keyword metrics"),
+});
+
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
 function getToken(): string | undefined {
@@ -249,6 +260,18 @@ function saveReportJson(basename: string, data: unknown): void {
 
 function timestamp(): string {
   return new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+}
+
+/** Generate a compelling Pinterest-style title from a keyword and topic context */
+function generateIdeaTitle(keyword: string, topic: string): string {
+  const templates = [
+    `Top ${Math.floor(Math.random() * 10) + 5} ${keyword} Ideas You Need to Try`,
+    `The Ultimate Guide to ${keyword}`,
+    `${keyword}: ${Math.floor(Math.random() * 10) + 5} Ideas That Actually Work`,
+    `How to Master ${keyword} in ${new Date().getFullYear()}`,
+    `${keyword} Inspiration Board — Best Picks for ${topic}`,
+  ];
+  return templates[Math.floor(Math.random() * templates.length)];
 }
 
 // ── PDF export ──────────────────────────────────────────────────────────────
@@ -2187,6 +2210,315 @@ export function createPinterestSeoTools(): ToolDefinition[] {
         }
 
         return { text: `${md}\n\n---\n_Report saved to ${filePath}${pdfSuffix}_` };
+      },
+    },
+
+    // ── pinterest-content-ideas ─────────────────────────────────────────
+    {
+      name: "pinterest-content-ideas",
+      description:
+        "Generate actionable content ideas for Pinterest based on trending topics, keyword metrics, and competitor analysis. " +
+        "Combines trend data, keyword search volumes, and Google Suggest expansion to suggest pin titles, descriptions, " +
+        "and target keywords you should create next. Ideas are saved to the tracker for later reference.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          topic: { type: "string", description: "Topic to generate content ideas for (e.g., 'home office decor', 'keto recipes')" },
+          region: { type: "string", enum: [...PINTEREST_REGIONS], description: "Region for trend data (default: US)" },
+          count: { type: "number", description: "Number of ideas to generate (default: 5, max: 10)" },
+        },
+        required: ["topic"],
+      },
+      zodSchema: pinterestContentIdeasSchema,
+      category: "social",
+      riskLevel: "low",
+      source: "pinterest",
+      handler: async (args) => {
+        const input = pinterestContentIdeasSchema.parse(args);
+        const token = getToken();
+        if (!token) return { text: "PINTEREST_ACCESS_TOKEN not configured.", isError: true };
+
+        const maxIdeas = Math.min(input.count ?? 5, 10);
+
+        // Phase 1: Get trending keywords in the topic area
+        const trendResult = await pinterestApiFetch(
+          `/trends/keywords/${encodeURIComponent(input.region)}/top/growing`,
+          token,
+          new URLSearchParams({ limit: "25" }),
+        );
+        let trendingKeywords: Array<{ keyword: string; mom: number; yoy: number }> = [];
+        if (!trendResult.isError) {
+          const trendData = JSON.parse(trendResult.text) as { trends?: Array<Record<string, unknown>> };
+          const queryWords = input.topic.toLowerCase().split(/\s+/);
+          const allTrends = trendData.trends ?? [];
+          const matching = allTrends.filter((t) => {
+            const kw = String(t.keyword ?? "").toLowerCase();
+            return queryWords.some((w) => kw.includes(w)) || kw.includes(input.topic.toLowerCase());
+          });
+          trendingKeywords = (matching.length > 0 ? matching : allTrends.slice(0, 10)).map((t) => ({
+            keyword: String(t.keyword ?? ""),
+            mom: Number(t.pct_growth_mom ?? 0),
+            yoy: Number(t.pct_growth_yoy ?? 0),
+          }));
+        }
+
+        // Phase 2: Expand topic with Google Suggest for related keywords
+        const { suggestions } = await fetchGoogleSuggestKeywords(`${input.topic} pinterest`);
+        const expandedKeywords = [...new Set([
+          input.topic,
+          ...suggestions.slice(0, 10),
+          ...trendingKeywords.slice(0, 5).map((t) => t.keyword),
+        ])].slice(0, 20);
+
+        // Phase 3: Get keyword metrics for expanded keywords
+        const { keywords: enrichedKws } = await enrichKeywordMetrics(expandedKeywords, token, input.region);
+
+        // Phase 4: Generate content ideas
+        const ideas: Array<{
+          title: string;
+          description: string;
+          target_keywords: string[];
+          difficulty: string;
+          estimated_volume: string;
+          reasoning: string;
+        }> = [];
+
+        // Sort keywords by opportunity (high volume + low competition)
+        const sortedKws = enrichedKws
+          .filter((k) => k.searches !== "N/A" && k.searches !== "0")
+          .sort((a, b) => {
+            const aScore = (a.competition.toLowerCase().includes("low") ? 3 : a.competition.toLowerCase().includes("med") ? 2 : 1);
+            const bScore = (b.competition.toLowerCase().includes("low") ? 3 : b.competition.toLowerCase().includes("med") ? 2 : 1);
+            return bScore - aScore;
+          });
+
+        // Generate ideas from keyword clusters
+        const usedKeywords = new Set<string>();
+        for (const kw of sortedKws) {
+          if (ideas.length >= maxIdeas) break;
+          if (usedKeywords.has(kw.keyword.toLowerCase())) continue;
+          usedKeywords.add(kw.keyword.toLowerCase());
+
+          const relatedKws = sortedKws
+            .filter((k) => k.keyword !== kw.keyword && k.keyword.toLowerCase().includes(kw.keyword.toLowerCase().split(" ")[0]))
+            .slice(0, 3)
+            .map((k) => k.keyword);
+
+          const difficulty = kw.competition.toLowerCase().includes("high") ? "high"
+            : kw.competition.toLowerCase().includes("med") ? "medium" : "low";
+
+          ideas.push({
+            title: generateIdeaTitle(kw.keyword, input.topic),
+            description: `Create a Pin targeting "${kw.keyword}" — ${kw.searches} monthly searches, ${kw.competition} competition. Include rich visuals and keyword-optimized description.`,
+            target_keywords: [kw.keyword, ...relatedKws],
+            difficulty,
+            estimated_volume: kw.searches,
+            reasoning: `${kw.source} data shows ${kw.searches} monthly searches with ${kw.competition} competition${trendingKeywords.find((t) => t.keyword.includes(kw.keyword)) ? " (trending)" : ""}.`,
+          });
+        }
+
+        // If not enough ideas from keyword data, add trend-based ideas
+        for (const trend of trendingKeywords) {
+          if (ideas.length >= maxIdeas) break;
+          if (usedKeywords.has(trend.keyword.toLowerCase())) continue;
+          usedKeywords.add(trend.keyword.toLowerCase());
+
+          ideas.push({
+            title: generateIdeaTitle(trend.keyword, input.topic),
+            description: `Trending topic with ${trend.mom > 0 ? `+${trend.mom}%` : `${trend.mom}%`} MoM growth. Create timely content to ride the trend wave.`,
+            target_keywords: [trend.keyword],
+            difficulty: "medium",
+            estimated_volume: "trending",
+            reasoning: `MoM growth: ${trend.mom > 0 ? "+" : ""}${trend.mom}%, YoY: ${trend.yoy > 0 ? "+" : ""}${trend.yoy}%`,
+          });
+        }
+
+        // Save ideas to tracker DB
+        const { getDatabase } = await import("../../productivity/database.js");
+        const { PinterestTrackerRepository } = await import("./pinterest-tracker.js");
+        const db = getDatabase();
+        const trackerRepo = new PinterestTrackerRepository(db);
+        for (const idea of ideas) {
+          trackerRepo.addContentIdea({
+            topic: input.topic,
+            suggested_title: idea.title,
+            suggested_description: idea.description,
+            target_keywords: JSON.stringify(idea.target_keywords),
+            difficulty: idea.difficulty,
+            estimated_volume: idea.estimated_volume,
+            source_data: JSON.stringify({ reasoning: idea.reasoning, region: input.region }),
+            created_at: new Date().toISOString(),
+            status: "new",
+            pin_id: null,
+          });
+        }
+
+        // Format output
+        const lines = [
+          `# Pinterest Content Ideas: ${input.topic}`,
+          ``,
+          `**Generated:** ${new Date().toISOString()}`,
+          `**Region:** ${input.region}`,
+          `**Ideas:** ${ideas.length}`,
+          ``,
+        ];
+
+        for (let i = 0; i < ideas.length; i++) {
+          const idea = ideas[i];
+          lines.push(`## ${i + 1}. ${idea.title}`);
+          lines.push(``);
+          lines.push(`**Target Keywords:** ${idea.target_keywords.join(", ")}`);
+          lines.push(`**Search Volume:** ${idea.estimated_volume} | **Difficulty:** ${idea.difficulty}`);
+          lines.push(`**Why:** ${idea.reasoning}`);
+          lines.push(``);
+          lines.push(`> ${idea.description}`);
+          lines.push(``);
+        }
+
+        lines.push(`---`);
+        lines.push(`_${ideas.length} ideas saved to your Content Ideas tracker. View them in the Pinterest Analytics dashboard._`);
+
+        const md = lines.join("\n");
+        const ts = timestamp();
+        const slug = input.topic.replace(/\s+/g, "-").toLowerCase().slice(0, 30);
+        const baseName = `content-ideas-${slug}-${ts}`;
+        saveReport(`${baseName}.md`, md);
+        saveReportJson(baseName, { type: "content-ideas", topic: input.topic, region: input.region, generated: new Date().toISOString(), ideas });
+
+        return { text: md };
+      },
+    },
+
+    // ── pinterest-related-keywords ──────────────────────────────────────
+    {
+      name: "pinterest-related-keywords",
+      description:
+        "Expand a single seed keyword into 20-30 related Pinterest keywords with search volume and competition data. " +
+        "Uses Google Suggest, Pinterest trends, and keyword metrics to find the best related terms. " +
+        "Perfect for building a keyword strategy around a topic.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          seed: { type: "string", description: "Seed keyword to expand (e.g., 'home office decor')" },
+          region: { type: "string", enum: [...PINTEREST_REGIONS], description: "Region for metrics (default: US)" },
+        },
+        required: ["seed"],
+      },
+      zodSchema: pinterestRelatedKeywordsSchema,
+      category: "social",
+      riskLevel: "low",
+      source: "pinterest",
+      handler: async (args) => {
+        const input = pinterestRelatedKeywordsSchema.parse(args);
+        const token = getToken();
+        if (!token) return { text: "PINTEREST_ACCESS_TOKEN not configured.", isError: true };
+
+        // Phase 1: Google Suggest expansion (multiple variations)
+        const variations = [
+          input.seed,
+          `${input.seed} ideas`,
+          `${input.seed} inspiration`,
+          `${input.seed} diy`,
+          `best ${input.seed}`,
+        ];
+        const allSuggestions = new Set<string>();
+        allSuggestions.add(input.seed);
+
+        for (const query of variations) {
+          const { suggestions } = await fetchGoogleSuggestKeywords(query);
+          for (const s of suggestions) allSuggestions.add(s);
+        }
+
+        // Phase 2: Pinterest autocomplete (alternative suggestions)
+        try {
+          const pinterestAcResult = await pinterestApiFetch(
+            `/search/keyword_autocomplete`,
+            token,
+            new URLSearchParams({ term: input.seed, limit: "20" }),
+          );
+          if (!pinterestAcResult.isError) {
+            const acData = JSON.parse(pinterestAcResult.text) as Array<Record<string, unknown>>;
+            for (const item of acData) {
+              if (typeof item.keyword === "string") allSuggestions.add(item.keyword);
+            }
+          }
+        } catch { /* Pinterest autocomplete may not be available */ }
+
+        const expandedKeywords = [...allSuggestions].slice(0, 30);
+
+        // Phase 3: Get metrics for all expanded keywords
+        const { keywords: enrichedKws, diagnosticNote } = await enrichKeywordMetrics(
+          expandedKeywords,
+          token,
+          input.region,
+        );
+
+        // Sort by opportunity score (low competition + high volume = better)
+        const scored = enrichedKws.map((kw) => {
+          const compScore = kw.competition.toLowerCase().includes("low") ? 3
+            : kw.competition.toLowerCase().includes("med") ? 2 : 1;
+          const volScore = kw.searches.toLowerCase().includes("k") ? 2
+            : kw.searches !== "N/A" && kw.searches !== "0" ? 1 : 0;
+          return { ...kw, opportunityScore: compScore + volScore };
+        }).sort((a, b) => b.opportunityScore - a.opportunityScore);
+
+        // Format output
+        const lines = [
+          `# Related Keywords: "${input.seed}"`,
+          ``,
+          `**Seed:** ${input.seed}`,
+          `**Region:** ${input.region}`,
+          `**Keywords Found:** ${scored.length}`,
+          ``,
+          `## Top Opportunities`,
+          ``,
+          `| Keyword | Monthly Searches | Competition | Source | Score |`,
+          `|---------|-----------------|-------------|--------|-------|`,
+        ];
+
+        for (const kw of scored) {
+          const stars = "★".repeat(kw.opportunityScore) + "☆".repeat(5 - kw.opportunityScore);
+          lines.push(`| ${kw.keyword} | ${kw.searches} | ${kw.competition} | ${kw.source} | ${stars} |`);
+        }
+
+        lines.push(``);
+        if (diagnosticNote) {
+          lines.push(`_Note: ${diagnosticNote}_`);
+          lines.push(``);
+        }
+
+        const goldKeywords = scored.filter((k) => k.opportunityScore >= 4);
+        if (goldKeywords.length > 0) {
+          lines.push(`## 🎯 Top Picks (Low Competition + High Volume)`);
+          lines.push(``);
+          for (const kw of goldKeywords) {
+            lines.push(`- **${kw.keyword}** — ${kw.searches} searches, ${kw.competition} competition`);
+          }
+          lines.push(``);
+        }
+
+        lines.push(`## Suggested Pin Strategy`);
+        lines.push(``);
+        lines.push(`1. Create pins targeting the top 3-5 low-competition keywords first`);
+        lines.push(`2. Use the high-volume keywords in pin descriptions and alt text`);
+        lines.push(`3. Monitor performance with \`pinterest-analytics\` after 7 days`);
+        lines.push(`4. Generate content ideas with \`pinterest-content-ideas\` for any winning keywords`);
+
+        const md = lines.join("\n");
+        const ts = timestamp();
+        const slug = input.seed.replace(/\s+/g, "-").toLowerCase().slice(0, 30);
+        const baseName = `related-keywords-${slug}-${ts}`;
+        const filePath = saveReport(`${baseName}.md`, md);
+        saveReportJson(baseName, {
+          type: "related-keywords",
+          seed: input.seed,
+          region: input.region,
+          generated: new Date().toISOString(),
+          keywords: scored,
+        });
+        const pdfPathRelated = await saveReportPdf(baseName, md);
+
+        return { text: `${md}\n\n---\n_Report saved to ${filePath}${pdfPathRelated ? ` · PDF: ${pdfPathRelated}` : ""}_` };
       },
     },
   ];

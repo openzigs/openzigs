@@ -570,4 +570,409 @@ describe("QueueMaster", () => {
       expect(body.stem_paths).toEqual({ vocals: "/v.wav", drums: "/d.wav" });
     });
   });
+
+  // ── reportProgress ──
+
+  describe("reportProgress", () => {
+    it("emits job:progress event with stage and progress", () => {
+      const handler = vi.fn();
+      qm.on("job:progress", handler);
+      qm.reportProgress("job-99", { stage: "rendering", progress: 50, message: "half done" });
+      expect(handler).toHaveBeenCalledWith("job-99", { stage: "rendering", progress: 50, message: "half done" });
+    });
+  });
+
+  // ── ensureVramAvailable (tested via processMacMini / processM2Pro) ──
+
+  describe("VRAM coordination via tick", () => {
+    it("unloads m2-pro before dispatching image job to mac-mini", async () => {
+      const job = makeJob({ id: "img-vram-1", targetNode: "mac-mini" });
+      repo.getPendingJobs.mockReturnValue([job]);
+      repo.listJobs.mockReturnValue([]);
+
+      // 1: mac-mini health (idle)
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ is_busy: false, model: "flux-schnell", model_loaded: true }),
+      });
+      // 2: m2-pro health (has model loaded — triggers VRAM unload)
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ is_busy: false, loaded_model: "ltx-2" }),
+      });
+      // 3: music sidecar
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ is_busy: false }),
+      });
+
+      // Give m2-pro a loaded model via getNodeStatuses first
+      await qm.getNodeStatuses();
+      mockFetch.mockClear();
+
+      // Now during tick: mac-mini health, unload m2-pro, dispatch
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ is_busy: false, model: "flux-schnell", model_loaded: true }),
+      });
+      // Unload m2-pro
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ status: "unloaded", previous_model: "ltx-2" }),
+      });
+      // Dispatch image job
+      mockFetch.mockResolvedValueOnce({ status: 202, ok: true });
+      // m2-pro health for processM2Pro
+      mockFetch.mockRejectedValueOnce(new Error("skip"));
+      // Music sidecar
+      mockFetch.mockRejectedValueOnce(new Error("skip"));
+      // music-studio sidecar
+      mockFetch.mockRejectedValueOnce(new Error("skip"));
+
+      await qm.tick();
+      // Verify unload was called
+      const unloadCall = mockFetch.mock.calls.find(c => String(c[0]).includes("/unload"));
+      expect(unloadCall).toBeDefined();
+      expect(repo.markDispatched).toHaveBeenCalledWith("img-vram-1");
+    });
+  });
+
+  // ── Image Dispatch Endpoints ──
+
+  describe("image dispatch endpoints", () => {
+    it("dispatches img2img job to /img2img-async endpoint", async () => {
+      const job = makeJob({
+        id: "i2i-1",
+        type: "img2img",
+        requiredModel: "flux-schnell",
+        payload: { prompt: "enhance this", init_image: "base64data", strength: 0.6 },
+      });
+      repo.getPendingJobs.mockReturnValue([job]);
+      repo.listJobs.mockReturnValue([]);
+
+      // mac-mini health
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ is_busy: false, model: "flux-schnell", model_loaded: true }),
+      });
+      // Dispatch POST
+      mockFetch.mockResolvedValueOnce({ status: 202, ok: true });
+      // m2-pro health
+      mockFetch.mockRejectedValueOnce(new Error("skip"));
+      // Music sidecar
+      mockFetch.mockRejectedValueOnce(new Error("skip"));
+      // Music-studio
+      mockFetch.mockRejectedValueOnce(new Error("skip"));
+
+      await qm.tick();
+      expect(repo.markDispatched).toHaveBeenCalledWith("i2i-1");
+
+      const dispatchCall = mockFetch.mock.calls.find(c => String(c[0]).includes("/img2img-async"));
+      expect(dispatchCall).toBeDefined();
+      const body = JSON.parse(dispatchCall![1]?.body as string);
+      expect(body.image).toBe("base64data");
+      expect(body.strength).toBe(0.6);
+    });
+
+    it("dispatches kontext job to /kontext-async endpoint", async () => {
+      const job = makeJob({
+        id: "knt-1",
+        type: "txt2img",
+        requiredModel: "flux-kontext",
+        payload: { prompt: "a kontext image" },
+      });
+      repo.getPendingJobs.mockReturnValue([job]);
+      repo.listJobs.mockReturnValue([]);
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ is_busy: false, model: "flux-kontext", model_loaded: true }),
+      });
+      mockFetch.mockResolvedValueOnce({ status: 202, ok: true });
+      mockFetch.mockRejectedValueOnce(new Error("skip"));
+      mockFetch.mockRejectedValueOnce(new Error("skip"));
+      mockFetch.mockRejectedValueOnce(new Error("skip"));
+
+      await qm.tick();
+      expect(repo.markDispatched).toHaveBeenCalledWith("knt-1");
+
+      const dispatchCall = mockFetch.mock.calls.find(c => String(c[0]).includes("/kontext-async"));
+      expect(dispatchCall).toBeDefined();
+    });
+
+    it("dispatches image job with lora_paths", async () => {
+      const job = makeJob({
+        id: "lora-1",
+        type: "txt2img",
+        requiredModel: "flux-schnell",
+        payload: { prompt: "a styled image", lora_paths: ["/lora/style.safetensors"], lora_scales: [0.8] },
+      });
+      repo.getPendingJobs.mockReturnValue([job]);
+      repo.listJobs.mockReturnValue([]);
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ is_busy: false, model: "flux-schnell", model_loaded: true }),
+      });
+      mockFetch.mockResolvedValueOnce({ status: 202, ok: true });
+      mockFetch.mockRejectedValueOnce(new Error("skip"));
+      mockFetch.mockRejectedValueOnce(new Error("skip"));
+      mockFetch.mockRejectedValueOnce(new Error("skip"));
+
+      await qm.tick();
+      const dispatchCall = mockFetch.mock.calls.find(c => String(c[0]).includes("/generate-async"));
+      expect(dispatchCall).toBeDefined();
+      const body = JSON.parse(dispatchCall![1]?.body as string);
+      expect(body.lora_paths).toEqual(["/lora/style.safetensors"]);
+      expect(body.lora_scales).toEqual([0.8]);
+    });
+  });
+
+  // ── Video Dispatch ──
+
+  describe("video dispatch", () => {
+    it("dispatches video job with full payload to m2-pro", async () => {
+      const job = makeJob({
+        id: "vid-full-1",
+        type: "txt2video",
+        requiredModel: "ltx-2",
+        targetNode: "m2-pro",
+        payload: {
+          prompt: "a cinematic scene",
+          width: 768,
+          height: 512,
+          num_frames: 97,
+          fps: 24,
+          pipeline: "distilled",
+          negative_prompt: "blurry",
+          cfg_scale: 7.5,
+          num_inference_steps: 30,
+        },
+      });
+      repo.getPendingJobs.mockImplementation((node?: string) =>
+        node === "m2-pro" ? [job] : [],
+      );
+      repo.getPendingJobsForModel.mockReturnValue([]);
+      repo.listJobs.mockReturnValue([]);
+
+      // mac-mini health
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ is_busy: false, model: null, model_loaded: false }),
+      });
+      // m2-pro health
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ is_busy: false, loaded_model: null }),
+      });
+      // music sidecar
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ is_busy: false }),
+      });
+      // Dispatch POST
+      mockFetch.mockResolvedValueOnce({ status: 202, ok: true });
+
+      await qm.tick();
+      expect(repo.markDispatched).toHaveBeenCalledWith("vid-full-1");
+
+      const dispatchCall = mockFetch.mock.calls.find(c => String(c[0]).includes("/generate") && String(c[0]).includes("m2-pro"));
+      // The dispatch call goes to the m2-pro /generate endpoint
+      const allCalls = mockFetch.mock.calls;
+      const generateCall = allCalls.find(c => {
+        const body = c[1]?.body;
+        return body && JSON.parse(body).job_id === "vid-full-1";
+      });
+      expect(generateCall).toBeDefined();
+      const body = JSON.parse(generateCall![1]?.body as string);
+      expect(body.negative_prompt).toBe("blurry");
+      expect(body.cfg_scale).toBe(7.5);
+      expect(body.pipeline).toBe("distilled");
+    });
+  });
+
+  // ── Music Studio (voice2voice) Dispatch ──
+
+  describe("music-studio voice2voice dispatch", () => {
+    it("dispatches voice2voice job through music-studio sidecar", async () => {
+      const v2vJob = makeJob({
+        id: "v2v-1",
+        type: "voice2voice",
+        requiredModel: "seed-vc",
+        targetNode: "local",
+        payload: {
+          prompt: "",
+          source_asset_id: "src-asset-1",
+          voice_reference_id: "ref-1",
+          diffusion_steps: 25,
+        },
+      });
+
+      repo.getPendingJobs.mockReturnValue([]);
+      repo.getPendingJobsForModel.mockImplementation((_node: string, model: string) =>
+        model === "seed-vc" ? [v2vJob] : [],
+      );
+      repo.listJobs.mockReturnValue([]);
+      repo.getAsset.mockReturnValue({ file_path: "/tmp/source.wav" });
+
+      // mac-mini health
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ is_busy: false, model: null, model_loaded: false }),
+      });
+      // m2-pro health
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ is_busy: false, loaded_model: null }),
+      });
+      // Music sidecar
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ is_busy: false }),
+      });
+      // Music-studio sidecar health
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ is_busy: false, loaded_model: null }),
+      });
+      // Dispatch POST
+      mockFetch.mockResolvedValueOnce({ status: 202, ok: true });
+
+      await qm.tick();
+      expect(repo.markDispatched).toHaveBeenCalledWith("v2v-1");
+
+      const generateCall = mockFetch.mock.calls.find(c => {
+        const body = c[1]?.body;
+        return body && String(body).includes("v2v-1");
+      });
+      expect(generateCall).toBeDefined();
+      const body = JSON.parse(generateCall![1]?.body as string);
+      expect(body.source_asset_id).toBe("src-asset-1");
+      expect(body.source_path).toBe("/tmp/source.wav");
+      expect(body.voice_reference_id).toBe("ref-1");
+    });
+  });
+
+  // ── handleJobCompletion for voice2voice / remix jobs ──
+
+  describe("handleJobCompletion clears sidecar busy flags", () => {
+    it("clears musicStudioStatus for voice2voice completion", async () => {
+      const job = makeJob({ id: "v2v-done", status: "dispatched", type: "voice2voice", targetNode: "local" });
+      repo.getJob.mockReturnValueOnce(job).mockReturnValueOnce({ ...job, status: "complete" });
+
+      mockFetch.mockRejectedValue(new Error(""));
+
+      await qm.handleJobCompletion("v2v-done", { metadata: {} });
+      expect(repo.markComplete).toHaveBeenCalled();
+    });
+
+    it("clears musicStudioStatus for remix job completion", async () => {
+      const job = makeJob({ id: "rmx-done", status: "dispatched", type: "remix_analyze", targetNode: "local" });
+      repo.getJob.mockReturnValueOnce(job).mockReturnValueOnce({ ...job, status: "complete" });
+
+      mockFetch.mockRejectedValue(new Error(""));
+
+      await qm.handleJobCompletion("rmx-done", { metadata: {} });
+      expect(repo.markComplete).toHaveBeenCalled();
+    });
+
+    it("clears musicStatus for txt2music completion", async () => {
+      const job = makeJob({ id: "mus-done", status: "dispatched", type: "txt2music", targetNode: "m2-pro" });
+      repo.getJob.mockReturnValueOnce(job).mockReturnValueOnce({ ...job, status: "complete" });
+
+      mockFetch.mockRejectedValue(new Error(""));
+
+      await qm.handleJobCompletion("mus-done", { metadata: {} });
+      expect(repo.markComplete).toHaveBeenCalled();
+    });
+  });
+
+  // ── switchActiveNode with model preload ──
+
+  describe("switchActiveNode with model preload", () => {
+    it("preloads model on mac-mini after unloading competing node", async () => {
+      // Give m2-pro a loaded model
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ is_busy: false, model: null, model_loaded: false }),
+      });
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ is_busy: false, loaded_model: "ltx-2" }),
+      });
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ is_busy: false }),
+      });
+      await qm.getNodeStatuses();
+
+      // switchActiveNode → mac-mini with model preload
+      // 1: Unload m2-pro
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ status: "unloaded", previous_model: "ltx-2" }),
+      });
+      // 2: Preload on mac-mini POST /model
+      mockFetch.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({}) });
+
+      const result = await qm.switchActiveNode("mac-mini", "flux-schnell");
+      expect(result.unloaded).toMatchObject({ node: "m2-pro" });
+      expect(result.loaded).toMatchObject({ node: "mac-mini", model: "flux-schnell" });
+    });
+
+    it("handles preload failure gracefully", async () => {
+      // switchActiveNode with no competing model → no unload needed
+      // Preload POST fails
+      mockFetch.mockRejectedValueOnce(new Error("connect refused"));
+
+      const result = await qm.switchActiveNode("mac-mini", "flux-schnell");
+      expect(result.unloaded).toBeNull();
+      expect(result.loaded).toBeNull();
+    });
+  });
+
+  // ── Stale Busy Flag Recovery ──
+
+  describe("stale busy flag recovery", () => {
+    it("clears stale mac-mini busy flag when no dispatched jobs exist", async () => {
+      const job = makeJob({ id: "after-stale", targetNode: "mac-mini" });
+      repo.getPendingJobs.mockReturnValue([job]);
+      // No dispatched jobs — the busy flag is stale
+      repo.listJobs.mockReturnValue([]);
+
+      // mac-mini health returns idle
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ is_busy: false, model: "flux-schnell", model_loaded: true }),
+      });
+      // Dispatch POST
+      mockFetch.mockResolvedValueOnce({ status: 202, ok: true });
+      // m2-pro + music + music-studio
+      mockFetch.mockRejectedValueOnce(new Error("skip"));
+      mockFetch.mockRejectedValueOnce(new Error("skip"));
+      mockFetch.mockRejectedValueOnce(new Error("skip"));
+
+      await qm.tick();
+      expect(repo.markDispatched).toHaveBeenCalledWith("after-stale");
+    });
+
+    it("recovers local stuck jobs and clears musicStudioStatus", async () => {
+      const stuckLocal = makeJob({
+        id: "stuck-local",
+        status: "dispatched",
+        targetNode: "local",
+        type: "remix_analyze",
+        dispatchedAt: new Date(Date.now() - 20 * 60 * 1000), // 20 min ago — beyond 15 min local timeout
+      });
+      repo.listJobs.mockReturnValue([stuckLocal]);
+      mockFetch.mockRejectedValue(new Error("unreachable"));
+
+      const failedHandler = vi.fn();
+      qm.on("job:failed", failedHandler);
+
+      await qm.tick();
+      expect(repo.markFailed).toHaveBeenCalledWith("stuck-local", expect.stringContaining("Dispatch timeout"));
+      expect(failedHandler).toHaveBeenCalled();
+    });
+  });
 });

@@ -1909,4 +1909,421 @@ describe("Director API router", () => {
       expect(res.body.error).toContain("videoDurationSec");
     });
   });
+
+  // ── GET /produce/jobs ──────────────────────────────────────
+
+  describe("GET /produce/jobs", () => {
+    it("returns empty jobs array when no produce jobs started", async () => {
+      const { app } = buildApp();
+      const res = await request(app).get("/director/produce/jobs");
+      expect(res.status).toBe(200);
+      expect(res.body.jobs).toEqual([]);
+    });
+
+    it("returns job after produce is started", async () => {
+      const { app } = buildApp();
+      // Trigger a produce to create a job entry (presentation without inputFile => 400)
+      await request(app).post("/director/produce").send({ mode: "presentation", inputFile: "/tmp/fake-input.md" });
+      const res = await request(app).get("/director/produce/jobs");
+      expect(res.status).toBe(200);
+      expect(res.body.jobs.length).toBeGreaterThanOrEqual(1);
+      expect(res.body.jobs[0]).toHaveProperty("id");
+      expect(res.body.jobs[0]).toHaveProperty("status");
+    });
+  });
+
+  // ── GET /produce/:id ──────────────────────────────────────
+
+  describe("GET /produce/:id", () => {
+    it("returns 404 for unknown produce job", async () => {
+      const { app } = buildApp();
+      const res = await request(app).get("/director/produce/unknown-id");
+      expect(res.status).toBe(404);
+      expect(res.body.error).toContain("not found");
+    });
+
+    it("returns status for produce job", async () => {
+      const { app } = buildApp();
+      const createRes = await request(app).post("/director/produce").send({ mode: "presentation", inputFile: "/tmp/fake.md" });
+      expect(createRes.status).toBe(202);
+      const jobId = createRes.body.produceJobId;
+
+      const res = await request(app).get(`/director/produce/${jobId}`);
+      expect(res.status).toBe(200);
+      // Race: async produce may still be running or already failed/done
+      expect(["running", "failed", "done"]).toContain(res.body.status);
+    });
+  });
+
+  // ── POST /produce/:id/cancel ──────────────────────────────
+
+  describe("POST /produce/:id/cancel", () => {
+    it("returns 404 for unknown produce job", async () => {
+      const { app } = buildApp();
+      const res = await request(app).post("/director/produce/unknown-id/cancel");
+      expect(res.status).toBe(404);
+    });
+
+    it("cancels a running produce job or reports already done", async () => {
+      const { app } = buildApp();
+      const createRes = await request(app).post("/director/produce").send({ mode: "presentation", inputFile: "/tmp/fake.md" });
+      const jobId = createRes.body.produceJobId;
+
+      const cancelRes = await request(app).post(`/director/produce/${jobId}/cancel`);
+      // Race condition: the async pipeline may finish before cancel arrives
+      expect([200, 409]).toContain(cancelRes.status);
+    });
+
+    it("returns 409 when cancelling already-cancelled job", async () => {
+      const { app } = buildApp();
+      const createRes = await request(app).post("/director/produce").send({ mode: "presentation", inputFile: "/tmp/fake.md" });
+      const jobId = createRes.body.produceJobId;
+      await request(app).post(`/director/produce/${jobId}/cancel`);
+
+      const res = await request(app).post(`/director/produce/${jobId}/cancel`);
+      expect(res.status).toBe(409);
+    });
+  });
+
+  // ── POST /enhance-instructions ────────────────────────────
+
+  describe("POST /enhance-instructions", () => {
+    it("returns 400 for missing raw_instructions", async () => {
+      const { app } = buildApp();
+      const res = await request(app).post("/director/enhance-instructions").send({});
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain("raw_instructions");
+    });
+
+    it("returns 400 for empty raw_instructions", async () => {
+      const { app } = buildApp();
+      const res = await request(app).post("/director/enhance-instructions").send({ raw_instructions: "   " });
+      expect(res.status).toBe(400);
+    });
+
+    it("enhances instructions via copilot", async () => {
+      const mockCopilot = createMockCopilot();
+      const responseJson = JSON.stringify({ thinking: "Added visual details", enhanced_instructions: "Enhanced cinematic instructions" });
+      (mockCopilot.chat as ReturnType<typeof vi.fn>).mockImplementation(async function* () {
+        yield responseJson;
+      });
+      (mockCopilot as unknown as { destroySession: ReturnType<typeof vi.fn> }).destroySession = vi.fn().mockResolvedValue(undefined);
+
+      const { app } = buildApp({ copilot: mockCopilot });
+      const res = await request(app).post("/director/enhance-instructions").send({ raw_instructions: "dark tech style" });
+      expect(res.status).toBe(200);
+      expect(res.body.enhanced_instructions).toBe("Enhanced cinematic instructions");
+      expect(res.body.thinking).toBe("Added visual details");
+    });
+  });
+
+  // ── POST /voice/analyze-params ────────────────────────────
+
+  describe("POST /voice/analyze-params", () => {
+    it("returns 400 for missing text", async () => {
+      const { app } = buildApp();
+      const res = await request(app).post("/director/voice/analyze-params").send({});
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain("text");
+    });
+
+    it("returns 400 for empty text", async () => {
+      const { app } = buildApp();
+      const res = await request(app).post("/director/voice/analyze-params").send({ text: "" });
+      expect(res.status).toBe(400);
+    });
+
+    it("returns analyzed params via copilot", async () => {
+      const mockCopilot = createMockCopilot();
+      const responseJson = JSON.stringify({ speed: 0.9, steps: 16, method: "rk4", cfgStrength: 2.5, swayCoef: -0.5, reasoning: "Technical text" });
+      (mockCopilot.chat as ReturnType<typeof vi.fn>).mockImplementation(async function* () {
+        yield responseJson;
+      });
+      (mockCopilot as unknown as { destroySession: ReturnType<typeof vi.fn> }).destroySession = vi.fn().mockResolvedValue(undefined);
+
+      const { app } = buildApp({ copilot: mockCopilot });
+      const res = await request(app).post("/director/voice/analyze-params").send({ text: "The N.P.M. package ecosystem grew by 40%." });
+      expect(res.status).toBe(200);
+      expect(res.body.speed).toBe(0.9);
+      expect(res.body.steps).toBe(16);
+      expect(res.body.method).toBe("rk4");
+      expect(res.body.reasoning).toBeTruthy();
+    });
+
+    it("clamps out-of-range values", async () => {
+      const mockCopilot = createMockCopilot();
+      const responseJson = JSON.stringify({ speed: 99, steps: 100, method: "invalid", cfgStrength: 99, swayCoef: 99, reasoning: "test" });
+      (mockCopilot.chat as ReturnType<typeof vi.fn>).mockImplementation(async function* () {
+        yield responseJson;
+      });
+      (mockCopilot as unknown as { destroySession: ReturnType<typeof vi.fn> }).destroySession = vi.fn().mockResolvedValue(undefined);
+
+      const { app } = buildApp({ copilot: mockCopilot });
+      const res = await request(app).post("/director/voice/analyze-params").send({ text: "Hello world" });
+      expect(res.status).toBe(200);
+      expect(res.body.speed).toBeLessThanOrEqual(2.0);
+      expect(res.body.steps).toBeLessThanOrEqual(32);
+      expect(res.body.cfgStrength).toBeLessThanOrEqual(5.0);
+      expect(res.body.swayCoef).toBeLessThanOrEqual(3.0);
+      expect(res.body.method).toBe("rk4"); // fallback for invalid
+    });
+  });
+
+  // ── POST /voice/add-directives ────────────────────────────
+
+  describe("POST /voice/add-directives", () => {
+    it("returns 400 for missing text", async () => {
+      const { app } = buildApp();
+      const res = await request(app).post("/director/voice/add-directives").send({});
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain("text");
+    });
+
+    it("returns 400 for empty text", async () => {
+      const { app } = buildApp();
+      const res = await request(app).post("/director/voice/add-directives").send({ text: "  " });
+      expect(res.status).toBe(400);
+    });
+
+    it("adds directives via copilot", async () => {
+      const mockCopilot = createMockCopilot();
+      const responseJson = JSON.stringify({ enhanced: "[PAUSE: 0.5s] Hello *world*.", reasoning: "Added pause and emphasis" });
+      (mockCopilot.chat as ReturnType<typeof vi.fn>).mockImplementation(async function* () {
+        yield responseJson;
+      });
+      (mockCopilot as unknown as { destroySession: ReturnType<typeof vi.fn> }).destroySession = vi.fn().mockResolvedValue(undefined);
+
+      const { app } = buildApp({ copilot: mockCopilot });
+      const res = await request(app).post("/director/voice/add-directives").send({ text: "Hello world." });
+      expect(res.status).toBe(200);
+      expect(res.body.enhanced).toContain("[PAUSE");
+      expect(res.body.reasoning).toBeTruthy();
+    });
+  });
+
+  // ── POST /scenes/:sceneIndex/enhance-prompt ───────────────
+
+  describe("POST /scenes/:sceneIndex/enhance-prompt", () => {
+    it("returns 400 for missing prompt", async () => {
+      const { app } = buildApp();
+      const res = await request(app).post("/director/scenes/0/enhance-prompt").send({});
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain("prompt");
+    });
+
+    it("returns 400 for empty prompt", async () => {
+      const { app } = buildApp();
+      const res = await request(app).post("/director/scenes/0/enhance-prompt").send({ prompt: "  " });
+      expect(res.status).toBe(400);
+    });
+
+    it("enhances prompt via copilot", async () => {
+      const mockCopilot = createMockCopilot();
+      const responseJson = JSON.stringify({ thinking: "Added lighting details", enhanced_prompt: "Cinematic wide shot with golden hour lighting" });
+      (mockCopilot.chat as ReturnType<typeof vi.fn>).mockImplementation(async function* () {
+        yield responseJson;
+      });
+      (mockCopilot as unknown as { destroySession: ReturnType<typeof vi.fn> }).destroySession = vi.fn().mockResolvedValue(undefined);
+
+      const { app } = buildApp({ copilot: mockCopilot });
+      const res = await request(app).post("/director/scenes/0/enhance-prompt").send({ prompt: "a sunset scene" });
+      expect(res.status).toBe(200);
+      expect(res.body.enhanced_prompt).toContain("Cinematic");
+      expect(res.body.thinking).toBeTruthy();
+    });
+  });
+
+  // ── POST /scenes/:sceneIndex/img2img ──────────────────────
+
+  describe("POST /scenes/:sceneIndex/img2img", () => {
+    it("returns 400 for invalid scene index", async () => {
+      const { app } = buildApp();
+      const res = await request(app).post("/director/scenes/abc/img2img").send({ prompt: "enhance", draftId: "d1" });
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain("Invalid scene index");
+    });
+
+    it("returns 400 for negative scene index", async () => {
+      const { app } = buildApp();
+      const res = await request(app).post("/director/scenes/-1/img2img").send({ prompt: "enhance", draftId: "d1" });
+      expect(res.status).toBe(400);
+    });
+
+    it("returns 400 for missing prompt", async () => {
+      const { app } = buildApp();
+      const res = await request(app).post("/director/scenes/0/img2img").send({ draftId: "d1" });
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain("prompt");
+    });
+
+    it("returns 400 for missing draftId", async () => {
+      const { app } = buildApp();
+      const res = await request(app).post("/director/scenes/0/img2img").send({ prompt: "enhance it" });
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain("draftId");
+    });
+
+    it("returns 404 for non-existent draft", async () => {
+      const { app } = buildApp();
+      const res = await request(app).post("/director/scenes/0/img2img").send({ prompt: "enhance it", draftId: "nonexistent" });
+      expect(res.status).toBe(404);
+      expect(res.body.error).toContain("Draft not found");
+    });
+
+    it("returns 400 when draft has no timeline", async () => {
+      const { app } = buildApp();
+      // Create a draft without timeline
+      const now = new Date().toISOString();
+      testDb.prepare(`INSERT INTO director_drafts (id, title, manifest, production_mode, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`)
+        .run("d-img2img-1", "Test", JSON.stringify({ projectTitle: "Test" }), "presentation", now, now);
+
+      const res = await request(app).post("/director/scenes/0/img2img").send({ prompt: "enhance it", draftId: "d-img2img-1" });
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain("no timeline");
+    });
+  });
+
+  // ── POST /scenes/:sceneIndex/replace-from-gallery ─────────
+
+  describe("POST /scenes/:sceneIndex/replace-from-gallery", () => {
+    it("returns 400 for invalid scene index", async () => {
+      const { app } = buildApp();
+      const res = await request(app).post("/director/scenes/abc/replace-from-gallery").send({ assetId: "a1" });
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain("Invalid scene index");
+    });
+
+    it("returns 400 for missing assetId", async () => {
+      const { app } = buildApp();
+      const res = await request(app).post("/director/scenes/0/replace-from-gallery").send({});
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain("assetId");
+    });
+
+    it("returns 404 when asset not found in DB", async () => {
+      const { app } = buildApp();
+      // Need media_assets table
+      testDb.exec(`CREATE TABLE IF NOT EXISTS media_assets (id TEXT PRIMARY KEY, file_path TEXT, name TEXT)`);
+      const res = await request(app).post("/director/scenes/0/replace-from-gallery").send({ assetId: "no-such-asset" });
+      expect(res.status).toBe(404);
+      expect(res.body.error).toContain("Asset not found");
+    });
+  });
+
+  // ── POST /scenes/:sceneIndex/re-record ────────────────────
+
+  describe("POST /scenes/:sceneIndex/re-record", () => {
+    it("returns 400 for invalid scene index", async () => {
+      const { app } = buildApp();
+      const res = await request(app).post("/director/scenes/abc/re-record").send({ text: "Hello" });
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain("Invalid scene index");
+    });
+
+    it("returns 400 for missing text", async () => {
+      const { app } = buildApp();
+      const res = await request(app).post("/director/scenes/0/re-record").send({});
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain("text");
+    });
+
+    it("returns 400 for empty text", async () => {
+      const { app } = buildApp();
+      const res = await request(app).post("/director/scenes/0/re-record").send({ text: "  " });
+      expect(res.status).toBe(400);
+    });
+
+    it("returns 503 when no voice service", async () => {
+      const { app } = buildApp({ voiceService: undefined });
+      const res = await request(app).post("/director/scenes/0/re-record").send({ text: "Hello world" });
+      expect(res.status).toBe(503);
+      expect(res.body.error).toContain("Voice service");
+    });
+  });
+
+  // ── GET /voice/engines ────────────────────────────────────
+
+  describe("GET /voice/engines", () => {
+    it("returns empty engines array when no voice service", async () => {
+      const { app } = buildApp({ voiceService: undefined });
+      const res = await request(app).get("/director/voice/engines");
+      expect(res.status).toBe(200);
+      expect(res.body.engines).toEqual([]);
+    });
+
+    it("returns engines when voice service is provided", async () => {
+      const mockVoiceService = {
+        isReady: vi.fn().mockReturnValue(true),
+        getProvider: vi.fn().mockReturnValue("local"),
+        getSidecarUrl: vi.fn().mockReturnValue("http://localhost:9880"),
+        initialize: vi.fn().mockResolvedValue(undefined),
+        synthesize: vi.fn(),
+        synthesizeF5TTS: vi.fn(),
+      } as unknown as DirectorRouterOptions["voiceService"];
+
+      const { app } = buildApp({ voiceService: mockVoiceService });
+      const res = await request(app).get("/director/voice/engines");
+      expect(res.status).toBe(200);
+      expect(res.body.engines).toBeDefined();
+      expect(res.body.engines.length).toBeGreaterThanOrEqual(1);
+      const kokoroEngine = res.body.engines.find((e: { id: string }) => e.id === "kokoro");
+      expect(kokoroEngine).toBeDefined();
+      expect(kokoroEngine.name).toContain("Kokoro");
+    });
+  });
+
+  // ── POST /enhance-overview ────────────────────────────────
+
+  describe("POST /enhance-overview", () => {
+    it("returns 400 for missing overview", async () => {
+      const { app } = buildApp();
+      const res = await request(app).post("/director/enhance-overview").send({});
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain("overview");
+    });
+
+    it("returns 400 for empty overview", async () => {
+      const { app } = buildApp();
+      const res = await request(app).post("/director/enhance-overview").send({ overview: "  " });
+      expect(res.status).toBe(400);
+    });
+
+    it("enhances overview via copilot", async () => {
+      const mockCopilot = createMockCopilot();
+      const responseJson = JSON.stringify({ enhanced_overview: "Sleek dark tech aesthetic with rapid cuts" });
+      (mockCopilot.chat as ReturnType<typeof vi.fn>).mockImplementation(async function* () {
+        yield responseJson;
+      });
+      (mockCopilot as unknown as { destroySession: ReturnType<typeof vi.fn> }).destroySession = vi.fn().mockResolvedValue(undefined);
+
+      const { app } = buildApp({ copilot: mockCopilot });
+      const res = await request(app).post("/director/enhance-overview").send({ overview: "tech reel" });
+      expect(res.status).toBe(200);
+      expect(res.body.enhanced_overview).toContain("dark tech");
+    });
+  });
+
+  // ── POST /hero-reel/process-inspiration ───────────────────
+
+  describe("POST /hero-reel/process-inspiration", () => {
+    it("returns 400 for missing filePath", async () => {
+      const { app } = buildApp();
+      const res = await request(app).post("/director/hero-reel/process-inspiration").send({});
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain("filePath");
+    });
+
+    it("returns 400 for empty filePath", async () => {
+      const { app } = buildApp();
+      const res = await request(app).post("/director/hero-reel/process-inspiration").send({ filePath: "  " });
+      expect(res.status).toBe(400);
+    });
+
+    it("returns 404 for non-existent file", async () => {
+      const { app } = buildApp();
+      const res = await request(app).post("/director/hero-reel/process-inspiration").send({ filePath: "/tmp/nonexistent-file-xyz.md" });
+      expect(res.status).toBe(404);
+      expect(res.body.error).toContain("not found");
+    });
+  });
 });

@@ -28,7 +28,7 @@ import { MessageRouter } from "./routing/index.js";
 import { SessionManager } from "./sessions/index.js";
 import { CloudflareTunnel } from "./tunnel/index.js";
 import { createModelsRouter } from "./api/models.js";
-import { createAdminRouter, pinterestOAuthStates, exchangePinterestCode, refreshPinterestToken } from "./api/admin.js";
+import { createAdminRouter, pinterestOAuthStates, exchangePinterestCode, refreshPinterestToken, ensurePinterestScheduledJob } from "./api/admin.js";
 import { createTasksRouter } from "./api/tasks.js";
 import { createFilesRouter } from "./api/files.js";
 import { launchChrome, killChrome } from "./browser/chrome-launcher.js";
@@ -250,6 +250,11 @@ const scheduler = new Scheduler({
 });
 scheduler.setTaskEngine(taskEngine);
 scheduler.startAll();
+
+// Auto-create the daily Pinterest job if a token is already configured
+if ((process.env.PINTEREST_ACCESS_TOKEN ?? "").trim()) {
+  ensurePinterestScheduledJob(scheduler);
+}
 
 // ── MCP Sidecar Auto-Provisioning ──
 const mcpServersConfig = config.mcpServers;
@@ -661,6 +666,9 @@ app.get("/api/pinterest/oauth/callback", async (req, res) => {
     logger.error(`Pinterest OAuth token exchange failed: ${result.error}`);
     return res.redirect(`${uiOrigin}/admin?pinterest_oauth=error&message=${encodeURIComponent(result.error ?? "Token exchange failed")}`);
   }
+
+  // Auto-create the daily Pinterest job now that we have a token
+  ensurePinterestScheduledJob(scheduler);
 
   logger.info("Pinterest OAuth flow completed successfully");
   return res.redirect(`${uiOrigin}/admin?pinterest_oauth=success`);

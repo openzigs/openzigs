@@ -8,10 +8,39 @@ import { ProducerService } from "./producer-service.js";
 import type { CopilotWrapper } from "../../copilot/copilot-wrapper.js";
 import type { ContextPayload } from "../ingestion/types.js";
 import type { DirectorManifest } from "../manifest/manifest-types.js";
+import type { VoiceService } from "../../voice/voice-service.js";
+import { sanitizeNarrationScript } from "./script-sanitizer.js";
 
 vi.mock("../ingestion/audio-extractor.js", () => ({
   getAudioDuration: vi.fn().mockResolvedValue(15.5),
 }));
+
+vi.mock("node:fs/promises", () => ({
+  default: {
+    readFile: vi.fn().mockResolvedValue("This is a test narration script."),
+    writeFile: vi.fn().mockResolvedValue(undefined),
+  },
+  readFile: vi.fn().mockResolvedValue("This is a test narration script."),
+  writeFile: vi.fn().mockResolvedValue(undefined),
+}));
+
+vi.mock("./script-sanitizer.js", () => ({
+  sanitizeNarrationScript: vi.fn().mockReturnValue({ text: "This is a test narration script.", flagged: false, threats: [] }),
+}));
+
+vi.mock("./macos-tts.js", () => ({
+  isAvailable: vi.fn().mockResolvedValue(false),
+  synthesize: vi.fn().mockResolvedValue("/tmp/macos-tts-output.mp3"),
+}));
+
+vi.mock("fluent-ffmpeg", () => {
+  const mockFfprobe = vi.fn();
+  return {
+    default: {
+      ffprobe: mockFfprobe,
+    },
+  };
+});
 
 // Build a valid manifest JSON that the mock LLM will return
 function buildValidManifestJson(): string {
@@ -309,5 +338,196 @@ describe("ProducerService", () => {
     await expect(
       p.produce({ mode: "highlight", contextPayload: buildTestContext() }),
     ).rejects.toThrow("No JSON object found");
+  });
+
+  // ── Script mode with scriptPath ─────────────────────────────────
+
+  it("reads and sanitizes script text in script mode", async () => {
+    const manifestWithVo = buildValidManifestJson();
+    const mockCopilot = createMockCopilot(manifestWithVo);
+    const p = new ProducerService(mockCopilot);
+
+    const result = await p.produce({
+      mode: "script",
+      contextPayload: buildTestContext(),
+      scriptPath: "/tmp/script.txt",
+      voiceoverPath: "/tmp/voiceover.mp3",
+    });
+
+    expect(result.manifest).toBeDefined();
+    expect(sanitizeNarrationScript).toHaveBeenCalled();
+  });
+
+  it("warns when sanitizer flags script threats", async () => {
+    vi.mocked(sanitizeNarrationScript).mockReturnValueOnce({
+      text: "Clean text",
+      flagged: true,
+      threats: ["prompt-injection"],
+    });
+
+    const mockCopilot = createMockCopilot(buildValidManifestJson());
+    const p = new ProducerService(mockCopilot);
+
+    const result = await p.produce({
+      mode: "script",
+      contextPayload: buildTestContext(),
+      scriptPath: "/tmp/malicious-script.txt",
+      voiceoverPath: "/tmp/voiceover.mp3",
+    });
+
+    // Should still produce a manifest (sanitized text used)
+    expect(result.manifest).toBeDefined();
+  });
+
+  it("generates voiceover via VoiceService when available", async () => {
+    const mockVoice = {
+      isReady: vi.fn().mockReturnValue(true),
+      synthesize: vi.fn().mockResolvedValue({ audio: Buffer.from("audio-data") }),
+      initialize: vi.fn(),
+    } as unknown as VoiceService;
+
+    const mockCopilot = createMockCopilot(buildValidManifestJson());
+    const p = new ProducerService(mockCopilot, mockVoice);
+
+    const result = await p.produce({
+      mode: "script",
+      contextPayload: buildTestContext(),
+      scriptPath: "/tmp/script.txt",
+    });
+
+    expect(mockVoice.synthesize).toHaveBeenCalled();
+    expect(result.manifest).toBeDefined();
+    // Voiceover should be injected
+    expect(result.manifest.audioLayer?.voiceover).toBeDefined();
+  });
+
+  it("attempts on-demand VoiceService init when not ready but credentials exist", async () => {
+    const originalCreds = process.env.GOOGLE_APPLICATION_CREDENTIALS;
+    process.env.GOOGLE_APPLICATION_CREDENTIALS = "/path/to/creds.json";
+
+    try {
+      const mockVoice = {
+        isReady: vi.fn()
+          .mockReturnValueOnce(false)  // first check: not ready
+          .mockReturnValueOnce(true)   // after init: ready
+          .mockReturnValue(true),      // generateVoiceover guard
+        synthesize: vi.fn().mockResolvedValue({ audio: Buffer.from("audio-data") }),
+        initialize: vi.fn().mockResolvedValue(undefined),
+      } as unknown as VoiceService;
+
+      const mockCopilot = createMockCopilot(buildValidManifestJson());
+      const p = new ProducerService(mockCopilot, mockVoice);
+
+      await p.produce({
+        mode: "script",
+        contextPayload: buildTestContext(),
+        scriptPath: "/tmp/script.txt",
+      });
+
+      expect(mockVoice.initialize).toHaveBeenCalled();
+    } finally {
+      if (originalCreds === undefined) {
+        delete process.env.GOOGLE_APPLICATION_CREDENTIALS;
+      } else {
+        process.env.GOOGLE_APPLICATION_CREDENTIALS = originalCreds;
+      }
+    }
+  });
+
+  // ── Music track probing ──────────────────────────────────────────
+
+  it("probes music track via ffprobe and includes metadata", async () => {
+    const ffmpeg = (await import("fluent-ffmpeg")).default;
+    vi.mocked(ffmpeg.ffprobe).mockImplementation((_path: string, cb: Function) => {
+      cb(null, {
+        format: { duration: 180.5 },
+        streams: [{ codec_name: "aac", codec_type: "audio" }],
+      });
+    });
+
+    const mockCopilot = createMockCopilot(buildValidManifestJson());
+    const p = new ProducerService(mockCopilot);
+
+    const result = await p.produce({
+      mode: "highlight",
+      contextPayload: buildTestContext(),
+      musicTrackPath: "/music/bg.mp3",
+    });
+
+    expect(ffmpeg.ffprobe).toHaveBeenCalledWith("/music/bg.mp3", expect.any(Function));
+    expect(result.manifest).toBeDefined();
+  });
+
+  it("handles ffprobe failure gracefully", async () => {
+    const ffmpeg = (await import("fluent-ffmpeg")).default;
+    vi.mocked(ffmpeg.ffprobe).mockImplementation((_path: string, cb: Function) => {
+      cb(new Error("ffprobe not found"), null);
+    });
+
+    const mockCopilot = createMockCopilot(buildValidManifestJson());
+    const p = new ProducerService(mockCopilot);
+
+    const result = await p.produce({
+      mode: "highlight",
+      contextPayload: buildTestContext(),
+      musicTrackPath: "/music/bg.mp3",
+    });
+
+    // Should still produce manifest — ffprobe failure is non-fatal
+    expect(result.manifest).toBeDefined();
+  });
+
+  // ── Music path correction ────────────────────────────────────────
+
+  it("corrects music path when LLM uses wrong path", async () => {
+    const manifest = JSON.parse(buildValidManifestJson()) as DirectorManifest;
+    manifest.audioLayer = {
+      music: {
+        track: "/wrong/path.mp3",
+        volume: 0.3,
+        ducking: false,
+        fadeInFrames: 30,
+        fadeOutFrames: 60,
+        loop: true,
+      },
+      voiceover: null,
+    };
+    const mockCopilot = createMockCopilot(JSON.stringify(manifest));
+    const p = new ProducerService(mockCopilot);
+
+    const ffmpeg = (await import("fluent-ffmpeg")).default;
+    vi.mocked(ffmpeg.ffprobe).mockImplementation((_path: string, cb: Function) => {
+      cb(null, { format: { duration: 60 }, streams: [] });
+    });
+
+    const result = await p.produce({
+      mode: "highlight",
+      contextPayload: buildTestContext(),
+      musicTrackPath: "/correct/music.mp3",
+    });
+
+    expect(result.manifest.audioLayer?.music?.track).toBe("/correct/music.mp3");
+  });
+
+  it("injects music track when LLM omits it from manifest", async () => {
+    const manifest = JSON.parse(buildValidManifestJson()) as DirectorManifest;
+    manifest.audioLayer = { music: null, voiceover: null };
+    const mockCopilot = createMockCopilot(JSON.stringify(manifest));
+    const p = new ProducerService(mockCopilot);
+
+    const ffmpeg = (await import("fluent-ffmpeg")).default;
+    vi.mocked(ffmpeg.ffprobe).mockImplementation((_path: string, cb: Function) => {
+      cb(null, { format: { duration: 60 }, streams: [] });
+    });
+
+    const result = await p.produce({
+      mode: "highlight",
+      contextPayload: buildTestContext(),
+      musicTrackPath: "/music/background.mp3",
+    });
+
+    expect(result.manifest.audioLayer?.music).toBeDefined();
+    expect(result.manifest.audioLayer?.music?.track).toBe("/music/background.mp3");
+    expect(result.manifest.audioLayer?.music?.volume).toBe(0.3);
   });
 });

@@ -1,8 +1,30 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi, beforeEach } from "vitest";
 import {
   defaultState,
   SentinelConfigSchema,
+  readState,
+  writeState,
+  appendDigestRecord,
+  pruneDigestHistory,
+  writeStatusMarkdown,
+  readStatusMarkdown,
+  readDigestHistory,
+  ensureSentinelDir,
+  SentinelStateSchema,
+  type DigestRecord,
 } from "./sentinel-state.js";
+
+vi.mock("node:fs/promises", () => ({
+  default: {
+    mkdir: vi.fn().mockResolvedValue(undefined),
+    readFile: vi.fn().mockRejectedValue(new Error("ENOENT")),
+    writeFile: vi.fn().mockResolvedValue(undefined),
+    rename: vi.fn().mockResolvedValue(undefined),
+    appendFile: vi.fn().mockResolvedValue(undefined),
+  },
+}));
+
+import fsMock from "node:fs/promises";
 
 // Override SENTINEL_DIR for isolated tests by patching the module internals isn't
 // straightforward here, so we test the pure-logic functions directly and do basic
@@ -116,6 +138,242 @@ describe("sentinel-state", () => {
     it("creates a state with current time when no clock provided", () => {
       const state = defaultState();
       expect(new Date(state.lastTaskCheckAt).getTime()).toBeGreaterThan(0);
+    });
+  });
+
+  // ── File I/O functions ──
+
+  describe("ensureSentinelDir", () => {
+    beforeEach(() => vi.clearAllMocks());
+
+    it("calls mkdir with recursive and 0o700 mode", async () => {
+      await ensureSentinelDir();
+      expect(fsMock.mkdir).toHaveBeenCalledWith(
+        expect.stringContaining("sentinel"),
+        expect.objectContaining({ recursive: true, mode: 0o700 }),
+      );
+    });
+  });
+
+  describe("readState", () => {
+    beforeEach(() => vi.clearAllMocks());
+
+    it("returns default state when file is missing", async () => {
+      vi.mocked(fsMock.readFile).mockRejectedValueOnce(new Error("ENOENT"));
+      const state = await readState(clock);
+      expect(state.lastTaskCheckAt).toBe("2026-06-15T12:00:00.000Z");
+      expect(state.enabled).toBe(true);
+    });
+
+    it("reads valid state from disk", async () => {
+      const validState = {
+        lastTaskCheckAt: "2026-01-01T00:00:00.000Z",
+        lastDigestAt: null,
+        lastPromptAuditAt: null,
+        consecutiveFailures: 3,
+        totalTasksReviewed: 42,
+        alertsSent: 5,
+        enabled: true,
+        modelOverride: "gpt-4o",
+      };
+      vi.mocked(fsMock.readFile).mockResolvedValueOnce(JSON.stringify(validState));
+      const state = await readState();
+      expect(state.consecutiveFailures).toBe(3);
+      expect(state.totalTasksReviewed).toBe(42);
+      expect(state.modelOverride).toBe("gpt-4o");
+    });
+
+    it("returns default state when file is corrupt JSON", async () => {
+      vi.mocked(fsMock.readFile).mockResolvedValueOnce("not valid json{{");
+      const state = await readState(clock);
+      expect(state.consecutiveFailures).toBe(0);
+    });
+  });
+
+  describe("writeState", () => {
+    beforeEach(() => vi.clearAllMocks());
+
+    it("writes state atomically (tmp + rename)", async () => {
+      const state = defaultState(clock);
+      await writeState(state);
+      expect(fsMock.mkdir).toHaveBeenCalled();
+      expect(fsMock.writeFile).toHaveBeenCalledWith(
+        expect.stringContaining(".tmp"),
+        expect.stringContaining("lastTaskCheckAt"),
+        expect.objectContaining({ mode: 0o600 }),
+      );
+      expect(fsMock.rename).toHaveBeenCalled();
+    });
+  });
+
+  describe("appendDigestRecord", () => {
+    beforeEach(() => vi.clearAllMocks());
+
+    it("appends a record and calls pruneDigestHistory", async () => {
+      // pruneDigestHistory will try to readFile — let it fail gracefully
+      vi.mocked(fsMock.readFile).mockRejectedValueOnce(new Error("ENOENT"));
+
+      const record: DigestRecord = {
+        timestamp: "2026-06-15T09:00:00Z",
+        period: { from: "2026-06-14T09:00:00Z", to: "2026-06-15T09:00:00Z" },
+        taskSummary: { completed: 10, failed: 2, cancelled: 1, successRate: 0.77 },
+        tokenBurn: null,
+        promptAudit: null,
+        promptRecommendations: null,
+        alertCount: 0,
+      };
+      await appendDigestRecord(record, 30);
+      expect(fsMock.appendFile).toHaveBeenCalledWith(
+        expect.stringContaining("digest-history.jsonl"),
+        expect.stringContaining('"timestamp"'),
+        expect.anything(),
+      );
+    });
+  });
+
+  describe("pruneDigestHistory", () => {
+    beforeEach(() => vi.clearAllMocks());
+
+    it("returns 0 when file is missing", async () => {
+      vi.mocked(fsMock.readFile).mockRejectedValueOnce(new Error("ENOENT"));
+      const pruned = await pruneDigestHistory(30);
+      expect(pruned).toBe(0);
+    });
+
+    it("prunes old entries beyond retention", async () => {
+      const old = { timestamp: "2020-01-01T00:00:00Z" };
+      const recent = { timestamp: new Date().toISOString() };
+      const content = JSON.stringify(old) + "\n" + JSON.stringify(recent) + "\n";
+      vi.mocked(fsMock.readFile).mockResolvedValueOnce(content);
+
+      const pruned = await pruneDigestHistory(30);
+      expect(pruned).toBe(1);
+      expect(fsMock.writeFile).toHaveBeenCalled();
+      expect(fsMock.rename).toHaveBeenCalled();
+    });
+
+    it("skips malformed lines and counts them as pruned", async () => {
+      const valid = { timestamp: new Date().toISOString() };
+      const content = "not json\n" + JSON.stringify(valid) + "\n";
+      vi.mocked(fsMock.readFile).mockResolvedValueOnce(content);
+
+      const pruned = await pruneDigestHistory(30);
+      expect(pruned).toBe(1);
+    });
+
+    it("does nothing when all entries are within retention", async () => {
+      const recent1 = { timestamp: new Date().toISOString() };
+      const recent2 = { timestamp: new Date().toISOString() };
+      const content = JSON.stringify(recent1) + "\n" + JSON.stringify(recent2) + "\n";
+      vi.mocked(fsMock.readFile).mockResolvedValueOnce(content);
+
+      const pruned = await pruneDigestHistory(30);
+      expect(pruned).toBe(0);
+      // Should NOT write when nothing was pruned
+      expect(fsMock.writeFile).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("writeStatusMarkdown", () => {
+    beforeEach(() => vi.clearAllMocks());
+
+    it("writes to default path", async () => {
+      await writeStatusMarkdown("# Sentinel Status\nAll clear.");
+      expect(fsMock.writeFile).toHaveBeenCalledWith(
+        expect.stringContaining("status.md"),
+        "# Sentinel Status\nAll clear.",
+        expect.anything(),
+      );
+    });
+
+    it("writes to custom path", async () => {
+      await writeStatusMarkdown("# Custom", "/tmp/custom-status.md");
+      expect(fsMock.mkdir).toHaveBeenCalled();
+      expect(fsMock.writeFile).toHaveBeenCalledWith(
+        "/tmp/custom-status.md",
+        "# Custom",
+        expect.anything(),
+      );
+    });
+  });
+
+  describe("readStatusMarkdown", () => {
+    beforeEach(() => vi.clearAllMocks());
+
+    it("returns null when file is missing", async () => {
+      vi.mocked(fsMock.readFile).mockRejectedValueOnce(new Error("ENOENT"));
+      const content = await readStatusMarkdown();
+      expect(content).toBeNull();
+    });
+
+    it("returns content when file exists", async () => {
+      vi.mocked(fsMock.readFile).mockResolvedValueOnce("# Status OK");
+      const content = await readStatusMarkdown();
+      expect(content).toBe("# Status OK");
+    });
+
+    it("reads from custom path", async () => {
+      vi.mocked(fsMock.readFile).mockResolvedValueOnce("# Custom Status");
+      const content = await readStatusMarkdown("/tmp/custom.md");
+      expect(content).toBe("# Custom Status");
+      expect(fsMock.readFile).toHaveBeenCalledWith("/tmp/custom.md", "utf-8");
+    });
+  });
+
+  describe("readDigestHistory", () => {
+    beforeEach(() => vi.clearAllMocks());
+
+    it("returns empty array when file is missing", async () => {
+      vi.mocked(fsMock.readFile).mockRejectedValueOnce(new Error("ENOENT"));
+      const records = await readDigestHistory();
+      expect(records).toEqual([]);
+    });
+
+    it("parses JSONL and returns most recent first", async () => {
+      const r1 = { timestamp: "2026-01-01T00:00:00Z" };
+      const r2 = { timestamp: "2026-06-15T00:00:00Z" };
+      vi.mocked(fsMock.readFile).mockResolvedValueOnce(
+        JSON.stringify(r1) + "\n" + JSON.stringify(r2) + "\n",
+      );
+
+      const records = await readDigestHistory();
+      expect(records).toHaveLength(2);
+      expect(records[0].timestamp).toBe("2026-06-15T00:00:00Z");
+      expect(records[1].timestamp).toBe("2026-01-01T00:00:00Z");
+    });
+
+    it("respects the limit parameter", async () => {
+      const lines = Array.from({ length: 10 }, (_, i) => JSON.stringify({ timestamp: `2026-01-${String(i + 1).padStart(2, "0")}T00:00:00Z` }));
+      vi.mocked(fsMock.readFile).mockResolvedValueOnce(lines.join("\n") + "\n");
+
+      const records = await readDigestHistory(3);
+      expect(records).toHaveLength(3);
+    });
+
+    it("skips malformed lines", async () => {
+      const valid = { timestamp: "2026-06-15T00:00:00Z" };
+      vi.mocked(fsMock.readFile).mockResolvedValueOnce(
+        "bad json\n" + JSON.stringify(valid) + "\n",
+      );
+
+      const records = await readDigestHistory();
+      expect(records).toHaveLength(1);
+    });
+  });
+
+  describe("SentinelStateSchema", () => {
+    it("parses valid state", () => {
+      const input = {
+        lastTaskCheckAt: "2026-06-15T12:00:00.000Z",
+        lastDigestAt: null,
+        lastPromptAuditAt: null,
+        consecutiveFailures: 0,
+        totalTasksReviewed: 0,
+        alertsSent: 0,
+        enabled: true,
+        modelOverride: null,
+      };
+      expect(() => SentinelStateSchema.parse(input)).not.toThrow();
     });
   });
 });

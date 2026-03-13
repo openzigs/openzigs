@@ -164,6 +164,46 @@ export async function exchangePinterestCode(code: string): Promise<{
   };
 }
 
+const PINTEREST_DAILY_JOB_NAME = "Daily Pinterest Trends & Metrics";
+
+/**
+ * Idempotently creates the daily Pinterest trends + snapshot job.
+ * Called whenever a Pinterest access token is saved so the job is
+ * always present when the integration is active. Safe to call multiple
+ * times — exits immediately if the job already exists.
+ */
+export function ensurePinterestScheduledJob(scheduler: Scheduler): void {
+  if (scheduler.getByName(PINTEREST_DAILY_JOB_NAME)) return;
+  try {
+    scheduler.create({
+      name: PINTEREST_DAILY_JOB_NAME,
+      cronExpression: "0 8 * * *",
+      timezone: "America/New_York",
+      actionType: "prompt",
+      actionPayload: {
+        goal: "Fetch growing Pinterest trends for the US market using the pinterest-trends tool (region: US, trend_type: growing, limit: 20). " +
+          "Then run pinterest-content-ideas for the topic 'AI automation productivity' to discover keyword opportunities. " +
+          "Finally, for each active pin in the tracker at http://localhost:3000/api/pinterest/tracker/pins, " +
+          "fetch its latest metrics from the Pinterest API and record a new snapshot via POST /api/pinterest/tracker/pins/:pinId/snapshots. " +
+          "Save a brief summary of today's top trends and any new content ideas.",
+      },
+      allowedTools: [
+        "pinterest-trends",
+        "pinterest-content-ideas",
+        "web-search",
+        "read-file",
+        "shell-execute",
+      ],
+      autoApproveTools: ["pinterest-trends", "pinterest-content-ideas"],
+    });
+    logger.info("[Pinterest] Created daily trends & metrics scheduled job");
+  } catch (err) {
+    logger.warn(
+      `[Pinterest] Failed to create daily scheduled job: ${err instanceof Error ? err.message : String(err)}`
+    );
+  }
+}
+
 const ENV_CHECKS = [
   "BRAVE_API_KEY",
   "CHROME_DEBUG_HOST",
@@ -3384,6 +3424,9 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
       if (adAccountId) {
         process.env.PINTEREST_AD_ACCOUNT_ID = adAccountId;
       }
+
+      // Auto-create the daily Pinterest job when a token is saved
+      ensurePinterestScheduledJob(scheduler);
 
       logger.info("Updated Pinterest credentials via admin UI");
       return res.json({ ok: true });
