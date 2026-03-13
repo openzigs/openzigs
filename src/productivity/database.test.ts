@@ -1,5 +1,4 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import Database from "better-sqlite3";
 
 // Mock heavy dependencies that database.ts imports at the top level
 vi.mock("../tasks/task-repository.js", () => ({

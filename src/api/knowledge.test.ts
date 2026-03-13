@@ -21,11 +21,12 @@ vi.mock("node:fs/promises", () => ({
 function createMockKnowledgeService() {
   return {
     getStats: vi.fn().mockResolvedValue({ totalDocuments: 5, totalChunks: 100 }),
-    listDocuments: vi.fn(() => [{ id: "d1", name: "test.pdf" }]),
+    listDocuments: vi.fn((): Record<string, unknown>[] => [{ id: "d1", name: "test.pdf" }]),
     search: vi.fn().mockResolvedValue([{ chunk: "result", score: 0.9 }]),
     reindexAll: vi.fn().mockResolvedValue(undefined),
     reindexDocument: vi.fn().mockResolvedValue(undefined),
     deleteDocument: vi.fn().mockResolvedValue(undefined),
+    updateDocumentMeta: vi.fn().mockResolvedValue(undefined),
     getConfig: vi.fn(() => ({
       directory: "/tmp/knowledge",
       watchEnabled: true,
@@ -435,7 +436,7 @@ describe("Knowledge API router", () => {
 
   describe("POST /convert (edge cases)", () => {
     it("resolves tilde paths", async () => {
-      const { app, ks } = buildApp();
+      const { app } = buildApp();
       const res = await request(app).post("/knowledge/convert").send({ filePath: "~/docs/test.pdf" });
       expect(res.status).toBe(200);
       expect(res.body.ok).toBe(true);

@@ -159,7 +159,7 @@ export function ScreenRecorder({ onRecordingComplete }: ScreenRecorderProps) {
               ...micStream.getAudioTracks(),
             ]);
           }
-        } catch (micErr) {
+        } catch {
           showToast("Microphone access denied — recording without mic.", "info");
         }
       }

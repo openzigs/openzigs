@@ -608,7 +608,7 @@ describe("KnowledgeIngestionService", () => {
   describe("updateDocumentMeta", () => {
     it("throws for non-existent document", async () => {
       await service.start();
-      await expect(service.updateDocumentMeta("nonexistent", "public", "general")).rejects.toThrow("Document not found");
+      await expect(service.updateDocumentMeta("nonexistent", "public", "document")).rejects.toThrow("Document not found");
     });
 
     it("updates virtual document metadata in place", async () => {
@@ -616,7 +616,7 @@ describe("KnowledgeIngestionService", () => {
       await service.ingestText("virtual-doc", "Title", "Content");
       const store = getStore();
       store.deleteByDocumentId.mockClear();
-      await service.updateDocumentMeta("virtual-doc", "private", "reference");
+      await service.updateDocumentMeta("virtual-doc", "private", "document");
       // Virtual docs (startsWith [virtual:) trigger deleteByDocumentId
       expect(store.deleteByDocumentId).toHaveBeenCalledWith("virtual-doc");
     });
@@ -708,7 +708,7 @@ describe("KnowledgeIngestionService", () => {
         type: "image",
         filename: "private.png",
         visibility: "private",
-        category: "reference",
+        category: "document",
       });
       const docs = service.listDocuments();
       const doc = docs.find((d) => d.id === "asset:img-003");
@@ -924,7 +924,7 @@ describe("KnowledgeIngestionService", () => {
       await service.start();
 
       const store = getStore();
-      const addChunksCallCount = store.addChunks.mock.calls.length;
+      void store.addChunks.mock.calls.length;
 
       // Second scan should skip since mtime + size are unchanged
       mfs.readdir.mockResolvedValueOnce(fakeDirents);

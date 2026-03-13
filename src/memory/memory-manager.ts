@@ -99,12 +99,17 @@ export interface GitHubContent {
 const GITHUB_API = "https://api.github.com";
 
 export function createGitHubApiClient(token: string): GitHubApiClient {
-  const headers = (): Record<string, string> => ({
-    Authorization: `Bearer ${token}`,
-    Accept: "application/vnd.github+json",
-    "X-GitHub-Api-Version": "2022-11-28",
-    "User-Agent": "openzigs-memory-manager",
-  });
+  const headers = (): Record<string, string> => {
+    const h: Record<string, string> = {
+      Accept: "application/vnd.github+json",
+      "X-GitHub-Api-Version": "2022-11-28",
+      "User-Agent": "openzigs-memory-manager",
+    };
+    if (token) {
+      h.Authorization = `Bearer ${token}`;
+    }
+    return h;
+  };
 
   const safeFetch = async (url: string, init?: RequestInit): Promise<Response> => {
     const resp = await fetch(url, { ...init, headers: { ...headers(), ...init?.headers } });

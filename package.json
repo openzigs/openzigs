@@ -35,7 +35,6 @@
     "@remotion/cli": "^4.0.431",
     "@remotion/renderer": "^4.0.431",
     "@remotion/transitions": "^4.0.431",
-    "@types/marked": "^6.0.0",
     "@types/multer": "^2.0.0",
     "better-sqlite3": "^12.6.2",
     "chokidar": "^5.0.0",

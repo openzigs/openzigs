@@ -3426,7 +3426,9 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
       }
 
       // Auto-create the daily Pinterest job when a token is saved
-      ensurePinterestScheduledJob(scheduler);
+      if (scheduler) {
+        ensurePinterestScheduledJob(scheduler);
+      }
 
       logger.info("Updated Pinterest credentials via admin UI");
       return res.json({ ok: true });

@@ -85,9 +85,14 @@ export const createStudioRouter = ({
       });
 
       // Listen for completion to register the asset
+      const cleanup = () => {
+        trimWorker.removeListener("trim:complete", onComplete);
+        trimWorker.removeListener("trim:failed", onFail);
+      };
+
       const onComplete = (data: { jobId: string }) => {
         if (data.jobId !== jobId) return;
-        trimWorker.removeListener("trim:complete", onComplete);
+        cleanup();
         try {
           const stat = fs.statSync(outputPath);
           const duration = endTime - startTime;
@@ -106,7 +111,14 @@ export const createStudioRouter = ({
           logger.error(`[StudioRouter] Failed to register trimmed asset: ${err}`);
         }
       };
+
+      const onFail = (data: { jobId: string }) => {
+        if (data.jobId !== jobId) return;
+        cleanup();
+      };
+
       trimWorker.on("trim:complete", onComplete);
+      trimWorker.on("trim:failed", onFail);
 
       res.json({ jobId, status: "queued" });
     } catch (err) {

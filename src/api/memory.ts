@@ -64,7 +64,7 @@ export function createMemoryRouter({ memoryManager }: MemoryRouterDeps): Router 
       if (typeof enabled === "boolean") patch.enabled = enabled;
       if (typeof owner === "string") patch.owner = owner;
       if (typeof repo === "string") patch.repo = repo;
-      if (typeof cacheTtlMs === "number" && cacheTtlMs > 0) patch.cacheTtlMs = cacheTtlMs;
+      if (typeof cacheTtlMs === "number" && cacheTtlMs >= 0) patch.cacheTtlMs = cacheTtlMs;
 
       memoryManager.updateConfig(patch);
 
@@ -178,8 +178,14 @@ export function createMemoryRouter({ memoryManager }: MemoryRouterDeps): Router 
       if (!id) { res.status(400).json({ error: "Missing memory id" }); return; }
 
       const { title, content } = req.body as { title?: string; content?: string };
+      if (title !== undefined && (typeof title !== "string" || title.trim().length === 0)) {
+        res.status(400).json({ error: "Title must be a non-empty string" }); return;
+      }
+      if (content !== undefined && typeof content !== "string") {
+        res.status(400).json({ error: "Content must be a string" }); return;
+      }
       const memory = await memoryManager.updateMemory(id, {
-        ...(title !== undefined && { title }),
+        ...(title !== undefined && { title: title.trim() }),
         ...(content !== undefined && { content }),
       });
       res.json(memory);

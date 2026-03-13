@@ -285,7 +285,7 @@ describe("Studio Router", () => {
       const { existsSync } = await import("node:fs");
       vi.mocked(existsSync).mockReturnValueOnce(true).mockReturnValueOnce(false);
 
-      const res = await request(app)
+      await request(app)
         .post("/api/studio/trim")
         .send({ assetId: "asset-001", startTime: 0, endTime: 5 });
 

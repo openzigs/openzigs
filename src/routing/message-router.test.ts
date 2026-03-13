@@ -692,7 +692,7 @@ describe("MessageRouter", () => {
 
     const failingCopilot = {
       ...new FakeCopilot("ok"),
-      chat: async function* () {
+      chat: async function* () { // eslint-disable-line require-yield
         throw new Error("Model unavailable");
       },
     } as unknown as CopilotWrapper;

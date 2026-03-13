@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import type { KnowledgeCategory } from "./types.js";
 
 // All mock objects must be created inside vi.mock factories to avoid hoisting issues
 
@@ -429,7 +430,7 @@ describe("LanceDBStore", () => {
     });
 
     it("builds categories filter clause", () => {
-      const clause = LanceDBStore.buildFilterClause({ categories: ["docs", "code"] });
+      const clause = LanceDBStore.buildFilterClause({ categories: ["docs", "code"] as unknown as KnowledgeCategory[] });
       expect(clause).toContain("IN ('docs', 'code')");
       expect(clause).toContain("OR category IS NULL");
     });
@@ -437,7 +438,7 @@ describe("LanceDBStore", () => {
     it("combines visibility and categories", () => {
       const clause = LanceDBStore.buildFilterClause({
         visibility: "private",
-        categories: ["api"],
+        categories: ["api"] as unknown as KnowledgeCategory[],
       });
       expect(clause).toContain("visibility = 'private'");
       expect(clause).toContain("AND");
@@ -445,7 +446,7 @@ describe("LanceDBStore", () => {
     });
 
     it("escapes single quotes in categories", () => {
-      const clause = LanceDBStore.buildFilterClause({ categories: ["it's"] });
+      const clause = LanceDBStore.buildFilterClause({ categories: ["it's"] as unknown as KnowledgeCategory[] });
       expect(clause).toContain("it''s");
     });
   });

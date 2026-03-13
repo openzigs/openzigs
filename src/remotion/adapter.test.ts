@@ -612,9 +612,11 @@ describe("stageInputPropsMedia", () => {
         type: "video_clip",
         src: "/clips/intro.mp4",
         startAtFrame: 0,
-        trimStart: 0,
+        trimStartFrame: 0,
         durationInFrames: 90,
         volume: 1,
+        effects: [],
+        textOverlays: [],
         fitMode: "cover",
         horizontalCropOffset: 50,
       },
@@ -631,9 +633,11 @@ describe("stageInputPropsMedia", () => {
         type: "video_clip",
         src: "/missing.mp4",
         startAtFrame: 0,
-        trimStart: 0,
+        trimStartFrame: 0,
         durationInFrames: 60,
         volume: 1,
+        effects: [],
+        textOverlays: [],
         fitMode: "cover",
         horizontalCropOffset: 50,
       },
@@ -652,6 +656,8 @@ describe("stageInputPropsMedia", () => {
         voiceover: "/audio/vo.mp3",
         voiceoverVolume: 0.9,
         kenBurns: { scaleFrom: 1, scaleTo: 1.15, translateXFrom: 0, translateXTo: -10, translateYFrom: 0, translateYTo: -5 },
+        effects: [],
+        textOverlays: [],
       },
     ]);
     const result = stageInputPropsMedia(props, bundleDir);
@@ -675,6 +681,8 @@ describe("stageInputPropsMedia", () => {
         voiceover: "/audio/missing.mp3",
         voiceoverVolume: 1,
         kenBurns: { scaleFrom: 1, scaleTo: 1.15, translateXFrom: 0, translateXTo: -10, translateYFrom: 0, translateYTo: -5 },
+        effects: [],
+        textOverlays: [],
       },
     ]);
     const result = stageInputPropsMedia(props, bundleDir);
@@ -692,6 +700,8 @@ describe("stageInputPropsMedia", () => {
         durationInFrames: 300,
         voiceoverVolume: 1,
         kenBurns: { scaleFrom: 1, scaleTo: 1.15, translateXFrom: 0, translateXTo: -10, translateYFrom: 0, translateYTo: -5 },
+        effects: [],
+        textOverlays: [],
       },
     ]);
     const result = stageInputPropsMedia(props, bundleDir);

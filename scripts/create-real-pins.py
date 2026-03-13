@@ -20,7 +20,10 @@ import urllib.error
 BOARD_ID = "1106478270890593622"
 BASE_URL = "https://api.pinterest.com/v5"
 TRACKER_URL = "http://localhost:3000/api/pinterest/tracker"
-OPENZIGS_TOKEN = "1528efb2267d94dca746741e8e8e037d469e2a26b3ecc5d6b57518df7a814193"
+OPENZIGS_TOKEN = os.environ.get("OPENZIGS_TOKEN")
+if not OPENZIGS_TOKEN:
+    print("Error: OPENZIGS_TOKEN environment variable is required", file=sys.stderr)
+    sys.exit(1)
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 PINS = [

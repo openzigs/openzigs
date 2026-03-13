@@ -803,8 +803,9 @@ export class CopilotWrapperService extends EventEmitter implements CopilotWrappe
             : memoryContext;
           effectiveSystemMessage = { mode: effectiveSystemMessage?.mode ?? "append", content: combined };
         }
-      } catch {
+      } catch (err) {
         // Memory context is best-effort — don't block chat on failures
+        console.warn("Failed to get memory context:", err);
       }
     }
 

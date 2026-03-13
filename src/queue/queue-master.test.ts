@@ -54,7 +54,7 @@ function makeRepo() {
     markFailed: vi.fn(),
     isProjectComplete: vi.fn(() => ({ complete: false, total: 0 })),
     createAsset: vi.fn(() => "asset-1"),
-    getAsset: vi.fn(() => null),
+    getAsset: vi.fn((): Record<string, unknown> | null => null),
   };
 }
 
@@ -776,7 +776,7 @@ describe("QueueMaster", () => {
       await qm.tick();
       expect(repo.markDispatched).toHaveBeenCalledWith("vid-full-1");
 
-      const dispatchCall = mockFetch.mock.calls.find(c => String(c[0]).includes("/generate") && String(c[0]).includes("m2-pro"));
+      void mockFetch.mock.calls.find(c => String(c[0]).includes("/generate") && String(c[0]).includes("m2-pro"));
       // The dispatch call goes to the m2-pro /generate endpoint
       const allCalls = mockFetch.mock.calls;
       const generateCall = allCalls.find(c => {

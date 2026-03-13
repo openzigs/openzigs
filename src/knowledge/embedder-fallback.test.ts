@@ -5,7 +5,7 @@
  * Separated from embedder.test.ts because that file tests the real ONNX model
  * while this file mocks the pipeline to exercise fallback/error paths.
  */
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 
 // Force pipeline to fail → triggers hash-based fallback
 vi.mock("@huggingface/transformers", () => ({

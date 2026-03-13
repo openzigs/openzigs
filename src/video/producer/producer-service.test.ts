@@ -438,7 +438,8 @@ describe("ProducerService", () => {
 
   it("probes music track via ffprobe and includes metadata", async () => {
     const ffmpeg = (await import("fluent-ffmpeg")).default;
-    vi.mocked(ffmpeg.ffprobe).mockImplementation((_path: string, cb: Function) => {
+    vi.mocked(ffmpeg.ffprobe).mockImplementation((...args: unknown[]) => {
+      const cb = args[args.length - 1] as (err: unknown, data: unknown) => void;
       cb(null, {
         format: { duration: 180.5 },
         streams: [{ codec_name: "aac", codec_type: "audio" }],
@@ -460,7 +461,8 @@ describe("ProducerService", () => {
 
   it("handles ffprobe failure gracefully", async () => {
     const ffmpeg = (await import("fluent-ffmpeg")).default;
-    vi.mocked(ffmpeg.ffprobe).mockImplementation((_path: string, cb: Function) => {
+    vi.mocked(ffmpeg.ffprobe).mockImplementation((...args: unknown[]) => {
+      const cb = args[args.length - 1] as (err: unknown, data: unknown) => void;
       cb(new Error("ffprobe not found"), null);
     });
 
@@ -496,7 +498,8 @@ describe("ProducerService", () => {
     const p = new ProducerService(mockCopilot);
 
     const ffmpeg = (await import("fluent-ffmpeg")).default;
-    vi.mocked(ffmpeg.ffprobe).mockImplementation((_path: string, cb: Function) => {
+    vi.mocked(ffmpeg.ffprobe).mockImplementation((...args: unknown[]) => {
+      const cb = args[args.length - 1] as (err: unknown, data: unknown) => void;
       cb(null, { format: { duration: 60 }, streams: [] });
     });
 
@@ -516,7 +519,8 @@ describe("ProducerService", () => {
     const p = new ProducerService(mockCopilot);
 
     const ffmpeg = (await import("fluent-ffmpeg")).default;
-    vi.mocked(ffmpeg.ffprobe).mockImplementation((_path: string, cb: Function) => {
+    vi.mocked(ffmpeg.ffprobe).mockImplementation((...args: unknown[]) => {
+      const cb = args[args.length - 1] as (err: unknown, data: unknown) => void;
       cb(null, { format: { duration: 60 }, streams: [] });
     });
 

@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import express from "express";
 import request from "supertest";
 import { createMemoryRouter } from "./memory.js";
-import type { MemoryManager, MemoryConfig } from "../memory/memory-manager.js";
+import type { MemoryManager } from "../memory/memory-manager.js";
 
 vi.mock("../logging/logger.js", () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
