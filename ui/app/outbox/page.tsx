@@ -8,6 +8,7 @@ import { fetchJson } from "@/lib/api";
 import { SectionCard } from "@/components/section-card";
 import { ToastContainer, showToast } from "@/components/toast";
 import { ConfirmDialog } from "@/components/confirm-dialog";
+import { AddToOutboxModal } from "@/components/add-to-outbox-modal";
 import {
   Send,
   Clock,
@@ -25,6 +26,8 @@ import {
   Music,
   FileText,
   Type,
+  Plus,
+  Paperclip,
 } from "lucide-react";
 
 // ── Types ───────────────────────────────────────────────────
@@ -32,6 +35,12 @@ import {
 type OutboxStatus = "pending" | "processing" | "published" | "failed" | "canceled";
 type OutboxPlatform = "twitter" | "pinterest" | "linkedin" | "facebook" | "youtube" | "reddit" | "instagram";
 type OutboxAssetType = "image" | "video" | "audio" | "document" | "text";
+
+interface OutboxAttachment {
+  filePath: string;
+  filename: string;
+  assetType?: string;
+}
 
 interface OutboxItem {
   id: string;
@@ -51,6 +60,9 @@ interface OutboxItem {
   updatedAt: string;
   startedAt: string | null;
   completedAt: string | null;
+  title: string | null;
+  contentBody: string | null;
+  attachments: OutboxAttachment[];
 }
 
 interface OutboxStats {
@@ -124,6 +136,7 @@ export default function OutboxPage() {
   const [platformFilter, setPlatformFilter] = useState<OutboxPlatform | "all">("all");
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [expandedError, setExpandedError] = useState<string | null>(null);
+  const [showNewItemModal, setShowNewItemModal] = useState(false);
 
   // ── Queries ───────────────────────────────────────────────
 
@@ -186,11 +199,21 @@ export default function OutboxPage() {
       <ToastContainer />
 
       {/* ── Header ──────────────────────────────────────────── */}
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold text-foreground">Publishing Outbox</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Queue content for autonomous publishing across platforms
-        </p>
+      <div className="mb-8 flex items-center justify-between">
+        <div>
+          <h1 className="text-3xl font-bold text-foreground">Publishing Outbox</h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Queue content for autonomous publishing across platforms
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => setShowNewItemModal(true)}
+          className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground hover:bg-primary/90"
+        >
+          <Plus className="h-4 w-4" />
+          New Item
+        </button>
       </div>
 
       {/* ── Stats Cards ─────────────────────────────────────── */}
@@ -247,7 +270,15 @@ export default function OutboxPage() {
           <div className="py-12 text-center text-sm text-muted-foreground">
             <Send className="mx-auto mb-3 h-8 w-8 opacity-40" />
             <p>No items in the outbox</p>
-            <p className="mt-1 text-xs">Use the Gallery to queue content for publishing</p>
+            <p className="mt-1 text-xs">Queue text, files, gallery assets, or URLs for publishing</p>
+            <button
+              type="button"
+              onClick={() => setShowNewItemModal(true)}
+              className="mt-4 inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
+            >
+              <Plus className="h-4 w-4" />
+              New Item
+            </button>
           </div>
         ) : (
           <div className="divide-y divide-border">
@@ -281,6 +312,18 @@ export default function OutboxPage() {
                         </span>
                       )}
                     </div>
+                    {item.title && (
+                      <p className="mt-1 text-sm font-medium text-card-foreground">{item.title}</p>
+                    )}
+                    {item.contentBody && (
+                      <p className="mt-0.5 line-clamp-2 text-xs text-muted-foreground font-mono">{item.contentBody}</p>
+                    )}
+                    {item.attachments.length > 0 && (
+                      <div className="mt-0.5 flex items-center gap-1 text-xs text-muted-foreground">
+                        <Paperclip className="h-3 w-3" />
+                        {item.attachments.length} file{item.attachments.length > 1 ? "s" : ""}
+                      </div>
+                    )}
                     <p className="mt-1 line-clamp-2 text-sm text-card-foreground">{item.agentContext}</p>
                     <div className="mt-1.5 flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
                       <span title={new Date(item.scheduledTime).toLocaleString()}>
@@ -369,6 +412,11 @@ export default function OutboxPage() {
           onCancel={() => setConfirmDelete(null)}
         />
       )}
+
+      <AddToOutboxModal
+        open={showNewItemModal}
+        onClose={() => setShowNewItemModal(false)}
+      />
     </main>
   );
 }

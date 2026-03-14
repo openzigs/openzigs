@@ -760,10 +760,11 @@ export default function GalleryPage() {
         <AddToOutboxModal
           open
           onClose={() => setOutboxAsset(null)}
-          assetId={outboxAsset.id}
-          assetFilename={outboxAsset.filename}
-          assetType={outboxAsset.type === "scene" ? "image" : outboxAsset.type}
+          initialAssetId={outboxAsset.id}
+          initialAssetFilename={outboxAsset.filename}
+          initialAssetType={outboxAsset.type === "scene" ? "image" : outboxAsset.type}
           defaultContext={outboxAsset.prompt ?? ""}
+          initialTab="gallery"
         />
       )}
 

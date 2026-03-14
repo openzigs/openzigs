@@ -14,7 +14,6 @@ test.describe('Outbox', () => {
   });
 
   test('stats cards display status counts', async ({ page }) => {
-    // Should see stat cards for each status
     await expect(page.getByText('Pending')).toBeVisible();
     await expect(page.getByText('Processing')).toBeVisible();
     await expect(page.getByText('Published')).toBeVisible();
@@ -26,7 +25,6 @@ test.describe('Outbox', () => {
   test('platform filter dropdown is present', async ({ page }) => {
     const select = page.locator('select');
     await expect(select).toBeVisible();
-    // Should have "All Platforms" as default
     await expect(select).toHaveValue('all');
   });
 
@@ -36,11 +34,54 @@ test.describe('Outbox', () => {
 
   test('empty state message when no items', async ({ page }) => {
     await expect(page.getByText('No items in the outbox')).toBeVisible();
-    await expect(page.getByText('Use the Gallery to queue content for publishing')).toBeVisible();
+    await expect(page.getByText('Queue text, files, gallery assets, or URLs for publishing')).toBeVisible();
   });
 
   test('navigation link exists in navbar', async ({ page }) => {
     const navLink = page.getByRole('link', { name: 'Outbox' });
     await expect(navLink).toBeVisible();
+  });
+
+  test('New Item button is visible in header', async ({ page }) => {
+    const btn = page.getByRole('button', { name: 'New Item' });
+    await expect(btn).toBeVisible();
+  });
+
+  test('New Item button opens the publishing modal', async ({ page }) => {
+    await page.getByRole('button', { name: 'New Item' }).click();
+    await expect(page.getByRole('heading', { name: 'Add to Publishing Queue' })).toBeVisible();
+  });
+
+  test('modal has source tabs', async ({ page }) => {
+    await page.getByRole('button', { name: 'New Item' }).click();
+    await expect(page.getByRole('button', { name: 'Text' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Files' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Gallery' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'URL' })).toBeVisible();
+  });
+
+  test('modal can be closed with cancel', async ({ page }) => {
+    await page.getByRole('button', { name: 'New Item' }).click();
+    await expect(page.getByRole('heading', { name: 'Add to Publishing Queue' })).toBeVisible();
+    await page.getByRole('button', { name: 'Cancel' }).click();
+    await expect(page.getByRole('heading', { name: 'Add to Publishing Queue' })).not.toBeVisible();
+  });
+
+  test('empty state CTA opens the modal', async ({ page }) => {
+    // The empty state should also have a "New Item" CTA
+    const cta = page.locator('text=No items in the outbox').locator('..').getByRole('button', { name: 'New Item' });
+    await cta.click();
+    await expect(page.getByRole('heading', { name: 'Add to Publishing Queue' })).toBeVisible();
+  });
+
+  test('modal defaults to Text tab with content textarea', async ({ page }) => {
+    await page.getByRole('button', { name: 'New Item' }).click();
+    await expect(page.getByPlaceholder('Write or paste your post content')).toBeVisible();
+  });
+
+  test('switching to URL tab shows URL input', async ({ page }) => {
+    await page.getByRole('button', { name: 'New Item' }).click();
+    await page.getByRole('button', { name: 'URL' }).click();
+    await expect(page.getByPlaceholder('https://example.com/content')).toBeVisible();
   });
 });

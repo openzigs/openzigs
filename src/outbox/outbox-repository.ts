@@ -26,11 +26,20 @@ export type OutboxAssetType =
   | "document"
   | "text";
 
+export interface OutboxAttachment {
+  filePath: string;
+  filename: string;
+  assetType?: OutboxAssetType;
+}
+
 export interface OutboxItem {
   id: string;
+  title: string | null;
   assetId: string | null;
   assetUrl: string | null;
   assetType: OutboxAssetType;
+  contentBody: string | null;
+  attachments: OutboxAttachment[];
   platform: OutboxPlatform;
   scheduledTime: Date;
   agentContext: string;
@@ -47,9 +56,12 @@ export interface OutboxItem {
 }
 
 export interface CreateOutboxInput {
+  title?: string | null;
   assetId?: string | null;
   assetUrl?: string | null;
   assetType?: OutboxAssetType;
+  contentBody?: string | null;
+  attachments?: OutboxAttachment[];
   platform: OutboxPlatform;
   scheduledTime: Date;
   agentContext: string;
@@ -77,9 +89,12 @@ export interface OutboxStats {
 
 interface StoredOutboxRow {
   id: string;
+  title: string | null;
   asset_id: string | null;
   asset_url: string | null;
   asset_type: string;
+  content_body: string | null;
+  attachments: string;
   platform: string;
   scheduled_time: string;
   agent_context: string;
@@ -99,9 +114,12 @@ interface StoredOutboxRow {
 
 const toItem = (row: StoredOutboxRow): OutboxItem => ({
   id: row.id,
+  title: row.title,
   assetId: row.asset_id,
   assetUrl: row.asset_url,
   assetType: row.asset_type as OutboxAssetType,
+  contentBody: row.content_body,
+  attachments: JSON.parse(row.attachments || "[]") as OutboxAttachment[],
   platform: row.platform as OutboxPlatform,
   scheduledTime: new Date(row.scheduled_time),
   agentContext: row.agent_context,
@@ -141,9 +159,12 @@ export class OutboxRepository {
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS outbox_queue (
         id TEXT PRIMARY KEY,
+        title TEXT,
         asset_id TEXT,
         asset_url TEXT,
         asset_type TEXT NOT NULL DEFAULT 'image',
+        content_body TEXT,
+        attachments TEXT NOT NULL DEFAULT '[]',
         platform TEXT NOT NULL,
         scheduled_time TEXT NOT NULL,
         agent_context TEXT NOT NULL DEFAULT '',
@@ -163,6 +184,19 @@ export class OutboxRepository {
       CREATE INDEX IF NOT EXISTS idx_outbox_scheduled ON outbox_queue(scheduled_time);
       CREATE INDEX IF NOT EXISTS idx_outbox_platform ON outbox_queue(platform);
     `);
+
+    // ── v2 migration: add title, content_body, attachments columns ──
+    const cols = this.db.prepare("PRAGMA table_info(outbox_queue)").all() as Array<{ name: string }>;
+    const colNames = new Set(cols.map((c) => c.name));
+    if (!colNames.has("title")) {
+      this.db.exec("ALTER TABLE outbox_queue ADD COLUMN title TEXT");
+    }
+    if (!colNames.has("content_body")) {
+      this.db.exec("ALTER TABLE outbox_queue ADD COLUMN content_body TEXT");
+    }
+    if (!colNames.has("attachments")) {
+      this.db.exec("ALTER TABLE outbox_queue ADD COLUMN attachments TEXT NOT NULL DEFAULT '[]'");
+    }
   }
 
   insert(input: CreateOutboxInput): OutboxItem {
@@ -172,13 +206,16 @@ export class OutboxRepository {
     const now = this.clock().toISOString();
     const id = randomUUID();
     this.db.prepare(`
-      INSERT INTO outbox_queue (id, asset_id, asset_url, asset_type, platform, scheduled_time, agent_context, platform_metadata, status, retry_count, max_retries, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0, ?, ?, ?)
+      INSERT INTO outbox_queue (id, title, asset_id, asset_url, asset_type, content_body, attachments, platform, scheduled_time, agent_context, platform_metadata, status, retry_count, max_retries, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0, ?, ?, ?)
     `).run(
       id,
+      input.title ?? null,
       input.assetId ?? null,
       input.assetUrl ?? null,
-      input.assetType ?? "image",
+      input.assetType ?? "text",
+      input.contentBody ?? null,
+      JSON.stringify(input.attachments ?? []),
       input.platform,
       input.scheduledTime.toISOString(),
       input.agentContext,

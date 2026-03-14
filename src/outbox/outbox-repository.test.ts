@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import Database from "better-sqlite3";
-import { OutboxRepository, type OutboxPlatform } from "./outbox-repository.js";
+import { OutboxRepository, type OutboxPlatform, type OutboxAttachment } from "./outbox-repository.js";
 
 function createTestDb(): Database.Database {
   const db = new Database(":memory:");
@@ -43,6 +43,39 @@ describe("OutboxRepository", () => {
       ).all();
       expect(tables).toHaveLength(1);
     });
+
+    it("adds new columns via v2 migration on existing table", () => {
+      // Simulate a v1 table without the new columns
+      const db2 = createTestDb();
+      db2.exec(`
+        CREATE TABLE outbox_queue (
+          id TEXT PRIMARY KEY,
+          asset_id TEXT,
+          asset_url TEXT,
+          asset_type TEXT NOT NULL DEFAULT 'image',
+          platform TEXT NOT NULL,
+          scheduled_time TEXT NOT NULL,
+          agent_context TEXT NOT NULL DEFAULT '',
+          platform_metadata TEXT NOT NULL DEFAULT '{}',
+          status TEXT NOT NULL DEFAULT 'pending',
+          error TEXT,
+          published_url TEXT,
+          retry_count INTEGER NOT NULL DEFAULT 0,
+          max_retries INTEGER NOT NULL DEFAULT 3,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          started_at TEXT,
+          completed_at TEXT
+        );
+      `);
+      const repo2 = new OutboxRepository(db2, () => NOW);
+      repo2.migrate(); // should add title, content_body, attachments
+      const cols = db2.prepare("PRAGMA table_info(outbox_queue)").all() as Array<{ name: string }>;
+      const colNames = cols.map((c) => c.name);
+      expect(colNames).toContain("title");
+      expect(colNames).toContain("content_body");
+      expect(colNames).toContain("attachments");
+    });
   });
 
   describe("insert()", () => {
@@ -61,9 +94,12 @@ describe("OutboxRepository", () => {
       expect(item.agentContext).toBe("Write a sarcastic caption");
       expect(item.retryCount).toBe(0);
       expect(item.maxRetries).toBe(3);
-      expect(item.assetType).toBe("image");
+      expect(item.assetType).toBe("text");
       expect(item.error).toBeNull();
       expect(item.publishedUrl).toBeNull();
+      expect(item.title).toBeNull();
+      expect(item.contentBody).toBeNull();
+      expect(item.attachments).toEqual([]);
     });
 
     it("inserts with custom asset type and metadata", () => {
@@ -90,6 +126,41 @@ describe("OutboxRepository", () => {
           agentContext: "test",
         }),
       ).toThrow("Invalid platform: tiktok");
+    });
+
+    it("inserts with title, content_body, and attachments", () => {
+      const attachments: OutboxAttachment[] = [
+        { filePath: "/home/user/post.md", filename: "post.md", assetType: "document" },
+        { filePath: "/home/user/banner.png", filename: "banner.png", assetType: "image" },
+      ];
+      const item = repo.insert({
+        title: "My Pinterest Post",
+        contentBody: "# Hello World\nThis is a markdown post",
+        attachments,
+        platform: "pinterest",
+        scheduledTime: FUTURE,
+        agentContext: "Post with image",
+      });
+
+      expect(item.title).toBe("My Pinterest Post");
+      expect(item.contentBody).toBe("# Hello World\nThis is a markdown post");
+      expect(item.attachments).toEqual(attachments);
+      expect(item.assetType).toBe("text");
+    });
+
+    it("inserts text-only content without files", () => {
+      const item = repo.insert({
+        title: "Quick tweet",
+        contentBody: "Just shipped a new feature!",
+        platform: "twitter",
+        scheduledTime: FUTURE,
+        agentContext: "Tweet this with relevant hashtags",
+      });
+
+      expect(item.title).toBe("Quick tweet");
+      expect(item.contentBody).toBe("Just shipped a new feature!");
+      expect(item.attachments).toEqual([]);
+      expect(item.assetId).toBeNull();
     });
   });
 

@@ -1,5 +1,8 @@
 import { Router } from "express";
 import * as z from "zod";
+import fs from "node:fs/promises";
+import path from "node:path";
+import os from "node:os";
 import type { OutboxRepository, OutboxPlatform, OutboxAssetType } from "../outbox/outbox-repository.js";
 
 // ── Validation schemas ──────────────────────────────────────
@@ -7,10 +10,19 @@ import type { OutboxRepository, OutboxPlatform, OutboxAssetType } from "../outbo
 const VALID_PLATFORMS = ["twitter", "pinterest", "linkedin", "facebook", "youtube", "reddit", "instagram"] as const;
 const VALID_ASSET_TYPES = ["image", "video", "audio", "document", "text"] as const;
 
+const attachmentSchema = z.object({
+  filePath: z.string(),
+  filename: z.string(),
+  assetType: z.enum(VALID_ASSET_TYPES).optional(),
+});
+
 const createOutboxSchema = z.object({
+  title: z.string().nullable().optional(),
   asset_id: z.string().nullable().optional(),
   asset_url: z.string().nullable().optional(),
-  asset_type: z.enum(VALID_ASSET_TYPES).optional().default("image"),
+  asset_type: z.enum(VALID_ASSET_TYPES).optional().default("text"),
+  content_body: z.string().nullable().optional(),
+  attachments: z.array(attachmentSchema).optional().default([]),
   platform: z.enum(VALID_PLATFORMS),
   scheduled_time: z.string().refine((v) => !isNaN(Date.parse(v)), "Invalid ISO 8601 timestamp"),
   agent_context: z.string().min(1, "Agent context is required"),
@@ -58,6 +70,37 @@ export const createOutboxRouter = ({ outboxRepo }: OutboxRouterOptions): Router 
     }
   });
 
+  // GET /api/admin/outbox/browse — Browse local files for attachment selection
+  router.get("/browse", async (req, res) => {
+    try {
+      const dirParam = typeof req.query.dir === "string" ? req.query.dir : os.homedir();
+      const resolved = path.resolve(dirParam);
+
+      // Security: only allow paths under the user's home directory
+      const home = os.homedir();
+      if (!resolved.startsWith(home)) {
+        return res.status(403).json({ error: "Access denied: path must be under home directory" });
+      }
+
+      const entries = await fs.readdir(resolved, { withFileTypes: true });
+      const items = entries
+        .filter((e) => !e.name.startsWith("."))
+        .map((e) => ({
+          name: e.name,
+          path: path.join(resolved, e.name),
+          isDirectory: e.isDirectory(),
+        }))
+        .sort((a, b) => {
+          if (a.isDirectory !== b.isDirectory) return a.isDirectory ? -1 : 1;
+          return a.name.localeCompare(b.name);
+        });
+
+      return res.json({ dir: resolved, parent: path.dirname(resolved), items });
+    } catch (err) {
+      return res.status(500).json({ error: err instanceof Error ? err.message : "Internal error" });
+    }
+  });
+
   // GET /api/admin/outbox/:id — Single item detail
   router.get("/:id", (req, res) => {
     try {
@@ -78,9 +121,12 @@ export const createOutboxRouter = ({ outboxRepo }: OutboxRouterOptions): Router 
       }
       const data = parsed.data;
       const item = outboxRepo.insert({
+        title: data.title ?? null,
         assetId: data.asset_id ?? null,
         assetUrl: data.asset_url ?? null,
         assetType: data.asset_type as OutboxAssetType,
+        contentBody: data.content_body ?? null,
+        attachments: data.attachments,
         platform: data.platform as OutboxPlatform,
         scheduledTime: new Date(data.scheduled_time),
         agentContext: data.agent_context,

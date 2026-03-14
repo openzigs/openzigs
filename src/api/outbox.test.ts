@@ -31,6 +31,17 @@ const VALID_ITEM = {
   asset_type: "image",
 };
 
+const VALID_ITEM_WITH_CONTENT = {
+  platform: "pinterest",
+  scheduled_time: new Date(Date.now() + 60_000).toISOString(),
+  agent_context: "Pin this markdown content with banner image",
+  title: "My Pinterest Post",
+  content_body: "# Hello\nSome markdown content",
+  attachments: [
+    { filePath: "/home/user/banner.png", filename: "banner.png", assetType: "image" },
+  ],
+};
+
 describe("Outbox API", () => {
   describe("POST /outbox", () => {
     it("creates an item successfully", async () => {
@@ -55,6 +66,27 @@ describe("Outbox API", () => {
 
     it("rejects empty agent_context", async () => {
       await request(app).post("/outbox").send({ ...VALID_ITEM, agent_context: "" }).expect(400);
+    });
+
+    it("creates an item with title, content_body, and attachments", async () => {
+      const res = await request(app).post("/outbox").send(VALID_ITEM_WITH_CONTENT).expect(201);
+      expect(res.body.title).toBe("My Pinterest Post");
+      expect(res.body.contentBody).toBe("# Hello\nSome markdown content");
+      expect(res.body.attachments).toHaveLength(1);
+      expect(res.body.attachments[0].filename).toBe("banner.png");
+    });
+
+    it("creates a text-only item without attachments", async () => {
+      const res = await request(app).post("/outbox").send({
+        platform: "twitter",
+        scheduled_time: new Date(Date.now() + 60_000).toISOString(),
+        agent_context: "Tweet this",
+        title: "Quick tweet",
+        content_body: "Just shipped a new feature!",
+      }).expect(201);
+      expect(res.body.title).toBe("Quick tweet");
+      expect(res.body.contentBody).toBe("Just shipped a new feature!");
+      expect(res.body.attachments).toEqual([]);
     });
   });
 
@@ -158,6 +190,24 @@ describe("Outbox API", () => {
 
     it("returns 404 for missing item", async () => {
       await request(app).delete("/outbox/nonexistent").expect(404);
+    });
+  });
+
+  describe("GET /outbox/browse", () => {
+    it("lists files in the home directory by default", async () => {
+      const res = await request(app).get("/outbox/browse").expect(200);
+      expect(res.body.dir).toBeDefined();
+      expect(Array.isArray(res.body.items)).toBe(true);
+      expect(res.body.parent).toBeDefined();
+    });
+
+    it("lists files in a specific directory", async () => {
+      const res = await request(app).get("/outbox/browse?dir=" + encodeURIComponent(process.env.HOME || "~")).expect(200);
+      expect(Array.isArray(res.body.items)).toBe(true);
+    });
+
+    it("returns 403 for paths outside home directory", async () => {
+      await request(app).get("/outbox/browse?dir=/etc").expect(403);
     });
   });
 });
