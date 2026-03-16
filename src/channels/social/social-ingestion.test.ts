@@ -1,170 +1,10 @@
 import { describe, it, expect, vi } from "vitest";
 import {
-  InstagramAdapter,
-  FacebookAdapter,
   TwitterAdapter,
   LinkedInAdapter,
   GenericPollAdapter,
   SocialIngestionService,
 } from "./social-ingestion.js";
-
-// ── InstagramAdapter ──
-
-describe("InstagramAdapter", () => {
-  const adapter = new InstagramAdapter();
-
-  it("has platform = instagram", () => {
-    expect(adapter.platform).toBe("instagram");
-  });
-
-  it("returns null for empty body", () => {
-    expect(adapter.parseWebhook({})).toBeNull();
-  });
-
-  it("returns null for empty entry", () => {
-    expect(adapter.parseWebhook({ entry: [] })).toBeNull();
-  });
-
-  it("parses DM messaging webhook", () => {
-    const body = {
-      entry: [
-        {
-          messaging: [
-            {
-              sender: { id: "user_123" },
-              message: { mid: "m_abc", text: "Hello!" },
-              timestamp: String(Date.now()),
-            },
-          ],
-        },
-      ],
-    };
-    const result = adapter.parseWebhook(body);
-    expect(result).not.toBeNull();
-    expect("platformMessageId" in result!).toBe(true);
-    const msg = result as { platform: string; platformUserId: string; text: string };
-    expect(msg.platform).toBe("instagram");
-    expect(msg.platformUserId).toBe("user_123");
-    expect(msg.text).toBe("Hello!");
-  });
-
-  it("parses comment webhook", () => {
-    const body = {
-      entry: [
-        {
-          changes: [
-            {
-              field: "comments",
-              value: {
-                comment_id: "c_456",
-                text: "Nice post!",
-                from: { id: "user_789", username: "commenter" },
-                media: { id: "media_111" },
-              },
-            },
-          ],
-        },
-      ],
-    };
-    const result = adapter.parseWebhook(body);
-    expect(result).not.toBeNull();
-    expect("commentId" in result!).toBe(true);
-    const comment = result as { platform: string; commentId: string; text: string; username: string };
-    expect(comment.platform).toBe("instagram");
-    expect(comment.commentId).toBe("c_456");
-    expect(comment.text).toBe("Nice post!");
-    expect(comment.username).toBe("commenter");
-  });
-});
-
-// ── FacebookAdapter ──
-
-describe("FacebookAdapter", () => {
-  const adapter = new FacebookAdapter();
-
-  it("has platform = facebook", () => {
-    expect(adapter.platform).toBe("facebook");
-  });
-
-  it("returns null for non-page object", () => {
-    expect(adapter.parseWebhook({ object: "user" })).toBeNull();
-  });
-
-  it("returns null for empty entry", () => {
-    expect(adapter.parseWebhook({ object: "page", entry: [] })).toBeNull();
-  });
-
-  it("parses page messaging webhook", () => {
-    const body = {
-      object: "page",
-      entry: [
-        {
-          messaging: [
-            {
-              sender: { id: "fb_user_1" },
-              message: { mid: "m_fb1", text: "Hi from FB" },
-              timestamp: String(Date.now()),
-            },
-          ],
-        },
-      ],
-    };
-    const result = adapter.parseWebhook(body);
-    expect(result).not.toBeNull();
-    const msg = result as { platform: string; platformUserId: string; text: string };
-    expect(msg.platform).toBe("facebook");
-    expect(msg.platformUserId).toBe("fb_user_1");
-    expect(msg.text).toBe("Hi from FB");
-  });
-
-  it("parses feed comment webhook", () => {
-    const body = {
-      object: "page",
-      entry: [
-        {
-          changes: [
-            {
-              field: "feed",
-              value: {
-                item: "comment",
-                post_id: "post_999",
-                comment_id: "c_888",
-                from: { id: "fb_user_2", name: "Commenter Name" },
-                message: "Great post!",
-                created_time: String(Math.floor(Date.now() / 1000)),
-              },
-            },
-          ],
-        },
-      ],
-    };
-    const result = adapter.parseWebhook(body);
-    expect(result).not.toBeNull();
-    const comment = result as { platform: string; commentId: string; text: string; postId: string };
-    expect(comment.platform).toBe("facebook");
-    expect(comment.commentId).toBe("c_888");
-    expect(comment.postId).toBe("post_999");
-    expect(comment.text).toBe("Great post!");
-  });
-
-  it("ignores non-comment feed changes", () => {
-    const body = {
-      object: "page",
-      entry: [
-        {
-          changes: [
-            {
-              field: "feed",
-              value: { item: "status", message: "New post" },
-            },
-          ],
-        },
-      ],
-    };
-    const result = adapter.parseWebhook(body);
-    expect(result).toBeNull();
-  });
-});
 
 // ── TwitterAdapter ──
 
@@ -325,8 +165,8 @@ describe("GenericPollAdapter", () => {
 
 describe("SocialIngestionService", () => {
   const createMockRepo = () => ({
-    upsertContact: vi.fn(() => ({ id: "contact-1", platform: "instagram", platform_user_id: "u1", username: "user1", display_name: "", tags: "[]", notes: "", first_seen_at: "", last_seen_at: "", message_count: 1, handoff_active: 0, handoff_thread_id: null, created_at: "", updated_at: "" })),
-    insertMessage: vi.fn(() => ({ id: "msg-1", contact_id: "contact-1", platform: "instagram", direction: "inbound", status: "received", platform_message_id: "", content: "hi", metadata: "{}", created_at: "" })),
+    upsertContact: vi.fn(() => ({ id: "contact-1", platform: "twitter", platform_user_id: "u1", username: "user1", display_name: "", tags: "[]", notes: "", first_seen_at: "", last_seen_at: "", message_count: 1, handoff_active: 0, handoff_thread_id: null, created_at: "", updated_at: "" })),
+    insertMessage: vi.fn(() => ({ id: "msg-1", contact_id: "contact-1", platform: "twitter", direction: "inbound", status: "received", platform_message_id: "", content: "hi", metadata: "{}", created_at: "" })),
   });
 
   it("emits message event on processMessage", () => {
@@ -336,7 +176,7 @@ describe("SocialIngestionService", () => {
     service.on("message", handler);
 
     service.processMessage({
-      platform: "instagram",
+      platform: "twitter",
       platformMessageId: "m1",
       platformUserId: "u1",
       username: "user1",
@@ -352,9 +192,9 @@ describe("SocialIngestionService", () => {
   it("registerAdapter adds runtime adapter", () => {
     const repo = createMockRepo();
     const service = new SocialIngestionService({ repository: repo as any });
-    const adapter = new InstagramAdapter();
+    const adapter = new TwitterAdapter();
     service.registerAdapter(adapter);
-    expect(service.getRegisteredPlatforms()).toContain("instagram");
+    expect(service.getRegisteredPlatforms()).toContain("twitter");
   });
 
   it("getRegisteredPlatforms returns empty array when no adapters", () => {
@@ -367,34 +207,35 @@ describe("SocialIngestionService", () => {
     const repo = createMockRepo();
     const service = new SocialIngestionService({ repository: repo as any });
     // should not throw, just log warning
-    await service.handleWebhook("instagram", {}, {});
+    await service.handleWebhook("twitter", {}, {});
   });
 
   it("handleWebhook with adapter that returns null is a no-op", async () => {
     const repo = createMockRepo();
-    const adapter = new InstagramAdapter();
+    const adapter = new TwitterAdapter();
     const service = new SocialIngestionService({ repository: repo as any, adapters: [adapter] });
     const handler = vi.fn();
     service.on("message", handler);
 
-    await service.handleWebhook("instagram", {}, {});
+    await service.handleWebhook("twitter", {}, {});
     expect(handler).not.toHaveBeenCalled();
   });
 
   it("handleWebhook processes DM message", async () => {
     const repo = createMockRepo();
-    const adapter = new InstagramAdapter();
+    const adapter = new TwitterAdapter();
     const service = new SocialIngestionService({ repository: repo as any, adapters: [adapter] });
     const handler = vi.fn();
     service.on("message", handler);
 
-    await service.handleWebhook("instagram", {
-      entry: [{
-        messaging: [{
-          sender: { id: "u1" },
-          message: { mid: "m1", text: "hi" },
-          timestamp: String(Date.now()),
-        }],
+    await service.handleWebhook("twitter", {
+      direct_message_events: [{
+        id: "dm_1",
+        created_timestamp: String(Date.now()),
+        message_create: {
+          sender_id: "u1",
+          message_data: { text: "hi" },
+        },
       }],
     }, {});
 
@@ -403,22 +244,18 @@ describe("SocialIngestionService", () => {
 
   it("handleWebhook emits comment event for comment webhook", async () => {
     const repo = createMockRepo();
-    const adapter = new InstagramAdapter();
+    const adapter = new TwitterAdapter();
     const service = new SocialIngestionService({ repository: repo as any, adapters: [adapter] });
     const handler = vi.fn();
     service.on("comment", handler);
 
-    await service.handleWebhook("instagram", {
-      entry: [{
-        changes: [{
-          field: "comments",
-          value: {
-            from: { id: "u1", username: "user1" },
-            text: "nice!",
-            comment_id: "c1",
-            media: { id: "p1" },
-          },
-        }],
+    await service.handleWebhook("twitter", {
+      tweet_create_events: [{
+        id_str: "tweet_456",
+        in_reply_to_status_id_str: "tweet_100",
+        text: "nice!",
+        created_at: "Thu Jun 01 12:00:00 +0000 2026",
+        user: { id_str: "u1", screen_name: "user1" },
       }],
     }, {});
 
@@ -427,11 +264,11 @@ describe("SocialIngestionService", () => {
 
   it("handleWebhook enriches comment with post context service", async () => {
     const repo = createMockRepo();
-    const adapter = new InstagramAdapter();
+    const adapter = new TwitterAdapter();
     const postContextService = {
       getPostContext: vi.fn().mockResolvedValue({
-        postId: "p1", platform: "instagram", caption: "pic", permalink: "http://x",
-        mediaType: "IMAGE", mediaUrl: "http://img", authorUsername: "a", publishedAt: "", cachedAt: "",
+        postId: "tweet_100", platform: "twitter", caption: "original tweet", permalink: "http://x",
+        mediaType: "TEXT", mediaUrl: "", authorUsername: "a", publishedAt: "", cachedAt: "",
       }),
     };
     const service = new SocialIngestionService({
@@ -442,22 +279,23 @@ describe("SocialIngestionService", () => {
     const handler = vi.fn();
     service.on("comment", handler);
 
-    await service.handleWebhook("instagram", {
-      entry: [{
-        changes: [{
-          field: "comments",
-          value: { from: { id: "u1" }, text: "wow", comment_id: "c2", media: { id: "p1" } },
-        }],
+    await service.handleWebhook("twitter", {
+      tweet_create_events: [{
+        id_str: "tweet_456",
+        in_reply_to_status_id_str: "tweet_100",
+        text: "wow",
+        created_at: "Thu Jun 01 12:00:00 +0000 2026",
+        user: { id_str: "u1", screen_name: "user1" },
       }],
     }, {});
 
-    expect(postContextService.getPostContext).toHaveBeenCalledWith("instagram", "p1");
+    expect(postContextService.getPostContext).toHaveBeenCalledWith("twitter", "tweet_100");
     expect(handler).toHaveBeenCalledTimes(1);
   });
 
   it("handleWebhook continues when post context enrichment fails", async () => {
     const repo = createMockRepo();
-    const adapter = new InstagramAdapter();
+    const adapter = new TwitterAdapter();
     const postContextService = {
       getPostContext: vi.fn().mockRejectedValue(new Error("API error")),
     };
@@ -469,12 +307,13 @@ describe("SocialIngestionService", () => {
     const handler = vi.fn();
     service.on("comment", handler);
 
-    await service.handleWebhook("instagram", {
-      entry: [{
-        changes: [{
-          field: "comments",
-          value: { from: { id: "u1" }, text: "ok", comment_id: "c3", media: { id: "p1" } },
-        }],
+    await service.handleWebhook("twitter", {
+      tweet_create_events: [{
+        id_str: "tweet_456",
+        in_reply_to_status_id_str: "tweet_100",
+        text: "ok",
+        created_at: "Thu Jun 01 12:00:00 +0000 2026",
+        user: { id_str: "u1", screen_name: "user1" },
       }],
     }, {});
 
@@ -484,18 +323,18 @@ describe("SocialIngestionService", () => {
   it("handleWebhook catches parse errors", async () => {
     const repo = createMockRepo();
     const badAdapter: any = {
-      platform: "instagram",
+      platform: "twitter",
       parseWebhook: () => { throw new Error("parse boom"); },
     };
     const service = new SocialIngestionService({ repository: repo as any, adapters: [badAdapter] });
     // should not throw
-    await service.handleWebhook("instagram", {}, {});
+    await service.handleWebhook("twitter", {}, {});
   });
 
   it("stopPolling is no-op when no timer exists", () => {
     const repo = createMockRepo();
     const service = new SocialIngestionService({ repository: repo as any });
-    service.stopPolling("instagram"); // should not throw
+    service.stopPolling("twitter"); // should not throw
   });
 
   it("stopAllPolling clears all timers", () => {
@@ -506,49 +345,9 @@ describe("SocialIngestionService", () => {
 
   it("startPolling warns when adapter has no poll method", () => {
     const repo = createMockRepo();
-    const adapter = new InstagramAdapter(); // no poll method
+    const adapter = new TwitterAdapter(); // no poll method
     const service = new SocialIngestionService({ repository: repo as any, adapters: [adapter] });
-    service.startPolling("instagram", 60); // should log warning, no crash
-  });
-});
-
-// ── Instagram adapter edge cases ──
-
-describe("InstagramAdapter - additional", () => {
-  const adapter = new InstagramAdapter();
-
-  it("returns null for entry with neither messaging nor changes", () => {
-    expect(adapter.parseWebhook({ entry: [{ other: "data" }] })).toBeNull();
-  });
-
-  it("returns null for messaging without text", () => {
-    expect(adapter.parseWebhook({
-      entry: [{ messaging: [{ sender: { id: "x" }, message: { mid: "m" } }] }],
-    })).toBeNull();
-  });
-});
-
-// ── Facebook adapter edge cases ──
-
-describe("FacebookAdapter - additional", () => {
-  const adapter = new FacebookAdapter();
-
-  it("returns null for page entry with neither messaging nor feed changes", () => {
-    expect(adapter.parseWebhook({ object: "page", entry: [{ other: "data" }] })).toBeNull();
-  });
-
-  it("returns null for messaging without text", () => {
-    expect(adapter.parseWebhook({
-      object: "page",
-      entry: [{ messaging: [{ sender: { id: "x" }, message: {} }] }],
-    })).toBeNull();
-  });
-
-  it("returns null for feed changes that are not comments", () => {
-    expect(adapter.parseWebhook({
-      object: "page",
-      entry: [{ changes: [{ field: "feed", value: { item: "post" } }] }],
-    })).toBeNull();
+    service.startPolling("twitter", 60); // should log warning, no crash
   });
 });
 

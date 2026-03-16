@@ -499,7 +499,7 @@ export class MediaQueueRepository {
   }
 
   /** Count total assets matching optional filters (for pagination). */
-  countAssets(opts: { type?: string; source?: string; projectId?: string; folder?: string } = {}): number {
+  countAssets(opts: { type?: string; source?: string; projectId?: string; folder?: string; q?: string } = {}): number {
     let sql = "SELECT COUNT(*) as c FROM media_assets WHERE 1=1";
     const params: unknown[] = [];
     if (opts.type) { sql += " AND type = ?"; params.push(opts.type); }
@@ -511,6 +511,11 @@ export class MediaQueueRepository {
       } else {
         sql += " AND folder = ?"; params.push(opts.folder);
       }
+    }
+    if (opts.q) {
+      sql += " AND (filename LIKE ? OR prompt LIKE ? OR tags LIKE ?)";
+      const like = `%${opts.q}%`;
+      params.push(like, like, like);
     }
     return (this.db.prepare(sql).get(...params) as { c: number }).c;
   }
@@ -590,7 +595,7 @@ export class MediaQueueRepository {
     return row;
   }
 
-  listAssets(opts: { type?: string; source?: string; projectId?: string; folder?: string; limit?: number; offset?: number } = {}): Array<Record<string, unknown>> {
+  listAssets(opts: { type?: string; source?: string; projectId?: string; folder?: string; q?: string; limit?: number; offset?: number } = {}): Array<Record<string, unknown>> {
     let sql = "SELECT * FROM media_assets WHERE 1=1";
     const params: unknown[] = [];
 
@@ -603,6 +608,11 @@ export class MediaQueueRepository {
       } else {
         sql += " AND folder = ?"; params.push(opts.folder);
       }
+    }
+    if (opts.q) {
+      sql += " AND (filename LIKE ? OR prompt LIKE ? OR tags LIKE ?)";
+      const like = `%${opts.q}%`;
+      params.push(like, like, like);
     }
 
     sql += " ORDER BY created_at DESC LIMIT ? OFFSET ?";

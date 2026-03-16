@@ -243,7 +243,10 @@ export class TaskRepository {
     }
 
     const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
-    const limit = options?.limit ? `LIMIT ${options.limit}` : "";
+    if (options?.limit) {
+      params.push(options.limit);
+    }
+    const limit = options?.limit ? "LIMIT ?" : "";
     const sql = `SELECT * FROM agent_tasks ${where} ORDER BY created_at DESC ${limit}`;
     const rows = this.db.prepare(sql).all(...params) as StoredTask[];
     return rows.map(toTask);
@@ -369,7 +372,10 @@ export class TaskRepository {
     }
 
     const where = `WHERE ${clauses.join(" AND ")}`;
-    const limit = options?.limit ? `LIMIT ${options.limit}` : "";
+    if (options?.limit) {
+      params.push(options.limit);
+    }
+    const limit = options?.limit ? "LIMIT ?" : "";
     const sql = `SELECT * FROM agent_tasks ${where} ORDER BY created_at DESC ${limit}`;
     const rows = this.db.prepare(sql).all(...params) as StoredTask[];
     return rows.map(toTask);
@@ -377,8 +383,10 @@ export class TaskRepository {
 
   /** Find tasks triggered by a specific job name (stored in context JSON). */
   findByJobName(jobName: string, limit = 10): AgentTask[] {
-    const sql = `SELECT * FROM agent_tasks WHERE context LIKE ? ORDER BY created_at DESC LIMIT ?`;
-    const pattern = `%"jobName":"${jobName.replace(/"/g, "")}"%`;
+    const sql = `SELECT * FROM agent_tasks WHERE context LIKE ? ESCAPE '\\' ORDER BY created_at DESC LIMIT ?`;
+    // Escape LIKE special characters and strip quotes to prevent injection
+    const safeJobName = jobName.replace(/"/g, "").replace(/[%_\\]/g, c => `\\${c}`);
+    const pattern = `%"jobName":"${safeJobName}"%`;
     const rows = this.db.prepare(sql).all(pattern, limit) as StoredTask[];
     return rows.map(toTask);
   }

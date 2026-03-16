@@ -19,6 +19,28 @@ npx playwright install chromium
 
 ## Running the Tests
 
+### Quick start (automated)
+
+`scripts/run-e2e.sh` starts the backend and UI dev server for you (if they aren't already running), installs the Playwright browser if needed, then hands off to `playwright test`. Any extra arguments are forwarded directly.
+
+```bash
+# Run all tests
+./scripts/run-e2e.sh
+
+# Run in headed mode
+./scripts/run-e2e.sh --headed
+
+# Run a single spec
+./scripts/run-e2e.sh e2e/dashboard.spec.ts
+
+# Open the interactive Playwright UI
+./scripts/run-e2e.sh --ui
+```
+
+If both servers are already up the script skips starting them and goes straight to the test run.
+
+### Manual (servers already running)
+
 Start both servers (in separate terminals or via your usual dev workflow):
 
 ```bash
@@ -59,6 +81,7 @@ npx playwright show-report
 | `e2e/library.spec.ts` | Prompt Library, search, prompt cards, action buttons, Ask AI panel | 9 |
 | `e2e/scheduler.spec.ts` | Scheduler page, cron display, job controls, history, Ask AI panel | 11 |
 | `e2e/skills.spec.ts` | Skills Editor at `/admin/skills`, built-in skill cards, View modal | 11 |
+| `e2e/outbox.spec.ts` | Outbox page, stats, queue, modal, multi-platform selector, AI generate | 22 |
 
 ## Shared Helpers
 

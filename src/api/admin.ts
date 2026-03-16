@@ -2,7 +2,7 @@ import { Router } from "express";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { randomUUID } from "node:crypto";
+import { randomUUID, randomBytes, createHash } from "node:crypto";
 import multer from "multer";
 import { z } from "zod";
 import { loadConfig, customAgentSchema, mcpServerConfigSchema, nativeMcpServersSchema } from "../config/index.js";
@@ -39,6 +39,10 @@ import type { Server as SocketIOServer } from "socket.io";
 let _adminIo: SocketIOServer | null = null;
 export function setAdminIO(io: SocketIOServer): void { _adminIo = io; }
 
+let _tunnelPublicUrl: string | null = null;
+export function setTunnelPublicUrl(url: string | null): void { _tunnelPublicUrl = url; }
+export function getTunnelPublicUrl(): string | null { return _tunnelPublicUrl; }
+
 type EnvEntry = {
   name: string;
   configured: boolean;
@@ -65,6 +69,14 @@ function matchCronField(field: string, value: number): boolean {
 // ── Pinterest OAuth state ──────────────────────────────────────────────────
 /** CSRF state tokens for pending Pinterest OAuth flows (short-lived, single-user) */
 export const pinterestOAuthStates = new Map<string, number>();
+
+// ── LinkedIn OAuth state ──────────────────────────────────────────────────
+/** CSRF state tokens for pending LinkedIn OAuth flows (short-lived, single-user) */
+export const linkedinOAuthStates = new Map<string, number>();
+
+// ── TikTok OAuth state ────────────────────────────────────────────────────
+/** CSRF state + PKCE code_verifier for pending TikTok OAuth flows (short-lived, single-user) */
+export const tiktokOAuthStates = new Map<string, { ts: number; codeVerifier: string }>();
 
 /** Refresh the Pinterest access token using the stored refresh token. */
 export async function refreshPinterestToken(): Promise<{ ok: boolean; expiresAt?: string; error?: string }> {
@@ -187,6 +199,308 @@ export async function exchangePinterestCode(code: string): Promise<{
   };
 }
 
+// ── LinkedIn OAuth helpers ─────────────────────────────────────────────────
+
+/** Refresh the LinkedIn access token using the stored refresh token. */
+export async function refreshLinkedInToken(): Promise<{ ok: boolean; expiresAt?: string; error?: string }> {
+  const clientId = (process.env.LINKEDIN_CLIENT_ID ?? "").trim();
+  const clientSecret = (process.env.LINKEDIN_CLIENT_SECRET ?? "").trim();
+  const refreshToken = (process.env.LINKEDIN_REFRESH_TOKEN ?? "").trim();
+
+  if (!clientId || !clientSecret || !refreshToken) {
+    return { ok: false, error: "Missing LINKEDIN_CLIENT_ID, LINKEDIN_CLIENT_SECRET, or LINKEDIN_REFRESH_TOKEN" };
+  }
+
+  const tokenRes = await fetch("https://www.linkedin.com/oauth/v2/accessToken", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      grant_type: "refresh_token",
+      refresh_token: refreshToken,
+      client_id: clientId,
+      client_secret: clientSecret,
+    }).toString(),
+  });
+
+  if (!tokenRes.ok) {
+    const errText = await tokenRes.text();
+    return { ok: false, error: `LinkedIn token refresh failed (${tokenRes.status}): ${errText}` };
+  }
+
+  const tokenData = (await tokenRes.json()) as {
+    access_token: string;
+    expires_in: number;
+    refresh_token?: string;
+    refresh_token_expires_in?: number;
+  };
+
+  const expiresAt = new Date(Date.now() + tokenData.expires_in * 1000).toISOString();
+  const envPath = defaultEnvPath();
+  const updates: Record<string, string> = {
+    LINKEDIN_ACCESS_TOKEN: tokenData.access_token,
+    LINKEDIN_TOKEN_EXPIRES_AT: expiresAt,
+  };
+  if (tokenData.refresh_token) {
+    updates.LINKEDIN_REFRESH_TOKEN = tokenData.refresh_token;
+    process.env.LINKEDIN_REFRESH_TOKEN = tokenData.refresh_token;
+  }
+  await upsertEnvFile(envPath, updates);
+  process.env.LINKEDIN_ACCESS_TOKEN = tokenData.access_token;
+  process.env.LINKEDIN_TOKEN_EXPIRES_AT = expiresAt;
+
+  logger.info(`LinkedIn access token refreshed, expires at ${expiresAt}`);
+  return { ok: true, expiresAt };
+}
+
+/** Exchange a LinkedIn authorization code for access + refresh tokens. */
+export async function exchangeLinkedInCode(code: string): Promise<{
+  ok: boolean;
+  accessToken?: string;
+  refreshToken?: string;
+  expiresAt?: string;
+  scope?: string;
+  error?: string;
+}> {
+  const clientId = (process.env.LINKEDIN_CLIENT_ID ?? "").trim();
+  const clientSecret = (process.env.LINKEDIN_CLIENT_SECRET ?? "").trim();
+
+  if (!clientId || !clientSecret) {
+    return { ok: false, error: "LINKEDIN_CLIENT_ID and LINKEDIN_CLIENT_SECRET must be configured" };
+  }
+
+  const backendPort = Number(process.env.PORT ?? 3000);
+  const redirectUri = (process.env.LINKEDIN_REDIRECT_URI ?? "").trim() || `http://localhost:${backendPort}/api/linkedin/oauth/callback`;
+
+  const tokenRes = await fetch("https://www.linkedin.com/oauth/v2/accessToken", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      grant_type: "authorization_code",
+      code,
+      client_id: clientId,
+      client_secret: clientSecret,
+      redirect_uri: redirectUri,
+    }).toString(),
+  });
+
+  if (!tokenRes.ok) {
+    const errText = await tokenRes.text();
+    return { ok: false, error: `LinkedIn token exchange failed (${tokenRes.status}): ${errText}` };
+  }
+
+  const tokenData = (await tokenRes.json()) as {
+    access_token: string;
+    expires_in: number;
+    refresh_token?: string;
+    refresh_token_expires_in?: number;
+    scope?: string;
+    id_token?: string;
+  };
+
+  const expiresAt = new Date(Date.now() + tokenData.expires_in * 1000).toISOString();
+  const envPath = defaultEnvPath();
+  const updates: Record<string, string> = {
+    LINKEDIN_ACCESS_TOKEN: tokenData.access_token,
+    LINKEDIN_TOKEN_EXPIRES_AT: expiresAt,
+  };
+  if (tokenData.refresh_token) {
+    updates.LINKEDIN_REFRESH_TOKEN = tokenData.refresh_token;
+  }
+  // Extract person ID from id_token JWT (returned when openid scope is granted)
+  if (tokenData.id_token) {
+    try {
+      const parts = tokenData.id_token.split(".");
+      if (parts.length === 3) {
+        const payload = JSON.parse(Buffer.from(parts[1], "base64url").toString()) as { sub?: string };
+        if (payload.sub) {
+          updates.LINKEDIN_PERSON_ID = payload.sub;
+        }
+      }
+    } catch (e) {
+      logger.warn("Failed to parse LinkedIn id_token", { error: String(e) });
+    }
+  }
+  // Fallback: try to discover person URN via /rest/posts error trick.
+  // POST with urn:li:member:{numeric_id} returns error revealing urn:li:person:{opaque_id}.
+  // This works when only w_member_social scope is available.
+  if (!updates.LINKEDIN_PERSON_ID && process.env.LINKEDIN_PERSON_ID) {
+    updates.LINKEDIN_PERSON_ID = process.env.LINKEDIN_PERSON_ID;
+  }
+
+  await upsertEnvFile(envPath, updates);
+  process.env.LINKEDIN_ACCESS_TOKEN = tokenData.access_token;
+  process.env.LINKEDIN_TOKEN_EXPIRES_AT = expiresAt;
+  if (tokenData.refresh_token) {
+    process.env.LINKEDIN_REFRESH_TOKEN = tokenData.refresh_token;
+  }
+  if (updates.LINKEDIN_PERSON_ID) {
+    process.env.LINKEDIN_PERSON_ID = updates.LINKEDIN_PERSON_ID;
+  }
+
+  logger.info(`LinkedIn OAuth completed — token expires at ${expiresAt}, scopes: ${tokenData.scope ?? "unknown"}, personId: ${updates.LINKEDIN_PERSON_ID ?? "unknown"}`);
+  return {
+    ok: true,
+    accessToken: tokenData.access_token,
+    refreshToken: tokenData.refresh_token,
+    expiresAt,
+    scope: tokenData.scope,
+  };
+}
+
+// ── TikTok OAuth helpers ───────────────────────────────────────────────────
+
+/** Refresh the TikTok access token using the stored refresh token. */
+export async function refreshTikTokToken(): Promise<{ ok: boolean; expiresAt?: string; error?: string }> {
+  const clientKey = (process.env.TIKTOK_CLIENT_KEY ?? "").trim();
+  const clientSecret = (process.env.TIKTOK_CLIENT_SECRET ?? "").trim();
+  const refreshToken = (process.env.TIKTOK_REFRESH_TOKEN ?? "").trim();
+
+  if (!clientKey || !clientSecret || !refreshToken) {
+    return { ok: false, error: "Missing TIKTOK_CLIENT_KEY, TIKTOK_CLIENT_SECRET, or TIKTOK_REFRESH_TOKEN" };
+  }
+
+  const tokenRes = await fetch("https://open.tiktokapis.com/v2/oauth/token/", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      client_key: clientKey,
+      client_secret: clientSecret,
+      grant_type: "refresh_token",
+      refresh_token: refreshToken,
+    }).toString(),
+  });
+
+  if (!tokenRes.ok) {
+    const errText = await tokenRes.text();
+    return { ok: false, error: `TikTok token refresh failed (${tokenRes.status}): ${errText}` };
+  }
+
+  const tokenData = (await tokenRes.json()) as {
+    access_token: string;
+    expires_in: number;
+    refresh_token?: string;
+    refresh_expires_in?: number;
+    open_id?: string;
+    scope?: string;
+    token_type?: string;
+  };
+
+  if (!tokenData.access_token) {
+    return { ok: false, error: `TikTok token refresh returned no access_token: ${JSON.stringify(tokenData)}` };
+  }
+
+  const expiresAt = new Date(Date.now() + tokenData.expires_in * 1000).toISOString();
+  const envPath = defaultEnvPath();
+  const updates: Record<string, string> = {
+    TIKTOK_ACCESS_TOKEN: tokenData.access_token,
+    TIKTOK_TOKEN_EXPIRES_AT: expiresAt,
+  };
+  if (tokenData.refresh_token) {
+    updates.TIKTOK_REFRESH_TOKEN = tokenData.refresh_token;
+    process.env.TIKTOK_REFRESH_TOKEN = tokenData.refresh_token;
+  }
+  if (tokenData.open_id) {
+    updates.TIKTOK_OPEN_ID = tokenData.open_id;
+    process.env.TIKTOK_OPEN_ID = tokenData.open_id;
+  }
+  await upsertEnvFile(envPath, updates);
+  process.env.TIKTOK_ACCESS_TOKEN = tokenData.access_token;
+  process.env.TIKTOK_TOKEN_EXPIRES_AT = expiresAt;
+
+  logger.info(`TikTok access token refreshed, expires at ${expiresAt}`);
+  return { ok: true, expiresAt };
+}
+
+/** Exchange a TikTok authorization code for access + refresh tokens. */
+export async function exchangeTikTokCode(code: string, codeVerifier?: string): Promise<{
+  ok: boolean;
+  accessToken?: string;
+  refreshToken?: string;
+  expiresAt?: string;
+  scope?: string;
+  openId?: string;
+  error?: string;
+}> {
+  const clientKey = (process.env.TIKTOK_CLIENT_KEY ?? "").trim();
+  const clientSecret = (process.env.TIKTOK_CLIENT_SECRET ?? "").trim();
+
+  if (!clientKey || !clientSecret) {
+    return { ok: false, error: "TIKTOK_CLIENT_KEY and TIKTOK_CLIENT_SECRET must be configured" };
+  }
+
+  const backendPort = Number(process.env.PORT ?? 3000);
+  const redirectUri = (process.env.TIKTOK_REDIRECT_URI ?? "").trim()
+    || (_tunnelPublicUrl ? `${_tunnelPublicUrl}/api/tiktok/oauth/callback` : `https://localhost:${backendPort}/api/tiktok/oauth/callback`);
+
+  const tokenParams: Record<string, string> = {
+    client_key: clientKey,
+    client_secret: clientSecret,
+    code,
+    grant_type: "authorization_code",
+    redirect_uri: redirectUri,
+  };
+  if (codeVerifier) {
+    tokenParams.code_verifier = codeVerifier;
+  }
+
+  const tokenRes = await fetch("https://open.tiktokapis.com/v2/oauth/token/", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams(tokenParams).toString(),
+  });
+
+  if (!tokenRes.ok) {
+    const errText = await tokenRes.text();
+    return { ok: false, error: `TikTok token exchange failed (${tokenRes.status}): ${errText}` };
+  }
+
+  const tokenData = (await tokenRes.json()) as {
+    access_token: string;
+    expires_in: number;
+    refresh_token?: string;
+    refresh_expires_in?: number;
+    open_id?: string;
+    scope?: string;
+    token_type?: string;
+  };
+
+  if (!tokenData.access_token) {
+    return { ok: false, error: `TikTok token exchange returned no access_token: ${JSON.stringify(tokenData)}` };
+  }
+
+  const expiresAt = new Date(Date.now() + tokenData.expires_in * 1000).toISOString();
+  const envPath = defaultEnvPath();
+  const updates: Record<string, string> = {
+    TIKTOK_ACCESS_TOKEN: tokenData.access_token,
+    TIKTOK_TOKEN_EXPIRES_AT: expiresAt,
+  };
+  if (tokenData.refresh_token) {
+    updates.TIKTOK_REFRESH_TOKEN = tokenData.refresh_token;
+  }
+  if (tokenData.open_id) {
+    updates.TIKTOK_OPEN_ID = tokenData.open_id;
+  }
+  await upsertEnvFile(envPath, updates);
+  process.env.TIKTOK_ACCESS_TOKEN = tokenData.access_token;
+  process.env.TIKTOK_TOKEN_EXPIRES_AT = expiresAt;
+  if (tokenData.refresh_token) {
+    process.env.TIKTOK_REFRESH_TOKEN = tokenData.refresh_token;
+  }
+  if (tokenData.open_id) {
+    process.env.TIKTOK_OPEN_ID = tokenData.open_id;
+  }
+
+  logger.info(`TikTok OAuth completed — token expires at ${expiresAt}, scopes: ${tokenData.scope ?? "unknown"}, open_id: ${tokenData.open_id ?? "unknown"}`);
+  return {
+    ok: true,
+    accessToken: tokenData.access_token,
+    refreshToken: tokenData.refresh_token,
+    expiresAt,
+    scope: tokenData.scope,
+    openId: tokenData.open_id,
+  };
+}
+
 const PINTEREST_DAILY_JOB_NAME = "Daily Pinterest Trends & Metrics";
 
 const PINTEREST_DAILY_PROMPT_NAME = "Daily Pinterest Trends & Metrics";
@@ -259,10 +573,19 @@ const ENV_CHECKS = [
   "TELEGRAM_BOT_TOKEN",
   "DISCORD_BOT_TOKEN",
   "LINKEDIN_ACCESS_TOKEN",
+  "LINKEDIN_CLIENT_ID",
+  "LINKEDIN_CLIENT_SECRET",
+  "LINKEDIN_REFRESH_TOKEN",
+  "LINKEDIN_TOKEN_EXPIRES_AT",
+  "REDDIT_CLIENT_ID",
+  "REDDIT_CLIENT_SECRET",
+  "REDDIT_USERNAME",
+  "REDDIT_PASSWORD",
   "TWITTER_BEARER_TOKEN",
   "TWITTER_API_KEY",
   "TWITTER_API_SECRET",
-  "FACEBOOK_PAGE_TOKEN",
+  "TWITTER_ACCESS_TOKEN",
+  "TWITTER_ACCESS_TOKEN_SECRET",
   "PINTEREST_APP_ID",
   "PINTEREST_APP_SECRET",
   "PINTEREST_ACCESS_TOKEN",
@@ -271,11 +594,8 @@ const ENV_CHECKS = [
   "GITHUB_PERSONAL_ACCESS_TOKEN",
   "JDBC_URL",
   "DB_PASSWORD",
-  "INSTAGRAM_ACCESS_TOKEN",
-  "FACEBOOK_APP_ID",
-  "FACEBOOK_APP_SECRET",
-  "INSTAGRAM_BUSINESS_ACCOUNT_ID",
   "YOUTUBE_API_KEY",
+  "TIKNEURON_MCP_API_KEY",
 ] as const;
 
 /**
@@ -308,22 +628,10 @@ const LOCAL_SERVER_CREDENTIALS: Array<{ server: string; label: string; runtime: 
   { server: "calendar", label: "Google Calendar", runtime: "node", envVars: ["GOOGLE_OAUTH_CREDENTIALS"] },
   // Social platform servers (Issue #301–#305)
   {
-    server: "instagram",
-    label: "Instagram",
-    runtime: "python",
-    envVars: ["INSTAGRAM_ACCESS_TOKEN", "FACEBOOK_APP_ID", "FACEBOOK_APP_SECRET", "INSTAGRAM_BUSINESS_ACCOUNT_ID"],
-  },
-  {
-    server: "facebook",
-    label: "Facebook / Meta Pages",
-    runtime: "python",
-    envVars: ["FACEBOOK_PAGE_TOKEN", "FACEBOOK_APP_ID", "FACEBOOK_APP_SECRET"],
-  },
-  {
     server: "twitter",
     label: "Twitter / X",
     runtime: "python",
-    envVars: ["TWITTER_BEARER_TOKEN", "TWITTER_API_KEY", "TWITTER_API_SECRET"],
+    envVars: ["TWITTER_BEARER_TOKEN", "TWITTER_API_KEY", "TWITTER_API_SECRET", "TWITTER_ACCESS_TOKEN", "TWITTER_ACCESS_TOKEN_SECRET"],
   },
   {
     server: "youtube",
@@ -335,20 +643,28 @@ const LOCAL_SERVER_CREDENTIALS: Array<{ server: string; label: string; runtime: 
     server: "linkedin",
     label: "LinkedIn",
     runtime: "python",
-    envVars: ["LINKEDIN_ACCESS_TOKEN"],
+    envVars: ["LINKEDIN_ACCESS_TOKEN", "LINKEDIN_CLIENT_ID", "LINKEDIN_CLIENT_SECRET", "LINKEDIN_REFRESH_TOKEN", "LINKEDIN_PERSON_ID"],
   },
   {
     server: "reddit",
     label: "Reddit",
     runtime: "python",
-    envVars: [],
+    envVars: ["REDDIT_CLIENT_ID", "REDDIT_CLIENT_SECRET", "REDDIT_USERNAME", "REDDIT_PASSWORD"],
+  },
+  {
+    server: "tiktok",
+    label: "TikTok",
+    runtime: "node",
+    envVars: ["TIKTOK_CLIENT_KEY", "TIKTOK_CLIENT_SECRET", "TIKTOK_ACCESS_TOKEN", "TIKTOK_REFRESH_TOKEN"],
   },
 ];
 
 // ── .env file helpers ──
 
+import { PROJECT_ROOT } from "../project-root.js";
+
 const defaultEnvPath = () =>
-  path.resolve(process.env.OPENZIGS_ENV_PATH ?? path.join(process.cwd(), ".env"));
+  path.resolve(process.env.OPENZIGS_ENV_PATH ?? path.join(PROJECT_ROOT, ".env"));
 
 /**
  * Upsert key=value pairs into a .env file, preserving comments and ordering.
@@ -518,12 +834,13 @@ export type AdminRouterOptions = {
 
 type SchedulerSuggestion = {
   name: string;
-  actionType: "prompt" | "shell" | "custom";
+  actionType: "prompt" | "shell" | "custom" | "outbox";
   cronExpression: string;
   timezone: string;
   promptName?: string;
   actionPayload?: Record<string, unknown>;
   model?: string;
+  notifyChannels?: string[];
 };
 
 const extractJsonBlock = (text: string): string | null => {
@@ -545,13 +862,16 @@ const normalizeSchedulerSuggestion = (
 ): SchedulerSuggestion => {
   const data = (raw && typeof raw === "object") ? (raw as Record<string, unknown>) : {};
   const promptName = typeof data.promptName === "string" ? data.promptName.trim() : "";
-  const actionType = (data.actionType === "prompt" || data.actionType === "shell" || data.actionType === "custom")
+  const actionType = (data.actionType === "prompt" || data.actionType === "shell" || data.actionType === "custom" || data.actionType === "outbox")
     ? data.actionType
     : (promptName ? "prompt" : "custom");
   const actionPayload = (data.actionPayload && typeof data.actionPayload === "object" && !Array.isArray(data.actionPayload))
     ? (data.actionPayload as Record<string, unknown>)
     : undefined;
   const model = typeof data.model === "string" ? data.model.trim() : undefined;
+  const notifyChannels = Array.isArray(data.notifyChannels)
+    ? (data.notifyChannels as string[]).filter(c => c === "telegram" || c === "discord")
+    : undefined;
   const name = typeof data.name === "string" && data.name.trim() ? data.name.trim() : "scheduled-job";
   const cronExpression = typeof data.cronExpression === "string" ? data.cronExpression.trim() : "";
   const timezone = typeof data.timezone === "string" && data.timezone.trim() ? data.timezone.trim() : "UTC";
@@ -565,6 +885,7 @@ const normalizeSchedulerSuggestion = (
     promptName: promptNameValid ? promptName : undefined,
     actionPayload,
     model: model || undefined,
+    notifyChannels: notifyChannels && notifyChannels.length > 0 ? notifyChannels : undefined,
   };
 };
 
@@ -595,7 +916,7 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
       const isDev = !!process.env.npm_lifecycle_script?.includes("tsx watch");
       if (isDev) {
         // Touch the entry-point so tsx watch picks up the "change"
-        const entry = path.resolve(process.cwd(), "src", "server.ts");
+        const entry = path.resolve(PROJECT_ROOT, "src", "server.ts");
         try {
           const now = new Date();
           await fs.utimes(entry, now, now);
@@ -1551,12 +1872,13 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
           name,
           cronExpression,
           timezone: typeof body.timezone === "string" ? body.timezone : undefined,
-          actionType: typeof body.actionType === "string" ? (body.actionType as "prompt" | "shell" | "custom") : undefined,
+          actionType: typeof body.actionType === "string" ? (body.actionType as "prompt" | "shell" | "custom" | "outbox") : undefined,
           actionPayload: (body.actionPayload ?? {}) as Record<string, unknown>,
           model: typeof body.model === "string" ? body.model : undefined,
           reasoningEffort,
           allowedTools: Array.isArray(body.allowedTools) ? (body.allowedTools as string[]) : undefined,
           autoApproveTools: Array.isArray(body.autoApproveTools) ? (body.autoApproveTools as string[]) : undefined,
+          notifyChannels: Array.isArray(body.notifyChannels) ? (body.notifyChannels as import("../channels/types.js").ChannelType[]) : undefined,
           enabled: typeof body.enabled === "boolean" ? body.enabled : undefined,
         });
         return res.status(201).json(job);
@@ -1582,6 +1904,7 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
           reasoningEffort: reasoningEffort ?? (body.reasoningEffort === null ? null : undefined),
           allowedTools: Array.isArray(body.allowedTools) ? (body.allowedTools as string[]) : (body.allowedTools === null ? null : undefined),
           autoApproveTools: Array.isArray(body.autoApproveTools) ? (body.autoApproveTools as string[]) : (body.autoApproveTools === null ? null : undefined),
+          notifyChannels: Array.isArray(body.notifyChannels) ? (body.notifyChannels as import("../channels/types.js").ChannelType[]) : (body.notifyChannels === null ? null : undefined),
           enabled: typeof body.enabled === "boolean" ? body.enabled : undefined,
         });
         return res.json(updated);
@@ -1751,9 +2074,10 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
       const instructions = [
         "You are a scheduling assistant for OpenZigs.",
         "Return ONLY valid JSON with these fields:",
-        "name (string), actionType (prompt|shell|custom), cronExpression (string), timezone (IANA string),",
-        "promptName (string, only if actionType is prompt), actionPayload (object, only if actionType is shell or custom),",
-        "model (string, optional).",
+        "name (string), actionType (prompt|shell|custom|outbox), cronExpression (string), timezone (IANA string),",
+        "promptName (string, only if actionType is prompt), actionPayload (object, only if actionType is shell, custom, or outbox),",
+        "model (string, optional), notifyChannels (array of 'telegram'|'discord', optional).",
+        "For outbox actionType, actionPayload must include: platform (string), contentTemplate (string), reviewRequired (boolean, optional).",
         "Use 5-field cron format. Default timezone to UTC if not specified.",
         "If actionType is prompt, promptName must be one of the available saved prompts.",
         promptList,
@@ -3730,6 +4054,72 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
   // Skill write endpoints (user skills in ~/.openzigs/skills/)
   const userSkillsDir = path.join(os.homedir(), ".openzigs", "skills");
 
+  router.post("/skills/generate", async (req, res) => {
+    if (!copilot) return res.status(503).json({ error: "Copilot not available" });
+
+    const body = req.body as Record<string, unknown>;
+    const description = typeof body.description === "string" ? body.description.trim() : "";
+    const selectedTools = Array.isArray(body.tools) ? (body.tools as string[]).filter((t) => typeof t === "string") : [];
+    const bodyModel = typeof body.model === "string" ? body.model : undefined;
+
+    if (!description) return res.status(400).json({ error: "description is required" });
+
+    // Build available tools context for the prompt
+    const allTools = toolRegistry.listEnabledTools();
+    const toolContext = selectedTools.length > 0
+      ? `The user selected these tools: ${selectedTools.join(", ")}`
+      : `Available tools the user can choose from:\n${allTools.map((t) => `- ${t.name}: ${t.description}`).join("\n")}`;
+
+    const prompt = [
+      "You are a Skill Generator for the OpenZigs AI platform.",
+      "Generate a complete SKILL.md file based on the user's description.",
+      "",
+      "A SKILL.md has this structure:",
+      "1. YAML frontmatter between --- markers with: name, description, allowed-tools (space-separated)",
+      "2. Markdown body with sections: Identity, Core Capabilities, Tool Routing Rules, Domain Rules, Error Recovery",
+      "",
+      "Rules:",
+      "- The name field must be lowercase-kebab-case (e.g., 'social-media-manager')",
+      "- The description should be a concise one-sentence summary",
+      "- allowed-tools should only include tools from the available list below",
+      "- Tool Routing Rules should be a table mapping tasks to specific tools with key parameters",
+      "- Include 3-5 example prompts users might ask",
+      "- Include error recovery guidance",
+      "- Be specific and actionable, not generic",
+      "",
+      toolContext,
+      "",
+      "Return ONLY the raw SKILL.md content (frontmatter + markdown). No extra commentary, no code fences.",
+      "",
+      "User's description of what this skill should do:",
+      description,
+    ].join("\n");
+
+    try {
+      let response = "";
+      const model = bodyModel || (await getUserSelectedModel() ?? "gpt-5-mini");
+      for await (const chunk of copilot.chat(prompt, { model, tools: [] })) {
+        response += chunk;
+      }
+
+      // Strip any accidental code fences wrapping the response
+      let content = response.trim();
+      if (content.startsWith("```")) {
+        content = content.replace(/^```\w*\n?/, "").replace(/\n?```$/, "").trim();
+      }
+
+      // Extract the generated skill name from frontmatter
+      const nameMatch = content.match(/^name:\s*(.+)$/m);
+      const generatedName = nameMatch?.[1]?.trim() ?? "";
+
+      return res.json({ content, generatedName });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      logger.error(`Skill generation failed: ${message}`);
+      return res.status(500).json({ error: message });
+    }
+  });
+
   router.post("/skills/validate", (req, res) => {
     const body = req.body as Record<string, unknown>;
     const content = typeof body.content === "string" ? body.content : "";
@@ -4047,6 +4437,328 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return res.status(500).json({ error: message });
+    }
+  });
+
+  // ── LinkedIn OAuth routes ──────────────────────────────────────────────────
+
+  /** GET /api/admin/linkedin/credentials — return masked LinkedIn credentials */
+  router.get("/linkedin/credentials", (_req, res) => {
+    const token = (process.env.LINKEDIN_ACCESS_TOKEN ?? "").trim();
+    const refreshToken = (process.env.LINKEDIN_REFRESH_TOKEN ?? "").trim();
+    const expiresAt = (process.env.LINKEDIN_TOKEN_EXPIRES_AT ?? "").trim();
+    const clientId = (process.env.LINKEDIN_CLIENT_ID ?? "").trim();
+    const clientSecret = (process.env.LINKEDIN_CLIENT_SECRET ?? "").trim();
+    res.json({
+      accessToken: token ? `${token.slice(0, 8)}…${token.slice(-4)}` : "",
+      configured: !!token,
+      hasRefreshToken: !!refreshToken,
+      expiresAt: expiresAt || null,
+      oauthConfigured: !!(clientId && clientSecret),
+      hasClientId: !!clientId,
+      hasClientSecret: !!clientSecret,
+    });
+  });
+
+  /** POST /api/admin/linkedin/app-credentials — save LinkedIn Client ID + Secret for OAuth */
+  router.post("/linkedin/app-credentials", async (req, res) => {
+    const body = req.body as Record<string, unknown>;
+    const clientId = typeof body.clientId === "string" ? body.clientId.trim() : "";
+    const clientSecret = typeof body.clientSecret === "string" ? body.clientSecret.trim() : "";
+
+    if (!clientId || !clientSecret) {
+      return res.status(400).json({ error: "clientId and clientSecret are required" });
+    }
+
+    try {
+      const envPath = defaultEnvPath();
+      await upsertEnvFile(envPath, { LINKEDIN_CLIENT_ID: clientId, LINKEDIN_CLIENT_SECRET: clientSecret });
+      process.env.LINKEDIN_CLIENT_ID = clientId;
+      process.env.LINKEDIN_CLIENT_SECRET = clientSecret;
+      logger.info("Updated LinkedIn OAuth app credentials via admin UI");
+      return res.json({ ok: true });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return res.status(500).json({ error: message });
+    }
+  });
+
+  /** GET /api/admin/linkedin/oauth/authorize — generate LinkedIn OAuth URL */
+  router.get("/linkedin/oauth/authorize", (_req, res) => {
+    const clientId = (process.env.LINKEDIN_CLIENT_ID ?? "").trim();
+    if (!clientId) {
+      return res.status(400).json({ error: "LINKEDIN_CLIENT_ID not configured. Set your Client ID first." });
+    }
+
+    const backendPort = Number(process.env.PORT ?? 3000);
+    const redirectUri = (process.env.LINKEDIN_REDIRECT_URI ?? "").trim() || `http://localhost:${backendPort}/api/linkedin/oauth/callback`;
+
+    // CSRF state token
+    const state = randomUUID();
+    linkedinOAuthStates.set(state, Date.now());
+    // Clean stale states older than 10 minutes
+    for (const [k, ts] of linkedinOAuthStates) {
+      if (Date.now() - ts > 600_000) linkedinOAuthStates.delete(k);
+    }
+
+    const scopes = [
+      "w_member_social",
+    ];
+
+    const params = new URLSearchParams({
+      response_type: "code",
+      client_id: clientId,
+      redirect_uri: redirectUri,
+      state,
+      scope: scopes.join(" "),
+    });
+
+    const authUrl = `https://www.linkedin.com/oauth/v2/authorization?${params.toString()}`;
+    return res.json({ authUrl, state });
+  });
+
+  /** POST /api/admin/linkedin/oauth/refresh — manually trigger token refresh */
+  router.post("/linkedin/oauth/refresh", async (_req, res) => {
+    try {
+      const result = await refreshLinkedInToken();
+      return res.json(result);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return res.status(500).json({ error: message });
+    }
+  });
+
+  /** POST /api/admin/linkedin/oauth/disconnect — clear all LinkedIn OAuth tokens */
+  router.post("/linkedin/oauth/disconnect", async (_req, res) => {
+    try {
+      const envPath = defaultEnvPath();
+      await upsertEnvFile(envPath, {
+        LINKEDIN_ACCESS_TOKEN: "",
+        LINKEDIN_REFRESH_TOKEN: "",
+        LINKEDIN_TOKEN_EXPIRES_AT: "",
+        LINKEDIN_PERSON_ID: "",
+      });
+      delete process.env.LINKEDIN_ACCESS_TOKEN;
+      delete process.env.LINKEDIN_REFRESH_TOKEN;
+      delete process.env.LINKEDIN_TOKEN_EXPIRES_AT;
+      delete process.env.LINKEDIN_PERSON_ID;
+      logger.info("LinkedIn OAuth disconnected via admin UI");
+      return res.json({ ok: true });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return res.status(500).json({ error: message });
+    }
+  });
+
+  /** GET /api/admin/linkedin/status — check if LinkedIn token is valid */
+  router.get("/linkedin/status", async (_req, res) => {
+    const token = process.env.LINKEDIN_ACCESS_TOKEN;
+    if (!token) {
+      return res.json({ connected: false, message: "LINKEDIN_ACCESS_TOKEN not configured" });
+    }
+    try {
+      // Validate token via introspection or a lightweight versioned API call.
+      // With only w_member_social scope, /v2/me and /v2/userinfo are inaccessible.
+      // Use token introspection endpoint instead.
+      const clientId = (process.env.LINKEDIN_CLIENT_ID ?? "").trim();
+      const clientSecret = (process.env.LINKEDIN_CLIENT_SECRET ?? "").trim();
+      if (clientId && clientSecret) {
+        const introspectRes = await fetch("https://www.linkedin.com/oauth/v2/introspectToken", {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: new URLSearchParams({ token, client_id: clientId, client_secret: clientSecret }).toString(),
+        });
+        if (introspectRes.ok) {
+          const info = (await introspectRes.json()) as { active?: boolean; scope?: string; client_id?: string };
+          if (info.active) {
+            return res.json({ connected: true, profile: { scope: info.scope, personId: process.env.LINKEDIN_PERSON_ID ?? "" } });
+          }
+          return res.json({ connected: false, message: "LinkedIn token is expired or revoked" });
+        }
+      }
+      // Fallback: assume connected if token is set and not expired
+      const expiresAt = process.env.LINKEDIN_TOKEN_EXPIRES_AT;
+      const isExpired = expiresAt ? new Date(expiresAt) < new Date() : false;
+      return res.json({
+        connected: !isExpired,
+        message: isExpired ? "Token expired" : undefined,
+        profile: { personId: process.env.LINKEDIN_PERSON_ID ?? "" },
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return res.status(500).json({ connected: false, message });
+    }
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Tunnel status
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  /** GET /api/admin/tunnel/status — return current Cloudflare tunnel state */
+  router.get("/tunnel/status", (_req, res) => {
+    res.json({ publicUrl: _tunnelPublicUrl });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // TikTok OAuth routes
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  /** GET /api/admin/tiktok/credentials — return current TikTok credential state */
+  router.get("/tiktok/credentials", (_req, res) => {
+    const token = (process.env.TIKTOK_ACCESS_TOKEN ?? "").trim();
+    const refreshToken = (process.env.TIKTOK_REFRESH_TOKEN ?? "").trim();
+    const expiresAt = (process.env.TIKTOK_TOKEN_EXPIRES_AT ?? "").trim();
+    const clientKey = (process.env.TIKTOK_CLIENT_KEY ?? "").trim();
+    const clientSecret = (process.env.TIKTOK_CLIENT_SECRET ?? "").trim();
+    const backendPort = Number(process.env.PORT ?? 3000);
+    const redirectUri = (process.env.TIKTOK_REDIRECT_URI ?? "").trim()
+      || (_tunnelPublicUrl ? `${_tunnelPublicUrl}/api/tiktok/oauth/callback` : `https://localhost:${backendPort}/api/tiktok/oauth/callback`);
+    res.json({
+      accessToken: token ? `${token.slice(0, 8)}…${token.slice(-4)}` : "",
+      configured: !!token,
+      hasRefreshToken: !!refreshToken,
+      expiresAt: expiresAt || null,
+      oauthConfigured: !!(clientKey && clientSecret),
+      hasClientKey: !!clientKey,
+      hasClientSecret: !!clientSecret,
+      redirectUri,
+    });
+  });
+
+  /** POST /api/admin/tiktok/oauth/credentials — save TikTok client key + secret */
+  router.post("/tiktok/oauth/credentials", async (req, res) => {
+    const clientKey = typeof req.body?.clientKey === "string" ? req.body.clientKey.trim() : "";
+    const clientSecret = typeof req.body?.clientSecret === "string" ? req.body.clientSecret.trim() : "";
+    if (!clientKey || !clientSecret) {
+      return res.status(400).json({ error: "clientKey and clientSecret are required" });
+    }
+    try {
+      const envPath = defaultEnvPath();
+      await upsertEnvFile(envPath, { TIKTOK_CLIENT_KEY: clientKey, TIKTOK_CLIENT_SECRET: clientSecret });
+      process.env.TIKTOK_CLIENT_KEY = clientKey;
+      process.env.TIKTOK_CLIENT_SECRET = clientSecret;
+      logger.info("Updated TikTok OAuth app credentials via admin UI");
+      return res.json({ ok: true });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return res.status(500).json({ error: message });
+    }
+  });
+
+  /** GET /api/admin/tiktok/oauth/authorize — generate TikTok OAuth URL */
+  router.get("/tiktok/oauth/authorize", (_req, res) => {
+    const clientKey = (process.env.TIKTOK_CLIENT_KEY ?? "").trim();
+    if (!clientKey) {
+      return res.status(400).json({ error: "TIKTOK_CLIENT_KEY not configured. Set your Client Key first." });
+    }
+
+    const backendPort = Number(process.env.PORT ?? 3000);
+    const redirectUri = (process.env.TIKTOK_REDIRECT_URI ?? "").trim()
+      || (_tunnelPublicUrl ? `${_tunnelPublicUrl}/api/tiktok/oauth/callback` : `https://localhost:${backendPort}/api/tiktok/oauth/callback`);
+
+    // CSRF state token
+    const state = randomUUID();
+
+    // PKCE: generate code_verifier and code_challenge (S256)
+    const codeVerifier = randomBytes(32).toString("base64url");
+    const codeChallenge = createHash("sha256").update(codeVerifier).digest("base64url");
+
+    tiktokOAuthStates.set(state, { ts: Date.now(), codeVerifier });
+    for (const [k, v] of tiktokOAuthStates) {
+      if (Date.now() - v.ts > 600_000) tiktokOAuthStates.delete(k);
+    }
+
+    const scopes = [
+      "user.info.basic",
+      "user.info.profile",
+      "user.info.stats",
+      "video.list",
+      "video.upload",
+    ];
+
+    const params = new URLSearchParams({
+      client_key: clientKey,
+      scope: scopes.join(","),
+      response_type: "code",
+      redirect_uri: redirectUri,
+      state,
+      code_challenge: codeChallenge,
+      code_challenge_method: "S256",
+    });
+
+    const authUrl = `https://www.tiktok.com/v2/auth/authorize/?${params.toString()}`;
+    return res.json({ authUrl, state });
+  });
+
+  /** POST /api/admin/tiktok/oauth/refresh — manually trigger token refresh */
+  router.post("/tiktok/oauth/refresh", async (_req, res) => {
+    try {
+      const result = await refreshTikTokToken();
+      return res.json(result);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return res.status(500).json({ error: message });
+    }
+  });
+
+  /** POST /api/admin/tiktok/oauth/disconnect — clear all TikTok OAuth tokens */
+  router.post("/tiktok/oauth/disconnect", async (_req, res) => {
+    try {
+      const envPath = defaultEnvPath();
+      await upsertEnvFile(envPath, {
+        TIKTOK_ACCESS_TOKEN: "",
+        TIKTOK_REFRESH_TOKEN: "",
+        TIKTOK_TOKEN_EXPIRES_AT: "",
+        TIKTOK_OPEN_ID: "",
+      });
+      delete process.env.TIKTOK_ACCESS_TOKEN;
+      delete process.env.TIKTOK_REFRESH_TOKEN;
+      delete process.env.TIKTOK_TOKEN_EXPIRES_AT;
+      delete process.env.TIKTOK_OPEN_ID;
+      logger.info("TikTok OAuth disconnected via admin UI");
+      return res.json({ ok: true });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return res.status(500).json({ error: message });
+    }
+  });
+
+  /** GET /api/admin/tiktok/status — check if TikTok token is valid */
+  router.get("/tiktok/status", async (_req, res) => {
+    const token = process.env.TIKTOK_ACCESS_TOKEN;
+    if (!token) {
+      return res.json({ connected: false, message: "TIKTOK_ACCESS_TOKEN not configured" });
+    }
+    try {
+      // Validate token by calling user info endpoint
+      const infoRes = await fetch("https://open.tiktokapis.com/v2/user/info/?fields=open_id,display_name,username", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (infoRes.ok) {
+        const info = (await infoRes.json()) as { data?: { user?: { open_id?: string; display_name?: string; username?: string } }; error?: { code: string } };
+        if (info.error?.code === "ok" || !info.error?.code) {
+          return res.json({
+            connected: true,
+            profile: {
+              openId: info.data?.user?.open_id ?? process.env.TIKTOK_OPEN_ID ?? "",
+              displayName: info.data?.user?.display_name ?? "",
+              username: info.data?.user?.username ?? "",
+            },
+          });
+        }
+        return res.json({ connected: false, message: `TikTok API error: ${info.error?.code}` });
+      }
+      // Fallback: check expiry
+      const expiresAt = process.env.TIKTOK_TOKEN_EXPIRES_AT;
+      const isExpired = expiresAt ? new Date(expiresAt) < new Date() : false;
+      return res.json({
+        connected: !isExpired,
+        message: isExpired ? "Token expired" : undefined,
+        profile: { openId: process.env.TIKTOK_OPEN_ID ?? "" },
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return res.status(500).json({ connected: false, message });
     }
   });
 

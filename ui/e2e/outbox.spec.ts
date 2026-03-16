@@ -84,4 +84,73 @@ test.describe('Outbox', () => {
     await page.getByRole('button', { name: 'URL' }).click();
     await expect(page.getByPlaceholder('https://example.com/content')).toBeVisible();
   });
+
+  // ── Multi-platform selector tests ─────────────────────────
+
+  test('modal shows multi-platform pill selector instead of dropdown', async ({ page }) => {
+    await page.getByRole('button', { name: 'New Item' }).click();
+    // Should have platform pill buttons, not a <select>
+    await expect(page.getByRole('button', { name: '𝕏 / Twitter' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'LinkedIn' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Pinterest' })).toBeVisible();
+  });
+
+  test('twitter platform is selected by default', async ({ page }) => {
+    await page.getByRole('button', { name: 'New Item' }).click();
+    const twitterBtn = page.getByRole('button', { name: '𝕏 / Twitter' });
+    await expect(twitterBtn).toHaveClass(/border-primary/);
+  });
+
+  test('can select multiple platforms', async ({ page }) => {
+    await page.getByRole('button', { name: 'New Item' }).click();
+    await page.getByRole('button', { name: 'LinkedIn' }).click();
+    // Both should be selected
+    await expect(page.getByRole('button', { name: '𝕏 / Twitter' })).toHaveClass(/border-primary/);
+    await expect(page.getByRole('button', { name: 'LinkedIn' })).toHaveClass(/bg-primary/);
+    // Submit button should show count
+    await expect(page.getByRole('button', { name: /Queue \(2 platforms\)/ })).toBeVisible();
+  });
+
+  // ── AI Generate (URL tab) tests ───────────────────────────
+
+  test('URL tab shows AI Content Generation section', async ({ page }) => {
+    await page.getByRole('button', { name: 'New Item' }).click();
+    await page.getByRole('button', { name: 'URL' }).click();
+    await expect(page.getByText('AI Content Generation')).toBeVisible();
+  });
+
+  test('AI Generate button is visible on URL tab', async ({ page }) => {
+    await page.getByRole('button', { name: 'New Item' }).click();
+    await page.getByRole('button', { name: 'URL' }).click();
+    await expect(page.getByRole('button', { name: 'AI Generate' })).toBeVisible();
+  });
+
+  test('AI Generate button is disabled without URL input', async ({ page }) => {
+    await page.getByRole('button', { name: 'New Item' }).click();
+    await page.getByRole('button', { name: 'URL' }).click();
+    await expect(page.getByRole('button', { name: 'AI Generate' })).toBeDisabled();
+  });
+
+  test('AI Generate button enables after entering URL', async ({ page }) => {
+    await page.getByRole('button', { name: 'New Item' }).click();
+    await page.getByRole('button', { name: 'URL' }).click();
+    await page.getByPlaceholder('https://example.com/content').fill('https://example.com/article');
+    await expect(page.getByRole('button', { name: 'AI Generate' })).toBeEnabled();
+  });
+
+  test('URL tab has image source options', async ({ page }) => {
+    await page.getByRole('button', { name: 'New Item' }).click();
+    await page.getByRole('button', { name: 'URL' }).click();
+    await expect(page.getByText('Pull from site')).toBeVisible();
+    await expect(page.getByText('Generate')).toBeVisible();
+    await expect(page.getByText('None')).toBeVisible();
+  });
+
+  test('URL tab has model picker', async ({ page }) => {
+    await page.getByRole('button', { name: 'New Item' }).click();
+    await page.getByRole('button', { name: 'URL' }).click();
+    // Model picker is a <select> inside the AI generation section
+    const aiSection = page.locator('text=AI Content Generation').locator('..');
+    await expect(aiSection.locator('select')).toBeVisible();
+  });
 });

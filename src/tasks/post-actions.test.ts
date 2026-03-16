@@ -250,4 +250,52 @@ describe("send-webhook handler", () => {
     expect(mockFetch.mock.calls[0][1].method).toBe("PUT");
     expect(mockFetch.mock.calls[0][1].headers["X-Custom"]).toBe("test");
   });
+
+  // ── SSRF protection tests (Issue #467) ────────────────────
+
+  it("blocks SSRF: localhost URL", async () => {
+    const def = postActionRegistry.get("send-webhook");
+    const result = await def!.handler("output", { url: "http://localhost:3000/admin" });
+    const parsed = JSON.parse(result);
+    expect(parsed.error).toContain("SSRF");
+  });
+
+  it("blocks SSRF: AWS metadata endpoint", async () => {
+    const def = postActionRegistry.get("send-webhook");
+    const result = await def!.handler("output", { url: "http://169.254.169.254/latest/meta-data/" });
+    const parsed = JSON.parse(result);
+    expect(parsed.error).toContain("SSRF");
+  });
+
+  it("blocks SSRF: private 10.x.x.x range", async () => {
+    const def = postActionRegistry.get("send-webhook");
+    const result = await def!.handler("output", { url: "http://10.0.0.1/internal" });
+    const parsed = JSON.parse(result);
+    expect(parsed.error).toContain("SSRF");
+  });
+
+  it("blocks SSRF: private 192.168.x.x range", async () => {
+    const def = postActionRegistry.get("send-webhook");
+    const result = await def!.handler("output", { url: "http://192.168.1.1/" });
+    const parsed = JSON.parse(result);
+    expect(parsed.error).toContain("SSRF");
+  });
+
+  it("blocks SSRF: non-HTTP protocol", async () => {
+    const def = postActionRegistry.get("send-webhook");
+    const result = await def!.handler("output", { url: "file:///etc/passwd" });
+    const parsed = JSON.parse(result);
+    expect(parsed.error).toContain("SSRF");
+  });
+
+  it("allows valid public webhook URL through SSRF check", async () => {
+    const mockFetch = vi.fn().mockResolvedValueOnce({ ok: true, status: 200 });
+    global.fetch = mockFetch;
+
+    const def = postActionRegistry.get("send-webhook");
+    const result = await def!.handler("output", { url: "https://hooks.slack.com/services/xxx" });
+    const parsed = JSON.parse(result);
+    expect(parsed.ok).toBe(true);
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
 });

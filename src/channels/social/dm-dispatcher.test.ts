@@ -11,33 +11,15 @@ const createMockManager = (isRunning = true, callResult: { text: string; isError
 
 describe("DmDispatcher", () => {
   describe("createDmSender", () => {
-    it("sends DM via Instagram", async () => {
-      const mgr = createMockManager();
-      const dispatcher = new DmDispatcher({ localServerManager: mgr });
-      const sendDm = dispatcher.createDmSender();
-
-      await sendDm("instagram", "user_123", "Hello!");
-      expect(mgr.callTool).toHaveBeenCalledWith("instagram", "send_dm", expect.objectContaining({ message: "Hello!" }));
-    });
-
-    it("sends DM via Facebook", async () => {
-      const mgr = createMockManager();
-      const dispatcher = new DmDispatcher({ localServerManager: mgr });
-      const sendDm = dispatcher.createDmSender();
-
-      await sendDm("facebook", "user_456", "Hi FB!");
-      expect(mgr.callTool).toHaveBeenCalledWith("facebook", "fb_send_message", expect.objectContaining({ message: "Hi FB!" }));
-    });
-
     it("sends DM via Twitter using participant_id", async () => {
       const mgr = createMockManager();
       const dispatcher = new DmDispatcher({ localServerManager: mgr });
       const sendDm = dispatcher.createDmSender();
 
-      await sendDm("twitter", "user_789", "Hey X!");
+      await sendDm("twitter", "user_123", "Hello!");
       expect(mgr.callTool).toHaveBeenCalledWith("twitter", "twitter_send_dm", {
-        participant_id: "user_789",
-        text: "Hey X!",
+        participant_id: "user_123",
+        text: "Hello!",
       });
     });
 
@@ -79,7 +61,7 @@ describe("DmDispatcher", () => {
       const dispatcher = new DmDispatcher({ localServerManager: mgr });
       const sendDm = dispatcher.createDmSender();
 
-      await expect(sendDm("instagram", "user_123", "Hi")).rejects.toThrow("MCP server is not running");
+      await expect(sendDm("twitter", "user_123", "Hi")).rejects.toThrow("MCP server is not running");
     });
 
     it("throws when callTool returns error", async () => {
@@ -87,35 +69,11 @@ describe("DmDispatcher", () => {
       const dispatcher = new DmDispatcher({ localServerManager: mgr });
       const sendDm = dispatcher.createDmSender();
 
-      await expect(sendDm("instagram", "user_123", "Hi")).rejects.toThrow("DM send failed");
+      await expect(sendDm("twitter", "user_123", "Hi")).rejects.toThrow("DM send failed");
     });
   });
 
   describe("createCommentReplier", () => {
-    it("replies to comment via Instagram using reply_to_comment tool", async () => {
-      const mgr = createMockManager();
-      const dispatcher = new DmDispatcher({ localServerManager: mgr });
-      const replier = dispatcher.createCommentReplier();
-
-      await replier("instagram", "comment_ig_1", "Thanks for commenting!");
-      expect(mgr.callTool).toHaveBeenCalledWith("instagram", "reply_to_comment", {
-        comment_id: "comment_ig_1",
-        message: "Thanks for commenting!",
-      });
-    });
-
-    it("replies to comment via Facebook using fb_reply_to_comment tool", async () => {
-      const mgr = createMockManager();
-      const dispatcher = new DmDispatcher({ localServerManager: mgr });
-      const replier = dispatcher.createCommentReplier();
-
-      await replier("facebook", "fb_comment_1", "Thanks!");
-      expect(mgr.callTool).toHaveBeenCalledWith("facebook", "fb_reply_to_comment", {
-        comment_id: "fb_comment_1",
-        message: "Thanks!",
-      });
-    });
-
     it("replies to comment via Twitter using post_tweet with reply_to", async () => {
       const mgr = createMockManager();
       const dispatcher = new DmDispatcher({ localServerManager: mgr });
@@ -191,7 +149,7 @@ describe("DmDispatcher", () => {
       const dispatcher = new DmDispatcher({ localServerManager: mgr });
       const replier = dispatcher.createCommentReplier();
 
-      await expect(replier("instagram", "comment_1", "Hi")).rejects.toThrow("Comment reply failed");
+      await expect(replier("twitter", "comment_1", "Hi")).rejects.toThrow("Comment reply failed");
     });
   });
 });

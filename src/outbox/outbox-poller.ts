@@ -1,11 +1,13 @@
 import cron from "node-cron";
 import type { OutboxRepository, OutboxItem } from "./outbox-repository.js";
 import type { TaskEngine } from "../tasks/task-engine.js";
+import type { MediaQueueRepository } from "../queue/media-queue-repository.js";
 import { logger } from "../logging/logger.js";
 
 export type OutboxPollerOptions = {
   outboxRepo: OutboxRepository;
   taskEngine: TaskEngine;
+  mediaQueueRepo?: MediaQueueRepository;
   /** Cron expression for polling interval (default: every 2 minutes) */
   cronExpression?: string;
   /** Max items to claim per poll cycle (default: 5) */
@@ -21,12 +23,14 @@ export class OutboxPoller {
   private task: cron.ScheduledTask | null = null;
   private readonly outboxRepo: OutboxRepository;
   private readonly taskEngine: TaskEngine;
+  private readonly mediaQueueRepo?: MediaQueueRepository;
   private readonly cronExpression: string;
   private readonly batchSize: number;
 
   constructor(options: OutboxPollerOptions) {
     this.outboxRepo = options.outboxRepo;
     this.taskEngine = options.taskEngine;
+    this.mediaQueueRepo = options.mediaQueueRepo;
     this.cronExpression = options.cronExpression ?? "*/2 * * * *";
     this.batchSize = options.batchSize ?? 5;
   }
@@ -35,7 +39,7 @@ export class OutboxPoller {
     if (this.task) return;
     this.task = cron.schedule(this.cronExpression, () => {
       this.poll();
-    });
+    }, { noOverlap: true });
     logger.info(`Outbox poller started (cron: ${this.cronExpression}, batch: ${this.batchSize})`);
   }
 
@@ -65,13 +69,27 @@ export class OutboxPoller {
 
   private submitTask(item: OutboxItem): void {
     try {
+      // Resolve assetId to actual file path if available
+      let resolvedAssetPath: string | null = null;
+      if (item.assetId && this.mediaQueueRepo) {
+        const asset = this.mediaQueueRepo.getAsset(item.assetId);
+        if (asset?.file_path) resolvedAssetPath = String(asset.file_path);
+      }
+
       const goal = [
         `Publish content to ${item.platform}.`,
         item.agentContext,
+        item.contentBody ? `Pre-approved content (use exactly as-is):\n${item.contentBody}` : null,
         item.assetUrl ? `Asset URL: ${item.assetUrl}` : null,
-        item.assetId ? `Asset ID: ${item.assetId}` : null,
+        resolvedAssetPath ? `Image file path: ${resolvedAssetPath}` : (item.assetId ? `Asset ID: ${item.assetId}` : null),
+        item.attachments && item.attachments.length > 0
+          ? `Attachments (include these with the post):\n${item.attachments.map((a) => `- ${a.filename} (${a.filePath})`).join("\n")}`
+          : null,
         `Outbox Item ID: ${item.id}`,
         `Platform metadata: ${JSON.stringify(item.platformMetadata)}`,
+        item.platform === "pinterest"
+          ? `IMPORTANT: You MUST call pinterest-list-boards FIRST to get the user's actual boards. IGNORE any board name mentioned anywhere in these instructions — they are AI-generated suggestions and likely wrong. Use ONLY a board_id returned by pinterest-list-boards. The user's board is retrieved from the API, not from the publishing instructions. Pick the most relevant board from the list, or use the first one if unsure.`
+          : null,
       ]
         .filter(Boolean)
         .join("\n");
@@ -82,9 +100,19 @@ export class OutboxPoller {
           goal,
           context: `Outbox item ${item.id} for ${item.platform}`,
           skillName: "universal-publisher",
-          autoApproveTools: ["update-outbox-status"],
+          autoApproveTools: ["update-outbox-status", "pinterest-list-boards", "fb_publish_post", "publish_media"],
           allowedTools: [
             "update-outbox-status",
+            "social-post",
+            "twitter-post-tweet",
+            "linkedin-create-post",
+            "reddit-submit-post",
+            "youtube-upload-video",
+            "pinterest-list-boards",
+            "pinterest-create-pin",
+            "fb_publish_post",
+            "publish_media",
+            "send-notification",
             "web-search",
             "browser-navigate",
             "read-file",

@@ -5,7 +5,7 @@ from pydantic_settings import BaseSettings
 
 
 class TwitterMCPSettings(BaseSettings):
-    model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "case_sensitive": False}
+    model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "case_sensitive": False, "extra": "ignore"}
 
     twitter_bearer_token: str = Field(..., description="Twitter API v2 Bearer token")
     twitter_api_key: str = Field("", description="Twitter API key (for OAuth 1.0a user-context)")

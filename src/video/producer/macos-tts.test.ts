@@ -1,15 +1,15 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const { mockExecAsync, mockFsWriteFile, mockFsStat, mockFsUnlink } = vi.hoisted(() => ({
-  mockExecAsync: vi.fn(),
+const { mockExecFileAsync, mockFsWriteFile, mockFsStat, mockFsUnlink } = vi.hoisted(() => ({
+  mockExecFileAsync: vi.fn(),
   mockFsWriteFile: vi.fn(),
   mockFsStat: vi.fn(),
   mockFsUnlink: vi.fn(),
 }));
 
-vi.mock("node:child_process", () => ({ exec: vi.fn() }));
+vi.mock("node:child_process", () => ({ execFile: vi.fn() }));
 vi.mock("node:util", () => ({
-  promisify: () => mockExecAsync,
+  promisify: () => mockExecFileAsync,
 }));
 vi.mock("node:fs/promises", () => ({
   default: {
@@ -45,10 +45,13 @@ describe("macos-tts", () => {
     it("returns true on darwin with say and ffmpeg available", async () => {
       const origPlatform = process.platform;
       Object.defineProperty(process, "platform", { value: "darwin", writable: true });
-      mockExecAsync.mockResolvedValue({ stdout: "/usr/bin/say\n/usr/local/bin/ffmpeg" });
+      mockExecFileAsync.mockResolvedValue({ stdout: "/usr/bin/say" });
       try {
         const result = await isAvailable();
         expect(result).toBe(true);
+        // Should call which for both 'say' and 'ffmpeg' separately
+        expect(mockExecFileAsync).toHaveBeenCalledWith("which", ["say"]);
+        expect(mockExecFileAsync).toHaveBeenCalledWith("which", ["ffmpeg"]);
       } finally {
         Object.defineProperty(process, "platform", { value: origPlatform, writable: true });
       }
@@ -57,7 +60,7 @@ describe("macos-tts", () => {
     it("returns false on darwin when commands not found", async () => {
       const origPlatform = process.platform;
       Object.defineProperty(process, "platform", { value: "darwin", writable: true });
-      mockExecAsync.mockRejectedValue(new Error("not found"));
+      mockExecFileAsync.mockRejectedValue(new Error("not found"));
       try {
         const result = await isAvailable();
         expect(result).toBe(false);
@@ -68,9 +71,9 @@ describe("macos-tts", () => {
   });
 
   describe("synthesize", () => {
-    it("generates mp3 from text via say + ffmpeg", async () => {
+    it("generates mp3 from text via say + ffmpeg using execFile (no shell)", async () => {
       mockFsWriteFile.mockResolvedValue(undefined);
-      mockExecAsync
+      mockExecFileAsync
         .mockResolvedValueOnce({ stdout: "" }) // say command
         .mockResolvedValueOnce({ stdout: "" }); // ffmpeg command
       mockFsStat.mockResolvedValue({ size: 12345 });
@@ -84,31 +87,34 @@ describe("macos-tts", () => {
         "Hello world",
         "utf-8",
       );
-      // say command with default Samantha voice
-      expect(mockExecAsync).toHaveBeenCalledWith(
-        expect.stringContaining('say -v "Samantha"'),
+      // say command with args as array (not shell string)
+      expect(mockExecFileAsync).toHaveBeenCalledWith(
+        "say",
+        expect.arrayContaining(["-v", "Samantha"]),
       );
-      // ffmpeg conversion
-      expect(mockExecAsync).toHaveBeenCalledWith(
-        expect.stringContaining("ffmpeg"),
+      // ffmpeg conversion with args as array
+      expect(mockExecFileAsync).toHaveBeenCalledWith(
+        "ffmpeg",
+        expect.arrayContaining(["-codec:a", "libmp3lame"]),
       );
     });
 
     it("uses custom voice when provided", async () => {
       mockFsWriteFile.mockResolvedValue(undefined);
-      mockExecAsync.mockResolvedValue({ stdout: "" });
+      mockExecFileAsync.mockResolvedValue({ stdout: "" });
       mockFsStat.mockResolvedValue({ size: 5000 });
 
       await synthesize("Test voice", "Alex");
 
-      expect(mockExecAsync).toHaveBeenCalledWith(
-        expect.stringContaining('say -v "Alex"'),
+      expect(mockExecFileAsync).toHaveBeenCalledWith(
+        "say",
+        expect.arrayContaining(["-v", "Alex"]),
       );
     });
 
     it("cleans up aiff and txt files in finally block", async () => {
       mockFsWriteFile.mockResolvedValue(undefined);
-      mockExecAsync.mockResolvedValue({ stdout: "" });
+      mockExecFileAsync.mockResolvedValue({ stdout: "" });
       mockFsStat.mockResolvedValue({ size: 5000 });
 
       await synthesize("Cleanup test");
@@ -121,12 +127,48 @@ describe("macos-tts", () => {
 
     it("cleans up temp files even on say failure", async () => {
       mockFsWriteFile.mockResolvedValue(undefined);
-      mockExecAsync.mockRejectedValueOnce(new Error("say failed"));
+      mockExecFileAsync.mockRejectedValueOnce(new Error("say failed"));
 
       await expect(synthesize("Fail test")).rejects.toThrow("say failed");
 
       // Should still attempt cleanup
       expect(mockFsUnlink).toHaveBeenCalledTimes(2);
+    });
+
+    // ── Shell injection prevention tests (Issue #466) ───────
+
+    it("rejects voice names with shell metacharacters", async () => {
+      mockFsWriteFile.mockResolvedValue(undefined);
+      await expect(synthesize("Hello", '"; rm -rf / #')).rejects.toThrow("Invalid voice name");
+    });
+
+    it("rejects voice names with backticks", async () => {
+      mockFsWriteFile.mockResolvedValue(undefined);
+      await expect(synthesize("Hello", "`whoami`")).rejects.toThrow("Invalid voice name");
+    });
+
+    it("rejects voice names with $() command substitution", async () => {
+      mockFsWriteFile.mockResolvedValue(undefined);
+      await expect(synthesize("Hello", "$(cat /etc/passwd)")).rejects.toThrow("Invalid voice name");
+    });
+
+    it("rejects voice names with semicolons", async () => {
+      mockFsWriteFile.mockResolvedValue(undefined);
+      await expect(synthesize("Hello", "Sam; rm -rf /")).rejects.toThrow("Invalid voice name");
+    });
+
+    it("passes args as array to execFile, never as shell string", async () => {
+      mockFsWriteFile.mockResolvedValue(undefined);
+      mockExecFileAsync.mockResolvedValue({ stdout: "" });
+      mockFsStat.mockResolvedValue({ size: 5000 });
+
+      await synthesize("Hello", "Samantha");
+
+      // Verify all calls use array-based args (execFile), not string (exec)
+      for (const call of mockExecFileAsync.mock.calls) {
+        expect(typeof call[0]).toBe("string"); // command name
+        expect(Array.isArray(call[1])).toBe(true); // args array
+      }
     });
   });
 });

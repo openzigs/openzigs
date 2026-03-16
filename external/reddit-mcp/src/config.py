@@ -5,7 +5,7 @@ from pydantic_settings import BaseSettings
 
 
 class RedditMCPSettings(BaseSettings):
-    model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "case_sensitive": False}
+    model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "case_sensitive": False, "extra": "ignore"}
 
     reddit_client_id: str = Field(..., description="Reddit OAuth2 client ID")
     reddit_client_secret: str = Field(..., description="Reddit OAuth2 client secret")

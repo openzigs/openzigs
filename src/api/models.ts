@@ -3,13 +3,14 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import type { CopilotWrapper } from "../copilot/copilot-wrapper.js";
 import { MODEL_CONTEXT_WINDOWS } from "../copilot/token-tracker.js";
+import { PROJECT_ROOT } from "../project-root.js";
 
 export type ModelsRouterOptions = {
   copilot: CopilotWrapper;
   userConfigPath?: string;
 };
 
-const defaultUserConfigPath = () => path.resolve(process.cwd(), "config", "user.json");
+const defaultUserConfigPath = () => path.resolve(PROJECT_ROOT, "config", "user.json");
 
 const readUserConfig = async (configPath: string): Promise<Record<string, unknown>> => {
   try {

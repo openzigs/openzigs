@@ -50,6 +50,9 @@ logs/
 *.log
 *.sqlite3
 
+# OpenZigs log files
+.openzigs-*.log
+
 # Misc
 Thumbs.db
 .bundle
@@ -57,6 +60,7 @@ Thumbs.db
 # Temporary files
 *.swp
 *~
+tmp/
 
 # Secrets
 .env.local
@@ -68,6 +72,7 @@ config/user.json
 
 # Coverage
 coverage/
+coverage-out/
 
 # Build artifacts
 build/
@@ -89,5 +94,26 @@ sidecars/**/models/
 npm-debug.log
 yarn-debug.log
 pnpm-debug.log
-eng.traineddata
+
+# OCR training data (downloaded at runtime)
 *.traineddata
+
+# Research files (user-generated, not part of source)
+files/
+downloads/
+
+# Debug screenshots (root-level)
+automation-architecture-section.png
+architecture-integrations-cta.png
+hero-section.png
+hero-top.png
+media-social-section.png
+openzigs-web-full-page.png
+
+# Research documents (user-specific)
+ai-coding-assistants-competitive-analysis-2026.md
+ai-coding-assistants-competitive-analysis-2026.docx
+research.md
+
+# Home directory symlink (accidental)
+~/

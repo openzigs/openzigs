@@ -25,7 +25,7 @@ describe("LanceDBStore.buildFilterClause", () => {
 
   it("builds a visibility filter clause", () => {
     const clause = LanceDBStore.buildFilterClause({ visibility: "public" });
-    expect(clause).toBe("(visibility = 'public' OR visibility IS NULL)");
+    expect(clause).toBe("(visibility IN ('public') OR visibility IS NULL)");
   });
 
   it("builds a category filter clause for a single category", () => {
@@ -46,7 +46,7 @@ describe("LanceDBStore.buildFilterClause", () => {
       categories: ["media"],
     });
     expect(clause).toBe(
-      "(visibility = 'public' OR visibility IS NULL) AND (category IN ('media') OR category IS NULL)",
+      "(visibility IN ('public') OR visibility IS NULL) AND (category IN ('media') OR category IS NULL)",
     );
   });
 
@@ -238,7 +238,7 @@ describe("KnowledgeIngestionService — search with filters", () => {
 
     expect(mockSearchByMode).toHaveBeenCalledTimes(1);
     const [, , , , sqlFilter] = mockSearchByMode.mock.calls[0];
-    expect(sqlFilter).toContain("visibility = 'public'");
+    expect(sqlFilter).toContain("visibility IN ('public')");
     expect(sqlFilter).toContain("category IN ('media')");
   });
 

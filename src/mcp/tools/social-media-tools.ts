@@ -10,23 +10,22 @@ import { markdownToSocialText } from "../../channels/social-formatter.js";
 type SocialMediaOptions = {
   linkedinSidecarUrl?: string;
   twitterSidecarUrl?: string;
-  facebookSidecarUrl?: string;
 };
 
 const postContentSchema = z.object({
-  platform: z.enum(["linkedin", "twitter", "facebook", "pinterest"]),
+  platform: z.enum(["linkedin", "twitter", "pinterest"]),
   content: z.string(),
   mediaUrls: z.array(z.string()).optional(),
   scheduledFor: z.string().optional(),
 });
 
 const getTimelineSchema = z.object({
-  platform: z.enum(["linkedin", "twitter", "facebook", "pinterest"]),
+  platform: z.enum(["linkedin", "twitter", "pinterest"]),
   count: z.number().optional(),
 });
 
 const getProfileSchema = z.object({
-  platform: z.enum(["linkedin", "twitter", "facebook", "pinterest"]),
+  platform: z.enum(["linkedin", "twitter", "pinterest"]),
   username: z.string().optional(),
 });
 
@@ -179,8 +178,6 @@ const getSidecarUrl = (
       return options.linkedinSidecarUrl;
     case "twitter":
       return options.twitterSidecarUrl;
-    case "facebook":
-      return options.facebookSidecarUrl;
     default:
       return undefined;
   }
@@ -191,7 +188,7 @@ export const createSocialMediaTools = (options: SocialMediaOptions): ToolDefinit
     {
       name: "social-post",
       description:
-        "Post content to a social media platform (LinkedIn, Twitter/X, or Facebook) via MCP sidecar. " +
+        "Post content to a social media platform (LinkedIn or Twitter/X) via MCP sidecar. " +
         "If the input content is Markdown, it will be automatically converted to platform-safe plain text " +
         "before posting: **bold** → Unicode bold, *italic* → Unicode italic, [text](url) → text (url), " +
         "# Heading → HEADING (bold uppercase), - list → • list, > quote → ❝quote❞. " +
@@ -201,7 +198,7 @@ export const createSocialMediaTools = (options: SocialMediaOptions): ToolDefinit
         properties: {
           platform: {
             type: "string",
-            enum: ["linkedin", "twitter", "facebook", "pinterest"],
+            enum: ["linkedin", "twitter", "pinterest"],
           },
           content: { type: "string" },
           mediaUrls: { type: "array", items: { type: "string" } },
@@ -223,13 +220,13 @@ export const createSocialMediaTools = (options: SocialMediaOptions): ToolDefinit
     {
       name: "social-timeline",
       description:
-        "Get recent posts from a social media timeline (LinkedIn, Twitter/X, or Facebook)",
+        "Get recent posts from a social media timeline (LinkedIn or Twitter/X)",
       inputSchema: {
         type: "object",
         properties: {
           platform: {
             type: "string",
-            enum: ["linkedin", "twitter", "facebook", "pinterest"],
+            enum: ["linkedin", "twitter", "pinterest"],
           },
           count: { type: "number" },
         },
@@ -253,7 +250,7 @@ export const createSocialMediaTools = (options: SocialMediaOptions): ToolDefinit
         properties: {
           platform: {
             type: "string",
-            enum: ["linkedin", "twitter", "facebook", "pinterest"],
+            enum: ["linkedin", "twitter", "pinterest"],
           },
           username: { type: "string" },
         },

@@ -794,11 +794,16 @@ export class CopilotWrapperService extends EventEmitter implements CopilotWrappe
           if (perCallToolCallback) {
             perCallToolCallback(tool.name, args);
           }
-          const result = await tool.handler(args as Record<string, unknown>);
-          if (result.isError) {
-            return `[Tool Error] ${result.text}`;
+          try {
+            const result = await tool.handler(args as Record<string, unknown>);
+            if (result.isError) {
+              return `[Tool Error] ${result.text}`;
+            }
+            return result.text;
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return `[Tool Error] ${msg}`;
           }
-          return result.text;
         }
       })
     );

@@ -26,7 +26,7 @@ export const MinimalistTemplate: TemplateDefinition = {
 
 /**
  * ContentCreator — Vertical 9:16 with rapid cuts for social media.
- * Best for: TikTok, Instagram Reels, YouTube Shorts.
+ * Best for: TikTok, YouTube Shorts.
  */
 export const ContentCreatorTemplate: TemplateDefinition = {
   id: "ContentCreator",

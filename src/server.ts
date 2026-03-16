@@ -28,7 +28,7 @@ import { MessageRouter } from "./routing/index.js";
 import { SessionManager } from "./sessions/index.js";
 import { CloudflareTunnel } from "./tunnel/index.js";
 import { createModelsRouter } from "./api/models.js";
-import { createAdminRouter, pinterestOAuthStates, exchangePinterestCode, refreshPinterestToken, ensurePinterestScheduledJob, setAdminIO } from "./api/admin.js";
+import { createAdminRouter, pinterestOAuthStates, exchangePinterestCode, refreshPinterestToken, linkedinOAuthStates, exchangeLinkedInCode, refreshLinkedInToken, tiktokOAuthStates, exchangeTikTokCode, ensurePinterestScheduledJob, setAdminIO, setTunnelPublicUrl } from "./api/admin.js";
 import { createTasksRouter } from "./api/tasks.js";
 import { createFilesRouter } from "./api/files.js";
 import { launchChrome, killChrome } from "./browser/chrome-launcher.js";
@@ -60,11 +60,11 @@ import { createPresenterRouter } from "./api/presenter.js";
 import { createSocialRouter } from "./api/social.js";
 import { createPinterestRouter } from "./api/pinterest.js";
 import { SocialRepository } from "./channels/social/social-repository.js";
-import { SocialIngestionService, InstagramAdapter, FacebookAdapter, TwitterAdapter, LinkedInAdapter } from "./channels/social/social-ingestion.js";
+import { SocialIngestionService, TwitterAdapter, LinkedInAdapter } from "./channels/social/social-ingestion.js";
 import { SocialBrain } from "./channels/social/social-brain.js";
 import { HandoffManager } from "./channels/social/handoff-manager.js";
 import { CommentRuleEngine } from "./channels/social/comment-rule-engine.js";
-import { PostContextService, InstagramApiClient, FacebookApiClient, TwitterApiClient, YouTubeApiClient, LinkedInApiClient } from "./channels/social/platform-api-client.js";
+import { PostContextService, TwitterApiClient, YouTubeApiClient, LinkedInApiClient, TikTokApiClient } from "./channels/social/platform-api-client.js";
 import { DmDispatcher } from "./channels/social/dm-dispatcher.js";
 import { BrandVoiceRepository } from "./personality/brand-voice-repository.js";
 import { BrandVoiceService } from "./personality/brand-voice-service.js";
@@ -90,6 +90,7 @@ import { createGalleryRouter } from "./api/gallery.js";
 import { createStudioRouter } from "./api/studio.js";
 import { createCharacterRouter, setCharacterIO, setCharacterChannelManager, resumeStaleTrainingPolls } from "./api/characters.js";
 import { CharacterRepository } from "./characters/character-repository.js";
+import { PROJECT_ROOT } from "./project-root.js";
 
 // Register built-in post-action types (create-github-issues, send-webhook, etc.)
 registerBuiltinPostActions();
@@ -103,7 +104,7 @@ const config = await loadConfig();
 // ── Load default agent archetypes from config/agents.json ──
 let defaultAgents: CustomAgentConfig[] = [];
 try {
-  const agentsPath = path.resolve(process.cwd(), "config", "agents.json");
+  const agentsPath = path.resolve(PROJECT_ROOT, "config", "agents.json");
   const raw = await fs.readFile(agentsPath, "utf-8");
   const parsed = JSON.parse(raw) as { agents?: unknown };
   const agentsArray = Array.isArray(parsed.agents) ? parsed.agents : (Array.isArray(parsed) ? parsed : []);
@@ -131,7 +132,7 @@ const resolvedNativeMcpServers: Record<string, NativeMcpServerConfig> = config.c
 const auditLogger = new AuditLogger();
 const approvalQueue = new ApprovalQueue({ auditLogger });
 const toolRegistry = new ToolRegistry({
-  statePath: path.resolve(process.cwd(), "config", "tools.json")
+  statePath: path.resolve(PROJECT_ROOT, "config", "tools.json")
 });
 const allowedDirsRaw = process.env.OPENZIGS_ALLOWED_DIRS ?? "";
 const allowedDirs = allowedDirsRaw
@@ -167,7 +168,7 @@ mediaQueueRepo.migrate();
 // ── Outbox Publishing Queue (Epic #458) ──
 const outboxRepo = new OutboxRepository(db);
 outboxRepo.migrate();
-const outboxPoller = new OutboxPoller({ outboxRepo, taskEngine });
+const outboxPoller = new OutboxPoller({ outboxRepo, taskEngine, mediaQueueRepo });
 outboxPoller.start();
 
 // Read user config for imageGen, videoGen, and musicGen network mode
@@ -224,6 +225,7 @@ const queueMaster = new QueueMaster(mediaQueueRepo, {
 
 const scheduler = new Scheduler({
   db,
+  outboxRepo,
   promptResolver: (name, variables) => promptManager.resolveWithStages(name, variables ?? {}),
   skillResolver: (skillName) => {
     for (const dir of resolvedSkillDirectories) {
@@ -369,6 +371,12 @@ const uiOrigin = process.env.OPENZIGS_UI_ORIGIN ?? "http://localhost:3001";
 const channelManager = new ChannelManager();
 const sessionManager = new SessionManager();
 
+// Wire deferred dependencies into the scheduler (channelManager created after scheduler)
+scheduler.setChannelManager(channelManager, {
+  telegram: config.channels?.telegram?.adminUserId || undefined,
+  discord: config.channels?.discord?.allowedGuilds?.[0] || undefined,
+});
+
 // Lazy ref for disabled native MCP tools — populated after copilot wrapper is created.
 // The hooks closure reads from this at call-time, not at construction time.
 let copilotRef: CopilotWrapperService | null = null;
@@ -387,7 +395,7 @@ const getDisabledNativeMcpToolNames = (): Set<string> => {
 // Discover skill directories — each subdirectory of src/skills/ that contains a SKILL.md
 const resolvedSkillDirectories: string[] = [];
 try {
-  const skillsRoot = path.resolve(process.cwd(), "src", "skills");
+  const skillsRoot = path.resolve(PROJECT_ROOT, "src", "skills");
   const entries = await fs.readdir(skillsRoot, { withFileTypes: true });
   for (const entry of entries) {
     if (entry.isDirectory()) {
@@ -500,17 +508,6 @@ const socialBrainConfig = (config as Record<string, unknown>).socialBrain as
   import("./config/index.js").SocialBrainAppConfig | undefined;
 
 const postContextService = new PostContextService(socialRepository);
-const instagramToken = process.env.INSTAGRAM_ACCESS_TOKEN
-  || socialBrainConfig?.connections?.instagram?.accessToken
-  || "";
-if (instagramToken) {
-  postContextService.registerClient(new InstagramApiClient(instagramToken));
-}
-
-const facebookToken = process.env.FACEBOOK_PAGE_ACCESS_TOKEN ?? "";
-if (facebookToken) {
-  postContextService.registerClient(new FacebookApiClient(facebookToken));
-}
 
 const twitterBearerToken = process.env.TWITTER_BEARER_TOKEN ?? "";
 if (twitterBearerToken) {
@@ -527,14 +524,13 @@ if (linkedinAccessToken) {
   postContextService.registerClient(new LinkedInApiClient(linkedinAccessToken));
 }
 
+const tikNeuronApiKey = process.env.TIKNEURON_MCP_API_KEY ?? "";
+if (tikNeuronApiKey) {
+  postContextService.registerClient(new TikTokApiClient(tikNeuronApiKey));
+}
+
 // Only register platform adapters when credentials are actually configured
 const socialAdapters: import("./channels/social/social-ingestion.js").SocialPlatformAdapter[] = [];
-if (instagramToken) {
-  socialAdapters.push(new InstagramAdapter());
-}
-if (facebookToken) {
-  socialAdapters.push(new FacebookAdapter());
-}
 if (twitterBearerToken) {
   socialAdapters.push(new TwitterAdapter());
 }
@@ -608,7 +604,7 @@ const analyzeWorker = new AnalyzeWorker({
 });
 
 registerMcpTools(toolRegistry, {
-  allowedDirs: allowedDirs.length > 0 ? allowedDirs : [process.cwd(), os.tmpdir(), os.homedir(), "/tmp", "/private/tmp"],
+  allowedDirs: allowedDirs.length > 0 ? allowedDirs : [PROJECT_ROOT, os.tmpdir(), os.homedir(), "/tmp", "/private/tmp"],
   shellAllowlist: (process.env.OPENZIGS_SHELL_ALLOWLIST ?? "git,find,ls,cat,head,tail,grep,wc,echo,pwd,mkdir,cp,mv,rm,which,date,curl,bash,sh,java,javac,python3,node,pip,brew").split(",").map(s => s.trim()).filter(Boolean),
   braveApiKey: process.env.BRAVE_API_KEY,
   chromeDebugHost: process.env.CHROME_DEBUG_HOST,
@@ -622,7 +618,6 @@ registerMcpTools(toolRegistry, {
   copilot,
   linkedinSidecarUrl: resolveSidecarUrl("linkedin", "MCP_LINKEDIN_URL", 5101),
   twitterSidecarUrl: resolveSidecarUrl("twitter", "MCP_TWITTER_URL", 5102),
-  facebookSidecarUrl: resolveSidecarUrl("facebook", "MCP_FACEBOOK_URL", 5103),
   markitdownSidecarUrl: resolveSidecarUrl("markitdown", "MCP_MARKITDOWN_URL", 5301),
   gmailSidecarUrl: resolveSidecarUrl("gmail", "MCP_GMAIL_URL", 5302),
   databaseSidecarUrl: resolveSidecarUrl("database", "MCP_DATABASE_URL", 5303),
@@ -638,6 +633,7 @@ registerMcpTools(toolRegistry, {
   queueMaster,
   channelManager,
   notificationChatId: config.channels?.telegram?.adminUserId || undefined,
+  discordNotificationChannelId: config.channels?.discord?.notificationChannelId || undefined,
   audioSidecarUrl: resolveSidecarUrl("audio", "AUDIO_SIDECAR_URL", 5006),
   trimWorker,
   analyzeWorker,
@@ -728,8 +724,76 @@ app.get("/api/pinterest/oauth/callback", async (req, res) => {
   return res.redirect(`${uiOrigin}/admin?pinterest_oauth=success`);
 });
 
+// LinkedIn OAuth callback — no auth middleware (redirected from LinkedIn)
+app.get("/api/linkedin/oauth/callback", async (req, res) => {
+  const code = typeof req.query.code === "string" ? req.query.code : "";
+  const state = typeof req.query.state === "string" ? req.query.state : "";
+  const error = typeof req.query.error === "string" ? req.query.error : "";
+
+  if (error) {
+    const desc = typeof req.query.error_description === "string" ? req.query.error_description : error;
+    logger.warn(`LinkedIn OAuth denied: ${desc}`);
+    return res.redirect(`${uiOrigin}/admin?linkedin_oauth=error&message=${encodeURIComponent(desc)}`);
+  }
+
+  if (!code || !state) {
+    return res.redirect(`${uiOrigin}/admin?linkedin_oauth=error&message=${encodeURIComponent("Missing code or state")}`);
+  }
+
+  // Validate CSRF state
+  if (!linkedinOAuthStates.has(state)) {
+    logger.warn("LinkedIn OAuth state mismatch — possible CSRF");
+    return res.redirect(`${uiOrigin}/admin?linkedin_oauth=error&message=${encodeURIComponent("Invalid state parameter")}`);
+  }
+  linkedinOAuthStates.delete(state);
+
+  const result = await exchangeLinkedInCode(code);
+  if (!result.ok) {
+    logger.error(`LinkedIn OAuth token exchange failed: ${result.error}`);
+    return res.redirect(`${uiOrigin}/admin?linkedin_oauth=error&message=${encodeURIComponent(result.error ?? "Token exchange failed")}`);
+  }
+
+  logger.info("LinkedIn OAuth flow completed successfully");
+  return res.redirect(`${uiOrigin}/admin?linkedin_oauth=success`);
+});
+
+// TikTok OAuth callback — no auth middleware (redirected from TikTok)
+app.get("/api/tiktok/oauth/callback", async (req, res) => {
+  const code = typeof req.query.code === "string" ? req.query.code : "";
+  const state = typeof req.query.state === "string" ? req.query.state : "";
+  const error = typeof req.query.error === "string" ? req.query.error : "";
+
+  if (error) {
+    const desc = typeof req.query.error_description === "string" ? req.query.error_description : error;
+    logger.warn(`TikTok OAuth denied: ${desc}`);
+    return res.redirect(`${uiOrigin}/admin?tiktok_oauth=error&message=${encodeURIComponent(desc)}`);
+  }
+
+  if (!code || !state) {
+    return res.redirect(`${uiOrigin}/admin?tiktok_oauth=error&message=${encodeURIComponent("Missing code or state")}`);
+  }
+
+  // Validate CSRF state and retrieve PKCE code_verifier
+  const oauthEntry = tiktokOAuthStates.get(state);
+  if (!oauthEntry) {
+    logger.warn("TikTok OAuth state mismatch — possible CSRF");
+    return res.redirect(`${uiOrigin}/admin?tiktok_oauth=error&message=${encodeURIComponent("Invalid state parameter")}`);
+  }
+  const { codeVerifier } = oauthEntry;
+  tiktokOAuthStates.delete(state);
+
+  const result = await exchangeTikTokCode(code, codeVerifier);
+  if (!result.ok) {
+    logger.error(`TikTok OAuth token exchange failed: ${result.error}`);
+    return res.redirect(`${uiOrigin}/admin?tiktok_oauth=error&message=${encodeURIComponent(result.error ?? "Token exchange failed")}`);
+  }
+
+  logger.info("TikTok OAuth flow completed successfully");
+  return res.redirect(`${uiOrigin}/admin?tiktok_oauth=success`);
+});
+
 // Pinterest Reports API routes (after callback so it doesn't intercept the OAuth redirect)
-const pinterestRouter = createPinterestRouter();
+const pinterestRouter = createPinterestRouter({ copilotWrapper: copilot });
 app.use("/api/pinterest", authMiddleware, pinterestRouter);
 
 // Vault API routes
@@ -737,7 +801,7 @@ const vaultRouter = createVaultRouter({ vaultService });
 app.use("/api/admin/vault", authMiddleware, vaultRouter);
 
 // Outbox API routes
-const outboxRouter = createOutboxRouter({ outboxRepo });
+const outboxRouter = createOutboxRouter({ outboxRepo, copilotWrapper: copilot, mediaQueueRepo, taskEngine });
 app.use("/api/admin/outbox", authMiddleware, outboxRouter);
 
 // Memory API routes
@@ -1265,7 +1329,7 @@ app.use("/api/tasks", authMiddleware, tasksRouter);
 // Media Queue API routes (push-based distributed queue + gallery)
 // Callback route is mounted WITHOUT auth — remote workers (Mac Mini, FluxQ)
 // POST results to /api/queue/complete without an Authorization header.
-const queueCallbackRouter = createQueueCallbackRouter({ queueMaster, repo: mediaQueueRepo, knowledgeService });
+const queueCallbackRouter = createQueueCallbackRouter({ queueMaster, repo: mediaQueueRepo, knowledgeService, workerSecret: config.auth.workerSecret });
 app.use("/api/queue", express.json({ limit: "50mb" }), queueCallbackRouter);
 
 // Character repo needed early — queue router uses it for auto-LoRA injection
@@ -1290,7 +1354,7 @@ app.use("/api/characters", authMiddleware, characterRouter);
 // Files API routes (Workbench file management)
 const filesBaseAllowedDirs = allowedDirs.length > 0
   ? allowedDirs
-  : [process.cwd(), os.tmpdir(), os.homedir(), "/tmp", "/private/tmp"];
+  : [PROJECT_ROOT, os.tmpdir(), os.homedir(), "/tmp", "/private/tmp"];
 
 // Always include OpenZigs render/output roots so Presenter video playback can
 // stream rendered assets, even when OPENZIGS_ALLOWED_DIRS is narrowed.
@@ -2048,7 +2112,7 @@ if (webConfig?.enabled !== false) {
     const choices = (request.choices ?? []).map((c) => c.toLowerCase());
 
     const mentionsVaultAuthIntent =
-      /(vault|secret|credential|password)/i.test(question) && /(login|log in|sign in|facebook|account)/i.test(question);
+      /(vault|secret|credential|password)/i.test(question) && /(login|log in|sign in|account)/i.test(question);
 
     // Only auto-approve when there's an obvious affirmative option and no risky freeform requirement.
     const hasAffirmativeChoice = choices.some((c) => /^(yes|allow|approve)/.test(c) || /(recommended)/.test(c));
@@ -2201,6 +2265,30 @@ httpServer.listen(port, "0.0.0.0", () => {
   // Check daily
   setInterval(() => void checkPinterestRefresh(), 24 * 60 * 60 * 1000);
 
+  // LinkedIn OAuth: auto-refresh token if expiry is within 7 days
+  const checkLinkedInRefresh = async () => {
+    const expiresAt = process.env.LINKEDIN_TOKEN_EXPIRES_AT;
+    const refreshToken = process.env.LINKEDIN_REFRESH_TOKEN;
+    if (!expiresAt || !refreshToken) return;
+    const expiresMs = new Date(expiresAt).getTime();
+    const sevenDays = 7 * 24 * 60 * 60 * 1000;
+    if (Date.now() > expiresMs - sevenDays) {
+      logger.info("LinkedIn token expiring within 7 days — auto-refreshing…");
+      try {
+        const result = await refreshLinkedInToken();
+        if (result.ok) {
+          logger.info(`LinkedIn token auto-refreshed, new expiry: ${result.expiresAt}`);
+        } else {
+          logger.warn(`LinkedIn auto-refresh failed: ${result.error}`);
+        }
+      } catch (err) {
+        logger.warn(`LinkedIn auto-refresh error: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+  };
+  void checkLinkedInRefresh();
+  setInterval(() => void checkLinkedInRefresh(), 24 * 60 * 60 * 1000);
+
   // Start the media queue push loop
   if (process.env.QUEUE_ENABLED !== "false") {
     queueMaster.start();
@@ -2250,9 +2338,11 @@ httpServer.listen(port, "0.0.0.0", () => {
   if (tunnel) {
     tunnel.on("connected", (publicUrl) => {
       logger.info(`Public URL: ${publicUrl}`);
+      setTunnelPublicUrl(publicUrl);
     });
     tunnel.on("disconnected", () => {
       logger.warn("Cloudflare tunnel disconnected");
+      setTunnelPublicUrl(null);
     });
     void tunnel.start(port).catch((error) => {
       const details = error instanceof Error ? error.message : String(error);

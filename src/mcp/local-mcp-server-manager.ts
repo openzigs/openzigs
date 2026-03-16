@@ -2,8 +2,10 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { execFileSync } from "node:child_process";
 import { EventEmitter } from "node:events";
+import fs from "node:fs";
 import path from "node:path";
 import { logger } from "../logging/logger.js";
+import { PROJECT_ROOT } from "../project-root.js";
 
 // ── Local MCP Server Definition ──────────────────────────────────────────────
 
@@ -120,39 +122,12 @@ export const DEFAULT_LOCAL_SERVER_DEFINITIONS: LocalMcpServerDefinition[] = [
     requiresCredentials: true,
   },
   {
-    name: "instagram",
-    label: "Instagram",
-    command: path.join(process.cwd(), "external/ig-mcp/.venv/bin/python"),
-    args: ["-m", "src.instagram_mcp_server"],
-    env: { PYTHONPATH: path.join(process.cwd(), "external/ig-mcp") },
-    requiredEnvVars: [
-      "INSTAGRAM_ACCESS_TOKEN",
-      "FACEBOOK_APP_ID",
-      "FACEBOOK_APP_SECRET",
-      "INSTAGRAM_BUSINESS_ACCOUNT_ID"
-    ],
-    runtime: "python",
-    category: "social",
-    requiresCredentials: true,
-  },
-  {
-    name: "facebook",
-    label: "Facebook / Meta Pages",
-    command: path.join(process.cwd(), "external/fb-mcp/.venv/bin/python"),
-    args: ["-m", "src.facebook_mcp_server"],
-    env: { PYTHONPATH: path.join(process.cwd(), "external/fb-mcp") },
-    requiredEnvVars: ["FACEBOOK_PAGE_TOKEN"],
-    runtime: "python",
-    category: "social",
-    requiresCredentials: true,
-  },
-  {
     name: "twitter",
     label: "Twitter / X",
-    command: path.join(process.cwd(), "external/twitter-mcp/.venv/bin/python"),
+    command: path.join(PROJECT_ROOT, "external/twitter-mcp/.venv/bin/python"),
     args: ["-m", "src.twitter_mcp_server"],
-    env: { PYTHONPATH: path.join(process.cwd(), "external/twitter-mcp") },
-    requiredEnvVars: ["TWITTER_BEARER_TOKEN"],
+    env: { PYTHONPATH: path.join(PROJECT_ROOT, "external/twitter-mcp") },
+    requiredEnvVars: ["TWITTER_BEARER_TOKEN", "TWITTER_API_KEY", "TWITTER_API_SECRET", "TWITTER_ACCESS_TOKEN", "TWITTER_ACCESS_TOKEN_SECRET"],
     runtime: "python",
     category: "social",
     requiresCredentials: true,
@@ -160,9 +135,9 @@ export const DEFAULT_LOCAL_SERVER_DEFINITIONS: LocalMcpServerDefinition[] = [
   {
     name: "youtube",
     label: "YouTube",
-    command: path.join(process.cwd(), "external/youtube-mcp/.venv/bin/python"),
+    command: path.join(PROJECT_ROOT, "external/youtube-mcp/.venv/bin/python"),
     args: ["-m", "src.youtube_mcp_server"],
-    env: { PYTHONPATH: path.join(process.cwd(), "external/youtube-mcp") },
+    env: { PYTHONPATH: path.join(PROJECT_ROOT, "external/youtube-mcp") },
     requiredEnvVars: ["YOUTUBE_API_KEY"],
     runtime: "python",
     category: "social",
@@ -171,9 +146,9 @@ export const DEFAULT_LOCAL_SERVER_DEFINITIONS: LocalMcpServerDefinition[] = [
   {
     name: "linkedin",
     label: "LinkedIn",
-    command: path.join(process.cwd(), "external/linkedin-mcp/.venv/bin/python"),
+    command: path.join(PROJECT_ROOT, "external/linkedin-mcp/.venv/bin/python"),
     args: ["-m", "src.linkedin_mcp_server"],
-    env: { PYTHONPATH: path.join(process.cwd(), "external/linkedin-mcp") },
+    env: { PYTHONPATH: path.join(PROJECT_ROOT, "external/linkedin-mcp") },
     requiredEnvVars: ["LINKEDIN_ACCESS_TOKEN"],
     runtime: "python",
     category: "social",
@@ -182,10 +157,42 @@ export const DEFAULT_LOCAL_SERVER_DEFINITIONS: LocalMcpServerDefinition[] = [
   {
     name: "reddit",
     label: "Reddit",
-    command: path.join(process.cwd(), "external/reddit-mcp/.venv/bin/python"),
+    command: path.join(PROJECT_ROOT, "external/reddit-mcp/.venv/bin/python"),
     args: ["-m", "src.reddit_mcp_server"],
-    env: { PYTHONPATH: path.join(process.cwd(), "external/reddit-mcp") },
+    env: { PYTHONPATH: path.join(PROJECT_ROOT, "external/reddit-mcp") },
     requiredEnvVars: ["REDDIT_CLIENT_ID", "REDDIT_CLIENT_SECRET"],
+    runtime: "python",
+    category: "social",
+    requiresCredentials: true,
+  },
+  {
+    name: "tiktok",
+    label: "TikTok",
+    command: "node",
+    args: [path.join(PROJECT_ROOT, "external/tiktok-mcp/build/index.js")],
+    requiredEnvVars: ["TIKTOK_ACCESS_TOKEN"],
+    runtime: "node",
+    category: "social",
+    requiresCredentials: true,
+  },
+  {
+    name: "instagram",
+    label: "Instagram",
+    command: path.join(PROJECT_ROOT, "external/ig-mcp/.venv/bin/python"),
+    args: ["-B", "-m", "src.instagram_mcp_server"],
+    env: { PYTHONPATH: path.join(PROJECT_ROOT, "external/ig-mcp") },
+    requiredEnvVars: ["INSTAGRAM_ACCESS_TOKEN", "FACEBOOK_APP_ID", "FACEBOOK_APP_SECRET"],
+    runtime: "python",
+    category: "social",
+    requiresCredentials: true,
+  },
+  {
+    name: "facebook",
+    label: "Facebook",
+    command: path.join(PROJECT_ROOT, "external/fb-mcp/.venv/bin/python"),
+    args: ["-B", "-m", "src.facebook_mcp_server"],
+    env: { PYTHONPATH: path.join(PROJECT_ROOT, "external/fb-mcp") },
+    requiredEnvVars: ["FACEBOOK_PAGE_TOKEN", "FACEBOOK_APP_ID", "FACEBOOK_APP_SECRET"],
     runtime: "python",
     category: "social",
     requiresCredentials: true,
@@ -239,6 +246,13 @@ export class LocalMcpServerManager extends EventEmitter {
           error: "credentials_missing",
         });
         continue;
+      }
+
+      if (!this.isRuntimeAvailable(def)) {
+        // Try auto-provisioning for Python servers with missing venvs
+        if (def.runtime === "python") {
+          this.provisionPythonVenv(def);
+        }
       }
 
       if (!this.isRuntimeAvailable(def)) {
@@ -393,6 +407,36 @@ export class LocalMcpServerManager extends EventEmitter {
       execFileSync("which", [def.command], { stdio: "ignore" });
       return true;
     } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Auto-provision a Python venv if the command points to a `.venv/bin/python`
+   * that doesn't exist yet but a `requirements.txt` is present in the same directory.
+   */
+  private provisionPythonVenv(def: LocalMcpServerDefinition): boolean {
+    if (def.runtime !== "python") return false;
+    const venvMatch = def.command.match(/^(.+\/.venv)\/bin\/python\d*$/);
+    if (!venvMatch) return false;
+    const venvDir = venvMatch[1];
+    if (fs.existsSync(path.join(venvDir, "bin", "python"))) return false; // already exists
+
+    const serverDir = path.dirname(venvDir);
+    const reqFile = path.join(serverDir, "requirements.txt");
+    if (!fs.existsSync(reqFile)) return false;
+
+    logger.info(`Auto-provisioning Python venv for "${def.name}" at ${venvDir}`);
+    try {
+      execFileSync("python3", ["-m", "venv", venvDir], { stdio: "pipe", timeout: 30_000 });
+      execFileSync(path.join(venvDir, "bin", "pip"), ["install", "-r", reqFile, "--quiet"], {
+        stdio: "pipe",
+        timeout: 120_000,
+      });
+      logger.info(`Python venv provisioned for "${def.name}"`);
+      return true;
+    } catch (err) {
+      logger.error(`Failed to provision Python venv for "${def.name}": ${err instanceof Error ? err.message : String(err)}`);
       return false;
     }
   }

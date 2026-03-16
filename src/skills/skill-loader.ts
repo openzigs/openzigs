@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { PROJECT_ROOT } from "../project-root.js";
 
 export interface SkillMetadata {
   name: string;
@@ -47,7 +48,7 @@ const SKILL_EXAMPLES: Record<string, string[]> = {
     "Master the remix with a warm lofi vibe",
   ],
   "platform-manager": [
-    "Schedule a weekly motivational post for Instagram",
+    "Schedule a weekly motivational post for Twitter",
     "Publish the latest gallery image to Twitter",
     "List all scheduled automation jobs",
   ],
@@ -170,7 +171,7 @@ export async function loadSkillMetadata(
         rulesCount: countRules(body),
         loaded: true,
         examples: SKILL_EXAMPLES[dirName] ?? [],
-        skillMdPath: path.relative(process.cwd(), skillMdPath),
+        skillMdPath: path.relative(PROJECT_ROOT, skillMdPath),
         ...(includeContent ? { content: raw } : {}),
       });
     } catch {

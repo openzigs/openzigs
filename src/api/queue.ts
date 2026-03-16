@@ -4,6 +4,7 @@
  */
 
 import { Router } from "express";
+import { timingSafeEqual } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
@@ -51,17 +52,38 @@ export interface QueueRouterOptions {
   repo: MediaQueueRepository;
   characterRepo?: CharacterRepository;
   knowledgeService?: KnowledgeIngestionService;
+  /** Optional shared secret for worker callback authentication. */
+  workerSecret?: string;
 }
 
 /**
- * Callback router for worker completion webhooks.  Mounted WITHOUT auth
- * because remote sidecars (Mac Mini LTX worker, FluxQ image-gen, music
- * sidecar) POST results to `/api/queue/complete` without an auth token.
- * Safety: the handler validates that job_id matches an existing dispatched
+ * Callback router for worker completion webhooks.  When `workerSecret` is configured,
+ * callbacks require `Authorization: Bearer <secret>` (timing-safe comparison).
+ * When no secret is configured, callbacks are accepted without auth (backward-compatible).
+ * Safety: the handler also validates that job_id matches an existing dispatched
  * job via queueMaster.handleJobCompletion; unknown job IDs are rejected.
  */
-export const createQueueCallbackRouter = ({ queueMaster, repo, knowledgeService }: QueueRouterOptions): Router => {
+export const createQueueCallbackRouter = ({ queueMaster, repo, knowledgeService, workerSecret }: QueueRouterOptions): Router => {
   const callbackRouter = Router();
+
+  // Worker secret auth middleware (opt-in via config.auth.workerSecret)
+  if (workerSecret) {
+    const expectedBuf = Buffer.from(workerSecret);
+    callbackRouter.use((req, res, next) => {
+      const authHeader = req.headers.authorization ?? "";
+      const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
+      const tokenBuf = Buffer.from(token);
+      if (tokenBuf.length !== expectedBuf.length || !timingSafeEqual(tokenBuf, expectedBuf)) {
+        logger.warn(`[QueueAPI] Rejected callback — invalid worker secret from ${req.ip}`);
+        res.status(401).json({ error: "Invalid worker secret" });
+        return;
+      }
+      next();
+    });
+    logger.info("[QueueAPI] Worker callback auth enabled (workerSecret configured)");
+  } else {
+    logger.warn("[QueueAPI] Worker callbacks are UNAUTHENTICATED — set auth.workerSecret to secure them");
+  }
 
   callbackRouter.post("/complete", async (req, res) => {
     try {
@@ -416,11 +438,12 @@ export const createQueueRouter = ({ queueMaster, repo, characterRepo, knowledgeS
       const source = req.query.source as string | undefined;
       const projectId = req.query.projectId as string | undefined;
       const folder = req.query.folder as string | undefined;
+      const q = req.query.q as string | undefined;
       const limit = req.query.limit ? Number(req.query.limit) : 50;
       const offset = req.query.offset ? Number(req.query.offset) : 0;
 
-      const assets = repo.listAssets({ type, source, projectId, folder, limit, offset });
-      const total = repo.countAssets({ type, source, projectId, folder });
+      const assets = repo.listAssets({ type, source, projectId, folder, q, limit, offset });
+      const total = repo.countAssets({ type, source, projectId, folder, q });
       res.json({ assets, total });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -615,6 +638,13 @@ export const createQueueRouter = ({ queueMaster, repo, characterRepo, knowledgeS
   });
 
   // ── POST /assets/upload — Upload a file directly to gallery ──
+  const MAX_UPLOAD_BYTES = 25 * 1024 * 1024; // 25 MB decoded limit
+  const ALLOWED_UPLOAD_MIMES = new Set([
+    "image/png", "image/jpeg", "image/webp", "image/gif",
+    "video/mp4", "video/webm", "video/quicktime",
+    "audio/wav", "audio/mp3", "audio/mpeg", "audio/ogg", "audio/flac",
+  ]);
+
   router.post("/assets/upload", async (req, res) => {
     try {
       const { filename, data_base64, mime_type, tags, projectId } = req.body;
@@ -624,8 +654,21 @@ export const createQueueRouter = ({ queueMaster, repo, characterRepo, knowledgeS
         return;
       }
 
+      // Validate MIME type against allowlist
+      if (!ALLOWED_UPLOAD_MIMES.has(mime_type)) {
+        res.status(400).json({ error: `Unsupported MIME type: ${mime_type}. Allowed: ${[...ALLOWED_UPLOAD_MIMES].join(", ")}` });
+        return;
+      }
+
       await ensureGalleryDir();
       const buffer = Buffer.from(data_base64, "base64");
+
+      // Validate decoded file size
+      if (buffer.length > MAX_UPLOAD_BYTES) {
+        res.status(413).json({ error: `File too large: ${buffer.length} bytes exceeds ${MAX_UPLOAD_BYTES} byte limit` });
+        return;
+      }
+
       const safeName = path.basename(filename);
       const filePath = path.join(GALLERY_DIR, `upload-${Date.now()}-${safeName}`);
       await fs.writeFile(filePath, buffer);

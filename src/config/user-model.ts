@@ -6,8 +6,9 @@
 
 import fs from "node:fs/promises";
 import path from "node:path";
+import { PROJECT_ROOT } from "../project-root.js";
 
-const defaultUserConfigPath = () => path.resolve(process.cwd(), "config", "user.json");
+const defaultUserConfigPath = () => path.resolve(PROJECT_ROOT, "config", "user.json");
 
 /**
  * Read the user's selected model from config/user.json.

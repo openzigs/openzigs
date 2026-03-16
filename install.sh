@@ -552,8 +552,9 @@ setup_credentials() {
   echo "  Enter credentials below, or press Enter to skip each."
   echo ""
 
-  echo "  LinkedIn:"
-  read_credential "Access Token" "LINKEDIN_ACCESS_TOKEN"
+  echo "  LinkedIn (OAuth — or set manually in admin UI):"
+  read_credential "Client ID"     "LINKEDIN_CLIENT_ID"
+  read_credential "Client Secret" "LINKEDIN_CLIENT_SECRET"
 
   echo ""
   echo "  Twitter/X:"
@@ -562,8 +563,19 @@ setup_credentials() {
   read_credential "API Secret"   "TWITTER_API_SECRET"
 
   echo ""
-  echo "  Facebook:"
-  read_credential "Page Token"   "FACEBOOK_PAGE_TOKEN"
+  echo "  Reddit:"
+  read_credential "Client ID"     "REDDIT_CLIENT_ID"
+  read_credential "Client Secret" "REDDIT_CLIENT_SECRET"
+  read_credential "Username"      "REDDIT_USERNAME"
+  read_credential "Password"      "REDDIT_PASSWORD"
+
+  echo ""
+  echo "  TikTok (TikNeuron — get key at https://tikneuron.com):"
+  read_credential "MCP API Key"  "TIKNEURON_MCP_API_KEY"
+
+  echo ""
+  echo "  YouTube:"
+  read_credential "API Key"      "YOUTUBE_API_KEY"
 
   echo ""
   echo "  Pinterest:"
@@ -573,6 +585,45 @@ setup_credentials() {
   echo ""
   echo "  Brave Search (web search tool):"
   read_credential "API Key"      "BRAVE_API_KEY"
+}
+
+# ── Summary ───────────────────────────────────────────────────────────────────
+
+# ── Auto-provision Python MCP server venvs ────────────────────────────────────
+setup_python_mcp_venvs() {
+  local base_dir="$1"
+  echo ""
+  echo -e "${BOLD}=== Setting up Python MCP server environments ===${RESET}"
+
+  for server_dir in "$base_dir"/external/*/; do
+    [ -d "$server_dir" ] || continue
+    local req="$server_dir/requirements.txt"
+    [ -f "$req" ] || continue
+
+    local name
+    name="$(basename "$server_dir")"
+    local venv="$server_dir/.venv"
+
+    if [ -d "$venv" ]; then
+      echo -e "  ${GREEN}✓ $name venv already exists${RESET}"
+      continue
+    fi
+
+    local PY=""
+    for candidate in python3.12 python3.11 python3.10 python3; do
+      if command -v "$candidate" >/dev/null 2>&1; then PY="$candidate"; break; fi
+    done
+    if [ -z "$PY" ]; then
+      echo -e "  ${RED}✗ $name: Python 3 not found, skipping${RESET}"
+      continue
+    fi
+
+    echo "  Creating venv for $name..."
+    "$PY" -m venv "$venv"
+    "$venv/bin/python" -m pip install --upgrade pip --quiet 2>/dev/null
+    "$venv/bin/python" -m pip install -r "$req" --quiet 2>&1 | tail -3
+    echo -e "  ${GREEN}✓ $name venv ready${RESET}"
+  done
 }
 
 # ── Summary ───────────────────────────────────────────────────────────────────
@@ -677,6 +728,7 @@ fi
 install_converter_deps_with_brew
 show_sidecar_menu
 setup_credentials
+setup_python_mcp_venvs "$install_dir"
 
 # ── Build and start core services ─────────────────────────────────────────────
 echo ""

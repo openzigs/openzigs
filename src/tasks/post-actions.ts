@@ -10,6 +10,7 @@
 
 import { postActionRegistry } from "./post-action-registry.js";
 import type { PipelinePostAction } from "./types.js";
+import { isAllowedWebhookUrl } from "../security/url-validation.js";
 
 /* ------------------------------------------------------------------ */
 /*  Finding parser — extracts structured findings from review output  */
@@ -260,6 +261,10 @@ async function executeSendWebhook(
   const { url, method, headers: extraHeaders, includeOutput } = config as unknown as SendWebhookConfig;
   if (!url) {
     return JSON.stringify({ error: "Webhook URL is required" });
+  }
+
+  if (!isAllowedWebhookUrl(url)) {
+    return JSON.stringify({ error: "Webhook URL blocked: private/internal addresses are not allowed (SSRF protection)" });
   }
 
   const payload: Record<string, unknown> = {

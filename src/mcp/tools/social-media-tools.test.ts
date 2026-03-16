@@ -68,9 +68,9 @@ describe("social-media-tools", () => {
     it("handles fetch failure gracefully", async () => {
       global.fetch = vi.fn().mockRejectedValue(new Error("Connection refused"));
 
-      const tools = createSocialMediaTools({ facebookSidecarUrl: "http://localhost:5003" });
+      const tools = createSocialMediaTools({ twitterSidecarUrl: "http://localhost:5003" });
       const handler = tools.find((t) => t.name === "social-post")!.handler;
-      const result = await handler({ platform: "facebook", content: "Hello" });
+      const result = await handler({ platform: "twitter", content: "Hello" });
       expect(result.isError).toBe(true);
       expect(result.text).toContain("Connection refused");
     });

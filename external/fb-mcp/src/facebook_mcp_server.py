@@ -95,7 +95,19 @@ class FacebookMCPServer:
 async def main():
     import logging
     settings = get_settings()
-    logging.basicConfig(level=getattr(logging, settings.log_level))
+    logging.basicConfig(level=getattr(logging, settings.log_level.upper()), stream=sys.stderr)
+    structlog.configure(
+        processors=[
+            structlog.stdlib.filter_by_level,
+            structlog.stdlib.add_log_level,
+            structlog.processors.TimeStamper(fmt="iso"),
+            structlog.processors.format_exc_info,
+            structlog.processors.JSONRenderer(),
+        ],
+        logger_factory=structlog.stdlib.LoggerFactory(),
+        wrapper_class=structlog.stdlib.BoundLogger,
+        cache_logger_on_first_use=True,
+    )
     server = FacebookMCPServer()
     await server.run()
 

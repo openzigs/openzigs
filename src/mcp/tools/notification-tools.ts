@@ -13,14 +13,16 @@ export type NotificationToolsOptions = {
   channelManager: ChannelManager;
   /** Telegram chat ID to send to. Uses config adminUserId if omitted. */
   fallbackChatId?: string;
+  /** Discord channel ID for notifications. */
+  discordNotificationChannelId?: string;
 };
 
-export const createNotificationTools = ({ channelManager, fallbackChatId }: NotificationToolsOptions): ToolDefinition[] => {
+export const createNotificationTools = ({ channelManager, fallbackChatId, discordNotificationChannelId }: NotificationToolsOptions): ToolDefinition[] => {
   return [
     {
       name: "send-notification",
       description:
-        "Send a notification message to the configured admin Telegram chat. Use this as the final step when completing a long-running task to inform the user of completion.",
+        "Send a notification message to configured channels (Telegram and/or Discord). Use this as the final step when completing a long-running task to inform the user of completion.",
       inputSchema: {
         type: "object",
         properties: {
@@ -36,28 +38,42 @@ export const createNotificationTools = ({ channelManager, fallbackChatId }: Noti
       riskLevel: "low",
       handler: async (args) => {
         const input = sendNotificationSchema.parse(args) as SendNotificationInput;
+        const results: string[] = [];
 
+        // Try Telegram
         const telegram = channelManager.getChannel("telegram");
-        if (!telegram) {
-          logger.warn("send-notification: Telegram channel not registered, skipping notification");
-          return { text: "Telegram channel not connected — notification skipped." };
+        if (telegram && fallbackChatId) {
+          try {
+            await telegram.sendMessage(fallbackChatId, { text: input.message });
+            logger.info(`send-notification: sent to Telegram chat ${fallbackChatId}`);
+            results.push("Telegram: sent");
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            logger.error(`send-notification: Telegram failed — ${msg}`);
+            results.push(`Telegram: failed (${msg})`);
+          }
         }
 
-        const chatId = fallbackChatId;
-        if (!chatId) {
-          logger.warn("send-notification: No admin chat ID configured, skipping notification");
-          return { text: "No admin chat ID configured — notification skipped." };
+        // Try Discord
+        const discord = channelManager.getChannel("discord");
+        if (discord && discordNotificationChannelId) {
+          try {
+            await discord.sendMessage(discordNotificationChannelId, { text: input.message });
+            logger.info(`send-notification: sent to Discord channel ${discordNotificationChannelId}`);
+            results.push("Discord: sent");
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            logger.error(`send-notification: Discord failed — ${msg}`);
+            results.push(`Discord: failed (${msg})`);
+          }
         }
 
-        try {
-          await telegram.sendMessage(chatId, { text: input.message });
-          logger.info(`send-notification: sent to Telegram chat ${chatId}`);
-          return { text: `Notification sent: ${input.message}` };
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
-          logger.error(`send-notification: failed to send — ${msg}`);
-          return { text: `Failed to send notification: ${msg}`, isError: true };
+        if (results.length === 0) {
+          logger.warn("send-notification: No notification channels configured, skipping");
+          return { text: "No notification channels configured — notification skipped." };
         }
+
+        return { text: `Notification: ${results.join("; ")}` };
       },
     },
   ];

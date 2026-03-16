@@ -11,7 +11,7 @@ import type { HandoffManager } from "../../channels/social/handoff-manager.js";
 import type { SocialPlatform } from "../../channels/social/types.js";
 
 const lookupContactSchema = z.object({
-  platform: z.enum(["instagram", "reddit", "youtube", "tiktok", "twitter", "facebook", "linkedin"]).optional()
+  platform: z.enum(["reddit", "youtube", "tiktok", "twitter", "linkedin"]).optional()
     .describe("Filter contacts by platform"),
   username: z.string().optional().describe("Exact username to look up"),
   search: z.string().optional().describe("Search contacts by username, display name, or notes"),
@@ -52,7 +52,7 @@ export const createSocialBrainTools = (options: SocialBrainToolsOptions): ToolDe
     inputSchema: {
       type: "object",
       properties: {
-        platform: { type: "string", enum: ["instagram", "reddit", "youtube", "tiktok", "twitter", "facebook", "linkedin"] },
+        platform: { type: "string", enum: ["reddit", "youtube", "tiktok", "twitter", "linkedin"] },
         username: { type: "string" },
         search: { type: "string" },
         tag: { type: "string" },

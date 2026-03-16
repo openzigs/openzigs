@@ -2,18 +2,12 @@ import { test, expect, navigateTo } from './helpers';
 
 test.describe('Skills Editor', () => {
   test.beforeEach(async ({ page }) => {
-    await navigateTo(page, '/admin/skills');
+    await navigateTo(page, '/skills');
   });
 
   test('page heading and description', async ({ page }) => {
     await expect(page.getByRole('heading', { name: 'Skills', level: 1 })).toBeVisible();
     await expect(page.getByText('Manage built-in and custom SKILL.md skill files')).toBeVisible();
-  });
-
-  test('back to admin link', async ({ page }) => {
-    const link = page.getByRole('link', { name: '← Admin' });
-    await expect(link).toBeVisible();
-    await expect(link).toHaveAttribute('href', '/admin');
   });
 
   test('new skill button is present', async ({ page }) => {
@@ -50,15 +44,16 @@ test.describe('Skills Editor', () => {
   });
 
   test('skill cards show tool tags', async ({ page }) => {
-    // Check that tool tags appear on cards
-    await expect(page.getByText('web-search')).toBeVisible();
+    // Check that tool tags appear on cards (use .first() in case multiple skills share a tool name)
+    await expect(page.getByText('web-search').first()).toBeVisible();
     await expect(page.getByText('submit-media-job').first()).toBeVisible();
   });
 
   test('skill cards have View button', async ({ page }) => {
     const viewBtns = page.getByRole('button', { name: 'View' });
     await expect(viewBtns.first()).toBeVisible();
-    expect(await viewBtns.count()).toBe(8);
+    // At least 8 built-in skills; may be more if custom skills exist during parallel test runs
+    expect(await viewBtns.count()).toBeGreaterThanOrEqual(8);
   });
 
   test('overflow tool count indicator', async ({ page }) => {
@@ -71,14 +66,8 @@ test.describe('Skills Editor', () => {
     // Click View on the first skill card
     await page.getByRole('button', { name: 'View' }).first().click();
 
-    // A modal or detail view should appear with skill content
-    // Wait for some detail content to appear
-    await page.waitForTimeout(500);
-
-    // Should show a close/back mechanism
-    const closeBtn = page.getByRole('button', { name: /Close|Back|×/ });
-    if (await closeBtn.isVisible().catch(() => false)) {
-      await closeBtn.click();
-    }
+    // Detail view should show the SKILL.md editor section
+    // beforeEach navigates fresh for each test, so no cleanup needed here
+    await expect(page.getByText('SKILL.md Content')).toBeVisible({ timeout: 5_000 });
   });
 });

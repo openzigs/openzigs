@@ -71,6 +71,45 @@ describe("OutboxPoller", () => {
     expect(call[1].mode).toBe("background");
   });
 
+  it("poll() includes content_body in goal when present", () => {
+    repo.insert({
+      platform: "twitter",
+      scheduledTime: new Date(Date.now() - 60_000),
+      agentContext: "Publish this tweet",
+      contentBody: "Check out our new feature! #launch",
+    });
+
+    const poller = new OutboxPoller({
+      outboxRepo: repo,
+      taskEngine: mockTaskEngine as any,
+    });
+    poller.poll();
+
+    expect(mockTaskEngine.submit).toHaveBeenCalledTimes(1);
+    const call = (mockTaskEngine.submit as ReturnType<typeof vi.fn>).mock.calls[0] as [Record<string, unknown>, Record<string, unknown>];
+    const goal = call[0].goal as string;
+    expect(goal).toContain("Pre-approved content (use exactly as-is):");
+    expect(goal).toContain("Check out our new feature! #launch");
+  });
+
+  it("poll() omits content_body from goal when null", () => {
+    repo.insert({
+      platform: "twitter",
+      scheduledTime: new Date(Date.now() - 60_000),
+      agentContext: "Post about launch",
+    });
+
+    const poller = new OutboxPoller({
+      outboxRepo: repo,
+      taskEngine: mockTaskEngine as any,
+    });
+    poller.poll();
+
+    const call = (mockTaskEngine.submit as ReturnType<typeof vi.fn>).mock.calls[0] as [Record<string, unknown>, Record<string, unknown>];
+    const goal = call[0].goal as string;
+    expect(goal).not.toContain("Pre-approved content");
+  });
+
   it("poll() does not claim future items", () => {
     repo.insert({
       platform: "pinterest",
@@ -140,7 +179,7 @@ describe("OutboxPoller", () => {
     });
 
     poller.start();
-    expect(cronModule.default.schedule).toHaveBeenCalledWith("*/2 * * * *", expect.any(Function));
+    expect(cronModule.default.schedule).toHaveBeenCalledWith("*/2 * * * *", expect.any(Function), { noOverlap: true });
 
     poller.stop();
     // Calling stop again should be a no-op

@@ -789,4 +789,468 @@ describe("Scheduler", () => {
 
     noAllSkillScheduler.stopAll();
   });
+
+  // ── notifyChannels CRUD tests ──
+
+  it("creates a job with notifyChannels", () => {
+    const job = scheduler.create({
+      name: "notify-job",
+      cronExpression: "0 9 * * *",
+      actionPayload: {},
+      notifyChannels: ["telegram", "discord"],
+    });
+    expect(job.notifyChannels).toEqual(["telegram", "discord"]);
+
+    const found = scheduler.getById(job.id);
+    expect(found!.notifyChannels).toEqual(["telegram", "discord"]);
+  });
+
+  it("defaults notifyChannels to null", () => {
+    const job = scheduler.create({
+      name: "no-notify",
+      cronExpression: "0 9 * * *",
+      actionPayload: {},
+    });
+    expect(job.notifyChannels).toBeNull();
+  });
+
+  it("updates notifyChannels on a job", () => {
+    const job = scheduler.create({
+      name: "update-notify",
+      cronExpression: "0 9 * * *",
+      actionPayload: {},
+    });
+    const updated = scheduler.update(job.id, { notifyChannels: ["telegram"] });
+    expect(updated.notifyChannels).toEqual(["telegram"]);
+  });
+
+  it("clears notifyChannels by setting null", () => {
+    const job = scheduler.create({
+      name: "clear-notify",
+      cronExpression: "0 9 * * *",
+      actionPayload: {},
+      notifyChannels: ["discord"],
+    });
+    const updated = scheduler.update(job.id, { notifyChannels: null });
+    expect(updated.notifyChannels).toBeNull();
+  });
+
+  // ── outbox action type tests ──
+
+  it("creates a job with outbox actionType", () => {
+    const job = scheduler.create({
+      name: "outbox-job",
+      cronExpression: "0 9 * * *",
+      actionType: "outbox",
+      actionPayload: {
+        platforms: ["twitter", "linkedin"],
+        contentTemplate: "Hello {{today}}!",
+        reviewRequired: true,
+      },
+    });
+    expect(job.actionType).toBe("outbox");
+    expect(job.actionPayload).toEqual({
+      platforms: ["twitter", "linkedin"],
+      contentTemplate: "Hello {{today}}!",
+      reviewRequired: true,
+    });
+  });
+
+  it("executeJob with outbox action creates outbox items", async () => {
+    const insertSpy = vi.fn().mockReturnValue({ id: "outbox-1" });
+    const updateStatusSpy = vi.fn();
+    const mockOutboxRepo = {
+      insert: insertSpy,
+      updateStatus: updateStatusSpy,
+    };
+
+    const handler = vi.fn();
+    const outboxScheduler = new Scheduler({
+      db,
+      clock: () => fixedNow,
+      auditLogDir: "/tmp/openzigs-test-audit",
+      outboxRepo: mockOutboxRepo as never,
+    });
+    outboxScheduler.on("job:executed", handler);
+
+    const job = outboxScheduler.create({
+      name: "outbox-exec",
+      cronExpression: "0 9 * * *",
+      actionType: "outbox",
+      actionPayload: {
+        platforms: ["twitter"],
+        contentTemplate: "Post for {{today}}",
+      },
+    });
+
+    await outboxScheduler.executeJob(job.id);
+
+    expect(insertSpy).toHaveBeenCalledOnce();
+    const insertArg = insertSpy.mock.calls[0][0];
+    expect(insertArg.platform).toBe("twitter");
+    expect(insertArg.contentBody).toBe("Post for 2026-01-15");
+    expect(insertArg.title).toBe("Scheduled: outbox-exec");
+
+    // reviewRequired not set, so updateStatus should NOT be called
+    expect(updateStatusSpy).not.toHaveBeenCalled();
+
+    expect(handler).toHaveBeenCalledOnce();
+    expect(handler.mock.calls[0][0]).toMatchObject({
+      success: true,
+      jobName: "outbox-exec",
+    });
+
+    outboxScheduler.stopAll();
+  });
+
+  it("executeJob with outbox + reviewRequired marks items as canceled", async () => {
+    const insertSpy = vi.fn().mockReturnValue({ id: "outbox-review-1" });
+    const updateStatusSpy = vi.fn();
+    const mockOutboxRepo = {
+      insert: insertSpy,
+      updateStatus: updateStatusSpy,
+    };
+
+    const outboxScheduler = new Scheduler({
+      db,
+      clock: () => fixedNow,
+      auditLogDir: "/tmp/openzigs-test-audit",
+      outboxRepo: mockOutboxRepo as never,
+    });
+
+    const job = outboxScheduler.create({
+      name: "review-outbox",
+      cronExpression: "0 9 * * *",
+      actionType: "outbox",
+      actionPayload: {
+        platforms: ["linkedin"],
+        contentTemplate: "Review this post for {{day_of_week}}",
+        reviewRequired: true,
+      },
+    });
+
+    await outboxScheduler.executeJob(job.id);
+
+    expect(insertSpy).toHaveBeenCalledOnce();
+    expect(updateStatusSpy).toHaveBeenCalledOnce();
+    expect(updateStatusSpy).toHaveBeenCalledWith("outbox-review-1", "canceled");
+
+    outboxScheduler.stopAll();
+  });
+
+  it("executeJob with outbox creates items for multiple platforms", async () => {
+    const insertSpy = vi.fn()
+      .mockReturnValueOnce({ id: "item-1" })
+      .mockReturnValueOnce({ id: "item-2" });
+    const mockOutboxRepo = {
+      insert: insertSpy,
+      updateStatus: vi.fn(),
+    };
+
+    const handler = vi.fn();
+    const outboxScheduler = new Scheduler({
+      db,
+      clock: () => fixedNow,
+      auditLogDir: "/tmp/openzigs-test-audit",
+      outboxRepo: mockOutboxRepo as never,
+    });
+    outboxScheduler.on("job:executed", handler);
+
+    const job = outboxScheduler.create({
+      name: "multi-platform",
+      cronExpression: "0 9 * * *",
+      actionType: "outbox",
+      actionPayload: {
+        platforms: ["twitter", "linkedin"],
+        contentTemplate: "Hello world!",
+      },
+    });
+
+    await outboxScheduler.executeJob(job.id);
+
+    expect(insertSpy).toHaveBeenCalledTimes(2);
+    expect(insertSpy.mock.calls[0][0].platform).toBe("twitter");
+    expect(insertSpy.mock.calls[1][0].platform).toBe("linkedin");
+
+    expect(handler.mock.calls[0][0].result).toContain("2 outbox item(s)");
+
+    outboxScheduler.stopAll();
+  });
+
+  it("executeJob with outbox interpolates dynamic variables", async () => {
+    const insertSpy = vi.fn().mockReturnValue({ id: "var-item" });
+    const mockOutboxRepo = {
+      insert: insertSpy,
+      updateStatus: vi.fn(),
+    };
+
+    const outboxScheduler = new Scheduler({
+      db,
+      clock: () => fixedNow,
+      auditLogDir: "/tmp/openzigs-test-audit",
+      outboxRepo: mockOutboxRepo as never,
+    });
+
+    const job = outboxScheduler.create({
+      name: "var-test",
+      cronExpression: "0 9 * * *",
+      actionType: "outbox",
+      actionPayload: {
+        platforms: ["twitter"],
+        contentTemplate: "Date: {{today}}, Day: {{day_of_week}}, Year: {{year}}",
+      },
+    });
+
+    await outboxScheduler.executeJob(job.id);
+
+    const insertArg = insertSpy.mock.calls[0][0];
+    expect(insertArg.contentBody).toContain("Date: 2026-01-15");
+    expect(insertArg.contentBody).toContain("Year: 2026");
+    // day_of_week should resolve to Thursday for 2026-01-15
+    expect(insertArg.contentBody).toContain("Day: Thursday");
+
+    outboxScheduler.stopAll();
+  });
+
+  // ── sendNotifications tests ──
+
+  it("executeJob sends notifications on success", async () => {
+    const sendMessageSpy = vi.fn();
+    const mockChannel = { sendMessage: sendMessageSpy };
+    const mockChannelManager = {
+      getChannel: vi.fn().mockReturnValue(mockChannel),
+    };
+
+    const handler = vi.fn();
+    const notifyScheduler = new Scheduler({
+      db,
+      clock: () => fixedNow,
+      auditLogDir: "/tmp/openzigs-test-audit",
+      onExecute: async () => "all good",
+    });
+    notifyScheduler.setChannelManager(mockChannelManager as never, { telegram: "12345" });
+    notifyScheduler.on("job:executed", handler);
+
+    const job = notifyScheduler.create({
+      name: "notify-success",
+      cronExpression: "0 9 * * *",
+      actionPayload: {},
+      notifyChannels: ["telegram"],
+    });
+
+    await notifyScheduler.executeJob(job.id);
+
+    expect(mockChannelManager.getChannel).toHaveBeenCalledWith("telegram");
+    expect(sendMessageSpy).toHaveBeenCalledOnce();
+    const [chatId, msg] = sendMessageSpy.mock.calls[0];
+    expect(chatId).toBe("12345");
+    expect(msg.text).toContain("✅");
+    expect(msg.text).toContain("notify-success");
+    expect(msg.text).toContain("succeeded");
+
+    notifyScheduler.stopAll();
+  });
+
+  it("executeJob sends notifications on failure", async () => {
+    const sendMessageSpy = vi.fn();
+    const mockChannel = { sendMessage: sendMessageSpy };
+    const mockChannelManager = {
+      getChannel: vi.fn().mockReturnValue(mockChannel),
+    };
+
+    const notifyScheduler = new Scheduler({
+      db,
+      clock: () => fixedNow,
+      auditLogDir: "/tmp/openzigs-test-audit",
+      onExecute: async () => { throw new Error("task failed"); },
+    });
+    notifyScheduler.setChannelManager(mockChannelManager as never, { discord: "guild-1" });
+
+    const job = notifyScheduler.create({
+      name: "notify-fail",
+      cronExpression: "0 9 * * *",
+      actionPayload: {},
+      notifyChannels: ["discord"],
+    });
+
+    await notifyScheduler.executeJob(job.id);
+
+    expect(sendMessageSpy).toHaveBeenCalledOnce();
+    const [, msg] = sendMessageSpy.mock.calls[0];
+    expect(msg.text).toContain("❌");
+    expect(msg.text).toContain("failed");
+
+    notifyScheduler.stopAll();
+  });
+
+  it("executeJob skips notifications when no channels configured", async () => {
+    const mockChannelManager = {
+      getChannel: vi.fn(),
+    };
+
+    const notifyScheduler = new Scheduler({
+      db,
+      clock: () => fixedNow,
+      auditLogDir: "/tmp/openzigs-test-audit",
+      onExecute: async () => "ok",
+    });
+    notifyScheduler.setChannelManager(mockChannelManager as never);
+
+    const job = notifyScheduler.create({
+      name: "no-notify-exec",
+      cronExpression: "0 9 * * *",
+      actionPayload: {},
+      // No notifyChannels
+    });
+
+    await notifyScheduler.executeJob(job.id);
+
+    expect(mockChannelManager.getChannel).not.toHaveBeenCalled();
+
+    notifyScheduler.stopAll();
+  });
+
+  it("executeJob swallows notification errors gracefully", async () => {
+    const mockChannel = {
+      sendMessage: vi.fn().mockRejectedValue(new Error("network error")),
+    };
+    const mockChannelManager = {
+      getChannel: vi.fn().mockReturnValue(mockChannel),
+    };
+
+    const handler = vi.fn();
+    const notifyScheduler = new Scheduler({
+      db,
+      clock: () => fixedNow,
+      auditLogDir: "/tmp/openzigs-test-audit",
+      onExecute: async () => "ok",
+    });
+    notifyScheduler.setChannelManager(mockChannelManager as never, { telegram: "111" });
+    notifyScheduler.on("job:executed", handler);
+
+    const job = notifyScheduler.create({
+      name: "swallow-error",
+      cronExpression: "0 9 * * *",
+      actionPayload: {},
+      notifyChannels: ["telegram"],
+    });
+
+    // Should not throw even though notification fails
+    await notifyScheduler.executeJob(job.id);
+
+    expect(handler).toHaveBeenCalledOnce();
+    expect(handler.mock.calls[0][0].success).toBe(true);
+
+    notifyScheduler.stopAll();
+  });
+
+  it("executeJob with outbox but no outboxRepo falls through to normal execution", async () => {
+    const handler = vi.fn();
+    const noRepoScheduler = new Scheduler({
+      db,
+      clock: () => fixedNow,
+      auditLogDir: "/tmp/openzigs-test-audit",
+      onExecute: async () => "fallback",
+    });
+    noRepoScheduler.on("job:executed", handler);
+
+    const job = noRepoScheduler.create({
+      name: "outbox-no-repo",
+      cronExpression: "0 9 * * *",
+      actionType: "outbox",
+      actionPayload: { platforms: ["twitter"], contentTemplate: "Test" },
+    });
+
+    await noRepoScheduler.executeJob(job.id);
+
+    // Falls through to onExecute handler since outboxRepo is not set
+    expect(handler).toHaveBeenCalledOnce();
+    expect(handler.mock.calls[0][0].result).toBe("fallback");
+
+    noRepoScheduler.stopAll();
+  });
+
+  it("executeJob with outbox + generationPrompt delegates to TaskEngine", async () => {
+    const submitSpy = vi.fn().mockReturnValue({ id: "task-gen-1" });
+    const mockTaskEngine = { submit: submitSpy };
+    const insertSpy = vi.fn().mockReturnValue({ id: "outbox-ai" });
+    const mockOutboxRepo = {
+      insert: insertSpy,
+      updateStatus: vi.fn(),
+    };
+
+    const handler = vi.fn();
+    const genScheduler = new Scheduler({
+      db,
+      clock: () => fixedNow,
+      auditLogDir: "/tmp/openzigs-test-audit",
+      outboxRepo: mockOutboxRepo as never,
+    });
+    genScheduler.setTaskEngine(mockTaskEngine as never);
+    genScheduler.on("job:executed", handler);
+
+    const job = genScheduler.create({
+      name: "ai-gen-outbox",
+      cronExpression: "0 9 * * *",
+      actionType: "outbox",
+      actionPayload: {
+        platforms: ["twitter", "linkedin"],
+        generationPrompt: "Write a post about AI trends for {{today}}",
+      },
+    });
+
+    await genScheduler.executeJob(job.id);
+
+    // Should delegate to TaskEngine instead of calling insert directly
+    expect(submitSpy).toHaveBeenCalledOnce();
+    const [taskInput] = submitSpy.mock.calls[0];
+    expect(taskInput.trigger).toBe("cron");
+    expect(taskInput.goal).toContain("Write a post about AI trends for 2026-01-15");
+    expect(taskInput.goal).toContain("twitter, linkedin");
+
+    // insert should NOT be called — AI task generates content asynchronously
+    expect(insertSpy).not.toHaveBeenCalled();
+
+    // Event should fire with success
+    expect(handler).toHaveBeenCalledOnce();
+    expect(handler.mock.calls[0][0].success).toBe(true);
+    expect(handler.mock.calls[0][0].result).toContain("AI content generation submitted");
+
+    genScheduler.stopAll();
+  });
+
+  it("executeJob with outbox + generationPrompt but no TaskEngine falls through to static insert", async () => {
+    const insertSpy = vi.fn().mockReturnValue({ id: "outbox-fallback" });
+    const mockOutboxRepo = {
+      insert: insertSpy,
+      updateStatus: vi.fn(),
+    };
+
+    const genScheduler = new Scheduler({
+      db,
+      clock: () => fixedNow,
+      auditLogDir: "/tmp/openzigs-test-audit",
+      outboxRepo: mockOutboxRepo as never,
+    });
+    // No taskEngine set
+
+    const job = genScheduler.create({
+      name: "gen-no-engine",
+      cronExpression: "0 9 * * *",
+      actionType: "outbox",
+      actionPayload: {
+        platforms: ["twitter"],
+        generationPrompt: "Write something clever",
+        contentTemplate: "Fallback content",
+      },
+    });
+
+    await genScheduler.executeJob(job.id);
+
+    // Without TaskEngine, should fall through to static insert with contentTemplate
+    expect(insertSpy).toHaveBeenCalledOnce();
+    expect(insertSpy.mock.calls[0][0].contentBody).toBe("Fallback content");
+
+    genScheduler.stopAll();
+  });
 });

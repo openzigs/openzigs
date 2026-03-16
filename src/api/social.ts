@@ -27,7 +27,7 @@ export type SocialRouterOptions = {
   brandVoiceService?: BrandVoiceService;
 };
 
-const platformSchema = z.enum(["instagram", "reddit", "youtube", "tiktok", "twitter", "facebook", "linkedin"]);
+const platformSchema = z.enum(["reddit", "youtube", "tiktok", "twitter", "linkedin"]);
 
 export const createSocialRouter = (opts: SocialRouterOptions): Router => {
   const { repository, ingestion, handoff, config: socialConfig, brandVoiceService } = opts;
@@ -35,11 +35,11 @@ export const createSocialRouter = (opts: SocialRouterOptions): Router => {
 
   /** Build connection info with real credential status. */
   const getConnectionStatus = () => {
-    const platforms: SocialPlatform[] = ["instagram", "twitter", "facebook", "linkedin", "reddit", "youtube", "tiktok"];
+    const platforms: SocialPlatform[] = ["twitter", "linkedin", "reddit", "youtube", "tiktok"];
     const registered = new Set(ingestion.getRegisteredPlatforms());
     return platforms.map((p) => {
       const conn = socialConfig?.connections?.[p];
-      const hasToken = !!(conn?.accessToken || (p === "instagram" && process.env.INSTAGRAM_ACCESS_TOKEN));
+      const hasToken = !!(conn?.accessToken);
       return {
         platform: p,
         connected: registered.has(p) && hasToken,
@@ -366,20 +366,10 @@ export const createSocialRouter = (opts: SocialRouterOptions): Router => {
   // ── Config — platform setup requirements ──
   router.get("/config", (_req, res) => {
     const platformInfo: Record<string, { envVar: string; webhookPath: string; docsUrl: string }> = {
-      instagram: {
-        envVar: "INSTAGRAM_ACCESS_TOKEN",
-        webhookPath: "/api/social/webhooks/instagram",
-        docsUrl: "https://developers.facebook.com/docs/instagram-platform/webhooks",
-      },
       twitter: {
         envVar: "TWITTER_ACCESS_TOKEN",
         webhookPath: "/api/social/webhooks/twitter",
         docsUrl: "https://developer.x.com/en/docs/x-api",
-      },
-      facebook: {
-        envVar: "FACEBOOK_ACCESS_TOKEN",
-        webhookPath: "/api/social/webhooks/facebook",
-        docsUrl: "https://developers.facebook.com/docs/graph-api/webhooks",
       },
       linkedin: {
         envVar: "LINKEDIN_ACCESS_TOKEN",

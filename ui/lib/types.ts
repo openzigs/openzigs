@@ -79,6 +79,7 @@ export type ScheduledJob = {
   reasoningEffort?: ReasoningEffort | null;
   allowedTools?: string[] | null;
   autoApproveTools?: string[] | null;
+  notifyChannels?: string[] | null;
   enabled: boolean;
   lastRunAt: string | null;
   runCount: number;

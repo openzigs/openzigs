@@ -2,6 +2,7 @@ import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import path from "node:path";
 import * as z from "zod";
+import { PROJECT_ROOT } from "../project-root.js";
 import { createFilesystemHandlers } from "./tools/filesystem.js";
 import { createBraveSearchHandler } from "./tools/brave-search.js";
 import { createChromeDevtoolsHandler } from "./tools/chrome-devtools.js";
@@ -16,7 +17,6 @@ import { createMarkItDownTools } from "./tools/markitdown-tools.js";
 import { createGmailTools } from "./tools/gmail-tools.js";
 import { createDatabaseTools } from "./tools/database-tools.js";
 import { createGitHubTools } from "./tools/github-tools.js";
-import { createInstagramTools } from "./tools/instagram-tools.js";
 import { createAgentTools } from "./tools/agent-tools.js";
 import { createOrchestrateAgentsTools } from "./tools/orchestrate-agents.js";
 import { createSystemConfigTools } from "./tools/system-config-tools.js";
@@ -28,11 +28,12 @@ import { createVideoTools } from "./tools/video-tools.js";
 import { createShortsTools } from "./tools/shorts-tools.js";
 import { createBlogTools } from "./tools/blog-tools.js";
 import { createSocialBrainTools } from "./tools/social-brain-tools.js";
-import { createFacebookTools } from "./tools/facebook-tools.js";
 import { createTwitterTools } from "./tools/twitter-tools.js";
 import { createYouTubeTools } from "./tools/youtube-tools.js";
 import { createLinkedInTools } from "./tools/linkedin-tools.js";
 import { createRedditTools } from "./tools/reddit-tools.js";
+import { createFacebookTools } from "./tools/facebook-tools.js";
+import { createInstagramTools } from "./tools/instagram-tools.js";
 import { createIngestYouTubeTools } from "./tools/ingest-youtube-tools.js";
 import { createGalleryTools } from "./tools/gallery-tools.js";
 import { createMediaQueueTools } from "./tools/media-queue-tools.js";
@@ -83,7 +84,6 @@ export type McpServerOptions = {
   shellAllowlist?: string[];
   linkedinSidecarUrl?: string;
   twitterSidecarUrl?: string;
-  facebookSidecarUrl?: string;
   markitdownSidecarUrl?: string;
   gmailSidecarUrl?: string;
   databaseSidecarUrl?: string;
@@ -125,6 +125,8 @@ export type McpServerOptions = {
   channelManager?: import("../channels/channel-manager.js").ChannelManager;
   /** Telegram admin chat ID for send-notification tool. */
   notificationChatId?: string;
+  /** Discord channel ID for notifications. */
+  discordNotificationChannelId?: string;
   /** Audio sidecar URL for transcribe-audio tool. */
   audioSidecarUrl?: string;
   /** TrimWorker for studio trim-video tool. */
@@ -153,8 +155,6 @@ export type RegisterMcpToolsOptions = Pick<
   | "copilot"
   | "linkedinSidecarUrl"
   | "twitterSidecarUrl"
-  | "facebookSidecarUrl"
-
   | "markitdownSidecarUrl"
   | "gmailSidecarUrl"
   | "databaseSidecarUrl"
@@ -178,6 +178,7 @@ export type RegisterMcpToolsOptions = Pick<
   | "sentinelService"
   | "channelManager"
   | "notificationChatId"
+  | "discordNotificationChannelId"
   | "audioSidecarUrl"
   | "trimWorker"
   | "analyzeWorker"
@@ -224,11 +225,14 @@ const parseArgs = (schema: z.ZodSchema, args: Record<string, unknown>) => {
 };
 
 export const createMcpServer = (options: McpServerOptions) => {
-  const server = new Server({ name: "openzigs", version: "0.1.0" });
+  const server = new Server(
+    { name: "openzigs", version: "0.1.0" },
+    { capabilities: { tools: {} } },
+  );
   const toolRegistry = options.toolRegistry
     ?? new ToolRegistry({
       statePath: options.toolStatePath
-        ?? path.resolve(process.cwd(), "config", "tools.json"),
+        ?? path.resolve(PROJECT_ROOT, "config", "tools.json"),
       defaultEnabledTools: options.defaultEnabledTools
     });
 
@@ -503,8 +507,6 @@ export const registerMcpTools = (toolRegistry: ToolRegistry, options: RegisterMc
   const socialTools = createSocialMediaTools({
     linkedinSidecarUrl: options.linkedinSidecarUrl,
     twitterSidecarUrl: options.twitterSidecarUrl,
-    facebookSidecarUrl: options.facebookSidecarUrl,
-
   });
   for (const tool of socialTools) {
     registerTool(tool);
@@ -557,18 +559,6 @@ export const registerMcpTools = (toolRegistry: ToolRegistry, options: RegisterMc
     registerTool(tool);
   }
 
-  // ── Instagram Tools (Local python MCP server) ──
-  const instagramTools = createInstagramTools({
-    localServerManager: options.localServerManager,
-  });
-  for (const tool of instagramTools) {
-    registerTool(tool);
-  }
-
-  // ── Facebook Tools (Local python MCP server) ──
-  const facebookTools = createFacebookTools({ localServerManager: options.localServerManager });
-  for (const tool of facebookTools) { registerTool(tool); }
-
   // ── Twitter Tools (Local python MCP server) ──
   const twitterTools = createTwitterTools({ localServerManager: options.localServerManager });
   for (const tool of twitterTools) { registerTool(tool); }
@@ -584,6 +574,14 @@ export const registerMcpTools = (toolRegistry: ToolRegistry, options: RegisterMc
   // ── Reddit Tools (Local python MCP server) ──
   const redditTools = createRedditTools({ localServerManager: options.localServerManager });
   for (const tool of redditTools) { registerTool(tool); }
+
+  // ── Facebook Tools (Local python MCP server) ──
+  const facebookTools = createFacebookTools({ localServerManager: options.localServerManager });
+  for (const tool of facebookTools) { registerTool(tool); }
+
+  // ── Instagram Tools (Local python MCP server) ──
+  const instagramTools = createInstagramTools({ localServerManager: options.localServerManager });
+  for (const tool of instagramTools) { registerTool(tool); }
 
   // ── Agent / Task Tools (spawn-agent) ──
   if (options.taskEngine) {
@@ -751,11 +749,12 @@ export const registerMcpTools = (toolRegistry: ToolRegistry, options: RegisterMc
   const draftMediaTools = createDraftMediaTools();
   for (const tool of draftMediaTools) { registerTool(tool); }
 
-  // ── Notification Tool (Telegram outbound, used by research-synthesizer skill) ──
+  // ── Notification Tool (Telegram/Discord outbound, used by research-synthesizer & universal-publisher skills) ──
   if (options.channelManager) {
     const notifTools = createNotificationTools({
       channelManager: options.channelManager,
       fallbackChatId: options.notificationChatId,
+      discordNotificationChannelId: options.discordNotificationChannelId,
     });
     for (const tool of notifTools) { registerTool(tool); }
   }

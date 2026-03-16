@@ -718,6 +718,8 @@ export class KnowledgeIngestionService extends EventEmitter {
     // Persist metadata after scan completes.
     if (indexed > 0 || staleRemoved > 0) {
       void this.saveDocumentMetadata();
+      // Flush any pending debounced FTS index rebuild now that the batch is done
+      await this.store.rebuildFtsIndex();
     }
 
     logger.info(`[Knowledge] Scan complete: ${indexed} indexed, ${failed} failed, ${staleRemoved} stale removed (${duration}ms)`);

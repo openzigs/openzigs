@@ -7,10 +7,10 @@ export type OutboxPlatform =
   | "twitter"
   | "pinterest"
   | "linkedin"
-  | "facebook"
   | "youtube"
   | "reddit"
-  | "instagram";
+  | "instagram"
+  | "facebook";
 
 export type OutboxStatus =
   | "pending"
@@ -67,6 +67,18 @@ export interface CreateOutboxInput {
   agentContext: string;
   platformMetadata?: Record<string, unknown>;
   maxRetries?: number;
+}
+
+export interface UpdateOutboxInput {
+  title?: string | null;
+  contentBody?: string | null;
+  agentContext?: string;
+  scheduledTime?: Date;
+  assetUrl?: string | null;
+  assetId?: string | null;
+  assetType?: OutboxAssetType;
+  attachments?: OutboxAttachment[];
+  platformMetadata?: Record<string, unknown>;
 }
 
 export interface OutboxListFilters {
@@ -138,7 +150,7 @@ const toItem = (row: StoredOutboxRow): OutboxItem => ({
 // ── Valid platforms & statuses ───────────────────────────────
 
 const VALID_PLATFORMS: Set<string> = new Set([
-  "twitter", "pinterest", "linkedin", "facebook", "youtube", "reddit", "instagram",
+  "twitter", "pinterest", "linkedin", "youtube", "reddit", "instagram", "facebook",
 ]);
 const VALID_STATUSES: Set<string> = new Set([
   "pending", "processing", "published", "failed", "canceled",
@@ -352,6 +364,72 @@ export class OutboxRepository {
     ).run(now, now, id);
 
     if (result.changes === 0) return null;
+    return this.getById(id);
+  }
+
+  /** Update status and started_at for an item (used by publish-now). */
+  updateStatus(id: string, status: OutboxStatus, startedAt?: string): void {
+    const now = this.clock().toISOString();
+    this.db.prepare(
+      `UPDATE outbox_queue SET status = ?, started_at = COALESCE(?, started_at), updated_at = ? WHERE id = ?`,
+    ).run(status, startedAt ?? null, now, id);
+  }
+
+  /**
+   * Update mutable fields of an outbox item. Only allowed for pending or canceled items.
+   * Returns the updated item, or null if the item doesn't exist or is in a non-editable state.
+   */
+  update(id: string, input: UpdateOutboxInput): OutboxItem | null {
+    const item = this.getById(id);
+    if (!item) return null;
+    if (item.status !== "pending" && item.status !== "canceled") return null;
+
+    const now = this.clock().toISOString();
+    const sets: string[] = ["updated_at = ?"];
+    const params: unknown[] = [now];
+
+    if (input.title !== undefined) {
+      sets.push("title = ?");
+      params.push(input.title);
+    }
+    if (input.contentBody !== undefined) {
+      sets.push("content_body = ?");
+      params.push(input.contentBody);
+    }
+    if (input.agentContext !== undefined) {
+      sets.push("agent_context = ?");
+      params.push(input.agentContext);
+    }
+    if (input.scheduledTime !== undefined) {
+      sets.push("scheduled_time = ?");
+      params.push(input.scheduledTime.toISOString());
+    }
+    if (input.assetUrl !== undefined) {
+      sets.push("asset_url = ?");
+      params.push(input.assetUrl);
+    }
+    if (input.assetId !== undefined) {
+      sets.push("asset_id = ?");
+      params.push(input.assetId);
+    }
+    if (input.assetType !== undefined) {
+      sets.push("asset_type = ?");
+      params.push(input.assetType);
+    }
+    if (input.attachments !== undefined) {
+      sets.push("attachments = ?");
+      params.push(JSON.stringify(input.attachments));
+    }
+    if (input.platformMetadata !== undefined) {
+      sets.push("platform_metadata = ?");
+      params.push(JSON.stringify(input.platformMetadata));
+    }
+
+    params.push(id);
+    this.db.prepare(
+      `UPDATE outbox_queue SET ${sets.join(", ")} WHERE id = ? AND status IN ('pending', 'canceled')`,
+    ).run(...params);
+
     return this.getById(id);
   }
 

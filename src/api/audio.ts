@@ -25,6 +25,7 @@ import { Router, raw } from "express";
 import { nanoid } from "nanoid";
 import Database from "better-sqlite3";
 import { logger } from "../logging/logger.js";
+import { PROJECT_ROOT } from "../project-root.js";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -328,7 +329,7 @@ export const createAudioRouter = ({ db, sidecarUrl }: AudioRouterOptions): Route
       return;
     }
 
-    const scriptPath = path.resolve(process.cwd(), "scripts", "setup-gptsovits.sh");
+    const scriptPath = path.resolve(PROJECT_ROOT, "scripts", "setup-gptsovits.sh");
 
     // SSE headers
     res.writeHead(200, {
@@ -344,7 +345,7 @@ export const createAudioRouter = ({ db, sidecarUrl }: AudioRouterOptions): Route
     send({ line: "Starting GPT-SoVITS installer…", stream: "system" });
 
     sovitsInstallProc = spawn("bash", [scriptPath], {
-      cwd: process.cwd(),
+      cwd: PROJECT_ROOT,
       env: { ...process.env, TERM: "dumb" },
       stdio: ["ignore", "pipe", "pipe"],
     });

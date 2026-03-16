@@ -1,6 +1,6 @@
 /**
  * Converts Markdown formatting to platform-safe plain text using Unicode
- * transformations. Social platforms (LinkedIn, X/Twitter, Facebook) do not
+ * transformations. Social platforms (LinkedIn, X/Twitter) do not
  * render Markdown — posting raw `**bold**` looks broken.  This utility
  * deterministically transforms common Markdown constructs into their Unicode
  * equivalents so posts look correct on every platform.

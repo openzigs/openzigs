@@ -1827,7 +1827,19 @@ export function createPinterestSeoTools(): ToolDefinition[] {
       riskLevel: "medium",
       source: "pinterest",
       handler: async (args) => {
-        const input = pinterestCreatePinSchema.parse(args);
+        // Auto-truncate title/description before validation for Pinterest API compliance
+        const sanitized = { ...args as Record<string, unknown> };
+        if (typeof sanitized.title === "string" && sanitized.title.length > 100) {
+          sanitized.title = sanitized.title.slice(0, 97) + "...";
+        }
+        if (typeof sanitized.description === "string" && sanitized.description.length > 800) {
+          sanitized.description = sanitized.description.slice(0, 797) + "...";
+        }
+        const validated = pinterestCreatePinSchema.safeParse(sanitized);
+        if (!validated.success) {
+          return { text: `Validation error: ${validated.error.issues.map(i => `${i.path.join(".")}: ${i.message}`).join("; ")}`, isError: true };
+        }
+        const input = validated.data;
         const token = getToken();
         if (!token) return { text: "PINTEREST_ACCESS_TOKEN not configured.", isError: true };
 

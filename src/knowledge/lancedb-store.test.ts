@@ -419,9 +419,19 @@ describe("LanceDBStore", () => {
       expect(LanceDBStore.buildFilterClause({})).toBeUndefined();
     });
 
-    it("builds visibility filter clause", () => {
+    it("builds hierarchical visibility filter — public returns only public", () => {
       const clause = LanceDBStore.buildFilterClause({ visibility: "public" });
-      expect(clause).toBe("(visibility = 'public' OR visibility IS NULL)");
+      expect(clause).toBe("(visibility IN ('public') OR visibility IS NULL)");
+    });
+
+    it("builds hierarchical visibility filter — internal returns public + internal", () => {
+      const clause = LanceDBStore.buildFilterClause({ visibility: "internal" });
+      expect(clause).toBe("(visibility IN ('public', 'internal') OR visibility IS NULL)");
+    });
+
+    it("builds hierarchical visibility filter — private returns all levels", () => {
+      const clause = LanceDBStore.buildFilterClause({ visibility: "private" });
+      expect(clause).toBe("(visibility IN ('public', 'internal', 'private') OR visibility IS NULL)");
     });
 
     it("escapes single quotes in visibility", () => {
@@ -440,7 +450,7 @@ describe("LanceDBStore", () => {
         visibility: "private",
         categories: ["api"] as unknown as KnowledgeCategory[],
       });
-      expect(clause).toContain("visibility = 'private'");
+      expect(clause).toContain("visibility IN ('public', 'internal', 'private')");
       expect(clause).toContain("AND");
       expect(clause).toContain("IN ('api')");
     });
@@ -520,7 +530,7 @@ describe("LanceDBStore", () => {
     });
   });
 
-  describe("ensureFtsIndex error handling", () => {
+  describe("FTS index debounce and rebuild", () => {
     it("continues when FTS index creation fails", async () => {
       getMockConnection().tableNames.mockResolvedValueOnce([]);
       await store.initialize();
@@ -530,6 +540,33 @@ describe("LanceDBStore", () => {
       const chunks = [{ id: "c1", documentId: "d1", text: "test", chunkIndex: 0, sourcePath: "/f.txt" }];
       // Should not throw
       await store.addChunks(chunks);
+    });
+
+    it("rebuildFtsIndex rebuilds manually when dirty", async () => {
+      getMockConnection().tableNames.mockResolvedValueOnce([]);
+      await store.initialize();
+
+      const chunks = [{ id: "c1", documentId: "d1", text: "test", chunkIndex: 0, sourcePath: "/f.txt" }];
+      await store.addChunks(chunks);
+
+      // Manually trigger rebuild (simulates debounce timer firing)
+      await store.rebuildFtsIndex();
+      // createIndex should have been called for both IVF_PQ (vector) and FTS
+      expect(getMockTable().createIndex).toHaveBeenCalled();
+    });
+
+    it("close flushes pending FTS rebuild", async () => {
+      getMockConnection().tableNames.mockResolvedValueOnce([]);
+      await store.initialize();
+
+      const chunks = [{ id: "c1", documentId: "d1", text: "test", chunkIndex: 0, sourcePath: "/f.txt" }];
+      await store.addChunks(chunks);
+
+      // Close should flush the dirty FTS index
+      await store.close();
+      // After close, state should be reset
+      const results = await store.search("test");
+      expect(results).toEqual([]);
     });
   });
 });

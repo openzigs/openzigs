@@ -5,12 +5,15 @@ from pydantic_settings import BaseSettings
 
 
 class LinkedInMCPSettings(BaseSettings):
-    model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "case_sensitive": False}
+    model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "case_sensitive": False, "extra": "ignore"}
 
-    linkedin_access_token: str = Field(..., description="LinkedIn OAuth2 access token")
+    linkedin_access_token: str = Field(..., description="LinkedIn OAuth2 access token (obtain via 3-legged OAuth authorization code flow)")
+    linkedin_client_id: str = Field("", description="LinkedIn OAuth2 client ID (optional, used for token refresh)")
+    linkedin_client_secret: str = Field("", description="LinkedIn OAuth2 client secret (optional, used for token refresh)")
+    linkedin_refresh_token: str = Field("", description="LinkedIn OAuth2 refresh token (optional, for auto-renewal)")
     linkedin_person_id: str = Field("", description="LinkedIn person URN (e.g. urn:li:person:xxx)")
     linkedin_org_id: str = Field("", description="LinkedIn organization ID for company pages")
-    linkedin_api_base: str = Field("https://api.linkedin.com/v2", description="LinkedIn API v2 base URL")
+    linkedin_api_base: str = Field("https://api.linkedin.com", description="LinkedIn API base URL")
     mcp_server_name: str = Field("linkedin-mcp-server", description="MCP server name")
     mcp_server_version: str = Field("1.0.0", description="Server version")
     log_level: str = Field("INFO", description="Log level")

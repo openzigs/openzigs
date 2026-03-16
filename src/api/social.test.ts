@@ -10,10 +10,10 @@ vi.mock("../logging/logger.js", () => ({
 
 function createMockRepository() {
   const contacts = new Map<string, Record<string, unknown>>();
-  contacts.set("c1", { id: "c1", platform: "instagram", username: "test_user", tags: "" });
+  contacts.set("c1", { id: "c1", platform: "twitter", username: "test_user", tags: "" });
 
   const rules = new Map<string, Record<string, unknown>>();
-  rules.set("r1", { id: "r1", name: "AutoDM", platform: "instagram", enabled: 1, dm_template: "Hi!" });
+  rules.set("r1", { id: "r1", name: "AutoDM", platform: "twitter", enabled: 1, dm_template: "Hi!" });
 
   return {
     getStats: vi.fn(() => ({ totalContacts: 1, totalMessages: 5, totalHandoffs: 0 })),
@@ -36,7 +36,7 @@ function createMockRepository() {
 
 function createMockIngestion() {
   return {
-    getRegisteredPlatforms: vi.fn(() => ["instagram"]),
+    getRegisteredPlatforms: vi.fn(() => ["twitter"]),
     handleWebhook: vi.fn().mockResolvedValue(undefined),
   };
 }
@@ -175,7 +175,7 @@ describe("Social API router", () => {
       const { app } = buildApp();
       const res = await request(app).post("/social/rules").send({
         name: "NewRule",
-        platform: "instagram",
+        platform: "twitter",
         dm_template: "Hey there!",
       });
       expect(res.status).toBe(201);
@@ -236,7 +236,7 @@ describe("Social API router", () => {
   describe("POST /webhooks/:platform", () => {
     it("accepts webhook payload", async () => {
       const { app } = buildApp();
-      const res = await request(app).post("/social/webhooks/instagram").send({ object: "instagram" });
+      const res = await request(app).post("/social/webhooks/twitter").send({ object: "twitter" });
       expect(res.status).toBe(200);
       expect(res.body.received).toBe(true);
     });
@@ -245,7 +245,7 @@ describe("Social API router", () => {
   describe("GET /webhooks/:platform", () => {
     it("returns 403 without valid verify token", async () => {
       const { app } = buildApp();
-      const res = await request(app).get("/social/webhooks/instagram");
+      const res = await request(app).get("/social/webhooks/twitter");
       expect(res.status).toBe(403);
     });
   });
@@ -403,8 +403,8 @@ describe("Social API router", () => {
   describe("GET /rules — with platform filter", () => {
     it("passes platform filter to listRules", async () => {
       const { app, opts } = buildApp();
-      await request(app).get("/social/rules?platform=instagram");
-      expect((opts.repository as unknown as ReturnType<typeof createMockRepository>).listRules).toHaveBeenCalledWith("instagram");
+      await request(app).get("/social/rules?platform=twitter");
+      expect((opts.repository as unknown as ReturnType<typeof createMockRepository>).listRules).toHaveBeenCalledWith("twitter");
     });
 
     it("returns 500 when listRules throws", async () => {
@@ -425,7 +425,7 @@ describe("Social API router", () => {
       });
       const res = await request(app).post("/social/rules").send({
         name: "TestRule",
-        platform: "instagram",
+        platform: "twitter",
         dm_template: "Hello!",
       });
       expect(res.status).toBe(500);
@@ -495,7 +495,7 @@ describe("Social API router", () => {
       try {
         const { app } = buildApp();
         const res = await request(app).get(
-          "/social/webhooks/instagram?hub.mode=subscribe&hub.verify_token=test-secret&hub.challenge=challenge123",
+          "/social/webhooks/twitter?hub.mode=subscribe&hub.verify_token=test-secret&hub.challenge=challenge123",
         );
         expect(res.status).toBe(200);
         expect(res.text).toBe("challenge123");

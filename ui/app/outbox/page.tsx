@@ -9,6 +9,7 @@ import { SectionCard } from "@/components/section-card";
 import { ToastContainer, showToast } from "@/components/toast";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { AddToOutboxModal } from "@/components/add-to-outbox-modal";
+import { EditOutboxModal } from "@/components/edit-outbox-modal";
 import {
   Send,
   Clock,
@@ -28,12 +29,14 @@ import {
   Type,
   Plus,
   Paperclip,
+  Pencil,
+  Bell,
 } from "lucide-react";
 
 // ── Types ───────────────────────────────────────────────────
 
 type OutboxStatus = "pending" | "processing" | "published" | "failed" | "canceled";
-type OutboxPlatform = "twitter" | "pinterest" | "linkedin" | "facebook" | "youtube" | "reddit" | "instagram";
+type OutboxPlatform = "twitter" | "pinterest" | "linkedin" | "youtube" | "reddit" | "instagram" | "facebook";
 type OutboxAssetType = "image" | "video" | "audio" | "document" | "text";
 
 interface OutboxAttachment {
@@ -74,6 +77,17 @@ interface OutboxStats {
   total: number;
 }
 
+interface ChannelConfig {
+  enabled: boolean;
+}
+
+interface ChannelsResponse {
+  channels: {
+    telegram: ChannelConfig;
+    discord: ChannelConfig;
+  };
+}
+
 // ── Constants ───────────────────────────────────────────────
 
 const STATUS_CONFIG: Record<OutboxStatus, { label: string; color: string; icon: React.ElementType }> = {
@@ -88,10 +102,10 @@ const PLATFORM_LABELS: Record<OutboxPlatform, string> = {
   twitter: "𝕏 / Twitter",
   pinterest: "Pinterest",
   linkedin: "LinkedIn",
-  facebook: "Facebook",
   youtube: "YouTube",
   reddit: "Reddit",
   instagram: "Instagram",
+  facebook: "Facebook",
 };
 
 const ASSET_TYPE_ICONS: Record<OutboxAssetType, React.ElementType> = {
@@ -103,7 +117,7 @@ const ASSET_TYPE_ICONS: Record<OutboxAssetType, React.ElementType> = {
 };
 
 const ALL_STATUSES: OutboxStatus[] = ["pending", "processing", "published", "failed", "canceled"];
-const ALL_PLATFORMS: OutboxPlatform[] = ["twitter", "pinterest", "linkedin", "facebook", "youtube", "reddit", "instagram"];
+const ALL_PLATFORMS: OutboxPlatform[] = ["twitter", "pinterest", "linkedin", "youtube", "reddit", "instagram", "facebook"];
 
 // ── Helpers ─────────────────────────────────────────────────
 
@@ -137,8 +151,21 @@ export default function OutboxPage() {
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [expandedError, setExpandedError] = useState<string | null>(null);
   const [showNewItemModal, setShowNewItemModal] = useState(false);
+  const [editingItem, setEditingItem] = useState<OutboxItem | null>(null);
+  const [notifySelections, setNotifySelections] = useState<Record<string, Set<string>>>({});
 
   // ── Queries ───────────────────────────────────────────────
+
+  const { data: channelsData } = useQuery<ChannelsResponse>({
+    queryKey: ["channels"],
+    queryFn: () => fetchJson("/api/admin/channels"),
+    staleTime: 60_000,
+  });
+
+  const availableNotifyChannels = [
+    ...(channelsData?.channels?.telegram?.enabled ? ["telegram" as const] : []),
+    ...(channelsData?.channels?.discord?.enabled ? ["discord" as const] : []),
+  ];
 
   const { data: statsData } = useQuery<OutboxStats>({
     queryKey: ["outbox-stats"],
@@ -176,6 +203,20 @@ export default function OutboxPage() {
       queryClient.invalidateQueries({ queryKey: ["outbox-items"] });
       queryClient.invalidateQueries({ queryKey: ["outbox-stats"] });
       showToast("Item canceled", "success");
+    },
+    onError: (err: Error) => showToast(err.message, "error"),
+  });
+
+  const publishMutation = useMutation({
+    mutationFn: ({ id, notifyChannels }: { id: string; notifyChannels?: string[] }) =>
+      fetchJson(`/api/admin/outbox/${id}/publish`, {
+        method: "POST",
+        body: JSON.stringify(notifyChannels?.length ? { notifyChannels } : {}),
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["outbox-items"] });
+      queryClient.invalidateQueries({ queryKey: ["outbox-stats"] });
+      showToast("Publishing now!", "success");
     },
     onError: (err: Error) => showToast(err.message, "error"),
   });
@@ -288,6 +329,8 @@ export default function OutboxPage() {
               const AssetIcon = ASSET_TYPE_ICONS[item.assetType] ?? FileText;
               const isPending = item.status === "pending";
               const isFailed = item.status === "failed";
+              const isCanceled = item.status === "canceled";
+              const isEditable = isPending || isCanceled;
 
               return (
                 <div key={item.id} className="flex items-start gap-4 py-4 first:pt-0 last:pb-0">
@@ -364,6 +407,55 @@ export default function OutboxPage() {
 
                   {/* Actions */}
                   <div className="flex shrink-0 items-center gap-1">
+                    {isEditable && (
+                      <button
+                        type="button"
+                        title="Edit"
+                        onClick={() => setEditingItem(item)}
+                        className="rounded-lg p-2 text-muted-foreground hover:bg-muted hover:text-blue-400"
+                      >
+                        <Pencil className="h-4 w-4" />
+                      </button>
+                    )}
+                    {isPending && (
+                      <div className="flex items-center gap-2">
+                        {availableNotifyChannels.length > 0 && (
+                          <div className="flex items-center gap-2 mr-1">
+                            {availableNotifyChannels.map((ch) => (
+                              <label key={ch} className="flex items-center gap-1 text-xs text-muted-foreground cursor-pointer select-none">
+                                <input
+                                  type="checkbox"
+                                  checked={notifySelections[item.id]?.has(ch) ?? false}
+                                  onChange={(e) => {
+                                    setNotifySelections((prev) => {
+                                      const current = new Set(prev[item.id] ?? []);
+                                      if (e.target.checked) current.add(ch);
+                                      else current.delete(ch);
+                                      return { ...prev, [item.id]: current };
+                                    });
+                                  }}
+                                  className="h-3 w-3 rounded border-border accent-emerald-500"
+                                />
+                                <Bell className="h-3 w-3" />
+                                {ch.charAt(0).toUpperCase() + ch.slice(1)}
+                              </label>
+                            ))}
+                          </div>
+                        )}
+                        <button
+                          type="button"
+                          title={notifySelections[item.id]?.size ? "Publish + Notify" : "Publish Now"}
+                          onClick={() => {
+                            const channels = Array.from(notifySelections[item.id] ?? []);
+                            publishMutation.mutate({ id: item.id, notifyChannels: channels.length ? channels : undefined });
+                          }}
+                          disabled={publishMutation.isPending}
+                          className="rounded-lg p-2 text-muted-foreground hover:bg-muted hover:text-emerald-400"
+                        >
+                          <Send className="h-4 w-4" />
+                        </button>
+                      </div>
+                    )}
                     {isFailed && (
                       <button
                         type="button"
@@ -416,6 +508,12 @@ export default function OutboxPage() {
       <AddToOutboxModal
         open={showNewItemModal}
         onClose={() => setShowNewItemModal(false)}
+      />
+
+      <EditOutboxModal
+        open={!!editingItem}
+        item={editingItem}
+        onClose={() => setEditingItem(null)}
       />
     </main>
   );

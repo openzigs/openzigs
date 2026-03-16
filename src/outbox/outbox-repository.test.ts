@@ -363,4 +363,75 @@ describe("OutboxRepository", () => {
       expect(repo.delete("nonexistent")).toBe(false);
     });
   });
+
+  describe("update()", () => {
+    it("updates contentBody and title on a pending item", () => {
+      const item = repo.insert({ platform: "twitter", scheduledTime: FUTURE, agentContext: "original" });
+      const updated = repo.update(item.id, { contentBody: "new content", title: "new title" });
+      expect(updated).not.toBeNull();
+      expect(updated!.contentBody).toBe("new content");
+      expect(updated!.title).toBe("new title");
+    });
+
+    it("updates scheduledTime", () => {
+      const item = repo.insert({ platform: "twitter", scheduledTime: FUTURE, agentContext: "test" });
+      const newTime = new Date("2026-03-20T09:00:00Z");
+      const updated = repo.update(item.id, { scheduledTime: newTime });
+      expect(updated).not.toBeNull();
+      expect(updated!.scheduledTime.toISOString()).toBe(newTime.toISOString());
+    });
+
+    it("updates agentContext", () => {
+      const item = repo.insert({ platform: "twitter", scheduledTime: FUTURE, agentContext: "old" });
+      const updated = repo.update(item.id, { agentContext: "new context" });
+      expect(updated).not.toBeNull();
+      expect(updated!.agentContext).toBe("new context");
+    });
+
+    it("updates canceled items", () => {
+      const item = repo.insert({ platform: "twitter", scheduledTime: FUTURE, agentContext: "test" });
+      repo.cancel(item.id);
+      const updated = repo.update(item.id, { contentBody: "edited while canceled" });
+      expect(updated).not.toBeNull();
+      expect(updated!.contentBody).toBe("edited while canceled");
+    });
+
+    it("returns null for processing items", () => {
+      const item = repo.insert({ platform: "twitter", scheduledTime: PAST, agentContext: "test" });
+      repo.claimPending(1);
+      const result = repo.update(item.id, { contentBody: "nope" });
+      expect(result).toBeNull();
+    });
+
+    it("returns null for published items", () => {
+      const item = repo.insert({ platform: "twitter", scheduledTime: PAST, agentContext: "test" });
+      repo.claimPending(1);
+      repo.markPublished(item.id, "https://example.com");
+      const result = repo.update(item.id, { contentBody: "nope" });
+      expect(result).toBeNull();
+    });
+
+    it("returns null for nonexistent ID", () => {
+      const result = repo.update("nonexistent", { contentBody: "nope" });
+      expect(result).toBeNull();
+    });
+
+    it("updates attachments and platformMetadata", () => {
+      const item = repo.insert({ platform: "twitter", scheduledTime: FUTURE, agentContext: "test" });
+      const attachments = [{ filePath: "/tmp/img.png", filename: "img.png" }];
+      const updated = repo.update(item.id, {
+        attachments,
+        platformMetadata: { hashtags: ["#test"] },
+      });
+      expect(updated).not.toBeNull();
+      expect(updated!.attachments).toEqual(attachments);
+      expect(updated!.platformMetadata).toEqual({ hashtags: ["#test"] });
+    });
+
+    it("sets updated_at to the clock time", () => {
+      const item = repo.insert({ platform: "twitter", scheduledTime: FUTURE, agentContext: "test" });
+      const updated = repo.update(item.id, { title: "new" });
+      expect(updated!.updatedAt.toISOString()).toBe(NOW.toISOString());
+    });
+  });
 });

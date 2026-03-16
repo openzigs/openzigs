@@ -360,6 +360,53 @@ const JobForm = ({ existing, onClose, createFromPrompt }: { existing: ScheduledJ
   );
   const [skillAutoPopulated, setSkillAutoPopulated] = useState(false);
 
+  // Outbox action type state
+  const [outboxPlatforms, setOutboxPlatforms] = useState<string[]>(
+    existing?.actionType === "outbox" && existing?.actionPayload?.platforms
+      ? (existing.actionPayload.platforms as string[])
+      : existing?.actionType === "outbox" && existing?.actionPayload?.platform
+        ? [String(existing.actionPayload.platform)]
+        : []
+  );
+  const [contentTemplate, setContentTemplate] = useState(
+    existing?.actionType === "outbox" && existing?.actionPayload?.contentTemplate
+      ? String(existing.actionPayload.contentTemplate)
+      : ""
+  );
+  const [reviewRequired, setReviewRequired] = useState(
+    existing?.actionType === "outbox" && existing?.actionPayload?.reviewRequired === true
+  );
+
+  // Notification channels state (applicable to all action types)
+  const [notifyChannels, setNotifyChannels] = useState<string[]>(
+    existing?.notifyChannels ?? []
+  );
+
+  // Fetch connected outbox platforms
+  const platformsQuery = useQuery({
+    queryKey: ["outbox-connected-platforms"],
+    queryFn: () => fetchJson<{ platforms: { platform: string; connected: boolean }[] }>("/api/admin/outbox/connected-platforms"),
+    enabled: actionType === "outbox",
+  });
+  const connectedPlatforms = useMemo(
+    () => (platformsQuery.data?.platforms ?? []).filter((p) => p.connected).map((p) => p.platform),
+    [platformsQuery.data]
+  );
+
+  // Fetch channel config for notification checkboxes
+  const channelsQuery = useQuery({
+    queryKey: ["channels"],
+    queryFn: () => fetchJson<{ channels: { telegram: { enabled: boolean }; discord: { enabled: boolean } } }>("/api/admin/channels"),
+  });
+  const enabledChannels = useMemo(() => {
+    const ch = channelsQuery.data?.channels;
+    if (!ch) return [];
+    const result: string[] = [];
+    if (ch.telegram?.enabled) result.push("telegram");
+    if (ch.discord?.enabled) result.push("discord");
+    return result;
+  }, [channelsQuery.data]);
+
   // Fetch prompts for the dropdown
   const promptsQuery = useQuery({
     queryKey: ["prompts"],
@@ -570,6 +617,14 @@ const JobForm = ({ existing, onClose, createFromPrompt }: { existing: ScheduledJ
     } else if (actionType === "pipeline") {
       if (pipelineStages.length < 2) { showToast("Pipeline needs at least 2 stages.", "error"); return; }
       actionPayload = { stages: pipelineStages };
+    } else if (actionType === "outbox") {
+      if (outboxPlatforms.length === 0) { showToast("Select at least one platform.", "error"); return; }
+      if (!contentTemplate.trim()) { showToast("Content template is required.", "error"); return; }
+      actionPayload = {
+        platforms: outboxPlatforms,
+        contentTemplate: contentTemplate.trim(),
+        reviewRequired,
+      };
     } else {
       try {
         actionPayload = JSON.parse(payloadText.trim() || "{}");
@@ -613,6 +668,13 @@ const JobForm = ({ existing, onClose, createFromPrompt }: { existing: ScheduledJ
       payload.autoApproveTools = null;
     }
 
+    // Notification channels
+    if (notifyChannels.length > 0) {
+      payload.notifyChannels = notifyChannels;
+    } else if (existing) {
+      payload.notifyChannels = null;
+    }
+
     saveMutation.mutate(payload);
   };
 
@@ -630,6 +692,16 @@ const JobForm = ({ existing, onClose, createFromPrompt }: { existing: ScheduledJ
         setPromptName("");
       }
       setPayloadText("");
+    } else if (suggestion.actionType === "outbox") {
+      if (suggestion.actionPayload) {
+        const p = suggestion.actionPayload;
+        if (Array.isArray(p.platforms)) setOutboxPlatforms(p.platforms as string[]);
+        else if (typeof p.platform === "string") setOutboxPlatforms([p.platform]);
+        if (typeof p.contentTemplate === "string") setContentTemplate(p.contentTemplate);
+        if (typeof p.reviewRequired === "boolean") setReviewRequired(p.reviewRequired);
+      }
+      setPayloadText("");
+      setPromptName("");
     } else if (suggestion.actionPayload) {
       setPromptName("");
       setPayloadText(JSON.stringify(suggestion.actionPayload, null, 2));
@@ -637,6 +709,10 @@ const JobForm = ({ existing, onClose, createFromPrompt }: { existing: ScheduledJ
 
     if (typeof suggestion.model === "string") {
       setModel(suggestion.model);
+    }
+
+    if (suggestion.notifyChannels) {
+      setNotifyChannels(suggestion.notifyChannels);
     }
   };
 
@@ -694,7 +770,7 @@ const JobForm = ({ existing, onClose, createFromPrompt }: { existing: ScheduledJ
 
         <Field
           label="Action Type"
-          hint={`"Prompt" executes a saved prompt template. "Shell" runs a command. "Custom" sends raw payload.`}
+          hint={`"Prompt" executes a saved prompt template. "Pipeline" runs a multi-stage workflow. "Shell" runs a command. "Outbox" queues content for social publishing.`}
         >
           <select
             className="w-full rounded-lg border border-border bg-card text-foreground px-3 py-2 text-sm"
@@ -705,6 +781,7 @@ const JobForm = ({ existing, onClose, createFromPrompt }: { existing: ScheduledJ
             <option value="pipeline">Pipeline</option>
             <option value="shell">Shell</option>
             <option value="custom">Custom</option>
+            <option value="outbox">Outbox (Publish)</option>
           </select>
         </Field>
 
@@ -796,6 +873,57 @@ const JobForm = ({ existing, onClose, createFromPrompt }: { existing: ScheduledJ
             availableTools={allTools}
             availablePrompts={availablePrompts}
           />
+        ) : actionType === "outbox" ? (
+          <>
+            <Field label="Platforms" hint="Select one or more social platforms to publish to.">
+              {connectedPlatforms.length === 0 && !platformsQuery.isLoading ? (
+                <p className="text-[11px] text-muted-foreground">
+                  No connected platforms found.{" "}
+                  <a href="/admin" className="text-primary hover:underline">Configure credentials first</a>.
+                </p>
+              ) : (
+                <div className="flex flex-wrap gap-2">
+                  {connectedPlatforms.map((p) => (
+                    <label key={p} className="flex items-center gap-1.5 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={outboxPlatforms.includes(p)}
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            setOutboxPlatforms((prev) => [...prev, p]);
+                          } else {
+                            setOutboxPlatforms((prev) => prev.filter((x) => x !== p));
+                          }
+                        }}
+                        className="rounded border-border"
+                      />
+                      <span className="text-sm capitalize text-foreground">{p}</span>
+                    </label>
+                  ))}
+                </div>
+              )}
+            </Field>
+            <Field label="Content Template" hint="Template for the post content. Use {{today}}, {{now}}, {{day_of_week}}, {{month}}, {{year}} for dynamic values.">
+              <textarea
+                className="w-full rounded-lg border border-border bg-card text-foreground px-3 py-2 text-sm"
+                rows={4}
+                placeholder="e.g., 🚀 Weekly update for {{day_of_week}}, {{today}} — here's what's new..."
+                value={contentTemplate}
+                onChange={(e) => setContentTemplate(e.target.value)}
+              />
+            </Field>
+            <Field label="Review Required" hint="When enabled, items are queued for human review before publishing.">
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={reviewRequired}
+                  onChange={(e) => setReviewRequired(e.target.checked)}
+                  className="rounded border-border"
+                />
+                <span className="text-sm text-foreground">Require manual review before publishing</span>
+              </label>
+            </Field>
+          </>
         ) : (
           <Field
             label="Action Payload (JSON)"
@@ -808,6 +936,30 @@ const JobForm = ({ existing, onClose, createFromPrompt }: { existing: ScheduledJ
               value={payloadText}
               onChange={(e) => setPayloadText(e.target.value)}
             />
+          </Field>
+        )}
+
+        {enabledChannels.length > 0 && (
+          <Field label="Notifications" hint="Send a notification when this job completes or fails.">
+            <div className="flex flex-wrap gap-3">
+              {enabledChannels.map((ch) => (
+                <label key={ch} className="flex items-center gap-1.5 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={notifyChannels.includes(ch)}
+                    onChange={(e) => {
+                      if (e.target.checked) {
+                        setNotifyChannels((prev) => [...prev, ch]);
+                      } else {
+                        setNotifyChannels((prev) => prev.filter((x) => x !== ch));
+                      }
+                    }}
+                    className="rounded border-border"
+                  />
+                  <span className="text-sm capitalize text-foreground">{ch}</span>
+                </label>
+              ))}
+            </div>
           </Field>
         )}
 
@@ -1056,12 +1208,13 @@ const ToggleSwitch = ({ checked, onChange }: { checked: boolean; onChange: (v: b
 
 type SchedulerSuggestion = {
   name: string;
-  actionType: "prompt" | "shell" | "custom";
+  actionType: "prompt" | "shell" | "custom" | "outbox";
   cronExpression: string;
   timezone: string;
   promptName?: string;
   actionPayload?: Record<string, unknown>;
   model?: string;
+  notifyChannels?: string[];
 };
 
 /* ── Execution History ── */

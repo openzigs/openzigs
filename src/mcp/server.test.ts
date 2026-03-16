@@ -72,9 +72,6 @@ vi.mock("./tools/database-tools.js", () => ({
 vi.mock("./tools/github-tools.js", () => ({
   createGitHubTools: vi.fn(() => stubTools("github-search")),
 }));
-vi.mock("./tools/instagram-tools.js", () => ({
-  createInstagramTools: vi.fn(() => stubTools("ig-post")),
-}));
 vi.mock("./tools/agent-tools.js", () => ({
   createAgentTools: vi.fn(() => stubTools("spawn-agent")),
 }));
@@ -107,9 +104,6 @@ vi.mock("./tools/blog-tools.js", () => ({
 }));
 vi.mock("./tools/social-brain-tools.js", () => ({
   createSocialBrainTools: vi.fn(() => stubTools("social-crm")),
-}));
-vi.mock("./tools/facebook-tools.js", () => ({
-  createFacebookTools: vi.fn(() => stubTools("fb-post")),
 }));
 vi.mock("./tools/twitter-tools.js", () => ({
   createTwitterTools: vi.fn(() => stubTools("tweet")),

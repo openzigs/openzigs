@@ -15,7 +15,7 @@ function createInMemoryRepo(): SocialRepository {
 
 function makeContact(repo: SocialRepository, overrides: Partial<{ handoff: boolean }> = {}): Contact {
   const contact = repo.upsertContact({
-    platform: "instagram",
+    platform: "twitter",
     platformUserId: "user_1",
     username: "testuser",
     displayName: "Test User",
@@ -40,7 +40,7 @@ function makeEscalationContext(overrides: Partial<EscalationContext> = {}): Esca
 
 function makeRawMessage(overrides: Partial<IncomingSocialMessage> = {}): IncomingSocialMessage {
   return {
-    platform: "instagram",
+    platform: "twitter",
     platformMessageId: "msg_1",
     platformUserId: "user_1",
     username: "testuser",

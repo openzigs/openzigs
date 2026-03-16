@@ -5,15 +5,19 @@ vi.mock("../../logging/logger.js", () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 
-function createMockChannelManager(hasTelegram = true) {
-  const sendMessage = vi.fn().mockResolvedValue(undefined);
+function createMockChannelManager(channels: { telegram?: boolean; discord?: boolean } = { telegram: true }) {
+  const telegramSend = vi.fn().mockResolvedValue(undefined);
+  const discordSend = vi.fn().mockResolvedValue(undefined);
   return {
     manager: {
-      getChannel: vi.fn().mockReturnValue(
-        hasTelegram ? { sendMessage } : null,
-      ),
+      getChannel: vi.fn().mockImplementation((type: string) => {
+        if (type === "telegram" && channels.telegram) return { sendMessage: telegramSend };
+        if (type === "discord" && channels.discord) return { sendMessage: discordSend };
+        return null;
+      }),
     },
-    sendMessage,
+    telegramSend,
+    discordSend,
   };
 }
 
@@ -28,39 +32,56 @@ describe("notification-tools", () => {
   });
 
   it("sends notification to telegram", async () => {
-    const { manager, sendMessage } = createMockChannelManager();
+    const { manager, telegramSend } = createMockChannelManager();
     const tools = createNotificationTools({
       channelManager: manager as any,
       fallbackChatId: "123456",
     });
     const result = await tools[0].handler({ message: "Task complete!" });
-    expect(sendMessage).toHaveBeenCalledWith("123456", { text: "Task complete!" });
-    expect(result.text).toContain("Notification sent");
+    expect(telegramSend).toHaveBeenCalledWith("123456", { text: "Task complete!" });
+    expect(result.text).toContain("Telegram: sent");
   });
 
-  it("returns skip message when telegram not connected", async () => {
-    const { manager } = createMockChannelManager(false);
-    const tools = createNotificationTools({ channelManager: manager as any });
-    const result = await tools[0].handler({ message: "Hello" });
-    expect(result.text).toContain("not connected");
+  it("sends notification to discord when configured", async () => {
+    const { manager, discordSend } = createMockChannelManager({ discord: true });
+    const tools = createNotificationTools({
+      channelManager: manager as any,
+      discordNotificationChannelId: "chan-789",
+    });
+    const result = await tools[0].handler({ message: "Done!" });
+    expect(discordSend).toHaveBeenCalledWith("chan-789", { text: "Done!" });
+    expect(result.text).toContain("Discord: sent");
   });
 
-  it("returns skip message when no chat ID configured", async () => {
-    const { manager } = createMockChannelManager();
+  it("sends to both channels when both configured", async () => {
+    const { manager, telegramSend, discordSend } = createMockChannelManager({ telegram: true, discord: true });
+    const tools = createNotificationTools({
+      channelManager: manager as any,
+      fallbackChatId: "123",
+      discordNotificationChannelId: "456",
+    });
+    const result = await tools[0].handler({ message: "Hello" });
+    expect(telegramSend).toHaveBeenCalled();
+    expect(discordSend).toHaveBeenCalled();
+    expect(result.text).toContain("Telegram: sent");
+    expect(result.text).toContain("Discord: sent");
+  });
+
+  it("returns skip message when no channels configured", async () => {
+    const { manager } = createMockChannelManager({});
     const tools = createNotificationTools({ channelManager: manager as any });
     const result = await tools[0].handler({ message: "Hello" });
-    expect(result.text).toContain("No admin chat ID");
+    expect(result.text).toContain("No notification channels configured");
   });
 
   it("handles send failure gracefully", async () => {
-    const { manager, sendMessage } = createMockChannelManager();
-    sendMessage.mockRejectedValue(new Error("Network error"));
+    const { manager, telegramSend } = createMockChannelManager();
+    telegramSend.mockRejectedValue(new Error("Network error"));
     const tools = createNotificationTools({
       channelManager: manager as any,
       fallbackChatId: "123",
     });
     const result = await tools[0].handler({ message: "Hello" });
-    expect(result.isError).toBe(true);
-    expect(result.text).toContain("Failed to send");
+    expect(result.text).toContain("Telegram: failed");
   });
 });

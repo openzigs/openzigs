@@ -2,7 +2,7 @@
  * E2E tests for Epic #446 — Skills-First Automation Redesign
  *
  * Covers:
- *  1. Skills Admin page  (/admin/skills) — view, create, edit, delete custom skills
+ *  1. Skills page         (/skills)       — view, create, edit, delete custom skills
  *  2. Prompt Library     (/library)       — suggestedSkill dropdown, skill badge on cards
  *  3. Scheduler          (/scheduler)     — skill selector in job form, cron builder
  *  4. Integration        — prompt with skill → linked to a scheduled job
@@ -73,22 +73,21 @@ async function deleteSkillByName(request: APIRequestContext, name: string) {
   await request.delete(`${API_BASE}/api/admin/skills/${name}`, { headers: authHeaders() });
 }
 
-// ─── 1. Skills Admin Page ─────────────────────────────────────────────────────
+// ─── 1. Skills Page ───────────────────────────────────────────────────────────
 
 /** Wait for the skills data to load (proves React is hydrated and API call complete) */
 async function waitForSkillsLoad(page: Page) {
   await page.getByRole('heading', { name: 'Content Creator' }).waitFor({ timeout: 10_000 });
 }
 
-test.describe('Skills Admin (/admin/skills) — Epic #446', () => {
-  test('shows page heading and link back to admin', async ({ page }) => {
-    await navigateTo(page, '/admin/skills');
+test.describe('Skills (/skills) — Epic #446', () => {
+  test('shows page heading', async ({ page }) => {
+    await navigateTo(page, '/skills');
     await expect(page.getByRole('heading', { name: 'Skills', level: 1 })).toBeVisible();
-    await expect(page.getByRole('link', { name: '← Admin' })).toBeVisible();
   });
 
   test('displays all 8 built-in skills with Built-in badge', async ({ page }) => {
-    await navigateTo(page, '/admin/skills');
+    await navigateTo(page, '/skills');
     await waitForSkillsLoad(page);
 
     const expectedSkills = [
@@ -112,14 +111,14 @@ test.describe('Skills Admin (/admin/skills) — Epic #446', () => {
   test('each built-in skill has a View button', async ({ page, request }) => {
     // Pre-clean any stale test skill from a previous failed run (would inflate View button count)
     await deleteSkillByName(request, 'e2e-test-skill');
-    await navigateTo(page, '/admin/skills');
+    await navigateTo(page, '/skills');
     await waitForSkillsLoad(page);
     const viewButtons = page.getByRole('button', { name: 'View' });
     await expect(viewButtons).toHaveCount(8);
   });
 
   test('View button opens skill detail with Allowed Tools section', async ({ page }) => {
-    await navigateTo(page, '/admin/skills');
+    await navigateTo(page, '/skills');
     await waitForSkillsLoad(page);
     await page.getByRole('button', { name: 'View' }).first().click();
     // Skill detail view shows a dedicated "Allowed Tools" heading
@@ -131,7 +130,7 @@ test.describe('Skills Admin (/admin/skills) — Epic #446', () => {
   test('New Skill button opens create form with disabled Create Skill button', async ({
     page,
   }) => {
-    await navigateTo(page, '/admin/skills');
+    await navigateTo(page, '/skills');
     await waitForSkillsLoad(page);
 
     await page.getByRole('button', { name: 'New Skill' }).click();
@@ -153,7 +152,7 @@ test.describe('Skills Admin (/admin/skills) — Epic #446', () => {
     // Cleanup pre-existing leftover in case a prior test run failed
     await deleteSkillByName(request, skillName);
 
-    await navigateTo(page, '/admin/skills');
+    await navigateTo(page, '/skills');
     await waitForSkillsLoad(page);
 
     await page.getByRole('button', { name: 'New Skill' }).click();
@@ -167,8 +166,8 @@ test.describe('Skills Admin (/admin/skills) — Epic #446', () => {
       timeout: 3_000,
     });
 
-    // Update the SKILL.md content in the textarea
-    await page.locator('textarea').fill(
+    // Update the SKILL.md content in the textarea (spellcheck="false" uniquely identifies it)
+    await page.locator('textarea[spellcheck="false"]').fill(
       `---\nname: ${skillName}\ndescription: E2E test skill\nallowed-tools: web-search\n---\n# E2E Test Skill\n## Description\nCreated by Playwright E2E tests.`
     );
 
@@ -188,7 +187,7 @@ test.describe('Skills Admin (/admin/skills) — Epic #446', () => {
   });
 
   test('Cancel button on create form returns to skills list', async ({ page }) => {
-    await navigateTo(page, '/admin/skills');
+    await navigateTo(page, '/skills');
     await waitForSkillsLoad(page);
 
     await page.getByRole('button', { name: 'New Skill' }).click();
@@ -267,8 +266,8 @@ test.describe('Prompt Library — suggestedSkill (Epic #446)', () => {
 
     // After save, the form closes and the new prompt card appears
     await expect(page.getByText(promptName)).toBeVisible({ timeout: 8_000 });
-    // The skill badge should be visible on the card
-    await expect(page.getByText('research-synthesizer')).toBeVisible();
+    // The skill badge should be visible on the card (use .first() — parallel tests may show multiple badges)
+    await expect(page.getByText('research-synthesizer').first()).toBeVisible();
 
     // Cleanup
     await deletePromptByName(request, promptName);
@@ -408,9 +407,16 @@ test.describe('Scheduler — skill selector and cron builder (Epic #446)', () =>
 
 // ─── 4. Integration: prompt + skill + scheduler ────────────────────────────────
 
-test.describe('Integration — prompt with skill → scheduler job (Epic #446)', () => {
+// serial: tests share promptName/jobName — must not run in parallel to avoid 409 conflicts
+test.describe.serial('Integration — prompt with skill → scheduler job (Epic #446)', () => {
   const promptName = 'e2e-integration-prompt';
   const jobName = 'e2e-integration-job';
+
+  test.beforeEach(async ({ request }) => {
+    // Pre-cleanup to guard against stale data from a previous failed run
+    await deletePromptByName(request, promptName);
+    await deleteJobByName(request, jobName);
+  });
 
   test.afterEach(async ({ request }) => {
     await deletePromptByName(request, promptName);
@@ -463,8 +469,8 @@ test.describe('Integration — prompt with skill → scheduler job (Epic #446)',
     await navigateTo(page, '/library');
     await waitForPromptsLoad(page);
     await expect(page.getByText(promptName)).toBeVisible();
-    // The skill badge on the card
-    await expect(page.getByText('research-synthesizer')).toBeVisible();
+    // The skill badge on the card (use .first() — parallel tests may show multiple badges)
+    await expect(page.getByText('research-synthesizer').first()).toBeVisible();
   });
 
   test('create scheduler job linked to prompt — actionPayload persists via API', async ({
