@@ -4730,5 +4730,156 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
     }
   });
 
+  // ── Social Brain Credentials ───────────────────────────────────────────────
+
+  /** GET /api/admin/social-brain/credentials — return masked status of all social Brain env vars */
+  router.get("/social-brain/credentials", (_req, res) => {
+    const mask = (val: string) => val.length > 12 ? `${val.slice(0, 6)}…${val.slice(-4)}` : val ? "••••••" : "";
+
+    const webhookToken = (process.env.SOCIAL_WEBHOOK_VERIFY_TOKEN ?? "").trim();
+
+    const igToken = (process.env.INSTAGRAM_ACCESS_TOKEN ?? "").trim();
+    const igAccountId = (process.env.INSTAGRAM_BUSINESS_ACCOUNT_ID ?? "").trim();
+
+    const fbPageToken = (process.env.FACEBOOK_PAGE_TOKEN ?? "").trim();
+    const fbAppId = (process.env.FACEBOOK_APP_ID ?? "").trim();
+    const fbAppSecret = (process.env.FACEBOOK_APP_SECRET ?? "").trim();
+    const fbPageId = (process.env.FACEBOOK_PAGE_ID ?? "").trim();
+
+    const twitterBearer = (process.env.TWITTER_BEARER_TOKEN ?? "").trim();
+    const twitterApiKey = (process.env.TWITTER_API_KEY ?? "").trim();
+    const twitterApiSecret = (process.env.TWITTER_API_SECRET ?? "").trim();
+    const twitterAccessToken = (process.env.TWITTER_ACCESS_TOKEN ?? "").trim();
+    const twitterAccessTokenSecret = (process.env.TWITTER_ACCESS_TOKEN_SECRET ?? "").trim();
+
+    const redditClientId = (process.env.REDDIT_CLIENT_ID ?? "").trim();
+    const redditClientSecret = (process.env.REDDIT_CLIENT_SECRET ?? "").trim();
+
+    return res.json({
+      webhookVerifyToken: { configured: !!webhookToken, preview: mask(webhookToken) },
+      instagram: {
+        configured: !!igToken,
+        accessToken: mask(igToken),
+        businessAccountId: igAccountId,
+      },
+      facebook: {
+        configured: !!fbPageToken,
+        pageToken: mask(fbPageToken),
+        appId: fbAppId,
+        hasAppSecret: !!fbAppSecret,
+        pageId: fbPageId,
+      },
+      twitter: {
+        configured: !!(twitterBearer || (twitterApiKey && twitterAccessToken)),
+        bearerToken: mask(twitterBearer),
+        apiKey: mask(twitterApiKey),
+        hasApiSecret: !!twitterApiSecret,
+        accessToken: mask(twitterAccessToken),
+        hasAccessTokenSecret: !!twitterAccessTokenSecret,
+      },
+      reddit: {
+        configured: !!redditClientId,
+        clientId: redditClientId,
+        hasClientSecret: !!redditClientSecret,
+      },
+    });
+  });
+
+  /** POST /api/admin/social-brain/credentials — persist social Brain credentials to .env */
+  router.post("/social-brain/credentials", async (req, res) => {
+    const body = req.body as Record<string, unknown>;
+    const str = (v: unknown): string | null => (typeof v === "string" ? v.trim() : null);
+
+    const updates: Record<string, string> = {};
+    const add = (envKey: string, val: string | null) => { if (val !== null) updates[envKey] = val; };
+
+    add("SOCIAL_WEBHOOK_VERIFY_TOKEN", str(body.webhookVerifyToken));
+    add("INSTAGRAM_ACCESS_TOKEN", str(body.instagramAccessToken));
+    add("INSTAGRAM_BUSINESS_ACCOUNT_ID", str(body.instagramBusinessAccountId));
+    add("FACEBOOK_PAGE_TOKEN", str(body.facebookPageToken));
+    add("FACEBOOK_APP_ID", str(body.facebookAppId));
+    add("FACEBOOK_APP_SECRET", str(body.facebookAppSecret));
+    add("FACEBOOK_PAGE_ID", str(body.facebookPageId));
+    add("TWITTER_BEARER_TOKEN", str(body.twitterBearerToken));
+    add("TWITTER_API_KEY", str(body.twitterApiKey));
+    add("TWITTER_API_SECRET", str(body.twitterApiSecret));
+    add("TWITTER_ACCESS_TOKEN", str(body.twitterAccessToken));
+    add("TWITTER_ACCESS_TOKEN_SECRET", str(body.twitterAccessTokenSecret));
+    add("REDDIT_CLIENT_ID", str(body.redditClientId));
+    add("REDDIT_CLIENT_SECRET", str(body.redditClientSecret));
+
+    if (Object.keys(updates).length === 0) {
+      return res.status(400).json({ error: "No credentials provided" });
+    }
+
+    try {
+      const envPath = defaultEnvPath();
+      await upsertEnvFile(envPath, updates);
+      for (const [key, value] of Object.entries(updates)) {
+        if (value) {
+          process.env[key] = value;
+        } else {
+          delete process.env[key];
+        }
+      }
+      logger.info(`Updated Social Brain credentials via admin UI: ${Object.keys(updates).join(", ")}`);
+      return res.json({ ok: true });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return res.status(500).json({ error: message });
+    }
+  });
+
+  /** GET /api/admin/social-brain/settings — return non-secret Social Brain config */
+  router.get("/social-brain/settings", async (_req, res) => {
+    try {
+      const configPath = defaultConfigPath();
+      const userConfig = await readUserConfig(configPath);
+      const sb = (userConfig.socialBrain && typeof userConfig.socialBrain === "object")
+        ? (userConfig.socialBrain as Record<string, unknown>)
+        : {};
+      return res.json({
+        enabled: sb.enabled ?? false,
+        confidenceThreshold: sb.confidenceThreshold ?? "high",
+        commentAutomation: (sb.commentAutomation as Record<string, unknown> | undefined)?.enabled ?? false,
+        handoff: sb.handoff ?? {},
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return res.status(500).json({ error: message });
+    }
+  });
+
+  /** POST /api/admin/social-brain/settings — persist non-secret Social Brain config */
+  router.post("/social-brain/settings", async (req, res) => {
+    const body = req.body as Record<string, unknown>;
+    try {
+      const configPath = defaultConfigPath();
+      const userConfig = await readUserConfig(configPath);
+      const existingSb = (userConfig.socialBrain && typeof userConfig.socialBrain === "object")
+        ? (userConfig.socialBrain as Record<string, unknown>)
+        : {};
+
+      if (typeof body.enabled === "boolean") existingSb.enabled = body.enabled;
+      if (body.confidenceThreshold === "high" || body.confidenceThreshold === "medium" || body.confidenceThreshold === "low") {
+        existingSb.confidenceThreshold = body.confidenceThreshold;
+      }
+      if (typeof body.commentAutomation === "boolean") {
+        existingSb.commentAutomation = { ...((existingSb.commentAutomation as Record<string, unknown>) ?? {}), enabled: body.commentAutomation };
+      }
+      if (body.handoff && typeof body.handoff === "object") {
+        existingSb.handoff = { ...((existingSb.handoff as Record<string, unknown>) ?? {}), ...(body.handoff as Record<string, unknown>) };
+      }
+
+      userConfig.socialBrain = existingSb;
+      await writeUserConfig(configPath, userConfig);
+      logger.info("Updated Social Brain settings via admin UI");
+      return res.json({ ok: true, restartRequired: false });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return res.status(500).json({ error: message });
+    }
+  });
+
   return router;
 };
