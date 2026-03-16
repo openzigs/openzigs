@@ -1,5 +1,6 @@
 import { logger } from "../../logging/logger.js";
 import { SocialRepository } from "./social-repository.js";
+import type { LocalMcpServerManager } from "../../mcp/local-mcp-server-manager.js";
 import type { PostContext, SocialPlatform } from "./types.js";
 
 /**
@@ -251,5 +252,78 @@ export class TikTokApiClient implements PlatformApiClient {
       publishedAt: d.created_at ?? "",
       cachedAt: new Date().toISOString(),
     };
+  }
+}
+
+// ── Reddit API Client (via Reddit MCP server) ────────────────────────
+
+export class RedditApiClient implements PlatformApiClient {
+  readonly platform: SocialPlatform = "reddit";
+  private serverManager: LocalMcpServerManager;
+
+  constructor(serverManager: LocalMcpServerManager) {
+    this.serverManager = serverManager;
+  }
+
+  async fetchPostContext(postId: string): Promise<PostContext | null> {
+    // postId may be a fullname like "t3_abc123" or just "abc123"
+    const rawId = postId.startsWith("t3_") ? postId.slice(3) : postId;
+
+    const result = await this.serverManager.callTool("reddit", "reddit_get_post_comments", {
+      subreddit: "all",
+      post_id: rawId,
+      limit: 1,
+    });
+
+    if (result.isError) {
+      logger.warn(`[RedditApiClient] reddit_get_post_comments failed for ${postId}: ${result.text.slice(0, 200)}`);
+      return null;
+    }
+
+    try {
+      const parsed = JSON.parse(result.text) as {
+        success?: boolean;
+        data?: Array<{
+          data?: {
+            children?: Array<{
+              data?: {
+                title?: string;
+                selftext?: string;
+                author?: string;
+                created_utc?: number;
+                permalink?: string;
+                url?: string;
+                is_video?: boolean;
+              };
+            }>;
+          };
+        }>;
+      };
+
+      if (!parsed.success && !parsed.data) return null;
+
+      // Reddit returns [listing (post), listing (comments)]
+      const postData = parsed.data?.[0]?.data?.children?.[0]?.data;
+      if (!postData) return null;
+
+      return {
+        postId: rawId,
+        platform: "reddit",
+        caption: postData.title ?? postData.selftext ?? "",
+        permalink: postData.permalink
+          ? `https://www.reddit.com${postData.permalink}`
+          : `https://www.reddit.com/comments/${rawId}`,
+        mediaType: postData.is_video ? "video" : "post",
+        mediaUrl: postData.url ?? "",
+        authorUsername: postData.author ?? "",
+        publishedAt: postData.created_utc
+          ? new Date(postData.created_utc * 1000).toISOString()
+          : "",
+        cachedAt: new Date().toISOString(),
+      };
+    } catch {
+      logger.warn(`[RedditApiClient] Failed to parse reddit response for ${postId}`);
+      return null;
+    }
   }
 }

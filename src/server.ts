@@ -60,12 +60,13 @@ import { createPresenterRouter } from "./api/presenter.js";
 import { createSocialRouter } from "./api/social.js";
 import { createPinterestRouter } from "./api/pinterest.js";
 import { SocialRepository } from "./channels/social/social-repository.js";
-import { SocialIngestionService, TwitterAdapter, LinkedInAdapter } from "./channels/social/social-ingestion.js";
+import { SocialIngestionService, TwitterAdapter, LinkedInAdapter, GenericPollAdapter } from "./channels/social/social-ingestion.js";
 import { SocialBrain } from "./channels/social/social-brain.js";
 import { HandoffManager } from "./channels/social/handoff-manager.js";
 import { CommentRuleEngine } from "./channels/social/comment-rule-engine.js";
-import { PostContextService, TwitterApiClient, YouTubeApiClient, LinkedInApiClient, TikTokApiClient } from "./channels/social/platform-api-client.js";
+import { PostContextService, TwitterApiClient, YouTubeApiClient, LinkedInApiClient, TikTokApiClient, RedditApiClient } from "./channels/social/platform-api-client.js";
 import { DmDispatcher } from "./channels/social/dm-dispatcher.js";
+import { createRedditPollFn } from "./channels/social/reddit-poll.js";
 import { BrandVoiceRepository } from "./personality/brand-voice-repository.js";
 import { BrandVoiceService } from "./personality/brand-voice-service.js";
 import { PipelineTemplateManager } from "./productivity/pipeline-template-manager.js";
@@ -529,6 +530,11 @@ if (tikNeuronApiKey) {
   postContextService.registerClient(new TikTokApiClient(tikNeuronApiKey));
 }
 
+const redditClientId = process.env.REDDIT_CLIENT_ID ?? "";
+if (redditClientId && localServerManager) {
+  postContextService.registerClient(new RedditApiClient(localServerManager));
+}
+
 // Only register platform adapters when credentials are actually configured
 const socialAdapters: import("./channels/social/social-ingestion.js").SocialPlatformAdapter[] = [];
 if (twitterBearerToken) {
@@ -536,6 +542,15 @@ if (twitterBearerToken) {
 }
 if (linkedinAccessToken) {
   socialAdapters.push(new LinkedInAdapter());
+}
+if (redditClientId && localServerManager) {
+  socialAdapters.push(new GenericPollAdapter("reddit", createRedditPollFn(localServerManager)));
+}
+if (youtubeApiKey) {
+  socialAdapters.push(new GenericPollAdapter("youtube", async () => []));
+}
+if (tikNeuronApiKey) {
+  socialAdapters.push(new GenericPollAdapter("tiktok", async () => []));
 }
 
 const socialIngestion = new SocialIngestionService({
@@ -585,6 +600,16 @@ socialIngestion.on("message", async ({ message, contact, raw }) => {
 socialIngestion.on("comment", async (comment) => {
   await commentRuleEngine.evaluate(comment);
 });
+
+// Start polling for poll-based platform adapters
+if (socialBrainConfig?.connections) {
+  for (const [platform, conn] of Object.entries(socialBrainConfig.connections)) {
+    if (conn?.enabled && conn?.mode === "polling" && socialIngestion.getRegisteredPlatforms().includes(platform as import("./channels/social/types.js").SocialPlatform)) {
+      const interval = conn.pollIntervalSeconds ?? 120;
+      socialIngestion.startPolling(platform as import("./channels/social/types.js").SocialPlatform, interval);
+    }
+  }
+}
 
 // Forward new user messages to active handoff threads
 socialBrain.on("escalated_message", async ({ contact, raw }) => {

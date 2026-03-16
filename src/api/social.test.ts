@@ -508,4 +508,91 @@ describe("Social API router", () => {
       }
     });
   });
+
+  describe("GET /stats — connection status", () => {
+    it("shows all 5 platforms in connections", async () => {
+      const { app } = buildApp();
+      const res = await request(app).get("/social/stats");
+      expect(res.status).toBe(200);
+      const platforms = res.body.connections.map((c: { platform: string }) => c.platform);
+      expect(platforms).toContain("twitter");
+      expect(platforms).toContain("linkedin");
+      expect(platforms).toContain("reddit");
+      expect(platforms).toContain("youtube");
+      expect(platforms).toContain("tiktok");
+      expect(platforms).toHaveLength(5);
+    });
+
+    it("shows platform as connected when adapter registered and token present", async () => {
+      const app = express();
+      app.use(express.json());
+      const opts = {
+        repository: createMockRepository(),
+        ingestion: {
+          getRegisteredPlatforms: vi.fn(() => ["twitter", "reddit"]),
+          handleWebhook: vi.fn().mockResolvedValue(undefined),
+        },
+        brain: createMockBrain(),
+        handoff: createMockHandoff(),
+        ruleEngine: {},
+        config: {
+          enabled: true,
+          confidenceThreshold: "medium",
+          connections: {
+            twitter: { enabled: true, accessToken: "tw-token", mode: "webhook" },
+            reddit: { enabled: true, accessToken: "rd-token", mode: "polling", pollIntervalSeconds: 120 },
+            youtube: { enabled: false, accessToken: "", mode: "polling" },
+          },
+        },
+      } as unknown as SocialRouterOptions;
+      app.use("/social", createSocialRouter(opts));
+
+      const res = await request(app).get("/social/stats");
+      expect(res.status).toBe(200);
+
+      const connections = res.body.connections as Array<{ platform: string; connected: boolean; configured: boolean }>;
+      const twitter = connections.find((c) => c.platform === "twitter");
+      expect(twitter?.connected).toBe(true);
+      expect(twitter?.configured).toBe(true);
+
+      const reddit = connections.find((c) => c.platform === "reddit");
+      expect(reddit?.connected).toBe(true);
+      expect(reddit?.configured).toBe(true);
+
+      const youtube = connections.find((c) => c.platform === "youtube");
+      expect(youtube?.connected).toBe(false);
+      expect(youtube?.configured).toBe(false);
+
+      const linkedin = connections.find((c) => c.platform === "linkedin");
+      expect(linkedin?.connected).toBe(false);
+    });
+
+    it("shows platform as not connected without adapter registration", async () => {
+      const app = express();
+      app.use(express.json());
+      const opts = {
+        repository: createMockRepository(),
+        ingestion: {
+          getRegisteredPlatforms: vi.fn(() => []),
+          handleWebhook: vi.fn().mockResolvedValue(undefined),
+        },
+        brain: createMockBrain(),
+        handoff: createMockHandoff(),
+        ruleEngine: {},
+        config: {
+          enabled: true,
+          confidenceThreshold: "medium",
+          connections: {
+            reddit: { enabled: true, accessToken: "token", mode: "polling" },
+          },
+        },
+      } as unknown as SocialRouterOptions;
+      app.use("/social", createSocialRouter(opts));
+
+      const res = await request(app).get("/social/stats");
+      const reddit = res.body.connections.find((c: { platform: string }) => c.platform === "reddit");
+      expect(reddit?.connected).toBe(false);
+      expect(reddit?.configured).toBe(true);
+    });
+  });
 });

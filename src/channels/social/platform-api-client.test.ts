@@ -6,6 +6,7 @@ import {
   TwitterApiClient,
   YouTubeApiClient,
   LinkedInApiClient,
+  RedditApiClient,
 } from "./platform-api-client.js";
 
 const createTestDb = () => {
@@ -206,5 +207,144 @@ describe("LinkedInApiClient", () => {
     expect(result!.platform).toBe("linkedin");
     expect(result!.caption).toBe("LinkedIn post text");
     expect(result!.authorUsername).toBe("urn:li:person:abc");
+  });
+});
+
+// ── RedditApiClient ──
+
+const createMockServerManager = (response: { text: string; isError?: boolean }) => ({
+  callTool: vi.fn().mockResolvedValue(response),
+  isRunning: vi.fn().mockReturnValue(true),
+});
+
+describe("RedditApiClient", () => {
+  it("has platform = reddit", () => {
+    const mgr = createMockServerManager({ text: "{}" });
+    const client = new RedditApiClient(mgr as any);
+    expect(client.platform).toBe("reddit");
+  });
+
+  it("returns null on MCP error", async () => {
+    const mgr = createMockServerManager({ text: "Server not running", isError: true });
+    const client = new RedditApiClient(mgr as any);
+    const result = await client.fetchPostContext("t3_abc123");
+    expect(result).toBeNull();
+  });
+
+  it("returns null on invalid JSON", async () => {
+    const mgr = createMockServerManager({ text: "not json" });
+    const client = new RedditApiClient(mgr as any);
+    const result = await client.fetchPostContext("abc123");
+    expect(result).toBeNull();
+  });
+
+  it("returns null when no post data in response", async () => {
+    const mgr = createMockServerManager({
+      text: JSON.stringify({ success: true, data: [] }),
+    });
+    const client = new RedditApiClient(mgr as any);
+    const result = await client.fetchPostContext("abc123");
+    expect(result).toBeNull();
+  });
+
+  it("parses successful post context response", async () => {
+    const mgr = createMockServerManager({
+      text: JSON.stringify({
+        success: true,
+        data: [
+          {
+            data: {
+              children: [
+                {
+                  data: {
+                    title: "Test Reddit Post",
+                    selftext: "This is the body",
+                    author: "testuser",
+                    created_utc: 1706745600,
+                    permalink: "/r/test/comments/abc123/test_post/",
+                    is_video: false,
+                    url: "https://reddit.com/r/test/comments/abc123/",
+                  },
+                },
+              ],
+            },
+          },
+        ],
+      }),
+    });
+    const client = new RedditApiClient(mgr as any);
+    const result = await client.fetchPostContext("t3_abc123");
+    expect(result).not.toBeNull();
+    expect(result!.platform).toBe("reddit");
+    expect(result!.postId).toBe("abc123");
+    expect(result!.caption).toBe("Test Reddit Post");
+    expect(result!.authorUsername).toBe("testuser");
+    expect(result!.permalink).toContain("reddit.com");
+    expect(result!.mediaType).toBe("post");
+  });
+
+  it("strips t3_ prefix from postId", async () => {
+    const mgr = createMockServerManager({
+      text: JSON.stringify({
+        success: true,
+        data: [
+          {
+            data: {
+              children: [{ data: { title: "Title", author: "u", created_utc: 0 } }],
+            },
+          },
+        ],
+      }),
+    });
+    const client = new RedditApiClient(mgr as any);
+    await client.fetchPostContext("t3_xyz789");
+    expect(mgr.callTool).toHaveBeenCalledWith("reddit", "reddit_get_post_comments", {
+      subreddit: "all",
+      post_id: "xyz789",
+      limit: 1,
+    });
+  });
+
+  it("detects video posts", async () => {
+    const mgr = createMockServerManager({
+      text: JSON.stringify({
+        success: true,
+        data: [
+          {
+            data: {
+              children: [
+                {
+                  data: {
+                    title: "Video Post",
+                    author: "poster",
+                    created_utc: 1706745600,
+                    is_video: true,
+                    url: "https://v.redd.it/abc",
+                  },
+                },
+              ],
+            },
+          },
+        ],
+      }),
+    });
+    const client = new RedditApiClient(mgr as any);
+    const result = await client.fetchPostContext("vid123");
+    expect(result).not.toBeNull();
+    expect(result!.mediaType).toBe("video");
+  });
+
+  it("registers with PostContextService", () => {
+    const db = new Database(":memory:");
+    db.pragma("journal_mode = WAL");
+    db.pragma("foreign_keys = ON");
+    const repo = new SocialRepository(db);
+    repo.migrate();
+    const service = new PostContextService(repo);
+    const mgr = createMockServerManager({ text: "{}" });
+    const client = new RedditApiClient(mgr as any);
+    service.registerClient(client);
+    // No error = success
+    expect(true).toBe(true);
   });
 });
