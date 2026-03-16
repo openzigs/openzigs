@@ -31,6 +31,19 @@ function createMockRepository() {
     updateRule: vi.fn((id: string, data: Record<string, unknown>) => ({ ...rules.get(id), ...data })),
     deleteRule: vi.fn((id: string) => rules.has(id)),
     getAutomationLog: vi.fn(() => []),
+    getAnalytics: vi.fn(() => [
+      { platform: "twitter", total_conversations: 10, total_messages_in: 20, total_messages_out: 15, avg_response_time_ms: 500, auto_reply_rate: 0.75, escalation_rate: 0.1, leads_captured: 2 },
+    ]),
+    getLeads: vi.fn(() => [
+      { id: "c1", platform: "twitter", username: "test_user", email: "test@example.com", phone: null, lead_captured_at: "2026-01-01T00:00:00Z" },
+    ]),
+    getFollowUpSteps: vi.fn(() => [
+      { id: "fs1", rule_id: "r1", step_order: 0, delay_seconds: 3600, message_template: "Follow up!" },
+    ]),
+    createFollowUpStep: vi.fn((_ruleId: string, data: Record<string, unknown>) => ({
+      id: "fs-new", rule_id: "r1", ...data,
+    })),
+    deleteFollowUpStep: vi.fn((id: string) => id === "fs1"),
   };
 }
 
@@ -593,6 +606,150 @@ describe("Social API router", () => {
       const reddit = res.body.connections.find((c: { platform: string }) => c.platform === "reddit");
       expect(reddit?.connected).toBe(false);
       expect(reddit?.configured).toBe(true);
+    });
+  });
+
+  // ── Analytics ──────────────────────────────────────────────
+
+  describe("GET /analytics", () => {
+    it("returns analytics data", async () => {
+      const { app } = buildApp();
+      const res = await request(app).get("/social/analytics");
+      expect(res.status).toBe(200);
+      expect(res.body.analytics).toHaveLength(1);
+      expect(res.body.analytics[0].platform).toBe("twitter");
+      expect(res.body.analytics[0].total_conversations).toBe(10);
+    });
+
+    it("passes since filter to repository", async () => {
+      const { app, opts } = buildApp();
+      await request(app).get("/social/analytics?since=2026-01-01T00:00:00Z");
+      expect((opts.repository as unknown as ReturnType<typeof createMockRepository>).getAnalytics).toHaveBeenCalledWith("2026-01-01T00:00:00Z");
+    });
+
+    it("returns 500 when getAnalytics throws", async () => {
+      const { app, opts } = buildApp();
+      (opts.repository as unknown as ReturnType<typeof createMockRepository>).getAnalytics.mockImplementation(() => {
+        throw new Error("DB error");
+      });
+      const res = await request(app).get("/social/analytics");
+      expect(res.status).toBe(500);
+    });
+  });
+
+  // ── Leads ──────────────────────────────────────────────────
+
+  describe("GET /leads", () => {
+    it("returns leads list", async () => {
+      const { app } = buildApp();
+      const res = await request(app).get("/social/leads");
+      expect(res.status).toBe(200);
+      expect(res.body.leads).toHaveLength(1);
+      expect(res.body.leads[0].email).toBe("test@example.com");
+    });
+
+    it("passes platform filter", async () => {
+      const { app, opts } = buildApp();
+      await request(app).get("/social/leads?platform=twitter&limit=10&offset=5");
+      expect((opts.repository as unknown as ReturnType<typeof createMockRepository>).getLeads).toHaveBeenCalledWith(
+        expect.objectContaining({ platform: "twitter", limit: 10, offset: 5 }),
+      );
+    });
+
+    it("clamps limit to 200 max", async () => {
+      const { app, opts } = buildApp();
+      await request(app).get("/social/leads?limit=999");
+      expect((opts.repository as unknown as ReturnType<typeof createMockRepository>).getLeads).toHaveBeenCalledWith(
+        expect.objectContaining({ limit: 200 }),
+      );
+    });
+
+    it("returns 500 when getLeads throws", async () => {
+      const { app, opts } = buildApp();
+      (opts.repository as unknown as ReturnType<typeof createMockRepository>).getLeads.mockImplementation(() => {
+        throw new Error("DB error");
+      });
+      const res = await request(app).get("/social/leads");
+      expect(res.status).toBe(500);
+    });
+  });
+
+  // ── Follow-Up Steps ────────────────────────────────────────
+
+  describe("GET /rules/:ruleId/follow-ups", () => {
+    it("returns follow-up steps for a rule", async () => {
+      const { app } = buildApp();
+      const res = await request(app).get("/social/rules/r1/follow-ups");
+      expect(res.status).toBe(200);
+      expect(res.body.steps).toHaveLength(1);
+      expect(res.body.steps[0].delay_seconds).toBe(3600);
+    });
+
+    it("returns 500 when getFollowUpSteps throws", async () => {
+      const { app, opts } = buildApp();
+      (opts.repository as unknown as ReturnType<typeof createMockRepository>).getFollowUpSteps.mockImplementation(() => {
+        throw new Error("DB error");
+      });
+      const res = await request(app).get("/social/rules/r1/follow-ups");
+      expect(res.status).toBe(500);
+    });
+  });
+
+  describe("POST /rules/:ruleId/follow-ups", () => {
+    it("creates a follow-up step", async () => {
+      const { app } = buildApp();
+      const res = await request(app).post("/social/rules/r1/follow-ups").send({
+        stepOrder: 0,
+        delaySeconds: 3600,
+        messageTemplate: "Hey {{username}}, just following up!",
+      });
+      expect(res.status).toBe(201);
+      expect(res.body.rule_id).toBe("r1");
+    });
+
+    it("returns 404 for missing rule", async () => {
+      const { app } = buildApp();
+      const res = await request(app).post("/social/rules/missing/follow-ups").send({
+        stepOrder: 0,
+        delaySeconds: 3600,
+        messageTemplate: "Hello!",
+      });
+      expect(res.status).toBe(404);
+    });
+
+    it("rejects invalid body schema", async () => {
+      const { app } = buildApp();
+      const res = await request(app).post("/social/rules/r1/follow-ups").send({
+        stepOrder: -1,
+        delaySeconds: 0, // min 1
+        messageTemplate: "",
+      });
+      expect(res.status).toBe(400);
+    });
+
+    it("rejects delay exceeding 7 days", async () => {
+      const { app } = buildApp();
+      const res = await request(app).post("/social/rules/r1/follow-ups").send({
+        stepOrder: 0,
+        delaySeconds: 700000, // > 604800
+        messageTemplate: "Too late!",
+      });
+      expect(res.status).toBe(400);
+    });
+  });
+
+  describe("DELETE /rules/:ruleId/follow-ups/:stepId", () => {
+    it("deletes a follow-up step", async () => {
+      const { app } = buildApp();
+      const res = await request(app).delete("/social/rules/r1/follow-ups/fs1");
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+    });
+
+    it("returns 404 for missing step", async () => {
+      const { app } = buildApp();
+      const res = await request(app).delete("/social/rules/r1/follow-ups/missing");
+      expect(res.status).toBe(404);
     });
   });
 });

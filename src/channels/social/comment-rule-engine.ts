@@ -9,11 +9,14 @@ import type {
 
 export type DmSender = (platform: SocialPlatform, userId: string, text: string) => Promise<void>;
 export type CommentReplier = (platform: SocialPlatform, commentId: string, text: string, postId?: string) => Promise<void>;
+/** AI reply generator for comment automation. */
+export type AiReplyGenerator = (prompt: string, context?: string) => Promise<string>;
 
 export interface CommentRuleEngineOpts {
   repository: SocialRepository;
   sendDm?: DmSender;
   replyToComment?: CommentReplier;
+  generateAiReply?: AiReplyGenerator;
 }
 
 /** Template variables available in rule templates. */
@@ -35,12 +38,14 @@ export class CommentRuleEngine extends EventEmitter {
   private repository: SocialRepository;
   private sendDm?: DmSender;
   private replyToComment?: CommentReplier;
+  private generateAiReply?: AiReplyGenerator;
 
   constructor(opts: CommentRuleEngineOpts) {
     super();
     this.repository = opts.repository;
     this.sendDm = opts.sendDm;
     this.replyToComment = opts.replyToComment;
+    this.generateAiReply = opts.generateAiReply;
   }
 
   setSendDm(fn: DmSender): void {
@@ -48,6 +53,9 @@ export class CommentRuleEngine extends EventEmitter {
   }
   setReplyToComment(fn: CommentReplier): void {
     this.replyToComment = fn;
+  }
+  setAiReplyGenerator(fn: AiReplyGenerator): void {
+    this.generateAiReply = fn;
   }
 
   /**
@@ -161,15 +169,35 @@ export class CommentRuleEngine extends EventEmitter {
     let dmSent = false;
     let dmError: string | null = null;
 
-    // 1. Reply to comment (if template exists and handler is available)
-    if (rule.comment_reply_template && this.replyToComment) {
-      try {
-        const reply = interpolateTemplate(rule.comment_reply_template, vars);
-        await this.replyToComment(comment.platform, comment.commentId, reply, comment.postId);
-        commentReplied = true;
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        logger.error(`[CommentRule] Comment reply failed for rule ${rule.id}: ${msg}`);
+    // 1. Reply to comment (AI-generated or template-based)
+    if (this.replyToComment) {
+      if (rule.use_ai_reply && this.generateAiReply) {
+        // AI-powered comment reply
+        try {
+          const aiPrompt = [
+            `Reply to this comment on ${comment.platform}:`,
+            `Comment by @${comment.username}: "${comment.text}"`,
+            comment.postContext?.caption ? `Post caption: "${comment.postContext.caption}"` : "",
+            rule.ai_reply_context ? `Context: ${rule.ai_reply_context}` : "",
+            "Keep the reply concise, friendly, and on-brand. Reply with just the text, no quotes.",
+          ].filter(Boolean).join("\n");
+          const reply = await this.generateAiReply(aiPrompt, rule.ai_reply_context ?? undefined);
+          await this.replyToComment(comment.platform, comment.commentId, reply, comment.postId);
+          commentReplied = true;
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          logger.error(`[CommentRule] AI comment reply failed for rule ${rule.id}: ${msg}`);
+        }
+      } else if (rule.comment_reply_template) {
+        // Template-based comment reply
+        try {
+          const reply = interpolateTemplate(rule.comment_reply_template, vars);
+          await this.replyToComment(comment.platform, comment.commentId, reply, comment.postId);
+          commentReplied = true;
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          logger.error(`[CommentRule] Comment reply failed for rule ${rule.id}: ${msg}`);
+        }
       }
     }
 

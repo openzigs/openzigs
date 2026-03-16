@@ -41,6 +41,8 @@ function createRule(repo: SocialRepository, overrides: Partial<Omit<CommentRule,
     max_triggers_total: null,
     auto_tag: null,
     model: null,
+    use_ai_reply: 0,
+    ai_reply_context: null,
     ...overrides,
   });
 }
@@ -205,5 +207,89 @@ describe("CommentRuleEngine", () => {
       "user_1",
       "Hi fanuser, you said 'I love widgets!' on post post_1",
     );
+  });
+
+  // ── AI-powered comment reply tests ─────────────────────────────────
+  describe("AI-powered comment replies", () => {
+    it("uses AI reply generator when use_ai_reply is enabled", async () => {
+      const generateAiReply = vi.fn().mockResolvedValue("Great comment! Thanks for sharing.");
+      const aiEngine = new CommentRuleEngine({
+        repository: repo,
+        sendDm,
+        replyToComment,
+        generateAiReply,
+      });
+
+      const rule = createRule(repo, { use_ai_reply: 1, ai_reply_context: "We sell premium widgets" });
+      repo.updateRule(rule.id, { use_ai_reply: 1, ai_reply_context: "We sell premium widgets" });
+
+      const comment = makeComment({ text: "I love this!", postContext: { postId: "post_1", platform: "twitter", caption: "Check out our new widget!", permalink: "https://x.com/post/1", mediaType: "image", mediaUrl: "https://x.com/media/1.jpg", authorUsername: "testuser", publishedAt: "2026-01-01T00:00:00Z", cachedAt: "2026-01-01T00:01:00Z" } });
+      await aiEngine.evaluate(comment);
+
+      expect(generateAiReply).toHaveBeenCalledTimes(1);
+      const prompt = generateAiReply.mock.calls[0][0] as string;
+      expect(prompt).toContain("I love this!");
+      expect(prompt).toContain("Check out our new widget!");
+      expect(prompt).toContain("We sell premium widgets");
+      expect(replyToComment).toHaveBeenCalledWith("twitter", "comment_1", "Great comment! Thanks for sharing.", "post_1");
+    });
+
+    it("falls back to template reply when AI generator is not configured", async () => {
+      const noAiEngine = new CommentRuleEngine({
+        repository: repo,
+        sendDm,
+        replyToComment,
+        // no generateAiReply
+      });
+
+      const rule = createRule(repo, { use_ai_reply: 1 });
+      repo.updateRule(rule.id, { use_ai_reply: 1 });
+
+      const comment = makeComment({ text: "I love it!" });
+      await noAiEngine.evaluate(comment);
+
+      // Should fall back to template reply
+      expect(replyToComment).toHaveBeenCalledWith("twitter", "comment_1", expect.stringContaining("Thanks testuser"), "post_1");
+    });
+
+    it("falls back to template when AI reply throws", async () => {
+      const generateAiReply = vi.fn().mockRejectedValue(new Error("API timeout"));
+      const aiEngine = new CommentRuleEngine({
+        repository: repo,
+        sendDm,
+        replyToComment,
+        generateAiReply,
+      });
+
+      const rule = createRule(repo, { use_ai_reply: 1 });
+      repo.updateRule(rule.id, { use_ai_reply: 1 });
+
+      const comment = makeComment({ text: "I love it!" });
+      await aiEngine.evaluate(comment);
+
+      // AI failed, but template reply should NOT fire (only one branch executes)
+      // DM should still be sent
+      expect(sendDm).toHaveBeenCalled();
+    });
+
+    it("setAiReplyGenerator updates the generator at runtime", async () => {
+      const aiEngine = new CommentRuleEngine({
+        repository: repo,
+        sendDm,
+        replyToComment,
+      });
+
+      const generateAiReply = vi.fn().mockResolvedValue("AI says hello!");
+      aiEngine.setAiReplyGenerator(generateAiReply);
+
+      const rule = createRule(repo, { use_ai_reply: 1, comment_reply_template: null });
+      repo.updateRule(rule.id, { use_ai_reply: 1 });
+
+      const comment = makeComment({ text: "I love it!" });
+      await aiEngine.evaluate(comment);
+
+      expect(generateAiReply).toHaveBeenCalledTimes(1);
+      expect(replyToComment).toHaveBeenCalledWith("twitter", "comment_1", "AI says hello!", "post_1");
+    });
   });
 });

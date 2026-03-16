@@ -217,6 +217,8 @@ export const createSocialRouter = (opts: SocialRouterOptions): Router => {
     max_triggers_total: z.number().int().min(1).nullable().default(null),
     auto_tag: z.string().nullable().default(null),
     model: z.string().max(255).nullable().default(null),
+    use_ai_reply: z.union([z.boolean(), z.number().int().min(0).max(1)]).transform(v => typeof v === "boolean" ? (v ? 1 : 0) : v).default(0),
+    ai_reply_context: z.string().nullable().default(null),
   });
 
   router.post("/rules", (req, res) => {
@@ -423,6 +425,82 @@ export const createSocialRouter = (opts: SocialRouterOptions): Router => {
       logger.error(`[SocialAPI] Failed to update brand voice: ${msg}`);
       res.status(500).json({ error: msg });
     }
+  });
+
+  // ── GET /analytics — Conversation analytics per platform ──
+  router.get("/analytics", (req, res) => {
+    try {
+      const since = req.query.since ? String(req.query.since) : undefined;
+      const analytics = repository.getAnalytics(since);
+      res.json({ analytics });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  // ── GET /leads — List captured leads ──
+  router.get("/leads", (req, res) => {
+    try {
+      const platform = req.query.platform ? String(req.query.platform) as SocialPlatform : undefined;
+      const limit = Math.min(200, Math.max(1, Number(req.query.limit) || 50));
+      const offset = Math.max(0, Number(req.query.offset) || 0);
+      const leads = repository.getLeads({ platform, limit, offset });
+      res.json({ leads });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  // ── Follow-Up Steps CRUD ───────────────────────────────────────────
+
+  // GET /rules/:ruleId/follow-ups — List follow-up steps for a rule
+  router.get("/rules/:ruleId/follow-ups", (req, res) => {
+    try {
+      const steps = repository.getFollowUpSteps(req.params.ruleId);
+      res.json({ steps });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  // POST /rules/:ruleId/follow-ups — Add a follow-up step
+  const createFollowUpSchema = z.object({
+    stepOrder: z.number().int().min(0),
+    delaySeconds: z.number().int().min(1).max(604800), // max 7 days
+    messageTemplate: z.string().min(1).max(5000),
+  });
+
+  router.post("/rules/:ruleId/follow-ups", (req, res) => {
+    const rule = repository.getRule(req.params.ruleId);
+    if (!rule) {
+      res.status(404).json({ error: "Rule not found" });
+      return;
+    }
+    const parsed = createFollowUpSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.format() });
+      return;
+    }
+    try {
+      const step = repository.createFollowUpStep(req.params.ruleId, parsed.data);
+      res.status(201).json(step);
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  // DELETE /rules/:ruleId/follow-ups/:stepId — Delete a follow-up step
+  router.delete("/rules/:ruleId/follow-ups/:stepId", (req, res) => {
+    const deleted = repository.deleteFollowUpStep(req.params.stepId);
+    if (!deleted) {
+      res.status(404).json({ error: "Follow-up step not found" });
+      return;
+    }
+    res.json({ success: true });
   });
 
   return router;

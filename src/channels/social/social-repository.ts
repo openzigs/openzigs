@@ -9,6 +9,9 @@ import type {
   CommentRule,
   AutomationLogEntry,
   PostContext,
+  FollowUpStep,
+  FollowUpJob,
+  ConversationAnalytics,
 } from "./types.js";
 
 export type ContactFilter = {
@@ -131,6 +134,34 @@ export class SocialRepository {
         published_at     TEXT NOT NULL DEFAULT '',
         cached_at        TEXT NOT NULL
       );
+
+      CREATE TABLE IF NOT EXISTS follow_up_steps (
+        id              TEXT PRIMARY KEY,
+        rule_id         TEXT NOT NULL REFERENCES comment_automation_rules(id) ON DELETE CASCADE,
+        step_order      INTEGER NOT NULL DEFAULT 0,
+        delay_seconds   INTEGER NOT NULL DEFAULT 3600,
+        message_template TEXT NOT NULL DEFAULT '',
+        created_at      TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_follow_up_steps_rule ON follow_up_steps(rule_id);
+
+      CREATE TABLE IF NOT EXISTS follow_up_jobs (
+        id                TEXT PRIMARY KEY,
+        contact_id        TEXT NOT NULL REFERENCES contacts(id),
+        rule_id           TEXT NOT NULL,
+        step_id           TEXT NOT NULL,
+        platform          TEXT NOT NULL,
+        platform_user_id  TEXT NOT NULL,
+        message           TEXT NOT NULL DEFAULT '',
+        scheduled_at      TEXT NOT NULL,
+        sent_at           TEXT,
+        error             TEXT,
+        created_at        TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_follow_up_jobs_scheduled ON follow_up_jobs(scheduled_at);
+      CREATE INDEX IF NOT EXISTS idx_follow_up_jobs_contact ON follow_up_jobs(contact_id);
     `);
 
     // Runtime migration: add model column to comment_automation_rules
@@ -139,6 +170,25 @@ export class SocialRepository {
     } catch {
       // Column already exists
     }
+
+    // Runtime migration: add lead fields to contacts
+    try {
+      this.db.exec(`ALTER TABLE contacts ADD COLUMN email TEXT DEFAULT NULL`);
+    } catch { /* Column already exists */ }
+    try {
+      this.db.exec(`ALTER TABLE contacts ADD COLUMN phone TEXT DEFAULT NULL`);
+    } catch { /* Column already exists */ }
+    try {
+      this.db.exec(`ALTER TABLE contacts ADD COLUMN lead_captured_at TEXT DEFAULT NULL`);
+    } catch { /* Column already exists */ }
+
+    // Runtime migration: add ai_reply flag to comment_automation_rules
+    try {
+      this.db.exec(`ALTER TABLE comment_automation_rules ADD COLUMN use_ai_reply INTEGER DEFAULT 0`);
+    } catch { /* Column already exists */ }
+    try {
+      this.db.exec(`ALTER TABLE comment_automation_rules ADD COLUMN ai_reply_context TEXT DEFAULT NULL`);
+    } catch { /* Column already exists */ }
   }
 
   // ── Contacts CRUD ───────────────────────────────────────────────────
@@ -316,13 +366,14 @@ export class SocialRepository {
       .prepare(
         `INSERT INTO comment_automation_rules
          (id, name, platform, enabled, post_ids, keywords, regex, comment_reply_template,
-          dm_template, dm_delay_seconds, max_triggers_per_user, max_triggers_total, trigger_count, auto_tag, model, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?)`
+          dm_template, dm_delay_seconds, max_triggers_per_user, max_triggers_total, trigger_count, auto_tag, model, use_ai_reply, ai_reply_context, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         id, rule.name, rule.platform, rule.enabled, rule.post_ids, rule.keywords,
         rule.regex, rule.comment_reply_template, rule.dm_template, rule.dm_delay_seconds,
-        rule.max_triggers_per_user, rule.max_triggers_total, rule.auto_tag, rule.model ?? null, now, now
+        rule.max_triggers_per_user, rule.max_triggers_total, rule.auto_tag, rule.model ?? null,
+        rule.use_ai_reply ?? 0, rule.ai_reply_context ?? null, now, now
       );
     return this.db.prepare("SELECT * FROM comment_automation_rules WHERE id = ?").get(id) as CommentRule;
   }
@@ -349,7 +400,7 @@ export class SocialRepository {
     const sets: string[] = ["updated_at = ?"];
     const params: unknown[] = [now];
 
-    const allowed = ["name", "platform", "enabled", "post_ids", "keywords", "regex", "comment_reply_template", "dm_template", "dm_delay_seconds", "max_triggers_per_user", "max_triggers_total", "auto_tag", "model"];
+    const allowed = ["name", "platform", "enabled", "post_ids", "keywords", "regex", "comment_reply_template", "dm_template", "dm_delay_seconds", "max_triggers_per_user", "max_triggers_total", "auto_tag", "model", "use_ai_reply", "ai_reply_context"];
     for (const [key, value] of Object.entries(updates)) {
       if (value !== undefined && allowed.includes(key)) {
         sets.push(`${key} = ?`);
@@ -464,6 +515,129 @@ export class SocialRepository {
     ).c;
 
     return { totalContacts, activeHandoffs, totalMessages, messagesLast24h, totalAutomationTriggers };
+  }
+
+  // ── Follow-Up Sequences ─────────────────────────────────────────────
+
+  createFollowUpStep(ruleId: string, step: { stepOrder: number; delaySeconds: number; messageTemplate: string }): FollowUpStep {
+    const id = nanoid(16);
+    const now = this.clock().toISOString();
+    this.db.prepare(
+      `INSERT INTO follow_up_steps (id, rule_id, step_order, delay_seconds, message_template, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)`
+    ).run(id, ruleId, step.stepOrder, step.delaySeconds, step.messageTemplate, now);
+    return this.db.prepare("SELECT * FROM follow_up_steps WHERE id = ?").get(id) as FollowUpStep;
+  }
+
+  getFollowUpSteps(ruleId: string): FollowUpStep[] {
+    return this.db.prepare("SELECT * FROM follow_up_steps WHERE rule_id = ? ORDER BY step_order ASC").all(ruleId) as FollowUpStep[];
+  }
+
+  deleteFollowUpStep(id: string): boolean {
+    return this.db.prepare("DELETE FROM follow_up_steps WHERE id = ?").run(id).changes > 0;
+  }
+
+  scheduleFollowUp(opts: {
+    contactId: string;
+    ruleId: string;
+    stepId: string;
+    platform: SocialPlatform;
+    platformUserId: string;
+    message: string;
+    scheduledAt: string;
+  }): FollowUpJob {
+    const id = nanoid(16);
+    const now = this.clock().toISOString();
+    this.db.prepare(
+      `INSERT INTO follow_up_jobs (id, contact_id, rule_id, step_id, platform, platform_user_id, message, scheduled_at, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(id, opts.contactId, opts.ruleId, opts.stepId, opts.platform, opts.platformUserId, opts.message, opts.scheduledAt, now);
+    return this.db.prepare("SELECT * FROM follow_up_jobs WHERE id = ?").get(id) as FollowUpJob;
+  }
+
+  getPendingFollowUps(beforeTime: string): FollowUpJob[] {
+    return this.db.prepare(
+      "SELECT * FROM follow_up_jobs WHERE sent_at IS NULL AND error IS NULL AND scheduled_at <= ? ORDER BY scheduled_at ASC"
+    ).all(beforeTime) as FollowUpJob[];
+  }
+
+  markFollowUpSent(id: string): void {
+    const now = this.clock().toISOString();
+    this.db.prepare("UPDATE follow_up_jobs SET sent_at = ? WHERE id = ?").run(now, id);
+  }
+
+  markFollowUpError(id: string, error: string): void {
+    this.db.prepare("UPDATE follow_up_jobs SET error = ? WHERE id = ?").run(error, id);
+  }
+
+  // ── Lead Capture ────────────────────────────────────────────────────
+
+  updateContactLead(id: string, lead: { email?: string; phone?: string }): Contact | undefined {
+    const contact = this.getContact(id);
+    if (!contact) return undefined;
+    const now = this.clock().toISOString();
+    const sets: string[] = ["updated_at = ?"];
+    const params: unknown[] = [now];
+
+    if (lead.email !== undefined) { sets.push("email = ?"); params.push(lead.email); }
+    if (lead.phone !== undefined) { sets.push("phone = ?"); params.push(lead.phone); }
+    if (lead.email || lead.phone) { sets.push("lead_captured_at = ?"); params.push(now); }
+
+    params.push(id);
+    this.db.prepare(`UPDATE contacts SET ${sets.join(", ")} WHERE id = ?`).run(...params);
+    return this.getContact(id);
+  }
+
+  getLeads(opts: { platform?: SocialPlatform; limit?: number; offset?: number } = {}): Contact[] {
+    const { platform, limit = 50, offset = 0 } = opts;
+    if (platform) {
+      return this.db.prepare(
+        "SELECT * FROM contacts WHERE (email IS NOT NULL OR phone IS NOT NULL) AND platform = ? ORDER BY lead_captured_at DESC LIMIT ? OFFSET ?"
+      ).all(platform, limit, offset) as Contact[];
+    }
+    return this.db.prepare(
+      "SELECT * FROM contacts WHERE (email IS NOT NULL OR phone IS NOT NULL) ORDER BY lead_captured_at DESC LIMIT ? OFFSET ?"
+    ).all(limit, offset) as Contact[];
+  }
+
+  // ── Conversation Analytics ──────────────────────────────────────────
+
+  getAnalytics(since?: string): ConversationAnalytics[] {
+    const sinceClause = since ? "AND sm.created_at >= ?" : "";
+    const params: unknown[] = since ? [since] : [];
+
+    const rows = this.db.prepare(`
+      SELECT
+        c.platform,
+        COUNT(DISTINCT c.id) as total_conversations,
+        SUM(CASE WHEN sm.direction = 'inbound' THEN 1 ELSE 0 END) as total_messages_in,
+        SUM(CASE WHEN sm.direction = 'outbound' THEN 1 ELSE 0 END) as total_messages_out,
+        SUM(CASE WHEN sm.status = 'auto_replied' THEN 1 ELSE 0 END) as auto_replies,
+        SUM(CASE WHEN sm.status = 'escalated' THEN 1 ELSE 0 END) as escalations,
+        COUNT(sm.id) as total_msg
+      FROM contacts c
+      LEFT JOIN social_messages sm ON sm.contact_id = c.id ${sinceClause}
+      GROUP BY c.platform
+    `).all(...params) as Array<Record<string, number | string>>;
+
+    const leadCounts = this.db.prepare(`
+      SELECT platform, COUNT(*) as leads
+      FROM contacts
+      WHERE email IS NOT NULL OR phone IS NOT NULL
+      GROUP BY platform
+    `).all() as Array<{ platform: string; leads: number }>;
+    const leadMap = new Map(leadCounts.map((r) => [r.platform, r.leads]));
+
+    return rows.map((r) => ({
+      platform: r.platform as SocialPlatform,
+      total_conversations: Number(r.total_conversations),
+      total_messages_in: Number(r.total_messages_in),
+      total_messages_out: Number(r.total_messages_out),
+      avg_response_time_ms: 0, // TODO: compute from paired inbound→outbound timestamps
+      auto_reply_rate: Number(r.total_msg) > 0 ? Number(r.auto_replies) / Number(r.total_msg) : 0,
+      escalation_rate: Number(r.total_msg) > 0 ? Number(r.escalations) / Number(r.total_msg) : 0,
+      leads_captured: leadMap.get(r.platform as string) ?? 0,
+    }));
   }
 
   // ── CSV Export ──────────────────────────────────────────────────────

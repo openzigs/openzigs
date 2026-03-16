@@ -116,4 +116,35 @@ test.describe('Social Brain', () => {
     const askBtn = page.getByRole('button', { name: /ask ai/i });
     await expect(askBtn).toBeVisible();
   });
+
+  test('automations tab shows Create Rule button', async ({ page }) => {
+    await page.getByRole('button', { name: 'automations' }).click();
+    const createBtn = page.getByRole('button', { name: /create|add|new/i });
+    const hasCreate = await createBtn.first().isVisible().catch(() => false);
+    expect(hasCreate).toBeTruthy();
+  });
+
+  test('dashboard shows Messages (24h) stat card', async ({ page }) => {
+    const card = page.getByText('Messages (24h)');
+    await expect(card).toBeVisible();
+  });
+
+  test('dashboard shows Automation Triggers stat card', async ({ page }) => {
+    const card = page.getByText('Automation Triggers');
+    await expect(card).toBeVisible();
+  });
+
+  test('crm tab search input can be typed into', async ({ page }) => {
+    await page.getByRole('button', { name: 'crm' }).click();
+    const searchInput = page.getByPlaceholder(/search/i);
+    await searchInput.fill('test_user');
+    await expect(searchInput).toHaveValue('test_user');
+  });
+
+  test('settings tab shows all expected sections', async ({ page }) => {
+    await page.getByRole('button', { name: 'settings' }).click();
+    await expect(page.getByText('Platform Configuration')).toBeVisible();
+    await expect(page.getByText('Confidence Threshold')).toBeVisible();
+    await expect(page.getByText('Quick Setup Guide')).toBeVisible();
+  });
 });
