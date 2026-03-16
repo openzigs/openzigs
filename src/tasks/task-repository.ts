@@ -28,6 +28,10 @@ export const toTask = (row: StoredTask): AgentTask => ({
   startedAt: row.started_at ? new Date(row.started_at) : null,
   completedAt: row.completed_at ? new Date(row.completed_at) : null,
   spawnedBy: row.spawned_by,
+  skillName: row.skill_name ?? null,
+  skillBody: row.skill_body ?? null,
+  disabledSkills: row.disabled_skills ? (JSON.parse(row.disabled_skills) as string[]) : null,
+  agentName: row.agent_name ?? null,
 });
 
 /**
@@ -105,6 +109,24 @@ export class TaskRepository {
       this.db.exec("ALTER TABLE agent_tasks ADD COLUMN token_usage_json TEXT DEFAULT NULL");
     }
 
+    // Add 'skill_name' and 'skill_body' columns — skill injection for background tasks
+    if (!columns.some((c) => c.name === "skill_name")) {
+      this.db.exec("ALTER TABLE agent_tasks ADD COLUMN skill_name TEXT DEFAULT NULL");
+    }
+    if (!columns.some((c) => c.name === "skill_body")) {
+      this.db.exec("ALTER TABLE agent_tasks ADD COLUMN skill_body TEXT DEFAULT NULL");
+    }
+
+    // Add 'disabled_skills' column — JSON array of disabled skill names for focused execution
+    if (!columns.some((c) => c.name === "disabled_skills")) {
+      this.db.exec("ALTER TABLE agent_tasks ADD COLUMN disabled_skills TEXT DEFAULT NULL");
+    }
+
+    // Add 'agent_name' column — custom agent persona for task execution
+    if (!columns.some((c) => c.name === "agent_name")) {
+      this.db.exec("ALTER TABLE agent_tasks ADD COLUMN agent_name TEXT DEFAULT NULL");
+    }
+
     // ── Backfill: link orphaned agent tasks to their parent ──
     // Before the parentTaskId propagation fix, spawn-agent/orchestrate-agents
     // never set parentTaskId. This backfill matches orphaned agent tasks to
@@ -169,8 +191,8 @@ export class TaskRepository {
         `INSERT INTO agent_tasks
           (id, parent_task_id, trigger, status, goal, context,
            session_id, channel_type, chat_id, model, reasoning_effort, allowed_tools, auto_approve_tools,
-           pipeline, notify_on_complete, depth, created_at, spawned_by)
-         VALUES (?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+           pipeline, notify_on_complete, depth, created_at, spawned_by, skill_name, skill_body, disabled_skills, agent_name)
+         VALUES (?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         id,
@@ -189,7 +211,11 @@ export class TaskRepository {
         input.notifyOnComplete ? 1 : 0,
         depth,
         now,
-        input.spawnedBy ?? null
+        input.spawnedBy ?? null,
+        input.skillName ?? null,
+        input.skillBody ?? null,
+        input.disabledSkills ? JSON.stringify(input.disabledSkills) : null,
+        input.agentName ?? null
       );
 
     return this.getById(id)!;
@@ -217,7 +243,10 @@ export class TaskRepository {
     }
 
     const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
-    const limit = options?.limit ? `LIMIT ${options.limit}` : "";
+    if (options?.limit) {
+      params.push(options.limit);
+    }
+    const limit = options?.limit ? "LIMIT ?" : "";
     const sql = `SELECT * FROM agent_tasks ${where} ORDER BY created_at DESC ${limit}`;
     const rows = this.db.prepare(sql).all(...params) as StoredTask[];
     return rows.map(toTask);
@@ -343,9 +372,19 @@ export class TaskRepository {
     }
 
     const where = `WHERE ${clauses.join(" AND ")}`;
-    const limit = options?.limit ? `LIMIT ${options.limit}` : "";
+    if (options?.limit) {
+      params.push(options.limit);
+    }
+    const limit = options?.limit ? "LIMIT ?" : "";
     const sql = `SELECT * FROM agent_tasks ${where} ORDER BY created_at DESC ${limit}`;
     const rows = this.db.prepare(sql).all(...params) as StoredTask[];
+    return rows.map(toTask);
+  }
+
+  /** Find tasks triggered by a specific job name (stored in context JSON). */
+  findByJobName(jobName: string, limit = 10): AgentTask[] {
+    const sql = `SELECT * FROM agent_tasks WHERE json_valid(context) AND json_extract(context, '$.jobName') = ? ORDER BY created_at DESC LIMIT ?`;
+    const rows = this.db.prepare(sql).all(jobName, limit) as StoredTask[];
     return rows.map(toTask);
   }
 }

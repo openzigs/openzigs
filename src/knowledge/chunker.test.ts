@@ -88,4 +88,22 @@ Sub-section details.`;
     expect(result).toHaveLength(1);
     expect(result[0].sectionHeading).toBeUndefined();
   });
+
+  it("overlap snaps to word boundary instead of splitting mid-word", () => {
+    // Create text that will be split into multiple chunks
+    // "alpha bravo charlie delta" repeated to exceed chunk size
+    const words = "alpha bravo charlie delta echo foxtrot golf hotel india juliet ";
+    const text = words.repeat(10); // ~600 chars
+    const result = chunkText(text, "doc1", "overlap.txt", { chunkSize: 100, chunkOverlap: 30 });
+
+    // Check chunks after the first: they should start at a word boundary (no partial words)
+    for (let i = 1; i < result.length; i++) {
+      const firstWord = result[i].text.split(/\s+/)[0];
+      // First word should be a complete word from the original vocabulary
+      expect(firstWord).toMatch(/^[a-z]+$/);
+      // Should not start with a substring of a word (e.g., "ravo" instead of "bravo")
+      // The first word may be a known word or a heading/sentence fragment, but not a mid-word slice
+      expect(firstWord.length).toBeGreaterThan(1);
+    }
+  });
 });

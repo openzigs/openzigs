@@ -96,6 +96,7 @@ type SessionCreateConfig = {
     request: { question: string; choices?: string[]; allowFreeform?: boolean },
     context: { sessionId: string }
   ) => Promise<{ answer: string; wasFreeform?: boolean }>;
+  disabledSkills?: string[];
 };
 
 // ── SDK Session Event / Metadata types (re-exported for consumers) ──
@@ -291,6 +292,8 @@ export type ChatOptions = {
   mcpServers?: Record<string, NativeMcpServerDefinition>;
   /** Tools to auto-approve without approval-queue gating (closure-based, survives JSON-RPC boundary). */
   autoApproveTools?: string[];
+  /** Skill names to disable for this session (SDK-native disabledSkills support). */
+  disabledSkills?: string[];
 };
 
 export interface CopilotWrapper {
@@ -346,6 +349,8 @@ export interface CopilotWrapper {
   resetSessionAnalytics(): void;
   /** Get configured skill directories for SKILL.md persona injection. */
   getSkillDirectories?(): string[];
+  /** Add a skill directory and invalidate cached sessions. */
+  addSkillDirectory?(dir: string): void;
 }
 
 export type CopilotWrapperOptions = {
@@ -665,6 +670,13 @@ export class CopilotWrapperService extends EventEmitter implements CopilotWrappe
     return [...this.skillDirectoriesConfig];
   }
 
+  addSkillDirectory(dir: string): void {
+    if (!this.skillDirectoriesConfig.includes(dir)) {
+      this.skillDirectoriesConfig.push(dir);
+      void this.clearAllSessions();
+    }
+  }
+
   setNativeMcpServers(servers: Record<string, NativeMcpServerDefinition>): void {
     this.nativeMcpServersConfig = { ...servers };
     // MCP server changes invalidate all cached sessions
@@ -782,11 +794,16 @@ export class CopilotWrapperService extends EventEmitter implements CopilotWrappe
           if (perCallToolCallback) {
             perCallToolCallback(tool.name, args);
           }
-          const result = await tool.handler(args as Record<string, unknown>);
-          if (result.isError) {
-            return `[Tool Error] ${result.text}`;
+          try {
+            const result = await tool.handler(args as Record<string, unknown>);
+            if (result.isError) {
+              return `[Tool Error] ${result.text}`;
+            }
+            return result.text;
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return `[Tool Error] ${msg}`;
           }
-          return result.text;
         }
       })
     );
@@ -823,6 +840,7 @@ export class CopilotWrapperService extends EventEmitter implements CopilotWrappe
         customAgents: options?.customAgents,
         mcpServers: options?.mcpServers,
         autoApproveTools: options?.autoApproveTools,
+        disabledSkills: options?.disabledSkills,
       }
     );
 
@@ -1047,6 +1065,7 @@ export class CopilotWrapperService extends EventEmitter implements CopilotWrappe
       customAgents?: CustomAgentDefinition[];
       mcpServers?: Record<string, NativeMcpServerDefinition>;
       autoApproveTools?: string[];
+      disabledSkills?: string[];
     }
   ): SessionCreateConfig {
     const effectiveHooks = this.hooksConfig;
@@ -1097,6 +1116,7 @@ export class CopilotWrapperService extends EventEmitter implements CopilotWrappe
       ...(mergedAgents.length > 0 ? { customAgents: mergedAgents } : {}),
       ...(Object.keys(sdkMcpServers).length > 0 ? { mcpServers: sdkMcpServers } : {}),
       ...(this.skillDirectoriesConfig.length > 0 ? { skillDirectories: this.skillDirectoriesConfig } : {}),
+      ...(extra?.disabledSkills?.length ? { disabledSkills: extra.disabledSkills } : {}),
       ...(effectiveHooks ? {
         hooks: {
           ...effectiveHooks,
@@ -1152,6 +1172,7 @@ export class CopilotWrapperService extends EventEmitter implements CopilotWrappe
       customAgents?: CustomAgentDefinition[];
       mcpServers?: Record<string, NativeMcpServerDefinition>;
       autoApproveTools?: string[];
+      disabledSkills?: string[];
     }
   ): Promise<CopilotSessionLike> {
     const requestedSignature = this.computeSessionConfigSignature(model, tools, extra);

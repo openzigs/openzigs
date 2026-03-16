@@ -88,7 +88,7 @@ class RedditMCPServer:
 async def main():
     import logging
     settings = get_settings()
-    logging.basicConfig(level=getattr(logging, settings.log_level))
+    logging.basicConfig(level=getattr(logging, settings.log_level.upper()))
     await RedditMCPServer().run()
 
 

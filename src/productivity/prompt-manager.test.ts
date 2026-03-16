@@ -182,6 +182,7 @@ describe("PromptManager", () => {
     expect(result).toEqual({
       text: "Search for AI news",
       preferredTools: ["web-search"],
+      suggestedSkill: null,
     });
   });
 
@@ -192,6 +193,23 @@ describe("PromptManager", () => {
     expect(result).toEqual({
       text: "Hello",
       preferredTools: null,
+      suggestedSkill: null,
+    });
+  });
+
+  it("resolveWithTools returns suggestedSkill when set", () => {
+    pm.create({
+      name: "skill-tooled",
+      template: "Make a video about {{topic}}",
+      preferredTools: ["generate-video"],
+      suggestedSkill: "media-director",
+    });
+
+    const result = pm.resolveWithTools("skill-tooled", { topic: "AI" });
+    expect(result).toEqual({
+      text: "Make a video about AI",
+      preferredTools: ["generate-video"],
+      suggestedSkill: "media-director",
     });
   });
 
@@ -296,7 +314,7 @@ describe("PromptManager", () => {
 
   // ── resolveWithStages ──
 
-  it("resolveWithStages returns text, preferredTools, and stages", () => {
+  it("resolveWithStages returns text, preferredTools, stages, and suggestedSkill", () => {
     pm.create({
       name: "full-resolve",
       template: "Analyze {{topic}}",
@@ -315,7 +333,23 @@ describe("PromptManager", () => {
         { name: "research", prompt: "Find info about AI" },
         { name: "report", prompt: "Compile findings" },
       ],
+      suggestedSkill: null,
     });
+  });
+
+  it("resolveWithStages returns suggestedSkill when set", () => {
+    pm.create({
+      name: "skill-stages",
+      template: "Pipeline for {{project}}",
+      suggestedSkill: "remix-engineer",
+      stages: [
+        { name: "init", prompt: "Set up {{project}}" },
+      ],
+    });
+
+    const result = pm.resolveWithStages("skill-stages", { project: "acme" });
+    expect(result!.suggestedSkill).toBe("remix-engineer");
+    expect(result!.text).toBe("Pipeline for acme");
   });
 
   it("resolveWithStages interpolates variables in stage prompts", () => {
@@ -341,6 +375,7 @@ describe("PromptManager", () => {
       text: "No pipeline",
       preferredTools: null,
       stages: null,
+      suggestedSkill: null,
     });
   });
 

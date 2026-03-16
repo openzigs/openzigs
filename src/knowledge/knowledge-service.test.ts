@@ -47,6 +47,7 @@ vi.mock("./lancedb-store.js", () => {
     deleteByDocumentId: vi.fn().mockResolvedValue(undefined),
     countChunks: vi.fn().mockResolvedValue(0),
     searchByMode: vi.fn().mockResolvedValue([]),
+    rebuildFtsIndex: vi.fn().mockResolvedValue(undefined),
   }));
   (MockLanceDBStore as unknown as Record<string, unknown>).buildFilterClause = vi.fn().mockReturnValue(undefined);
   return { LanceDBStore: MockLanceDBStore };

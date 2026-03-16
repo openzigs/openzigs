@@ -12,13 +12,126 @@ import path from "node:path";
 import os from "node:os";
 import { getDatabase } from "../productivity/database.js";
 import { PinterestTrackerRepository } from "../mcp/tools/pinterest-tracker.js";
+import { logger } from "../logging/logger.js";
+import type { CopilotWrapper } from "../copilot/copilot-wrapper.js";
 
 const REPORTS_DIR = path.join(os.homedir(), ".openzigs", "pinterest-reports");
+const PINTEREST_API_BASE = "https://api.pinterest.com/v5";
 
-export const createPinterestRouter = (): Router => {
+export const createPinterestRouter = (options?: { copilotWrapper?: CopilotWrapper }): Router => {
   const router = Router();
   const db = getDatabase();
   const tracker = new PinterestTrackerRepository(db);
+  const copilotWrapper = options?.copilotWrapper;
+
+  // ── Pinterest API helpers (thin wrappers for direct REST calls) ─────
+
+  function getToken(): string | undefined {
+    return process.env.PINTEREST_ACCESS_TOKEN;
+  }
+
+  // ── GET /boards — list boards for the authenticated user ────────────
+  router.get("/boards", async (_req, res) => {
+    const token = getToken();
+    if (!token) return res.status(401).json({ error: "PINTEREST_ACCESS_TOKEN not configured" });
+
+    try {
+      const apiRes = await fetch(`${PINTEREST_API_BASE}/boards?page_size=100`, {
+        headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
+      });
+      if (!apiRes.ok) {
+        const body = await apiRes.text();
+        logger.warn(`Pinterest boards fetch failed (${apiRes.status}): ${body}`);
+        return res.status(apiRes.status).json({ error: `Pinterest API error: ${body}` });
+      }
+      const data = (await apiRes.json()) as { items?: Array<Record<string, unknown>> };
+      const boards = (data.items ?? []).map((b) => ({
+        id: b.id,
+        name: b.name,
+        description: b.description ?? "",
+        pin_count: b.pin_count ?? 0,
+        privacy: b.privacy ?? "PUBLIC",
+      }));
+      return res.json({ boards });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.error(`Pinterest boards error: ${msg}`);
+      return res.status(500).json({ error: msg });
+    }
+  });
+
+  // ── POST /create-pin — create a pin on Pinterest ───────────────────
+  router.post("/create-pin", async (req, res) => {
+    const token = getToken();
+    if (!token) return res.status(401).json({ error: "PINTEREST_ACCESS_TOKEN not configured" });
+
+    const { board_id, title, description, link, alt_text, image_url, image_path, board_section_id } = req.body ?? {};
+    if (!board_id || !title || !description) {
+      return res.status(400).json({ error: "board_id, title, and description are required" });
+    }
+    if (!image_url && !image_path) {
+      return res.status(400).json({ error: "Either image_url or image_path is required" });
+    }
+
+    try {
+      const pin: Record<string, unknown> = { board_id, title, description };
+      if (link) pin.link = link;
+      if (alt_text) pin.alt_text = alt_text;
+      if (board_section_id) pin.board_section_id = board_section_id;
+
+      if (image_path) {
+        const absPath = path.resolve(image_path);
+        if (!fs.existsSync(absPath)) {
+          return res.status(400).json({ error: `Image file not found: ${absPath}` });
+        }
+        const imgBuf = fs.readFileSync(absPath);
+        const ext = path.extname(absPath).toLowerCase();
+        const contentTypes: Record<string, string> = {
+          ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+          ".gif": "image/gif", ".webp": "image/webp",
+        };
+        pin.media_source = {
+          source_type: "image_base64",
+          content_type: contentTypes[ext] ?? "image/png",
+          data: imgBuf.toString("base64"),
+        };
+      } else if (image_url) {
+        pin.media_source = { source_type: "image_url", url: image_url };
+      }
+
+      const apiRes = await fetch(`${PINTEREST_API_BASE}/pins`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: JSON.stringify(pin),
+      });
+
+      const rawBody = await apiRes.text();
+      if (!apiRes.ok) {
+        logger.warn(`Pinterest create-pin failed (${apiRes.status}): ${rawBody}`);
+        return res.status(apiRes.status).json({ error: `Pinterest API error: ${rawBody}` });
+      }
+
+      const pinData = JSON.parse(rawBody) as Record<string, unknown>;
+      const pinId = pinData.id as string;
+
+      logger.info(`Pinterest pin created: ${pinId} on board ${board_id}`);
+      return res.json({
+        ok: true,
+        pin_id: pinId,
+        url: `https://www.pinterest.com/pin/${pinId}/`,
+        board_id,
+        title: pinData.title,
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.error(`Pinterest create-pin error: ${msg}`);
+      return res.status(500).json({ error: msg });
+    }
+  });
 
   /** GET /api/pinterest/reports — list all reports with metadata */
   router.get("/reports", (_req, res) => {
@@ -215,6 +328,177 @@ export const createPinterestRouter = (): Router => {
     return deleted ? res.json({ ok: true }) : res.status(404).json({ error: "Idea not found" });
   });
 
+  // ── Sync real Pinterest data ──────────────────────────────────────────
+
+  /** POST /api/pinterest/sync-pins — import real pins from Pinterest API and track them */
+  router.post("/sync-pins", async (_req, res) => {
+    const token = getToken();
+    if (!token) return res.status(401).json({ error: "PINTEREST_ACCESS_TOKEN not configured" });
+
+    try {
+      // Fetch user's real pins
+      const apiRes = await fetch(`${PINTEREST_API_BASE}/pins?page_size=50`, {
+        headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
+      });
+      if (!apiRes.ok) {
+        const body = await apiRes.text();
+        logger.warn(`Pinterest pins fetch failed (${apiRes.status}): ${body}`);
+        return res.status(apiRes.status).json({ error: `Pinterest API error: ${body}` });
+      }
+
+      const data = (await apiRes.json()) as { items?: Array<Record<string, unknown>> };
+      const pins = data.items ?? [];
+      let imported = 0;
+
+      for (const pin of pins) {
+        const pinId = String(pin.id ?? "");
+        if (!pinId) continue;
+
+        const boardId = pin.board_id as string | undefined;
+        const title = (pin.title as string) ?? null;
+        const description = (pin.description as string) ?? null;
+        const link = (pin.link as string) ?? null;
+        const createdAt = (pin.created_at as string) ?? new Date().toISOString();
+
+        tracker.trackPin({
+          pin_id: pinId,
+          title: title ?? (description ? description.slice(0, 100) : pinId),
+          topic: null,
+          board_id: boardId ?? null,
+          link,
+          initial_score: null,
+          created_at: createdAt,
+          status: "active",
+        });
+        imported++;
+      }
+
+      logger.info(`Pinterest sync: imported ${imported} pins`);
+      return res.json({ ok: true, imported, total: pins.length });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.error(`Pinterest sync-pins error: ${msg}`);
+      return res.status(500).json({ error: msg });
+    }
+  });
+
+  /** POST /api/pinterest/sync-metrics — fetch analytics for all tracked active pins */
+  router.post("/sync-metrics", async (_req, res) => {
+    const token = getToken();
+    if (!token) return res.status(401).json({ error: "PINTEREST_ACCESS_TOKEN not configured" });
+
+    try {
+      const activePins = tracker.listTrackedPins("active");
+      let synced = 0;
+      let errors = 0;
+
+      for (const pin of activePins) {
+        try {
+          const apiRes = await fetch(
+            `${PINTEREST_API_BASE}/pins/${pin.pin_id}/analytics?start_date=${getDateDaysAgo(1)}&end_date=${getTodayDate()}&metric_types=IMPRESSION,PIN_CLICK,SAVE,OUTBOUND_CLICK`,
+            { headers: { Authorization: `Bearer ${token}`, Accept: "application/json" } },
+          );
+
+          if (!apiRes.ok) {
+            logger.warn(`Pinterest analytics for ${pin.pin_id} failed (${apiRes.status})`);
+            errors++;
+            continue;
+          }
+
+          const analyticsData = (await apiRes.json()) as Record<string, unknown>;
+          // Pinterest analytics v5 returns { all: { daily_metrics: [...], summary_metrics: {...} } }
+          const all = analyticsData.all as Record<string, unknown> | undefined;
+          const summary = (all?.summary_metrics ?? analyticsData.summary_metrics ?? {}) as Record<string, number>;
+
+          tracker.addSnapshot({
+            pin_id: pin.pin_id,
+            checked_at: new Date().toISOString(),
+            impressions: Number(summary.IMPRESSION ?? 0),
+            pin_clicks: Number(summary.PIN_CLICK ?? 0),
+            saves: Number(summary.SAVE ?? 0),
+            outbound_clicks: Number(summary.OUTBOUND_CLICK ?? 0),
+            reactions: 0,
+            comments: 0,
+          });
+          tracker.updateLastChecked(pin.pin_id, new Date().toISOString());
+          synced++;
+        } catch {
+          errors++;
+        }
+      }
+
+      logger.info(`Pinterest sync-metrics: ${synced} synced, ${errors} errors`);
+      return res.json({ ok: true, synced, errors, total: activePins.length });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.error(`Pinterest sync-metrics error: ${msg}`);
+      return res.status(500).json({ error: msg });
+    }
+  });
+
+  /** POST /api/pinterest/generate-ideas — use AI to generate content ideas */
+  router.post("/generate-ideas", async (req, res) => {
+    const { topic, count } = req.body ?? {};
+    const numIdeas = Math.min(Number(count) || 5, 10);
+    const topicHint = typeof topic === "string" && topic.trim() ? topic.trim() : "trending Pinterest topics";
+
+    try {
+      if (!copilotWrapper) {
+        return res.status(503).json({ error: "AI backend is not available" });
+      }
+
+      const prompt = [
+        `You are a Pinterest content strategist. Generate ${numIdeas} content ideas for Pinterest pins.`,
+        ``,
+        `Topic/niche focus: ${topicHint}`,
+        ``,
+        `For each idea provide:`,
+        `- topic: broad category`,
+        `- suggested_title: SEO-optimized pin title (under 100 chars)`,
+        `- suggested_description: keyword-rich description (under 500 chars) with relevant hashtags`,
+        `- target_keywords: array of 3-5 keywords`,
+        `- difficulty: "low", "medium", or "high"`,
+        `- estimated_volume: search volume range like "1K-5K", "5K-10K", "10K-50K", "50K-100K"`,
+        ``,
+        `Return ONLY a valid JSON array of objects (no markdown fences, no explanation).`,
+      ].join("\n");
+
+      let result = "";
+      for await (const chunk of copilotWrapper.chat(prompt, {})) {
+        result += chunk;
+      }
+
+      const jsonMatch = result.match(/\[[\s\S]*\]/);
+      if (!jsonMatch) {
+        return res.status(500).json({ error: "AI did not return valid JSON" });
+      }
+      const ideas = JSON.parse(jsonMatch[0]) as Array<Record<string, unknown>>;
+      let added = 0;
+
+      for (const idea of ideas) {
+        tracker.addContentIdea({
+          topic: String(idea.topic ?? topicHint),
+          suggested_title: String(idea.suggested_title ?? ""),
+          suggested_description: String(idea.suggested_description ?? ""),
+          target_keywords: JSON.stringify(idea.target_keywords ?? []),
+          difficulty: String(idea.difficulty ?? "medium"),
+          estimated_volume: String(idea.estimated_volume ?? "unknown"),
+          source_data: JSON.stringify({ ai_generated: true, topic: topicHint }),
+          created_at: new Date().toISOString(),
+          status: "new",
+          pin_id: null,
+        });
+        added++;
+      }
+
+      return res.json({ ok: true, added, ideas: ideas.length });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.error(`Pinterest generate-ideas error: ${msg}`);
+      return res.status(500).json({ error: msg });
+    }
+  });
+
   // ── Seed test data (dev helper) ─────────────────────────────────────────
 
   /** POST /api/pinterest/tracker/seed — seed test data for development */
@@ -303,3 +587,15 @@ export const createPinterestRouter = (): Router => {
 
   return router;
 };
+
+// ── Date helpers for Pinterest API ──
+
+function getTodayDate(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function getDateDaysAgo(days: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() - days);
+  return d.toISOString().slice(0, 10);
+}

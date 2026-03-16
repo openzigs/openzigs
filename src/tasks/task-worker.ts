@@ -1,6 +1,7 @@
 import { EventEmitter } from "node:events";
 import type { TaskEngine } from "./task-engine.js";
 import type { CopilotWrapper } from "../copilot/copilot-wrapper.js";
+import type { SystemMessageConfig, CustomAgentDefinition } from "../copilot/copilot-wrapper.js";
 import type { TaskRepository } from "./task-repository.js";
 import type { AgentTask, PipelineNode, PipelineStage, ParallelGroup } from "./types.js";
 
@@ -20,6 +21,8 @@ export type TaskWorkerOptions = {
   pollIntervalMs?: number;
   /** For testing: inject a logger. */
   log?: Pick<typeof logger, "info" | "warn" | "error">;
+  /** Custom agent definitions available for task-specific agent personas. */
+  customAgentsConfig?: CustomAgentDefinition[];
 };
 
 /**
@@ -36,6 +39,7 @@ export class TaskWorker extends EventEmitter {
   private maxConcurrent: number;
   private pollIntervalMs: number;
   private log: Pick<typeof logger, "info" | "warn" | "error">;
+  private customAgentsConfig: CustomAgentDefinition[];
   private timer: ReturnType<typeof setInterval> | null = null;
   private running = 0;
   private stopped = false;
@@ -47,6 +51,7 @@ export class TaskWorker extends EventEmitter {
     maxConcurrent = 2,
     pollIntervalMs = 2_000,
     log: logOverride,
+    customAgentsConfig,
   }: TaskWorkerOptions) {
     super();
     this.engine = engine;
@@ -55,6 +60,7 @@ export class TaskWorker extends EventEmitter {
     this.maxConcurrent = maxConcurrent;
     this.pollIntervalMs = pollIntervalMs;
     this.log = logOverride ?? logger;
+    this.customAgentsConfig = customAgentsConfig ?? [];
   }
 
   /** Start the polling loop. Idempotent. */
@@ -148,6 +154,9 @@ export class TaskWorker extends EventEmitter {
       let result = "";
       const toolCallLog: Array<{ tool: string; timestamp: number }> = [];
 
+      // Build system message with skill injection (replicates message-router pattern)
+      const systemMessage = this.buildSkillSystemMessage(task);
+
       // Pass autoApproveTools via ChatOptions so it's captured in the
       // buildSessionConfig closure — this survives JSON-RPC boundaries
       // (AsyncLocalStorage context is lost when the SDK's hooks handler
@@ -163,11 +172,17 @@ export class TaskWorker extends EventEmitter {
           ? [...task.allowedTools]
           : undefined;
 
+      // Resolve custom agents for task-specific agent persona
+      const customAgents = this.resolveCustomAgents(task);
+
       for await (const chunk of this.copilot.chat(prompt, {
         model: task.model ?? undefined,
         reasoningEffort: task.reasoningEffort ?? undefined,
         availableTools,
         autoApproveTools: effectiveAutoApprove,
+        systemMessage,
+        disabledSkills: task.disabledSkills ?? undefined,
+        customAgents,
         onToolCall: (toolName, args) => {
           this.log.info(`TaskWorker tool call [${task.id}]: ${toolName}(${JSON.stringify(args).slice(0, 200)})`);
           toolCallLog.push({ tool: toolName, timestamp: Date.now() });
@@ -236,6 +251,37 @@ export class TaskWorker extends EventEmitter {
     lines.push("Complete this task thoroughly and return your results. Be concise but comprehensive.");
 
     return lines.join("\n");
+  }
+
+  /**
+   * Build system message with skill injection for background tasks.
+   * Replicates the message-router pattern: skill body + autonomous guardrails.
+   */
+  private buildSkillSystemMessage(task: AgentTask): SystemMessageConfig | undefined {
+    if (!task.skillBody) return undefined;
+
+    const autonomousGuardrail =
+      "AUTONOMOUS EXECUTION MODE — CRITICAL RULES:\n" +
+      "1. You MUST complete ALL numbered steps by calling tools. Do NOT output text until the FINAL step says to respond.\n" +
+      "2. ANY text response (even 'I will now...') PERMANENTLY ENDS the session. You CANNOT resume.\n" +
+      "3. If a tool fails, skip that step and IMMEDIATELY proceed to the next numbered step by calling the next tool.\n" +
+      "4. NEVER ask the user questions or request confirmation. Execute autonomously.\n" +
+      "5. Call tools in batches of 1-10 per step. Wait for results, then proceed to the next step.";
+
+    return {
+      mode: "append",
+      content: task.skillBody + "\n\n" + autonomousGuardrail,
+    };
+  }
+
+  /**
+   * Resolve custom agents for a task. When agentName is set, find the matching
+   * agent definition and return it as a single-element array for per-session override.
+   */
+  private resolveCustomAgents(task: AgentTask): CustomAgentDefinition[] | undefined {
+    if (!task.agentName) return undefined;
+    const agent = this.customAgentsConfig.find(a => a.name === task.agentName);
+    return agent ? [agent] : undefined;
   }
 
   /**

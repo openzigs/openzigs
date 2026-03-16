@@ -42,6 +42,7 @@
 - [Cloudflare Tunnel](#cloudflare-tunnel)
 - [Productivity Tools](#productivity-tools)
 - [Social Media Tools](#social-media-tools)
+  - [Platform API Setup Guide](#platform-api-setup-guide)
 - [Document Intelligence Tools](#document-intelligence-tools)
 - [Personal Assistant Tools](#personal-assistant-tools)
 - [Granular Tool Control](#granular-tool-control)
@@ -63,6 +64,7 @@
 - [Security Hardening](#security-hardening)
 - [Telegram Notifications for Async Jobs](#telegram-notifications-for-async-jobs)
 - [Pinterest SEO Engine](#pinterest-seo-engine)
+- [TikTok Content Publishing](#tiktok-content-publishing)
 - [Research & Content Synthesis Engine](#research--content-synthesis-engine)
 - [Media Queue & Asset Gallery](#media-queue--asset-gallery)
 
@@ -76,10 +78,18 @@ Before you begin, ensure the following are installed and available:
 |---|---|---|
 | **Node.js** | 22+ | Runtime for the agent server. |
 | **pnpm** | 10+ | Package manager. |
-| **Docker Desktop** | Latest | Runs the agent, Cloudflare Tunnel sidecar, and MCP server sidecars in containers. Required for the full stack. |
-| **Docker Compose** | v2+ | Orchestrates multi-container deployments (bundled with Docker Desktop). |
 | **GitHub Copilot Subscription** | Individual or Business | Required for SDK access. The agent authenticates via OAuth device flow using `@github/copilot-sdk`. |
 | **Chrome** | Any recent version | Required only if you use the `browser-read` or `browser-navigate` tools. |
+| **Docker Desktop** | Latest | *Optional.* Experimental containerized deployment (not fully tested). |
+
+**Platform Support:**
+
+| Platform | Status | Notes |
+|---|---|---|
+| **macOS (Apple Silicon)** | Full Support | All features including AI sidecars (Audio, Image Gen, Music, Video) |
+| **macOS (Intel)** | Partial | Core features work; AI sidecars require Apple Silicon |
+| **Linux** | Core Features | Native Node.js; AI sidecars not available (require Apple Silicon) |
+| **Windows** | Core Features | Native Node.js; AI sidecars not available (require Apple Silicon) |
 
 **Knowledge converter prerequisites (Local Knowledge Base):**
 
@@ -99,14 +109,16 @@ Before you begin, ensure the following are installed and available:
 | `GITHUB_CLIENT_ID` | OAuth app client ID for the device-flow authentication. |
 | `TUNNEL_TOKEN` | Cloudflare Tunnel token for the Docker sidecar (production). |
 | `GOOGLE_APPLICATION_CREDENTIALS` | Path to Google Cloud service account JSON key file. Required for voice TTS. |
-| `SOCIAL_WEBHOOK_VERIFY_TOKEN` | Verify token for Social Brain webhook subscriptions (Instagram, TikTok, etc.). |
-| `INSTAGRAM_ACCESS_TOKEN` | Instagram User Access Token for post context lookup (captions, media type in comment automation). |
+| `SOCIAL_WEBHOOK_VERIFY_TOKEN` | Verify token for Social Brain webhook subscriptions (TikTok, etc.). |
+| `TIKTOK_CLIENT_KEY` | TikTok OAuth Client Key (from [developers.tiktok.com](https://developers.tiktok.com)). Required for TikTok MCP tools. |
+| `TIKTOK_CLIENT_SECRET` | TikTok OAuth Client Secret. |
+| `TIKTOK_ACCESS_TOKEN` | TikTok access token (obtained via OAuth in Admin → TikTok panel). |
 
 **Native MCP Server prerequisites (optional — only needed if using social, document, or personal assistant tools):**
 
 | Requirement | Purpose |
 |---|---|
-| **Python 3.10+** | Social media MCP servers (Instagram, Facebook, Twitter, YouTube, LinkedIn, Reddit) and MarkItDown are Python-based. Each has its own virtualenv under `external/`. |
+| **Python 3.10+** | Social media MCP servers (Twitter, YouTube, LinkedIn, Reddit) and MarkItDown are Python-based. Each has its own virtualenv under `external/`. |
 | **Java 17+ / JBang** | Required for the JDBC Database MCP server. [Install JBang](https://www.jbang.dev/download/). |
 | **Platform API credentials** | Each social platform requires API credentials set as environment variables. See respective `README.md` in `external/`. |
 | **Google Cloud OAuth credentials** | Required for Gmail MCP server. Create an OAuth app in Google Cloud Console. |
@@ -155,13 +167,6 @@ TUNNEL_TOKEN=your-cloudflare-tunnel-token
 GOOGLE_APPLICATION_CREDENTIALS=/path/to/your/service-account-key.json
 
 # ── Optional: Social Platform MCP Servers ──
-# Instagram (Meta Graph API)
-# INSTAGRAM_ACCESS_TOKEN=your-instagram-user-access-token
-# INSTAGRAM_BUSINESS_ACCOUNT_ID=your-instagram-business-account-id
-# FACEBOOK_APP_ID=your-meta-app-id
-# FACEBOOK_APP_SECRET=your-meta-app-secret
-# Facebook Pages (same Meta app)
-# FACEBOOK_PAGE_TOKEN=your-facebook-page-access-token
 # Twitter / X (API v2)
 # TWITTER_BEARER_TOKEN=your-twitter-bearer-token
 # TWITTER_API_KEY=your-twitter-api-key
@@ -176,6 +181,11 @@ GOOGLE_APPLICATION_CREDENTIALS=/path/to/your/service-account-key.json
 # REDDIT_CLIENT_SECRET=your-reddit-client-secret
 # REDDIT_USERNAME=your-reddit-username
 # REDDIT_PASSWORD=your-reddit-password
+# TikTok (Official API v2 — OAuth from Admin panel)
+# TIKTOK_CLIENT_KEY=your-tiktok-client-key
+# TIKTOK_CLIENT_SECRET=your-tiktok-client-secret
+# TIKTOK_ACCESS_TOKEN=  (set automatically via OAuth)
+# TIKTOK_REFRESH_TOKEN= (set automatically via OAuth)
 
 # ── Optional: Pinterest SEO ──
 # PINTEREST_ACCESS_TOKEN=your-pinterest-api-v5-token
@@ -221,13 +231,187 @@ pnpm start
 cd ui && pnpm build && pnpm start
 ```
 
-**Docker (recommended for production):**
+**Docker (experimental — not fully tested):**
 
 ```bash
 docker compose up -d
 ```
 
+> **Note:** Docker deployment is experimental and incomplete. Only the main backend and audio sidecar are defined. The recommended approach is native deployment via `pnpm dev`.
+
 The backend API starts at **http://localhost:3000** and the Next.js UI at **http://localhost:3001** by default. Access the UI at `http://localhost:3001`.
+
+---
+
+## Windows Installation
+
+OpenZigs runs on Windows via native Node.js. The AI sidecars (Audio STT/TTS, Image Generation, Music, Video) require Apple Silicon and are not available on Windows, but all core features (chat, tools, tasks, scheduler, knowledge manager, etc.) work identically.
+
+### Quick Install (PowerShell)
+
+1. Open PowerShell as Administrator
+2. Run the installation script:
+
+```powershell
+# Download and run the installer
+Invoke-WebRequest -Uri "https://raw.githubusercontent.com/mgcronin/openzigs/main/install.ps1" -OutFile "install.ps1"
+.\install.ps1
+```
+
+Or clone and run locally:
+
+```powershell
+git clone https://github.com/mgcronin/openzigs.git
+cd openzigs
+.\install.ps1
+```
+
+### Manual Installation (Windows)
+
+#### 1. Install Prerequisites
+
+Using **winget** (Windows 11 / Windows 10 with App Installer):
+
+```powershell
+# Install Node.js
+winget install --id OpenJS.NodeJS.LTS -e
+
+# Install Git
+winget install --id Git.Git -e
+
+# Install pnpm
+npm install -g pnpm
+```
+
+Or download manually:
+- [Node.js 22+](https://nodejs.org/)
+- [Git for Windows](https://git-scm.com/download/win)
+
+#### 2. Clone the Repository
+
+```powershell
+git clone https://github.com/mgcronin/openzigs.git
+cd openzigs
+```
+
+#### 3. Configure Environment
+
+```powershell
+# Copy the example environment file
+copy .env.example .env
+
+# Edit with your preferred editor
+notepad .env
+```
+
+#### 4. Start the Server
+
+```powershell
+# Terminal 1: Start the backend
+pnpm dev
+
+# Terminal 2: Start the UI
+cd ui
+pnpm dev
+```
+
+#### 5. Access the UI
+
+Open **http://localhost:3001** in your browser.
+
+### Production Build (Windows)
+
+For a production build:
+
+```powershell
+# Build the backend
+pnpm build
+pnpm start
+
+# In another terminal, build and start the UI
+cd ui
+pnpm build
+pnpm start
+
+# Start UI (Terminal 2)
+cd ui
+pnpm dev
+```
+
+### Windows Feature Availability
+
+The following table shows what features are available on Windows:
+
+| Feature | Windows | macOS (Apple Silicon) | Notes |
+|---------|---------|----------------------|-------|
+| **Core Chat & AI** | ✅ | ✅ | Full Copilot SDK support |
+| **MCP Tools** | ✅ | ✅ | All built-in tools work |
+| **Task Engine** | ✅ | ✅ | Background tasks, pipelines |
+| **Scheduler** | ✅ | ✅ | Cron-based job scheduling |
+| **Web UI** | ✅ | ✅ | Full Next.js UI |
+| **Telegram Channel** | ✅ | ✅ | Bot integration |
+| **Discord Channel** | ✅ | ✅ | Bot integration |
+| **Chrome DevTools** | ✅ | ✅ | Browser automation |
+| **Knowledge Manager** | ✅ | ✅ | Document ingestion, RAG |
+| **Social Brain** | ✅ | ✅ | Social inbox, CRM |
+| **Sentinel Monitor** | ✅ | ✅ | Autonomous SRE |
+| **Workbench Editor** | ✅ | ✅ | Rich Markdown editing |
+| **Prompt Library** | ✅ | ✅ | Saved templates |
+| **Web Search** | ✅ | ✅ | Brave Search API |
+| **Docker Deployment** | ⚠️ | ⚠️ | Experimental, not fully tested |
+| **Audio STT (Whisper MLX)** | ❌ | ✅ | Requires Apple Silicon |
+| **Audio TTS (Kokoro)** | ❌ | ✅ | Requires Apple Silicon |
+| **Image Generation (MFLUX)** | ❌ | ✅ | Requires Apple Silicon |
+| **Music Generation (ACE-Step)** | ❌ | ✅ | Requires Apple Silicon |
+| **Music Studio (Demucs/Seed-VC)** | ❌ | ✅ | Requires Apple Silicon |
+| **Video Generation (LTX)** | ❌ | ✅ | Requires Apple Silicon |
+| **Voice Cloning (GPT-SoVITS)** | ❌ | ✅ | Requires Apple Silicon |
+| **Director Mode (Video)** | ⚠️ | ✅ | Render requires sidecars |
+| **Gallery (Media Creation)** | ⚠️ | ✅ | Generation requires sidecars |
+
+**Legend**: ✅ Full support | ⚠️ Partial (UI works, generation unavailable) | ❌ Not available
+
+### Windows-Specific Notes
+
+1. **Path Differences**: Windows uses backslashes (`\`) in paths. The application handles this automatically, but when configuring file paths in `.env`, use forward slashes or escape backslashes:
+   ```
+   GOOGLE_APPLICATION_CREDENTIALS=C:/Users/YourName/.openzigs/service-account.json
+   ```
+
+2. **Data Directory**: OpenZigs stores data in `%USERPROFILE%\.openzigs\` (typically `C:\Users\YourName\.openzigs\`)
+
+3. **Chrome DevTools**: To use browser automation tools, launch Chrome with remote debugging:
+   ```powershell
+   & "C:\Program Files\Google\Chrome\Application\chrome.exe" --remote-debugging-port=9222
+   ```
+
+4. **Media Generation Alternatives**: For AI media generation on Windows, consider:
+   - **Cloud APIs**: Use external image/audio/video generation APIs
+   - **Remote macOS Worker**: Run sidecars on a Mac and connect via network
+   - **WSL2**: Run the full stack in Windows Subsystem for Linux
+
+5. **WSL Alternative**: You can also run OpenZigs in WSL2 (Windows Subsystem for Linux) for a Unix-like experience:
+   ```bash
+   # In WSL2 terminal
+   git clone https://github.com/mgcronin/openzigs.git
+   cd openzigs
+   ./install.sh
+   ```
+
+### Uninstalling (Windows)
+
+```powershell
+.\uninstall.ps1
+```
+
+Or manually:
+
+```powershell
+cd $env:USERPROFILE\.openzigs
+docker compose down -v
+cd ..
+Remove-Item -Recurse -Force .openzigs
+```
 
 ---
 
@@ -403,7 +587,7 @@ Understanding when to use each:
 |-------|-------------|-----------------|
 | **Media Director** 🎬 | Creates images (Flux), videos (LTX-2), audio (F5-TTS), music (ACE-Step). Handles character LoRA identity. | "Create a 4-second cyberpunk video" / "Generate a portrait with character Alex" / "Show images from this week" |
 | **Remix Engineer** 🎵 | Audio stem separation, AI instrument replacement, and auto-mastering via the Remix Lab pipeline. | "Remix my track — replace drums with strings" / "Analyze stems of yesterday's upload" / "Master with a warm lofi vibe" |
-| **Platform Manager** 📡 | Scheduling, social media publishing (Instagram, Twitter, LinkedIn, YouTube, Facebook, Reddit), knowledge base ops. | "Schedule a daily Instagram post at 9am" / "Publish the latest image to Twitter" / "List all scheduled jobs" |
+| **Platform Manager** 📡 | Scheduling, social media publishing (Twitter, LinkedIn, YouTube, Reddit, TikTok), knowledge base ops. | "Schedule a daily Twitter post at 9am" / "Publish the latest image to Twitter" / "List all scheduled jobs" |
 | **Content Creator** ✍️ | Blog-to-video, voiceovers (54+ voices), YouTube Shorts, brand voice enforcement. | "Convert this blog to a narrated video" / "Create a Short from the latest upload" / "Use the warm female voice" |
 | **Knowledge Curator** 📚 | RAG knowledge base ingestion, semantic search, presentation management, quiz generation. | "Ingest this article" / "Search for machine learning content" / "Generate a quiz for chapter 3" |
 | **System Operator** 🛡️ | Sentinel SRE monitoring, webhook management, worker node health, system diagnostics. | "Check all worker node health" / "Show the latest Sentinel digest" / "Create a CI/CD webhook" |
@@ -415,14 +599,14 @@ Understanding when to use each:
 
 ```
 You: Create a motivational image with a sunrise background, add the text
-"New beginnings start now", then schedule it to post to Instagram and
+"New beginnings start now", then schedule it to post to LinkedIn and
 Twitter every Monday at 8am.
 ```
 
 What happens behind the scenes:
 1. **Media Director** skill activates → calls `submit-media-job` with a Flux image generation job
 2. **Platform Manager** skill activates → calls `schedule-job` with cron `0 8 * * 1`
-3. The AI chains social publishing tools for Instagram and Twitter into the scheduled job
+3. The AI chains social publishing tools for LinkedIn and Twitter into the scheduled job
 4. You get confirmation with the schedule and a preview of the generated image
 
 ##### Example 2: Remixing a Track (Remix Engineer)
@@ -564,6 +748,32 @@ allowed-tools: tool-a tool-b tool-c
 - Use specific keywords in the `description` field for accurate task matching
 - The `allowed-tools` field pre-approves tools the skill may use
 
+#### Skill Editor (Admin UI)
+
+![Skill Editor](images/skill-editor.png)
+
+The Skills page at `/skills` (under **Automation → Skills**) provides a unified interface for browsing, creating, and managing skills:
+
+- **Gallery view** — browse all loaded skills (built-in and user-created) with icons, descriptions, tool badges, and "Try It" prompts.
+- **Create skills** — click "New Skill" to open the editor with a starter SKILL.md template. Enter a name, write the skill content, select allowed tools, and save.
+- **Edit user skills** — click any user-created skill to modify its content. Built-in skills are read-only.
+- **Live validation** — the editor validates SKILL.md frontmatter in real-time, checking for required `name` field and valid tool references.
+- **Delete** user skills with confirmation dialog.
+- **Real-time updates** — when skills are created, updated, or deleted, all connected clients receive a Socket.IO `skills:updated` event.
+- **Ask AI** — get help understanding skills from the AI assistant.
+
+User skills are stored in `~/.openzigs/skills/{name}/SKILL.md` and are hot-reloaded into active sessions via `copilot.addSkillDirectory()`.
+
+#### Suggested Skill on Prompts
+
+Saved prompts can specify a **Suggested Skill** — a skill that should be activated when the prompt executes. This is configured in the Library editor via the "Suggested Skill" dropdown. When a scheduled job runs a prompt with a suggested skill:
+
+1. The skill's `SKILL.md` content is loaded and injected as a system message prefix.
+2. The skill's `allowed-tools` are merged with the prompt's `preferredTools` and the job's `allowedTools`.
+3. All other skills are disabled for that execution via `disabledSkills`, ensuring focused tool routing.
+
+This enables **skills-first automation** — prompts carry domain expertise, not just instructions.
+
 ### Library (Saved Prompts)
 
 ![Library — saved prompt templates with variable highlighting](images/library-prompts.png)
@@ -579,7 +789,32 @@ The library at `/library` provides a visual interface for managing saved prompt 
 - **Use as System Prompt** — Apply any saved prompt as the active system instruction in the AI Personality panel.
 - **Export** — Download any prompt as a portable `.openzigs-template.json` file for sharing across instances.
 - **Import** — Upload a `.openzigs-template.json` file via the Import Wizard to add a shared template to your library.
+- **From Template** — Create a prompt from pre-built pipeline templates via the Pipeline Template Gallery.
+- **Schedule This Prompt** — Quick-link button to create a scheduled job pre-filled with the prompt's name, skill, and tool scoping.
+- **Template autocomplete** — Type `{{` in the template editor to trigger an autocomplete popup with built-in variables (`today`, `now`, `day_of_week`, `month`, `year`) and custom variables detected from the template.
+- **Live preview** — See how built-in variables resolve in real-time below the template editor.
+- **Validation warnings** — Unresolved `{{variables}}` that have no default value show amber warning badges.
 - **Delete** with confirmation.
+
+#### Pipeline Template Gallery
+
+![Library Page](images/library-page.png)
+
+The Pipeline Template Gallery provides ready-to-use multi-stage workflow templates. Click **From Template** in the Library page to open the gallery.
+
+**Built-in templates:**
+
+| Template | Stages | Description |
+|----------|--------|-------------|
+| 🔬 Research & Summarize | 2 | Deep research then structured summary report |
+| 🔍 Code Review Pipeline | 3 | Analyze structure, identify issues, generate report |
+| ✍️ Content Creation | 3 | Trend research, draft content, polish and format |
+| 📊 Competitive Analysis | 3 | Gather intelligence, compare features, strategic report |
+| 🔔 Monitor & Alert | 2 | Check sources, evaluate and generate alerts |
+
+Each template includes pre-configured stages with tool scoping, timeouts, and `{{variable}}` placeholders. Clicking a template creates a new saved prompt with all stages and variables pre-filled.
+
+**Custom templates** can be created via the API (`POST /api/admin/pipeline-templates`) and are stored in `~/.openzigs/pipeline-templates.json`.
 
 #### Pipeline Stages on Prompts
 
@@ -835,9 +1070,14 @@ The scheduler at `/scheduler` manages cron-based automated jobs:
 - **Model selection** — optionally choose a model override per prompt or pipeline job.
 - **AI Scheduler Assistant** — describe the schedule in plain English and auto-fill fields (uses `gpt-5-mini`).
 - **Cron preview** — visual breakdown of minute, hour, day, month, weekday fields.
+- **Visual Cron Builder** — toggle between Simple mode (frequency presets, time picker, day-of-week toggles, "Next 3 Runs" preview) and Advanced mode (raw cron expression input).
+- **Skill selector** — choose a skill to activate for the job. Auto-populates from the linked prompt's `suggestedSkill`. Shows skill tool badges and icon.
 - **Enable/disable** individual jobs with toggle switches.
 - **Run Now** — trigger any job immediately with the ▶ Run button, bypassing the cron schedule.
+- **Dry-Run Preview** — structured preview showing resolved prompt, interpolated variables, skill info with token estimate, tool scoping, pipeline stages, and next execution times.
+- **Execution History** — expandable section on each job card showing recent task runs with status, duration, and links to task details.
 - **Auto-Approve Tools** — for prompt/shell/custom jobs, specify tool names that bypass approval gating. For **pipeline jobs**, auto-approve tools are **automatically derived** from the union of all stage-level tool restrictions — any tool a stage uses is auto-approved during scheduled runs.
+- **Create from Library** — navigate to `/scheduler?createFrom=promptName` to auto-fill the job form from a linked prompt, including skill, tools, and auto-approve configuration.
 
 ![New Job form — Pipeline action type with model selector and wizard/manual chooser](images/scheduler-pipeline-new-job.png)
 - **Live execution events** via Socket.IO — see when jobs fire in real time.
@@ -952,6 +1192,93 @@ The scheduler supports **pipeline** as a job action type. A pipeline job execute
 4. Review the AI's rationale and the generated pipeline in the visual editor.
 5. Make adjustments if needed, then confirm to create the pipeline.
 6. You can also click **Skip to Manual Editor** at any time to switch to manual mode.
+
+#### Outbox Action Type (Scheduled Publishing)
+
+The scheduler supports an **outbox** action type that bridges the scheduler with the [Outbox](#outbox) system for recurring social media publishing. Instead of invoking an AI prompt, outbox jobs create outbox queue items on a schedule, which are then published by the outbox poller and Universal Publisher skill.
+
+**Creating an outbox job:**
+
+1. In the New Job form, select **Outbox (Publish)** as the action type.
+2. **Platforms** — check one or more connected social platforms (Twitter, Pinterest, LinkedIn, etc.). Only platforms with configured credentials appear.
+3. **Content Template** — write the post content. Use dynamic variables (see below) for evergreen, date-aware content.
+4. **Review Required** — when enabled, items are queued with a hold status so you can review and edit them in the [Outbox page](#outbox) before publishing. When disabled, items are published automatically.
+5. Set your cron schedule, timezone, and optionally enable notifications (see below).
+6. Click **Create Job**.
+
+**Dynamic variables in content templates:**
+
+The same built-in variables available in prompt templates work in outbox content templates:
+
+| Variable | Example output |
+|---|---|
+| `{{today}}` | `2026-03-04` |
+| `{{now}}` | `2026-03-04T14:30:00.000Z` |
+| `{{day_of_week}}` | `Tuesday` |
+| `{{month}}` | `March` |
+| `{{year}}` | `2026` |
+
+**Example: Weekly Twitter recap**
+
+- **Name:** `weekly-twitter-recap`
+- **Action Type:** Outbox (Publish)
+- **Platforms:** Twitter
+- **Content Template:** `🚀 Week in review for {{day_of_week}}, {{today}} — Here's what we shipped this week in OpenZigs!`
+- **Review Required:** ✅ (review before posting)
+- **Schedule:** Every Friday at 10:00 AM (`0 10 * * 5`)
+- **Notifications:** Telegram ✅
+
+Each Friday at 10 AM, an outbox item is created with the resolved content. Because **Review Required** is enabled, the item waits in the outbox for your approval. After you review and click **Publish Now**, it's sent to Twitter. A Telegram notification lets you know the job ran.
+
+**Example: Daily multi-platform motivational post**
+
+- **Name:** `daily-motivation`
+- **Action Type:** Outbox (Publish)
+- **Platforms:** Twitter, LinkedIn
+- **Content Template:** `✨ Good {{day_of_week}} morning! Start your day with focus and intention. #motivation #{{day_of_week}}`
+- **Review Required:** ❌ (auto-publish)
+- **Schedule:** Every day at 8:00 AM (`0 8 * * *`)
+
+This creates outbox items for both Twitter and LinkedIn every morning, which are automatically picked up and published by the outbox poller.
+
+**Example: AI-generated content (Generation Prompt)**
+
+Instead of a static content template, you can provide a **Generation Prompt** that instructs the AI to create fresh content each time the job fires:
+
+- **Name:** `daily-ai-trends`
+- **Action Type:** Outbox (Publish)
+- **Platforms:** Twitter, LinkedIn
+- **Generation Prompt:** `Write a concise, engaging post about the latest AI trends for {{today}}.`
+- **Review Required:** ✅
+- **Schedule:** Every weekday at 9:00 AM (`0 9 * * 1-5`)
+
+When the job fires, the scheduler delegates to TaskEngine which generates unique content via AI. The `generationPrompt` supports the same dynamic variables as content templates. If TaskEngine is unavailable, it falls back to the static content template.
+
+**Editing outbox items:**
+
+Pending and canceled outbox items can be edited from the `/outbox` page. Click the **pencil icon** on any editable item to change the title, content, agent context, or scheduled time. Processing and published items cannot be edited.
+
+**Batch creation:**
+
+The outbox API supports creating up to 50 items in a single request via `POST /api/admin/outbox/batch`. This is useful for queuing an entire week of posts at once.
+
+#### Job Completion Notifications
+
+Any scheduled job (prompt, pipeline, shell, custom, or outbox) can send notifications when it completes or fails. Notifications are sent to the messaging channels you have configured.
+
+**Setting up notifications:**
+
+1. First, enable **Telegram** and/or **Discord** in Admin → Channels.
+2. In the scheduler job form, a **Notifications** section appears with checkboxes for each enabled channel.
+3. Check the channels you want to receive notifications on.
+4. Save the job.
+
+**Notification format:**
+
+- **Success:** `✅ Scheduled job "weekly-recap" completed successfully`
+- **Failure:** `❌ Scheduled job "weekly-recap" failed: <error message>`
+
+Notifications are sent after every execution, whether triggered by the cron schedule or a manual "Run Now".
 
 #### Global Tool Approval Lock
 
@@ -2796,7 +3123,7 @@ This starts the complete stack:
 | `tunnel` | Cloudflare Tunnel sidecar | — (proxies to `agent:3000`) |
 | `audio-sidecar` | Local TTS + STT (MLX) | 5006 |
 
-All MCP tool servers now run as **native subprocesses** via `LocalMcpServerManager` (12 servers: word, markitdown, gmail, database, github, calendar, instagram, facebook, twitter, youtube, linkedin, reddit). They are managed automatically by the agent — no Docker containers needed.
+All MCP tool servers now run as **native subprocesses** via `LocalMcpServerManager` (11 servers: word, markitdown, gmail, database, github, calendar, twitter, youtube, linkedin, reddit, tiktok). They are managed automatically by the agent — no Docker containers needed.
 
 ### Starting Individual Services
 
@@ -2974,12 +3301,11 @@ Social media tools are powered by **native MCP servers** — Python subprocess s
 
 | Platform | MCP Server | Publish Tool | Content Types | Key Tools |
 |---|---|---|---|---|
-| **Instagram** | `ig-mcp` | `instagram-publish-media` | Image, video (Reels), with caption | 11 tools: profile, posts, insights, DMs, comments |
-| **Facebook** | `fb-mcp` | `facebook-publish-post` | Text, link, photo | 10 tools: page info, posts, Messenger, insights, comments |
 | **Twitter/X** | `twitter-mcp` | `twitter-post-tweet` | Text (280 chars), replies | 8 tools: tweets, search, DMs, user lookup |
 | **LinkedIn** | `linkedin-mcp` | `linkedin-create-post` | Text (PUBLIC or CONNECTIONS) | 8 tools: profile, posts, company, messages, comments |
 | **Reddit** | `reddit-mcp` | `reddit-submit-post` | Text or link post to a subreddit | 8 tools: subreddits, posts, comments, search, inbox |
 | **YouTube** | `youtube-mcp` | `youtube-upload-video` | Video file upload (resumable) with metadata | 8 tools: channel, videos, comments, search, analytics, **upload** |
+| **TikTok** | `tiktok-mcp` | — (read-only) | Search, post details, subtitles | 3 tools: search, get post details, get subtitles |
 
 > **Note — YouTube Upload Quota:** Each `youtube-upload-video` call consumes **1,600 quota units** (default daily quota: 10,000 units), limiting uploads to **~6 per day**. The upload uses the YouTube Data API v3 resumable upload protocol — provide a path to a local video file and the tool handles chunked transfer automatically. Uploads default to **private** privacy. Set `privacy_status` to `"public"` or `"unlisted"` as needed. Requires an OAuth2 token with the `youtube.upload` scope — see [YouTube OAuth Setup](#youtube-oauth-setup) in the Social Brain Guide.
 
@@ -2991,20 +3317,17 @@ You can publish content to any supported platform by asking the agent in chat:
 You: Post "Just shipped a new feature! 🚀" to LinkedIn
 Agent: [calls linkedin-create-post] ✅ Posted to LinkedIn
 
-You: Publish an Instagram post with caption "Summer vibes ☀️" using this image: https://example.com/photo.jpg
-Agent: [calls instagram-publish-media] ✅ Published to Instagram
-
 You: Tweet "Check out our latest blog post: https://example.com/blog"
 Agent: [calls twitter-post-tweet] ✅ Tweeted
 
 You: Submit a post to r/programming titled "My new open-source project" with a link
 Agent: [calls reddit-submit-post] ✅ Submitted to r/programming
 
-You: Post "Excited to announce our Series A! 🎉" to Facebook
-Agent: [calls facebook-publish-post] ✅ Posted to Facebook Page
-
 You: Upload /path/to/video.mp4 to YouTube titled "Product Demo" with tags ["demo", "product"]
 Agent: [calls youtube-upload-video] ✅ Uploaded to YouTube (video ID: abc123, status: private)
+
+You: Search TikTok for "AI coding tools"
+Agent: [calls tiktok_search] Found 10 results for "AI coding tools"
 ```
 
 The agent automatically selects the correct platform-specific tool and handles parameter mapping. For a comprehensive list of all tools per platform, see the [Social Brain Guide](SOCIAL_BRAIN_GUIDE.md#platform-specific-tools).
@@ -3012,6 +3335,474 @@ The agent automatically selects the correct platform-specific tool and handles p
 ### Configuration
 
 Each MCP server requires platform-specific API credentials set as environment variables in your `.env` file (see [Environment Variables](#3-configure-environment)). Servers start automatically when credentials are present. Manage server status and restart servers from the Admin UI under **MCP Servers**.
+
+### Platform API Setup Guide
+
+Each social platform requires its own set of API credentials. This section walks through every step needed to get each platform working. All servers require **Python 3.10+** with a virtual environment.
+
+#### Python Virtual Environment Setup (All Platforms)
+
+Every social media MCP server needs its own Python venv. Run this for each platform you want to enable:
+
+```bash
+# Replace {platform} with: twitter-mcp, youtube-mcp, linkedin-mcp, reddit-mcp, ig-mcp, fb-mcp
+cd external/{platform}
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+deactivate
+```
+
+After creating the venv and setting the required environment variables in `.env`, restart OpenZigs and the server will start automatically.
+
+---
+
+#### Twitter / X
+
+**Difficulty:** Easy | **Token Expiry:** None (bearer tokens are permanent) | **App Review:** Not required for personal use
+
+**Required Environment Variables:**
+
+| Variable | Required | Purpose |
+|---|---|---|
+| `TWITTER_BEARER_TOKEN` | Yes | API v2 read/write access |
+| `TWITTER_API_KEY` | No | OAuth 1.0a (for DMs) |
+| `TWITTER_API_SECRET` | No | OAuth 1.0a (for DMs) |
+| `TWITTER_ACCESS_TOKEN` | No | OAuth 1.0a user token |
+| `TWITTER_ACCESS_TOKEN_SECRET` | No | OAuth 1.0a user token secret |
+
+**Setup Steps:**
+
+1. Go to the [X Developer Portal](https://developer.x.com/en/portal/dashboard).
+2. Sign in and create a new **Project** and **App**.
+3. Under **Keys and Tokens**, copy the **Bearer Token**.
+4. (Optional) Generate **API Key + Secret** and **Access Token + Secret** for OAuth 1.0a operations like DMs.
+5. Add to your `.env`:
+   ```dotenv
+   TWITTER_BEARER_TOKEN=AAAAAAAAAAAAAAAAAAAAAAxxxxxxx
+   # Optional for DMs:
+   # TWITTER_API_KEY=xxxxxx
+   # TWITTER_API_SECRET=xxxxxx
+   # TWITTER_ACCESS_TOKEN=xxxxxx
+   # TWITTER_ACCESS_TOKEN_SECRET=xxxxxx
+   ```
+6. Create the venv: `cd external/twitter-mcp && python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt && deactivate`
+
+**Rate Limits:** Free tier allows 500 tweets/month and 10k reads. Basic tier ($100/month) increases to 10k reads/month. The Pro tier ($5,000/month) adds webhook access.
+
+**Available Tools (8):** `twitter_post_tweet`, `twitter_send_dm`, `twitter_search_tweets`, `twitter_get_user_info`, `twitter_get_user_tweets`, `twitter_get_tweet`, `twitter_get_followers`, `twitter_get_following`
+
+---
+
+#### YouTube
+
+**Difficulty:** Medium | **Token Expiry:** OAuth tokens expire in 1 hour (refresh token persists) | **App Review:** Required for public apps; unverified apps limited to 100 test users
+
+**Required Environment Variables:**
+
+| Variable | Required | Purpose |
+|---|---|---|
+| `YOUTUBE_API_KEY` | Yes | Read operations (list videos, comments, search) |
+| `YOUTUBE_OAUTH_TOKEN` | Only for writes | Upload videos, reply to comments |
+
+**Setup Steps:**
+
+1. Go to [Google Cloud Console](https://console.cloud.google.com/).
+2. Create a new project (or select existing).
+3. Navigate to **APIs & Services → Library**.
+4. Search for **YouTube Data API v3** and click **Enable**.
+5. Go to **Credentials → Create Credentials → API Key**. Copy the key.
+6. Add to your `.env`:
+   ```dotenv
+   YOUTUBE_API_KEY=AIzaSy_xxxxxxxxxxxxxxxxxxxxxxxx
+   ```
+
+**For video uploads and comment replies (OAuth2):**
+
+7. In **Credentials → Create Credentials → OAuth 2.0 Client ID**.
+8. Application type: **Desktop App**.
+9. Go to **OAuth consent screen** → Add scopes:
+   - `https://www.googleapis.com/auth/youtube` (full access)
+   - OR `https://www.googleapis.com/auth/youtube.upload` (upload only)
+10. Use the [Google OAuth Playground](https://developers.google.com/oauthplayground/) to generate an access token:
+    - Click the gear icon → Check "Use your own OAuth credentials" → Enter your Client ID and Secret.
+    - Select **YouTube Data API v3** scopes → Authorize → Exchange for tokens.
+11. Copy the access token and add to `.env`:
+    ```dotenv
+    YOUTUBE_OAUTH_TOKEN=ya29.a0_xxxxxxxxxxxxxxxxxxxxxxxx
+    ```
+12. Create the venv: `cd external/youtube-mcp && python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt && deactivate`
+
+**Quota:** 10,000 units/day. Video uploads cost **1,600 units** each (~6 uploads/day max). Reads cost 1–5 units each.
+
+> **Note:** OAuth tokens expire after 1 hour. For production use, implement a refresh token flow. Unverified apps can only upload **private** videos.
+
+**Available Tools (8):** `yt_upload_video`, `yt_reply_to_comment`, `yt_get_channel_videos`, `yt_get_video_comments`, `yt_search_videos`, `yt_get_channel_info`, `yt_get_video_details`, `yt_get_channel_analytics`
+
+---
+
+#### LinkedIn
+
+**Difficulty:** Medium | **Token Expiry:** 60 days (auto-refreshable) | **App Review:** Required for DM access (Marketing API Partner)
+
+**Required Environment Variables:**
+
+| Variable | Required | Purpose |
+|---|---|---|
+| `LINKEDIN_ACCESS_TOKEN` | Yes | API v2 access |
+| `LINKEDIN_CLIENT_ID` | Recommended | For automatic token refresh |
+| `LINKEDIN_CLIENT_SECRET` | Recommended | For automatic token refresh |
+| `LINKEDIN_PERSON_ID` | No | Auto-detected from token |
+
+**Setup Steps:**
+
+1. Go to [LinkedIn Developer Portal](https://www.linkedin.com/developers/apps/) and create a new app.
+2. Request these products:
+   - **Sign In with LinkedIn using OpenID Connect** (scopes: `openid`, `profile`, `email`)
+   - **Share on LinkedIn** (scope: `w_member_social`) — needed for posting
+3. In the **Auth** tab, add redirect URLs:
+   - `http://localhost:3000/api/admin/linkedin/oauth/callback`
+4. Copy **Client ID** and **Client Secret** from the Auth tab.
+
+**Get Access Token (Easiest Method — Admin UI):**
+
+5. Add your Client ID and Secret to `.env`:
+   ```dotenv
+   LINKEDIN_CLIENT_ID=xxxxxxxxxxxxxxxx
+   LINKEDIN_CLIENT_SECRET=xxxxxxxxxxxxxxxx
+   ```
+6. Start OpenZigs and navigate to **Admin → MCP Servers → LinkedIn**.
+7. Click **Connect LinkedIn** → Sign in and approve permissions.
+8. The access token is saved automatically.
+
+**Get Access Token (Manual Method):**
+
+5. Visit: `https://www.linkedin.com/oauth/v2/authorization?response_type=code&client_id={CLIENT_ID}&redirect_uri=http://localhost:3000/api/admin/linkedin/oauth/callback&scope=openid%20profile%20email%20w_member_social`
+6. Sign in and approve → You'll be redirected with an auth code.
+7. OpenZigs exchanges the code for tokens automatically.
+
+**Token Lifecycle:** Access tokens last 60 days and are auto-refreshed when they expire within 7 days (if Client ID/Secret are configured).
+
+> **Note:** DM sending (`linkedin_send_message`) requires **Marketing API Partner** status, which involves a separate application process with LinkedIn.
+
+**Available Tools (8):** `linkedin_create_post`, `linkedin_reply_to_comment`, `linkedin_send_message`, `linkedin_get_profile`, `linkedin_get_posts`, `linkedin_get_company_info`, `linkedin_get_connections`, `linkedin_get_messages`
+
+---
+
+#### Reddit
+
+**Difficulty:** Easy | **Token Expiry:** None (auto-refreshed internally) | **App Review:** Not required
+
+**Required Environment Variables:**
+
+| Variable | Required | Purpose |
+|---|---|---|
+| `REDDIT_CLIENT_ID` | Yes | App client ID |
+| `REDDIT_CLIENT_SECRET` | Yes | App client secret |
+| `REDDIT_USERNAME` | Yes | Bot account username |
+| `REDDIT_PASSWORD` | Yes | Bot account password |
+
+**Setup Steps:**
+
+1. Go to [reddit.com/prefs/apps](https://www.reddit.com/prefs/apps).
+2. Scroll to the bottom and click **create another app...**.
+3. Fill in details:
+   - **Name:** e.g., "OpenZigs Bot"
+   - **App type:** Select **script**
+   - **Redirect URI:** `http://localhost:3000` (required field, not used for script apps)
+4. Click **Create app**.
+5. Note the credentials:
+   - **Client ID:** The string under the app name (e.g., `a1b2c3d4e5f6g7`)
+   - **Client Secret:** The "secret" field
+6. Add to your `.env`:
+   ```dotenv
+   REDDIT_CLIENT_ID=a1b2c3d4e5f6g7
+   REDDIT_CLIENT_SECRET=xxxxxxxxxxxxxxxxxxxxxxxx
+   REDDIT_USERNAME=your_bot_username
+   REDDIT_PASSWORD=your_bot_password
+   ```
+7. Create the venv: `cd external/reddit-mcp && python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt && deactivate`
+
+**Rate Limits:** 60 requests/minute per OAuth token.
+
+> **Tip:** Consider creating a separate Reddit account for your bot rather than using your personal account.
+
+**Available Tools (8):** `reddit_submit_post`, `reddit_reply_to_comment`, `reddit_send_message`, `reddit_get_subreddit_posts`, `reddit_get_post_comments`, `reddit_search`, `reddit_get_inbox`, `reddit_get_user_info`
+
+---
+
+#### Instagram (Meta Graph API)
+
+**Difficulty:** Hard | **Token Expiry:** 60 days (must be refreshed) | **App Review:** Required for DM access
+
+Instagram publishing uses the **Meta Graph API** and requires a Facebook Developer account, a Facebook Page, and an Instagram Professional account linked to that page.
+
+**Required Environment Variables:**
+
+| Variable | Required | Purpose |
+|---|---|---|
+| `INSTAGRAM_ACCESS_TOKEN` | Yes | Long-lived user token (60-day expiry) |
+| `FACEBOOK_APP_ID` | Yes | Meta App ID |
+| `FACEBOOK_APP_SECRET` | Yes | Meta App Secret |
+| `INSTAGRAM_BUSINESS_ACCOUNT_ID` | No | Auto-detected from linked page |
+
+**Prerequisites:**
+- An **Instagram Professional Account** (Business or Creator) — free to switch in Instagram app settings
+- A **Facebook Page** connected to that Instagram account
+- A **Meta Developer Account** at [developers.facebook.com](https://developers.facebook.com)
+
+**Step 1 — Switch Instagram to Professional:**
+
+1. Open the Instagram app → Profile → **Settings and privacy**.
+2. Scroll to **Account type and tools → Switch to professional account**.
+3. Choose a category (e.g., "Software Company") and select **Business** or **Creator**.
+
+**Step 2 — Create a Facebook Page (if you don't have one):**
+
+1. Go to [facebook.com/pages/create](https://www.facebook.com/pages/create).
+2. Enter a page name and category → Click **Create Page**.
+
+**Step 3 — Link Instagram to Facebook Page:**
+
+1. Go to [business.facebook.com](https://business.facebook.com).
+2. Navigate to your business portfolio → **Settings → Instagram accounts**.
+3. Click **Connect Instagram** → Log into Instagram and authorize.
+4. Confirm the connection.
+
+**Step 4 — Create a Meta App:**
+
+1. Go to [developers.facebook.com](https://developers.facebook.com) → **My Apps → Create App**.
+2. App type: **Business** (or **Consumer** for personal use).
+3. Fill in the app name and contact email.
+4. Add products:
+   - **Instagram Graph API** → Click **Set Up**
+5. Go to **Settings → Basic** and copy:
+   - **App ID** → `FACEBOOK_APP_ID`
+   - **App Secret** → `FACEBOOK_APP_SECRET`
+
+**Step 5 — Generate Access Tokens:**
+
+1. Go to the [Graph API Explorer](https://developers.facebook.com/tools/explorer/).
+2. Select your app from the dropdown.
+3. Click **Generate Access Token** and approve the required permissions:
+   - `instagram_basic`
+   - `instagram_content_publish`
+   - `pages_show_list`
+   - `pages_read_engagement`
+   - `business_management`
+4. Copy the short-lived token.
+5. Exchange for a **long-lived token** (lasts 60 days):
+   ```bash
+   curl "https://graph.facebook.com/v19.0/oauth/access_token?\
+   grant_type=fb_exchange_token&\
+   client_id=YOUR_APP_ID&\
+   client_secret=YOUR_APP_SECRET&\
+   fb_exchange_token=YOUR_SHORT_LIVED_TOKEN"
+   ```
+6. Copy the `access_token` from the response.
+
+**Step 6 — Get Your Instagram Business Account ID:**
+
+```bash
+# Get your Page ID and Page Token
+curl "https://graph.facebook.com/me/accounts?access_token=YOUR_LONG_LIVED_TOKEN"
+
+# Get Instagram Business Account ID from the Page
+curl "https://graph.facebook.com/YOUR_PAGE_ID?fields=instagram_business_account&access_token=YOUR_PAGE_TOKEN"
+```
+
+**Step 7 — Add to `.env`:**
+
+```dotenv
+FACEBOOK_APP_ID=123456789012345
+FACEBOOK_APP_SECRET=abcdef1234567890abcdef1234567890
+INSTAGRAM_ACCESS_TOKEN=EAAL...your-long-lived-token...
+INSTAGRAM_BUSINESS_ACCOUNT_ID=17841400000000000
+```
+
+**Step 8 — Create the venv:**
+
+```bash
+cd external/ig-mcp && python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt && deactivate
+```
+
+> **Important:** Long-lived tokens expire after 60 days. Refresh before expiry with:
+> ```bash
+> curl "https://graph.facebook.com/v19.0/oauth/access_token?grant_type=fb_exchange_token&client_id=APP_ID&client_secret=APP_SECRET&fb_exchange_token=CURRENT_LONG_LIVED_TOKEN"
+> ```
+
+> **Publishing Constraint:** Instagram requires media (images/videos) to be hosted at **publicly accessible URLs**. Instagram's servers fetch the media from the URL you provide — local file paths will not work. Use a service like Cloudinary, S3, or any public web server.
+
+> **Image Aspect Ratio Requirements:** Instagram enforces strict aspect ratio rules. Images must be between **4:5** (portrait, e.g., 1080×1350) and **1.91:1** (landscape, e.g., 1080×566). The recommended size is **1:1** (square, 1080×1080). Images outside this range will be **rejected** by the API — they are NOT auto-cropped. You must resize or crop images before providing the URL. For Unsplash images, you can append `?w=1080&h=1080&fit=crop` to the URL.
+
+**Rate Limits:** 200 API calls/hour per token. Publishing limited to **25 posts/day**.
+
+**Available Tools (12):** `get_profile_info`, `get_media_posts`, `get_media_insights`, `publish_media`, `get_account_pages`, `get_account_insights`, `validate_access_token`, `get_conversations`, `get_conversation_messages`, `reply_to_comment`, `get_media_comments`, `send_dm`
+
+---
+
+#### Facebook Pages (Meta Graph API)
+
+**Difficulty:** Hard | **Token Expiry:** Page tokens are permanent (if generated from a long-lived user token) | **App Review:** Not required for page owner
+
+Facebook Page publishing shares the same Meta App as Instagram. If you already set up Instagram above, you can reuse the same app.
+
+**Required Environment Variables:**
+
+| Variable | Required | Purpose |
+|---|---|---|
+| `FACEBOOK_PAGE_TOKEN` | Yes | Page-specific access token |
+| `FACEBOOK_APP_ID` | Recommended | For token validation |
+| `FACEBOOK_APP_SECRET` | Recommended | For token validation |
+| `FACEBOOK_PAGE_ID` | No | Auto-detected from token |
+
+**Setup Steps (if you already have a Meta App from Instagram setup):**
+
+1. You already have your **App ID** and **App Secret** from the Instagram setup above.
+
+2. Get a **Page Access Token** using the long-lived user token:
+   ```bash
+   curl "https://graph.facebook.com/me/accounts?access_token=YOUR_LONG_LIVED_USER_TOKEN"
+   ```
+   This returns a list of pages you manage. Each entry contains:
+   - `name` — Page name
+   - `access_token` — **Page token** (permanent when derived from a long-lived user token)
+   - `id` — Page ID
+
+3. Copy the `access_token` and `id` for your page.
+
+**Setup Steps (starting from scratch):**
+
+1. Follow Steps 1–5 of the [Instagram setup](#instagram-meta-graph-api) to create a Meta App and generate tokens.
+2. When selecting permissions in the Graph API Explorer, also include:
+   - `pages_manage_posts`
+   - `pages_manage_metadata`
+   - `pages_read_user_content`
+3. Get your Page Token as described above.
+
+**Add to `.env`:**
+
+```dotenv
+FACEBOOK_APP_ID=123456789012345
+FACEBOOK_APP_SECRET=abcdef1234567890abcdef1234567890
+FACEBOOK_PAGE_TOKEN=EAAL...your-page-token...
+FACEBOOK_PAGE_ID=955369944333833
+```
+
+**Create the venv:**
+
+```bash
+cd external/fb-mcp && python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt && deactivate
+```
+
+> **Note:** Page tokens generated from a long-lived user token **do not expire**. However, if the user who generated them loses admin access to the page, the token becomes invalid.
+
+**Available Tools (10):** `fb_get_page_info`, `fb_get_page_posts`, `fb_get_post_insights`, `fb_publish_post`, `fb_get_conversations`, `fb_get_conversation_messages`, `fb_send_message`, `fb_get_page_insights`, `fb_get_post_comments`, `fb_reply_to_comment`
+
+---
+
+#### Pinterest
+
+**Difficulty:** Medium | **Token Expiry:** 30 days (refresh token lasts 365 days) | **App Review:** Not required for personal sandbox
+
+**Required Environment Variables:**
+
+| Variable | Required | Purpose |
+|---|---|---|
+| `PINTEREST_ACCESS_TOKEN` | Yes | API v5 access token |
+| `PINTEREST_AD_ACCOUNT_ID` | No | For ads analytics only |
+
+**Setup Steps:**
+
+1. Go to [developers.pinterest.com](https://developers.pinterest.com/) and create a developer account.
+2. Create a new **App** → Note the **App ID** and **App Secret**.
+3. Generate an access token via the [Pinterest Token Generator](https://developers.pinterest.com/tools/access-token/) or use OAuth 2.0 flow:
+   - Authorize URL: `https://www.pinterest.com/oauth/?client_id=APP_ID&redirect_uri=REDIRECT_URI&response_type=code&scope=boards:read,pins:read,pins:write`
+   - Exchange auth code for token: `POST https://api.pinterest.com/v5/oauth/token`
+4. Add to `.env`:
+   ```dotenv
+   PINTEREST_ACCESS_TOKEN=pina_xxxxxxxxxxxxxxxxxxxxxxxx
+   ```
+
+**Rate Limits:** 300 write requests/day for sandbox. Production apps require app review for higher limits.
+
+---
+
+#### TikTok (via TikNeuron — Read Only)
+
+**Difficulty:** Easy | **Token Expiry:** None (API key) | **App Review:** Not required | **Pricing:** Free tier (20 credits), Pro ($7.49/mo, 500 credits), Business ($24/mo, 1800 credits)
+
+TikTok integration uses [TikNeuron](https://tikneuron.com), a third-party API that provides read-only access to TikTok content (search, post details, subtitles). No OAuth or TikTok developer account is needed.
+
+**Required Environment Variables:**
+
+| Variable | Required | Purpose |
+|---|---|---|
+| `TIKNEURON_MCP_API_KEY` | Yes | TikNeuron MCP API access |
+
+**Setup Steps:**
+
+1. Go to [tikneuron.com/signin](https://tikneuron.com/signin).
+2. Click **"Login with Google"** (Google is the only supported sign-in method).
+3. Sign in with your Google account and authorize TikNeuron.
+4. After signing in, you'll be redirected to the TikNeuron dashboard.
+5. Navigate to the [API page](https://tikneuron.com/api) — your API key is shown under **"Your API Key"** at the top of the page.
+6. Copy the API key and add to your `.env`:
+   ```dotenv
+   TIKNEURON_MCP_API_KEY=your_api_key_here
+   ```
+7. The TikTok MCP server is a Node.js server (no Python venv needed). It's pre-built at `external/tiktok-mcp/build/index.js` and starts automatically when `TIKNEURON_MCP_API_KEY` is set.
+
+> **Note:** TikTok integration is **read-only**. You can search posts, get post details, and download subtitles, but publishing is not supported. TikTok does not offer a public content publishing API.
+
+> **Credit Costs:** Search = 1 credit, Post Details = 1 credit, Subtitles = 1 credit. The free tier includes 20 credits (non-expiring). See [tikneuron.com/pricing](https://tikneuron.com/pricing) for plan details.
+
+**Available Tools (3):** `tiktok_search`, `tiktok_get_post_details`, `tiktok_get_subtitle`
+
+---
+
+#### Quick Reference — All Platform Credentials
+
+```dotenv
+# ── Twitter / X ──
+TWITTER_BEARER_TOKEN=
+# TWITTER_API_KEY=
+# TWITTER_API_SECRET=
+# TWITTER_ACCESS_TOKEN=
+# TWITTER_ACCESS_TOKEN_SECRET=
+
+# ── YouTube ──
+YOUTUBE_API_KEY=
+# YOUTUBE_OAUTH_TOKEN=        # Only for uploads/comment replies
+
+# ── LinkedIn ──
+LINKEDIN_ACCESS_TOKEN=
+LINKEDIN_CLIENT_ID=
+LINKEDIN_CLIENT_SECRET=
+
+# ── Reddit ──
+REDDIT_CLIENT_ID=
+REDDIT_CLIENT_SECRET=
+REDDIT_USERNAME=
+REDDIT_PASSWORD=
+
+# ── Instagram (Meta Graph API) ──
+INSTAGRAM_ACCESS_TOKEN=       # Long-lived token (60-day expiry)
+FACEBOOK_APP_ID=              # Shared with Facebook
+FACEBOOK_APP_SECRET=          # Shared with Facebook
+# INSTAGRAM_BUSINESS_ACCOUNT_ID=  # Auto-detected
+
+# ── Facebook Pages (Meta Graph API) ──
+FACEBOOK_PAGE_TOKEN=          # Permanent (from long-lived user token)
+# FACEBOOK_PAGE_ID=           # Auto-detected
+
+# ── Pinterest ──
+PINTEREST_ACCESS_TOKEN=
+# PINTEREST_AD_ACCOUNT_ID=
+
+# ── TikTok (read-only) ──
+TIKNEURON_MCP_API_KEY=
+```
 
 ---
 
@@ -5409,13 +6200,15 @@ The `search-knowledge` tool supports two additional optional parameters for targ
 
 ### Visibility & Privacy
 
-To prevent sensitive data from leaking into social media auto-replies, the knowledge base has three visibility levels:
+To prevent sensitive data from leaking into social media auto-replies, the knowledge base has three visibility levels with **hierarchical access control**:
 
 | Level | Chat Access | Social Auto-Reply Access | Example Content |
 |---|---|---|---|
 | **Public** | ✅ | ✅ | Gallery assets, published content |
 | **Internal** | ✅ | ❌ | Personal documents, presentations, system events |
 | **Private** | Admin only | ❌ | Sensitive configuration, credentials |
+
+**Hierarchical filtering**: Visibility levels are ordered `public < internal < private`. When the AI searches with `visibility: "internal"`, it sees both **public** and **internal** items — but never **private** items. A `public`-level search only returns public items. This hierarchy prevents accidental information leakage while ensuring broader-scoped queries still include lower-visibility content.
 
 Social Brain auto-replies **only** search public content, ensuring your private documents and system events never appear in social media responses.
 
@@ -5520,11 +6313,14 @@ Configure the knowledge base in your config file (`~/.openzigs/config.json`):
 
 ### Architecture Notes
 
-- **Embedding**: Uses Hugging Face Transformers.js with the `all-MiniLM-L6-v2` sentence transformer (~23MB, 384-dimensional vectors). Falls back to deterministic FNV-1a hashing if the model fails to load.
+- **Embedding**: Uses Hugging Face Transformers.js with the `all-MiniLM-L6-v2` sentence transformer (~23MB, 384-dimensional vectors). Falls back to deterministic FNV-1a hashing if the model fails to load. Input text is truncated at word boundaries (~2000 chars) to respect the model's 512-token context window.
 - **Vector Store**: [LanceDB](https://lancedb.com/) embedded database stored at `~/.openzigs/knowledge-db/` with both IVF-PQ vector index and native FTS index.
+- **Vector Index Rebuild**: The IVF-PQ index is automatically rebuilt when the dataset grows by ≥50% since the last build, with a minimum threshold of 256 rows. This ensures search quality scales with your knowledge base.
 - **Hybrid Search**: Default mode combines vector (semantic) and full-text (keyword) search using Reciprocal Rank Fusion (k=60). Results in both lists get a score boost.
-- **Chunking**: Markdown-aware splitting that preserves heading context. Headings are extracted and stored as metadata for each chunk.
-- **Change Detection**: SHA-256 content hashing — files are only re-indexed when their content actually changes. Document metadata is persisted to disk so the hash check survives server restarts.
+- **FTS Index**: Full-text search uses stemming, stop-word removal, and positional indexing. The FTS index rebuild is debounced (2-second window) to avoid quadratic cost during bulk ingestion. After a directory scan completes, the index is explicitly flushed.
+- **Chunking**: Markdown-aware splitting that preserves heading context. Headings are extracted and stored as metadata for each chunk. Chunk overlap snaps to word boundaries to avoid splitting mid-word.
+- **Change Detection**: SHA-256 content hashing — files are only re-indexed when their content actually changes. A fast mtime + file size pre-check avoids unnecessary file reads. Document metadata is persisted to disk so the hash check survives server restarts.
+- **Visibility Hierarchy**: Access levels are hierarchical — a `public` search only returns public items, while an `internal` search returns both public and internal items. This prevents accidental data leakage across visibility boundaries.
 
 ---
 
@@ -5983,6 +6779,53 @@ The agent will automatically set `notify_via_telegram: true` on the job (see the
 The Pinterest SEO Engine provides tools for trend discovery, keyword research, account analytics, and pin-level SEO analysis — including extraction of Pinterest's hidden annotation keywords that drive algorithmic distribution.
 
 For a deep-dive into how the pipeline works under the hood, see [PINTEREST_SEO_ENGINE.md](PINTEREST_SEO_ENGINE.md).
+
+---
+
+## TikTok Content Publishing
+
+OpenZigs integrates with TikTok's **official API v2** for content publishing, video listing, and user analytics. The MCP server provides 8 tools:
+
+| Tool | Description |
+|---|---|
+| `tiktok_get_user_info` | Fetch profile info and stats for the connected account |
+| `tiktok_list_videos` | List recent videos with metadata |
+| `tiktok_query_videos` | Query specific videos by ID |
+| `tiktok_query_creator_info` | Get creator info for content posting eligibility |
+| `tiktok_post_video` | Post a video (via URL) with caption, privacy, and settings |
+| `tiktok_post_photo` | Post photos (via URLs) with caption and settings |
+| `tiktok_get_post_status` | Check the publish status of a submitted post |
+| `tiktok_refresh_token` | Manually refresh the access token |
+
+### Setup — TikTok Developer App
+
+1. Go to [developers.tiktok.com/apps](https://developers.tiktok.com/apps/) and sign in with your TikTok developer account
+2. Click **Create app** → set type to **Other**, ownership to **Individual**
+3. Under **Products**, add:
+   - **Login Kit** (grants `user.info.basic` scope)
+   - **Content Posting API** — enable the **Direct Post** toggle
+4. Under **Scopes**, add: `user.info.profile`, `user.info.stats`, `video.list`
+5. Under **Platform** → **Web**, set the redirect URI to:
+   ```
+   http://localhost:3000/api/tiktok/oauth/callback
+   ```
+6. Copy the **Client Key** and **Client Secret** from the app overview
+
+### Connect via Admin Panel
+
+1. Open the **Admin** page → expand the **TikTok** section
+2. Click **Configure OAuth App** and paste your Client Key + Client Secret → **Save**
+3. Click **Connect with TikTok** — you'll be redirected to TikTok's login page
+4. Log in with the TikTok account you want to publish from (this is your personal/creator TikTok account, not your developer account)
+5. Authorize the app → you'll be redirected back to Admin with a success toast
+6. Access and refresh tokens are saved automatically
+
+### Important Notes
+
+- **Token expiry**: Access tokens expire every 24 hours. Refresh tokens are valid for 365 days. Use the Refresh Token button in Admin or the `tiktok_refresh_token` tool.
+- **Unaudited apps**: Until your TikTok app passes review, all published posts will only be visible in **private mode** to the posting account.
+- **Rate limits**: 6 requests/minute per user access token for content posting.
+- **PKCE**: The OAuth flow uses PKCE (S256) as required by TikTok's API.
 
 ### Getting Your Pinterest API Credentials
 

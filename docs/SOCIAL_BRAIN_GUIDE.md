@@ -17,14 +17,14 @@ This guide walks through every step needed to get Social Brain running: Cloudfla
   - [Verifying the Tunnel](#verifying-the-tunnel)
 - [Environment Variables](#environment-variables)
 - [Platform Setup Guides](#platform-setup-guides)
-  - [Instagram / Facebook (Meta Graph API)](#instagram--facebook-meta-graph-api)
+  - [Twitter / X](#twitter--x)
   - [YouTube](#youtube)
     - [YouTube OAuth Setup](#youtube-oauth-setup)
     - [YouTube Upload Quota](#youtube-upload-quota)
-  - [Twitter / X](#twitter--x)
-  - [TikTok](#tiktok)
-  - [Reddit](#reddit)
   - [LinkedIn](#linkedin)
+    - [LinkedIn OAuth Setup](#linkedin-oauth-setup)
+  - [Reddit](#reddit)
+  - [TikTok](#tiktok)
 - [Settings Tab — Connection Status](#settings-tab--connection-status)
 - [CRM Usage Guide](#crm-usage-guide)
 - [Automation Rules (Comment-to-DM)](#automation-rules-comment-to-dm)
@@ -36,10 +36,7 @@ This guide walks through every step needed to get Social Brain running: Cloudfla
 - [Posting to Social Media](#posting-to-social-media)
 - [Native MCP Server Configuration](#native-mcp-server-configuration)
 - [Testing with Curl](#testing-with-curl)
-  - [Simulating an Instagram Comment Webhook](#simulating-an-instagram-comment-webhook)
-  - [Simulating a Facebook Page Comment Webhook](#simulating-a-facebook-page-comment-webhook)
   - [Simulating a Twitter Mention](#simulating-a-twitter-mention)
-  - [Simulating an Instagram DM Webhook](#simulating-an-instagram-dm-webhook)
   - [CRM and Activity Endpoints](#crm-and-activity-endpoints)
   - [Automation Rules CRUD](#automation-rules-crud)
   - [End-to-End Test Flow](#end-to-end-test-flow)
@@ -52,13 +49,11 @@ This guide walks through every step needed to get Social Brain running: Cloudfla
 
 ```
                                      ┌─────────────────────┐
-  Instagram ─── webhook POST ───────►│                     │
-  Facebook  ─── webhook POST ───────►│  Cloudflare Tunnel  │
-  Twitter   ─── Account Activity ──►│   (cloudflared)     │
-  TikTok    ─── webhook POST ───────►│                     │
-  YouTube   ─── polling ────────────►│                     │
-  LinkedIn  ─── polling ────────────►└────────┬────────────┘
-  Reddit    ─── polling ─────────────────────►│
+  Twitter   ─── Account Activity ──►│                     │
+  TikTok    ─── webhook POST ───────►│  Cloudflare Tunnel  │
+  YouTube   ─── polling ────────────►│   (cloudflared)     │
+  LinkedIn  ─── polling ────────────►│                     │
+  Reddit    ─── polling ─────────────►└────────┬────────────┘
                                               │ http://localhost:3000
                                               ▼
                                    ┌──────────────────────┐
@@ -87,8 +82,8 @@ This guide walks through every step needed to get Social Brain running: Cloudfla
               ┌───────────────────────────┼────────────────────────────┐
               ▼                           ▼                            ▼
    ┌─────────────────────┐  ┌─────────────────────┐  ┌─────────────────────┐
-   │  ig-mcp (Python)    │  │  fb-mcp (Python)    │  │  twitter-mcp        │
-   │  instagram native   │  │  facebook native    │  │  (Python) native    │
+   │  twitter-mcp        │  │  linkedin-mcp       │  │  youtube-mcp        │
+   │  (Python) native    │  │  (Python) native    │  │  (Python) native    │
    │  stdio subprocess   │  │  stdio subprocess   │  │  stdio subprocess   │
    └─────────────────────┘  └─────────────────────┘  └─────────────────────┘
 ```
@@ -110,8 +105,6 @@ All social platform interactions use **native MCP servers** (stdio subprocess tr
 
 | MCP Server | Runtime | Tools | Used For |
 |------------|---------|-------|----------|
-| `ig-mcp` | Python (uvx) | 11 | Instagram DMs (`send_dm`), comment replies (`reply_to_comment`), post reads, analytics, media publish |
-| `fb-mcp` | Python (uvx) | 10 | Facebook Messenger (`fb_send_message`), comment replies (`fb_reply_to_comment`), page analytics |
 | `twitter-mcp` | Python (uvx) | 8 | Twitter DMs (`twitter_send_dm`), tweet replies (`twitter_post_tweet` w/ `reply_to`), search |
 | `youtube-mcp` | Python (uvx) | 8 | YouTube **video upload** (`yt_upload_video`), comment replies (`yt_reply_to_comment`), video search, analytics (no DM API) |
 | `linkedin-mcp` | Python (uvx) | 8 | LinkedIn DMs (`linkedin_send_message`, partner-only), comment replies (`linkedin_reply_to_comment`) |
@@ -315,17 +308,7 @@ Add these to your `.env` file at the project root:
 
 ```dotenv
 # ── Required for Social Brain ──
-SOCIAL_WEBHOOK_VERIFY_TOKEN=your-random-secret-string   # Used by Meta/TikTok to verify webhook subscriptions
-
-# ── Instagram (Meta Graph API) ──
-INSTAGRAM_ACCESS_TOKEN=your-instagram-user-access-token
-INSTAGRAM_BUSINESS_ACCOUNT_ID=your-instagram-business-account-id
-FACEBOOK_APP_ID=your-meta-app-id
-FACEBOOK_APP_SECRET=your-meta-app-secret
-
-# ── Facebook Pages (same Meta app, different token) ──
-FACEBOOK_PAGE_TOKEN=your-facebook-page-access-token
-# FACEBOOK_APP_ID and FACEBOOK_APP_SECRET shared with Instagram above
+SOCIAL_WEBHOOK_VERIFY_TOKEN=your-random-secret-string   # Used by TikTok to verify webhook subscriptions
 
 # ── Twitter / X ──
 TWITTER_BEARER_TOKEN=your-twitter-bearer-token
@@ -336,8 +319,10 @@ TWITTER_API_SECRET=your-twitter-api-key-secret
 YOUTUBE_API_KEY=your-youtube-data-api-v3-key
 YOUTUBE_OAUTH_TOKEN=your-youtube-oauth-token  # Required for uploads and comment replies (scope: youtube.upload)
 
-# ── LinkedIn ──
-LINKEDIN_ACCESS_TOKEN=your-linkedin-access-token
+# ── LinkedIn (OAuth2 — set Client ID + Secret, then use Admin UI to complete OAuth flow) ──
+LINKEDIN_CLIENT_ID=your-linkedin-client-id
+LINKEDIN_CLIENT_SECRET=your-linkedin-client-secret
+# LINKEDIN_ACCESS_TOKEN, LINKEDIN_REFRESH_TOKEN, LINKEDIN_TOKEN_EXPIRES_AT are set automatically by the OAuth flow
 
 # ── Reddit (OAuth2 script app) ──
 REDDIT_CLIENT_ID=your-reddit-client-id
@@ -369,16 +354,6 @@ Platform connections can also be configured in `~/.openzigs/config.json`:
       "autoArchiveMinutes": 60
     },
     "connections": {
-      "instagram": {
-        "enabled": true,
-        "mode": "webhook",
-        "accessToken": "your-token-here"
-      },
-      "facebook": {
-        "enabled": true,
-        "mode": "webhook",
-        "pageToken": "your-page-token"
-      },
       "twitter": {
         "enabled": true,
         "mode": "webhook"
@@ -390,8 +365,9 @@ Platform connections can also be configured in `~/.openzigs/config.json`:
       },
       "linkedin": {
         "enabled": true,
-        "mode": "polling",
-        "pollIntervalSeconds": 300
+        "mode": "webhook",
+        "clientId": "your-client-id",
+        "clientSecret": "your-client-secret"
       },
       "reddit": {
         "enabled": true,
@@ -409,130 +385,9 @@ Platform connections can also be configured in `~/.openzigs/config.json`:
 
 ## Platform Setup Guides
 
-### Instagram / Facebook (Meta Graph API)
+### Twitter / X
 
-Instagram and Facebook both use the Meta Graph API and can share the same Meta Developer App.
-
-#### Prerequisites
-
-- A **Facebook Page** linked to your Instagram Professional account (Business or Creator)
-- A **Meta Developer App** (type: Business)
-
-#### Step-by-Step Setup
-
-**1. Create a Meta Developer App**
-
-1. Go to [developers.facebook.com/apps](https://developers.facebook.com/apps/)
-2. Click **Create App** → select **Business** type → click **Next**
-3. Enter an app name (e.g., "OpenZigs Social Brain") and select your business portfolio
-4. Click **Create App**
-
-**2. Add Instagram and Messenger Products**
-
-1. In the app dashboard, click **Add Product** in the left sidebar
-2. Find **Instagram** and click **Set Up**
-3. Also add **Messenger** (for Facebook Page DMs)
-
-**3. Generate Access Tokens**
-
-For **Instagram:**
-1. Navigate to **Instagram → API Setup with Instagram Login**
-2. Add your Instagram Professional account as a test user
-3. Generate a **User Access Token** with these permissions:
-   - `instagram_basic`
-   - `instagram_manage_comments`
-   - `instagram_manage_messages`
-   - `pages_show_list`
-   - `pages_read_engagement`
-4. Copy the token → set as `INSTAGRAM_ACCESS_TOKEN`
-5. Find your Instagram Business Account ID → set as `INSTAGRAM_BUSINESS_ACCOUNT_ID`
-6. Set `FACEBOOK_APP_ID` and `FACEBOOK_APP_SECRET` from your app's Basic Settings
-
-For **Facebook Pages:**
-1. Generate a **Page Access Token** for your Facebook Page (under Messenger settings)
-2. Set it as `FACEBOOK_PAGE_TOKEN`
-
-> **Token expiry:** Instagram User Access Tokens expire after 60 days. For production, implement token refresh using the [long-lived token exchange](https://developers.facebook.com/docs/instagram-platform/instagram-api-with-instagram-login/business-login#exchange-a-short-lived-token-for-a-long-lived-token).
-
-**4. Configure Webhooks**
-
-For **Instagram:**
-1. Navigate to **Instagram → Webhooks** → **Configure**
-2. Enter:
-   - **Callback URL:** `https://<your-tunnel-url>/api/social/webhooks/instagram`
-   - **Verify Token:** same value as `SOCIAL_WEBHOOK_VERIFY_TOKEN`
-3. Subscribe to: `comments`, `messages`, `messaging_postbacks`
-
-For **Facebook Pages:**
-1. Navigate to **Messenger → Webhooks** → **Add Callback URL**
-2. Enter:
-   - **Callback URL:** `https://<your-tunnel-url>/api/social/webhooks/facebook`
-   - **Verify Token:** same as `SOCIAL_WEBHOOK_VERIFY_TOKEN`
-3. Subscribe to: `messages`, `messaging_postbacks`, `feed` (for page comments)
-
-**5. Test It**
-
-```bash
-# Use the Meta App Dashboard's built-in test tool:
-# Go to Instagram → Webhooks → click "Test" next to the "comments" field
-
-# Or check if webhooks are being received:
-curl http://localhost:3000/api/social/activity | python3 -m json.tool
-```
-
-#### Instagram Webhook Payload Reference
-
-**Comment webhook:**
-
-```json
-{
-  "entry": [{
-    "changes": [{
-      "field": "comments",
-      "value": {
-        "from": { "id": "12345", "username": "commenter" },
-        "media": { "id": "media_789" },
-        "id": "comment_001",
-        "text": "Interested in pricing!"
-      }
-    }]
-  }]
-}
-```
-
-**DM webhook:**
-
-```json
-{
-  "entry": [{
-    "messaging": [{
-      "sender": { "id": "12345" },
-      "recipient": { "id": "67890" },
-      "timestamp": 1699900000000,
-      "message": {
-        "mid": "msg_abc123",
-        "text": "Hello, I have a question"
-      }
-    }]
-  }]
-}
-```
-
-#### Post Context Enrichment
-
-When a comment arrives, OpenZigs automatically calls the platform's API to fetch the post's metadata:
-
-```
-GET /{media_id}?fields=caption,permalink,media_type,media_url,username,timestamp
-Authorization: Bearer {INSTAGRAM_ACCESS_TOKEN}
-```
-
-This data is cached in SQLite for 24 hours and made available as:
-- `{{post_caption}}` — in DM templates
-- `{{post_url}}` — in DM templates
-- Post context block in the Brain Engine's LLM prompt
-
-Without the access token, comment-to-DM automation still works, but templates won't have post context.
+> See the [Twitter / X](#twitter--x) section below for setup details.
 
 ---
 
@@ -799,50 +654,63 @@ curl "https://oauth.reddit.com/message/inbox?limit=25" \
 
 ### LinkedIn
 
-LinkedIn's API does not support traditional webhooks for comments or messages. Social Brain uses the polling adapter for comment monitoring. The `linkedin-mcp` native server handles posting and comment replies.
+LinkedIn uses OAuth 2.0 (3-legged authorization code flow) for API access. OpenZigs includes a built-in OAuth flow that handles token exchange, storage, and auto-refresh.
+
+#### LinkedIn OAuth Setup
 
 **1. Create a LinkedIn App:**
 
 1. Go to [linkedin.com/developers/apps](https://www.linkedin.com/developers/apps/)
 2. Create a new app and request access to:
-   - **Sign In with LinkedIn using OpenID Connect**
-   - **Share on LinkedIn** (for posting)
-   - **Marketing Developer Platform** (for organization pages)
-3. Generate an access token via 3-legged OAuth
+   - **Sign In with LinkedIn using OpenID Connect** (`openid`, `profile`, `email` scopes)
+   - **Share on LinkedIn** (`w_member_social` scope)
+   - **Marketing Developer Platform** (optional, for organization pages and programmatic refresh tokens)
+3. In the **Auth** tab, add your redirect URL:
+   - Local development: `http://localhost:3000/api/linkedin/oauth/callback`
+   - Production: `https://<your-domain>/api/linkedin/oauth/callback`
+4. Note your **Client ID** and **Client Secret**
 
-**2. Set environment variables:**
+**2. Set app credentials** (choose one method):
 
+*Option A — Admin UI:*
+1. Navigate to **Admin → MCP Servers → LinkedIn** 
+2. Enter your Client ID and Client Secret
+3. Click **Connect LinkedIn** to start the OAuth flow
+
+*Option B — Environment variables:*
 ```dotenv
-LINKEDIN_ACCESS_TOKEN=your-linkedin-access-token
+LINKEDIN_CLIENT_ID=your-linkedin-client-id
+LINKEDIN_CLIENT_SECRET=your-linkedin-client-secret
 ```
+Then visit `GET /api/admin/linkedin/oauth/authorize` to generate the OAuth URL.
 
-**3. Enable polling:**
+**3. Complete the OAuth flow:**
 
-```json
-{
-  "socialBrain": {
-    "connections": {
-      "linkedin": {
-        "enabled": true,
-        "mode": "polling",
-        "pollIntervalSeconds": 300
-      }
-    }
-  }
-}
-```
+1. The authorize endpoint returns an `authUrl` — open it in a browser
+2. Sign in to LinkedIn and approve the requested permissions
+3. LinkedIn redirects back to your callback URL
+4. OpenZigs automatically exchanges the code for access + refresh tokens
+5. Tokens are saved to `.env` with `0o600` permissions
 
-**4. LinkedIn API endpoints:**
+**4. Token lifecycle:**
 
-```bash
-# Get organization posts (via LinkedInApiClient)
-curl "https://api.linkedin.com/v2/organizationShares?q=owners&owners=urn:li:organization:YOUR_ORG_ID&count=10" \
-  -H "Authorization: Bearer YOUR_TOKEN"
+| Token | Lifetime | Auto-Refresh |
+|---|---|---|
+| Access token | 60 days | Yes — refreshed when expiring within 7 days |
+| Refresh token | 365 days | Extended on each use (if Marketing Developer Platform approved) |
 
-# Get comments on a post (via polling adapter)
-curl "https://api.linkedin.com/v2/socialActions/urn:li:share:POST_ID/comments?start=0&count=20" \
-  -H "Authorization: Bearer YOUR_TOKEN"
-```
+OpenZigs checks token expiry on startup and daily. If the access token expires within 7 days, it's automatically refreshed using the stored refresh token.
+
+**5. API endpoints:**
+
+| Endpoint | Method | Purpose |
+|---|---|---|
+| `/api/admin/linkedin/app-credentials` | POST | Save Client ID + Secret |
+| `/api/admin/linkedin/oauth/authorize` | GET | Generate OAuth authorization URL |
+| `/api/admin/linkedin/oauth/refresh` | POST | Manually trigger token refresh |
+| `/api/admin/linkedin/oauth/disconnect` | POST | Clear all LinkedIn tokens |
+| `/api/admin/linkedin/status` | GET | Check connection status + profile |
+| `/api/linkedin/oauth/callback` | GET | OAuth callback (no auth required) |
 
 > **Note:** LinkedIn heavily rate-limits API access and requires app review for production use. DM sending via the Messaging API is only available to Marketing API partners. Social Brain comment replies use the `linkedin-mcp` server's `reply-to-comment` tool.
 

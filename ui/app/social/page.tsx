@@ -180,7 +180,7 @@ function CrmTab() {
           className="rounded-md border border-border bg-background px-3 py-2 text-sm"
         >
           <option value="">All Platforms</option>
-          {["instagram", "twitter", "facebook", "linkedin", "reddit", "youtube", "tiktok"].map((p) => (
+          {["twitter", "linkedin", "reddit", "youtube", "tiktok"].map((p) => (
             <option key={p} value={p}>{p}</option>
           ))}
         </select>
@@ -531,7 +531,7 @@ function AutomationsTab() {
 
 function RuleForm({ onSubmit }: { onSubmit: (data: Partial<CommentRule>) => void }) {
   const [name, setName] = useState("");
-  const [platform, setPlatform] = useState("instagram");
+  const [platform, setPlatform] = useState("twitter");
   const [keywords, setKeywords] = useState("");
   const [dmTemplate, setDmTemplate] = useState("");
   const [commentReply, setCommentReply] = useState("");
@@ -568,7 +568,7 @@ function RuleForm({ onSubmit }: { onSubmit: (data: Partial<CommentRule>) => void
           <label className="text-xs font-medium text-muted-foreground">Platform</label>
           <select value={platform} onChange={(e) => setPlatform(e.target.value)}
             className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm">
-            {["instagram", "twitter", "facebook", "linkedin", "reddit", "youtube", "tiktok"].map((p) => (
+            {["twitter", "linkedin", "reddit", "youtube", "tiktok"].map((p) => (
               <option key={p} value={p}>{p}</option>
             ))}
           </select>
@@ -898,9 +898,7 @@ function PlatformCard({ platform: p }: { platform: PlatformConfigEntry }) {
 
 function PlatformBadge({ platform }: { platform: string }) {
   const colors: Record<string, string> = {
-    instagram: "bg-pink-500/10 text-pink-600",
     twitter: "bg-sky-500/10 text-sky-600",
-    facebook: "bg-blue-500/10 text-blue-600",
     linkedin: "bg-blue-700/10 text-blue-700",
     reddit: "bg-orange-500/10 text-orange-600",
     youtube: "bg-red-500/10 text-red-600",

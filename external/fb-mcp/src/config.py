@@ -5,7 +5,7 @@ from pydantic_settings import BaseSettings
 
 
 class FacebookMCPSettings(BaseSettings):
-    model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "case_sensitive": False}
+    model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "case_sensitive": False, "extra": "ignore"}
 
     facebook_page_token: str = Field(..., description="Facebook Page access token")
     facebook_app_id: str = Field("", description="Facebook App ID")

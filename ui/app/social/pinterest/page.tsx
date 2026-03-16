@@ -36,7 +36,9 @@ import {
   Archive,
   Plus,
   RefreshCw,
+  Upload,
 } from "lucide-react";
+import { CreatePinModal } from "@/components/create-pin-modal";
 
 // ── Types ──
 
@@ -274,6 +276,24 @@ function PinTrackerTab() {
   const [selectedPin, setSelectedPin] = useState<string | null>(null);
   const queryClient = useQueryClient();
 
+  const syncPinsMutation = useMutation({
+    mutationFn: () => fetchJson<{ ok: boolean; imported: number }>("/api/pinterest/sync-pins", { method: "POST" }),
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["pinterest-tracked-pins"] });
+      showToast(`Synced ${data.imported} pins from Pinterest`, "success");
+    },
+    onError: (err: Error) => showToast(`Sync failed: ${err.message}`, "error"),
+  });
+
+  const syncMetricsMutation = useMutation({
+    mutationFn: () => fetchJson<{ ok: boolean; synced: number; errors: number }>("/api/pinterest/sync-metrics", { method: "POST" }),
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["pinterest-tracked-pins"] });
+      showToast(`Metrics synced for ${data.synced} pins${data.errors ? ` (${data.errors} errors)` : ""}`, "success");
+    },
+    onError: (err: Error) => showToast(`Metrics sync failed: ${err.message}`, "error"),
+  });
+
   const seedMutation = useMutation({
     mutationFn: () => fetchJson("/api/pinterest/tracker/seed", { method: "POST" }),
     onSuccess: () => {
@@ -300,6 +320,7 @@ function PinTrackerTab() {
   });
 
   const pins = data?.pins ?? [];
+  const isSyncing = syncPinsMutation.isPending || syncMetricsMutation.isPending;
 
   if (selectedPin) {
     return <PinDetail pinId={selectedPin} onBack={() => setSelectedPin(null)} />;
@@ -313,30 +334,60 @@ function PinTrackerTab() {
         <Target className="mb-4 h-12 w-12 text-muted-foreground/30" />
         <h2 className="text-lg font-semibold">No Pins Being Tracked</h2>
         <p className="mt-2 max-w-sm text-sm text-muted-foreground">
-          Use the <code className="rounded bg-muted px-1">pinterest-seo-analyze</code> tool in Chat to analyze pins,
-          or seed demo data to explore the dashboard.
+          Sync your real Pinterest pins to start tracking their performance over time.
         </p>
-        <p className="mt-1 text-xs text-muted-foreground/70">Demo data uses fake pin IDs for UI testing only.</p>
-        <button
-          onClick={() => seedMutation.mutate()}
-          disabled={seedMutation.isPending}
-          className="mt-4 flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 transition disabled:opacity-50"
-        >
-          <Plus className="h-4 w-4" />
-          {seedMutation.isPending ? "Seeding..." : "Seed Demo Data"}
-        </button>
+        <div className="flex items-center gap-3 mt-4">
+          <button
+            onClick={() => syncPinsMutation.mutate()}
+            disabled={isSyncing}
+            className="flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 transition disabled:opacity-50"
+          >
+            <RefreshCw className={`h-4 w-4 ${syncPinsMutation.isPending ? "animate-spin" : ""}`} />
+            {syncPinsMutation.isPending ? "Syncing..." : "Sync from Pinterest"}
+          </button>
+          <button
+            onClick={() => seedMutation.mutate()}
+            disabled={seedMutation.isPending}
+            className="flex items-center gap-2 rounded-lg border border-border px-4 py-2 text-sm text-muted-foreground hover:text-foreground transition disabled:opacity-50"
+          >
+            <Plus className="h-4 w-4" />
+            {seedMutation.isPending ? "Seeding..." : "Seed Demo Data"}
+          </button>
+        </div>
       </div>
     );
   }
 
   return (
     <div className="space-y-4">
-      {/* Summary row */}
-      <div className="grid grid-cols-4 gap-4">
-        <MetricCard label="Tracked Pins" value={pins.length} icon={<Target className="h-4 w-4 text-primary" />} />
-        <MetricCard label="Active" value={pins.filter((p) => p.status === "active").length} icon={<Play className="h-4 w-4 text-green-500" />} />
-        <MetricCard label="Paused" value={pins.filter((p) => p.status === "paused").length} icon={<Pause className="h-4 w-4 text-yellow-500" />} />
-        <MetricCard label="Archived" value={pins.filter((p) => p.status === "archived").length} icon={<Archive className="h-4 w-4 text-muted-foreground" />} />
+      {/* Summary row + sync actions */}
+      <div className="flex items-end justify-between">
+        <div className="grid flex-1 grid-cols-4 gap-4">
+          <MetricCard label="Tracked Pins" value={pins.length} icon={<Target className="h-4 w-4 text-primary" />} />
+          <MetricCard label="Active" value={pins.filter((p) => p.status === "active").length} icon={<Play className="h-4 w-4 text-green-500" />} />
+          <MetricCard label="Paused" value={pins.filter((p) => p.status === "paused").length} icon={<Pause className="h-4 w-4 text-yellow-500" />} />
+          <MetricCard label="Archived" value={pins.filter((p) => p.status === "archived").length} icon={<Archive className="h-4 w-4 text-muted-foreground" />} />
+        </div>
+      </div>
+
+      {/* Sync buttons */}
+      <div className="flex items-center gap-2">
+        <button
+          onClick={() => syncPinsMutation.mutate()}
+          disabled={isSyncing}
+          className="flex items-center gap-2 rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:opacity-90 transition disabled:opacity-50"
+        >
+          <RefreshCw className={`h-3.5 w-3.5 ${syncPinsMutation.isPending ? "animate-spin" : ""}`} />
+          {syncPinsMutation.isPending ? "Syncing Pins..." : "Sync Pins"}
+        </button>
+        <button
+          onClick={() => syncMetricsMutation.mutate()}
+          disabled={isSyncing}
+          className="flex items-center gap-2 rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-muted-foreground hover:text-foreground transition disabled:opacity-50"
+        >
+          <TrendingUp className={`h-3.5 w-3.5 ${syncMetricsMutation.isPending ? "animate-spin" : ""}`} />
+          {syncMetricsMutation.isPending ? "Syncing Metrics..." : "Sync Metrics"}
+        </button>
       </div>
 
       {/* Pin list */}
@@ -407,14 +458,6 @@ function PinTrackerTab() {
         ))}
       </div>
 
-      <button
-        onClick={() => seedMutation.mutate()}
-        disabled={seedMutation.isPending}
-        className="flex items-center gap-2 rounded-lg border border-dashed border-border px-4 py-2 text-sm text-muted-foreground hover:text-foreground hover:border-primary/30 transition"
-      >
-        <RefreshCw className={`h-4 w-4 ${seedMutation.isPending ? "animate-spin" : ""}`} />
-        {seedMutation.isPending ? "Seeding..." : "Seed More Demo Data"}
-      </button>
     </div>
   );
 }
@@ -530,6 +573,9 @@ function PinDetail({ pinId, onBack }: { pinId: string; onBack: () => void }) {
 function ContentIdeasTab() {
   const { data, isLoading } = useContentIdeas();
   const queryClient = useQueryClient();
+  const [createPinOpen, setCreatePinOpen] = useState(false);
+  const [selectedIdea, setSelectedIdea] = useState<ContentIdea | null>(null);
+  const [ideaTopic, setIdeaTopic] = useState("");
 
   const dismissMutation = useMutation({
     mutationFn: (id: number) =>
@@ -541,13 +587,43 @@ function ContentIdeasTab() {
   });
 
   const markCreatedMutation = useMutation({
-    mutationFn: (id: number) =>
+    mutationFn: ({ id, pin_id }: { id: number; pin_id?: string }) =>
       fetchJson(`/api/pinterest/tracker/ideas/${id}/status`, {
         method: "PATCH",
-        body: JSON.stringify({ status: "created" }),
+        body: JSON.stringify({ status: "created", pin_id }),
       }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["pinterest-content-ideas"] }),
   });
+
+  const generateIdeasMutation = useMutation({
+    mutationFn: (body: { topic?: string; count?: number }) =>
+      fetchJson<{ ok: boolean; added: number }>("/api/pinterest/generate-ideas", {
+        method: "POST",
+        body: JSON.stringify(body),
+      }),
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["pinterest-content-ideas"] });
+      showToast(`Generated ${data.added} new content ideas`, "success");
+      setIdeaTopic("");
+    },
+    onError: (err: Error) => showToast(`Failed to generate ideas: ${err.message}`, "error"),
+  });
+
+  const handleCreatePin = (idea: ContentIdea) => {
+    setSelectedIdea(idea);
+    setCreatePinOpen(true);
+  };
+
+  const handleCreatePinStandalone = () => {
+    setSelectedIdea(null);
+    setCreatePinOpen(true);
+  };
+
+  const handlePinCreated = (pinId: string, ideaId?: number) => {
+    if (ideaId) {
+      markCreatedMutation.mutate({ id: ideaId, pin_id: pinId });
+    }
+  };
 
   const ideas = data?.ideas ?? [];
   const newIdeas = ideas.filter((i) => i.status === "new");
@@ -562,15 +638,39 @@ function ContentIdeasTab() {
         <Lightbulb className="mb-4 h-12 w-12 text-muted-foreground/30" />
         <h2 className="text-lg font-semibold">No Content Ideas Yet</h2>
         <p className="mt-2 max-w-sm text-sm text-muted-foreground">
-          Use the <code className="rounded bg-muted px-1">pinterest-content-ideas</code> tool in Chat
-          to generate content ideas based on trending topics and keyword data.
+          Generate AI-powered content ideas for your Pinterest pins, or create a pin directly.
         </p>
-        <Link
-          href="/chat"
-          className="mt-4 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 transition"
-        >
-          Go to Chat
-        </Link>
+        <div className="flex flex-col items-center gap-3 mt-4">
+          <div className="flex items-center gap-2">
+            <input
+              type="text"
+              value={ideaTopic}
+              onChange={(e) => setIdeaTopic(e.target.value)}
+              placeholder="Topic or niche (optional)..."
+              className="w-56 rounded-lg border border-border bg-background px-3 py-2 text-sm focus:border-primary focus:outline-none transition"
+            />
+            <button
+              onClick={() => generateIdeasMutation.mutate({ topic: ideaTopic || undefined, count: 5 })}
+              disabled={generateIdeasMutation.isPending}
+              className="flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 transition disabled:opacity-50"
+            >
+              <Lightbulb className={`h-4 w-4 ${generateIdeasMutation.isPending ? "animate-pulse" : ""}`} />
+              {generateIdeasMutation.isPending ? "Generating..." : "Generate Ideas"}
+            </button>
+          </div>
+          <button
+            onClick={handleCreatePinStandalone}
+            className="flex items-center gap-2 rounded-lg border border-border px-4 py-2 text-sm font-medium hover:bg-muted transition"
+          >
+            <Upload className="h-4 w-4" /> Create Pin
+          </button>
+        </div>
+        <CreatePinModal
+          open={createPinOpen}
+          onOpenChange={setCreatePinOpen}
+          idea={selectedIdea}
+          onPinCreated={handlePinCreated}
+        />
       </div>
     );
   }
@@ -618,11 +718,11 @@ function ContentIdeasTab() {
           {idea.status === "new" && (
             <div className="flex items-center gap-1">
               <button
-                onClick={() => markCreatedMutation.mutate(idea.id)}
+                onClick={() => handleCreatePin(idea)}
                 className="rounded-lg p-2 text-muted-foreground hover:bg-muted hover:text-green-600 transition"
-                title="Mark as created"
+                title="Create pin from this idea"
               >
-                <Plus className="h-4 w-4" />
+                <Upload className="h-4 w-4" />
               </button>
               <button
                 onClick={() => dismissMutation.mutate(idea.id)}
@@ -640,11 +740,37 @@ function ContentIdeasTab() {
 
   return (
     <div className="space-y-6">
-      {/* Summary */}
-      <div className="grid grid-cols-3 gap-4">
-        <MetricCard label="New Ideas" value={newIdeas.length} icon={<Lightbulb className="h-4 w-4 text-yellow-500" />} />
-        <MetricCard label="Created" value={createdIdeas.length} icon={<Plus className="h-4 w-4 text-green-500" />} />
-        <MetricCard label="Dismissed" value={dismissedIdeas.length} icon={<Trash2 className="h-4 w-4 text-muted-foreground" />} />
+      {/* Summary + action buttons */}
+      <div className="flex items-center justify-between">
+        <div className="grid flex-1 grid-cols-3 gap-4">
+          <MetricCard label="New Ideas" value={newIdeas.length} icon={<Lightbulb className="h-4 w-4 text-yellow-500" />} />
+          <MetricCard label="Created" value={createdIdeas.length} icon={<Plus className="h-4 w-4 text-green-500" />} />
+          <MetricCard label="Dismissed" value={dismissedIdeas.length} icon={<Trash2 className="h-4 w-4 text-muted-foreground" />} />
+        </div>
+      </div>
+
+      <div className="flex items-center gap-2">
+        <input
+          type="text"
+          value={ideaTopic}
+          onChange={(e) => setIdeaTopic(e.target.value)}
+          placeholder="Topic or niche (optional)..."
+          className="w-48 rounded-lg border border-border bg-background px-3 py-1.5 text-xs focus:border-primary focus:outline-none transition"
+        />
+        <button
+          onClick={() => generateIdeasMutation.mutate({ topic: ideaTopic || undefined, count: 5 })}
+          disabled={generateIdeasMutation.isPending}
+          className="flex items-center gap-2 rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:opacity-90 transition disabled:opacity-50"
+        >
+          <Lightbulb className={`h-3.5 w-3.5 ${generateIdeasMutation.isPending ? "animate-pulse" : ""}`} />
+          {generateIdeasMutation.isPending ? "Generating..." : "Generate Ideas"}
+        </button>
+        <button
+          onClick={handleCreatePinStandalone}
+          className="flex items-center gap-2 rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-muted-foreground hover:text-foreground transition"
+        >
+          <Upload className="h-3.5 w-3.5" /> Create Pin
+        </button>
       </div>
 
       {newIdeas.length > 0 && (
@@ -664,6 +790,13 @@ function ContentIdeasTab() {
           <div className="space-y-3">{dismissedIdeas.map(renderIdea)}</div>
         </SectionCard>
       )}
+
+      <CreatePinModal
+        open={createPinOpen}
+        onOpenChange={setCreatePinOpen}
+        idea={selectedIdea}
+        onPinCreated={handlePinCreated}
+      />
     </div>
   );
 }

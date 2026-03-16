@@ -70,7 +70,15 @@ export const generateEmbedding = async (text: string): Promise<number[]> => {
   if (pipe && typeof pipe === "function") {
     try {
       // Truncate very long text to avoid OOM (model max is ~512 tokens ≈ ~2000 chars)
-      const truncated = text.length > 2000 ? text.slice(0, 2000) : text;
+      // Snap to word boundary to avoid splitting mid-word
+      let truncated = text;
+      if (truncated.length > 2000) {
+        truncated = truncated.slice(0, 2000);
+        const lastSpace = truncated.lastIndexOf(" ");
+        if (lastSpace > 1500) {
+          truncated = truncated.slice(0, lastSpace);
+        }
+      }
 
       const result = await (pipe as (input: string, options?: Record<string, unknown>) => Promise<unknown>)(
         truncated,

@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSocket } from "@/lib/socket-context";
+import Link from "next/link";
 import { fetchJson } from "@/lib/api";
 import type { ToolInfo, Approval, AuditEntry } from "@/lib/types";
 import { SectionCard } from "./section-card";
@@ -38,6 +39,18 @@ export const Dashboard = () => {
   const healthQuery = useQuery({
     queryKey: ["health"],
     queryFn: () => fetchJson<{ status: string }>("/api/health")
+  });
+
+  type AutomationItem = {
+    job: { id: string; name: string; cronExpression: string; timezone: string; enabled: boolean; runCount: number; lastRunAt: string | null };
+    prompt: { name: string; suggestedSkill: string | null; template: string; stages: number } | null;
+    skillName: string | null;
+    lastExecution: { taskId: string; status: string; startedAt: string | null; completedAt: string | null; duration: number | null } | null;
+  };
+
+  const automationsQuery = useQuery({
+    queryKey: ["automations"],
+    queryFn: () => fetchJson<{ automations: AutomationItem[] }>("/api/admin/automations"),
   });
 
   const decisionMutation = useMutation({
@@ -180,6 +193,48 @@ export const Dashboard = () => {
                 <p className="mt-2 text-2xl font-semibold text-foreground">{pendingApprovals.length}</p>
               </div>
             </div>
+          </SectionCard>
+
+          <SectionCard title="Active Automations">
+            {(() => {
+              const automations = automationsQuery.data?.automations ?? [];
+              const active = automations.filter((a) => a.job.enabled);
+              if (active.length === 0) {
+                return (
+                  <div className="text-center">
+                    <p className="text-sm text-muted-foreground">No active automations.</p>
+                    <Link href="/scheduler" className="mt-2 inline-block text-xs font-semibold text-primary hover:underline">
+                      + Create Automation
+                    </Link>
+                  </div>
+                );
+              }
+              return (
+                <div className="space-y-3">
+                  {active.slice(0, 5).map((a) => (
+                    <div key={a.job.id} className="rounded-xl border border-border bg-card p-3">
+                      <div className="flex items-center justify-between">
+                        <p className="text-sm font-semibold text-foreground">{a.job.name}</p>
+                        {a.lastExecution && (
+                          <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${a.lastExecution.status === "completed" ? "bg-emerald-500/10 text-emerald-600" : a.lastExecution.status === "failed" ? "bg-destructive/10 text-destructive" : "bg-muted text-muted-foreground"}`}>
+                            {a.lastExecution.status}
+                          </span>
+                        )}
+                      </div>
+                      <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
+                        {a.skillName && <span className="rounded bg-emerald-500/10 px-1.5 py-0.5 text-emerald-600 dark:text-emerald-400">★ {a.skillName}</span>}
+                        {a.prompt && <span>📝 {a.prompt.name}</span>}
+                        <code className="rounded bg-muted px-1 font-mono">{a.job.cronExpression}</code>
+                        {a.job.lastRunAt && <span>Last: {new Date(a.job.lastRunAt).toLocaleString()}</span>}
+                      </div>
+                    </div>
+                  ))}
+                  <Link href="/scheduler" className="block text-center text-xs font-semibold text-primary hover:underline">
+                    View all automations →
+                  </Link>
+                </div>
+              );
+            })()}
           </SectionCard>
 
           <SectionCard title="Pending Approvals">

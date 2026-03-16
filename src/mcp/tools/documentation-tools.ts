@@ -2,6 +2,7 @@ import * as z from "zod";
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { ToolDefinition } from "../tool-registry.js";
+import { PROJECT_ROOT } from "../../project-root.js";
 
 const queryDocSchema = z.object({
   topic: z.string().min(1, "topic is required"),
@@ -81,8 +82,8 @@ const searchMarkdownSections = (
 export const createDocumentationTools = (
   options?: DocumentationToolsOptions
 ): ToolDefinition[] => {
-  const docsDir = options?.docsDir ?? path.resolve(process.cwd(), "docs");
-  const configDir = options?.configDir ?? path.resolve(process.cwd(), "config");
+  const docsDir = options?.docsDir ?? path.resolve(PROJECT_ROOT, "docs");
+  const configDir = options?.configDir ?? path.resolve(PROJECT_ROOT, "config");
 
   return [
     {

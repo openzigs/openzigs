@@ -174,10 +174,18 @@ const splitSentences = (text: string): string[] => {
 
 /**
  * Get the overlap suffix from the end of a chunk.
+ * Snaps to the nearest word boundary to avoid splitting mid-word.
  */
 const getOverlap = (text: string, overlapSize: number): string => {
   if (overlapSize <= 0 || text.length <= overlapSize) {
     return "";
   }
-  return text.slice(-overlapSize);
+  const raw = text.slice(-overlapSize);
+  // Find the first whitespace to snap to a word boundary
+  const spaceIndex = raw.indexOf(" ");
+  if (spaceIndex === -1 || spaceIndex === 0) {
+    return raw;
+  }
+  // Skip the partial word at the start
+  return raw.slice(spaceIndex + 1);
 };

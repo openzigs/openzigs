@@ -3,8 +3,6 @@ import Database from "better-sqlite3";
 import { SocialRepository } from "./social-repository.js";
 import {
   PostContextService,
-  InstagramApiClient,
-  FacebookApiClient,
   TwitterApiClient,
   YouTubeApiClient,
   LinkedInApiClient,
@@ -31,7 +29,7 @@ describe("PostContextService", () => {
   });
 
   it("registers client by platform", () => {
-    const client = new InstagramApiClient("test-token");
+    const client = new TwitterApiClient("test-token");
     service.registerClient(client);
     // No error means it registered successfully
     expect(true).toBe(true);
@@ -43,12 +41,12 @@ describe("PostContextService", () => {
   });
 
   it("caches post context on second call", async () => {
-    const client = new InstagramApiClient("test-token");
+    const client = new TwitterApiClient("test-token");
     const fetchSpy = vi.fn().mockResolvedValue({
       postId: "123",
-      platform: "instagram",
+      platform: "twitter",
       caption: "Hello",
-      permalink: "https://ig.com/p/123",
+      permalink: "https://x.com/p/123",
       mediaType: "IMAGE",
       mediaUrl: "",
       authorUsername: "test_user",
@@ -58,117 +56,17 @@ describe("PostContextService", () => {
     client.fetchPostContext = fetchSpy;
     service.registerClient(client);
 
-    await service.getPostContext("instagram", "123");
-    await service.getPostContext("instagram", "123");
+    await service.getPostContext("twitter", "123");
+    await service.getPostContext("twitter", "123");
     expect(fetchSpy).toHaveBeenCalledTimes(1); // cached
   });
 
   it("registers multiple platform clients without error", () => {
-    service.registerClient(new InstagramApiClient("ig-token"));
-    service.registerClient(new FacebookApiClient("fb-token"));
     service.registerClient(new TwitterApiClient("tw-token"));
     service.registerClient(new YouTubeApiClient("yt-key"));
     service.registerClient(new LinkedInApiClient("li-token"));
-    // All 5 registered without error
+    // All 3 registered without error
     expect(true).toBe(true);
-  });
-});
-
-// ── InstagramApiClient ──
-
-describe("InstagramApiClient", () => {
-  it("has platform = instagram", () => {
-    const client = new InstagramApiClient("test-token");
-    expect(client.platform).toBe("instagram");
-  });
-
-  it("returns null on HTTP error", async () => {
-    global.fetch = vi.fn().mockResolvedValue({
-      ok: false,
-      status: 401,
-      text: async () => "Unauthorized",
-    }) as unknown as typeof fetch;
-
-    const client = new InstagramApiClient("bad-token");
-    const result = await client.fetchPostContext("123");
-    expect(result).toBeNull();
-  });
-
-  it("parses successful response", async () => {
-    global.fetch = vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({
-        caption: "Test caption",
-        permalink: "https://ig.com/p/123",
-        media_type: "IMAGE",
-        media_url: "https://ig.com/img.jpg",
-        username: "test_user",
-        timestamp: "2026-01-01T00:00:00Z",
-      }),
-    }) as unknown as typeof fetch;
-
-    const client = new InstagramApiClient("good-token");
-    const result = await client.fetchPostContext("123");
-    expect(result).not.toBeNull();
-    expect(result!.platform).toBe("instagram");
-    expect(result!.caption).toBe("Test caption");
-    expect(result!.authorUsername).toBe("test_user");
-  });
-});
-
-// ── FacebookApiClient ──
-
-describe("FacebookApiClient", () => {
-  it("has platform = facebook", () => {
-    const client = new FacebookApiClient("test-token");
-    expect(client.platform).toBe("facebook");
-  });
-
-  it("returns null on HTTP error", async () => {
-    global.fetch = vi.fn().mockResolvedValue({
-      ok: false,
-      status: 400,
-      text: async () => "Bad Request",
-    }) as unknown as typeof fetch;
-
-    const client = new FacebookApiClient("bad-token");
-    const result = await client.fetchPostContext("456");
-    expect(result).toBeNull();
-  });
-
-  it("parses successful response", async () => {
-    global.fetch = vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({
-        message: "Hello world",
-        permalink_url: "https://fb.com/post/456",
-        type: "status",
-        created_time: "2026-01-01T12:00:00Z",
-        from: { name: "Test Page" },
-      }),
-    }) as unknown as typeof fetch;
-
-    const client = new FacebookApiClient("good-token");
-    const result = await client.fetchPostContext("456");
-    expect(result).not.toBeNull();
-    expect(result!.platform).toBe("facebook");
-    expect(result!.caption).toBe("Hello world");
-    expect(result!.authorUsername).toBe("Test Page");
-  });
-
-  it("sends message via Facebook API", async () => {
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({ message_id: "m_123" }),
-    }) as unknown as typeof fetch;
-    global.fetch = fetchMock;
-
-    const client = new FacebookApiClient("page-token");
-    await client.sendMessage("user_123", "Hello!", "page_456");
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    const [url, opts] = (fetchMock as ReturnType<typeof vi.fn>).mock.calls[0] as [string, RequestInit];
-    expect(url).toContain("page_456/messages");
-    expect(opts.method).toBe("POST");
   });
 });
 

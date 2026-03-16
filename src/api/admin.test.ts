@@ -61,7 +61,23 @@ vi.mock("node:fs/promises", () => ({
     mkdir: vi.fn().mockResolvedValue(undefined),
     chmod: vi.fn().mockResolvedValue(undefined),
     utimes: vi.fn().mockResolvedValue(undefined),
+    rm: vi.fn().mockResolvedValue(undefined),
   },
+}));
+
+vi.mock("../skills/skill-loader.js", () => ({
+  loadSkillMetadata: vi.fn().mockResolvedValue([{
+    name: "test-skill",
+    displayName: "Test Skill",
+    description: "A test skill",
+    icon: "🧪",
+    tools: ["web-search"],
+    rulesCount: 1,
+    loaded: true,
+    examples: [],
+    skillMdPath: "/tmp/test/SKILL.md",
+    allowedTools: ["web-search"],
+  }]),
 }));
 
 vi.mock("../productivity/template-service.js", () => ({
@@ -2927,6 +2943,129 @@ describe("Admin API router", () => {
       const res = await request(app).post("/admin/native-mcp-servers/my-server/tools/test-tool/remove");
       expect(res.status).toBe(200);
       expect(res.body.ok).toBe(true);
+    });
+  });
+
+  // ── Skill CRUD Endpoints ──────────────────────────────────
+
+  describe("Skill CRUD", () => {
+    function buildAppWithCopilotSkills(builtInDirs: string[] = []) {
+      const copilot = createMockCopilot();
+      (copilot as any).getSkillDirectories = vi.fn().mockReturnValue(builtInDirs);
+      (copilot as any).addSkillDirectory = vi.fn();
+      return { ...buildApp({ copilot: copilot as any }), copilot };
+    }
+
+    describe("POST /skills/validate", () => {
+      it("rejects empty content", async () => {
+        const { app } = buildAppWithCopilotSkills();
+        const res = await request(app).post("/admin/skills/validate").send({ content: "" });
+        expect(res.status).toBe(400);
+        expect(res.body.error).toBe("content is required");
+      });
+
+      it("reports missing name in frontmatter", async () => {
+        const { app } = buildAppWithCopilotSkills();
+        const res = await request(app).post("/admin/skills/validate").send({ content: "# No frontmatter" });
+        expect(res.status).toBe(200);
+        expect(res.body.valid).toBe(false);
+        expect(res.body.errors).toContain("Missing 'name' in YAML frontmatter");
+      });
+
+      it("validates valid content", async () => {
+        const { app } = buildAppWithCopilotSkills();
+        const res = await request(app)
+          .post("/admin/skills/validate")
+          .send({ content: "---\nname: my-skill\n---\n# My Skill" });
+        expect(res.status).toBe(200);
+        expect(res.body.valid).toBe(true);
+        expect(res.body.parsedName).toBe("my-skill");
+      });
+    });
+
+    describe("POST /skills", () => {
+      it("rejects missing name or content", async () => {
+        const { app } = buildAppWithCopilotSkills();
+        const res = await request(app).post("/admin/skills").send({ name: "", content: "" });
+        expect(res.status).toBe(400);
+        expect(res.body.error).toBe("name and content are required");
+      });
+
+      it("rejects path-traversal characters", async () => {
+        const { app } = buildAppWithCopilotSkills();
+        const res = await request(app)
+          .post("/admin/skills")
+          .send({ name: "../evil", content: "hack" });
+        expect(res.status).toBe(400);
+        expect(res.body.error).toBe("Invalid skill name");
+      });
+
+      it("creates a valid skill", async () => {
+        const { app, copilot } = buildAppWithCopilotSkills();
+        const res = await request(app)
+          .post("/admin/skills")
+          .send({ name: "test-skill", content: "---\nname: test-skill\n---\n# Test" });
+        expect(res.status).toBe(200);
+        expect(res.body.success).toBe(true);
+        expect(res.body.skill).toBeDefined();
+        expect(res.body.skill.name).toBe("test-skill");
+        expect((copilot as any).addSkillDirectory).toHaveBeenCalled();
+      });
+    });
+
+    describe("PUT /skills/:name", () => {
+      it("rejects missing content", async () => {
+        const { app } = buildAppWithCopilotSkills();
+        const res = await request(app).put("/admin/skills/my-skill").send({ content: "" });
+        expect(res.status).toBe(400);
+        expect(res.body.error).toBe("content is required");
+      });
+
+      it("rejects updating built-in skills", async () => {
+        const { app } = buildAppWithCopilotSkills([
+          "/project/src/skills/my-skill",
+        ]);
+        const res = await request(app)
+          .put("/admin/skills/my-skill")
+          .send({ content: "updated" });
+        expect(res.status).toBe(403);
+        expect(res.body.error).toBe("Built-in skills are read-only");
+      });
+
+      it("updates a user skill", async () => {
+        const { app, copilot } = buildAppWithCopilotSkills();
+        const res = await request(app)
+          .put("/admin/skills/test-skill")
+          .send({ content: "---\nname: test-skill\n---\n# Updated" });
+        expect(res.status).toBe(200);
+        expect(res.body.success).toBe(true);
+        expect((copilot as any).addSkillDirectory).toHaveBeenCalled();
+      });
+    });
+
+    describe("DELETE /skills/:name", () => {
+      it("rejects path-traversal characters", async () => {
+        const { app } = buildAppWithCopilotSkills();
+        const res = await request(app).delete("/admin/skills/evil..name");
+        expect(res.status).toBe(400);
+        expect(res.body.error).toBe("Invalid skill name");
+      });
+
+      it("rejects deleting built-in skills", async () => {
+        const { app } = buildAppWithCopilotSkills([
+          "/project/src/skills/core-skill",
+        ]);
+        const res = await request(app).delete("/admin/skills/core-skill");
+        expect(res.status).toBe(403);
+        expect(res.body.error).toBe("Cannot delete built-in skills");
+      });
+
+      it("deletes a user skill", async () => {
+        const { app } = buildAppWithCopilotSkills();
+        const res = await request(app).delete("/admin/skills/test-skill");
+        expect(res.status).toBe(200);
+        expect(res.body.success).toBe(true);
+      });
     });
   });
 });

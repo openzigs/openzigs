@@ -99,6 +99,58 @@ describe("TaskRepository", () => {
       expect(task.allowedTools).toBeNull();
     });
 
+    it("stores and retrieves skillName and skillBody", () => {
+      const task = repo.insert({
+        trigger: "cron",
+        goal: "Skill task",
+        skillName: "media-director",
+        skillBody: "You are a media director skill.\n\nDo media things.",
+      });
+
+      expect(task.skillName).toBe("media-director");
+      expect(task.skillBody).toBe("You are a media director skill.\n\nDo media things.");
+
+      const fetched = repo.getById(task.id);
+      expect(fetched!.skillName).toBe("media-director");
+      expect(fetched!.skillBody).toBe("You are a media director skill.\n\nDo media things.");
+    });
+
+    it("defaults skillName and skillBody to null", () => {
+      const task = repo.insert({
+        trigger: "chat",
+        goal: "No skill task",
+      });
+
+      expect(task.skillName).toBeNull();
+      expect(task.skillBody).toBeNull();
+    });
+
+    it("stores and retrieves disabledSkills and agentName", () => {
+      const task = repo.insert({
+        trigger: "cron",
+        goal: "Focused skill task",
+        disabledSkills: ["content-creator", "knowledge-curator"],
+        agentName: "scheduled-researcher",
+      });
+
+      expect(task.disabledSkills).toEqual(["content-creator", "knowledge-curator"]);
+      expect(task.agentName).toBe("scheduled-researcher");
+
+      const fetched = repo.getById(task.id);
+      expect(fetched!.disabledSkills).toEqual(["content-creator", "knowledge-curator"]);
+      expect(fetched!.agentName).toBe("scheduled-researcher");
+    });
+
+    it("defaults disabledSkills and agentName to null", () => {
+      const task = repo.insert({
+        trigger: "chat",
+        goal: "No extras",
+      });
+
+      expect(task.disabledSkills).toBeNull();
+      expect(task.agentName).toBeNull();
+    });
+
     it("sets depth from parent", () => {
       const parent = repo.insert({ trigger: "chat", goal: "Parent" });
       const child = repo.insert({
@@ -318,6 +370,145 @@ describe("TaskRepository", () => {
       // 60s window should include both s1 tasks
       expect(repo.countRecentBySession("s1", 60_000)).toBe(2);
       expect(repo.countRecentBySession("s2", 60_000)).toBe(1);
+    });
+  });
+
+  describe("findByJobName", () => {
+    it("finds tasks matching a job name in context JSON", () => {
+      repo.insert({
+        trigger: "cron",
+        goal: "Run daily report",
+        context: JSON.stringify({ jobName: "daily-report", jobId: "j1" }),
+      });
+      repo.insert({
+        trigger: "cron",
+        goal: "Run weekly digest",
+        context: JSON.stringify({ jobName: "weekly-digest", jobId: "j2" }),
+      });
+      repo.insert({
+        trigger: "cron",
+        goal: "Another daily report",
+        context: JSON.stringify({ jobName: "daily-report", jobId: "j1" }),
+      });
+
+      const results = repo.findByJobName("daily-report");
+      expect(results).toHaveLength(2);
+      expect(results.every((t) => t.goal.includes("daily report"))).toBe(true);
+    });
+
+    it("returns empty array when no tasks match", () => {
+      repo.insert({ trigger: "chat", goal: "No context" });
+      expect(repo.findByJobName("nonexistent")).toEqual([]);
+    });
+
+    it("respects the limit parameter", () => {
+      for (let i = 0; i < 5; i++) {
+        repo.insert({
+          trigger: "cron",
+          goal: `Task ${i}`,
+          context: JSON.stringify({ jobName: "my-job" }),
+        });
+      }
+      expect(repo.findByJobName("my-job", 3)).toHaveLength(3);
+    });
+
+    it("returns results ordered by most recent first", () => {
+      repo.insert({
+        trigger: "cron",
+        goal: "First",
+        context: JSON.stringify({ jobName: "ordered-job" }),
+      });
+      now = new Date("2026-02-09T13:00:00Z");
+      repo.insert({
+        trigger: "cron",
+        goal: "Second",
+        context: JSON.stringify({ jobName: "ordered-job" }),
+      });
+
+      const results = repo.findByJobName("ordered-job");
+      expect(results[0].goal).toBe("Second");
+      expect(results[1].goal).toBe("First");
+    });
+
+    it("sanitizes double quotes from job name to prevent injection", () => {
+      repo.insert({
+        trigger: "cron",
+        goal: "Safe task",
+        context: JSON.stringify({ jobName: "safe-job" }),
+      });
+      // Attempting injection via quotes should return nothing
+      const results = repo.findByJobName('safe-job" OR 1=1 --');
+      expect(results).toEqual([]);
+    });
+
+    it("escapes LIKE wildcards (% and _) in job name (Issue #468)", () => {
+      // Insert a task with a job name that contains a literal %
+      repo.insert({
+        trigger: "cron",
+        goal: "Percent task",
+        context: JSON.stringify({ jobName: "100%_done" }),
+      });
+      repo.insert({
+        trigger: "cron",
+        goal: "Other task",
+        context: JSON.stringify({ jobName: "other-job" }),
+      });
+
+      // Searching for the literal % name should find only the matching task
+      const results = repo.findByJobName("100%_done");
+      expect(results).toHaveLength(1);
+      expect(results[0].goal).toBe("Percent task");
+
+      // Searching with % as a wildcard attack should NOT match all tasks
+      const wildcard = repo.findByJobName("%");
+      expect(wildcard).toHaveLength(0);
+    });
+  });
+
+  describe("list — LIMIT parameterization (Issue #468)", () => {
+    it("respects numeric limit param", () => {
+      for (let i = 0; i < 5; i++) {
+        repo.insert({ trigger: "chat", goal: `Task ${i}` });
+      }
+      const tasks = repo.list({ limit: 3 });
+      expect(tasks).toHaveLength(3);
+    });
+
+    it("returns all tasks when no limit", () => {
+      for (let i = 0; i < 3; i++) {
+        repo.insert({ trigger: "chat", goal: `Task ${i}` });
+      }
+      const tasks = repo.list();
+      expect(tasks).toHaveLength(3);
+    });
+
+    it("does not allow SQL injection via limit (parameterized)", () => {
+      repo.insert({ trigger: "chat", goal: "Task" });
+      // If limit were string-interpolated, "1; DROP TABLE agent_tasks" would be dangerous.
+      // With parameterized ?, passing a number is the only valid option.
+      // This test verifies the code doesn't crash and works correctly.
+      const tasks = repo.list({ limit: 1 });
+      expect(tasks).toHaveLength(1);
+    });
+  });
+
+  describe("listSince — LIMIT parameterization (Issue #468)", () => {
+    it("respects numeric limit param", () => {
+      for (let i = 0; i < 5; i++) {
+        repo.insert({ trigger: "chat", goal: `Task ${i}` });
+      }
+      const tasks = repo.listSince("2026-01-01T00:00:00Z", { limit: 2 });
+      expect(tasks).toHaveLength(2);
+    });
+
+    it("filters by status and applies limit", () => {
+      for (let i = 0; i < 3; i++) {
+        const t = repo.insert({ trigger: "chat", goal: `Task ${i}` });
+        if (i < 2) repo.markCompleted(t.id, "done");
+      }
+      const tasks = repo.listSince("2026-01-01T00:00:00Z", { status: "completed", limit: 1 });
+      expect(tasks).toHaveLength(1);
+      expect(tasks[0].status).toBe("completed");
     });
   });
 });

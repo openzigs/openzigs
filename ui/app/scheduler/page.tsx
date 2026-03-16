@@ -1,16 +1,28 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSocket } from "@/lib/socket-context";
 import { fetchJson } from "@/lib/api";
 import type { ModelInfo, ReasoningEffort, SavedPrompt, ScheduledJob, ToolInfo } from "@/lib/types";
+
+type SkillMetadata = {
+  name: string;
+  displayName: string;
+  description: string;
+  icon: string;
+  tools: string[];
+};
 import { SectionCard } from "@/components/section-card";
 import { ToastContainer, showToast } from "@/components/toast";
 import { PipelineEditor, type BackendPipelineNode } from "@/components/pipeline/pipeline-editor";
 import { WorkflowWizard } from "@/components/pipeline/workflow-wizard";
 import { ToolMultiSelect, type ToolOption } from "@/components/pipeline/tool-multi-select";
 import { AskAiPanel, AskAiButton, PAGE_CONTEXTS } from "@/components/ask-ai";
+import { CronBuilder } from "@/components/cron-builder";
+import { DryRunPreview, type DryRunData } from "@/components/dry-run-preview";
+import { ChevronDown, ChevronUp, History } from "lucide-react";
 
 const FALLBACK_MODEL_IDS = [
   "gpt-5-mini",
@@ -33,11 +45,31 @@ const supportsReasoningModel = (modelId: string, modelCapabilities?: { supports?
 };
 
 export default function SchedulerPage() {
+  return (
+    <Suspense>
+      <SchedulerContent />
+    </Suspense>
+  );
+}
+
+function SchedulerContent() {
   const queryClient = useQueryClient();
   const { socket } = useSocket();
+  const searchParams = useSearchParams();
   const [editingJob, setEditingJob] = useState<ScheduledJob | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [askAiOpen, setAskAiOpen] = useState(false);
+  const [createFromPrompt, setCreateFromPrompt] = useState<string | null>(null);
+
+  // Auto-open form when createFrom query param is present
+  useEffect(() => {
+    const fromParam = searchParams.get("createFrom");
+    if (fromParam) {
+      setCreateFromPrompt(fromParam);
+      setEditingJob(null);
+      setShowForm(true);
+    }
+  }, [searchParams]);
 
   const jobsQuery = useQuery({
     queryKey: ["jobs"],
@@ -76,13 +108,14 @@ export default function SchedulerPage() {
     onError: (err) => showToast(`Error: ${err.message}`, "error"),
   });
 
-  const [dryRunResult, setDryRunResult] = useState<{ id: string; preview: string } | null>(null);
+  const [dryRunResult, setDryRunResult] = useState<{ id: string; data: DryRunData } | null>(null);
+  const [expandedHistory, setExpandedHistory] = useState<string | null>(null);
 
   const dryRunMutation = useMutation({
     mutationFn: (id: string) =>
-      fetchJson<{ preview: Record<string, unknown> }>(`/api/admin/jobs/${id}/run?dry_run=true`, { method: "POST" }),
+      fetchJson<{ preview: DryRunData }>(`/api/admin/jobs/${id}/run?dry_run=true`, { method: "POST" }),
     onSuccess: (data, id) => {
-      setDryRunResult({ id, preview: JSON.stringify(data.preview ?? data, null, 2) });
+      setDryRunResult({ id, data: data.preview ?? data });
       showToast("Dry run complete — preview below", "success");
     },
     onError: (err) => showToast(`Dry run error: ${err.message}`, "error"),
@@ -145,7 +178,7 @@ export default function SchedulerPage() {
 
       {showForm && (
         <div className="mb-6">
-          <JobForm existing={editingJob} onClose={handleFormClose} />
+          <JobForm existing={editingJob} onClose={handleFormClose} createFromPrompt={createFromPrompt} />
         </div>
       )}
 
@@ -215,36 +248,63 @@ export default function SchedulerPage() {
                       Model: {job.model}
                     </span>
                   )}
+                  {typeof job.actionPayload?.skillName === "string" && (
+                    <a href={`/admin/skills?view=${encodeURIComponent(job.actionPayload.skillName)}`} className="rounded bg-emerald-500/10 px-2 py-0.5 text-[10px] font-semibold text-emerald-600 hover:underline dark:text-emerald-400">
+                      ★ {job.actionPayload.skillName}
+                    </a>
+                  )}
                 </div>
                 {job.actionPayload && Object.keys(job.actionPayload).length > 0 && (
-                  <pre className="mt-2 whitespace-pre-wrap break-words font-mono text-xs text-muted-foreground">
-                    {job.actionType === "prompt" && job.actionPayload.promptName
-                      ? `Prompt: ${job.actionPayload.promptName}${
-                          job.actionPayload.variables && typeof job.actionPayload.variables === "object" && Object.keys(job.actionPayload.variables as Record<string, string>).length > 0
-                            ? `\nVariables: ${Object.entries(job.actionPayload.variables as Record<string, string>).map(([k, v]) => `${k}=${v}`).join(", ")}`
-                            : ""
-                        }`
-                      : JSON.stringify(job.actionPayload, null, 2).slice(0, 200)}
-                  </pre>
+                  <div className="mt-2 font-mono text-xs text-muted-foreground">
+                    {job.actionType === "prompt" && job.actionPayload.promptName ? (
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span>Prompt:</span>
+                        <a href={`/library?search=${encodeURIComponent(String(job.actionPayload.promptName))}`} className="text-primary hover:underline">
+                          {String(job.actionPayload.promptName)}
+                        </a>
+                        {(() => {
+                          const vars = job.actionPayload?.variables;
+                          if (!vars || typeof vars !== "object") return null;
+                          const entries = Object.entries(vars as Record<string, string>);
+                          if (entries.length === 0) return null;
+                          return (
+                            <span className="text-muted-foreground">
+                              ({entries.map(([k, v]) => `${k}=${v}`).join(", ")})
+                            </span>
+                          );
+                        })()}
+                      </div>
+                    ) : (
+                      <pre className="whitespace-pre-wrap break-words">{JSON.stringify(job.actionPayload, null, 2).slice(0, 200)}</pre>
+                    )}
+                  </div>
                 )}
                 <div className="mt-2 flex items-center gap-4 text-[11px] text-muted-foreground">
                   <span>Runs: {job.runCount || 0}</span>
                   {job.lastRunAt && <span>Last: {new Date(job.lastRunAt).toLocaleString()}</span>}
                 </div>
+                {/* Execution History toggle */}
+                <div className="mt-2">
+                  <button
+                    type="button"
+                    onClick={() => setExpandedHistory(expandedHistory === job.id ? null : job.id)}
+                    className="flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground"
+                  >
+                    <History className="h-3 w-3" />
+                    History
+                    {expandedHistory === job.id ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+                  </button>
+                  {expandedHistory === job.id && (
+                    <ExecutionHistory jobId={job.id} />
+                  )}
+                </div>
                 {dryRunResult?.id === job.id && (
-                  <div className="mt-3 rounded-lg border border-amber-400/30 bg-amber-50/5 p-3">
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-semibold text-amber-500">🧪 Dry Run Preview</span>
-                      <button
-                        onClick={() => setDryRunResult(null)}
-                        className="text-xs text-muted-foreground hover:text-foreground"
-                      >
-                        ✕
-                      </button>
-                    </div>
-                    <pre className="mt-2 whitespace-pre-wrap break-words font-mono text-[11px] text-muted-foreground">
-                      {dryRunResult.preview}
-                    </pre>
+                  <div className="mt-3">
+                    <DryRunPreview
+                      data={dryRunResult.data}
+                      onExecute={() => { setDryRunResult(null); runNowMutation.mutate(job.id); }}
+                      onClose={() => setDryRunResult(null)}
+                    />
                   </div>
                 )}
               </div>
@@ -260,16 +320,18 @@ export default function SchedulerPage() {
 
 /* ── Job Form (create / edit) ── */
 
-const JobForm = ({ existing, onClose }: { existing: ScheduledJob | null; onClose: () => void }) => {
+const JobForm = ({ existing, onClose, createFromPrompt }: { existing: ScheduledJob | null; onClose: () => void; createFromPrompt?: string | null }) => {
   const queryClient = useQueryClient();
   const [assistantInput, setAssistantInput] = useState("");
   const [assistantOutput, setAssistantOutput] = useState<string | null>(null);
   const [name, setName] = useState(existing?.name ?? "");
   const [actionType, setActionType] = useState(existing?.actionType ?? "prompt");
   const [promptName, setPromptName] = useState(
-    existing?.actionType === "prompt" && existing?.actionPayload?.promptName
-      ? String(existing.actionPayload.promptName)
-      : ""
+    createFromPrompt
+      ? createFromPrompt
+      : existing?.actionType === "prompt" && existing?.actionPayload?.promptName
+        ? String(existing.actionPayload.promptName)
+        : ""
   );
   const [payloadText, setPayloadText] = useState(
     existing && existing.actionType !== "prompt" && existing.actionType !== "pipeline" && existing.actionPayload
@@ -293,6 +355,57 @@ const JobForm = ({ existing, onClose }: { existing: ScheduledJob | null; onClose
       ? (existing.actionPayload.variables as Record<string, string>)
       : {})
   );
+  const [skillName, setSkillName] = useState(
+    existing?.actionPayload?.skillName ? String(existing.actionPayload.skillName) : ""
+  );
+  const [skillAutoPopulated, setSkillAutoPopulated] = useState(false);
+
+  // Outbox action type state
+  const [outboxPlatforms, setOutboxPlatforms] = useState<string[]>(
+    existing?.actionType === "outbox" && existing?.actionPayload?.platforms
+      ? (existing.actionPayload.platforms as string[])
+      : existing?.actionType === "outbox" && existing?.actionPayload?.platform
+        ? [String(existing.actionPayload.platform)]
+        : []
+  );
+  const [contentTemplate, setContentTemplate] = useState(
+    existing?.actionType === "outbox" && existing?.actionPayload?.contentTemplate
+      ? String(existing.actionPayload.contentTemplate)
+      : ""
+  );
+  const [reviewRequired, setReviewRequired] = useState(
+    existing?.actionType === "outbox" && existing?.actionPayload?.reviewRequired === true
+  );
+
+  // Notification channels state (applicable to all action types)
+  const [notifyChannels, setNotifyChannels] = useState<string[]>(
+    existing?.notifyChannels ?? []
+  );
+
+  // Fetch connected outbox platforms
+  const platformsQuery = useQuery({
+    queryKey: ["outbox-connected-platforms"],
+    queryFn: () => fetchJson<{ platforms: { platform: string; connected: boolean }[] }>("/api/admin/outbox/connected-platforms"),
+    enabled: actionType === "outbox",
+  });
+  const connectedPlatforms = useMemo(
+    () => (platformsQuery.data?.platforms ?? []).filter((p) => p.connected).map((p) => p.platform),
+    [platformsQuery.data]
+  );
+
+  // Fetch channel config for notification checkboxes
+  const channelsQuery = useQuery({
+    queryKey: ["channels"],
+    queryFn: () => fetchJson<{ channels: { telegram: { enabled: boolean }; discord: { enabled: boolean } } }>("/api/admin/channels"),
+  });
+  const enabledChannels = useMemo(() => {
+    const ch = channelsQuery.data?.channels;
+    if (!ch) return [];
+    const result: string[] = [];
+    if (ch.telegram?.enabled) result.push("telegram");
+    if (ch.discord?.enabled) result.push("discord");
+    return result;
+  }, [channelsQuery.data]);
 
   // Fetch prompts for the dropdown
   const promptsQuery = useQuery({
@@ -300,6 +413,17 @@ const JobForm = ({ existing, onClose }: { existing: ScheduledJob | null; onClose
     queryFn: () => fetchJson<{ prompts: SavedPrompt[] }>("/api/admin/prompts"),
   });
   const prompts = promptsQuery.data?.prompts ?? [];
+
+  // Fetch skills for the skill selector
+  const skillsQuery = useQuery({
+    queryKey: ["skills"],
+    queryFn: () => fetchJson<{ skills: SkillMetadata[] }>("/api/admin/skills"),
+  });
+  const skills = skillsQuery.data?.skills ?? [];
+  const selectedSkill = useMemo(
+    () => skills.find((s) => s.name === skillName) ?? null,
+    [skills, skillName]
+  );
 
   // Extract {{variable}} names from the selected prompt template
   const BUILTIN_VARS = ["today", "now", "day_of_week", "month", "year"];
@@ -325,6 +449,19 @@ const JobForm = ({ existing, onClose }: { existing: ScheduledJob | null; onClose
       return next;
     });
   }, [detectedVars]);
+
+  // Auto-populate skill from linked prompt's suggestedSkill
+  useEffect(() => {
+    if (actionType !== "prompt" || !promptName) return;
+    const selected = prompts.find((p) => p.name === promptName);
+    if (selected?.suggestedSkill && !skillName) {
+      setSkillName(selected.suggestedSkill);
+      setSkillAutoPopulated(true);
+    } else {
+      setSkillAutoPopulated(false);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [promptName, prompts, actionType]);
 
   const modelsQuery = useQuery({
     queryKey: ["models"],
@@ -472,12 +609,22 @@ const JobForm = ({ existing, onClose }: { existing: ScheduledJob | null; onClose
       for (const [k, v] of Object.entries(templateVars)) {
         if (v.trim()) vars[k] = v.trim();
       }
-      actionPayload = Object.keys(vars).length > 0
-        ? { promptName, variables: vars }
-        : { promptName };
+      actionPayload = {
+        promptName,
+        ...(skillName ? { skillName } : {}),
+        ...(Object.keys(vars).length > 0 ? { variables: vars } : {}),
+      };
     } else if (actionType === "pipeline") {
       if (pipelineStages.length < 2) { showToast("Pipeline needs at least 2 stages.", "error"); return; }
       actionPayload = { stages: pipelineStages };
+    } else if (actionType === "outbox") {
+      if (outboxPlatforms.length === 0) { showToast("Select at least one platform.", "error"); return; }
+      if (!contentTemplate.trim()) { showToast("Content template is required.", "error"); return; }
+      actionPayload = {
+        platforms: outboxPlatforms,
+        contentTemplate: contentTemplate.trim(),
+        reviewRequired,
+      };
     } else {
       try {
         actionPayload = JSON.parse(payloadText.trim() || "{}");
@@ -521,6 +668,13 @@ const JobForm = ({ existing, onClose }: { existing: ScheduledJob | null; onClose
       payload.autoApproveTools = null;
     }
 
+    // Notification channels
+    if (notifyChannels.length > 0) {
+      payload.notifyChannels = notifyChannels;
+    } else if (existing) {
+      payload.notifyChannels = null;
+    }
+
     saveMutation.mutate(payload);
   };
 
@@ -538,6 +692,16 @@ const JobForm = ({ existing, onClose }: { existing: ScheduledJob | null; onClose
         setPromptName("");
       }
       setPayloadText("");
+    } else if (suggestion.actionType === "outbox") {
+      if (suggestion.actionPayload) {
+        const p = suggestion.actionPayload;
+        if (Array.isArray(p.platforms)) setOutboxPlatforms(p.platforms as string[]);
+        else if (typeof p.platform === "string") setOutboxPlatforms([p.platform]);
+        if (typeof p.contentTemplate === "string") setContentTemplate(p.contentTemplate);
+        if (typeof p.reviewRequired === "boolean") setReviewRequired(p.reviewRequired);
+      }
+      setPayloadText("");
+      setPromptName("");
     } else if (suggestion.actionPayload) {
       setPromptName("");
       setPayloadText(JSON.stringify(suggestion.actionPayload, null, 2));
@@ -545,6 +709,10 @@ const JobForm = ({ existing, onClose }: { existing: ScheduledJob | null; onClose
 
     if (typeof suggestion.model === "string") {
       setModel(suggestion.model);
+    }
+
+    if (suggestion.notifyChannels) {
+      setNotifyChannels(suggestion.notifyChannels);
     }
   };
 
@@ -556,14 +724,6 @@ const JobForm = ({ existing, onClose }: { existing: ScheduledJob | null; onClose
     }
     assistMutation.mutate(message);
   };
-
-  // Cron preview
-  const cronParts = useMemo(() => {
-    const parts = cronExpression.trim().split(/\s+/);
-    if (parts.length !== 5) return null;
-    const labels = ["min", "hour", "day", "month", "weekday"];
-    return parts.map((p, i) => ({ label: labels[i], value: p }));
-  }, [cronExpression]);
 
   return (
     <div className="rounded-2xl border border-primary/20 bg-card p-5">
@@ -610,7 +770,7 @@ const JobForm = ({ existing, onClose }: { existing: ScheduledJob | null; onClose
 
         <Field
           label="Action Type"
-          hint={`"Prompt" executes a saved prompt template. "Shell" runs a command. "Custom" sends raw payload.`}
+          hint={`"Prompt" executes a saved prompt template. "Pipeline" runs a multi-stage workflow. "Shell" runs a command. "Outbox" queues content for social publishing.`}
         >
           <select
             className="w-full rounded-lg border border-border bg-card text-foreground px-3 py-2 text-sm"
@@ -621,6 +781,7 @@ const JobForm = ({ existing, onClose }: { existing: ScheduledJob | null; onClose
             <option value="pipeline">Pipeline</option>
             <option value="shell">Shell</option>
             <option value="custom">Custom</option>
+            <option value="outbox">Outbox (Publish)</option>
           </select>
         </Field>
 
@@ -674,6 +835,36 @@ const JobForm = ({ existing, onClose }: { existing: ScheduledJob | null; onClose
               </div>
             </Field>
           )}
+          <Field label="Skill" hint="Skills inject domain expertise and restrict tools to the skill's allowed set.">
+            <select
+              className="w-full rounded-lg border border-border bg-card text-foreground px-3 py-2 text-sm"
+              value={skillName}
+              onChange={(e) => { setSkillName(e.target.value); setSkillAutoPopulated(false); }}
+            >
+              <option value="">— No skill (generic execution) —</option>
+              {skills.map((s) => (
+                <option key={s.name} value={s.name}>
+                  {s.icon} {s.displayName}
+                </option>
+              ))}
+            </select>
+            {skillAutoPopulated && (
+              <p className="mt-1 text-[10px] text-emerald-500">Auto-suggested by linked prompt</p>
+            )}
+            {selectedSkill && selectedSkill.tools.length > 0 && (
+              <div className="mt-2 flex flex-wrap gap-1">
+                <span className="text-[10px] text-muted-foreground mr-1">Skill tools:</span>
+                {selectedSkill.tools.slice(0, 10).map((t) => (
+                  <span key={t} className="inline-flex rounded-full bg-primary/10 px-2 py-0.5 text-[10px] text-primary">
+                    {t}
+                  </span>
+                ))}
+                {selectedSkill.tools.length > 10 && (
+                  <span className="text-[10px] text-muted-foreground">+{selectedSkill.tools.length - 10} more</span>
+                )}
+              </div>
+            )}
+          </Field>
           </>
         ) : actionType === "pipeline" ? (
           <PipelineSection
@@ -682,6 +873,57 @@ const JobForm = ({ existing, onClose }: { existing: ScheduledJob | null; onClose
             availableTools={allTools}
             availablePrompts={availablePrompts}
           />
+        ) : actionType === "outbox" ? (
+          <>
+            <Field label="Platforms" hint="Select one or more social platforms to publish to.">
+              {connectedPlatforms.length === 0 && !platformsQuery.isLoading ? (
+                <p className="text-[11px] text-muted-foreground">
+                  No connected platforms found.{" "}
+                  <a href="/admin" className="text-primary hover:underline">Configure credentials first</a>.
+                </p>
+              ) : (
+                <div className="flex flex-wrap gap-2">
+                  {connectedPlatforms.map((p) => (
+                    <label key={p} className="flex items-center gap-1.5 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={outboxPlatforms.includes(p)}
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            setOutboxPlatforms((prev) => [...prev, p]);
+                          } else {
+                            setOutboxPlatforms((prev) => prev.filter((x) => x !== p));
+                          }
+                        }}
+                        className="rounded border-border"
+                      />
+                      <span className="text-sm capitalize text-foreground">{p}</span>
+                    </label>
+                  ))}
+                </div>
+              )}
+            </Field>
+            <Field label="Content Template" hint="Template for the post content. Use {{today}}, {{now}}, {{day_of_week}}, {{month}}, {{year}} for dynamic values.">
+              <textarea
+                className="w-full rounded-lg border border-border bg-card text-foreground px-3 py-2 text-sm"
+                rows={4}
+                placeholder="e.g., 🚀 Weekly update for {{day_of_week}}, {{today}} — here's what's new..."
+                value={contentTemplate}
+                onChange={(e) => setContentTemplate(e.target.value)}
+              />
+            </Field>
+            <Field label="Review Required" hint="When enabled, items are queued for human review before publishing.">
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={reviewRequired}
+                  onChange={(e) => setReviewRequired(e.target.checked)}
+                  className="rounded border-border"
+                />
+                <span className="text-sm text-foreground">Require manual review before publishing</span>
+              </label>
+            </Field>
+          </>
         ) : (
           <Field
             label="Action Payload (JSON)"
@@ -694,6 +936,30 @@ const JobForm = ({ existing, onClose }: { existing: ScheduledJob | null; onClose
               value={payloadText}
               onChange={(e) => setPayloadText(e.target.value)}
             />
+          </Field>
+        )}
+
+        {enabledChannels.length > 0 && (
+          <Field label="Notifications" hint="Send a notification when this job completes or fails.">
+            <div className="flex flex-wrap gap-3">
+              {enabledChannels.map((ch) => (
+                <label key={ch} className="flex items-center gap-1.5 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={notifyChannels.includes(ch)}
+                    onChange={(e) => {
+                      if (e.target.checked) {
+                        setNotifyChannels((prev) => [...prev, ch]);
+                      } else {
+                        setNotifyChannels((prev) => prev.filter((x) => x !== ch));
+                      }
+                    }}
+                    className="rounded border-border"
+                  />
+                  <span className="text-sm capitalize text-foreground">{ch}</span>
+                </label>
+              ))}
+            </div>
           </Field>
         )}
 
@@ -726,31 +992,14 @@ const JobForm = ({ existing, onClose }: { existing: ScheduledJob | null; onClose
         )}
 
         <Field
-          label="Cron Expression"
-          hint={`Standard 5-field cron. Examples: "0 9 * * *" (daily 9 AM), "*/30 * * * *" (every 30 min).`}
+          label="Schedule"
+          hint="When should this job run? Use Simple mode for common patterns or Advanced for raw cron."
         >
-          <input
-            type="text"
-            className="w-full rounded-lg border border-border bg-card text-foreground px-3 py-2 font-mono text-sm"
-            placeholder="*/5 * * * *"
+          <CronBuilder
             value={cronExpression}
-            onChange={(e) => setCronExpression(e.target.value)}
+            onChange={setCronExpression}
+            timezone={timezone}
           />
-          {cronExpression.trim() && (
-            <div className="mt-1 flex flex-wrap gap-1">
-              {cronParts ? (
-                cronParts.map((p) => (
-                  <code key={p.label} className="rounded bg-primary/10 px-1.5 py-0.5 font-mono text-[11px] text-primary">
-                    {p.label}={p.value}
-                  </code>
-                ))
-              ) : (
-                <span className="text-[11px] text-ember">
-                  Expected 5 fields: minute hour day-of-month month day-of-week
-                </span>
-              )}
-            </div>
-          )}
         </Field>
 
         <Field label="Timezone" hint="IANA timezone identifier.">
@@ -959,10 +1208,65 @@ const ToggleSwitch = ({ checked, onChange }: { checked: boolean; onChange: (v: b
 
 type SchedulerSuggestion = {
   name: string;
-  actionType: "prompt" | "shell" | "custom";
+  actionType: "prompt" | "shell" | "custom" | "outbox";
   cronExpression: string;
   timezone: string;
   promptName?: string;
   actionPayload?: Record<string, unknown>;
   model?: string;
+  notifyChannels?: string[];
+};
+
+/* ── Execution History ── */
+
+type TaskSummary = {
+  id: string;
+  status: string;
+  createdAt: string;
+  completedAt: string | null;
+  goal: string;
+};
+
+const ExecutionHistory = ({ jobId }: { jobId: string }) => {
+  const historyQuery = useQuery({
+    queryKey: ["job-history", jobId],
+    queryFn: () => fetchJson<{ executions: TaskSummary[] }>(`/api/admin/jobs/${jobId}/history?limit=5`),
+  });
+  const executions = historyQuery.data?.executions ?? [];
+
+  if (historyQuery.isLoading) return <p className="mt-1 text-[11px] text-muted-foreground">Loading…</p>;
+  if (executions.length === 0) return <p className="mt-1 text-[11px] text-muted-foreground">No executions yet.</p>;
+
+  return (
+    <div className="mt-1.5 space-y-1">
+      {executions.map((ex) => {
+        const duration = ex.completedAt
+          ? Math.round((new Date(ex.completedAt).getTime() - new Date(ex.createdAt).getTime()) / 1000)
+          : null;
+        return (
+          <div key={ex.id} className="flex items-center gap-2 text-[11px]">
+            <span className={`rounded-full px-1.5 py-0.5 text-[9px] font-semibold ${
+              ex.status === "completed" ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-400" :
+              ex.status === "failed" ? "bg-red-100 text-red-700 dark:bg-red-900/20 dark:text-red-400" :
+              "bg-muted text-muted-foreground"
+            }`}>
+              {ex.status}
+            </span>
+            <span className="text-muted-foreground">
+              {new Date(ex.createdAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+            </span>
+            {duration !== null && (
+              <span className="text-muted-foreground">{duration}s</span>
+            )}
+            <a
+              href={`/tasks?id=${ex.id}`}
+              className="text-primary hover:underline"
+            >
+              View →
+            </a>
+          </div>
+        );
+      })}
+    </div>
+  );
 };

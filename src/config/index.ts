@@ -4,6 +4,7 @@ import os from "node:os";
 import { randomBytes } from "node:crypto";
 import * as z from "zod";
 import { logger } from "../logging/logger.js";
+import { PROJECT_ROOT } from "../project-root.js";
 import type { Role } from "../auth/auth.js";
 
 export type RateLimitConfig = {
@@ -16,6 +17,8 @@ export type AuthConfig = {
   token?: string;
   role?: Role;
   rateLimit: RateLimitConfig;
+  /** Optional shared secret for queue worker callbacks. When set, /api/queue callback endpoints require this as a Bearer token. */
+  workerSecret?: string;
 };
 
 export type AccessControlMode = "allowlist" | "blocklist" | "open";
@@ -44,6 +47,7 @@ export type DiscordConfig = {
   enabled: boolean;
   token: string;
   allowedGuilds: string[];
+  notificationChannelId?: string;
 };
 
 export type WebChannelConfig = {
@@ -269,7 +273,8 @@ const authSchema = z.object({
   mode: z.enum(["local", "github"]),
   token: z.string().optional(),
   role: z.enum(["viewer", "operator", "admin"]).optional(),
-  rateLimit: rateLimitSchema
+  rateLimit: rateLimitSchema,
+  workerSecret: z.string().optional()
 });
 
 const accessControlSchema = z.object({
@@ -529,7 +534,7 @@ export type LoadConfigOptions = {
 
 const defaultConfigPath = () => path.join(os.homedir(), ".openzigs", "config.json");
 
-const defaultConfigFile = () => path.resolve(process.cwd(), "config", "default.json");
+const defaultConfigFile = () => path.resolve(PROJECT_ROOT, "config", "default.json");
 
 const interpolateEnv = (value: string) => {
   return value.replace(/\$\{([^}]+)\}/g, (_match, name) => process.env[name] ?? "");

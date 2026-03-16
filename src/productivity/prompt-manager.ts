@@ -247,7 +247,7 @@ export class PromptManager {
   resolveWithTools(
     name: string,
     variables: Record<string, string> = {}
-  ): { text: string; preferredTools: string[] | null } | null {
+  ): { text: string; preferredTools: string[] | null; suggestedSkill: string | null } | null {
     const prompt = this.getByName(name);
     if (!prompt) {
       return null;
@@ -255,6 +255,7 @@ export class PromptManager {
     return {
       text: interpolateTemplate(prompt.template, variables),
       preferredTools: prompt.preferredTools,
+      suggestedSkill: prompt.suggestedSkill,
     };
   }
 
@@ -266,7 +267,7 @@ export class PromptManager {
   resolveWithStages(
     name: string,
     variables: Record<string, string> = {}
-  ): { text: string; preferredTools: string[] | null; stages: PipelineStage[] | null } | null {
+  ): { text: string; preferredTools: string[] | null; stages: PipelineStage[] | null; suggestedSkill: string | null } | null {
     const prompt = this.getByName(name);
     if (!prompt) {
       return null;
@@ -282,6 +283,7 @@ export class PromptManager {
       text: interpolateTemplate(prompt.template, variables),
       preferredTools: prompt.preferredTools,
       stages: resolvedStages,
+      suggestedSkill: prompt.suggestedSkill,
     };
   }
 }

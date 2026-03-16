@@ -61,107 +61,6 @@ export class PostContextService {
   }
 }
 
-// ── Instagram API Client ─────────────────────────────────────────────
-
-const META_GRAPH_API_VERSION = process.env.META_GRAPH_API_VERSION || "v24.0";
-
-export class InstagramApiClient implements PlatformApiClient {
-  readonly platform: SocialPlatform = "instagram";
-  private accessToken: string;
-  private baseUrl: string;
-
-  constructor(accessToken: string, baseUrl = "https://graph.instagram.com") {
-    this.accessToken = accessToken;
-    this.baseUrl = baseUrl;
-  }
-
-  async fetchPostContext(postId: string): Promise<PostContext | null> {
-    const fields = "caption,permalink,media_type,media_url,username,timestamp";
-    const url = `${this.baseUrl}/${META_GRAPH_API_VERSION}/${encodeURIComponent(postId)}?fields=${fields}&access_token=${this.accessToken}`;
-
-    const res = await fetch(url, {
-      headers: { "User-Agent": "OpenZigs-SocialBrain/1.0" },
-      signal: AbortSignal.timeout(10_000),
-    });
-
-    if (!res.ok) {
-      const body = await res.text().catch(() => "");
-      logger.warn(`[InstagramApiClient] GET /${postId} returned ${res.status}: ${body.slice(0, 200)}`);
-      return null;
-    }
-
-    const data = (await res.json()) as Record<string, string>;
-    return {
-      postId,
-      platform: "instagram",
-      caption: data.caption ?? "",
-      permalink: data.permalink ?? "",
-      mediaType: data.media_type ?? "",
-      mediaUrl: data.media_url ?? "",
-      authorUsername: data.username ?? "",
-      publishedAt: data.timestamp ?? "",
-      cachedAt: new Date().toISOString(),
-    };
-  }
-}
-
-// ── Facebook API Client ──────────────────────────────────────────────
-
-export class FacebookApiClient implements PlatformApiClient {
-  readonly platform: SocialPlatform = "facebook";
-  private accessToken: string;
-  private baseUrl: string;
-
-  constructor(accessToken: string, baseUrl = "https://graph.facebook.com") {
-    this.accessToken = accessToken;
-    this.baseUrl = `${baseUrl}/${META_GRAPH_API_VERSION}`;
-  }
-
-  async fetchPostContext(postId: string): Promise<PostContext | null> {
-    const fields = "message,permalink_url,type,created_time,from";
-    const url = `${this.baseUrl}/${encodeURIComponent(postId)}?fields=${fields}&access_token=${this.accessToken}`;
-
-    const res = await fetch(url, {
-      headers: { "User-Agent": "OpenZigs-SocialBrain/1.0" },
-      signal: AbortSignal.timeout(10_000),
-    });
-
-    if (!res.ok) {
-      const body = await res.text().catch(() => "");
-      logger.warn(`[FacebookApiClient] GET /${postId} returned ${res.status}: ${body.slice(0, 200)}`);
-      return null;
-    }
-
-    const data = (await res.json()) as Record<string, unknown>;
-    const from = data.from as Record<string, string> | undefined;
-    return {
-      postId,
-      platform: "facebook",
-      caption: (data.message as string) ?? "",
-      permalink: (data.permalink_url as string) ?? "",
-      mediaType: (data.type as string) ?? "",
-      mediaUrl: "",
-      authorUsername: from?.name ?? "",
-      publishedAt: (data.created_time as string) ?? "",
-      cachedAt: new Date().toISOString(),
-    };
-  }
-
-  async sendMessage(recipientId: string, text: string, pageId: string): Promise<void> {
-    const url = `${this.baseUrl}/${encodeURIComponent(pageId)}/messages?access_token=${this.accessToken}`;
-    const res = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "User-Agent": "OpenZigs-SocialBrain/1.0" },
-      body: JSON.stringify({ recipient: { id: recipientId }, message: { text }, messaging_type: "RESPONSE" }),
-      signal: AbortSignal.timeout(10_000),
-    });
-    if (!res.ok) {
-      const body = await res.text().catch(() => "");
-      throw new Error(`Facebook send_message failed (${res.status}): ${body.slice(0, 200)}`);
-    }
-  }
-}
-
 // ── Twitter API Client ───────────────────────────────────────────────
 
 export class TwitterApiClient implements PlatformApiClient {
@@ -292,6 +191,64 @@ export class LinkedInApiClient implements PlatformApiClient {
       mediaUrl: "",
       authorUsername: (data.author as string) ?? "",
       publishedAt: data.created ? new Date(data.created as number).toISOString() : "",
+      cachedAt: new Date().toISOString(),
+    };
+  }
+}
+
+// ── TikTok API Client (via TikNeuron) ────────────────────────────────
+
+export class TikTokApiClient implements PlatformApiClient {
+  readonly platform: SocialPlatform = "tiktok";
+  private apiKey: string;
+  private baseUrl: string;
+
+  constructor(apiKey: string, baseUrl = "https://tikneuron.com/api/mcp") {
+    this.apiKey = apiKey;
+    this.baseUrl = baseUrl;
+  }
+
+  async fetchPostContext(postId: string): Promise<PostContext | null> {
+    const url = new URL(`${this.baseUrl}/post-detail`);
+    url.searchParams.set("tiktok_url", postId);
+
+    const res = await fetch(url, {
+      headers: {
+        Accept: "application/json",
+        "MCP-API-KEY": this.apiKey,
+      },
+      signal: AbortSignal.timeout(15_000),
+    });
+
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      logger.warn(`[TikTokApiClient] GET /post-detail/${postId} returned ${res.status}: ${body.slice(0, 200)}`);
+      return null;
+    }
+
+    const data = (await res.json()) as {
+      success: boolean;
+      details?: {
+        description?: string;
+        video_id?: string;
+        creator?: string;
+        created_at?: string;
+        duration?: number;
+      };
+    };
+
+    if (!data.success || !data.details) return null;
+
+    const d = data.details;
+    return {
+      postId: d.video_id ?? postId,
+      platform: "tiktok",
+      caption: d.description ?? "",
+      permalink: `https://www.tiktok.com/@${d.creator ?? "unknown"}/video/${d.video_id ?? postId}`,
+      mediaType: "VIDEO",
+      mediaUrl: "",
+      authorUsername: d.creator ?? "",
+      publishedAt: d.created_at ?? "",
       cachedAt: new Date().toISOString(),
     };
   }

@@ -1,0 +1,29 @@
+{
+    "name": "tiktok-mcp",
+    "version": "1.0.0",
+    "description": "MCP server for TikTok — Official TikTok API v2 (Content Posting, Display, OAuth)",
+    "license": "MIT",
+    "author": "OpenZigs",
+    "homepage": "https://developers.tiktok.com",
+    "type": "module",
+    "bin": {
+      "tiktok-mcp-server": "build/index.js"
+    },
+    "files": [
+      "build"
+    ],
+    "scripts": {
+      "build": "tsc && shx chmod +x build/*.js",
+      "prepare": "npm run build",
+      "watch": "tsc --watch",
+      "mcpb:pack": "mcpb pack"
+    },
+    "dependencies": {
+      "@modelcontextprotocol/sdk": "1.10.1"
+    },
+    "devDependencies": {
+      "@types/node": "^22",
+      "shx": "^0.3.4",
+      "typescript": "^5.6.2"
+    }
+  }

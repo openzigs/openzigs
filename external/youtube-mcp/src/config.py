@@ -5,7 +5,7 @@ from pydantic_settings import BaseSettings
 
 
 class YouTubeMCPSettings(BaseSettings):
-    model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "case_sensitive": False}
+    model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "case_sensitive": False, "extra": "ignore"}
 
     youtube_api_key: str = Field(..., description="YouTube Data API v3 key")
     youtube_channel_id: Optional[str] = Field(None, description="YouTube channel ID (auto-detected if omitted)")

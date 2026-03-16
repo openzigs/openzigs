@@ -33,6 +33,8 @@ export const CONTEXTUAL_TOOLS = new Set([
   "send-notification",
   "produce-video",
   "transcribe-audio",
+  "pop-next-queue-item",
+  "update-outbox-status",
 ]);
 
 /** Combined set — backward-compatible union of ESSENTIAL + CONTEXTUAL. */
@@ -60,4 +62,6 @@ export const INTERACTIVE_CHAT_AUTO_APPROVE_TOOLS = [
   "produce-video",
   "transcribe-audio",
   "save-memory",
+  "pop-next-queue-item",
+  "update-outbox-status",
 ];

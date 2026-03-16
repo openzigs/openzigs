@@ -6,14 +6,14 @@
  * Issue #243: Director Mode voiceover generation.
  */
 
-import { exec } from "node:child_process";
+import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import { logger } from "../../logging/logger.js";
 
-const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 
 /** Default macOS voice for narration (Samantha is clear, widely available) */
 const DEFAULT_VOICE = "Samantha";
@@ -22,7 +22,8 @@ const DEFAULT_VOICE = "Samantha";
 export async function isAvailable(): Promise<boolean> {
   if (process.platform !== "darwin") return false;
   try {
-    await execAsync("which say && which ffmpeg");
+    await execFileAsync("which", ["say"]);
+    await execFileAsync("which", ["ffmpeg"]);
     return true;
   } catch {
     return false;
@@ -47,16 +48,20 @@ export async function synthesize(text: string, voice?: string): Promise<string> 
   await fs.writeFile(textPath, text, "utf-8");
 
   const selectedVoice = voice ?? DEFAULT_VOICE;
+
+  // Validate voice name: only allow alphanumeric, spaces, hyphens, periods
+  if (!/^[\w\s.-]+$/.test(selectedVoice)) {
+    throw new Error(`Invalid voice name: ${selectedVoice}`);
+  }
+
   const startMs = Date.now();
 
   try {
-    // Step 1: macOS say → AIFF
-    await execAsync(`say -v "${selectedVoice}" -o "${aiffPath}" -f "${textPath}"`);
+    // Step 1: macOS say → AIFF (execFile avoids shell injection)
+    await execFileAsync("say", ["-v", selectedVoice, "-o", aiffPath, "-f", textPath]);
 
     // Step 2: ffmpeg AIFF → MP3
-    await execAsync(
-      `ffmpeg -i "${aiffPath}" -codec:a libmp3lame -q:a 2 -y "${mp3Path}" 2>/dev/null`,
-    );
+    await execFileAsync("ffmpeg", ["-i", aiffPath, "-codec:a", "libmp3lame", "-q:a", "2", "-y", mp3Path]);
 
     const stat = await fs.stat(mp3Path);
     const elapsed = Date.now() - startMs;

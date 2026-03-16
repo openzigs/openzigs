@@ -30,7 +30,7 @@ function makeMockKnowledge(chunks: string[] = []) {
 
 function makeContact(repo: SocialRepository, overrides: Partial<{ handoff_active: number }> = {}): Contact {
   const contact = repo.upsertContact({
-    platform: "instagram",
+    platform: "twitter",
     platformUserId: "user_123",
     username: "testuser",
     displayName: "Test User",
@@ -44,7 +44,7 @@ function makeContact(repo: SocialRepository, overrides: Partial<{ handoff_active
 
 function makeRawMessage(overrides: Partial<IncomingSocialMessage> = {}): IncomingSocialMessage {
   return {
-    platform: "instagram",
+    platform: "twitter",
     platformMessageId: "msg_1",
     platformUserId: "user_123",
     username: "testuser",
@@ -69,7 +69,7 @@ describe("SocialBrain", () => {
 
     const contact = makeContact(repo);
     const raw = makeRawMessage();
-    const msg = repo.insertMessage({ contactId: contact.id, platform: "instagram", direction: "inbound", content: raw.text });
+    const msg = repo.insertMessage({ contactId: contact.id, platform: "twitter", direction: "inbound", content: raw.text });
     const result = await brain.process(contact, msg, raw);
 
     expect(result).not.toBeNull();
@@ -87,7 +87,7 @@ describe("SocialBrain", () => {
 
     const contact = makeContact(repo);
     const raw = makeRawMessage({ text: "Something obscure" });
-    const msg = repo.insertMessage({ contactId: contact.id, platform: "instagram", direction: "inbound", content: raw.text });
+    const msg = repo.insertMessage({ contactId: contact.id, platform: "twitter", direction: "inbound", content: raw.text });
     const result = await brain.process(contact, msg, raw);
 
     expect(result).not.toBeNull();
@@ -104,7 +104,7 @@ describe("SocialBrain", () => {
 
     const contact = makeContact(repo, { handoff_active: 1 });
     const raw = makeRawMessage();
-    const msg = repo.insertMessage({ contactId: contact.id, platform: "instagram", direction: "inbound", content: raw.text });
+    const msg = repo.insertMessage({ contactId: contact.id, platform: "twitter", direction: "inbound", content: raw.text });
     const result = await brain.process(contact, msg, raw);
 
     expect(result).toBeNull();
@@ -119,7 +119,7 @@ describe("SocialBrain", () => {
 
     const contact = makeContact(repo);
     const raw = makeRawMessage();
-    const msg = repo.insertMessage({ contactId: contact.id, platform: "instagram", direction: "inbound", content: raw.text });
+    const msg = repo.insertMessage({ contactId: contact.id, platform: "twitter", direction: "inbound", content: raw.text });
     await brain.process(contact, msg, raw);
 
     expect(knowledge.search).toHaveBeenCalledWith(raw.text, 5, {
@@ -142,7 +142,7 @@ describe("SocialBrain", () => {
 
     const contact = makeContact(repo);
     const raw = makeRawMessage();
-    const msg = repo.insertMessage({ contactId: contact.id, platform: "instagram", direction: "inbound", content: raw.text });
+    const msg = repo.insertMessage({ contactId: contact.id, platform: "twitter", direction: "inbound", content: raw.text });
     const result = await brain.process(contact, msg, raw);
 
     expect(result).not.toBeNull();
@@ -157,7 +157,7 @@ describe("SocialBrain", () => {
 
     const contact = makeContact(repo);
     const raw = makeRawMessage();
-    const msg = repo.insertMessage({ contactId: contact.id, platform: "instagram", direction: "inbound", content: raw.text });
+    const msg = repo.insertMessage({ contactId: contact.id, platform: "twitter", direction: "inbound", content: raw.text });
     const result = await brain.process(contact, msg, raw);
 
     expect(result).not.toBeNull();
@@ -173,7 +173,7 @@ describe("SocialBrain", () => {
 
     const contact = makeContact(repo);
     const raw = makeRawMessage();
-    const msg = repo.insertMessage({ contactId: contact.id, platform: "instagram", direction: "inbound", content: raw.text });
+    const msg = repo.insertMessage({ contactId: contact.id, platform: "twitter", direction: "inbound", content: raw.text });
     const result = await brain.process(contact, msg, raw);
 
     expect(result!.shouldEscalate).toBe(true);
@@ -186,7 +186,7 @@ describe("SocialBrain", () => {
 
     const contact = makeContact(repo);
     const raw = makeRawMessage();
-    const msg = repo.insertMessage({ contactId: contact.id, platform: "instagram", direction: "inbound", content: raw.text });
+    const msg = repo.insertMessage({ contactId: contact.id, platform: "twitter", direction: "inbound", content: raw.text });
     await brain.process(contact, msg, raw);
 
     const messages = repo.getMessages(contact.id, 10);
@@ -205,7 +205,7 @@ describe("SocialBrain", () => {
 
     const contact = makeContact(repo);
     const raw = makeRawMessage();
-    const msg = repo.insertMessage({ contactId: contact.id, platform: "instagram", direction: "inbound", content: raw.text });
+    const msg = repo.insertMessage({ contactId: contact.id, platform: "twitter", direction: "inbound", content: raw.text });
     const result = await brain.process(contact, msg, raw);
 
     expect(result).not.toBeNull();
@@ -233,11 +233,11 @@ describe("SocialBrain", () => {
     const brain = new SocialBrain({ repository: repo, copilot, knowledgeService: makeMockKnowledge() });
 
     const contact = makeContact(repo);
-    repo.insertMessage({ contactId: contact.id, platform: "instagram", direction: "inbound", content: "First message" });
-    repo.insertMessage({ contactId: contact.id, platform: "instagram", direction: "outbound", status: "auto_replied", content: "Hi there!" });
+    repo.insertMessage({ contactId: contact.id, platform: "twitter", direction: "inbound", content: "First message" });
+    repo.insertMessage({ contactId: contact.id, platform: "twitter", direction: "outbound", status: "auto_replied", content: "Hi there!" });
 
     const raw = makeRawMessage({ text: "Second message" });
-    const msg = repo.insertMessage({ contactId: contact.id, platform: "instagram", direction: "inbound", content: raw.text });
+    const msg = repo.insertMessage({ contactId: contact.id, platform: "twitter", direction: "inbound", content: raw.text });
     await brain.process(contact, msg, raw);
 
     const promptArg = (copilot.chat as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
@@ -252,7 +252,7 @@ describe("SocialBrain", () => {
 
     const contact = makeContact(repo);
     const raw = makeRawMessage();
-    const msg = repo.insertMessage({ contactId: contact.id, platform: "instagram", direction: "inbound", content: raw.text });
+    const msg = repo.insertMessage({ contactId: contact.id, platform: "twitter", direction: "inbound", content: raw.text });
     await brain.process(contact, msg, raw);
 
     const chatOptions = (copilot.chat as ReturnType<typeof vi.fn>).mock.calls[0][1];
@@ -265,7 +265,7 @@ describe("SocialBrain", () => {
 
     const contact = makeContact(repo);
     const raw = makeRawMessage();
-    const msg = repo.insertMessage({ contactId: contact.id, platform: "instagram", direction: "inbound", content: raw.text });
+    const msg = repo.insertMessage({ contactId: contact.id, platform: "twitter", direction: "inbound", content: raw.text });
     const result = await brain.process(contact, msg, raw);
 
     expect(result!.reply).toBe("Parsed!");
@@ -279,7 +279,7 @@ describe("SocialBrain", () => {
 
     const contact = makeContact(repo);
     const raw = makeRawMessage();
-    const msg = repo.insertMessage({ contactId: contact.id, platform: "instagram", direction: "inbound", content: raw.text });
+    const msg = repo.insertMessage({ contactId: contact.id, platform: "twitter", direction: "inbound", content: raw.text });
     await brain.process(contact, msg, raw);
 
     const chatOptions = (copilot.chat as ReturnType<typeof vi.fn>).mock.calls[0][1];
@@ -292,7 +292,7 @@ describe("SocialBrain", () => {
 
     const contact = makeContact(repo);
     const raw = makeRawMessage();
-    const msg = repo.insertMessage({ contactId: contact.id, platform: "instagram", direction: "inbound", content: raw.text });
+    const msg = repo.insertMessage({ contactId: contact.id, platform: "twitter", direction: "inbound", content: raw.text });
     await brain.process(contact, msg, raw);
 
     const chatOptions = (copilot.chat as ReturnType<typeof vi.fn>).mock.calls[0][1];
@@ -305,7 +305,7 @@ describe("SocialBrain", () => {
 
     const contact = makeContact(repo);
     const raw = makeRawMessage();
-    const msg = repo.insertMessage({ contactId: contact.id, platform: "instagram", direction: "inbound", content: raw.text });
+    const msg = repo.insertMessage({ contactId: contact.id, platform: "twitter", direction: "inbound", content: raw.text });
 
     await brain.process(contact, msg, raw);
 
@@ -322,7 +322,7 @@ describe("SocialBrain", () => {
 
     const contact2 = makeContact(repo);
     const raw2 = makeRawMessage({ platformMessageId: "msg_2" });
-    const msg2 = repo.insertMessage({ contactId: contact2.id, platform: "instagram", direction: "inbound", content: raw2.text });
+    const msg2 = repo.insertMessage({ contactId: contact2.id, platform: "twitter", direction: "inbound", content: raw2.text });
     await brain2.process(contact2, msg2, raw2);
 
     const chatOptions2 = (copilot2.chat as ReturnType<typeof vi.fn>).mock.calls[0][1];

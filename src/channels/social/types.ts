@@ -1,6 +1,6 @@
 /** Shared types for the Social Brain subsystem. */
 
-export type SocialPlatform = "instagram" | "reddit" | "youtube" | "tiktok" | "twitter" | "facebook" | "linkedin";
+export type SocialPlatform = "reddit" | "youtube" | "tiktok" | "twitter" | "linkedin";
 
 export type MessageDirection = "inbound" | "outbound";
 

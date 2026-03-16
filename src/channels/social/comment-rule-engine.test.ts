@@ -15,7 +15,7 @@ function createInMemoryRepo(): SocialRepository {
 
 function makeComment(overrides: Partial<IncomingComment> = {}): IncomingComment {
   return {
-    platform: "instagram",
+    platform: "twitter",
     postId: "post_1",
     commentId: "comment_1",
     userId: "user_1",
@@ -29,7 +29,7 @@ function makeComment(overrides: Partial<IncomingComment> = {}): IncomingComment 
 function createRule(repo: SocialRepository, overrides: Partial<Omit<CommentRule, "id" | "trigger_count" | "created_at" | "updated_at">> = {}): CommentRule {
   return repo.createRule({
     name: "Test Rule",
-    platform: "instagram",
+    platform: "twitter",
     enabled: 1,
     post_ids: null,
     keywords: JSON.stringify(["love", "amazing"]),
@@ -56,7 +56,7 @@ describe("CommentRuleEngine", () => {
     sendDm = vi.fn().mockResolvedValue(undefined);
     replyToComment = vi.fn().mockResolvedValue(undefined);
     engine = new CommentRuleEngine({ repository: repo, sendDm, replyToComment });
-    repo.upsertContact({ platform: "instagram", platformUserId: "user_1", username: "testuser" });
+    repo.upsertContact({ platform: "twitter", platformUserId: "user_1", username: "testuser" });
   });
 
   it("keyword match triggers DM", async () => {
@@ -65,7 +65,7 @@ describe("CommentRuleEngine", () => {
     const matched = await engine.evaluate(comment);
 
     expect(matched).toHaveLength(1);
-    expect(sendDm).toHaveBeenCalledWith("instagram", "user_1", expect.stringContaining("thanks for the love"));
+    expect(sendDm).toHaveBeenCalledWith("twitter", "user_1", expect.stringContaining("thanks for the love"));
   });
 
   it("keyword match triggers comment reply when template exists", async () => {
@@ -73,7 +73,7 @@ describe("CommentRuleEngine", () => {
     const comment = makeComment({ text: "I love it!" });
     await engine.evaluate(comment);
 
-    expect(replyToComment).toHaveBeenCalledWith("instagram", "comment_1", expect.stringContaining("Thanks testuser"), "post_1");
+    expect(replyToComment).toHaveBeenCalledWith("twitter", "comment_1", expect.stringContaining("Thanks testuser"), "post_1");
   });
 
   it("regex match triggers rule when keywords don't match", async () => {
@@ -129,7 +129,7 @@ describe("CommentRuleEngine", () => {
     const comment = makeComment({ text: "I love this!" });
     await engine.evaluate(comment);
 
-    const contact = repo.getContactByPlatformUser("instagram", "user_1");
+    const contact = repo.getContactByPlatformUser("twitter", "user_1");
     expect(contact).toBeDefined();
     const tags = JSON.parse(contact!.tags);
     expect(tags).toContain("engaged");
@@ -169,11 +169,11 @@ describe("CommentRuleEngine", () => {
   it("max_triggers_total prevents further triggers after limit", async () => {
     createRule(repo, { max_triggers_total: 1, max_triggers_per_user: 99 });
     const c1 = makeComment({ commentId: "c1", userId: "u1", username: "user1", text: "I love it!" });
-    repo.upsertContact({ platform: "instagram", platformUserId: "u1", username: "user1" });
+    repo.upsertContact({ platform: "twitter", platformUserId: "u1", username: "user1" });
     await engine.evaluate(c1);
 
     const c2 = makeComment({ commentId: "c2", userId: "u2", username: "user2", text: "I love it too!" });
-    repo.upsertContact({ platform: "instagram", platformUserId: "u2", username: "user2" });
+    repo.upsertContact({ platform: "twitter", platformUserId: "u2", username: "user2" });
     const matched2 = await engine.evaluate(c2);
 
     expect(matched2).toHaveLength(0);
@@ -201,7 +201,7 @@ describe("CommentRuleEngine", () => {
     await engine.evaluate(comment);
 
     expect(sendDm).toHaveBeenCalledWith(
-      "instagram",
+      "twitter",
       "user_1",
       "Hi fanuser, you said 'I love widgets!' on post post_1",
     );

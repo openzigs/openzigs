@@ -50,7 +50,7 @@ OpenZigs is a **local-first AI agent platform** built on top of the [GitHub Copi
 1. **Local-First Native Servers** — MCP tool servers run as native subprocesses managed by `LocalMcpServerManager`, eliminating Docker overhead. Docker Compose is retained only for the agent container, Cloudflare tunnel, and audio sidecar.
 2. **Permissioned MCP Tools** — Every tool the agent can call is registered, risk-classified, and individually toggleable.
 3. **Human-in-the-Loop Approvals** — High-risk actions (file writes, shell commands) pause execution until a human approves via the Web Chat or a messaging channel.
-4. **MCP Host Architecture** — OpenZigs acts as an **MCP Host**, orchestrating 12 native MCP servers (social media, document intelligence, personal assistant, developer tools) as local subprocesses alongside the core Node.js agent.
+4. **MCP Host Architecture** — OpenZigs acts as an **MCP Host**, orchestrating 11 native MCP servers (social media, document intelligence, personal assistant, developer tools) as local subprocesses alongside the core Node.js agent.
 
 The result is a "God Mode" AI assistant that **can** do anything, but only after you say it **should**.
 
@@ -190,8 +190,7 @@ graph TB
             DB[mcp-database<br/>jbang]
             GH[mcp-github<br/>npx]
             CAL[mcp-calendar<br/>npx]
-            IG[mcp-instagram<br/>python]
-            FB[mcp-facebook<br/>python]
+            IG[mcp-tiktok<br/>node]
             TW[mcp-twitter<br/>python]
             YT[mcp-youtube<br/>python]
             LI[mcp-linkedin<br/>python]
@@ -564,12 +563,11 @@ All MCP servers now run as **native subprocesses** via `LocalMcpServerManager` (
 | `mcp-database` | `jbang` (Java) | JDBC Database | data |
 | `mcp-github` | `npx` (Node.js) | GitHub | developer |
 | `mcp-calendar` | `npx` (Node.js) | Google Calendar | personal |
-| `mcp-instagram` | `python` (venv) | Instagram | social |
-| `mcp-facebook` | `python` (venv) | Facebook/Meta | social |
 | `mcp-twitter` | `python` (venv) | Twitter/X | social |
 | `mcp-youtube` | `python` (venv) | YouTube | social |
 | `mcp-linkedin` | `python` (venv) | LinkedIn | social |
 | `mcp-reddit` | `python` (venv) | Reddit | social |
+| `mcp-tiktok` | `node` (npm) | TikTok | social |
 
 > **Migration note:** Docker-based MCP sidecars have been fully deprecated. The `DockerSidecarManager` class remains in the codebase with `@deprecated` JSDoc and an empty `DEFAULT_SIDECAR_DEFINITIONS` array. All MCP servers now use native subprocess management for lower overhead and simpler deployment.
 
@@ -609,16 +607,15 @@ Full GitHub API access — repos, issues, PRs, code search, actions. Uses a GitH
 
 #### Multi-Platform Social MCP Servers
 
-Six social platform MCP servers live under `external/` as Python applications using the official MCP SDK, each with its own virtualenv:
+Social platform MCP servers live under `external/` using either Python (official MCP SDK) or Node.js runtimes, each managed as a native subprocess:
 
 | Server | Directory | Tools | API | Key Capabilities |
 |---|---|---|---|---|
-| Instagram | `external/ig-mcp/` | 12 tools | Instagram Graph API | DMs, comment replies, post context, analytics, media publish |
-| Facebook | `external/fb-mcp/` | 10 tools | Meta Graph API v24.0 | Messenger DMs, comment replies, post reads, page analytics |
 | Twitter/X | `external/twitter-mcp/` | 8 tools | Twitter API v2 (OAuth 1.0a) | DMs, tweet replies, search, user lookup |
 | YouTube | `external/youtube-mcp/` | 8 tools | YouTube Data API v3 | **Video upload** (resumable), comment replies, video search, channel analytics |
 | LinkedIn | `external/linkedin-mcp/` | 8 tools | LinkedIn API v2 | DMs (partner-only), comment replies, post/company reads |
 | Reddit | `external/reddit-mcp/` | 8 tools | Reddit OAuth2 | Private messages, comment replies, post/search reads |
+| TikTok | `external/tiktok-mcp/` | 3 tools | TikNeuron API | Search, post details, subtitle extraction |
 
 All servers use **official platform APIs** (no scraping or unofficial endpoints). Each requires platform-specific API credentials set as environment variables. See respective `README.md` files in `external/` for setup instructions.
 
@@ -934,8 +931,14 @@ allowed-tools: query-gallery-assets submit-media-job get-job-status manage-chara
 2. **Loading**: `CopilotWrapper` accepts `skillDirectories: string[]` in its constructor. These paths are passed to the SDK's `createSession()`.
 3. **Injection**: The SDK reads each `SKILL.md` and injects its content into the session's system context alongside built-in instructions.
 4. **Activation**: Skills activate automatically when the user's request matches the skill's domain (based on the `description` field keywords). Users can also explicitly invoke via `!` trigger in chat or `/skill-name` in their prompt.
-5. **Metadata API**: The `/api/admin/skills` endpoint serves parsed skill metadata (from YAML frontmatter + body) for the UI's `/skills` catalog page.
+5. **Metadata API**: The `/api/admin/skills` endpoint serves parsed skill metadata (from YAML frontmatter + body) for the UI's `/skills` page.
 6. **Library Integration**: `SavedPrompt.suggestedSkill` pairs a Library prompt with a skill, providing automatic domain expertise when the prompt is used.
+7. **User Skills**: Custom skills created via the Skill Editor (integrated into `/skills`) are stored in `~/.openzigs/skills/{name}/SKILL.md` and hot-reloaded via `copilot.addSkillDirectory()`.
+8. **Skills-First Automation**: When a scheduled job runs a prompt with `suggestedSkill`:
+   - The skill body is loaded and injected as a `systemMessage` prefix with autonomous guardrails.
+   - The skill's `allowed-tools` are merged with prompt/job tools.
+   - All other skills are disabled via `disabledSkills` for focused execution.
+   - Optional `agentName` from `actionPayload` resolves a custom agent persona from `config/agents.json`.
 
 #### Autonomous Error Recovery
 
@@ -3438,6 +3441,51 @@ POST /api/admin/templates/import { template, placeholders }
 
 ### Tracking: [Epic #188](https://github.com/mgcronin/openzigs/issues/188)
 
+## Pipeline Template Library (Epic #446 → #456)
+
+### Overview
+
+The Pipeline Template Library provides reusable multi-stage prompt templates with typed variables, suggested skills, and preferred tools. Built-in templates ship with the application; users can create, edit, and delete custom templates that persist across restarts.
+
+### Architecture
+
+| Component | Path | Purpose |
+|-----------|------|---------|
+| `PipelineTemplateManager` | `src/productivity/pipeline-template-manager.ts` | CRUD manager merging built-in + user templates |
+| Built-in templates | `config/pipeline-templates.json` | 5 shipped templates (research, code-review, content, competitive-analysis, monitor-alert) |
+| User templates | `~/.openzigs/pipeline-templates.json` | User-created templates, persisted on create/update/delete |
+| API endpoints | `src/api/admin.ts` | REST CRUD at `/api/admin/pipeline-templates` |
+| Template Gallery | `ui/app/library/page.tsx` | Modal grid for browsing and instantiating templates |
+
+### Template Schema
+
+Each template contains:
+- **id** / **name** / **description** — Identity and display metadata
+- **icon** / **tags** — UI presentation (Lucide icon name, searchable tags)
+- **suggestedSkill** — Auto-attached skill when instantiated as a saved prompt
+- **template** — Default prompt body with `{{variable}}` interpolation placeholders
+- **stages[]** — Multi-stage pipeline definition (name, prompt template, tools, post-actions)
+- **variables[]** — Declared variables with name, label, description, and optional default values
+
+### Data Flow
+
+1. On server start, `PipelineTemplateManager.load()` reads `config/pipeline-templates.json` (built-in) and merges `~/.openzigs/pipeline-templates.json` (user overrides, keyed by `id`).
+2. User templates with matching IDs override built-in templates; unique user templates are appended.
+3. `create()` / `update()` / `remove()` mutate user templates and call `saveUserTemplates()` to persist.
+4. The UI Library page fetches `GET /api/admin/pipeline-templates`, displays a gallery grid, and on click creates a new saved prompt pre-populated with the template's stages, variables, and suggested skill.
+
+### API Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/admin/pipeline-templates` | List all templates (built-in + user) |
+| `GET` | `/api/admin/pipeline-templates/:id` | Get single template by ID |
+| `POST` | `/api/admin/pipeline-templates` | Create user template |
+| `PUT` | `/api/admin/pipeline-templates/:id` | Update user template |
+| `DELETE` | `/api/admin/pipeline-templates/:id` | Remove user template |
+
+### Tracking: [Issue #456](https://github.com/mgcronin/openzigs/issues/456)
+
 ## Sentinel — Autonomous System Monitor & SRE Agent (Epic #179 → #194)
 
 ### Overview
@@ -3605,8 +3653,8 @@ graph LR
 | Component | File | Responsibility |
 |---|---|---|
 | **Types** | `src/knowledge/types.ts` | `KnowledgeDocument`, `KnowledgeChunk`, `KnowledgeSearchResult`, `KnowledgeConfig`, `KnowledgeSearchMode` types and defaults |
-| **Chunker** | `src/knowledge/chunker.ts` | Markdown-aware text splitting: headings → paragraphs → sentences, with configurable chunk size and overlap |
-| **Embedder** | `src/knowledge/embedder.ts` | Hugging Face Transformers.js embedding (`Xenova/all-MiniLM-L6-v2`, 384-dim). Lazy-loaded singleton with hash-based fallback. |
+| **Chunker** | `src/knowledge/chunker.ts` | Markdown-aware text splitting: headings → paragraphs → sentences, with configurable chunk size and overlap. Overlap snaps to word boundaries to avoid splitting mid-word. |
+| **Embedder** | `src/knowledge/embedder.ts` | Hugging Face Transformers.js embedding (`Xenova/all-MiniLM-L6-v2`, 384-dim). Lazy-loaded singleton with hash-based fallback. Text truncation snaps to word boundaries. |
 | **LanceDB Store** | `src/knowledge/lancedb-store.ts` | Vector database wrapper: upsert chunks, vector search (cosine), full-text search (FTS index), hybrid search (RRF merging), delete by document ID, score threshold filtering |
 | **Converter Registry** | `src/knowledge/converters/` | Auto-detects available converters: text, PDF (pdf-parse), DOCX (mammoth), XLSX, image OCR (tesseract.js), media (ffmpeg + whisper-node) |
 | **Media Converter** | `src/knowledge/converters/media-converter.ts` | Audio/video transcription via ffmpeg → whisper-node with configurable model (tiny.en through large-v1) |
@@ -3651,7 +3699,30 @@ LanceDB's built-in full-text search index is created on the `text` column with:
 - **Stemming** enabled — matches morphological variants (e.g., "running" matches "run")
 - **Stop-word removal** — filters common words for better precision
 - **Positional indexing** — supports phrase queries
-- The FTS index is rebuilt after each `addChunks()` call via `replace: true`
+- **Debounced rebuild** — instead of rebuilding the FTS index after every single `addChunks()` call (which is O(n) on the total corpus), the index is marked dirty and a rebuild is scheduled with a 2-second debounce timer. After a batch scan completes, the service explicitly flushes the FTS rebuild. This avoids quadratic cost during bulk ingestion.
+- **Close flush** — `store.close()` flushes any pending FTS rebuild before shutting down
+
+### Vector Index Management
+
+The IVF_PQ vector index requires manual rebuilding in LanceDB OSS (no auto-compaction). The store implements an adaptive rebuild strategy:
+
+- **Minimum threshold**: Index is only created when the table has ≥ 256 rows (IVF_PQ needs sufficient data for effective partitioning)
+- **Growth-triggered rebuild**: Rebuilds when data has grown by ≥ 50% since the last index build
+- **First-create index**: On initial table creation, the vector index is built immediately if the row count meets the minimum threshold
+- **Cosine distance**: All vector indexes use cosine distance for semantic similarity
+- **Config**: `num_partitions` and `num_sub_vectors` are auto-tuned by LanceDB based on data shape
+
+### Visibility & Access Control
+
+The knowledge base supports three visibility levels with **hierarchical access**:
+
+| Visibility | Who Can Search | Use Case |
+|---|---|---|
+| `public` | Everyone | General documentation, public notes |
+| `internal` | Public + Internal queries | Team-specific docs, internal references |
+| `private` | All query levels (public + internal + private) | Sensitive information, personal notes |
+
+Visibility filtering is hierarchical: a search with `visibility: "internal"` returns both `public` and `internal` items (but not `private`). Items with `NULL` visibility are always included. This prevents accidental information leakage — a public-level search never returns internal or private documents.
 
 ### Document Metadata Persistence
 

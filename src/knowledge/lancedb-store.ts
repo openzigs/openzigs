@@ -40,6 +40,11 @@ export class LanceDBStore {
   private dbPath: string;
   private initialized = false;
   private ftsIndexCreated = false;
+  private ftsIndexDirty = false;
+  private ftsRebuildTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Tracks total rows for vector index rebuild decisions. */
+  private rowsSinceLastIndex = 0;
+  private lastVectorIndexRowCount = 0;
 
   constructor({ dbPath }: LanceDBStoreOptions) {
     this.dbPath = dbPath;
@@ -140,32 +145,39 @@ export class LanceDBStore {
     if (!this.table) {
       // Create the table with the first batch
       this.table = await this.db!.createTable(TABLE_NAME, rows);
+      this.lastVectorIndexRowCount = rows.length;
       // Create a vector index with cosine distance for semantic search
-      try {
-        await this.table.createIndex("vector", {
-          config: lancedb.Index.ivfPq({
-            distanceType: DISTANCE_TYPE,
-          }),
-        });
-      } catch {
-        // Index creation may fail on small tables — search still works via brute force
-      }
+      await this.maybeRebuildVectorIndex(rows.length);
       logger.info(`[KnowledgeStore] Created table "${TABLE_NAME}" with ${rows.length} rows (cosine distance)`);
     } else {
       await this.table.add(rows);
+      this.rowsSinceLastIndex += rows.length;
       logger.info(`[KnowledgeStore] Added ${rows.length} chunks for document ${documentId}`);
     }
 
-    // (Re)create the FTS index after data changes
-    await this.ensureFtsIndex();
+    // Mark FTS index as dirty — debounce rebuild to avoid O(n) per document
+    this.scheduleFtsRebuild();
+  }
+
+  /**
+   * Schedule a debounced FTS index rebuild.
+   * Instead of rebuilding after every addChunks (O(n) each time),
+   * we wait for a quiet period to batch the rebuild.
+   */
+  private scheduleFtsRebuild(): void {
+    this.ftsIndexDirty = true;
+    if (this.ftsRebuildTimer) clearTimeout(this.ftsRebuildTimer);
+    this.ftsRebuildTimer = setTimeout(() => {
+      void this.rebuildFtsIndex();
+    }, 2000); // 2 second debounce
   }
 
   /**
    * Create or rebuild the full-text search index on the text column.
-   * Called after addChunks to keep the FTS index current.
+   * Called after a debounced delay to batch multiple addChunks calls.
    */
-  private async ensureFtsIndex(): Promise<void> {
-    if (!this.table) return;
+  async rebuildFtsIndex(): Promise<void> {
+    if (!this.table || !this.ftsIndexDirty) return;
 
     try {
       await this.table.createIndex("text", {
@@ -177,11 +189,50 @@ export class LanceDBStore {
         replace: true,
       });
       this.ftsIndexCreated = true;
+      this.ftsIndexDirty = false;
       logger.debug("[KnowledgeStore] FTS index created/rebuilt on text column");
     } catch (error) {
       // FTS index creation is optional — log but don't fail
       const msg = error instanceof Error ? error.message : String(error);
       logger.warn(`[KnowledgeStore] FTS index creation failed (search still works via vector): ${msg}`);
+    }
+  }
+
+  /**
+   * Rebuild the vector (IVF_PQ) index when the dataset has grown significantly.
+   *
+   * LanceDB OSS requires manual index rebuilding. The index should be rebuilt
+   * when the data has grown by >50% since the last build, with a minimum
+   * threshold of 256 rows (IVF_PQ needs sufficient data for effective partitioning).
+   */
+  private async maybeRebuildVectorIndex(currentRowCount?: number): Promise<void> {
+    if (!this.table) return;
+
+    const totalRows = currentRowCount ?? await this.countChunks();
+    const MIN_ROWS_FOR_INDEX = 256;
+    const GROWTH_THRESHOLD = 0.5; // Rebuild when 50% more data than last build
+
+    if (totalRows < MIN_ROWS_FOR_INDEX) return;
+
+    const growth = this.lastVectorIndexRowCount > 0
+      ? (totalRows - this.lastVectorIndexRowCount) / this.lastVectorIndexRowCount
+      : Infinity;
+
+    if (growth < GROWTH_THRESHOLD && this.lastVectorIndexRowCount > 0) return;
+
+    try {
+      await this.table.createIndex("vector", {
+        config: lancedb.Index.ivfPq({
+          distanceType: DISTANCE_TYPE,
+        }),
+        replace: true,
+      });
+      this.lastVectorIndexRowCount = totalRows;
+      this.rowsSinceLastIndex = 0;
+      logger.info(`[KnowledgeStore] Vector index rebuilt (${totalRows} rows, cosine distance)`);
+    } catch {
+      // Index creation may fail on small tables — search still works via brute force
+      logger.debug(`[KnowledgeStore] Vector index creation skipped (table may be too small)`);
     }
   }
 
@@ -409,26 +460,48 @@ export class LanceDBStore {
   }
 
   /**
-   * Close the LanceDB connection.
+   * Close the LanceDB connection and clean up timers.
    */
   async close(): Promise<void> {
+    if (this.ftsRebuildTimer) {
+      clearTimeout(this.ftsRebuildTimer);
+      this.ftsRebuildTimer = null;
+    }
+    // Flush any pending FTS rebuild before closing
+    if (this.ftsIndexDirty && this.table) {
+      await this.rebuildFtsIndex();
+    }
     this.table = null;
     this.db = null;
     this.initialized = false;
     this.ftsIndexCreated = false;
+    this.ftsIndexDirty = false;
+    this.rowsSinceLastIndex = 0;
+    this.lastVectorIndexRowCount = 0;
   }
 
   /**
    * Build a SQL WHERE clause from a KnowledgeSearchFilter.
    * Returns undefined if no filter conditions are specified.
+   *
+   * Visibility is hierarchical: public < internal < private.
+   * Searching with visibility='public' returns only public items.
+   * Searching with visibility='internal' returns public + internal.
+   * Searching with visibility='private' (or omitted) returns all.
    */
   static buildFilterClause(filter?: KnowledgeSearchFilter): string | undefined {
     if (!filter) return undefined;
     const conditions: string[] = [];
 
     if (filter.visibility) {
-      const vis = filter.visibility.replace(/'/g, "''");
-      conditions.push(`(visibility = '${vis}' OR visibility IS NULL)`);
+      const VISIBILITY_HIERARCHY: Record<string, string[]> = {
+        public: ["public"],
+        internal: ["public", "internal"],
+        private: ["public", "internal", "private"],
+      };
+      const allowed = VISIBILITY_HIERARCHY[filter.visibility] ?? [filter.visibility];
+      const list = allowed.map((v) => `'${v.replace(/'/g, "''")}'`).join(", ");
+      conditions.push(`(visibility IN (${list}) OR visibility IS NULL)`);
     }
 
     if (filter.categories && filter.categories.length > 0) {

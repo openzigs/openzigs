@@ -10,8 +10,6 @@ import type { DmSender, CommentReplier } from "./comment-rule-engine.js";
 
 /** Maps SocialPlatform to MCP server name and tool names. */
 const PLATFORM_DM_MAP: Record<string, { server: string; dmTool?: string; replyTool?: string }> = {
-  instagram: { server: "instagram", dmTool: "send_dm", replyTool: "reply_to_comment" },
-  facebook: { server: "facebook", dmTool: "fb_send_message", replyTool: "fb_reply_to_comment" },
   twitter: { server: "twitter", dmTool: "twitter_send_dm", replyTool: "twitter_post_tweet" },
   youtube: { server: "youtube", replyTool: "yt_reply_to_comment" },
   linkedin: { server: "linkedin", dmTool: "linkedin_send_message", replyTool: "linkedin_reply_to_comment" },
@@ -90,10 +88,7 @@ export class DmDispatcher {
       case "reddit":
         // reddit_send_message expects recipient + subject + text
         return { recipient: userId, subject: "Message from OpenZigs", text };
-      case "instagram":
-      case "facebook":
       default:
-        // send_dm / fb_send_message expect recipient_id + message
         return { recipient_id: userId, message: text };
     }
   }
@@ -110,10 +105,6 @@ export class DmDispatcher {
         return { parent_id: commentId, text };
       case "reddit":
         return { thing_id: commentId, text };
-      case "instagram":
-        return { comment_id: commentId, message: text };
-      case "facebook":
-        return { comment_id: commentId, message: text };
       case "linkedin":
         // linkedin_reply_to_comment requires the parent post URN for the API endpoint path
         return { comment_urn: commentId, text, post_urn: postId ?? "" };

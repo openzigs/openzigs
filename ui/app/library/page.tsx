@@ -1,29 +1,31 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { fetchJson } from "@/lib/api";
-import type { ModelInfo, PersonalityConfig, SavedPrompt, ToolInfo } from "@/lib/types";
+import type { PersonalityConfig, SavedPrompt, ToolInfo } from "@/lib/types";
 import { buildUrl } from "@/lib/api";
 import { SectionCard } from "@/components/section-card";
 import { ToastContainer, showToast } from "@/components/toast";
-import { SmartTextarea } from "@/components/smart-textarea";
 import { PipelineEditor, type BackendPipelineNode, type AvailablePrompt } from "@/components/pipeline/pipeline-editor";
 import { WorkflowWizard } from "@/components/pipeline/workflow-wizard";
 import { ToolMultiSelect, type ToolOption } from "@/components/pipeline/tool-multi-select";
 import { ImportWizard } from "@/components/library/import-wizard";
-import { ChevronDown, ChevronUp, Download, FileUp, Zap, Wrench, PenTool, Sparkles } from "lucide-react";
+import { ChevronDown, ChevronUp, Download, FileUp, Zap, Wrench, PenTool, Sparkles, AlertTriangle, Calendar, LayoutTemplate } from "lucide-react";
 import { AskAiPanel, AskAiButton, PAGE_CONTEXTS } from "@/components/ask-ai";
+import { TemplateAutocomplete, BUILT_IN_VARIABLES } from "@/components/template-autocomplete";
 
 export default function LibraryPage() {
   const queryClient = useQueryClient();
+  const router = useRouter();
   const [search, setSearch] = useState("");
   const [editingPrompt, setEditingPrompt] = useState<SavedPrompt | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [showImportWizard, setShowImportWizard] = useState(false);
+  const [showTemplateGallery, setShowTemplateGallery] = useState(false);
   const [askAiOpen, setAskAiOpen] = useState(false);
   const [tools, setTools] = useState<ToolInfo[]>([]);
-  const [models, setModels] = useState<ModelInfo[]>([]);
 
   const promptsQuery = useQuery({
     queryKey: ["prompts", search],
@@ -34,6 +36,19 @@ export default function LibraryPage() {
   });
 
   const prompts = promptsQuery.data?.prompts ?? [];
+
+  type PipelineTemplate = {
+    id: string; name: string; description: string; icon: string; tags: string[];
+    suggestedSkill: string | null; template: string;
+    stages: BackendPipelineNode[]; variables: { key: string; label: string; description: string; required: boolean; default?: string }[];
+    builtIn: boolean;
+  };
+
+  const templatesQuery = useQuery({
+    queryKey: ["pipeline-templates"],
+    queryFn: () => fetchJson<PipelineTemplate[]>("/api/admin/pipeline-templates"),
+    enabled: showTemplateGallery,
+  });
 
   useEffect(() => {
     const loadTools = async () => {
@@ -50,16 +65,7 @@ export default function LibraryPage() {
         // Tools not available
       }
     };
-    const loadModels = async () => {
-      try {
-        const data = await fetchJson<{ models: ModelInfo[] }>("/api/models");
-        setModels(data.models ?? []);
-      } catch {
-        // Models not available
-      }
-    };
     void loadTools();
-    void loadModels();
   }, []);
 
   const deleteMutation = useMutation({
@@ -161,6 +167,15 @@ export default function LibraryPage() {
           </span>
         </button>
         <button
+          onClick={() => setShowTemplateGallery(true)}
+          className="rounded-xl border border-primary px-5 py-2.5 text-sm font-semibold text-primary hover:bg-primary/5"
+        >
+          <span className="flex items-center gap-1.5">
+            <LayoutTemplate className="h-4 w-4" />
+            From Template
+          </span>
+        </button>
+        <button
           onClick={handleNew}
           className="rounded-xl bg-primary px-5 py-2.5 text-sm font-semibold text-primary-foreground"
         >
@@ -175,7 +190,6 @@ export default function LibraryPage() {
             existing={editingPrompt}
             onClose={handleFormClose}
             tools={tools}
-            models={models}
             prompts={prompts}
           />
         </div>
@@ -212,6 +226,16 @@ export default function LibraryPage() {
                       className="rounded-lg border border-moss/30 px-3 py-1.5 text-xs font-semibold text-moss hover:bg-moss/5"
                     >
                       Use as System Prompt
+                    </button>
+                    <button
+                      onClick={() => router.push(`/scheduler?createFrom=${encodeURIComponent(prompt.name)}`)}
+                      title="Create a scheduled job from this prompt"
+                      className="rounded-lg border border-amber-500/30 px-3 py-1.5 text-xs font-semibold text-amber-600 hover:bg-amber-500/5 dark:text-amber-400"
+                    >
+                      <span className="flex items-center gap-1">
+                        <Calendar className="h-3 w-3" />
+                        Schedule
+                      </span>
                     </button>
                     <button
                       onClick={() => handleExport(prompt)}
@@ -275,6 +299,65 @@ export default function LibraryPage() {
         )}
       </SectionCard>
       {showImportWizard && <ImportWizard onClose={() => setShowImportWizard(false)} />}
+
+      {/* Pipeline Template Gallery */}
+      {showTemplateGallery && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setShowTemplateGallery(false)}>
+          <div className="w-full max-w-3xl rounded-2xl bg-card p-6 shadow-xl" onClick={(e) => e.stopPropagation()}>
+            <div className="mb-4 flex items-center justify-between">
+              <h2 className="text-xl font-semibold">Pipeline Templates</h2>
+              <button onClick={() => setShowTemplateGallery(false)} className="text-muted-foreground hover:text-foreground">✕</button>
+            </div>
+            {templatesQuery.isLoading ? (
+              <p className="text-sm text-muted-foreground">Loading templates…</p>
+            ) : (
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                {(templatesQuery.data ?? []).map((t) => (
+                  <button
+                    key={t.id}
+                    onClick={async () => {
+                      try {
+                        const created = await fetchJson<SavedPrompt>("/api/admin/prompts", {
+                          method: "POST",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({
+                            name: t.name,
+                            template: t.template,
+                            description: t.description,
+                            tags: t.tags,
+                            stages: t.stages,
+                            suggestedSkill: t.suggestedSkill,
+                          }),
+                        });
+                        queryClient.invalidateQueries({ queryKey: ["prompts"] });
+                        setShowTemplateGallery(false);
+                        showToast(`Created "${created.name}" from template`, "success");
+                      } catch (err) {
+                        showToast(err instanceof Error ? err.message : "Failed to create prompt", "error");
+                      }
+                    }}
+                    className="flex flex-col items-start gap-2 rounded-xl border border-border bg-background p-4 text-left hover:border-primary hover:bg-primary/5 transition-colors"
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className="text-2xl">{t.icon}</span>
+                      <span className="font-semibold text-foreground">{t.name}</span>
+                      {t.builtIn && <span className="ml-auto rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">Built-in</span>}
+                    </div>
+                    <p className="text-xs text-muted-foreground line-clamp-2">{t.description}</p>
+                    <div className="flex flex-wrap gap-1">
+                      {t.tags.map((tag) => (
+                        <span key={tag} className="rounded bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary">{tag}</span>
+                      ))}
+                    </div>
+                    <p className="text-[10px] text-muted-foreground">{t.stages.length} stage{t.stages.length !== 1 ? "s" : ""}</p>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       <ToastContainer />
       <AskAiPanel pageContext={PAGE_CONTEXTS["library"]} open={askAiOpen} onClose={() => setAskAiOpen(false)} />
     </main>
@@ -287,13 +370,11 @@ const PromptForm = ({
   existing,
   onClose,
   tools,
-  models,
   prompts,
 }: {
   existing: SavedPrompt | null;
   onClose: () => void;
   tools: ToolInfo[];
-  models: ModelInfo[];
   prompts: SavedPrompt[];
 }) => {
   const queryClient = useQueryClient();
@@ -326,6 +407,23 @@ const PromptForm = ({
     queryFn: () => fetchJson<{ voices: Array<{ id: string; name: string; active: boolean }> }>("/api/admin/brand-voice"),
   });
   const voices = voicesQuery.data?.voices ?? [];
+
+  // Skills list (dynamic from API)
+  const skillsQuery = useQuery({
+    queryKey: ["skills"],
+    queryFn: () => fetchJson<{ skills: Array<{ name: string }> }>("/api/admin/skills"),
+  });
+  const skillsList = skillsQuery.data?.skills ?? [];
+
+  // Scheduler cross-reference: find jobs that use this prompt
+  const linkedJobsQuery = useQuery({
+    queryKey: ["linked-jobs", existing?.name],
+    queryFn: () => fetchJson<{ jobs: Array<{ id: string; name: string; cronExpression: string; enabled: boolean }> }>(
+      `/api/admin/jobs?promptName=${encodeURIComponent(existing?.name ?? "")}`
+    ),
+    enabled: !!existing?.name,
+  });
+  const linkedJobs = linkedJobsQuery.data?.jobs ?? [];
 
   // Build ToolOption[] and AvailablePrompt[] for sub-components
   const toolOptions: ToolOption[] = useMemo(
@@ -387,6 +485,31 @@ const PromptForm = ({
     return [...new Set(matches.map((m) => m.replace(/[{}]/g, "")))];
   }, [template]);
 
+  // Unresolved variable validation: warn about variables not in built-in or presets
+  const builtInNames = useMemo(() => new Set(BUILT_IN_VARIABLES.map((v) => v.name)), []);
+  const unresolvedVars = useMemo(
+    () => variables.filter((v) => !builtInNames.has(v)),
+    [variables, builtInNames]
+  );
+
+  // Live preview with built-in defaults
+  const [showPreview, setShowPreview] = useState(false);
+  const [previewDefaults, setPreviewDefaults] = useState<Record<string, string>>({});
+  const previewText = useMemo(() => {
+    const now = new Date();
+    const builtInDefaults: Record<string, string> = {
+      today: now.toISOString().slice(0, 10),
+      now: now.toISOString(),
+      day_of_week: now.toLocaleDateString("en-US", { weekday: "long" }),
+      month: now.toLocaleDateString("en-US", { month: "long" }),
+      year: String(now.getFullYear()),
+    };
+    const merged = { ...builtInDefaults, ...previewDefaults };
+    return template.replace(/\{\{(\w+)\}\}/g, (_m, key: string) =>
+      key in merged ? merged[key] : `{{${key}}}`
+    );
+  }, [template, previewDefaults]);
+
   return (
     <div className="rounded-2xl border border-primary/20 bg-card p-5">
       <h3 className="mb-4 text-lg font-semibold text-foreground">
@@ -416,15 +539,13 @@ const PromptForm = ({
         </Field>
 
         <Field label="Template">
-          <SmartTextarea
+          <TemplateAutocomplete
             className="w-full rounded-lg border border-border bg-card px-3 py-2 font-mono text-sm text-foreground"
             rows={8}
             placeholder={"Write your prompt template here.\nUse {{variable}} for dynamic placeholders."}
             value={template}
-            onValueChange={setTemplate}
-            tools={tools}
-            models={models}
-            prompts={prompts}
+            onChange={setTemplate}
+            customVariables={variables}
           />
           {variables.length > 0 && (
             <div className="mt-1 flex flex-wrap items-center gap-1">
@@ -434,6 +555,60 @@ const PromptForm = ({
                   {`{{${v}}}`}
                 </code>
               ))}
+            </div>
+          )}
+          {/* Unresolved variable validation warning */}
+          {unresolvedVars.length > 0 && (
+            <div className="mt-1.5 flex items-start gap-1.5 rounded-lg border border-amber-300/30 bg-amber-50/50 dark:bg-amber-900/10 px-2.5 py-1.5">
+              <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0 text-amber-500" />
+              <div className="text-[11px] text-amber-700 dark:text-amber-400">
+                <span className="font-medium">Custom variables:</span>{" "}
+                {unresolvedVars.map((v) => (
+                  <code key={v} className="mx-0.5 rounded bg-amber-200/30 px-1 font-mono">{`{{${v}}}`}</code>
+                ))}
+                — will be left as literal text if not provided at execution time.
+              </div>
+            </div>
+          )}
+          {/* Live Preview toggle */}
+          {template && (
+            <div className="mt-2">
+              <button
+                type="button"
+                onClick={() => setShowPreview(!showPreview)}
+                className="text-[11px] font-medium text-primary hover:underline"
+              >
+                {showPreview ? "Hide Preview" : "Show Live Preview"}
+              </button>
+              {showPreview && (
+                <div className="mt-1.5 rounded-lg border border-border bg-muted/30 p-3">
+                  <div className="mb-2 flex items-center gap-1.5">
+                    <span className="text-[11px] font-semibold text-muted-foreground">Preview (with defaults)</span>
+                  </div>
+                  {/* Editable default inputs for custom variables */}
+                  {unresolvedVars.length > 0 && (
+                    <div className="mb-2 flex flex-wrap gap-2">
+                      {unresolvedVars.map((v) => (
+                        <div key={v} className="flex items-center gap-1">
+                          <label className="font-mono text-[10px] text-muted-foreground">{v}:</label>
+                          <input
+                            type="text"
+                            className="w-28 rounded border border-border bg-card px-1.5 py-0.5 text-[11px] text-foreground"
+                            placeholder={`value for ${v}`}
+                            value={previewDefaults[v] ?? ""}
+                            onChange={(e) =>
+                              setPreviewDefaults((d) => ({ ...d, [v]: e.target.value }))
+                            }
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <pre className="whitespace-pre-wrap break-words font-mono text-xs text-foreground/80">
+                    {previewText}
+                  </pre>
+                </div>
+              )}
             </div>
           )}
         </Field>
@@ -500,17 +675,44 @@ const PromptForm = ({
             className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-foreground"
           >
             <option value="">None</option>
-            <option value="media-director">Media Director</option>
-            <option value="remix-engineer">Remix Engineer</option>
-            <option value="platform-manager">Platform Manager</option>
-            <option value="content-creator">Content Creator</option>
-            <option value="knowledge-curator">Knowledge Curator</option>
-            <option value="system-operator">System Operator</option>
+            {skillsList.map((s) => (
+              <option key={s.name} value={s.name}>{s.name}</option>
+            ))}
           </select>
           <p className="text-[11px] text-muted-foreground/60">
             When this prompt is used, the AI activates the selected skill for domain-specific expertise. Skills abstract away tool knowledge — you describe what you want, and the skill handles tool selection.
           </p>
         </div>
+
+        {/* Scheduler Cross-References */}
+        {existing && linkedJobs.length > 0 && (
+          <div className="rounded-xl border border-amber-300/30 bg-amber-50/50 dark:bg-amber-900/10 p-3">
+            <div className="flex items-center gap-1.5 mb-2">
+              <Calendar className="h-3.5 w-3.5 text-amber-500" />
+              <span className="text-xs font-semibold text-amber-700 dark:text-amber-400">
+                Used by {linkedJobs.length} Scheduled Job{linkedJobs.length !== 1 ? "s" : ""}
+              </span>
+            </div>
+            <div className="space-y-1">
+              {linkedJobs.map((job) => (
+                <div key={job.id} className="flex items-center gap-2 text-[11px]">
+                  <span className="font-medium text-foreground">{job.name}</span>
+                  <code className="rounded bg-muted px-1 py-0.5 font-mono text-muted-foreground">{job.cronExpression}</code>
+                  <span className={`rounded-full px-1.5 py-0.5 text-[9px] font-semibold ${
+                    job.enabled
+                      ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-400"
+                      : "bg-muted text-muted-foreground"
+                  }`}>
+                    {job.enabled ? "Active" : "Paused"}
+                  </span>
+                </div>
+              ))}
+            </div>
+            <p className="mt-2 text-[10px] text-amber-600 dark:text-amber-500">
+              Changes to this prompt will affect all linked jobs on next execution.
+            </p>
+          </div>
+        )}
 
         {/* Pipeline Stages — collapsible progressive disclosure */}
         <div className="rounded-xl border border-primary/20 overflow-hidden">

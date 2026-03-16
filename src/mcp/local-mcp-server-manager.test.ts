@@ -18,6 +18,14 @@ vi.mock("../logging/logger.js", () => ({
 // Mock child_process for runtime checks
 vi.mock("node:child_process", () => ({
   execSync: vi.fn(() => Buffer.from("/usr/bin/uvx")),
+  execFileSync: vi.fn(() => Buffer.from("")),
+}));
+
+// Mock node:fs for venv provisioning tests
+vi.mock("node:fs", () => ({
+  default: {
+    existsSync: vi.fn(() => false),
+  },
 }));
 
 describe("LocalMcpServerManager", () => {
@@ -231,8 +239,38 @@ describe("LocalMcpServerManager", () => {
       expect(cal!.requiredEnvVars).toContain("GOOGLE_OAUTH_CREDENTIALS");
     });
 
-    it("has exactly 12 default definitions", () => {
-      expect(DEFAULT_LOCAL_SERVER_DEFINITIONS).toHaveLength(12);
+    it("includes tiktok server definition", () => {
+      const tiktok = DEFAULT_LOCAL_SERVER_DEFINITIONS.find((d) => d.name === "tiktok");
+      expect(tiktok).toBeDefined();
+      expect(tiktok!.command).toBe("node");
+      expect(tiktok!.runtime).toBe("node");
+      expect(tiktok!.category).toBe("social");
+      expect(tiktok!.requiresCredentials).toBe(true);
+      expect(tiktok!.requiredEnvVars).toContain("TIKTOK_ACCESS_TOKEN");
+    });
+
+    it("includes instagram server definition", () => {
+      const ig = DEFAULT_LOCAL_SERVER_DEFINITIONS.find((d) => d.name === "instagram");
+      expect(ig).toBeDefined();
+      expect(ig!.runtime).toBe("python");
+      expect(ig!.category).toBe("social");
+      expect(ig!.requiresCredentials).toBe(true);
+      expect(ig!.requiredEnvVars).toContain("INSTAGRAM_ACCESS_TOKEN");
+      expect(ig!.requiredEnvVars).toContain("FACEBOOK_APP_ID");
+    });
+
+    it("includes facebook server definition", () => {
+      const fb = DEFAULT_LOCAL_SERVER_DEFINITIONS.find((d) => d.name === "facebook");
+      expect(fb).toBeDefined();
+      expect(fb!.runtime).toBe("python");
+      expect(fb!.category).toBe("social");
+      expect(fb!.requiresCredentials).toBe(true);
+      expect(fb!.requiredEnvVars).toContain("FACEBOOK_PAGE_TOKEN");
+      expect(fb!.requiredEnvVars).toContain("FACEBOOK_APP_ID");
+    });
+
+    it("has exactly 13 default definitions", () => {
+      expect(DEFAULT_LOCAL_SERVER_DEFINITIONS).toHaveLength(13);
     });
   });
 
@@ -346,8 +384,8 @@ describe("LocalMcpServerManager", () => {
 
   describe("startAll with runtime unavailable", () => {
     it("skips servers when runtime is not available", async () => {
-      const { execSync } = await import("node:child_process");
-      (execSync as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => {
+      const { execFileSync } = await import("node:child_process");
+      (execFileSync as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => {
         throw new Error("not found");
       });
 
@@ -451,7 +489,6 @@ describe("LocalMcpServerManager", () => {
       const social = DEFAULT_LOCAL_SERVER_DEFINITIONS.filter((d) => d.category === "social");
       expect(social.length).toBeGreaterThanOrEqual(4);
       const names = social.map((d) => d.name);
-      expect(names).toContain("instagram");
       expect(names).toContain("twitter");
       expect(names).toContain("youtube");
     });
@@ -535,6 +572,121 @@ describe("LocalMcpServerManager", () => {
       expect(statuses).toHaveLength(1);
       expect(statuses[0].name).toBe("creds-test");
       expect(statuses[0].error).toBe("credentials_missing");
+    });
+  });
+
+  describe("provisionPythonVenv (via startAll)", () => {
+    it("attempts provisioning when python venv is missing", async () => {
+      const { execFileSync } = await import("node:child_process");
+      const fs = (await import("node:fs")).default;
+      const mockedExecFile = vi.mocked(execFileSync);
+      const mockedExists = vi.mocked(fs.existsSync);
+
+      // First call: which check fails (runtime not available)
+      // existsSync: venv/bin/python doesn't exist, requirements.txt exists
+      mockedExecFile.mockImplementation((cmd: string, _args?: readonly string[]) => {
+        if (cmd === "which") throw new Error("not found");
+        if (cmd === "python3") return Buffer.from(""); // venv creation
+        if (typeof cmd === "string" && cmd.includes("/pip")) return Buffer.from(""); // pip install
+        return Buffer.from("");
+      });
+      mockedExists.mockImplementation((p: unknown) => {
+        const s = String(p);
+        if (s.endsWith("bin/python")) return false; // venv doesn't exist
+        if (s.endsWith("requirements.txt")) return true;
+        return false;
+      });
+
+      process.env.PY_TEST_KEY = "set";
+      const mgr = new LocalMcpServerManager({
+        definitions: [
+          {
+            name: "py-test",
+            label: "Python Test",
+            command: "/fake/path/.venv/bin/python",
+            args: ["-m", "test_server"],
+            runtime: "python",
+            category: "test",
+            requiresCredentials: true,
+            requiredEnvVars: ["PY_TEST_KEY"],
+          },
+        ],
+      });
+      await mgr.startAll();
+
+      // Should have attempted python3 -m venv
+      expect(mockedExecFile).toHaveBeenCalledWith(
+        "python3",
+        ["-m", "venv", "/fake/path/.venv"],
+        expect.any(Object)
+      );
+      delete process.env.PY_TEST_KEY;
+    });
+
+    it("skips provisioning for non-python servers", async () => {
+      const { execFileSync } = await import("node:child_process");
+      const mockedExecFile = vi.mocked(execFileSync);
+      mockedExecFile.mockImplementation(() => { throw new Error("not found"); });
+
+      delete process.env.NODE_TEST_KEY;
+      const mgr = new LocalMcpServerManager({
+        definitions: [
+          {
+            name: "node-test",
+            label: "Node Test",
+            command: "npx",
+            args: ["-y", "test-server"],
+            runtime: "node",
+            category: "test",
+            requiresCredentials: true,
+            requiredEnvVars: ["NODE_TEST_KEY"],
+          },
+        ],
+      });
+      await mgr.startAll();
+
+      // Should not attempt python3 -m venv
+      expect(mockedExecFile).not.toHaveBeenCalledWith(
+        "python3",
+        expect.arrayContaining(["-m", "venv"]),
+        expect.any(Object)
+      );
+    });
+
+    it("skips provisioning when venv already exists", async () => {
+      const { execFileSync } = await import("node:child_process");
+      const fs = (await import("node:fs")).default;
+      const mockedExecFile = vi.mocked(execFileSync);
+      const mockedExists = vi.mocked(fs.existsSync);
+
+      // which succeeds (runtime already available)
+      mockedExecFile.mockReturnValue(Buffer.from("/some/path"));
+      mockedExists.mockReturnValue(true);
+
+      process.env.PY_EXISTS_KEY = "set";
+      const mgr = new LocalMcpServerManager({
+        definitions: [
+          {
+            name: "py-exists",
+            label: "Python Exists",
+            command: "/fake/path/.venv/bin/python",
+            args: ["-m", "test_server"],
+            runtime: "python",
+            category: "test",
+            requiresCredentials: true,
+            requiredEnvVars: ["PY_EXISTS_KEY"],
+          },
+        ],
+      });
+      await mgr.startAll();
+
+      // The provisioning python3 -m venv call should NOT happen
+      expect(mockedExecFile).not.toHaveBeenCalledWith(
+        "python3",
+        expect.arrayContaining(["-m", "venv"]),
+        expect.any(Object)
+      );
+      delete process.env.PY_EXISTS_KEY;
     });
   });
 });

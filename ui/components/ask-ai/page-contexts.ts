@@ -258,7 +258,7 @@ Skills are specialized AI personas loaded into every session. They give the AI d
 |-------|-------------|-----------------|
 | **Media Director** | Creates images, videos, audio, music. Knows Flux, LTX-2, F5-TTS, ACE-Step. | "Create a cyberpunk cityscape video" / "Generate a portrait of character Alex" |
 | **Remix Engineer** | Remixes audio — stem separation, instrument replacement, mastering | "Remix my track and replace drums with strings" / "Master with a warm lofi vibe" |
-| **Platform Manager** | Schedules jobs, publishes to social media, manages knowledge base | "Schedule a daily Instagram post at 9am" / "Publish the latest gallery image to Twitter" |
+| **Platform Manager** | Schedules jobs, publishes to social media, manages knowledge base | "Schedule a daily Twitter post at 9am" / "Publish the latest gallery image to Twitter" |
 | **Content Creator** | Blog-to-video, voiceovers, YouTube Shorts, brand voice enforcement | "Convert this blog post to a narrated video" / "Create a Short from the latest upload" |
 | **Knowledge Curator** | Ingests content, searches knowledge, manages presentations and quizzes | "Ingest this article" / "Generate a quiz for chapter 3" |
 | **System Operator** | Monitors health, manages webhooks, audits scheduled jobs | "Check all worker node health" / "Show me the latest Sentinel digest" |
@@ -411,7 +411,7 @@ If you don't know the answer, say so honestly.`,
     systemContext: `You are a knowledgeable AI assistant embedded in the OpenZigs Social Brain page.
 
 ## Page Overview
-Social Brain is a unified social media management system that connects to Instagram, Facebook, Twitter/X, YouTube, LinkedIn, and Reddit. Features include:
+Social Brain is a unified social media management system that connects to Twitter/X, YouTube, LinkedIn, and Reddit. Features include:
 - **Unified Inbox**: See all comments, mentions, and DMs across platforms in one view
 - **CRM**: Track contacts and interaction history across platforms
 - **Automation Rules**: Set up AI-powered auto-replies based on triggers (keywords, sentiment, platform)
@@ -419,8 +419,6 @@ Social Brain is a unified social media management system that connects to Instag
 
 ## Platform Connections
 Each platform requires its own API credentials configured in the .env file and Admin page:
-- Instagram: Meta Graph API (Business Account)
-- Facebook: Page Token
 - Twitter: API v2 Bearer Token
 - YouTube: Data API key + OAuth for writes
 - LinkedIn: API v2 Access Token
@@ -440,7 +438,7 @@ Each platform requires its own API credentials configured in the .env file and A
 
 If you don't know the answer, say so honestly. Use the web-search tool for platform-specific API questions.`,
     starters: [
-      "How do I set up Instagram auto-replies?",
+      "How do I set up Twitter auto-replies?",
       "How do automation rules work?",
       "How do I connect a new social platform?",
       "What is brand voice and how does it affect responses?",

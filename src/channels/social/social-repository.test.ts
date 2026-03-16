@@ -26,13 +26,13 @@ describe("SocialRepository", () => {
   describe("contacts", () => {
     it("upserts a new contact", () => {
       const contact = repo.upsertContact({
-        platform: "instagram",
+        platform: "twitter",
         platformUserId: "ig_123",
         username: "jane_doe",
         displayName: "Jane Doe",
       });
 
-      expect(contact.platform).toBe("instagram");
+      expect(contact.platform).toBe("twitter");
       expect(contact.username).toBe("jane_doe");
       expect(contact.display_name).toBe("Jane Doe");
       expect(contact.message_count).toBe(1);
@@ -40,8 +40,8 @@ describe("SocialRepository", () => {
     });
 
     it("increments message_count on upsert", () => {
-      repo.upsertContact({ platform: "instagram", platformUserId: "ig_123", username: "jane" });
-      const updated = repo.upsertContact({ platform: "instagram", platformUserId: "ig_123", username: "jane" });
+      repo.upsertContact({ platform: "twitter", platformUserId: "ig_123", username: "jane" });
+      const updated = repo.upsertContact({ platform: "twitter", platformUserId: "ig_123", username: "jane" });
       expect(updated.message_count).toBe(2);
     });
 
@@ -53,7 +53,7 @@ describe("SocialRepository", () => {
 
     it("lists contacts with pagination", () => {
       for (let i = 0; i < 30; i++) {
-        repo.upsertContact({ platform: "instagram", platformUserId: `ig_${i}`, username: `user_${i}` });
+        repo.upsertContact({ platform: "twitter", platformUserId: `ig_${i}`, username: `user_${i}` });
       }
       const page1 = repo.listContacts({ page: 1, pageSize: 10 });
       expect(page1.data.length).toBe(10);
@@ -64,22 +64,22 @@ describe("SocialRepository", () => {
     });
 
     it("filters contacts by platform", () => {
-      repo.upsertContact({ platform: "instagram", platformUserId: "ig_1", username: "user1" });
+      repo.upsertContact({ platform: "twitter", platformUserId: "ig_1", username: "user1" });
       repo.upsertContact({ platform: "reddit", platformUserId: "r_1", username: "user2" });
-      const result = repo.listContacts({ platform: "instagram" });
+      const result = repo.listContacts({ platform: "twitter" });
       expect(result.total).toBe(1);
-      expect(result.data[0].platform).toBe("instagram");
+      expect(result.data[0].platform).toBe("twitter");
     });
 
     it("filters contacts by search", () => {
-      repo.upsertContact({ platform: "instagram", platformUserId: "ig_1", username: "jane_doe" });
-      repo.upsertContact({ platform: "instagram", platformUserId: "ig_2", username: "john_smith" });
+      repo.upsertContact({ platform: "twitter", platformUserId: "ig_1", username: "jane_doe" });
+      repo.upsertContact({ platform: "twitter", platformUserId: "ig_2", username: "john_smith" });
       const result = repo.listContacts({ search: "jane" });
       expect(result.total).toBe(1);
     });
 
     it("adds and removes tags", () => {
-      const contact = repo.upsertContact({ platform: "instagram", platformUserId: "ig_1", username: "user1" });
+      const contact = repo.upsertContact({ platform: "twitter", platformUserId: "ig_1", username: "user1" });
       repo.addTag(contact.id, "lead");
       repo.addTag(contact.id, "buyer");
       let updated = repo.getContact(contact.id)!;
@@ -91,7 +91,7 @@ describe("SocialRepository", () => {
     });
 
     it("does not duplicate tags", () => {
-      const contact = repo.upsertContact({ platform: "instagram", platformUserId: "ig_1", username: "user1" });
+      const contact = repo.upsertContact({ platform: "twitter", platformUserId: "ig_1", username: "user1" });
       repo.addTag(contact.id, "lead");
       repo.addTag(contact.id, "lead");
       const updated = repo.getContact(contact.id)!;
@@ -99,7 +99,7 @@ describe("SocialRepository", () => {
     });
 
     it("updates contact handoff state", () => {
-      const contact = repo.upsertContact({ platform: "instagram", platformUserId: "ig_1", username: "user1" });
+      const contact = repo.upsertContact({ platform: "twitter", platformUserId: "ig_1", username: "user1" });
       repo.updateContact(contact.id, { handoff_active: 1, handoff_thread_id: "thread_123", handoff_channel: "discord" });
       const updated = repo.getContact(contact.id)!;
       expect(updated.handoff_active).toBe(1);
@@ -112,17 +112,17 @@ describe("SocialRepository", () => {
 
   describe("messages", () => {
     it("inserts and retrieves messages", () => {
-      const contact = repo.upsertContact({ platform: "instagram", platformUserId: "ig_1", username: "user1" });
+      const contact = repo.upsertContact({ platform: "twitter", platformUserId: "ig_1", username: "user1" });
       repo.insertMessage({
         contactId: contact.id,
-        platform: "instagram",
+        platform: "twitter",
         direction: "inbound",
         content: "Hello!",
         platformMessageId: "msg_1",
       });
       repo.insertMessage({
         contactId: contact.id,
-        platform: "instagram",
+        platform: "twitter",
         direction: "outbound",
         status: "auto_replied",
         content: "Hi there!",
@@ -136,9 +136,9 @@ describe("SocialRepository", () => {
     });
 
     it("retrieves recent activity", () => {
-      const c1 = repo.upsertContact({ platform: "instagram", platformUserId: "ig_1", username: "user1" });
+      const c1 = repo.upsertContact({ platform: "twitter", platformUserId: "ig_1", username: "user1" });
       const c2 = repo.upsertContact({ platform: "reddit", platformUserId: "r_1", username: "user2" });
-      repo.insertMessage({ contactId: c1.id, platform: "instagram", direction: "inbound", content: "msg1" });
+      repo.insertMessage({ contactId: c1.id, platform: "twitter", direction: "inbound", content: "msg1" });
       repo.insertMessage({ contactId: c2.id, platform: "reddit", direction: "inbound", content: "msg2" });
 
       const activity = repo.getRecentActivity(10);
@@ -152,7 +152,7 @@ describe("SocialRepository", () => {
     it("creates and lists rules", () => {
       repo.createRule({
         name: "Ebook Funnel",
-        platform: "instagram",
+        platform: "twitter",
         enabled: 1,
         post_ids: null,
         keywords: JSON.stringify(["LINK", "EBOOK"]),
@@ -175,7 +175,7 @@ describe("SocialRepository", () => {
     it("updates a rule", () => {
       const rule = repo.createRule({
         name: "Test",
-        platform: "instagram",
+        platform: "twitter",
         enabled: 1,
         post_ids: null,
         keywords: "[]",
@@ -197,7 +197,7 @@ describe("SocialRepository", () => {
     it("deletes a rule", () => {
       const rule = repo.createRule({
         name: "ToDelete",
-        platform: "instagram",
+        platform: "twitter",
         enabled: 1,
         post_ids: null,
         keywords: "[]",
@@ -218,7 +218,7 @@ describe("SocialRepository", () => {
     it("increments trigger count", () => {
       const rule = repo.createRule({
         name: "Counter",
-        platform: "instagram",
+        platform: "twitter",
         enabled: 1,
         post_ids: null,
         keywords: "[]",
@@ -244,7 +244,7 @@ describe("SocialRepository", () => {
     it("inserts and queries log entries", () => {
       const rule = repo.createRule({
         name: "Test",
-        platform: "instagram",
+        platform: "twitter",
         enabled: 1,
         post_ids: null,
         keywords: '["LINK"]',
@@ -261,7 +261,7 @@ describe("SocialRepository", () => {
       repo.insertAutomationLog({
         rule_id: rule.id,
         contact_id: null,
-        platform: "instagram",
+        platform: "twitter",
         post_id: "post_1",
         comment_id: "comment_1",
         username: "user1",
@@ -279,7 +279,7 @@ describe("SocialRepository", () => {
     it("tracks per-user trigger count", () => {
       const rule = repo.createRule({
         name: "Test",
-        platform: "instagram",
+        platform: "twitter",
         enabled: 1,
         post_ids: null,
         keywords: '["LINK"]',
@@ -294,7 +294,7 @@ describe("SocialRepository", () => {
       });
 
       repo.insertAutomationLog({
-        rule_id: rule.id, contact_id: null, platform: "instagram",
+        rule_id: rule.id, contact_id: null, platform: "twitter",
         post_id: null, comment_id: "c1", username: "user1",
         matched_keyword: "LINK", comment_replied: 1, dm_sent: 1, dm_error: null,
       });
@@ -308,8 +308,8 @@ describe("SocialRepository", () => {
 
   describe("stats", () => {
     it("returns aggregate stats", () => {
-      const c = repo.upsertContact({ platform: "instagram", platformUserId: "ig_1", username: "user1" });
-      repo.insertMessage({ contactId: c.id, platform: "instagram", direction: "inbound", content: "hi" });
+      const c = repo.upsertContact({ platform: "twitter", platformUserId: "ig_1", username: "user1" });
+      repo.insertMessage({ contactId: c.id, platform: "twitter", direction: "inbound", content: "hi" });
       repo.updateContact(c.id, { handoff_active: 1 });
 
       const stats = repo.getStats();
@@ -324,8 +324,8 @@ describe("SocialRepository", () => {
 
   describe("CSV export", () => {
     it("exports contacts as CSV", () => {
-      repo.upsertContact({ platform: "instagram", platformUserId: "ig_1", username: "jane_doe", displayName: "Jane" });
-      repo.addTag(repo.getContactByPlatformUser("instagram", "ig_1")!.id, "lead");
+      repo.upsertContact({ platform: "twitter", platformUserId: "ig_1", username: "jane_doe", displayName: "Jane" });
+      repo.addTag(repo.getContactByPlatformUser("twitter", "ig_1")!.id, "lead");
 
       const csv = repo.exportContactsCsv();
       const lines = csv.split("\n");
