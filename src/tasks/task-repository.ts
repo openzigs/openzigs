@@ -383,11 +383,8 @@ export class TaskRepository {
 
   /** Find tasks triggered by a specific job name (stored in context JSON). */
   findByJobName(jobName: string, limit = 10): AgentTask[] {
-    const sql = `SELECT * FROM agent_tasks WHERE context LIKE ? ESCAPE '\\' ORDER BY created_at DESC LIMIT ?`;
-    // Escape LIKE special characters and strip quotes to prevent injection
-    const safeJobName = jobName.replace(/"/g, "").replace(/[%_\\]/g, c => `\\${c}`);
-    const pattern = `%"jobName":"${safeJobName}"%`;
-    const rows = this.db.prepare(sql).all(pattern, limit) as StoredTask[];
+    const sql = `SELECT * FROM agent_tasks WHERE json_valid(context) AND json_extract(context, '$.jobName') = ? ORDER BY created_at DESC LIMIT ?`;
+    const rows = this.db.prepare(sql).all(jobName, limit) as StoredTask[];
     return rows.map(toTask);
   }
 }

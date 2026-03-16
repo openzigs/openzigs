@@ -111,8 +111,8 @@ export type SchedulerOptions = {
     stages: PipelineStage[] | null;
     suggestedSkill: string | null;
   } | null;
-  /** Resolve a skill name to its full SKILL.md body and allowed tools. */
-  skillResolver?: (skillName: string) => { body: string; allowedTools: string[] } | null;
+  /** Resolve a skill name to its full SKILL.md body and allowed tools. May return a Promise for async implementations. */
+  skillResolver?: (skillName: string) => { body: string; allowedTools: string[] } | null | Promise<{ body: string; allowedTools: string[] } | null>;
   /** Return all known skill names for computing disabledSkills lists. */
   allSkillNames?: () => string[];
   /** Outbox repository for creating outbox items from scheduler jobs. */
@@ -158,7 +158,7 @@ export class Scheduler extends EventEmitter {
     stages: PipelineStage[] | null;
     suggestedSkill: string | null;
   } | null;
-  private skillResolver?: (skillName: string) => { body: string; allowedTools: string[] } | null;
+  private skillResolver?: (skillName: string) => { body: string; allowedTools: string[] } | null | Promise<{ body: string; allowedTools: string[] } | null>;
   private allSkillNames?: () => string[];
   private outboxRepo?: OutboxRepository;
   private channelManager?: ChannelManager;
@@ -435,7 +435,7 @@ export class Scheduler extends EventEmitter {
         let skillAllowedTools: string[] | null = null;
 
         if (effectiveSkillName && this.skillResolver) {
-          const skill = this.skillResolver(effectiveSkillName);
+          const skill = await Promise.resolve(this.skillResolver(effectiveSkillName));
           if (skill) {
             skillBody = skill.body;
             skillAllowedTools = skill.allowedTools;

@@ -4,7 +4,7 @@ import { createServer } from "node:http";
 import { createRequire } from "node:module";
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import fs from "node:fs/promises";
-import { statSync, readFileSync } from "node:fs";
+import { statSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { Server as SocketIOServer } from "socket.io";
@@ -227,11 +227,11 @@ const scheduler = new Scheduler({
   db,
   outboxRepo,
   promptResolver: (name, variables) => promptManager.resolveWithStages(name, variables ?? {}),
-  skillResolver: (skillName) => {
+  skillResolver: async (skillName) => {
     for (const dir of resolvedSkillDirectories) {
       const skillMdPath = path.join(dir, "SKILL.md");
       try {
-        const raw = readFileSync(skillMdPath, "utf-8");
+        const raw = await fs.readFile(skillMdPath, "utf-8");
         const dirName = path.basename(dir);
         // Parse frontmatter to get name and allowed-tools
         const trimmed = raw.trimStart();

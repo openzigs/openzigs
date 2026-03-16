@@ -35,6 +35,7 @@ import { AVAILABLE_VOICES } from "../voice/types.js";
 import { loadSkillMetadata } from "../skills/skill-loader.js";
 import type { PipelineTemplateManager } from "../productivity/pipeline-template-manager.js";
 import type { Server as SocketIOServer } from "socket.io";
+import { CronExpressionParser } from "cron-parser";
 
 let _adminIo: SocketIOServer | null = null;
 export function setAdminIO(io: SocketIOServer): void { _adminIo = io; }
@@ -49,23 +50,6 @@ type EnvEntry = {
 };
 
 // ── Cron field matcher (for dry-run next-runs computation) ──────────────────
-function matchCronField(field: string, value: number): boolean {
-  if (field === "*") return true;
-  return field.split(",").some((part) => {
-    if (part.includes("/")) {
-      const [base, step] = part.split("/");
-      const s = parseInt(step, 10);
-      const b = base === "*" ? 0 : parseInt(base, 10);
-      return (value - b) % s === 0 && value >= b;
-    }
-    if (part.includes("-")) {
-      const [lo, hi] = part.split("-").map(Number);
-      return value >= lo && value <= hi;
-    }
-    return parseInt(part, 10) === value;
-  });
-}
-
 // ── Pinterest OAuth state ──────────────────────────────────────────────────
 /** CSRF state tokens for pending Pinterest OAuth flows (short-lived, single-user) */
 export const pinterestOAuthStates = new Map<string, number>();
@@ -1986,29 +1970,13 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
 
         // Compute next run times
         try {
+          const interval = CronExpressionParser.parse(job.cronExpression, {
+            tz: job.timezone || undefined,
+          });
           const nextRuns: string[] = [];
-          const cursor = new Date();
-          cursor.setSeconds(0, 0);
-          cursor.setMinutes(cursor.getMinutes() + 1);
-          const parts = job.cronExpression.trim().split(/\s+/);
-          if (parts.length === 5) {
-            for (let i = 0; i < 525960 && nextRuns.length < 3; i++) {
-              const min = cursor.getMinutes();
-              const hour = cursor.getHours();
-              const dom = cursor.getDate();
-              const mon = cursor.getMonth() + 1;
-              const dow = cursor.getDay();
-              if (
-                matchCronField(parts[0], min) &&
-                matchCronField(parts[1], hour) &&
-                matchCronField(parts[2], dom) &&
-                matchCronField(parts[3], mon) &&
-                matchCronField(parts[4], dow)
-              ) {
-                nextRuns.push(cursor.toISOString());
-              }
-              cursor.setMinutes(cursor.getMinutes() + 1);
-            }
+          for (let i = 0; i < 3; i++) {
+            const iso = interval.next().toISOString();
+            if (iso !== null) nextRuns.push(iso);
           }
           preview.nextRuns = nextRuns;
         } catch {
