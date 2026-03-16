@@ -60,11 +60,11 @@ import { createPresenterRouter } from "./api/presenter.js";
 import { createSocialRouter } from "./api/social.js";
 import { createPinterestRouter } from "./api/pinterest.js";
 import { SocialRepository } from "./channels/social/social-repository.js";
-import { SocialIngestionService, TwitterAdapter, LinkedInAdapter, GenericPollAdapter } from "./channels/social/social-ingestion.js";
+import { SocialIngestionService, TwitterAdapter, LinkedInAdapter, InstagramAdapter, FacebookAdapter, GenericPollAdapter } from "./channels/social/social-ingestion.js";
 import { SocialBrain } from "./channels/social/social-brain.js";
 import { HandoffManager } from "./channels/social/handoff-manager.js";
 import { CommentRuleEngine } from "./channels/social/comment-rule-engine.js";
-import { PostContextService, TwitterApiClient, YouTubeApiClient, LinkedInApiClient, TikTokApiClient, RedditApiClient } from "./channels/social/platform-api-client.js";
+import { PostContextService, TwitterApiClient, YouTubeApiClient, LinkedInApiClient, TikTokApiClient, RedditApiClient, InstagramApiClient, FacebookApiClient } from "./channels/social/platform-api-client.js";
 import { DmDispatcher } from "./channels/social/dm-dispatcher.js";
 import { createRedditPollFn } from "./channels/social/reddit-poll.js";
 import { BrandVoiceRepository } from "./personality/brand-voice-repository.js";
@@ -535,6 +535,16 @@ if (redditClientId && localServerManager) {
   postContextService.registerClient(new RedditApiClient(localServerManager));
 }
 
+const instagramAccessToken = process.env.INSTAGRAM_ACCESS_TOKEN ?? "";
+if (instagramAccessToken) {
+  postContextService.registerClient(new InstagramApiClient(instagramAccessToken));
+}
+
+const facebookPageToken = process.env.FACEBOOK_PAGE_TOKEN ?? "";
+if (facebookPageToken) {
+  postContextService.registerClient(new FacebookApiClient(facebookPageToken));
+}
+
 // Only register platform adapters when credentials are actually configured
 const socialAdapters: import("./channels/social/social-ingestion.js").SocialPlatformAdapter[] = [];
 if (twitterBearerToken) {
@@ -551,6 +561,12 @@ if (youtubeApiKey) {
 }
 if (tikNeuronApiKey) {
   socialAdapters.push(new GenericPollAdapter("tiktok", async () => []));
+}
+if (instagramAccessToken) {
+  socialAdapters.push(new InstagramAdapter());
+}
+if (facebookPageToken) {
+  socialAdapters.push(new FacebookAdapter());
 }
 
 const socialIngestion = new SocialIngestionService({

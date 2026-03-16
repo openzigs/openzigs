@@ -27,7 +27,7 @@ export type SocialRouterOptions = {
   brandVoiceService?: BrandVoiceService;
 };
 
-const platformSchema = z.enum(["reddit", "youtube", "tiktok", "twitter", "linkedin"]);
+const platformSchema = z.enum(["reddit", "youtube", "tiktok", "twitter", "linkedin", "instagram", "facebook"]);
 
 export const createSocialRouter = (opts: SocialRouterOptions): Router => {
   const { repository, ingestion, handoff, config: socialConfig, brandVoiceService } = opts;

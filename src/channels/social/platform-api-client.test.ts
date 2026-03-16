@@ -7,6 +7,8 @@ import {
   YouTubeApiClient,
   LinkedInApiClient,
   RedditApiClient,
+  InstagramApiClient,
+  FacebookApiClient,
 } from "./platform-api-client.js";
 
 const createTestDb = () => {
@@ -345,6 +347,175 @@ describe("RedditApiClient", () => {
     const client = new RedditApiClient(mgr as any);
     service.registerClient(client);
     // No error = success
+    expect(true).toBe(true);
+  });
+});
+
+// ── InstagramApiClient ──
+
+describe("InstagramApiClient", () => {
+  it("has platform = instagram", () => {
+    const client = new InstagramApiClient("ig-token");
+    expect(client.platform).toBe("instagram");
+  });
+
+  it("returns null on HTTP error", async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 400,
+      text: async () => "Invalid token",
+    }) as unknown as typeof fetch;
+
+    const client = new InstagramApiClient("bad-token");
+    const result = await client.fetchPostContext("ig_media_123");
+    expect(result).toBeNull();
+  });
+
+  it("parses successful media response", async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        id: "ig_media_123",
+        caption: "Summer vibes!",
+        media_type: "IMAGE",
+        media_url: "https://cdn.instagram.com/photo.jpg",
+        timestamp: "2026-01-05T10:00:00+0000",
+        permalink: "https://www.instagram.com/p/ABC123/",
+        username: "testuser",
+      }),
+    }) as unknown as typeof fetch;
+
+    const client = new InstagramApiClient("good-token");
+    const result = await client.fetchPostContext("ig_media_123");
+    expect(result).not.toBeNull();
+    expect(result!.platform).toBe("instagram");
+    expect(result!.caption).toBe("Summer vibes!");
+    expect(result!.permalink).toBe("https://www.instagram.com/p/ABC123/");
+    expect(result!.mediaType).toBe("IMAGE");
+    expect(result!.mediaUrl).toBe("https://cdn.instagram.com/photo.jpg");
+    expect(result!.authorUsername).toBe("testuser");
+  });
+
+  it("returns null when id is missing from response", async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({}),
+    }) as unknown as typeof fetch;
+
+    const client = new InstagramApiClient("good-token");
+    const result = await client.fetchPostContext("ig_999");
+    expect(result).toBeNull();
+  });
+
+  it("uses fallback permalink when not returned by API", async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        id: "ig_media_456",
+        caption: "Test",
+      }),
+    }) as unknown as typeof fetch;
+
+    const client = new InstagramApiClient("good-token");
+    const result = await client.fetchPostContext("ig_media_456");
+    expect(result).not.toBeNull();
+    expect(result!.permalink).toContain("instagram.com/p/ig_media_456");
+  });
+
+  it("registers with PostContextService", () => {
+    const db = new Database(":memory:");
+    db.pragma("journal_mode = WAL");
+    db.pragma("foreign_keys = ON");
+    const repo = new SocialRepository(db);
+    repo.migrate();
+    const service = new PostContextService(repo);
+    const client = new InstagramApiClient("ig-token");
+    service.registerClient(client);
+    expect(true).toBe(true);
+  });
+});
+
+// ── FacebookApiClient ──
+
+describe("FacebookApiClient", () => {
+  it("has platform = facebook", () => {
+    const client = new FacebookApiClient("fb-token");
+    expect(client.platform).toBe("facebook");
+  });
+
+  it("returns null on HTTP error", async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 403,
+      text: async () => "Unauthorized",
+    }) as unknown as typeof fetch;
+
+    const client = new FacebookApiClient("bad-token");
+    const result = await client.fetchPostContext("fb_post_123");
+    expect(result).toBeNull();
+  });
+
+  it("parses successful post response", async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        id: "fb_post_123",
+        message: "Check out our new product!",
+        type: "photo",
+        created_time: "2026-02-01T08:00:00+0000",
+        from: { name: "Test Page", id: "page_id" },
+        permalink_url: "https://www.facebook.com/page/posts/123",
+      }),
+    }) as unknown as typeof fetch;
+
+    const client = new FacebookApiClient("good-token");
+    const result = await client.fetchPostContext("fb_post_123");
+    expect(result).not.toBeNull();
+    expect(result!.platform).toBe("facebook");
+    expect(result!.caption).toBe("Check out our new product!");
+    expect(result!.permalink).toBe("https://www.facebook.com/page/posts/123");
+    expect(result!.mediaType).toBe("photo");
+    expect(result!.authorUsername).toBe("Test Page");
+    expect(result!.publishedAt).toBe("2026-02-01T08:00:00+0000");
+  });
+
+  it("returns null when id is missing from response", async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({}),
+    }) as unknown as typeof fetch;
+
+    const client = new FacebookApiClient("good-token");
+    const result = await client.fetchPostContext("fb_999");
+    expect(result).toBeNull();
+  });
+
+  it("uses fallback permalink and caption when not returned", async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        id: "fb_post_456",
+        from: { name: "Page" },
+      }),
+    }) as unknown as typeof fetch;
+
+    const client = new FacebookApiClient("good-token");
+    const result = await client.fetchPostContext("fb_post_456");
+    expect(result).not.toBeNull();
+    expect(result!.caption).toBe("");
+    expect(result!.permalink).toContain("facebook.com/fb_post_456");
+    expect(result!.mediaType).toBe("status");
+  });
+
+  it("registers with PostContextService", () => {
+    const db = new Database(":memory:");
+    db.pragma("journal_mode = WAL");
+    db.pragma("foreign_keys = ON");
+    const repo = new SocialRepository(db);
+    repo.migrate();
+    const service = new PostContextService(repo);
+    const client = new FacebookApiClient("fb-token");
+    service.registerClient(client);
     expect(true).toBe(true);
   });
 });

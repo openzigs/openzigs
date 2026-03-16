@@ -278,3 +278,120 @@ export class GenericPollAdapter implements SocialPlatformAdapter {
     return this._poll(since);
   }
 }
+
+// ── Instagram Webhook Adapter ────────────────────────────────────────
+
+/** Instagram webhook adapter for DMs and comments via Meta Graph API. */
+export class InstagramAdapter implements SocialPlatformAdapter {
+  readonly platform: SocialPlatform = "instagram";
+
+  parseWebhook(body: unknown): IncomingSocialMessage | IncomingComment | null {
+    const payload = body as Record<string, unknown>;
+    const entry = (payload.entry as Array<Record<string, unknown>>)?.[0];
+    if (!entry) return null;
+
+    // Instagram messaging webhook (DMs)
+    const messaging = entry.messaging as Array<Record<string, unknown>> | undefined;
+    if (messaging?.length) {
+      const event = messaging[0];
+      const sender = event.sender as Record<string, string> | undefined;
+      const message = event.message as Record<string, string> | undefined;
+      if (sender?.id && message?.text) {
+        return {
+          platform: "instagram",
+          platformMessageId: message.mid ?? `ig_msg_${Date.now()}`,
+          platformUserId: sender.id,
+          username: sender.id,
+          text: message.text,
+          timestamp: new Date(Number(event.timestamp ?? Date.now())).toISOString(),
+        };
+      }
+    }
+
+    // Instagram comment webhook (changes array with field="comments")
+    const changes = entry.changes as Array<Record<string, unknown>> | undefined;
+    if (changes?.length) {
+      for (const change of changes) {
+        if (change.field !== "comments") continue;
+        const value = change.value as Record<string, unknown> | undefined;
+        if (!value) continue;
+        const commentId = value.id as string | undefined;
+        const text = value.text as string | undefined;
+        const from = value.from as Record<string, string> | undefined;
+        const mediaId = value.media as Record<string, string> | undefined;
+        if (commentId && text && from?.id) {
+          return {
+            platform: "instagram",
+            postId: mediaId?.id ?? (entry.id as string) ?? "",
+            commentId,
+            userId: from.id,
+            username: from.username ?? from.id,
+            text,
+            timestamp: new Date().toISOString(),
+          };
+        }
+      }
+    }
+
+    return null;
+  }
+}
+
+// ── Facebook Webhook Adapter ─────────────────────────────────────────
+
+/** Facebook webhook adapter for Messenger DMs and Page post comments. */
+export class FacebookAdapter implements SocialPlatformAdapter {
+  readonly platform: SocialPlatform = "facebook";
+
+  parseWebhook(body: unknown): IncomingSocialMessage | IncomingComment | null {
+    const payload = body as Record<string, unknown>;
+    const entry = (payload.entry as Array<Record<string, unknown>>)?.[0];
+    if (!entry) return null;
+
+    // Facebook Messenger webhook (messaging array)
+    const messaging = entry.messaging as Array<Record<string, unknown>> | undefined;
+    if (messaging?.length) {
+      const event = messaging[0];
+      const sender = event.sender as Record<string, string> | undefined;
+      const message = event.message as Record<string, string> | undefined;
+      if (sender?.id && message?.text) {
+        return {
+          platform: "facebook",
+          platformMessageId: message.mid ?? `fb_msg_${Date.now()}`,
+          platformUserId: sender.id,
+          username: sender.id,
+          text: message.text,
+          timestamp: new Date(Number(event.timestamp ?? Date.now())).toISOString(),
+        };
+      }
+    }
+
+    // Facebook Page comment webhook (changes array with field="feed")
+    const changes = entry.changes as Array<Record<string, unknown>> | undefined;
+    if (changes?.length) {
+      for (const change of changes) {
+        if (change.field !== "feed") continue;
+        const value = change.value as Record<string, unknown> | undefined;
+        if (!value || value.item !== "comment") continue;
+        const commentId = value.comment_id as string | undefined;
+        const postId = value.post_id as string | undefined;
+        const senderId = value.sender_id as string | undefined;
+        const senderName = value.sender_name as string | undefined;
+        const message = value.message as string | undefined;
+        if (commentId && postId && senderId && message) {
+          return {
+            platform: "facebook",
+            postId,
+            commentId,
+            userId: senderId,
+            username: senderName ?? senderId,
+            text: message,
+            timestamp: new Date(Number(value.created_time ?? Date.now()) * 1000).toISOString(),
+          };
+        }
+      }
+    }
+
+    return null;
+  }
+}

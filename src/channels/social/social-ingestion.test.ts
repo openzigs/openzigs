@@ -3,6 +3,8 @@ import {
   TwitterAdapter,
   LinkedInAdapter,
   GenericPollAdapter,
+  InstagramAdapter,
+  FacebookAdapter,
   SocialIngestionService,
 } from "./social-ingestion.js";
 
@@ -358,5 +360,323 @@ describe("TwitterAdapter - additional", () => {
 
   it("returns null for direct_message_events with no message_create", () => {
     expect(adapter.parseWebhook({ direct_message_events: [{ id: "1" }] })).toBeNull();
+  });
+});
+
+// ── InstagramAdapter ──
+
+describe("InstagramAdapter", () => {
+  const adapter = new InstagramAdapter();
+
+  it("has platform = instagram", () => {
+    expect(adapter.platform).toBe("instagram");
+  });
+
+  it("returns null for empty body", () => {
+    expect(adapter.parseWebhook({})).toBeNull();
+  });
+
+  it("returns null for entry with no messaging or changes", () => {
+    expect(adapter.parseWebhook({ entry: [{ id: "123" }] })).toBeNull();
+  });
+
+  it("parses DM (messaging) webhook payload", () => {
+    const body = {
+      entry: [{
+        id: "ig_page_1",
+        messaging: [{
+          sender: { id: "igsid_user_1" },
+          message: { mid: "mid_123", text: "Hello from IG DM" },
+          timestamp: Date.now(),
+        }],
+      }],
+    };
+    const result = adapter.parseWebhook(body);
+    expect(result).not.toBeNull();
+    const msg = result as { platform: string; platformUserId: string; text: string; platformMessageId: string };
+    expect(msg.platform).toBe("instagram");
+    expect(msg.platformUserId).toBe("igsid_user_1");
+    expect(msg.text).toBe("Hello from IG DM");
+    expect(msg.platformMessageId).toBe("mid_123");
+  });
+
+  it("parses comment webhook payload (changes with field=comments)", () => {
+    const body = {
+      entry: [{
+        id: "ig_media_1",
+        changes: [{
+          field: "comments",
+          value: {
+            id: "comment_456",
+            text: "Great post!",
+            from: { id: "ig_user_2", username: "commenter" },
+            media: { id: "media_789" },
+          },
+        }],
+      }],
+    };
+    const result = adapter.parseWebhook(body);
+    expect(result).not.toBeNull();
+    const comment = result as { platform: string; postId: string; commentId: string; username: string; text: string };
+    expect(comment.platform).toBe("instagram");
+    expect(comment.postId).toBe("media_789");
+    expect(comment.commentId).toBe("comment_456");
+    expect(comment.username).toBe("commenter");
+    expect(comment.text).toBe("Great post!");
+  });
+
+  it("falls back to entry.id for postId when media is missing", () => {
+    const body = {
+      entry: [{
+        id: "ig_media_fallback",
+        changes: [{
+          field: "comments",
+          value: {
+            id: "comment_999",
+            text: "Neat!",
+            from: { id: "ig_user_3" },
+          },
+        }],
+      }],
+    };
+    const result = adapter.parseWebhook(body);
+    expect(result).not.toBeNull();
+    const comment = result as { postId: string; username: string };
+    expect(comment.postId).toBe("ig_media_fallback");
+    expect(comment.username).toBe("ig_user_3"); // falls back to id when no username
+  });
+
+  it("ignores changes with non-comments field", () => {
+    const body = {
+      entry: [{
+        id: "ig_1",
+        changes: [{ field: "mentions", value: { id: "1" } }],
+      }],
+    };
+    expect(adapter.parseWebhook(body)).toBeNull();
+  });
+
+  it("ignores comments with missing required fields", () => {
+    const body = {
+      entry: [{
+        id: "ig_1",
+        changes: [{ field: "comments", value: { id: "c1" } }], // no text, no from
+      }],
+    };
+    expect(adapter.parseWebhook(body)).toBeNull();
+  });
+});
+
+// ── FacebookAdapter ──
+
+describe("FacebookAdapter", () => {
+  const adapter = new FacebookAdapter();
+
+  it("has platform = facebook", () => {
+    expect(adapter.platform).toBe("facebook");
+  });
+
+  it("returns null for empty body", () => {
+    expect(adapter.parseWebhook({})).toBeNull();
+  });
+
+  it("returns null for entry with no messaging or changes", () => {
+    expect(adapter.parseWebhook({ entry: [{ id: "page_1" }] })).toBeNull();
+  });
+
+  it("parses Messenger DM (messaging) webhook payload", () => {
+    const body = {
+      entry: [{
+        id: "page_1",
+        messaging: [{
+          sender: { id: "psid_user_1" },
+          message: { mid: "mid_fb_1", text: "Hello from Messenger" },
+          timestamp: Date.now(),
+        }],
+      }],
+    };
+    const result = adapter.parseWebhook(body);
+    expect(result).not.toBeNull();
+    const msg = result as { platform: string; platformUserId: string; text: string; platformMessageId: string };
+    expect(msg.platform).toBe("facebook");
+    expect(msg.platformUserId).toBe("psid_user_1");
+    expect(msg.text).toBe("Hello from Messenger");
+    expect(msg.platformMessageId).toBe("mid_fb_1");
+  });
+
+  it("parses Page comment webhook payload (changes with field=feed, item=comment)", () => {
+    const body = {
+      entry: [{
+        id: "page_1",
+        changes: [{
+          field: "feed",
+          value: {
+            item: "comment",
+            comment_id: "fb_comment_1",
+            post_id: "fb_post_1",
+            sender_id: "fb_user_1",
+            sender_name: "John Doe",
+            message: "Nice post!",
+            created_time: Math.floor(Date.now() / 1000),
+          },
+        }],
+      }],
+    };
+    const result = adapter.parseWebhook(body);
+    expect(result).not.toBeNull();
+    const comment = result as { platform: string; postId: string; commentId: string; username: string; text: string };
+    expect(comment.platform).toBe("facebook");
+    expect(comment.postId).toBe("fb_post_1");
+    expect(comment.commentId).toBe("fb_comment_1");
+    expect(comment.username).toBe("John Doe");
+    expect(comment.text).toBe("Nice post!");
+  });
+
+  it("ignores feed changes that are not comments", () => {
+    const body = {
+      entry: [{
+        id: "page_1",
+        changes: [{
+          field: "feed",
+          value: { item: "post", post_id: "p1" },
+        }],
+      }],
+    };
+    expect(adapter.parseWebhook(body)).toBeNull();
+  });
+
+  it("ignores non-feed changes", () => {
+    const body = {
+      entry: [{
+        id: "page_1",
+        changes: [{ field: "ratings", value: { rating: 5 } }],
+      }],
+    };
+    expect(adapter.parseWebhook(body)).toBeNull();
+  });
+
+  it("ignores comments with missing required fields", () => {
+    const body = {
+      entry: [{
+        id: "page_1",
+        changes: [{
+          field: "feed",
+          value: { item: "comment", comment_id: "c1" }, // missing post_id, sender_id, message
+        }],
+      }],
+    };
+    expect(adapter.parseWebhook(body)).toBeNull();
+  });
+});
+
+// ── Integration: Instagram/Facebook with SocialIngestionService ──
+
+describe("SocialIngestionService - Instagram/Facebook integration", () => {
+  const createMockRepo = () => ({
+    upsertContact: vi.fn(() => ({ id: "contact-ig", platform: "instagram", platform_user_id: "u1", username: "user1", display_name: "", tags: "[]", notes: "", first_seen_at: "", last_seen_at: "", message_count: 1, handoff_active: 0, handoff_thread_id: null, created_at: "", updated_at: "" })),
+    insertMessage: vi.fn(() => ({ id: "msg-ig", contact_id: "contact-ig", platform: "instagram", direction: "inbound", status: "received", platform_message_id: "", content: "hi", metadata: "{}", created_at: "" })),
+  });
+
+  it("handleWebhook processes Instagram DM", async () => {
+    const repo = createMockRepo();
+    const adapter = new InstagramAdapter();
+    const service = new SocialIngestionService({ repository: repo as any, adapters: [adapter] });
+    const handler = vi.fn();
+    service.on("message", handler);
+
+    await service.handleWebhook("instagram", {
+      entry: [{
+        id: "ig_page",
+        messaging: [{
+          sender: { id: "igsid_1" },
+          message: { mid: "mid_1", text: "hi from ig" },
+          timestamp: Date.now(),
+        }],
+      }],
+    }, {});
+
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(repo.upsertContact).toHaveBeenCalled();
+  });
+
+  it("handleWebhook emits comment event for Instagram comment", async () => {
+    const repo = createMockRepo();
+    const adapter = new InstagramAdapter();
+    const service = new SocialIngestionService({ repository: repo as any, adapters: [adapter] });
+    const handler = vi.fn();
+    service.on("comment", handler);
+
+    await service.handleWebhook("instagram", {
+      entry: [{
+        id: "ig_media",
+        changes: [{
+          field: "comments",
+          value: {
+            id: "c1",
+            text: "cool pic",
+            from: { id: "u2", username: "fan" },
+            media: { id: "m1" },
+          },
+        }],
+      }],
+    }, {});
+
+    expect(handler).toHaveBeenCalledTimes(1);
+    const comment = handler.mock.calls[0][0];
+    expect(comment.platform).toBe("instagram");
+    expect(comment.commentId).toBe("c1");
+  });
+
+  it("handleWebhook processes Facebook Messenger DM", async () => {
+    const repo = createMockRepo();
+    const adapter = new FacebookAdapter();
+    const service = new SocialIngestionService({ repository: repo as any, adapters: [adapter] });
+    const handler = vi.fn();
+    service.on("message", handler);
+
+    await service.handleWebhook("facebook", {
+      entry: [{
+        id: "page_1",
+        messaging: [{
+          sender: { id: "psid_1" },
+          message: { mid: "mid_fb", text: "hello messenger" },
+          timestamp: Date.now(),
+        }],
+      }],
+    }, {});
+
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(repo.upsertContact).toHaveBeenCalled();
+  });
+
+  it("handleWebhook emits comment event for Facebook Page comment", async () => {
+    const repo = createMockRepo();
+    const adapter = new FacebookAdapter();
+    const service = new SocialIngestionService({ repository: repo as any, adapters: [adapter] });
+    const handler = vi.fn();
+    service.on("comment", handler);
+
+    await service.handleWebhook("facebook", {
+      entry: [{
+        id: "page_1",
+        changes: [{
+          field: "feed",
+          value: {
+            item: "comment",
+            comment_id: "fc1",
+            post_id: "fp1",
+            sender_id: "fu1",
+            sender_name: "Jane",
+            message: "love it",
+            created_time: Math.floor(Date.now() / 1000),
+          },
+        }],
+      }],
+    }, {});
+
+    expect(handler).toHaveBeenCalledTimes(1);
+    const comment = handler.mock.calls[0][0];
+    expect(comment.platform).toBe("facebook");
+    expect(comment.commentId).toBe("fc1");
   });
 });

@@ -14,6 +14,8 @@ const PLATFORM_DM_MAP: Record<string, { server: string; dmTool?: string; replyTo
   youtube: { server: "youtube", replyTool: "yt_reply_to_comment" },
   linkedin: { server: "linkedin", dmTool: "linkedin_send_message", replyTool: "linkedin_reply_to_comment" },
   reddit: { server: "reddit", dmTool: "reddit_send_message", replyTool: "reddit_reply_to_comment" },
+  instagram: { server: "instagram", dmTool: "send_dm", replyTool: "reply_to_comment" },
+  facebook: { server: "facebook", dmTool: "fb_send_message", replyTool: "fb_reply_to_comment" },
 };
 
 export interface DmDispatcherOptions {
@@ -88,6 +90,12 @@ export class DmDispatcher {
       case "reddit":
         // reddit_send_message expects recipient + subject + text
         return { recipient: userId, subject: "Message from OpenZigs", text };
+      case "instagram":
+        // Instagram send_dm expects recipient_id (IGSID) + message
+        return { recipient_id: userId, message: text };
+      case "facebook":
+        // Facebook fb_send_message expects recipient_id (PSID) + message
+        return { recipient_id: userId, message: text };
       default:
         return { recipient_id: userId, message: text };
     }
@@ -108,6 +116,12 @@ export class DmDispatcher {
       case "linkedin":
         // linkedin_reply_to_comment requires the parent post URN for the API endpoint path
         return { comment_urn: commentId, text, post_urn: postId ?? "" };
+      case "instagram":
+        // Instagram reply_to_comment expects comment_id + message
+        return { comment_id: commentId, message: text };
+      case "facebook":
+        // Facebook fb_reply_to_comment expects comment_id + message
+        return { comment_id: commentId, message: text };
       default:
         return { comment_id: commentId, text, message: text };
     }

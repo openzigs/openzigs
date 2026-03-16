@@ -327,3 +327,104 @@ export class RedditApiClient implements PlatformApiClient {
     }
   }
 }
+
+// ── Instagram API Client ─────────────────────────────────────────────
+
+export class InstagramApiClient implements PlatformApiClient {
+  readonly platform: SocialPlatform = "instagram";
+  private accessToken: string;
+  private baseUrl: string;
+
+  constructor(accessToken: string, baseUrl = "https://graph.instagram.com/v19.0") {
+    this.accessToken = accessToken;
+    this.baseUrl = baseUrl;
+  }
+
+  async fetchPostContext(postId: string): Promise<PostContext | null> {
+    const url = `${this.baseUrl}/${encodeURIComponent(postId)}?fields=id,caption,media_type,media_url,timestamp,permalink,username&access_token=${encodeURIComponent(this.accessToken)}`;
+
+    const res = await fetch(url, {
+      headers: { "User-Agent": "OpenZigs-SocialBrain/1.0" },
+      signal: AbortSignal.timeout(10_000),
+    });
+
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      logger.warn(`[InstagramApiClient] GET /${postId} returned ${res.status}: ${body.slice(0, 200)}`);
+      return null;
+    }
+
+    const data = (await res.json()) as {
+      id?: string;
+      caption?: string;
+      media_type?: string;
+      media_url?: string;
+      timestamp?: string;
+      permalink?: string;
+      username?: string;
+    };
+
+    if (!data.id) return null;
+    return {
+      postId: data.id,
+      platform: "instagram",
+      caption: data.caption ?? "",
+      permalink: data.permalink ?? `https://www.instagram.com/p/${postId}`,
+      mediaType: data.media_type ?? "IMAGE",
+      mediaUrl: data.media_url ?? "",
+      authorUsername: data.username ?? "",
+      publishedAt: data.timestamp ?? "",
+      cachedAt: new Date().toISOString(),
+    };
+  }
+}
+
+// ── Facebook API Client ──────────────────────────────────────────────
+
+export class FacebookApiClient implements PlatformApiClient {
+  readonly platform: SocialPlatform = "facebook";
+  private accessToken: string;
+  private baseUrl: string;
+
+  constructor(accessToken: string, baseUrl = "https://graph.facebook.com/v19.0") {
+    this.accessToken = accessToken;
+    this.baseUrl = baseUrl;
+  }
+
+  async fetchPostContext(postId: string): Promise<PostContext | null> {
+    const url = `${this.baseUrl}/${encodeURIComponent(postId)}?fields=id,message,type,created_time,from,permalink_url&access_token=${encodeURIComponent(this.accessToken)}`;
+
+    const res = await fetch(url, {
+      headers: { "User-Agent": "OpenZigs-SocialBrain/1.0" },
+      signal: AbortSignal.timeout(10_000),
+    });
+
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      logger.warn(`[FacebookApiClient] GET /${postId} returned ${res.status}: ${body.slice(0, 200)}`);
+      return null;
+    }
+
+    const data = (await res.json()) as {
+      id?: string;
+      message?: string;
+      type?: string;
+      created_time?: string;
+      from?: { name?: string; id?: string };
+      permalink_url?: string;
+    };
+
+    if (!data.id) return null;
+    return {
+      postId: data.id,
+      platform: "facebook",
+      caption: data.message ?? "",
+      permalink: data.permalink_url ?? `https://www.facebook.com/${postId}`,
+      mediaType: data.type ?? "status",
+      mediaUrl: "",
+      authorUsername: data.from?.name ?? "",
+      publishedAt: data.created_time ?? "",
+      cachedAt: new Date().toISOString(),
+    };
+  }
+}
