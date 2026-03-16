@@ -2,7 +2,7 @@ import "dotenv/config";
 import express from "express";
 import { createServer } from "node:http";
 import { createRequire } from "node:module";
-import { randomBytes, timingSafeEqual } from "node:crypto";
+import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import fs from "node:fs/promises";
 import { statSync } from "node:fs";
 import os from "node:os";
@@ -727,6 +727,58 @@ const socialRouter = createSocialRouter({
   config: socialBrainConfig,
   brandVoiceService,
 });
+
+// Social webhook routes are PUBLIC — no auth middleware.
+// External platforms (Twitter CRC, Meta hub challenge) call these without auth headers.
+// MUST be registered before the auth-gated /api/social mount.
+app.get("/api/social/webhooks/:platform", (req, res) => {
+  const { platform } = req.params;
+
+  // Twitter CRC check: GET ?crc_token=NONCE → JSON { response_token: "sha256=HMAC" }
+  const crcToken = req.query.crc_token;
+  if (typeof crcToken === "string") {
+    const apiSecret = process.env.TWITTER_API_SECRET ?? process.env.TWITTER_CONSUMER_SECRET;
+    if (!apiSecret) {
+      logger.warn("[Social] Twitter CRC received but TWITTER_API_SECRET not configured");
+      res.status(503).json({ error: "Webhook not configured" });
+      return;
+    }
+    const hmac = createHmac("sha256", apiSecret).update(crcToken).digest("base64");
+    logger.info(`[Social] Twitter CRC verification for ${platform}`);
+    res.status(200).json({ response_token: `sha256=${hmac}` });
+    return;
+  }
+
+  // Meta hub challenge (Instagram, Facebook): GET ?hub.mode=subscribe&hub.verify_token=...&hub.challenge=...
+  const mode = req.query["hub.mode"];
+  const token = req.query["hub.verify_token"];
+  const challenge = req.query["hub.challenge"];
+  const verifyToken = process.env.SOCIAL_WEBHOOK_VERIFY_TOKEN;
+  if (mode === "subscribe" && token && challenge && verifyToken && token === verifyToken) {
+    logger.info(`[Social] Meta webhook verification for ${platform}`);
+    res.status(200).send(challenge);
+    return;
+  }
+
+  res.status(403).send("Forbidden");
+});
+
+app.post("/api/social/webhooks/:platform", (req, res) => {
+  const { platform } = req.params;
+  try {
+    void socialIngestion.handleWebhook(
+      platform as Parameters<typeof socialIngestion.handleWebhook>[0],
+      req.body as Record<string, unknown>,
+      req.headers as Record<string, string>,
+    );
+    res.status(200).json({ received: true });
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    logger.error(`[Social] Webhook error (${platform}): ${msg}`);
+    res.status(500).json({ error: msg });
+  }
+});
+
 app.use("/api/social", authMiddleware, socialRouter);
 
 // Pinterest OAuth callback — no auth middleware (redirected from Pinterest)
