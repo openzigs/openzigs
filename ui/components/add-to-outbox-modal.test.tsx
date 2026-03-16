@@ -20,6 +20,7 @@ vi.mock("@/lib/api", () => ({
     }
     return Promise.resolve({ items: [], assets: [] });
   }),
+  buildMediaUrl: vi.fn((path: string) => `http://localhost:5010${path}`),
 }));
 
 vi.mock("@/components/toast", () => ({
