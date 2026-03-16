@@ -76,6 +76,29 @@ curl http://localhost:3000/api/social/connections | python3 -m json.tool
 curl http://localhost:3000/api/social/rules | python3 -m json.tool
 ```
 
+### Cloudflare Tunnel for Webhooks
+
+Instagram, Facebook, and Twitter use **webhooks** for real-time comment/DM ingestion. These require a publicly reachable URL. **No separate tunnel endpoints or ingress rules are needed** — the same Cloudflare Tunnel that handles Telegram also handles social webhooks, since all routes are served on the same Express server (port 3000).
+
+| Mode | Webhook Base URL | Setup |
+|------|-----------------|-------|
+| **Docker sidecar** | `https://agent.example.com` | Set `TUNNEL_TOKEN` in `.env`, use hostname from Cloudflare dashboard |
+| **Quick mode** | `https://xxx.trycloudflare.com` | Set `tunnel.enabled: true, tunnel.mode: "quick"` in config — auto-generated URL |
+| **Named tunnel** | `https://your-hostname.com` | Set `tunnel.enabled: true, tunnel.mode: "named"` with credentials file |
+| **ngrok (dev)** | `https://abc123.ngrok.io` | Run `ngrok http 3000` — use the generated HTTPS URL |
+
+Webhook endpoints follow the pattern: `<base-url>/api/social/webhooks/:platform`
+
+```bash
+# Verify your tunnel is reachable (from another machine or curl with the public URL)
+curl https://<your-domain>/health
+# Should return: {"status":"ok"}
+
+# Verify webhook verification endpoint works
+curl "https://<your-domain>/api/social/webhooks/instagram?hub.mode=subscribe&hub.verify_token=YOUR_VERIFY_TOKEN&hub.challenge=test123"
+# Should return: test123
+```
+
 ### Platform Support Matrix
 
 Not all platforms have the same level of Social Brain integration. This matrix shows what's currently wired in:

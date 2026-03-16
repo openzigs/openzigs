@@ -109,7 +109,11 @@ Before you begin, ensure the following are installed and available:
 | `GITHUB_CLIENT_ID` | OAuth app client ID for the device-flow authentication. |
 | `TUNNEL_TOKEN` | Cloudflare Tunnel token for the Docker sidecar (production). |
 | `GOOGLE_APPLICATION_CREDENTIALS` | Path to Google Cloud service account JSON key file. Required for voice TTS. |
-| `SOCIAL_WEBHOOK_VERIFY_TOKEN` | Verify token for Social Brain webhook subscriptions (TikTok, etc.). |
+| `SOCIAL_WEBHOOK_VERIFY_TOKEN` | Verify token for Social Brain webhook subscriptions (Meta, TikTok, etc.). |
+| `INSTAGRAM_ACCESS_TOKEN` | Instagram Graph API user access token (for comment ingestion, DMs, post context enrichment). |
+| `FACEBOOK_PAGE_TOKEN` | Facebook Page access token (for comment ingestion, Messenger DMs, post context enrichment). |
+| `FACEBOOK_APP_ID` | Facebook App ID (shared by Instagram and Facebook MCP servers). |
+| `FACEBOOK_APP_SECRET` | Facebook App Secret (shared by Instagram and Facebook MCP servers). |
 | `TIKTOK_CLIENT_KEY` | TikTok OAuth Client Key (from [developers.tiktok.com](https://developers.tiktok.com)). Required for TikTok MCP tools. |
 | `TIKTOK_CLIENT_SECRET` | TikTok OAuth Client Secret. |
 | `TIKTOK_ACCESS_TOKEN` | TikTok access token (obtained via OAuth in Admin → TikTok panel). |
@@ -199,6 +203,10 @@ GOOGLE_APPLICATION_CREDENTIALS=/path/to/your/service-account-key.json
 
 # ── Optional: Social Brain ──
 # SOCIAL_WEBHOOK_VERIFY_TOKEN=your-random-verify-token
+# INSTAGRAM_ACCESS_TOKEN=your-ig-long-lived-user-access-token
+# FACEBOOK_PAGE_TOKEN=your-facebook-page-access-token
+# FACEBOOK_APP_ID=your-facebook-app-id
+# FACEBOOK_APP_SECRET=your-facebook-app-secret
 
 # ── Media Queue (Distributed GPU Nodes) ──
 # Set to the primary Mac's LAN IP so remote worker nodes can POST callbacks back to it.
@@ -3170,7 +3178,7 @@ This mounts the source directory for live-reload inside the container.
 
 ## Cloudflare Tunnel
 
-The Cloudflare Tunnel provides a public HTTPS URL to reach your local agent. This is required for Telegram webhooks and Discord OAuth redirects.
+The Cloudflare Tunnel provides a public HTTPS URL to reach your local agent. This is required for Telegram webhooks, Discord OAuth redirects, and **Social Brain platform webhooks** (Instagram, Facebook, Twitter, TikTok). All services share the same tunnel — no separate endpoints or ingress rules are needed.
 
 ### Docker Sidecar (Recommended)
 
@@ -3200,7 +3208,7 @@ In the recommended deployment, `cloudflared` runs as a separate container define
    docker compose up -d
    ```
 
-The `tunnel` service proxies public HTTPS traffic to `http://agent:3000` inside the Docker network. Set your Telegram `webhookUrl` to your Cloudflare hostname (e.g., `https://agent.example.com/telegram/webhook`).
+The `tunnel` service proxies public HTTPS traffic to `http://agent:3000` inside the Docker network. Set your Telegram `webhookUrl` to your Cloudflare hostname (e.g., `https://agent.example.com/telegram/webhook`). Social Brain webhooks use the same hostname (e.g., `https://agent.example.com/api/social/webhooks/instagram`).
 
 ### Embedded Quick Mode (Development)
 
@@ -6328,7 +6336,7 @@ Configure the knowledge base in your config file (`~/.openzigs/config.json`):
 
 > **📖 Comprehensive Setup Guide:** For step-by-step platform setup, Cloudflare Tunnel configuration, curl testing commands, and troubleshooting, see the dedicated [Social Brain Guide](SOCIAL_BRAIN_GUIDE.md).
 
-The Social Brain at `/social` provides a unified inbox for managing DMs and comments across 6 social platforms — **Instagram**, **Facebook**, **Twitter/X**, **YouTube**, **LinkedIn**, and **Reddit** — with AI-powered auto-replies, a built-in CRM, comment-to-DM automation, and cross-platform content publishing.
+The Social Brain at `/social` provides a unified inbox for managing DMs and comments across 7 social platforms — **Instagram**, **Facebook**, **Twitter/X**, **YouTube**, **LinkedIn**, **Reddit**, and **TikTok** — with AI-powered auto-replies, a built-in CRM, comment-to-DM automation, and cross-platform content publishing.
 
 Each platform has a dedicated native MCP server with tools for posting, reading, analytics, DMs, and comment management. See the [Social Media Posting](#social-media-posting) section for publishing details, and the [Social Brain Guide](SOCIAL_BRAIN_GUIDE.md) for comprehensive setup and troubleshooting.
 
@@ -6463,33 +6471,83 @@ Add these to your `.env` file:
 ```dotenv
 # ── Social Brain ──
 SOCIAL_WEBHOOK_VERIFY_TOKEN=your-random-secret-string  # Used to verify webhook subscriptions
-INSTAGRAM_ACCESS_TOKEN=your-instagram-user-access-token # Required for post context lookup (captions, media type)
+INSTAGRAM_ACCESS_TOKEN=your-instagram-user-access-token # Required for IG post context enrichment + adapter activation
+FACEBOOK_PAGE_TOKEN=your-facebook-page-access-token    # Required for FB post context enrichment + adapter activation
+FACEBOOK_APP_ID=your-facebook-app-id                   # Shared by Instagram and Facebook MCP servers
+FACEBOOK_APP_SECRET=your-facebook-app-secret            # Shared by Instagram and Facebook MCP servers
 ```
 
 > **Tip:** Generate a random verify token with `openssl rand -hex 32`.
 
-#### Instagram / Facebook (Meta Graph API)
+> **Important:** The ingestion adapters for Instagram and Facebook are only activated when their respective env vars (`INSTAGRAM_ACCESS_TOKEN`, `FACEBOOK_PAGE_TOKEN`) are set. Without them, webhooks will still be received but won't be processed through the automation pipeline.
+
+#### Cloudflare Tunnel & Webhooks
+
+All social webhook endpoints are served on the same Express server (port 3000) as the rest of OpenZigs. **No separate tunnel routes or ingress rules are needed** — the same Cloudflare Tunnel that handles Telegram webhooks also handles social platform webhooks.
+
+Webhook URLs follow the pattern: `https://<your-domain>/api/social/webhooks/:platform`
+
+Example webhook URLs for a tunnel hostname of `agent.example.com`:
+
+| Platform | Webhook URL |
+|----------|-------------|
+| Instagram | `https://agent.example.com/api/social/webhooks/instagram` |
+| Facebook | `https://agent.example.com/api/social/webhooks/facebook` |
+| Twitter | `https://agent.example.com/api/social/webhooks/twitter` |
+| TikTok | `https://agent.example.com/api/social/webhooks/tiktok` |
+| Telegram | `https://agent.example.com/telegram/webhook` |
+
+All routes go through the same tunnel → same origin (`localhost:3000`). In quick mode, replace the hostname with your `trycloudflare.com` URL.
+
+#### Instagram (Meta Graph API)
 
 1. Go to the [Meta Developer Console](https://developers.facebook.com/apps/).
 2. Open your app (or create one: **Business** type → add **Instagram** product).
 3. Navigate to **Instagram → Webhooks** in the left sidebar.
 4. Click **Subscribe to events** and enable:
-   - `messages` — receives DMs
-   - `comments` — receives comment events (required for comment-to-DM automation)
+   - `messages` — receives DMs (parsed by `InstagramAdapter` from `entry[].messaging[]`)
+   - `comments` — receives comment events (parsed from `entry[].changes[{field:"comments"}]`)
 5. Set the **Callback URL** to:
    ```
    https://<your-domain>/api/social/webhooks/instagram
    ```
 6. Set the **Verify Token** to the same value as `SOCIAL_WEBHOOK_VERIFY_TOKEN` in your `.env`.
 7. Click **Verify and Save** — Meta will send a `GET` request with `hub.verify_token` and `hub.challenge`; OpenZigs responds automatically.
-8. Under **Instagram → Basic Display** or **Instagram → API Setup**, generate a **User Access Token** with these permissions:
+8. Under **Instagram → API Setup**, generate a **User Access Token** with these permissions:
    - `instagram_basic`
    - `instagram_manage_comments`
    - `instagram_manage_messages`
    - `pages_show_list`, `pages_read_engagement` (for the business account)
 9. Copy the token and set it as `INSTAGRAM_ACCESS_TOKEN` in your `.env`.
 
-> **Post context enrichment:** When a comment arrives, OpenZigs uses the `INSTAGRAM_ACCESS_TOKEN` to fetch the post's caption, permalink, and media type via `GET /{media_id}?fields=caption,permalink,media_type,media_url,username,timestamp`. This is cached in SQLite for 24 hours to avoid redundant API calls. Without this token, comment-to-DM automation still works, but the Brain and DM templates won't have post context (e.g., `{{post_caption}}` will be empty).
+> **Post context enrichment:** When a comment arrives, `InstagramApiClient` fetches the post's caption, permalink, and media type via `GET https://graph.instagram.com/v19.0/{media_id}?fields=id,caption,media_type,media_url,timestamp,permalink,username`. This is cached for 24 hours. Without this token, the adapter won't be activated, so no webhook processing occurs.
+
+> **24-hour DM window:** Instagram restricts sending DMs to users who have messaged you within the last 24 hours. DMs sent via `send_dm` to users outside this window will fail.
+
+#### Facebook Page (Meta Graph API)
+
+1. In the same [Meta Developer Console](https://developers.facebook.com/apps/) app, add the **Facebook Login** and **Webhooks** products.
+2. Navigate to **Webhooks** in the left sidebar.
+3. Select **Page** from the dropdown and subscribe to:
+   - `feed` — receives Page post comments (parsed by `FacebookAdapter` from `entry[].changes[{field:"feed", value.item:"comment"}]`)
+   - `messages` — receives Messenger DMs (parsed from `entry[].messaging[]`)
+4. Set the **Callback URL** to:
+   ```
+   https://<your-domain>/api/social/webhooks/facebook
+   ```
+5. Set the **Verify Token** to the same value as `SOCIAL_WEBHOOK_VERIFY_TOKEN` in your `.env`.
+6. Click **Verify and Save**.
+7. Generate a **Page Access Token** via the Graph Explorer or your app's OAuth flow with these permissions:
+   - `pages_show_list`, `pages_read_engagement`, `pages_read_user_content`
+   - `pages_messaging` (for Messenger DMs)
+   - `pages_manage_posts` (for publishing)
+8. Copy the token and set it as `FACEBOOK_PAGE_TOKEN` in your `.env`.
+
+> **Post context enrichment:** When a comment arrives, `FacebookApiClient` fetches the post via `GET https://graph.facebook.com/v19.0/{post_id}?fields=id,message,type,created_time,from,permalink_url`. This is cached for 24 hours.
+
+> **Messenger 24-hour window:** Facebook Messenger uses Page-Scoped IDs (PSIDs). Like Instagram, DMs can only be sent to users who messaged within the last 24 hours.
+
+> **Same Meta App, different webhooks:** Instagram and Facebook can share the same Meta App but require separate webhook subscriptions — Instagram subscribes to the **Instagram** object, Facebook subscribes to the **Page** object. Both use the same `SOCIAL_WEBHOOK_VERIFY_TOKEN`.
 
 #### Twitter / X
 
