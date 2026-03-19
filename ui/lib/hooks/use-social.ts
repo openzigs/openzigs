@@ -274,7 +274,7 @@ export const useSocialConfig = () =>
     refetchInterval: 30_000,
   });
 
-export type WebhookLogEntry = { ts: string; platform: string; parsed: boolean; type?: string };
+export type WebhookLogEntry = { ts: string; platform: string; parsed: boolean; type?: string; source?: string };
 
 export const useSocialWebhookLog = () =>
   useQuery({

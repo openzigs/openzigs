@@ -95,9 +95,9 @@ export class SocialIngestionService extends EventEmitter {
     }
   }
 
-  /** Push a webhook event into the diagnostics ring buffer. */
-  private pushWebhookLog(platform: string, parsed: boolean, type?: string): void {
-    this.webhookLog.push({ ts: new Date().toISOString(), platform, parsed, type });
+  /** Push an inbound event into the diagnostics ring buffer. */
+  private pushWebhookLog(platform: string, parsed: boolean, type?: string, source = "webhook"): void {
+    this.webhookLog.push({ ts: new Date().toISOString(), platform, parsed, type, source });
     if (this.webhookLog.length > 50) this.webhookLog.shift();
   }
 
@@ -207,14 +207,17 @@ export class SocialIngestionService extends EventEmitter {
                 if (ctx) comment.postContext = ctx;
               } catch { /* best-effort enrichment */ }
             }
+            this.pushWebhookLog(platform, true, "comment", "poll");
             this.processComment(comment);
           } else {
+            this.pushWebhookLog(platform, true, "message", "poll");
             this.processMessage(item);
           }
         }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         logger.error(`[SocialIngestion] Poll error (${platform}): ${msg}`);
+        this.pushWebhookLog(platform, false, "poll_error", "poll");
 
         health.consecutiveErrors++;
         health.lastError = msg;
@@ -274,11 +277,11 @@ export class SocialIngestionService extends EventEmitter {
     return result;
   }
 
-  /** Recent webhook events for diagnostics (ring buffer, last 50). */
-  private webhookLog: Array<{ ts: string; platform: string; parsed: boolean; type?: string }> = [];
+  /** Recent inbound events for diagnostics (ring buffer, last 50). */
+  private webhookLog: Array<{ ts: string; platform: string; parsed: boolean; type?: string; source?: string }> = [];
 
-  /** Get recent webhook event log. */
-  getWebhookLog(): Array<{ ts: string; platform: string; parsed: boolean; type?: string }> {
+  /** Get recent inbound event log. */
+  getWebhookLog(): Array<{ ts: string; platform: string; parsed: boolean; type?: string; source?: string }> {
     return [...this.webhookLog];
   }
 }

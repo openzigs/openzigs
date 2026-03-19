@@ -1372,16 +1372,16 @@ function WebhookEventLog() {
   const events = data?.events ?? [];
 
   const title = events.length > 0
-    ? `Recent Webhook Events (${events.length})`
-    : "Recent Webhook Events";
+    ? `Recent Inbound Events (${events.length})`
+    : "Recent Inbound Events";
 
   return (
     <SectionCard title={title} defaultOpen>
       {events.length === 0 ? (
         <div className="rounded-md border border-dashed border-yellow-500/30 bg-yellow-500/5 p-4 text-sm">
-          <p className="font-medium text-yellow-600 dark:text-yellow-400">No webhook events received yet</p>
+          <p className="font-medium text-yellow-600 dark:text-yellow-400">No inbound events received yet</p>
           <p className="mt-1 text-muted-foreground">
-            Events will appear here when platforms send webhooks to your server (including Meta verification pings).
+            Events will appear here when platforms send webhooks to your server or when polling picks up new messages.
             If you&apos;ve configured webhooks on a platform&apos;s developer portal and still see nothing here, the webhook
             URL may not be reachable — verify your Cloudflare tunnel is running and the platform can reach your server.
           </p>
@@ -1397,6 +1397,9 @@ function WebhookEventLog() {
                 {new Date(ev.ts).toLocaleString()}
               </span>
               <PlatformBadge platform={ev.platform} />
+              <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ${ev.source === "poll" ? "bg-blue-500/10 text-blue-600" : "bg-purple-500/10 text-purple-600"}`}>
+                {ev.source === "poll" ? "poll" : "webhook"}
+              </span>
               <span className={ev.parsed ? "text-green-600" : "text-destructive"}>
                 {ev.parsed ? "Parsed" : "Failed"}
               </span>
