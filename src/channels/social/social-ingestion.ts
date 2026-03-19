@@ -141,7 +141,7 @@ export class SocialIngestionService extends EventEmitter {
     });
 
     // Log the inbound comment as a message (dedup by commentId as platformMessageId)
-    this.repository.insertMessage({
+    const message = this.repository.insertMessage({
       contactId: contact.id,
       platform: comment.platform,
       direction: "inbound",
@@ -150,6 +150,11 @@ export class SocialIngestionService extends EventEmitter {
       content: comment.text,
       metadata: { postId: comment.postId, source: "comment" },
     });
+
+    if (!message) {
+      logger.info(`[SocialIngestion] Duplicate comment skipped: ${comment.platform}/${comment.commentId}`);
+      return;
+    }
 
     this.emit("comment", comment);
   }

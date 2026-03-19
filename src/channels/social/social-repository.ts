@@ -206,6 +206,40 @@ export class SocialRepository {
     try {
       this.db.exec(`ALTER TABLE comment_automation_rules ADD COLUMN ai_reply_context TEXT DEFAULT NULL`);
     } catch { /* Column already exists */ }
+
+    // Runtime migration: expand the status CHECK constraint to include 'pending_approval' and 'rejected'.
+    // SQLite doesn't support ALTER CHECK, so we must recreate the table.
+    {
+      const tableInfo = this.db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='social_messages'").get() as { sql: string } | undefined;
+      if (tableInfo && !tableInfo.sql.includes("pending_approval")) {
+        this.db.exec(`
+          CREATE TABLE social_messages_new (
+            id                  TEXT PRIMARY KEY,
+            contact_id          TEXT NOT NULL REFERENCES contacts(id),
+            platform            TEXT NOT NULL,
+            direction           TEXT NOT NULL CHECK(direction IN ('inbound', 'outbound')),
+            status              TEXT NOT NULL DEFAULT 'received'
+              CHECK(status IN ('received', 'auto_replied', 'escalated', 'failed', 'pending_approval', 'rejected')),
+            platform_message_id TEXT NOT NULL DEFAULT '',
+            content             TEXT NOT NULL DEFAULT '',
+            metadata            TEXT NOT NULL DEFAULT '{}',
+            created_at          TEXT NOT NULL
+          );
+
+          INSERT INTO social_messages_new SELECT * FROM social_messages;
+
+          DROP TABLE social_messages;
+
+          ALTER TABLE social_messages_new RENAME TO social_messages;
+
+          CREATE INDEX IF NOT EXISTS idx_social_messages_contact ON social_messages(contact_id);
+          CREATE INDEX IF NOT EXISTS idx_social_messages_created ON social_messages(created_at);
+          CREATE UNIQUE INDEX IF NOT EXISTS idx_social_messages_platform_msg
+            ON social_messages(platform, platform_message_id)
+            WHERE platform_message_id != '';
+        `);
+      }
+    }
   }
 
   // ── Contacts CRUD ───────────────────────────────────────────────────

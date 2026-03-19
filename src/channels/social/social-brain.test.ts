@@ -135,6 +135,7 @@ describe("SocialBrain", () => {
     const msg = repo.insertMessage({ contactId: contact.id, platform: "twitter", direction: "inbound", content: raw.text })!;
     await brain.process(contact, msg, raw);
 
+    // No approval gate → public-only to prevent leaking internal data in auto-replies
     expect(knowledge.search).toHaveBeenCalledWith(raw.text, 5, {
       mode: "hybrid",
       filter: { visibility: "public" },
@@ -142,6 +143,23 @@ describe("SocialBrain", () => {
     const promptArg = (copilot.chat as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
     expect(promptArg).toContain("Widget Pro");
     expect(promptArg).toContain("$99");
+  });
+
+  it("searches internal docs when approvalRequired is true", async () => {
+    const copilot = makeMockCopilot('{"reply":"Here is info from our docs","confidence":"high","intent":"inquiry"}');
+    const knowledge = makeMockKnowledge(["Internal architecture details."]);
+    const brain = new SocialBrain({ repository: repo, copilot, knowledgeService: knowledge, approvalRequired: true });
+
+    const contact = makeContact(repo);
+    const raw = makeRawMessage();
+    const msg = repo.insertMessage({ contactId: contact.id, platform: "twitter", direction: "inbound", content: raw.text })!;
+    await brain.process(contact, msg, raw);
+
+    // Approval gate active → include internal docs since a human reviews every reply
+    expect(knowledge.search).toHaveBeenCalledWith(raw.text, 5, {
+      mode: "hybrid",
+      filter: { visibility: "internal" },
+    });
   });
 
   it("handles LLM timeout/error gracefully", async () => {
@@ -399,7 +417,7 @@ describe("SocialBrain", () => {
     expect(pendingHandler2).toHaveBeenCalledTimes(1);
   });
 
-  it("still escalates even when approvalRequired is true", async () => {
+  it("routes low confidence through approval when approvalRequired is true", async () => {
     const copilot = makeMockCopilot('{"reply":"Not sure","confidence":"low","intent":"unknown"}');
     const brain = new SocialBrain({ repository: repo, copilot, knowledgeService: makeMockKnowledge(), approvalRequired: true, confidenceThreshold: "medium" });
     const escalateHandler = vi.fn();
@@ -412,9 +430,12 @@ describe("SocialBrain", () => {
     const msg = repo.insertMessage({ contactId: contact.id, platform: "twitter", direction: "inbound", content: raw.text })!;
     await brain.process(contact, msg, raw);
 
-    // Low confidence should escalate, not go to approval queue
-    expect(escalateHandler).toHaveBeenCalledTimes(1);
-    expect(pendingHandler).not.toHaveBeenCalled();
+    // Low confidence should go through approval queue (not escalate) when approvalRequired is true
+    expect(pendingHandler).toHaveBeenCalledTimes(1);
+    expect(escalateHandler).not.toHaveBeenCalled();
+    // Verify escalation flag is in metadata
+    const pendingData = pendingHandler.mock.calls[0][0];
+    expect(pendingData.pendingMessage.metadata).toContain('"escalated":true');
   });
 
   // ── processComment Tests ──────────────────────────────────────────

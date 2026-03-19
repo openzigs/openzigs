@@ -351,6 +351,34 @@ describe("SocialIngestionService", () => {
     const service = new SocialIngestionService({ repository: repo as any, adapters: [adapter] });
     service.startPolling("twitter", 60); // should log warning, no crash
   });
+
+  it("processMessage skips duplicate messages", () => {
+    const repo = createMockRepo();
+    repo.insertMessage.mockReturnValueOnce({ id: "msg-1" } as any).mockReturnValueOnce(null as any);
+    const service = new SocialIngestionService({ repository: repo as any });
+    const handler = vi.fn();
+    service.on("message", handler);
+
+    const msg = { platform: "twitter" as const, platformMessageId: "m1", platformUserId: "u1", username: "user1", text: "hi", timestamp: new Date().toISOString() };
+    service.processMessage(msg);
+    service.processMessage(msg);
+
+    expect(handler).toHaveBeenCalledTimes(1);
+  });
+
+  it("processComment skips duplicate comments", () => {
+    const repo = createMockRepo();
+    repo.insertMessage.mockReturnValueOnce({ id: "msg-1" } as any).mockReturnValueOnce(null as any);
+    const service = new SocialIngestionService({ repository: repo as any });
+    const handler = vi.fn();
+    service.on("comment", handler);
+
+    const comment = { platform: "twitter" as const, postId: "p1", commentId: "c1", userId: "u1", username: "user1", text: "great", timestamp: new Date().toISOString() };
+    service.processComment(comment);
+    service.processComment(comment);
+
+    expect(handler).toHaveBeenCalledTimes(1);
+  });
 });
 
 // ── Twitter adapter edge cases ──

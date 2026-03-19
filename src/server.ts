@@ -57,7 +57,7 @@ import { createAuthMiddleware } from "./auth/auth.js";
 import { createDirectorRouter, setDirectorIO } from "./api/director.js";
 import { createAudioRouter } from "./api/audio.js";
 import { createPresenterRouter } from "./api/presenter.js";
-import { createSocialRouter } from "./api/social.js";
+import { createSocialRouter, dispatchApprovedReply } from "./api/social.js";
 import { createPinterestRouter } from "./api/pinterest.js";
 import { SocialRepository } from "./channels/social/social-repository.js";
 import { SocialIngestionService, TwitterAdapter, LinkedInAdapter, InstagramAdapter, FacebookAdapter, GenericPollAdapter } from "./channels/social/social-ingestion.js";
@@ -598,32 +598,48 @@ const commentRuleEngine = new CommentRuleEngine({
 });
 
 // Wire DM dispatcher into comment rule engine
-if (localServerManager) {
-  const dmDispatcher = new DmDispatcher({ localServerManager });
+const dmDispatcher = localServerManager ? new DmDispatcher({ localServerManager }) : undefined;
+if (dmDispatcher) {
   commentRuleEngine.setSendDm(dmDispatcher.createDmSender());
   commentRuleEngine.setReplyToComment(dmDispatcher.createCommentReplier());
 }
 
 // Wire ingestion → brain → handoff pipeline
-socialIngestion.on("message", async ({ message, contact, raw }) => {
-  const result = await socialBrain.process(contact, message, raw);
-  if (result?.shouldEscalate) {
-    await socialHandoff.escalate(contact, {
-      brainConfidence: result.confidence,
-      brainIntent: result.intent,
-      ragChunksUsed: result.ragChunksUsed,
-      conversationHistory: socialRepository.getMessages(contact.id, 5),
-      triggerReason: "low_confidence",
-    }, raw);
-  }
+socialIngestion.on("message", ({ message, contact, raw }) => {
+  void (async () => {
+    try {
+      const result = await socialBrain.process(contact, message, raw);
+      if (result?.shouldEscalate) {
+        await socialHandoff.escalate(contact, {
+          brainConfidence: result.confidence,
+          brainIntent: result.intent,
+          ragChunksUsed: result.ragChunksUsed,
+          conversationHistory: socialRepository.getMessages(contact.id, 5),
+          triggerReason: "low_confidence",
+        }, raw);
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.error(`[SocialBrain] Message processing pipeline failed: ${msg}`);
+      io.emit("social:brain_error", { error: msg, platform: raw.platform, contactId: contact.id });
+    }
+  })();
 });
 
-socialIngestion.on("comment", async (comment) => {
-  const matchedRuleIds = await commentRuleEngine.evaluate(comment);
-  // If no keyword rules matched and comment-brain is enabled, route through Brain
-  if (matchedRuleIds.length === 0 && socialBrainConfig?.commentBrainEnabled) {
-    await socialBrain.processComment(comment);
-  }
+socialIngestion.on("comment", (comment) => {
+  void (async () => {
+    try {
+      const matchedRuleIds = await commentRuleEngine.evaluate(comment);
+      // If no keyword rules matched and comment-brain is enabled, route through Brain
+      if (matchedRuleIds.length === 0 && socialBrainConfig?.commentBrainEnabled) {
+        await socialBrain.processComment(comment);
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.error(`[SocialBrain] Comment processing pipeline failed: ${msg}`);
+      io.emit("social:brain_error", { error: msg, platform: comment.platform, commentId: comment.commentId });
+    }
+  })();
 });
 
 // Start polling for poll-based platform adapters
@@ -637,8 +653,11 @@ if (socialBrainConfig?.connections) {
 }
 
 // Forward new user messages to active handoff threads
-socialBrain.on("escalated_message", async ({ contact, raw }) => {
-  await socialHandoff.forwardToThread(contact, raw.text);
+socialBrain.on("escalated_message", ({ contact, raw }: { contact: import("./channels/social/types.js").Contact; raw: { text: string } }) => {
+  void socialHandoff.forwardToThread(contact, raw.text).catch((err) => {
+    const msg = err instanceof Error ? err.message : String(err);
+    logger.error(`[SocialBrain] Failed to forward escalated message: ${msg}`);
+  });
 });
 
 const trimWorker = new TrimWorker();
@@ -736,6 +755,7 @@ const socialRouter = createSocialRouter({
   config: socialBrainConfig,
   brandVoiceService,
   copilot,
+  dmDispatcher,
 });
 
 // Social webhook routes are PUBLIC — no auth middleware.
@@ -1996,7 +2016,7 @@ if (socialNotifyConfig?.enabled) {
     }
   });
 
-  // Wire Telegram social approval callbacks → repository approve/reject + voice learning
+  // Wire Telegram social approval callbacks → repository approve/reject + dispatch + voice learning
   const tgForSocial = channelManager.getChannel("telegram");
   if (tgForSocial && "onSocialApproval" in tgForSocial) {
     const voiceLearning = socialBrain.getVoiceLearning();
@@ -2012,8 +2032,9 @@ if (socialNotifyConfig?.enabled) {
         }
         logger.info(`[SocialBrain] Telegram ${action.action} for message ${action.messageId} by ${action.decidedBy ?? "unknown"}`);
 
-        // Record approved reply as voice example
+        // Dispatch approved reply to platform + record voice example
         if (action.action === "approve" && message) {
+          void dispatchApprovedReply(dmDispatcher, socialRepository, message);
           try {
             const meta = JSON.parse(message.metadata) as Record<string, unknown>;
             const originalMessage = (meta.originalMessage as string) ?? "";

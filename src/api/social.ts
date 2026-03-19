@@ -22,6 +22,7 @@ import type { BrandVoiceService } from "../personality/brand-voice-service.js";
 import type { CopilotWrapper } from "../copilot/copilot-wrapper.js";
 import { getUserSelectedModel } from "../config/user-model.js";
 import type { VoiceLearningService } from "../channels/social/voice-learning.js";
+import type { DmDispatcher } from "../channels/social/dm-dispatcher.js";
 
 export type SocialRouterOptions = {
   repository: SocialRepository;
@@ -32,6 +33,7 @@ export type SocialRouterOptions = {
   config?: SocialBrainAppConfig;
   brandVoiceService?: BrandVoiceService;
   copilot?: CopilotWrapper;
+  dmDispatcher?: DmDispatcher;
 };
 
 const platformSchema = z.enum(["reddit", "youtube", "tiktok", "twitter", "linkedin", "instagram", "facebook"]);
@@ -63,8 +65,56 @@ async function recordVoiceExample(
   }
 }
 
+/**
+ * Dispatch an approved reply to the originating platform via MCP.
+ * Reads metadata.source to decide: DM dispatch vs. comment reply.
+ */
+async function dispatchApprovedReply(
+  dispatcher: DmDispatcher | undefined,
+  repository: SocialRepository,
+  message: SocialMessage,
+): Promise<void> {
+  if (!dispatcher) {
+    logger.warn("[SocialDispatch] No DmDispatcher available — reply approved but not sent to platform");
+    return;
+  }
+  try {
+    const meta = JSON.parse(message.metadata) as Record<string, unknown>;
+    const source = meta.source as string | undefined;
+
+    if (source === "brain_comment") {
+      // Comment reply — need commentId (stored as the original inbound platformMessageId or in meta)
+      const commentId = (meta.commentId as string) ?? "";
+      const postId = (meta.postId as string) ?? undefined;
+      if (!commentId) {
+        logger.warn(`[SocialDispatch] Cannot reply to comment — missing commentId in metadata for message ${message.id}`);
+        return;
+      }
+      const replier = dispatcher.createCommentReplier();
+      await replier(message.platform, commentId, message.content, postId);
+      logger.info(`[SocialDispatch] Sent comment reply to ${message.platform} comment ${commentId}`);
+    } else {
+      // DM reply — need contact's platform_user_id
+      const contact = repository.getContact(message.contact_id);
+      if (!contact?.platform_user_id) {
+        logger.warn(`[SocialDispatch] Cannot send DM — no platform_user_id for contact ${message.contact_id}`);
+        return;
+      }
+      const sender = dispatcher.createDmSender();
+      await sender(message.platform, contact.platform_user_id, message.content);
+      logger.info(`[SocialDispatch] Sent DM reply to ${message.platform} user ${contact.platform_user_id}`);
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    logger.error(`[SocialDispatch] Failed to send approved reply ${message.id}: ${msg}`);
+  }
+}
+
+/** Exported for use in server.ts Telegram approval callback. */
+export { dispatchApprovedReply };
+
 export const createSocialRouter = (opts: SocialRouterOptions): Router => {
-  const { repository, ingestion, brain, handoff, config: socialConfig, brandVoiceService } = opts;
+  const { repository, ingestion, brain, handoff, config: socialConfig, brandVoiceService, dmDispatcher } = opts;
   const router = Router();
   const voiceLearning = brain.getVoiceLearning();
 
@@ -766,7 +816,8 @@ export const createSocialRouter = (opts: SocialRouterOptions): Router => {
         res.status(404).json({ error: "Message not found or not pending approval" });
         return;
       }
-      // Record voice example in background (non-blocking)
+      // Dispatch to platform and record voice example in background
+      void dispatchApprovedReply(dmDispatcher, repository, message);
       void recordVoiceExample(voiceLearning, repository, message, false);
       res.json({ ok: true, message });
     } catch (error) {
@@ -803,7 +854,8 @@ export const createSocialRouter = (opts: SocialRouterOptions): Router => {
         res.status(404).json({ error: "Message not found or not pending approval" });
         return;
       }
-      // Edited replies are especially valuable — they represent corrections to AI style
+      // Dispatch to platform and record voice example (edited replies are especially valuable)
+      void dispatchApprovedReply(dmDispatcher, repository, message);
       void recordVoiceExample(voiceLearning, repository, message, true);
       res.json({ ok: true, message });
     } catch (error) {
@@ -848,6 +900,33 @@ export const createSocialRouter = (opts: SocialRouterOptions): Router => {
       const msg = error instanceof Error ? error.message : String(error);
       res.status(500).json({ error: msg });
     }
+  });
+
+  // ── Brain Diagnostics ─────────────────────────────────────────────
+
+  /** POST /brain/test — Test the brain pipeline with a sample message. */
+  router.post("/brain/test", (req, res) => {
+    void (async () => {
+      try {
+        const body = req.body as { text?: string; platform?: string };
+        const text = body.text ?? "Hello, can you tell me about your product?";
+        const platform = (body.platform ?? "twitter") as SocialPlatform;
+        const result = await brain.processComment({
+          platform,
+          postId: "test-post",
+          commentId: `test-${Date.now()}`,
+          userId: "test-user",
+          username: "test-user",
+          text,
+          timestamp: new Date().toISOString(),
+        });
+        res.json({ ok: true, result });
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        logger.error(`[SocialBrain] Brain test failed: ${msg}`);
+        res.status(500).json({ ok: false, error: msg });
+      }
+    })();
   });
 
   return router;

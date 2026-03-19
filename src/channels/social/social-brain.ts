@@ -190,20 +190,20 @@ export class SocialBrain extends EventEmitter {
         shouldEscalate,
       };
 
-      if (shouldEscalate) {
-        // Update message status to escalated
-        this.emit("escalate", { contact, message, result: brainResult, raw });
-      } else if (this.approvalRequired) {
-        // Hold reply for human approval
+      if (this.approvalRequired) {
+        // Hold reply for human approval (including low-confidence / would-escalate)
         const pendingMsg = this.repository.insertMessage({
           contactId: contact.id,
           platform: raw.platform,
           direction: "outbound",
           status: "pending_approval",
           content: result.reply,
-          metadata: { confidence: result.confidence, intent: result.intent, source: "brain_dm", originalMessage: raw.text },
+          metadata: { confidence: result.confidence, intent: result.intent, source: "brain_dm", originalMessage: raw.text, escalated: shouldEscalate },
         });
         this.emit("pending_approval", { contact, message, result: brainResult, raw, pendingMessage: pendingMsg });
+      } else if (shouldEscalate) {
+        // Escalate to human handoff (no approval queue configured)
+        this.emit("escalate", { contact, message, result: brainResult, raw });
       } else {
         // Log auto-reply in messages table
         this.repository.insertMessage({
@@ -299,9 +299,7 @@ export class SocialBrain extends EventEmitter {
         shouldEscalate,
       };
 
-      if (shouldEscalate) {
-        this.emit("escalate", { contact, comment, result: brainResult });
-      } else if (this.approvalRequired) {
+      if (this.approvalRequired) {
         const pendingMsg = this.repository.insertMessage({
           contactId: contact.id,
           platform: comment.platform,
@@ -315,9 +313,12 @@ export class SocialBrain extends EventEmitter {
             commentId: comment.commentId,
             postId: comment.postId,
             originalMessage: comment.text,
+            escalated: shouldEscalate,
           },
         });
         this.emit("pending_approval", { contact, comment, result: brainResult, pendingMessage: pendingMsg });
+      } else if (shouldEscalate) {
+        this.emit("escalate", { contact, comment, result: brainResult });
       } else {
         this.repository.insertMessage({
           contactId: contact.id,
@@ -352,10 +353,12 @@ export class SocialBrain extends EventEmitter {
 
   private async searchKnowledge(query: string): Promise<string[]> {
     try {
-      // Only surface public content in social auto-replies to prevent leaking internal data
+      // When approval is required a human reviews every reply, so internal docs are safe to include.
+      // Auto-replies (no approval gate) are restricted to public-only to prevent leaking internal data.
+      const visibility = this.approvalRequired ? "internal" : "public";
       const results = await this.knowledgeService.search(query, 5, {
         mode: "hybrid",
-        filter: { visibility: "public" },
+        filter: { visibility },
       });
       return results.map((r) => r.text);
     } catch {
