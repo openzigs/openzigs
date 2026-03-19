@@ -1966,10 +1966,55 @@ if (socialNotifyConfig?.enabled) {
     const preview = (comment.text ?? "").slice(0, 100);
     void pushSocialNotification(`💬 New comment on ${comment.platform ?? "unknown"} from @${comment.username ?? "unknown"}: ${preview}`);
   });
-  socialBrain.on("pending_approval", (data: { contact?: { username?: string }; result?: { reply?: string } }) => {
-    const preview = (data.result?.reply ?? "").slice(0, 100);
-    void pushSocialNotification(`⏳ Reply pending approval for @${data.contact?.username ?? "unknown"}: ${preview}`);
+  socialBrain.on("pending_approval", (data: {
+    contact?: { username?: string };
+    result?: { reply?: string };
+    pendingMessage?: { id?: string };
+    comment?: { text?: string; platform?: string };
+    raw?: { platform?: string };
+  }) => {
+    const platform = data.comment?.platform ?? data.raw?.platform ?? "unknown";
+    const username = data.contact?.username ?? "unknown";
+    const reply = data.result?.reply ?? "";
+
+    // Telegram: inline Approve / Reject buttons
+    if (socialNotifyConfig.telegram !== false && telegramAdminChatId && data.pendingMessage?.id) {
+      const tg = channelManager.getChannel("telegram");
+      if (tg && "sendSocialApproval" in tg) {
+        void (tg as import("./channels/telegram.js").TelegramChannel).sendSocialApproval(telegramAdminChatId, {
+          messageId: data.pendingMessage.id,
+          username,
+          platform,
+          replyPreview: reply,
+          originalComment: data.comment?.text,
+        }).catch(() => {});
+      }
+    }
+    // Discord / fallback: plain text
+    if (socialNotifyConfig.discord !== false && discordNotifChannelId) {
+      void pushSocialNotification(`⏳ Reply pending approval for @${username}: ${reply.slice(0, 100)}`);
+    }
   });
+
+  // Wire Telegram social approval callbacks → repository approve/reject
+  const tgForSocial = channelManager.getChannel("telegram");
+  if (tgForSocial && "onSocialApproval" in tgForSocial) {
+    (tgForSocial as import("./channels/telegram.js").TelegramChannel).onSocialApproval((action) => {
+      try {
+        if (action.action === "approve") {
+          socialRepository.approveReply(action.messageId);
+          io.emit("social:approval_resolved", { messageId: action.messageId, action: "approved" });
+        } else {
+          socialRepository.rejectReply(action.messageId);
+          io.emit("social:approval_resolved", { messageId: action.messageId, action: "rejected" });
+        }
+        logger.info(`[SocialBrain] Telegram ${action.action} for message ${action.messageId} by ${action.decidedBy ?? "unknown"}`);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        logger.error(`[SocialBrain] Telegram approval callback error: ${msg}`);
+      }
+    });
+  }
 }
 
 // Wire Render Orchestrator → Socket.IO event forwarding

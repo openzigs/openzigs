@@ -32,6 +32,7 @@ import {
   useSocialAnalytics,
   useSocialLeads,
   usePendingApprovals,
+  usePendingApprovalCount,
   useApproveReply,
   useRejectReply,
   useEditAndApproveReply,
@@ -49,6 +50,8 @@ type Tab = "dashboard" | "crm" | "automations" | "activity" | "settings" | "lead
 export default function SocialBrainPage() {
   const [activeTab, setActiveTab] = useState<Tab>("dashboard");
   const [askAiOpen, setAskAiOpen] = useState(false);
+  const { data: pendingCountData } = usePendingApprovalCount();
+  const pendingCount = pendingCountData?.count ?? 0;
 
   return (
     <main className="mx-auto max-w-6xl px-6 pb-12 pt-4">
@@ -75,6 +78,11 @@ export default function SocialBrainPage() {
             }`}
           >
             {tab}
+            {tab === "activity" && pendingCount > 0 && (
+              <span className="ml-1.5 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-orange-500 px-1 text-[10px] font-bold text-white">
+                {pendingCount}
+              </span>
+            )}
           </button>
         ))}
       </div>
@@ -857,11 +865,13 @@ function ActivityTab() {
   return (
     <div className="space-y-6">
       {/* Approval Queue */}
-      {pending.length > 0 && (
-        <div>
-          <h2 className="text-lg font-semibold mb-2">
-            Pending Approval <span className="ml-2 rounded-full bg-orange-500/10 px-2 py-0.5 text-xs text-orange-600">{pending.length}</span>
-          </h2>
+      <div>
+        <h2 className="text-lg font-semibold mb-2">
+          Pending Approval <span className="ml-2 rounded-full bg-orange-500/10 px-2 py-0.5 text-xs text-orange-600">{pending.length}</span>
+        </h2>
+        {pending.length === 0 ? (
+          <p className="text-sm text-muted-foreground mb-4">No replies awaiting approval.</p>
+        ) : (
           <div className="space-y-2">
             {pending.map((p) => (
               <div key={p.id} className="rounded-lg border border-orange-500/30 bg-orange-500/5 p-4">
@@ -927,8 +937,8 @@ function ActivityTab() {
               </div>
             ))}
           </div>
-        </div>
-      )}
+        )}
+      </div>
 
       <h2 className="text-lg font-semibold">Recent Activity</h2>
 
