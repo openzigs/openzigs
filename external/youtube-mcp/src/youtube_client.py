@@ -46,6 +46,22 @@ class YouTubeClient:
     async def _get_channel_id(self) -> str:
         if self._channel_id:
             return self._channel_id
+        # Try resolving by handle first (works with API key, no OAuth needed)
+        handle = self.settings.youtube_channel_handle
+        if handle:
+            # Strip leading @ if present for the forHandle param
+            h = handle.lstrip("@")
+            data = await self._request("GET", "channels", params={"part": "id", "forHandle": h})
+            items = data.get("items", [])
+            if items:
+                self._channel_id = items[0]["id"]
+                return self._channel_id
+        # Fall back to OAuth mine=true
+        if not self.settings.youtube_oauth_token:
+            raise YouTubeAPIError(
+                "Cannot determine channel ID. Set YOUTUBE_CHANNEL_ID or YOUTUBE_CHANNEL_HANDLE, "
+                "or provide YOUTUBE_OAUTH_TOKEN for auto-detection."
+            )
         data = await self._request("GET", "channels", params={"part": "id", "mine": "true"}, use_oauth=True)
         items = data.get("items", [])
         if not items:

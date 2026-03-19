@@ -159,7 +159,8 @@
     "connections": {
       "twitter": {
         "enabled": false,
-        "mode": "webhook",
+        "mode": "polling",
+        "pollIntervalSeconds": 120,
         "accessToken": "${TWITTER_BEARER_TOKEN}"
       },
       "youtube": {
@@ -185,9 +186,18 @@
       },
       "tiktok": {
         "enabled": false,
-        "mode": "polling",
-        "pollIntervalSeconds": 300,
+        "mode": "webhook",
         "accessToken": "${TIKNEURON_MCP_API_KEY}"
+      },
+      "instagram": {
+        "enabled": false,
+        "mode": "webhook",
+        "accessToken": "${INSTAGRAM_ACCESS_TOKEN}"
+      },
+      "facebook": {
+        "enabled": false,
+        "mode": "webhook",
+        "accessToken": "${FACEBOOK_PAGE_TOKEN}"
       }
     }
   },

@@ -13,7 +13,7 @@ test.describe('Social Brain', () => {
   });
 
   test('tab navigation shows all tabs', async ({ page }) => {
-    const tabs = ['dashboard', 'crm', 'automations', 'activity', 'settings'];
+    const tabs = ['dashboard', 'crm', 'automations', 'leads', 'analytics', 'activity', 'settings'];
     for (const tab of tabs) {
       await expect(page.getByRole('button', { name: tab, exact: false })).toBeVisible();
     }
@@ -101,10 +101,42 @@ test.describe('Social Brain', () => {
     expect(hasContent).toBeTruthy();
   });
 
+  test('automations tab shows AI Generate button', async ({ page }) => {
+    await page.getByRole('button', { name: 'automations' }).click();
+    const aiBtn = page.getByRole('button', { name: /ai generate/i });
+    await expect(aiBtn).toBeVisible();
+  });
+
   test('activity tab loads', async ({ page }) => {
     await page.getByRole('button', { name: 'activity' }).click();
     // Should show activity section
     const hasContent = await page.getByText(/Activity|No recent activity/i).first().isVisible().catch(() => false);
+    expect(hasContent).toBeTruthy();
+  });
+
+  test('leads tab loads', async ({ page }) => {
+    await page.getByRole('button', { name: 'leads' }).click();
+    // Should show the leads section — either data or empty state
+    const hasContent = await page.getByText(/leads|No leads captured/i).first().isVisible().catch(() => false);
+    expect(hasContent).toBeTruthy();
+  });
+
+  test('leads tab shows platform filter', async ({ page }) => {
+    await page.getByRole('button', { name: 'leads' }).click();
+    // Platform filter dropdown should be present
+    const filter = page.locator('select, [role="combobox"]').first();
+    const hasFilter = await filter.isVisible().catch(() => false);
+    // It's acceptable if filter is only shown when leads exist
+    if (!hasFilter) {
+      const emptyState = page.getByText(/No leads captured/i);
+      await expect(emptyState).toBeVisible();
+    }
+  });
+
+  test('analytics tab loads with summary', async ({ page }) => {
+    await page.getByRole('button', { name: 'analytics' }).click();
+    // Should show analytics section with summary cards or loading state
+    const hasContent = await page.getByText(/analytics|conversations|messages|automations/i).first().isVisible().catch(() => false);
     expect(hasContent).toBeTruthy();
   });
 
@@ -146,5 +178,16 @@ test.describe('Social Brain', () => {
     await expect(page.getByText('Platform Configuration')).toBeVisible();
     await expect(page.getByText('Confidence Threshold')).toBeVisible();
     await expect(page.getByText('Quick Setup Guide')).toBeVisible();
+  });
+
+  test('can switch between all tabs', async ({ page }) => {
+    const tabs = ['crm', 'automations', 'leads', 'analytics', 'activity', 'settings', 'dashboard'];
+    for (const tab of tabs) {
+      await page.getByRole('button', { name: tab, exact: false }).click();
+      // Brief wait for tab content to render
+      await page.waitForTimeout(300);
+    }
+    // Should end on dashboard without errors
+    await expect(page.getByText('Contacts')).toBeVisible();
   });
 });

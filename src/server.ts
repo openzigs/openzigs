@@ -67,6 +67,8 @@ import { CommentRuleEngine } from "./channels/social/comment-rule-engine.js";
 import { PostContextService, TwitterApiClient, YouTubeApiClient, LinkedInApiClient, TikTokApiClient, RedditApiClient, InstagramApiClient, FacebookApiClient } from "./channels/social/platform-api-client.js";
 import { DmDispatcher } from "./channels/social/dm-dispatcher.js";
 import { createRedditPollFn } from "./channels/social/reddit-poll.js";
+import { createYouTubePollFn } from "./channels/social/youtube-poll.js";
+import { createTwitterPollFn } from "./channels/social/twitter-poll.js";
 import { BrandVoiceRepository } from "./personality/brand-voice-repository.js";
 import { BrandVoiceService } from "./personality/brand-voice-service.js";
 import { PipelineTemplateManager } from "./productivity/pipeline-template-manager.js";
@@ -547,8 +549,13 @@ if (facebookPageToken) {
 
 // Only register platform adapters when credentials are actually configured
 const socialAdapters: import("./channels/social/social-ingestion.js").SocialPlatformAdapter[] = [];
+const twitterMode = socialBrainConfig?.connections?.twitter?.mode ?? "webhook";
 if (twitterBearerToken) {
-  socialAdapters.push(new TwitterAdapter());
+  if (twitterMode === "polling" && localServerManager) {
+    socialAdapters.push(new GenericPollAdapter("twitter", createTwitterPollFn(localServerManager)));
+  } else {
+    socialAdapters.push(new TwitterAdapter());
+  }
 }
 if (linkedinAccessToken) {
   socialAdapters.push(new LinkedInAdapter());
@@ -556,11 +563,8 @@ if (linkedinAccessToken) {
 if (redditClientId && localServerManager) {
   socialAdapters.push(new GenericPollAdapter("reddit", createRedditPollFn(localServerManager)));
 }
-if (youtubeApiKey) {
-  socialAdapters.push(new GenericPollAdapter("youtube", async () => []));
-}
-if (tikNeuronApiKey) {
-  socialAdapters.push(new GenericPollAdapter("tiktok", async () => []));
+if (youtubeApiKey && localServerManager) {
+  socialAdapters.push(new GenericPollAdapter("youtube", createYouTubePollFn(localServerManager)));
 }
 if (instagramAccessToken) {
   socialAdapters.push(new InstagramAdapter());
@@ -581,6 +585,7 @@ const socialBrain = new SocialBrain({
   knowledgeService,
   confidenceThreshold: socialBrainConfig?.confidenceThreshold,
   brandVoiceBlock: brandVoiceService.getActiveVoicePromptBlock(),
+  approvalRequired: socialBrainConfig?.approvalRequired,
 });
 
 const socialHandoff = new HandoffManager({
@@ -614,7 +619,11 @@ socialIngestion.on("message", async ({ message, contact, raw }) => {
 });
 
 socialIngestion.on("comment", async (comment) => {
-  await commentRuleEngine.evaluate(comment);
+  const matchedRuleIds = await commentRuleEngine.evaluate(comment);
+  // If no keyword rules matched and comment-brain is enabled, route through Brain
+  if (matchedRuleIds.length === 0 && socialBrainConfig?.commentBrainEnabled) {
+    await socialBrain.processComment(comment);
+  }
 });
 
 // Start polling for poll-based platform adapters
@@ -726,6 +735,7 @@ const socialRouter = createSocialRouter({
   ruleEngine: commentRuleEngine,
   config: socialBrainConfig,
   brandVoiceService,
+  copilot,
 });
 
 // Social webhook routes are PUBLIC — no auth middleware.
@@ -1913,9 +1923,54 @@ socialBrain.on("reply", (data: unknown) => {
   }
 });
 socialBrain.on("escalate", (data: unknown) => io.emit("social:escalate", sanitizeStringFields(data)));
+socialBrain.on("pending_approval", (data: unknown) => io.emit("social:pending_approval", sanitizeStringFields(data)));
+socialBrain.on("comment_reply", (data: unknown) => io.emit("social:comment_reply", sanitizeStringFields(data)));
 socialHandoff.on("escalated", (data: unknown) => io.emit("social:handoff:created", sanitizeStringFields(data)));
 socialHandoff.on("resolved", (data: unknown) => io.emit("social:handoff:resolved", sanitizeStringFields(data)));
 commentRuleEngine.on("rule_triggered", (data: unknown) => io.emit("social:rule:triggered", sanitizeStringFields(data)));
+
+// Forward incoming messages/comments to Socket.IO for real-time notifications
+socialIngestion.on("message", ({ message, contact, raw }: { message: unknown; contact: unknown; raw: unknown }) => {
+  io.emit("social:new_message", sanitizeStringFields({ message, contact, raw }));
+});
+socialIngestion.on("comment", (comment: unknown) => {
+  io.emit("social:new_comment", sanitizeStringFields(comment));
+});
+
+// Push notifications for incoming social messages to Telegram/Discord
+const socialNotifyConfig = socialBrainConfig?.notifications;
+if (socialNotifyConfig?.enabled) {
+  const telegramAdminChatId = config.channels?.telegram?.adminUserId || undefined;
+  const discordNotifChannelId = config.channels?.discord?.notificationChannelId || undefined;
+
+  const pushSocialNotification = async (text: string) => {
+    if (socialNotifyConfig.telegram !== false && telegramAdminChatId) {
+      const tg = channelManager.getChannel("telegram");
+      if (tg) {
+        try { await tg.sendMessage(telegramAdminChatId, { text }); } catch { /* best-effort */ }
+      }
+    }
+    if (socialNotifyConfig.discord !== false && discordNotifChannelId) {
+      const dc = channelManager.getChannel("discord");
+      if (dc) {
+        try { await dc.sendMessage(discordNotifChannelId, { text }); } catch { /* best-effort */ }
+      }
+    }
+  };
+
+  socialIngestion.on("message", ({ raw }: { raw: { platform?: string; username?: string; text?: string } }) => {
+    const preview = (raw.text ?? "").slice(0, 100);
+    void pushSocialNotification(`📩 New DM on ${raw.platform ?? "unknown"} from @${raw.username ?? "unknown"}: ${preview}`);
+  });
+  socialIngestion.on("comment", (comment: { platform?: string; username?: string; text?: string }) => {
+    const preview = (comment.text ?? "").slice(0, 100);
+    void pushSocialNotification(`💬 New comment on ${comment.platform ?? "unknown"} from @${comment.username ?? "unknown"}: ${preview}`);
+  });
+  socialBrain.on("pending_approval", (data: { contact?: { username?: string }; result?: { reply?: string } }) => {
+    const preview = (data.result?.reply ?? "").slice(0, 100);
+    void pushSocialNotification(`⏳ Reply pending approval for @${data.contact?.username ?? "unknown"}: ${preview}`);
+  });
+}
 
 // Wire Render Orchestrator → Socket.IO event forwarding
 renderOrchestrator.on("render:progress", (data: unknown) => io.emit("render:progress", data));

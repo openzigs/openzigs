@@ -4,7 +4,7 @@ export type SocialPlatform = "reddit" | "youtube" | "tiktok" | "twitter" | "link
 
 export type MessageDirection = "inbound" | "outbound";
 
-export type MessageStatus = "received" | "auto_replied" | "escalated" | "failed";
+export type MessageStatus = "received" | "auto_replied" | "escalated" | "failed" | "pending_approval" | "rejected";
 
 /** Normalised inbound social message — platform adapters produce this. */
 export type IncomingSocialMessage = {
@@ -184,6 +184,8 @@ export type ConversationAnalytics = {
 export type SocialBrainConfig = {
   enabled?: boolean;
   confidenceThreshold?: "high" | "medium" | "low";
+  commentBrainEnabled?: boolean;
+  approvalRequired?: boolean;
   handoff?: {
     preferredChannel?: "discord" | "telegram";
     discordChannelId?: string;
@@ -205,6 +207,12 @@ export type SocialBrainConfig = {
     messages?: Partial<Record<SocialPlatform, string>>;
     /** Delay in seconds before sending the welcome DM */
     delaySeconds?: number;
+  };
+  notifications?: {
+    enabled?: boolean;
+    telegram?: boolean;
+    discord?: boolean;
+    web?: boolean;
   };
   connections?: Record<string, {
     enabled?: boolean;

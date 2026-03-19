@@ -1,7 +1,7 @@
 # Social Brain — Live Testing Playbook
 
 > **Purpose:** Hands-on testing guide for verifying Social Brain features end-to-end with real social media posts, comments, DMs, and automation rules.
-> **Last Updated:** 2026-03-16
+> **Last Updated:** 2026-03-17
 > **Complements:** [SOCIAL_BRAIN_TEST_PLAN.md](SOCIAL_BRAIN_TEST_PLAN.md) (unit/integration tests) and [SOCIAL_BRAIN_GUIDE.md](SOCIAL_BRAIN_GUIDE.md) (setup guide)
 
 ---
@@ -19,11 +19,16 @@
 9. [Test Suite F: Follower Welcome DMs](#9-test-suite-f-follower-welcome-dms)
 10. [Test Suite G: Human Handoff & Escalation](#10-test-suite-g-human-handoff--escalation)
 11. [Test Suite H: Multi-Platform Verification](#11-test-suite-h-multi-platform-verification) (Twitter, Reddit, YouTube, LinkedIn, Instagram, Facebook, Pinterest)
-12. [Simulated Testing (No Real Accounts)](#12-simulated-testing-no-real-accounts)
-13. [Outbox Integration: How Posting Works](#13-outbox-integration-how-posting-works)
-14. [Platform Integration Status](#14-platform-integration-status)
-15. [Verification Checklist](#15-verification-checklist)
-16. [Troubleshooting](#16-troubleshooting)
+12. [Test Suite I: AI Rule Generation](#12-test-suite-i-ai-rule-generation)
+13. [Test Suite J: Leads Tab & Analytics Tab](#13-test-suite-j-leads-tab--analytics-tab)
+14. [Simulated Testing (No Real Accounts)](#14-simulated-testing-no-real-accounts)
+15. [Outbox Integration: How Posting Works](#15-outbox-integration-how-posting-works)
+15b. [Test Suite K: AI Comment Replies](#15b-test-suite-k-ai-comment-replies)
+15c. [Test Suite L: Approval Queue](#15c-test-suite-l-approval-queue)
+15d. [Test Suite M: Manual Reply & Notifications](#15d-test-suite-m-manual-reply--notifications)
+16. [Platform Integration Status](#16-platform-integration-status)
+17. [Verification Checklist](#17-verification-checklist)
+18. [Troubleshooting](#18-troubleshooting)
 
 ---
 
@@ -727,6 +732,41 @@ curl -X POST "http://localhost:3000/api/social/handoff/$CONTACT_ID/close" \
 
 ## 11. Test Suite H: Multi-Platform Verification
 
+### Real-World Testing Strategy
+
+Before running per-platform tests, understand the **privacy and isolation options** each platform offers. The goal is to test the full comment → rule match → DM/reply pipeline **without polluting your public profile or spamming real users**.
+
+#### Platform Testing Capabilities — Quick Reference
+
+| Platform | Private/Unlisted Option | Can Others Comment? | Best Test Strategy |
+|----------|------------------------|--------------------|--------------------|
+| **YouTube** | Unlisted videos | **Yes** — anyone with the link | Upload unlisted video, comment from 2nd account |
+| **Reddit** | r/test subreddit (public but expected) | **Yes** — open subreddit | Post to r/test, comment from 2nd account |
+| **Twitter/X** | Protected accounts (followers-only) | **No** — replies restricted | Use 2nd test account, delete tweets after test |
+| **LinkedIn** | Dark Posts (`feedDistribution: NONE`) | **Limited** — via direct URL only | Create dark post from org page, comment from personal |
+| **Facebook** | Test Users + Development Mode | **Yes** — test users can interact | Use Facebook Test Users (up to 10 per app) |
+| **Instagram** | Trial Reels (non-follower only) | **Yes** — comments enabled | Use trial reels or Development Mode app |
+| **Pinterest** | Secret Boards | **N/A** — no comment system | Create pin on secret board, test publish/analytics only |
+
+#### Two-Account Testing Pattern
+
+For platforms that require interaction (comment → reply), you need **two accounts**:
+
+1. **Business/Bot Account** — the account connected to Social Brain (receives webhooks, sends replies)
+2. **Test Commenter Account** — a secondary personal account that simulates a customer leaving comments
+
+> **Important:** Never use the same account for both roles. Social Brain filters out self-comments to avoid infinite reply loops.
+
+#### General Cleanup Checklist
+
+After each platform test:
+- [ ] Delete test posts/videos/pins created during testing
+- [ ] Clear test contacts via `DELETE /api/social/contacts/:id`
+- [ ] Clear test conversations via the admin panel
+- [ ] Review analytics to confirm test data was recorded correctly
+
+---
+
 ### H1. Twitter End-to-End
 
 | Ingestion | DM Tool | Reply Tool | PostContext |
@@ -734,6 +774,36 @@ curl -X POST "http://localhost:3000/api/social/handoff/$CONTACT_ID/close" \
 | Webhook (Account Activity API) | `twitter_send_dm` | `twitter_post_tweet` (with `reply_to`) | `TwitterApiClient` (API v2) |
 
 **Test:** Post tweet → comment from test account → verify DM + reply
+
+#### Real-World Testing Strategy
+
+**Privacy Options:**
+- **Protected Account:** Set the bot account to "protected" (Settings → Privacy → Protect your posts). Only approved followers can see tweets. Replies from followers are also protected.
+  - **Limitation:** Webhook events still fire for protected accounts, but DMs require mutual following.
+- **Post-and-Delete:** Post a public tweet, let the test commenter reply, verify the pipeline fires, then delete both tweets immediately. Fastest approach for one-off testing.
+- **Dedicated Test Account:** Create a fresh X account solely for testing. Low follower count means minimal exposure.
+
+**Recommended Approach — Post-and-Delete with 2nd Account:**
+
+1. **Setup:** Ensure the bot account has the Account Activity API webhook registered and the test commenter account follows the bot account.
+2. **Post test tweet:**
+   ```bash
+   curl -X POST http://localhost:3000/api/admin/mcp/call \
+     -H "Content-Type: application/json" \
+     -d '{"server": "twitter", "tool": "twitter_post_tweet", "args": {"text": "Testing Social Brain auto-reply. DM me INFO for details!"}}'
+   ```
+3. **Manually reply from 2nd account** with the keyword (e.g., "INFO")
+4. **Verify:** Check the Social Brain dashboard — the reply should trigger:
+   - [ ] Comment ingested via webhook
+   - [ ] Rule matched (keyword "INFO")
+   - [ ] DM sent to commenter (if DM template configured)
+   - [ ] Public reply posted (if reply template configured)
+5. **Cleanup:** Delete both tweets via the Twitter app or API
+
+**Twitter-Specific Gotchas:**
+- Twitter API v2 has strict rate limits on tweet creation (50 tweets per 24 hours for Basic tier)
+- DMs require the `dm.write` scope and mutual follow or open DM settings
+- Webhook registration requires a valid HTTPS callback URL (use the Cloudflare tunnel)
 
 ### H2. Reddit End-to-End
 
@@ -743,10 +813,36 @@ curl -X POST "http://localhost:3000/api/social/handoff/$CONTACT_ID/close" \
 
 **Test:** Post to r/test → comment with keyword → verify DM + reply
 
-**Reddit-specific notes:**
-- Polling interval: configurable, default 120s
-- DM = Reddit private message (has `subject` field)
+#### Real-World Testing Strategy
+
+**Privacy Options:**
+- **r/test subreddit (RECOMMENDED):** A public subreddit specifically designed for testing bots and API integrations. Thousands of test posts are made daily — your test posts will blend in naturally. Comments are expected. No moderation issues.
+- **Private subreddit:** Create your own private subreddit (only approved members can view/post). Requires Reddit Premium or sufficient karma. Fully isolated but more setup effort.
+- **User profile post:** Post to your own profile (`u/yourusername`) instead of a subreddit. Less visible but still technically public.
+
+**Recommended Approach — r/test with 2nd Account:**
+
+1. **Setup:** Ensure `REDDIT_CLIENT_ID`, `REDDIT_CLIENT_SECRET`, `REDDIT_USERNAME`, `REDDIT_PASSWORD` are configured. Reddit polling should be enabled.
+2. **Post to r/test:**
+   ```bash
+   curl -X POST http://localhost:3000/api/admin/mcp/call \
+     -H "Content-Type: application/json" \
+     -d '{"server": "reddit", "tool": "reddit_submit_post", "args": {"subreddit": "test", "title": "Social Brain test - please ignore", "text": "Testing auto-reply. Comment INFO for details."}}'
+   ```
+3. **Comment from 2nd Reddit account** on the post with keyword "INFO"
+4. **Wait for polling cycle** (default 120s) and verify:
+   - [ ] Comment ingested via polling
+   - [ ] Rule matched (keyword "INFO")
+   - [ ] Reddit private message sent to commenter
+   - [ ] Public comment reply posted (`t1_` thing ID format)
+5. **Cleanup:** Delete the post via Reddit or API
+
+**Reddit-Specific Notes:**
+- Polling interval: configurable, default 120s — tests may take up to 2 minutes to trigger
+- DM = Reddit private message (requires `subject` field)
 - Reply uses `thing_id` format: `t1_commentid`
+- Reddit rate-limits new accounts — the bot account needs some karma before posting
+- r/test has no posting restrictions, making it ideal for automated testing
 
 ### H3. YouTube End-to-End
 
@@ -756,10 +852,50 @@ curl -X POST "http://localhost:3000/api/social/handoff/$CONTACT_ID/close" \
 
 **Test:** Upload unlisted video → comment with keyword → verify comment reply (no DM)
 
-**YouTube-specific notes:**
+#### Real-World Testing Strategy
+
+**Privacy Options:**
+- **Unlisted Video (RECOMMENDED):** Upload a video with `privacyStatus: "unlisted"`. The video does NOT appear in search results, recommendations, or your channel page. However, **anyone with the direct link CAN comment on it**. This is the ideal testing setup.
+- **Private Video:** Upload with `privacyStatus: "private"`. Only you can see it. **Comments are disabled** — cannot be used for testing the reply pipeline.
+- **Public Video (post-and-delete):** Upload a public video, test, delete immediately. Works but briefly visible.
+
+> **API Caveat:** Unverified YouTube API projects created after July 28, 2020 can only upload **private** videos. To upload unlisted videos, you must complete the YouTube API [compliance audit](https://support.google.com/youtube/contact/yt_api_form). Check your Google Cloud Console → APIs & Services → YouTube Data API v3 to verify your project status.
+
+**Recommended Approach — Unlisted Video with 2nd Account:**
+
+1. **Upload unlisted video:**
+   ```bash
+   curl -X POST http://localhost:3000/api/admin/mcp/call \
+     -H "Content-Type: application/json" \
+     -d '{"server": "youtube", "tool": "yt_upload_video", "args": {
+       "title": "Social Brain Test - Unlisted",
+       "description": "Testing auto-reply. Comment INFO for details.",
+       "privacy": "unlisted",
+       "file_path": "/path/to/test-video.mp4"
+     }}'
+   ```
+   - If you don't have a test video, create a 5-second black screen: `ffmpeg -f lavfi -i color=black:s=1280x720:d=5 -c:v libx264 test-video.mp4`
+2. **Share the unlisted video URL** with your 2nd Google account
+3. **Comment from 2nd account** with keyword "INFO"
+4. **Wait for YouTube polling cycle** and verify:
+   - [ ] Comment ingested via YouTube Data API polling
+   - [ ] Rule matched (keyword "INFO")
+   - [ ] Comment reply posted (YouTube has NO DM API)
+5. **Cleanup:** Delete the video via YouTube Studio or API
+
+**YouTube-Specific Notes:**
 - YouTube has NO DM API — only comment replies work
 - Upload via `yt_upload_video` tool (resumable upload, 10MiB chunks)
 - Comment reply requires OAuth scope `youtube.force-ssl`
+- Unlisted video privacy comparison:
+
+  | Feature | Unlisted | Private | Public |
+  |---------|----------|---------|--------|
+  | Appears in search | No | No | Yes |
+  | Appears in recommendations | No | No | Yes |
+  | Appears on channel page | No | No | Yes |
+  | **Comments allowed** | **Yes** | **No** | **Yes** |
+  | Shareable via link | Yes | No | Yes |
 
 ### H4. LinkedIn End-to-End
 
@@ -769,10 +905,41 @@ curl -X POST "http://localhost:3000/api/social/handoff/$CONTACT_ID/close" \
 
 **Test:** Create LinkedIn post → comment → verify comment reply
 
-**LinkedIn-specific notes:**
+#### Real-World Testing Strategy
+
+**Privacy Options:**
+- **Dark Post (RECOMMENDED for org pages):** Create a post with `feedDistribution: "NONE"`. The post does NOT appear on the company page feed or in anyone's news feed. It is only accessible via direct URL (`https://www.linkedin.com/feed/update/urn:li:ugcPost:<id>/`). You can still comment on it via the direct URL.
+- **DRAFT State:** Create a post with `lifecycleState: "DRAFT"`. Only the author can see it. **Cannot be commented on** — useful for testing the publishing pipeline but not the reply pipeline.
+- **Personal post (connections-only):** LinkedIn's audience selector in the UI allows "Connections only" visibility. However, the API only exposes `visibility: "PUBLIC"` — there is no API parameter for connections-only posts.
+- **Post-and-delete:** Create a public post, test quickly, then delete. Simple but briefly visible to your network.
+
+**Recommended Approach — Dark Post from Org Page:**
+
+1. **Create dark post** (requires `w_organization_social` permission):
+   ```bash
+   curl -X POST http://localhost:3000/api/admin/mcp/call \
+     -H "Content-Type: application/json" \
+     -d '{"server": "linkedin", "tool": "linkedin_create_post", "args": {
+       "text": "Testing Social Brain. Comment INFO for details.",
+       "visibility": "PUBLIC",
+       "feed_distribution": "NONE"
+     }}'
+   ```
+   The post is created but hidden from all feeds. Note the post URN from the response.
+2. **Open the direct URL** from your personal LinkedIn account: `https://www.linkedin.com/feed/update/<POST_URN>/`
+3. **Comment from personal account** with keyword "INFO"
+4. **Wait for LinkedIn polling cycle** and verify:
+   - [ ] Comment ingested via polling
+   - [ ] Rule matched (keyword "INFO")
+   - [ ] Comment reply posted (URN format: `urn:li:comment:123`)
+5. **Cleanup:** Delete the post via API
+
+**LinkedIn-Specific Notes:**
 - DMs require LinkedIn Marketing Partner status (most apps won't have this)
 - Comment replies work with standard API access
 - Uses URN format: `urn:li:comment:123`
+- Dark posts are primarily intended for sponsored content (DSC) but work for testing the comment pipeline
+- LinkedIn has strict API rate limits — 100 API calls per day for most scopes
 
 ### H5. Instagram End-to-End (Outbox + Manual MCP Tools)
 
@@ -787,6 +954,38 @@ curl -X POST "http://localhost:3000/api/social/handoff/$CONTACT_ID/close" \
 - `get_account_pages`, `get_account_insights`, `validate_access_token`
 - `get_conversations`, `get_conversation_messages`, `send_dm`
 - `reply_to_comment`, `get_media_comments`
+
+#### Real-World Testing Strategy
+
+**Privacy Options:**
+- **Trial Reels (RECOMMENDED):** Instagram's API supports "Trial Reels" — reels that are **only shared to non-followers**. Set `trial_params.graduation_strategy: "MANUAL"` when creating the reel. The reel is published but your existing followers won't see it. Perfect for testing comment interactions without notifying your audience.
+- **Facebook App Development Mode:** Keep your Meta app in Development Mode. Any data generated (posts, comments) is **only visible to users with a role on the app** (Admins, Developers, Testers). This is the strongest isolation option but requires that both your bot account and test commenter have app roles.
+- **Post-and-delete:** Publish a normal post, test comments/replies, then delete. Simple but briefly visible to all followers.
+- **Test Business Account:** Create a separate Instagram Business account connected to a test Facebook Page. Low follower count = minimal exposure.
+
+**Recommended Approach — Trial Reel or Development Mode:**
+
+1. **For Trial Reel approach:**
+   ```bash
+   curl -X POST http://localhost:3000/api/admin/mcp/call \
+     -H "Content-Type: application/json" \
+     -d '{"server": "instagram", "tool": "publish_media", "args": {
+       "video_url": "https://example.com/test-reel.mp4",
+       "caption": "Testing Social Brain! Comment INFO for details. #test",
+       "media_type": "REELS",
+       "trial_params": {"graduation_strategy": "MANUAL"}
+     }}'
+   ```
+2. **For Development Mode approach:** Keep your Meta app toggle set to "Development" in the App Dashboard. Publish normally — content will only be visible to app role users.
+3. **Comment from 2nd Instagram account** (must be an app role user if using Development Mode)
+4. **Verify MCP tools work** for comment reading and replying (see H5d, H5e below)
+5. **Cleanup:** Delete the media via Instagram or API
+
+**Instagram-Specific Notes:**
+- Instagram has no "unlisted" or "private" post concept for standard feed posts
+- All published Instagram posts are public (unless using Trial Reels or Development Mode)
+- The 24-hour DM window means: the user must message your Business account first before you can send them a DM
+- JPEG is the only supported image format for API publishing
 
 #### H5a. Test: Instagram Token Validation
 
@@ -899,6 +1098,51 @@ curl -X POST http://localhost:3000/api/admin/mcp/call \
 - `fb_get_conversations`, `fb_get_conversation_messages`, `fb_send_message`
 - `fb_get_page_insights`, `fb_get_post_comments`, `fb_reply_to_comment`
 
+#### Real-World Testing Strategy
+
+**Privacy Options:**
+- **Facebook Test Users (RECOMMENDED):** Facebook provides up to 10 simulated test user accounts per app. These are the gold standard for isolated testing:
+  - Test users **can only interact with other test users** or real users who have an Admin/Developer/Tester role on the app
+  - **Data generated by test users is only visible** to other test users or app role holders
+  - Test users are **exempt from spam and fake account detection** — they won't be disabled
+  - Test users can comment on app-published posts and send Messenger messages
+  - Create them at: App Dashboard → Roles → Test Users → "Create test users"
+- **Development Mode (strong isolation):** Keep your Meta app in Development Mode. All data generated (posts, comments, messages) is only visible to role users. Combined with test users, this provides complete isolation.
+- **Test Pages:** Facebook has app-scoped "Test Pages" that test users can interact with. These are separate from your real business page.
+- **Unpublished Page Posts:** The Graph API supports creating posts visible only to page admins. However, these can't receive comments from non-admins.
+
+**Recommended Approach — Test Users + Development Mode:**
+
+1. **Create test users** in the App Dashboard:
+   - Go to your app → Roles → Test Users
+   - Click "Create test users" (up to 4 at a time, 10 total)
+   - Install the app for each test user and grant required permissions
+   - Note: You can also generate test users via the Graph API for bulk creation
+2. **Log in as a test user** (click the ellipsis ••• → "Log in as test user")
+3. **Publish a post to your test page:**
+   ```bash
+   curl -X POST http://localhost:3000/api/admin/mcp/call \
+     -H "Content-Type: application/json" \
+     -d '{"server": "facebook", "tool": "fb_publish_post", "args": {
+       "message": "Testing Social Brain. Comment INFO for details."
+     }}'
+   ```
+4. **Comment from a test user account** with keyword "INFO"
+5. **Verify the automation pipeline:**
+   - [ ] Comment ingested via Facebook webhook
+   - [ ] Rule matched (keyword "INFO")
+   - [ ] Messenger message sent to test user (if configured)
+   - [ ] Comment reply posted on the post
+6. **Cleanup:** Delete test posts; test user data is automatically isolated
+
+**Facebook-Specific Notes:**
+- Test users can only interact with test pages, not real pages (use your real page only if your bot account has Admin role)
+- Facebook temporarily disabled creating new test users (may be reinstated — check the developer docs)
+- If test user creation is unavailable, use Development Mode + real accounts with app roles as a fallback
+- Uses Page-Scoped IDs (PSID) for Messenger, not regular Facebook user IDs
+- 24-hour messaging window: user must message the Page first
+- Requires `pages_messaging` permission
+
 #### H6a. Test: Facebook Page Info
 
 ```bash
@@ -1002,6 +1246,50 @@ curl -X POST http://localhost:3000/api/admin/mcp/call \
 - `pinterest-list-boards`, `pinterest-create-pin`, `pinterest-pin-insights`
 - `pinterest-analytics`, `pinterest-trends`, `pinterest-keyword-metrics`
 - `pinterest-seo-analyze`, `pinterest-search-pins`, `pinterest-content-ideas`, `pinterest-related-keywords`
+
+#### Real-World Testing Strategy
+
+**Privacy Options:**
+- **Secret Boards (RECOMMENDED):** Pinterest secret boards are **completely private** — only you (and anyone you explicitly invite) can see the board and its pins. Pins on secret boards:
+  - Do NOT appear in search, home feed, or recommendations
+  - Do NOT send notifications to anyone
+  - Do NOT increase pin save counts
+  - Can be toggled back to public at any time
+  - You can invite collaborators to the secret board for team testing
+- **Sandbox API (available):** The Pinterest API has sandbox support enabled for pin creation (`pinterest-create-pin`), which may allow test API calls without publishing real pins.
+
+**Recommended Approach — Secret Board:**
+
+1. **Create a secret board:**
+   - Log into Pinterest → Create Board → Toggle "Keep this board secret" ON
+   - Or create via API (set `privacy` to `secret` on board creation)
+2. **List boards to get the secret board ID:**
+   ```bash
+   curl -X POST http://localhost:3000/api/admin/mcp/call \
+     -H "Content-Type: application/json" \
+     -d '{"server": "pinterest", "tool": "pinterest-list-boards", "args": {}}'
+   ```
+3. **Create test pin on the secret board:**
+   ```bash
+   curl -X POST http://localhost:3000/api/admin/mcp/call \
+     -H "Content-Type: application/json" \
+     -d '{"server": "pinterest", "tool": "pinterest-create-pin", "args": {
+       "board_id": "SECRET_BOARD_ID",
+       "title": "Test Pin - Secret Board",
+       "description": "Testing pin creation via MCP #test",
+       "image_url": "https://picsum.photos/1000/1500",
+       "link": "https://example.com"
+     }}'
+   ```
+4. **Verify pin analytics** (H7d tests below)
+5. **Cleanup:** Delete test pins, or leave them on the secret board (invisible to public)
+
+**Pinterest-Specific Notes:**
+- Pinterest has no comment system — the Social Brain automation pipeline (rules, DMs, replies) does not apply
+- Testing focuses exclusively on: publishing, analytics, SEO tools, and board management
+- Secret boards cannot be promoted through Pinterest ads
+- Secret board pins will have zero impressions/engagement (since they're not distributed), so analytics tests should use a previously-published public pin
+- The Pinterest API has sandbox support — use it for API integration testing without real publishing
 
 #### H7a. Test: List Boards
 
@@ -1111,9 +1399,238 @@ curl http://localhost:3000/api/pinterest/reports | python3 -m json.tool
 - [ ] No message cross-contamination
 - [ ] Analytics show separate platform counts
 
+### H9. End-to-End Testing Playbook (Recommended Order)
+
+If you're setting up real testing for the first time, follow this order to minimize risk and maximize coverage:
+
+**Phase 1 — Lowest Risk (zero public exposure):**
+1. **Facebook** — Use Test Users + Development Mode (completely isolated)
+2. **YouTube** — Upload an unlisted video (not discoverable, comments allowed)
+3. **Pinterest** — Create pins on a secret board (invisible to public)
+
+**Phase 2 — Low Risk (minimal public exposure):**
+4. **Reddit** — Post to r/test (public but expected/accepted as test content)
+5. **Instagram** — Use Trial Reels or Development Mode app
+6. **LinkedIn** — Use Dark Posts (hidden from feeds, accessible only via direct URL)
+
+**Phase 3 — Moderate Risk (briefly public):**
+7. **Twitter/X** — Post and delete method (briefly visible, no privacy API option)
+
+**After all platforms pass individually**, run the **Cross-Platform Isolation test** (H8) to confirm contacts and analytics are properly separated.
+
+#### Cleanup Automation Script
+
+After completing all tests, run a full cleanup:
+
+```bash
+# List all test contacts
+curl http://localhost:3000/api/social/contacts | python3 -m json.tool
+
+# Delete each test contact
+curl -X DELETE http://localhost:3000/api/social/contacts/CONTACT_ID
+
+# Verify analytics are clean
+curl "http://localhost:3000/api/social/analytics?since=$(date -u -v-1d +%Y-%m-%dT%H:%M:%SZ)" | python3 -m json.tool
+
+# Delete test posts on each platform via their respective APIs or UIs
+```
+
 ---
 
-## 12. Simulated Testing (No Real Accounts)
+## 12. Test Suite I: AI Rule Generation
+
+The AI Rule Generation feature uses the Copilot SDK to generate complete automation rules from a natural-language description. This eliminates the need for users to manually configure keywords, DM templates, and comment replies.
+
+### I1. Generate a Basic Rule via API
+
+```bash
+curl -X POST http://localhost:3000/api/social/rules/generate \
+  -H "Content-Type: application/json" \
+  -d '{
+    "description": "Capture leads who ask about pricing on Instagram posts",
+    "platform": "instagram"
+  }'
+```
+
+**Expected:**
+- [ ] HTTP 200 with `{ rule: { name, platform, keywords, dm_template, ... } }`
+- [ ] Generated `platform` matches the input (`"instagram"`)
+- [ ] `keywords` is a JSON-stringified array of relevant terms (e.g., `["pricing", "price", "cost", "how much"]`)
+- [ ] `dm_template` contains `{{username}}` interpolation variable
+- [ ] `comment_reply_template` is present and contextually relevant
+
+### I2. Generate Without Platform (AI Picks Default)
+
+```bash
+curl -X POST http://localhost:3000/api/social/rules/generate \
+  -H "Content-Type: application/json" \
+  -d '{
+    "description": "Auto-reply to people asking about our return policy"
+  }'
+```
+
+**Expected:**
+- [ ] HTTP 200 — rule generated with a default platform (e.g., `"instagram"`)
+- [ ] Rule fields are contextually appropriate for return policy inquiries
+
+### I3. Generate via UI
+
+**Steps:**
+1. Navigate to `/social` → **Automations** tab
+2. Click **AI Generate** button
+3. Enter description: _"Welcome everyone who comments on our launch post"_
+4. Select platform: **twitter**
+5. Click **Generate**
+
+**Expected:**
+- [ ] Loading spinner appears during generation
+- [ ] Generated rule populates the rule creation form
+- [ ] User can review and edit before saving
+- [ ] Click "Save" creates the rule in the database
+
+### I4. Validation — Missing Description
+
+```bash
+curl -X POST http://localhost:3000/api/social/rules/generate \
+  -H "Content-Type: application/json" \
+  -d '{}'
+```
+
+**Expected:**
+- [ ] HTTP 400 with descriptive error message
+
+### I5. Copilot Not Available
+
+If the Copilot SDK is not authenticated:
+
+**Expected:**
+- [ ] HTTP 503 with `"AI generation not available — copilot not connected"`
+- [ ] No server crash
+
+### I6. Cross-Platform Generation
+
+Test generating rules for each supported platform:
+
+```bash
+for platform in twitter instagram facebook youtube linkedin reddit; do
+  echo "=== $platform ==="
+  curl -s -X POST http://localhost:3000/api/social/rules/generate \
+    -H "Content-Type: application/json" \
+    -d "{\"description\": \"Welcome people commenting on our posts\", \"platform\": \"$platform\"}" | python3 -m json.tool
+done
+```
+
+**Expected per platform:**
+- [ ] Each returns a valid rule with platform-appropriate tone
+- [ ] YouTube rules should NOT include DM template (no DM API) — or template acknowledges comment-reply-only
+- [ ] Instagram/Facebook rules may reference post captions and DM 24-hour windows
+
+---
+
+## 13. Test Suite J: Leads Tab & Analytics Tab
+
+### J1. Leads Tab — Empty State
+
+Navigate to `/social` → **Leads** tab.
+
+**Expected:**
+- [ ] Shows "No leads captured yet" when no contacts have email/phone captured
+- [ ] Platform filter dropdown is visible
+
+### J2. Lead Capture via DM
+
+**Steps:**
+1. Simulate an Instagram DM containing an email address:
+
+```bash
+curl -X POST http://localhost:3000/api/social/webhooks/instagram \
+  -H "Content-Type: application/json" \
+  -d '{
+    "entry": [{
+      "messaging": [{
+        "sender": {"id": "lead_user_001"},
+        "recipient": {"id": "page_123"},
+        "timestamp": '"$(date +%s000)"',
+        "message": {
+          "mid": "lead_msg_001",
+          "text": "Hi! You can reach me at buyer@example.com"
+        }
+      }]
+    }]
+  }'
+```
+
+2. Check the Leads tab.
+
+**Expected:**
+- [ ] Contact appears with captured email `buyer@example.com`
+- [ ] `lead_captured_at` timestamp is set
+- [ ] Leads tab shows the contact in the table
+
+### J3. Lead Capture — Phone Number
+
+```bash
+curl -X POST http://localhost:3000/api/social/webhooks/instagram \
+  -H "Content-Type: application/json" \
+  -d '{
+    "entry": [{
+      "messaging": [{
+        "sender": {"id": "lead_user_002"},
+        "recipient": {"id": "page_123"},
+        "timestamp": '"$(date +%s000)"',
+        "message": {
+          "mid": "lead_msg_002",
+          "text": "Call me at 555-867-5309 please"
+        }
+      }]
+    }]
+  }'
+```
+
+**Expected:**
+- [ ] Contact appears with captured phone number
+- [ ] Visible on the Leads tab
+
+### J4. Leads API
+
+```bash
+# All leads
+curl http://localhost:3000/api/social/leads | python3 -m json.tool
+
+# Filter by platform
+curl "http://localhost:3000/api/social/leads?platform=instagram" | python3 -m json.tool
+```
+
+**Expected:**
+- [ ] Returns array of contacts with `email`, `phone`, and `lead_captured_at` fields
+- [ ] Platform filter works correctly
+
+### J5. Analytics Tab — Overview
+
+Navigate to `/social` → **Analytics** tab.
+
+**Expected:**
+- [ ] Summary cards showing total conversations, messages, automations, and active contacts
+- [ ] Per-platform breakdown showing message counts by platform
+- [ ] Data reflects actual CRM activity
+
+### J6. Analytics API
+
+```bash
+# All analytics
+curl http://localhost:3000/api/social/analytics | python3 -m json.tool
+
+# With since filter
+curl "http://localhost:3000/api/social/analytics?since=2026-03-17T00:00:00Z" | python3 -m json.tool
+```
+
+**Expected:**
+- [ ] `/analytics` returns per-platform breakdown with message counts, contact counts, automation trigger counts
+- [ ] `since` filter narrows the time window
+
+---
+
+## 14. Simulated Testing (No Real Accounts)
 
 If you don't have real platform credentials, use curl to simulate webhook payloads:
 
@@ -1229,7 +1746,7 @@ curl http://localhost:3000/api/social/leads | python3 -m json.tool
 
 ---
 
-## 13. Outbox Integration: How Posting Works
+## 15. Outbox Integration: How Posting Works
 
 ### Posting Flow
 
@@ -1357,7 +1874,187 @@ curl -X POST http://localhost:3000/api/outbox/queue \
 
 ---
 
-## 14. Platform Integration Status
+## 15b. Test Suite K: AI Comment Replies
+
+Tests the Brain Engine's ability to auto-reply to comments that don't match any keyword automation rule.
+
+### K1. Setup: Enable Comment Brain
+
+**Steps:**
+1. Navigate to Social Brain → Settings tab
+2. Under "AI Reply Settings", enable "AI Comment Replies"
+3. Optionally enable "Require Approval" for safer testing
+
+**Or via API:**
+```bash
+curl -X POST http://localhost:3000/api/admin/social-brain/settings \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"commentBrainEnabled": true, "approvalRequired": true}'
+```
+
+**Expected:** Settings saved successfully.
+
+### K2. Test: Comment Without Matching Rule → Brain Reply
+
+**Steps:**
+1. Ensure no keyword rules match the word "question"
+2. Post a comment on a tracked post: "I have a question about your product"
+3. Wait for polling interval (or simulate via curl)
+
+**Expected:**
+- [ ] Comment ingested (appears in Activity tab)
+- [ ] Brain Engine processes the comment (server log: `[SocialBrain] Comment processing`)
+- [ ] AI-generated reply stored as outbound message
+- [ ] If `approvalRequired`: message status is `pending_approval`, appears in approval queue
+- [ ] If not `approvalRequired`: message status is `auto_replied`
+
+### K3. Test: Comment With Matching Rule → Rule Takes Priority
+
+**Steps:**
+1. Create a keyword rule matching "INFO"
+2. Post a comment containing "INFO"
+
+**Expected:**
+- [ ] Comment Rule Engine triggers the matching rule
+- [ ] Brain Engine is NOT invoked (rule takes priority)
+- [ ] Automation log shows the triggered rule
+
+### K4. Test: Post Context in Reply
+
+**Steps:**
+1. Post a comment on a post with a known caption
+2. Wait for Brain to process
+
+**Expected:**
+- [ ] The AI reply references or acknowledges the post's content
+- [ ] Prompt sent to LLM includes `public comment reply` context
+
+---
+
+## 15c. Test Suite L: Approval Queue
+
+Tests the human-in-the-loop approval workflow for AI-generated replies.
+
+### L1. Test: Pending Replies Appear in Activity Tab
+
+**Steps:**
+1. Enable `approvalRequired` in Settings
+2. Trigger an AI reply (DM or comment)
+3. Navigate to Activity tab
+
+**Expected:**
+- [ ] "Pending Approval" section visible at top of Activity tab with orange badge
+- [ ] Pending message shows platform badge, contact username, AI-generated content
+- [ ] Buttons: ✓ Approve, ✏️ Edit, ✕ Reject
+
+### L2. Test: Approve Reply
+
+**Steps:**
+1. Click ✓ Approve on a pending reply
+
+**Expected:**
+- [ ] Message status changes to `auto_replied`
+- [ ] Message disappears from pending queue
+- [ ] Badge count decrements
+- [ ] Reply is sent via `DmDispatcher`
+
+### L3. Test: Edit and Approve Reply
+
+**Steps:**
+1. Click ✏️ Edit on a pending reply
+2. Modify the text in the edit textarea
+3. Click "Save & Approve"
+
+**Expected:**
+- [ ] Message content updated to edited text
+- [ ] Status changes to `auto_replied`
+- [ ] Metadata includes `edited: true` and `approved_at`
+- [ ] Edited reply is sent
+
+### L4. Test: Reject Reply
+
+**Steps:**
+1. Click ✕ Reject on a pending reply
+
+**Expected:**
+- [ ] Message status changes to `rejected`
+- [ ] Message disappears from pending queue
+- [ ] No reply is sent to the user
+
+### L5. Test: API Approval Endpoints
+
+```bash
+# List pending
+curl http://localhost:3000/api/social/approvals \
+  -H "Authorization: Bearer $TOKEN"
+
+# Approve
+curl -X POST http://localhost:3000/api/social/approvals/$MSG_ID/approve \
+  -H "Authorization: Bearer $TOKEN"
+
+# Reject
+curl -X POST http://localhost:3000/api/social/approvals/$MSG_ID/reject \
+  -H "Authorization: Bearer $TOKEN"
+
+# Edit & approve
+curl -X POST http://localhost:3000/api/social/approvals/$MSG_ID/edit \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"content": "Updated reply text"}'
+```
+
+---
+
+## 15d. Test Suite M: Manual Reply & Notifications
+
+### M1. Test: Send Manual Reply from CRM
+
+**Steps:**
+1. Navigate to CRM tab, click on a contact
+2. Type "Hello! Thanks for reaching out." in the reply input
+3. Click Send
+
+**Expected:**
+- [ ] Reply appears in message history as outbound
+- [ ] Message metadata shows `source: "manual_reply"`
+- [ ] `DmDispatcher` sends the message to the platform
+
+### M2. Test: Real-Time Socket.IO Notifications
+
+**Steps:**
+1. Open the Social Brain page in one browser tab
+2. From another tab or the API, trigger a new inbound message
+
+**Expected:**
+- [ ] `social:new_message` event fires in real-time
+- [ ] Activity tab updates without manual refresh
+
+### M3. Test: Push Notifications (Telegram)
+
+**Prerequisites:** Telegram bot + admin chat ID configured.
+
+**Steps:**
+1. Enable notifications in Settings (toggle "Enable Push Notifications" + "Telegram")
+2. Trigger an inbound message
+
+**Expected:**
+- [ ] Telegram bot sends a formatted alert to the admin chat
+- [ ] Alert includes platform, username, and message preview
+
+### M4. Test: Notification Settings Persistence
+
+**Steps:**
+1. Toggle notification settings on/off in Settings tab
+2. Refresh the page
+
+**Expected:**
+- [ ] Settings persist across page refresh
+- [ ] API `GET /api/admin/social-brain/settings` returns saved notification config
+
+---
+
+## 16. Platform Integration Status
 
 All seven platforms have full MCP tool support. Instagram and Facebook are **fully integrated** into the Social Brain automation pipeline as of this version.
 
@@ -1411,7 +2108,7 @@ Pinterest pins have no native comment thread or DM API. This is a platform limit
 
 ---
 
-## 15. Verification Checklist
+## 17. Verification Checklist
 
 ### Core Pipeline
 
@@ -1440,6 +2137,12 @@ Pinterest pins have no native comment thread or DM API. This is a platform limit
 | 16 | Lead phone captured | DM with phone number | `GET /leads` shows phone |
 | 17 | Analytics populated | Activity generates data | `GET /analytics` shows stats |
 | 18 | Follower welcome | New follower event | DM sent, dedup works |
+| 19 | AI rule generation | `POST /rules/generate` | Returns valid rule from description |
+| 20 | AI generate — missing desc | `POST /rules/generate {}` | HTTP 400 |
+| 21 | AI generate — copilot offline | Disconnect copilot | HTTP 503, no crash |
+| 22 | Leads tab displays leads | Navigate to `/social` → Leads | Captured leads visible |
+| 23 | Analytics tab displays data | Navigate to `/social` → Analytics | Summary + per-platform breakdown |
+| 24 | Follow-up steps in UI | Expand a rule in Automations | Steps listed with delay and template |
 
 ### Instagram / Facebook / Pinterest
 
@@ -1477,7 +2180,7 @@ Pinterest pins have no native comment thread or DM API. This is a platform limit
 
 ---
 
-## 16. Troubleshooting
+## 18. Troubleshooting
 
 ### Comments Not Being Detected
 

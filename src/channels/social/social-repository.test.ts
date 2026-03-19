@@ -35,14 +35,14 @@ describe("SocialRepository", () => {
       expect(contact.platform).toBe("twitter");
       expect(contact.username).toBe("jane_doe");
       expect(contact.display_name).toBe("Jane Doe");
-      expect(contact.message_count).toBe(1);
+      expect(contact.message_count).toBe(0);
       expect(contact.handoff_active).toBe(0);
     });
 
-    it("increments message_count on upsert", () => {
-      repo.upsertContact({ platform: "twitter", platformUserId: "ig_123", username: "jane" });
-      const updated = repo.upsertContact({ platform: "twitter", platformUserId: "ig_123", username: "jane" });
-      expect(updated.message_count).toBe(2);
+    it("does not increment message_count on upsert", () => {
+      repo.upsertContact({ platform: "twitter", platformUserId: "ig_123", username: "jane_doe" });
+      const updated = repo.upsertContact({ platform: "twitter", platformUserId: "ig_123", username: "jane_doe" });
+      expect(updated.message_count).toBe(0);
     });
 
     it("gets contact by platform user", () => {
@@ -517,6 +517,123 @@ describe("SocialRepository", () => {
       const analytics = repo.getAnalytics();
       const twitter = analytics.find((a) => a.platform === "twitter")!;
       expect(twitter.leads_captured).toBe(1);
+    });
+  });
+
+  // ── Approval Queue ──
+
+  describe("approval queue", () => {
+    function createPendingMessage(repo: SocialRepository, contactId: string) {
+      return repo.insertMessage({
+        contactId,
+        platform: "twitter",
+        direction: "outbound",
+        status: "pending_approval",
+        content: "AI generated reply",
+        metadata: { confidence: "high", intent: "help", source: "brain_dm" },
+      });
+    }
+
+    it("lists pending approvals with contact info", () => {
+      const c = repo.upsertContact({ platform: "twitter", platformUserId: "u_a", username: "alice", displayName: "Alice" });
+      createPendingMessage(repo, c.id);
+
+      const pending = repo.listPendingApprovals();
+      expect(pending).toHaveLength(1);
+      expect(pending[0].status).toBe("pending_approval");
+      expect(pending[0].contact_username).toBe("alice");
+      expect(pending[0].contact_display_name).toBe("Alice");
+    });
+
+    it("getPendingApprovalCount returns correct count", () => {
+      const c = repo.upsertContact({ platform: "twitter", platformUserId: "u_b", username: "bob" });
+      expect(repo.getPendingApprovalCount()).toBe(0);
+
+      createPendingMessage(repo, c.id);
+      expect(repo.getPendingApprovalCount()).toBe(1);
+
+      createPendingMessage(repo, c.id);
+      expect(repo.getPendingApprovalCount()).toBe(2);
+    });
+
+    it("approveReply changes status to auto_replied", () => {
+      const c = repo.upsertContact({ platform: "twitter", platformUserId: "u_c", username: "carol" });
+      const msg = createPendingMessage(repo, c.id)!;
+
+      const approved = repo.approveReply(msg.id);
+      expect(approved).toBeDefined();
+      expect(approved!.status).toBe("auto_replied");
+      const meta = JSON.parse(approved!.metadata);
+      expect(meta.approved_at).toBe(now.toISOString());
+      expect(repo.getPendingApprovalCount()).toBe(0);
+    });
+
+    it("rejectReply changes status to rejected", () => {
+      const c = repo.upsertContact({ platform: "twitter", platformUserId: "u_d", username: "dave" });
+      const msg = createPendingMessage(repo, c.id)!;
+
+      const rejected = repo.rejectReply(msg.id);
+      expect(rejected).toBeDefined();
+      expect(rejected!.status).toBe("rejected");
+      const meta = JSON.parse(rejected!.metadata);
+      expect(meta.rejected_at).toBe(now.toISOString());
+      expect(repo.getPendingApprovalCount()).toBe(0);
+    });
+
+    it("editAndApproveReply updates content and approves", () => {
+      const c = repo.upsertContact({ platform: "twitter", platformUserId: "u_e", username: "eve" });
+      const msg = createPendingMessage(repo, c.id)!;
+
+      const edited = repo.editAndApproveReply(msg.id, "Human-edited reply");
+      expect(edited).toBeDefined();
+      expect(edited!.status).toBe("auto_replied");
+      expect(edited!.content).toBe("Human-edited reply");
+      const meta = JSON.parse(edited!.metadata);
+      expect(meta.approved_at).toBe(now.toISOString());
+      expect(meta.edited).toBeTruthy();
+    });
+
+    it("approveReply is a no-op for already approved messages", () => {
+      const c = repo.upsertContact({ platform: "twitter", platformUserId: "u_f", username: "frank" });
+      const msg = createPendingMessage(repo, c.id)!;
+
+      repo.approveReply(msg.id);
+      // Second approve — should not change anything (already approved, no longer pending)
+      const result = repo.approveReply(msg.id);
+      expect(result!.status).toBe("auto_replied");
+    });
+
+    it("listPendingApprovals paginates correctly", () => {
+      const c = repo.upsertContact({ platform: "twitter", platformUserId: "u_g", username: "grace" });
+      for (let i = 0; i < 5; i++) {
+        createPendingMessage(repo, c.id);
+      }
+
+      const page1 = repo.listPendingApprovals(2, 0);
+      expect(page1).toHaveLength(2);
+
+      const page2 = repo.listPendingApprovals(2, 2);
+      expect(page2).toHaveLength(2);
+
+      const page3 = repo.listPendingApprovals(2, 4);
+      expect(page3).toHaveLength(1);
+    });
+
+    it("insertManualReply stores outbound message with manual_reply source", () => {
+      const c = repo.upsertContact({ platform: "twitter", platformUserId: "u_h", username: "heidi" });
+
+      const msg = repo.insertManualReply({
+        contactId: c.id,
+        platform: "twitter",
+        content: "Hello from human!",
+      });
+
+      expect(msg).not.toBeNull();
+      expect(msg!.direction).toBe("outbound");
+      expect(msg!.status).toBe("auto_replied");
+      expect(msg!.content).toBe("Hello from human!");
+      const meta = JSON.parse(msg!.metadata);
+      expect(meta.source).toBe("manual_reply");
     });
   });
 });

@@ -1,7 +1,7 @@
 import { EventEmitter } from "node:events";
 import { logger } from "../../logging/logger.js";
 import { SocialRepository } from "./social-repository.js";
-import type { Contact, IncomingSocialMessage, SocialMessage, BrainResult } from "./types.js";
+import type { Contact, IncomingSocialMessage, IncomingComment, SocialMessage, BrainResult } from "./types.js";
 import type { CopilotWrapperService } from "../../copilot/copilot-wrapper.js";
 import type { KnowledgeIngestionService } from "../../knowledge/index.js";
 import { getUserSelectedModel } from "../../config/user-model.js";
@@ -16,6 +16,8 @@ export type SocialBrainOptions = {
   brandVoiceBlock?: string;
   /** Override which LLM model to use. Falls back to user's selected model, then copilot default. */
   model?: string;
+  /** Hold AI-generated replies for human approval before sending */
+  approvalRequired?: boolean;
 };
 
 const DEFAULT_SYSTEM_PROMPT = `You are a helpful social media assistant. You respond to direct messages from users.
@@ -54,6 +56,7 @@ export class SocialBrain extends EventEmitter {
   private baseSystemPrompt: string;
   private brandVoiceBlock: string;
   private model: string | undefined;
+  private approvalRequired: boolean;
 
   constructor(opts: SocialBrainOptions) {
     super();
@@ -64,6 +67,7 @@ export class SocialBrain extends EventEmitter {
     this.brandVoiceBlock = opts.brandVoiceBlock ?? "";
     this.baseSystemPrompt = opts.systemPrompt ?? DEFAULT_SYSTEM_PROMPT;
     this.model = opts.model;
+    this.approvalRequired = opts.approvalRequired ?? false;
     this.rebuildSystemPrompt();
   }
 
@@ -76,6 +80,11 @@ export class SocialBrain extends EventEmitter {
   /** Update the model used for LLM calls at runtime. */
   setModel(model: string | undefined): void {
     this.model = model;
+  }
+
+  /** Update whether replies require human approval before sending. */
+  setApprovalRequired(required: boolean): void {
+    this.approvalRequired = required;
   }
 
   private rebuildSystemPrompt(): void {
@@ -159,6 +168,17 @@ export class SocialBrain extends EventEmitter {
       if (shouldEscalate) {
         // Update message status to escalated
         this.emit("escalate", { contact, message, result: brainResult, raw });
+      } else if (this.approvalRequired) {
+        // Hold reply for human approval
+        const pendingMsg = this.repository.insertMessage({
+          contactId: contact.id,
+          platform: raw.platform,
+          direction: "outbound",
+          status: "pending_approval",
+          content: result.reply,
+          metadata: { confidence: result.confidence, intent: result.intent, source: "brain_dm" },
+        });
+        this.emit("pending_approval", { contact, message, result: brainResult, raw, pendingMessage: pendingMsg });
       } else {
         // Log auto-reply in messages table
         this.repository.insertMessage({
@@ -176,6 +196,116 @@ export class SocialBrain extends EventEmitter {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       logger.error(`[SocialBrain] Processing failed for contact ${contact.id}: ${msg}`);
+      return {
+        reply: "",
+        confidence: "low",
+        intent: "error",
+        ragChunksUsed: [],
+        shouldEscalate: true,
+      };
+    }
+  }
+
+  /**
+   * Process an inbound comment through the Brain pipeline.
+   * Converts the comment to a brain-compatible format, generates a reply,
+   * and stores it (pending approval or auto-replied based on config).
+   */
+  async processComment(comment: IncomingComment): Promise<BrainResult | null> {
+    // Upsert / look up the contact
+    const contact = this.repository.getContactByPlatformUser(comment.platform, comment.userId)
+      ?? this.repository.upsertContact({
+        platform: comment.platform,
+        platformUserId: comment.userId,
+        username: comment.username,
+      });
+
+    if (contact.handoff_active) {
+      return null;
+    }
+
+    try {
+      // RAG retrieval
+      const ragChunks = await this.searchKnowledge(comment.text);
+      const ragContext = ragChunks.length > 0
+        ? ragChunks.map((c, i) => `[${i + 1}] ${c}`).join("\n\n")
+        : "(No relevant knowledge base context found)";
+
+      // Build post context block
+      let postContextBlock = "";
+      if (comment.postContext) {
+        postContextBlock = [
+          "Post context (the user commented on this post):",
+          `  Caption: ${comment.postContext.caption}`,
+          `  URL: ${comment.postContext.permalink}`,
+          `  Media type: ${comment.postContext.mediaType}`,
+        ].filter(Boolean).join("\n");
+      }
+
+      // Compose prompt
+      const userPrompt = [
+        `Platform: ${comment.platform}`,
+        `Username: @${comment.username}`,
+        `Context: This is a public comment reply (not a DM). Keep the reply brief, public-appropriate, and on-topic.`,
+        "",
+        postContextBlock || "(no post context)",
+        "",
+        "Knowledge base context:",
+        ragContext,
+        "",
+        `Comment from user: ${comment.text}`,
+      ].join("\n");
+
+      // LLM generation
+      const result = await this.generateReply(userPrompt);
+      const shouldEscalate = this.shouldEscalate(result);
+
+      const brainResult: BrainResult = {
+        ...result,
+        ragChunksUsed: ragChunks,
+        shouldEscalate,
+      };
+
+      if (shouldEscalate) {
+        this.emit("escalate", { contact, comment, result: brainResult });
+      } else if (this.approvalRequired) {
+        const pendingMsg = this.repository.insertMessage({
+          contactId: contact.id,
+          platform: comment.platform,
+          direction: "outbound",
+          status: "pending_approval",
+          content: result.reply,
+          metadata: {
+            confidence: result.confidence,
+            intent: result.intent,
+            source: "brain_comment",
+            commentId: comment.commentId,
+            postId: comment.postId,
+          },
+        });
+        this.emit("pending_approval", { contact, comment, result: brainResult, pendingMessage: pendingMsg });
+      } else {
+        this.repository.insertMessage({
+          contactId: contact.id,
+          platform: comment.platform,
+          direction: "outbound",
+          status: "auto_replied",
+          content: result.reply,
+          metadata: {
+            confidence: result.confidence,
+            intent: result.intent,
+            source: "brain_comment",
+            commentId: comment.commentId,
+            postId: comment.postId,
+          },
+        });
+        this.emit("comment_reply", { contact, comment, result: brainResult });
+      }
+
+      return brainResult;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.error(`[SocialBrain] Comment processing failed for ${comment.commentId}: ${msg}`);
       return {
         reply: "",
         confidence: "low",

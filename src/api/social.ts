@@ -7,6 +7,9 @@
 
 import { Router } from "express";
 import { z } from "zod";
+import * as fs from "node:fs/promises";
+import * as path from "node:path";
+import * as os from "node:os";
 import { logger } from "../logging/logger.js";
 import type { SocialRepository } from "../channels/social/social-repository.js";
 import type { SocialIngestionService } from "../channels/social/social-ingestion.js";
@@ -16,6 +19,8 @@ import type { CommentRuleEngine } from "../channels/social/comment-rule-engine.j
 import type { SocialPlatform } from "../channels/social/types.js";
 import type { SocialBrainAppConfig } from "../config/index.js";
 import type { BrandVoiceService } from "../personality/brand-voice-service.js";
+import type { CopilotWrapper } from "../copilot/copilot-wrapper.js";
+import { getUserSelectedModel } from "../config/user-model.js";
 
 export type SocialRouterOptions = {
   repository: SocialRepository;
@@ -25,6 +30,7 @@ export type SocialRouterOptions = {
   ruleEngine: CommentRuleEngine;
   config?: SocialBrainAppConfig;
   brandVoiceService?: BrandVoiceService;
+  copilot?: CopilotWrapper;
 };
 
 const platformSchema = z.enum(["reddit", "youtube", "tiktok", "twitter", "linkedin", "instagram", "facebook"]);
@@ -35,17 +41,34 @@ export const createSocialRouter = (opts: SocialRouterOptions): Router => {
 
   /** Build connection info with real credential status. */
   const getConnectionStatus = () => {
-    const platforms: SocialPlatform[] = ["twitter", "linkedin", "reddit", "youtube", "tiktok"];
+    const platforms: SocialPlatform[] = ["twitter", "linkedin", "reddit", "youtube", "tiktok", "instagram", "facebook"];
     const registered = new Set(ingestion.getRegisteredPlatforms());
+    const activePollers = new Set(ingestion.getActivePollers());
+    const allHealth = ingestion.getAllPollHealth();
+    // Map platform → env var so we can check real process.env directly
+    const envVarMap: Record<SocialPlatform, string[]> = {
+      twitter: ["TWITTER_BEARER_TOKEN"],
+      linkedin: ["LINKEDIN_ACCESS_TOKEN"],
+      reddit: ["REDDIT_CLIENT_ID"],
+      youtube: ["YOUTUBE_API_KEY"],
+      tiktok: ["TIKNEURON_MCP_API_KEY"],
+      instagram: ["INSTAGRAM_ACCESS_TOKEN"],
+      facebook: ["FACEBOOK_PAGE_TOKEN"],
+    };
     return platforms.map((p) => {
       const conn = socialConfig?.connections?.[p];
-      const hasToken = !!(conn?.accessToken);
+      // Check real env vars directly — config accessToken may contain unresolved templates
+      const hasToken = envVarMap[p]?.some((v) => !!process.env[v]) || !!(conn?.accessToken);
+      const isRegistered = registered.has(p);
       return {
         platform: p,
-        connected: registered.has(p) && hasToken,
+        connected: isRegistered && hasToken,
         configured: hasToken,
         enabled: conn?.enabled ?? false,
         mode: conn?.mode ?? "webhook",
+        adapterRegistered: isRegistered,
+        activelyPolling: activePollers.has(p),
+        pollHealth: allHealth[p] ?? null,
       };
     });
   };
@@ -236,6 +259,21 @@ export const createSocialRouter = (opts: SocialRouterOptions): Router => {
     }
   });
 
+  // ── GET /rules/log — Automation execution log ──
+  // (must be registered BEFORE /rules/:id to avoid :id shadowing)
+  router.get("/rules/log", (req, res) => {
+    try {
+      const ruleId = req.query.ruleId ? String(req.query.ruleId) : undefined;
+      const limit = Math.min(200, Math.max(1, Number(req.query.limit) || 50));
+      const offset = Math.max(0, Number(req.query.offset) || 0);
+      const log = repository.getAutomationLog({ ruleId, limit, offset });
+      res.json({ log });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      res.status(500).json({ error: msg });
+    }
+  });
+
   // GET /rules/:id — Get a single rule
   router.get("/rules/:id", (req, res) => {
     const rule = repository.getRule(req.params.id);
@@ -250,7 +288,7 @@ export const createSocialRouter = (opts: SocialRouterOptions): Router => {
   const UpdateRuleSchema = z.object({
     name: z.string().max(255).optional(),
     platform: platformSchema.optional(),
-    enabled: z.boolean().optional(),
+    enabled: z.union([z.boolean(), z.number().int().min(0).max(1)]).transform(v => typeof v === "boolean" ? (v ? 1 : 0) : v).optional(),
     post_ids: z.string().max(10000).optional(),
     keywords: z.string().max(10000).optional(),
     regex: z.string().max(1000).optional(),
@@ -291,20 +329,6 @@ export const createSocialRouter = (opts: SocialRouterOptions): Router => {
       return;
     }
     res.json({ success: true });
-  });
-
-  // ── GET /rules/log — Automation execution log ──
-  router.get("/rules/log", (req, res) => {
-    try {
-      const ruleId = req.query.ruleId ? String(req.query.ruleId) : undefined;
-      const limit = Math.min(200, Math.max(1, Number(req.query.limit) || 50));
-      const offset = Math.max(0, Number(req.query.offset) || 0);
-      const log = repository.getAutomationLog({ ruleId, limit, offset });
-      res.json({ log });
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
-      res.status(500).json({ error: msg });
-    }
   });
 
   // ── Handoff Management ─────────────────────────────────────────────
@@ -365,6 +389,11 @@ export const createSocialRouter = (opts: SocialRouterOptions): Router => {
     res.json({ connections: getConnectionStatus() });
   });
 
+  // ── Webhook event log — recent inbound webhook events for diagnostics ──
+  router.get("/webhook-log", (_req, res) => {
+    res.json({ events: ingestion.getWebhookLog() });
+  });
+
   // ── Config — platform setup requirements ──
   router.get("/config", (_req, res) => {
     const platformInfo: Record<string, { envVar: string; webhookPath: string; docsUrl: string }> = {
@@ -392,6 +421,16 @@ export const createSocialRouter = (opts: SocialRouterOptions): Router => {
         envVar: "TIKTOK_ACCESS_TOKEN",
         webhookPath: "/api/social/webhooks/tiktok",
         docsUrl: "https://developers.tiktok.com/",
+      },
+      instagram: {
+        envVar: "INSTAGRAM_ACCESS_TOKEN",
+        webhookPath: "/api/social/webhooks/instagram",
+        docsUrl: "https://developers.facebook.com/docs/instagram-api/",
+      },
+      facebook: {
+        envVar: "FACEBOOK_PAGE_TOKEN",
+        webhookPath: "/api/social/webhooks/facebook",
+        docsUrl: "https://developers.facebook.com/docs/graph-api/webhooks/",
       },
     };
 
@@ -501,6 +540,274 @@ export const createSocialRouter = (opts: SocialRouterOptions): Router => {
       return;
     }
     res.json({ success: true });
+  });
+
+  // ── POST /rules/generate — AI-generate a comment automation rule ──
+  router.post("/rules/generate", async (req, res) => {
+    if (!opts.copilot) {
+      res.status(503).json({ error: "Copilot not available" });
+      return;
+    }
+
+    const generateSchema = z.object({
+      description: z.string().min(1).max(2000),
+      platform: platformSchema.optional(),
+      model: z.string().max(255).optional(),
+    });
+    const parsed = generateSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.format() });
+      return;
+    }
+
+    const { description, platform: targetPlatform, model: bodyModel } = parsed.data;
+
+    const platformContext: Record<string, string> = {
+      twitter: "Twitter/X: Keyword comments trigger DMs via twitter_send_dm. Comment replies via twitter_post_tweet. Max 280 char DMs.",
+      instagram: "Instagram: Comment automation within Meta's 24-hour messaging window. DMs via send_dm, replies via reply_to_comment. Supports rich templates with {{username}}, {{keyword}}.",
+      facebook: "Facebook: Page comment monitoring. DMs via fb_send_message, comment replies via fb_reply_to_comment. Works within Meta messaging policies.",
+      linkedin: "LinkedIn: Professional context. DMs via linkedin_send_message, replies via linkedin_reply_to_comment. Keep tone professional.",
+      youtube: "YouTube: Video comment monitoring via polling. Replies via yt_reply_to_comment. No DM capability — use comment replies only.",
+      reddit: "Reddit: Subreddit comment monitoring. DMs via reddit_send_message, replies via reddit_reply_to_comment. Follow subreddit rules.",
+      tiktok: "TikTok: Limited API — publish-only. No comment reading or DM sending yet. Rules are preparatory.",
+    };
+
+    const platformHint = targetPlatform
+      ? `Target platform: ${targetPlatform}. ${platformContext[targetPlatform] ?? ""}`
+      : "Choose the most appropriate platform based on the description.";
+
+    const prompt = [
+      "You are a Social Media Comment Automation expert for the OpenZigs platform.",
+      "Generate a JSON object representing a comment automation rule based on the user's description.",
+      "",
+      "Available template variables: {{username}}, {{keyword}}, {{post_id}}, {{post_caption}}, {{post_url}}, {{comment_text}}",
+      "",
+      platformHint,
+      "",
+      "The JSON must have EXACTLY these fields:",
+      '- name (string): A concise descriptive rule name',
+      '- platform (string): One of twitter, instagram, facebook, linkedin, youtube, reddit, tiktok',
+      '- keywords (string[]): Array of trigger keywords/phrases',
+      '- dm_template (string): The DM message template with variables',
+      '- comment_reply_template (string|null): Optional public comment reply',
+      '- dm_delay_seconds (number): Delay before sending DM (0-3600)',
+      '- max_triggers_per_user (number): Max times one user triggers this rule (1-100)',
+      '- auto_tag (string|null): Tag to auto-apply to the contact',
+      '- use_ai_reply (boolean): Whether to use AI-generated contextual replies instead of templates',
+      '- ai_reply_context (string|null): Context/instructions for AI when use_ai_reply is true',
+      "",
+      "Rules for good automation:",
+      "- Keywords should be specific enough to avoid false positives",
+      "- DM templates should feel personal, not spammy",
+      "- Comment replies should be brief and encourage DM conversation",
+      "- Use auto_tag for lead categorization (e.g., 'lead', 'interested', 'pricing-inquiry')",
+      "- If the user wants AI-powered replies, set use_ai_reply: true and provide detailed ai_reply_context",
+      "",
+      "Return ONLY valid JSON, no markdown fences, no commentary.",
+      "",
+      "User's description:",
+      description,
+    ].join("\n");
+
+    try {
+      let response = "";
+      const model = bodyModel || (await getUserSelectedModel() ?? "gpt-5-mini");
+      for await (const chunk of opts.copilot.chat(prompt, { model, tools: [] })) {
+        response += chunk;
+      }
+
+      let content = response.trim();
+      if (content.startsWith("```")) {
+        content = content.replace(/^```\w*\n?/, "").replace(/\n?```$/, "").trim();
+      }
+
+      const rule = JSON.parse(content) as Record<string, unknown>;
+
+      // Normalize keywords to JSON string if array
+      if (Array.isArray(rule.keywords)) {
+        rule.keywords = JSON.stringify(rule.keywords);
+      }
+      // Normalize use_ai_reply to int
+      if (typeof rule.use_ai_reply === "boolean") {
+        rule.use_ai_reply = rule.use_ai_reply ? 1 : 0;
+      }
+
+      res.json({ rule });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      logger.error(`[SocialAPI] Rule generation failed: ${msg}`);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  // ── PATCH /connections/:platform — Toggle platform enabled state ──
+  const toggleSchema = z.object({ enabled: z.boolean() });
+
+  router.patch("/connections/:platform", async (req, res) => {
+    const parsed = platformSchema.safeParse(req.params.platform);
+    if (!parsed.success) {
+      res.status(400).json({ error: "Invalid platform" });
+      return;
+    }
+    const body = toggleSchema.safeParse(req.body);
+    if (!body.success) {
+      res.status(400).json({ error: "Request body must include { enabled: boolean }" });
+      return;
+    }
+    const platform = parsed.data;
+    const { enabled } = body.data;
+
+    try {
+      const configPath = process.env.OPENZIGS_CONFIG_PATH
+        ?? path.join(os.homedir(), ".openzigs", "config.json");
+
+      // Read existing user config
+      let userConfig: Record<string, unknown> = {};
+      try {
+        const raw = await fs.readFile(configPath, "utf-8");
+        userConfig = JSON.parse(raw) as Record<string, unknown>;
+      } catch (e) {
+        if (!(e instanceof Error && "code" in e && (e as { code?: string }).code === "ENOENT")) throw e;
+      }
+
+      // Update socialBrain.connections.<platform>.enabled
+      const sb = (userConfig.socialBrain && typeof userConfig.socialBrain === "object")
+        ? (userConfig.socialBrain as Record<string, unknown>) : {};
+      const conns = (sb.connections && typeof sb.connections === "object")
+        ? (sb.connections as Record<string, unknown>) : {};
+      const existing = (conns[platform] && typeof conns[platform] === "object")
+        ? (conns[platform] as Record<string, unknown>) : {};
+      existing.enabled = enabled;
+      conns[platform] = existing;
+      sb.connections = conns;
+      userConfig.socialBrain = sb;
+
+      // Write back with secure perms
+      await fs.mkdir(path.dirname(configPath), { recursive: true, mode: 0o700 });
+      await fs.writeFile(configPath, JSON.stringify(userConfig, null, 2), { encoding: "utf-8", mode: 0o600 });
+      await fs.chmod(configPath, 0o600);
+
+      // Update in-memory config so getConnectionStatus reflects immediately
+      if (socialConfig?.connections) {
+        if (!socialConfig.connections[platform]) {
+          socialConfig.connections[platform] = { enabled };
+        } else {
+          socialConfig.connections[platform]!.enabled = enabled;
+        }
+      }
+
+      logger.info(`[SocialAPI] Platform ${platform} ${enabled ? "enabled" : "disabled"} by user`);
+      res.json({ ok: true, platform, enabled });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      logger.error(`[SocialAPI] Failed to toggle platform ${platform}: ${msg}`);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  // ── Approval Queue ─────────────────────────────────────────────────
+
+  /** GET /approvals — List pending approval messages. */
+  router.get("/approvals", (_req, res) => {
+    try {
+      const pending = repository.listPendingApprovals();
+      const count = repository.getPendingApprovalCount();
+      res.json({ data: pending, count });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  /** GET /approvals/count — Just the pending count (for badge). */
+  router.get("/approvals/count", (_req, res) => {
+    try {
+      res.json({ count: repository.getPendingApprovalCount() });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  /** POST /approvals/:id/approve — Approve a pending reply. */
+  router.post("/approvals/:id/approve", (req, res) => {
+    try {
+      const message = repository.approveReply(req.params.id);
+      if (!message) {
+        res.status(404).json({ error: "Message not found or not pending approval" });
+        return;
+      }
+      res.json({ ok: true, message });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  /** POST /approvals/:id/reject — Reject a pending reply. */
+  router.post("/approvals/:id/reject", (req, res) => {
+    try {
+      const message = repository.rejectReply(req.params.id);
+      if (!message) {
+        res.status(404).json({ error: "Message not found or not pending approval" });
+        return;
+      }
+      res.json({ ok: true, message });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  /** POST /approvals/:id/edit — Edit content and approve. */
+  router.post("/approvals/:id/edit", (req, res) => {
+    try {
+      const body = req.body as { content?: string };
+      if (!body.content || typeof body.content !== "string" || body.content.trim().length === 0) {
+        res.status(400).json({ error: "content is required" });
+        return;
+      }
+      const message = repository.editAndApproveReply(req.params.id, body.content.trim());
+      if (!message) {
+        res.status(404).json({ error: "Message not found or not pending approval" });
+        return;
+      }
+      res.json({ ok: true, message });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  // ── Manual Reply ──────────────────────────────────────────────────
+
+  /** POST /contacts/:id/reply — Send a manual reply from the UI. */
+  router.post("/contacts/:id/reply", (req, res) => {
+    try {
+      const contact = repository.getContact(req.params.id);
+      if (!contact) {
+        res.status(404).json({ error: "Contact not found" });
+        return;
+      }
+      const body = req.body as { content?: string };
+      if (!body.content || typeof body.content !== "string" || body.content.trim().length === 0) {
+        res.status(400).json({ error: "content is required" });
+        return;
+      }
+      const message = repository.insertManualReply({
+        contactId: contact.id,
+        platform: contact.platform,
+        content: body.content.trim(),
+      });
+      if (!message) {
+        res.status(500).json({ error: "Failed to insert reply" });
+        return;
+      }
+      res.json({ ok: true, message });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      res.status(500).json({ error: msg });
+    }
   });
 
   return router;

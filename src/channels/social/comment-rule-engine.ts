@@ -63,6 +63,11 @@ export class CommentRuleEngine extends EventEmitter {
    * Returns the list of matched rule IDs.
    */
   async evaluate(comment: IncomingComment): Promise<string[]> {
+    // Skip if this comment was already processed (webhook retry / poll overlap)
+    if (this.repository.hasCommentBeenProcessed(comment.commentId, comment.platform)) {
+      return [];
+    }
+
     const rules = this.repository.listRules(comment.platform);
     const enabled = rules.filter((r) => r.enabled === 1);
     const matched: string[] = [];

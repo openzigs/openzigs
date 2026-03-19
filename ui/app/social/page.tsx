@@ -23,12 +23,28 @@ import {
   useUpdateContact,
   useCloseHandoff,
   useSocialConfig,
+  useSocialWebhookLog,
+  useTogglePlatform,
+  useGenerateRule,
+  useFollowUps,
+  useCreateFollowUp,
+  useDeleteFollowUp,
+  useSocialAnalytics,
+  useSocialLeads,
+  usePendingApprovals,
+  useApproveReply,
+  useRejectReply,
+  useEditAndApproveReply,
+  useSendReply,
   type Contact,
   type CommentRule,
   type PlatformConfigEntry,
+  type FollowUpStep,
+  type AnalyticsEntry,
+  type LeadEntry,
 } from "@/lib/hooks/use-social";
 
-type Tab = "dashboard" | "crm" | "automations" | "activity" | "settings";
+type Tab = "dashboard" | "crm" | "automations" | "activity" | "settings" | "leads" | "analytics";
 
 export default function SocialBrainPage() {
   const [activeTab, setActiveTab] = useState<Tab>("dashboard");
@@ -48,7 +64,7 @@ export default function SocialBrainPage() {
 
       {/* Tab navigation */}
       <div className="mb-6 flex gap-1 rounded-lg bg-muted p-1">
-        {(["dashboard", "crm", "automations", "activity", "settings"] as Tab[]).map((tab) => (
+        {(["dashboard", "crm", "automations", "leads", "analytics", "activity", "settings"] as Tab[]).map((tab) => (
           <button
             key={tab}
             onClick={() => setActiveTab(tab)}
@@ -66,6 +82,8 @@ export default function SocialBrainPage() {
       {activeTab === "dashboard" && <DashboardTab />}
       {activeTab === "crm" && <CrmTab />}
       {activeTab === "automations" && <AutomationsTab />}
+      {activeTab === "leads" && <LeadsTab />}
+      {activeTab === "analytics" && <AnalyticsTab />}
       {activeTab === "activity" && <ActivityTab />}
       {activeTab === "settings" && <SettingsTab />}
 
@@ -180,7 +198,7 @@ function CrmTab() {
           className="rounded-md border border-border bg-background px-3 py-2 text-sm"
         >
           <option value="">All Platforms</option>
-          {["twitter", "linkedin", "reddit", "youtube", "tiktok"].map((p) => (
+          {["twitter", "linkedin", "reddit", "youtube", "tiktok", "instagram", "facebook"].map((p) => (
             <option key={p} value={p}>{p}</option>
           ))}
         </select>
@@ -279,8 +297,10 @@ function ContactDetail({ contact, onClose }: { contact: Contact; onClose: () => 
   const addTag = useAddTag();
   const updateContact = useUpdateContact();
   const closeHandoff = useCloseHandoff();
+  const sendReply = useSendReply();
   const [newTag, setNewTag] = useState("");
   const [notes, setNotes] = useState(contact.notes);
+  const [replyText, setReplyText] = useState("");
 
   const messages = messagesData?.messages ?? [];
 
@@ -401,6 +421,111 @@ function ContactDetail({ contact, onClose }: { contact: Contact; onClose: () => 
             </div>
           ))}
         </div>
+
+        {/* Reply compose */}
+        <div className="mt-2 flex gap-2">
+          <input
+            type="text"
+            value={replyText}
+            onChange={(e) => setReplyText(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && replyText.trim()) {
+                sendReply.mutate(
+                  { contactId: contact.id, content: replyText.trim() },
+                  {
+                    onSuccess: () => { setReplyText(""); showToast("Reply sent", "success"); },
+                    onError: (err) => showToast(`Failed: ${err.message}`, "error"),
+                  },
+                );
+              }
+            }}
+            placeholder="Type a reply..."
+            className="flex-1 rounded-md border border-border bg-background px-3 py-2 text-sm"
+          />
+          <button
+            onClick={() => {
+              if (!replyText.trim()) return;
+              sendReply.mutate(
+                { contactId: contact.id, content: replyText.trim() },
+                {
+                  onSuccess: () => { setReplyText(""); showToast("Reply sent", "success"); },
+                  onError: (err) => showToast(`Failed: ${err.message}`, "error"),
+                },
+              );
+            }}
+            disabled={!replyText.trim() || sendReply.isPending}
+            className="rounded-md bg-primary px-4 py-2 text-sm text-primary-foreground disabled:opacity-50"
+          >
+            {sendReply.isPending ? "Sending..." : "Send"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── AI Rule Generator ──────────────────────────────────────────────────
+
+function AiRuleGenerator({
+  onGenerated,
+  generateRule,
+}: {
+  onGenerated: (rule: Partial<CommentRule>) => void;
+  generateRule: ReturnType<typeof useGenerateRule>;
+}) {
+  const [description, setDescription] = useState("");
+  const [platform, setPlatform] = useState("");
+  const [model, setModel] = useState("");
+
+  const handleGenerate = () => {
+    if (!description.trim()) return;
+    generateRule.mutate(
+      { description, platform: platform || undefined, model: model || undefined },
+      {
+        onSuccess: (data) => {
+          if (data.rule) onGenerated(data.rule as Partial<CommentRule>);
+        },
+        onError: (err) => showToast(`Generation failed: ${err.message}`, "error"),
+      },
+    );
+  };
+
+  return (
+    <div className="rounded-lg border border-purple-500/30 bg-purple-500/5 p-4 space-y-3">
+      <h3 className="text-sm font-semibold flex items-center gap-1.5">
+        <span>✨</span> AI Rule Generator
+      </h3>
+      <textarea
+        value={description}
+        onChange={(e) => setDescription(e.target.value)}
+        rows={3}
+        placeholder="Describe the automation you want, e.g. 'When someone comments asking about pricing on my Instagram posts, DM them a link to our pricing page and reply publicly to check their DMs'"
+        className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+      />
+      <div className="flex items-end gap-3">
+        <div className="flex-1">
+          <label className="text-xs font-medium text-muted-foreground">Platform (optional)</label>
+          <select value={platform} onChange={(e) => setPlatform(e.target.value)}
+            className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm">
+            <option value="">Auto-detect</option>
+            {["twitter", "instagram", "facebook", "linkedin", "youtube", "reddit", "tiktok"].map((p) => (
+              <option key={p} value={p}>{p}</option>
+            ))}
+          </select>
+        </div>
+        <div className="flex-1">
+          <label className="text-xs font-medium text-muted-foreground">LLM Model</label>
+          <div className="mt-1">
+            <InlineModelPicker value={model} onChange={setModel} className="w-full" />
+          </div>
+        </div>
+        <button
+          onClick={handleGenerate}
+          disabled={generateRule.isPending || !description.trim()}
+          className="rounded-md bg-purple-600 px-4 py-2 text-sm text-white disabled:opacity-50"
+        >
+          {generateRule.isPending ? "Generating..." : "Generate Rule"}
+        </button>
       </div>
     </div>
   );
@@ -413,8 +538,11 @@ function AutomationsTab() {
   const createRule = useCreateRule();
   const updateRule = useUpdateRule();
   const deleteRule = useDeleteRule();
+  const generateRule = useGenerateRule();
   const [showCreate, setShowCreate] = useState(false);
+  const [showAiGenerate, setShowAiGenerate] = useState(false);
   const [ruleToDelete, setRuleToDelete] = useState<CommentRule | null>(null);
+  const [expandedRuleId, setExpandedRuleId] = useState<string | null>(null);
 
   const rules = data?.rules ?? [];
 
@@ -445,13 +573,33 @@ function AutomationsTab() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <h2 className="text-lg font-semibold">Comment Automation Rules</h2>
-        <button
-          onClick={() => setShowCreate(!showCreate)}
-          className="rounded-md bg-primary px-4 py-2 text-sm text-primary-foreground"
-        >
-          {showCreate ? "Cancel" : "+ New Rule"}
-        </button>
+        <div className="flex gap-2">
+          <button
+            onClick={() => { setShowAiGenerate(!showAiGenerate); setShowCreate(false); }}
+            className="rounded-md border border-primary/30 bg-primary/10 px-4 py-2 text-sm text-primary hover:bg-primary/20"
+          >
+            {showAiGenerate ? "Cancel" : "AI Generate"}
+          </button>
+          <button
+            onClick={() => { setShowCreate(!showCreate); setShowAiGenerate(false); }}
+            className="rounded-md bg-primary px-4 py-2 text-sm text-primary-foreground"
+          >
+            {showCreate ? "Cancel" : "+ New Rule"}
+          </button>
+        </div>
       </div>
+
+      {showAiGenerate && (
+        <AiRuleGenerator
+          onGenerated={(rule) => {
+            createRule.mutate(rule, {
+              onSuccess: () => { setShowAiGenerate(false); showToast("AI-generated rule created", "success"); },
+              onError: (err) => showToast(`Failed: ${err.message}`, "error"),
+            });
+          }}
+          generateRule={generateRule}
+        />
+      )}
 
       {showCreate && (
         <RuleForm
@@ -471,7 +619,7 @@ function AutomationsTab() {
           {rules.map((rule) => (
             <div key={rule.id} className="rounded-lg border border-border bg-card p-4">
               <div className="flex items-start justify-between">
-                <div>
+                <div className="flex-1 cursor-pointer" onClick={() => setExpandedRuleId(expandedRuleId === rule.id ? null : rule.id)}>
                   <div className="flex items-center gap-2">
                     <h3 className="font-medium">{rule.name}</h3>
                     <PlatformBadge platform={rule.platform} />
@@ -480,6 +628,9 @@ function AutomationsTab() {
                     }`}>
                       {rule.enabled ? "Active" : "Disabled"}
                     </span>
+                    {(rule as CommentRule & { use_ai_reply?: number }).use_ai_reply ? (
+                      <span className="rounded-full bg-purple-500/10 px-2 py-0.5 text-xs text-purple-600">AI Reply</span>
+                    ) : null}
                   </div>
                   <p className="text-xs text-muted-foreground mt-1">
                     Keywords: {JSON.parse(rule.keywords).join(", ") || "none"} &middot;
@@ -507,6 +658,7 @@ function AutomationsTab() {
                   </button>
                 </div>
               </div>
+              {expandedRuleId === rule.id && <FollowUpStepsSection ruleId={rule.id} />}
             </div>
           ))}
         </div>
@@ -539,6 +691,8 @@ function RuleForm({ onSubmit }: { onSubmit: (data: Partial<CommentRule>) => void
   const [maxPerUser, setMaxPerUser] = useState(1);
   const [autoTag, setAutoTag] = useState("");
   const [ruleModel, setRuleModel] = useState("");
+  const [useAiReply, setUseAiReply] = useState(false);
+  const [aiReplyContext, setAiReplyContext] = useState("");
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -553,7 +707,9 @@ function RuleForm({ onSubmit }: { onSubmit: (data: Partial<CommentRule>) => void
       max_triggers_per_user: maxPerUser,
       auto_tag: autoTag || null,
       model: ruleModel || null,
-    });
+      use_ai_reply: useAiReply ? 1 : 0,
+      ai_reply_context: aiReplyContext || null,
+    } as Partial<CommentRule>);
   };
 
   return (
@@ -568,7 +724,7 @@ function RuleForm({ onSubmit }: { onSubmit: (data: Partial<CommentRule>) => void
           <label className="text-xs font-medium text-muted-foreground">Platform</label>
           <select value={platform} onChange={(e) => setPlatform(e.target.value)}
             className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm">
-            {["twitter", "linkedin", "reddit", "youtube", "tiktok"].map((p) => (
+            {["twitter", "linkedin", "reddit", "youtube", "tiktok", "instagram", "facebook"].map((p) => (
               <option key={p} value={p}>{p}</option>
             ))}
           </select>
@@ -610,6 +766,24 @@ function RuleForm({ onSubmit }: { onSubmit: (data: Partial<CommentRule>) => void
             placeholder="lead"
             className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm" />
         </div>
+      </div>
+      {/* AI Reply toggle & context */}
+      <div className="rounded-md border border-border p-3 space-y-2">
+        <label className="flex items-center gap-2 cursor-pointer">
+          <input type="checkbox" checked={useAiReply} onChange={(e) => setUseAiReply(e.target.checked)}
+            className="h-4 w-4 rounded border-border" />
+          <span className="text-xs font-medium text-muted-foreground">Use AI-Generated Replies</span>
+          <span className="text-[10px] text-purple-500">(instead of static templates)</span>
+        </label>
+        {useAiReply && (
+          <div>
+            <label className="text-xs font-medium text-muted-foreground">AI Context / Instructions</label>
+            <textarea value={aiReplyContext} onChange={(e) => setAiReplyContext(e.target.value)} rows={3}
+              placeholder="Tell the AI about your brand, products, tone of voice, and what to say (up to 10K chars)..."
+              className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm" />
+            <p className="text-[10px] text-muted-foreground mt-0.5">The AI will use this context to generate personalized replies to each comment</p>
+          </div>
+        )}
       </div>
       <div>
         <label className="text-xs font-medium text-muted-foreground">LLM Model Override</label>
@@ -671,10 +845,91 @@ function AutomationLogSection() {
 
 function ActivityTab() {
   const { data } = useSocialActivity(100);
+  const { data: approvalsData } = usePendingApprovals();
+  const approveReply = useApproveReply();
+  const rejectReply = useRejectReply();
+  const editAndApprove = useEditAndApproveReply();
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editContent, setEditContent] = useState("");
   const messages = data?.messages ?? [];
+  const pending = approvalsData?.data ?? [];
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
+      {/* Approval Queue */}
+      {pending.length > 0 && (
+        <div>
+          <h2 className="text-lg font-semibold mb-2">
+            Pending Approval <span className="ml-2 rounded-full bg-orange-500/10 px-2 py-0.5 text-xs text-orange-600">{pending.length}</span>
+          </h2>
+          <div className="space-y-2">
+            {pending.map((p) => (
+              <div key={p.id} className="rounded-lg border border-orange-500/30 bg-orange-500/5 p-4">
+                <div className="flex items-center gap-2 mb-2">
+                  <PlatformBadge platform={p.platform} />
+                  <span className="text-sm font-medium">→ @{p.contact_username || "unknown"}</span>
+                  <span className="text-xs text-muted-foreground">{new Date(p.created_at).toLocaleString()}</span>
+                </div>
+                {editingId === p.id ? (
+                  <div className="space-y-2">
+                    <textarea
+                      value={editContent}
+                      onChange={(e) => setEditContent(e.target.value)}
+                      rows={3}
+                      className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+                    />
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => {
+                          editAndApprove.mutate({ id: p.id, content: editContent }, {
+                            onSuccess: () => { setEditingId(null); showToast("Reply edited & approved", "success"); },
+                            onError: (err) => showToast(`Error: ${err.message}`, "error"),
+                          });
+                        }}
+                        className="rounded-md bg-primary px-3 py-1 text-xs text-primary-foreground"
+                      >
+                        Save & Approve
+                      </button>
+                      <button onClick={() => setEditingId(null)} className="rounded-md border border-border px-3 py-1 text-xs">Cancel</button>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <p className="text-sm mb-3">{p.content}</p>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => approveReply.mutate(p.id, {
+                          onSuccess: () => showToast("Reply approved", "success"),
+                          onError: (err) => showToast(`Error: ${err.message}`, "error"),
+                        })}
+                        className="rounded-md bg-green-600 px-3 py-1 text-xs text-white"
+                      >
+                        Approve
+                      </button>
+                      <button
+                        onClick={() => { setEditingId(p.id); setEditContent(p.content); }}
+                        className="rounded-md border border-border px-3 py-1 text-xs"
+                      >
+                        Edit
+                      </button>
+                      <button
+                        onClick={() => rejectReply.mutate(p.id, {
+                          onSuccess: () => showToast("Reply rejected", "success"),
+                          onError: (err) => showToast(`Error: ${err.message}`, "error"),
+                        })}
+                        className="rounded-md bg-red-600 px-3 py-1 text-xs text-white"
+                      >
+                        Reject
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       <h2 className="text-lg font-semibold">Recent Activity</h2>
 
       {messages.length === 0 ? (
@@ -702,9 +957,11 @@ function ActivityTab() {
                     m.status === "auto_replied" ? "bg-green-500/10 text-green-600" :
                     m.status === "escalated" ? "bg-orange-500/10 text-orange-600" :
                     m.status === "failed" ? "bg-red-500/10 text-red-600" :
+                    m.status === "pending_approval" ? "bg-yellow-500/10 text-yellow-600" :
+                    m.status === "rejected" ? "bg-red-500/10 text-red-500" :
                     "bg-muted text-muted-foreground"
                   }`}>
-                    {m.status}
+                    {m.status === "pending_approval" ? "pending approval" : m.status}
                   </span>
                 </div>
                 <p className="mt-1 text-sm truncate">{m.content}</p>
@@ -730,6 +987,34 @@ function SettingsTab() {
   });
   const voices = voicesQuery.data?.voices ?? [];
   const [savingVoice, setSavingVoice] = useState(false);
+
+  // Fetch brain settings from admin endpoint
+  const brainSettingsQuery = useQuery({
+    queryKey: ["social", "brain-settings"],
+    queryFn: () => fetchJson<{
+      enabled: boolean;
+      confidenceThreshold: string;
+      commentAutomation: boolean;
+      commentBrainEnabled: boolean;
+      approvalRequired: boolean;
+      notifications: { enabled: boolean; telegram: boolean; discord: boolean; web: boolean };
+      handoff: Record<string, unknown>;
+    }>("/api/admin/social-brain/settings"),
+    refetchInterval: 30_000,
+  });
+
+  const saveBrainSettings = useMutation({
+    mutationFn: (settings: Record<string, unknown>) =>
+      fetchJson("/api/admin/social-brain/settings", {
+        method: "POST",
+        body: JSON.stringify(settings),
+      }),
+    onSuccess: () => {
+      showToast("Settings saved", "success");
+      brainSettingsQuery.refetch();
+    },
+    onError: (err) => showToast(`Error: ${(err as Error).message}`, "error"),
+  });
 
   const voiceMutation = useMutation({
     mutationFn: (brandVoiceId: string | null) =>
@@ -802,6 +1087,88 @@ function SettingsTab() {
         ))}
       </div>
 
+      {/* AI Brain Settings */}
+      <SectionCard title="AI Reply Settings" defaultOpen={true}>
+        <div className="space-y-4">
+          <label className="flex items-center gap-3">
+            <input
+              type="checkbox"
+              checked={brainSettingsQuery.data?.commentBrainEnabled ?? false}
+              onChange={(e) => saveBrainSettings.mutate({ commentBrainEnabled: e.target.checked })}
+              className="h-4 w-4 rounded border-border"
+            />
+            <div>
+              <p className="text-sm font-medium">AI Comment Replies</p>
+              <p className="text-xs text-muted-foreground">Route comments (with no matching keyword rule) through the AI Brain for auto-reply</p>
+            </div>
+          </label>
+          <label className="flex items-center gap-3">
+            <input
+              type="checkbox"
+              checked={brainSettingsQuery.data?.approvalRequired ?? false}
+              onChange={(e) => saveBrainSettings.mutate({ approvalRequired: e.target.checked })}
+              className="h-4 w-4 rounded border-border"
+            />
+            <div>
+              <p className="text-sm font-medium">Require Approval</p>
+              <p className="text-xs text-muted-foreground">Hold AI-generated replies for human review before sending (recommended)</p>
+            </div>
+          </label>
+        </div>
+      </SectionCard>
+
+      {/* Notification Settings */}
+      <SectionCard title="Notification Settings" defaultOpen={true}>
+        <div className="space-y-4">
+          <label className="flex items-center gap-3">
+            <input
+              type="checkbox"
+              checked={brainSettingsQuery.data?.notifications?.enabled ?? false}
+              onChange={(e) => saveBrainSettings.mutate({ notifications: { enabled: e.target.checked } })}
+              className="h-4 w-4 rounded border-border"
+            />
+            <div>
+              <p className="text-sm font-medium">Enable Push Notifications</p>
+              <p className="text-xs text-muted-foreground">Push incoming message and comment alerts to configured channels</p>
+            </div>
+          </label>
+          {brainSettingsQuery.data?.notifications?.enabled && (
+            <div className="ml-7 space-y-3">
+              <label className="flex items-center gap-3">
+                <input
+                  type="checkbox"
+                  checked={brainSettingsQuery.data?.notifications?.telegram ?? true}
+                  onChange={(e) => saveBrainSettings.mutate({ notifications: { telegram: e.target.checked } })}
+                  className="h-4 w-4 rounded border-border"
+                />
+                <span className="text-sm">Telegram</span>
+              </label>
+              <label className="flex items-center gap-3">
+                <input
+                  type="checkbox"
+                  checked={brainSettingsQuery.data?.notifications?.discord ?? true}
+                  onChange={(e) => saveBrainSettings.mutate({ notifications: { discord: e.target.checked } })}
+                  className="h-4 w-4 rounded border-border"
+                />
+                <span className="text-sm">Discord</span>
+              </label>
+              <label className="flex items-center gap-3">
+                <input
+                  type="checkbox"
+                  checked={brainSettingsQuery.data?.notifications?.web ?? true}
+                  onChange={(e) => saveBrainSettings.mutate({ notifications: { web: e.target.checked } })}
+                  className="h-4 w-4 rounded border-border"
+                />
+                <span className="text-sm">Web (Socket.IO — always available)</span>
+              </label>
+            </div>
+          )}
+        </div>
+      </SectionCard>
+
+      {/* Webhook event log */}
+      <WebhookEventLog />
+
       {/* Setup guide */}
       <SectionCard title="Quick Setup Guide" defaultOpen={false}>
         <div className="space-y-3 text-sm">
@@ -812,9 +1179,9 @@ function SettingsTab() {
             </p>
           </div>
           <div>
-            <p className="font-medium">2. Enable platforms in config</p>
+            <p className="font-medium">2. Enable platforms</p>
             <p className="text-muted-foreground">
-              Set <code className="rounded bg-muted px-1">socialBrain.connections.&lt;platform&gt;.enabled: true</code> in <code className="rounded bg-muted px-1">~/.openzigs/config.json</code>.
+              Use the toggle switch on each platform card above to enable it. Polling platforms will start fetching data; webhook platforms will begin processing inbound events.
             </p>
           </div>
           <div>
@@ -835,24 +1202,52 @@ function SettingsTab() {
   );
 }
 
+function relativeTime(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime();
+  const secs = Math.floor(diff / 1000);
+  if (secs < 60) return `${secs}s ago`;
+  const mins = Math.floor(secs / 60);
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  return `${hrs}h ago`;
+}
+
 function PlatformCard({ platform: p }: { platform: PlatformConfigEntry }) {
-  const statusColor = p.connected
+  const toggle = useTogglePlatform();
+
+  const isActive = p.enabled && p.connected;
+  const needsToken = !p.configured;
+
+  const statusColor = isActive
     ? "border-green-500/30 bg-green-500/5"
     : p.configured
-      ? "border-yellow-500/30 bg-yellow-500/5"
+      ? p.enabled
+        ? "border-blue-500/30 bg-blue-500/5"
+        : "border-border"
       : "border-border";
 
-  const statusLabel = p.connected
-    ? "Connected"
-    : p.configured
-      ? "Token Set — Not Enabled"
-      : "Not Configured";
+  const statusLabel = needsToken
+    ? "Needs Setup"
+    : isActive
+      ? "Active"
+      : p.enabled
+        ? "Enabled"
+        : "Disabled";
 
-  const statusBadgeColor = p.connected
-    ? "bg-green-500/10 text-green-600"
-    : p.configured
-      ? "bg-yellow-500/10 text-yellow-600"
-      : "bg-muted text-muted-foreground";
+  const statusBadgeColor = needsToken
+    ? "bg-muted text-muted-foreground"
+    : isActive
+      ? "bg-green-500/10 text-green-600"
+      : p.enabled
+        ? "bg-blue-500/10 text-blue-600"
+        : "bg-muted text-muted-foreground";
+
+  const modeLabel = p.mode === "polling"
+    ? (p.pollHealth?.backoffUntil && new Date() < new Date(p.pollHealth.backoffUntil) ? "Backoff" : "Polling")
+    : "Webhook";
+
+  const isInBackoff = p.mode === "polling" && !!(p.pollHealth?.backoffUntil && new Date() < new Date(p.pollHealth.backoffUntil));
+  const hasErrors = (p.pollHealth?.consecutiveErrors ?? 0) > 0;
 
   return (
     <div className={`rounded-lg border p-4 ${statusColor}`}>
@@ -863,14 +1258,64 @@ function PlatformCard({ platform: p }: { platform: PlatformConfigEntry }) {
             {statusLabel}
           </span>
         </div>
-        <span className="text-xs text-muted-foreground capitalize">{p.mode}</span>
+        <div className="flex items-center gap-2">
+          {p.mode === "polling" && p.activelyPolling && !isInBackoff && (
+            <span className="relative flex h-2 w-2">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75" />
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500" />
+            </span>
+          )}
+          {isInBackoff && (
+            <span className="relative flex h-2 w-2">
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-yellow-500" />
+            </span>
+          )}
+          <span className={`text-xs capitalize ${isInBackoff ? "text-yellow-600" : "text-muted-foreground"}`}>{modeLabel}</span>
+          {hasErrors && (
+            <span className="rounded-full bg-destructive/10 px-1.5 py-0.5 text-xs font-medium text-destructive">
+              {p.pollHealth!.consecutiveErrors} err
+            </span>
+          )}
+          {/* Enable / Disable toggle */}
+          <button
+            type="button"
+            onClick={() => {
+              toggle.mutate(
+                { platform: p.platform, enabled: !p.enabled },
+                {
+                  onSuccess: () => showToast(`${p.platform} ${!p.enabled ? "enabled" : "disabled"}`, "success"),
+                  onError: (err) => showToast(`Error: ${(err as Error).message}`, "error"),
+                },
+              );
+            }}
+            disabled={toggle.isPending}
+            className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+              p.enabled ? "bg-green-500" : "bg-muted-foreground/30"
+            } ${toggle.isPending ? "opacity-50 cursor-not-allowed" : ""}`}
+            role="switch"
+            aria-checked={p.enabled}
+            aria-label={`${p.enabled ? "Disable" : "Enable"} ${p.platform}`}
+          >
+            <span
+              className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-sm ring-0 transition duration-200 ${
+                p.enabled ? "translate-x-4" : "translate-x-0"
+              }`}
+            />
+          </button>
+        </div>
       </div>
 
       <div className="space-y-2 text-xs">
         <div className="flex items-center justify-between">
           <span className="text-muted-foreground">Access Token</span>
-          <span className={p.configured ? "text-green-600" : "text-muted-foreground"}>
+          <span className={p.configured ? "text-green-600" : "text-destructive"}>
             {p.configured ? "Configured" : "Missing"}
+          </span>
+        </div>
+        <div className="flex items-center justify-between">
+          <span className="text-muted-foreground">Adapter</span>
+          <span className={p.adapterRegistered ? "text-green-600" : "text-muted-foreground"}>
+            {p.adapterRegistered ? "Registered" : "Not Registered"}
           </span>
         </div>
         <div>
@@ -878,9 +1323,35 @@ function PlatformCard({ platform: p }: { platform: PlatformConfigEntry }) {
           <code className="rounded bg-muted px-1">{p.envVar}</code>
         </div>
         <div>
-          <span className="text-muted-foreground">Webhook: </span>
+          <span className="text-muted-foreground">{p.mode === "polling" ? "Endpoint: " : "Webhook: "}</span>
           <code className="rounded bg-muted px-1 break-all">{p.webhookPath}</code>
         </div>
+        {p.mode === "polling" && p.pollHealth && (
+          <>
+            <div className="flex items-center justify-between">
+              <span className="text-muted-foreground">Last poll</span>
+              <span className={p.pollHealth.lastSuccess ? "text-green-600" : "text-muted-foreground"}>
+                {p.pollHealth.lastSuccess ? relativeTime(p.pollHealth.lastSuccess) : "Never"}
+              </span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-muted-foreground">Total polls</span>
+              <span className="tabular-nums">{p.pollHealth.totalPolls}</span>
+            </div>
+            {isInBackoff && p.pollHealth.lastError && (
+              <div className="rounded bg-yellow-500/10 p-2 text-yellow-700">
+                <p className="font-medium">Backoff active</p>
+                <p className="truncate mt-0.5 text-yellow-600/80">{p.pollHealth.lastError}</p>
+                <p className="mt-0.5">Retries at: {new Date(p.pollHealth.backoffUntil!).toLocaleTimeString()}</p>
+              </div>
+            )}
+          </>
+        )}
+        {!p.configured && (
+          <p className="text-xs text-destructive">
+            Set the env var above in your .env file and restart the server.
+          </p>
+        )}
         <a
           href={p.docsUrl}
           target="_blank"
@@ -896,6 +1367,50 @@ function PlatformCard({ platform: p }: { platform: PlatformConfigEntry }) {
 
 // ── Shared Components ──────────────────────────────────────────────────
 
+function WebhookEventLog() {
+  const { data } = useSocialWebhookLog();
+  const events = data?.events ?? [];
+
+  const title = events.length > 0
+    ? `Recent Webhook Events (${events.length})`
+    : "Recent Webhook Events";
+
+  return (
+    <SectionCard title={title} defaultOpen>
+      {events.length === 0 ? (
+        <div className="rounded-md border border-dashed border-yellow-500/30 bg-yellow-500/5 p-4 text-sm">
+          <p className="font-medium text-yellow-600 dark:text-yellow-400">No webhook events received yet</p>
+          <p className="mt-1 text-muted-foreground">
+            Events will appear here when platforms send webhooks to your server (including Meta verification pings).
+            If you&apos;ve configured webhooks on a platform&apos;s developer portal and still see nothing here, the webhook
+            URL may not be reachable — verify your Cloudflare tunnel is running and the platform can reach your server.
+          </p>
+          <p className="mt-2 text-xs text-muted-foreground">
+            Test with: <code className="rounded bg-muted px-1">curl -X POST https://&lt;your-domain&gt;/api/social/webhooks/instagram -H &quot;Content-Type: application/json&quot; -d &apos;{}&apos;</code>
+          </p>
+        </div>
+      ) : (
+        <div className="space-y-1 max-h-64 overflow-y-auto">
+          {events.slice().reverse().map((ev, i) => (
+            <div key={i} className="flex items-center gap-2 text-xs py-1 border-b border-border last:border-0">
+              <span className="text-muted-foreground font-mono w-[160px] shrink-0">
+                {new Date(ev.ts).toLocaleString()}
+              </span>
+              <PlatformBadge platform={ev.platform} />
+              <span className={ev.parsed ? "text-green-600" : "text-destructive"}>
+                {ev.parsed ? "Parsed" : "Failed"}
+              </span>
+              {ev.type && (
+                <span className="text-muted-foreground">({ev.type})</span>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </SectionCard>
+  );
+}
+
 function PlatformBadge({ platform }: { platform: string }) {
   const colors: Record<string, string> = {
     twitter: "bg-sky-500/10 text-sky-600",
@@ -903,12 +1418,233 @@ function PlatformBadge({ platform }: { platform: string }) {
     reddit: "bg-orange-500/10 text-orange-600",
     youtube: "bg-red-500/10 text-red-600",
     tiktok: "bg-fuchsia-500/10 text-fuchsia-600",
+    instagram: "bg-pink-500/10 text-pink-600",
+    facebook: "bg-blue-600/10 text-blue-600",
   };
 
   return (
     <span className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${colors[platform] ?? "bg-muted text-muted-foreground"}`}>
       {platform}
     </span>
+  );
+}
+
+function FollowUpStepsSection({ ruleId }: { ruleId: string }) {
+  const { data, isLoading } = useFollowUps(ruleId);
+  const createStep = useCreateFollowUp();
+  const deleteStep = useDeleteFollowUp();
+  const [showAdd, setShowAdd] = useState(false);
+  const [delay, setDelay] = useState(3600);
+  const [message, setMessage] = useState("");
+
+  const steps: FollowUpStep[] = data?.steps ?? [];
+
+  const handleAdd = () => {
+    if (!message.trim()) return;
+    createStep.mutate(
+      { ruleId, stepOrder: steps.length + 1, delaySeconds: delay, messageTemplate: message },
+      {
+        onSuccess: () => { setMessage(""); setDelay(3600); setShowAdd(false); },
+        onError: () => showToast("Failed to add follow-up step", "error"),
+      },
+    );
+  };
+
+  return (
+    <div className="border-t border-border pt-3 mt-3 space-y-2">
+      <div className="flex items-center justify-between">
+        <h4 className="text-xs font-semibold text-muted-foreground">Follow-Up Sequence</h4>
+        <button onClick={() => setShowAdd(!showAdd)} className="text-xs text-primary hover:underline">
+          {showAdd ? "Cancel" : "+ Add Step"}
+        </button>
+      </div>
+
+      {isLoading && <p className="text-xs text-muted-foreground">Loading...</p>}
+
+      {steps.length > 0 && (
+        <div className="space-y-1">
+          {steps.map((s, i) => (
+            <div key={s.id} className="flex items-center gap-2 rounded-md bg-muted/30 px-3 py-1.5 text-xs">
+              <span className="font-mono text-muted-foreground">#{i + 1}</span>
+              <span className="text-muted-foreground">after {Math.round(s.delay_seconds / 60)}m:</span>
+              <span className="flex-1 truncate">{s.message_template}</span>
+              <button
+                onClick={() => deleteStep.mutate({ ruleId, stepId: s.id })}
+                className="text-destructive hover:underline"
+              >×</button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {showAdd && (
+        <div className="flex items-end gap-2">
+          <div>
+            <label className="text-[10px] text-muted-foreground">Delay (sec)</label>
+            <input type="number" value={delay} onChange={(e) => setDelay(Number(e.target.value))} min={60}
+              className="w-24 rounded-md border border-border bg-background px-2 py-1 text-xs" />
+          </div>
+          <div className="flex-1">
+            <label className="text-[10px] text-muted-foreground">Message</label>
+            <input type="text" value={message} onChange={(e) => setMessage(e.target.value)}
+              placeholder="Just checking in..."
+              className="w-full rounded-md border border-border bg-background px-2 py-1 text-xs" />
+          </div>
+          <button onClick={handleAdd} disabled={createStep.isPending}
+            className="rounded-md bg-primary px-3 py-1 text-xs text-primary-foreground disabled:opacity-50">
+            Add
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function LeadsTab() {
+  const [platform, setPlatform] = useState<string>("");
+  const { data, isLoading } = useSocialLeads(platform || undefined, 100);
+  const leads: LeadEntry[] = data?.leads ?? [];
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <h2 className="text-lg font-semibold">Captured Leads</h2>
+        <select value={platform} onChange={(e) => setPlatform(e.target.value)}
+          className="rounded-md border border-border bg-background px-3 py-1.5 text-sm">
+          <option value="">All Platforms</option>
+          {["twitter", "linkedin", "instagram", "facebook", "youtube", "tiktok", "reddit"].map((p) => (
+            <option key={p} value={p}>{p}</option>
+          ))}
+        </select>
+      </div>
+
+      {isLoading && <p className="text-sm text-muted-foreground">Loading leads...</p>}
+
+      {!isLoading && leads.length === 0 && (
+        <div className="rounded-lg border border-dashed border-border p-8 text-center">
+          <p className="text-sm text-muted-foreground">No leads captured yet. Create automation rules with keywords to start capturing leads from comments.</p>
+        </div>
+      )}
+
+      {leads.length > 0 && (
+        <div className="overflow-x-auto rounded-lg border border-border">
+          <table className="w-full text-sm">
+            <thead className="border-b border-border bg-muted/30">
+              <tr>
+                <th className="px-4 py-2 text-left text-xs font-medium text-muted-foreground">Platform</th>
+                <th className="px-4 py-2 text-left text-xs font-medium text-muted-foreground">Username</th>
+                <th className="px-4 py-2 text-left text-xs font-medium text-muted-foreground">Name</th>
+                <th className="px-4 py-2 text-left text-xs font-medium text-muted-foreground">Email</th>
+                <th className="px-4 py-2 text-left text-xs font-medium text-muted-foreground">Phone</th>
+                <th className="px-4 py-2 text-left text-xs font-medium text-muted-foreground">Tags</th>
+                <th className="px-4 py-2 text-left text-xs font-medium text-muted-foreground">Captured</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border">
+              {leads.map((lead) => (
+                <tr key={lead.id} className="hover:bg-muted/20">
+                  <td className="px-4 py-2"><PlatformBadge platform={lead.platform} /></td>
+                  <td className="px-4 py-2 font-mono text-xs">@{lead.username}</td>
+                  <td className="px-4 py-2">{lead.display_name || "—"}</td>
+                  <td className="px-4 py-2 text-xs">{lead.email || "—"}</td>
+                  <td className="px-4 py-2 text-xs">{lead.phone || "—"}</td>
+                  <td className="px-4 py-2"><TagList tags={lead.tags} /></td>
+                  <td className="px-4 py-2 text-xs text-muted-foreground">{relativeTime(lead.lead_captured_at)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AnalyticsTab() {
+  const [since, setSince] = useState<string>("");
+  const { data, isLoading } = useSocialAnalytics(since || undefined);
+  const analytics: AnalyticsEntry[] = data?.analytics ?? [];
+
+  const totals = analytics.reduce(
+    (acc, e) => ({
+      messages: acc.messages + e.total_messages_in + e.total_messages_out,
+      inbound: acc.inbound + e.total_messages_in,
+      outbound: acc.outbound + e.total_messages_out,
+      contacts: acc.contacts + e.total_conversations,
+    }),
+    { messages: 0, inbound: 0, outbound: 0, contacts: 0 },
+  );
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <h2 className="text-lg font-semibold">Conversation Analytics</h2>
+        <div className="flex items-center gap-2">
+          <label className="text-xs text-muted-foreground">Since</label>
+          <input type="date" value={since} onChange={(e) => setSince(e.target.value)}
+            className="rounded-md border border-border bg-background px-2 py-1 text-xs" />
+          {since && (
+            <button onClick={() => setSince("")} className="text-xs text-muted-foreground hover:text-foreground">Clear</button>
+          )}
+        </div>
+      </div>
+
+      {isLoading && <p className="text-sm text-muted-foreground">Loading analytics...</p>}
+
+      {/* Summary cards */}
+      <div className="grid grid-cols-4 gap-3">
+        <div className="rounded-lg border border-border p-4 text-center">
+          <p className="text-2xl font-bold">{totals.messages}</p>
+          <p className="text-xs text-muted-foreground">Total Messages</p>
+        </div>
+        <div className="rounded-lg border border-border p-4 text-center">
+          <p className="text-2xl font-bold">{totals.inbound}</p>
+          <p className="text-xs text-muted-foreground">Inbound</p>
+        </div>
+        <div className="rounded-lg border border-border p-4 text-center">
+          <p className="text-2xl font-bold">{totals.outbound}</p>
+          <p className="text-xs text-muted-foreground">Outbound</p>
+        </div>
+        <div className="rounded-lg border border-border p-4 text-center">
+          <p className="text-2xl font-bold">{totals.contacts}</p>
+          <p className="text-xs text-muted-foreground">Contacts</p>
+        </div>
+      </div>
+
+      {/* Per-platform breakdown */}
+      {analytics.length > 0 && (
+        <div className="rounded-lg border border-border overflow-hidden">
+          <table className="w-full text-sm">
+            <thead className="border-b border-border bg-muted/30">
+              <tr>
+                <th className="px-4 py-2 text-left text-xs font-medium text-muted-foreground">Platform</th>
+                <th className="px-4 py-2 text-right text-xs font-medium text-muted-foreground">Messages</th>
+                <th className="px-4 py-2 text-right text-xs font-medium text-muted-foreground">Inbound</th>
+                <th className="px-4 py-2 text-right text-xs font-medium text-muted-foreground">Outbound</th>
+                <th className="px-4 py-2 text-right text-xs font-medium text-muted-foreground">Contacts</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border">
+              {analytics.map((row) => (
+                <tr key={row.platform} className="hover:bg-muted/20">
+                  <td className="px-4 py-2"><PlatformBadge platform={row.platform} /></td>
+                  <td className="px-4 py-2 text-right font-mono">{row.total_messages_in + row.total_messages_out}</td>
+                  <td className="px-4 py-2 text-right font-mono">{row.total_messages_in}</td>
+                  <td className="px-4 py-2 text-right font-mono">{row.total_messages_out}</td>
+                  <td className="px-4 py-2 text-right font-mono">{row.total_conversations}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {!isLoading && analytics.length === 0 && (
+        <div className="rounded-lg border border-dashed border-border p-8 text-center">
+          <p className="text-sm text-muted-foreground">No analytics data yet. Start conversations via automation rules or direct messages.</p>
+        </div>
+      )}
+    </div>
   );
 }
 

@@ -8,6 +8,10 @@ vi.mock("../logging/logger.js", () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 
+vi.mock("../config/user-model.js", () => ({
+  getUserSelectedModel: vi.fn().mockResolvedValue("gpt-5-mini"),
+}));
+
 function createMockRepository() {
   const contacts = new Map<string, Record<string, unknown>>();
   contacts.set("c1", { id: "c1", platform: "twitter", username: "test_user", tags: "" });
@@ -50,6 +54,8 @@ function createMockRepository() {
 function createMockIngestion() {
   return {
     getRegisteredPlatforms: vi.fn(() => ["twitter"]),
+    getActivePollers: vi.fn(() => []),
+    getAllPollHealth: vi.fn(() => ({})),
     handleWebhook: vi.fn().mockResolvedValue(undefined),
   };
 }
@@ -75,6 +81,32 @@ function buildApp() {
   } as unknown as SocialRouterOptions;
   app.use("/social", createSocialRouter(opts));
   return { app, opts };
+}
+
+function createMockCopilot(responseText: string) {
+  return {
+    chat: vi.fn(async function* () {
+      yield responseText;
+    }),
+    listModels: vi.fn().mockResolvedValue([]),
+  };
+}
+
+function buildAppWithCopilot(response: string) {
+  const app = express();
+  app.use(express.json());
+  const copilot = createMockCopilot(response);
+  const opts = {
+    repository: createMockRepository(),
+    ingestion: createMockIngestion(),
+    brain: createMockBrain(),
+    handoff: createMockHandoff(),
+    ruleEngine: {},
+    config: { enabled: true, confidenceThreshold: "medium", connections: {} },
+    copilot,
+  } as unknown as SocialRouterOptions;
+  app.use("/social", createSocialRouter(opts));
+  return { app, opts, copilot };
 }
 
 describe("Social API router", () => {
@@ -474,8 +506,15 @@ describe("Social API router", () => {
     });
   });
 
-  // NOTE: GET /rules/log is shadowed by GET /rules/:id (registered earlier in Express).
-  // Express matches ":id" = "log" first, so this endpoint is unreachable. Skipping tests.
+  // GET /rules/log — now registered before /rules/:id so it's reachable
+  describe("GET /rules/log", () => {
+    it("returns automation log entries", async () => {
+      const { app } = buildApp();
+      const res = await request(app).get("/social/rules/log");
+      expect(res.status).toBe(200);
+      expect(res.body).toHaveProperty("log");
+    });
+  });
 
   describe("POST /handoff/:contactId/close — error paths", () => {
     it("returns 404 when handoff not found", async () => {
@@ -523,7 +562,7 @@ describe("Social API router", () => {
   });
 
   describe("GET /stats — connection status", () => {
-    it("shows all 5 platforms in connections", async () => {
+    it("shows all 7 platforms in connections", async () => {
       const { app } = buildApp();
       const res = await request(app).get("/social/stats");
       expect(res.status).toBe(200);
@@ -533,7 +572,9 @@ describe("Social API router", () => {
       expect(platforms).toContain("reddit");
       expect(platforms).toContain("youtube");
       expect(platforms).toContain("tiktok");
-      expect(platforms).toHaveLength(5);
+      expect(platforms).toContain("instagram");
+      expect(platforms).toContain("facebook");
+      expect(platforms).toHaveLength(7);
     });
 
     it("shows platform as connected when adapter registered and token present", async () => {
@@ -543,6 +584,8 @@ describe("Social API router", () => {
         repository: createMockRepository(),
         ingestion: {
           getRegisteredPlatforms: vi.fn(() => ["twitter", "reddit"]),
+          getActivePollers: vi.fn(() => []),
+          getAllPollHealth: vi.fn(() => ({})),
           handleWebhook: vi.fn().mockResolvedValue(undefined),
         },
         brain: createMockBrain(),
@@ -587,6 +630,8 @@ describe("Social API router", () => {
         repository: createMockRepository(),
         ingestion: {
           getRegisteredPlatforms: vi.fn(() => []),
+          getActivePollers: vi.fn(() => []),
+          getAllPollHealth: vi.fn(() => ({})),
           handleWebhook: vi.fn().mockResolvedValue(undefined),
         },
         brain: createMockBrain(),
@@ -750,6 +795,121 @@ describe("Social API router", () => {
       const { app } = buildApp();
       const res = await request(app).delete("/social/rules/r1/follow-ups/missing");
       expect(res.status).toBe(404);
+    });
+  });
+
+  describe("POST /rules/generate", () => {
+    const validRule = JSON.stringify({
+      name: "Lead Capture DM",
+      platform: "instagram",
+      keywords: ["pricing", "interested"],
+      dm_template: "Hey {{username}}, thanks for your interest!",
+      comment_reply_template: "Check your DMs!",
+      dm_delay_seconds: 30,
+      max_triggers_per_user: 3,
+      auto_tag: "lead",
+      use_ai_reply: false,
+      ai_reply_context: null,
+    });
+
+    it("generates a rule from description", async () => {
+      const { app, copilot } = buildAppWithCopilot(validRule);
+      const res = await request(app)
+        .post("/social/rules/generate")
+        .send({ description: "Capture leads who ask about pricing on Instagram" });
+      expect(res.status).toBe(200);
+      expect(res.body.rule).toBeDefined();
+      expect(res.body.rule.name).toBe("Lead Capture DM");
+      expect(res.body.rule.platform).toBe("instagram");
+      expect(copilot.chat).toHaveBeenCalledTimes(1);
+    });
+
+    it("accepts optional platform and model", async () => {
+      const { app, copilot } = buildAppWithCopilot(validRule);
+      const res = await request(app)
+        .post("/social/rules/generate")
+        .send({ description: "Auto-reply to comments", platform: "twitter", model: "gpt-5" });
+      expect(res.status).toBe(200);
+      expect(copilot.chat).toHaveBeenCalledWith(
+        expect.stringContaining("twitter"),
+        expect.objectContaining({ model: "gpt-5" }),
+      );
+    });
+
+    it("returns 503 when copilot unavailable", async () => {
+      const { app } = buildApp(); // no copilot
+      const res = await request(app)
+        .post("/social/rules/generate")
+        .send({ description: "Generate a rule" });
+      expect(res.status).toBe(503);
+      expect(res.body.error).toMatch(/copilot/i);
+    });
+
+    it("returns 400 for empty description", async () => {
+      const { app } = buildAppWithCopilot(validRule);
+      const res = await request(app)
+        .post("/social/rules/generate")
+        .send({ description: "" });
+      expect(res.status).toBe(400);
+    });
+
+    it("returns 400 for missing description", async () => {
+      const { app } = buildAppWithCopilot(validRule);
+      const res = await request(app)
+        .post("/social/rules/generate")
+        .send({});
+      expect(res.status).toBe(400);
+    });
+
+    it("strips markdown fences from response", async () => {
+      const fenced = "```json\n" + validRule + "\n```";
+      const { app } = buildAppWithCopilot(fenced);
+      const res = await request(app)
+        .post("/social/rules/generate")
+        .send({ description: "Generate a rule for leads" });
+      expect(res.status).toBe(200);
+      expect(res.body.rule.name).toBe("Lead Capture DM");
+    });
+
+    it("normalizes keywords array to JSON string", async () => {
+      const { app } = buildAppWithCopilot(validRule);
+      const res = await request(app)
+        .post("/social/rules/generate")
+        .send({ description: "A pricing rule" });
+      expect(res.status).toBe(200);
+      // keywords should be serialized to JSON string
+      expect(typeof res.body.rule.keywords).toBe("string");
+      expect(JSON.parse(res.body.rule.keywords as string)).toEqual(["pricing", "interested"]);
+    });
+
+    it("normalizes use_ai_reply boolean to integer", async () => {
+      const aiRule = JSON.stringify({
+        name: "AI DM",
+        platform: "twitter",
+        keywords: ["help"],
+        dm_template: "Hi!",
+        comment_reply_template: null,
+        dm_delay_seconds: 0,
+        max_triggers_per_user: 1,
+        auto_tag: null,
+        use_ai_reply: true,
+        ai_reply_context: "Be helpful and friendly",
+      });
+      const { app } = buildAppWithCopilot(aiRule);
+      const res = await request(app)
+        .post("/social/rules/generate")
+        .send({ description: "AI powered support rule" });
+      expect(res.status).toBe(200);
+      expect(res.body.rule.use_ai_reply).toBe(1);
+      expect(res.body.rule.ai_reply_context).toBe("Be helpful and friendly");
+    });
+
+    it("returns 500 for invalid JSON from copilot", async () => {
+      const { app } = buildAppWithCopilot("This is not valid JSON at all.");
+      const res = await request(app)
+        .post("/social/rules/generate")
+        .send({ description: "Some rule" });
+      expect(res.status).toBe(500);
     });
   });
 });

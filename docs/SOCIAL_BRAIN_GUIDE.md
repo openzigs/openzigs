@@ -28,8 +28,16 @@ This guide walks through every step needed to get Social Brain running: Cloudfla
 - [Settings Tab — Connection Status](#settings-tab--connection-status)
 - [CRM Usage Guide](#crm-usage-guide)
 - [Automation Rules (Comment-to-DM)](#automation-rules-comment-to-dm)
+- [AI Rule Generation](#ai-rule-generation)
+- [Follow-Up Sequences](#follow-up-sequences)
 - [AI Auto-Reply (Brain Engine)](#ai-auto-reply-brain-engine)
+- [AI Comment Replies](#ai-comment-replies)
+- [Approval Queue](#approval-queue)
+- [Manual Reply (Compose UI)](#manual-reply-compose-ui)
+- [Push Notifications](#push-notifications)
 - [Human Handoff](#human-handoff)
+- [Leads Tab](#leads-tab)
+- [Analytics Tab](#analytics-tab)
 - [MCP Tools (Chat Interface)](#mcp-tools-chat-interface)
   - [Social CRM Tools](#social-crm-tools)
   - [Platform-Specific Tools](#platform-specific-tools)
@@ -878,6 +886,100 @@ curl "http://localhost:3000/api/social/rules/log?limit=25" | python3 -m json.too
 
 ---
 
+## AI Rule Generation
+
+Instead of manually configuring keywords, templates, and settings, you can describe what you want in plain English and let the AI generate a complete automation rule.
+
+### Using the UI
+
+1. Navigate to `/social` → **Automations** tab
+2. Click the **AI Generate** button (sparkle icon)
+3. Enter a description, e.g., _"Capture leads who comment about pricing on Instagram"_
+4. Optionally select a target platform and model
+5. Click **Generate**
+6. Review the generated rule — edit any fields if needed
+7. Click **Save** to create the rule
+
+### Using the API
+
+```bash
+curl -X POST http://localhost:3000/api/social/rules/generate \
+  -H "Content-Type: application/json" \
+  -d '{
+    "description": "Welcome everyone who asks about our product on Twitter",
+    "platform": "twitter"
+  }'
+```
+
+**Response:**
+
+```json
+{
+  "rule": {
+    "name": "Product Welcome",
+    "platform": "twitter",
+    "keywords": "[\"product\", \"interested\", \"tell me more\", \"info\"]",
+    "dm_template": "Hey {{username}}! Thanks for your interest in our product. Here is everything you need to know: ...",
+    "comment_reply_template": "Thanks for asking, {{username}}! Check your DMs 📬",
+    "auto_tag": "product-interest",
+    "max_triggers_per_user": 1
+  }
+}
+```
+
+The `platform` parameter is optional — if omitted, the AI defaults to Instagram. The generated rule includes all standard fields (`name`, `keywords`, `dm_template`, `comment_reply_template`, `auto_tag`, `max_triggers_per_user`) ready to be saved via `POST /api/social/rules`.
+
+> **Requires:** Copilot SDK authentication. If the SDK is not connected, the endpoint returns HTTP 503.
+
+---
+
+## Follow-Up Sequences
+
+Follow-up sequences send timed DM messages after an automation rule triggers. This is useful for nurture campaigns — e.g., send a pricing link immediately, then follow up 1 hour later with a case study, and 24 hours later with a trial reminder.
+
+### Creating Follow-Up Steps via UI
+
+1. Navigate to `/social` → **Automations** tab
+2. Click any rule to expand its details
+3. The **Follow-Up Steps** section appears below the rule
+4. Click **+ Add Step** to create a new step
+5. Set the **delay** (in seconds) and **message template**
+6. Steps execute in order — step 0 fires first, then step 1, etc.
+
+### Creating Follow-Up Steps via API
+
+```bash
+# Add a 1-hour follow-up
+curl -X POST http://localhost:3000/api/social/rules/<ruleId>/follow-ups \
+  -H "Content-Type: application/json" \
+  -d '{
+    "stepOrder": 0,
+    "delaySeconds": 3600,
+    "messageTemplate": "Hey {{username}}, just following up — any questions about pricing?"
+  }'
+
+# Add a 24-hour follow-up
+curl -X POST http://localhost:3000/api/social/rules/<ruleId>/follow-ups \
+  -H "Content-Type: application/json" \
+  -d '{
+    "stepOrder": 1,
+    "delaySeconds": 86400,
+    "messageTemplate": "Hi {{username}}, last reminder — our free trial ends soon!"
+  }'
+
+# List steps for a rule
+curl http://localhost:3000/api/social/rules/<ruleId>/follow-ups
+
+# Delete a step
+curl -X DELETE http://localhost:3000/api/social/rules/<ruleId>/follow-ups/<stepId>
+```
+
+### How It Works
+
+When a rule triggers, the `FollowUpScheduler` creates pending jobs for each follow-up step. The scheduler runs on a cron interval and dispatches DMs when the delay has elapsed. If a DM fails, the job is marked as errored and the scheduler continues with the next step.
+
+---
+
 ## AI Auto-Reply (Brain Engine)
 
 The Brain Engine processes incoming DMs through a RAG pipeline:
@@ -923,6 +1025,140 @@ When a customer asks "What's your return policy?", the Brain searches the knowle
 
 ---
 
+## AI Comment Replies
+
+By default, the Brain Engine only processes DMs. You can enable **AI Comment Replies** to also route public comments through the Brain when no keyword automation rule matches.
+
+### Configuration
+
+Enable via the Settings tab on the Social Brain page, or through the config file:
+
+```json
+{
+  "socialBrain": {
+    "commentBrainEnabled": true
+  }
+}
+```
+
+When enabled:
+1. An incoming comment is first evaluated by the **Comment Rule Engine** (keyword automation)
+2. If no rules match, the comment is sent to the Brain Engine
+3. The Brain generates a public-appropriate reply using RAG context + post caption
+4. The reply is stored as an outbound message (either auto-sent or held for approval)
+
+### API
+
+```bash
+# Toggle via admin API
+curl -X POST http://localhost:3000/api/admin/social-brain/settings \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"commentBrainEnabled": true}'
+```
+
+---
+
+## Approval Queue
+
+When **Require Approval** is enabled, all AI-generated replies (both DM and comment) are held in a pending state for human review before being sent.
+
+### Configuration
+
+Enable via the Settings tab or config:
+
+```json
+{
+  "socialBrain": {
+    "approvalRequired": true
+  }
+}
+```
+
+### Workflow
+
+1. Brain Engine generates a reply → message is stored with `status: "pending_approval"`
+2. A real-time `social:pending_approval` Socket.IO event notifies the UI
+3. The **Activity tab** shows a "Pending Approval" section at the top with orange-highlighted cards
+4. For each pending reply, you can:
+   - **Approve** — sends the reply as-is
+   - **Edit & Approve** — modify the reply content, then send
+   - **Reject** — discards the reply (status changes to `rejected`)
+
+### API Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/social/approvals` | List all pending approval messages |
+| `GET` | `/api/social/approvals/count` | Get pending count (for badge display) |
+| `POST` | `/api/social/approvals/:id/approve` | Approve a pending reply |
+| `POST` | `/api/social/approvals/:id/reject` | Reject a pending reply |
+| `POST` | `/api/social/approvals/:id/edit` | Edit content and approve |
+
+---
+
+## Manual Reply (Compose UI)
+
+You can send manual replies directly from the CRM contact detail panel:
+
+1. Click on a contact in the CRM tab
+2. Scroll to the bottom of the messages list
+3. Type your reply in the "Type a reply..." input
+4. Click **Send** or press Enter
+
+Manual replies are stored with `source: "manual_reply"` metadata and sent via `DmDispatcher`.
+
+### API
+
+```bash
+curl -X POST http://localhost:3000/api/social/contacts/$CONTACT_ID/reply \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"content": "Thanks for reaching out!"}'
+```
+
+---
+
+## Push Notifications
+
+Real-time push notifications alert you to new messages, comments, and pending approvals across configured channels.
+
+### Configuration
+
+Enable via the Settings tab or config:
+
+```json
+{
+  "socialBrain": {
+    "notifications": {
+      "enabled": true,
+      "telegram": true,
+      "discord": true,
+      "web": true
+    }
+  }
+}
+```
+
+### Channels
+
+| Channel | Requirement | Event |
+|---------|-------------|-------|
+| **Web** (Socket.IO) | Always available | `social:new_message`, `social:new_comment`, `social:pending_approval` |
+| **Telegram** | Bot token + admin chat ID configured | Sends formatted alert to the admin chat |
+| **Discord** | Bot token + notification channel ID | Sends formatted alert to the notification channel |
+
+### Socket.IO Events
+
+| Event | Payload | Description |
+|-------|---------|-------------|
+| `social:new_message` | `{ contact, message }` | New inbound DM received |
+| `social:new_comment` | `{ comment }` | New inbound comment received |
+| `social:pending_approval` | `{ contact, message, result }` | AI reply held for approval |
+| `social:comment_reply` | `{ contact, comment, result }` | AI auto-replied to a comment |
+
+---
+
 ## Human Handoff
 
 When the AI cannot answer confidently, the conversation is escalated to a human operator:
@@ -956,6 +1192,64 @@ When the AI cannot answer confidently, the conversation is escalated to a human 
 curl -X POST http://localhost:3000/api/social/handoff/<contactId>/close \
   -H "Content-Type: application/json" \
   -d '{"resolution": "Issue resolved — refund processed"}'
+```
+
+---
+
+## Leads Tab
+
+The Leads tab at `/social` → **Leads** shows contacts who have shared their email address or phone number in a DM conversation. Lead capture happens automatically — the `LeadCaptureService` scans incoming DM text for email and phone patterns.
+
+### How It Works
+
+1. A user sends a DM containing an email (e.g., `buyer@example.com`) or phone number (e.g., `555-123-4567`)
+2. The `LeadCaptureService` extracts the data and updates the contact record
+3. The contact's `lead_captured_at` timestamp is set
+4. The contact now appears on the Leads tab
+
+### UI Features
+
+- **Platform filter** — Filter leads by source platform (Instagram, Facebook, Twitter, etc.)
+- **Table columns** — Username, platform, email, phone, captured date
+- **Empty state** — Shows "No leads captured yet" when no leads exist
+
+### Via API
+
+```bash
+# All leads
+curl http://localhost:3000/api/social/leads
+
+# Filter by platform
+curl "http://localhost:3000/api/social/leads?platform=instagram"
+```
+
+---
+
+## Analytics Tab
+
+The Analytics tab at `/social` → **Analytics** shows conversation and automation statistics across all connected platforms.
+
+### Summary Cards
+
+| Card | Description |
+|------|-------------|
+| **Total Conversations** | Unique contacts who have exchanged messages |
+| **Total Messages** | All inbound + outbound messages |
+| **Automations Fired** | Total automation rule triggers |
+| **Active Contacts** | Contacts with recent activity |
+
+### Per-Platform Breakdown
+
+A table showing per-platform stats: message count, contact count, and automation trigger count. This helps identify which platforms are driving the most engagement.
+
+### Via API
+
+```bash
+# Full analytics
+curl http://localhost:3000/api/social/analytics
+
+# Filtered by date
+curl "http://localhost:3000/api/social/analytics?since=2026-03-01T00:00:00Z"
 ```
 
 ---
@@ -1503,10 +1797,26 @@ curl http://localhost:3000/api/social/activity | python3 -m json.tool
 |---|---|---|
 | GET | `/api/social/rules` | List all rules (optionally filter by platform) |
 | POST | `/api/social/rules` | Create a rule |
+| POST | `/api/social/rules/generate` | AI-generate a rule from a description (requires Copilot) |
 | GET | `/api/social/rules/:id` | Get a single rule |
 | PATCH | `/api/social/rules/:id` | Update a rule |
 | DELETE | `/api/social/rules/:id` | Delete a rule |
 | GET | `/api/social/rules/log` | Automation execution log |
+
+### Follow-Up Steps
+
+| Method | Endpoint | Description |
+|---|---|---|
+| GET | `/api/social/rules/:id/follow-ups` | List follow-up steps for a rule |
+| POST | `/api/social/rules/:id/follow-ups` | Create a follow-up step |
+| DELETE | `/api/social/rules/:id/follow-ups/:stepId` | Delete a follow-up step |
+
+### Leads & Analytics
+
+| Method | Endpoint | Description |
+|---|---|---|
+| GET | `/api/social/leads` | List captured leads (filterable by platform) |
+| GET | `/api/social/analytics` | Per-platform analytics (filterable by `since` param) |
 
 ### Handoff
 

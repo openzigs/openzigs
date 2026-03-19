@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import Database from "better-sqlite3";
 import { SocialBrain, type SocialBrainOptions } from "./social-brain.js";
 import { SocialRepository } from "./social-repository.js";
-import type { Contact, IncomingSocialMessage } from "./types.js";
+import type { Contact, IncomingSocialMessage, IncomingComment } from "./types.js";
 
 function createInMemoryRepo(clock?: () => Date): SocialRepository {
   const db = new Database(":memory:");
@@ -54,6 +54,19 @@ function makeRawMessage(overrides: Partial<IncomingSocialMessage> = {}): Incomin
   };
 }
 
+function makeComment(overrides: Partial<IncomingComment> = {}): IncomingComment {
+  return {
+    platform: "twitter",
+    postId: "post_1",
+    commentId: "comment_1",
+    userId: "user_123",
+    username: "testuser",
+    text: "Great post! Can I get more info?",
+    timestamp: new Date().toISOString(),
+    ...overrides,
+  };
+}
+
 describe("SocialBrain", () => {
   let repo: SocialRepository;
 
@@ -69,7 +82,7 @@ describe("SocialBrain", () => {
 
     const contact = makeContact(repo);
     const raw = makeRawMessage();
-    const msg = repo.insertMessage({ contactId: contact.id, platform: "twitter", direction: "inbound", content: raw.text });
+    const msg = repo.insertMessage({ contactId: contact.id, platform: "twitter", direction: "inbound", content: raw.text })!;
     const result = await brain.process(contact, msg, raw);
 
     expect(result).not.toBeNull();
@@ -87,7 +100,7 @@ describe("SocialBrain", () => {
 
     const contact = makeContact(repo);
     const raw = makeRawMessage({ text: "Something obscure" });
-    const msg = repo.insertMessage({ contactId: contact.id, platform: "twitter", direction: "inbound", content: raw.text });
+    const msg = repo.insertMessage({ contactId: contact.id, platform: "twitter", direction: "inbound", content: raw.text })!;
     const result = await brain.process(contact, msg, raw);
 
     expect(result).not.toBeNull();
@@ -104,7 +117,7 @@ describe("SocialBrain", () => {
 
     const contact = makeContact(repo, { handoff_active: 1 });
     const raw = makeRawMessage();
-    const msg = repo.insertMessage({ contactId: contact.id, platform: "twitter", direction: "inbound", content: raw.text });
+    const msg = repo.insertMessage({ contactId: contact.id, platform: "twitter", direction: "inbound", content: raw.text })!;
     const result = await brain.process(contact, msg, raw);
 
     expect(result).toBeNull();
@@ -119,7 +132,7 @@ describe("SocialBrain", () => {
 
     const contact = makeContact(repo);
     const raw = makeRawMessage();
-    const msg = repo.insertMessage({ contactId: contact.id, platform: "twitter", direction: "inbound", content: raw.text });
+    const msg = repo.insertMessage({ contactId: contact.id, platform: "twitter", direction: "inbound", content: raw.text })!;
     await brain.process(contact, msg, raw);
 
     expect(knowledge.search).toHaveBeenCalledWith(raw.text, 5, {
@@ -142,7 +155,7 @@ describe("SocialBrain", () => {
 
     const contact = makeContact(repo);
     const raw = makeRawMessage();
-    const msg = repo.insertMessage({ contactId: contact.id, platform: "twitter", direction: "inbound", content: raw.text });
+    const msg = repo.insertMessage({ contactId: contact.id, platform: "twitter", direction: "inbound", content: raw.text })!;
     const result = await brain.process(contact, msg, raw);
 
     expect(result).not.toBeNull();
@@ -157,7 +170,7 @@ describe("SocialBrain", () => {
 
     const contact = makeContact(repo);
     const raw = makeRawMessage();
-    const msg = repo.insertMessage({ contactId: contact.id, platform: "twitter", direction: "inbound", content: raw.text });
+    const msg = repo.insertMessage({ contactId: contact.id, platform: "twitter", direction: "inbound", content: raw.text })!;
     const result = await brain.process(contact, msg, raw);
 
     expect(result).not.toBeNull();
@@ -173,7 +186,7 @@ describe("SocialBrain", () => {
 
     const contact = makeContact(repo);
     const raw = makeRawMessage();
-    const msg = repo.insertMessage({ contactId: contact.id, platform: "twitter", direction: "inbound", content: raw.text });
+    const msg = repo.insertMessage({ contactId: contact.id, platform: "twitter", direction: "inbound", content: raw.text })!;
     const result = await brain.process(contact, msg, raw);
 
     expect(result!.shouldEscalate).toBe(true);
@@ -186,7 +199,7 @@ describe("SocialBrain", () => {
 
     const contact = makeContact(repo);
     const raw = makeRawMessage();
-    const msg = repo.insertMessage({ contactId: contact.id, platform: "twitter", direction: "inbound", content: raw.text });
+    const msg = repo.insertMessage({ contactId: contact.id, platform: "twitter", direction: "inbound", content: raw.text })!;
     await brain.process(contact, msg, raw);
 
     const messages = repo.getMessages(contact.id, 10);
@@ -205,7 +218,7 @@ describe("SocialBrain", () => {
 
     const contact = makeContact(repo);
     const raw = makeRawMessage();
-    const msg = repo.insertMessage({ contactId: contact.id, platform: "twitter", direction: "inbound", content: raw.text });
+    const msg = repo.insertMessage({ contactId: contact.id, platform: "twitter", direction: "inbound", content: raw.text })!;
     const result = await brain.process(contact, msg, raw);
 
     expect(result).not.toBeNull();
@@ -220,7 +233,7 @@ describe("SocialBrain", () => {
 
     const contact = makeContact(repo);
     const raw = makeRawMessage({ platform: "twitter", username: "twitterfan" });
-    const msg = repo.insertMessage({ contactId: contact.id, platform: "twitter", direction: "inbound", content: raw.text });
+    const msg = repo.insertMessage({ contactId: contact.id, platform: "twitter", direction: "inbound", content: raw.text })!;
     await brain.process(contact, msg, raw);
 
     const promptArg = (copilot.chat as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
@@ -237,7 +250,7 @@ describe("SocialBrain", () => {
     repo.insertMessage({ contactId: contact.id, platform: "twitter", direction: "outbound", status: "auto_replied", content: "Hi there!" });
 
     const raw = makeRawMessage({ text: "Second message" });
-    const msg = repo.insertMessage({ contactId: contact.id, platform: "twitter", direction: "inbound", content: raw.text });
+    const msg = repo.insertMessage({ contactId: contact.id, platform: "twitter", direction: "inbound", content: raw.text })!;
     await brain.process(contact, msg, raw);
 
     const promptArg = (copilot.chat as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
@@ -252,7 +265,7 @@ describe("SocialBrain", () => {
 
     const contact = makeContact(repo);
     const raw = makeRawMessage();
-    const msg = repo.insertMessage({ contactId: contact.id, platform: "twitter", direction: "inbound", content: raw.text });
+    const msg = repo.insertMessage({ contactId: contact.id, platform: "twitter", direction: "inbound", content: raw.text })!;
     await brain.process(contact, msg, raw);
 
     const chatOptions = (copilot.chat as ReturnType<typeof vi.fn>).mock.calls[0][1];
@@ -265,7 +278,7 @@ describe("SocialBrain", () => {
 
     const contact = makeContact(repo);
     const raw = makeRawMessage();
-    const msg = repo.insertMessage({ contactId: contact.id, platform: "twitter", direction: "inbound", content: raw.text });
+    const msg = repo.insertMessage({ contactId: contact.id, platform: "twitter", direction: "inbound", content: raw.text })!;
     const result = await brain.process(contact, msg, raw);
 
     expect(result!.reply).toBe("Parsed!");
@@ -279,7 +292,7 @@ describe("SocialBrain", () => {
 
     const contact = makeContact(repo);
     const raw = makeRawMessage();
-    const msg = repo.insertMessage({ contactId: contact.id, platform: "twitter", direction: "inbound", content: raw.text });
+    const msg = repo.insertMessage({ contactId: contact.id, platform: "twitter", direction: "inbound", content: raw.text })!;
     await brain.process(contact, msg, raw);
 
     const chatOptions = (copilot.chat as ReturnType<typeof vi.fn>).mock.calls[0][1];
@@ -292,7 +305,7 @@ describe("SocialBrain", () => {
 
     const contact = makeContact(repo);
     const raw = makeRawMessage();
-    const msg = repo.insertMessage({ contactId: contact.id, platform: "twitter", direction: "inbound", content: raw.text });
+    const msg = repo.insertMessage({ contactId: contact.id, platform: "twitter", direction: "inbound", content: raw.text })!;
     await brain.process(contact, msg, raw);
 
     const chatOptions = (copilot.chat as ReturnType<typeof vi.fn>).mock.calls[0][1];
@@ -305,7 +318,7 @@ describe("SocialBrain", () => {
 
     const contact = makeContact(repo);
     const raw = makeRawMessage();
-    const msg = repo.insertMessage({ contactId: contact.id, platform: "twitter", direction: "inbound", content: raw.text });
+    const msg = repo.insertMessage({ contactId: contact.id, platform: "twitter", direction: "inbound", content: raw.text })!;
 
     await brain.process(contact, msg, raw);
 
@@ -322,7 +335,7 @@ describe("SocialBrain", () => {
 
     const contact2 = makeContact(repo);
     const raw2 = makeRawMessage({ platformMessageId: "msg_2" });
-    const msg2 = repo.insertMessage({ contactId: contact2.id, platform: "twitter", direction: "inbound", content: raw2.text });
+    const msg2 = repo.insertMessage({ contactId: contact2.id, platform: "twitter", direction: "inbound", content: raw2.text })!;
     await brain2.process(contact2, msg2, raw2);
 
     const chatOptions2 = (copilot2.chat as ReturnType<typeof vi.fn>).mock.calls[0][1];
@@ -331,5 +344,169 @@ describe("SocialBrain", () => {
     if (configModel) {
       expect(chatOptions2.model).not.toBe(configModel);
     }
+  });
+
+  // ── Approval Queue Tests ──────────────────────────────────────────
+
+  it("emits 'pending_approval' when approvalRequired is true", async () => {
+    const copilot = makeMockCopilot('{"reply":"Approved reply","confidence":"high","intent":"help"}');
+    const brain = new SocialBrain({ repository: repo, copilot, knowledgeService: makeMockKnowledge(), approvalRequired: true });
+    const pendingHandler = vi.fn();
+    const replyHandler = vi.fn();
+    brain.on("pending_approval", pendingHandler);
+    brain.on("reply", replyHandler);
+
+    const contact = makeContact(repo);
+    const raw = makeRawMessage();
+    const msg = repo.insertMessage({ contactId: contact.id, platform: "twitter", direction: "inbound", content: raw.text })!;
+    await brain.process(contact, msg, raw);
+
+    expect(pendingHandler).toHaveBeenCalledTimes(1);
+    expect(replyHandler).not.toHaveBeenCalled();
+
+    // Verify the message was stored as pending_approval
+    const messages = repo.getMessages(contact.id, 10);
+    const outbound = messages.find((m) => m.direction === "outbound");
+    expect(outbound).toBeDefined();
+    expect(outbound!.status).toBe("pending_approval");
+    expect(outbound!.content).toBe("Approved reply");
+  });
+
+  it("setApprovalRequired toggles approval mode at runtime", async () => {
+    const copilot = makeMockCopilot('{"reply":"Reply1","confidence":"high","intent":"test"}');
+    const brain = new SocialBrain({ repository: repo, copilot, knowledgeService: makeMockKnowledge() });
+    const pendingHandler = vi.fn();
+    brain.on("pending_approval", pendingHandler);
+
+    // Initially no approval required — should emit "reply"
+    const contact = makeContact(repo);
+    const raw = makeRawMessage();
+    const msg = repo.insertMessage({ contactId: contact.id, platform: "twitter", direction: "inbound", content: raw.text })!;
+    await brain.process(contact, msg, raw);
+    expect(pendingHandler).not.toHaveBeenCalled();
+
+    // Enable approval
+    brain.setApprovalRequired(true);
+
+    const copilot2 = makeMockCopilot('{"reply":"Reply2","confidence":"high","intent":"test"}');
+    const brain2 = new SocialBrain({ repository: repo, copilot: copilot2, knowledgeService: makeMockKnowledge(), approvalRequired: true });
+    const pendingHandler2 = vi.fn();
+    brain2.on("pending_approval", pendingHandler2);
+
+    const raw2 = makeRawMessage({ platformMessageId: "msg_2" });
+    const msg2 = repo.insertMessage({ contactId: contact.id, platform: "twitter", direction: "inbound", content: raw2.text })!;
+    await brain2.process(contact, msg2, raw2);
+    expect(pendingHandler2).toHaveBeenCalledTimes(1);
+  });
+
+  it("still escalates even when approvalRequired is true", async () => {
+    const copilot = makeMockCopilot('{"reply":"Not sure","confidence":"low","intent":"unknown"}');
+    const brain = new SocialBrain({ repository: repo, copilot, knowledgeService: makeMockKnowledge(), approvalRequired: true, confidenceThreshold: "medium" });
+    const escalateHandler = vi.fn();
+    const pendingHandler = vi.fn();
+    brain.on("escalate", escalateHandler);
+    brain.on("pending_approval", pendingHandler);
+
+    const contact = makeContact(repo);
+    const raw = makeRawMessage();
+    const msg = repo.insertMessage({ contactId: contact.id, platform: "twitter", direction: "inbound", content: raw.text })!;
+    await brain.process(contact, msg, raw);
+
+    // Low confidence should escalate, not go to approval queue
+    expect(escalateHandler).toHaveBeenCalledTimes(1);
+    expect(pendingHandler).not.toHaveBeenCalled();
+  });
+
+  // ── processComment Tests ──────────────────────────────────────────
+
+  it("processComment generates a reply for a comment", async () => {
+    const copilot = makeMockCopilot('{"reply":"Thanks for your comment!","confidence":"high","intent":"gratitude"}');
+    const brain = new SocialBrain({ repository: repo, copilot, knowledgeService: makeMockKnowledge() });
+    const commentReplyHandler = vi.fn();
+    brain.on("comment_reply", commentReplyHandler);
+
+    const comment = makeComment();
+    const result = await brain.processComment(comment);
+
+    expect(result).not.toBeNull();
+    expect(result!.reply).toBe("Thanks for your comment!");
+    expect(result!.confidence).toBe("high");
+    expect(commentReplyHandler).toHaveBeenCalledTimes(1);
+  });
+
+  it("processComment stores outbound message with comment metadata", async () => {
+    const copilot = makeMockCopilot('{"reply":"Sure thing!","confidence":"high","intent":"help"}');
+    const brain = new SocialBrain({ repository: repo, copilot, knowledgeService: makeMockKnowledge() });
+
+    const comment = makeComment();
+    await brain.processComment(comment);
+
+    // Find the contact that was upserted
+    const contact = repo.getContactByPlatformUser("twitter", "user_123");
+    expect(contact).toBeDefined();
+
+    const messages = repo.getMessages(contact!.id, 10);
+    const outbound = messages.find((m) => m.direction === "outbound");
+    expect(outbound).toBeDefined();
+    expect(outbound!.content).toBe("Sure thing!");
+    const meta = JSON.parse(outbound!.metadata);
+    expect(meta.source).toBe("brain_comment");
+    expect(meta.commentId).toBe("comment_1");
+    expect(meta.postId).toBe("post_1");
+  });
+
+  it("processComment with approvalRequired stores as pending_approval", async () => {
+    const copilot = makeMockCopilot('{"reply":"Pending comment reply","confidence":"high","intent":"info"}');
+    const brain = new SocialBrain({ repository: repo, copilot, knowledgeService: makeMockKnowledge(), approvalRequired: true });
+    const pendingHandler = vi.fn();
+    brain.on("pending_approval", pendingHandler);
+
+    const comment = makeComment();
+    await brain.processComment(comment);
+
+    expect(pendingHandler).toHaveBeenCalledTimes(1);
+
+    const contact = repo.getContactByPlatformUser("twitter", "user_123");
+    const messages = repo.getMessages(contact!.id, 10);
+    const outbound = messages.find((m) => m.direction === "outbound");
+    expect(outbound!.status).toBe("pending_approval");
+  });
+
+  it("processComment returns null when contact is in handoff", async () => {
+    const copilot = makeMockCopilot('{"reply":"should not happen","confidence":"high","intent":"test"}');
+    const brain = new SocialBrain({ repository: repo, copilot, knowledgeService: makeMockKnowledge() });
+
+    // Create a contact with handoff active
+    makeContact(repo, { handoff_active: 1 });
+    const comment = makeComment({ userId: "user_123" });
+    const result = await brain.processComment(comment);
+
+    expect(result).toBeNull();
+    expect(copilot.chat).not.toHaveBeenCalled();
+  });
+
+  it("processComment includes post context in prompt when available", async () => {
+    const copilot = makeMockCopilot('{"reply":"Great question!","confidence":"high","intent":"inquiry"}');
+    const brain = new SocialBrain({ repository: repo, copilot, knowledgeService: makeMockKnowledge() });
+
+    const comment = makeComment({
+      postContext: {
+        postId: "post_1",
+        platform: "twitter",
+        caption: "Check out our new product!",
+        permalink: "https://twitter.com/post/1",
+        mediaType: "IMAGE",
+        mediaUrl: "",
+        authorUsername: "brand",
+        publishedAt: new Date().toISOString(),
+        cachedAt: new Date().toISOString(),
+      },
+    });
+
+    await brain.processComment(comment);
+
+    const promptArg = (copilot.chat as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
+    expect(promptArg).toContain("Check out our new product!");
+    expect(promptArg).toContain("public comment reply");
   });
 });

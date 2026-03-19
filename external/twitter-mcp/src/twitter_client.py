@@ -56,16 +56,26 @@ class TwitterClient:
 
     async def _request(self, method: str, path: str, *, auth: str = "bearer", **kwargs) -> dict:
         url = f"{self.base}/{path}" if not path.startswith("http") else path
-        headers = self._bearer_headers() if auth == "bearer" else self._oauth1_headers(method, url)
+        headers = self._bearer_headers() if auth == "bearer" else self._oauth1_headers(method, url, kwargs.get("params"))
         async with httpx.AsyncClient(timeout=30.0) as c:
             resp = await c.request(method, url, headers=headers, **kwargs)
         if resp.status_code >= 400:
             text = resp.text[:500]
             raise TwitterAPIError(f"HTTP {resp.status_code}: {text}", resp.status_code)
-        return resp.json()
+        data = resp.json()
+        result_count = data.get("meta", {}).get("result_count")
+        has_data = "data" in data and bool(data["data"])
+        logger.info(
+            "twitter_api_response",
+            endpoint=path,
+            result_count=result_count,
+            has_data=has_data,
+            meta=data.get("meta"),
+        )
+        return data
 
     async def get_me(self) -> dict:
-        return await self._request("GET", "users/me", params={"user.fields": "id,name,username,description,public_metrics,profile_image_url,verified"})
+        return await self._request("GET", "users/me", auth="oauth1", params={"user.fields": "id,name,username,description,public_metrics,profile_image_url,verified"})
 
     async def get_user_tweets(self, user_id: str, max_results: int = 10) -> dict:
         return await self._request("GET", f"users/{user_id}/tweets", params={"max_results": str(max_results), "tweet.fields": "created_at,public_metrics,text,source"})
@@ -90,3 +100,26 @@ class TwitterClient:
 
     async def get_user_by_username(self, username: str) -> dict:
         return await self._request("GET", f"users/by/username/{username}", params={"user.fields": "id,name,username,description,public_metrics"})
+
+    async def get_mentions(self, user_id: str, max_results: int = 20, since_id: str | None = None) -> dict:
+        """Get recent mentions of a user (tweets that @mention them). Uses user-context auth (OAuth 1.0a)."""
+        params: dict[str, str] = {
+            "max_results": str(max_results),
+            "tweet.fields": "created_at,public_metrics,text,author_id,conversation_id,in_reply_to_user_id",
+            "expansions": "author_id",
+            "user.fields": "id,name,username",
+        }
+        if since_id:
+            params["since_id"] = since_id
+        return await self._request("GET", f"users/{user_id}/mentions", auth="oauth1", params=params)
+
+    async def search_replies(self, username: str, max_results: int = 20) -> dict:
+        """Search for recent replies to a user using search/recent with the `to:` operator."""
+        query = f"to:{username} is:reply"
+        return await self._request("GET", "tweets/search/recent", params={
+            "query": query,
+            "max_results": str(max_results),
+            "tweet.fields": "created_at,public_metrics,author_id,text,conversation_id,in_reply_to_user_id",
+            "expansions": "author_id",
+            "user.fields": "id,name,username",
+        })

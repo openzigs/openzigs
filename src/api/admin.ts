@@ -4842,6 +4842,9 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
         enabled: sb.enabled ?? false,
         confidenceThreshold: sb.confidenceThreshold ?? "high",
         commentAutomation: (sb.commentAutomation as Record<string, unknown> | undefined)?.enabled ?? false,
+        commentBrainEnabled: sb.commentBrainEnabled ?? false,
+        approvalRequired: sb.approvalRequired ?? false,
+        notifications: sb.notifications ?? { enabled: false, telegram: true, discord: true, web: true },
         handoff: sb.handoff ?? {},
       });
     } catch (error) {
@@ -4866,6 +4869,15 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
       }
       if (typeof body.commentAutomation === "boolean") {
         existingSb.commentAutomation = { ...((existingSb.commentAutomation as Record<string, unknown>) ?? {}), enabled: body.commentAutomation };
+      }
+      if (typeof body.commentBrainEnabled === "boolean") {
+        existingSb.commentBrainEnabled = body.commentBrainEnabled;
+      }
+      if (typeof body.approvalRequired === "boolean") {
+        existingSb.approvalRequired = body.approvalRequired;
+      }
+      if (body.notifications && typeof body.notifications === "object") {
+        existingSb.notifications = { ...((existingSb.notifications as Record<string, unknown>) ?? {}), ...(body.notifications as Record<string, unknown>) };
       }
       if (body.handoff && typeof body.handoff === "object") {
         existingSb.handoff = { ...((existingSb.handoff as Record<string, unknown>) ?? {}), ...(body.handoff as Record<string, unknown>) };

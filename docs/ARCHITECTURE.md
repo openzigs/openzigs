@@ -2207,6 +2207,12 @@ The shell executor uses a **command allowlist**. If the allowlist is empty, the 
 | `POST` | `/api/social/handoff/:contactId/close` | Token | Close an active human handoff. |
 | `POST` | `/api/social/webhooks/:platform` | None | Incoming platform webhook events. |
 | `GET` | `/api/social/connections` | Token | List connected platform statuses. |
+| `GET` | `/api/social/approvals` | Token | List pending approval messages (paginated). |
+| `GET` | `/api/social/approvals/count` | Token | Count of pending approvals (for badge). |
+| `POST` | `/api/social/approvals/:id/approve` | Token | Approve a pending AI reply. |
+| `POST` | `/api/social/approvals/:id/reject` | Token | Reject a pending AI reply. |
+| `POST` | `/api/social/approvals/:id/edit` | Token | Edit content and approve a pending reply. |
+| `POST` | `/api/social/contacts/:id/reply` | Token | Send a manual reply to a contact. |
 | `POST` | `/api/admin/director/drafts` | Token | Create a draft from a manifest. |
 | `GET` | `/api/admin/director/drafts` | Token | List all drafts (paginated). |
 | `GET` | `/api/admin/director/drafts/:id` | Token | Get draft with full manifest. |
@@ -4261,11 +4267,11 @@ The dispatcher is wired into the `CommentRuleEngine` via `setSendDm()` and `setR
 | Module | Purpose |
 |---|---|
 | `types.ts` | Shared types: `SocialPlatform`, `Contact`, `SocialMessage`, `IncomingSocialMessage`, `IncomingComment`, `CommentRule`, `AutomationLogEntry`, `BrainResult`, `EscalationContext`, `SocialBrainConfig` |
-| `social-repository.ts` | SQLite CRM — 4 tables (`contacts`, `social_messages`, `comment_automation_rules`, `comment_automation_log`). Pagination, tag management, CSV export, stats. 19 unit tests. |
+| `social-repository.ts` | SQLite CRM — 4 tables (`contacts`, `social_messages`, `comment_automation_rules`, `comment_automation_log`). Pagination, tag management, CSV export, stats. Approval queue methods: `listPendingApprovals()`, `approveReply()`, `rejectReply()`, `editAndApproveReply()`, `getPendingApprovalCount()`, `insertManualReply()`. Message statuses: `received`, `auto_replied`, `escalated`, `failed`, `pending_approval`, `rejected`. |
 | `social-ingestion.ts` | `SocialIngestionService` (EventEmitter) — platform adapter pattern: `handleWebhook()`, `processMessage()`, `startPolling()`/`stopPolling()`. Ships with `InstagramAdapter`, `FacebookAdapter`, `TwitterAdapter`, `LinkedInAdapter`, and `GenericPollAdapter` (for YouTube/Reddit). |
 | `platform-api-client.ts` | `PlatformApiClient` interface + `PostContextService` + per-platform API clients (Instagram, Facebook, Twitter, YouTube, LinkedIn). Each implements `fetchPostContext()` for RAG enrichment. |
 | `dm-dispatcher.ts` | `DmDispatcher` — multi-platform DM sender and comment replier. Factory methods `createDmSender()` and `createCommentReplier()` route through native MCP servers via `LocalMcpServerManager.callTool()`. |
-| `social-brain.ts` | `SocialBrain` (EventEmitter) — RAG pipeline: handoff check → `knowledgeService.search(query, 5, { mode: "hybrid" })` → conversation history (last 5) → `copilot.chat()` with `{ mode: "replace" }` system prompt → JSON parse → confidence routing. Emits `reply`, `escalate`, `escalated_message`. |
+| `social-brain.ts` | `SocialBrain` (EventEmitter) — RAG pipeline: handoff check → `knowledgeService.search(query, 5, { mode: "hybrid" })` → conversation history (last 5) → `copilot.chat()` with `{ mode: "replace" }` system prompt → JSON parse → confidence routing. Processes both DMs (`process()`) and comments (`processComment()`). Supports `approvalRequired` mode for human-in-the-loop review. Emits `reply`, `escalate`, `escalated_message`, `pending_approval`, `comment_reply`. |
 | `handoff-manager.ts` | `HandoffManager` (EventEmitter) — `HandoffChannel` interface with `createThread`/`postToThread`/`archiveThread`. Escalate, forward messages, handle admin replies via thread→contact reverse map, close handoffs. Emits `handoff:created`, `handoff:resolved`. |
 | `comment-rule-engine.ts` | `CommentRuleEngine` (EventEmitter) — Keyword matching (word-boundary regex), regex fallback, template interpolation (`{{username}}`, `{{keyword}}`, `{{post_id}}`, `{{comment_text}}`), DM delay scheduling, auto-tagging, per-user rate limiting. Wired to `DmDispatcher` for cross-platform DM/reply delivery. Emits `rule:triggered`. |
 
@@ -4274,7 +4280,9 @@ The dispatcher is wired into the `CommentRuleEngine` via `setSendDm()` and `setR
 ```
 Ingestion "message" ──────▶ Brain.process()
                                 │
-                                ├─ confidence ≥ threshold ──▶ emit "reply" ──▶ Socket.IO "social:reply"
+                                ├─ confidence ≥ threshold
+                                │    ├─ approvalRequired ──▶ emit "pending_approval" ──▶ Socket.IO "social:pending_approval"
+                                │    └─ auto-send ──────────▶ emit "reply" ──▶ Socket.IO "social:reply"
                                 │       (configurable: "high" | "medium" | "low")
                                 └─ confidence < threshold ──▶ emit "escalate" ──▶ Handoff.escalate()
                                                                                │
@@ -4283,9 +4291,18 @@ Ingestion "message" ──────▶ Brain.process()
 
 Ingestion "comment" ──────▶ CommentRuleEngine.evaluate()
                                 │
-                                └─ match ──▶ executeRule() ──▶ emit "rule:triggered"
-                                                                  │
-                                                                  └─ Socket.IO "social:rule:triggered"
+                                ├─ match ──▶ executeRule() ──▶ emit "rule:triggered"
+                                │                                  └─ Socket.IO "social:rule:triggered"
+                                │
+                                └─ no match + commentBrainEnabled
+                                     └──▶ Brain.processComment()
+                                           │
+                                           ├─ approvalRequired ──▶ emit "pending_approval"
+                                           └─ auto-send ──────────▶ emit "comment_reply"
+                                                                     └─ Socket.IO "social:comment_reply"
+
+Ingestion "message" ──────▶ Socket.IO "social:new_message" + push notifications
+Ingestion "comment" ──────▶ Socket.IO "social:new_comment" + push notifications
 
 Brain "escalated_message" ──▶ Handoff.forwardToThread()
 ```

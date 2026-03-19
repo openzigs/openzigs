@@ -87,8 +87,9 @@ class LinkedInMCPServer:
 
 async def main():
     import logging
+    import sys
     settings = get_settings()
-    logging.basicConfig(level=getattr(logging, settings.log_level.upper()))
+    logging.basicConfig(level=getattr(logging, settings.log_level.upper()), stream=sys.stderr)
     await LinkedInMCPServer().run()
 
 

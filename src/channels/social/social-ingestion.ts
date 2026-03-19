@@ -24,10 +24,19 @@ export type SocialIngestionOptions = {
  * polling into a unified stream. Emits events for downstream processing
  * (Brain, Comment Rule Engine).
  */
+export interface PollHealth {
+  consecutiveErrors: number;
+  lastSuccess: string | null;
+  lastError: string | null;
+  backoffUntil: string | null;
+  totalPolls: number;
+}
+
 export class SocialIngestionService extends EventEmitter {
   private repository: SocialRepository;
   private adapters = new Map<SocialPlatform, SocialPlatformAdapter>();
   private pollTimers = new Map<string, ReturnType<typeof setInterval>>();
+  private pollHealth = new Map<string, PollHealth>();
   private postContextService?: PostContextService;
 
   constructor(opts: SocialIngestionOptions) {
@@ -46,18 +55,24 @@ export class SocialIngestionService extends EventEmitter {
 
   /** Handle a raw webhook payload — delegates to the platform adapter. */
   async handleWebhook(platform: SocialPlatform, body: unknown, headers: Record<string, string>): Promise<void> {
+    logger.info(`[SocialIngestion] Webhook received for ${platform}`);
     const adapter = this.adapters.get(platform);
     if (!adapter) {
       logger.warn(`[SocialIngestion] No adapter registered for platform: ${platform}`);
+      this.pushWebhookLog(platform, false, "no_adapter");
       return;
     }
 
     try {
       const parsed = adapter.parseWebhook(body, headers);
-      if (!parsed) return;
+      if (!parsed) {
+        this.pushWebhookLog(platform, false, "unparseable");
+        return;
+      }
 
       if ("commentId" in parsed) {
         const comment = parsed as IncomingComment;
+        this.pushWebhookLog(platform, true, "comment");
         // Enrich comment with post context (non-blocking on failure)
         if (this.postContextService && comment.postId) {
           try {
@@ -68,14 +83,22 @@ export class SocialIngestionService extends EventEmitter {
             logger.warn(`[SocialIngestion] Post context enrichment failed: ${ctxMsg}`);
           }
         }
-        this.emit("comment", comment);
+        this.processComment(comment);
       } else {
+        this.pushWebhookLog(platform, true, "message");
         this.processMessage(parsed as IncomingSocialMessage);
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       logger.error(`[SocialIngestion] Webhook parse error (${platform}): ${msg}`);
+      this.pushWebhookLog(platform, false, "parse_error");
     }
+  }
+
+  /** Push a webhook event into the diagnostics ring buffer. */
+  private pushWebhookLog(platform: string, parsed: boolean, type?: string): void {
+    this.webhookLog.push({ ts: new Date().toISOString(), platform, parsed, type });
+    if (this.webhookLog.length > 50) this.webhookLog.shift();
   }
 
   /** Process a normalised inbound social message. */
@@ -88,7 +111,7 @@ export class SocialIngestionService extends EventEmitter {
       displayName: msg.displayName,
     });
 
-    // Log the inbound message
+    // Log the inbound message (dedup by platformMessageId)
     const message = this.repository.insertMessage({
       contactId: contact.id,
       platform: msg.platform,
@@ -99,8 +122,36 @@ export class SocialIngestionService extends EventEmitter {
       metadata: msg.metadata,
     });
 
+    if (!message) {
+      logger.info(`[SocialIngestion] Duplicate message skipped: ${msg.platform}/${msg.platformMessageId}`);
+      return;
+    }
+
     // Emit for downstream processing (Brain)
     this.emit("message", { message, contact, raw: msg });
+  }
+
+  /** Process a normalised inbound comment: upsert contact, log as message, then emit. */
+  processComment(comment: IncomingComment): void {
+    // Upsert contact in CRM
+    const contact = this.repository.upsertContact({
+      platform: comment.platform,
+      platformUserId: comment.userId,
+      username: comment.username,
+    });
+
+    // Log the inbound comment as a message (dedup by commentId as platformMessageId)
+    this.repository.insertMessage({
+      contactId: contact.id,
+      platform: comment.platform,
+      direction: "inbound",
+      status: "received",
+      platformMessageId: comment.commentId,
+      content: comment.text,
+      metadata: { postId: comment.postId, source: "comment" },
+    });
+
+    this.emit("comment", comment);
   }
 
   /** Start polling for a platform at the given interval (seconds). */
@@ -114,12 +165,39 @@ export class SocialIngestionService extends EventEmitter {
     // Stop existing timer if any
     this.stopPolling(platform);
 
-    let lastPoll = new Date(Date.now() - intervalSeconds * 1000).toISOString();
+    // Initialize health tracking for this platform
+    const health: PollHealth = this.pollHealth.get(platform) ?? {
+      consecutiveErrors: 0,
+      lastSuccess: null,
+      lastError: null,
+      backoffUntil: null,
+      totalPolls: 0,
+    };
+    this.pollHealth.set(platform, health);
+
+    // On first poll, look back 24 hours to catch messages received while the
+    // server was down.  The repository deduplicates by platformMessageId, so
+    // re-ingesting already-seen messages is safe.
+    const INITIAL_LOOKBACK_MS = 24 * 60 * 60 * 1000;
+    let lastPoll = new Date(Date.now() - INITIAL_LOOKBACK_MS).toISOString();
 
     const poll = async () => {
+      // Respect backoff window — skip this cycle if we're backing off
+      if (health.backoffUntil && new Date() < new Date(health.backoffUntil)) {
+        logger.info(`[SocialIngestion] ${platform} in backoff until ${health.backoffUntil}, skipping poll`);
+        return;
+      }
+
+      health.totalPolls++;
       try {
         const items = await adapter.poll!(lastPoll);
         lastPoll = new Date().toISOString();
+
+        // Reset error state on success
+        health.consecutiveErrors = 0;
+        health.lastSuccess = lastPoll;
+        health.backoffUntil = null;
+
         for (const item of items) {
           if ("commentId" in item) {
             const comment = item as IncomingComment;
@@ -129,7 +207,7 @@ export class SocialIngestionService extends EventEmitter {
                 if (ctx) comment.postContext = ctx;
               } catch { /* best-effort enrichment */ }
             }
-            this.emit("comment", comment);
+            this.processComment(comment);
           } else {
             this.processMessage(item);
           }
@@ -137,6 +215,16 @@ export class SocialIngestionService extends EventEmitter {
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         logger.error(`[SocialIngestion] Poll error (${platform}): ${msg}`);
+
+        health.consecutiveErrors++;
+        health.lastError = msg;
+
+        // Exponential backoff: 2^(n-1) × interval, capped at 10 min
+        const backoffSeconds = Math.min(Math.pow(2, health.consecutiveErrors - 1) * intervalSeconds, 600);
+        health.backoffUntil = new Date(Date.now() + backoffSeconds * 1000).toISOString();
+        logger.warn(
+          `[SocialIngestion] ${platform} consecutive error #${health.consecutiveErrors} — backing off for ${backoffSeconds}s`,
+        );
       }
     };
 
@@ -153,6 +241,7 @@ export class SocialIngestionService extends EventEmitter {
     if (timer) {
       clearInterval(timer);
       this.pollTimers.delete(platform);
+      this.pollHealth.delete(platform);
     }
   }
 
@@ -164,6 +253,33 @@ export class SocialIngestionService extends EventEmitter {
 
   getRegisteredPlatforms(): SocialPlatform[] {
     return [...this.adapters.keys()];
+  }
+
+  /** Return platforms that currently have active poll timers. */
+  getActivePollers(): SocialPlatform[] {
+    return [...this.pollTimers.keys()] as SocialPlatform[];
+  }
+
+  /** Return poll health for a specific platform (or null if not polling). */
+  getPollHealth(platform: SocialPlatform): PollHealth | null {
+    return this.pollHealth.get(platform) ?? null;
+  }
+
+  /** Return poll health snapshot for all active pollers. */
+  getAllPollHealth(): Record<string, PollHealth> {
+    const result: Record<string, PollHealth> = {};
+    for (const [platform, health] of this.pollHealth) {
+      result[platform] = { ...health };
+    }
+    return result;
+  }
+
+  /** Recent webhook events for diagnostics (ring buffer, last 50). */
+  private webhookLog: Array<{ ts: string; platform: string; parsed: boolean; type?: string }> = [];
+
+  /** Get recent webhook event log. */
+  getWebhookLog(): Array<{ ts: string; platform: string; parsed: boolean; type?: string }> {
+    return [...this.webhookLog];
   }
 }
 

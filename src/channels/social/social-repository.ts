@@ -77,7 +77,7 @@ export class SocialRepository {
         platform            TEXT NOT NULL,
         direction           TEXT NOT NULL CHECK(direction IN ('inbound', 'outbound')),
         status              TEXT NOT NULL DEFAULT 'received'
-          CHECK(status IN ('received', 'auto_replied', 'escalated', 'failed')),
+          CHECK(status IN ('received', 'auto_replied', 'escalated', 'failed', 'pending_approval', 'rejected')),
         platform_message_id TEXT NOT NULL DEFAULT '',
         content             TEXT NOT NULL DEFAULT '',
         metadata            TEXT NOT NULL DEFAULT '{}',
@@ -164,6 +164,23 @@ export class SocialRepository {
       CREATE INDEX IF NOT EXISTS idx_follow_up_jobs_contact ON follow_up_jobs(contact_id);
     `);
 
+    // Deduplicate social_messages before creating the partial UNIQUE index —
+    // keeps the row with the lowest rowid (earliest inserted) for each (platform, platform_message_id) pair.
+    this.db.exec(`
+      DELETE FROM social_messages
+      WHERE rowid NOT IN (
+        SELECT MIN(rowid)
+        FROM social_messages
+        WHERE platform_message_id != ''
+        GROUP BY platform, platform_message_id
+      )
+      AND platform_message_id != '';
+
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_social_messages_platform_msg
+        ON social_messages(platform, platform_message_id)
+        WHERE platform_message_id != '';
+    `);
+
     // Runtime migration: add model column to comment_automation_rules
     try {
       this.db.exec(`ALTER TABLE comment_automation_rules ADD COLUMN model TEXT DEFAULT NULL`);
@@ -208,7 +225,7 @@ export class SocialRepository {
       this.db
         .prepare(
           `UPDATE contacts SET username = ?, display_name = ?, last_seen_at = ?,
-           message_count = message_count + 1, updated_at = ? WHERE id = ?`
+           updated_at = ? WHERE id = ?`
         )
         .run(opts.username, opts.displayName ?? existing.display_name, now, now, existing.id);
       return this.getContact(existing.id)!;
@@ -220,7 +237,7 @@ export class SocialRepository {
         `INSERT INTO contacts (id, platform, platform_user_id, username, display_name,
          tags, notes, first_seen_at, last_seen_at, message_count, handoff_active,
          created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, '[]', '', ?, ?, 1, 0, ?, ?)`
+         VALUES (?, ?, ?, ?, ?, '[]', '', ?, ?, 0, 0, ?, ?)`
       )
       .run(id, opts.platform, opts.platformUserId, opts.username, opts.displayName ?? "", now, now, now, now);
     return this.getContact(id)!;
@@ -323,12 +340,12 @@ export class SocialRepository {
     platformMessageId?: string;
     content: string;
     metadata?: Record<string, unknown>;
-  }): SocialMessage {
+  }): SocialMessage | null {
     const id = nanoid(16);
     const now = this.clock().toISOString();
-    this.db
+    const result = this.db
       .prepare(
-        `INSERT INTO social_messages (id, contact_id, platform, direction, status, platform_message_id, content, metadata, created_at)
+        `INSERT OR IGNORE INTO social_messages (id, contact_id, platform, direction, status, platform_message_id, content, metadata, created_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
@@ -342,6 +359,10 @@ export class SocialRepository {
         JSON.stringify(opts.metadata ?? {}),
         now
       );
+    if (result.changes === 0) return null; // duplicate platformMessageId
+    this.db
+      .prepare("UPDATE contacts SET message_count = message_count + 1, updated_at = ? WHERE id = ?")
+      .run(now, opts.contactId);
     return this.db.prepare("SELECT * FROM social_messages WHERE id = ?").get(id) as SocialMessage;
   }
 
@@ -453,6 +474,14 @@ export class SocialRepository {
     return this.db
       .prepare("SELECT * FROM comment_automation_log ORDER BY created_at DESC LIMIT ? OFFSET ?")
       .all(limit, offset) as AutomationLogEntry[];
+  }
+
+  /** Check whether a comment has already been processed by any rule. */
+  hasCommentBeenProcessed(commentId: string, platform: SocialPlatform): boolean {
+    const row = this.db
+      .prepare("SELECT 1 FROM comment_automation_log WHERE comment_id = ? AND platform = ? LIMIT 1")
+      .get(commentId, platform);
+    return !!row;
   }
 
   getUserTriggerCount(ruleId: string, username: string): number {
@@ -652,5 +681,68 @@ export class SocialRepository {
         .join(",");
     });
     return [headers.join(","), ...rows].join("\n");
+  }
+
+  // ── Approval Queue ─────────────────────────────────────────────────
+
+  /** List all messages with pending_approval status, newest first. */
+  listPendingApprovals(limit = 50, offset = 0): Array<SocialMessage & { contact_username?: string; contact_display_name?: string }> {
+    return this.db.prepare(`
+      SELECT sm.*, c.username AS contact_username, c.display_name AS contact_display_name
+      FROM social_messages sm
+      LEFT JOIN contacts c ON c.id = sm.contact_id
+      WHERE sm.status = 'pending_approval'
+      ORDER BY sm.created_at DESC
+      LIMIT ? OFFSET ?
+    `).all(limit, offset) as Array<SocialMessage & { contact_username?: string; contact_display_name?: string }>;
+  }
+
+  /** Approve a pending reply — update status to auto_replied. */
+  approveReply(messageId: string): SocialMessage | undefined {
+    const now = this.clock().toISOString();
+    this.db.prepare(
+      "UPDATE social_messages SET status = 'auto_replied', metadata = json_set(metadata, '$.approved_at', ?) WHERE id = ? AND status = 'pending_approval'"
+    ).run(now, messageId);
+    return this.db.prepare("SELECT * FROM social_messages WHERE id = ?").get(messageId) as SocialMessage | undefined;
+  }
+
+  /** Reject a pending reply — update status to rejected. */
+  rejectReply(messageId: string): SocialMessage | undefined {
+    const now = this.clock().toISOString();
+    this.db.prepare(
+      "UPDATE social_messages SET status = 'rejected', metadata = json_set(metadata, '$.rejected_at', ?) WHERE id = ? AND status = 'pending_approval'"
+    ).run(now, messageId);
+    return this.db.prepare("SELECT * FROM social_messages WHERE id = ?").get(messageId) as SocialMessage | undefined;
+  }
+
+  /** Edit and approve a pending reply — update content + status. */
+  editAndApproveReply(messageId: string, newContent: string): SocialMessage | undefined {
+    const now = this.clock().toISOString();
+    this.db.prepare(
+      "UPDATE social_messages SET status = 'auto_replied', content = ?, metadata = json_set(metadata, '$.approved_at', ?, '$.edited', true) WHERE id = ? AND status = 'pending_approval'"
+    ).run(newContent, now, messageId);
+    return this.db.prepare("SELECT * FROM social_messages WHERE id = ?").get(messageId) as SocialMessage | undefined;
+  }
+
+  /** Get count of pending approval messages. */
+  getPendingApprovalCount(): number {
+    return (this.db.prepare("SELECT COUNT(*) as c FROM social_messages WHERE status = 'pending_approval'").get() as { c: number }).c;
+  }
+
+  /** Insert a manual reply message (sent by human from UI). */
+  insertManualReply(opts: {
+    contactId: string;
+    platform: SocialPlatform;
+    content: string;
+    metadata?: Record<string, unknown>;
+  }): SocialMessage | null {
+    return this.insertMessage({
+      contactId: opts.contactId,
+      platform: opts.platform,
+      direction: "outbound",
+      status: "auto_replied",
+      content: opts.content,
+      metadata: { ...opts.metadata, source: "manual_reply" },
+    });
   }
 }

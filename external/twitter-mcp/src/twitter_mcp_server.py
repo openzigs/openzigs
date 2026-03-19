@@ -41,6 +41,8 @@ class TwitterMCPServer:
                 Tool(name="twitter_get_dm_events", description="Get recent DM events", inputSchema={"type": "object", "properties": {"max_results": {"type": "integer", "default": 20}}}),
                 Tool(name="twitter_send_dm", description="Send a direct message", inputSchema={"type": "object", "properties": {"participant_id": {"type": "string", "description": "Twitter user ID"}, "text": {"type": "string"}}, "required": ["participant_id", "text"]}),
                 Tool(name="twitter_get_user", description="Look up a user by username", inputSchema={"type": "object", "properties": {"username": {"type": "string"}}, "required": ["username"]}),
+                Tool(name="twitter_get_mentions", description="Get recent tweets mentioning a user (requires OAuth 1.0a)", inputSchema={"type": "object", "properties": {"user_id": {"type": "string", "description": "Twitter user ID"}, "max_results": {"type": "integer", "default": 20, "maximum": 100}, "since_id": {"type": "string", "description": "Only return tweets after this tweet ID"}}, "required": ["user_id"]}),
+                Tool(name="twitter_search_replies", description="Search for recent replies to a username using search/recent", inputSchema={"type": "object", "properties": {"username": {"type": "string", "description": "Twitter username (without @)"}, "max_results": {"type": "integer", "default": 20, "maximum": 100}}, "required": ["username"]}),
             ]
 
         @self.server.call_tool()
@@ -65,6 +67,10 @@ class TwitterMCPServer:
                     data = await client.send_dm(arguments["participant_id"], arguments["text"])
                 elif name == "twitter_get_user":
                     data = await client.get_user_by_username(arguments["username"])
+                elif name == "twitter_get_mentions":
+                    data = await client.get_mentions(arguments["user_id"], arguments.get("max_results", 20), arguments.get("since_id"))
+                elif name == "twitter_search_replies":
+                    data = await client.search_replies(arguments["username"], arguments.get("max_results", 20))
                 else:
                     return [TextContent(type="text", text=_result(False, error=f"Unknown tool: {name}"))]
                 return [TextContent(type="text", text=_result(True, data=data))]
@@ -87,8 +93,26 @@ class TwitterMCPServer:
 
 async def main():
     import logging
+    import sys
     settings = get_settings()
-    logging.basicConfig(level=getattr(logging, settings.log_level.upper()))
+    # ALL logging MUST go to stderr — stdout is reserved for the MCP JSON protocol
+    logging.basicConfig(
+        level=getattr(logging, settings.log_level.upper()),
+        stream=sys.stderr,
+        force=True,
+    )
+    # Ensure httpx and other library loggers also go to stderr and don't propagate
+    for name in ("httpx", "httpcore", "mcp"):
+        lib_logger = logging.getLogger(name)
+        lib_logger.handlers.clear()
+        handler = logging.StreamHandler(sys.stderr)
+        lib_logger.addHandler(handler)
+        lib_logger.propagate = False
+
+    # Configure structlog to write to stderr (default PrintLogger writes to stdout!)
+    structlog.configure(
+        logger_factory=structlog.PrintLoggerFactory(file=sys.stderr),
+    )
     await TwitterMCPServer().run()
 
 

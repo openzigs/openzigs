@@ -225,6 +225,10 @@ export type SocialBrainPlatformConnectionConfig = {
 export type SocialBrainAppConfig = {
   enabled?: boolean;
   confidenceThreshold?: "high" | "medium" | "low";
+  /** Route comments (with no matching rule) through the Brain for AI auto-reply */
+  commentBrainEnabled?: boolean;
+  /** Hold AI-generated replies for human approval before sending */
+  approvalRequired?: boolean;
   handoff?: {
     preferredChannel?: "discord" | "telegram";
     discordChannelId?: string;
@@ -233,6 +237,15 @@ export type SocialBrainAppConfig = {
   };
   commentAutomation?: {
     enabled?: boolean;
+  };
+  notifications?: {
+    enabled?: boolean;
+    /** Push incoming message alerts to Telegram admin chat */
+    telegram?: boolean;
+    /** Push incoming message alerts to Discord notification channel */
+    discord?: boolean;
+    /** Push incoming message alerts to the web UI via Socket.IO (always on) */
+    web?: boolean;
   };
   connections?: Record<string, SocialBrainPlatformConnectionConfig>;
 };
@@ -457,6 +470,8 @@ const appConfigSchema = z.object({
   socialBrain: z.object({
     enabled: z.boolean().optional(),
     confidenceThreshold: z.enum(["high", "medium", "low"]).optional(),
+    commentBrainEnabled: z.boolean().optional(),
+    approvalRequired: z.boolean().optional(),
     handoff: z.object({
       preferredChannel: z.enum(["discord", "telegram"]).optional(),
       discordChannelId: z.string().optional(),
@@ -465,6 +480,12 @@ const appConfigSchema = z.object({
     }).optional(),
     commentAutomation: z.object({
       enabled: z.boolean().optional(),
+    }).optional(),
+    notifications: z.object({
+      enabled: z.boolean().optional(),
+      telegram: z.boolean().optional(),
+      discord: z.boolean().optional(),
+      web: z.boolean().optional(),
     }).optional(),
     connections: z.record(z.string(), z.object({
       enabled: z.boolean().optional(),

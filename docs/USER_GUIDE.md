@@ -6377,12 +6377,41 @@ Create keyword-based and regex-based automation rules that trigger DM responses 
 | **DM Delay** | Seconds to wait before sending the DM (0 = immediate) |
 | **Max Triggers/User** | Rate limit per user per rule |
 | **Auto-Tag** | Automatically tag contacts who trigger the rule |
+| **Use AI Reply** | Toggle to enable AI-generated comment replies instead of static templates |
+| **AI Reply Context** | Business context for the AI to use when generating replies (e.g., product info, pricing) |
+
+**AI Rule Generation** — Click the **AI Generate** button to describe what you want in plain English and have the AI create a complete rule with keywords, templates, and settings. Requires Copilot SDK authentication.
+
+**Follow-Up Sequences** — Expand any rule to view and manage timed follow-up DM steps. Add steps with configurable delays (e.g., 1hr, 24hr) and message templates for drip campaigns.
 
 The **Automation Log** shows a live feed of every rule trigger with timestamp, contact, and action taken.
+
+### Leads Tab
+
+The Leads tab shows contacts who have shared their email or phone number during DM conversations. The `LeadCaptureService` automatically extracts email addresses and phone numbers from incoming messages.
+
+- **Platform filter** — Filter leads by source platform
+- **Table view** — Username, platform, email, phone, and capture date
+- **Empty state** — "No leads captured yet" when no lead data exists
+
+### Analytics Tab
+
+The Analytics tab provides conversation and engagement statistics across all connected platforms:
+
+- **Summary cards** — Total conversations, messages, automations fired, and active contacts
+- **Per-platform breakdown** — Message counts, contact counts, and automation trigger counts broken down by platform
+- **Date filtering** — Filter analytics by time period via the API (`?since=` parameter)
 
 ### Activity Tab
 
 A real-time feed of all inbound and outbound messages across platforms, with direction badges and platform icons.
+
+**Approval Queue** — When "Require Approval" is enabled, AI-generated replies appear at the top of the Activity tab in a "Pending Approval" section with orange highlights. For each pending reply you can:
+- **Approve** — Send the AI-generated reply as-is
+- **Edit & Approve** — Modify the reply text in an inline editor, then send
+- **Reject** — Discard the reply without sending
+
+Status badges include: `received` (blue), `auto_replied` (green), `escalated` (yellow), `pending_approval` (orange), `rejected` (red).
 
 ### AI-Powered Auto-Reply (Brain Engine)
 
@@ -6393,6 +6422,24 @@ When a DM arrives, the Social Brain engine:
 3. Sends the context + message to the LLM with a social-media-specific system prompt.
 4. Parses the JSON response for `reply`, `confidence`, and `escalate` fields.
 5. If confidence > 0.7, auto-sends the reply. Otherwise, escalates to a human operator.
+
+**AI Comment Replies** — When enabled in Settings ("AI Reply Settings" → "AI Comment Replies"), comments that don't match any keyword automation rule are also routed through the Brain Engine. The Brain generates a public-appropriate reply using the post's caption and knowledge base context.
+
+**Approval Queue** — When "Require Approval" is enabled, AI-generated replies (both DM and comment) are held with `pending_approval` status for human review. Pending replies appear in the Activity tab's approval queue. See the [Approval Queue section](SOCIAL_BRAIN_GUIDE.md#approval-queue) in the Social Brain Guide.
+
+### Manual Reply
+
+You can send manual replies directly from the CRM contact detail panel. Click a contact, type your message in the "Type a reply..." input at the bottom of their message history, and click Send (or press Enter). Manual replies are stored with `source: "manual_reply"` metadata.
+
+### Push Notifications
+
+Enable real-time push notifications for incoming messages and comments:
+
+1. Navigate to Settings tab → "Notification Settings"
+2. Toggle "Enable Push Notifications"
+3. Enable specific channels: **Telegram**, **Discord**, or **Web** (Socket.IO)
+
+When enabled, alerts are pushed to configured Telegram admin chats and/or Discord notification channels when new messages arrive or AI replies need approval.
 
 ### Human Handoff
 
@@ -6432,8 +6479,27 @@ curl -X POST http://localhost:3000/api/social/rules \
   -H "Content-Type: application/json" \
   -d '{"name":"Welcome DM","platform":"instagram","enabled":true,"keywords":"[\"hello\",\"hi\"]","dm_template":"Hey {{username}}! How can I help?"}'
 
+# AI-generate a rule from a description
+curl -X POST http://localhost:3000/api/social/rules/generate \
+  -H "Content-Type: application/json" \
+  -d '{"description":"Capture leads asking about pricing","platform":"instagram"}'
+
 # List all rules
 curl http://localhost:3000/api/social/rules
+
+# Manage follow-up steps
+curl http://localhost:3000/api/social/rules/<ruleId>/follow-ups
+curl -X POST http://localhost:3000/api/social/rules/<ruleId>/follow-ups \
+  -H "Content-Type: application/json" \
+  -d '{"stepOrder":0,"delaySeconds":3600,"messageTemplate":"Following up, {{username}}!"}'
+
+# Get captured leads
+curl http://localhost:3000/api/social/leads
+curl "http://localhost:3000/api/social/leads?platform=instagram"
+
+# Get analytics
+curl http://localhost:3000/api/social/analytics
+curl "http://localhost:3000/api/social/analytics?since=2026-03-01T00:00:00Z"
 
 # Get recent activity
 curl http://localhost:3000/api/social/activity
@@ -6442,6 +6508,20 @@ curl http://localhost:3000/api/social/activity
 curl -X POST http://localhost:3000/api/social/handoff/<contactId>/close \
   -H "Content-Type: application/json" \
   -d '{"resolution":"Issue resolved"}'
+
+# Approval queue
+curl http://localhost:3000/api/social/approvals
+curl http://localhost:3000/api/social/approvals/count
+curl -X POST http://localhost:3000/api/social/approvals/<messageId>/approve
+curl -X POST http://localhost:3000/api/social/approvals/<messageId>/reject
+curl -X POST http://localhost:3000/api/social/approvals/<messageId>/edit \
+  -H "Content-Type: application/json" \
+  -d '{"content":"Edited reply text"}'
+
+# Send manual reply
+curl -X POST http://localhost:3000/api/social/contacts/<contactId>/reply \
+  -H "Content-Type: application/json" \
+  -d '{"content":"Hello from the team!"}'
 ```
 
 ### Webhook Integration
@@ -6454,6 +6534,10 @@ Platform webhooks are received at `POST /api/social/webhooks/:platform`. For Ins
 |---|---|---|
 | `social:reply` | Server → Client | AI auto-reply sent to a contact |
 | `social:escalate` | Server → Client | Conversation escalated to human |
+| `social:pending_approval` | Server → Client | AI reply held for human approval |
+| `social:comment_reply` | Server → Client | AI auto-replied to a comment |
+| `social:new_message` | Server → Client | New inbound DM received |
+| `social:new_comment` | Server → Client | New inbound comment received |
 | `social:handoff:created` | Server → Client | New handoff thread created |
 | `social:handoff:resolved` | Server → Client | Handoff closed |
 | `social:rule:triggered` | Server → Client | Automation rule fired |
