@@ -24,7 +24,7 @@ export type KnowledgeVisibility = "public" | "internal" | "private";
  * Category tags for faceted search and filtering.
  * Enables queries like "show me all media" or "find presentations about X".
  */
-export type KnowledgeCategory = "document" | "media" | "presentation" | "social" | "system" | "conversation";
+export type KnowledgeCategory = "document" | "media" | "presentation" | "social" | "system" | "conversation" | "voice_example";
 
 /** A raw source document before chunking. */
 export type KnowledgeDocument = {

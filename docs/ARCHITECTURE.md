@@ -4271,7 +4271,8 @@ The dispatcher is wired into the `CommentRuleEngine` via `setSendDm()` and `setR
 | `social-ingestion.ts` | `SocialIngestionService` (EventEmitter) — platform adapter pattern: `handleWebhook()`, `processMessage()`, `startPolling()`/`stopPolling()`. Ships with `InstagramAdapter`, `FacebookAdapter`, `TwitterAdapter`, `LinkedInAdapter`, and `GenericPollAdapter` (for YouTube/Reddit). |
 | `platform-api-client.ts` | `PlatformApiClient` interface + `PostContextService` + per-platform API clients (Instagram, Facebook, Twitter, YouTube, LinkedIn). Each implements `fetchPostContext()` for RAG enrichment. |
 | `dm-dispatcher.ts` | `DmDispatcher` — multi-platform DM sender and comment replier. Factory methods `createDmSender()` and `createCommentReplier()` route through native MCP servers via `LocalMcpServerManager.callTool()`. |
-| `social-brain.ts` | `SocialBrain` (EventEmitter) — RAG pipeline: handoff check → `knowledgeService.search(query, 5, { mode: "hybrid" })` → conversation history (last 5) → `copilot.chat()` with `{ mode: "replace" }` system prompt → JSON parse → confidence routing. Processes both DMs (`process()`) and comments (`processComment()`). Supports `approvalRequired` mode for human-in-the-loop review. Emits `reply`, `escalate`, `escalated_message`, `pending_approval`, `comment_reply`. |
+| `social-brain.ts` | `SocialBrain` (EventEmitter) — RAG pipeline: handoff check → `knowledgeService.search(query, 5, { mode: "hybrid" })` → voice example retrieval (top 3 similar via `VoiceLearningService`) → conversation history (last 5) → `copilot.chat()` with `{ mode: "replace" }` system prompt + few-shot voice examples → JSON parse → confidence routing. Processes both DMs (`process()`) and comments (`processComment()`). Supports `approvalRequired` mode for human-in-the-loop review. Emits `reply`, `escalate`, `escalated_message`, `pending_approval`, `comment_reply`. |
+| `voice-learning.ts` | `VoiceLearningService` — Episodic memory for voice matching. Stores approved/edited replies as knowledge chunks (`category: "voice_example"`, `visibility: "internal"`). `recordApprovedReply()` persists examples on approval; `getVoiceExamples(query, limit)` retrieves semantically similar past replies via hybrid search; `formatForPrompt()` renders them as numbered few-shot examples injected into the generation prompt. |
 | `handoff-manager.ts` | `HandoffManager` (EventEmitter) — `HandoffChannel` interface with `createThread`/`postToThread`/`archiveThread`. Escalate, forward messages, handle admin replies via thread→contact reverse map, close handoffs. Emits `handoff:created`, `handoff:resolved`. |
 | `comment-rule-engine.ts` | `CommentRuleEngine` (EventEmitter) — Keyword matching (word-boundary regex), regex fallback, template interpolation (`{{username}}`, `{{keyword}}`, `{{post_id}}`, `{{comment_text}}`), DM delay scheduling, auto-tagging, per-user rate limiting. Wired to `DmDispatcher` for cross-platform DM/reply delivery. Emits `rule:triggered`. |
 
@@ -4335,6 +4336,8 @@ Brain "escalated_message" ──▶ Handoff.forwardToThread()
 | `GET` | `/webhooks/:platform` | Meta webhook verification |
 | `POST` | `/webhooks/:platform` | Incoming platform webhook events |
 | `GET` | `/connections` | List connected platform statuses |
+| `GET` | `/voice-learning/stats` | Voice example count and enabled status |
+| `DELETE` | `/voice-learning/examples` | Clear all stored voice examples |
 
 ### MCP Tools (`src/mcp/tools/social-brain-tools.ts`)
 

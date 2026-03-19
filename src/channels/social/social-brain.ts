@@ -5,6 +5,7 @@ import type { Contact, IncomingSocialMessage, IncomingComment, SocialMessage, Br
 import type { CopilotWrapperService } from "../../copilot/copilot-wrapper.js";
 import type { KnowledgeIngestionService } from "../../knowledge/index.js";
 import { getUserSelectedModel } from "../../config/user-model.js";
+import { VoiceLearningService } from "./voice-learning.js";
 
 export type SocialBrainOptions = {
   repository: SocialRepository;
@@ -18,6 +19,8 @@ export type SocialBrainOptions = {
   model?: string;
   /** Hold AI-generated replies for human approval before sending */
   approvalRequired?: boolean;
+  /** Enable voice learning from approved replies (episodic few-shot examples) */
+  voiceLearningEnabled?: boolean;
 };
 
 const DEFAULT_SYSTEM_PROMPT = `You are a helpful social media assistant. You respond to direct messages from users.
@@ -57,6 +60,8 @@ export class SocialBrain extends EventEmitter {
   private brandVoiceBlock: string;
   private model: string | undefined;
   private approvalRequired: boolean;
+  private voiceLearning: VoiceLearningService;
+  private voiceLearningEnabled: boolean;
 
   constructor(opts: SocialBrainOptions) {
     super();
@@ -68,7 +73,19 @@ export class SocialBrain extends EventEmitter {
     this.baseSystemPrompt = opts.systemPrompt ?? DEFAULT_SYSTEM_PROMPT;
     this.model = opts.model;
     this.approvalRequired = opts.approvalRequired ?? false;
+    this.voiceLearning = new VoiceLearningService(opts.knowledgeService);
+    this.voiceLearningEnabled = opts.voiceLearningEnabled ?? true;
     this.rebuildSystemPrompt();
+  }
+
+  /** Get the voice learning service instance (used by approval handlers to record examples). */
+  getVoiceLearning(): VoiceLearningService {
+    return this.voiceLearning;
+  }
+
+  /** Enable or disable voice learning at runtime. */
+  setVoiceLearningEnabled(enabled: boolean): void {
+    this.voiceLearningEnabled = enabled;
   }
 
   /** Update the brand voice block used in system prompts at runtime. */
@@ -136,7 +153,14 @@ export class SocialBrain extends EventEmitter {
         } catch { /* not JSON, skip */ }
       }
 
-      // 4. Compose prompt
+      // 4. Retrieve voice examples (few-shot) for style matching
+      let voiceExamplesBlock = "";
+      if (this.voiceLearningEnabled) {
+        const voiceExamples = await this.voiceLearning.getVoiceExamples(raw.text, 3);
+        voiceExamplesBlock = VoiceLearningService.formatForPrompt(voiceExamples);
+      }
+
+      // 5. Compose prompt
       const userPrompt = [
         `Platform: ${raw.platform}`,
         `Username: @${raw.username}`,
@@ -150,13 +174,14 @@ export class SocialBrain extends EventEmitter {
         "Knowledge base context:",
         ragContext,
         "",
+        voiceExamplesBlock,
         `New message from user: ${raw.text}`,
       ].join("\n");
 
-      // 5. LLM generation
+      // 6. LLM generation
       const result = await this.generateReply(userPrompt);
 
-      // 6. Decide action based on confidence
+      // 7. Decide action based on confidence
       const shouldEscalate = this.shouldEscalate(result);
 
       const brainResult: BrainResult = {
@@ -176,7 +201,7 @@ export class SocialBrain extends EventEmitter {
           direction: "outbound",
           status: "pending_approval",
           content: result.reply,
-          metadata: { confidence: result.confidence, intent: result.intent, source: "brain_dm" },
+          metadata: { confidence: result.confidence, intent: result.intent, source: "brain_dm", originalMessage: raw.text },
         });
         this.emit("pending_approval", { contact, message, result: brainResult, raw, pendingMessage: pendingMsg });
       } else {
@@ -242,6 +267,13 @@ export class SocialBrain extends EventEmitter {
         ].filter(Boolean).join("\n");
       }
 
+      // Retrieve voice examples for style matching
+      let voiceExamplesBlock = "";
+      if (this.voiceLearningEnabled) {
+        const voiceExamples = await this.voiceLearning.getVoiceExamples(comment.text, 3);
+        voiceExamplesBlock = VoiceLearningService.formatForPrompt(voiceExamples);
+      }
+
       // Compose prompt
       const userPrompt = [
         `Platform: ${comment.platform}`,
@@ -253,6 +285,7 @@ export class SocialBrain extends EventEmitter {
         "Knowledge base context:",
         ragContext,
         "",
+        voiceExamplesBlock,
         `Comment from user: ${comment.text}`,
       ].join("\n");
 
@@ -281,6 +314,7 @@ export class SocialBrain extends EventEmitter {
             source: "brain_comment",
             commentId: comment.commentId,
             postId: comment.postId,
+            originalMessage: comment.text,
           },
         });
         this.emit("pending_approval", { contact, comment, result: brainResult, pendingMessage: pendingMsg });

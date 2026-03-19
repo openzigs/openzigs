@@ -1996,19 +1996,40 @@ if (socialNotifyConfig?.enabled) {
     }
   });
 
-  // Wire Telegram social approval callbacks → repository approve/reject
+  // Wire Telegram social approval callbacks → repository approve/reject + voice learning
   const tgForSocial = channelManager.getChannel("telegram");
   if (tgForSocial && "onSocialApproval" in tgForSocial) {
+    const voiceLearning = socialBrain.getVoiceLearning();
     (tgForSocial as import("./channels/telegram.js").TelegramChannel).onSocialApproval((action) => {
       try {
+        let message: import("./channels/social/types.js").SocialMessage | undefined;
         if (action.action === "approve") {
-          socialRepository.approveReply(action.messageId);
+          message = socialRepository.approveReply(action.messageId);
           io.emit("social:approval_resolved", { messageId: action.messageId, action: "approved" });
         } else {
           socialRepository.rejectReply(action.messageId);
           io.emit("social:approval_resolved", { messageId: action.messageId, action: "rejected" });
         }
         logger.info(`[SocialBrain] Telegram ${action.action} for message ${action.messageId} by ${action.decidedBy ?? "unknown"}`);
+
+        // Record approved reply as voice example
+        if (action.action === "approve" && message) {
+          try {
+            const meta = JSON.parse(message.metadata) as Record<string, unknown>;
+            const originalMessage = (meta.originalMessage as string) ?? "";
+            if (originalMessage) {
+              const contact = socialRepository.getContact(message.contact_id);
+              void voiceLearning.recordApprovedReply({
+                messageId: message.id,
+                platform: message.platform,
+                username: contact?.username ?? "unknown",
+                originalMessage,
+                approvedReply: message.content,
+                wasEdited: false,
+              });
+            }
+          } catch { /* metadata parse failed */ }
+        }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         logger.error(`[SocialBrain] Telegram approval callback error: ${msg}`);

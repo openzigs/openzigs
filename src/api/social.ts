@@ -16,11 +16,12 @@ import type { SocialIngestionService } from "../channels/social/social-ingestion
 import type { SocialBrain } from "../channels/social/social-brain.js";
 import type { HandoffManager } from "../channels/social/handoff-manager.js";
 import type { CommentRuleEngine } from "../channels/social/comment-rule-engine.js";
-import type { SocialPlatform } from "../channels/social/types.js";
+import type { SocialPlatform, SocialMessage } from "../channels/social/types.js";
 import type { SocialBrainAppConfig } from "../config/index.js";
 import type { BrandVoiceService } from "../personality/brand-voice-service.js";
 import type { CopilotWrapper } from "../copilot/copilot-wrapper.js";
 import { getUserSelectedModel } from "../config/user-model.js";
+import type { VoiceLearningService } from "../channels/social/voice-learning.js";
 
 export type SocialRouterOptions = {
   repository: SocialRepository;
@@ -35,9 +36,37 @@ export type SocialRouterOptions = {
 
 const platformSchema = z.enum(["reddit", "youtube", "tiktok", "twitter", "linkedin", "instagram", "facebook"]);
 
+/** Record an approved reply as a voice example (fire-and-forget). */
+async function recordVoiceExample(
+  voiceLearning: VoiceLearningService,
+  repository: SocialRepository,
+  message: SocialMessage,
+  wasEdited: boolean,
+): Promise<void> {
+  try {
+    const meta = JSON.parse(message.metadata) as Record<string, unknown>;
+    const originalMessage = (meta.originalMessage as string) ?? "";
+    if (!originalMessage) return; // no context to learn from
+
+    const contact = repository.getContact(message.contact_id);
+    await voiceLearning.recordApprovedReply({
+      messageId: message.id,
+      platform: message.platform,
+      username: contact?.username ?? "unknown",
+      originalMessage,
+      approvedReply: message.content,
+      wasEdited,
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    logger.error(`[VoiceLearning] Failed to record voice example: ${msg}`);
+  }
+}
+
 export const createSocialRouter = (opts: SocialRouterOptions): Router => {
-  const { repository, ingestion, handoff, config: socialConfig, brandVoiceService } = opts;
+  const { repository, ingestion, brain, handoff, config: socialConfig, brandVoiceService } = opts;
   const router = Router();
+  const voiceLearning = brain.getVoiceLearning();
 
   /** Build connection info with real credential status. */
   const getConnectionStatus = () => {
@@ -737,6 +766,8 @@ export const createSocialRouter = (opts: SocialRouterOptions): Router => {
         res.status(404).json({ error: "Message not found or not pending approval" });
         return;
       }
+      // Record voice example in background (non-blocking)
+      void recordVoiceExample(voiceLearning, repository, message, false);
       res.json({ ok: true, message });
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
@@ -772,11 +803,20 @@ export const createSocialRouter = (opts: SocialRouterOptions): Router => {
         res.status(404).json({ error: "Message not found or not pending approval" });
         return;
       }
+      // Edited replies are especially valuable — they represent corrections to AI style
+      void recordVoiceExample(voiceLearning, repository, message, true);
       res.json({ ok: true, message });
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       res.status(500).json({ error: msg });
     }
+  });
+
+  // ── Voice Learning ─────────────────────────────────────────────────
+
+  /** GET /voice-learning/stats — Voice learning example count. */
+  router.get("/voice-learning/stats", (_req, res) => {
+    res.json({ count: voiceLearning.getExampleCount() });
   });
 
   // ── Manual Reply ──────────────────────────────────────────────────

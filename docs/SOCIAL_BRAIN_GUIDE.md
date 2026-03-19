@@ -33,6 +33,7 @@ This guide walks through every step needed to get Social Brain running: Cloudfla
 - [AI Auto-Reply (Brain Engine)](#ai-auto-reply-brain-engine)
 - [AI Comment Replies](#ai-comment-replies)
 - [Approval Queue](#approval-queue)
+- [Voice Learning (Episodic Memory)](#voice-learning-episodic-memory)
 - [Manual Reply (Compose UI)](#manual-reply-compose-ui)
 - [Push Notifications](#push-notifications)
 - [Human Handoff](#human-handoff)
@@ -1119,6 +1120,61 @@ curl -X POST http://localhost:3000/api/social/contacts/$CONTACT_ID/reply \
 
 ---
 
+## Voice Learning (Episodic Memory)
+
+Social Brain **learns your voice** from every reply you approve or edit. Approved replies are stored as episodic memory (few-shot examples) and retrieved at generation time to match your tone and style.
+
+### How It Works
+
+1. You approve or edit-and-approve a pending reply (via the web UI or Telegram inline buttons)
+2. The original inbound message + your approved reply are stored as a **voice example** in the knowledge base (`category: "voice_example"`, `visibility: "internal"`)
+3. On the next reply generation, Social Brain retrieves the **3 most semantically similar** past examples via hybrid search (vector + full-text)
+4. These examples are injected into the prompt as few-shot context:
+
+```
+Previously approved replies (match this style and tone):
+
+Example 1:
+  User said: How much does your starter plan cost?
+  You replied: Hey! Our starter plan is $29/mo. Want me to send the full breakdown?
+
+Example 2:
+  User said: Do you offer discounts for teams?
+  You replied: Absolutely! Teams of 5+ get 20% off. DM me your team size and I'll get you a quote.
+```
+
+5. The LLM uses these examples to match your phrasing, tone, emoji usage, and response length
+
+### Progressive Improvement
+
+- **0 examples** — Brain uses brand voice settings + knowledge base only
+- **1–5 examples** — Early patterns emerge (formality level, greeting style)
+- **10+ examples** — Replies closely match your natural voice
+- **Edited replies are especially valuable** — they teach the AI where its defaults don't match your style
+
+### Storage Details
+
+| Aspect | Value |
+|--------|-------|
+| Category | `voice_example` |
+| Visibility | `internal` (excluded from public RAG search) |
+| Document ID | `voice-example-{messageId}` |
+| Retrieval | Hybrid search (vector + FTS), top 3 by similarity |
+| Search scope | Filtered to `categories: ["voice_example"]` only |
+
+### API Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/social/voice-learning/stats` | Example count and enabled status |
+| `DELETE` | `/api/social/voice-learning/examples` | Clear all stored voice examples (reset) |
+
+### Telegram Integration
+
+When using Telegram inline approve/reject buttons, approved replies are recorded as voice examples automatically — no web UI interaction required.
+
+---
+
 ## Push Notifications
 
 Real-time push notifications alert you to new messages, comments, and pending approvals across configured channels.
@@ -1823,6 +1879,13 @@ curl http://localhost:3000/api/social/activity | python3 -m json.tool
 | Method | Endpoint | Description |
 |---|---|---|
 | POST | `/api/social/handoff/:contactId/close` | Close an active handoff |
+
+### Voice Learning
+
+| Method | Endpoint | Description |
+|---|---|---|
+| GET | `/api/social/voice-learning/stats` | Example count and enabled status |
+| DELETE | `/api/social/voice-learning/examples` | Clear all stored voice examples |
 
 ### Webhooks
 
