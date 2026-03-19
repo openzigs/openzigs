@@ -358,10 +358,17 @@ export class SocialBrain extends EventEmitter {
       const visibility = this.approvalRequired ? "internal" : "public";
       const results = await this.knowledgeService.search(query, 5, {
         mode: "hybrid",
+        // Use a lower minScore than the default (0.65) because the LLM
+        // can judge relevance and we'd rather surface borderline matches
+        // than miss useful context entirely.
+        minScore: 0.3,
         filter: { visibility },
       });
+      logger.debug(`[SocialBrain] Knowledge search for "${query.slice(0, 80)}" returned ${results.length} chunks (visibility=${visibility})`);
       return results.map((r) => r.text);
-    } catch {
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      logger.error(`[SocialBrain] Knowledge search failed: ${msg}`);
       return [];
     }
   }

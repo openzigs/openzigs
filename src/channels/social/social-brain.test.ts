@@ -138,6 +138,7 @@ describe("SocialBrain", () => {
     // No approval gate → public-only to prevent leaking internal data in auto-replies
     expect(knowledge.search).toHaveBeenCalledWith(raw.text, 5, {
       mode: "hybrid",
+      minScore: 0.3,
       filter: { visibility: "public" },
     });
     const promptArg = (copilot.chat as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
@@ -158,6 +159,7 @@ describe("SocialBrain", () => {
     // Approval gate active → include internal docs since a human reviews every reply
     expect(knowledge.search).toHaveBeenCalledWith(raw.text, 5, {
       mode: "hybrid",
+      minScore: 0.3,
       filter: { visibility: "internal" },
     });
   });
