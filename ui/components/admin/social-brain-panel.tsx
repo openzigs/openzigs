@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { fetchJson } from "@/lib/api";
 import { Key, Save, ChevronDown, ChevronRight, CheckCircle2, AlertCircle } from "lucide-react";
@@ -12,18 +12,6 @@ type SocialBrainCredentials = {
   facebook: { configured: boolean; pageToken: string; appId: string; hasAppSecret: boolean; pageId: string };
   twitter: { configured: boolean; bearerToken: string; apiKey: string; hasApiSecret: boolean; accessToken: string; hasAccessTokenSecret: boolean };
   reddit: { configured: boolean; clientId: string; hasClientSecret: boolean };
-};
-
-type SocialBrainSettings = {
-  enabled: boolean;
-  confidenceThreshold: "high" | "medium" | "low";
-  commentAutomation: boolean;
-  handoff: {
-    preferredChannel?: string;
-    discordChannelId?: string;
-    telegramChatId?: string;
-    autoArchiveMinutes?: number;
-  };
 };
 
 function StatusBadge({ configured }: { configured: boolean }) {
@@ -105,40 +93,12 @@ export function SocialBrainPanel() {
   const [redditClientId, setRedditClientId] = useState("");
   const [redditClientSecret, setRedditClientSecret] = useState("");
 
-  // Settings state
-  const [sbEnabled, setSbEnabled] = useState(false);
-  const [confidenceThreshold, setConfidenceThreshold] = useState<"high" | "medium" | "low">("high");
-  const [commentAutomation, setCommentAutomation] = useState(false);
-  const [handoffChannel, setHandoffChannel] = useState("");
-  const [discordChannelId, setDiscordChannelId] = useState("");
-  const [telegramChatId, setTelegramChatId] = useState("");
-
   const [isSavingCreds, setIsSavingCreds] = useState(false);
-  const [isSavingSettings, setIsSavingSettings] = useState(false);
 
   const credsQuery = useQuery({
     queryKey: ["social-brain-credentials"],
     queryFn: () => fetchJson<SocialBrainCredentials>("/api/admin/social-brain/credentials"),
   });
-
-  const settingsQuery = useQuery({
-    queryKey: ["social-brain-settings"],
-    queryFn: () => fetchJson<SocialBrainSettings>("/api/admin/social-brain/settings"),
-    staleTime: 10_000,
-  });
-
-  // Populate settings from query when loaded
-  const settings = settingsQuery.data;
-
-  useEffect(() => {
-    if (!settings) return;
-    setSbEnabled(settings.enabled);
-    setConfidenceThreshold(settings.confidenceThreshold);
-    setCommentAutomation(settings.commentAutomation);
-    setHandoffChannel(settings.handoff?.preferredChannel ?? "");
-    setDiscordChannelId(settings.handoff?.discordChannelId ?? "");
-    setTelegramChatId(settings.handoff?.telegramChatId ?? "");
-  }, [settings]);
 
   const creds = credsQuery.data;
 
@@ -186,108 +146,12 @@ export function SocialBrainPanel() {
     }
   };
 
-  const handleSaveSettings = async () => {
-    setIsSavingSettings(true);
-    try {
-      await fetchJson("/api/admin/social-brain/settings", {
-        method: "POST",
-        body: JSON.stringify({
-          enabled: sbEnabled,
-          confidenceThreshold,
-          commentAutomation,
-          handoff: {
-            preferredChannel: handoffChannel || undefined,
-            discordChannelId: discordChannelId || undefined,
-            telegramChatId: telegramChatId || undefined,
-          },
-        }),
-      });
-      showToast("Settings saved", "success");
-      await queryClient.invalidateQueries({ queryKey: ["social-brain-settings"] });
-    } catch (err) {
-      showToast(err instanceof Error ? err.message : "Failed to save settings", "error");
-    } finally {
-      setIsSavingSettings(false);
-    }
-  };
-
   return (
     <div className="space-y-5">
-      {/* General Settings */}
-      <div className="rounded-xl border border-border bg-card/60 p-4 space-y-4">
-        <h3 className="text-sm font-semibold text-card-foreground">General Settings</h3>
-
-        <div className="flex items-center justify-between">
-          <div>
-            <p className="text-sm text-foreground">Enable Social Brain</p>
-            <p className="text-xs text-muted-foreground">Activates AI-powered DM automation and comment responses</p>
-          </div>
-          <button
-            onClick={() => setSbEnabled((v) => !v)}
-            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${sbEnabled ? "bg-primary" : "bg-muted"}`}
-          >
-            <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${sbEnabled ? "translate-x-6" : "translate-x-1"}`} />
-          </button>
-        </div>
-
-        <div className="flex items-center justify-between">
-          <div>
-            <p className="text-sm text-foreground">Comment Automation</p>
-            <p className="text-xs text-muted-foreground">Auto-reply and DM triggers based on keyword rules</p>
-          </div>
-          <button
-            onClick={() => setCommentAutomation((v) => !v)}
-            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${commentAutomation ? "bg-primary" : "bg-muted"}`}
-          >
-            <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${commentAutomation ? "translate-x-6" : "translate-x-1"}`} />
-          </button>
-        </div>
-
-        <div>
-          <label className="block text-xs font-medium text-muted-foreground mb-1">AI Confidence Threshold</label>
-          <select
-            value={confidenceThreshold}
-            onChange={(e) => setConfidenceThreshold(e.target.value as "high" | "medium" | "low")}
-            className="rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
-          >
-            <option value="high">High — only auto-reply when very confident</option>
-            <option value="medium">Medium — balance automation and escalation</option>
-            <option value="low">Low — maximize automation, escalate rarely</option>
-          </select>
-        </div>
-
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <div>
-            <label className="block text-xs font-medium text-muted-foreground mb-1">Handoff Channel</label>
-            <select
-              value={handoffChannel}
-              onChange={(e) => setHandoffChannel(e.target.value)}
-              className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
-            >
-              <option value="">None</option>
-              <option value="discord">Discord</option>
-              <option value="telegram">Telegram</option>
-            </select>
-          </div>
-          {handoffChannel === "discord" && (
-            <InputRow label="Discord Channel ID" value={discordChannelId} onChange={setDiscordChannelId} placeholder="1234567890" />
-          )}
-          {handoffChannel === "telegram" && (
-            <InputRow label="Telegram Chat ID" value={telegramChatId} onChange={setTelegramChatId} placeholder="-100123456789" />
-          )}
-        </div>
-
-        <div className="flex justify-end">
-          <button
-            onClick={handleSaveSettings}
-            disabled={isSavingSettings}
-            className="flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition hover:bg-primary/90 disabled:opacity-50"
-          >
-            <Save className="h-3.5 w-3.5" />
-            {isSavingSettings ? "Saving…" : "Save Settings"}
-          </button>
-        </div>
-      </div>
+      <p className="text-sm text-muted-foreground">
+        Manage platform API credentials here. For AI behavior settings (model, response style, confidence, handoff), go to the{" "}
+        <a href="/social" className="text-primary hover:underline">Social Brain</a> Settings tab.
+      </p>
 
       {/* Webhook Verify Token */}
       <CollapsibleSection

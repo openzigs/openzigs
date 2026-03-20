@@ -224,6 +224,10 @@ export type SocialBrainPlatformConnectionConfig = {
 
 export type SocialBrainAppConfig = {
   enabled?: boolean;
+  /** Override the LLM model used for social brain responses (falls back to system default) */
+  model?: string;
+  /** Response style preset: "friendly" (default), "professional", "witty", "minimal" */
+  responseStyle?: "friendly" | "professional" | "witty" | "minimal";
   confidenceThreshold?: "high" | "medium" | "low";
   /** Route comments (with no matching rule) through the Brain for AI auto-reply */
   commentBrainEnabled?: boolean;

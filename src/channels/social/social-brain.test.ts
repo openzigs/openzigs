@@ -289,7 +289,7 @@ describe("SocialBrain", () => {
     await brain.process(contact, msg, raw);
 
     const chatOptions = (copilot.chat as ReturnType<typeof vi.fn>).mock.calls[0][1];
-    expect(chatOptions.systemMessage.content).toBe(customPrompt);
+    expect(chatOptions.systemMessage.content).toContain(customPrompt);
   });
 
   it("parses JSON from markdown code block response", async () => {
@@ -531,5 +531,164 @@ describe("SocialBrain", () => {
     const promptArg = (copilot.chat as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
     expect(promptArg).toContain("Check out our new product!");
     expect(promptArg).toContain("public comment reply");
+  });
+
+  it("processComment enhances KB search query with post caption", async () => {
+    const copilot = makeMockCopilot('{"reply":"Sure!","confidence":"high","intent":"info"}');
+    const knowledge = makeMockKnowledge(["Some product info."]);
+    const brain = new SocialBrain({ repository: repo, copilot, knowledgeService: knowledge });
+
+    const comment = makeComment({
+      text: "What features does this have?",
+      postContext: {
+        postId: "post_1",
+        platform: "twitter",
+        caption: "OpenZigs is an AI agent platform with Director Mode and Social Brain",
+        permalink: "https://twitter.com/post/1",
+        mediaType: "IMAGE",
+        mediaUrl: "",
+        authorUsername: "brand",
+        publishedAt: new Date().toISOString(),
+        cachedAt: new Date().toISOString(),
+      },
+    });
+
+    await brain.processComment(comment);
+
+    // The search query should be enhanced with the post caption for richer semantic matching
+    const searchCall = (knowledge.search as ReturnType<typeof vi.fn>).mock.calls[0];
+    const searchQuery = searchCall[0] as string;
+    expect(searchQuery).toContain("What features does this have?");
+    expect(searchQuery).toContain("OpenZigs");
+    expect(searchQuery).toContain("Director Mode");
+  });
+
+  // ── Response Style Tests ──────────────────────────────────────────
+
+  it("includes social-responder skill content in system prompt by default", async () => {
+    const copilot = makeMockCopilot('{"reply":"Hey!","confidence":"high","intent":"greeting"}');
+    const brain = new SocialBrain({ repository: repo, copilot, knowledgeService: makeMockKnowledge() });
+
+    const contact = makeContact(repo);
+    const raw = makeRawMessage();
+    const msg = repo.insertMessage({ contactId: contact.id, platform: "twitter", direction: "inbound", content: raw.text })!;
+    await brain.process(contact, msg, raw);
+
+    const chatOptions = (copilot.chat as ReturnType<typeof vi.fn>).mock.calls[0][1];
+    // The social-responder skill should be loaded and injected into the system prompt
+    expect(chatOptions.systemMessage.content).toContain("Social Responder");
+  });
+
+  it("applies professional response style modifier to system prompt", async () => {
+    const copilot = makeMockCopilot('{"reply":"Good day.","confidence":"high","intent":"greeting"}');
+    const brain = new SocialBrain({ repository: repo, copilot, knowledgeService: makeMockKnowledge(), responseStyle: "professional" });
+
+    const contact = makeContact(repo);
+    const raw = makeRawMessage();
+    const msg = repo.insertMessage({ contactId: contact.id, platform: "twitter", direction: "inbound", content: raw.text })!;
+    await brain.process(contact, msg, raw);
+
+    const chatOptions = (copilot.chat as ReturnType<typeof vi.fn>).mock.calls[0][1];
+    expect(chatOptions.systemMessage.content).toContain("polished, professional tone");
+  });
+
+  it("applies witty response style modifier to system prompt", async () => {
+    const copilot = makeMockCopilot('{"reply":"Oh you!","confidence":"high","intent":"greeting"}');
+    const brain = new SocialBrain({ repository: repo, copilot, knowledgeService: makeMockKnowledge(), responseStyle: "witty" });
+
+    const contact = makeContact(repo);
+    const raw = makeRawMessage();
+    const msg = repo.insertMessage({ contactId: contact.id, platform: "twitter", direction: "inbound", content: raw.text })!;
+    await brain.process(contact, msg, raw);
+
+    const chatOptions = (copilot.chat as ReturnType<typeof vi.fn>).mock.calls[0][1];
+    expect(chatOptions.systemMessage.content).toContain("clever and slightly playful");
+  });
+
+  it("applies minimal response style modifier to system prompt", async () => {
+    const copilot = makeMockCopilot('{"reply":"Yes.","confidence":"high","intent":"confirmation"}');
+    const brain = new SocialBrain({ repository: repo, copilot, knowledgeService: makeMockKnowledge(), responseStyle: "minimal" });
+
+    const contact = makeContact(repo);
+    const raw = makeRawMessage();
+    const msg = repo.insertMessage({ contactId: contact.id, platform: "twitter", direction: "inbound", content: raw.text })!;
+    await brain.process(contact, msg, raw);
+
+    const chatOptions = (copilot.chat as ReturnType<typeof vi.fn>).mock.calls[0][1];
+    expect(chatOptions.systemMessage.content).toContain("extremely brief");
+  });
+
+  it("setResponseStyle updates style at runtime and rebuilds prompt", async () => {
+    const copilot = makeMockCopilot('{"reply":"Hey!","confidence":"high","intent":"greeting"}');
+    const brain = new SocialBrain({ repository: repo, copilot, knowledgeService: makeMockKnowledge() });
+
+    expect(brain.getResponseStyle()).toBe("friendly");
+    brain.setResponseStyle("professional");
+    expect(brain.getResponseStyle()).toBe("professional");
+
+    const contact = makeContact(repo);
+    const raw = makeRawMessage();
+    const msg = repo.insertMessage({ contactId: contact.id, platform: "twitter", direction: "inbound", content: raw.text })!;
+    await brain.process(contact, msg, raw);
+
+    const chatOptions = (copilot.chat as ReturnType<typeof vi.fn>).mock.calls[0][1];
+    expect(chatOptions.systemMessage.content).toContain("polished, professional tone");
+  });
+
+  it("brand voice block takes priority over response style (appended last)", async () => {
+    const copilot = makeMockCopilot('{"reply":"On brand!","confidence":"high","intent":"greeting"}');
+    const brandBlock = "BRAND VOICE: Always use the word 'exceptional'.";
+    const brain = new SocialBrain({
+      repository: repo,
+      copilot,
+      knowledgeService: makeMockKnowledge(),
+      responseStyle: "witty",
+      brandVoiceBlock: brandBlock,
+    });
+
+    const contact = makeContact(repo);
+    const raw = makeRawMessage();
+    const msg = repo.insertMessage({ contactId: contact.id, platform: "twitter", direction: "inbound", content: raw.text })!;
+    await brain.process(contact, msg, raw);
+
+    const chatOptions = (copilot.chat as ReturnType<typeof vi.fn>).mock.calls[0][1];
+    const content = chatOptions.systemMessage.content as string;
+    // Brand voice should come after the style modifier
+    const wittyIdx = content.indexOf("clever and slightly playful");
+    const brandIdx = content.indexOf("exceptional");
+    expect(wittyIdx).toBeGreaterThan(-1);
+    expect(brandIdx).toBeGreaterThan(wittyIdx);
+  });
+
+  it("friendly style does not add a style modifier (it is the default tone)", async () => {
+    const copilot = makeMockCopilot('{"reply":"Hi!","confidence":"high","intent":"greeting"}');
+    const brain = new SocialBrain({ repository: repo, copilot, knowledgeService: makeMockKnowledge(), responseStyle: "friendly" });
+
+    const contact = makeContact(repo);
+    const raw = makeRawMessage();
+    const msg = repo.insertMessage({ contactId: contact.id, platform: "twitter", direction: "inbound", content: raw.text })!;
+    await brain.process(contact, msg, raw);
+
+    const chatOptions = (copilot.chat as ReturnType<typeof vi.fn>).mock.calls[0][1];
+    const content = chatOptions.systemMessage.content as string;
+    expect(content).not.toContain("Style override:");
+  });
+
+  it("setConfidenceThreshold updates threshold at runtime", async () => {
+    const copilot = makeMockCopilot('{"reply":"Sure thing!","confidence":"medium","intent":"info"}');
+    const brain = new SocialBrain({ repository: repo, copilot, knowledgeService: makeMockKnowledge(), confidenceThreshold: "high" });
+
+    const contact = makeContact(repo);
+    const raw = makeRawMessage();
+    const msg = repo.insertMessage({ contactId: contact.id, platform: "twitter", direction: "inbound", content: raw.text })!;
+
+    // With "high" threshold, a "medium" confidence reply should escalate
+    const result1 = await brain.process(contact, msg, raw);
+    expect(result1?.shouldEscalate).toBe(true);
+
+    // Lower the threshold to "low" at runtime — now "medium" should NOT escalate
+    brain.setConfidenceThreshold("low");
+    const result2 = await brain.process(contact, msg, raw);
+    expect(result2?.shouldEscalate).toBe(false);
   });
 });

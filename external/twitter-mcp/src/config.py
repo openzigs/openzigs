@@ -12,7 +12,7 @@ class TwitterMCPSettings(BaseSettings):
     twitter_api_secret: str = Field("", description="Twitter API secret")
     twitter_access_token: str = Field("", description="Twitter OAuth 1.0a access token")
     twitter_access_token_secret: str = Field("", description="Twitter OAuth 1.0a access token secret")
-    twitter_api_base: str = Field("https://api.twitter.com/2", description="Twitter API v2 base URL")
+    twitter_api_base: str = Field("https://api.x.com/2", description="Twitter API v2 base URL")
     mcp_server_name: str = Field("twitter-mcp-server", description="MCP server name")
     mcp_server_version: str = Field("1.0.0", description="Server version")
     log_level: str = Field("INFO", description="Log level")

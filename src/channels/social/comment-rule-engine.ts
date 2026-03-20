@@ -223,6 +223,7 @@ export class CommentRuleEngine extends EventEmitter {
           } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
             logger.error(`[CommentRule] Delayed DM failed for rule ${rule.id}: ${msg}`);
+            this.emit("dm_failed", { ruleId: rule.id, username: comment.username, error: msg });
           }
         }, rule.dm_delay_seconds * 1000);
         dmSent = true; // scheduled

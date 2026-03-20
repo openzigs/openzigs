@@ -152,7 +152,7 @@ export default function AdminPage() {
           <TikTokPanel />
         </SectionCard>
 
-        <SectionCard title="Social Brain" defaultOpen={false}>
+        <SectionCard title="Social Brain Credentials" defaultOpen={false}>
           <SocialBrainPanel />
         </SectionCard>
 

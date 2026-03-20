@@ -586,6 +586,8 @@ const socialBrain = new SocialBrain({
   confidenceThreshold: socialBrainConfig?.confidenceThreshold,
   brandVoiceBlock: brandVoiceService.getActiveVoicePromptBlock(),
   approvalRequired: socialBrainConfig?.approvalRequired,
+  model: socialBrainConfig?.model,
+  responseStyle: socialBrainConfig?.responseStyle,
 });
 
 const socialHandoff = new HandoffManager({
@@ -738,7 +740,7 @@ const pipelineTemplateManager = new PipelineTemplateManager(path.join(import.met
 await pipelineTemplateManager.load();
 
 // Admin API routes — gated behind auth
-const adminRouter = createAdminRouter({ toolRegistry, sidecarManager, localServerManager, promptManager, scheduler, personalityManager, sessionManager, copilot, taskWorker, taskEngine, webhookManager, customPostActionManager, sentinel, knowledgeService, brandVoiceService, pipelineTemplateManager });
+const adminRouter = createAdminRouter({ toolRegistry, sidecarManager, localServerManager, promptManager, scheduler, personalityManager, sessionManager, copilot, taskWorker, taskEngine, webhookManager, customPostActionManager, sentinel, knowledgeService, brandVoiceService, pipelineTemplateManager, socialBrain });
 app.use("/api/admin", authMiddleware, adminRouter);
 
 // Knowledge Base API routes

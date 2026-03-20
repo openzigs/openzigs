@@ -93,10 +93,10 @@ class TwitterClient:
         return await self._request("POST", "tweets", auth="oauth1", json=body)
 
     async def get_dm_events(self, max_results: int = 20) -> dict:
-        return await self._request("GET", "dm_events", params={"max_results": str(max_results), "dm_event.fields": "id,text,created_at,sender_id,dm_conversation_id"})
+        return await self._request("GET", "dm_events", auth="oauth1", params={"max_results": str(max_results), "dm_event.fields": "id,text,created_at,sender_id,dm_conversation_id"})
 
     async def send_dm(self, participant_id: str, text: str) -> dict:
-        return await self._request("POST", "dm_conversations", auth="oauth1", json={"message": {"text": text}, "participant_ids": [participant_id], "conversation_type": "Group"})
+        return await self._request("POST", f"dm_conversations/with/{participant_id}/messages", auth="oauth1", json={"text": text})
 
     async def get_user_by_username(self, username: str) -> dict:
         return await self._request("GET", f"users/by/username/{username}", params={"user.fields": "id,name,username,description,public_metrics"})

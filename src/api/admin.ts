@@ -814,6 +814,7 @@ export type AdminRouterOptions = {
   brandVoiceService?: BrandVoiceService;
   nativeMcpTester?: NativeMcpTester;
   pipelineTemplateManager?: PipelineTemplateManager;
+  socialBrain?: import("../channels/social/social-brain.js").SocialBrain;
 };
 
 type SchedulerSuggestion = {
@@ -883,7 +884,7 @@ const parseReasoningEffort = (value: unknown): ReasoningEffort | undefined => {
     : undefined;
 };
 
-export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerManager, promptManager, scheduler, personalityManager, sessionManager, copilot, taskWorker, taskEngine, webhookManager, customPostActionManager, sentinel, brandVoiceService, nativeMcpTester, pipelineTemplateManager }: AdminRouterOptions): Router => {
+export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerManager, promptManager, scheduler, personalityManager, sessionManager, copilot, taskWorker, taskEngine, webhookManager, customPostActionManager, sentinel, brandVoiceService, nativeMcpTester, pipelineTemplateManager, socialBrain }: AdminRouterOptions): Router => {
   const router = Router();
   const mcpTester = nativeMcpTester ?? new CopilotNativeMcpTester();
 
@@ -4840,6 +4841,8 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
         : {};
       return res.json({
         enabled: sb.enabled ?? false,
+        model: sb.model ?? "",
+        responseStyle: sb.responseStyle ?? "friendly",
         confidenceThreshold: sb.confidenceThreshold ?? "high",
         commentAutomation: (sb.commentAutomation as Record<string, unknown> | undefined)?.enabled ?? false,
         commentBrainEnabled: sb.commentBrainEnabled ?? false,
@@ -4864,6 +4867,10 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
         : {};
 
       if (typeof body.enabled === "boolean") existingSb.enabled = body.enabled;
+      if (typeof body.model === "string") existingSb.model = body.model || undefined;
+      if (body.responseStyle === "friendly" || body.responseStyle === "professional" || body.responseStyle === "witty" || body.responseStyle === "minimal") {
+        existingSb.responseStyle = body.responseStyle;
+      }
       if (body.confidenceThreshold === "high" || body.confidenceThreshold === "medium" || body.confidenceThreshold === "low") {
         existingSb.confidenceThreshold = body.confidenceThreshold;
       }
@@ -4885,6 +4892,19 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
 
       userConfig.socialBrain = existingSb;
       await writeUserConfig(configPath, userConfig);
+
+      // Apply changes to the running SocialBrain instance (no restart required)
+      if (socialBrain) {
+        if (typeof body.model === "string") socialBrain.setModel(body.model || undefined);
+        if (body.responseStyle === "friendly" || body.responseStyle === "professional" || body.responseStyle === "witty" || body.responseStyle === "minimal") {
+          socialBrain.setResponseStyle(body.responseStyle);
+        }
+        if (body.confidenceThreshold === "high" || body.confidenceThreshold === "medium" || body.confidenceThreshold === "low") {
+          socialBrain.setConfidenceThreshold(body.confidenceThreshold);
+        }
+        if (typeof body.approvalRequired === "boolean") socialBrain.setApprovalRequired(body.approvalRequired);
+      }
+
       logger.info("Updated Social Brain settings via admin UI");
       return res.json({ ok: true, restartRequired: false });
     } catch (error) {

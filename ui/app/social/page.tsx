@@ -1003,6 +1003,8 @@ function SettingsTab() {
     queryKey: ["social", "brain-settings"],
     queryFn: () => fetchJson<{
       enabled: boolean;
+      model: string;
+      responseStyle: string;
       confidenceThreshold: string;
       commentAutomation: boolean;
       commentBrainEnabled: boolean;
@@ -1063,10 +1065,6 @@ function SettingsTab() {
             </p>
           )}
         </div>
-        <div className="rounded-lg border border-border bg-card p-3">
-          <p className="text-xs text-muted-foreground">Confidence Threshold</p>
-          <p className="text-sm font-medium capitalize">{config.confidenceThreshold}</p>
-        </div>
         {voices.length > 0 && (
           <div className="rounded-lg border border-border bg-card p-3 min-w-[200px]">
             <p className="text-xs text-muted-foreground mb-1">Brand Voice</p>
@@ -1124,6 +1122,47 @@ function SettingsTab() {
               <p className="text-xs text-muted-foreground">Hold AI-generated replies for human review before sending (recommended)</p>
             </div>
           </label>
+
+          <div className="border-t border-border/50 pt-4 space-y-4">
+            <div>
+              <label className="block text-sm font-medium mb-1">LLM Model</label>
+              <p className="text-xs text-muted-foreground mb-2">Choose the model used for AI-generated social replies. Leave blank to use the system default.</p>
+              <InlineModelPicker
+                value={brainSettingsQuery.data?.model ?? ""}
+                onChange={(v) => saveBrainSettings.mutate({ model: v })}
+                className="max-w-xs"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium mb-1">Response Style</label>
+              <p className="text-xs text-muted-foreground mb-2">Set the tone for AI-generated replies across all platforms.</p>
+              <select
+                value={brainSettingsQuery.data?.responseStyle ?? "friendly"}
+                onChange={(e) => saveBrainSettings.mutate({ responseStyle: e.target.value })}
+                className="rounded-md border border-border bg-card px-3 py-1.5 text-sm text-foreground max-w-xs"
+              >
+                <option value="friendly">Friendly — warm, approachable, emoji-light</option>
+                <option value="professional">Professional — polished, business-appropriate</option>
+                <option value="witty">Witty — clever, personality-forward</option>
+                <option value="minimal">Minimal — brief, direct answers</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium mb-1">Confidence Threshold</label>
+              <p className="text-xs text-muted-foreground mb-2">Minimum AI confidence needed before sending a reply. Lower thresholds reply more often but may be less accurate.</p>
+              <select
+                value={brainSettingsQuery.data?.confidenceThreshold ?? "high"}
+                onChange={(e) => saveBrainSettings.mutate({ confidenceThreshold: e.target.value })}
+                className="rounded-md border border-border bg-card px-3 py-1.5 text-sm text-foreground max-w-xs"
+              >
+                <option value="high">High — reply only when very confident</option>
+                <option value="medium">Medium — balanced confidence level</option>
+                <option value="low">Low — reply to most comments</option>
+              </select>
+            </div>
+          </div>
         </div>
       </SectionCard>
 

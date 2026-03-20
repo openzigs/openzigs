@@ -1,4 +1,6 @@
 import { EventEmitter } from "node:events";
+import fs from "node:fs";
+import path from "node:path";
 import { logger } from "../../logging/logger.js";
 import { SocialRepository } from "./social-repository.js";
 import type { Contact, IncomingSocialMessage, IncomingComment, SocialMessage, BrainResult } from "./types.js";
@@ -6,6 +8,9 @@ import type { CopilotWrapperService } from "../../copilot/copilot-wrapper.js";
 import type { KnowledgeIngestionService } from "../../knowledge/index.js";
 import { getUserSelectedModel } from "../../config/user-model.js";
 import { VoiceLearningService } from "./voice-learning.js";
+import { PROJECT_ROOT } from "../../project-root.js";
+
+export type ResponseStyle = "friendly" | "professional" | "witty" | "minimal";
 
 export type SocialBrainOptions = {
   repository: SocialRepository;
@@ -17,23 +22,33 @@ export type SocialBrainOptions = {
   brandVoiceBlock?: string;
   /** Override which LLM model to use. Falls back to user's selected model, then copilot default. */
   model?: string;
+  /** Response style preset — adjusts tone of generated replies */
+  responseStyle?: ResponseStyle;
   /** Hold AI-generated replies for human approval before sending */
   approvalRequired?: boolean;
   /** Enable voice learning from approved replies (episodic few-shot examples) */
   voiceLearningEnabled?: boolean;
 };
 
-const DEFAULT_SYSTEM_PROMPT = `You are a helpful social media assistant. You respond to direct messages from users.
-Use the provided context from the knowledge base to answer questions accurately.
-If post context is provided, use it to understand what the user is referring to.
-If you are not confident in your answer, say so honestly.
+const DEFAULT_SYSTEM_PROMPT = `You are a friendly, knowledgeable person representing a brand on social media.
+You reply to messages and comments in a natural, conversational tone — the way a real human on the team would.
+Never reveal that you are an AI or mention "knowledge base", "context", or "documentation" in your replies.
 
-Instructions:
-- Be concise and friendly
-- Match the platform's communication style (informal for TikTok, slightly more formal for LinkedIn)
-- If the user is asking about a specific post, use the post caption and details to inform your reply
-- If you cannot answer the question from the available context, set confidence to "low"
-- Always respond in the same language the user writes in
+CRITICAL — Social media replies are NOT chat:
+- Your reply is a COMPLETE, SELF-CONTAINED answer. Do NOT ask follow-up questions like "want the link or a summary?" or "would you like more details?"
+- Give the answer directly. If someone asks about features, describe the features. If someone asks for a link, give the link. Don't offer a menu of options.
+- Every reply should feel like it ENDS the conversation satisfactorily. The person should not need to reply again to get their answer.
+- On public comments especially: one definitive answer, no back-and-forth.
+
+Guidelines:
+- Write like a real person: warm, direct, and approachable. Avoid bullet-point lists in replies.
+- Keep responses concise — 1-3 sentences for simple questions, a short paragraph for complex ones.
+- Adapt your voice to the platform (casual on TikTok/Instagram, professional on LinkedIn).
+- If post context is provided, weave it into your reply naturally — don't repeat it verbatim.
+- If you genuinely cannot answer, give what you can and point them to a link or resource (set confidence to "low").
+  Do NOT say "I don't have docs" or "no information available" — answer with what you know.
+- Match the language the user writes in.
+- Sound confident when you have the information. Don't hedge or qualify unnecessarily.
 
 Respond in JSON format:
 {
@@ -41,6 +56,33 @@ Respond in JSON format:
   "confidence": "high" | "medium" | "low",
   "intent": "brief description of what the user wants"
 }`;
+
+const RESPONSE_STYLE_MODIFIERS: Record<ResponseStyle, string> = {
+  friendly: "", // default — no modifier needed, the base prompt is already friendly
+  professional: `Style override: Use a polished, professional tone. Avoid slang, emoji, and overly casual phrasing. Structure responses clearly. Suitable for LinkedIn and business contexts.`,
+  witty: `Style override: Be clever and slightly playful. Use humor when appropriate, but never at the user's expense. Think "brand with personality" — entertaining but still helpful.`,
+  minimal: `Style override: Be extremely brief. One sentence when possible, two max. No fluff, no pleasantries. Just the answer.`,
+};
+
+/** Load the social-responder SKILL.md content (sync, cached). */
+function loadSkillContent(): string {
+  try {
+    const skillPath = path.join(PROJECT_ROOT, "src", "skills", "social-responder", "SKILL.md");
+    const raw = fs.readFileSync(skillPath, "utf-8");
+    // Strip YAML frontmatter
+    const trimmed = raw.trimStart();
+    if (trimmed.startsWith("---")) {
+      const endIdx = trimmed.indexOf("---", 3);
+      if (endIdx !== -1) return trimmed.slice(endIdx + 3).trim();
+    }
+    return raw.trim();
+  } catch {
+    logger.warn("[SocialBrain] Could not load social-responder skill — using built-in prompt only");
+    return "";
+  }
+}
+
+const SOCIAL_RESPONDER_SKILL = loadSkillContent();
 
 /**
  * The Social Brain: processes inbound social messages through a RAG pipeline
@@ -58,6 +100,7 @@ export class SocialBrain extends EventEmitter {
   private systemPrompt!: string;
   private baseSystemPrompt: string;
   private brandVoiceBlock: string;
+  private responseStyle: ResponseStyle;
   private model: string | undefined;
   private approvalRequired: boolean;
   private voiceLearning: VoiceLearningService;
@@ -72,6 +115,7 @@ export class SocialBrain extends EventEmitter {
     this.brandVoiceBlock = opts.brandVoiceBlock ?? "";
     this.baseSystemPrompt = opts.systemPrompt ?? DEFAULT_SYSTEM_PROMPT;
     this.model = opts.model;
+    this.responseStyle = opts.responseStyle ?? "friendly";
     this.approvalRequired = opts.approvalRequired ?? false;
     this.voiceLearning = new VoiceLearningService(opts.knowledgeService);
     this.voiceLearningEnabled = opts.voiceLearningEnabled ?? true;
@@ -104,10 +148,42 @@ export class SocialBrain extends EventEmitter {
     this.approvalRequired = required;
   }
 
+  /** Update confidence threshold at runtime. */
+  setConfidenceThreshold(level: "high" | "medium" | "low"): void {
+    this.confidenceThreshold = level;
+  }
+
+  /** Update the response style preset at runtime. */
+  setResponseStyle(style: ResponseStyle): void {
+    this.responseStyle = style;
+    this.rebuildSystemPrompt();
+  }
+
+  /** Get the current response style. */
+  getResponseStyle(): ResponseStyle {
+    return this.responseStyle;
+  }
+
   private rebuildSystemPrompt(): void {
-    this.systemPrompt = this.brandVoiceBlock
-      ? `${this.baseSystemPrompt}\n\n${this.brandVoiceBlock}`
-      : this.baseSystemPrompt;
+    const parts = [this.baseSystemPrompt];
+
+    // Inject the social-responder skill guidelines
+    if (SOCIAL_RESPONDER_SKILL) {
+      parts.push(SOCIAL_RESPONDER_SKILL);
+    }
+
+    // Apply response style modifier (skip for "friendly" — it's the default tone)
+    const styleModifier = RESPONSE_STYLE_MODIFIERS[this.responseStyle];
+    if (styleModifier) {
+      parts.push(styleModifier);
+    }
+
+    // Brand voice takes highest priority — appended last so it overrides style defaults
+    if (this.brandVoiceBlock) {
+      parts.push(this.brandVoiceBlock);
+    }
+
+    this.systemPrompt = parts.join("\n\n");
   }
 
   /**
@@ -123,13 +199,24 @@ export class SocialBrain extends EventEmitter {
 
     try {
       // 2. RAG retrieval from knowledge base
-      const ragChunks = await this.searchKnowledge(raw.text);
+      // Enhance the search query with post context if available for richer semantic matching
+      let searchContext = "";
+      const history = this.repository.getMessages(contact.id, 5);
+      for (const m of history) {
+        try {
+          const meta = JSON.parse(m.metadata) as Record<string, unknown>;
+          if (meta.postCaption) {
+            searchContext = String(meta.postCaption);
+            break;
+          }
+        } catch { /* not JSON, skip */ }
+      }
+      const ragChunks = await this.searchKnowledge(raw.text, searchContext);
       const ragContext = ragChunks.length > 0
         ? ragChunks.map((c, i) => `[${i + 1}] ${c}`).join("\n\n")
         : "(No relevant knowledge base context found)";
 
-      // 3. Build conversation context (last 5 messages)
-      const history = this.repository.getMessages(contact.id, 5);
+      // 3. Build conversation context (last 5 messages — already fetched above)
       const conversationContext = history
         .reverse()
         .map((m) => `${m.direction === "inbound" ? "User" : "Assistant"}: ${m.content}`)
@@ -250,8 +337,9 @@ export class SocialBrain extends EventEmitter {
     }
 
     try {
-      // RAG retrieval
-      const ragChunks = await this.searchKnowledge(comment.text);
+      // RAG retrieval — enhance query with post caption for better semantic matching
+      const commentSearchContext = comment.postContext?.caption ?? "";
+      const ragChunks = await this.searchKnowledge(comment.text, commentSearchContext);
       const ragContext = ragChunks.length > 0
         ? ragChunks.map((c, i) => `[${i + 1}] ${c}`).join("\n\n")
         : "(No relevant knowledge base context found)";
@@ -351,12 +439,20 @@ export class SocialBrain extends EventEmitter {
     }
   }
 
-  private async searchKnowledge(query: string): Promise<string[]> {
+  private async searchKnowledge(query: string, context?: string): Promise<string[]> {
     try {
       // When approval is required a human reviews every reply, so internal docs are safe to include.
       // Auto-replies (no approval gate) are restricted to public-only to prevent leaking internal data.
       const visibility = this.approvalRequired ? "internal" : "public";
-      const results = await this.knowledgeService.search(query, 5, {
+
+      // Enhance the search query with surrounding context (post caption, etc.)
+      // Short social comments like "What are the features?" have weak semantic signal;
+      // appending the post caption gives the vector search much richer keywords to match.
+      const enhancedQuery = context
+        ? `${query} ${context}`.slice(0, 500)
+        : query;
+
+      const results = await this.knowledgeService.search(enhancedQuery, 5, {
         mode: "hybrid",
         // Use a lower minScore than the default (0.65) because the LLM
         // can judge relevance and we'd rather surface borderline matches
@@ -364,7 +460,7 @@ export class SocialBrain extends EventEmitter {
         minScore: 0.3,
         filter: { visibility },
       });
-      logger.debug(`[SocialBrain] Knowledge search for "${query.slice(0, 80)}" returned ${results.length} chunks (visibility=${visibility})`);
+      logger.debug(`[SocialBrain] Knowledge search for "${enhancedQuery.slice(0, 80)}" returned ${results.length} chunks (visibility=${visibility})`);
       return results.map((r) => r.text);
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
