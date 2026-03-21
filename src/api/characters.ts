@@ -852,6 +852,7 @@ async function getImageGenSidecarUrl(): Promise<string | null> {
 }
 
 async function getImageGenToken(): Promise<string> {
+  // IMAGE_GEN_NETWORK_TOKEN takes highest precedence (explicit override)
   const envToken = process.env.IMAGE_GEN_NETWORK_TOKEN;
   if (envToken) return envToken;
 
@@ -867,6 +868,12 @@ async function getImageGenToken(): Promise<string> {
   } catch {
     // Config unavailable
   }
+
+  // Fall back to the sidecar's own token env var — set when both openzigs and
+  // the FluxQ sidecar run on the same machine (loaded from ~/fluxq-node/.env).
+  const fluxqToken = process.env.FLUXQ_SECRET_TOKEN;
+  if (fluxqToken) return fluxqToken;
+
   return "";
 }
 
