@@ -61,7 +61,13 @@ function createMockIngestion() {
 }
 
 function createMockBrain() {
-  return { setBrandVoice: vi.fn() };
+  return {
+    setBrandVoice: vi.fn(),
+    getVoiceLearning: vi.fn().mockReturnValue({
+      getExampleCount: vi.fn().mockReturnValue(0),
+      recordApprovedReply: vi.fn(),
+    }),
+  };
 }
 
 function createMockHandoff() {

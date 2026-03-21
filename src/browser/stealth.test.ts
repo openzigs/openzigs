@@ -2,8 +2,8 @@ import { describe, it, expect } from "vitest";
 import { STEALTH_SCRIPTS, COMBINED_STEALTH_SCRIPT } from "./stealth.js";
 
 describe("browser stealth", () => {
-  it("provides 17 stealth scripts", () => {
-    expect(STEALTH_SCRIPTS.length).toBe(17);
+  it("provides 20 stealth scripts", () => {
+    expect(STEALTH_SCRIPTS.length).toBe(20);
   });
 
   it("combined script is a non-empty IIFE with concealed sourceURL", () => {

@@ -74,7 +74,7 @@ describe("createInstagramPollFn", () => {
     expect(results).toEqual([]);
   });
 
-  it("skips posts with no comments_count", async () => {
+  it("returns empty array for posts with no actual comments", async () => {
     const mgr = createMockManager({
       get_media_posts: {
         text: mcpResult(true, {
@@ -84,14 +84,15 @@ describe("createInstagramPollFn", () => {
           count: 1,
         }),
       },
+      get_media_comments: {
+        text: mcpResult(true, { comments: [], count: 0 }),
+      },
     });
 
     const poll = createInstagramPollFn(mgr as any);
     const results = await poll(SINCE);
 
     expect(results).toEqual([]);
-    // Should not call get_media_comments since post has 0 comments
-    expect(mgr.callTool).not.toHaveBeenCalledWith("instagram", "get_media_comments", expect.anything());
   });
 
   it("returns empty array when get_media_comments fails", async () => {

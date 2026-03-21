@@ -10,9 +10,9 @@ function createMockLocalServerManager(opts: { running?: boolean; callResult?: { 
 }
 
 describe("linkedin-tools", () => {
-  it("returns 6 tool definitions", () => {
+  it("returns 8 tool definitions", () => {
     const tools = createLinkedInTools({});
-    expect(tools).toHaveLength(6);
+    expect(tools).toHaveLength(8);
   });
 
   it("all tools have category social", () => {
@@ -28,6 +28,7 @@ describe("linkedin-tools", () => {
     expect(names).toEqual(expect.arrayContaining([
       "linkedin-get-profile", "linkedin-get-posts", "linkedin-create-post",
       "linkedin-get-company", "linkedin-send-message", "linkedin-get-conversations",
+      "linkedin-get-post-comments", "linkedin-reply-to-comment",
     ]));
   });
 

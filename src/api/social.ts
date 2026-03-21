@@ -909,6 +909,18 @@ export const createSocialRouter = (opts: SocialRouterOptions): Router => {
         res.status(500).json({ error: "Failed to insert reply" });
         return;
       }
+      // Dispatch the reply to the platform in the background
+      if (dmDispatcher && contact.platform_user_id) {
+        void (async () => {
+          try {
+            const sender = dmDispatcher.createDmSender();
+            await sender(contact.platform, contact.platform_user_id!, message.content);
+          } catch (err) {
+            const errMsg = err instanceof Error ? err.message : String(err);
+            logger.error(`[SocialManualReply] Failed to send manual reply to ${contact.platform}: ${errMsg}`);
+          }
+        })();
+      }
       res.json({ ok: true, message });
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
