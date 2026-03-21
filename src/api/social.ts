@@ -464,7 +464,7 @@ export const createSocialRouter = (opts: SocialRouterOptions): Router => {
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       logger.error(`[Social] Webhook error (${platform}): ${msg}`);
-      res.status(500).json({ error: msg });
+      res.status(500).json({ error: "Internal server error" });
     }
   });
 

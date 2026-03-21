@@ -66,6 +66,7 @@ import { HandoffManager } from "./channels/social/handoff-manager.js";
 import { CommentRuleEngine } from "./channels/social/comment-rule-engine.js";
 import { PostContextService, TwitterApiClient, YouTubeApiClient, LinkedInApiClient, TikTokApiClient, RedditApiClient, InstagramApiClient, FacebookApiClient } from "./channels/social/platform-api-client.js";
 import { DmDispatcher } from "./channels/social/dm-dispatcher.js";
+import { verifyWebhookSignature } from "./channels/social/webhook-signature.js";
 import { createRedditPollFn } from "./channels/social/reddit-poll.js";
 import { createYouTubePollFn } from "./channels/social/youtube-poll.js";
 import { createRedditBrowserPollFn } from "./channels/social/reddit-browser-poll.js";
@@ -804,6 +805,19 @@ const socialRouter = createSocialRouter({
 // Social webhook routes are PUBLIC — no auth middleware.
 // External platforms (Twitter CRC, Meta hub challenge) call these without auth headers.
 // MUST be registered before the auth-gated /api/social mount.
+// Raw body capture for HMAC signature verification (global parser skips this prefix).
+app.use("/api/social/webhooks", express.json({
+  limit: "1mb",
+  verify: (req, _res, buf) => {
+    (req as unknown as Record<string, unknown>).rawBody = buf;
+  },
+}));
+
+const webhookSecrets = {
+  twitter: (process.env.TWITTER_API_SECRET ?? process.env.TWITTER_CONSUMER_SECRET ?? "").trim() || undefined,
+  meta: (process.env.FACEBOOK_APP_SECRET ?? "").trim() || undefined,
+};
+
 app.get("/api/social/webhooks/:platform", (req, res) => {
   const { platform } = req.params;
 
@@ -837,18 +851,31 @@ app.get("/api/social/webhooks/:platform", (req, res) => {
 });
 
 app.post("/api/social/webhooks/:platform", (req, res) => {
-  const { platform } = req.params;
+  const platform = req.params.platform as Parameters<typeof socialIngestion.handleWebhook>[0];
+  const rawBody = (req as unknown as Record<string, unknown>).rawBody as Buffer | undefined;
+
+  // Verify webhook payload signature when a secret is configured for this platform.
+  if (rawBody) {
+    const result = verifyWebhookSignature(platform, rawBody, req.headers, webhookSecrets);
+    if (result === false) {
+      logger.warn(`[Social] Webhook signature verification failed for ${platform}`);
+      res.status(403).json({ error: "Invalid webhook signature" });
+      return;
+    }
+    // result === null means no secret configured — allow through with a one-time warning
+    // result === true means signature verified
+  }
+
   try {
     void socialIngestion.handleWebhook(
-      platform as Parameters<typeof socialIngestion.handleWebhook>[0],
+      platform,
       req.body as Record<string, unknown>,
       req.headers as Record<string, string>,
     );
     res.status(200).json({ received: true });
   } catch (error) {
-    const msg = error instanceof Error ? error.message : String(error);
-    logger.error(`[Social] Webhook error (${platform}): ${msg}`);
-    res.status(500).json({ error: msg });
+    logger.error(`[Social] Webhook error (${platform}): ${error instanceof Error ? error.message : String(error)}`);
+    res.status(500).json({ error: "Internal server error" });
   }
 });
 

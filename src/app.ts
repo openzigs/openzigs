@@ -151,14 +151,17 @@ export const createApp = (config: AppConfig, options: CreateAppOptions = {}): Ex
     ...(!trustProxy && { validate: { xForwardedForHeader: false } }),
   }));
 
-  // /api/queue uses a higher limit (50mb) registered in server.ts for image callbacks;
-  // skip the global 1mb parser for that prefix so it isn't rejected here first.
+  // /api/queue uses a higher limit (50mb) registered in server.ts for image callbacks.
+  // /api/social/webhooks needs a custom parser that captures raw body for HMAC verification.
+  // Skip the global 1mb parser for both prefixes so they aren't rejected or double-parsed.
+  const skipGlobalParser = (p: string) =>
+    p.startsWith("/api/queue") || p.startsWith("/api/social/webhooks");
   app.use((req, res, next) => {
-    if (req.path.startsWith("/api/queue")) return next();
+    if (skipGlobalParser(req.path)) return next();
     express.json({ limit: "1mb" })(req, res, next);
   });
   app.use((req, res, next) => {
-    if (req.path.startsWith("/api/queue")) return next();
+    if (skipGlobalParser(req.path)) return next();
     express.urlencoded({ extended: true, limit: "1mb" })(req, res, next);
   });
 
