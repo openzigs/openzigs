@@ -30,6 +30,7 @@ import { BrandVoicePanel } from "@/components/admin/brand-voice-panel";
 import { PinterestPanel } from "@/components/admin/pinterest-panel";
 import { LinkedInPanel } from "@/components/admin/linkedin-panel";
 import { TikTokPanel } from "@/components/admin/tiktok-panel";
+import { SocialBrainPanel } from "@/components/admin/social-brain-panel";
 import { ToastContainer, showToast } from "@/components/toast";
 import { RotateCw } from "lucide-react";
 import { AskAiPanel, AskAiButton, PAGE_CONTEXTS } from "@/components/ask-ai";
@@ -149,6 +150,10 @@ export default function AdminPage() {
 
         <SectionCard title="TikTok" defaultOpen={false}>
           <TikTokPanel />
+        </SectionCard>
+
+        <SectionCard title="Social Brain Credentials" defaultOpen={false}>
+          <SocialBrainPanel />
         </SectionCard>
 
         <SectionCard title="Custom Agents" defaultOpen={false}>

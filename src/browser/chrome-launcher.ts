@@ -158,9 +158,24 @@ export const launchChrome = async (
     // Exclude the enable-automation switch that Chrome adds for CDP sessions.
     // This prevents navigator.webdriver from being set at the C++ level
     // and removes the "Chrome is being controlled" infobar.
-    // Unlike --disable-blink-features=AutomationControlled, this flag does
-    // NOT trigger a warning banner.
     "--disable-features=AutomationControlled",
+    // Suppress "Chrome is being controlled by automated test software" infobar
+    "--disable-infobars",
+    // Prevent background tab throttling which creates timing anomalies
+    // detectable by anti-bot systems
+    "--disable-background-timer-throttling",
+    "--disable-backgrounding-occluded-windows",
+    "--disable-renderer-backgrounding",
+    // Avoid Chrome internal monitoring that slows automated interactions
+    "--disable-hang-monitor",
+    "--disable-ipc-flooding-protection",
+    // Prevent prompts/popups that interrupt automation
+    "--disable-popup-blocking",
+    "--disable-prompt-on-repost",
+    // Disable component updates to avoid mid-session Chrome restarts
+    "--disable-component-update",
+    // Only record metrics, don't report them (reduces fingerprint surface)
+    "--metrics-recording-only",
     // Realistic window size so outerWidth/outerHeight are non-zero
     "--window-size=1440,900",
     ...extraFlags

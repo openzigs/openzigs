@@ -285,6 +285,79 @@ export const STEALTH_SCRIPTS: string[] = [
        configurable: true,
      });
    }`,
+
+  // 18. Neutralise CDP detection via console.log(Error) stack getter trick.
+  //     Anti-bot systems (Cloudflare Turnstile, DataDome) create an Error
+  //     with a getter on `stack` and call console.log(). When CDP is active
+  //     the WebSocket serialisation triggers the getter, revealing automation.
+  //     We wrap console methods so the getter is never triggered by the CDP
+  //     serialisation path. Uses the same Proxy approach but adds a safeguard
+  //     that prevents Error object stack access during console serialisation.
+  `(function() {
+     const origConsole = window.console;
+     const safeStringify = (arg) => {
+       try {
+         if (arg instanceof Error) return arg.message || 'Error';
+         if (typeof arg === 'object' && arg !== null) return JSON.stringify(arg);
+         return String(arg);
+       } catch { return '[object]'; }
+     };
+     const wrapMethod = (name) => {
+       const orig = origConsole[name];
+       if (typeof orig !== 'function') return;
+       origConsole[name] = function(...args) {
+         // Call original but prevent Error stack getter trigger
+         // by pre-converting Error objects to safe strings
+         const safeArgs = args.map(a => a instanceof Error ? a.message || 'Error' : a);
+         return orig.apply(this, safeArgs);
+       };
+       // Preserve native toString so detectors see [native code]
+       origConsole[name].toString = () => 'function ' + name + '() { [native code] }';
+     };
+     ['log', 'debug', 'info', 'warn', 'error', 'trace', 'dir'].forEach(wrapMethod);
+   })();`,
+
+  // 19. Prevent MutationObserver from detecting DOM changes caused by CDP
+  //     script injection (Page.addScriptToEvaluateOnNewDocument adds <script>
+  //     elements that can be observed). Wrap MutationObserver to filter out
+  //     script nodes added before DOMContentLoaded.
+  `(function() {
+     const OrigMO = window.MutationObserver;
+     window.MutationObserver = class extends OrigMO {
+       constructor(callback) {
+         super(function(mutations, observer) {
+           // Filter out script additions that happen pre-DOMContentLoaded
+           // (these are typically CDP-injected stealth scripts)
+           const filtered = mutations.filter(m => {
+             if (m.type === 'childList' && m.addedNodes.length) {
+               for (const node of m.addedNodes) {
+                 if (node.tagName === 'SCRIPT' && !document.readyState.match(/interactive|complete/)) {
+                   return false;
+                 }
+               }
+             }
+             return true;
+           });
+           if (filtered.length > 0) callback(filtered, observer);
+         });
+       }
+     };
+     window.MutationObserver.toString = () => 'function MutationObserver() { [native code] }';
+     window.MutationObserver.prototype = OrigMO.prototype;
+   })();`,
+
+  // 20. Spoof Notification.permission to "default" (many bot detectors
+  //     check that notifications aren't in a suspicious state)
+  `(function() {
+     try {
+       if (typeof Notification !== 'undefined' && Notification.permission === 'denied') {
+         Object.defineProperty(Notification, 'permission', {
+           get: () => 'default',
+           configurable: true,
+         });
+       }
+     } catch(e) {}
+   })();`,
 ];
 
 /**

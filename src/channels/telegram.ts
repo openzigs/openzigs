@@ -48,12 +48,19 @@ const splitTelegramMessageLegacy = (text: string) => {
   return splitMessage(text, TELEGRAM_MAX_MESSAGE_LENGTH);
 };
 
+export type SocialApprovalAction = {
+  messageId: string;
+  action: "approve" | "reject";
+  decidedBy?: string;
+};
+
 export class TelegramChannel implements MessageChannel {
   readonly id: string;
   readonly type = "telegram";
   private connected = false;
   private messageHandlers: Array<(msg: IncomingMessage) => void> = [];
   private approvalHandlers: Array<(response: ApprovalResponse) => void> = [];
+  private socialApprovalHandlers: Array<(action: SocialApprovalAction) => void> = [];
   private bot: TelegramBotLike;
   private approvals = new Map<string, ApprovalRequest>();
   private toolRegistry?: ToolRegistry;
@@ -204,6 +211,31 @@ export class TelegramChannel implements MessageChannel {
         );
       }
     });
+
+    // Social Brain approval callbacks
+    this.bot.callbackQuery(/^social_(approve|reject):(.+)$/, async (ctx) => {
+      const action = ctx.match?.[1] as "approve" | "reject";
+      const messageId = ctx.match?.[2];
+      if (!messageId || !action) return;
+
+      await ctx.answerCallbackQuery({
+        text: action === "approve" ? "\u2705 Reply approved & sent" : "\u274c Reply rejected",
+      });
+
+      this.emitSocialApproval({ messageId, action, decidedBy: ctx.from?.id?.toString() });
+
+      const callbackMessage = ctx.callbackQuery?.message;
+      const originalText = callbackMessage?.text ?? "";
+      if (callbackMessage?.message_id && callbackMessage.chat?.id && this.bot.api.editMessageText) {
+        try {
+          await this.bot.api.editMessageText(
+            callbackMessage.chat.id.toString(),
+            callbackMessage.message_id,
+            `${originalText}\n\n${action === "approve" ? "\u2705 Approved" : "\u274c Rejected"}`,
+          );
+        } catch { /* best-effort edit */ }
+      }
+    });
   }
 
   async connect(): Promise<void> {
@@ -277,6 +309,40 @@ export class TelegramChannel implements MessageChannel {
     });
   }
 
+  /** Send a social brain approval notification with inline Approve / Reject buttons. */
+  async sendSocialApproval(chatId: string, opts: {
+    messageId: string;
+    username: string;
+    platform: string;
+    replyPreview: string;
+    originalComment?: string;
+  }): Promise<void> {
+    if (!this.connected) throw new Error("Channel is not connected");
+
+    const keyboard = new InlineKeyboard()
+      .text("\u2705 Approve", `social_approve:${opts.messageId}`)
+      .text("\u274c Reject", `social_reject:${opts.messageId}`);
+
+    const lines = [
+      `\u23f3 Reply pending approval`,
+      ``,
+      `Platform: ${opts.platform}`,
+      `To: @${opts.username}`,
+    ];
+    if (opts.originalComment) {
+      lines.push(`Comment: ${opts.originalComment.slice(0, 120)}`);
+    }
+    lines.push(``, `AI Reply:`, opts.replyPreview.slice(0, 300));
+
+    await this.bot.api.sendMessage(chatId, lines.join("\n"), {
+      reply_markup: keyboard,
+    });
+  }
+
+  onSocialApproval(handler: (action: SocialApprovalAction) => void): void {
+    this.socialApprovalHandlers.push(handler);
+  }
+
   getWebhookCallback() {
     return webhookCallback(this.bot as Bot, "express");
   }
@@ -290,6 +356,12 @@ export class TelegramChannel implements MessageChannel {
   private emitApprovalResponse(response: ApprovalResponse) {
     for (const handler of this.approvalHandlers) {
       handler(response);
+    }
+  }
+
+  private emitSocialApproval(action: SocialApprovalAction) {
+    for (const handler of this.socialApprovalHandlers) {
+      handler(action);
     }
   }
 }

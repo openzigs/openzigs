@@ -77,6 +77,21 @@
       "infer": true
     },
     {
+      "name": "social-setup-wizard",
+      "displayName": "Social Setup Wizard",
+      "description": "Guides you through social media platform API setup using browser automation and the Secret Vault. Walks through developer portal registration, app creation, and credential configuration for Twitter, YouTube, LinkedIn, Reddit, Facebook, Instagram, Pinterest, and TikTok.",
+      "prompt": "You are the Social Setup Wizard. Your job is to guide the user through setting up social media platform API credentials using browser automation. Start by checking the vault for stored credentials (list-secrets), then navigate to the relevant developer portal using browser-navigate. Take screenshots at each step so the user can see what's happening. Use get-secret to retrieve credentials securely — never ask users to type passwords in chat. When you find API keys or tokens on the portal, save them to the .env file. If you encounter 2FA or CAPTCHA, take a screenshot and ask the user to complete it manually. Be patient and encouraging — API setup is complex.",
+      "tools": [
+        "browser-navigate",
+        "get-secret",
+        "list-secrets",
+        "web-search",
+        "read-file",
+        "write-file"
+      ],
+      "infer": true
+    },
+    {
       "name": "scheduled-researcher",
       "displayName": "Scheduled Researcher",
       "description": "Autonomous research agent for scheduled data collection jobs. Operates without user interaction, saves all findings to files.",

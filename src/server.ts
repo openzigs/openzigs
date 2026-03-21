@@ -2,7 +2,7 @@ import "dotenv/config";
 import express from "express";
 import { createServer } from "node:http";
 import { createRequire } from "node:module";
-import { randomBytes, timingSafeEqual } from "node:crypto";
+import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import fs from "node:fs/promises";
 import { statSync } from "node:fs";
 import os from "node:os";
@@ -28,7 +28,7 @@ import { MessageRouter } from "./routing/index.js";
 import { SessionManager } from "./sessions/index.js";
 import { CloudflareTunnel } from "./tunnel/index.js";
 import { createModelsRouter } from "./api/models.js";
-import { createAdminRouter, pinterestOAuthStates, exchangePinterestCode, refreshPinterestToken, linkedinOAuthStates, exchangeLinkedInCode, refreshLinkedInToken, tiktokOAuthStates, exchangeTikTokCode, ensurePinterestScheduledJob, setAdminIO, setTunnelPublicUrl } from "./api/admin.js";
+import { createAdminRouter, pinterestOAuthStates, exchangePinterestCode, refreshPinterestToken, linkedinOAuthStates, exchangeLinkedInCode, refreshLinkedInToken, tiktokOAuthStates, exchangeTikTokCode, youtubeOAuthStates, exchangeYouTubeCode, refreshYouTubeToken, ensurePinterestScheduledJob, setAdminIO, setTunnelPublicUrl } from "./api/admin.js";
 import { createTasksRouter } from "./api/tasks.js";
 import { createFilesRouter } from "./api/files.js";
 import { launchChrome, killChrome } from "./browser/chrome-launcher.js";
@@ -57,15 +57,24 @@ import { createAuthMiddleware } from "./auth/auth.js";
 import { createDirectorRouter, setDirectorIO } from "./api/director.js";
 import { createAudioRouter } from "./api/audio.js";
 import { createPresenterRouter } from "./api/presenter.js";
-import { createSocialRouter } from "./api/social.js";
+import { createSocialRouter, dispatchApprovedReply } from "./api/social.js";
 import { createPinterestRouter } from "./api/pinterest.js";
 import { SocialRepository } from "./channels/social/social-repository.js";
-import { SocialIngestionService, TwitterAdapter, LinkedInAdapter } from "./channels/social/social-ingestion.js";
+import { SocialIngestionService, TwitterAdapter, LinkedInAdapter, InstagramAdapter, FacebookAdapter, GenericPollAdapter } from "./channels/social/social-ingestion.js";
 import { SocialBrain } from "./channels/social/social-brain.js";
 import { HandoffManager } from "./channels/social/handoff-manager.js";
 import { CommentRuleEngine } from "./channels/social/comment-rule-engine.js";
-import { PostContextService, TwitterApiClient, YouTubeApiClient, LinkedInApiClient, TikTokApiClient } from "./channels/social/platform-api-client.js";
+import { PostContextService, TwitterApiClient, YouTubeApiClient, LinkedInApiClient, TikTokApiClient, RedditApiClient, InstagramApiClient, FacebookApiClient } from "./channels/social/platform-api-client.js";
 import { DmDispatcher } from "./channels/social/dm-dispatcher.js";
+import { verifyWebhookSignature } from "./channels/social/webhook-signature.js";
+import { createRedditPollFn } from "./channels/social/reddit-poll.js";
+import { createYouTubePollFn } from "./channels/social/youtube-poll.js";
+import { createRedditBrowserPollFn } from "./channels/social/reddit-browser-poll.js";
+import { createYouTubeBrowserPollFn } from "./channels/social/youtube-browser-poll.js";
+import { createTwitterPollFn } from "./channels/social/twitter-poll.js";
+import { createFacebookPollFn } from "./channels/social/facebook-poll.js";
+import { createInstagramPollFn } from "./channels/social/instagram-poll.js";
+import { createLinkedInPollFn } from "./channels/social/linkedin-poll.js";
 import { BrandVoiceRepository } from "./personality/brand-voice-repository.js";
 import { BrandVoiceService } from "./personality/brand-voice-service.js";
 import { PipelineTemplateManager } from "./productivity/pipeline-template-manager.js";
@@ -529,13 +538,79 @@ if (tikNeuronApiKey) {
   postContextService.registerClient(new TikTokApiClient(tikNeuronApiKey));
 }
 
+const redditClientId = process.env.REDDIT_CLIENT_ID ?? "";
+if (redditClientId && localServerManager) {
+  postContextService.registerClient(new RedditApiClient(localServerManager));
+}
+
+const instagramAccessToken = process.env.INSTAGRAM_ACCESS_TOKEN ?? "";
+if (instagramAccessToken) {
+  postContextService.registerClient(new InstagramApiClient(instagramAccessToken));
+}
+
+const facebookPageToken = process.env.FACEBOOK_PAGE_TOKEN ?? "";
+if (facebookPageToken) {
+  postContextService.registerClient(new FacebookApiClient(facebookPageToken));
+}
+
 // Only register platform adapters when credentials are actually configured
 const socialAdapters: import("./channels/social/social-ingestion.js").SocialPlatformAdapter[] = [];
+const twitterMode = socialBrainConfig?.connections?.twitter?.mode ?? "webhook";
 if (twitterBearerToken) {
-  socialAdapters.push(new TwitterAdapter());
+  if (twitterMode === "polling" && localServerManager) {
+    socialAdapters.push(new GenericPollAdapter("twitter", createTwitterPollFn(localServerManager)));
+  } else {
+    socialAdapters.push(new TwitterAdapter());
+  }
 }
 if (linkedinAccessToken) {
-  socialAdapters.push(new LinkedInAdapter());
+  const linkedinMode = socialBrainConfig?.connections?.linkedin?.mode ?? "polling";
+  if (linkedinMode === "polling" && localServerManager) {
+    socialAdapters.push(new GenericPollAdapter("linkedin", createLinkedInPollFn(localServerManager)));
+  } else {
+    socialAdapters.push(new LinkedInAdapter());
+  }
+}
+if (redditClientId && localServerManager) {
+  socialAdapters.push(new GenericPollAdapter("reddit", createRedditPollFn(localServerManager)));
+} else if (socialBrainConfig?.connections?.reddit?.mode === "browser") {
+  const chromeHost = process.env.CHROME_DEBUG_HOST ?? "";
+  const chromePort = parseInt(process.env.CHROME_DEBUG_PORT ?? "9222", 10);
+  if (chromeHost) {
+    logger.info("[SocialBrain] Reddit using browser mode (beta) — no API credentials required");
+    socialAdapters.push(new GenericPollAdapter("reddit", createRedditBrowserPollFn({ host: chromeHost, port: chromePort })));
+  } else {
+    logger.warn("[SocialBrain] Reddit browser mode requires CHROME_DEBUG_HOST to be set");
+  }
+}
+if (youtubeApiKey && localServerManager) {
+  socialAdapters.push(new GenericPollAdapter("youtube", createYouTubePollFn(localServerManager)));
+} else if (socialBrainConfig?.connections?.youtube?.mode === "browser") {
+  const chromeHost = process.env.CHROME_DEBUG_HOST ?? "";
+  const chromePort = parseInt(process.env.CHROME_DEBUG_PORT ?? "9222", 10);
+  const ytChannelUrl = process.env.YOUTUBE_CHANNEL_URL ?? "";
+  if (chromeHost && ytChannelUrl) {
+    logger.info("[SocialBrain] YouTube using browser mode (beta) — no API key required");
+    socialAdapters.push(new GenericPollAdapter("youtube", createYouTubeBrowserPollFn({ host: chromeHost, port: chromePort, channelUrl: ytChannelUrl })));
+  } else {
+    logger.warn("[SocialBrain] YouTube browser mode requires CHROME_DEBUG_HOST and YOUTUBE_CHANNEL_URL to be set");
+  }
+}
+if (instagramAccessToken) {
+  const instagramMode = socialBrainConfig?.connections?.instagram?.mode ?? "polling";
+  if (instagramMode === "polling" && localServerManager) {
+    socialAdapters.push(new GenericPollAdapter("instagram", createInstagramPollFn(localServerManager)));
+  } else {
+    socialAdapters.push(new InstagramAdapter());
+  }
+}
+if (facebookPageToken) {
+  const facebookMode = socialBrainConfig?.connections?.facebook?.mode ?? "polling";
+  if (facebookMode === "polling" && localServerManager) {
+    socialAdapters.push(new GenericPollAdapter("facebook", createFacebookPollFn(localServerManager)));
+  } else {
+    socialAdapters.push(new FacebookAdapter());
+  }
 }
 
 const socialIngestion = new SocialIngestionService({
@@ -550,6 +625,9 @@ const socialBrain = new SocialBrain({
   knowledgeService,
   confidenceThreshold: socialBrainConfig?.confidenceThreshold,
   brandVoiceBlock: brandVoiceService.getActiveVoicePromptBlock(),
+  approvalRequired: socialBrainConfig?.approvalRequired,
+  model: socialBrainConfig?.model,
+  responseStyle: socialBrainConfig?.responseStyle,
 });
 
 const socialHandoff = new HandoffManager({
@@ -562,33 +640,68 @@ const commentRuleEngine = new CommentRuleEngine({
 });
 
 // Wire DM dispatcher into comment rule engine
-if (localServerManager) {
-  const dmDispatcher = new DmDispatcher({ localServerManager });
+const dmDispatcher = localServerManager ? new DmDispatcher({ localServerManager }) : undefined;
+if (dmDispatcher) {
   commentRuleEngine.setSendDm(dmDispatcher.createDmSender());
   commentRuleEngine.setReplyToComment(dmDispatcher.createCommentReplier());
 }
 
 // Wire ingestion → brain → handoff pipeline
-socialIngestion.on("message", async ({ message, contact, raw }) => {
-  const result = await socialBrain.process(contact, message, raw);
-  if (result?.shouldEscalate) {
-    await socialHandoff.escalate(contact, {
-      brainConfidence: result.confidence,
-      brainIntent: result.intent,
-      ragChunksUsed: result.ragChunksUsed,
-      conversationHistory: socialRepository.getMessages(contact.id, 5),
-      triggerReason: "low_confidence",
-    }, raw);
-  }
+socialIngestion.on("message", ({ message, contact, raw }) => {
+  void (async () => {
+    try {
+      const result = await socialBrain.process(contact, message, raw);
+      if (result?.shouldEscalate) {
+        await socialHandoff.escalate(contact, {
+          brainConfidence: result.confidence,
+          brainIntent: result.intent,
+          ragChunksUsed: result.ragChunksUsed,
+          conversationHistory: socialRepository.getMessages(contact.id, 5),
+          triggerReason: "low_confidence",
+        }, raw);
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.error(`[SocialBrain] Message processing pipeline failed: ${msg}`);
+      io.emit("social:brain_error", { error: msg, platform: raw.platform, contactId: contact.id });
+    }
+  })();
 });
 
-socialIngestion.on("comment", async (comment) => {
-  await commentRuleEngine.evaluate(comment);
+socialIngestion.on("comment", (comment) => {
+  void (async () => {
+    try {
+      const matchedRuleIds = await commentRuleEngine.evaluate(comment);
+      // If no keyword rules matched and comment-brain is enabled, route through Brain
+      if (matchedRuleIds.length === 0 && socialBrainConfig?.commentBrainEnabled) {
+        await socialBrain.processComment(comment);
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.error(`[SocialBrain] Comment processing pipeline failed: ${msg}`);
+      io.emit("social:brain_error", { error: msg, platform: comment.platform, commentId: comment.commentId });
+    }
+  })();
 });
+
+// Start polling for poll-based and browser-based platform adapters
+if (socialBrainConfig?.connections) {
+  for (const [platform, conn] of Object.entries(socialBrainConfig.connections)) {
+    if (conn?.enabled && (conn?.mode === "polling" || conn?.mode === "browser") && socialIngestion.getRegisteredPlatforms().includes(platform as import("./channels/social/types.js").SocialPlatform)) {
+      // Browser mode uses a longer default interval to avoid detection
+      const defaultInterval = conn.mode === "browser" ? 1800 : 120;
+      const interval = conn.pollIntervalSeconds ?? defaultInterval;
+      socialIngestion.startPolling(platform as import("./channels/social/types.js").SocialPlatform, interval);
+    }
+  }
+}
 
 // Forward new user messages to active handoff threads
-socialBrain.on("escalated_message", async ({ contact, raw }) => {
-  await socialHandoff.forwardToThread(contact, raw.text);
+socialBrain.on("escalated_message", ({ contact, raw }: { contact: import("./channels/social/types.js").Contact; raw: { text: string } }) => {
+  void socialHandoff.forwardToThread(contact, raw.text).catch((err) => {
+    const msg = err instanceof Error ? err.message : String(err);
+    logger.error(`[SocialBrain] Failed to forward escalated message: ${msg}`);
+  });
 });
 
 const trimWorker = new TrimWorker();
@@ -669,7 +782,7 @@ const pipelineTemplateManager = new PipelineTemplateManager(path.join(import.met
 await pipelineTemplateManager.load();
 
 // Admin API routes — gated behind auth
-const adminRouter = createAdminRouter({ toolRegistry, sidecarManager, localServerManager, promptManager, scheduler, personalityManager, sessionManager, copilot, taskWorker, taskEngine, webhookManager, customPostActionManager, sentinel, knowledgeService, brandVoiceService, pipelineTemplateManager });
+const adminRouter = createAdminRouter({ toolRegistry, sidecarManager, localServerManager, promptManager, scheduler, personalityManager, sessionManager, copilot, taskWorker, taskEngine, webhookManager, customPostActionManager, sentinel, knowledgeService, brandVoiceService, pipelineTemplateManager, socialBrain });
 app.use("/api/admin", authMiddleware, adminRouter);
 
 // Knowledge Base API routes
@@ -685,7 +798,87 @@ const socialRouter = createSocialRouter({
   ruleEngine: commentRuleEngine,
   config: socialBrainConfig,
   brandVoiceService,
+  copilot,
+  dmDispatcher,
 });
+
+// Social webhook routes are PUBLIC — no auth middleware.
+// External platforms (Twitter CRC, Meta hub challenge) call these without auth headers.
+// MUST be registered before the auth-gated /api/social mount.
+// Raw body capture for HMAC signature verification (global parser skips this prefix).
+app.use("/api/social/webhooks", express.json({
+  limit: "1mb",
+  verify: (req, _res, buf) => {
+    (req as unknown as Record<string, unknown>).rawBody = buf;
+  },
+}));
+
+const webhookSecrets = {
+  twitter: (process.env.TWITTER_API_SECRET ?? process.env.TWITTER_CONSUMER_SECRET ?? "").trim() || undefined,
+  meta: (process.env.FACEBOOK_APP_SECRET ?? "").trim() || undefined,
+};
+
+app.get("/api/social/webhooks/:platform", (req, res) => {
+  const { platform } = req.params;
+
+  // Twitter CRC check: GET ?crc_token=NONCE → JSON { response_token: "sha256=HMAC" }
+  const crcToken = req.query.crc_token;
+  if (typeof crcToken === "string") {
+    const apiSecret = process.env.TWITTER_API_SECRET ?? process.env.TWITTER_CONSUMER_SECRET;
+    if (!apiSecret) {
+      logger.warn("[Social] Twitter CRC received but TWITTER_API_SECRET not configured");
+      res.status(503).json({ error: "Webhook not configured" });
+      return;
+    }
+    const hmac = createHmac("sha256", apiSecret).update(crcToken).digest("base64");
+    logger.info(`[Social] Twitter CRC verification for ${platform}`);
+    res.status(200).json({ response_token: `sha256=${hmac}` });
+    return;
+  }
+
+  // Meta hub challenge (Instagram, Facebook): GET ?hub.mode=subscribe&hub.verify_token=...&hub.challenge=...
+  const mode = req.query["hub.mode"];
+  const token = req.query["hub.verify_token"];
+  const challenge = req.query["hub.challenge"];
+  const verifyToken = process.env.SOCIAL_WEBHOOK_VERIFY_TOKEN;
+  if (mode === "subscribe" && token && challenge && verifyToken && token === verifyToken) {
+    logger.info(`[Social] Meta webhook verification for ${platform}`);
+    res.status(200).send(challenge);
+    return;
+  }
+
+  res.status(403).send("Forbidden");
+});
+
+app.post("/api/social/webhooks/:platform", (req, res) => {
+  const platform = req.params.platform as Parameters<typeof socialIngestion.handleWebhook>[0];
+  const rawBody = (req as unknown as Record<string, unknown>).rawBody as Buffer | undefined;
+
+  // Verify webhook payload signature when a secret is configured for this platform.
+  if (rawBody) {
+    const result = verifyWebhookSignature(platform, rawBody, req.headers, webhookSecrets);
+    if (result === false) {
+      logger.warn(`[Social] Webhook signature verification failed for ${platform}`);
+      res.status(403).json({ error: "Invalid webhook signature" });
+      return;
+    }
+    // result === null means no secret configured — allow through with a one-time warning
+    // result === true means signature verified
+  }
+
+  try {
+    void socialIngestion.handleWebhook(
+      platform,
+      req.body as Record<string, unknown>,
+      req.headers as Record<string, string>,
+    );
+    res.status(200).json({ received: true });
+  } catch (error) {
+    logger.error(`[Social] Webhook error (${platform}): ${error instanceof Error ? error.message : String(error)}`);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
 app.use("/api/social", authMiddleware, socialRouter);
 
 // Pinterest OAuth callback — no auth middleware (redirected from Pinterest)
@@ -755,6 +948,39 @@ app.get("/api/linkedin/oauth/callback", async (req, res) => {
 
   logger.info("LinkedIn OAuth flow completed successfully");
   return res.redirect(`${uiOrigin}/admin?linkedin_oauth=success`);
+});
+
+// YouTube/Google OAuth callback — no auth middleware (redirected from Google)
+app.get("/api/youtube/oauth/callback", async (req, res) => {
+  const code = typeof req.query.code === "string" ? req.query.code : "";
+  const state = typeof req.query.state === "string" ? req.query.state : "";
+  const error = typeof req.query.error === "string" ? req.query.error : "";
+
+  if (error) {
+    const desc = typeof req.query.error_description === "string" ? req.query.error_description : error;
+    logger.warn(`YouTube OAuth denied: ${desc}`);
+    return res.redirect(`${uiOrigin}/admin?youtube_oauth=error&message=${encodeURIComponent(desc)}`);
+  }
+
+  if (!code || !state) {
+    return res.redirect(`${uiOrigin}/admin?youtube_oauth=error&message=${encodeURIComponent("Missing code or state")}`);
+  }
+
+  // Validate CSRF state
+  if (!youtubeOAuthStates.has(state)) {
+    logger.warn("YouTube OAuth state mismatch — possible CSRF");
+    return res.redirect(`${uiOrigin}/admin?youtube_oauth=error&message=${encodeURIComponent("Invalid state parameter")}`);
+  }
+  youtubeOAuthStates.delete(state);
+
+  const result = await exchangeYouTubeCode(code);
+  if (!result.ok) {
+    logger.error(`YouTube OAuth token exchange failed: ${result.error}`);
+    return res.redirect(`${uiOrigin}/admin?youtube_oauth=error&message=${encodeURIComponent(result.error ?? "Token exchange failed")}`);
+  }
+
+  logger.info("YouTube OAuth flow completed successfully");
+  return res.redirect(`${uiOrigin}/admin?youtube_oauth=success`);
 });
 
 // TikTok OAuth callback — no auth middleware (redirected from TikTok)
@@ -1820,9 +2046,121 @@ socialBrain.on("reply", (data: unknown) => {
   }
 });
 socialBrain.on("escalate", (data: unknown) => io.emit("social:escalate", sanitizeStringFields(data)));
+socialBrain.on("pending_approval", (data: unknown) => io.emit("social:pending_approval", sanitizeStringFields(data)));
+socialBrain.on("comment_reply", (data: unknown) => io.emit("social:comment_reply", sanitizeStringFields(data)));
 socialHandoff.on("escalated", (data: unknown) => io.emit("social:handoff:created", sanitizeStringFields(data)));
 socialHandoff.on("resolved", (data: unknown) => io.emit("social:handoff:resolved", sanitizeStringFields(data)));
 commentRuleEngine.on("rule_triggered", (data: unknown) => io.emit("social:rule:triggered", sanitizeStringFields(data)));
+
+// Forward incoming messages/comments to Socket.IO for real-time notifications
+socialIngestion.on("message", ({ message, contact, raw }: { message: unknown; contact: unknown; raw: unknown }) => {
+  io.emit("social:new_message", sanitizeStringFields({ message, contact, raw }));
+});
+socialIngestion.on("comment", (comment: unknown) => {
+  io.emit("social:new_comment", sanitizeStringFields(comment));
+});
+
+// Push notifications for incoming social messages to Telegram/Discord
+const socialNotifyConfig = socialBrainConfig?.notifications;
+if (socialNotifyConfig?.enabled) {
+  const telegramAdminChatId = config.channels?.telegram?.adminUserId || undefined;
+  const discordNotifChannelId = config.channels?.discord?.notificationChannelId || undefined;
+
+  const pushSocialNotification = async (text: string) => {
+    if (socialNotifyConfig.telegram !== false && telegramAdminChatId) {
+      const tg = channelManager.getChannel("telegram");
+      if (tg) {
+        try { await tg.sendMessage(telegramAdminChatId, { text }); } catch { /* best-effort */ }
+      }
+    }
+    if (socialNotifyConfig.discord !== false && discordNotifChannelId) {
+      const dc = channelManager.getChannel("discord");
+      if (dc) {
+        try { await dc.sendMessage(discordNotifChannelId, { text }); } catch { /* best-effort */ }
+      }
+    }
+  };
+
+  socialIngestion.on("message", ({ raw }: { raw: { platform?: string; username?: string; text?: string } }) => {
+    const preview = (raw.text ?? "").slice(0, 100);
+    void pushSocialNotification(`📩 New DM on ${raw.platform ?? "unknown"} from @${raw.username ?? "unknown"}: ${preview}`);
+  });
+  socialIngestion.on("comment", (comment: { platform?: string; username?: string; text?: string }) => {
+    const preview = (comment.text ?? "").slice(0, 100);
+    void pushSocialNotification(`💬 New comment on ${comment.platform ?? "unknown"} from @${comment.username ?? "unknown"}: ${preview}`);
+  });
+  socialBrain.on("pending_approval", (data: {
+    contact?: { username?: string };
+    result?: { reply?: string };
+    pendingMessage?: { id?: string };
+    comment?: { text?: string; platform?: string };
+    raw?: { platform?: string };
+  }) => {
+    const platform = data.comment?.platform ?? data.raw?.platform ?? "unknown";
+    const username = data.contact?.username ?? "unknown";
+    const reply = data.result?.reply ?? "";
+
+    // Telegram: inline Approve / Reject buttons
+    if (socialNotifyConfig.telegram !== false && telegramAdminChatId && data.pendingMessage?.id) {
+      const tg = channelManager.getChannel("telegram");
+      if (tg && "sendSocialApproval" in tg) {
+        void (tg as import("./channels/telegram.js").TelegramChannel).sendSocialApproval(telegramAdminChatId, {
+          messageId: data.pendingMessage.id,
+          username,
+          platform,
+          replyPreview: reply,
+          originalComment: data.comment?.text,
+        }).catch(() => {});
+      }
+    }
+    // Discord / fallback: plain text
+    if (socialNotifyConfig.discord !== false && discordNotifChannelId) {
+      void pushSocialNotification(`⏳ Reply pending approval for @${username}: ${reply.slice(0, 100)}`);
+    }
+  });
+
+  // Wire Telegram social approval callbacks → repository approve/reject + dispatch + voice learning
+  const tgForSocial = channelManager.getChannel("telegram");
+  if (tgForSocial && "onSocialApproval" in tgForSocial) {
+    const voiceLearning = socialBrain.getVoiceLearning();
+    (tgForSocial as import("./channels/telegram.js").TelegramChannel).onSocialApproval((action) => {
+      try {
+        let message: import("./channels/social/types.js").SocialMessage | undefined;
+        if (action.action === "approve") {
+          message = socialRepository.approveReply(action.messageId);
+          io.emit("social:approval_resolved", { messageId: action.messageId, action: "approved" });
+        } else {
+          socialRepository.rejectReply(action.messageId);
+          io.emit("social:approval_resolved", { messageId: action.messageId, action: "rejected" });
+        }
+        logger.info(`[SocialBrain] Telegram ${action.action} for message ${action.messageId} by ${action.decidedBy ?? "unknown"}`);
+
+        // Dispatch approved reply to platform + record voice example
+        if (action.action === "approve" && message) {
+          void dispatchApprovedReply(dmDispatcher, socialRepository, message);
+          try {
+            const meta = JSON.parse(message.metadata) as Record<string, unknown>;
+            const originalMessage = (meta.originalMessage as string) ?? "";
+            if (originalMessage) {
+              const contact = socialRepository.getContact(message.contact_id);
+              void voiceLearning.recordApprovedReply({
+                messageId: message.id,
+                platform: message.platform,
+                username: contact?.username ?? "unknown",
+                originalMessage,
+                approvedReply: message.content,
+                wasEdited: false,
+              });
+            }
+          } catch { /* metadata parse failed */ }
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        logger.error(`[SocialBrain] Telegram approval callback error: ${msg}`);
+      }
+    });
+  }
+}
 
 // Wire Render Orchestrator → Socket.IO event forwarding
 renderOrchestrator.on("render:progress", (data: unknown) => io.emit("render:progress", data));
@@ -2288,6 +2626,40 @@ httpServer.listen(port, "0.0.0.0", () => {
   };
   void checkLinkedInRefresh();
   setInterval(() => void checkLinkedInRefresh(), 24 * 60 * 60 * 1000);
+
+  // YouTube/Google OAuth: auto-refresh token if expiry is within 30 minutes
+  const checkYouTubeRefresh = async () => {
+    const expiresAt = process.env.YOUTUBE_TOKEN_EXPIRES_AT;
+    const refreshToken = process.env.YOUTUBE_REFRESH_TOKEN;
+    if (!expiresAt || !refreshToken) return;
+    const expiresMs = new Date(expiresAt).getTime();
+    const thirtyMinutes = 30 * 60 * 1000;
+    if (Date.now() > expiresMs - thirtyMinutes) {
+      logger.info("YouTube token expiring within 30 minutes — auto-refreshing…");
+      try {
+        const result = await refreshYouTubeToken();
+        if (result.ok) {
+          logger.info(`YouTube token auto-refreshed, new expiry: ${result.expiresAt}`);
+          // Restart youtube MCP server so the new subprocess picks up the fresh token
+          if (localServerManager.isRunning("youtube")) {
+            try {
+              await localServerManager.restartServer("youtube");
+              logger.info("YouTube MCP server restarted with refreshed token");
+            } catch (restartErr) {
+              logger.warn(`YouTube MCP server restart failed: ${restartErr instanceof Error ? restartErr.message : String(restartErr)}`);
+            }
+          }
+        } else {
+          logger.warn(`YouTube auto-refresh failed: ${result.error}`);
+        }
+      } catch (err) {
+        logger.warn(`YouTube auto-refresh error: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+  };
+  void checkYouTubeRefresh();
+  // Google access tokens expire in 1 hour — check every 15 minutes
+  setInterval(() => void checkYouTubeRefresh(), 15 * 60 * 1000);
 
   // Start the media queue push loop
   if (process.env.QUEUE_ENABLED !== "false") {

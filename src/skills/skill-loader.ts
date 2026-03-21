@@ -34,6 +34,8 @@ const SKILL_ICONS: Record<string, string> = {
   "pinterest-marketer": "\u{1F4CC}",
   "research-synthesizer": "\u{1F52C}",
   "universal-publisher": "\u{1F4E4}",
+  "social-responder": "\u{1F4AC}",
+  "social-setup-wizard": "\u{1F6E0}\uFE0F",
 };
 
 const SKILL_EXAMPLES: Record<string, string[]> = {
@@ -81,6 +83,16 @@ const SKILL_EXAMPLES: Record<string, string[]> = {
     "Publish the next queued outbox item",
     "Post the latest gallery image to Twitter with hashtags",
     "Publish all pending outbox items for Pinterest",
+  ],
+  "social-responder": [
+    "Reply to a customer DM asking about product features",
+    "Respond to a positive comment on our latest post",
+    "Handle a complaint about shipping delays",
+  ],
+  "social-setup-wizard": [
+    "Help me set up my Twitter developer account",
+    "Walk me through LinkedIn API setup",
+    "Set up all my social media platform APIs",
   ],
 };
 

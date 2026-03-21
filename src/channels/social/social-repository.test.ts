@@ -35,14 +35,14 @@ describe("SocialRepository", () => {
       expect(contact.platform).toBe("twitter");
       expect(contact.username).toBe("jane_doe");
       expect(contact.display_name).toBe("Jane Doe");
-      expect(contact.message_count).toBe(1);
+      expect(contact.message_count).toBe(0);
       expect(contact.handoff_active).toBe(0);
     });
 
-    it("increments message_count on upsert", () => {
-      repo.upsertContact({ platform: "twitter", platformUserId: "ig_123", username: "jane" });
-      const updated = repo.upsertContact({ platform: "twitter", platformUserId: "ig_123", username: "jane" });
-      expect(updated.message_count).toBe(2);
+    it("does not increment message_count on upsert", () => {
+      repo.upsertContact({ platform: "twitter", platformUserId: "ig_123", username: "jane_doe" });
+      const updated = repo.upsertContact({ platform: "twitter", platformUserId: "ig_123", username: "jane_doe" });
+      expect(updated.message_count).toBe(0);
     });
 
     it("gets contact by platform user", () => {
@@ -164,6 +164,8 @@ describe("SocialRepository", () => {
         max_triggers_total: null,
         auto_tag: "lead-ebook",
         model: null,
+        use_ai_reply: 0,
+        ai_reply_context: null,
       });
 
       const rules = repo.listRules();
@@ -187,6 +189,8 @@ describe("SocialRepository", () => {
         max_triggers_total: null,
         auto_tag: null,
         model: null,
+        use_ai_reply: 0,
+        ai_reply_context: null,
       });
 
       const updated = repo.updateRule(rule.id, { name: "Updated", enabled: 0 });
@@ -209,6 +213,8 @@ describe("SocialRepository", () => {
         max_triggers_total: null,
         auto_tag: null,
         model: null,
+        use_ai_reply: 0,
+        ai_reply_context: null,
       });
 
       expect(repo.deleteRule(rule.id)).toBe(true);
@@ -230,6 +236,8 @@ describe("SocialRepository", () => {
         max_triggers_total: null,
         auto_tag: null,
         model: null,
+        use_ai_reply: 0,
+        ai_reply_context: null,
       });
 
       repo.incrementRuleTriggerCount(rule.id);
@@ -256,6 +264,8 @@ describe("SocialRepository", () => {
         max_triggers_total: null,
         auto_tag: null,
         model: null,
+        use_ai_reply: 0,
+        ai_reply_context: null,
       });
 
       repo.insertAutomationLog({
@@ -291,6 +301,8 @@ describe("SocialRepository", () => {
         max_triggers_total: null,
         auto_tag: null,
         model: null,
+        use_ai_reply: 0,
+        ai_reply_context: null,
       });
 
       repo.insertAutomationLog({
@@ -332,6 +344,296 @@ describe("SocialRepository", () => {
       expect(lines[0]).toContain("id,platform,username");
       expect(lines[1]).toContain("jane_doe");
       expect(lines[1]).toContain("lead");
+    });
+  });
+
+  // ── Follow-Up Sequences ──
+
+  describe("follow-up sequences", () => {
+    let ruleId: string;
+
+    beforeEach(() => {
+      const rule = repo.createRule({
+        name: "FollowUp Test",
+        platform: "twitter",
+        enabled: 1,
+        post_ids: null,
+        keywords: "[]",
+        regex: null,
+        comment_reply_template: null,
+        dm_template: "Hi!",
+        dm_delay_seconds: 0,
+        max_triggers_per_user: 1,
+        max_triggers_total: null,
+        auto_tag: null,
+        model: null,
+        use_ai_reply: 0,
+        ai_reply_context: null,
+      });
+      ruleId = rule.id;
+    });
+
+    it("creates and lists follow-up steps", () => {
+      repo.createFollowUpStep(ruleId, { stepOrder: 0, delaySeconds: 3600, messageTemplate: "Step 1" });
+      repo.createFollowUpStep(ruleId, { stepOrder: 1, delaySeconds: 86400, messageTemplate: "Step 2" });
+
+      const steps = repo.getFollowUpSteps(ruleId);
+      expect(steps).toHaveLength(2);
+      expect(steps[0].message_template).toBe("Step 1");
+      expect(steps[1].message_template).toBe("Step 2");
+    });
+
+    it("deletes a follow-up step", () => {
+      const step = repo.createFollowUpStep(ruleId, { stepOrder: 0, delaySeconds: 3600, messageTemplate: "Deletable" });
+      expect(repo.deleteFollowUpStep(step.id)).toBe(true);
+      expect(repo.getFollowUpSteps(ruleId)).toHaveLength(0);
+    });
+
+    it("schedules and retrieves pending follow-up jobs", () => {
+      const contact = repo.upsertContact({ platform: "twitter", platformUserId: "u_1", username: "test" });
+      const step = repo.createFollowUpStep(ruleId, { stepOrder: 0, delaySeconds: 0, messageTemplate: "msg" });
+
+      repo.scheduleFollowUp({
+        contactId: contact.id,
+        ruleId,
+        stepId: step.id,
+        platform: "twitter",
+        platformUserId: "u_1",
+        message: "msg",
+        scheduledAt: now.toISOString(),
+      });
+
+      const pending = repo.getPendingFollowUps(now.toISOString());
+      expect(pending).toHaveLength(1);
+      expect(pending[0].message).toBe("msg");
+    });
+
+    it("marks follow-up as sent", () => {
+      const contact = repo.upsertContact({ platform: "twitter", platformUserId: "u_2", username: "test2" });
+      const step = repo.createFollowUpStep(ruleId, { stepOrder: 0, delaySeconds: 0, messageTemplate: "msg" });
+
+      const job = repo.scheduleFollowUp({
+        contactId: contact.id,
+        ruleId,
+        stepId: step.id,
+        platform: "twitter",
+        platformUserId: "u_2",
+        message: "msg",
+        scheduledAt: now.toISOString(),
+      });
+
+      repo.markFollowUpSent(job.id);
+      const pending = repo.getPendingFollowUps(now.toISOString());
+      expect(pending).toHaveLength(0);
+    });
+
+    it("marks follow-up as error", () => {
+      const contact = repo.upsertContact({ platform: "twitter", platformUserId: "u_3", username: "test3" });
+      const step = repo.createFollowUpStep(ruleId, { stepOrder: 0, delaySeconds: 0, messageTemplate: "msg" });
+
+      const job = repo.scheduleFollowUp({
+        contactId: contact.id,
+        ruleId,
+        stepId: step.id,
+        platform: "twitter",
+        platformUserId: "u_3",
+        message: "msg",
+        scheduledAt: now.toISOString(),
+      });
+
+      repo.markFollowUpError(job.id, "timeout");
+      const pending = repo.getPendingFollowUps(now.toISOString());
+      expect(pending).toHaveLength(0);
+    });
+  });
+
+  // ── Lead Capture ──
+
+  describe("lead capture", () => {
+    it("updates contact with email", () => {
+      const contact = repo.upsertContact({ platform: "twitter", platformUserId: "u_1", username: "lead1" });
+      const updated = repo.updateContactLead(contact.id, { email: "lead1@example.com" });
+      expect((updated as Record<string, unknown>).email).toBe("lead1@example.com");
+      expect((updated as Record<string, unknown>).lead_captured_at).toBe(now.toISOString());
+    });
+
+    it("updates contact with phone", () => {
+      const contact = repo.upsertContact({ platform: "twitter", platformUserId: "u_2", username: "lead2" });
+      const updated = repo.updateContactLead(contact.id, { phone: "+15551234567" });
+      expect((updated as Record<string, unknown>).phone).toBe("+15551234567");
+    });
+
+    it("lists leads", () => {
+      const c1 = repo.upsertContact({ platform: "twitter", platformUserId: "u_3", username: "lead3" });
+      const c2 = repo.upsertContact({ platform: "reddit", platformUserId: "u_4", username: "lead4" });
+      repo.upsertContact({ platform: "twitter", platformUserId: "u_5", username: "nolead" });
+
+      repo.updateContactLead(c1.id, { email: "a@b.com" });
+      repo.updateContactLead(c2.id, { phone: "555-1234" });
+
+      const allLeads = repo.getLeads();
+      expect(allLeads).toHaveLength(2);
+
+      const twitterLeads = repo.getLeads({ platform: "twitter" });
+      expect(twitterLeads).toHaveLength(1);
+      expect(twitterLeads[0].username).toBe("lead3");
+    });
+
+    it("returns undefined for nonexistent contact", () => {
+      expect(repo.updateContactLead("nonexistent", { email: "x@y.com" })).toBeUndefined();
+    });
+  });
+
+  // ── Analytics ──
+
+  describe("analytics", () => {
+    it("returns per-platform analytics", () => {
+      const c1 = repo.upsertContact({ platform: "twitter", platformUserId: "u_1", username: "user1" });
+      const c2 = repo.upsertContact({ platform: "reddit", platformUserId: "u_2", username: "user2" });
+
+      repo.insertMessage({ contactId: c1.id, platform: "twitter", direction: "inbound", content: "hi" });
+      repo.insertMessage({ contactId: c1.id, platform: "twitter", direction: "outbound", status: "auto_replied", content: "hello" });
+      repo.insertMessage({ contactId: c2.id, platform: "reddit", direction: "inbound", content: "hey" });
+      repo.insertMessage({ contactId: c2.id, platform: "reddit", direction: "inbound", status: "escalated", content: "help" });
+
+      const analytics = repo.getAnalytics();
+      expect(analytics).toHaveLength(2);
+
+      const twitter = analytics.find((a) => a.platform === "twitter")!;
+      expect(twitter.total_conversations).toBe(1);
+      expect(twitter.total_messages_in).toBe(1);
+      expect(twitter.total_messages_out).toBe(1);
+
+      const reddit = analytics.find((a) => a.platform === "reddit")!;
+      expect(reddit.total_conversations).toBe(1);
+      expect(reddit.total_messages_in).toBe(2);
+    });
+
+    it("includes lead counts in analytics", () => {
+      const c1 = repo.upsertContact({ platform: "twitter", platformUserId: "u_3", username: "lead" });
+      repo.insertMessage({ contactId: c1.id, platform: "twitter", direction: "inbound", content: "hi" });
+      repo.updateContactLead(c1.id, { email: "test@example.com" });
+
+      const analytics = repo.getAnalytics();
+      const twitter = analytics.find((a) => a.platform === "twitter")!;
+      expect(twitter.leads_captured).toBe(1);
+    });
+  });
+
+  // ── Approval Queue ──
+
+  describe("approval queue", () => {
+    function createPendingMessage(repo: SocialRepository, contactId: string) {
+      return repo.insertMessage({
+        contactId,
+        platform: "twitter",
+        direction: "outbound",
+        status: "pending_approval",
+        content: "AI generated reply",
+        metadata: { confidence: "high", intent: "help", source: "brain_dm" },
+      });
+    }
+
+    it("lists pending approvals with contact info", () => {
+      const c = repo.upsertContact({ platform: "twitter", platformUserId: "u_a", username: "alice", displayName: "Alice" });
+      createPendingMessage(repo, c.id);
+
+      const pending = repo.listPendingApprovals();
+      expect(pending).toHaveLength(1);
+      expect(pending[0].status).toBe("pending_approval");
+      expect(pending[0].contact_username).toBe("alice");
+      expect(pending[0].contact_display_name).toBe("Alice");
+    });
+
+    it("getPendingApprovalCount returns correct count", () => {
+      const c = repo.upsertContact({ platform: "twitter", platformUserId: "u_b", username: "bob" });
+      expect(repo.getPendingApprovalCount()).toBe(0);
+
+      createPendingMessage(repo, c.id);
+      expect(repo.getPendingApprovalCount()).toBe(1);
+
+      createPendingMessage(repo, c.id);
+      expect(repo.getPendingApprovalCount()).toBe(2);
+    });
+
+    it("approveReply changes status to auto_replied", () => {
+      const c = repo.upsertContact({ platform: "twitter", platformUserId: "u_c", username: "carol" });
+      const msg = createPendingMessage(repo, c.id)!;
+
+      const approved = repo.approveReply(msg.id);
+      expect(approved).toBeDefined();
+      expect(approved!.status).toBe("auto_replied");
+      const meta = JSON.parse(approved!.metadata);
+      expect(meta.approved_at).toBe(now.toISOString());
+      expect(repo.getPendingApprovalCount()).toBe(0);
+    });
+
+    it("rejectReply changes status to rejected", () => {
+      const c = repo.upsertContact({ platform: "twitter", platformUserId: "u_d", username: "dave" });
+      const msg = createPendingMessage(repo, c.id)!;
+
+      const rejected = repo.rejectReply(msg.id);
+      expect(rejected).toBeDefined();
+      expect(rejected!.status).toBe("rejected");
+      const meta = JSON.parse(rejected!.metadata);
+      expect(meta.rejected_at).toBe(now.toISOString());
+      expect(repo.getPendingApprovalCount()).toBe(0);
+    });
+
+    it("editAndApproveReply updates content and approves", () => {
+      const c = repo.upsertContact({ platform: "twitter", platformUserId: "u_e", username: "eve" });
+      const msg = createPendingMessage(repo, c.id)!;
+
+      const edited = repo.editAndApproveReply(msg.id, "Human-edited reply");
+      expect(edited).toBeDefined();
+      expect(edited!.status).toBe("auto_replied");
+      expect(edited!.content).toBe("Human-edited reply");
+      const meta = JSON.parse(edited!.metadata);
+      expect(meta.approved_at).toBe(now.toISOString());
+      expect(meta.edited).toBeTruthy();
+    });
+
+    it("approveReply is a no-op for already approved messages", () => {
+      const c = repo.upsertContact({ platform: "twitter", platformUserId: "u_f", username: "frank" });
+      const msg = createPendingMessage(repo, c.id)!;
+
+      repo.approveReply(msg.id);
+      // Second approve — should not change anything (already approved, no longer pending)
+      const result = repo.approveReply(msg.id);
+      expect(result!.status).toBe("auto_replied");
+    });
+
+    it("listPendingApprovals paginates correctly", () => {
+      const c = repo.upsertContact({ platform: "twitter", platformUserId: "u_g", username: "grace" });
+      for (let i = 0; i < 5; i++) {
+        createPendingMessage(repo, c.id);
+      }
+
+      const page1 = repo.listPendingApprovals(2, 0);
+      expect(page1).toHaveLength(2);
+
+      const page2 = repo.listPendingApprovals(2, 2);
+      expect(page2).toHaveLength(2);
+
+      const page3 = repo.listPendingApprovals(2, 4);
+      expect(page3).toHaveLength(1);
+    });
+
+    it("insertManualReply stores outbound message with manual_reply source", () => {
+      const c = repo.upsertContact({ platform: "twitter", platformUserId: "u_h", username: "heidi" });
+
+      const msg = repo.insertManualReply({
+        contactId: c.id,
+        platform: "twitter",
+        content: "Hello from human!",
+      });
+
+      expect(msg).not.toBeNull();
+      expect(msg!.direction).toBe("outbound");
+      expect(msg!.status).toBe("auto_replied");
+      expect(msg!.content).toBe("Hello from human!");
+      const meta = JSON.parse(msg!.metadata);
+      expect(meta.source).toBe("manual_reply");
     });
   });
 });

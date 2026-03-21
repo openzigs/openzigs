@@ -117,3 +117,16 @@ research.md
 
 # Home directory symlink (accidental)
 ~/
+
+# Private VS Code Copilot customizations (not for open source)
+.github/agents/
+.github/skills/
+
+# Debug / throwaway screenshots
+screenshots/
+
+# Throwaway test scripts that may reference credentials
+external/**/test_tokens.py
+
+# Accidental file copies
+"ui/public/openzigs-icon copy.png"

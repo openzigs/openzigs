@@ -62,6 +62,10 @@ export const linkedinOAuthStates = new Map<string, number>();
 /** CSRF state + PKCE code_verifier for pending TikTok OAuth flows (short-lived, single-user) */
 export const tiktokOAuthStates = new Map<string, { ts: number; codeVerifier: string }>();
 
+// ── YouTube OAuth state ───────────────────────────────────────────────────
+/** CSRF state tokens for pending YouTube/Google OAuth flows (short-lived, single-user) */
+export const youtubeOAuthStates = new Map<string, number>();
+
 /** Refresh the Pinterest access token using the stored refresh token. */
 export async function refreshPinterestToken(): Promise<{ ok: boolean; expiresAt?: string; error?: string }> {
   const appId = (process.env.PINTEREST_APP_ID ?? "").trim();
@@ -333,6 +337,128 @@ export async function exchangeLinkedInCode(code: string): Promise<{
 
 // ── TikTok OAuth helpers ───────────────────────────────────────────────────
 
+/** Refresh the YouTube/Google access token using the stored refresh token. */
+export async function refreshYouTubeToken(): Promise<{ ok: boolean; expiresAt?: string; error?: string }> {
+  const clientId = (process.env.YOUTUBE_CLIENT_ID ?? "").trim();
+  const clientSecret = (process.env.YOUTUBE_CLIENT_SECRET ?? "").trim();
+  const refreshToken = (process.env.YOUTUBE_REFRESH_TOKEN ?? "").trim();
+
+  if (!clientId || !clientSecret || !refreshToken) {
+    return { ok: false, error: "Missing YOUTUBE_CLIENT_ID, YOUTUBE_CLIENT_SECRET, or YOUTUBE_REFRESH_TOKEN" };
+  }
+
+  const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      grant_type: "refresh_token",
+      refresh_token: refreshToken,
+      client_id: clientId,
+      client_secret: clientSecret,
+    }).toString(),
+  });
+
+  if (!tokenRes.ok) {
+    const errText = await tokenRes.text();
+    return { ok: false, error: `YouTube token refresh failed (${tokenRes.status}): ${errText}` };
+  }
+
+  const tokenData = (await tokenRes.json()) as {
+    access_token: string;
+    expires_in: number;
+    refresh_token?: string;
+    scope?: string;
+    token_type: string;
+  };
+
+  const expiresAt = new Date(Date.now() + tokenData.expires_in * 1000).toISOString();
+  const envPath = defaultEnvPath();
+  const updates: Record<string, string> = {
+    YOUTUBE_OAUTH_TOKEN: tokenData.access_token,
+    YOUTUBE_TOKEN_EXPIRES_AT: expiresAt,
+  };
+  if (tokenData.refresh_token) {
+    updates.YOUTUBE_REFRESH_TOKEN = tokenData.refresh_token;
+    process.env.YOUTUBE_REFRESH_TOKEN = tokenData.refresh_token;
+  }
+  await upsertEnvFile(envPath, updates);
+  process.env.YOUTUBE_OAUTH_TOKEN = tokenData.access_token;
+  process.env.YOUTUBE_TOKEN_EXPIRES_AT = expiresAt;
+
+  logger.info(`YouTube access token refreshed, expires at ${expiresAt}`);
+  return { ok: true, expiresAt };
+}
+
+/** Exchange a Google OAuth authorization code for YouTube access + refresh tokens. */
+export async function exchangeYouTubeCode(code: string): Promise<{
+  ok: boolean;
+  accessToken?: string;
+  refreshToken?: string;
+  expiresAt?: string;
+  scope?: string;
+  error?: string;
+}> {
+  const clientId = (process.env.YOUTUBE_CLIENT_ID ?? "").trim();
+  const clientSecret = (process.env.YOUTUBE_CLIENT_SECRET ?? "").trim();
+
+  if (!clientId || !clientSecret) {
+    return { ok: false, error: "YOUTUBE_CLIENT_ID and YOUTUBE_CLIENT_SECRET must be configured" };
+  }
+
+  const backendPort = Number(process.env.PORT ?? 3000);
+  const redirectUri = (process.env.YOUTUBE_REDIRECT_URI ?? "").trim() || `http://localhost:${backendPort}/api/youtube/oauth/callback`;
+
+  const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      grant_type: "authorization_code",
+      code,
+      client_id: clientId,
+      client_secret: clientSecret,
+      redirect_uri: redirectUri,
+    }).toString(),
+  });
+
+  if (!tokenRes.ok) {
+    const errText = await tokenRes.text();
+    return { ok: false, error: `YouTube token exchange failed (${tokenRes.status}): ${errText}` };
+  }
+
+  const tokenData = (await tokenRes.json()) as {
+    access_token: string;
+    expires_in: number;
+    refresh_token?: string;
+    scope?: string;
+    token_type: string;
+  };
+
+  const expiresAt = new Date(Date.now() + tokenData.expires_in * 1000).toISOString();
+  const envPath = defaultEnvPath();
+  const updates: Record<string, string> = {
+    YOUTUBE_OAUTH_TOKEN: tokenData.access_token,
+    YOUTUBE_TOKEN_EXPIRES_AT: expiresAt,
+  };
+  if (tokenData.refresh_token) {
+    updates.YOUTUBE_REFRESH_TOKEN = tokenData.refresh_token;
+  }
+  await upsertEnvFile(envPath, updates);
+  process.env.YOUTUBE_OAUTH_TOKEN = tokenData.access_token;
+  process.env.YOUTUBE_TOKEN_EXPIRES_AT = expiresAt;
+  if (tokenData.refresh_token) {
+    process.env.YOUTUBE_REFRESH_TOKEN = tokenData.refresh_token;
+  }
+
+  logger.info(`YouTube OAuth completed — token expires at ${expiresAt}, scopes: ${tokenData.scope ?? "unknown"}`);
+  return {
+    ok: true,
+    accessToken: tokenData.access_token,
+    refreshToken: tokenData.refresh_token,
+    expiresAt,
+    scope: tokenData.scope,
+  };
+}
+
 /** Refresh the TikTok access token using the stored refresh token. */
 export async function refreshTikTokToken(): Promise<{ ok: boolean; expiresAt?: string; error?: string }> {
   const clientKey = (process.env.TIKTOK_CLIENT_KEY ?? "").trim();
@@ -579,6 +705,13 @@ const ENV_CHECKS = [
   "JDBC_URL",
   "DB_PASSWORD",
   "YOUTUBE_API_KEY",
+  "YOUTUBE_CHANNEL_ID",
+  "YOUTUBE_CHANNEL_HANDLE",
+  "YOUTUBE_CLIENT_ID",
+  "YOUTUBE_CLIENT_SECRET",
+  "YOUTUBE_OAUTH_TOKEN",
+  "YOUTUBE_REFRESH_TOKEN",
+  "YOUTUBE_TOKEN_EXPIRES_AT",
   "TIKNEURON_MCP_API_KEY",
 ] as const;
 
@@ -621,7 +754,7 @@ const LOCAL_SERVER_CREDENTIALS: Array<{ server: string; label: string; runtime: 
     server: "youtube",
     label: "YouTube",
     runtime: "python",
-    envVars: ["YOUTUBE_API_KEY"],
+    envVars: ["YOUTUBE_API_KEY", "YOUTUBE_CHANNEL_ID", "YOUTUBE_CHANNEL_HANDLE", "YOUTUBE_CLIENT_ID", "YOUTUBE_CLIENT_SECRET", "YOUTUBE_OAUTH_TOKEN", "YOUTUBE_REFRESH_TOKEN", "YOUTUBE_TOKEN_EXPIRES_AT"],
   },
   {
     server: "linkedin",
@@ -814,6 +947,7 @@ export type AdminRouterOptions = {
   brandVoiceService?: BrandVoiceService;
   nativeMcpTester?: NativeMcpTester;
   pipelineTemplateManager?: PipelineTemplateManager;
+  socialBrain?: import("../channels/social/social-brain.js").SocialBrain;
 };
 
 type SchedulerSuggestion = {
@@ -883,7 +1017,7 @@ const parseReasoningEffort = (value: unknown): ReasoningEffort | undefined => {
     : undefined;
 };
 
-export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerManager, promptManager, scheduler, personalityManager, sessionManager, copilot, taskWorker, taskEngine, webhookManager, customPostActionManager, sentinel, brandVoiceService, nativeMcpTester, pipelineTemplateManager }: AdminRouterOptions): Router => {
+export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerManager, promptManager, scheduler, personalityManager, sessionManager, copilot, taskWorker, taskEngine, webhookManager, customPostActionManager, sentinel, brandVoiceService, nativeMcpTester, pipelineTemplateManager, socialBrain }: AdminRouterOptions): Router => {
   const router = Router();
   const mcpTester = nativeMcpTester ?? new CopilotNativeMcpTester();
 
@@ -4471,6 +4605,9 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
 
     const scopes = [
       "w_member_social",
+      // NOTE: r_organization_social and rw_organization_admin require the
+      // Community Management API product, which is mutually exclusive with
+      // "Share on LinkedIn". Add them here when using a dedicated org app.
     ];
 
     const params = new URLSearchParams({
@@ -4727,6 +4864,327 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return res.status(500).json({ connected: false, message });
+    }
+  });
+
+  // ── YouTube OAuth ─────────────────────────────────────────────────────────
+
+  /** POST /api/admin/youtube/app-credentials — save YouTube/Google OAuth client ID + secret */
+  router.post("/youtube/app-credentials", async (req, res) => {
+    const { clientId, clientSecret } = req.body as { clientId?: string; clientSecret?: string };
+    if (!clientId?.trim() || !clientSecret?.trim()) {
+      return res.status(400).json({ error: "clientId and clientSecret are required" });
+    }
+    const envPath = defaultEnvPath();
+    await upsertEnvFile(envPath, {
+      YOUTUBE_CLIENT_ID: clientId.trim(),
+      YOUTUBE_CLIENT_SECRET: clientSecret.trim(),
+    });
+    process.env.YOUTUBE_CLIENT_ID = clientId.trim();
+    process.env.YOUTUBE_CLIENT_SECRET = clientSecret.trim();
+    return res.json({ ok: true });
+  });
+
+  /** GET /api/admin/youtube/credentials — return masked YouTube OAuth credential status */
+  router.get("/youtube/credentials", (_req, res) => {
+    const mask = (val: string) => val.length > 12 ? `${val.slice(0, 6)}…${val.slice(-4)}` : val ? "••••••" : "";
+    const clientId = (process.env.YOUTUBE_CLIENT_ID ?? "").trim();
+    const clientSecret = (process.env.YOUTUBE_CLIENT_SECRET ?? "").trim();
+    const oauthToken = (process.env.YOUTUBE_OAUTH_TOKEN ?? "").trim();
+    const refreshToken = (process.env.YOUTUBE_REFRESH_TOKEN ?? "").trim();
+    const expiresAt = (process.env.YOUTUBE_TOKEN_EXPIRES_AT ?? "").trim();
+
+    return res.json({
+      appConfigured: !!clientId && !!clientSecret,
+      clientId: mask(clientId),
+      oauthConnected: !!oauthToken,
+      hasRefreshToken: !!refreshToken,
+      expiresAt: expiresAt || null,
+      accessToken: mask(oauthToken),
+    });
+  });
+
+  /** GET /api/admin/youtube/oauth/authorize — build Google OAuth auth URL and return it */
+  router.get("/youtube/oauth/authorize", (_req, res) => {
+    const clientId = (process.env.YOUTUBE_CLIENT_ID ?? "").trim();
+    if (!clientId) {
+      return res.status(400).json({ error: "YOUTUBE_CLIENT_ID not configured. Save app credentials first." });
+    }
+    const backendPort = Number(process.env.PORT ?? 3000);
+    const redirectUri = (process.env.YOUTUBE_REDIRECT_URI ?? "").trim() || `http://localhost:${backendPort}/api/youtube/oauth/callback`;
+
+    const state = randomUUID();
+    youtubeOAuthStates.set(state, Date.now());
+    // Expire stale states after 10 minutes
+    setTimeout(() => youtubeOAuthStates.delete(state), 10 * 60 * 1000);
+
+    const scopes = [
+      "https://www.googleapis.com/auth/youtube.force-ssl",
+      "https://www.googleapis.com/auth/youtube.upload",
+    ];
+    const params = new URLSearchParams({
+      client_id: clientId,
+      redirect_uri: redirectUri,
+      response_type: "code",
+      scope: scopes.join(" "),
+      access_type: "offline",
+      prompt: "consent",
+      state,
+      include_granted_scopes: "true",
+    });
+
+    return res.json({ url: `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}` });
+  });
+
+  /** POST /api/admin/youtube/oauth/refresh — manually trigger a YouTube token refresh */
+  router.post("/youtube/oauth/refresh", async (_req, res) => {
+    const result = await refreshYouTubeToken();
+    if (!result.ok) {
+      return res.status(400).json({ error: result.error });
+    }
+    return res.json({ ok: true, expiresAt: result.expiresAt });
+  });
+
+  /** POST /api/admin/youtube/oauth/disconnect — clear all YouTube OAuth tokens */
+  router.post("/youtube/oauth/disconnect", async (_req, res) => {
+    const envPath = defaultEnvPath();
+    await upsertEnvFile(envPath, {
+      YOUTUBE_OAUTH_TOKEN: "",
+      YOUTUBE_REFRESH_TOKEN: "",
+      YOUTUBE_TOKEN_EXPIRES_AT: "",
+    });
+    delete process.env.YOUTUBE_OAUTH_TOKEN;
+    delete process.env.YOUTUBE_REFRESH_TOKEN;
+    delete process.env.YOUTUBE_TOKEN_EXPIRES_AT;
+    return res.json({ ok: true });
+  });
+
+  /** GET /api/admin/youtube/status — validate YouTube OAuth token via API call */
+  router.get("/youtube/status", async (_req, res) => {
+    const token = process.env.YOUTUBE_OAUTH_TOKEN;
+    if (!token) {
+      return res.json({ connected: false, message: "YOUTUBE_OAUTH_TOKEN not configured" });
+    }
+    try {
+      const channelRes = await fetch(
+        "https://www.googleapis.com/youtube/v3/channels?part=snippet&mine=true",
+        { headers: { Authorization: `Bearer ${token}` } },
+      );
+      if (channelRes.ok) {
+        const data = (await channelRes.json()) as { items?: Array<{ snippet?: { title?: string } }> };
+        return res.json({
+          connected: true,
+          profile: { channelTitle: data.items?.[0]?.snippet?.title ?? "" },
+        });
+      }
+      const expiresAt = process.env.YOUTUBE_TOKEN_EXPIRES_AT;
+      const isExpired = expiresAt ? new Date(expiresAt) < new Date() : false;
+      return res.json({ connected: !isExpired, message: isExpired ? "Token expired" : `API returned ${channelRes.status}` });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return res.status(500).json({ connected: false, message });
+    }
+  });
+
+  // ── Social Brain Credentials ───────────────────────────────────────────────
+
+  /** GET /api/admin/social-brain/credentials — return masked status of all social Brain env vars */
+  router.get("/social-brain/credentials", (_req, res) => {
+    const mask = (val: string) => val.length > 12 ? `${val.slice(0, 6)}…${val.slice(-4)}` : val ? "••••••" : "";
+
+    const webhookToken = (process.env.SOCIAL_WEBHOOK_VERIFY_TOKEN ?? "").trim();
+
+    const igToken = (process.env.INSTAGRAM_ACCESS_TOKEN ?? "").trim();
+    const igAccountId = (process.env.INSTAGRAM_BUSINESS_ACCOUNT_ID ?? "").trim();
+
+    const fbPageToken = (process.env.FACEBOOK_PAGE_TOKEN ?? "").trim();
+    const fbAppId = (process.env.FACEBOOK_APP_ID ?? "").trim();
+    const fbAppSecret = (process.env.FACEBOOK_APP_SECRET ?? "").trim();
+    const fbPageId = (process.env.FACEBOOK_PAGE_ID ?? "").trim();
+
+    const twitterBearer = (process.env.TWITTER_BEARER_TOKEN ?? "").trim();
+    const twitterApiKey = (process.env.TWITTER_API_KEY ?? "").trim();
+    const twitterApiSecret = (process.env.TWITTER_API_SECRET ?? "").trim();
+    const twitterAccessToken = (process.env.TWITTER_ACCESS_TOKEN ?? "").trim();
+    const twitterAccessTokenSecret = (process.env.TWITTER_ACCESS_TOKEN_SECRET ?? "").trim();
+
+    const redditClientId = (process.env.REDDIT_CLIENT_ID ?? "").trim();
+    const redditClientSecret = (process.env.REDDIT_CLIENT_SECRET ?? "").trim();
+
+    const youtubeApiKey = (process.env.YOUTUBE_API_KEY ?? "").trim();
+    const youtubeChannelId = (process.env.YOUTUBE_CHANNEL_ID ?? "").trim();
+    const youtubeChannelHandle = (process.env.YOUTUBE_CHANNEL_HANDLE ?? "").trim();
+    const youtubeOAuthToken = (process.env.YOUTUBE_OAUTH_TOKEN ?? "").trim();
+    const youtubeRefreshToken = (process.env.YOUTUBE_REFRESH_TOKEN ?? "").trim();
+    const youtubeTokenExpiresAt = (process.env.YOUTUBE_TOKEN_EXPIRES_AT ?? "").trim();
+
+    return res.json({
+      webhookVerifyToken: { configured: !!webhookToken, preview: mask(webhookToken) },
+      instagram: {
+        configured: !!igToken,
+        accessToken: mask(igToken),
+        businessAccountId: igAccountId,
+      },
+      facebook: {
+        configured: !!fbPageToken,
+        pageToken: mask(fbPageToken),
+        appId: fbAppId,
+        hasAppSecret: !!fbAppSecret,
+        pageId: fbPageId,
+      },
+      twitter: {
+        configured: !!(twitterBearer || (twitterApiKey && twitterAccessToken)),
+        bearerToken: mask(twitterBearer),
+        apiKey: mask(twitterApiKey),
+        hasApiSecret: !!twitterApiSecret,
+        accessToken: mask(twitterAccessToken),
+        hasAccessTokenSecret: !!twitterAccessTokenSecret,
+      },
+      reddit: {
+        configured: !!redditClientId,
+        clientId: redditClientId,
+        hasClientSecret: !!redditClientSecret,
+      },
+      youtube: {
+        configured: !!youtubeApiKey,
+        apiKey: mask(youtubeApiKey),
+        channelId: youtubeChannelId,
+        channelHandle: youtubeChannelHandle,
+        oauthConfigured: !!youtubeOAuthToken,
+        hasRefreshToken: !!youtubeRefreshToken,
+        expiresAt: youtubeTokenExpiresAt || null,
+        hasAccessToken: !!youtubeOAuthToken,
+      },
+    });
+  });
+
+  /** POST /api/admin/social-brain/credentials — persist social Brain credentials to .env */
+  router.post("/social-brain/credentials", async (req, res) => {
+    const body = req.body as Record<string, unknown>;
+    const str = (v: unknown): string | null => (typeof v === "string" ? v.trim() : null);
+
+    const updates: Record<string, string> = {};
+    const add = (envKey: string, val: string | null) => { if (val !== null) updates[envKey] = val; };
+
+    add("SOCIAL_WEBHOOK_VERIFY_TOKEN", str(body.webhookVerifyToken));
+    add("INSTAGRAM_ACCESS_TOKEN", str(body.instagramAccessToken));
+    add("INSTAGRAM_BUSINESS_ACCOUNT_ID", str(body.instagramBusinessAccountId));
+    add("FACEBOOK_PAGE_TOKEN", str(body.facebookPageToken));
+    add("FACEBOOK_APP_ID", str(body.facebookAppId));
+    add("FACEBOOK_APP_SECRET", str(body.facebookAppSecret));
+    add("FACEBOOK_PAGE_ID", str(body.facebookPageId));
+    add("TWITTER_BEARER_TOKEN", str(body.twitterBearerToken));
+    add("TWITTER_API_KEY", str(body.twitterApiKey));
+    add("TWITTER_API_SECRET", str(body.twitterApiSecret));
+    add("TWITTER_ACCESS_TOKEN", str(body.twitterAccessToken));
+    add("TWITTER_ACCESS_TOKEN_SECRET", str(body.twitterAccessTokenSecret));
+    add("REDDIT_CLIENT_ID", str(body.redditClientId));
+    add("REDDIT_CLIENT_SECRET", str(body.redditClientSecret));
+    add("YOUTUBE_API_KEY", str(body.youtubeApiKey));
+    add("YOUTUBE_CHANNEL_ID", str(body.youtubeChannelId));
+    add("YOUTUBE_CHANNEL_HANDLE", str(body.youtubeChannelHandle));
+
+    if (Object.keys(updates).length === 0) {
+      return res.status(400).json({ error: "No credentials provided" });
+    }
+
+    try {
+      const envPath = defaultEnvPath();
+      await upsertEnvFile(envPath, updates);
+      for (const [key, value] of Object.entries(updates)) {
+        if (value) {
+          process.env[key] = value;
+        } else {
+          delete process.env[key];
+        }
+      }
+      logger.info(`Updated Social Brain credentials via admin UI: ${Object.keys(updates).join(", ")}`);
+      return res.json({ ok: true });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return res.status(500).json({ error: message });
+    }
+  });
+
+  /** GET /api/admin/social-brain/settings — return non-secret Social Brain config */
+  router.get("/social-brain/settings", async (_req, res) => {
+    try {
+      const configPath = defaultConfigPath();
+      const userConfig = await readUserConfig(configPath);
+      const sb = (userConfig.socialBrain && typeof userConfig.socialBrain === "object")
+        ? (userConfig.socialBrain as Record<string, unknown>)
+        : {};
+      return res.json({
+        enabled: sb.enabled ?? false,
+        model: sb.model ?? "",
+        responseStyle: sb.responseStyle ?? "friendly",
+        confidenceThreshold: sb.confidenceThreshold ?? "high",
+        commentAutomation: (sb.commentAutomation as Record<string, unknown> | undefined)?.enabled ?? false,
+        commentBrainEnabled: sb.commentBrainEnabled ?? false,
+        approvalRequired: sb.approvalRequired ?? false,
+        notifications: sb.notifications ?? { enabled: false, telegram: true, discord: true, web: true },
+        handoff: sb.handoff ?? {},
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return res.status(500).json({ error: message });
+    }
+  });
+
+  /** POST /api/admin/social-brain/settings — persist non-secret Social Brain config */
+  router.post("/social-brain/settings", async (req, res) => {
+    const body = req.body as Record<string, unknown>;
+    try {
+      const configPath = defaultConfigPath();
+      const userConfig = await readUserConfig(configPath);
+      const existingSb = (userConfig.socialBrain && typeof userConfig.socialBrain === "object")
+        ? (userConfig.socialBrain as Record<string, unknown>)
+        : {};
+
+      if (typeof body.enabled === "boolean") existingSb.enabled = body.enabled;
+      if (typeof body.model === "string") existingSb.model = body.model || undefined;
+      if (body.responseStyle === "friendly" || body.responseStyle === "professional" || body.responseStyle === "witty" || body.responseStyle === "minimal") {
+        existingSb.responseStyle = body.responseStyle;
+      }
+      if (body.confidenceThreshold === "high" || body.confidenceThreshold === "medium" || body.confidenceThreshold === "low") {
+        existingSb.confidenceThreshold = body.confidenceThreshold;
+      }
+      if (typeof body.commentAutomation === "boolean") {
+        existingSb.commentAutomation = { ...((existingSb.commentAutomation as Record<string, unknown>) ?? {}), enabled: body.commentAutomation };
+      }
+      if (typeof body.commentBrainEnabled === "boolean") {
+        existingSb.commentBrainEnabled = body.commentBrainEnabled;
+      }
+      if (typeof body.approvalRequired === "boolean") {
+        existingSb.approvalRequired = body.approvalRequired;
+      }
+      if (body.notifications && typeof body.notifications === "object") {
+        existingSb.notifications = { ...((existingSb.notifications as Record<string, unknown>) ?? {}), ...(body.notifications as Record<string, unknown>) };
+      }
+      if (body.handoff && typeof body.handoff === "object") {
+        existingSb.handoff = { ...((existingSb.handoff as Record<string, unknown>) ?? {}), ...(body.handoff as Record<string, unknown>) };
+      }
+
+      userConfig.socialBrain = existingSb;
+      await writeUserConfig(configPath, userConfig);
+
+      // Apply changes to the running SocialBrain instance (no restart required)
+      if (socialBrain) {
+        if (typeof body.model === "string") socialBrain.setModel(body.model || undefined);
+        if (body.responseStyle === "friendly" || body.responseStyle === "professional" || body.responseStyle === "witty" || body.responseStyle === "minimal") {
+          socialBrain.setResponseStyle(body.responseStyle);
+        }
+        if (body.confidenceThreshold === "high" || body.confidenceThreshold === "medium" || body.confidenceThreshold === "low") {
+          socialBrain.setConfidenceThreshold(body.confidenceThreshold);
+        }
+        if (typeof body.approvalRequired === "boolean") socialBrain.setApprovalRequired(body.approvalRequired);
+      }
+
+      logger.info("Updated Social Brain settings via admin UI");
+      return res.json({ ok: true, restartRequired: false });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return res.status(500).json({ error: message });
     }
   });
 

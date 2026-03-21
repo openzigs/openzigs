@@ -1,5 +1,6 @@
 import { logger } from "../../logging/logger.js";
 import { SocialRepository } from "./social-repository.js";
+import type { LocalMcpServerManager } from "../../mcp/local-mcp-server-manager.js";
 import type { PostContext, SocialPlatform } from "./types.js";
 
 /**
@@ -249,6 +250,180 @@ export class TikTokApiClient implements PlatformApiClient {
       mediaUrl: "",
       authorUsername: d.creator ?? "",
       publishedAt: d.created_at ?? "",
+      cachedAt: new Date().toISOString(),
+    };
+  }
+}
+
+// ── Reddit API Client (via Reddit MCP server) ────────────────────────
+
+export class RedditApiClient implements PlatformApiClient {
+  readonly platform: SocialPlatform = "reddit";
+  private serverManager: LocalMcpServerManager;
+
+  constructor(serverManager: LocalMcpServerManager) {
+    this.serverManager = serverManager;
+  }
+
+  async fetchPostContext(postId: string): Promise<PostContext | null> {
+    // postId may be a fullname like "t3_abc123" or just "abc123"
+    const rawId = postId.startsWith("t3_") ? postId.slice(3) : postId;
+
+    const result = await this.serverManager.callTool("reddit", "reddit_get_post_comments", {
+      subreddit: "all",
+      post_id: rawId,
+      limit: 1,
+    });
+
+    if (result.isError) {
+      logger.warn(`[RedditApiClient] reddit_get_post_comments failed for ${postId}: ${result.text.slice(0, 200)}`);
+      return null;
+    }
+
+    try {
+      const parsed = JSON.parse(result.text) as {
+        success?: boolean;
+        data?: Array<{
+          data?: {
+            children?: Array<{
+              data?: {
+                title?: string;
+                selftext?: string;
+                author?: string;
+                created_utc?: number;
+                permalink?: string;
+                url?: string;
+                is_video?: boolean;
+              };
+            }>;
+          };
+        }>;
+      };
+
+      if (!parsed.success && !parsed.data) return null;
+
+      // Reddit returns [listing (post), listing (comments)]
+      const postData = parsed.data?.[0]?.data?.children?.[0]?.data;
+      if (!postData) return null;
+
+      return {
+        postId: rawId,
+        platform: "reddit",
+        caption: postData.title ?? postData.selftext ?? "",
+        permalink: postData.permalink
+          ? `https://www.reddit.com${postData.permalink}`
+          : `https://www.reddit.com/comments/${rawId}`,
+        mediaType: postData.is_video ? "video" : "post",
+        mediaUrl: postData.url ?? "",
+        authorUsername: postData.author ?? "",
+        publishedAt: postData.created_utc
+          ? new Date(postData.created_utc * 1000).toISOString()
+          : "",
+        cachedAt: new Date().toISOString(),
+      };
+    } catch (error) {
+      logger.warn(`[RedditApiClient] Failed to parse reddit response for ${postId}: ${error instanceof Error ? error.message : String(error)}`);
+      return null;
+    }
+  }
+}
+
+// ── Instagram API Client ─────────────────────────────────────────────
+
+export class InstagramApiClient implements PlatformApiClient {
+  readonly platform: SocialPlatform = "instagram";
+  private accessToken: string;
+  private baseUrl: string;
+
+  constructor(accessToken: string, baseUrl = "https://graph.instagram.com/v19.0") {
+    this.accessToken = accessToken;
+    this.baseUrl = baseUrl;
+  }
+
+  async fetchPostContext(postId: string): Promise<PostContext | null> {
+    const url = `${this.baseUrl}/${encodeURIComponent(postId)}?fields=id,caption,media_type,media_url,timestamp,permalink,username&access_token=${encodeURIComponent(this.accessToken)}`;
+
+    const res = await fetch(url, {
+      headers: { "User-Agent": "OpenZigs-SocialBrain/1.0" },
+      signal: AbortSignal.timeout(10_000),
+    });
+
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      logger.warn(`[InstagramApiClient] GET /${postId} returned ${res.status}: ${body.slice(0, 200)}`);
+      return null;
+    }
+
+    const data = (await res.json()) as {
+      id?: string;
+      caption?: string;
+      media_type?: string;
+      media_url?: string;
+      timestamp?: string;
+      permalink?: string;
+      username?: string;
+    };
+
+    if (!data.id) return null;
+    return {
+      postId: data.id,
+      platform: "instagram",
+      caption: data.caption ?? "",
+      permalink: data.permalink ?? `https://www.instagram.com/p/${postId}`,
+      mediaType: data.media_type ?? "IMAGE",
+      mediaUrl: data.media_url ?? "",
+      authorUsername: data.username ?? "",
+      publishedAt: data.timestamp ?? "",
+      cachedAt: new Date().toISOString(),
+    };
+  }
+}
+
+// ── Facebook API Client ──────────────────────────────────────────────
+
+export class FacebookApiClient implements PlatformApiClient {
+  readonly platform: SocialPlatform = "facebook";
+  private accessToken: string;
+  private baseUrl: string;
+
+  constructor(accessToken: string, baseUrl = "https://graph.facebook.com/v19.0") {
+    this.accessToken = accessToken;
+    this.baseUrl = baseUrl;
+  }
+
+  async fetchPostContext(postId: string): Promise<PostContext | null> {
+    const url = `${this.baseUrl}/${encodeURIComponent(postId)}?fields=id,message,type,created_time,from,permalink_url&access_token=${encodeURIComponent(this.accessToken)}`;
+
+    const res = await fetch(url, {
+      headers: { "User-Agent": "OpenZigs-SocialBrain/1.0" },
+      signal: AbortSignal.timeout(10_000),
+    });
+
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      logger.warn(`[FacebookApiClient] GET /${postId} returned ${res.status}: ${body.slice(0, 200)}`);
+      return null;
+    }
+
+    const data = (await res.json()) as {
+      id?: string;
+      message?: string;
+      type?: string;
+      created_time?: string;
+      from?: { name?: string; id?: string };
+      permalink_url?: string;
+    };
+
+    if (!data.id) return null;
+    return {
+      postId: data.id,
+      platform: "facebook",
+      caption: data.message ?? "",
+      permalink: data.permalink_url ?? `https://www.facebook.com/${postId}`,
+      mediaType: data.type ?? "status",
+      mediaUrl: "",
+      authorUsername: data.from?.name ?? "",
+      publishedAt: data.created_time ?? "",
       cachedAt: new Date().toISOString(),
     };
   }

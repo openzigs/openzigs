@@ -137,7 +137,11 @@ export const DEFAULT_LOCAL_SERVER_DEFINITIONS: LocalMcpServerDefinition[] = [
     label: "YouTube",
     command: path.join(PROJECT_ROOT, "external/youtube-mcp/.venv/bin/python"),
     args: ["-m", "src.youtube_mcp_server"],
-    env: { PYTHONPATH: path.join(PROJECT_ROOT, "external/youtube-mcp") },
+    env: {
+      PYTHONPATH: path.join(PROJECT_ROOT, "external/youtube-mcp"),
+      // YOUTUBE_* env vars are inherited from process.env in startServer();
+      // DO NOT capture them here — they become stale after token refresh.
+    },
     requiredEnvVars: ["YOUTUBE_API_KEY"],
     runtime: "python",
     category: "social",
@@ -271,12 +275,32 @@ export class LocalMcpServerManager extends EventEmitter {
         await this.startServer(def);
       } catch (error) {
         const err = error instanceof Error ? error : new Error(String(error));
-        logger.error(`Failed to start local MCP server "${def.name}": ${err.message}`);
-        this.setStatus(def, {
-          running: false,
-          toolCount: 0,
-          error: err.message,
-        });
+        const errMsg = err.message.toLowerCase();
+        // Detect expired token errors and provide actionable guidance
+        const isTokenError =
+          errMsg.includes("expired") ||
+          errMsg.includes("invalid") ||
+          errMsg.includes("access token") ||
+          errMsg.includes("oauthexception");
+        if (isTokenError && (def.category === "social")) {
+          logger.error(
+            `Local MCP server "${def.name}" failed: access token is expired or invalid. ` +
+            `Please generate a new long-lived token from https://developers.facebook.com/tools/explorer/ ` +
+            `and update the environment variable(s): ${(def.requiredEnvVars ?? []).join(", ")}`
+          );
+          this.setStatus(def, {
+            running: false,
+            toolCount: 0,
+            error: "token_expired",
+          });
+        } else {
+          logger.error(`Failed to start local MCP server "${def.name}": ${err.message}`);
+          this.setStatus(def, {
+            running: false,
+            toolCount: 0,
+            error: err.message,
+          });
+        }
         this.emit("server:error", def.name, err);
       }
     }

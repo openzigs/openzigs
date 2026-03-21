@@ -1,10 +1,10 @@
 /** Shared types for the Social Brain subsystem. */
 
-export type SocialPlatform = "reddit" | "youtube" | "tiktok" | "twitter" | "linkedin";
+export type SocialPlatform = "reddit" | "youtube" | "tiktok" | "twitter" | "linkedin" | "instagram" | "facebook";
 
 export type MessageDirection = "inbound" | "outbound";
 
-export type MessageStatus = "received" | "auto_replied" | "escalated" | "failed";
+export type MessageStatus = "received" | "auto_replied" | "escalated" | "failed" | "pending_approval" | "rejected";
 
 /** Normalised inbound social message — platform adapters produce this. */
 export type IncomingSocialMessage = {
@@ -93,6 +93,10 @@ export type CommentRule = {
   trigger_count: number;
   auto_tag: string | null;
   model: string | null;
+  /** Use AI to generate comment replies instead of template. */
+  use_ai_reply: number; // 0 or 1
+  /** Additional context for AI-generated replies. */
+  ai_reply_context: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -131,10 +135,57 @@ export type EscalationContext = {
   triggerReason: "low_confidence" | "handoff_request" | "manual";
 };
 
+/** Follow-up sequence step. */
+export type FollowUpStep = {
+  id: string;
+  rule_id: string;
+  step_order: number;
+  delay_seconds: number;
+  message_template: string;
+  created_at: string;
+};
+
+/** Pending follow-up job. */
+export type FollowUpJob = {
+  id: string;
+  contact_id: string;
+  rule_id: string;
+  step_id: string;
+  platform: SocialPlatform;
+  platform_user_id: string;
+  message: string;
+  scheduled_at: string;
+  sent_at: string | null;
+  error: string | null;
+  created_at: string;
+};
+
+/** Lead data captured from DM conversations. */
+export type LeadData = {
+  email: string | null;
+  phone: string | null;
+  captured_at: string;
+  source: string; // "dm_extraction" | "manual"
+};
+
+/** Conversation analytics row. */
+export type ConversationAnalytics = {
+  platform: SocialPlatform;
+  total_conversations: number;
+  total_messages_in: number;
+  total_messages_out: number;
+  avg_response_time_ms: number;
+  auto_reply_rate: number;
+  escalation_rate: number;
+  leads_captured: number;
+};
+
 /** Social Brain config section. */
 export type SocialBrainConfig = {
   enabled?: boolean;
   confidenceThreshold?: "high" | "medium" | "low";
+  commentBrainEnabled?: boolean;
+  approvalRequired?: boolean;
   handoff?: {
     preferredChannel?: "discord" | "telegram";
     discordChannelId?: string;
@@ -150,9 +201,22 @@ export type SocialBrainConfig = {
       dmsPerHour?: number;
     };
   };
+  followerWelcome?: {
+    enabled?: boolean;
+    /** Per-platform welcome message templates */
+    messages?: Partial<Record<SocialPlatform, string>>;
+    /** Delay in seconds before sending the welcome DM */
+    delaySeconds?: number;
+  };
+  notifications?: {
+    enabled?: boolean;
+    telegram?: boolean;
+    discord?: boolean;
+    web?: boolean;
+  };
   connections?: Record<string, {
     enabled?: boolean;
-    mode?: "webhook" | "polling";
+    mode?: "webhook" | "polling" | "browser";
     pollIntervalSeconds?: number;
     accessToken?: string;
   }>;

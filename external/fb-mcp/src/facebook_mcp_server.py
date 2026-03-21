@@ -84,6 +84,32 @@ class FacebookMCPServer:
     async def run(self):
         global client
         client = FacebookClient()
+
+        # Proactively refresh token if it's expiring soon
+        try:
+            refreshed = await client.refresh_token_if_needed()
+            if refreshed:
+                logger.info("Facebook page token was refreshed on startup")
+        except FacebookAPIError as e:
+            logger.error(
+                "Facebook token is expired or invalid — "
+                "please generate a new long-lived token from "
+                "https://developers.facebook.com/tools/explorer/",
+                error=str(e),
+            )
+            sys.exit(1)
+
+        # Validate token
+        try:
+            is_valid = await client.validate_token()
+            if not is_valid:
+                logger.error("Invalid Facebook page token")
+                sys.exit(1)
+            logger.info("Facebook page token validated successfully")
+        except Exception as e:
+            logger.error("Failed to validate Facebook token", error=str(e))
+            sys.exit(1)
+
         async with stdio_server() as (read_stream, write_stream):
             await self.server.run(read_stream, write_stream, InitializationOptions(
                 server_name=self.settings.mcp_server_name,

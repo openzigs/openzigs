@@ -9,6 +9,7 @@ class YouTubeMCPSettings(BaseSettings):
 
     youtube_api_key: str = Field(..., description="YouTube Data API v3 key")
     youtube_channel_id: Optional[str] = Field(None, description="YouTube channel ID (auto-detected if omitted)")
+    youtube_channel_handle: Optional[str] = Field(None, description="YouTube channel handle e.g. @MyCoolChannel (used to resolve channel ID without OAuth)")
     youtube_oauth_token: str = Field("", description="OAuth2 access token for write operations")
     youtube_api_base: str = Field("https://www.googleapis.com/youtube/v3", description="YouTube API base URL")
     mcp_server_name: str = Field("youtube-mcp-server", description="MCP server name")

@@ -11,7 +11,7 @@ class FacebookMCPSettings(BaseSettings):
     facebook_app_id: str = Field("", description="Facebook App ID")
     facebook_app_secret: str = Field("", description="Facebook App secret")
     facebook_page_id: Optional[str] = Field(None, description="Facebook Page ID (auto-detected if omitted)")
-    meta_graph_api_version: str = Field("v24.0", description="Graph API version")
+    meta_graph_api_version: str = Field("v21.0", description="Graph API version")
     meta_graph_api_base: str = Field("https://graph.facebook.com", description="Graph API base URL")
     mcp_server_name: str = Field("facebook-mcp-server", description="MCP server name")
     mcp_server_version: str = Field("1.0.0", description="MCP server version")

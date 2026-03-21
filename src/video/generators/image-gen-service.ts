@@ -100,7 +100,7 @@ function getDefaultConfig(): Required<ImageGenServiceConfig> {
     outputDir: path.join(os.tmpdir(), "openzigs-image-gen"),
     imageGenMode: (process.env.IMAGE_GEN_MODE as "local" | "network" | undefined) ?? "local",
     networkNodeUrl: process.env.IMAGE_GEN_NETWORK_URL ?? "",
-    networkNodeToken: process.env.IMAGE_GEN_NETWORK_TOKEN ?? "",
+    networkNodeToken: process.env.IMAGE_GEN_NETWORK_TOKEN ?? process.env.FLUXQ_SECRET_TOKEN ?? "",
   };
 }
 
@@ -149,6 +149,11 @@ export class ImageGenService {
       if (ig.mode === "local" || ig.mode === "network") result.imageGenMode = ig.mode;
       if (typeof ig.networkNodeUrl === "string" && ig.networkNodeUrl) result.networkNodeUrl = ig.networkNodeUrl;
       if (typeof ig.networkNodeToken === "string" && ig.networkNodeToken) result.networkNodeToken = ig.networkNodeToken;
+      // If config has no token, fall back to the sidecar's own env var so
+      // local co-located deployments work without extra configuration.
+      if (!result.networkNodeToken && process.env.FLUXQ_SECRET_TOKEN) {
+        result.networkNodeToken = process.env.FLUXQ_SECRET_TOKEN;
+      }
       if (typeof ig.localTimeoutMs === "number" && ig.localTimeoutMs > 0) result.localTimeoutMs = ig.localTimeoutMs;
       return result;
     } catch {

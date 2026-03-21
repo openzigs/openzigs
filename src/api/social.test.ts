@@ -8,6 +8,10 @@ vi.mock("../logging/logger.js", () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 
+vi.mock("../config/user-model.js", () => ({
+  getUserSelectedModel: vi.fn().mockResolvedValue("gpt-5-mini"),
+}));
+
 function createMockRepository() {
   const contacts = new Map<string, Record<string, unknown>>();
   contacts.set("c1", { id: "c1", platform: "twitter", username: "test_user", tags: "" });
@@ -31,18 +35,39 @@ function createMockRepository() {
     updateRule: vi.fn((id: string, data: Record<string, unknown>) => ({ ...rules.get(id), ...data })),
     deleteRule: vi.fn((id: string) => rules.has(id)),
     getAutomationLog: vi.fn(() => []),
+    getAnalytics: vi.fn(() => [
+      { platform: "twitter", total_conversations: 10, total_messages_in: 20, total_messages_out: 15, avg_response_time_ms: 500, auto_reply_rate: 0.75, escalation_rate: 0.1, leads_captured: 2 },
+    ]),
+    getLeads: vi.fn(() => [
+      { id: "c1", platform: "twitter", username: "test_user", email: "test@example.com", phone: null, lead_captured_at: "2026-01-01T00:00:00Z" },
+    ]),
+    getFollowUpSteps: vi.fn(() => [
+      { id: "fs1", rule_id: "r1", step_order: 0, delay_seconds: 3600, message_template: "Follow up!" },
+    ]),
+    createFollowUpStep: vi.fn((_ruleId: string, data: Record<string, unknown>) => ({
+      id: "fs-new", rule_id: "r1", ...data,
+    })),
+    deleteFollowUpStep: vi.fn((id: string) => id === "fs1"),
   };
 }
 
 function createMockIngestion() {
   return {
     getRegisteredPlatforms: vi.fn(() => ["twitter"]),
+    getActivePollers: vi.fn(() => []),
+    getAllPollHealth: vi.fn(() => ({})),
     handleWebhook: vi.fn().mockResolvedValue(undefined),
   };
 }
 
 function createMockBrain() {
-  return { setBrandVoice: vi.fn() };
+  return {
+    setBrandVoice: vi.fn(),
+    getVoiceLearning: vi.fn().mockReturnValue({
+      getExampleCount: vi.fn().mockReturnValue(0),
+      recordApprovedReply: vi.fn(),
+    }),
+  };
 }
 
 function createMockHandoff() {
@@ -62,6 +87,32 @@ function buildApp() {
   } as unknown as SocialRouterOptions;
   app.use("/social", createSocialRouter(opts));
   return { app, opts };
+}
+
+function createMockCopilot(responseText: string) {
+  return {
+    chat: vi.fn(async function* () {
+      yield responseText;
+    }),
+    listModels: vi.fn().mockResolvedValue([]),
+  };
+}
+
+function buildAppWithCopilot(response: string) {
+  const app = express();
+  app.use(express.json());
+  const copilot = createMockCopilot(response);
+  const opts = {
+    repository: createMockRepository(),
+    ingestion: createMockIngestion(),
+    brain: createMockBrain(),
+    handoff: createMockHandoff(),
+    ruleEngine: {},
+    config: { enabled: true, confidenceThreshold: "medium", connections: {} },
+    copilot,
+  } as unknown as SocialRouterOptions;
+  app.use("/social", createSocialRouter(opts));
+  return { app, opts, copilot };
 }
 
 describe("Social API router", () => {
@@ -461,8 +512,15 @@ describe("Social API router", () => {
     });
   });
 
-  // NOTE: GET /rules/log is shadowed by GET /rules/:id (registered earlier in Express).
-  // Express matches ":id" = "log" first, so this endpoint is unreachable. Skipping tests.
+  // GET /rules/log — now registered before /rules/:id so it's reachable
+  describe("GET /rules/log", () => {
+    it("returns automation log entries", async () => {
+      const { app } = buildApp();
+      const res = await request(app).get("/social/rules/log");
+      expect(res.status).toBe(200);
+      expect(res.body).toHaveProperty("log");
+    });
+  });
 
   describe("POST /handoff/:contactId/close — error paths", () => {
     it("returns 404 when handoff not found", async () => {
@@ -506,6 +564,358 @@ describe("Social API router", () => {
           delete process.env.SOCIAL_WEBHOOK_VERIFY_TOKEN;
         }
       }
+    });
+  });
+
+  describe("GET /stats — connection status", () => {
+    it("shows all 7 platforms in connections", async () => {
+      const { app } = buildApp();
+      const res = await request(app).get("/social/stats");
+      expect(res.status).toBe(200);
+      const platforms = res.body.connections.map((c: { platform: string }) => c.platform);
+      expect(platforms).toContain("twitter");
+      expect(platforms).toContain("linkedin");
+      expect(platforms).toContain("reddit");
+      expect(platforms).toContain("youtube");
+      expect(platforms).toContain("tiktok");
+      expect(platforms).toContain("instagram");
+      expect(platforms).toContain("facebook");
+      expect(platforms).toHaveLength(7);
+    });
+
+    it("shows platform as connected when adapter registered and token present", async () => {
+      const app = express();
+      app.use(express.json());
+      const opts = {
+        repository: createMockRepository(),
+        ingestion: {
+          getRegisteredPlatforms: vi.fn(() => ["twitter", "reddit"]),
+          getActivePollers: vi.fn(() => []),
+          getAllPollHealth: vi.fn(() => ({})),
+          handleWebhook: vi.fn().mockResolvedValue(undefined),
+        },
+        brain: createMockBrain(),
+        handoff: createMockHandoff(),
+        ruleEngine: {},
+        config: {
+          enabled: true,
+          confidenceThreshold: "medium",
+          connections: {
+            twitter: { enabled: true, accessToken: "tw-token", mode: "webhook" },
+            reddit: { enabled: true, accessToken: "rd-token", mode: "polling", pollIntervalSeconds: 120 },
+            youtube: { enabled: false, accessToken: "", mode: "polling" },
+          },
+        },
+      } as unknown as SocialRouterOptions;
+      app.use("/social", createSocialRouter(opts));
+
+      const res = await request(app).get("/social/stats");
+      expect(res.status).toBe(200);
+
+      const connections = res.body.connections as Array<{ platform: string; connected: boolean; configured: boolean }>;
+      const twitter = connections.find((c) => c.platform === "twitter");
+      expect(twitter?.connected).toBe(true);
+      expect(twitter?.configured).toBe(true);
+
+      const reddit = connections.find((c) => c.platform === "reddit");
+      expect(reddit?.connected).toBe(true);
+      expect(reddit?.configured).toBe(true);
+
+      const youtube = connections.find((c) => c.platform === "youtube");
+      expect(youtube?.connected).toBe(false);
+      expect(youtube?.configured).toBe(false);
+
+      const linkedin = connections.find((c) => c.platform === "linkedin");
+      expect(linkedin?.connected).toBe(false);
+    });
+
+    it("shows platform as not connected without adapter registration", async () => {
+      const app = express();
+      app.use(express.json());
+      const opts = {
+        repository: createMockRepository(),
+        ingestion: {
+          getRegisteredPlatforms: vi.fn(() => []),
+          getActivePollers: vi.fn(() => []),
+          getAllPollHealth: vi.fn(() => ({})),
+          handleWebhook: vi.fn().mockResolvedValue(undefined),
+        },
+        brain: createMockBrain(),
+        handoff: createMockHandoff(),
+        ruleEngine: {},
+        config: {
+          enabled: true,
+          confidenceThreshold: "medium",
+          connections: {
+            reddit: { enabled: true, accessToken: "token", mode: "polling" },
+          },
+        },
+      } as unknown as SocialRouterOptions;
+      app.use("/social", createSocialRouter(opts));
+
+      const res = await request(app).get("/social/stats");
+      const reddit = res.body.connections.find((c: { platform: string }) => c.platform === "reddit");
+      expect(reddit?.connected).toBe(false);
+      expect(reddit?.configured).toBe(true);
+    });
+  });
+
+  // ── Analytics ──────────────────────────────────────────────
+
+  describe("GET /analytics", () => {
+    it("returns analytics data", async () => {
+      const { app } = buildApp();
+      const res = await request(app).get("/social/analytics");
+      expect(res.status).toBe(200);
+      expect(res.body.analytics).toHaveLength(1);
+      expect(res.body.analytics[0].platform).toBe("twitter");
+      expect(res.body.analytics[0].total_conversations).toBe(10);
+    });
+
+    it("passes since filter to repository", async () => {
+      const { app, opts } = buildApp();
+      await request(app).get("/social/analytics?since=2026-01-01T00:00:00Z");
+      expect((opts.repository as unknown as ReturnType<typeof createMockRepository>).getAnalytics).toHaveBeenCalledWith("2026-01-01T00:00:00Z");
+    });
+
+    it("returns 500 when getAnalytics throws", async () => {
+      const { app, opts } = buildApp();
+      (opts.repository as unknown as ReturnType<typeof createMockRepository>).getAnalytics.mockImplementation(() => {
+        throw new Error("DB error");
+      });
+      const res = await request(app).get("/social/analytics");
+      expect(res.status).toBe(500);
+    });
+  });
+
+  // ── Leads ──────────────────────────────────────────────────
+
+  describe("GET /leads", () => {
+    it("returns leads list", async () => {
+      const { app } = buildApp();
+      const res = await request(app).get("/social/leads");
+      expect(res.status).toBe(200);
+      expect(res.body.leads).toHaveLength(1);
+      expect(res.body.leads[0].email).toBe("test@example.com");
+    });
+
+    it("passes platform filter", async () => {
+      const { app, opts } = buildApp();
+      await request(app).get("/social/leads?platform=twitter&limit=10&offset=5");
+      expect((opts.repository as unknown as ReturnType<typeof createMockRepository>).getLeads).toHaveBeenCalledWith(
+        expect.objectContaining({ platform: "twitter", limit: 10, offset: 5 }),
+      );
+    });
+
+    it("clamps limit to 200 max", async () => {
+      const { app, opts } = buildApp();
+      await request(app).get("/social/leads?limit=999");
+      expect((opts.repository as unknown as ReturnType<typeof createMockRepository>).getLeads).toHaveBeenCalledWith(
+        expect.objectContaining({ limit: 200 }),
+      );
+    });
+
+    it("returns 500 when getLeads throws", async () => {
+      const { app, opts } = buildApp();
+      (opts.repository as unknown as ReturnType<typeof createMockRepository>).getLeads.mockImplementation(() => {
+        throw new Error("DB error");
+      });
+      const res = await request(app).get("/social/leads");
+      expect(res.status).toBe(500);
+    });
+  });
+
+  // ── Follow-Up Steps ────────────────────────────────────────
+
+  describe("GET /rules/:ruleId/follow-ups", () => {
+    it("returns follow-up steps for a rule", async () => {
+      const { app } = buildApp();
+      const res = await request(app).get("/social/rules/r1/follow-ups");
+      expect(res.status).toBe(200);
+      expect(res.body.steps).toHaveLength(1);
+      expect(res.body.steps[0].delay_seconds).toBe(3600);
+    });
+
+    it("returns 500 when getFollowUpSteps throws", async () => {
+      const { app, opts } = buildApp();
+      (opts.repository as unknown as ReturnType<typeof createMockRepository>).getFollowUpSteps.mockImplementation(() => {
+        throw new Error("DB error");
+      });
+      const res = await request(app).get("/social/rules/r1/follow-ups");
+      expect(res.status).toBe(500);
+    });
+  });
+
+  describe("POST /rules/:ruleId/follow-ups", () => {
+    it("creates a follow-up step", async () => {
+      const { app } = buildApp();
+      const res = await request(app).post("/social/rules/r1/follow-ups").send({
+        stepOrder: 0,
+        delaySeconds: 3600,
+        messageTemplate: "Hey {{username}}, just following up!",
+      });
+      expect(res.status).toBe(201);
+      expect(res.body.rule_id).toBe("r1");
+    });
+
+    it("returns 404 for missing rule", async () => {
+      const { app } = buildApp();
+      const res = await request(app).post("/social/rules/missing/follow-ups").send({
+        stepOrder: 0,
+        delaySeconds: 3600,
+        messageTemplate: "Hello!",
+      });
+      expect(res.status).toBe(404);
+    });
+
+    it("rejects invalid body schema", async () => {
+      const { app } = buildApp();
+      const res = await request(app).post("/social/rules/r1/follow-ups").send({
+        stepOrder: -1,
+        delaySeconds: 0, // min 1
+        messageTemplate: "",
+      });
+      expect(res.status).toBe(400);
+    });
+
+    it("rejects delay exceeding 7 days", async () => {
+      const { app } = buildApp();
+      const res = await request(app).post("/social/rules/r1/follow-ups").send({
+        stepOrder: 0,
+        delaySeconds: 700000, // > 604800
+        messageTemplate: "Too late!",
+      });
+      expect(res.status).toBe(400);
+    });
+  });
+
+  describe("DELETE /rules/:ruleId/follow-ups/:stepId", () => {
+    it("deletes a follow-up step", async () => {
+      const { app } = buildApp();
+      const res = await request(app).delete("/social/rules/r1/follow-ups/fs1");
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+    });
+
+    it("returns 404 for missing step", async () => {
+      const { app } = buildApp();
+      const res = await request(app).delete("/social/rules/r1/follow-ups/missing");
+      expect(res.status).toBe(404);
+    });
+  });
+
+  describe("POST /rules/generate", () => {
+    const validRule = JSON.stringify({
+      name: "Lead Capture DM",
+      platform: "instagram",
+      keywords: ["pricing", "interested"],
+      dm_template: "Hey {{username}}, thanks for your interest!",
+      comment_reply_template: "Check your DMs!",
+      dm_delay_seconds: 30,
+      max_triggers_per_user: 3,
+      auto_tag: "lead",
+      use_ai_reply: false,
+      ai_reply_context: null,
+    });
+
+    it("generates a rule from description", async () => {
+      const { app, copilot } = buildAppWithCopilot(validRule);
+      const res = await request(app)
+        .post("/social/rules/generate")
+        .send({ description: "Capture leads who ask about pricing on Instagram" });
+      expect(res.status).toBe(200);
+      expect(res.body.rule).toBeDefined();
+      expect(res.body.rule.name).toBe("Lead Capture DM");
+      expect(res.body.rule.platform).toBe("instagram");
+      expect(copilot.chat).toHaveBeenCalledTimes(1);
+    });
+
+    it("accepts optional platform and model", async () => {
+      const { app, copilot } = buildAppWithCopilot(validRule);
+      const res = await request(app)
+        .post("/social/rules/generate")
+        .send({ description: "Auto-reply to comments", platform: "twitter", model: "gpt-5" });
+      expect(res.status).toBe(200);
+      expect(copilot.chat).toHaveBeenCalledWith(
+        expect.stringContaining("twitter"),
+        expect.objectContaining({ model: "gpt-5" }),
+      );
+    });
+
+    it("returns 503 when copilot unavailable", async () => {
+      const { app } = buildApp(); // no copilot
+      const res = await request(app)
+        .post("/social/rules/generate")
+        .send({ description: "Generate a rule" });
+      expect(res.status).toBe(503);
+      expect(res.body.error).toMatch(/copilot/i);
+    });
+
+    it("returns 400 for empty description", async () => {
+      const { app } = buildAppWithCopilot(validRule);
+      const res = await request(app)
+        .post("/social/rules/generate")
+        .send({ description: "" });
+      expect(res.status).toBe(400);
+    });
+
+    it("returns 400 for missing description", async () => {
+      const { app } = buildAppWithCopilot(validRule);
+      const res = await request(app)
+        .post("/social/rules/generate")
+        .send({});
+      expect(res.status).toBe(400);
+    });
+
+    it("strips markdown fences from response", async () => {
+      const fenced = "```json\n" + validRule + "\n```";
+      const { app } = buildAppWithCopilot(fenced);
+      const res = await request(app)
+        .post("/social/rules/generate")
+        .send({ description: "Generate a rule for leads" });
+      expect(res.status).toBe(200);
+      expect(res.body.rule.name).toBe("Lead Capture DM");
+    });
+
+    it("normalizes keywords array to JSON string", async () => {
+      const { app } = buildAppWithCopilot(validRule);
+      const res = await request(app)
+        .post("/social/rules/generate")
+        .send({ description: "A pricing rule" });
+      expect(res.status).toBe(200);
+      // keywords should be serialized to JSON string
+      expect(typeof res.body.rule.keywords).toBe("string");
+      expect(JSON.parse(res.body.rule.keywords as string)).toEqual(["pricing", "interested"]);
+    });
+
+    it("normalizes use_ai_reply boolean to integer", async () => {
+      const aiRule = JSON.stringify({
+        name: "AI DM",
+        platform: "twitter",
+        keywords: ["help"],
+        dm_template: "Hi!",
+        comment_reply_template: null,
+        dm_delay_seconds: 0,
+        max_triggers_per_user: 1,
+        auto_tag: null,
+        use_ai_reply: true,
+        ai_reply_context: "Be helpful and friendly",
+      });
+      const { app } = buildAppWithCopilot(aiRule);
+      const res = await request(app)
+        .post("/social/rules/generate")
+        .send({ description: "AI powered support rule" });
+      expect(res.status).toBe(200);
+      expect(res.body.rule.use_ai_reply).toBe(1);
+      expect(res.body.rule.ai_reply_context).toBe("Be helpful and friendly");
+    });
+
+    it("returns 500 for invalid JSON from copilot", async () => {
+      const { app } = buildAppWithCopilot("This is not valid JSON at all.");
+      const res = await request(app)
+        .post("/social/rules/generate")
+        .send({ description: "Some rule" });
+      expect(res.status).toBe(500);
     });
   });
 });

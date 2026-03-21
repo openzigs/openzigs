@@ -48,6 +48,30 @@ describe("DmDispatcher", () => {
       });
     });
 
+    it("sends DM via Instagram using recipient_id + message", async () => {
+      const mgr = createMockManager();
+      const dispatcher = new DmDispatcher({ localServerManager: mgr });
+      const sendDm = dispatcher.createDmSender();
+
+      await sendDm("instagram", "igsid_123", "Hello from IG!");
+      expect(mgr.callTool).toHaveBeenCalledWith("instagram", "send_dm", {
+        recipient_id: "igsid_123",
+        message: "Hello from IG!",
+      });
+    });
+
+    it("sends DM via Facebook using recipient_id + message", async () => {
+      const mgr = createMockManager();
+      const dispatcher = new DmDispatcher({ localServerManager: mgr });
+      const sendDm = dispatcher.createDmSender();
+
+      await sendDm("facebook", "psid_456", "Hello from FB!");
+      expect(mgr.callTool).toHaveBeenCalledWith("facebook", "fb_send_message", {
+        recipient_id: "psid_456",
+        message: "Hello from FB!",
+      });
+    });
+
     it("throws for unsupported platform (youtube DM)", async () => {
       const mgr = createMockManager();
       const dispatcher = new DmDispatcher({ localServerManager: mgr });
@@ -133,6 +157,30 @@ describe("DmDispatcher", () => {
       expect(mgr.callTool).toHaveBeenCalledWith("reddit", "reddit_reply_to_comment", {
         thing_id: "t1_abc",
         text: "Thanks!",
+      });
+    });
+
+    it("replies to comment via Instagram using comment_id + message", async () => {
+      const mgr = createMockManager();
+      const dispatcher = new DmDispatcher({ localServerManager: mgr });
+      const replier = dispatcher.createCommentReplier();
+
+      await replier("instagram", "ig_comment_1", "Thanks for commenting!");
+      expect(mgr.callTool).toHaveBeenCalledWith("instagram", "reply_to_comment", {
+        comment_id: "ig_comment_1",
+        message: "Thanks for commenting!",
+      });
+    });
+
+    it("replies to comment via Facebook using comment_id + message", async () => {
+      const mgr = createMockManager();
+      const dispatcher = new DmDispatcher({ localServerManager: mgr });
+      const replier = dispatcher.createCommentReplier();
+
+      await replier("facebook", "fb_comment_1", "Great feedback!");
+      expect(mgr.callTool).toHaveBeenCalledWith("facebook", "fb_reply_to_comment", {
+        comment_id: "fb_comment_1",
+        message: "Great feedback!",
       });
     });
 

@@ -109,7 +109,13 @@ Before you begin, ensure the following are installed and available:
 | `GITHUB_CLIENT_ID` | OAuth app client ID for the device-flow authentication. |
 | `TUNNEL_TOKEN` | Cloudflare Tunnel token for the Docker sidecar (production). |
 | `GOOGLE_APPLICATION_CREDENTIALS` | Path to Google Cloud service account JSON key file. Required for voice TTS. |
-| `SOCIAL_WEBHOOK_VERIFY_TOKEN` | Verify token for Social Brain webhook subscriptions (TikTok, etc.). |
+| `SOCIAL_WEBHOOK_VERIFY_TOKEN` | Verify token for Social Brain webhook subscriptions (Meta, TikTok, etc.). |
+| `INSTAGRAM_ACCESS_TOKEN` | Instagram Graph API user access token (for comment ingestion, DMs, post context enrichment). |
+| `INSTAGRAM_BUSINESS_ACCOUNT_ID` | Instagram Business Account ID (numeric, from Graph API). |
+| `FACEBOOK_PAGE_TOKEN` | Facebook Page access token (for comment ingestion, Messenger DMs, post context enrichment). |
+| `FACEBOOK_APP_ID` | Facebook App ID (shared by Instagram and Facebook MCP servers). |
+| `FACEBOOK_APP_SECRET` | Facebook App Secret (shared by Instagram and Facebook MCP servers). |
+| `FACEBOOK_PAGE_ID` | Facebook Page ID (numeric). Required for the Facebook polling adapter. |
 | `TIKTOK_CLIENT_KEY` | TikTok OAuth Client Key (from [developers.tiktok.com](https://developers.tiktok.com)). Required for TikTok MCP tools. |
 | `TIKTOK_CLIENT_SECRET` | TikTok OAuth Client Secret. |
 | `TIKTOK_ACCESS_TOKEN` | TikTok access token (obtained via OAuth in Admin → TikTok panel). |
@@ -199,6 +205,12 @@ GOOGLE_APPLICATION_CREDENTIALS=/path/to/your/service-account-key.json
 
 # ── Optional: Social Brain ──
 # SOCIAL_WEBHOOK_VERIFY_TOKEN=your-random-verify-token
+# INSTAGRAM_ACCESS_TOKEN=your-ig-long-lived-user-access-token
+# INSTAGRAM_BUSINESS_ACCOUNT_ID=your-ig-business-account-id
+# FACEBOOK_PAGE_TOKEN=your-facebook-page-access-token
+# FACEBOOK_APP_ID=your-facebook-app-id
+# FACEBOOK_APP_SECRET=your-facebook-app-secret
+# FACEBOOK_PAGE_ID=your-facebook-page-id
 
 # ── Media Queue (Distributed GPU Nodes) ──
 # Set to the primary Mac's LAN IP so remote worker nodes can POST callbacks back to it.
@@ -3170,7 +3182,7 @@ This mounts the source directory for live-reload inside the container.
 
 ## Cloudflare Tunnel
 
-The Cloudflare Tunnel provides a public HTTPS URL to reach your local agent. This is required for Telegram webhooks and Discord OAuth redirects.
+The Cloudflare Tunnel provides a public HTTPS URL to reach your local agent. This is required for Telegram webhooks, Discord OAuth redirects, and **Social Brain platform webhooks** (Instagram, Facebook, Twitter, TikTok). All services share the same tunnel — no separate endpoints or ingress rules are needed.
 
 ### Docker Sidecar (Recommended)
 
@@ -3200,7 +3212,7 @@ In the recommended deployment, `cloudflared` runs as a separate container define
    docker compose up -d
    ```
 
-The `tunnel` service proxies public HTTPS traffic to `http://agent:3000` inside the Docker network. Set your Telegram `webhookUrl` to your Cloudflare hostname (e.g., `https://agent.example.com/telegram/webhook`).
+The `tunnel` service proxies public HTTPS traffic to `http://agent:3000` inside the Docker network. Set your Telegram `webhookUrl` to your Cloudflare hostname (e.g., `https://agent.example.com/telegram/webhook`). Social Brain webhooks use the same hostname (e.g., `https://agent.example.com/api/social/webhooks/instagram`).
 
 ### Embedded Quick Mode (Development)
 
@@ -3374,21 +3386,25 @@ After creating the venv and setting the required environment variables in `.env`
 **Setup Steps:**
 
 1. Go to the [X Developer Portal](https://developer.x.com/en/portal/dashboard).
-2. Sign in and create a new **Project** and **App**.
-3. Under **Keys and Tokens**, copy the **Bearer Token**.
-4. (Optional) Generate **API Key + Secret** and **Access Token + Secret** for OAuth 1.0a operations like DMs.
-5. Add to your `.env`:
+2. Sign in with your X account and accept the **Developer Agreement**.
+3. Create a new **Project** and **App** inside the project.
+4. Under **Keys and Tokens**, copy the **Bearer Token** (shown once — save immediately).
+5. (Optional) Generate **API Key + Secret** and **Access Token + Secret** for OAuth 1.0a operations like DMs and posting.
+6. If you change app permissions (e.g., Read → Read & Write), you must **regenerate** your Access Token and Access Token Secret.
+7. Add to your `.env`:
    ```dotenv
    TWITTER_BEARER_TOKEN=AAAAAAAAAAAAAAAAAAAAAAxxxxxxx
-   # Optional for DMs:
+   # Optional for DMs and posting:
    # TWITTER_API_KEY=xxxxxx
    # TWITTER_API_SECRET=xxxxxx
    # TWITTER_ACCESS_TOKEN=xxxxxx
    # TWITTER_ACCESS_TOKEN_SECRET=xxxxxx
    ```
-6. Create the venv: `cd external/twitter-mcp && python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt && deactivate`
+8. Create the venv: `cd external/twitter-mcp && python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt && deactivate`
 
-**Rate Limits:** Free tier allows 500 tweets/month and 10k reads. Basic tier ($100/month) increases to 10k reads/month. The Pro tier ($5,000/month) adds webhook access.
+> **Authentication options:** Bearer Token provides read-only app-level access. For user actions (posting, DMs), use OAuth 1.0a (API Key + Access Token) or OAuth 2.0 with PKCE (supports `offline.access` scope for automatic token refresh).
+
+**Rate Limits:** X API uses a **credit-based pay-per-usage** model with configurable spending limits. Free tier has limited access (~500 tweet reads/month). See [X API Pricing](https://docs.x.com/x-api/getting-started/pricing) for current tiers.
 
 **Available Tools (8):** `twitter_post_tweet`, `twitter_send_dm`, `twitter_search_tweets`, `twitter_get_user_info`, `twitter_get_user_tweets`, `twitter_get_tweet`, `twitter_get_followers`, `twitter_get_following`
 
@@ -3396,46 +3412,107 @@ After creating the venv and setting the required environment variables in `.env`
 
 #### YouTube
 
-**Difficulty:** Medium | **Token Expiry:** OAuth tokens expire in 1 hour (refresh token persists) | **App Review:** Required for public apps; unverified apps limited to 100 test users
+**Difficulty:** Medium | **Token Expiry:** OAuth access tokens expire in ~1 hour (auto-refreshed); refresh tokens last 7 days in Testing mode | **App Review:** Not required for personal use; unverified apps limited to 100 test users
 
-**Required Environment Variables:**
+**Environment Variables:**
 
-| Variable | Required | Purpose |
+| Variable | Required | Set by | Purpose |
+|---|---|---|---|
+| `YOUTUBE_API_KEY` | Yes | You | Read operations: list videos, comments, search, analytics |
+| `YOUTUBE_CHANNEL_ID` | Recommended | You | Channel ID (`UCxxxx`) for the comment poller to monitor |
+| `YOUTUBE_CHANNEL_HANDLE` | Optional | You | Alternative to Channel ID — your `@handle` |
+| `YOUTUBE_CLIENT_ID` | For OAuth | Admin UI | Google OAuth 2.0 client ID |
+| `YOUTUBE_CLIENT_SECRET` | For OAuth | Admin UI | Google OAuth 2.0 client secret |
+| `YOUTUBE_OAUTH_TOKEN` | Auto | Admin UI | Access token — upload videos, reply to comments |
+| `YOUTUBE_REFRESH_TOKEN` | Auto | Admin UI | Long-lived token used to renew the access token |
+| `YOUTUBE_TOKEN_EXPIRES_AT` | Auto | Admin UI | Expiry timestamp (epoch ms) |
+
+**What API key vs OAuth gives you:**
+
+| Capability | API Key only | API Key + OAuth |
 |---|---|---|
-| `YOUTUBE_API_KEY` | Yes | Read operations (list videos, comments, search) |
-| `YOUTUBE_OAUTH_TOKEN` | Only for writes | Upload videos, reply to comments |
+| List videos, search, analytics | ✅ | ✅ |
+| Read comments | ✅ | ✅ |
+| Reply to comments | ❌ | ✅ |
+| Upload videos | ❌ | ✅ |
+| Automatic token refresh | ❌ | ✅ (every 15 min) |
 
-**Setup Steps:**
+---
+
+**Step 1 — Create a Google Cloud project and enable the API:**
 
 1. Go to [Google Cloud Console](https://console.cloud.google.com/).
-2. Create a new project (or select existing).
+2. Click **Select a project → New Project**, give it a name (e.g., "OpenZigs"), and click **Create**.
 3. Navigate to **APIs & Services → Library**.
 4. Search for **YouTube Data API v3** and click **Enable**.
-5. Go to **Credentials → Create Credentials → API Key**. Copy the key.
-6. Add to your `.env`:
+5. Go to **APIs & Services → Credentials → Create Credentials → API Key**. Copy the key.
+6. In Admin → Social Brain → YouTube, paste the key into the **YouTube API Key** field and click **Save**.
+   Or add it directly to `.env`:
    ```dotenv
    YOUTUBE_API_KEY=AIzaSy_xxxxxxxxxxxxxxxxxxxxxxxx
    ```
 
-**For video uploads and comment replies (OAuth2):**
+**Step 2 — Add your channel identifier:**
 
-7. In **Credentials → Create Credentials → OAuth 2.0 Client ID**.
-8. Application type: **Desktop App**.
-9. Go to **OAuth consent screen** → Add scopes:
-   - `https://www.googleapis.com/auth/youtube` (full access)
-   - OR `https://www.googleapis.com/auth/youtube.upload` (upload only)
-10. Use the [Google OAuth Playground](https://developers.google.com/oauthplayground/) to generate an access token:
-    - Click the gear icon → Check "Use your own OAuth credentials" → Enter your Client ID and Secret.
-    - Select **YouTube Data API v3** scopes → Authorize → Exchange for tokens.
-11. Copy the access token and add to `.env`:
-    ```dotenv
-    YOUTUBE_OAUTH_TOKEN=ya29.a0_xxxxxxxxxxxxxxxxxxxxxxxx
+7. In Admin → Social Brain → YouTube, fill in **Channel ID** or **Channel Handle** so the comment poller knows which channel to monitor:
+   - **Channel ID** (`UCxxxxxxxxxxxxxxxxxx`): found in YouTube Studio → Settings → Channel → Advanced settings.
+   - **Channel Handle** (`@YourChannel`): your public @handle — simpler to find.
+8. Click **Save**. Values are written to `.env` as `YOUTUBE_CHANNEL_ID` and `YOUTUBE_CHANNEL_HANDLE`.
+
+> **Admin display:** After saving, the YouTube section shows your API key (masked) and channel values just above the input fields. The fields themselves remain blank — they are for entering updates, not displaying current values. If the section appears collapsed, click the header to expand it.
+
+---
+
+**Step 3 — Enable OAuth for video uploads and comment replies (optional but recommended):**
+
+OAuth 2.0 is required for any write operation. OpenZigs has a **built-in OAuth flow** — no manual token copying or OAuth Playground needed.
+
+**Configure Google Cloud Console:**
+
+9. Navigate to **APIs & Services → OAuth consent screen**.
+10. Select **User Type: External** (required even for personal use — "Internal" requires a Google Workspace org).
+11. Fill in the App name, support email, and developer contact email.
+12. Skip Scopes — OpenZigs requests them at authorization time.
+13. Under **Test users**, click **Add users** and add your Google account. You must be listed here to authorize in Testing mode.
+14. Save and continue.
+
+> **Testing vs Production:** Stay in Testing mode for personal use. **Caveat:** Google's restricted scopes (`youtube.force-ssl`, `youtube.upload`) cause refresh tokens to expire after **7 days** in Testing mode, requiring weekly re-authorization. To eliminate this, publish the app on the consent screen (unverified apps allow up to 100 users — fine for personal use).
+
+15. Navigate to **APIs & Services → Credentials → Create Credentials → OAuth client ID**.
+16. Application type: **Web application** (not Desktop — Desktop clients do not support redirect URIs).
+17. Under **Authorized redirect URIs**, add exactly:
     ```
-12. Create the venv: `cd external/youtube-mcp && python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt && deactivate`
+    http://localhost:3000/api/youtube/oauth/callback
+    ```
+18. Click **Create**. Copy the **Client ID** and **Client Secret**.
 
-**Quota:** 10,000 units/day. Video uploads cost **1,600 units** each (~6 uploads/day max). Reads cost 1–5 units each.
+**Connect via the Admin panel:**
 
-> **Note:** OAuth tokens expire after 1 hour. For production use, implement a refresh token flow. Unverified apps can only upload **private** videos.
+19. Open **Admin → Social Brain → YouTube → Edit App Credentials**.
+20. Paste your Client ID and Client Secret. Click **Save App Credentials**.
+21. Click **Connect via OAuth**. A Google sign-in window opens.
+22. If you see **"Google hasn't verified this app"**, click **Continue** — this is expected for personal/development apps.
+23. Grant YouTube permissions and click **Allow**.
+24. You are redirected back to Admin. `YOUTUBE_OAUTH_TOKEN`, `YOUTUBE_REFRESH_TOKEN`, and `YOUTUBE_TOKEN_EXPIRES_AT` are saved to `.env` automatically.
+
+> **Automatic token refresh:** OpenZigs refreshes the access token every 15 minutes when it is within 30 minutes of expiry. No manual action is needed after the initial OAuth flow.
+
+**Set up the MCP server venv:**
+
+25. Create the venv: `cd external/youtube-mcp && python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt && deactivate`
+
+---
+
+**Quota:** 10,000 units/day free. Video uploads cost **1,600 units** each (~6 uploads/day max). Comment reads cost 1 unit each.
+
+| Operation | Quota Cost | ~Daily Limit |
+|---|---|---|
+| `videos.insert` (upload) | 1,600 | ~6 |
+| `commentThreads.list` | 1 | 10,000 |
+| `comments.insert` (reply) | 50 | 200 |
+| `search.list` | 100 | 100 |
+
+> **Note:** Videos uploaded from unverified API projects are restricted to **private** viewing. Your project must pass a [YouTube API audit](https://support.google.com/youtube/contact/yt_api_form) to allow public/unlisted uploads.
 
 **Available Tools (8):** `yt_upload_video`, `yt_reply_to_comment`, `yt_get_channel_videos`, `yt_get_video_comments`, `yt_search_videos`, `yt_get_channel_info`, `yt_get_video_details`, `yt_get_channel_analytics`
 
@@ -3484,6 +3561,10 @@ After creating the venv and setting the required environment variables in `.env`
 **Token Lifecycle:** Access tokens last 60 days and are auto-refreshed when they expire within 7 days (if Client ID/Secret are configured).
 
 > **Note:** DM sending (`linkedin_send_message`) requires **Marketing API Partner** status, which involves a separate application process with LinkedIn.
+
+**Comment Monitoring — Community Management API:**
+
+LinkedIn polling detects comments on your **personal posts** using the "Share on LinkedIn" product. To monitor comments on **organization/company page posts** and access likes, reactions, and analytics, you need LinkedIn's **Community Management API** — which must be on a **separate LinkedIn app** (it is mutually exclusive with "Share on LinkedIn"). See the [Social Brain Guide — LinkedIn Community Management API](SOCIAL_BRAIN_GUIDE.md#linkedin-comment-monitoring--community-management-api) for full setup instructions.
 
 **Available Tools (8):** `linkedin_create_post`, `linkedin_reply_to_comment`, `linkedin_send_message`, `linkedin_get_profile`, `linkedin_get_posts`, `linkedin_get_company_info`, `linkedin_get_connections`, `linkedin_get_messages`
 
@@ -3587,13 +3668,17 @@ Instagram publishing uses the **Meta Graph API** and requires a Facebook Develop
 3. Click **Generate Access Token** and approve the required permissions:
    - `instagram_basic`
    - `instagram_content_publish`
+   - `instagram_manage_comments` — read and reply to comments
    - `pages_show_list`
    - `pages_read_engagement`
    - `business_management`
+
+> **New scope names (2025):** Meta is migrating to new scope names: `instagram_business_basic`, `instagram_business_manage_comments`, `instagram_business_manage_messages`, `instagram_business_content_publish`. Both old and new names currently work, but plan to migrate to the new names.
+
 4. Copy the short-lived token.
 5. Exchange for a **long-lived token** (lasts 60 days):
    ```bash
-   curl "https://graph.facebook.com/v19.0/oauth/access_token?\
+   curl "https://graph.facebook.com/v21.0/oauth/access_token?\
    grant_type=fb_exchange_token&\
    client_id=YOUR_APP_ID&\
    client_secret=YOUR_APP_SECRET&\
@@ -3628,7 +3713,7 @@ cd external/ig-mcp && python3 -m venv .venv && source .venv/bin/activate && pip 
 
 > **Important:** Long-lived tokens expire after 60 days. Refresh before expiry with:
 > ```bash
-> curl "https://graph.facebook.com/v19.0/oauth/access_token?grant_type=fb_exchange_token&client_id=APP_ID&client_secret=APP_SECRET&fb_exchange_token=CURRENT_LONG_LIVED_TOKEN"
+> curl "https://graph.facebook.com/v21.0/oauth/access_token?grant_type=fb_exchange_token&client_id=APP_ID&client_secret=APP_SECRET&fb_exchange_token=CURRENT_LONG_LIVED_TOKEN"
 > ```
 
 > **Publishing Constraint:** Instagram requires media (images/videos) to be hosted at **publicly accessible URLs**. Instagram's servers fetch the media from the URL you provide — local file paths will not work. Use a service like Cloudinary, S3, or any public web server.
@@ -3695,7 +3780,9 @@ FACEBOOK_PAGE_ID=955369944333833
 cd external/fb-mcp && python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt && deactivate
 ```
 
-> **Note:** Page tokens generated from a long-lived user token **do not expire**. However, if the user who generated them loses admin access to the page, the token becomes invalid.
+> **Note:** Page tokens generated from a long-lived user token **do not expire**. However, if the user who generated them loses admin access to the page or changes their Facebook password, the token becomes invalid.
+
+> **Privacy note (Graph API v24.0+):** Facebook no longer returns `from.id` for regular user comments due to privacy restrictions. The polling adapter automatically skips comments without user IDs — public comment replies still work via `fb_reply_to_comment`, but private DMs to anonymous commenters are not possible.
 
 **Available Tools (10):** `fb_get_page_info`, `fb_get_page_posts`, `fb_get_post_insights`, `fb_publish_post`, `fb_get_conversations`, `fb_get_conversation_messages`, `fb_send_message`, `fb_get_page_insights`, `fb_get_post_comments`, `fb_reply_to_comment`
 
@@ -6328,9 +6415,42 @@ Configure the knowledge base in your config file (`~/.openzigs/config.json`):
 
 > **📖 Comprehensive Setup Guide:** For step-by-step platform setup, Cloudflare Tunnel configuration, curl testing commands, and troubleshooting, see the dedicated [Social Brain Guide](SOCIAL_BRAIN_GUIDE.md).
 
-The Social Brain at `/social` provides a unified inbox for managing DMs and comments across 6 social platforms — **Instagram**, **Facebook**, **Twitter/X**, **YouTube**, **LinkedIn**, and **Reddit** — with AI-powered auto-replies, a built-in CRM, comment-to-DM automation, and cross-platform content publishing.
+The Social Brain at `/social` provides a unified inbox for managing DMs and comments across 7 social platforms — **Instagram**, **Facebook**, **Twitter/X**, **YouTube**, **LinkedIn**, **Reddit**, and **TikTok** — with AI-powered auto-replies, a built-in CRM, comment-to-DM automation, and cross-platform content publishing.
 
 Each platform has a dedicated native MCP server with tools for posting, reading, analytics, DMs, and comment management. See the [Social Media Posting](#social-media-posting) section for publishing details, and the [Social Brain Guide](SOCIAL_BRAIN_GUIDE.md) for comprehensive setup and troubleshooting.
+
+### Ingestion Modes — Webhook vs Polling
+
+Each platform ingests messages via either **webhooks** (platform pushes events to your server) or **polling** (OpenZigs periodically fetches new data via API). Some platforms support both:
+
+| Platform | Webhook | Polling | Default | Notes |
+|----------|---------|---------|---------|-------|
+| Twitter/X | ✅ | ✅ | Polling | Webhook requires Account Activity API setup |
+| YouTube | — | ✅ | Polling | No webhook API available |
+| Reddit | — | ✅ | Polling | No webhook API available |
+| LinkedIn | — | ✅ | Polling | Polling only (no webhook support) |
+| TikTok | ✅ | — | Webhook | Webhook-only |
+| Facebook | ✅ | ✅ | **Polling** | **Use polling** — webhooks require Meta App Review |
+| Instagram | ✅ | ✅ | **Polling** | **Use polling** — webhooks require Meta App Review |
+
+For platforms that support both modes (Facebook, Twitter, Instagram), you can switch between them using the **mode dropdown** on each platform card in the Settings tab. The mode is saved to `~/.openzigs/config.json` automatically. A server restart is required for the mode change to take effect.
+
+> **Why polling over webhooks for Meta (Facebook/Instagram)?** Meta does not deliver webhook events to apps in development mode. If your Meta app is not published and approved via App Review, webhooks will not function. Polling works immediately without any app approval — it uses the respective MCP server (`fb-mcp` for Facebook, `ig-mcp` for Instagram) to periodically fetch posts and their comments. This captures all comments from any user, not just app admins or testers.
+
+> **Need help setting up platform APIs?** Use the **Social Setup Wizard** skill in chat — it uses browser automation and the Secret Vault to walk you through each platform's developer portal step by step. See the [Social Brain Guide — AI-Assisted Platform Setup](SOCIAL_BRAIN_GUIDE.md#ai-assisted-platform-setup-setup-wizard-agent) for details.
+
+**Configuring the poll interval:**
+
+```json
+{
+  "socialBrain": {
+    "connections": {
+      "facebook": { "enabled": true, "mode": "polling", "pollIntervalSeconds": 120 },
+      "instagram": { "enabled": true, "mode": "polling", "pollIntervalSeconds": 120 }
+    }
+  }
+}
+```
 
 ### Dashboard Tab
 
@@ -6369,12 +6489,41 @@ Create keyword-based and regex-based automation rules that trigger DM responses 
 | **DM Delay** | Seconds to wait before sending the DM (0 = immediate) |
 | **Max Triggers/User** | Rate limit per user per rule |
 | **Auto-Tag** | Automatically tag contacts who trigger the rule |
+| **Use AI Reply** | Toggle to enable AI-generated comment replies instead of static templates |
+| **AI Reply Context** | Business context for the AI to use when generating replies (e.g., product info, pricing) |
+
+**AI Rule Generation** — Click the **AI Generate** button to describe what you want in plain English and have the AI create a complete rule with keywords, templates, and settings. Requires Copilot SDK authentication.
+
+**Follow-Up Sequences** — Expand any rule to view and manage timed follow-up DM steps. Add steps with configurable delays (e.g., 1hr, 24hr) and message templates for drip campaigns.
 
 The **Automation Log** shows a live feed of every rule trigger with timestamp, contact, and action taken.
+
+### Leads Tab
+
+The Leads tab shows contacts who have shared their email or phone number during DM conversations. The `LeadCaptureService` automatically extracts email addresses and phone numbers from incoming messages.
+
+- **Platform filter** — Filter leads by source platform
+- **Table view** — Username, platform, email, phone, and capture date
+- **Empty state** — "No leads captured yet" when no lead data exists
+
+### Analytics Tab
+
+The Analytics tab provides conversation and engagement statistics across all connected platforms:
+
+- **Summary cards** — Total conversations, messages, automations fired, and active contacts
+- **Per-platform breakdown** — Message counts, contact counts, and automation trigger counts broken down by platform
+- **Date filtering** — Filter analytics by time period via the API (`?since=` parameter)
 
 ### Activity Tab
 
 A real-time feed of all inbound and outbound messages across platforms, with direction badges and platform icons.
+
+**Approval Queue** — When "Require Approval" is enabled, AI-generated replies appear at the top of the Activity tab in a "Pending Approval" section with orange highlights. For each pending reply you can:
+- **Approve** — Send the AI-generated reply as-is
+- **Edit & Approve** — Modify the reply text in an inline editor, then send
+- **Reject** — Discard the reply without sending
+
+Status badges include: `received` (blue), `auto_replied` (green), `escalated` (yellow), `pending_approval` (orange), `rejected` (red).
 
 ### AI-Powered Auto-Reply (Brain Engine)
 
@@ -6385,6 +6534,24 @@ When a DM arrives, the Social Brain engine:
 3. Sends the context + message to the LLM with a social-media-specific system prompt.
 4. Parses the JSON response for `reply`, `confidence`, and `escalate` fields.
 5. If confidence > 0.7, auto-sends the reply. Otherwise, escalates to a human operator.
+
+**AI Comment Replies** — When enabled in Settings ("AI Reply Settings" → "AI Comment Replies"), comments that don't match any keyword automation rule are also routed through the Brain Engine. The Brain generates a public-appropriate reply using the post's caption and knowledge base context.
+
+**Approval Queue** — When "Require Approval" is enabled, AI-generated replies (both DM and comment) are held with `pending_approval` status for human review. Pending replies appear in the Activity tab's approval queue. See the [Approval Queue section](SOCIAL_BRAIN_GUIDE.md#approval-queue) in the Social Brain Guide.
+
+### Manual Reply
+
+You can send manual replies directly from the CRM contact detail panel. Click a contact, type your message in the "Type a reply..." input at the bottom of their message history, and click Send (or press Enter). Manual replies are stored with `source: "manual_reply"` metadata.
+
+### Push Notifications
+
+Enable real-time push notifications for incoming messages and comments:
+
+1. Navigate to Settings tab → "Notification Settings"
+2. Toggle "Enable Push Notifications"
+3. Enable specific channels: **Telegram**, **Discord**, or **Web** (Socket.IO)
+
+When enabled, alerts are pushed to configured Telegram admin chats and/or Discord notification channels when new messages arrive or AI replies need approval.
 
 ### Human Handoff
 
@@ -6424,8 +6591,27 @@ curl -X POST http://localhost:3000/api/social/rules \
   -H "Content-Type: application/json" \
   -d '{"name":"Welcome DM","platform":"instagram","enabled":true,"keywords":"[\"hello\",\"hi\"]","dm_template":"Hey {{username}}! How can I help?"}'
 
+# AI-generate a rule from a description
+curl -X POST http://localhost:3000/api/social/rules/generate \
+  -H "Content-Type: application/json" \
+  -d '{"description":"Capture leads asking about pricing","platform":"instagram"}'
+
 # List all rules
 curl http://localhost:3000/api/social/rules
+
+# Manage follow-up steps
+curl http://localhost:3000/api/social/rules/<ruleId>/follow-ups
+curl -X POST http://localhost:3000/api/social/rules/<ruleId>/follow-ups \
+  -H "Content-Type: application/json" \
+  -d '{"stepOrder":0,"delaySeconds":3600,"messageTemplate":"Following up, {{username}}!"}'
+
+# Get captured leads
+curl http://localhost:3000/api/social/leads
+curl "http://localhost:3000/api/social/leads?platform=instagram"
+
+# Get analytics
+curl http://localhost:3000/api/social/analytics
+curl "http://localhost:3000/api/social/analytics?since=2026-03-01T00:00:00Z"
 
 # Get recent activity
 curl http://localhost:3000/api/social/activity
@@ -6434,6 +6620,20 @@ curl http://localhost:3000/api/social/activity
 curl -X POST http://localhost:3000/api/social/handoff/<contactId>/close \
   -H "Content-Type: application/json" \
   -d '{"resolution":"Issue resolved"}'
+
+# Approval queue
+curl http://localhost:3000/api/social/approvals
+curl http://localhost:3000/api/social/approvals/count
+curl -X POST http://localhost:3000/api/social/approvals/<messageId>/approve
+curl -X POST http://localhost:3000/api/social/approvals/<messageId>/reject
+curl -X POST http://localhost:3000/api/social/approvals/<messageId>/edit \
+  -H "Content-Type: application/json" \
+  -d '{"content":"Edited reply text"}'
+
+# Send manual reply
+curl -X POST http://localhost:3000/api/social/contacts/<contactId>/reply \
+  -H "Content-Type: application/json" \
+  -d '{"content":"Hello from the team!"}'
 ```
 
 ### Webhook Integration
@@ -6446,6 +6646,10 @@ Platform webhooks are received at `POST /api/social/webhooks/:platform`. For Ins
 |---|---|---|
 | `social:reply` | Server → Client | AI auto-reply sent to a contact |
 | `social:escalate` | Server → Client | Conversation escalated to human |
+| `social:pending_approval` | Server → Client | AI reply held for human approval |
+| `social:comment_reply` | Server → Client | AI auto-replied to a comment |
+| `social:new_message` | Server → Client | New inbound DM received |
+| `social:new_comment` | Server → Client | New inbound comment received |
 | `social:handoff:created` | Server → Client | New handoff thread created |
 | `social:handoff:resolved` | Server → Client | Handoff closed |
 | `social:rule:triggered` | Server → Client | Automation rule fired |
@@ -6463,33 +6667,83 @@ Add these to your `.env` file:
 ```dotenv
 # ── Social Brain ──
 SOCIAL_WEBHOOK_VERIFY_TOKEN=your-random-secret-string  # Used to verify webhook subscriptions
-INSTAGRAM_ACCESS_TOKEN=your-instagram-user-access-token # Required for post context lookup (captions, media type)
+INSTAGRAM_ACCESS_TOKEN=your-instagram-user-access-token # Required for IG post context enrichment + adapter activation
+FACEBOOK_PAGE_TOKEN=your-facebook-page-access-token    # Required for FB post context enrichment + adapter activation
+FACEBOOK_APP_ID=your-facebook-app-id                   # Shared by Instagram and Facebook MCP servers
+FACEBOOK_APP_SECRET=your-facebook-app-secret            # Shared by Instagram and Facebook MCP servers
 ```
 
 > **Tip:** Generate a random verify token with `openssl rand -hex 32`.
 
-#### Instagram / Facebook (Meta Graph API)
+> **Important:** The ingestion adapters for Instagram and Facebook are only activated when their respective env vars (`INSTAGRAM_ACCESS_TOKEN`, `FACEBOOK_PAGE_TOKEN`) are set. Without them, webhooks will still be received but won't be processed through the automation pipeline.
+
+#### Cloudflare Tunnel & Webhooks
+
+All social webhook endpoints are served on the same Express server (port 3000) as the rest of OpenZigs. **No separate tunnel routes or ingress rules are needed** — the same Cloudflare Tunnel that handles Telegram webhooks also handles social platform webhooks.
+
+Webhook URLs follow the pattern: `https://<your-domain>/api/social/webhooks/:platform`
+
+Example webhook URLs for a tunnel hostname of `agent.example.com`:
+
+| Platform | Webhook URL |
+|----------|-------------|
+| Instagram | `https://agent.example.com/api/social/webhooks/instagram` |
+| Facebook | `https://agent.example.com/api/social/webhooks/facebook` |
+| Twitter | `https://agent.example.com/api/social/webhooks/twitter` |
+| TikTok | `https://agent.example.com/api/social/webhooks/tiktok` |
+| Telegram | `https://agent.example.com/telegram/webhook` |
+
+All routes go through the same tunnel → same origin (`localhost:3000`). In quick mode, replace the hostname with your `trycloudflare.com` URL.
+
+#### Instagram (Meta Graph API)
 
 1. Go to the [Meta Developer Console](https://developers.facebook.com/apps/).
 2. Open your app (or create one: **Business** type → add **Instagram** product).
 3. Navigate to **Instagram → Webhooks** in the left sidebar.
 4. Click **Subscribe to events** and enable:
-   - `messages` — receives DMs
-   - `comments` — receives comment events (required for comment-to-DM automation)
+   - `messages` — receives DMs (parsed by `InstagramAdapter` from `entry[].messaging[]`)
+   - `comments` — receives comment events (parsed from `entry[].changes[{field:"comments"}]`)
 5. Set the **Callback URL** to:
    ```
    https://<your-domain>/api/social/webhooks/instagram
    ```
 6. Set the **Verify Token** to the same value as `SOCIAL_WEBHOOK_VERIFY_TOKEN` in your `.env`.
 7. Click **Verify and Save** — Meta will send a `GET` request with `hub.verify_token` and `hub.challenge`; OpenZigs responds automatically.
-8. Under **Instagram → Basic Display** or **Instagram → API Setup**, generate a **User Access Token** with these permissions:
+8. Under **Instagram → API Setup**, generate a **User Access Token** with these permissions:
    - `instagram_basic`
    - `instagram_manage_comments`
    - `instagram_manage_messages`
    - `pages_show_list`, `pages_read_engagement` (for the business account)
 9. Copy the token and set it as `INSTAGRAM_ACCESS_TOKEN` in your `.env`.
 
-> **Post context enrichment:** When a comment arrives, OpenZigs uses the `INSTAGRAM_ACCESS_TOKEN` to fetch the post's caption, permalink, and media type via `GET /{media_id}?fields=caption,permalink,media_type,media_url,username,timestamp`. This is cached in SQLite for 24 hours to avoid redundant API calls. Without this token, comment-to-DM automation still works, but the Brain and DM templates won't have post context (e.g., `{{post_caption}}` will be empty).
+> **Post context enrichment:** When a comment arrives, `InstagramApiClient` fetches the post's caption, permalink, and media type via `GET https://graph.instagram.com/v19.0/{media_id}?fields=id,caption,media_type,media_url,timestamp,permalink,username`. This is cached for 24 hours. Without this token, the adapter won't be activated, so no webhook processing occurs.
+
+> **24-hour DM window:** Instagram restricts sending DMs to users who have messaged you within the last 24 hours. DMs sent via `send_dm` to users outside this window will fail.
+
+#### Facebook Page (Meta Graph API)
+
+1. In the same [Meta Developer Console](https://developers.facebook.com/apps/) app, add the **Facebook Login** and **Webhooks** products.
+2. Navigate to **Webhooks** in the left sidebar.
+3. Select **Page** from the dropdown and subscribe to:
+   - `feed` — receives Page post comments (parsed by `FacebookAdapter` from `entry[].changes[{field:"feed", value.item:"comment"}]`)
+   - `messages` — receives Messenger DMs (parsed from `entry[].messaging[]`)
+4. Set the **Callback URL** to:
+   ```
+   https://<your-domain>/api/social/webhooks/facebook
+   ```
+5. Set the **Verify Token** to the same value as `SOCIAL_WEBHOOK_VERIFY_TOKEN` in your `.env`.
+6. Click **Verify and Save**.
+7. Generate a **Page Access Token** via the Graph Explorer or your app's OAuth flow with these permissions:
+   - `pages_show_list`, `pages_read_engagement`, `pages_read_user_content`
+   - `pages_messaging` (for Messenger DMs)
+   - `pages_manage_posts` (for publishing)
+8. Copy the token and set it as `FACEBOOK_PAGE_TOKEN` in your `.env`.
+
+> **Post context enrichment:** When a comment arrives, `FacebookApiClient` fetches the post via `GET https://graph.facebook.com/v19.0/{post_id}?fields=id,message,type,created_time,from,permalink_url`. This is cached for 24 hours.
+
+> **Messenger 24-hour window:** Facebook Messenger uses Page-Scoped IDs (PSIDs). Like Instagram, DMs can only be sent to users who messaged within the last 24 hours.
+
+> **Same Meta App, different webhooks:** Instagram and Facebook can share the same Meta App but require separate webhook subscriptions — Instagram subscribes to the **Instagram** object, Facebook subscribes to the **Page** object. Both use the same `SOCIAL_WEBHOOK_VERIFY_TOKEN`.
 
 #### Twitter / X
 
