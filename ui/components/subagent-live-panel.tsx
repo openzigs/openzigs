@@ -268,6 +268,11 @@ export function SubagentLivePanel({ sessionId }: { sessionId: string | null }) {
     [sessionId]
   );
 
+  // Reset agent state when the user navigates to a different session
+  useEffect(() => {
+    dispatch({ type: "RESET" });
+  }, [sessionId]);
+
   useEffect(() => {
     if (!socket) return;
     socket.on("task:tool-call", handleToolCall);

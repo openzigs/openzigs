@@ -8,15 +8,16 @@ import {
   CreateOrchestrationTemplateSchema,
   UpdateOrchestrationTemplateSchema,
   ExecuteTemplateSchema,
+  TemplateNotFoundError,
 } from "./types.js";
+import { logger } from "../logging/logger.js";
 
-const VARIABLE_REGEX = /\{\{(\w+)\}\}/g;
+const VARIABLE_PATTERN = /\{\{(\w+)\}\}/g;
 
 /** Extract {{variable}} names from a string. */
 export function extractVariables(text: string): string[] {
   const matches = new Set<string>();
-  let m: RegExpExecArray | null;
-  while ((m = VARIABLE_REGEX.exec(text)) !== null) {
+  for (const m of text.matchAll(/\{\{(\w+)\}\}/g)) {
     matches.add(m[1]);
   }
   return [...matches];
@@ -27,7 +28,7 @@ export function interpolateTemplate(
   text: string,
   variables: Record<string, string>
 ): string {
-  return text.replace(VARIABLE_REGEX, (_, name: string) => {
+  return text.replace(VARIABLE_PATTERN, (_, name: string) => {
     return variables[name] ?? `{{${name}}}`;
   });
 }
@@ -85,7 +86,7 @@ export class TemplateService {
   ): { taskIds: string[] } {
     const template = this.repo.getById(id);
     if (!template) {
-      throw new Error(`Template not found: ${id}`);
+      throw new TemplateNotFoundError(id);
     }
     if (!this.taskEngine) {
       throw new Error("TaskEngine not available for execution");
@@ -322,11 +323,13 @@ export class TemplateService {
 
     let seeded = 0;
     for (const template of builtIns) {
-      try {
-        this.repo.insert(template, true);
-        seeded++;
-      } catch {
-        // Ignore duplicates from previous seeds
+      if (!this.repo.getByName(template.name)) {
+        try {
+          this.repo.insert(template, true);
+          seeded++;
+        } catch (err) {
+          logger.warn(`Failed to seed built-in template "${template.name}"`, { error: err });
+        }
       }
     }
     return seeded;
