@@ -25,6 +25,7 @@ import {
   useSocialConfig,
   useSocialWebhookLog,
   useTogglePlatform,
+  useSetPlatformMode,
   useGenerateRule,
   useFollowUps,
   useCreateFollowUp,
@@ -551,6 +552,7 @@ function AutomationsTab() {
   const [showAiGenerate, setShowAiGenerate] = useState(false);
   const [ruleToDelete, setRuleToDelete] = useState<CommentRule | null>(null);
   const [expandedRuleId, setExpandedRuleId] = useState<string | null>(null);
+  const [editingRule, setEditingRule] = useState<CommentRule | null>(null);
 
   const rules = data?.rules ?? [];
 
@@ -620,6 +622,22 @@ function AutomationsTab() {
         />
       )}
 
+      {editingRule && (
+        <RuleForm
+          initialValues={editingRule}
+          onSubmit={(data) => {
+            updateRule.mutate(
+              { id: editingRule.id, ...data },
+              {
+                onSuccess: () => { setEditingRule(null); showToast("Rule updated", "success"); },
+                onError: (err) => showToast(`Failed: ${err.message}`, "error"),
+              },
+            );
+          }}
+          onCancel={() => setEditingRule(null)}
+        />
+      )}
+
       {rules.length === 0 ? (
         <p className="text-sm text-muted-foreground">No automation rules configured yet.</p>
       ) : (
@@ -646,12 +664,27 @@ function AutomationsTab() {
                     {rule.max_triggers_total ? ` / ${rule.max_triggers_total} max` : ""}
                   </p>
                   <p className="text-xs text-muted-foreground mt-1">
-                    DM: &quot;{rule.dm_template.slice(0, 80)}{rule.dm_template.length > 80 ? "..." : ""}&quot;
+                    {rule.comment_reply_template ? (
+                      <>Reply: &quot;{rule.comment_reply_template.slice(0, 80)}{rule.comment_reply_template.length > 80 ? "..." : ""}&quot;</>
+                    ) : (rule as CommentRule & { use_ai_reply?: number }).use_ai_reply ? (
+                      <>Reply: AI-generated</>
+                    ) : (
+                      <>Reply: none</>
+                    )}
+                    {rule.dm_template ? (
+                      <> &middot; DM: &quot;{rule.dm_template.slice(0, 60)}{rule.dm_template.length > 60 ? "..." : ""}&quot;</>
+                    ) : null}
                     {rule.dm_delay_seconds > 0 ? ` (${rule.dm_delay_seconds}s delay)` : ""}
                     {rule.model ? ` · Model: ${rule.model}` : ""}
                   </p>
                 </div>
                 <div className="flex gap-2">
+                  <button
+                    onClick={() => { setEditingRule(rule); setShowCreate(false); setShowAiGenerate(false); }}
+                    className="rounded-md border border-border px-3 py-1 text-xs hover:bg-accent/10"
+                  >
+                    Edit
+                  </button>
                   <button
                     onClick={() => handleToggle(rule)}
                     className="rounded-md border border-border px-3 py-1 text-xs hover:bg-accent/10"
@@ -689,18 +722,27 @@ function AutomationsTab() {
   );
 }
 
-function RuleForm({ onSubmit }: { onSubmit: (data: Partial<CommentRule>) => void }) {
-  const [name, setName] = useState("");
-  const [platform, setPlatform] = useState("twitter");
-  const [keywords, setKeywords] = useState("");
-  const [dmTemplate, setDmTemplate] = useState("");
-  const [commentReply, setCommentReply] = useState("");
-  const [dmDelay, setDmDelay] = useState(0);
-  const [maxPerUser, setMaxPerUser] = useState(1);
-  const [autoTag, setAutoTag] = useState("");
-  const [ruleModel, setRuleModel] = useState("");
-  const [useAiReply, setUseAiReply] = useState(false);
-  const [aiReplyContext, setAiReplyContext] = useState("");
+function RuleForm({ onSubmit, initialValues, onCancel }: {
+  onSubmit: (data: Partial<CommentRule>) => void;
+  initialValues?: CommentRule;
+  onCancel?: () => void;
+}) {
+  const isEdit = !!initialValues;
+  const parseKeywords = (kw: string | undefined) => {
+    if (!kw) return "";
+    try { return (JSON.parse(kw) as string[]).join(", "); } catch { return kw; }
+  };
+  const [name, setName] = useState(initialValues?.name ?? "");
+  const [platform, setPlatform] = useState(initialValues?.platform ?? "twitter");
+  const [keywords, setKeywords] = useState(initialValues ? parseKeywords(initialValues.keywords) : "");
+  const [dmTemplate, setDmTemplate] = useState(initialValues?.dm_template ?? "");
+  const [commentReply, setCommentReply] = useState(initialValues?.comment_reply_template ?? "");
+  const [dmDelay, setDmDelay] = useState(initialValues?.dm_delay_seconds ?? 0);
+  const [maxPerUser, setMaxPerUser] = useState(initialValues?.max_triggers_per_user ?? 1);
+  const [autoTag, setAutoTag] = useState(initialValues?.auto_tag ?? "");
+  const [ruleModel, setRuleModel] = useState(initialValues?.model ?? "");
+  const [useAiReply, setUseAiReply] = useState(!!(initialValues as CommentRule & { use_ai_reply?: number })?.use_ai_reply);
+  const [aiReplyContext, setAiReplyContext] = useState((initialValues as CommentRule & { ai_reply_context?: string })?.ai_reply_context ?? "");
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -745,17 +787,18 @@ function RuleForm({ onSubmit }: { onSubmit: (data: Partial<CommentRule>) => void
           className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm" />
       </div>
       <div>
-        <label className="text-xs font-medium text-muted-foreground">DM Template</label>
-        <textarea value={dmTemplate} onChange={(e) => setDmTemplate(e.target.value)} required rows={2}
-          placeholder="Hey {{username}}, thanks for your interest! ..."
+        <label className="text-xs font-medium text-muted-foreground">Comment Reply Template</label>
+        <textarea value={commentReply} onChange={(e) => setCommentReply(e.target.value)} rows={2}
+          placeholder="Hey {{username}}, thanks for your comment! ..."
           className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm" />
-        <p className="text-xs text-muted-foreground mt-0.5">Variables: {"{{username}}, {{keyword}}, {{post_id}}, {{post_caption}}, {{post_url}}"}</p>
+        <p className="text-xs text-muted-foreground mt-0.5">Public reply posted on the comment. Variables: {"{{username}}, {{keyword}}, {{post_id}}, {{post_caption}}, {{post_url}}"}</p>
       </div>
       <div>
-        <label className="text-xs font-medium text-muted-foreground">Comment Reply Template (optional)</label>
-        <input type="text" value={commentReply} onChange={(e) => setCommentReply(e.target.value)}
-          placeholder="Thanks for commenting! Check your DMs 📬"
+        <label className="text-xs font-medium text-muted-foreground">DM Template (optional)</label>
+        <textarea value={dmTemplate} onChange={(e) => setDmTemplate(e.target.value)} rows={2}
+          placeholder="Hey {{username}}, thanks for your interest! ..."
           className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm" />
+        <p className="text-xs text-muted-foreground mt-0.5">Private DM sent to the user, in addition to the comment reply. Leave blank for comment-only.</p>
       </div>
       <div className="grid grid-cols-3 gap-3">
         <div>
@@ -800,9 +843,16 @@ function RuleForm({ onSubmit }: { onSubmit: (data: Partial<CommentRule>) => void
         </div>
         <p className="text-[10px] text-muted-foreground mt-0.5">Leave as Default to use the system-wide model</p>
       </div>
-      <button type="submit" className="rounded-md bg-primary px-4 py-2 text-sm text-primary-foreground">
-        Create Rule
-      </button>
+      <div className="flex gap-2">
+        <button type="submit" className="rounded-md bg-primary px-4 py-2 text-sm text-primary-foreground">
+          {isEdit ? "Save Changes" : "Create Rule"}
+        </button>
+        {onCancel && (
+          <button type="button" onClick={onCancel} className="rounded-md border border-border px-4 py-2 text-sm hover:bg-accent/10">
+            Cancel
+          </button>
+        )}
+      </div>
     </form>
   );
 }
@@ -1263,6 +1313,12 @@ function relativeTime(iso: string): string {
 
 function PlatformCard({ platform: p }: { platform: PlatformConfigEntry }) {
   const toggle = useTogglePlatform();
+  const setMode = useSetPlatformMode();
+
+  // Platforms that support mode switching (webhook/polling, or browser for YouTube/Reddit)
+  const supportsModeSwitching = ["facebook", "twitter", "instagram", "linkedin", "youtube", "reddit"].includes(p.platform);
+  const supportsBrowserMode = ["youtube", "reddit"].includes(p.platform);
+  const isBrowserMode = p.mode === "browser";
 
   const isActive = p.enabled && p.connected;
   const needsToken = !p.configured;
@@ -1291,11 +1347,13 @@ function PlatformCard({ platform: p }: { platform: PlatformConfigEntry }) {
         ? "bg-blue-500/10 text-blue-600"
         : "bg-muted text-muted-foreground";
 
-  const modeLabel = p.mode === "polling"
-    ? (p.pollHealth?.backoffUntil && new Date() < new Date(p.pollHealth.backoffUntil) ? "Backoff" : "Polling")
-    : "Webhook";
+  const modeLabel = p.mode === "browser"
+    ? "Browser"
+    : p.mode === "polling"
+      ? (p.pollHealth?.backoffUntil && new Date() < new Date(p.pollHealth.backoffUntil) ? "Backoff" : "Polling")
+      : "Webhook";
 
-  const isInBackoff = p.mode === "polling" && !!(p.pollHealth?.backoffUntil && new Date() < new Date(p.pollHealth.backoffUntil));
+  const isInBackoff = (p.mode === "polling" || p.mode === "browser") && !!(p.pollHealth?.backoffUntil && new Date() < new Date(p.pollHealth.backoffUntil));
   const hasErrors = (p.pollHealth?.consecutiveErrors ?? 0) > 0;
 
   return (
@@ -1308,7 +1366,7 @@ function PlatformCard({ platform: p }: { platform: PlatformConfigEntry }) {
           </span>
         </div>
         <div className="flex items-center gap-2">
-          {p.mode === "polling" && p.activelyPolling && !isInBackoff && (
+          {(p.mode === "polling" || p.mode === "browser") && p.activelyPolling && !isInBackoff && (
             <span className="relative flex h-2 w-2">
               <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75" />
               <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500" />
@@ -1319,7 +1377,32 @@ function PlatformCard({ platform: p }: { platform: PlatformConfigEntry }) {
               <span className="relative inline-flex rounded-full h-2 w-2 bg-yellow-500" />
             </span>
           )}
-          <span className={`text-xs capitalize ${isInBackoff ? "text-yellow-600" : "text-muted-foreground"}`}>{modeLabel}</span>
+          {supportsModeSwitching ? (
+            <select
+              value={p.mode}
+              onChange={(e) => {
+                const newMode = e.target.value as "webhook" | "polling" | "browser";
+                setMode.mutate(
+                  { platform: p.platform, mode: newMode },
+                  {
+                    onSuccess: () => showToast(`${p.platform} mode changed to ${newMode} — restart server to apply`, "success"),
+                    onError: (err) => showToast(`Error: ${(err as Error).message}`, "error"),
+                  },
+                );
+              }}
+              disabled={setMode.isPending}
+              className={`rounded border bg-background px-1.5 py-0.5 text-xs focus:outline-none focus:ring-1 focus:ring-ring ${
+                isBrowserMode ? "border-amber-500/50 text-amber-600" : "border-border text-muted-foreground"
+              }`}
+              aria-label={`Ingestion mode for ${p.platform}`}
+            >
+              <option value="polling">Polling</option>
+              {!supportsBrowserMode && <option value="webhook">Webhook</option>}
+              {supportsBrowserMode && <option value="browser">Browser (Beta)</option>}
+            </select>
+          ) : (
+            <span className={`text-xs capitalize ${isInBackoff ? "text-yellow-600" : "text-muted-foreground"}`}>{modeLabel}</span>
+          )}
           {hasErrors && (
             <span className="rounded-full bg-destructive/10 px-1.5 py-0.5 text-xs font-medium text-destructive">
               {p.pollHealth!.consecutiveErrors} err
@@ -1354,6 +1437,20 @@ function PlatformCard({ platform: p }: { platform: PlatformConfigEntry }) {
         </div>
       </div>
 
+      {/* Browser mode warning banner */}
+      {isBrowserMode && (
+        <div className="rounded-md bg-amber-500/10 border border-amber-500/30 p-2.5 mb-1 text-xs">
+          <p className="font-medium text-amber-700 dark:text-amber-400">
+            &#9888;&#65039; Browser Mode (Beta)
+          </p>
+          <p className="mt-1 text-amber-600/80 dark:text-amber-400/70">
+            Scrapes {p.platform} via Chrome instead of using API credentials.
+            May violate platform ToS. Less reliable than API polling.
+            Requires a logged-in Chrome session. Polls every 30 min by default.
+          </p>
+        </div>
+      )}
+
       <div className="space-y-2 text-xs">
         <div className="flex items-center justify-between">
           <span className="text-muted-foreground">Access Token</span>
@@ -1372,10 +1469,14 @@ function PlatformCard({ platform: p }: { platform: PlatformConfigEntry }) {
           <code className="rounded bg-muted px-1">{p.envVar}</code>
         </div>
         <div>
-          <span className="text-muted-foreground">{p.mode === "polling" ? "Endpoint: " : "Webhook: "}</span>
-          <code className="rounded bg-muted px-1 break-all">{p.webhookPath}</code>
+          <span className="text-muted-foreground">{p.mode === "browser" ? "Mode: " : p.mode === "polling" ? "Endpoint: " : "Webhook: "}</span>
+          {p.mode === "browser" ? (
+            <span className="text-amber-600">Browser scraping</span>
+          ) : (
+            <code className="rounded bg-muted px-1 break-all">{p.webhookPath}</code>
+          )}
         </div>
-        {p.mode === "polling" && p.pollHealth && (
+        {(p.mode === "polling" || p.mode === "browser") && p.pollHealth && (
           <>
             <div className="flex items-center justify-between">
               <span className="text-muted-foreground">Last poll</span>

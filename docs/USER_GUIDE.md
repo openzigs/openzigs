@@ -111,9 +111,11 @@ Before you begin, ensure the following are installed and available:
 | `GOOGLE_APPLICATION_CREDENTIALS` | Path to Google Cloud service account JSON key file. Required for voice TTS. |
 | `SOCIAL_WEBHOOK_VERIFY_TOKEN` | Verify token for Social Brain webhook subscriptions (Meta, TikTok, etc.). |
 | `INSTAGRAM_ACCESS_TOKEN` | Instagram Graph API user access token (for comment ingestion, DMs, post context enrichment). |
+| `INSTAGRAM_BUSINESS_ACCOUNT_ID` | Instagram Business Account ID (numeric, from Graph API). |
 | `FACEBOOK_PAGE_TOKEN` | Facebook Page access token (for comment ingestion, Messenger DMs, post context enrichment). |
 | `FACEBOOK_APP_ID` | Facebook App ID (shared by Instagram and Facebook MCP servers). |
 | `FACEBOOK_APP_SECRET` | Facebook App Secret (shared by Instagram and Facebook MCP servers). |
+| `FACEBOOK_PAGE_ID` | Facebook Page ID (numeric). Required for the Facebook polling adapter. |
 | `TIKTOK_CLIENT_KEY` | TikTok OAuth Client Key (from [developers.tiktok.com](https://developers.tiktok.com)). Required for TikTok MCP tools. |
 | `TIKTOK_CLIENT_SECRET` | TikTok OAuth Client Secret. |
 | `TIKTOK_ACCESS_TOKEN` | TikTok access token (obtained via OAuth in Admin → TikTok panel). |
@@ -204,9 +206,11 @@ GOOGLE_APPLICATION_CREDENTIALS=/path/to/your/service-account-key.json
 # ── Optional: Social Brain ──
 # SOCIAL_WEBHOOK_VERIFY_TOKEN=your-random-verify-token
 # INSTAGRAM_ACCESS_TOKEN=your-ig-long-lived-user-access-token
+# INSTAGRAM_BUSINESS_ACCOUNT_ID=your-ig-business-account-id
 # FACEBOOK_PAGE_TOKEN=your-facebook-page-access-token
 # FACEBOOK_APP_ID=your-facebook-app-id
 # FACEBOOK_APP_SECRET=your-facebook-app-secret
+# FACEBOOK_PAGE_ID=your-facebook-page-id
 
 # ── Media Queue (Distributed GPU Nodes) ──
 # Set to the primary Mac's LAN IP so remote worker nodes can POST callbacks back to it.
@@ -3382,21 +3386,25 @@ After creating the venv and setting the required environment variables in `.env`
 **Setup Steps:**
 
 1. Go to the [X Developer Portal](https://developer.x.com/en/portal/dashboard).
-2. Sign in and create a new **Project** and **App**.
-3. Under **Keys and Tokens**, copy the **Bearer Token**.
-4. (Optional) Generate **API Key + Secret** and **Access Token + Secret** for OAuth 1.0a operations like DMs.
-5. Add to your `.env`:
+2. Sign in with your X account and accept the **Developer Agreement**.
+3. Create a new **Project** and **App** inside the project.
+4. Under **Keys and Tokens**, copy the **Bearer Token** (shown once — save immediately).
+5. (Optional) Generate **API Key + Secret** and **Access Token + Secret** for OAuth 1.0a operations like DMs and posting.
+6. If you change app permissions (e.g., Read → Read & Write), you must **regenerate** your Access Token and Access Token Secret.
+7. Add to your `.env`:
    ```dotenv
    TWITTER_BEARER_TOKEN=AAAAAAAAAAAAAAAAAAAAAAxxxxxxx
-   # Optional for DMs:
+   # Optional for DMs and posting:
    # TWITTER_API_KEY=xxxxxx
    # TWITTER_API_SECRET=xxxxxx
    # TWITTER_ACCESS_TOKEN=xxxxxx
    # TWITTER_ACCESS_TOKEN_SECRET=xxxxxx
    ```
-6. Create the venv: `cd external/twitter-mcp && python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt && deactivate`
+8. Create the venv: `cd external/twitter-mcp && python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt && deactivate`
 
-**Rate Limits:** Free tier allows 500 tweets/month and 10k reads. Basic tier ($100/month) increases to 10k reads/month. The Pro tier ($5,000/month) adds webhook access.
+> **Authentication options:** Bearer Token provides read-only app-level access. For user actions (posting, DMs), use OAuth 1.0a (API Key + Access Token) or OAuth 2.0 with PKCE (supports `offline.access` scope for automatic token refresh).
+
+**Rate Limits:** X API uses a **credit-based pay-per-usage** model with configurable spending limits. Free tier has limited access (~500 tweet reads/month). See [X API Pricing](https://docs.x.com/x-api/getting-started/pricing) for current tiers.
 
 **Available Tools (8):** `twitter_post_tweet`, `twitter_send_dm`, `twitter_search_tweets`, `twitter_get_user_info`, `twitter_get_user_tweets`, `twitter_get_tweet`, `twitter_get_followers`, `twitter_get_following`
 
@@ -3404,46 +3412,107 @@ After creating the venv and setting the required environment variables in `.env`
 
 #### YouTube
 
-**Difficulty:** Medium | **Token Expiry:** OAuth tokens expire in 1 hour (refresh token persists) | **App Review:** Required for public apps; unverified apps limited to 100 test users
+**Difficulty:** Medium | **Token Expiry:** OAuth access tokens expire in ~1 hour (auto-refreshed); refresh tokens last 7 days in Testing mode | **App Review:** Not required for personal use; unverified apps limited to 100 test users
 
-**Required Environment Variables:**
+**Environment Variables:**
 
-| Variable | Required | Purpose |
+| Variable | Required | Set by | Purpose |
+|---|---|---|---|
+| `YOUTUBE_API_KEY` | Yes | You | Read operations: list videos, comments, search, analytics |
+| `YOUTUBE_CHANNEL_ID` | Recommended | You | Channel ID (`UCxxxx`) for the comment poller to monitor |
+| `YOUTUBE_CHANNEL_HANDLE` | Optional | You | Alternative to Channel ID — your `@handle` |
+| `YOUTUBE_CLIENT_ID` | For OAuth | Admin UI | Google OAuth 2.0 client ID |
+| `YOUTUBE_CLIENT_SECRET` | For OAuth | Admin UI | Google OAuth 2.0 client secret |
+| `YOUTUBE_OAUTH_TOKEN` | Auto | Admin UI | Access token — upload videos, reply to comments |
+| `YOUTUBE_REFRESH_TOKEN` | Auto | Admin UI | Long-lived token used to renew the access token |
+| `YOUTUBE_TOKEN_EXPIRES_AT` | Auto | Admin UI | Expiry timestamp (epoch ms) |
+
+**What API key vs OAuth gives you:**
+
+| Capability | API Key only | API Key + OAuth |
 |---|---|---|
-| `YOUTUBE_API_KEY` | Yes | Read operations (list videos, comments, search) |
-| `YOUTUBE_OAUTH_TOKEN` | Only for writes | Upload videos, reply to comments |
+| List videos, search, analytics | ✅ | ✅ |
+| Read comments | ✅ | ✅ |
+| Reply to comments | ❌ | ✅ |
+| Upload videos | ❌ | ✅ |
+| Automatic token refresh | ❌ | ✅ (every 15 min) |
 
-**Setup Steps:**
+---
+
+**Step 1 — Create a Google Cloud project and enable the API:**
 
 1. Go to [Google Cloud Console](https://console.cloud.google.com/).
-2. Create a new project (or select existing).
+2. Click **Select a project → New Project**, give it a name (e.g., "OpenZigs"), and click **Create**.
 3. Navigate to **APIs & Services → Library**.
 4. Search for **YouTube Data API v3** and click **Enable**.
-5. Go to **Credentials → Create Credentials → API Key**. Copy the key.
-6. Add to your `.env`:
+5. Go to **APIs & Services → Credentials → Create Credentials → API Key**. Copy the key.
+6. In Admin → Social Brain → YouTube, paste the key into the **YouTube API Key** field and click **Save**.
+   Or add it directly to `.env`:
    ```dotenv
    YOUTUBE_API_KEY=AIzaSy_xxxxxxxxxxxxxxxxxxxxxxxx
    ```
 
-**For video uploads and comment replies (OAuth2):**
+**Step 2 — Add your channel identifier:**
 
-7. In **Credentials → Create Credentials → OAuth 2.0 Client ID**.
-8. Application type: **Desktop App**.
-9. Go to **OAuth consent screen** → Add scopes:
-   - `https://www.googleapis.com/auth/youtube` (full access)
-   - OR `https://www.googleapis.com/auth/youtube.upload` (upload only)
-10. Use the [Google OAuth Playground](https://developers.google.com/oauthplayground/) to generate an access token:
-    - Click the gear icon → Check "Use your own OAuth credentials" → Enter your Client ID and Secret.
-    - Select **YouTube Data API v3** scopes → Authorize → Exchange for tokens.
-11. Copy the access token and add to `.env`:
-    ```dotenv
-    YOUTUBE_OAUTH_TOKEN=ya29.a0_xxxxxxxxxxxxxxxxxxxxxxxx
+7. In Admin → Social Brain → YouTube, fill in **Channel ID** or **Channel Handle** so the comment poller knows which channel to monitor:
+   - **Channel ID** (`UCxxxxxxxxxxxxxxxxxx`): found in YouTube Studio → Settings → Channel → Advanced settings.
+   - **Channel Handle** (`@YourChannel`): your public @handle — simpler to find.
+8. Click **Save**. Values are written to `.env` as `YOUTUBE_CHANNEL_ID` and `YOUTUBE_CHANNEL_HANDLE`.
+
+> **Admin display:** After saving, the YouTube section shows your API key (masked) and channel values just above the input fields. The fields themselves remain blank — they are for entering updates, not displaying current values. If the section appears collapsed, click the header to expand it.
+
+---
+
+**Step 3 — Enable OAuth for video uploads and comment replies (optional but recommended):**
+
+OAuth 2.0 is required for any write operation. OpenZigs has a **built-in OAuth flow** — no manual token copying or OAuth Playground needed.
+
+**Configure Google Cloud Console:**
+
+9. Navigate to **APIs & Services → OAuth consent screen**.
+10. Select **User Type: External** (required even for personal use — "Internal" requires a Google Workspace org).
+11. Fill in the App name, support email, and developer contact email.
+12. Skip Scopes — OpenZigs requests them at authorization time.
+13. Under **Test users**, click **Add users** and add your Google account. You must be listed here to authorize in Testing mode.
+14. Save and continue.
+
+> **Testing vs Production:** Stay in Testing mode for personal use. **Caveat:** Google's restricted scopes (`youtube.force-ssl`, `youtube.upload`) cause refresh tokens to expire after **7 days** in Testing mode, requiring weekly re-authorization. To eliminate this, publish the app on the consent screen (unverified apps allow up to 100 users — fine for personal use).
+
+15. Navigate to **APIs & Services → Credentials → Create Credentials → OAuth client ID**.
+16. Application type: **Web application** (not Desktop — Desktop clients do not support redirect URIs).
+17. Under **Authorized redirect URIs**, add exactly:
     ```
-12. Create the venv: `cd external/youtube-mcp && python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt && deactivate`
+    http://localhost:3000/api/youtube/oauth/callback
+    ```
+18. Click **Create**. Copy the **Client ID** and **Client Secret**.
 
-**Quota:** 10,000 units/day. Video uploads cost **1,600 units** each (~6 uploads/day max). Reads cost 1–5 units each.
+**Connect via the Admin panel:**
 
-> **Note:** OAuth tokens expire after 1 hour. For production use, implement a refresh token flow. Unverified apps can only upload **private** videos.
+19. Open **Admin → Social Brain → YouTube → Edit App Credentials**.
+20. Paste your Client ID and Client Secret. Click **Save App Credentials**.
+21. Click **Connect via OAuth**. A Google sign-in window opens.
+22. If you see **"Google hasn't verified this app"**, click **Continue** — this is expected for personal/development apps.
+23. Grant YouTube permissions and click **Allow**.
+24. You are redirected back to Admin. `YOUTUBE_OAUTH_TOKEN`, `YOUTUBE_REFRESH_TOKEN`, and `YOUTUBE_TOKEN_EXPIRES_AT` are saved to `.env` automatically.
+
+> **Automatic token refresh:** OpenZigs refreshes the access token every 15 minutes when it is within 30 minutes of expiry. No manual action is needed after the initial OAuth flow.
+
+**Set up the MCP server venv:**
+
+25. Create the venv: `cd external/youtube-mcp && python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt && deactivate`
+
+---
+
+**Quota:** 10,000 units/day free. Video uploads cost **1,600 units** each (~6 uploads/day max). Comment reads cost 1 unit each.
+
+| Operation | Quota Cost | ~Daily Limit |
+|---|---|---|
+| `videos.insert` (upload) | 1,600 | ~6 |
+| `commentThreads.list` | 1 | 10,000 |
+| `comments.insert` (reply) | 50 | 200 |
+| `search.list` | 100 | 100 |
+
+> **Note:** Videos uploaded from unverified API projects are restricted to **private** viewing. Your project must pass a [YouTube API audit](https://support.google.com/youtube/contact/yt_api_form) to allow public/unlisted uploads.
 
 **Available Tools (8):** `yt_upload_video`, `yt_reply_to_comment`, `yt_get_channel_videos`, `yt_get_video_comments`, `yt_search_videos`, `yt_get_channel_info`, `yt_get_video_details`, `yt_get_channel_analytics`
 
@@ -3492,6 +3561,10 @@ After creating the venv and setting the required environment variables in `.env`
 **Token Lifecycle:** Access tokens last 60 days and are auto-refreshed when they expire within 7 days (if Client ID/Secret are configured).
 
 > **Note:** DM sending (`linkedin_send_message`) requires **Marketing API Partner** status, which involves a separate application process with LinkedIn.
+
+**Comment Monitoring — Community Management API:**
+
+LinkedIn polling detects comments on your **personal posts** using the "Share on LinkedIn" product. To monitor comments on **organization/company page posts** and access likes, reactions, and analytics, you need LinkedIn's **Community Management API** — which must be on a **separate LinkedIn app** (it is mutually exclusive with "Share on LinkedIn"). See the [Social Brain Guide — LinkedIn Community Management API](SOCIAL_BRAIN_GUIDE.md#linkedin-comment-monitoring--community-management-api) for full setup instructions.
 
 **Available Tools (8):** `linkedin_create_post`, `linkedin_reply_to_comment`, `linkedin_send_message`, `linkedin_get_profile`, `linkedin_get_posts`, `linkedin_get_company_info`, `linkedin_get_connections`, `linkedin_get_messages`
 
@@ -3595,13 +3668,17 @@ Instagram publishing uses the **Meta Graph API** and requires a Facebook Develop
 3. Click **Generate Access Token** and approve the required permissions:
    - `instagram_basic`
    - `instagram_content_publish`
+   - `instagram_manage_comments` — read and reply to comments
    - `pages_show_list`
    - `pages_read_engagement`
    - `business_management`
+
+> **New scope names (2025):** Meta is migrating to new scope names: `instagram_business_basic`, `instagram_business_manage_comments`, `instagram_business_manage_messages`, `instagram_business_content_publish`. Both old and new names currently work, but plan to migrate to the new names.
+
 4. Copy the short-lived token.
 5. Exchange for a **long-lived token** (lasts 60 days):
    ```bash
-   curl "https://graph.facebook.com/v19.0/oauth/access_token?\
+   curl "https://graph.facebook.com/v21.0/oauth/access_token?\
    grant_type=fb_exchange_token&\
    client_id=YOUR_APP_ID&\
    client_secret=YOUR_APP_SECRET&\
@@ -3636,7 +3713,7 @@ cd external/ig-mcp && python3 -m venv .venv && source .venv/bin/activate && pip 
 
 > **Important:** Long-lived tokens expire after 60 days. Refresh before expiry with:
 > ```bash
-> curl "https://graph.facebook.com/v19.0/oauth/access_token?grant_type=fb_exchange_token&client_id=APP_ID&client_secret=APP_SECRET&fb_exchange_token=CURRENT_LONG_LIVED_TOKEN"
+> curl "https://graph.facebook.com/v21.0/oauth/access_token?grant_type=fb_exchange_token&client_id=APP_ID&client_secret=APP_SECRET&fb_exchange_token=CURRENT_LONG_LIVED_TOKEN"
 > ```
 
 > **Publishing Constraint:** Instagram requires media (images/videos) to be hosted at **publicly accessible URLs**. Instagram's servers fetch the media from the URL you provide — local file paths will not work. Use a service like Cloudinary, S3, or any public web server.
@@ -3703,7 +3780,9 @@ FACEBOOK_PAGE_ID=955369944333833
 cd external/fb-mcp && python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt && deactivate
 ```
 
-> **Note:** Page tokens generated from a long-lived user token **do not expire**. However, if the user who generated them loses admin access to the page, the token becomes invalid.
+> **Note:** Page tokens generated from a long-lived user token **do not expire**. However, if the user who generated them loses admin access to the page or changes their Facebook password, the token becomes invalid.
+
+> **Privacy note (Graph API v24.0+):** Facebook no longer returns `from.id` for regular user comments due to privacy restrictions. The polling adapter automatically skips comments without user IDs — public comment replies still work via `fb_reply_to_comment`, but private DMs to anonymous commenters are not possible.
 
 **Available Tools (10):** `fb_get_page_info`, `fb_get_page_posts`, `fb_get_post_insights`, `fb_publish_post`, `fb_get_conversations`, `fb_get_conversation_messages`, `fb_send_message`, `fb_get_page_insights`, `fb_get_post_comments`, `fb_reply_to_comment`
 
@@ -6339,6 +6418,39 @@ Configure the knowledge base in your config file (`~/.openzigs/config.json`):
 The Social Brain at `/social` provides a unified inbox for managing DMs and comments across 7 social platforms — **Instagram**, **Facebook**, **Twitter/X**, **YouTube**, **LinkedIn**, **Reddit**, and **TikTok** — with AI-powered auto-replies, a built-in CRM, comment-to-DM automation, and cross-platform content publishing.
 
 Each platform has a dedicated native MCP server with tools for posting, reading, analytics, DMs, and comment management. See the [Social Media Posting](#social-media-posting) section for publishing details, and the [Social Brain Guide](SOCIAL_BRAIN_GUIDE.md) for comprehensive setup and troubleshooting.
+
+### Ingestion Modes — Webhook vs Polling
+
+Each platform ingests messages via either **webhooks** (platform pushes events to your server) or **polling** (OpenZigs periodically fetches new data via API). Some platforms support both:
+
+| Platform | Webhook | Polling | Default | Notes |
+|----------|---------|---------|---------|-------|
+| Twitter/X | ✅ | ✅ | Polling | Webhook requires Account Activity API setup |
+| YouTube | — | ✅ | Polling | No webhook API available |
+| Reddit | — | ✅ | Polling | No webhook API available |
+| LinkedIn | — | ✅ | Polling | Polling only (no webhook support) |
+| TikTok | ✅ | — | Webhook | Webhook-only |
+| Facebook | ✅ | ✅ | **Polling** | **Use polling** — webhooks require Meta App Review |
+| Instagram | ✅ | ✅ | **Polling** | **Use polling** — webhooks require Meta App Review |
+
+For platforms that support both modes (Facebook, Twitter, Instagram), you can switch between them using the **mode dropdown** on each platform card in the Settings tab. The mode is saved to `~/.openzigs/config.json` automatically. A server restart is required for the mode change to take effect.
+
+> **Why polling over webhooks for Meta (Facebook/Instagram)?** Meta does not deliver webhook events to apps in development mode. If your Meta app is not published and approved via App Review, webhooks will not function. Polling works immediately without any app approval — it uses the respective MCP server (`fb-mcp` for Facebook, `ig-mcp` for Instagram) to periodically fetch posts and their comments. This captures all comments from any user, not just app admins or testers.
+
+> **Need help setting up platform APIs?** Use the **Social Setup Wizard** skill in chat — it uses browser automation and the Secret Vault to walk you through each platform's developer portal step by step. See the [Social Brain Guide — AI-Assisted Platform Setup](SOCIAL_BRAIN_GUIDE.md#ai-assisted-platform-setup-setup-wizard-agent) for details.
+
+**Configuring the poll interval:**
+
+```json
+{
+  "socialBrain": {
+    "connections": {
+      "facebook": { "enabled": true, "mode": "polling", "pollIntervalSeconds": 120 },
+      "instagram": { "enabled": true, "mode": "polling", "pollIntervalSeconds": 120 }
+    }
+  }
+}
+```
 
 ### Dashboard Tab
 

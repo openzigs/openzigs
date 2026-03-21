@@ -28,7 +28,7 @@ import { MessageRouter } from "./routing/index.js";
 import { SessionManager } from "./sessions/index.js";
 import { CloudflareTunnel } from "./tunnel/index.js";
 import { createModelsRouter } from "./api/models.js";
-import { createAdminRouter, pinterestOAuthStates, exchangePinterestCode, refreshPinterestToken, linkedinOAuthStates, exchangeLinkedInCode, refreshLinkedInToken, tiktokOAuthStates, exchangeTikTokCode, ensurePinterestScheduledJob, setAdminIO, setTunnelPublicUrl } from "./api/admin.js";
+import { createAdminRouter, pinterestOAuthStates, exchangePinterestCode, refreshPinterestToken, linkedinOAuthStates, exchangeLinkedInCode, refreshLinkedInToken, tiktokOAuthStates, exchangeTikTokCode, youtubeOAuthStates, exchangeYouTubeCode, refreshYouTubeToken, ensurePinterestScheduledJob, setAdminIO, setTunnelPublicUrl } from "./api/admin.js";
 import { createTasksRouter } from "./api/tasks.js";
 import { createFilesRouter } from "./api/files.js";
 import { launchChrome, killChrome } from "./browser/chrome-launcher.js";
@@ -68,7 +68,12 @@ import { PostContextService, TwitterApiClient, YouTubeApiClient, LinkedInApiClie
 import { DmDispatcher } from "./channels/social/dm-dispatcher.js";
 import { createRedditPollFn } from "./channels/social/reddit-poll.js";
 import { createYouTubePollFn } from "./channels/social/youtube-poll.js";
+import { createRedditBrowserPollFn } from "./channels/social/reddit-browser-poll.js";
+import { createYouTubeBrowserPollFn } from "./channels/social/youtube-browser-poll.js";
 import { createTwitterPollFn } from "./channels/social/twitter-poll.js";
+import { createFacebookPollFn } from "./channels/social/facebook-poll.js";
+import { createInstagramPollFn } from "./channels/social/instagram-poll.js";
+import { createLinkedInPollFn } from "./channels/social/linkedin-poll.js";
 import { BrandVoiceRepository } from "./personality/brand-voice-repository.js";
 import { BrandVoiceService } from "./personality/brand-voice-service.js";
 import { PipelineTemplateManager } from "./productivity/pipeline-template-manager.js";
@@ -558,19 +563,53 @@ if (twitterBearerToken) {
   }
 }
 if (linkedinAccessToken) {
-  socialAdapters.push(new LinkedInAdapter());
+  const linkedinMode = socialBrainConfig?.connections?.linkedin?.mode ?? "polling";
+  if (linkedinMode === "polling" && localServerManager) {
+    socialAdapters.push(new GenericPollAdapter("linkedin", createLinkedInPollFn(localServerManager)));
+  } else {
+    socialAdapters.push(new LinkedInAdapter());
+  }
 }
 if (redditClientId && localServerManager) {
   socialAdapters.push(new GenericPollAdapter("reddit", createRedditPollFn(localServerManager)));
+} else if (socialBrainConfig?.connections?.reddit?.mode === "browser") {
+  const chromeHost = process.env.CHROME_DEBUG_HOST ?? "";
+  const chromePort = parseInt(process.env.CHROME_DEBUG_PORT ?? "9222", 10);
+  if (chromeHost) {
+    logger.info("[SocialBrain] Reddit using browser mode (beta) — no API credentials required");
+    socialAdapters.push(new GenericPollAdapter("reddit", createRedditBrowserPollFn({ host: chromeHost, port: chromePort })));
+  } else {
+    logger.warn("[SocialBrain] Reddit browser mode requires CHROME_DEBUG_HOST to be set");
+  }
 }
 if (youtubeApiKey && localServerManager) {
   socialAdapters.push(new GenericPollAdapter("youtube", createYouTubePollFn(localServerManager)));
+} else if (socialBrainConfig?.connections?.youtube?.mode === "browser") {
+  const chromeHost = process.env.CHROME_DEBUG_HOST ?? "";
+  const chromePort = parseInt(process.env.CHROME_DEBUG_PORT ?? "9222", 10);
+  const ytChannelUrl = process.env.YOUTUBE_CHANNEL_URL ?? "";
+  if (chromeHost && ytChannelUrl) {
+    logger.info("[SocialBrain] YouTube using browser mode (beta) — no API key required");
+    socialAdapters.push(new GenericPollAdapter("youtube", createYouTubeBrowserPollFn({ host: chromeHost, port: chromePort, channelUrl: ytChannelUrl })));
+  } else {
+    logger.warn("[SocialBrain] YouTube browser mode requires CHROME_DEBUG_HOST and YOUTUBE_CHANNEL_URL to be set");
+  }
 }
 if (instagramAccessToken) {
-  socialAdapters.push(new InstagramAdapter());
+  const instagramMode = socialBrainConfig?.connections?.instagram?.mode ?? "polling";
+  if (instagramMode === "polling" && localServerManager) {
+    socialAdapters.push(new GenericPollAdapter("instagram", createInstagramPollFn(localServerManager)));
+  } else {
+    socialAdapters.push(new InstagramAdapter());
+  }
 }
 if (facebookPageToken) {
-  socialAdapters.push(new FacebookAdapter());
+  const facebookMode = socialBrainConfig?.connections?.facebook?.mode ?? "polling";
+  if (facebookMode === "polling" && localServerManager) {
+    socialAdapters.push(new GenericPollAdapter("facebook", createFacebookPollFn(localServerManager)));
+  } else {
+    socialAdapters.push(new FacebookAdapter());
+  }
 }
 
 const socialIngestion = new SocialIngestionService({
@@ -644,11 +683,13 @@ socialIngestion.on("comment", (comment) => {
   })();
 });
 
-// Start polling for poll-based platform adapters
+// Start polling for poll-based and browser-based platform adapters
 if (socialBrainConfig?.connections) {
   for (const [platform, conn] of Object.entries(socialBrainConfig.connections)) {
-    if (conn?.enabled && conn?.mode === "polling" && socialIngestion.getRegisteredPlatforms().includes(platform as import("./channels/social/types.js").SocialPlatform)) {
-      const interval = conn.pollIntervalSeconds ?? 120;
+    if (conn?.enabled && (conn?.mode === "polling" || conn?.mode === "browser") && socialIngestion.getRegisteredPlatforms().includes(platform as import("./channels/social/types.js").SocialPlatform)) {
+      // Browser mode uses a longer default interval to avoid detection
+      const defaultInterval = conn.mode === "browser" ? 1800 : 120;
+      const interval = conn.pollIntervalSeconds ?? defaultInterval;
       socialIngestion.startPolling(platform as import("./channels/social/types.js").SocialPlatform, interval);
     }
   }
@@ -880,6 +921,39 @@ app.get("/api/linkedin/oauth/callback", async (req, res) => {
 
   logger.info("LinkedIn OAuth flow completed successfully");
   return res.redirect(`${uiOrigin}/admin?linkedin_oauth=success`);
+});
+
+// YouTube/Google OAuth callback — no auth middleware (redirected from Google)
+app.get("/api/youtube/oauth/callback", async (req, res) => {
+  const code = typeof req.query.code === "string" ? req.query.code : "";
+  const state = typeof req.query.state === "string" ? req.query.state : "";
+  const error = typeof req.query.error === "string" ? req.query.error : "";
+
+  if (error) {
+    const desc = typeof req.query.error_description === "string" ? req.query.error_description : error;
+    logger.warn(`YouTube OAuth denied: ${desc}`);
+    return res.redirect(`${uiOrigin}/admin?youtube_oauth=error&message=${encodeURIComponent(desc)}`);
+  }
+
+  if (!code || !state) {
+    return res.redirect(`${uiOrigin}/admin?youtube_oauth=error&message=${encodeURIComponent("Missing code or state")}`);
+  }
+
+  // Validate CSRF state
+  if (!youtubeOAuthStates.has(state)) {
+    logger.warn("YouTube OAuth state mismatch — possible CSRF");
+    return res.redirect(`${uiOrigin}/admin?youtube_oauth=error&message=${encodeURIComponent("Invalid state parameter")}`);
+  }
+  youtubeOAuthStates.delete(state);
+
+  const result = await exchangeYouTubeCode(code);
+  if (!result.ok) {
+    logger.error(`YouTube OAuth token exchange failed: ${result.error}`);
+    return res.redirect(`${uiOrigin}/admin?youtube_oauth=error&message=${encodeURIComponent(result.error ?? "Token exchange failed")}`);
+  }
+
+  logger.info("YouTube OAuth flow completed successfully");
+  return res.redirect(`${uiOrigin}/admin?youtube_oauth=success`);
 });
 
 // TikTok OAuth callback — no auth middleware (redirected from TikTok)
@@ -2525,6 +2599,40 @@ httpServer.listen(port, "0.0.0.0", () => {
   };
   void checkLinkedInRefresh();
   setInterval(() => void checkLinkedInRefresh(), 24 * 60 * 60 * 1000);
+
+  // YouTube/Google OAuth: auto-refresh token if expiry is within 30 minutes
+  const checkYouTubeRefresh = async () => {
+    const expiresAt = process.env.YOUTUBE_TOKEN_EXPIRES_AT;
+    const refreshToken = process.env.YOUTUBE_REFRESH_TOKEN;
+    if (!expiresAt || !refreshToken) return;
+    const expiresMs = new Date(expiresAt).getTime();
+    const thirtyMinutes = 30 * 60 * 1000;
+    if (Date.now() > expiresMs - thirtyMinutes) {
+      logger.info("YouTube token expiring within 30 minutes — auto-refreshing…");
+      try {
+        const result = await refreshYouTubeToken();
+        if (result.ok) {
+          logger.info(`YouTube token auto-refreshed, new expiry: ${result.expiresAt}`);
+          // Restart youtube MCP server so the new subprocess picks up the fresh token
+          if (localServerManager.isRunning("youtube")) {
+            try {
+              await localServerManager.restartServer("youtube");
+              logger.info("YouTube MCP server restarted with refreshed token");
+            } catch (restartErr) {
+              logger.warn(`YouTube MCP server restart failed: ${restartErr instanceof Error ? restartErr.message : String(restartErr)}`);
+            }
+          }
+        } else {
+          logger.warn(`YouTube auto-refresh failed: ${result.error}`);
+        }
+      } catch (err) {
+        logger.warn(`YouTube auto-refresh error: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+  };
+  void checkYouTubeRefresh();
+  // Google access tokens expire in 1 hour — check every 15 minutes
+  setInterval(() => void checkYouTubeRefresh(), 15 * 60 * 1000);
 
   // Start the media queue push loop
   if (process.env.QUEUE_ENABLED !== "false") {

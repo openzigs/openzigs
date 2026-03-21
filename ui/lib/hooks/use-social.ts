@@ -299,6 +299,22 @@ export const useTogglePlatform = () => {
   });
 };
 
+export const useSetPlatformMode = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ platform, mode }: { platform: string; mode: "webhook" | "polling" | "browser" }) =>
+      fetchJson<{ ok: boolean; needsRestart?: boolean }>(`/api/social/connections/${platform}`, {
+        method: "PATCH",
+        body: JSON.stringify({ mode }),
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["social", "config"] });
+      qc.invalidateQueries({ queryKey: ["social", "stats"] });
+      qc.invalidateQueries({ queryKey: ["social", "connections"] });
+    },
+  });
+};
+
 // ── AI Generate Rule ──
 
 export type GeneratedRule = {

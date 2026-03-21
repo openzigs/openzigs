@@ -32,6 +32,10 @@ export class DmDispatcher {
   /** Returns a DmSender function compatible with CommentRuleEngine. */
   createDmSender(): DmSender {
     return async (platform: SocialPlatform, userId: string, text: string): Promise<void> => {
+      if (!userId) {
+        throw new Error(`DM send aborted for ${platform}: recipient userId is empty`);
+      }
+
       const mapping = PLATFORM_DM_MAP[platform];
       if (!mapping?.dmTool) {
         throw new Error(`DM sending not supported for platform: ${platform}`);
@@ -69,6 +73,16 @@ export class DmDispatcher {
 
       if (result.isError) {
         throw new Error(`Comment reply failed (${platform}): ${result.text}`);
+      }
+
+      // Also check for application-level errors in the JSON response body
+      try {
+        const parsed = JSON.parse(result.text);
+        if (parsed.success === false) {
+          throw new Error(`Comment reply failed (${platform}): ${parsed.error ?? result.text}`);
+        }
+      } catch (e) {
+        if (e instanceof SyntaxError) { /* non-JSON response, assume ok */ } else throw e;
       }
 
       logger.info(`[DmDispatcher] Replied to comment ${commentId} via ${platform}`);

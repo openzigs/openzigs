@@ -221,7 +221,16 @@ export const createBrowserNavigateHandler = ({ host, port, vaultService }: Brows
           await cdp.send("Page.addScriptToEvaluateOnNewDocument", {
             source: COMBINED_STEALTH_SCRIPT,
           });
-          const loadPromise = cdp.waitForEvent("Page.loadEventFired", 30000);
+          // Wait for either loadEventFired (traditional pages) or
+          // frameStoppedLoading (SPAs that never fire load). Use a race
+          // so we don't hang for 30s on sites that skip the load event.
+          const loadPromise = Promise.race([
+            cdp.waitForEvent("Page.loadEventFired", 15000),
+            cdp.waitForEvent("Page.frameStoppedLoading", 15000),
+          ]).catch(() => {
+            // Neither event fired within 15s — page is likely an SPA
+            // that loaded via JS. Continue anyway.
+          });
           await cdp.send("Page.navigate", { url: input.url });
           await loadPromise;
           // Get the final page title and URL
@@ -235,11 +244,13 @@ export const createBrowserNavigateHandler = ({ host, port, vaultService }: Brows
         }
 
         case "click": {
+          // Simulate human-like mouse movement to the element before clicking.
+          // Anti-bot systems detect instant teleporting clicks.
           const clickExpr = `(() => {
             const el = document.querySelector(${JSON.stringify(input.selector)});
             if (!el) return { error: "Element not found" };
-            el.click();
-            return { clicked: true };
+            const rect = el.getBoundingClientRect();
+            return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
           })()`;
           const clickResult = await cdp.send("Runtime.evaluate", {
             expression: clickExpr,
@@ -249,6 +260,38 @@ export const createBrowserNavigateHandler = ({ host, port, vaultService }: Brows
           if (clickValue && typeof clickValue === "object" && (clickValue as Record<string, unknown>).error) {
             throw new Error(String((clickValue as Record<string, unknown>).error));
           }
+          const cx = Number((clickValue as Record<string, unknown>).x ?? 0);
+          const cy = Number((clickValue as Record<string, unknown>).y ?? 0);
+
+          // Simulate realistic mouse movement using multiple steps
+          const steps = 8 + Math.floor(Math.random() * 8);
+          // Start from a pseudo-random point on screen
+          const fromX = 100 + Math.random() * 400;
+          const fromY = 100 + Math.random() * 300;
+          for (let i = 1; i <= steps; i++) {
+            const t = i / steps;
+            // Ease-in-out curve for natural deceleration
+            const ease = t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
+            const mx = fromX + (cx - fromX) * ease + (Math.random() - 0.5) * 4;
+            const my = fromY + (cy - fromY) * ease + (Math.random() - 0.5) * 4;
+            await cdp.send("Input.dispatchMouseEvent", {
+              type: "mouseMoved", x: mx, y: my, button: "none"
+            });
+            // Small random delay between movements (5-25ms)
+            await new Promise(r => setTimeout(r, 5 + Math.random() * 20));
+          }
+
+          // Brief hover pause before clicking (50-150ms)
+          await new Promise(r => setTimeout(r, 50 + Math.random() * 100));
+
+          await cdp.send("Input.dispatchMouseEvent", {
+            type: "mousePressed", x: cx, y: cy, button: "left", clickCount: 1
+          });
+          // Human click duration (40-120ms between press and release)
+          await new Promise(r => setTimeout(r, 40 + Math.random() * 80));
+          await cdp.send("Input.dispatchMouseEvent", {
+            type: "mouseReleased", x: cx, y: cy, button: "left", clickCount: 1
+          });
           return { success: true, text: `Clicked ${input.selector}` };
         }
 
@@ -285,7 +328,7 @@ export const createBrowserNavigateHandler = ({ host, port, vaultService }: Brows
             });
           }
 
-          // Type each character via Input.dispatchKeyEvent
+          // Type each character via Input.dispatchKeyEvent with human-like delays
           for (const char of resolvedText) {
             await cdp.send("Input.dispatchKeyEvent", {
               type: "keyDown",
@@ -297,6 +340,11 @@ export const createBrowserNavigateHandler = ({ host, port, vaultService }: Brows
               text: char,
               unmodifiedText: char
             });
+            // Human typing cadence: 30-120ms per character with occasional pauses
+            const delay = Math.random() < 0.1
+              ? 150 + Math.random() * 200  // 10% chance of a longer "thinking" pause
+              : 30 + Math.random() * 90;
+            await new Promise(r => setTimeout(r, delay));
           }
           return { success: true, text: `Typed into ${input.selector}` };
         }

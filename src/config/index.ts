@@ -217,7 +217,7 @@ export type MusicGenAppConfig = {
 
 export type SocialBrainPlatformConnectionConfig = {
   enabled?: boolean;
-  mode?: "webhook" | "polling";
+  mode?: "webhook" | "polling" | "browser";
   pollIntervalSeconds?: number;
   accessToken?: string;
 };
@@ -493,7 +493,7 @@ const appConfigSchema = z.object({
     }).optional(),
     connections: z.record(z.string(), z.object({
       enabled: z.boolean().optional(),
-      mode: z.enum(["webhook", "polling"]).optional(),
+      mode: z.enum(["webhook", "polling", "browser"]).optional(),
       pollIntervalSeconds: z.number().optional(),
       accessToken: z.string().optional(),
     })).optional(),

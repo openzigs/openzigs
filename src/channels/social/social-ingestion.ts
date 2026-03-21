@@ -340,14 +340,51 @@ export class TwitterAdapter implements SocialPlatformAdapter {
   }
 }
 
-/** LinkedIn webhook adapter (organization events). */
+/** LinkedIn webhook adapter (Organization Social Action Notifications). */
 export class LinkedInAdapter implements SocialPlatformAdapter {
   readonly platform: SocialPlatform = "linkedin";
 
   parseWebhook(body: unknown): IncomingSocialMessage | IncomingComment | null {
     const payload = body as Record<string, unknown>;
 
-    // LinkedIn uses a batch-style format with eventType
+    // LinkedIn Organization Social Action Notifications use a batch payload:
+    // { type: "ORGANIZATION_SOCIAL_ACTION_NOTIFICATIONS", notifications: [...] }
+    const payloadType = payload.type as string | undefined;
+
+    if (payloadType === "ORGANIZATION_SOCIAL_ACTION_NOTIFICATIONS") {
+      const notifications = payload.notifications as Array<Record<string, unknown>> | undefined;
+      if (!notifications?.length) return null;
+
+      // Process the first COMMENT notification (Social Brain handles one at a time)
+      for (const notification of notifications) {
+        const action = notification.action as string | undefined;
+        if (action !== "COMMENT" && action !== "ADMIN_COMMENT") continue;
+
+        const sourcePost = (notification.sourcePost as string) ?? "";
+        const generatedActivity = (notification.generatedActivity as string) ?? "";
+        const lastModifiedAt = notification.lastModifiedAt as number | undefined;
+
+        // Extract comment text from decoratedGeneratedActivity if available
+        const decorated = notification.decoratedGeneratedActivity as Record<string, unknown> | undefined;
+        const commentData = decorated?.comment as Record<string, unknown> | undefined;
+        const commentText = (commentData?.text as string) ?? (commentData?.message as string) ?? "";
+        const commentOwner = (commentData?.owner as string) ?? "";
+
+        if (!generatedActivity || !sourcePost) continue;
+
+        return {
+          platform: "linkedin",
+          postId: sourcePost,
+          commentId: generatedActivity,
+          userId: commentOwner,
+          username: commentOwner,
+          text: commentText,
+          timestamp: new Date(lastModifiedAt ?? Date.now()).toISOString(),
+        };
+      }
+    }
+
+    // Legacy format fallback: eventType-based payload
     const eventType = payload.eventType as string | undefined;
 
     if (eventType === "MESSAGING") {

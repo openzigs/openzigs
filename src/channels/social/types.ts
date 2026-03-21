@@ -216,7 +216,7 @@ export type SocialBrainConfig = {
   };
   connections?: Record<string, {
     enabled?: boolean;
-    mode?: "webhook" | "polling";
+    mode?: "webhook" | "polling" | "browser";
     pollIntervalSeconds?: number;
     accessToken?: string;
   }>;

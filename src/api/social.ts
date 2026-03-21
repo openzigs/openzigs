@@ -313,7 +313,7 @@ export const createSocialRouter = (opts: SocialRouterOptions): Router => {
     keywords: z.string().default("[]"),
     regex: z.string().nullable().default(null),
     comment_reply_template: z.string().nullable().default(null),
-    dm_template: z.string().min(1),
+    dm_template: z.string().default(""),
     dm_delay_seconds: z.number().int().min(0).max(3600).default(0),
     max_triggers_per_user: z.number().int().min(1).max(100).default(1),
     max_triggers_total: z.number().int().min(1).nullable().default(null),
@@ -321,7 +321,10 @@ export const createSocialRouter = (opts: SocialRouterOptions): Router => {
     model: z.string().max(255).nullable().default(null),
     use_ai_reply: z.union([z.boolean(), z.number().int().min(0).max(1)]).transform(v => typeof v === "boolean" ? (v ? 1 : 0) : v).default(0),
     ai_reply_context: z.string().nullable().default(null),
-  });
+  }).refine(
+    (d) => d.comment_reply_template || d.dm_template || d.use_ai_reply,
+    { message: "At least one of comment reply template, DM template, or AI reply must be set" },
+  );
 
   router.post("/rules", (req, res) => {
     const parsed = createRuleSchema.safeParse(req.body);
@@ -378,6 +381,8 @@ export const createSocialRouter = (opts: SocialRouterOptions): Router => {
     max_triggers_total: z.number().int().min(0).optional(),
     auto_tag: z.string().max(255).optional(),
     model: z.string().max(255).nullable().optional(),
+    use_ai_reply: z.union([z.boolean(), z.number().int().min(0).max(1)]).transform(v => typeof v === "boolean" ? (v ? 1 : 0) : v).optional(),
+    ai_reply_context: z.string().nullable().optional(),
   }).strict();
 
   router.patch("/rules/:id", (req, res) => {
@@ -719,8 +724,13 @@ export const createSocialRouter = (opts: SocialRouterOptions): Router => {
     }
   });
 
-  // ── PATCH /connections/:platform — Toggle platform enabled state ──
-  const toggleSchema = z.object({ enabled: z.boolean() });
+  // ── PATCH /connections/:platform — Toggle platform enabled state / ingestion mode ──
+  const toggleSchema = z.object({
+    enabled: z.boolean().optional(),
+    mode: z.enum(["webhook", "polling", "browser"]).optional(),
+  }).refine((d) => d.enabled !== undefined || d.mode !== undefined, {
+    message: "Request body must include at least one of { enabled, mode }",
+  });
 
   router.patch("/connections/:platform", async (req, res) => {
     const parsed = platformSchema.safeParse(req.params.platform);
@@ -730,11 +740,11 @@ export const createSocialRouter = (opts: SocialRouterOptions): Router => {
     }
     const body = toggleSchema.safeParse(req.body);
     if (!body.success) {
-      res.status(400).json({ error: "Request body must include { enabled: boolean }" });
+      res.status(400).json({ error: "Request body must include { enabled?: boolean, mode?: 'webhook' | 'polling' | 'browser' }" });
       return;
     }
     const platform = parsed.data;
-    const { enabled } = body.data;
+    const { enabled, mode } = body.data;
 
     try {
       const configPath = process.env.OPENZIGS_CONFIG_PATH
@@ -749,14 +759,15 @@ export const createSocialRouter = (opts: SocialRouterOptions): Router => {
         if (!(e instanceof Error && "code" in e && (e as { code?: string }).code === "ENOENT")) throw e;
       }
 
-      // Update socialBrain.connections.<platform>.enabled
+      // Update socialBrain.connections.<platform>
       const sb = (userConfig.socialBrain && typeof userConfig.socialBrain === "object")
         ? (userConfig.socialBrain as Record<string, unknown>) : {};
       const conns = (sb.connections && typeof sb.connections === "object")
         ? (sb.connections as Record<string, unknown>) : {};
       const existing = (conns[platform] && typeof conns[platform] === "object")
         ? (conns[platform] as Record<string, unknown>) : {};
-      existing.enabled = enabled;
+      if (enabled !== undefined) existing.enabled = enabled;
+      if (mode !== undefined) existing.mode = mode;
       conns[platform] = existing;
       sb.connections = conns;
       userConfig.socialBrain = sb;
@@ -769,17 +780,20 @@ export const createSocialRouter = (opts: SocialRouterOptions): Router => {
       // Update in-memory config so getConnectionStatus reflects immediately
       if (socialConfig?.connections) {
         if (!socialConfig.connections[platform]) {
-          socialConfig.connections[platform] = { enabled };
-        } else {
-          socialConfig.connections[platform]!.enabled = enabled;
+          socialConfig.connections[platform] = {};
         }
+        if (enabled !== undefined) socialConfig.connections[platform]!.enabled = enabled;
+        if (mode !== undefined) socialConfig.connections[platform]!.mode = mode;
       }
 
-      logger.info(`[SocialAPI] Platform ${platform} ${enabled ? "enabled" : "disabled"} by user`);
-      res.json({ ok: true, platform, enabled });
+      const parts: string[] = [];
+      if (enabled !== undefined) parts.push(`${enabled ? "enabled" : "disabled"}`);
+      if (mode !== undefined) parts.push(`mode=${mode}`);
+      logger.info(`[SocialAPI] Platform ${platform} updated: ${parts.join(", ")}`);
+      res.json({ ok: true, platform, enabled, mode, needsRestart: mode !== undefined });
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
-      logger.error(`[SocialAPI] Failed to toggle platform ${platform}: ${msg}`);
+      logger.error(`[SocialAPI] Failed to update platform ${platform}: ${msg}`);
       res.status(500).json({ error: msg });
     }
   });

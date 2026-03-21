@@ -91,7 +91,22 @@ export class CommentRuleEngine extends EventEmitter {
         direction: "outbound",
         status: "auto_replied",
         content: dmText,
-        metadata: { source: "comment-rule-engine", ...metadata },
+        metadata: { source: "comment-rule-engine", type: "dm", ...metadata },
+      });
+    }
+  }
+
+  /** Log an outbound comment reply in the social_messages table. */
+  private logOutboundCommentReply(comment: IncomingComment, replyText: string): void {
+    const contact = this.repository.getContactByPlatformUser(comment.platform, comment.userId);
+    if (contact) {
+      this.repository.insertMessage({
+        contactId: contact.id,
+        platform: comment.platform,
+        direction: "outbound",
+        status: "auto_replied",
+        content: replyText,
+        metadata: { source: "comment-rule-engine", type: "comment_reply", postId: comment.postId, commentId: comment.commentId },
       });
     }
   }
@@ -188,6 +203,7 @@ export class CommentRuleEngine extends EventEmitter {
           ].filter(Boolean).join("\n");
           const reply = await this.generateAiReply(aiPrompt, rule.ai_reply_context ?? undefined);
           await this.replyToComment(comment.platform, comment.commentId, reply, comment.postId);
+          this.logOutboundCommentReply(comment, reply);
           commentReplied = true;
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
@@ -198,6 +214,7 @@ export class CommentRuleEngine extends EventEmitter {
         try {
           const reply = interpolateTemplate(rule.comment_reply_template, vars);
           await this.replyToComment(comment.platform, comment.commentId, reply, comment.postId);
+          this.logOutboundCommentReply(comment, reply);
           commentReplied = true;
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
@@ -206,8 +223,9 @@ export class CommentRuleEngine extends EventEmitter {
       }
     }
 
-    // 2. Send DM (with optional delay)
-    if (this.sendDm) {
+    // 2. Send DM (with optional delay) — skip for platforms without DM support (e.g. YouTube)
+    const DM_SUPPORTED_PLATFORMS: Set<string> = new Set(["twitter", "linkedin", "reddit", "instagram", "facebook"]);
+    if (this.sendDm && rule.dm_template && DM_SUPPORTED_PLATFORMS.has(comment.platform)) {
       const postMeta = comment.postContext
         ? { postCaption: comment.postContext.caption, postUrl: comment.postContext.permalink, postMediaType: comment.postContext.mediaType, triggeringComment: comment.text }
         : { triggeringComment: comment.text };

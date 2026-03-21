@@ -31,6 +31,17 @@ const getConversationsSchema = z.object({
   count: z.number().min(1).max(50).optional(),
 });
 
+const getPostCommentsSchema = z.object({
+  post_urn: z.string().describe("Post URN (e.g. urn:li:share:xxx or urn:li:ugcPost:xxx)"),
+  count: z.number().min(1).max(100).optional().describe("Number of comments (default: 20)"),
+});
+
+const replyToCommentSchema = z.object({
+  post_urn: z.string().describe("Post URN"),
+  comment_urn: z.string().describe("Comment URN to reply to"),
+  text: z.string().max(3000).describe("Reply text"),
+});
+
 const callLocalServer = async (
   manager: LocalMcpServerManager | undefined,
   toolName: string,
@@ -108,6 +119,26 @@ export const createLinkedInTools = (options: LinkedInToolsOptions): ToolDefiniti
       riskLevel: "high",
       source: "linkedin",
       handler: async (args) => callLocalServer(mgr, "linkedin_get_conversations", args),
+    },
+    {
+      name: "linkedin-get-post-comments",
+      description: "Get comments on a LinkedIn post.",
+      inputSchema: { type: "object", properties: { post_urn: { type: "string" }, count: { type: "number" } }, required: ["post_urn"] },
+      zodSchema: getPostCommentsSchema,
+      category: "social",
+      riskLevel: "low",
+      source: "linkedin",
+      handler: async (args) => callLocalServer(mgr, "linkedin_get_post_comments", args),
+    },
+    {
+      name: "linkedin-reply-to-comment",
+      description: "Reply to a comment on a LinkedIn post.",
+      inputSchema: { type: "object", properties: { post_urn: { type: "string" }, comment_urn: { type: "string" }, text: { type: "string" } }, required: ["post_urn", "comment_urn", "text"] },
+      zodSchema: replyToCommentSchema,
+      category: "social",
+      riskLevel: "high",
+      source: "linkedin",
+      handler: async (args) => callLocalServer(mgr, "linkedin_reply_to_comment", args),
     },
   ];
 };

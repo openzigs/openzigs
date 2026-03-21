@@ -167,11 +167,13 @@
         "enabled": false,
         "mode": "polling",
         "pollIntervalSeconds": 300,
-        "accessToken": "${YOUTUBE_API_KEY}"
+        "accessToken": "${YOUTUBE_API_KEY}",
+        "channelId": "${YOUTUBE_CHANNEL_ID}",
+        "channelHandle": "${YOUTUBE_CHANNEL_HANDLE}"
       },
       "linkedin": {
         "enabled": false,
-        "mode": "webhook",
+        "mode": "polling",
         "clientId": "${LINKEDIN_CLIENT_ID}",
         "clientSecret": "${LINKEDIN_CLIENT_SECRET}",
         "accessToken": "${LINKEDIN_ACCESS_TOKEN}",
