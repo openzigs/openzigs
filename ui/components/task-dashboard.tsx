@@ -15,6 +15,11 @@ const TaskGraph = dynamic(
   { ssr: false, loading: () => <p className="text-sm text-muted-foreground p-4">Loading graph…</p> }
 );
 
+const TaskTreeView = dynamic(
+  () => import("@/components/tasks/task-tree-view").then((mod) => ({ default: mod.TaskTreeView })),
+  { ssr: false, loading: () => <p className="text-sm text-muted-foreground p-4">Loading tree…</p> }
+);
+
 type TaskData = {
   id: string;
   parentTaskId: string | null;
@@ -78,6 +83,7 @@ export const TaskDashboard = () => {
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [expandedTask, setExpandedTask] = useState<string | null>(null);
   const [graphTaskId, setGraphTaskId] = useState<string | null>(null);
+  const [treeTaskId, setTreeTaskId] = useState<string | null>(null);
 
   const tasksQuery = useQuery({
     queryKey: ["tasks", statusFilter],
@@ -246,6 +252,12 @@ export const TaskDashboard = () => {
                   >
                     {graphTaskId === task.id ? "◆ Hide graph" : "◇ View graph"}
                   </button>
+                  <button
+                    className="text-xs text-muted-foreground hover:text-foreground"
+                    onClick={() => setTreeTaskId(treeTaskId === task.id ? null : task.id)}
+                  >
+                    {treeTaskId === task.id ? "▣ Hide tree" : "▢ View tree"}
+                  </button>
                 </div>
 
                 {expandedTask === task.id && childrenQuery.data && (
@@ -270,6 +282,13 @@ export const TaskDashboard = () => {
                 {graphTaskId === task.id && (
                   <div className="mt-3">
                     <TaskGraph taskId={task.id} height={400} />
+                  </div>
+                )}
+
+                {/* Task tree view */}
+                {treeTaskId === task.id && (
+                  <div className="mt-3">
+                    <TaskTreeView taskId={task.id} />
                   </div>
                 )}
               </div>

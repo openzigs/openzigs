@@ -31,6 +31,7 @@ import { PinterestPanel } from "@/components/admin/pinterest-panel";
 import { LinkedInPanel } from "@/components/admin/linkedin-panel";
 import { TikTokPanel } from "@/components/admin/tiktok-panel";
 import { SocialBrainPanel } from "@/components/admin/social-brain-panel";
+import { OrchestrationTemplatesPanel } from "@/components/admin/orchestration-templates-panel";
 import { ToastContainer, showToast } from "@/components/toast";
 import { RotateCw } from "lucide-react";
 import { AskAiPanel, AskAiButton, PAGE_CONTEXTS } from "@/components/ask-ai";
@@ -102,6 +103,10 @@ export default function AdminPage() {
 
         <SectionCard title="Task Engine" defaultOpen={false}>
           <TaskEnginePanel />
+        </SectionCard>
+
+        <SectionCard title="Orchestration Templates" defaultOpen={false}>
+          <OrchestrationTemplatesPanel />
         </SectionCard>
 
         <SectionCard title="Sentinel Monitor" defaultOpen={false}>

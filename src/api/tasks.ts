@@ -30,6 +30,18 @@ export const createTasksRouter = ({ taskEngine, taskRepository }: TasksRouterOpt
     res.json(stats);
   });
 
+  /** GET /api/tasks/roots — All root tasks (no parent) with child count. */
+  router.get("/roots", (req, res) => {
+    if (!taskRepository) {
+      res.status(501).json({ error: "Task repository not available" });
+      return;
+    }
+    const limit = req.query.limit ? Number(req.query.limit) : 50;
+    const offset = req.query.offset ? Number(req.query.offset) : 0;
+    const roots = taskRepository.getRootTasks({ limit, offset });
+    res.json({ roots, count: roots.length });
+  });
+
   /** GET /api/tasks/usage/summary — Aggregate token usage across recent tasks. */
   router.get("/usage/summary", (req, res) => {
     const hours = req.query.hours ? Number(req.query.hours) : 24;
@@ -96,7 +108,8 @@ export const createTasksRouter = ({ taskEngine, taskRepository }: TasksRouterOpt
    * hierarchy regardless of which node the user clicked — this ensures the
    * orchestration graph always shows the complete workflow.
    *
-   * Returns React Flow-compatible `nodes` and `edges` arrays.
+   * Supports `?maxDepth=N` (default 10) and `?format=graph` for React Flow nodes/edges.
+   * Default format returns nested TaskTreeNode with aggregate stats.
    */
   router.get("/:id/tree", (req, res) => {
     const task = taskEngine.getTask(req.params.id);
@@ -107,7 +120,21 @@ export const createTasksRouter = ({ taskEngine, taskRepository }: TasksRouterOpt
 
     // Walk up to the root of the tree
     const root = taskEngine.getRoot(req.params.id);
+    const maxDepth = req.query.maxDepth ? Number(req.query.maxDepth) : 10;
+    const format = req.query.format as string | undefined;
 
+    // If repository is available, use efficient recursive CTE
+    if (taskRepository && format !== "graph") {
+      const tree = taskRepository.getTaskTree(root.id, maxDepth);
+      if (!tree) {
+        res.status(404).json({ error: "Task tree not found" });
+        return;
+      }
+      res.json(tree);
+      return;
+    }
+
+    // Fallback: in-memory traversal for React Flow graph format
     const descendants = taskEngine.getDescendants(root.id);
     const allTasks = [root, ...descendants];
 

@@ -32,7 +32,7 @@ import { createAdminRouter, pinterestOAuthStates, exchangePinterestCode, refresh
 import { createTasksRouter } from "./api/tasks.js";
 import { createFilesRouter } from "./api/files.js";
 import { launchChrome, killChrome } from "./browser/chrome-launcher.js";
-import { TaskRepository, TaskEngine, TaskWorker, NotificationDispatcher } from "./tasks/index.js";
+import { TaskRepository, TaskEngine, TaskWorker, NotificationDispatcher, TaskEventStreamer, ResultInjector } from "./tasks/index.js";
 import { getDatabase, closeDatabase } from "./productivity/database.js";
 import { WebhookManager } from "./webhooks/webhook-manager.js";
 import { createWebhookRouter } from "./webhooks/webhook-routes.js";
@@ -98,6 +98,8 @@ import { createQueueRouter, createQueueCallbackRouter } from "./api/queue.js";
 import { createGalleryRouter } from "./api/gallery.js";
 import { createStudioRouter } from "./api/studio.js";
 import { createCharacterRouter, setCharacterIO, setCharacterChannelManager, resumeStaleTrainingPolls } from "./api/characters.js";
+import { TemplateRepository, TemplateService } from "./orchestration/index.js";
+import { createOrchestrationRouter } from "./api/orchestration.js";
 import { CharacterRepository } from "./characters/character-repository.js";
 import { PROJECT_ROOT } from "./project-root.js";
 
@@ -169,6 +171,12 @@ const personalityManager = new PersonalityManager({ db });
 const brandVoiceRepo = new BrandVoiceRepository(db);
 const taskRepository = new TaskRepository(db);
 const taskEngine = new TaskEngine({ repository: taskRepository });
+
+// ── Orchestration Templates ──
+const orchTemplateRepo = new TemplateRepository(db);
+orchTemplateRepo.migrate();
+const orchTemplateService = new TemplateService({ repository: orchTemplateRepo, taskEngine });
+orchTemplateService.seedBuiltIns();
 
 // ── Media Queue: Push-Based Distributed Queue ──
 const mediaQueueRepo = new MediaQueueRepository(db);
@@ -788,6 +796,10 @@ app.use("/api/admin", authMiddleware, adminRouter);
 // Knowledge Base API routes
 const knowledgeRouter = createKnowledgeRouter({ knowledgeService });
 app.use("/api/admin/knowledge", authMiddleware, knowledgeRouter);
+
+// Orchestration Template API routes
+const orchestrationRouter = createOrchestrationRouter({ templateService: orchTemplateService });
+app.use("/api/admin/orchestration", authMiddleware, orchestrationRouter);
 
 // Social Brain API routes
 const socialRouter = createSocialRouter({
@@ -2194,6 +2206,13 @@ new MediaNotificationService({
   fallbackChatId: config.channels?.telegram?.adminUserId || undefined,
 });
 
+// Wire TaskEventStreamer for real-time subagent progress events (#488)
+const taskEventStreamer = new TaskEventStreamer({ io });
+taskWorker.setEventStreamer(taskEventStreamer);
+
+// Wire ResultInjector for inline result injection into parent sessions (#487)
+new ResultInjector({ taskEngine, sessionManager, io });
+
 // Forward ALL task lifecycle events to Socket.IO for real-time graph updates
 for (const event of ["task:queued", "task:running", "task:completed", "task:failed", "task:cancelled"] as const) {
   taskEngine.on(event, (task: import("./tasks/types.js").AgentTask) => {
@@ -2210,12 +2229,34 @@ for (const event of ["task:queued", "task:running", "task:completed", "task:fail
         result: task.result,
         error: task.error,
         spawnedBy: task.spawnedBy,
+        agentName: task.agentName,
         sessionId: task.sessionId,
+        tokenUsage: task.tokenUsage,
         createdAt: task.createdAt.toISOString(),
         startedAt: task.startedAt?.toISOString() ?? null,
         completedAt: task.completedAt?.toISOString() ?? null,
       },
     });
+
+    // Emit task:tree-update with rootTaskId for live DAG visualization (#486)
+    try {
+      const rootTask = taskEngine.getRoot(task.id);
+      io.emit("task:tree-update", {
+        rootTaskId: rootTask.id,
+        taskId: task.id,
+        status: task.status,
+        updatedFields: {
+          status: task.status,
+          result: task.result,
+          error: task.error,
+          startedAt: task.startedAt?.toISOString() ?? null,
+          completedAt: task.completedAt?.toISOString() ?? null,
+          tokenUsage: task.tokenUsage,
+        },
+      });
+    } catch {
+      // If getRoot fails (e.g., task already deleted), skip tree-update
+    }
   });
 }
 
