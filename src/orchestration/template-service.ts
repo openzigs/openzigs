@@ -105,12 +105,14 @@ export class TemplateService {
     }
 
     const taskIds: string[] = [];
+    const stageTaskIds = new Map<string, string[]>();
+    const engine = this.taskEngine;
 
-    for (const stage of template.stages) {
+    const submitStage = (stage: OrchestrationTemplate["stages"][number]): string[] => {
+      const ids: string[] = [];
       for (const agent of stage.agents) {
         const goal = interpolateTemplate(agent.goal, vars);
-
-        const task = this.taskEngine.submit(
+        const task = engine.submit(
           {
             trigger: "agent",
             goal,
@@ -124,9 +126,68 @@ export class TemplateService {
           },
           { mode: "background" }
         );
-
+        ids.push(task.id);
         taskIds.push(task.id);
       }
+      stageTaskIds.set(stage.name, ids);
+      return ids;
+    };
+
+    // Separate stages into immediately-ready vs. dependent
+    const readyStages = template.stages.filter((s) => s.dependsOn.length === 0);
+    const pendingStages = template.stages.filter((s) => s.dependsOn.length > 0);
+
+    // Submit stages that have no dependencies
+    for (const stage of readyStages) {
+      submitStage(stage);
+    }
+
+    // Wire up event-driven chaining for stages with dependencies
+    if (pendingStages.length > 0) {
+      const completedStages = new Set<string>();
+
+      const trySubmitPending = (): void => {
+        let submitted = false;
+        for (const stage of pendingStages) {
+          if (stageTaskIds.has(stage.name)) continue;
+          if (stage.dependsOn.every((dep) => completedStages.has(dep))) {
+            submitStage(stage);
+            submitted = true;
+          }
+        }
+        // If we submitted new stages, check again (cascading deps)
+        if (submitted) trySubmitPending();
+      };
+
+      const isStageComplete = (stageName: string): boolean => {
+        const ids = stageTaskIds.get(stageName);
+        if (!ids) return false;
+        return ids.every((tid) => {
+          const t = engine.getTask(tid);
+          return t && (t.status === "completed" || t.status === "failed" || t.status === "cancelled");
+        });
+      };
+
+      const onTaskDone = (): void => {
+        for (const [stageName] of stageTaskIds) {
+          if (completedStages.has(stageName)) continue;
+          if (isStageComplete(stageName)) {
+            completedStages.add(stageName);
+          }
+        }
+        trySubmitPending();
+
+        // Clean up listeners once all pending stages have been submitted
+        if (pendingStages.every((s) => stageTaskIds.has(s.name))) {
+          engine.removeListener("task:completed", onTaskDone);
+          engine.removeListener("task:failed", onTaskDone);
+          engine.removeListener("task:cancelled", onTaskDone);
+        }
+      };
+
+      engine.on("task:completed", onTaskDone);
+      engine.on("task:failed", onTaskDone);
+      engine.on("task:cancelled", onTaskDone);
     }
 
     return { taskIds };

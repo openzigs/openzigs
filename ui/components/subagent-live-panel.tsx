@@ -227,7 +227,7 @@ export function SubagentLivePanel({ sessionId }: { sessionId: string | null }) {
     (ev: TaskToolCallEvent) => {
       if (ev.sessionId !== sessionId) return;
       dispatch({ type: "ADD_AGENT", taskId: ev.taskId, goal: "", agentName: "" });
-      dispatch({ type: "TOOL_CALL", taskId: ev.taskId, toolName: ev.toolName });
+      dispatch({ type: "TOOL_CALL", taskId: ev.taskId, toolName: ev.tool });
     },
     [sessionId]
   );
@@ -235,7 +235,7 @@ export function SubagentLivePanel({ sessionId }: { sessionId: string | null }) {
   const handleToolResult = useCallback(
     (ev: TaskToolResultEvent) => {
       if (ev.sessionId !== sessionId) return;
-      dispatch({ type: "TOOL_RESULT", taskId: ev.taskId, toolName: ev.toolName, durationMs: 0 });
+      dispatch({ type: "TOOL_RESULT", taskId: ev.taskId, toolName: ev.tool, durationMs: 0 });
     },
     [sessionId]
   );

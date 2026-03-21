@@ -684,18 +684,19 @@ export type RootTaskSummary = {
 
 export type TaskToolCallEvent = {
   taskId: string;
-  sessionId: string;
-  toolName: string;
+  parentTaskId: string | null;
+  sessionId: string | null;
+  tool: string;
   args: Record<string, unknown>;
-  timestamp: string;
 };
 
 export type TaskToolResultEvent = {
   taskId: string;
-  sessionId: string;
-  toolName: string;
+  parentTaskId: string | null;
+  sessionId: string | null;
+  tool: string;
   result: string;
-  timestamp: string;
+  isError: boolean;
 };
 
 export type TaskChunkEvent = {

@@ -5,7 +5,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { fetchJson } from "@/lib/api";
 import { showToast } from "@/components/toast";
 import type { OrchestrationTemplate, OrchestrationStage, StageAgent, TemplateVariable } from "@/lib/types";
-import { Play, Pencil, Trash2, Plus, X, GripVertical, ChevronDown, ChevronUp, Lock } from "lucide-react";
+import { Play, Pencil, Trash2, Plus, X, GripVertical, Lock } from "lucide-react";
 
 const CATEGORIES = ["research", "analysis", "content", "dev", "custom"] as const;
 const ARCHETYPES = ["researcher", "coder", "writer", "analyst", "assistant"] as const;
@@ -336,7 +336,7 @@ function TemplateForm({
         </div>
         <div>
           <label className="block text-xs font-medium text-muted-foreground mb-1">Category</label>
-          <select className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm" value={category} onChange={(e) => setCategory(e.target.value)}>
+          <select className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm" value={category} onChange={(e) => setCategory(e.target.value as typeof category)}>
             {CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
           </select>
         </div>

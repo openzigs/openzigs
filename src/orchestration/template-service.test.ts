@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
+import { EventEmitter } from "node:events";
 import Database from "better-sqlite3";
 import { TemplateRepository } from "./template-repository.js";
 import {
@@ -309,6 +310,131 @@ describe("TemplateService", () => {
       svc.execute(t.id, { variables: { topic: "AI" } });
       const call = fakeEngine.submit.mock.calls[0][0];
       expect(call.goal).toBe("Write a blog post about AI");
+    });
+
+    it("defers stages with dependsOn until dependencies complete", () => {
+      let taskCounter = 0;
+      const emitter = new EventEmitter();
+      const tasks = new Map<string, { id: string; status: string }>();
+
+      const fakeEngine = Object.assign(emitter, {
+        submit: vi.fn().mockImplementation(() => {
+          const id = `task-${++taskCounter}`;
+          const task = { id, status: "queued" };
+          tasks.set(id, task);
+          return task;
+        }),
+        getTask: vi.fn().mockImplementation((id: string) => tasks.get(id) ?? null),
+      });
+
+      const svc = new TemplateService({
+        repository: repo,
+        taskEngine: fakeEngine as never,
+      });
+      const t = svc.create({
+        ...SAMPLE_INPUT,
+        stages: [
+          {
+            name: "research",
+            type: "parallel",
+            agents: [
+              { archetype: "researcher", goal: "Research {{topic}}", model: null, allowedTools: ["web-search"], autoApproveTools: [] },
+            ],
+            dependsOn: [],
+          },
+          {
+            name: "synthesize",
+            type: "sequential",
+            agents: [
+              { archetype: "writer", goal: "Synthesize {{topic}}", model: null, allowedTools: [], autoApproveTools: [] },
+            ],
+            dependsOn: ["research"],
+          },
+        ],
+      });
+
+      const result = svc.execute(t.id, { variables: { topic: "AI" } });
+
+      // Only the "research" stage should have been submitted
+      expect(fakeEngine.submit).toHaveBeenCalledTimes(1);
+      expect(fakeEngine.submit.mock.calls[0][0].goal).toBe("Research AI");
+
+      // Initial taskIds only includes the first stage
+      expect(result.taskIds).toHaveLength(1);
+
+      // Simulate task-1 completing
+      tasks.get("task-1")!.status = "completed";
+      emitter.emit("task:completed", { id: "task-1" });
+
+      // Now the "synthesize" stage should have been submitted
+      expect(fakeEngine.submit).toHaveBeenCalledTimes(2);
+      expect(fakeEngine.submit.mock.calls[1][0].goal).toBe("Synthesize AI");
+    });
+
+    it("does not submit dependent stage until ALL deps complete", () => {
+      let taskCounter = 0;
+      const emitter = new EventEmitter();
+      const tasks = new Map<string, { id: string; status: string }>();
+
+      const fakeEngine = Object.assign(emitter, {
+        submit: vi.fn().mockImplementation(() => {
+          const id = `task-${++taskCounter}`;
+          const task = { id, status: "queued" };
+          tasks.set(id, task);
+          return task;
+        }),
+        getTask: vi.fn().mockImplementation((id: string) => tasks.get(id) ?? null),
+      });
+
+      const svc = new TemplateService({
+        repository: repo,
+        taskEngine: fakeEngine as never,
+      });
+      const t = svc.create({
+        ...SAMPLE_INPUT,
+        stages: [
+          {
+            name: "gather-a",
+            type: "parallel",
+            agents: [
+              { archetype: "researcher", goal: "Gather A for {{topic}}", model: null, allowedTools: [], autoApproveTools: [] },
+            ],
+            dependsOn: [],
+          },
+          {
+            name: "gather-b",
+            type: "parallel",
+            agents: [
+              { archetype: "researcher", goal: "Gather B for {{topic}}", model: null, allowedTools: [], autoApproveTools: [] },
+            ],
+            dependsOn: [],
+          },
+          {
+            name: "merge",
+            type: "sequential",
+            agents: [
+              { archetype: "writer", goal: "Merge {{topic}}", model: null, allowedTools: [], autoApproveTools: [] },
+            ],
+            dependsOn: ["gather-a", "gather-b"],
+          },
+        ],
+      });
+
+      svc.execute(t.id, { variables: { topic: "AI" } });
+
+      // Two independent stages submitted
+      expect(fakeEngine.submit).toHaveBeenCalledTimes(2);
+
+      // Complete only gather-a — merge should NOT start yet
+      tasks.get("task-1")!.status = "completed";
+      emitter.emit("task:completed", { id: "task-1" });
+      expect(fakeEngine.submit).toHaveBeenCalledTimes(2);
+
+      // Complete gather-b — now merge should start
+      tasks.get("task-2")!.status = "completed";
+      emitter.emit("task:completed", { id: "task-2" });
+      expect(fakeEngine.submit).toHaveBeenCalledTimes(3);
+      expect(fakeEngine.submit.mock.calls[2][0].goal).toBe("Merge AI");
     });
   });
 });
