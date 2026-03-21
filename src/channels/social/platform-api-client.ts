@@ -321,8 +321,8 @@ export class RedditApiClient implements PlatformApiClient {
           : "",
         cachedAt: new Date().toISOString(),
       };
-    } catch {
-      logger.warn(`[RedditApiClient] Failed to parse reddit response for ${postId}`);
+    } catch (error) {
+      logger.warn(`[RedditApiClient] Failed to parse reddit response for ${postId}: ${error instanceof Error ? error.message : String(error)}`);
       return null;
     }
   }

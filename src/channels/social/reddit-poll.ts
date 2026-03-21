@@ -53,8 +53,8 @@ export function createRedditPollFn(
       items = children
         .map((c) => c.data)
         .filter((d): d is RedditInboxItem => d != null);
-    } catch {
-      logger.warn("[RedditPoll] Failed to parse inbox response");
+    } catch (error) {
+      logger.warn(`[RedditPoll] Failed to parse inbox response: ${error instanceof Error ? error.message : String(error)}`);
       return results;
     }
 
