@@ -181,7 +181,7 @@ const AgentCard = ({
       {agent.infer === false && (
         <span
           className="rounded-full bg-muted px-2 py-0.5 text-[10px] text-muted-foreground"
-          title="This agent can only be invoked via explicit spawn-agent tool call"
+          title="This agent must be explicitly selected via the Agent Selector dropdown"
         >
           Manual only
         </span>

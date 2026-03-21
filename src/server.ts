@@ -2212,7 +2212,7 @@ const taskEventStreamer = new TaskEventStreamer({ io });
 taskWorker.setEventStreamer(taskEventStreamer);
 
 // Wire SubagentEventRelay for SDK-native subagent events (#497)
-new SubagentEventRelay({ io, copilot });
+const subagentRelay = new SubagentEventRelay({ io, copilot });
 
 // Wire ResultInjector for inline result injection into parent sessions (#487)
 new ResultInjector({ taskEngine, sessionManager, io });
@@ -2777,6 +2777,7 @@ const gracefulShutdown = () => {
   socialIngestion.stopAllPolling();
   outboxPoller.stop();
   queueMaster.stop();
+  subagentRelay.dispose();
   closeDatabase();
   killChrome();
   vaultService.lock();

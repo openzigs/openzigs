@@ -3143,8 +3143,8 @@ SubagentInlineView (ui/components/chat/subagent-inline-view.tsx)
 
 | SDK Event | Internal EventEmitter | Socket.IO Event | Payload Fields |
 |-----------|----------------------|-----------------|----------------|
-| `subagent.started` | `subagent:started` | `subagent:started` | `sessionId`, `agentName`, `goal` |
-| `subagent.completed` | `subagent:completed` | `subagent:completed` | `sessionId`, `agentName`, `result` |
+| `subagent.started` | `subagent:started` | `subagent:started` | `sessionId`, `agentName`, `parentSessionId` |
+| `subagent.completed` | `subagent:completed` | `subagent:completed` | `sessionId`, `agentName`, `summary` |
 | `subagent.failed` | `subagent:failed` | `subagent:failed` | `sessionId`, `agentName`, `error` |
 | `subagent.selected` | `subagent:selected` | `subagent:selected` | `sessionId`, `agentName` |
 | `subagent.deselected` | `subagent:deselected` | `subagent:deselected` | `sessionId`, `agentName` |

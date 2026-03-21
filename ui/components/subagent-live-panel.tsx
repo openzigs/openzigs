@@ -20,8 +20,6 @@ import { ChevronDown, ChevronUp, X, Bot, Wrench, CheckCircle2, XCircle, Clock, L
 export type AgentMode = "background" | "in-session";
 export type FilterMode = "all" | "background" | "in-session";
 
-/* ── Types ── */
-
 type AgentEvent =
   | { type: "tool-call"; toolName: string; ts: number }
   | { type: "tool-result"; toolName: string; durationMs: number; ts: number }
