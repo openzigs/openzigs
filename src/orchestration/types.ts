@@ -74,6 +74,14 @@ export type CreateOrchestrationTemplateInput = z.infer<typeof CreateOrchestratio
 export type UpdateOrchestrationTemplateInput = z.infer<typeof UpdateOrchestrationTemplateSchema>;
 export type ExecuteTemplateInput = z.infer<typeof ExecuteTemplateSchema>;
 
+/** Thrown when a template ID is not found, enabling typed 404 handling. */
+export class TemplateNotFoundError extends Error {
+  constructor(id: string) {
+    super(`Template not found: ${id}`);
+    this.name = "TemplateNotFoundError";
+  }
+}
+
 /** SQLite row shape. */
 export interface StoredOrchestrationTemplate {
   id: string;

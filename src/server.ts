@@ -2254,8 +2254,11 @@ for (const event of ["task:queued", "task:running", "task:completed", "task:fail
           tokenUsage: task.tokenUsage,
         },
       });
-    } catch {
-      // If getRoot fails (e.g., task already deleted), skip tree-update
+    } catch (err) {
+      // If getRoot fails (e.g., task already deleted), skip tree-update.
+      if (!(err instanceof Error && err.message.includes("Task not found"))) {
+        logger.warn(`Failed to emit task:tree-update for task ${task.id}`, { error: err });
+      }
     }
   });
 }

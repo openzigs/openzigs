@@ -5,17 +5,16 @@ import type {
   CreateOrchestrationTemplateInput,
   UpdateOrchestrationTemplateInput,
   StoredOrchestrationTemplate,
-  OrchestrationStage,
-  TemplateVariable,
 } from "./types.js";
+import { OrchestrationStageSchema, TemplateVariableSchema } from "./types.js";
 
 const toTemplate = (row: StoredOrchestrationTemplate): OrchestrationTemplate => ({
   id: row.id,
   name: row.name,
   description: row.description,
   category: row.category as OrchestrationTemplate["category"],
-  stages: JSON.parse(row.stages_json) as OrchestrationStage[],
-  variables: JSON.parse(row.variables_json) as TemplateVariable[],
+  stages: OrchestrationStageSchema.array().parse(JSON.parse(row.stages_json)),
+  variables: TemplateVariableSchema.array().parse(JSON.parse(row.variables_json)),
   aggregationPrompt: row.aggregation_prompt,
   isBuiltIn: row.is_built_in === 1,
   createdAt: row.created_at,

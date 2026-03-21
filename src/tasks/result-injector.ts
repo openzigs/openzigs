@@ -145,7 +145,7 @@ export class ResultInjector extends EventEmitter {
       this.emit("injected", message);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      this.log.warn(`ResultInjector: failed to inject result for task ${message.metadata.taskId}: ${msg}`);
+      this.log.warn(`ResultInjector: failed to inject result for task ${message.metadata.taskId}: ${msg}`, { error: err });
     }
   }
 }

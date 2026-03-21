@@ -9,6 +9,7 @@ import { Router } from "express";
 import type { TemplateService } from "../orchestration/template-service.js";
 import { logger } from "../logging/logger.js";
 import { ZodError } from "zod";
+import { TemplateNotFoundError } from "../orchestration/types.js";
 
 export type OrchestrationRouterOptions = {
   templateService: TemplateService;
@@ -26,7 +27,7 @@ export const createOrchestrationRouter = ({
       res.json({ templates });
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
-      logger.error("Failed to list orchestration templates", { error: msg });
+      logger.error("Failed to list orchestration templates", { error });
       res.status(500).json({ error: msg });
     }
   });
@@ -42,7 +43,7 @@ export const createOrchestrationRouter = ({
       res.json(template);
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
-      logger.error("Failed to get orchestration template", { error: msg });
+      logger.error("Failed to get orchestration template", { error });
       res.status(500).json({ error: msg });
     }
   });
@@ -58,7 +59,7 @@ export const createOrchestrationRouter = ({
         return;
       }
       const msg = error instanceof Error ? error.message : String(error);
-      logger.error("Failed to create orchestration template", { error: msg });
+      logger.error("Failed to create orchestration template", { error });
       res.status(500).json({ error: msg });
     }
   });
@@ -78,7 +79,7 @@ export const createOrchestrationRouter = ({
         return;
       }
       const msg = error instanceof Error ? error.message : String(error);
-      logger.error("Failed to update orchestration template", { error: msg });
+      logger.error("Failed to update orchestration template", { error });
       res.status(500).json({ error: msg });
     }
   });
@@ -94,7 +95,7 @@ export const createOrchestrationRouter = ({
       res.json({ ok: true });
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
-      logger.error("Failed to delete orchestration template", { error: msg });
+      logger.error("Failed to delete orchestration template", { error });
       res.status(500).json({ error: msg });
     }
   });
@@ -110,11 +111,11 @@ export const createOrchestrationRouter = ({
         return;
       }
       const msg = error instanceof Error ? error.message : String(error);
-      if (msg.includes("not found")) {
+      if (error instanceof TemplateNotFoundError) {
         res.status(404).json({ error: msg });
         return;
       }
-      logger.error("Failed to execute orchestration template", { error: msg });
+      logger.error("Failed to execute orchestration template", { error });
       res.status(500).json({ error: msg });
     }
   });

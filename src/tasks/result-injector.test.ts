@@ -186,7 +186,8 @@ describe("ResultInjector", () => {
 
       await vi.waitFor(() => {
         expect(log.warn).toHaveBeenCalledWith(
-          expect.stringContaining("failed to inject result for task task-1")
+          expect.stringContaining("failed to inject result for task task-1"),
+          expect.objectContaining({ error: expect.any(Error) })
         );
       });
     });

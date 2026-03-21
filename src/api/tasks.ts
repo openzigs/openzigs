@@ -120,8 +120,9 @@ export const createTasksRouter = ({ taskEngine, taskRepository }: TasksRouterOpt
 
     // Walk up to the root of the tree
     const root = taskEngine.getRoot(req.params.id);
-    const maxDepth = req.query.maxDepth ? Number(req.query.maxDepth) : 10;
-    const format = req.query.format as string | undefined;
+    const rawDepth = Number(req.query.maxDepth);
+    const maxDepth = Number.isFinite(rawDepth) ? Math.max(1, Math.min(rawDepth, 50)) : 10;
+    const format = typeof req.query.format === "string" ? req.query.format : undefined;
 
     // If repository is available, use efficient recursive CTE
     if (taskRepository && format !== "graph") {
