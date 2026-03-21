@@ -72,6 +72,8 @@ export class MessageRouter {
   private userInputHandler?: UserInputHandler;
   private vaultService?: SecretVaultService;
   private brandVoiceService?: BrandVoiceService;
+  /** In-memory map of sessionId → active agent name for SDK-native agent switching. */
+  private sessionAgents = new Map<string, string>();
 
   constructor({
     channelManager,
@@ -109,8 +111,25 @@ export class MessageRouter {
 
     // Also destroy the SDK session to free resources and reset context
     if (sessionId) {
+      this.sessionAgents.delete(sessionId);
       void this.copilot.destroySession(sessionId);
     }
+  }
+
+  /** Set the active agent for a session. Pass null to revert to default. */
+  setSessionAgent(sessionId: string, agentName: string | null): void {
+    if (agentName) {
+      this.sessionAgents.set(sessionId, agentName);
+    } else {
+      this.sessionAgents.delete(sessionId);
+    }
+    // Destroy cached SDK session so the next message picks up the new agent config
+    void this.copilot.destroySession(sessionId);
+  }
+
+  /** Get the active agent for a session, or null if using default. */
+  getSessionAgent(sessionId: string): string | null {
+    return this.sessionAgents.get(sessionId) ?? null;
   }
 
   async route(message: IncomingMessage, options?: RouteOptions): Promise<void> {
@@ -237,6 +256,8 @@ export class MessageRouter {
         workingDirectory: options?.workingDirectory,
         reasoningEffort: options?.reasoningEffort,
         autoApproveTools,
+        enableSubagents: true,
+        agent: this.sessionAgents.get(sessionId),
       })) {
         response += chunk;
         if (options?.onChunk) {

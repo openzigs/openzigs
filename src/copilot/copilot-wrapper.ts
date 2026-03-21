@@ -142,6 +142,42 @@ export type SdkSessionLifecycleEvent = {
   };
 };
 
+// ── Subagent Event Payload Types ──
+export type SubagentStartedEvent = {
+  sessionId: string;
+  agentName: string;
+  parentSessionId?: string;
+};
+
+export type SubagentCompletedEvent = {
+  sessionId: string;
+  agentName: string;
+  summary?: string;
+};
+
+export type SubagentFailedEvent = {
+  sessionId: string;
+  agentName: string;
+  error: string;
+};
+
+export type SubagentSelectedEvent = {
+  sessionId: string;
+  agentName: string;
+};
+
+export type SubagentDeselectedEvent = {
+  sessionId: string;
+  agentName: string;
+};
+
+export type SubagentEvent =
+  | { type: "started"; payload: SubagentStartedEvent }
+  | { type: "completed"; payload: SubagentCompletedEvent }
+  | { type: "failed"; payload: SubagentFailedEvent }
+  | { type: "selected"; payload: SubagentSelectedEvent }
+  | { type: "deselected"; payload: SubagentDeselectedEvent };
+
 type CopilotSessionLike = {
   readonly sessionId: string;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -294,6 +330,10 @@ export type ChatOptions = {
   autoApproveTools?: string[];
   /** Skill names to disable for this session (SDK-native disabledSkills support). */
   disabledSkills?: string[];
+  /** When true, SDK-native subagent delegation is enabled (customAgents are passed to the session). */
+  enableSubagents?: boolean;
+  /** Override agent for this session — the SDK will use this agent's persona/tools. */
+  agent?: string;
 };
 
 export interface CopilotWrapper {
@@ -1314,6 +1354,50 @@ export class CopilotWrapperService extends EventEmitter implements CopilotWrappe
     session.on("compaction_complete", () => {
       const compactionEvent: CompactionEvent = { sessionId, status: "completed" };
       this.emit("context:compaction", compactionEvent);
+    });
+
+    // ── Subagent lifecycle events (SDK-native delegation) ──
+    session.on("subagent.started", (event: { data?: { agentName?: string; parentSessionId?: string } }) => {
+      const payload: SubagentStartedEvent = {
+        sessionId,
+        agentName: event.data?.agentName ?? "unknown",
+        parentSessionId: event.data?.parentSessionId,
+      };
+      this.emit("subagent:started", payload);
+    });
+
+    session.on("subagent.completed", (event: { data?: { agentName?: string; summary?: string } }) => {
+      const payload: SubagentCompletedEvent = {
+        sessionId,
+        agentName: event.data?.agentName ?? "unknown",
+        summary: event.data?.summary,
+      };
+      this.emit("subagent:completed", payload);
+    });
+
+    session.on("subagent.failed", (event: { data?: { agentName?: string; error?: string } }) => {
+      const payload: SubagentFailedEvent = {
+        sessionId,
+        agentName: event.data?.agentName ?? "unknown",
+        error: event.data?.error ?? "Unknown error",
+      };
+      this.emit("subagent:failed", payload);
+    });
+
+    session.on("subagent.selected", (event: { data?: { agentName?: string } }) => {
+      const payload: SubagentSelectedEvent = {
+        sessionId,
+        agentName: event.data?.agentName ?? "unknown",
+      };
+      this.emit("subagent:selected", payload);
+    });
+
+    session.on("subagent.deselected", (event: { data?: { agentName?: string } }) => {
+      const payload: SubagentDeselectedEvent = {
+        sessionId,
+        agentName: event.data?.agentName ?? "unknown",
+      };
+      this.emit("subagent:deselected", payload);
     });
   }
 

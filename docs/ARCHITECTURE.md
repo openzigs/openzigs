@@ -24,6 +24,7 @@
 - [Human-in-the-Loop Execution](#human-in-the-loop-execution-detailed)
 - [Recursive Agent Chaining (Task Engine)](#recursive-agent-chaining-task-engine)
 - [Native Orchestration — Hierarchical Agents](#native-orchestration--hierarchical-agents)
+- [SDK-Native Subagent Support (In-Session Agent Delegation)](#sdk-native-subagent-support-in-session-agent-delegation-epic-495)
 - [AI-Assisted Configuration & Enterprise Webhooks](#ai-assisted-configuration--enterprise-webhooks)
 - [UX 2.0: Advanced Workflow Builder](#ux-20-advanced-workflow-builder-epic-163)
 - [Template Portability & Sharing](#template-portability--sharing-epic-188)
@@ -3085,6 +3086,142 @@ UI wiring:
 | `GET` | `/api/admin/tasks/stats` | Task queue/running stats used for busy guard |
 
 ### Tracking: [Epic #135](https://github.com/mgcronin/openzigs/issues/135)
+
+---
+
+## SDK-Native Subagent Support (In-Session Agent Delegation) (Epic #495)
+
+OpenZigs supports two complementary subagent architectures: **SDK-native in-session delegation** and **TaskEngine-backed background agents**. This section documents the SDK-native path added in [Epic #495](https://github.com/mgcronin/openzigs/issues/495).
+
+### Dual Subagent Architecture
+
+```mermaid
+graph TB
+    subgraph "Mode A: SDK-Native (In-Session)"
+        A1[User] --> A2[MessageRouter]
+        A2 --> A3[CopilotWrapper - SAME session]
+        A3 --> A4[SDK runSubagent]
+        A4 --> A5[Subagent work]
+        A5 --> A3
+        A3 --> A6[SubagentEventRelay]
+        A6 --> A7[UI - SubagentInlineView]
+    end
+    subgraph "Mode B: TaskEngine (Background)"
+        B1[spawn-agent tool] --> B2[TaskEngine]
+        B2 --> B3[TaskWorker]
+        B3 --> B4[CopilotWrapper - NEW session]
+        B3 --> B5[TaskEventStreamer]
+        B5 --> B6[UI - SubagentLivePanel]
+    end
+```
+
+| Aspect | SDK-Native (In-Session) | TaskEngine (Background) |
+|--------|------------------------|------------------------|
+| **Session** | Shares parent session context | Creates a new SDK session |
+| **Execution** | Synchronous within chat turn | Asynchronous, survives page close |
+| **Premium Requests** | 1 request (subagent reuses session) | N requests (1 per spawned agent) |
+| **Persistence** | No SQLite state | Full SQLite audit trail |
+| **UI Component** | `SubagentInlineView` (inline in chat) | `SubagentLivePanel` (floating panel) |
+| **Trigger** | SDK auto-delegates based on agent `infer` flag | Explicit `spawn-agent` / `orchestrate-agents` tool call |
+| **Use Case** | Quick specialist delegation during chat | Long-running tasks, scheduled jobs, pipelines |
+
+### SDK-Native Event Flow
+
+```
+CopilotWrapper (session.on("subagent.*"))
+        ↓ EventEmitter events
+SubagentEventRelay (src/copilot/subagent-event-relay.ts)
+        ↓ io.emit("subagent:*")
+Socket.IO broadcast
+        ↓
+useSubagentEvents hook (ui/lib/hooks/use-subagent-events.ts)
+        ↓ useReducer state updates
+SubagentInlineView (ui/components/chat/subagent-inline-view.tsx)
+```
+
+**Events wired in `CopilotWrapper.wireSessionEvents()`:**
+
+| SDK Event | Internal EventEmitter | Socket.IO Event | Payload Fields |
+|-----------|----------------------|-----------------|----------------|
+| `subagent.started` | `subagent:started` | `subagent:started` | `sessionId`, `agentName`, `goal` |
+| `subagent.completed` | `subagent:completed` | `subagent:completed` | `sessionId`, `agentName`, `result` |
+| `subagent.failed` | `subagent:failed` | `subagent:failed` | `sessionId`, `agentName`, `error` |
+| `subagent.selected` | `subagent:selected` | `subagent:selected` | `sessionId`, `agentName` |
+| `subagent.deselected` | `subagent:deselected` | `subagent:deselected` | `sessionId`, `agentName` |
+
+### TaskEngine Event Flow (Existing, for Comparison)
+
+```
+spawn-agent tool call → TaskEngine.createTask()
+        ↓
+TaskWorker picks up task → CopilotWrapper.chat() in new session
+        ↓ TaskEventStreamer listens to task lifecycle
+io.emit("task:started"), io.emit("task:progress"), io.emit("task:completed")
+        ↓
+SubagentLivePanel reducer (SDK_STARTED / task:* handlers)
+```
+
+### SubagentEventRelay (`src/copilot/subagent-event-relay.ts`)
+
+Bridges `CopilotWrapper` EventEmitter events to Socket.IO broadcasts. Instantiated in `server.ts` after the `TaskEventStreamer`.
+
+```typescript
+const relay = new SubagentEventRelay({ io, copilot });
+// On shutdown:
+relay.dispose();
+```
+
+Listens to 5 events on the `CopilotWrapper` emitter and re-broadcasts each via `io.emit()` with the same event name and payload.
+
+### Session-Level Agent Switching
+
+Users can select a specific agent for their chat session via the **Agent Selector** dropdown in the chat toolbar. This sets a per-session agent override stored in `MessageRouter.sessionAgents`.
+
+```
+AgentSelector dropdown (ui/components/chat/agent-selector.tsx)
+        ↓ POST /api/admin/sessions/:sessionId/agent
+Admin API (src/api/admin.ts)
+        ↓ messageRouter.setSessionAgent(sessionId, agentName)
+MessageRouter (src/routing/message-router.ts)
+        ↓ copilot.destroySession(sessionId)  // clear old context
+Next chat() call includes { agent: agentName, enableSubagents: true }
+```
+
+When an agent is set, `MessageRouter.routeMessage()` passes `agent` and `enableSubagents: true` to `CopilotWrapper.chat()`. When the session agent changes, the existing SDK session is destroyed so the new agent starts with a fresh context.
+
+### Admin API Endpoints (Subagent)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/api/admin/sessions/:sessionId/agent` | Set the active agent for a session |
+| `GET` | `/api/admin/sessions/:sessionId/agent` | Get the current agent for a session |
+
+### Configuration Reference
+
+| Config Path | Default | Description |
+|-------------|---------|-------------|
+| `copilot.customAgents[].infer` | `true` | When `true`, the SDK can auto-invoke this agent. When `false`, the agent must be explicitly selected ("Manual only"). |
+| `copilot.customAgents[].name` | — | Unique agent identifier passed to SDK `customAgents` |
+| `copilot.customAgents[].instructions` | — | System prompt for the agent |
+| `copilot.customAgents[].tools` | — | Optional tool allowlist for the agent |
+
+### Premium Request Implications
+
+SDK-native subagents execute within the parent session's single premium request. The SDK handles delegation internally — the subagent's work is part of the same API call. This contrasts with `spawn-agent`, which creates a new `CopilotWrapper.chat()` call (and thus a new premium request) for each background task.
+
+**Cost comparison for a 3-agent research task:**
+- **SDK-native**: 1 premium request (all 3 agents share the session)
+- **TaskEngine**: 4 premium requests (1 parent + 3 spawned agents)
+
+### SubagentLivePanel Dual-Mode Support
+
+The `SubagentLivePanel` component (`ui/components/subagent-live-panel.tsx`) now supports both agent modes in a unified view:
+
+- **Background agents** (TaskEngine): Tracked via `task:*` Socket.IO events, shown with amber "Background" badge
+- **In-session agents** (SDK-native): Tracked via `subagent:*` Socket.IO events, shown with blue "In-Session" badge
+- **Filter toggle**: Users can filter by All / Background / In-Session
+
+### Tracking: [Epic #495](https://github.com/mgcronin/openzigs/issues/495)
 
 ---
 

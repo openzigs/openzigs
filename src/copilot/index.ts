@@ -1,2 +1,2 @@
 export { CopilotWrapperService } from "./copilot-wrapper.js";
-export type { ChatOptions, CopilotModel, CopilotWrapper, CopilotWrapperOptions, DeviceAuthInfo, InfiniteSessionConfig, SdkAttachment, ReasoningEffort, ProviderConfig, CustomAgentDefinition, NativeMcpServerDefinition, ModelCapabilities } from "./copilot-wrapper.js";
+export type { ChatOptions, CopilotModel, CopilotWrapper, CopilotWrapperOptions, DeviceAuthInfo, InfiniteSessionConfig, SdkAttachment, ReasoningEffort, ProviderConfig, CustomAgentDefinition, NativeMcpServerDefinition, ModelCapabilities, SubagentStartedEvent, SubagentCompletedEvent, SubagentFailedEvent, SubagentSelectedEvent, SubagentDeselectedEvent, SubagentEvent } from "./copilot-wrapper.js";

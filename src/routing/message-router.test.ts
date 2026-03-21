@@ -79,6 +79,7 @@ class FakeCopilot implements CopilotWrapper {
   lastPrompt = "";
   lastModel?: string;
   lastConversationId?: string;
+  lastEnableSubagents?: boolean;
   response: string;
   chunks: string[];
   destroyedSessions: string[] = [];
@@ -102,11 +103,12 @@ class FakeCopilot implements CopilotWrapper {
 
   lastSystemMessage?: import("../copilot/copilot-wrapper.js").SystemMessageConfig;
 
-  async *chat(message: string, options?: { tools?: unknown[]; model?: string; onToolCall?: (tool: string, args: unknown) => void; conversationId?: string; systemMessage?: import("../copilot/copilot-wrapper.js").SystemMessageConfig }): AsyncGenerator<string> {
+  async *chat(message: string, options?: { tools?: unknown[]; model?: string; onToolCall?: (tool: string, args: unknown) => void; conversationId?: string; systemMessage?: import("../copilot/copilot-wrapper.js").SystemMessageConfig; enableSubagents?: boolean }): AsyncGenerator<string> {
     this.lastPrompt = message;
     this.lastModel = options?.model;
     this.lastConversationId = options?.conversationId;
     this.lastSystemMessage = options?.systemMessage;
+    this.lastEnableSubagents = options?.enableSubagents;
     for (const chunk of this.chunks) {
       yield chunk;
     }
@@ -747,5 +749,103 @@ describe("MessageRouter", () => {
 
     await router.route(baseMessage({ userId: "random-user" }));
     expect(telegram.messages).toHaveLength(1);
+  });
+
+  it("passes enableSubagents: true for interactive chat", async () => {
+    const baseDir = await createTempDir();
+    cleanupDirs.push(baseDir);
+
+    const channelManager = new ChannelManager();
+    const telegram = new RecordingChannel("telegram");
+    await telegram.connect();
+    channelManager.register(telegram);
+
+    const sessionManager = new SessionManager({ baseDir });
+    const copilot = new FakeCopilot("hi");
+    const router = new MessageRouter({ channelManager, sessionManager, copilot });
+
+    await router.route(baseMessage());
+    expect(copilot.lastEnableSubagents).toBe(true);
+  });
+
+  it("setSessionAgent stores and getSessionAgent retrieves the agent for a session", async () => {
+    const baseDir = await createTempDir();
+    cleanupDirs.push(baseDir);
+
+    const channelManager = new ChannelManager();
+    const telegram = new RecordingChannel("telegram");
+    await telegram.connect();
+    channelManager.register(telegram);
+
+    const sessionManager = new SessionManager({ baseDir });
+    const copilot = new FakeCopilot("ok");
+    const router = new MessageRouter({ channelManager, sessionManager, copilot });
+
+    expect(router.getSessionAgent("session-1")).toBeNull();
+    router.setSessionAgent("session-1", "researcher");
+    expect(router.getSessionAgent("session-1")).toBe("researcher");
+    router.setSessionAgent("session-1", null);
+    expect(router.getSessionAgent("session-1")).toBeNull();
+  });
+
+  it("passes session agent to copilot.chat", async () => {
+    const baseDir = await createTempDir();
+    cleanupDirs.push(baseDir);
+
+    const channelManager = new ChannelManager();
+    const telegram = new RecordingChannel("telegram");
+    await telegram.connect();
+    channelManager.register(telegram);
+
+    const sessionManager = new SessionManager({ baseDir });
+
+    let capturedAgent: string | undefined;
+    const baseCopilot = new FakeCopilot("delegated");
+    const copilot = {
+      ...baseCopilot,
+      chat: async function* (_message: string, options?: { agent?: string }) {
+        capturedAgent = options?.agent;
+        yield "delegated";
+      },
+      destroySession: async (id: string) => { baseCopilot.destroyedSessions.push(id); },
+    } as unknown as CopilotWrapper;
+
+    const router = new MessageRouter({ channelManager, sessionManager, copilot });
+
+    // Route first message to create a session
+    await router.route(baseMessage({ content: "Hello" }));
+    const sessions = await sessionManager.listSessions();
+    const sessionId = sessions[0].id;
+
+    // Set agent for this session
+    router.setSessionAgent(sessionId, "coder");
+
+    // Route another message — should pass agent
+    await router.route(baseMessage({ content: "Write code" }));
+    expect(capturedAgent).toBe("coder");
+  });
+
+  it("clears session agent when clearing user session", async () => {
+    const baseDir = await createTempDir();
+    cleanupDirs.push(baseDir);
+
+    const channelManager = new ChannelManager();
+    const telegram = new RecordingChannel("telegram");
+    await telegram.connect();
+    channelManager.register(telegram);
+
+    const sessionManager = new SessionManager({ baseDir });
+    const copilot = new FakeCopilot("ok");
+    const router = new MessageRouter({ channelManager, sessionManager, copilot });
+
+    await router.route(baseMessage({ content: "Hello" }));
+    const sessions = await sessionManager.listSessions();
+    const sessionId = sessions[0].id;
+
+    router.setSessionAgent(sessionId, "researcher");
+    expect(router.getSessionAgent(sessionId)).toBe("researcher");
+
+    router.clearUserSession("telegram", "user-1");
+    expect(router.getSessionAgent(sessionId)).toBeNull();
   });
 });
