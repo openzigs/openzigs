@@ -34,6 +34,7 @@ import { SessionContextBar } from "@/components/session-context-bar";
 import { ContextFuelGauge } from "@/components/chat/context-fuel-gauge";
 import { VoiceControls } from "@/components/voice";
 import { useTokenUsage } from "@/lib/hooks/use-token-usage";
+import { SubagentLivePanel } from "@/components/subagent-live-panel";
 import type {
   ModelInfo,
   ToolInfo,
@@ -837,6 +838,9 @@ export const ChatView = () => {
 
         <div ref={messagesEndRef} />
       </main>
+
+      {/* Subagent live progress */}
+      <SubagentLivePanel sessionId={chatId} />
 
       {/* Input */}
       <footer className="border-t border-border bg-card px-5 py-4">

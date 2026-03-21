@@ -1,6 +1,6 @@
 import type Database from "better-sqlite3";
 import { randomUUID } from "node:crypto";
-import type { AgentTask, CreateTaskInput, PipelineDefinition, StoredTask, TaskStatus } from "./types.js";
+import type { AgentTask, CreateTaskInput, PipelineDefinition, StoredTask, TaskStatus, TaskTreeNode, TaskTreeStats, RootTaskSummary } from "./types.js";
 import { TASK_LIMITS } from "./types.js";
 
 /** Convert a SQLite row into a domain `AgentTask`. */
@@ -386,5 +386,117 @@ export class TaskRepository {
     const sql = `SELECT * FROM agent_tasks WHERE json_valid(context) AND json_extract(context, '$.jobName') = ? ORDER BY created_at DESC LIMIT ?`;
     const rows = this.db.prepare(sql).all(jobName, limit) as StoredTask[];
     return rows.map(toTask);
+  }
+
+  /**
+   * Fetch the full task tree rooted at `taskId` using a recursive CTE.
+   * Returns a flat list of `AgentTask` ordered by depth then created_at.
+   */
+  getTaskTreeFlat(taskId: string, maxDepth = 10): AgentTask[] {
+    const sql = `
+      WITH RECURSIVE task_tree AS (
+        SELECT *, 0 as tree_depth FROM agent_tasks WHERE id = ?
+        UNION ALL
+        SELECT t.*, tt.tree_depth + 1
+        FROM agent_tasks t
+        JOIN task_tree tt ON t.parent_task_id = tt.id
+        WHERE tt.tree_depth < ?
+      )
+      SELECT * FROM task_tree ORDER BY tree_depth, created_at
+    `;
+    const rows = this.db.prepare(sql).all(taskId, maxDepth) as (StoredTask & { tree_depth: number })[];
+    return rows.map(toTask);
+  }
+
+  /**
+   * Build a nested `TaskTreeNode` tree from a flat list of tasks rooted at `taskId`.
+   */
+  getTaskTree(taskId: string, maxDepth = 10): { root: TaskTreeNode; stats: TaskTreeStats } | null {
+    const flatTasks = this.getTaskTreeFlat(taskId, maxDepth);
+    if (flatTasks.length === 0) return null;
+
+    const toNode = (task: AgentTask): TaskTreeNode => {
+      const durationMs =
+        task.startedAt && task.completedAt
+          ? task.completedAt.getTime() - task.startedAt.getTime()
+          : null;
+      return {
+        id: task.id,
+        parentTaskId: task.parentTaskId,
+        status: task.status,
+        goal: task.goal,
+        depth: task.depth,
+        tokenUsage: task.tokenUsage,
+        createdAt: task.createdAt.toISOString(),
+        startedAt: task.startedAt?.toISOString() ?? null,
+        completedAt: task.completedAt?.toISOString() ?? null,
+        durationMs,
+        agentName: task.agentName,
+        children: [],
+      };
+    };
+
+    const nodeMap = new Map<string, TaskTreeNode>();
+    for (const task of flatTasks) {
+      nodeMap.set(task.id, toNode(task));
+    }
+
+    // Build tree links
+    for (const task of flatTasks) {
+      if (task.parentTaskId && nodeMap.has(task.parentTaskId)) {
+        nodeMap.get(task.parentTaskId)!.children.push(nodeMap.get(task.id)!);
+      }
+    }
+
+    // Compute aggregate stats
+    const stats: TaskTreeStats = {
+      totalTasks: flatTasks.length,
+      completed: 0,
+      failed: 0,
+      running: 0,
+      queued: 0,
+      cancelled: 0,
+      totalTokens: 0,
+    };
+    for (const task of flatTasks) {
+      if (task.status === "completed") stats.completed++;
+      else if (task.status === "failed") stats.failed++;
+      else if (task.status === "running") stats.running++;
+      else if (task.status === "queued") stats.queued++;
+      else if (task.status === "cancelled") stats.cancelled++;
+      if (task.tokenUsage) stats.totalTokens += task.tokenUsage.totalTokens;
+    }
+
+    return { root: nodeMap.get(taskId)!, stats };
+  }
+
+  /** List all root tasks (no parent) with immediate child count. */
+  getRootTasks(options?: { limit?: number; offset?: number }): RootTaskSummary[] {
+    const limit = options?.limit ?? 50;
+    const offset = options?.offset ?? 0;
+
+    const sql = `
+      SELECT t.*,
+        (SELECT COUNT(*) FROM agent_tasks c WHERE c.parent_task_id = t.id) as child_count
+      FROM agent_tasks t
+      WHERE t.parent_task_id IS NULL
+      ORDER BY t.created_at DESC
+      LIMIT ? OFFSET ?
+    `;
+    const rows = this.db.prepare(sql).all(limit, offset) as (StoredTask & { child_count: number })[];
+    return rows.map((row) => ({
+      id: row.id,
+      status: row.status as AgentTask["status"],
+      goal: row.goal,
+      model: row.model,
+      trigger: row.trigger as AgentTask["trigger"],
+      createdAt: row.created_at,
+      startedAt: row.started_at,
+      completedAt: row.completed_at,
+      childCount: row.child_count,
+      tokenUsage: row.token_usage_json
+        ? (JSON.parse(row.token_usage_json) as AgentTask["tokenUsage"])
+        : null,
+    }));
   }
 }

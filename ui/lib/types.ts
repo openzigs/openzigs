@@ -602,3 +602,121 @@ export type MemoryRepoStatus = {
   lastSynced: string | null;
   error?: string;
 };
+
+/* ── Orchestration Template types (#485) ── */
+
+export type StageAgent = {
+  archetype: string;
+  goal: string;
+  model: string | null;
+  allowedTools: string[];
+  autoApproveTools: string[];
+};
+
+export type OrchestrationStage = {
+  name: string;
+  type: "parallel" | "sequential";
+  agents: StageAgent[];
+  dependsOn: string[];
+};
+
+export type TemplateVariable = {
+  name: string;
+  description: string;
+  required: boolean;
+  defaultValue: string | null;
+};
+
+export type OrchestrationTemplate = {
+  id: string;
+  name: string;
+  description: string;
+  category: "research" | "analysis" | "content" | "dev" | "custom";
+  stages: OrchestrationStage[];
+  variables: TemplateVariable[];
+  aggregationPrompt: string | null;
+  isBuiltIn: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
+/* ── Task Tree types (#486) ── */
+
+export type TaskTreeNode = {
+  id: string;
+  parentTaskId: string | null;
+  status: "queued" | "running" | "completed" | "failed" | "cancelled";
+  goal: string;
+  depth: number;
+  tokenUsage: { inputTokens: number; outputTokens: number; totalTokens: number; turns: number } | null;
+  createdAt: string;
+  startedAt: string | null;
+  completedAt: string | null;
+  durationMs: number | null;
+  agentName: string | null;
+  children: TaskTreeNode[];
+};
+
+export type TaskTreeStats = {
+  totalTasks: number;
+  completed: number;
+  failed: number;
+  running: number;
+  queued: number;
+  cancelled: number;
+  totalTokens: number;
+};
+
+export type RootTaskSummary = {
+  id: string;
+  status: "queued" | "running" | "completed" | "failed" | "cancelled";
+  goal: string;
+  model: string | null;
+  trigger: string;
+  createdAt: string;
+  startedAt: string | null;
+  completedAt: string | null;
+  childCount: number;
+  tokenUsage: { inputTokens: number; outputTokens: number; totalTokens: number; turns: number } | null;
+};
+
+/* ── Subagent event types (#488, #490) ── */
+
+export type TaskToolCallEvent = {
+  taskId: string;
+  parentTaskId: string | null;
+  sessionId: string | null;
+  tool: string;
+  args: Record<string, unknown>;
+};
+
+export type TaskToolResultEvent = {
+  taskId: string;
+  parentTaskId: string | null;
+  sessionId: string | null;
+  tool: string;
+  result: string;
+  isError: boolean;
+};
+
+export type TaskChunkEvent = {
+  taskId: string;
+  sessionId: string;
+  text: string;
+  timestamp: string;
+};
+
+export type TaskProgressEvent = {
+  taskId: string;
+  sessionId: string;
+  stage: string;
+  message: string;
+  timestamp: string;
+};
+
+export type TaskTreeUpdateEvent = {
+  rootTaskId: string;
+  taskId: string;
+  status: string;
+  updatedFields: Record<string, unknown>;
+};

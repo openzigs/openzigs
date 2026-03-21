@@ -167,3 +167,46 @@ export const TASK_LIMITS = {
   /** Maximum tasks per session per minute. */
   maxRatePerMinute: 20,
 } as const;
+
+// ── Task tree types ───────────────────────────────────────────────────
+
+/** Recursive tree node for the task DAG visualization. */
+export type TaskTreeNode = {
+  id: string;
+  parentTaskId: string | null;
+  status: TaskStatus;
+  goal: string;
+  depth: number;
+  tokenUsage: { inputTokens: number; outputTokens: number; totalTokens: number; turns: number } | null;
+  createdAt: string;
+  startedAt: string | null;
+  completedAt: string | null;
+  durationMs: number | null;
+  agentName: string | null;
+  children: TaskTreeNode[];
+};
+
+/** Aggregate statistics for a task tree. */
+export type TaskTreeStats = {
+  totalTasks: number;
+  completed: number;
+  failed: number;
+  running: number;
+  queued: number;
+  cancelled: number;
+  totalTokens: number;
+};
+
+/** Root task summary with child count and stats. */
+export type RootTaskSummary = {
+  id: string;
+  status: TaskStatus;
+  goal: string;
+  model: string | null;
+  trigger: TaskTrigger;
+  createdAt: string;
+  startedAt: string | null;
+  completedAt: string | null;
+  childCount: number;
+  tokenUsage: { inputTokens: number; outputTokens: number; totalTokens: number; turns: number } | null;
+};

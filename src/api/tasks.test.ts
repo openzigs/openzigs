@@ -147,7 +147,7 @@ describe("Tasks API", () => {
         { mode: "background" }
       );
 
-      const res = await request(app).get(`/api/tasks/${root.id}/tree`);
+      const res = await request(app).get(`/api/tasks/${root.id}/tree?format=graph`);
       expect(res.status).toBe(200);
       expect(res.body.nodes).toHaveLength(4);
       expect(res.body.edges).toHaveLength(3);
@@ -169,7 +169,7 @@ describe("Tasks API", () => {
 
     it("returns single node and no edges for a leaf task", async () => {
       const leaf = engine.submit({ trigger: "chat", goal: "Leaf" }, { mode: "background" });
-      const res = await request(app).get(`/api/tasks/${leaf.id}/tree`);
+      const res = await request(app).get(`/api/tasks/${leaf.id}/tree?format=graph`);
       expect(res.body.nodes).toHaveLength(1);
       expect(res.body.edges).toHaveLength(0);
     });

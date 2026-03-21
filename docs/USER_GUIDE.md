@@ -1462,6 +1462,110 @@ The task graph provides an interactive visualisation of a task and all its desce
 
 The graph auto-refreshes every 10 seconds to reflect status changes.
 
+### Task Tree View
+
+In addition to the interactive graph, each task card also offers a **tree view** — a compact, collapsible text-based representation of the task hierarchy.
+
+**How to use:**
+
+1. Navigate to the **Tasks** page at `/tasks`.
+2. Find a task and click **▢ View tree** to expand the tree below that task card.
+3. The tree shows the full hierarchy with collapsible nodes, status icons, duration, and token usage per node.
+
+**Tree features:**
+- Collapsible/expandable nodes — click to toggle children
+- Status icons: ⏳ queued, 🔄 running (animated), ✅ completed, ❌ failed, 🚫 cancelled
+- Per-node duration and token count
+- Child count badges on parent nodes
+- Statistics bar showing overall progress with color-coded segments
+
+**Real-time updates:** The tree re-fetches on `task:tree-update` Socket.IO events, so status changes appear within seconds.
+
+### Task Tree API
+
+```bash
+# Get nested tree structure for a task (with stats)
+curl -H "Authorization: Bearer <token>" \
+  http://localhost:3000/api/tasks/<id>/tree?maxDepth=10
+
+# Get root tasks (top-level tasks with child counts)
+curl -H "Authorization: Bearer <token>" \
+  http://localhost:3000/api/tasks/roots?limit=20&offset=0
+```
+
+### Subagent Live Progress Panel
+
+When sub-agents are running during a chat conversation, a **live progress panel** appears above the input area in the chat view. This panel shows real-time activity for every spawned background agent.
+
+**What you'll see:**
+- **Agent cards** — one card per spawned sub-agent, showing its goal and status
+- **Tool call log** — real-time tool invocations with tool names and durations
+- **Progress updates** — stage-level progress messages from the agent
+- **Token usage** — accumulated token counts when the agent completes
+- **Elapsed time** — running timer per agent
+
+**Behavior:**
+- The panel appears automatically when sub-agents start running
+- Cards update in real-time via Socket.IO events
+- The panel auto-collapses when all agents finish
+- Click the **X** button to dismiss the panel
+- Click the header to collapse/expand
+
+### Orchestration Templates
+
+Orchestration templates are pre-built multi-agent workflow definitions for common patterns. They define multiple stages of agents that execute sequentially, with agents within each stage running in parallel.
+
+**How to use:**
+
+1. Navigate to **Admin** → scroll to the **Orchestration Templates** section.
+2. Browse built-in templates or create your own.
+3. Click **Execute** on a template, fill in variables, and launch.
+
+**Creating a template:**
+
+1. Click **Create Template** in the admin panel.
+2. Give it a name, description, and category.
+3. Add **stages** — each stage is a sequential step in the workflow.
+4. Within each stage, add **agents** with goals and optional model overrides.
+5. Use `{{variable}}` placeholders in agent goals for dynamic content.
+6. Optionally add an **aggregation prompt** that synthesizes all agent outputs.
+
+**Built-in templates:**
+| Template | Description |
+|----------|-------------|
+| Research & Synthesize | Multi-source research with synthesis |
+| Multi-Perspective Analysis | Same topic analyzed from different angles |
+| Code Review Pipeline | Security, performance, and maintainability reviews |
+| Content Creation | Research → draft → edit pipeline |
+| Competitive Analysis | Parallel competitor research with comparison |
+
+**REST API:**
+
+```bash
+# List all templates
+curl -H "Authorization: Bearer <token>" http://localhost:3000/api/admin/orchestration
+
+# Create a template
+curl -X POST -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "My Template", "stages": [...], "category": "custom"}' \
+  http://localhost:3000/api/admin/orchestration
+
+# Execute a template with variables
+curl -X POST -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"variables": {"topic": "AI trends 2026"}}' \
+  http://localhost:3000/api/admin/orchestration/<id>/execute
+```
+
+### Inline Result Injection
+
+When a background sub-agent completes its work, its result is automatically injected as a system message back into the parent chat session. This means:
+
+- You don't need to manually check the Tasks page for results
+- The AI has full context of what sub-agents produced
+- Follow-up questions about sub-agent results work naturally
+
 **How background tasks are created:**
 
 1. **spawn-agent tool** — During a conversation, the AI can call the `spawn-agent` MCP tool to delegate long-running work to a background sub-agent.

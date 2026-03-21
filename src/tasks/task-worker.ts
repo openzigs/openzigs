@@ -4,6 +4,7 @@ import type { CopilotWrapper } from "../copilot/copilot-wrapper.js";
 import type { SystemMessageConfig, CustomAgentDefinition } from "../copilot/copilot-wrapper.js";
 import type { TaskRepository } from "./task-repository.js";
 import type { AgentTask, PipelineNode, PipelineStage, ParallelGroup } from "./types.js";
+import type { TaskEventStreamer } from "./task-event-streamer.js";
 
 import { executePostAction } from "./post-actions.js";
 import { normalizeLegacyStages } from "./pipeline-schema.js";
@@ -23,6 +24,8 @@ export type TaskWorkerOptions = {
   log?: Pick<typeof logger, "info" | "warn" | "error">;
   /** Custom agent definitions available for task-specific agent personas. */
   customAgentsConfig?: CustomAgentDefinition[];
+  /** Optional event streamer for real-time Socket.IO events during task execution. */
+  eventStreamer?: TaskEventStreamer;
 };
 
 /**
@@ -40,6 +43,7 @@ export class TaskWorker extends EventEmitter {
   private pollIntervalMs: number;
   private log: Pick<typeof logger, "info" | "warn" | "error">;
   private customAgentsConfig: CustomAgentDefinition[];
+  private eventStreamer?: TaskEventStreamer;
   private timer: ReturnType<typeof setInterval> | null = null;
   private running = 0;
   private stopped = false;
@@ -52,6 +56,7 @@ export class TaskWorker extends EventEmitter {
     pollIntervalMs = 2_000,
     log: logOverride,
     customAgentsConfig,
+    eventStreamer,
   }: TaskWorkerOptions) {
     super();
     this.engine = engine;
@@ -61,6 +66,7 @@ export class TaskWorker extends EventEmitter {
     this.pollIntervalMs = pollIntervalMs;
     this.log = logOverride ?? logger;
     this.customAgentsConfig = customAgentsConfig ?? [];
+    this.eventStreamer = eventStreamer;
   }
 
   /** Start the polling loop. Idempotent. */
@@ -96,6 +102,11 @@ export class TaskWorker extends EventEmitter {
   /** Number of currently executing tasks. */
   get activeCount(): number {
     return this.running;
+  }
+
+  /** Set the event streamer after construction (e.g., once Socket.IO is available). */
+  setEventStreamer(streamer: TaskEventStreamer): void {
+    this.eventStreamer = streamer;
   }
 
   /** Get the current max concurrent limit. */
@@ -186,6 +197,14 @@ export class TaskWorker extends EventEmitter {
         onToolCall: (toolName, args) => {
           this.log.info(`TaskWorker tool call [${task.id}]: ${toolName}(${JSON.stringify(args).slice(0, 200)})`);
           toolCallLog.push({ tool: toolName, timestamp: Date.now() });
+          // Stream tool-call event to UI
+          this.eventStreamer?.emitToolCall({
+            taskId: task.id,
+            parentTaskId: task.parentTaskId,
+            sessionId: task.sessionId,
+            tool: toolName,
+            args: args as Record<string, unknown>,
+          });
           if (toolName === "spawn-agent" || toolName === "orchestrate-agents") {
             // Inject parent task ID, session, and channel info for recursive chaining.
             const a = args as Record<string, unknown>;
@@ -199,10 +218,18 @@ export class TaskWorker extends EventEmitter {
         onUserInputRequest: async () => ({ answer: "", wasFreeform: false }),
       })) {
         result += chunk;
+        // Stream text chunks to UI
+        this.eventStreamer?.emitChunk({
+          taskId: task.id,
+          parentTaskId: task.parentTaskId,
+          sessionId: task.sessionId,
+          text: chunk,
+        });
       }
 
       // Persist token usage before marking complete
       this.persistTokenUsage(task);
+      this.eventStreamer?.clearTask(task.id);
 
       const completed = this.engine.complete(task.id, result);
       this.log.info(`TaskWorker completed task ${task.id} (${toolCallLog.length} tool calls: ${[...new Set(toolCallLog.map(t => t.tool))].join(", ") || "none"}, availableTools: ${JSON.stringify(availableTools ?? "all")})`);
@@ -210,6 +237,7 @@ export class TaskWorker extends EventEmitter {
     } catch (error) {
       // Persist token usage even on failure
       this.persistTokenUsage(task);
+      this.eventStreamer?.clearTask(task.id);
 
       const message = error instanceof Error ? error.message : String(error);
       const failed = this.engine.fail(task.id, message);

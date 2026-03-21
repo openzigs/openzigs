@@ -2918,6 +2918,86 @@ curl -X PUT -H "Authorization: Bearer <token>" \
 
 ### Tracking: [Epic #81](https://github.com/mgcronin/openzigs/issues/81)
 
+### Real-Time Subagent Event Streaming (#488)
+
+The `TaskEventStreamer` bridges the gap between background task execution and the UI by emitting fine-grained Socket.IO events as tasks execute.
+
+**Components:**
+| Component | Location | Responsibility |
+|-----------|----------|----------------|
+| `TaskEventStreamer` | `src/tasks/task-event-streamer.ts` | Emits tool-call, tool-result, chunk, and progress events via Socket.IO with throttling |
+| `SubagentLivePanel` | `ui/components/subagent-live-panel.tsx` | Real-time per-agent progress cards in the chat view |
+
+**Socket.IO Events (scoped to sessionId room):**
+| Event | Payload | Throttle |
+|-------|---------|----------|
+| `task:tool-call` | `{ taskId, sessionId, toolName, args }` | None |
+| `task:tool-result` | `{ taskId, sessionId, toolName, result }` | None |
+| `task:chunk` | `{ taskId, sessionId, text }` | 500ms batching |
+| `task:progress` | `{ taskId, sessionId, stage, message }` | 1s dedup per stage |
+
+**UI Behavior:** The SubagentLivePanel renders when any child agent task starts running. Cards show real-time tool calls, streaming text, and progress. The panel auto-collapses when all agents complete and can be manually dismissed.
+
+### Inline Result Injection (#487)
+
+The `ResultInjector` automatically injects completed sub-agent results back into the parent chat session as system messages, providing seamless continuity.
+
+| Component | Location | Responsibility |
+|-----------|----------|----------------|
+| `ResultInjector` | `src/tasks/result-injector.ts` | Listens to task:completed/failed, writes to parent's JSONL session |
+
+**Behavior:**
+- Filters to `trigger === "agent"` tasks only (sub-agents)
+- Truncates results over 4000 characters
+- Emits `task:result-injected` event via Socket.IO for UI updates
+
+### Orchestration Templates (#485)
+
+Orchestration templates are reusable multi-stage, multi-agent workflow definitions stored in SQLite.
+
+**Architecture:**
+```
+POST /api/admin/orchestration/:id/execute
+  → TemplateService.execute({ templateId, variables })
+    → interpolateTemplate(stage.agents[].goal, variables)
+    → TaskEngine.submit() per agent per stage
+    → Returns spawned task IDs
+```
+
+| Component | Location | Responsibility |
+|-----------|----------|----------------|
+| `TemplateRepository` | `src/orchestration/template-repository.ts` | SQLite CRUD for template definitions |
+| `TemplateService` | `src/orchestration/template-service.ts` | Business logic, variable interpolation, execution |
+| REST API | `src/api/orchestration.ts` | Full CRUD + execution at `/api/admin/orchestration` |
+| Admin Panel | `ui/components/admin/orchestration-templates-panel.tsx` | Template management UI with stage builder |
+
+**Template Structure:**
+- **Stages**: Sequential groups of agents. Each stage can have multiple agents that run in parallel.
+- **Variables**: `{{variable}}` placeholders interpolated at execution time.
+- **Categories**: `research`, `analysis`, `development`, `content`, `operations`, `custom`.
+
+**Seed Templates** (5 built-in): research-synthesize, multi-perspective-analysis, code-review-pipeline, content-creation, competitive-analysis.
+
+### Task Tree API & Visualization (#486, #492)
+
+The Task Tree API provides recursive hierarchical views of task DAGs using SQLite recursive CTEs.
+
+| Component | Location | Responsibility |
+|-----------|----------|----------------|
+| `getTaskTree()` | `src/tasks/task-repository.ts` | Recursive CTE query → nested `TaskTreeNode` with `TaskTreeStats` |
+| `getRootTasks()` | `src/tasks/task-repository.ts` | Root tasks with child counts for overview |
+| `TaskTreeView` | `ui/components/tasks/task-tree-view.tsx` | Collapsible tree with status icons, duration, token usage |
+
+**API Endpoints:**
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/tasks/:id/tree?maxDepth=N` | Nested tree + stats (default maxDepth: 10) |
+| `GET` | `/api/tasks/roots?limit=N&offset=N` | Root tasks with `childCount` |
+
+**Socket.IO Event:** `task:tree-update` emitted on all task lifecycle changes — includes `rootTaskId` resolved by walking up the parent chain.
+
+### Tracking: [Epic #484](https://github.com/mgcronin/openzigs/issues/484)
+
 ---
 
 ## Native Orchestration — Hierarchical Agents
