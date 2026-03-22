@@ -86,6 +86,90 @@ describe("TaskEngine", () => {
         engine.submit({ trigger: "cron", goal: `Task ${i}` }, { mode: "background" });
       }
     });
+
+    it("applies backgroundTaskDefaultModel to non-chat tasks without model", () => {
+      const engineWithDefault = new TaskEngine({
+        repository: repo,
+        clock: () => now,
+        backgroundTaskDefaultModel: "gpt-4.1-mini",
+      });
+
+      const task = engineWithDefault.submit(
+        { trigger: "cron", goal: "Background task" },
+        { mode: "background" }
+      );
+
+      expect(task.model).toBe("gpt-4.1-mini");
+    });
+
+    it("does not override explicit model for non-chat tasks", () => {
+      const engineWithDefault = new TaskEngine({
+        repository: repo,
+        clock: () => now,
+        backgroundTaskDefaultModel: "gpt-4.1-mini",
+      });
+
+      const task = engineWithDefault.submit(
+        { trigger: "cron", goal: "Explicit model", model: "gpt-4.1" },
+        { mode: "background" }
+      );
+
+      expect(task.model).toBe("gpt-4.1");
+    });
+
+    it("does not apply backgroundTaskDefaultModel to chat-triggered tasks", () => {
+      const engineWithDefault = new TaskEngine({
+        repository: repo,
+        clock: () => now,
+        backgroundTaskDefaultModel: "gpt-4.1-mini",
+      });
+
+      const task = engineWithDefault.submit(
+        { trigger: "chat", goal: "Interactive task" },
+        { mode: "immediate" }
+      );
+
+      expect(task.model).toBeNull();
+    });
+  });
+
+  describe("backgroundTaskDefaultModel", () => {
+    it("getter returns configured default", () => {
+      const engineWithDefault = new TaskEngine({
+        repository: repo,
+        clock: () => now,
+        backgroundTaskDefaultModel: "gpt-4.1-nano",
+      });
+
+      expect(engineWithDefault.getBackgroundTaskDefaultModel()).toBe("gpt-4.1-nano");
+    });
+
+    it("setter updates default at runtime", () => {
+      expect(engine.getBackgroundTaskDefaultModel()).toBeUndefined();
+
+      engine.setBackgroundTaskDefaultModel("gpt-4.1-mini");
+      expect(engine.getBackgroundTaskDefaultModel()).toBe("gpt-4.1-mini");
+
+      // Verify it applies to new tasks
+      const task = engine.submit(
+        { trigger: "cron", goal: "After setter" },
+        { mode: "background" }
+      );
+      expect(task.model).toBe("gpt-4.1-mini");
+    });
+
+    it("setter clears default when called with undefined", () => {
+      engine.setBackgroundTaskDefaultModel("gpt-4.1-mini");
+      engine.setBackgroundTaskDefaultModel(undefined);
+
+      expect(engine.getBackgroundTaskDefaultModel()).toBeUndefined();
+
+      const task = engine.submit(
+        { trigger: "cron", goal: "No default" },
+        { mode: "background" }
+      );
+      expect(task.model).toBeNull();
+    });
   });
 
   describe("complete", () => {

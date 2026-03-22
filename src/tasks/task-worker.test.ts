@@ -1328,4 +1328,73 @@ describe("TaskWorker", () => {
     const chatOptions = mockCopilot.chat.mock.calls[0][1] as { customAgents?: unknown };
     expect(chatOptions.customAgents).toBeUndefined();
   });
+
+  it("passes enableSubagents and customAgents when enableInSessionSubagents is true", async () => {
+    const agents = [
+      {
+        name: "coder",
+        displayName: "Coder",
+        prompt: "You are a coder.",
+        tools: ["shell-execute"],
+      },
+    ];
+    const mockCopilot = makeMockCopilot();
+    worker = new TaskWorker({
+      engine,
+      copilot: mockCopilot,
+      maxConcurrent: 1,
+      pollIntervalMs: 50,
+      log: silentLog,
+      customAgentsConfig: agents,
+    });
+
+    engine.submit(
+      {
+        trigger: "cron",
+        goal: "With subagents",
+        enableInSessionSubagents: true,
+      },
+      { mode: "background" }
+    );
+
+    const donePromise = new Promise<void>((resolve) => {
+      worker.on("task:done", () => resolve());
+    });
+
+    worker.start();
+    await donePromise;
+
+    const chatOptions = mockCopilot.chat.mock.calls[0][1] as { enableSubagents?: boolean; customAgents?: unknown[] };
+    expect(chatOptions.enableSubagents).toBe(true);
+    expect(chatOptions.customAgents).toEqual(agents);
+  });
+
+  it("does not pass enableSubagents when enableInSessionSubagents is falsy", async () => {
+    const mockCopilot = makeMockCopilot();
+    worker = new TaskWorker({
+      engine,
+      copilot: mockCopilot,
+      maxConcurrent: 1,
+      pollIntervalMs: 50,
+      log: silentLog,
+    });
+
+    engine.submit(
+      {
+        trigger: "cron",
+        goal: "Without subagents",
+      },
+      { mode: "background" }
+    );
+
+    const donePromise = new Promise<void>((resolve) => {
+      worker.on("task:done", () => resolve());
+    });
+
+    worker.start();
+    await donePromise;
+
+    const chatOptions = mockCopilot.chat.mock.calls[0][1] as { enableSubagents?: boolean };
+    expect(chatOptions.enableSubagents).toBeUndefined();
+  });
 });

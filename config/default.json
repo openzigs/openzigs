@@ -57,7 +57,8 @@
     "sidecars": {}
   },
   "tasks": {
-    "maxConcurrent": 2
+    "maxConcurrent": 2,
+    "backgroundTaskDefaultModel": null
   },
   "session": {
     "historyWindow": 20,

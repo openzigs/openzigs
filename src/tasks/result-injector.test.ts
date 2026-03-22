@@ -51,6 +51,7 @@ const baseTask = (overrides: Partial<AgentTask> = {}): AgentTask => ({
   skillBody: null,
   disabledSkills: null,
   agentName: null,
+  enableInSessionSubagents: false,
   ...overrides,
 });
 

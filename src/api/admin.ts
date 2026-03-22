@@ -2844,7 +2844,8 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
     const reasoningEffort = copilot?.getReasoningEffort() ?? "medium";
     const provider = copilot?.getProvider() ?? null;
     const workingDirectory = copilot?.getWorkingDirectory() ?? null;
-    return res.json({ reasoningEffort, provider, workingDirectory });
+    const backgroundTaskDefaultModel = taskEngine?.getBackgroundTaskDefaultModel() ?? null;
+    return res.json({ reasoningEffort, provider, workingDirectory, backgroundTaskDefaultModel });
   });
 
   router.put("/models/config", async (req, res) => {
@@ -2877,6 +2878,12 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
       }
     }
 
+    if (body.backgroundTaskDefaultModel !== undefined) {
+      if (body.backgroundTaskDefaultModel !== null && typeof body.backgroundTaskDefaultModel !== "string") {
+        return res.status(400).json({ error: "backgroundTaskDefaultModel must be a string or null" });
+      }
+    }
+
     try {
       // Apply changes in-memory
       if (copilot) {
@@ -2897,6 +2904,12 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
         }
       }
 
+      if (body.backgroundTaskDefaultModel !== undefined && taskEngine) {
+        taskEngine.setBackgroundTaskDefaultModel(
+          body.backgroundTaskDefaultModel === null ? undefined : (body.backgroundTaskDefaultModel as string)
+        );
+      }
+
       // Persist to user config
       const configPath = defaultConfigPath();
       const userConfig = await readUserConfig(configPath);
@@ -2915,6 +2928,15 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
       }
 
       userConfig.copilot = existingCopilot;
+
+      if (body.backgroundTaskDefaultModel !== undefined) {
+        const existingTasks = (userConfig.tasks && typeof userConfig.tasks === "object")
+          ? (userConfig.tasks as Record<string, unknown>)
+          : {};
+        existingTasks.backgroundTaskDefaultModel = body.backgroundTaskDefaultModel;
+        userConfig.tasks = existingTasks;
+      }
+
       await writeUserConfig(configPath, userConfig);
 
       logger.info(`Model config updated: ${Object.keys(body).join(", ")}`);
@@ -2923,6 +2945,7 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
         reasoningEffort: copilot?.getReasoningEffort() ?? "medium",
         provider: copilot?.getProvider() ?? null,
         workingDirectory: copilot?.getWorkingDirectory() ?? null,
+        backgroundTaskDefaultModel: taskEngine?.getBackgroundTaskDefaultModel() ?? null,
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

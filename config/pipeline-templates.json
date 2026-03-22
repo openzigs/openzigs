@@ -152,5 +152,34 @@
       { "key": "target", "label": "Monitor Target", "description": "URLs, services, or metrics to monitor", "required": true },
       { "key": "check_type", "label": "Check Type", "description": "Type of monitoring check", "required": false, "default": "availability, performance, content changes" }
     ]
+  },
+  {
+    "id": "cost-optimized-research",
+    "name": "Cost-Optimized Research",
+    "description": "Research with a powerful model, then summarize with a lightweight model. Demonstrates per-stage model overrides for cost optimization.",
+    "icon": "💰",
+    "tags": ["research", "cost-optimization"],
+    "suggestedSkill": null,
+    "template": "Research {{topic}} (cost-optimized)",
+    "stages": [
+      {
+        "name": "deep-research",
+        "prompt": "Perform thorough research on the following topic. Gather information from multiple sources, identify conflicting claims, and collect data points with citations.\n\nTopic: {{topic}}\nFocus: {{focus_areas}}",
+        "tools": ["web-search", "browser-navigate", "read-file"],
+        "model": "gpt-4.1",
+        "timeoutSeconds": 600
+      },
+      {
+        "name": "summarize",
+        "prompt": "Using the research gathered above, create a concise executive summary with key findings, bullet points, and actionable recommendations. Keep it under 500 words.",
+        "tools": ["write-file"],
+        "model": "gpt-4.1-mini",
+        "timeoutSeconds": 180
+      }
+    ],
+    "variables": [
+      { "key": "topic", "label": "Research Topic", "description": "The topic to research", "required": true },
+      { "key": "focus_areas", "label": "Focus Areas", "description": "Specific aspects to prioritize", "required": false, "default": "recent developments, key players, market impact" }
+    ]
   }
 ]
