@@ -5281,29 +5281,84 @@ Generate the following as JSON (and ONLY JSON, no markdown fences):
     }
   });
 
-  // ── YouTube Analytics Proxy (Issue #518) ───────────────
+  // ── YouTube Analytics Proxy with SQLite cache (Issue #518) ───────────────
+
+  // Ensure cache table exists (idempotent)
+  {
+    const db = getDatabase();
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS youtube_analytics_cache (
+        key TEXT PRIMARY KEY,
+        data TEXT NOT NULL,
+        fetched_at INTEGER NOT NULL
+      )
+    `);
+  }
+
+  function getAnalyticsCache(key: string): { data: unknown; fetchedAt: Date } | null {
+    try {
+      const db = getDatabase();
+      const row = db
+        .prepare(`SELECT data, fetched_at FROM youtube_analytics_cache WHERE key = ?`)
+        .get(key) as { data: string; fetched_at: number } | undefined;
+      if (!row) return null;
+      return { data: JSON.parse(row.data), fetchedAt: new Date(row.fetched_at) };
+    } catch {
+      return null;
+    }
+  }
+
+  function setAnalyticsCache(key: string, data: unknown): void {
+    try {
+      const db = getDatabase();
+      db.prepare(
+        `INSERT OR REPLACE INTO youtube_analytics_cache (key, data, fetched_at) VALUES (?, ?, ?)`
+      ).run(key, JSON.stringify(data), Date.now());
+    } catch {
+      // Non-fatal — cache write failure shouldn't break the response
+    }
+  }
 
   router.get("/youtube/analytics/channel", async (_req, res) => {
+    const CACHE_KEY = "channel";
     try {
       if (!toolRegistry) {
+        const cached = getAnalyticsCache(CACHE_KEY);
+        if (cached) {
+          res.json({ ...cached.data as object, _cached: true, _cachedAt: cached.fetchedAt.toISOString() });
+          return;
+        }
         res.status(503).json({ error: "Tool registry not available" });
         return;
       }
       const tool = toolRegistry.getToolDefinition("yt_get_channel_analytics");
       if (!tool) {
+        const cached = getAnalyticsCache(CACHE_KEY);
+        if (cached) {
+          res.json({ ...cached.data as object, _cached: true, _cachedAt: cached.fetchedAt.toISOString() });
+          return;
+        }
         res.status(503).json({ error: "yt_get_channel_analytics tool not registered" });
         return;
       }
-      const result = await tool.handler({});
-      if (result.isError) {
-        res.status(502).json({ error: result.text });
+      let data: unknown;
+      try {
+        const result = await tool.handler({});
+        if (result.isError) throw new Error(result.text);
+        data = JSON.parse(result.text);
+        setAnalyticsCache(CACHE_KEY, data);
+      } catch (liveErr) {
+        const msg = liveErr instanceof Error ? liveErr.message : String(liveErr);
+        logger.warn(`[Director API] YouTube channel analytics live fetch failed: ${msg} — falling back to cache`);
+        const cached = getAnalyticsCache(CACHE_KEY);
+        if (cached) {
+          res.json({ ...cached.data as object, _cached: true, _cachedAt: cached.fetchedAt.toISOString() });
+          return;
+        }
+        res.status(502).json({ error: msg });
         return;
       }
-      try {
-        res.json(JSON.parse(result.text));
-      } catch {
-        res.json({ raw: result.text });
-      }
+      res.json(data);
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       logger.error(`[Director API] GET /youtube/analytics/channel failed: ${msg}`);
@@ -5312,30 +5367,52 @@ Generate the following as JSON (and ONLY JSON, no markdown fences):
   });
 
   router.get("/youtube/analytics/videos", async (req, res) => {
+    const { videoIds, maxResults, limit } = req.query as {
+      videoIds?: string; maxResults?: string; limit?: string;
+    };
+    const CACHE_KEY = `videos:${videoIds ?? ""}:${maxResults ?? limit ?? "50"}`;
     try {
       if (!toolRegistry) {
+        const cached = getAnalyticsCache(CACHE_KEY);
+        if (cached) {
+          res.json({ ...cached.data as object, _cached: true, _cachedAt: (getAnalyticsCache(CACHE_KEY)!.fetchedAt).toISOString() });
+          return;
+        }
         res.status(503).json({ error: "Tool registry not available" });
         return;
       }
-      const { videoIds, maxResults } = req.query as { videoIds?: string; maxResults?: string };
-      const args: Record<string, unknown> = {};
-      if (videoIds) args.videoIds = videoIds.split(",");
-      if (maxResults) args.maxResults = parseInt(maxResults, 10);
       const tool = toolRegistry.getToolDefinition("yt_get_video_details");
       if (!tool) {
+        const cached = getAnalyticsCache(CACHE_KEY);
+        if (cached) {
+          res.json({ ...cached.data as object, _cached: true, _cachedAt: cached.fetchedAt.toISOString() });
+          return;
+        }
         res.status(503).json({ error: "yt_get_video_details tool not registered" });
         return;
       }
-      const result = await tool.handler(args);
-      if (result.isError) {
-        res.status(502).json({ error: result.text });
+      const args: Record<string, unknown> = {};
+      if (videoIds) args.videoIds = videoIds.split(",");
+      if (maxResults) args.maxResults = parseInt(maxResults, 10);
+      else if (limit) args.maxResults = parseInt(limit, 10);
+      let data: unknown;
+      try {
+        const result = await tool.handler(args);
+        if (result.isError) throw new Error(result.text);
+        data = JSON.parse(result.text);
+        setAnalyticsCache(CACHE_KEY, data);
+      } catch (liveErr) {
+        const msg = liveErr instanceof Error ? liveErr.message : String(liveErr);
+        logger.warn(`[Director API] YouTube videos analytics live fetch failed: ${msg} — falling back to cache`);
+        const cached = getAnalyticsCache(CACHE_KEY);
+        if (cached) {
+          res.json({ ...cached.data as object, _cached: true, _cachedAt: cached.fetchedAt.toISOString() });
+          return;
+        }
+        res.status(502).json({ error: msg });
         return;
       }
-      try {
-        res.json(JSON.parse(result.text));
-      } catch {
-        res.json({ raw: result.text });
-      }
+      res.json(data);
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       logger.error(`[Director API] GET /youtube/analytics/videos failed: ${msg}`);

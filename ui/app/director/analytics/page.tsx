@@ -34,6 +34,8 @@ interface ChannelStats {
   viewCount: number;
   videoCount: number;
   thumbnailUrl: string;
+  _cached?: boolean;
+  _cachedAt?: string;
 }
 
 interface VideoMetric {
@@ -46,6 +48,12 @@ interface VideoMetric {
   duration: string;
   thumbnailUrl: string;
   likeRatio: number;
+}
+
+interface VideosResponse {
+  videos: VideoMetric[];
+  _cached?: boolean;
+  _cachedAt?: string;
 }
 
 type SortField = "viewCount" | "likeCount" | "commentCount" | "publishedAt";
@@ -93,10 +101,13 @@ export default function AnalyticsPage() {
   const videosQuery = useQuery({
     queryKey: ["yt-analytics-videos"],
     queryFn: () =>
-      fetchJson<{ videos: VideoMetric[] }>("/api/admin/director/youtube/analytics/videos?limit=50&sort=views&order=desc"),
+      fetchJson<VideosResponse>("/api/admin/director/youtube/analytics/videos?limit=50&sort=views&order=desc"),
     staleTime: 5 * 60 * 1000,
     retry: 1,
   });
+
+  const cachedAt = channelQuery.data?._cachedAt ?? videosQuery.data?._cachedAt;
+  const isFromCache = !!(channelQuery.data?._cached || videosQuery.data?._cached);
 
   const handleSort = (field: SortField) => {
     if (sortField === field) {
@@ -131,9 +142,9 @@ export default function AnalyticsPage() {
     }));
 
   const isLoading = channelQuery.isLoading || videosQuery.isLoading;
-  const hasError = channelQuery.isError && videosQuery.isError;
+  const hasNoData = channelQuery.isError && videosQuery.isError && !channelQuery.data && !videosQuery.data;
 
-  if (hasError) {
+  if (hasNoData) {
     return (
       <div className="flex min-h-[50vh] flex-col items-center justify-center gap-3 text-muted-foreground">
         <AlertCircle className="h-8 w-8" />
@@ -153,10 +164,18 @@ export default function AnalyticsPage() {
     <div className="mx-auto max-w-6xl space-y-6 p-6">
       {/* Header */}
       <div className="flex items-center justify-between">
-        <h1 className="flex items-center gap-2 text-lg font-bold text-foreground">
-          <BarChart3 className="h-5 w-5" />
-          YouTube Analytics
-        </h1>
+        <div>
+          <h1 className="flex items-center gap-2 text-lg font-bold text-foreground">
+            <BarChart3 className="h-5 w-5" />
+            YouTube Analytics
+          </h1>
+          {isFromCache && cachedAt && (
+            <p className="mt-0.5 flex items-center gap-1 text-xs text-amber-500">
+              <AlertCircle className="h-3 w-3" />
+              Showing cached data from {new Date(cachedAt).toLocaleString()} — live API unavailable
+            </p>
+          )}
+        </div>
         <button
           onClick={refetchAll}
           disabled={isLoading}
