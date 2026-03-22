@@ -103,12 +103,13 @@ export function formatChaptersForDescription(chapters: ChapterEntry[]): string {
 }
 
 function getSceneDurationMs(scene: TimelineScene, fps: number): number {
-  if (typeof scene.duration === "number" && scene.duration > 0) {
-    // duration could be in seconds or ms — if < 1000, treat as seconds
-    return scene.duration < 1000 ? scene.duration * 1000 : scene.duration;
-  }
+  // Prefer explicit durationInFrames (used by test fixtures)
   if (typeof scene.durationInFrames === "number" && scene.durationInFrames > 0) {
     return (scene.durationInFrames / fps) * 1000;
+  }
+  // Director manifests store frame counts in the `duration` field — convert via fps
+  if (typeof scene.duration === "number" && scene.duration > 0) {
+    return (scene.duration / fps) * 1000;
   }
   return 5000; // default 5s per scene
 }

@@ -41,9 +41,9 @@ describe("generateChapters", () => {
     const manifest: ManifestForChapters = {
       composition: { fps: 30 },
       timeline: [
-        { type: "title_card", title: "Intro", duration: 15 },
-        { type: "image_scene", title: "Topic One", duration: 20 },
-        { type: "image_scene", title: "Topic Two", duration: 25 },
+        { type: "title_card", title: "Intro", duration: 450 },
+        { type: "image_scene", title: "Topic One", duration: 600 },
+        { type: "image_scene", title: "Topic Two", duration: 750 },
       ],
     };
 
@@ -58,9 +58,9 @@ describe("generateChapters", () => {
     const manifest: ManifestForChapters = {
       composition: { fps: 30 },
       timeline: [
-        { type: "image_scene", title: "Scene 1", duration: 15 },
-        { type: "transition", duration: 1 },
-        { type: "image_scene", title: "Scene 2", duration: 15 },
+        { type: "image_scene", title: "Scene 1", duration: 450 },
+        { type: "transition", duration: 30 },
+        { type: "image_scene", title: "Scene 2", duration: 450 },
       ],
     };
 
@@ -75,7 +75,7 @@ describe("generateChapters", () => {
     const manifest: ManifestForChapters = {
       composition: { fps: 30 },
       timeline: [
-        { type: "image_scene", scriptText: "Welcome to the show", duration: 15 },
+        { type: "image_scene", scriptText: "Welcome to the show", duration: 450 },
       ],
     };
 
@@ -87,7 +87,7 @@ describe("generateChapters", () => {
     const longText = "A".repeat(60);
     const manifest: ManifestForChapters = {
       composition: { fps: 30 },
-      timeline: [{ type: "image_scene", scriptText: longText, duration: 15 }],
+      timeline: [{ type: "image_scene", scriptText: longText, duration: 450 }],
     };
 
     const chapters = generateChapters(manifest);
@@ -98,8 +98,8 @@ describe("generateChapters", () => {
     const manifest: ManifestForChapters = {
       composition: { fps: 30 },
       timeline: [
-        { type: "image_scene", duration: 15 },
-        { type: "image_scene", duration: 15 },
+        { type: "image_scene", duration: 450 },
+        { type: "image_scene", duration: 450 },
       ],
     };
 
@@ -112,9 +112,9 @@ describe("generateChapters", () => {
     const manifest: ManifestForChapters = {
       composition: { fps: 30 },
       timeline: [
-        { type: "intro_card", duration: 10 },
-        { type: "image_scene", title: "Main", duration: 30 },
-        { type: "outro_card", duration: 10 },
+        { type: "intro_card", duration: 300 },
+        { type: "image_scene", title: "Main", duration: 900 },
+        { type: "outro_card", duration: 300 },
       ],
     };
 
@@ -123,12 +123,12 @@ describe("generateChapters", () => {
     expect(chapters[2].label).toBe("Outro");
   });
 
-  it("handles duration in seconds (< 1000)", () => {
+  it("handles duration as frame count", () => {
     const manifest: ManifestForChapters = {
       composition: { fps: 30 },
       timeline: [
-        { type: "image_scene", title: "A", duration: 10 },
-        { type: "image_scene", title: "B", duration: 20 },
+        { type: "image_scene", title: "A", duration: 300 },
+        { type: "image_scene", title: "B", duration: 600 },
       ],
     };
 
@@ -140,9 +140,9 @@ describe("generateChapters", () => {
     const manifest: ManifestForChapters = {
       composition: { fps: 30 },
       timeline: [
-        { type: "image_scene", title: "Long Scene", duration: 30 },
-        { type: "image_scene", title: "Short Scene", duration: 5 },
-        { type: "image_scene", title: "Another Long", duration: 20 },
+        { type: "image_scene", title: "Long Scene", duration: 900 },
+        { type: "image_scene", title: "Short Scene", duration: 150 },
+        { type: "image_scene", title: "Another Long", duration: 600 },
       ],
     };
 
