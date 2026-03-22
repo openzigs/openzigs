@@ -569,7 +569,7 @@ curl "https://www.googleapis.com/youtube/v3/commentThreads?part=snippet&videoId=
 # Called automatically by the DmDispatcher — not a direct API call
 ```
 
-> **Quota:** YouTube Data API has a daily quota of 10,000 units. `commentThreads.list` costs 1 unit per call. With 120-second polling on 5 videos, that's ~3,600 calls/day — well within the free quota.
+> **Quota:** YouTube Data API has a daily quota of 10,000 units. Each poll cycle calls `search.list` (100 units) to discover recent videos, then `commentThreads.list` (1 unit each) per video. With the default 1-hour polling interval and 3 videos per cycle, that's ~2,472 units/day — leaving ample headroom for uploads (1,600 units each) and other operations.
 
 **4. Responding to comments:**
 

@@ -700,8 +700,11 @@ socialIngestion.on("comment", (comment) => {
 if (socialBrainConfig?.connections) {
   for (const [platform, conn] of Object.entries(socialBrainConfig.connections)) {
     if (conn?.enabled && (conn?.mode === "polling" || conn?.mode === "browser") && socialIngestion.getRegisteredPlatforms().includes(platform as import("./channels/social/types.js").SocialPlatform)) {
-      // Browser mode uses a longer default interval to avoid detection
-      const defaultInterval = conn.mode === "browser" ? 1800 : 120;
+      // YouTube has a very tight daily quota (10,000 units); default to 1-hour
+      // polling to stay well under budget.  Browser mode uses 30 minutes for
+      // anti-detection.  All other API platforms default to 2 minutes.
+      const defaultInterval =
+        conn.mode === "browser" ? 1800 : platform === "youtube" ? 3600 : 120;
       const interval = conn.pollIntervalSeconds ?? defaultInterval;
       socialIngestion.startPolling(platform as import("./channels/social/types.js").SocialPlatform, interval);
     }

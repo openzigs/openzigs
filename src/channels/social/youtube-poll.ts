@@ -49,7 +49,7 @@ interface McpResponse<T = unknown> {
  */
 export function createYouTubePollFn(
   serverManager: LocalMcpServerManager,
-  maxVideos = 5,
+  maxVideos = 3,
   commentsPerVideo = 20,
 ): (since: string) => Promise<IncomingComment[]> {
   return async (since: string) => {
