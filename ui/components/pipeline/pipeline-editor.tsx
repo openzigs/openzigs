@@ -22,6 +22,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Plus, Trash2, GitBranch, Search } from "lucide-react";
 import { fetchJson } from "@/lib/api";
 import { ToolMultiSelect, type ToolOption } from "./tool-multi-select";
+import { useModelsQuery, ModelPickerSelect } from "@/components/model-picker-select";
 
 /* ── Pipeline node types (matches backend PipelineNode) ── */
 
@@ -580,6 +581,28 @@ const PromptSelector = ({
   );
 };
 
+/** Inline model-override dropdown that fetches available models. */
+const ModelOverrideSelect = ({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+}) => {
+  const modelsQuery = useModelsQuery();
+  return (
+    <label className="block">
+      <span className="text-xs text-muted-foreground">Model Override</span>
+      <ModelPickerSelect
+        value={value}
+        onChange={onChange}
+        modelsData={modelsQuery.data}
+        className="mt-1 w-full rounded-lg py-1.5 text-sm"
+      />
+    </label>
+  );
+};
+
 const StageEditor = ({
   node,
   onChange,
@@ -659,15 +682,10 @@ const StageEditor = ({
           onChange={(e) => onChange(node.id, { ...promptData, timeoutSeconds: Number(e.target.value) })}
         />
       </label>
-      <label className="block">
-        <span className="text-xs text-muted-foreground">Model Override</span>
-        <input
-          className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-1.5 text-sm"
-          placeholder="Default (inherit from task)"
-          value={promptData.model ?? ""}
-          onChange={(e) => onChange(node.id, { ...promptData, model: e.target.value || undefined })}
-        />
-      </label>
+      <ModelOverrideSelect
+        value={promptData.model ?? ""}
+        onChange={(model) => onChange(node.id, { ...promptData, model: model || undefined })}
+      />
       <label className="flex items-center gap-2">
         <input
           type="checkbox"

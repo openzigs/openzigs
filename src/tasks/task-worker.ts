@@ -114,6 +114,11 @@ export class TaskWorker extends EventEmitter {
     this.eventStreamer = streamer;
   }
 
+  /** Update the set of known valid model IDs (e.g., after models are fetched or refreshed). */
+  setValidModels(models: string[]): void {
+    this.validModels = models;
+  }
+
   /** Get the current max concurrent limit. */
   get concurrencyLimit(): number {
     return this.maxConcurrent;

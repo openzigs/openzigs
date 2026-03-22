@@ -2217,6 +2217,11 @@ taskWorker.setEventStreamer(taskEventStreamer);
 // Wire SubagentEventRelay for SDK-native subagent events (#497)
 const subagentRelay = new SubagentEventRelay({ io, copilot });
 
+// Seed TaskWorker with valid model IDs so pipeline stage model overrides are validated
+copilot.listModels().then((models) => {
+  taskWorker.setValidModels(models.map((m) => m.id));
+}).catch(() => { /* non-fatal: validation will be skipped if models can't be fetched */ });
+
 // Wire ResultInjector for inline result injection into parent sessions (#487)
 new ResultInjector({ taskEngine, sessionManager, io });
 
