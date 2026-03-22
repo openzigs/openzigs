@@ -141,10 +141,10 @@ export class YouTubePublishService {
     this.emitProgress(request.draftId, publishId, "uploading", 0);
 
     try {
-      // Get the yt_upload_video tool from the registry
-      const tool = this.toolRegistry.getToolDefinition("yt_upload_video");
+      // Get the youtube-upload-video tool from the registry
+      const tool = this.toolRegistry.getToolDefinition("youtube-upload-video");
       if (!tool) {
-        throw new Error("YouTube upload tool (yt_upload_video) is not available. Ensure the YouTube MCP server is running.");
+        throw new Error("YouTube upload tool (youtube-upload-video) is not available. Ensure the YouTube MCP server is running.");
       }
 
       // Call the MCP tool
@@ -274,9 +274,9 @@ export class YouTubePublishService {
       if (!fs.existsSync(pngPath)) return;
     }
 
-    const tool = this.toolRegistry.getToolDefinition("yt_set_thumbnail");
+    const tool = this.toolRegistry.getToolDefinition("youtube-set-thumbnail");
     if (!tool) {
-      logger.debug("[YouTubePublish] yt_set_thumbnail tool not available, skipping thumbnail upload");
+      logger.debug("[YouTubePublish] youtube-set-thumbnail tool not available, skipping thumbnail upload");
       return;
     }
 

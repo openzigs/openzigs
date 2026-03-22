@@ -52,7 +52,7 @@ function createMockToolRegistry(uploadResult?: { text: string; isError?: boolean
   const registry = new ToolRegistry({ statePath: "/tmp/test-yt-tools-state.json" });
 
   const mockTool: ToolDefinition = {
-    name: "yt_upload_video",
+    name: "youtube-upload-video",
     description: "Upload video to YouTube",
     inputSchema: { type: "object", properties: {} },
     zodSchema: z.object({}),
@@ -110,7 +110,7 @@ describe("YouTubePublishService", () => {
       expect(row!.status).toBe("failed");
     });
 
-    it("returns failed status when yt_upload_video tool is not available", async () => {
+    it("returns failed status when youtube-upload-video tool is not available", async () => {
       const registry = new ToolRegistry({ statePath: "/tmp/test-yt-empty-state.json" });
       const service = new YouTubePublishService({ toolRegistry: registry, publishRepo });
 
@@ -124,7 +124,7 @@ describe("YouTubePublishService", () => {
       });
 
       expect(result.status).toBe("failed");
-      expect(result.error).toContain("yt_upload_video");
+      expect(result.error).toContain("youtube-upload-video");
     });
 
     it("publishes successfully when tool succeeds", async () => {
@@ -149,7 +149,7 @@ describe("YouTubePublishService", () => {
       expect(result.videoUrl).toBe("https://www.youtube.com/watch?v=abc123");
 
       // Verify the tool was called with correct arguments
-      const tool = registry.getToolDefinition("yt_upload_video")!;
+      const tool = registry.getToolDefinition("youtube-upload-video")!;
       expect(tool.handler).toHaveBeenCalledWith({
         file_path: tmpFile,
         title: "My Video Title",
@@ -310,7 +310,7 @@ describe("YouTubePublishService", () => {
       expect(result.videoId).toBe("abc123");
 
       // Verify the tool was called with the DB-resolved path
-      const tool = registry.getToolDefinition("yt_upload_video")!;
+      const tool = registry.getToolDefinition("youtube-upload-video")!;
       expect(tool.handler).toHaveBeenCalledWith(
         expect.objectContaining({ file_path: tmpFile }),
       );
@@ -353,7 +353,7 @@ describe("YouTubePublishService", () => {
       });
 
       expect(result.status).toBe("published");
-      const tool = registry.getToolDefinition("yt_upload_video")!;
+      const tool = registry.getToolDefinition("youtube-upload-video")!;
       expect(tool.handler).toHaveBeenCalledWith(
         expect.objectContaining({ file_path: tmpFile }),
       );

@@ -127,7 +127,7 @@ function createMockCopilot() {
 function createMockToolRegistry(): ToolRegistry {
   const registry = new ToolRegistry({ statePath: "/tmp/test-yt-route-tools.json" });
   const mockTool: ToolDefinition = {
-    name: "yt_upload_video",
+    name: "youtube-upload-video",
     description: "Upload video",
     inputSchema: { type: "object", properties: {} },
     zodSchema: z.object({}),

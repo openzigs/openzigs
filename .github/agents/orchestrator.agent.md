@@ -2,7 +2,19 @@
 name: Orchestrator
 description: "End-to-end development orchestrator. Takes a feature request or bug report, plans epics/issues, implements them with TDD, and reviews the PR — all in one session via subagents."
 argument-hint: "Describe the feature, bug fix, or project work you want planned, implemented, and reviewed."
-tools: [agent, read, search, web, todo, github/*, context7/*, tavily/*]
+tools:
+  - agent
+  - browser
+  - edit
+  - execute
+  - read
+  - search
+  - todo
+  - vscode
+  - web
+  - github/*
+  - context7/*
+  - tavily/*
 agents:
   - Code Planner
   - Code Issue
