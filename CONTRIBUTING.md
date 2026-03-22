@@ -7,6 +7,8 @@ Thank you for your interest in contributing to OpenZigs! This document provides 
 - [Code of Conduct](#code-of-conduct)
 - [Getting Started](#getting-started)
 - [Development Setup](#development-setup)
+- [Branching Strategy](#branching-strategy)
+- [Changelog](#changelog)
 - [Pull Request Process](#pull-request-process)
 - [Coding Standards](#coding-standards)
 - [Testing](#testing)
@@ -60,6 +62,37 @@ Copy `.env.example` to `.env` and configure the required values:
 ```bash
 cp .env.example .env
 ```
+
+## Branching Strategy
+
+This project uses **GitHub Flow** — the standard for open-source projects:
+
+- `main` is the **only permanent branch** and is always in a releasable state
+- All work (features, fixes, docs) is done on **short-lived branches** off `main`
+- Branches are merged back to `main` via a reviewed pull request and then deleted
+- Versions are tagged directly on `main` commits (e.g., `v0.2.0`) — there are no separate `develop` or `release` branches
+
+**Branch naming:**
+```
+feature/short-description      # new features
+fix/issue-123-short-description # bug fixes
+docs/update-readme              # documentation
+chore/dependency-updates        # maintenance
+```
+
+> **Why not Gitflow?** Gitflow (with develop/release branches) is designed for scheduled enterprise releases. GitHub Flow is simpler and works better for continuous-delivery open-source projects where changes ship frequently.
+
+## Changelog
+
+Every PR with user-facing changes **must** add an entry to the `## [Unreleased]` section of [CHANGELOG.md](CHANGELOG.md) using the appropriate sub-heading:
+
+- `### Added` — new features
+- `### Changed` — changes to existing behavior
+- `### Fixed` — bug fixes
+- `### Removed` — removed features
+- `### Security` — security fixes
+
+**Do not bump the version number in `package.json`** on every PR. Versions are incremented only when a tagged release is cut (e.g., `git tag v0.2.0`), at which point the `[Unreleased]` section is promoted to a versioned entry.
 
 ## Pull Request Process
 
