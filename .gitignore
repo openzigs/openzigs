@@ -102,6 +102,9 @@ pnpm-debug.log
 files/
 downloads/
 
+# Screenshots (user-generated)
+screenshots/
+
 # Debug screenshots (root-level)
 automation-architecture-section.png
 architecture-integrations-cta.png

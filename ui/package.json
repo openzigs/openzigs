@@ -1,8 +1,19 @@
 {
   "name": "openzigs-ui",
   "version": "0.1.0",
+  "description": "Next.js frontend for OpenZigs AI assistant",
   "private": true,
   "type": "module",
+  "license": "FSL-1.1-MIT",
+  "author": "Zylos Labs LLC",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/openzigs/openzigs.git",
+    "directory": "ui"
+  },
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "dev": "node dev-server.mjs",
     "build": "next build",

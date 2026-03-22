@@ -92,4 +92,6 @@ See [Issues](https://github.com/mgcronin/openzigs/issues) for detailed progress.
 
 ## License
 
-MIT
+[FSL-1.1-MIT](LICENSE.md) — Functional Source License, Version 1.1, with MIT future license. See [LICENSE.md](LICENSE.md) for full terms.
+
+Copyright 2026 Zylos Labs LLC.

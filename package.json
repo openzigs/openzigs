@@ -1,8 +1,18 @@
 {
   "name": "openzigs",
   "version": "0.1.0",
+  "description": "Open-source AI assistant and developer tools platform built on GitHub Copilot SDK",
   "type": "module",
   "private": true,
+  "license": "FSL-1.1-MIT",
+  "author": "Zylos Labs LLC",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/openzigs/openzigs.git"
+  },
+  "engines": {
+    "node": ">=22"
+  },
   "packageManager": "pnpm@10.28.2",
   "bin": {
     "openzigs": "dist/cli.js"
