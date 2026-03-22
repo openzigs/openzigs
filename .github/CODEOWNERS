@@ -1,14 +1,14 @@
 # Default owners for all files
-* @matthewcronin
+* @mgcronin
 
 # Frontend
-/ui/ @matthewcronin
+/ui/ @mgcronin
 
 # MCP tools
-/src/mcp/ @matthewcronin
+/src/mcp/ @mgcronin
 
 # Task engine
-/src/tasks/ @matthewcronin
+/src/tasks/ @mgcronin
 
 # External MCP servers
-/external/ @matthewcronin
+/external/ @mgcronin

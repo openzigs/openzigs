@@ -4,7 +4,7 @@
  * Mounted at `/api/admin/memory` in server.ts.
  *
  * @module api/memory
- * @see https://github.com/mgcronin/openzigs/issues/433
+ * @see https://github.com/openzigs/openzigs/issues/433
  */
 
 import { Router } from "express";

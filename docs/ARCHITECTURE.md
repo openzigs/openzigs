@@ -2484,7 +2484,7 @@ For the current Express/Node.js stack:
 2. **`historyWindow: 20` is retained** for the JSONL audit trail and admin session viewer, but no longer affects the LLM context.
 3. **`maxToolsPerRequest: 30` is implemented** as a runtime-configurable safety valve. Increase to 50-80 if you need broader tool coverage per request; decrease if you hit context limits or observe hallucinated tool calls.
 4. **Monitor tool-related failures.** If the model calls tools that were excluded by the cap, increase the limit or add the tool to `ALWAYS_ON_TOOLS` in `src/mcp/constants.ts`.
-5. **Future: vector-based tool retrieval** — embed tool descriptions and retrieve top-K by semantic similarity to the user query. This is the long-term scalable solution. See [Epic #112](https://github.com/mgcronin/openzigs/issues/112).
+5. **Future: vector-based tool retrieval** — embed tool descriptions and retrieve top-K by semantic similarity to the user query. This is the long-term scalable solution. See [Epic #112](https://github.com/openzigs/openzigs/issues/112).
 
 ---
 
@@ -2927,7 +2927,7 @@ curl -X PUT -H "Authorization: Bearer <token>" \
   http://localhost:3000/api/admin/tasks/config
 ```
 
-### Tracking: [Epic #81](https://github.com/mgcronin/openzigs/issues/81)
+### Tracking: [Epic #81](https://github.com/openzigs/openzigs/issues/81)
 
 ### Real-Time Subagent Event Streaming (#488)
 
@@ -3007,7 +3007,7 @@ The Task Tree API provides recursive hierarchical views of task DAGs using SQLit
 
 **Socket.IO Event:** `task:tree-update` emitted on all task lifecycle changes — includes `rootTaskId` resolved by walking up the parent chain.
 
-### Tracking: [Epic #484](https://github.com/mgcronin/openzigs/issues/484)
+### Tracking: [Epic #484](https://github.com/openzigs/openzigs/issues/484)
 
 ---
 
@@ -3095,13 +3095,13 @@ UI wiring:
 | `GET` | `/api/admin/native-mcp-servers/tool-cache` | List cached discovery/disconnect metadata |
 | `GET` | `/api/admin/tasks/stats` | Task queue/running stats used for busy guard |
 
-### Tracking: [Epic #135](https://github.com/mgcronin/openzigs/issues/135)
+### Tracking: [Epic #135](https://github.com/openzigs/openzigs/issues/135)
 
 ---
 
 ## SDK-Native Subagent Support (In-Session Agent Delegation) (Epic #495)
 
-OpenZigs supports two complementary subagent architectures: **SDK-native in-session delegation** and **TaskEngine-backed background agents**. This section documents the SDK-native path added in [Epic #495](https://github.com/mgcronin/openzigs/issues/495).
+OpenZigs supports two complementary subagent architectures: **SDK-native in-session delegation** and **TaskEngine-backed background agents**. This section documents the SDK-native path added in [Epic #495](https://github.com/openzigs/openzigs/issues/495).
 
 ### Dual Subagent Architecture
 
@@ -3231,13 +3231,13 @@ The `SubagentLivePanel` component (`ui/components/subagent-live-panel.tsx`) now 
 - **In-session agents** (SDK-native): Tracked via `subagent:*` Socket.IO events, shown with blue "In-Session" badge
 - **Filter toggle**: Users can filter by All / Background / In-Session
 
-### Tracking: [Epic #495](https://github.com/mgcronin/openzigs/issues/495)
+### Tracking: [Epic #495](https://github.com/openzigs/openzigs/issues/495)
 
 ---
 
 ## AI-Assisted Configuration & Enterprise Webhooks
 
-This section covers the AI-assisted configuration system, enterprise webhooks, dry-run capabilities, and self-aware documentation features added in [Epic #156](https://github.com/mgcronin/openzigs/issues/156).
+This section covers the AI-assisted configuration system, enterprise webhooks, dry-run capabilities, and self-aware documentation features added in [Epic #156](https://github.com/openzigs/openzigs/issues/156).
 
 ### Workflow Wizard Architecture
 
@@ -3358,7 +3358,7 @@ A `documentation-expert` custom agent (with `infer: true`) can be automatically 
 | `test-job` | productivity | medium | Dry-run an existing scheduled job |
 | `query-documentation` | productivity | low | Search project documentation by topic |
 
-### Tracking: [Epic #156](https://github.com/mgcronin/openzigs/issues/156)
+### Tracking: [Epic #156](https://github.com/openzigs/openzigs/issues/156)
 
 ---
 
@@ -3526,7 +3526,7 @@ CustomPostActionManager (src/tasks/custom-post-actions.ts)
 
 **Data flow:** Create via UI → Zod-validated API → `CustomPostActionManager.create()` → persist to disk → `postActionRegistry.register()` → appears in stage editor dropdown.
 
-### Tracking: [Epic #171](https://github.com/mgcronin/openzigs/issues/171)
+### Tracking: [Epic #171](https://github.com/openzigs/openzigs/issues/171)
 
 ---
 
@@ -3672,7 +3672,7 @@ POST /api/admin/templates/import { template, placeholders }
 2. **Preview** — Shows prompt name, description, stage count, tags, and a form for required placeholder values.
 3. **Success** — Confirmation with checkmark and prompt name.
 
-### Tracking: [Epic #188](https://github.com/mgcronin/openzigs/issues/188)
+### Tracking: [Epic #188](https://github.com/openzigs/openzigs/issues/188)
 
 ## Pipeline Template Library (Epic #446 → #456)
 
@@ -3717,7 +3717,7 @@ Each template contains:
 | `PUT` | `/api/admin/pipeline-templates/:id` | Update user template |
 | `DELETE` | `/api/admin/pipeline-templates/:id` | Remove user template |
 
-### Tracking: [Issue #456](https://github.com/mgcronin/openzigs/issues/456)
+### Tracking: [Issue #456](https://github.com/openzigs/openzigs/issues/456)
 
 ## Sentinel — Autonomous System Monitor & SRE Agent (Epic #179 → #194)
 
@@ -3835,7 +3835,7 @@ The Sentinel panel appears on the Admin page (`/admin`) under "Sentinel Monitor"
 - **Digest history**: `~/.openzigs/sentinel/digest-history.jsonl` — append-only JSONL of daily digests (auto-pruned per `digestRetentionDays`)
 - **Status report**: `~/.openzigs/sentinel/status.md` — human-readable Markdown digest (auto-generated when `persistMarkdownDigest: true`)
 
-### Tracking: [Epic #179](https://github.com/mgcronin/openzigs/issues/179) → [Epic #194](https://github.com/mgcronin/openzigs/issues/194)
+### Tracking: [Epic #179](https://github.com/openzigs/openzigs/issues/179) → [Epic #194](https://github.com/openzigs/openzigs/issues/194)
 
 ---
 
@@ -4061,7 +4061,7 @@ When the AI retrieves media assets from the knowledge base, it can format them f
 - **Audio**: `[🎵 filename](/api/queue/assets/{id}/file)` → rendered by `ChatAudioBlock` (inline player)
 - **Video**: `[🎬 filename](/api/queue/assets/{id}/file)` → rendered by `ChatVideoBlock` (preview + lightbox)
 
-### Tracking: [Epic #215](https://github.com/mgcronin/openzigs/issues/215)
+### Tracking: [Epic #215](https://github.com/openzigs/openzigs/issues/215)
 
 ---
 
@@ -4161,7 +4161,7 @@ Files are stored at `memories/{category}/{slug}.md` in the GitHub repository.
 4. Start chatting — the AI will automatically save important facts it discovers
 5. Optionally create manual memories via the admin UI or API
 
-### Tracking: [Epic #334](https://github.com/mgcronin/openzigs/issues/334)
+### Tracking: [Epic #334](https://github.com/openzigs/openzigs/issues/334)
 
 ---
 
@@ -4249,13 +4249,13 @@ Changed from temporary `/tmp/openzigs-chrome-profile` to persistent `~/.openzigs
 }
 ```
 
-### Tracking: [Epic #216](https://github.com/mgcronin/openzigs/issues/216)
+### Tracking: [Epic #216](https://github.com/openzigs/openzigs/issues/216)
 
 ---
 
 ## Presenter Mode (Interactive Playback, Blackboard & Quizzes)
 
-Issue: [Epic #275](https://github.com/mgcronin/openzigs/issues/275)
+Issue: [Epic #275](https://github.com/openzigs/openzigs/issues/275)
 
 Presenter Mode transforms rendered Director Mode videos into interactive learning experiences. After a video is rendered, it is auto-indexed into a presentation catalog. Users can play presentations with AI-powered Q&A, pop quizzes, and live blackboard overlays.
 
@@ -4327,13 +4327,13 @@ Presenter Mode transforms rendered Director Mode videos into interactive learnin
 | `presenter:answer:done` | server → client | Answer complete |
 | `presenter:answer:error` | server → client | Error during answer generation |
 
-### Tracking: [Epic #275](https://github.com/mgcronin/openzigs/issues/275)
+### Tracking: [Epic #275](https://github.com/openzigs/openzigs/issues/275)
 
 ---
 
 ## Multiplayer Presenter Mode — P2P Watch Party & Guest Invite
 
-Issue: [Epic #282](https://github.com/mgcronin/openzigs/issues/282)
+Issue: [Epic #282](https://github.com/openzigs/openzigs/issues/282)
 
 Multiplayer extends Presenter Mode into a real-time collaborative watch party using Socket.IO rooms, JWT-based guest invites, and a PeerJS WebRTC audio mesh.
 
@@ -4412,7 +4412,7 @@ app.use(peerServer);
 | `room:audio_chunk` | C→S | Binary audio for STT (≤2MB, rate-limited) |
 | `room:transcription_preview` | S→C | Live transcription text with speaker name |
 
-### Tracking: [Epic #282](https://github.com/mgcronin/openzigs/issues/282)
+### Tracking: [Epic #282](https://github.com/openzigs/openzigs/issues/282)
 
 ---
 
@@ -4580,7 +4580,7 @@ Brain "escalated_message" ──▶ Handoff.forwardToThread()
 
 4-tab page: Dashboard (stat cards + connections), CRM (paginated table + detail drawer), Automations (rules CRUD + log), Activity (message feed). React Query hooks in `ui/lib/hooks/use-social.ts`.
 
-### Tracking: [Epic #291](https://github.com/mgcronin/openzigs/issues/291)
+### Tracking: [Epic #291](https://github.com/openzigs/openzigs/issues/291)
 
 ---
 
@@ -4859,7 +4859,7 @@ Generates stylized YouTube thumbnails for rendered videos:
 - `ui/components/director/studio/scene-inspector.tsx` — Framing panel for 9:16 clips
 - `ui/components/director/studio/studio-toolbar.tsx` — Thumbnail generate button
 
-### Tracking: [Epic #313](https://github.com/mgcronin/openzigs/issues/313)
+### Tracking: [Epic #313](https://github.com/openzigs/openzigs/issues/313)
 
 ---
 
@@ -5181,7 +5181,7 @@ The Gallery page at `/gallery` provides:
 | `/gallery` | `gallery/page.tsx` | Asset Gallery + Gallery Studio |
 | `/music-studio` | `music-studio/page.tsx` | AI Music Studio — Voice2Voice pipeline + Smart Remix Lab with DAW waveform view |
 
-### Tracking: [Epic #325](https://github.com/mgcronin/openzigs/issues/325), [Epic #335](https://github.com/mgcronin/openzigs/issues/335), [Epic #380](https://github.com/mgcronin/openzigs/issues/380), [Epic #389](https://github.com/mgcronin/openzigs/issues/389)
+### Tracking: [Epic #325](https://github.com/openzigs/openzigs/issues/325), [Epic #335](https://github.com/openzigs/openzigs/issues/335), [Epic #380](https://github.com/openzigs/openzigs/issues/380), [Epic #389](https://github.com/openzigs/openzigs/issues/389)
 
 ## Music Studio — Voice2Voice Pipeline & Smart Remix Lab (Epic #380, #389, #402)
 
@@ -5325,7 +5325,7 @@ SoundFonts are loaded from `~/.openzigs/soundfonts/` and mapped by instrument ID
 | Auto-Mastering | `sidecars/music-studio/finalize.py` | pyloudnorm ITU-R BS.1770 LUFS −14 normalization + brick-wall limiter |
 | Sidecar Endpoints | `sidecars/music-studio/server.py` | `/remix/analyze`, `/remix/replace-stem`, `/remix/master`, voice reference CRUD |
 
-### Tracking: [Epic #380](https://github.com/mgcronin/openzigs/issues/380), [Epic #389](https://github.com/mgcronin/openzigs/issues/389), [Epic #402](https://github.com/mgcronin/openzigs/issues/402)
+### Tracking: [Epic #380](https://github.com/openzigs/openzigs/issues/380), [Epic #389](https://github.com/openzigs/openzigs/issues/389), [Epic #402](https://github.com/openzigs/openzigs/issues/402)
 
 ## Character Lab — LoRA Training & Identity Consistency (Epic #374)
 
@@ -5441,7 +5441,7 @@ The Gallery Studio (`ui/app/gallery/page.tsx`) adds:
 |---|---|---|
 | `/characters` | `characters/page.tsx` | Character Lab (CRUD, photos, training) |
 
-### Tracking: [Epic #374](https://github.com/mgcronin/openzigs/issues/374)
+### Tracking: [Epic #374](https://github.com/openzigs/openzigs/issues/374)
 
 ---
 
@@ -5481,7 +5481,7 @@ Uses `routeToToolSequence(prompt)` to validate that natural language intents res
 2. **Remix pipeline** — Analyzes audio, replaces stems, applies mastering
 3. **Scheduled content pipeline** — Creates brand voice, schedules media generation
 
-### Tracking: [Epic #394](https://github.com/mgcronin/openzigs/issues/394)
+### Tracking: [Epic #394](https://github.com/openzigs/openzigs/issues/394)
 
 ---
 
@@ -5595,7 +5595,7 @@ All worker events are forwarded to connected clients via Socket.IO in `server.ts
 - `trim:queued`, `trim:processing`, `trim:complete`, `trim:failed`
 - `analyze:queued`, `analyze:progress`, `analyze:complete`, `analyze:failed`
 
-### Tracking: [Epic #438](https://github.com/mgcronin/openzigs/issues/438)
+### Tracking: [Epic #438](https://github.com/openzigs/openzigs/issues/438)
 
 ---
 
@@ -5641,7 +5641,7 @@ Studio Toolbar → YouTubeMetadataEditor (modal) → POST /director/youtube/publ
 - `youtube:publish:complete` — Successful publish with video URL
 - `youtube:publish:error` — Upload failure with error message
 
-### Tracking: [Epic #510](https://github.com/mgcronin/openzigs/issues/510)
+### Tracking: [Epic #510](https://github.com/openzigs/openzigs/issues/510)
 
 ---
 
@@ -5678,4 +5678,4 @@ Professional-grade features for video production and asset management.
 - API: `GET /api/admin/director/youtube/analytics/channel`, `GET /youtube/analytics/videos` — Proxies YouTube MCP tools.
 - UI: **`ui/app/director/analytics/page.tsx`** — Channel overview cards, Recharts bar chart (top 10 by views), sortable/searchable video metrics table.
 
-### Tracking: [Epic #511](https://github.com/mgcronin/openzigs/issues/511)
+### Tracking: [Epic #511](https://github.com/openzigs/openzigs/issues/511)

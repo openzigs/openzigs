@@ -143,7 +143,7 @@ function Install-OpenZigs {
     if (-not (Test-Path $installDir)) {
         Write-Host ""
         Write-Host "  Cloning OpenZigs to $installDir..."
-        git clone https://github.com/mgcronin/openzigs.git $installDir
+        git clone https://github.com/openzigs/openzigs.git $installDir
     }
 
     Set-Location $installDir

@@ -279,7 +279,7 @@ export async function extractBlog(url: string): Promise<ExtractedBlog> {
 
   const response = await fetch(validated.href, {
     headers: {
-      "User-Agent": "Mozilla/5.0 (compatible; OpenZigs/1.0; +https://github.com/mgcronin/openzigs)",
+      "User-Agent": "Mozilla/5.0 (compatible; OpenZigs/1.0; +https://github.com/openzigs/openzigs)",
       "Accept": "text/html,application/xhtml+xml",
       "Accept-Language": "en-US,en;q=0.9",
     },

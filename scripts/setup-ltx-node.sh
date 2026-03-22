@@ -20,7 +20,7 @@ set -euo pipefail
 
 INSTALL_DIR="${LTX_INSTALL_DIR:-$HOME/ltx-worker}"
 PYTHON="${LTX_PYTHON:-python3}"
-REPO_RAW="https://raw.githubusercontent.com/mgcronin/openzigs/main"
+REPO_RAW="https://raw.githubusercontent.com/openzigs/openzigs/main"
 
 # Resolve local sidecar directory relative to this script
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

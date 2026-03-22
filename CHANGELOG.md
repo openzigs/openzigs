@@ -31,7 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Scheduler with cron-based job management
 - External MCP servers: Facebook, Instagram, LinkedIn, Reddit, TikTok, Twitter/X, YouTube
 - Docker Compose configuration for containerized deployment
-- 370+ unit tests with Vitest
+- 4,850+ unit tests with Vitest
 - FSL-1.1-MIT license with MIT future grant
 
 [Unreleased]: https://github.com/openzigs/openzigs/compare/v0.1.0...HEAD

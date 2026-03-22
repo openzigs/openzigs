@@ -16,7 +16,7 @@ const FAKE_SESSIONS: SdkSessionMetadata[] = [
     modifiedTime: "2026-01-15T11:30:00.000Z",
     summary: "Refactoring the auth module",
     isRemote: false,
-    context: { cwd: "/home/dev/project", repository: "mgcronin/openzigs", branch: "main" },
+    context: { cwd: "/home/dev/project", repository: "openzigs/openzigs", branch: "main" },
   },
   {
     sessionId: "sdk-session-2",
@@ -120,7 +120,7 @@ describe("Admin Copilot Sessions API", () => {
     expect(res.status).toBe(200);
     expect(res.body.sessions).toHaveLength(2);
     expect(res.body.sessions[0].sessionId).toBe("sdk-session-1");
-    expect(res.body.sessions[0].context.repository).toBe("mgcronin/openzigs");
+    expect(res.body.sessions[0].context.repository).toBe("openzigs/openzigs");
     expect(res.body.sessions[1].isRemote).toBe(true);
   });
 

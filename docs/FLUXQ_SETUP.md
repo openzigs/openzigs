@@ -20,13 +20,13 @@ headless Python sidecar (FluxQ) that serves FLUX.1 models via [MFLUX](https://gi
 ### 1. Run the setup script on the remote Mac
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/mgcronin/openzigs/main/scripts/setup-fluxq-node.sh | bash
+curl -fsSL https://raw.githubusercontent.com/openzigs/openzigs/main/scripts/setup-fluxq-node.sh | bash
 ```
 
 Or clone the repo and run locally:
 
 ```bash
-git clone https://github.com/mgcronin/openzigs.git
+git clone https://github.com/openzigs/openzigs.git
 cd openzigs
 bash scripts/setup-fluxq-node.sh
 ```

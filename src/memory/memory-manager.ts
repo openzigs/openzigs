@@ -6,7 +6,7 @@
  * SDK sessions as supplementary context to improve response quality over time.
  *
  * @module memory/memory-manager
- * @see https://github.com/mgcronin/openzigs/issues/334
+ * @see https://github.com/openzigs/openzigs/issues/334
  */
 
 import { EventEmitter } from "node:events";
