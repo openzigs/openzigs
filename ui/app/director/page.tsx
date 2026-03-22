@@ -1,17 +1,19 @@
 "use client";
 
 import { useState } from "react";
-import { Film, Globe, FolderOpen, Scissors, Sparkles, MonitorUp } from "lucide-react";
+import { Film, Globe, FolderOpen, Scissors, Sparkles, MonitorUp, Palette, Layers } from "lucide-react";
 import { DirectorWizard } from "@/components/director/director-wizard";
 import { BlogToVideoPanel } from "@/components/director/blog-to-video-panel";
 import { ShortsPanel } from "@/components/director/shorts-panel";
 import { DraftsPanel } from "@/components/director/drafts-panel";
 import { HeroReelPanel } from "@/components/director/hero-reel-panel";
 import { CaptureAndTrimPanel } from "@/components/director/studio/capture-and-trim-panel";
+import { BrandKitEditor } from "@/components/director/brand-kit-editor";
+import { BatchRenderPanel } from "@/components/director/batch-render-panel";
 import { ToastContainer } from "@/components/toast";
 import { AskAiPanel, AskAiButton, PAGE_CONTEXTS } from "@/components/ask-ai";
 
-type DirectorTab = "wizard" | "blog" | "shorts" | "drafts" | "hero-reel" | "capture";
+type DirectorTab = "wizard" | "blog" | "shorts" | "drafts" | "hero-reel" | "capture" | "brand-kit" | "batch-render";
 
 export default function DirectorPage() {
   const [tab, setTab] = useState<DirectorTab>("wizard");
@@ -100,6 +102,28 @@ export default function DirectorPage() {
           <MonitorUp className="h-4 w-4" />
           Capture &amp; Trim
         </button>
+        <button
+          onClick={() => setTab("brand-kit")}
+          className={`flex items-center gap-1.5 px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+            tab === "brand-kit"
+              ? "border-primary text-primary"
+              : "border-transparent text-muted-foreground hover:text-foreground"
+          }`}
+        >
+          <Palette className="h-4 w-4" />
+          Brand Kit
+        </button>
+        <button
+          onClick={() => setTab("batch-render")}
+          className={`flex items-center gap-1.5 px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+            tab === "batch-render"
+              ? "border-primary text-primary"
+              : "border-transparent text-muted-foreground hover:text-foreground"
+          }`}
+        >
+          <Layers className="h-4 w-4" />
+          Batch Render
+        </button>
       </div>
 
       <div className="min-h-0 flex-1">
@@ -109,6 +133,8 @@ export default function DirectorPage() {
         {tab === "drafts" && <DraftsPanel />}
         {tab === "hero-reel" && <HeroReelPanel />}
         {tab === "capture" && <CaptureAndTrimPanel />}
+        {tab === "brand-kit" && <BrandKitEditor />}
+        {tab === "batch-render" && <BatchRenderPanel />}
       </div>
       <ToastContainer />
       <AskAiPanel pageContext={PAGE_CONTEXTS["director"]} open={askAiOpen} onClose={() => setAskAiOpen(false)} />

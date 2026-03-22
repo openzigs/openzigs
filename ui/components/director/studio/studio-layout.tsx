@@ -10,6 +10,7 @@ import { SceneInspector } from "./scene-inspector";
 import { CaptionStylePanel } from "./caption-style-panel";
 import { TimelineTracks } from "./timeline-tracks";
 import { AudioManager } from "./audio-manager";
+import { ShortsProposalPanel } from "./shorts-proposal-panel";
 import { Plus, X } from "lucide-react";
 import type {
   DraftFull,
@@ -592,6 +593,11 @@ export function StudioLayout({ draftId }: { draftId: string }) {
               />
             </div>
           )}
+
+          {/* Shorts Generator */}
+          <div className="mt-4">
+            <ShortsProposalPanel draftId={draftId} />
+          </div>
         </div>
       </div>
 

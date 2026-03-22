@@ -472,7 +472,7 @@ The OpenZigs UI is a **Next.js** application with a navigation bar providing acc
 | **Gallery** | `/gallery` | Asset gallery for generated images, videos, and audio; inline creation studio for txt2img, img2img, txt2video, img2video, txt2music |
 | **Music Studio** | `/music-studio` | AI Voice2Voice pipeline &amp; Smart Remix Lab — stem separation, voice conversion, instrument replacement, and auto-mastering |
 | **Director** | `/director` | AI video production wizard, blog-to-YouTube, timeline studio, and capture & trim |
-| **Director Studio** | `/director/studio/[id]` | Full timeline editor with player preview, scene inspector, and drag-and-drop reordering |
+| **Director Studio** | `/director/studio/[id]` | Full timeline editor with player preview, scene inspector, drag-and-drop reordering, and YouTube direct publishing |
 
 ### Chat
 
@@ -1775,6 +1775,74 @@ You can also use Studio tools from the chat interface via the **Media Director**
 - **"Analyze my latest screen recording for redundant sections"** → The AI calls `analyze-video-redundancy` and returns suggested cuts.
 - **"Trim the first 30 seconds from video X"** → The AI calls `trim-video` with the specified times.
 - **"Clean up my recording — remove dead air and repeated sections"** → The AI runs analysis first, then trims the suggested cuts sequentially.
+
+---
+
+### Subtitle Export (SRT/VTT)
+
+Export subtitles from any Director draft's narration timeline:
+
+1. Open a draft in **Studio**.
+2. Click the **Subtitles** dropdown in the toolbar.
+3. Choose **SRT** (SubRip) or **VTT** (WebVTT) format.
+4. The subtitle file downloads automatically with timestamps synchronized to each scene's narration.
+
+**API:** `GET /api/admin/director/drafts/:id/subtitles/srt` or `/vtt`
+
+### Brand Kit System
+
+Create reusable brand kits for consistent video styling:
+
+1. Go to **Director** → **Brand Kit** tab.
+2. Click **New Kit** and set:
+   - **Name** — e.g., "Company Brand"
+   - **Colors** — Primary, secondary, and accent (hex color picker)
+   - **Font Family** — Select from available fonts
+3. The live **Preview** shows your color swatches and font.
+4. Brand kits are stored in SQLite and available across all productions.
+
+### Batch Render Queue
+
+Render multiple drafts at once:
+
+1. Go to **Director** → **Batch Render** tab.
+2. Select drafts using checkboxes (or **Select All**).
+3. Click **Render Selected (N)** to queue them all.
+4. The **Last Batch Results** panel shows per-job status (queued/failed).
+
+**API:** `POST /api/admin/director/render/batch` with `{ draftIds: string[] }`
+
+### Gallery Collections & Tagging
+
+Organize assets into collections and tag them for easy filtering:
+
+- **Collections Sidebar** — Appears on the left of the Gallery page. Create, rename, and delete collections. Click a collection to filter assets.
+- **Tag Filter** — Tag chips appear above the asset grid. Click to filter by tags; click again to remove. Supports multi-tag filtering.
+- **API Routes:**
+  - `GET/POST/PUT/DELETE /api/admin/director/gallery/collections` — Collection CRUD
+  - `POST/DELETE /api/admin/director/gallery/collections/:id/items` — Add/remove assets
+  - `GET/POST/DELETE /api/admin/director/gallery/tags` — Tag management
+
+### Shorts Generator
+
+Auto-generate YouTube Shorts from long-form video drafts:
+
+1. Open a draft in **Studio**.
+2. Scroll to the **Shorts Generator** panel in the right sidebar.
+3. Set **Max Shorts** (1–5) and click **Generate Proposals**.
+4. The LLM analyzes your video transcript and proposes the most engaging 30–60 second segments, each with a title, hook text, CTA, engagement score, and justification.
+5. **Accept/Reject** individual proposals, or click **Edit** to customize.
+6. Click **Render N Shorts** to queue accepted segments for rendering.
+
+### YouTube Analytics Dashboard
+
+View channel and per-video metrics at `/director/analytics`:
+
+- **Channel Overview** — Subscriber count, total views, total videos.
+- **Top Videos Chart** — Recharts bar chart of top 10 videos by views.
+- **Video Metrics Table** — Sortable by views, likes, comments, or date. Searchable by title. Shows thumbnail, like ratio, and publish date.
+- Data is fetched from the YouTube MCP server and cached with 5-minute stale time.
+- **Empty state** displays when YouTube OAuth is not configured.
 
 ---
 
@@ -4456,6 +4524,14 @@ The Studio provides a three-panel layout:
 - **Auto-save** — After any manifest change, the Studio auto-saves every 30 seconds while the draft is dirty. Manual saves reset the timer.
 - **Render history** — The **Renders** dropdown button shows all past renders for the current draft with status icons (complete, failed, queued, in-progress), progress bars for active renders, and download links for completed outputs. Polls every 5 seconds while renders are active.
 - **Render-to-draft linking** — Each render is recorded in the `director_renders` table and linked to its parent draft. The Render button auto-saves before submitting.
+- **YouTube Direct Publishing** — After rendering, click the red **Publish** button in the toolbar to open the YouTube Metadata Editor. Features:
+  - **AI-generated metadata** — Click "Generate with AI" to auto-generate an SEO-optimized title, description, tags, and suggested category using the video's manifest content.
+  - **Auto-chapters** — YouTube chapter timestamps are automatically generated from the video timeline and appended to the description.
+  - **Privacy controls** — Choose Public, Unlisted, or Private visibility.
+  - **Tag editor** — Add up to 30 tags with Enter/comma, remove with X.
+  - **Category selector** — Choose from 15 YouTube video categories.
+  - **Publish history** — The "Publishes" dropdown shows all past upload attempts with status (uploading/published/failed) and direct YouTube links.
+  - After a successful publish, the Publish button changes to "View on YouTube" with a direct link.
 
 ### Blog-to-YouTube Pipeline
 

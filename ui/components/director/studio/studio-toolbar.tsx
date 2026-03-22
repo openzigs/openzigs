@@ -1,13 +1,16 @@
 "use client";
 
-import { useState, useCallback } from "react";
-import { ArrowLeft, Save, Film, Loader2, Check } from "lucide-react";
+import { useState, useCallback, useEffect } from "react";
+import { ArrowLeft, Save, Film, Loader2, Check, Youtube, ExternalLink, Subtitles, ChevronDown } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { fetchJson } from "@/lib/api";
 import { showToast } from "@/components/toast";
 import { RenderHistory } from "./render-history";
 import { VersionHistory } from "./version-history";
 import { ThumbnailPanel } from "./thumbnail-panel";
+import { YouTubeMetadataEditor } from "./youtube-metadata-editor";
+import { YouTubePublishHistory } from "./youtube-publish-history";
+import type { YouTubeMetadata } from "./youtube-metadata-editor";
 import type { DirectorManifest } from "../types";
 
 interface StudioToolbarProps {
@@ -25,6 +28,10 @@ export function StudioToolbar({ title, draftId, manifest, onSave, onRestore, dir
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [rendering, setRendering] = useState(false);
+  const [ytOpen, setYtOpen] = useState(false);
+  const [publishing, setPublishing] = useState(false);
+  const [publishStatus, setPublishStatus] = useState<{ status: string; videoUrl?: string } | null>(null);
+  const [subtitleMenuOpen, setSubtitleMenuOpen] = useState(false);
 
   const handleSave = useCallback(async () => {
     setSaving(true);
@@ -61,6 +68,52 @@ export function StudioToolbar({ title, draftId, manifest, onSave, onRestore, dir
       setRendering(false);
     }
   }, [manifest, draftId, onSave]);
+
+  // Poll YouTube publish status
+  useEffect(() => {
+    if (!draftId) return;
+    fetchJson<{ status: string; videoUrl?: string }>(
+      `/api/admin/director/youtube/publish/${draftId}/status`,
+    )
+      .then(setPublishStatus)
+      .catch(() => {/* silent */});
+  }, [draftId]);
+
+  const handleYouTubePublish = useCallback(async (metadata: YouTubeMetadata) => {
+    setPublishing(true);
+    try {
+      await onSave();
+      const res = await fetchJson<{ id: string; status: string; error?: string }>(
+        "/api/admin/director/youtube/publish",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            draftId,
+            title: metadata.title,
+            description: metadata.description,
+            tags: metadata.tags,
+            categoryId: metadata.categoryId,
+            privacyStatus: metadata.privacyStatus,
+          }),
+        },
+      );
+      if (res.status === "failed") {
+        showToast(res.error ?? "Publish failed", "error");
+      } else {
+        showToast("Publishing to YouTube…", "success");
+        setYtOpen(false);
+        // Re-fetch status
+        const status = await fetchJson<{ status: string; videoUrl?: string }>(
+          `/api/admin/director/youtube/publish/${draftId}/status`,
+        );
+        setPublishStatus(status);
+      }
+    } catch {
+      showToast("Failed to start YouTube publish", "error");
+    } finally {
+      setPublishing(false);
+    }
+  }, [draftId, onSave]);
 
   const handleSaveVersion = useCallback(async () => {
     await onSave();
@@ -109,6 +162,69 @@ export function StudioToolbar({ title, draftId, manifest, onSave, onRestore, dir
         )}
         {draftId && <ThumbnailPanel draftId={draftId} />}
         {draftId && <RenderHistory draftId={draftId} />}
+        {draftId && <YouTubePublishHistory draftId={draftId} />}
+
+        {/* Export Subtitles */}
+        {draftId && (
+          <div className="relative">
+            <button
+              onClick={() => setSubtitleMenuOpen(!subtitleMenuOpen)}
+              className="flex items-center gap-1.5 rounded-md bg-muted px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted/80 transition"
+            >
+              <Subtitles className="h-3.5 w-3.5" />
+              Subtitles
+              <ChevronDown className="h-3 w-3" />
+            </button>
+            {subtitleMenuOpen && (
+              <div className="absolute right-0 top-full mt-1 z-50 w-36 rounded-md border border-border bg-popover p-1 shadow-md">
+                <a
+                  href={`${process.env.NEXT_PUBLIC_OPENZIGS_API_BASE ?? ""}/api/admin/director/drafts/${draftId}/subtitles/srt${process.env.NEXT_PUBLIC_OPENZIGS_TOKEN ? `?token=${encodeURIComponent(process.env.NEXT_PUBLIC_OPENZIGS_TOKEN)}` : ""}`}
+                  download
+                  onClick={() => setSubtitleMenuOpen(false)}
+                  className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-xs text-foreground hover:bg-accent transition"
+                >
+                  Export .srt
+                </a>
+                <a
+                  href={`${process.env.NEXT_PUBLIC_OPENZIGS_API_BASE ?? ""}/api/admin/director/drafts/${draftId}/subtitles/vtt${process.env.NEXT_PUBLIC_OPENZIGS_TOKEN ? `?token=${encodeURIComponent(process.env.NEXT_PUBLIC_OPENZIGS_TOKEN)}` : ""}`}
+                  download
+                  onClick={() => setSubtitleMenuOpen(false)}
+                  className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-xs text-foreground hover:bg-accent transition"
+                >
+                  Export .vtt
+                </a>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* YouTube Publish */}
+        {draftId && publishStatus?.status === "published" && publishStatus.videoUrl ? (
+          <a
+            href={publishStatus.videoUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-1.5 rounded-md bg-red-600/10 px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-600/20 transition"
+          >
+            <Youtube className="h-3.5 w-3.5" />
+            View on YouTube
+            <ExternalLink className="h-3 w-3" />
+          </a>
+        ) : draftId ? (
+          <button
+            onClick={() => setYtOpen(true)}
+            disabled={publishing}
+            className="flex items-center gap-1.5 rounded-md bg-red-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-red-700 transition disabled:opacity-50"
+          >
+            {publishing ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Youtube className="h-3.5 w-3.5" />
+            )}
+            {publishing ? "Publishing…" : "Publish"}
+          </button>
+        ) : null}
+
         <button
           onClick={handleRender}
           disabled={rendering || !manifest}
@@ -118,6 +234,17 @@ export function StudioToolbar({ title, draftId, manifest, onSave, onRestore, dir
           Render
         </button>
       </div>
+
+      {/* YouTube Metadata Editor Modal */}
+      <YouTubeMetadataEditor
+        draftId={draftId}
+        defaultTitle={title}
+        open={ytOpen}
+        onClose={() => setYtOpen(false)}
+        onPublish={handleYouTubePublish}
+        publishing={publishing}
+        warning={publishStatus?.status === "published" ? "This draft has already been published to YouTube. Publishing again will create a new video." : undefined}
+      />
     </div>
   );
 }

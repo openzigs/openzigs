@@ -30,19 +30,23 @@
  */
 
 import path from "node:path";
+import os from "node:os";
 import { spawn } from "node:child_process";
 import { Router, raw } from "express";
 import { nanoid } from "nanoid";
+import { z } from "zod";
 import { logger } from "../logging/logger.js";
 import { getDatabase } from "../productivity/database.js";
 import type { CopilotWrapper } from "../copilot/copilot-wrapper.js";
 import type { VoiceService } from "../voice/voice-service.js";
 import type { RenderOrchestrator } from "../video/render-orchestrator.js";
 import type { BrandVoiceService } from "../personality/brand-voice-service.js";
+import type { ToolRegistry } from "../mcp/tool-registry.js";
 import type { Server as SocketIOServer } from "socket.io";
 import { NARRATION_DIRECTIVES } from "../voice/pacing-translator.js";
 import { AVAILABLE_LOCAL_VOICES } from "../voice/types.js";
 import { getUserSelectedModel } from "../config/user-model.js";
+import { BrandKitRepository } from "../video/brand-kit.js";
 
 /** Late-bound Socket.IO reference for emitting activity events. */
 let _io: SocketIOServer | null = null;
@@ -53,6 +57,7 @@ export interface DirectorRouterOptions {
   voiceService?: VoiceService;
   renderOrchestrator?: RenderOrchestrator;
   brandVoiceService?: BrandVoiceService;
+  toolRegistry?: ToolRegistry;
   config: {
     enabled: boolean;
     outputDir: string;
@@ -72,6 +77,7 @@ export const createDirectorRouter = ({
   voiceService,
   renderOrchestrator,
   brandVoiceService,
+  toolRegistry,
   config,
 }: DirectorRouterOptions): Router => {
   const router = Router();
@@ -245,6 +251,32 @@ export const createDirectorRouter = ({
 
   /** Lazy singleton asset manager (hoisted so config PUT can reset it). */
   let assetManagerInstance: import("../video/assets/asset-manager.js").AssetManager | null = null;
+
+  /** Ensure gallery collection/tag tables exist (idempotent). */
+  let galleryTablesReady = false;
+  function ensureGalleryTables(db: import("better-sqlite3").Database): void {
+    if (galleryTablesReady) return;
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS gallery_collections (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        description TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS gallery_collection_items (
+        collection_id TEXT NOT NULL,
+        asset_path TEXT NOT NULL,
+        PRIMARY KEY (collection_id, asset_path),
+        FOREIGN KEY (collection_id) REFERENCES gallery_collections(id) ON DELETE CASCADE
+      );
+      CREATE TABLE IF NOT EXISTS gallery_tags (
+        asset_path TEXT NOT NULL,
+        tag TEXT NOT NULL,
+        PRIMARY KEY (asset_path, tag)
+      );
+    `);
+    galleryTablesReady = true;
+  }
 
   // ── Config ─────────────────────────────────────────────────
 
@@ -2559,6 +2591,54 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
   });
 
   /**
+   * GET /drafts/:id/subtitles/:format — export subtitles in SRT or VTT format.
+   * Issue #521
+   */
+  router.get("/drafts/:id/subtitles/:format", async (req, res) => {
+    try {
+      const { id, format } = req.params;
+      if (format !== "srt" && format !== "vtt") {
+        res.status(400).json({ error: "Format must be 'srt' or 'vtt'" });
+        return;
+      }
+
+      const db = getDatabase();
+      const row = db.prepare(`SELECT title, manifest FROM director_drafts WHERE id = ?`).get(id) as {
+        title: string;
+        manifest: string;
+      } | undefined;
+
+      if (!row) {
+        res.status(404).json({ error: `Draft not found: ${id}` });
+        return;
+      }
+
+      let manifest: Record<string, unknown>;
+      try {
+        manifest = JSON.parse(row.manifest);
+      } catch {
+        res.status(500).json({ error: "Draft has corrupt manifest JSON" });
+        return;
+      }
+
+      const { generateSubtitles } = await import("../video/subtitle-export.js");
+      const content = generateSubtitles(manifest as import("../video/subtitle-export.js").ManifestForSubtitles, format);
+
+      const safeTitle = row.title.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 50);
+      const filename = `${safeTitle}.${format}`;
+      const contentType = format === "srt" ? "application/x-subrip" : "text/vtt";
+
+      res.setHeader("Content-Type", contentType);
+      res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+      res.send(content);
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      logger.error(`[Director API] GET /drafts/:id/subtitles/:format failed: ${msg}`);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  /**
    * PUT /drafts/:id — update a draft's manifest and/or title.
    * Body: { title?, manifest?, status?, thumbnail? }
    */
@@ -4626,6 +4706,1029 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       logger.error(`[Director API] POST /hero-reel/process-inspiration failed: ${msg}`);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  // ── YouTube Direct Publishing Pipeline ──────────────────────
+
+  // Lazy-init YouTube publish service
+  let _youtubePublishService: import("../video/youtube-publish-service.js").YouTubePublishService | null = null;
+
+  async function getYouTubePublishService() {
+    if (!_youtubePublishService) {
+      const { YouTubePublishService } = await import("../video/youtube-publish-service.js");
+      const { YouTubePublishRepository } = await import("../video/youtube-publish-repository.js");
+      const publishRepo = new YouTubePublishRepository(getDatabase());
+      _youtubePublishService = new YouTubePublishService({
+        toolRegistry: toolRegistry!,
+        publishRepo,
+        io: _io,
+        db: getDatabase(),
+      });
+    }
+    return _youtubePublishService;
+  }
+
+  const youtubePublishSchema = z.object({
+    draftId: z.string({ required_error: "draftId is required" }).min(1, "draftId is required"),
+    filePath: z.string().optional(),
+    title: z.string({ required_error: "title is required" }).min(1, "title is required").transform((s) => s.trim()),
+    description: z.string().optional(),
+    tags: z.array(z.string()).optional(),
+    categoryId: z.string().optional(),
+    privacyStatus: z.enum(["public", "unlisted", "private"]).optional(),
+    notifySubscribers: z.boolean().optional(),
+    scheduledPublishTime: z.string().optional(),
+  });
+
+  /** Allowed base directories for YouTube publish file paths. */
+  const YOUTUBE_PUBLISH_ALLOWED_DIRS = [
+    path.join(os.homedir(), ".openzigs", "video-output"),
+    path.join(os.homedir(), ".openzigs", "renders"),
+  ];
+
+  /**
+   * POST /youtube/publish — Start a YouTube publish job for a draft.
+   * Body: { draftId, filePath?, title, description?, tags?, categoryId?, privacyStatus?, notifySubscribers?, scheduledPublishTime? }
+   */
+  router.post("/youtube/publish", async (req, res) => {
+    try {
+      if (!toolRegistry) {
+        res.status(503).json({ error: "Tool registry not available" });
+        return;
+      }
+
+      const parsed = youtubePublishSchema.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({ error: parsed.error.issues.map((i) => i.message).join("; ") });
+        return;
+      }
+
+      const { draftId, filePath, title, description, tags, categoryId, privacyStatus, notifySubscribers, scheduledPublishTime } = parsed.data;
+
+      // Path traversal guard: filePath must resolve to an allowed directory
+      if (filePath) {
+        const resolved = path.resolve(filePath.startsWith("~") ? path.join(os.homedir(), filePath.slice(1)) : filePath);
+        const allowed = YOUTUBE_PUBLISH_ALLOWED_DIRS.some((dir) => resolved.startsWith(dir + path.sep) || resolved === dir);
+        if (!allowed) {
+          res.status(403).json({ error: "File path is outside allowed directories" });
+          return;
+        }
+      }
+
+      const service = await getYouTubePublishService();
+      const result = await service.publish({
+        draftId,
+        filePath,
+        title,
+        description,
+        tags,
+        categoryId,
+        privacyStatus,
+        notifySubscribers,
+        scheduledPublishTime,
+      });
+
+      res.json(result);
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      logger.error(`[Director API] POST /youtube/publish failed: ${msg}`);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  /**
+   * GET /youtube/publish/:draftId/status — Check publish status for a draft.
+   */
+  router.get("/youtube/publish/:draftId/status", async (req, res) => {
+    try {
+      const service = await getYouTubePublishService();
+      const status = service.getPublishStatus(req.params.draftId);
+      if (!status) {
+        res.json({ status: "none" });
+        return;
+      }
+      res.json(status);
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      logger.error(`[Director API] GET /youtube/publish status failed: ${msg}`);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  /**
+   * GET /youtube/publish/:draftId/history — Get all publish attempts for a draft.
+   */
+  router.get("/youtube/publish/:draftId/history", async (req, res) => {
+    try {
+      const service = await getYouTubePublishService();
+      const history = service.getPublishHistory(req.params.draftId);
+      res.json({ publishes: history });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      logger.error(`[Director API] GET /youtube/publish history failed: ${msg}`);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  /**
+   * GET /youtube/categories — Return YouTube video categories.
+   */
+  router.get("/youtube/categories", (_req, res) => {
+    // Standard YouTube categories — these are stable and rarely change.
+    res.json({
+      categories: [
+        { id: "1", name: "Film & Animation" },
+        { id: "2", name: "Autos & Vehicles" },
+        { id: "10", name: "Music" },
+        { id: "15", name: "Pets & Animals" },
+        { id: "17", name: "Sports" },
+        { id: "19", name: "Travel & Events" },
+        { id: "20", name: "Gaming" },
+        { id: "22", name: "People & Blogs" },
+        { id: "23", name: "Comedy" },
+        { id: "24", name: "Entertainment" },
+        { id: "25", name: "News & Politics" },
+        { id: "26", name: "Howto & Style" },
+        { id: "27", name: "Education" },
+        { id: "28", name: "Science & Technology" },
+        { id: "29", name: "Nonprofits & Activism" },
+      ],
+    });
+  });
+
+  /**
+   * POST /youtube/generate-metadata — LLM SEO metadata generation for YouTube.
+   * Body: { draftId }
+   * Returns: { title, description, tags, suggestedCategory }
+   */
+  router.post("/youtube/generate-metadata", async (req, res) => {
+    try {
+      const { draftId, model: bodyModel } = req.body as { draftId?: string; model?: string };
+
+      if (!draftId || typeof draftId !== "string") {
+        res.status(400).json({ error: "draftId is required" });
+        return;
+      }
+
+      const db = getDatabase();
+      const row = db.prepare(`SELECT title, manifest FROM director_drafts WHERE id = ?`).get(draftId) as {
+        title: string;
+        manifest: string;
+      } | undefined;
+
+      if (!row) {
+        res.status(404).json({ error: "Draft not found" });
+        return;
+      }
+
+      let manifest: Record<string, unknown> = {};
+      try {
+        manifest = JSON.parse(row.manifest);
+      } catch {
+        // non-fatal
+      }
+
+      // Extract narration text and scene descriptions from the manifest
+      const timeline = Array.isArray(manifest.timeline) ? manifest.timeline : [];
+      const narrationParts: string[] = [];
+      const sceneDescriptions: string[] = [];
+      for (const entry of timeline) {
+        if (entry.scriptText) narrationParts.push(entry.scriptText);
+        if (entry.title) sceneDescriptions.push(entry.title);
+      }
+
+      // Generate chapter text for context
+      const { generateChapters, formatChaptersForDescription } = await import("../video/youtube-chapters.js");
+      const chapters = generateChapters(manifest as import("../video/youtube-chapters.js").ManifestForChapters);
+      const chapterText = formatChaptersForDescription(chapters);
+
+      const seoModel = bodyModel || await getUserSelectedModel();
+      const prompt = `You are a YouTube SEO expert. Given the following video content, generate optimized YouTube metadata.
+
+VIDEO TITLE: "${row.title}"
+PROJECT TITLE: "${manifest.projectTitle ?? row.title}"
+
+NARRATION/SCRIPT:
+${narrationParts.join("\n").slice(0, 2000) || "(no narration)"}
+
+SCENE DESCRIPTIONS:
+${sceneDescriptions.join(", ").slice(0, 500) || "(no scene descriptions)"}
+
+Generate the following as JSON (and ONLY JSON, no markdown fences):
+{
+  "title": "Optimized YouTube title (under 100 chars, engaging, with key SEO terms)",
+  "description": "SEO-friendly description (200-500 words, include relevant hashtags at the end, natural keyword density). ${chapterText ? "Include these chapter timestamps at the beginning:\\n" + chapterText : ""}",
+  "tags": ["array", "of", "relevant", "tags", "up to 20 tags, total under 500 characters"],
+  "suggestedCategory": "One of: Film & Animation, Education, Science & Technology, Entertainment, Howto & Style, People & Blogs, Music, Gaming, News & Politics, Comedy"
+}`;
+
+      const stream = copilot.chat(prompt, { tools: [], ...(seoModel ? { model: seoModel } : {}) });
+      const chunks: string[] = [];
+      for await (const chunk of stream) {
+        chunks.push(chunk);
+      }
+
+      const rawResponse = chunks.join("").trim();
+
+      // Parse JSON from the response, handling potential markdown fences
+      let parsed: Record<string, unknown>;
+      try {
+        const jsonMatch = rawResponse.match(/\{[\s\S]*\}/);
+        if (!jsonMatch) throw new Error("No JSON found in response");
+        parsed = JSON.parse(jsonMatch[0]);
+      } catch {
+        res.status(500).json({ error: "Failed to parse LLM response", raw: rawResponse });
+        return;
+      }
+
+      // Validate and sanitize the response
+      const generatedTitle = typeof parsed.title === "string" ? parsed.title.slice(0, 100) : row.title;
+      const generatedDescription = typeof parsed.description === "string" ? parsed.description.slice(0, 5000) : "";
+      const generatedTags = Array.isArray(parsed.tags) ? parsed.tags.filter((t: unknown) => typeof t === "string").slice(0, 30) : [];
+      const suggestedCategory = typeof parsed.suggestedCategory === "string" ? parsed.suggestedCategory : "Education";
+
+      res.json({
+        title: generatedTitle,
+        description: generatedDescription,
+        tags: generatedTags,
+        suggestedCategory,
+        chapters: chapterText || null,
+      });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      logger.error(`[Director API] POST /youtube/generate-metadata failed: ${msg}`);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  // ── Brand Kit CRUD (Issue #523) ────────────────────────
+
+  router.get("/brand-kits", (_req, res) => {
+    try {
+      const repo = new BrandKitRepository(getDatabase());
+      res.json({ brandKits: repo.getAll() });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      logger.error(`[Director API] GET /brand-kits failed: ${msg}`);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  router.get("/brand-kits/:id", (req, res) => {
+    try {
+      
+      const repo = new BrandKitRepository(getDatabase());
+      const kit = repo.getById(req.params.id);
+      if (!kit) { res.status(404).json({ error: "Brand kit not found" }); return; }
+      res.json(kit);
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      logger.error(`[Director API] GET /brand-kits/:id failed: ${msg}`);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  router.post("/brand-kits", (req, res) => {
+    try {
+      const { name, primaryColor, secondaryColor, accentColor, fontFamily, logoPath, watermarkPath, introTemplateId, outroTemplateId } = req.body as Record<string, string | null | undefined>;
+      if (!name || typeof name !== "string" || !name.trim()) {
+        res.status(400).json({ error: "name is required" });
+        return;
+      }
+      
+      const repo = new BrandKitRepository(getDatabase());
+      const id = nanoid();
+      const kit = repo.create({
+        id,
+        name: name.trim(),
+        primaryColor: (primaryColor as string) || "#000000",
+        secondaryColor: (secondaryColor as string) || "#ffffff",
+        accentColor: (accentColor as string) || "#0066ff",
+        fontFamily: (fontFamily as string) || "Inter",
+        logoPath: (logoPath as string) || null,
+        watermarkPath: (watermarkPath as string) || null,
+        introTemplateId: (introTemplateId as string) || null,
+        outroTemplateId: (outroTemplateId as string) || null,
+      });
+      res.status(201).json(kit);
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      logger.error(`[Director API] POST /brand-kits failed: ${msg}`);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  router.put("/brand-kits/:id", (req, res) => {
+    try {
+      const brandKitUpdateSchema = z.object({
+        name: z.string().min(1).optional(),
+        primaryColor: z.string().optional(),
+        secondaryColor: z.string().optional(),
+        accentColor: z.string().optional(),
+        fontFamily: z.string().optional(),
+        logoPath: z.string().nullable().optional(),
+        watermarkPath: z.string().nullable().optional(),
+        introTemplateId: z.string().nullable().optional(),
+        outroTemplateId: z.string().nullable().optional(),
+      }).strict();
+      const parsed = brandKitUpdateSchema.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({ error: "Invalid fields", details: parsed.error.flatten().fieldErrors });
+        return;
+      }
+      const repo = new BrandKitRepository(getDatabase());
+      const updated = repo.update(req.params.id, parsed.data);
+      if (!updated) { res.status(404).json({ error: "Brand kit not found" }); return; }
+      res.json(updated);
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      logger.error(`[Director API] PUT /brand-kits/:id failed: ${msg}`);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  router.delete("/brand-kits/:id", (req, res) => {
+    try {
+      
+      const repo = new BrandKitRepository(getDatabase());
+      const deleted = repo.delete(req.params.id);
+      if (!deleted) { res.status(404).json({ error: "Brand kit not found" }); return; }
+      res.json({ success: true });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      logger.error(`[Director API] DELETE /brand-kits/:id failed: ${msg}`);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  // ── Batch Render Queue (Issue #522) ────────────────────
+
+  router.post("/render/batch", async (req, res) => {
+    try {
+      const { draftIds } = req.body as { draftIds?: string[] };
+      if (!Array.isArray(draftIds) || draftIds.length === 0) {
+        res.status(400).json({ error: "draftIds array is required" });
+        return;
+      }
+
+      const db = getDatabase();
+      const results: Array<{ draftId: string; jobId?: string; error?: string }> = [];
+
+      // Process sequentially to avoid overwhelming the render queue
+      for (const draftId of draftIds) {
+        try {
+          const row = db.prepare(`SELECT id, manifest FROM director_drafts WHERE id = ?`).get(draftId) as {
+            id: string;
+            manifest: string;
+          } | undefined;
+
+          if (!row) { results.push({ draftId, error: "Draft not found" }); continue; }
+
+          let manifest: Record<string, unknown>;
+          try {
+            manifest = JSON.parse(row.manifest);
+          } catch {
+            results.push({ draftId, error: "Corrupt manifest" }); continue;
+          }
+
+          if (!renderOrchestrator) { results.push({ draftId, error: "Render orchestrator not available" }); continue; }
+
+          const jobId = nanoid();
+          const now = new Date().toISOString();
+          db.prepare(
+            `INSERT INTO director_renders (id, draft_id, job_id, quality, status, created_at, updated_at)
+             VALUES (?, ?, ?, 'standard', 'queued', ?, ?)`,
+          ).run(nanoid(), draftId, jobId, now, now);
+
+          await renderOrchestrator.submit({
+            manifest: manifest as never,
+          });
+
+          results.push({ draftId, jobId });
+        } catch (err) {
+          results.push({ draftId, error: err instanceof Error ? err.message : String(err) });
+        }
+      }
+
+      const completed = results.filter((r) => r.jobId).length;
+      const failed = results.filter((r) => r.error).length;
+      res.json({ total: draftIds.length, queued: completed, failed, results });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      logger.error(`[Director API] POST /render/batch failed: ${msg}`);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  // ── Gallery Collections & Tags (Issue #520) ────────────
+
+  router.get("/gallery/collections", (_req, res) => {
+    try {
+      const db = getDatabase();
+      ensureGalleryTables(db);
+      const rows = db.prepare(`SELECT * FROM gallery_collections ORDER BY name ASC`).all() as Array<{
+        id: string; name: string; description: string; created_at: string;
+      }>;
+      res.json({ collections: rows.map((r) => ({ id: r.id, name: r.name, description: r.description, createdAt: r.created_at })) });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  router.post("/gallery/collections", (req, res) => {
+    try {
+      const { name, description } = req.body as { name?: string; description?: string };
+      if (!name || typeof name !== "string" || !name.trim()) {
+        res.status(400).json({ error: "name is required" }); return;
+      }
+      const db = getDatabase();
+      ensureGalleryTables(db);
+      const id = nanoid();
+      const now = new Date().toISOString();
+      db.prepare(`INSERT INTO gallery_collections (id, name, description, created_at) VALUES (?, ?, ?, ?)`).run(id, name.trim(), (description || "").trim(), now);
+      res.status(201).json({ id, name: name.trim(), description: (description || "").trim(), createdAt: now });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  router.put("/gallery/collections/:id", (req, res) => {
+    try {
+      const { name, description } = req.body as { name?: string; description?: string };
+      const db = getDatabase();
+      ensureGalleryTables(db);
+      const existing = db.prepare(`SELECT id FROM gallery_collections WHERE id = ?`).get(req.params.id);
+      if (!existing) { res.status(404).json({ error: "Collection not found" }); return; }
+      const sets: string[] = [];
+      const values: unknown[] = [];
+      if (name !== undefined) { sets.push("name = ?"); values.push(name.trim()); }
+      if (description !== undefined) { sets.push("description = ?"); values.push(description.trim()); }
+      if (sets.length > 0) {
+        values.push(req.params.id);
+        db.prepare(`UPDATE gallery_collections SET ${sets.join(", ")} WHERE id = ?`).run(...values);
+      }
+      res.json({ success: true });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  router.delete("/gallery/collections/:id", (req, res) => {
+    try {
+      const db = getDatabase();
+      ensureGalleryTables(db);
+      db.prepare(`DELETE FROM gallery_collection_items WHERE collection_id = ?`).run(req.params.id);
+      const result = db.prepare(`DELETE FROM gallery_collections WHERE id = ?`).run(req.params.id);
+      if (result.changes === 0) { res.status(404).json({ error: "Collection not found" }); return; }
+      res.json({ success: true });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  router.post("/gallery/collections/:id/items", (req, res) => {
+    try {
+      const { assetPath } = req.body as { assetPath?: string };
+      if (!assetPath) { res.status(400).json({ error: "assetPath is required" }); return; }
+      const db = getDatabase();
+      ensureGalleryTables(db);
+      db.prepare(`INSERT OR IGNORE INTO gallery_collection_items (collection_id, asset_path) VALUES (?, ?)`).run(req.params.id, assetPath);
+      res.status(201).json({ success: true });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  router.delete("/gallery/collections/:id/items", (req, res) => {
+    try {
+      const { assetPath } = req.body as { assetPath?: string };
+      if (!assetPath) { res.status(400).json({ error: "assetPath is required" }); return; }
+      const db = getDatabase();
+      ensureGalleryTables(db);
+      db.prepare(`DELETE FROM gallery_collection_items WHERE collection_id = ? AND asset_path = ?`).run(req.params.id, assetPath);
+      res.json({ success: true });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  router.get("/gallery/collections/:id/items", (req, res) => {
+    try {
+      const db = getDatabase();
+      ensureGalleryTables(db);
+      const rows = db.prepare(`SELECT asset_path FROM gallery_collection_items WHERE collection_id = ?`).all(req.params.id) as Array<{ asset_path: string }>;
+      res.json({ items: rows.map((r) => r.asset_path) });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  router.post("/gallery/tags", (req, res) => {
+    try {
+      const { assetPath, tag } = req.body as { assetPath?: string; tag?: string };
+      if (!assetPath || !tag) { res.status(400).json({ error: "assetPath and tag are required" }); return; }
+      const db = getDatabase();
+      ensureGalleryTables(db);
+      db.prepare(`INSERT OR IGNORE INTO gallery_tags (asset_path, tag) VALUES (?, ?)`).run(assetPath, tag.trim().toLowerCase());
+      res.status(201).json({ success: true });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  router.delete("/gallery/tags", (req, res) => {
+    try {
+      const { assetPath, tag } = req.body as { assetPath?: string; tag?: string };
+      if (!assetPath || !tag) { res.status(400).json({ error: "assetPath and tag are required" }); return; }
+      const db = getDatabase();
+      ensureGalleryTables(db);
+      db.prepare(`DELETE FROM gallery_tags WHERE asset_path = ? AND tag = ?`).run(assetPath, tag.trim().toLowerCase());
+      res.json({ success: true });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  router.get("/gallery/tags", (req, res) => {
+    try {
+      const db = getDatabase();
+      ensureGalleryTables(db);
+      const { assetPath, tag } = req.query as { assetPath?: string; tag?: string };
+      if (assetPath) {
+        const rows = db.prepare(`SELECT tag FROM gallery_tags WHERE asset_path = ?`).all(assetPath) as Array<{ tag: string }>;
+        res.json({ tags: rows.map((r) => r.tag) });
+      } else if (tag) {
+        const rows = db.prepare(`SELECT asset_path FROM gallery_tags WHERE tag = ?`).all(tag.trim().toLowerCase()) as Array<{ asset_path: string }>;
+        res.json({ assets: rows.map((r) => r.asset_path) });
+      } else {
+        const rows = db.prepare(`SELECT tag, COUNT(*) as count FROM gallery_tags GROUP BY tag ORDER BY count DESC, tag ASC`).all() as Array<{ tag: string; count: number }>;
+        res.json({ tags: rows });
+      }
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  // ── YouTube Analytics Proxy with SQLite cache (Issue #518) ───────────────
+
+  // Ensure cache table exists (idempotent)
+  {
+    const db = getDatabase();
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS youtube_analytics_cache (
+        key TEXT PRIMARY KEY,
+        data TEXT NOT NULL,
+        fetched_at INTEGER NOT NULL
+      )
+    `);
+  }
+
+  function getAnalyticsCache(key: string): { data: unknown; fetchedAt: Date } | null {
+    try {
+      const db = getDatabase();
+      const row = db
+        .prepare(`SELECT data, fetched_at FROM youtube_analytics_cache WHERE key = ?`)
+        .get(key) as { data: string; fetched_at: number } | undefined;
+      if (!row) return null;
+      return { data: JSON.parse(row.data), fetchedAt: new Date(row.fetched_at) };
+    } catch {
+      return null;
+    }
+  }
+
+  function setAnalyticsCache(key: string, data: unknown): void {
+    try {
+      const db = getDatabase();
+      db.prepare(
+        `INSERT OR REPLACE INTO youtube_analytics_cache (key, data, fetched_at) VALUES (?, ?, ?)`
+      ).run(key, JSON.stringify(data), Date.now());
+    } catch {
+      // Non-fatal — cache write failure shouldn't break the response
+    }
+  }
+
+  router.get("/youtube/analytics/channel", async (_req, res) => {
+    const CACHE_KEY = "channel";
+    try {
+      if (!toolRegistry) {
+        const cached = getAnalyticsCache(CACHE_KEY);
+        if (cached) {
+          res.json({ ...cached.data as object, _cached: true, _cachedAt: cached.fetchedAt.toISOString() });
+          return;
+        }
+        res.status(503).json({ error: "Tool registry not available" });
+        return;
+      }
+      const tool = toolRegistry.getToolDefinition("yt_get_channel_analytics");
+      if (!tool) {
+        const cached = getAnalyticsCache(CACHE_KEY);
+        if (cached) {
+          res.json({ ...cached.data as object, _cached: true, _cachedAt: cached.fetchedAt.toISOString() });
+          return;
+        }
+        res.status(503).json({ error: "yt_get_channel_analytics tool not registered" });
+        return;
+      }
+      let data: unknown;
+      try {
+        const result = await tool.handler({});
+        if (result.isError) throw new Error(result.text);
+        data = JSON.parse(result.text);
+        setAnalyticsCache(CACHE_KEY, data);
+      } catch (liveErr) {
+        const msg = liveErr instanceof Error ? liveErr.message : String(liveErr);
+        logger.warn(`[Director API] YouTube channel analytics live fetch failed: ${msg} — falling back to cache`);
+        const cached = getAnalyticsCache(CACHE_KEY);
+        if (cached) {
+          res.json({ ...cached.data as object, _cached: true, _cachedAt: cached.fetchedAt.toISOString() });
+          return;
+        }
+        res.status(502).json({ error: msg });
+        return;
+      }
+      res.json(data);
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      logger.error(`[Director API] GET /youtube/analytics/channel failed: ${msg}`);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  router.get("/youtube/analytics/videos", async (req, res) => {
+    const { videoIds, maxResults, limit } = req.query as {
+      videoIds?: string; maxResults?: string; limit?: string;
+    };
+    const CACHE_KEY = `videos:${videoIds ?? ""}:${maxResults ?? limit ?? "50"}`;
+    try {
+      if (!toolRegistry) {
+        const cached = getAnalyticsCache(CACHE_KEY);
+        if (cached) {
+          res.json({ ...cached.data as object, _cached: true, _cachedAt: (getAnalyticsCache(CACHE_KEY)!.fetchedAt).toISOString() });
+          return;
+        }
+        res.status(503).json({ error: "Tool registry not available" });
+        return;
+      }
+      const tool = toolRegistry.getToolDefinition("yt_get_video_details");
+      if (!tool) {
+        const cached = getAnalyticsCache(CACHE_KEY);
+        if (cached) {
+          res.json({ ...cached.data as object, _cached: true, _cachedAt: cached.fetchedAt.toISOString() });
+          return;
+        }
+        res.status(503).json({ error: "yt_get_video_details tool not registered" });
+        return;
+      }
+      const args: Record<string, unknown> = {};
+      if (videoIds) args.videoIds = videoIds.split(",");
+      if (maxResults) args.maxResults = parseInt(maxResults, 10);
+      else if (limit) args.maxResults = parseInt(limit, 10);
+      let data: unknown;
+      try {
+        const result = await tool.handler(args);
+        if (result.isError) throw new Error(result.text);
+        data = JSON.parse(result.text);
+        setAnalyticsCache(CACHE_KEY, data);
+      } catch (liveErr) {
+        const msg = liveErr instanceof Error ? liveErr.message : String(liveErr);
+        logger.warn(`[Director API] YouTube videos analytics live fetch failed: ${msg} — falling back to cache`);
+        const cached = getAnalyticsCache(CACHE_KEY);
+        if (cached) {
+          res.json({ ...cached.data as object, _cached: true, _cachedAt: cached.fetchedAt.toISOString() });
+          return;
+        }
+        res.status(502).json({ error: msg });
+        return;
+      }
+      res.json(data);
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      logger.error(`[Director API] GET /youtube/analytics/videos failed: ${msg}`);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  // ── Shorts from Manifest (Issue #519) ──────────────────
+
+  router.post("/shorts/from-manifest", async (req, res) => {
+    try {
+      const { draftId, maxClips } = req.body as { draftId?: string; maxClips?: number };
+      if (!draftId || typeof draftId !== "string") {
+        res.status(400).json({ error: "draftId is required" });
+        return;
+      }
+
+      const db = getDatabase();
+      const row = db.prepare(`SELECT title, manifest FROM director_drafts WHERE id = ?`).get(draftId) as {
+        title: string;
+        manifest: string;
+      } | undefined;
+
+      if (!row) { res.status(404).json({ error: "Draft not found" }); return; }
+
+      let manifest: Record<string, unknown>;
+      try {
+        manifest = JSON.parse(row.manifest);
+      } catch {
+        res.status(500).json({ error: "Corrupt manifest" }); return;
+      }
+
+      const timeline = Array.isArray(manifest.timeline) ? manifest.timeline : [];
+      if (timeline.length === 0) {
+        res.status(400).json({ error: "Manifest has no timeline scenes" }); return;
+      }
+
+      // Use LLM to identify most engaging segments
+      const sceneDescriptions = timeline.map((s: Record<string, unknown>, i: number) => {
+        const text = (s.scriptText as string) || (s.title as string) || `Scene ${i + 1}`;
+        const dur = typeof s.duration === "number" ? s.duration : 5000;
+        return `[${i}] (${Math.round(dur < 1000 ? dur : dur / 1000)}s) ${text.slice(0, 200)}`;
+      }).join("\n");
+
+      const limit = Math.min(maxClips || 3, 5);
+      const prompt = `You are a viral content strategist. Analyze these video scenes and select up to ${limit} segments that would make the most engaging YouTube Shorts (max 60 seconds each).
+
+SCENES:
+${sceneDescriptions}
+
+For each Short, respond with JSON only (no markdown fences):
+[
+  {
+    "startSceneIndex": 0,
+    "endSceneIndex": 2,
+    "title": "Hook title for the Short",
+    "hookText": "Opening hook text overlay",
+    "ctaText": "Call to action text",
+    "reason": "Why this segment is engaging"
+  }
+]`;
+
+      const seoModel = await getUserSelectedModel();
+      const stream = copilot.chat(prompt, { tools: [], ...(seoModel ? { model: seoModel } : {}) });
+      const chunks: string[] = [];
+      for await (const chunk of stream) { chunks.push(chunk); }
+
+      const rawResponse = chunks.join("").trim();
+      let suggestions: Array<{
+        startSceneIndex: number;
+        endSceneIndex: number;
+        title: string;
+        hookText: string;
+        ctaText: string;
+        reason: string;
+      }>;
+
+      try {
+        const jsonMatch = rawResponse.match(/\[[\s\S]*\]/);
+        if (!jsonMatch) throw new Error("No JSON array found");
+        suggestions = JSON.parse(jsonMatch[0]);
+      } catch {
+        res.status(500).json({ error: "Failed to parse LLM response", raw: rawResponse });
+        return;
+      }
+
+      // Validate and enrich suggestions
+      const enriched = suggestions.slice(0, limit).map((s) => {
+        const startIdx = Math.max(0, Math.min(s.startSceneIndex, timeline.length - 1));
+        const endIdx = Math.max(startIdx, Math.min(s.endSceneIndex, timeline.length - 1));
+        const scenes = timeline.slice(startIdx, endIdx + 1);
+        const totalDurationMs = scenes.reduce((acc: number, sc: Record<string, unknown>) => {
+          const d = typeof sc.duration === "number" ? sc.duration : 5000;
+          return acc + (d < 1000 ? d * 1000 : d);
+        }, 0);
+
+        return {
+          ...s,
+          startSceneIndex: startIdx,
+          endSceneIndex: endIdx,
+          sceneCount: scenes.length,
+          estimatedDurationMs: totalDurationMs,
+          cropConfig: { aspectRatio: "9:16", width: 1080, height: 1920 },
+        };
+      });
+
+      res.json({ suggestions: enriched, totalScenes: timeline.length });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      logger.error(`[Director API] POST /shorts/from-manifest failed: ${msg}`);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  // ── Shorts Propose & Render (UI-facing routes for Issue #519) ──────
+
+  /**
+   * POST /drafts/:draftId/shorts/propose — Analyze a draft's manifest and propose
+   * engaging Short segments via LLM.
+   * Body: { maxShorts?: number }
+   * Response: { proposals: ShortProposal[] }
+   */
+  router.post("/drafts/:draftId/shorts/propose", async (req, res) => {
+    try {
+      const { draftId } = req.params;
+      const { maxShorts } = req.body as { maxShorts?: number };
+
+      const db = getDatabase();
+      const row = db.prepare(`SELECT title, manifest FROM director_drafts WHERE id = ?`).get(draftId) as {
+        title: string;
+        manifest: string;
+      } | undefined;
+
+      if (!row) { res.status(404).json({ error: "Draft not found" }); return; }
+
+      let manifest: Record<string, unknown>;
+      try {
+        manifest = JSON.parse(row.manifest);
+      } catch {
+        res.status(500).json({ error: "Corrupt manifest" }); return;
+      }
+
+      const timeline = Array.isArray(manifest.timeline) ? manifest.timeline : [];
+      if (timeline.length === 0) {
+        res.status(400).json({ error: "Manifest has no timeline scenes" }); return;
+      }
+
+      // Build cumulative start/end times for each scene
+      let cumulativeMs = 0;
+      const sceneTimes = timeline.map((s: Record<string, unknown>) => {
+        const dur = typeof s.duration === "number" ? (s.duration < 1000 ? s.duration * 1000 : s.duration) : 5000;
+        const start = cumulativeMs;
+        cumulativeMs += dur;
+        return { startMs: start, endMs: cumulativeMs, durationMs: dur };
+      });
+
+      const sceneDescriptions = timeline.map((s: Record<string, unknown>, i: number) => {
+        const text = (s.scriptText as string) || (s.title as string) || `Scene ${i + 1}`;
+        return `[${i}] (${Math.round(sceneTimes[i].durationMs / 1000)}s) ${text.slice(0, 200)}`;
+      }).join("\n");
+
+      const limit = Math.min(maxShorts || 3, 5);
+      const prompt = `You are a viral content strategist. Analyze these video scenes and select up to ${limit} segments that would make the most engaging YouTube Shorts (max 60 seconds each).
+
+SCENES:
+${sceneDescriptions}
+
+For each Short, respond with JSON only (no markdown fences):
+[
+  {
+    "startSceneIndex": 0,
+    "endSceneIndex": 2,
+    "title": "Hook title for the Short",
+    "hookText": "Opening hook text overlay",
+    "ctaText": "Call to action text",
+    "reason": "Why this segment is engaging",
+    "score": 85
+  }
+]`;
+
+      const seoModel = await getUserSelectedModel();
+      const stream = copilot.chat(prompt, { tools: [], ...(seoModel ? { model: seoModel } : {}) });
+      const chunks: string[] = [];
+      for await (const chunk of stream) { chunks.push(chunk); }
+
+      const rawResponse = chunks.join("").trim();
+      let suggestions: Array<{
+        startSceneIndex: number;
+        endSceneIndex: number;
+        title: string;
+        hookText: string;
+        ctaText: string;
+        reason: string;
+        score?: number;
+      }>;
+
+      try {
+        const jsonMatch = rawResponse.match(/\[[\s\S]*\]/);
+        if (!jsonMatch) throw new Error("No JSON array found");
+        suggestions = JSON.parse(jsonMatch[0]);
+      } catch {
+        res.status(500).json({ error: "Failed to parse LLM response", raw: rawResponse });
+        return;
+      }
+
+      // Map to the shape the UI expects: { startTime, endTime, title, hookText, ctaText, score, reason }
+      const proposals = suggestions.slice(0, limit).map((s) => {
+        const startIdx = Math.max(0, Math.min(s.startSceneIndex, timeline.length - 1));
+        const endIdx = Math.max(startIdx, Math.min(s.endSceneIndex, timeline.length - 1));
+        return {
+          startTime: sceneTimes[startIdx].startMs / 1000,
+          endTime: sceneTimes[endIdx].endMs / 1000,
+          title: s.title,
+          hookText: s.hookText,
+          ctaText: s.ctaText,
+          score: typeof s.score === "number" ? s.score : 80,
+          reason: s.reason,
+        };
+      });
+
+      res.json({ proposals });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      logger.error(`[Director API] POST /drafts/:draftId/shorts/propose failed: ${msg}`);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  /**
+   * POST /drafts/:draftId/shorts/render — Accept selected Short segments and
+   * create new Short drafts + queue them for rendering.
+   * Body: { segments: Array<{ startTime, endTime, title, hookText, ctaText, burnSubtitles? }> }
+   * Response: { jobIds: string[] }
+   */
+  router.post("/drafts/:draftId/shorts/render", async (req, res) => {
+    try {
+      const { draftId } = req.params;
+      const segmentSchema = z.object({
+        startTime: z.number(),
+        endTime: z.number(),
+        title: z.string(),
+        hookText: z.string().optional().default(""),
+        ctaText: z.string().optional().default(""),
+        burnSubtitles: z.boolean().optional().default(false),
+      });
+      const bodySchema = z.object({
+        segments: z.array(segmentSchema).min(1, "At least one segment is required"),
+      });
+      const parsed = bodySchema.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({ error: "Invalid request body", details: parsed.error.flatten().fieldErrors });
+        return;
+      }
+
+      const db = getDatabase();
+      const parentDraft = db.prepare(`SELECT id, title, manifest FROM director_drafts WHERE id = ?`).get(draftId) as {
+        id: string; title: string; manifest: string;
+      } | undefined;
+
+      if (!parentDraft) { res.status(404).json({ error: "Parent draft not found" }); return; }
+
+      let parentManifest: Record<string, unknown>;
+      try {
+        parentManifest = JSON.parse(parentDraft.manifest);
+      } catch {
+        res.status(500).json({ error: "Corrupt parent manifest" }); return;
+      }
+
+      const jobIds: string[] = [];
+
+      for (const seg of parsed.data.segments) {
+        const shortDraftId = nanoid();
+        const jobId = nanoid();
+        const now = new Date().toISOString();
+
+        // Create a Shorts manifest from the segment
+        const shortsManifest = {
+          ...parentManifest,
+          projectTitle: seg.title,
+          composition: {
+            ...(parentManifest.composition as Record<string, unknown> || {}),
+            width: 1080,
+            height: 1920,
+          },
+          shortsMetadata: {
+            parentDraftId: draftId,
+            startTime: seg.startTime,
+            endTime: seg.endTime,
+            hookText: seg.hookText,
+            ctaText: seg.ctaText,
+            burnSubtitles: seg.burnSubtitles,
+          },
+        };
+
+        db.prepare(
+          `INSERT INTO director_drafts (id, title, manifest, thumbnail, production_mode, created_at, updated_at, status)
+           VALUES (?, ?, ?, ?, ?, ?, ?, 'draft')`,
+        ).run(shortDraftId, seg.title, JSON.stringify(shortsManifest), null, "shorts", now, now);
+
+        db.prepare(
+          `INSERT INTO director_renders (id, draft_id, job_id, quality, status, created_at, updated_at)
+           VALUES (?, ?, ?, 'standard', 'queued', ?, ?)`,
+        ).run(nanoid(), shortDraftId, jobId, now, now);
+
+        if (renderOrchestrator) {
+          await renderOrchestrator.submit({ manifest: shortsManifest as never });
+        }
+
+        jobIds.push(jobId);
+      }
+
+      logger.info(`[Director API] Queued ${jobIds.length} Short render(s) from draft ${draftId}`);
+      res.json({ jobIds });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      logger.error(`[Director API] POST /drafts/:draftId/shorts/render failed: ${msg}`);
       res.status(500).json({ error: msg });
     }
   });

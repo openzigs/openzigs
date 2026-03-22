@@ -1,0 +1,133 @@
+/**
+ * YouTube Chapter Generator — generates chapter timestamps from manifest timeline.
+ * Issue #516: Auto-generates YouTube chapter markers from scene/narration segments.
+ */
+
+export interface ChapterEntry {
+  /** Timestamp string formatted for YouTube (e.g. "0:00", "1:30") */
+  timestamp: string;
+  /** Chapter title / label */
+  label: string;
+}
+
+/**
+ * Format a duration in milliseconds to a YouTube chapter timestamp.
+ * Uses "M:SS" for < 60 minutes, "H:MM:SS" for >= 60 minutes.
+ */
+export function formatTimestamp(ms: number): string {
+  const totalSeconds = Math.floor(ms / 1000);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+
+  if (hours > 0) {
+    return `${hours}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+  }
+  return `${minutes}:${String(seconds).padStart(2, "0")}`;
+}
+
+export interface TimelineScene {
+  type?: string;
+  title?: string;
+  scriptText?: string;
+  duration?: number;
+  durationInFrames?: number;
+  [key: string]: unknown;
+}
+
+export interface ManifestForChapters {
+  projectTitle?: string;
+  composition?: { fps: number };
+  timeline?: TimelineScene[];
+}
+
+/** YouTube requires each chapter to be at least 10 seconds. */
+const MIN_CHAPTER_DURATION_MS = 10_000;
+
+/**
+ * Generate YouTube chapter entries from a manifest's timeline scenes.
+ * Accumulates durations to produce timestamps. Requires at least 3 chapters
+ * (YouTube's minimum) for the output to be valid. Chapters shorter than 10s
+ * are merged into the previous chapter (YouTube rejects chapters < 10s).
+ */
+export function generateChapters(manifest: ManifestForChapters): ChapterEntry[] {
+  const timeline = manifest.timeline;
+  if (!timeline || timeline.length === 0) return [];
+
+  const fps = manifest.composition?.fps ?? 30;
+  const chapters: ChapterEntry[] = [];
+  let currentMs = 0;
+
+  for (const scene of timeline) {
+    // Only generate chapters for visual scenes, not transitions/overlays
+    if (scene.type === "transition" || scene.type === "overlay") {
+      // Still accumulate duration
+      const durationMs = getSceneDurationMs(scene, fps);
+      currentMs += durationMs;
+      continue;
+    }
+
+    const durationMs = getSceneDurationMs(scene, fps);
+
+    // Skip chapters shorter than 10s — YouTube requires minimum 10s per chapter
+    if (durationMs < MIN_CHAPTER_DURATION_MS) {
+      currentMs += durationMs;
+      continue;
+    }
+
+    const label = deriveLabel(scene, chapters.length);
+    chapters.push({
+      timestamp: formatTimestamp(currentMs),
+      label,
+    });
+
+    currentMs += durationMs;
+  }
+
+  return chapters;
+}
+
+/**
+ * Format chapters as a YouTube description block.
+ * YouTube requires the first chapter to start at 0:00 and at least 3 chapters.
+ */
+export function formatChaptersForDescription(chapters: ChapterEntry[]): string {
+  if (chapters.length < 3) return "";
+
+  // Ensure first chapter starts at 0:00
+  if (chapters[0].timestamp !== "0:00") {
+    chapters = [{ timestamp: "0:00", label: chapters[0].label }, ...chapters.slice(1)];
+  }
+
+  return chapters.map((c) => `${c.timestamp} ${c.label}`).join("\n");
+}
+
+function getSceneDurationMs(scene: TimelineScene, fps: number): number {
+  // Prefer explicit durationInFrames (used by test fixtures)
+  if (typeof scene.durationInFrames === "number" && scene.durationInFrames > 0) {
+    return (scene.durationInFrames / fps) * 1000;
+  }
+  // Director manifests store frame counts in the `duration` field — convert via fps
+  if (typeof scene.duration === "number" && scene.duration > 0) {
+    return (scene.duration / fps) * 1000;
+  }
+  return 5000; // default 5s per scene
+}
+
+function deriveLabel(scene: TimelineScene, index: number): string {
+  if (scene.title && typeof scene.title === "string" && scene.title.trim().length > 0) {
+    return scene.title.trim();
+  }
+  if (scene.scriptText && typeof scene.scriptText === "string") {
+    // Use first ~50 chars of script as label
+    const clean = scene.scriptText.trim().replace(/\n/g, " ");
+    return clean.length > 50 ? clean.slice(0, 47) + "..." : clean;
+  }
+  if (scene.type === "intro_card" || scene.type === "title_card") {
+    return "Intro";
+  }
+  if (scene.type === "outro_card") {
+    return "Outro";
+  }
+  return `Part ${index + 1}`;
+}

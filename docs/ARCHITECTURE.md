@@ -280,7 +280,7 @@ The frontend is a **Next.js 14 App Router** application in the `ui/` directory. 
 | `/tasks` | `task-dashboard.tsx` | Background task queue, status filters, cancel, recursive child expansion, real-time updates |
 | `/social` | `social/page.tsx` | Social Brain — unified inbox, CRM, automation rules, AI auto-reply |
 | `/director` | `director/page.tsx` | Director Mode — Video Wizard tab (production pipeline) + Blog to YouTube tab (blog conversion) + My Drafts tab (browse/reopen saved drafts) + Capture & Trim tab (screen recorder, video trimmer, AI auto-cut) |
-| `/director/studio/[id]` | `director/studio/[id]/page.tsx` | Timeline Studio — @remotion/player preview, multi-track timeline, scene inspector, save/auto-save, render history |
+| `/director/studio/[id]` | `director/studio/[id]/page.tsx` | Timeline Studio — @remotion/player preview, multi-track timeline, scene inspector, save/auto-save, render history, YouTube direct publishing (metadata editor, chapters, SEO generation) |
 | `/workbench` | `workbench/page.tsx` | Rich Markdown editor (MDXEditor) with file sidebar, live file system CRUD, Cmd/Ctrl+S save |
 
 ### Component Structure
@@ -357,8 +357,10 @@ ui/
 │           ├── player-preview.tsx  # @remotion/player wrapper
 │           ├── timeline-tracks.tsx # Multi-track visual timeline
 │           ├── scene-inspector.tsx # Per-scene property editor
-│           ├── studio-toolbar.tsx  # Save + Renders + Render actions with dirty indicator
+│           ├── studio-toolbar.tsx  # Save + Renders + YouTube Publish + Render actions with dirty indicator
 │           ├── render-history.tsx  # Render history dropdown with status/progress/download
+│           ├── youtube-metadata-editor.tsx # YouTube publish modal — title, description, tags, category, privacy, AI generate
+│           ├── youtube-publish-history.tsx # YouTube publish history dropdown with status badges
 │           ├── framing-panel.tsx   # 9:16 horizontal crop offset slider
 │           ├── screen-recorder.tsx # In-app screen capture (MediaRecorder + getDisplayMedia)
 │           ├── video-trimmer.tsx   # Visual trim timeline with AI-suggested cuts
@@ -5594,3 +5596,86 @@ All worker events are forwarded to connected clients via Socket.IO in `server.ts
 - `analyze:queued`, `analyze:progress`, `analyze:complete`, `analyze:failed`
 
 ### Tracking: [Epic #438](https://github.com/mgcronin/openzigs/issues/438)
+
+---
+
+## YouTube Direct Publishing Pipeline (Epic #510)
+
+Enables one-click publishing of rendered videos to YouTube directly from the Director Studio, with AI-generated SEO metadata, auto-chapters, and publish history tracking.
+
+### Architecture
+
+```
+Studio Toolbar → YouTubeMetadataEditor (modal) → POST /director/youtube/publish
+                                                      ↓
+                                              YouTubePublishService
+                                                      ↓
+                                              ToolRegistry.getToolDefinition("yt_upload_video")
+                                                      ↓
+                                              youtube-mcp-server (Python sidecar)
+                                                      ↓
+                                              YouTube Data API v3
+```
+
+### Components
+
+**Backend (`src/video/`):**
+- `youtube-publish-repository.ts` — SQLite persistence for `youtube_publishes` table (status tracking, history)
+- `youtube-publish-service.ts` — Orchestrates uploads via MCP tool registry, emits Socket.IO progress events
+- `youtube-chapters.ts` — Generates YouTube chapter timestamps from manifest timeline entries
+
+**API Routes (`src/api/director.ts`):**
+- `POST /youtube/publish` — Start publish job (validates draft, resolves render output, invokes MCP tool)
+- `GET /youtube/publish/:draftId/status` — Latest publish status for a draft
+- `GET /youtube/publish/:draftId/history` — All publish attempts for a draft
+- `GET /youtube/categories` — Static YouTube video category list
+- `POST /youtube/generate-metadata` — LLM-powered SEO title/description/tags + auto-chapters
+
+**Frontend (`ui/components/director/studio/`):**
+- `youtube-metadata-editor.tsx` — Publish modal with title, description, tags, category, privacy, AI generation
+- `youtube-publish-history.tsx` — Publish history dropdown with status badges and YouTube links
+- `studio-toolbar.tsx` — Publish button (red YouTube branded) + "View on YouTube" link after publish
+
+### Socket.IO Events
+- `youtube:publish:progress` — Upload progress updates
+- `youtube:publish:complete` — Successful publish with video URL
+- `youtube:publish:error` — Upload failure with error message
+
+### Tracking: [Epic #510](https://github.com/mgcronin/openzigs/issues/510)
+
+---
+
+## Studio & Gallery Professional Enhancements (Epic #511)
+
+Professional-grade features for video production and asset management.
+
+### Subtitle Export (#521)
+- **`src/video/subtitle-export.ts`** — Generates SRT/VTT from manifest timeline narration segments.
+- Functions: `extractSubtitleSegments()`, `generateSrt()`, `generateVtt()`, `generateSubtitles(manifest, format)`
+- API: `GET /api/admin/director/drafts/:id/subtitles/:format` (format: `srt` or `vtt`)
+- UI: Subtitles dropdown in `studio-toolbar.tsx`
+
+### Brand Kit System (#523)
+- **`src/video/brand-kit.ts`** — `BrandKitRepository` with SQLite CRUD for `brand_kits` table.
+- Schema: id, name, primaryColor, secondaryColor, accentColor, fontFamily, logoPath, watermarkPath, timestamps.
+- API: Full CRUD at `/api/admin/director/brand-kits`
+- UI: **`brand-kit-editor.tsx`** — Create/edit/delete brand kits with color pickers and font selector. Wired as "Brand Kit" tab on Director page.
+
+### Batch Render Queue (#522)
+- API: `POST /api/admin/director/render/batch` — accepts `{ draftIds }`, queues each for rendering via `RenderOrchestrator.submit()`.
+- UI: **`batch-render-panel.tsx`** — Select drafts with checkboxes, render selected, view batch results. Wired as "Batch Render" tab on Director page.
+
+### Gallery Collections & Tagging (#520)
+- **DDL in `director.ts`**: `gallery_collections`, `gallery_collection_items`, `gallery_tags` tables (lazy-created via `ensureGalleryTables()`).
+- API: Collection CRUD, item add/remove, tag CRUD at `/api/admin/director/gallery/*`.
+- UI: **`collection-sidebar.tsx`** — Collections sidebar with create/rename/delete. **`tag-filter.tsx`** — Tag chip filter. Both wired into Gallery page.
+
+### Shorts Generator (#519)
+- API: `POST /api/admin/director/shorts/from-manifest` — LLM analysis of manifest narration for shorts-worthy segments.
+- UI: **`shorts-proposal-panel.tsx`** — Generate proposals, accept/reject/edit, render selected shorts. Wired into Studio right panel.
+
+### YouTube Analytics Dashboard (#518)
+- API: `GET /api/admin/director/youtube/analytics/channel`, `GET /youtube/analytics/videos` — Proxies YouTube MCP tools.
+- UI: **`ui/app/director/analytics/page.tsx`** — Channel overview cards, Recharts bar chart (top 10 by views), sortable/searchable video metrics table.
+
+### Tracking: [Epic #511](https://github.com/mgcronin/openzigs/issues/511)

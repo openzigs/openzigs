@@ -227,8 +227,8 @@ export class SocialIngestionService extends EventEmitter {
         health.consecutiveErrors++;
         health.lastError = msg;
 
-        // Exponential backoff: 2^(n-1) × interval, capped at 10 min
-        const backoffSeconds = Math.min(Math.pow(2, health.consecutiveErrors - 1) * intervalSeconds, 600);
+        // Exponential backoff: 2^(n-1) × interval, capped at the polling interval itself
+        const backoffSeconds = Math.min(Math.pow(2, health.consecutiveErrors - 1) * intervalSeconds, Math.max(intervalSeconds, 600));
         health.backoffUntil = new Date(Date.now() + backoffSeconds * 1000).toISOString();
         logger.warn(
           `[SocialIngestion] ${platform} consecutive error #${health.consecutiveErrors} — backing off for ${backoffSeconds}s`,

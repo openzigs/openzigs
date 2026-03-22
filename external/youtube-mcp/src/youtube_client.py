@@ -177,7 +177,7 @@ class YouTubeClient:
             )
             if init_resp.status_code != 200:
                 raise YouTubeAPIError(
-                    f"Failed to initiate upload (HTTP {init_resp.status_code}): {init_resp.text[:500]}",
+                    self._parse_api_error(init_resp, "Failed to initiate upload"),
                     init_resp.status_code,
                 )
             upload_url = init_resp.headers.get("Location")
@@ -211,11 +211,40 @@ class YouTubeClient:
                         logger.info("upload_complete", video_id=result.get("id"))
                         return result
                     raise YouTubeAPIError(
-                        f"Upload failed at byte {offset} (HTTP {resp.status_code}): {resp.text[:500]}",
+                        self._parse_api_error(resp, f"Upload failed at byte {offset}"),
                         resp.status_code,
                     )
 
         raise YouTubeAPIError("Upload ended without a completion response")
+
+    @staticmethod
+    def _parse_api_error(resp: "httpx.Response", prefix: str) -> str:
+        """Extract a clean error message from a YouTube API error response."""
+        try:
+            body = resp.json()
+            error = body.get("error", {})
+            reason = ""
+            message = error.get("message", "")
+            errors_list = error.get("errors", [])
+            if errors_list:
+                reason = errors_list[0].get("reason", "")
+            # Map known reasons to user-friendly messages
+            reason_map = {
+                "quotaExceeded": "Daily YouTube API quota exceeded. Quota resets at midnight Pacific Time.",
+                "rateLimitExceeded": "YouTube API rate limit exceeded. Please wait a moment and try again.",
+                "forbidden": "Access denied. Check that your YouTube OAuth token has upload permissions.",
+                "insufficientPermissions": "Insufficient permissions. Re-authorize YouTube with upload scope.",
+                "unauthorized": "YouTube authorization expired. Please re-connect your YouTube account.",
+            }
+            if reason in reason_map:
+                return reason_map[reason]
+            if message:
+                import re
+                clean = re.sub(r"<[^>]+>", "", message)
+                return f"{prefix} (HTTP {resp.status_code}): {clean}"
+        except Exception:
+            pass
+        return f"{prefix} (HTTP {resp.status_code}): {resp.text[:200]}"
 
     @staticmethod
     def _guess_mime(path: Path) -> str:

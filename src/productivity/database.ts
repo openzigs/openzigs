@@ -9,6 +9,8 @@ import { BrandVoiceRepository } from "../personality/brand-voice-repository.js";
 import { CharacterRepository } from "../characters/character-repository.js";
 import { PinterestTrackerRepository } from "../mcp/tools/pinterest-tracker.js";
 import { OutboxRepository } from "../outbox/outbox-repository.js";
+import { YouTubePublishRepository } from "../video/youtube-publish-repository.js";
+import { BrandKitRepository } from "../video/brand-kit.js";
 
 export type DatabaseOptions = {
   dbPath?: string;
@@ -59,6 +61,14 @@ export const getDatabase = (options: DatabaseOptions = {}): Database.Database =>
   // Run Outbox Queue migration (outbox_queue table)
   const outboxRepo = new OutboxRepository(db);
   outboxRepo.migrate();
+
+  // Run YouTube Publish migration (youtube_publishes table)
+  const youtubePublishRepo = new YouTubePublishRepository(db);
+  youtubePublishRepo.migrate();
+
+  // Run Brand Kit migration (brand_kits table)
+  const brandKitRepo = new BrandKitRepository(db);
+  brandKitRepo.migrate();
 
   sharedDb = db;
   return db;
@@ -197,6 +207,12 @@ export const createTestDatabase = (): Database.Database => {
 
   const socialRepo = new SocialRepository(db);
   socialRepo.migrate();
+
+  const youtubePublishRepo = new YouTubePublishRepository(db);
+  youtubePublishRepo.migrate();
+
+  const brandKitRepo = new BrandKitRepository(db);
+  brandKitRepo.migrate();
 
   return db;
 };

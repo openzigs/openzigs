@@ -40,6 +40,8 @@ import {
 import { InlineModelPicker } from "@/components/model-picker-select";
 import { AskAiPanel, AskAiButton, PAGE_CONTEXTS } from "@/components/ask-ai";
 import { AddToOutboxModal } from "@/components/add-to-outbox-modal";
+import { CollectionSidebar } from "@/components/gallery/collection-sidebar";
+import { TagFilter } from "@/components/gallery/tag-filter";
 
 // ── Types ───────────────────────────────────────────────────
 
@@ -177,16 +179,20 @@ export default function GalleryPage() {
   const [folderFilter, setFolderFilter] = useState<string>("");
   const [creatingFolder, setCreatingFolder] = useState(false);
   const [newFolderName, setNewFolderName] = useState("");
+  const [activeCollection, setActiveCollection] = useState<string | null>(null);
+  const [activeTags, setActiveTags] = useState<string[]>([]);
 
   // ── Queries ─────────────────────────────────────────
 
   const assetsQuery = useQuery({
-    queryKey: ["gallery-assets", typeFilter, sourceFilter, folderFilter],
+    queryKey: ["gallery-assets", typeFilter, sourceFilter, folderFilter, activeCollection, activeTags],
     queryFn: () => {
       const params = new URLSearchParams();
       if (typeFilter) params.set("type", typeFilter);
       if (sourceFilter) params.set("source", sourceFilter);
       if (folderFilter) params.set("folder", folderFilter);
+      if (activeCollection) params.set("collection", activeCollection);
+      if (activeTags.length > 0) params.set("tags", activeTags.join(","));
       params.set("limit", "100");
       return fetchJson<{ assets: GalleryAsset[]; total: number }>(`/api/queue/assets?${params.toString()}`);
     },
@@ -284,6 +290,7 @@ export default function GalleryPage() {
   });
 
   const assets = assetsQuery.data?.assets ?? [];
+
   const stats = statsQuery.data;
   const nodes = nodesQuery.data?.nodes ?? [];
 
@@ -680,6 +687,19 @@ export default function GalleryPage() {
         </div>
       )}
 
+      {/* Tag Filter */}
+      <div className="mb-4">
+        <TagFilter activeTags={activeTags} onTagsChange={setActiveTags} />
+      </div>
+
+      {/* Collection Sidebar + Asset Grid */}
+      <div className="flex gap-4">
+        <CollectionSidebar
+          activeCollection={activeCollection}
+          onSelectCollection={setActiveCollection}
+        />
+        <div className="min-w-0 flex-1">
+
       {/* Gallery Grid / List */}
       <SectionCard title={`Assets${folderFilter ? ` — ${folderFilter}` : ""} (${assets.length})`}>
         {assetsQuery.isLoading ? (
@@ -734,6 +754,9 @@ export default function GalleryPage() {
           </div>
         )}
       </SectionCard>
+
+        </div>{/* end flex-1 */}
+      </div>{/* end sidebar+grid flex */}
 
       {/* Preview Lightbox */}
       {previewAsset && (
