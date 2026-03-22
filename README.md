@@ -1,5 +1,7 @@
 # OpenZigs — Open-source AI Assistant & Developer Tools
 
+> **⚠️ ALPHA — This project is under active development. Features are still being built and tested. Expect breaking changes between releases.**
+
 > An open-source AI coding assistant and secure local automation platform built on GitHub Copilot SDK, combining developer tools, task automation, and human-in-the-loop safety controls.
 
 OpenZigs gives you a "God Mode" AI assistant that can read files, search the web, browse pages, and execute shell commands — but only when you say it should. Every high-risk action requires explicit human approval.
