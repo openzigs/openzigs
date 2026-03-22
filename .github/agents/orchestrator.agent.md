@@ -58,7 +58,7 @@ Call the **Code Issue** subagent with `#tool:agent/runSubagent`:
 
 - **agentName**: `Code Issue`
 - **description**: `Implementing epic #{N} and sub-issues`
-- **prompt**: *"Implement epic #{N} with sub-issues #{list}. Read the code-issue skill at `.github/skills/code-issue/SKILL.md` for the full workflow. Follow TDD, run tests and lint, create a feature branch, and open a PR. Include `Closes #{N}` for every resolved issue. When done, report back the PR number."*
+- **prompt**: *"Implement epic #{N} with sub-issues #{list}. Read the code-issue skill at `.github/skills/code-issue/SKILL.md` for the full workflow. Follow TDD, run tests and lint, create a feature branch, and open a PR. Include `Closes #{N}` for every resolved issue. Before creating the PR, update `CHANGELOG.md`: add bullet points describing any user-facing changes under the existing `## [Unreleased]` section (use `### Added`, `### Changed`, or `### Fixed` sub-headings as appropriate). Do NOT bump the version in `package.json` — versions are only bumped when cutting a tagged release. When done, report back the PR number."*
 
 **Extract from the result**: The PR number. You need this for the review phase.
 
@@ -128,5 +128,12 @@ To prevent orphaned terminal tabs in VS Code, include this reminder in every sub
 
 - If the user already has existing issues/epics, skip Phase 1 and go straight to IMPLEMENT.
 - If the user already has a PR, skip to REVIEW.
+
+## CHANGELOG & Versioning
+
+- Every PR with user-facing changes **must** add entries to the `## [Unreleased]` section of `CHANGELOG.md` (Keep a Changelog format).
+- Use sub-headings `### Added`, `### Changed`, `### Fixed`, `### Removed`, or `### Security` as appropriate.
+- **Do NOT bump the version number on every PR.** The version in `package.json` (and `ui/package.json`) is only incremented when cutting a tagged release (e.g., `git tag v0.2.0`), at which point the `[Unreleased]` section is promoted to a new versioned entry.
+- This project follows SemVer: `0.x.y` signals pre-stable alpha. Minor bumps (`0.x` → `0.x+1`) mark significant feature milestones; patch bumps (`0.x.y` → `0.x.y+1`) mark bug-fix-only releases.
 - If the user specifies only one phase (e.g., "just plan this"), run only that phase.
 - Read `docs/ARCHITECTURE.md` and `docs/USER_GUIDE.md` before starting — pass any relevant context to subagents.

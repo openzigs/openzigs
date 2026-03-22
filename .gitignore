@@ -121,10 +121,6 @@ research.md
 # Home directory symlink (accidental)
 ~/
 
-# Private VS Code Copilot customizations (not for open source)
-.github/agents/
-.github/skills/
-
 # Debug / throwaway screenshots
 screenshots/
 
