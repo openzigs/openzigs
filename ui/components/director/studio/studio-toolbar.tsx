@@ -243,6 +243,7 @@ export function StudioToolbar({ title, draftId, manifest, onSave, onRestore, dir
         onClose={() => setYtOpen(false)}
         onPublish={handleYouTubePublish}
         publishing={publishing}
+        warning={publishStatus?.status === "published" ? "This draft has already been published to YouTube. Publishing again will create a new video." : undefined}
       />
     </div>
   );

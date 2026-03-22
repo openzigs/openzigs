@@ -11,6 +11,7 @@ import { logger } from "../logging/logger.js";
 import type { ToolRegistry } from "../mcp/tool-registry.js";
 import type { YouTubePublishRepository } from "./youtube-publish-repository.js";
 import type { Server as SocketIOServer } from "socket.io";
+import type Database from "better-sqlite3";
 
 /** Resolve ~ to the user's home directory. */
 function resolvePath(p: string): string {
@@ -42,17 +43,20 @@ export interface YouTubePublishServiceOptions {
   toolRegistry: ToolRegistry;
   publishRepo: YouTubePublishRepository;
   io?: SocketIOServer | null;
+  db?: Database.Database | null;
 }
 
 export class YouTubePublishService {
   private readonly toolRegistry: ToolRegistry;
   private readonly publishRepo: YouTubePublishRepository;
   private io: SocketIOServer | null;
+  private readonly db: Database.Database | null;
 
-  constructor({ toolRegistry, publishRepo, io }: YouTubePublishServiceOptions) {
+  constructor({ toolRegistry, publishRepo, io, db }: YouTubePublishServiceOptions) {
     this.toolRegistry = toolRegistry;
     this.publishRepo = publishRepo;
     this.io = io ?? null;
+    this.db = db ?? null;
   }
 
   setIO(io: SocketIOServer): void {
@@ -219,25 +223,41 @@ export class YouTubePublishService {
   // ── Private helpers ────────────────────────────────────────
 
   private resolveRenderOutputPath(draftId: string): string | null {
-    // Check the renders directory for any completed render for this draft
-    const rendersDir = resolvePath("~/.openzigs/renders");
-    if (!fs.existsSync(rendersDir)) return null;
-
-    // Look for output.mp4 files in render subdirectories
-    try {
-      const entries = fs.readdirSync(rendersDir, { withFileTypes: true });
-      for (const entry of entries.reverse()) {
-        if (!entry.isDirectory()) continue;
-        const outputPath = path.join(rendersDir, entry.name, "output.mp4");
-        if (fs.existsSync(outputPath)) {
-          return outputPath;
+    // 1. Query director_renders for the latest completed render for this draft
+    if (this.db) {
+      try {
+        const row = this.db.prepare(
+          `SELECT output_path FROM director_renders WHERE draft_id = ? AND status = 'complete' AND output_path IS NOT NULL ORDER BY created_at DESC LIMIT 1`,
+        ).get(draftId) as { output_path: string } | undefined;
+        if (row?.output_path && fs.existsSync(row.output_path)) {
+          logger.debug(`[YouTubePublish] Resolved render path from DB: ${row.output_path}`);
+          return row.output_path;
         }
+      } catch (err) {
+        logger.warn(`[YouTubePublish] DB lookup for render path failed: ${err instanceof Error ? err.message : String(err)}`);
       }
-    } catch {
-      // If we can't read the renders dir, fall back to video-output
     }
 
-    // Legacy path
+    // 2. Scan renders directory for any .mp4 file (not just output.mp4)
+    const rendersDir = resolvePath("~/.openzigs/renders");
+    if (fs.existsSync(rendersDir)) {
+      try {
+        const entries = fs.readdirSync(rendersDir, { withFileTypes: true });
+        for (const entry of entries.reverse()) {
+          if (!entry.isDirectory()) continue;
+          const subDir = path.join(rendersDir, entry.name);
+          const files = fs.readdirSync(subDir);
+          const mp4 = files.find((f) => f.endsWith(".mp4"));
+          if (mp4) {
+            return path.join(subDir, mp4);
+          }
+        }
+      } catch {
+        // If we can't read the renders dir, fall back to video-output
+      }
+    }
+
+    // 3. Legacy path
     const legacyPath = resolvePath(`~/.openzigs/video-output/${draftId}/output.mp4`);
     if (fs.existsSync(legacyPath)) return legacyPath;
 

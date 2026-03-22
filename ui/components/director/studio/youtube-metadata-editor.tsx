@@ -27,6 +27,7 @@ interface YouTubeMetadataEditorProps {
   onClose: () => void;
   onPublish: (metadata: YouTubeMetadata) => void;
   publishing?: boolean;
+  warning?: string;
 }
 
 const PRIVACY_OPTIONS: { value: YouTubeMetadata["privacyStatus"]; label: string; icon: React.ReactNode; description: string }[] = [
@@ -42,6 +43,7 @@ export function YouTubeMetadataEditor({
   onClose,
   onPublish,
   publishing,
+  warning,
 }: YouTubeMetadataEditorProps) {
   const [title, setTitle] = useState(defaultTitle);
   const [description, setDescription] = useState("");
@@ -171,6 +173,13 @@ export function YouTubeMetadataEditor({
 
         {/* Body */}
         <div className="max-h-[70vh] overflow-y-auto p-4 space-y-4">
+          {/* Re-publish warning */}
+          {warning && (
+            <div className="rounded-md border border-yellow-500/30 bg-yellow-500/10 px-3 py-2 text-xs text-yellow-200">
+              {warning}
+            </div>
+          )}
+
           {/* AI Generate Button */}
           <button
             onClick={handleGenerateAI}

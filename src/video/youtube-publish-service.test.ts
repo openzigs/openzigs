@@ -27,6 +27,19 @@ function createTestDb(): Database.Database {
       updated_at TEXT NOT NULL,
       status TEXT NOT NULL DEFAULT 'draft'
     );
+
+    CREATE TABLE IF NOT EXISTS director_renders (
+      id TEXT PRIMARY KEY,
+      draft_id TEXT NOT NULL,
+      job_id TEXT NOT NULL,
+      quality TEXT NOT NULL DEFAULT 'standard',
+      status TEXT NOT NULL DEFAULT 'queued',
+      output_path TEXT,
+      error TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (draft_id) REFERENCES director_drafts(id) ON DELETE CASCADE
+    );
   `);
   db.prepare(
     `INSERT INTO director_drafts (id, title, manifest, production_mode, created_at, updated_at)
@@ -269,6 +282,81 @@ describe("YouTubePublishService", () => {
 
       const history = service.getPublishHistory("draft-1");
       expect(history).toHaveLength(2);
+    });
+  });
+
+  describe("resolveRenderOutputPath (DB-based)", () => {
+    it("resolves video path from director_renders table", async () => {
+      const registry = createMockToolRegistry();
+      const tmpFile = path.join(TEST_RENDERS_DIR, "My_Cool_Video.mp4");
+      fs.writeFileSync(tmpFile, "fake video data");
+
+      // Insert a completed render row pointing to our test file
+      const now = new Date().toISOString();
+      db.prepare(
+        `INSERT INTO director_renders (id, draft_id, job_id, quality, status, output_path, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run("render-1", "draft-1", "job-1", "standard", "complete", tmpFile, now, now);
+
+      const service = new YouTubePublishService({ toolRegistry: registry, publishRepo, db });
+
+      const result = await service.publish({
+        draftId: "draft-1",
+        title: "DB Lookup Test",
+      });
+
+      // Should succeed using the DB-resolved path
+      expect(result.status).toBe("published");
+      expect(result.videoId).toBe("abc123");
+
+      // Verify the tool was called with the DB-resolved path
+      const tool = registry.getToolDefinition("yt_upload_video")!;
+      expect(tool.handler).toHaveBeenCalledWith(
+        expect.objectContaining({ file_path: tmpFile }),
+      );
+    });
+
+    it("falls back to filesystem scan when DB has no render", async () => {
+      const registry = createMockToolRegistry();
+      const tmpFile = path.join(TEST_RENDERS_DIR, "Safe_Title.mp4");
+      fs.writeFileSync(tmpFile, "fake video data");
+
+      // Pass the db but don't insert any director_renders row
+      const service = new YouTubePublishService({ toolRegistry: registry, publishRepo, db });
+
+      const result = await service.publish({
+        draftId: "draft-1",
+        title: "Fallback Test",
+      });
+
+      // Should succeed via filesystem scan finding the .mp4
+      expect(result.status).toBe("published");
+      expect(result.videoId).toBe("abc123");
+    });
+
+    it("uses DB path even when filename is not output.mp4", async () => {
+      const registry = createMockToolRegistry();
+      const tmpFile = path.join(TEST_RENDERS_DIR, "How_to_Build_a_Rocket.mp4");
+      fs.writeFileSync(tmpFile, "fake video data");
+
+      const now = new Date().toISOString();
+      db.prepare(
+        `INSERT INTO director_renders (id, draft_id, job_id, quality, status, output_path, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run("render-2", "draft-1", "job-2", "standard", "complete", tmpFile, now, now);
+
+      const service = new YouTubePublishService({ toolRegistry: registry, publishRepo, db });
+
+      const result = await service.publish({
+        draftId: "draft-1",
+        title: "Custom Filename Test",
+      });
+
+      expect(result.status).toBe("published");
+      const tool = registry.getToolDefinition("yt_upload_video")!;
+      expect(tool.handler).toHaveBeenCalledWith(
+        expect.objectContaining({ file_path: tmpFile }),
+      );
     });
   });
 

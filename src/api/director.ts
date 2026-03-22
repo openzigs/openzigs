@@ -4724,6 +4724,7 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
         toolRegistry: toolRegistry!,
         publishRepo,
         io: _io,
+        db: getDatabase(),
       });
     }
     return _youtubePublishService;
