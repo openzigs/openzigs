@@ -4,6 +4,7 @@ import { useState, useCallback, useEffect } from "react";
 import { X, Loader2, Sparkles, Youtube, Globe, Lock, Clock, Tag } from "lucide-react";
 import { fetchJson } from "@/lib/api";
 import { showToast } from "@/components/toast";
+import { InlineModelPicker } from "@/components/model-picker-select";
 
 export interface YouTubeMetadata {
   title: string;
@@ -54,6 +55,7 @@ export function YouTubeMetadataEditor({
   const [categories, setCategories] = useState<YouTubeCategory[]>([]);
   const [chapters, setChapters] = useState("");
   const [generating, setGenerating] = useState(false);
+  const [aiModel, setAiModel] = useState("");
 
   // Load categories on mount
   useEffect(() => {
@@ -87,7 +89,7 @@ export function YouTubeMetadataEditor({
         chapters: string;
       }>("/api/admin/director/youtube/generate-metadata", {
         method: "POST",
-        body: JSON.stringify({ draftId }),
+        body: JSON.stringify({ draftId, ...(aiModel ? { model: aiModel } : {}) }),
       });
 
       if (res.title) setTitle(res.title);
@@ -109,7 +111,7 @@ export function YouTubeMetadataEditor({
     } finally {
       setGenerating(false);
     }
-  }, [draftId, categories]);
+  }, [draftId, categories, aiModel]);
 
   const handleAddTag = useCallback(
     (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -180,19 +182,22 @@ export function YouTubeMetadataEditor({
             </div>
           )}
 
-          {/* AI Generate Button */}
-          <button
-            onClick={handleGenerateAI}
-            disabled={generating}
-            className="flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-primary/40 bg-primary/5 px-3 py-2 text-xs font-medium text-primary hover:bg-primary/10 transition disabled:opacity-50"
-          >
-            {generating ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            ) : (
-              <Sparkles className="h-3.5 w-3.5" />
-            )}
-            {generating ? "Generating…" : "Generate with AI"}
-          </button>
+          {/* AI Generate Button + Model Selector */}
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleGenerateAI}
+              disabled={generating}
+              className="flex flex-1 items-center justify-center gap-2 rounded-lg border border-dashed border-primary/40 bg-primary/5 px-3 py-2 text-xs font-medium text-primary hover:bg-primary/10 transition disabled:opacity-50"
+            >
+              {generating ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Sparkles className="h-3.5 w-3.5" />
+              )}
+              {generating ? "Generating…" : "Generate with AI"}
+            </button>
+            <InlineModelPicker value={aiModel} onChange={setAiModel} className="w-36" />
+          </div>
 
           {/* Title */}
           <div>
