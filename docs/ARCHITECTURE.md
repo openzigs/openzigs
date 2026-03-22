@@ -280,7 +280,7 @@ The frontend is a **Next.js 14 App Router** application in the `ui/` directory. 
 | `/tasks` | `task-dashboard.tsx` | Background task queue, status filters, cancel, recursive child expansion, real-time updates |
 | `/social` | `social/page.tsx` | Social Brain — unified inbox, CRM, automation rules, AI auto-reply |
 | `/director` | `director/page.tsx` | Director Mode — Video Wizard tab (production pipeline) + Blog to YouTube tab (blog conversion) + My Drafts tab (browse/reopen saved drafts) + Capture & Trim tab (screen recorder, video trimmer, AI auto-cut) |
-| `/director/studio/[id]` | `director/studio/[id]/page.tsx` | Timeline Studio — @remotion/player preview, multi-track timeline, scene inspector, save/auto-save, render history |
+| `/director/studio/[id]` | `director/studio/[id]/page.tsx` | Timeline Studio — @remotion/player preview, multi-track timeline, scene inspector, save/auto-save, render history, YouTube direct publishing (metadata editor, chapters, SEO generation) |
 | `/workbench` | `workbench/page.tsx` | Rich Markdown editor (MDXEditor) with file sidebar, live file system CRUD, Cmd/Ctrl+S save |
 
 ### Component Structure
@@ -357,8 +357,10 @@ ui/
 │           ├── player-preview.tsx  # @remotion/player wrapper
 │           ├── timeline-tracks.tsx # Multi-track visual timeline
 │           ├── scene-inspector.tsx # Per-scene property editor
-│           ├── studio-toolbar.tsx  # Save + Renders + Render actions with dirty indicator
+│           ├── studio-toolbar.tsx  # Save + Renders + YouTube Publish + Render actions with dirty indicator
 │           ├── render-history.tsx  # Render history dropdown with status/progress/download
+│           ├── youtube-metadata-editor.tsx # YouTube publish modal — title, description, tags, category, privacy, AI generate
+│           ├── youtube-publish-history.tsx # YouTube publish history dropdown with status badges
 │           ├── framing-panel.tsx   # 9:16 horizontal crop offset slider
 │           ├── screen-recorder.tsx # In-app screen capture (MediaRecorder + getDisplayMedia)
 │           ├── video-trimmer.tsx   # Visual trim timeline with AI-suggested cuts
@@ -5594,3 +5596,49 @@ All worker events are forwarded to connected clients via Socket.IO in `server.ts
 - `analyze:queued`, `analyze:progress`, `analyze:complete`, `analyze:failed`
 
 ### Tracking: [Epic #438](https://github.com/mgcronin/openzigs/issues/438)
+
+---
+
+## YouTube Direct Publishing Pipeline (Epic #510)
+
+Enables one-click publishing of rendered videos to YouTube directly from the Director Studio, with AI-generated SEO metadata, auto-chapters, and publish history tracking.
+
+### Architecture
+
+```
+Studio Toolbar → YouTubeMetadataEditor (modal) → POST /director/youtube/publish
+                                                      ↓
+                                              YouTubePublishService
+                                                      ↓
+                                              ToolRegistry.getToolDefinition("yt_upload_video")
+                                                      ↓
+                                              youtube-mcp-server (Python sidecar)
+                                                      ↓
+                                              YouTube Data API v3
+```
+
+### Components
+
+**Backend (`src/video/`):**
+- `youtube-publish-repository.ts` — SQLite persistence for `youtube_publishes` table (status tracking, history)
+- `youtube-publish-service.ts` — Orchestrates uploads via MCP tool registry, emits Socket.IO progress events
+- `youtube-chapters.ts` — Generates YouTube chapter timestamps from manifest timeline entries
+
+**API Routes (`src/api/director.ts`):**
+- `POST /youtube/publish` — Start publish job (validates draft, resolves render output, invokes MCP tool)
+- `GET /youtube/publish/:draftId/status` — Latest publish status for a draft
+- `GET /youtube/publish/:draftId/history` — All publish attempts for a draft
+- `GET /youtube/categories` — Static YouTube video category list
+- `POST /youtube/generate-metadata` — LLM-powered SEO title/description/tags + auto-chapters
+
+**Frontend (`ui/components/director/studio/`):**
+- `youtube-metadata-editor.tsx` — Publish modal with title, description, tags, category, privacy, AI generation
+- `youtube-publish-history.tsx` — Publish history dropdown with status badges and YouTube links
+- `studio-toolbar.tsx` — Publish button (red YouTube branded) + "View on YouTube" link after publish
+
+### Socket.IO Events
+- `youtube:publish:progress` — Upload progress updates
+- `youtube:publish:complete` — Successful publish with video URL
+- `youtube:publish:error` — Upload failure with error message
+
+### Tracking: [Epic #510](https://github.com/mgcronin/openzigs/issues/510)

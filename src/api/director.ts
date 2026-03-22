@@ -39,6 +39,7 @@ import type { CopilotWrapper } from "../copilot/copilot-wrapper.js";
 import type { VoiceService } from "../voice/voice-service.js";
 import type { RenderOrchestrator } from "../video/render-orchestrator.js";
 import type { BrandVoiceService } from "../personality/brand-voice-service.js";
+import type { ToolRegistry } from "../mcp/tool-registry.js";
 import type { Server as SocketIOServer } from "socket.io";
 import { NARRATION_DIRECTIVES } from "../voice/pacing-translator.js";
 import { AVAILABLE_LOCAL_VOICES } from "../voice/types.js";
@@ -53,6 +54,7 @@ export interface DirectorRouterOptions {
   voiceService?: VoiceService;
   renderOrchestrator?: RenderOrchestrator;
   brandVoiceService?: BrandVoiceService;
+  toolRegistry?: ToolRegistry;
   config: {
     enabled: boolean;
     outputDir: string;
@@ -72,6 +74,7 @@ export const createDirectorRouter = ({
   voiceService,
   renderOrchestrator,
   brandVoiceService,
+  toolRegistry,
   config,
 }: DirectorRouterOptions): Router => {
   const router = Router();
@@ -4626,6 +4629,244 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       logger.error(`[Director API] POST /hero-reel/process-inspiration failed: ${msg}`);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  // ── YouTube Direct Publishing Pipeline ──────────────────────
+
+  // Lazy-init YouTube publish service
+  let _youtubePublishService: import("../video/youtube-publish-service.js").YouTubePublishService | null = null;
+
+  async function getYouTubePublishService() {
+    if (!_youtubePublishService) {
+      const { YouTubePublishService } = await import("../video/youtube-publish-service.js");
+      const { YouTubePublishRepository } = await import("../video/youtube-publish-repository.js");
+      const publishRepo = new YouTubePublishRepository(getDatabase());
+      publishRepo.migrate();
+      _youtubePublishService = new YouTubePublishService({
+        toolRegistry: toolRegistry!,
+        publishRepo,
+        io: _io,
+      });
+    }
+    return _youtubePublishService;
+  }
+
+  /**
+   * POST /youtube/publish — Start a YouTube publish job for a draft.
+   * Body: { draftId, filePath?, title, description?, tags?, categoryId?, privacyStatus?, notifySubscribers?, scheduledPublishTime? }
+   */
+  router.post("/youtube/publish", async (req, res) => {
+    try {
+      if (!toolRegistry) {
+        res.status(503).json({ error: "Tool registry not available" });
+        return;
+      }
+
+      const { draftId, filePath, title, description, tags, categoryId, privacyStatus, notifySubscribers, scheduledPublishTime } = req.body as {
+        draftId?: string;
+        filePath?: string;
+        title?: string;
+        description?: string;
+        tags?: string[];
+        categoryId?: string;
+        privacyStatus?: "public" | "unlisted" | "private";
+        notifySubscribers?: boolean;
+        scheduledPublishTime?: string;
+      };
+
+      if (!draftId || typeof draftId !== "string") {
+        res.status(400).json({ error: "draftId is required" });
+        return;
+      }
+      if (!title || typeof title !== "string" || title.trim().length === 0) {
+        res.status(400).json({ error: "title is required" });
+        return;
+      }
+
+      const service = await getYouTubePublishService();
+      const result = await service.publish({
+        draftId,
+        filePath,
+        title: title.trim(),
+        description,
+        tags,
+        categoryId,
+        privacyStatus,
+        notifySubscribers,
+        scheduledPublishTime,
+      });
+
+      res.json(result);
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      logger.error(`[Director API] POST /youtube/publish failed: ${msg}`);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  /**
+   * GET /youtube/publish/:draftId/status — Check publish status for a draft.
+   */
+  router.get("/youtube/publish/:draftId/status", async (req, res) => {
+    try {
+      const service = await getYouTubePublishService();
+      const status = service.getPublishStatus(req.params.draftId);
+      if (!status) {
+        res.json({ status: "none" });
+        return;
+      }
+      res.json(status);
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      logger.error(`[Director API] GET /youtube/publish status failed: ${msg}`);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  /**
+   * GET /youtube/publish/:draftId/history — Get all publish attempts for a draft.
+   */
+  router.get("/youtube/publish/:draftId/history", async (req, res) => {
+    try {
+      const service = await getYouTubePublishService();
+      const history = service.getPublishHistory(req.params.draftId);
+      res.json({ publishes: history });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      logger.error(`[Director API] GET /youtube/publish history failed: ${msg}`);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  /**
+   * GET /youtube/categories — Return YouTube video categories.
+   */
+  router.get("/youtube/categories", (_req, res) => {
+    // Standard YouTube categories — these are stable and rarely change.
+    res.json({
+      categories: [
+        { id: "1", name: "Film & Animation" },
+        { id: "2", name: "Autos & Vehicles" },
+        { id: "10", name: "Music" },
+        { id: "15", name: "Pets & Animals" },
+        { id: "17", name: "Sports" },
+        { id: "19", name: "Travel & Events" },
+        { id: "20", name: "Gaming" },
+        { id: "22", name: "People & Blogs" },
+        { id: "23", name: "Comedy" },
+        { id: "24", name: "Entertainment" },
+        { id: "25", name: "News & Politics" },
+        { id: "26", name: "Howto & Style" },
+        { id: "27", name: "Education" },
+        { id: "28", name: "Science & Technology" },
+        { id: "29", name: "Nonprofits & Activism" },
+      ],
+    });
+  });
+
+  /**
+   * POST /youtube/generate-metadata — LLM SEO metadata generation for YouTube.
+   * Body: { draftId }
+   * Returns: { title, description, tags, suggestedCategory }
+   */
+  router.post("/youtube/generate-metadata", async (req, res) => {
+    try {
+      const { draftId, model: bodyModel } = req.body as { draftId?: string; model?: string };
+
+      if (!draftId || typeof draftId !== "string") {
+        res.status(400).json({ error: "draftId is required" });
+        return;
+      }
+
+      const db = getDatabase();
+      const row = db.prepare(`SELECT title, manifest FROM director_drafts WHERE id = ?`).get(draftId) as {
+        title: string;
+        manifest: string;
+      } | undefined;
+
+      if (!row) {
+        res.status(404).json({ error: "Draft not found" });
+        return;
+      }
+
+      let manifest: Record<string, unknown> = {};
+      try {
+        manifest = JSON.parse(row.manifest);
+      } catch {
+        // non-fatal
+      }
+
+      // Extract narration text and scene descriptions from the manifest
+      const timeline = Array.isArray(manifest.timeline) ? manifest.timeline : [];
+      const narrationParts: string[] = [];
+      const sceneDescriptions: string[] = [];
+      for (const entry of timeline) {
+        if (entry.scriptText) narrationParts.push(entry.scriptText);
+        if (entry.title) sceneDescriptions.push(entry.title);
+      }
+
+      // Generate chapter text for context
+      const { generateChapters, formatChaptersForDescription } = await import("../video/youtube-chapters.js");
+      const chapters = generateChapters(manifest as import("../video/youtube-chapters.js").ManifestForChapters);
+      const chapterText = formatChaptersForDescription(chapters);
+
+      const seoModel = bodyModel || await getUserSelectedModel();
+      const prompt = `You are a YouTube SEO expert. Given the following video content, generate optimized YouTube metadata.
+
+VIDEO TITLE: "${row.title}"
+PROJECT TITLE: "${manifest.projectTitle ?? row.title}"
+
+NARRATION/SCRIPT:
+${narrationParts.join("\n").slice(0, 2000) || "(no narration)"}
+
+SCENE DESCRIPTIONS:
+${sceneDescriptions.join(", ").slice(0, 500) || "(no scene descriptions)"}
+
+Generate the following as JSON (and ONLY JSON, no markdown fences):
+{
+  "title": "Optimized YouTube title (under 100 chars, engaging, with key SEO terms)",
+  "description": "SEO-friendly description (200-500 words, include relevant hashtags at the end, natural keyword density). ${chapterText ? "Include these chapter timestamps at the beginning:\\n" + chapterText : ""}",
+  "tags": ["array", "of", "relevant", "tags", "up to 20 tags, total under 500 characters"],
+  "suggestedCategory": "One of: Film & Animation, Education, Science & Technology, Entertainment, Howto & Style, People & Blogs, Music, Gaming, News & Politics, Comedy"
+}`;
+
+      const stream = copilot.chat(prompt, { tools: [], ...(seoModel ? { model: seoModel } : {}) });
+      const chunks: string[] = [];
+      for await (const chunk of stream) {
+        chunks.push(chunk);
+      }
+
+      const rawResponse = chunks.join("").trim();
+
+      // Parse JSON from the response, handling potential markdown fences
+      let parsed: Record<string, unknown>;
+      try {
+        const jsonMatch = rawResponse.match(/\{[\s\S]*\}/);
+        if (!jsonMatch) throw new Error("No JSON found in response");
+        parsed = JSON.parse(jsonMatch[0]);
+      } catch {
+        res.status(500).json({ error: "Failed to parse LLM response", raw: rawResponse });
+        return;
+      }
+
+      // Validate and sanitize the response
+      const generatedTitle = typeof parsed.title === "string" ? parsed.title.slice(0, 100) : row.title;
+      const generatedDescription = typeof parsed.description === "string" ? parsed.description.slice(0, 5000) : "";
+      const generatedTags = Array.isArray(parsed.tags) ? parsed.tags.filter((t: unknown) => typeof t === "string").slice(0, 30) : [];
+      const suggestedCategory = typeof parsed.suggestedCategory === "string" ? parsed.suggestedCategory : "Education";
+
+      res.json({
+        title: generatedTitle,
+        description: generatedDescription,
+        tags: generatedTags,
+        suggestedCategory,
+        chapters: chapterText || null,
+      });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      logger.error(`[Director API] POST /youtube/generate-metadata failed: ${msg}`);
       res.status(500).json({ error: msg });
     }
   });

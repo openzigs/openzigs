@@ -1080,6 +1080,7 @@ const directorRouter = createDirectorRouter({
   voiceService,
   renderOrchestrator,
   brandVoiceService,
+  toolRegistry,
   config: {
     enabled: directorConfig?.enabled ?? true,
     outputDir: expandTilde(directorConfig?.outputDir ?? "~/.openzigs/video-output"),

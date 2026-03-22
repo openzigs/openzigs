@@ -472,7 +472,7 @@ The OpenZigs UI is a **Next.js** application with a navigation bar providing acc
 | **Gallery** | `/gallery` | Asset gallery for generated images, videos, and audio; inline creation studio for txt2img, img2img, txt2video, img2video, txt2music |
 | **Music Studio** | `/music-studio` | AI Voice2Voice pipeline &amp; Smart Remix Lab — stem separation, voice conversion, instrument replacement, and auto-mastering |
 | **Director** | `/director` | AI video production wizard, blog-to-YouTube, timeline studio, and capture & trim |
-| **Director Studio** | `/director/studio/[id]` | Full timeline editor with player preview, scene inspector, and drag-and-drop reordering |
+| **Director Studio** | `/director/studio/[id]` | Full timeline editor with player preview, scene inspector, drag-and-drop reordering, and YouTube direct publishing |
 
 ### Chat
 
@@ -4456,6 +4456,14 @@ The Studio provides a three-panel layout:
 - **Auto-save** — After any manifest change, the Studio auto-saves every 30 seconds while the draft is dirty. Manual saves reset the timer.
 - **Render history** — The **Renders** dropdown button shows all past renders for the current draft with status icons (complete, failed, queued, in-progress), progress bars for active renders, and download links for completed outputs. Polls every 5 seconds while renders are active.
 - **Render-to-draft linking** — Each render is recorded in the `director_renders` table and linked to its parent draft. The Render button auto-saves before submitting.
+- **YouTube Direct Publishing** — After rendering, click the red **Publish** button in the toolbar to open the YouTube Metadata Editor. Features:
+  - **AI-generated metadata** — Click "Generate with AI" to auto-generate an SEO-optimized title, description, tags, and suggested category using the video's manifest content.
+  - **Auto-chapters** — YouTube chapter timestamps are automatically generated from the video timeline and appended to the description.
+  - **Privacy controls** — Choose Public, Unlisted, or Private visibility.
+  - **Tag editor** — Add up to 30 tags with Enter/comma, remove with X.
+  - **Category selector** — Choose from 15 YouTube video categories.
+  - **Publish history** — The "Publishes" dropdown shows all past upload attempts with status (uploading/published/failed) and direct YouTube links.
+  - After a successful publish, the Publish button changes to "View on YouTube" with a direct link.
 
 ### Blog-to-YouTube Pipeline
 
