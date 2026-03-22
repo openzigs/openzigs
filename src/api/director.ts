@@ -5021,9 +5021,24 @@ Generate the following as JSON (and ONLY JSON, no markdown fences):
 
   router.put("/brand-kits/:id", (req, res) => {
     try {
-      
+      const brandKitUpdateSchema = z.object({
+        name: z.string().min(1).optional(),
+        primaryColor: z.string().optional(),
+        secondaryColor: z.string().optional(),
+        accentColor: z.string().optional(),
+        fontFamily: z.string().optional(),
+        logoPath: z.string().nullable().optional(),
+        watermarkPath: z.string().nullable().optional(),
+        introTemplateId: z.string().nullable().optional(),
+        outroTemplateId: z.string().nullable().optional(),
+      }).strict();
+      const parsed = brandKitUpdateSchema.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({ error: "Invalid fields", details: parsed.error.flatten().fieldErrors });
+        return;
+      }
       const repo = new BrandKitRepository(getDatabase());
-      const updated = repo.update(req.params.id, req.body);
+      const updated = repo.update(req.params.id, parsed.data);
       if (!updated) { res.status(404).json({ error: "Brand kit not found" }); return; }
       res.json(updated);
     } catch (error) {
@@ -5060,6 +5075,7 @@ Generate the following as JSON (and ONLY JSON, no markdown fences):
       const db = getDatabase();
       const results: Array<{ draftId: string; jobId?: string; error?: string }> = [];
 
+      // Process sequentially to avoid overwhelming the render queue
       for (const draftId of draftIds) {
         try {
           const row = db.prepare(`SELECT id, manifest FROM director_drafts WHERE id = ?`).get(draftId) as {
@@ -5067,23 +5083,16 @@ Generate the following as JSON (and ONLY JSON, no markdown fences):
             manifest: string;
           } | undefined;
 
-          if (!row) {
-            results.push({ draftId, error: "Draft not found" });
-            continue;
-          }
+          if (!row) { results.push({ draftId, error: "Draft not found" }); continue; }
 
           let manifest: Record<string, unknown>;
           try {
             manifest = JSON.parse(row.manifest);
           } catch {
-            results.push({ draftId, error: "Corrupt manifest" });
-            continue;
+            results.push({ draftId, error: "Corrupt manifest" }); continue;
           }
 
-          if (!renderOrchestrator) {
-            results.push({ draftId, error: "Render orchestrator not available" });
-            continue;
-          }
+          if (!renderOrchestrator) { results.push({ draftId, error: "Render orchestrator not available" }); continue; }
 
           const jobId = nanoid();
           const now = new Date().toISOString();
@@ -5092,7 +5101,7 @@ Generate the following as JSON (and ONLY JSON, no markdown fences):
              VALUES (?, ?, ?, 'standard', 'queued', ?, ?)`,
           ).run(nanoid(), draftId, jobId, now, now);
 
-          renderOrchestrator.submit({
+          await renderOrchestrator.submit({
             manifest: manifest as never,
           });
 
@@ -5262,8 +5271,8 @@ Generate the following as JSON (and ONLY JSON, no markdown fences):
         const rows = db.prepare(`SELECT asset_path FROM gallery_tags WHERE tag = ?`).all(tag.trim().toLowerCase()) as Array<{ asset_path: string }>;
         res.json({ assets: rows.map((r) => r.asset_path) });
       } else {
-        const rows = db.prepare(`SELECT DISTINCT tag FROM gallery_tags ORDER BY tag ASC`).all() as Array<{ tag: string }>;
-        res.json({ tags: rows.map((r) => r.tag) });
+        const rows = db.prepare(`SELECT tag, COUNT(*) as count FROM gallery_tags GROUP BY tag ORDER BY count DESC, tag ASC`).all() as Array<{ tag: string; count: number }>;
+        res.json({ tags: rows });
       }
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
@@ -5436,6 +5445,212 @@ For each Short, respond with JSON only (no markdown fences):
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       logger.error(`[Director API] POST /shorts/from-manifest failed: ${msg}`);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  // ── Shorts Propose & Render (UI-facing routes for Issue #519) ──────
+
+  /**
+   * POST /drafts/:draftId/shorts/propose — Analyze a draft's manifest and propose
+   * engaging Short segments via LLM.
+   * Body: { maxShorts?: number }
+   * Response: { proposals: ShortProposal[] }
+   */
+  router.post("/drafts/:draftId/shorts/propose", async (req, res) => {
+    try {
+      const { draftId } = req.params;
+      const { maxShorts } = req.body as { maxShorts?: number };
+
+      const db = getDatabase();
+      const row = db.prepare(`SELECT title, manifest FROM director_drafts WHERE id = ?`).get(draftId) as {
+        title: string;
+        manifest: string;
+      } | undefined;
+
+      if (!row) { res.status(404).json({ error: "Draft not found" }); return; }
+
+      let manifest: Record<string, unknown>;
+      try {
+        manifest = JSON.parse(row.manifest);
+      } catch {
+        res.status(500).json({ error: "Corrupt manifest" }); return;
+      }
+
+      const timeline = Array.isArray(manifest.timeline) ? manifest.timeline : [];
+      if (timeline.length === 0) {
+        res.status(400).json({ error: "Manifest has no timeline scenes" }); return;
+      }
+
+      // Build cumulative start/end times for each scene
+      let cumulativeMs = 0;
+      const sceneTimes = timeline.map((s: Record<string, unknown>) => {
+        const dur = typeof s.duration === "number" ? (s.duration < 1000 ? s.duration * 1000 : s.duration) : 5000;
+        const start = cumulativeMs;
+        cumulativeMs += dur;
+        return { startMs: start, endMs: cumulativeMs, durationMs: dur };
+      });
+
+      const sceneDescriptions = timeline.map((s: Record<string, unknown>, i: number) => {
+        const text = (s.scriptText as string) || (s.title as string) || `Scene ${i + 1}`;
+        return `[${i}] (${Math.round(sceneTimes[i].durationMs / 1000)}s) ${text.slice(0, 200)}`;
+      }).join("\n");
+
+      const limit = Math.min(maxShorts || 3, 5);
+      const prompt = `You are a viral content strategist. Analyze these video scenes and select up to ${limit} segments that would make the most engaging YouTube Shorts (max 60 seconds each).
+
+SCENES:
+${sceneDescriptions}
+
+For each Short, respond with JSON only (no markdown fences):
+[
+  {
+    "startSceneIndex": 0,
+    "endSceneIndex": 2,
+    "title": "Hook title for the Short",
+    "hookText": "Opening hook text overlay",
+    "ctaText": "Call to action text",
+    "reason": "Why this segment is engaging",
+    "score": 85
+  }
+]`;
+
+      const seoModel = await getUserSelectedModel();
+      const stream = copilot.chat(prompt, { tools: [], ...(seoModel ? { model: seoModel } : {}) });
+      const chunks: string[] = [];
+      for await (const chunk of stream) { chunks.push(chunk); }
+
+      const rawResponse = chunks.join("").trim();
+      let suggestions: Array<{
+        startSceneIndex: number;
+        endSceneIndex: number;
+        title: string;
+        hookText: string;
+        ctaText: string;
+        reason: string;
+        score?: number;
+      }>;
+
+      try {
+        const jsonMatch = rawResponse.match(/\[[\s\S]*\]/);
+        if (!jsonMatch) throw new Error("No JSON array found");
+        suggestions = JSON.parse(jsonMatch[0]);
+      } catch {
+        res.status(500).json({ error: "Failed to parse LLM response", raw: rawResponse });
+        return;
+      }
+
+      // Map to the shape the UI expects: { startTime, endTime, title, hookText, ctaText, score, reason }
+      const proposals = suggestions.slice(0, limit).map((s) => {
+        const startIdx = Math.max(0, Math.min(s.startSceneIndex, timeline.length - 1));
+        const endIdx = Math.max(startIdx, Math.min(s.endSceneIndex, timeline.length - 1));
+        return {
+          startTime: sceneTimes[startIdx].startMs / 1000,
+          endTime: sceneTimes[endIdx].endMs / 1000,
+          title: s.title,
+          hookText: s.hookText,
+          ctaText: s.ctaText,
+          score: typeof s.score === "number" ? s.score : 80,
+          reason: s.reason,
+        };
+      });
+
+      res.json({ proposals });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      logger.error(`[Director API] POST /drafts/:draftId/shorts/propose failed: ${msg}`);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  /**
+   * POST /drafts/:draftId/shorts/render — Accept selected Short segments and
+   * create new Short drafts + queue them for rendering.
+   * Body: { segments: Array<{ startTime, endTime, title, hookText, ctaText, burnSubtitles? }> }
+   * Response: { jobIds: string[] }
+   */
+  router.post("/drafts/:draftId/shorts/render", async (req, res) => {
+    try {
+      const { draftId } = req.params;
+      const segmentSchema = z.object({
+        startTime: z.number(),
+        endTime: z.number(),
+        title: z.string(),
+        hookText: z.string().optional().default(""),
+        ctaText: z.string().optional().default(""),
+        burnSubtitles: z.boolean().optional().default(false),
+      });
+      const bodySchema = z.object({
+        segments: z.array(segmentSchema).min(1, "At least one segment is required"),
+      });
+      const parsed = bodySchema.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({ error: "Invalid request body", details: parsed.error.flatten().fieldErrors });
+        return;
+      }
+
+      const db = getDatabase();
+      const parentDraft = db.prepare(`SELECT id, title, manifest FROM director_drafts WHERE id = ?`).get(draftId) as {
+        id: string; title: string; manifest: string;
+      } | undefined;
+
+      if (!parentDraft) { res.status(404).json({ error: "Parent draft not found" }); return; }
+
+      let parentManifest: Record<string, unknown>;
+      try {
+        parentManifest = JSON.parse(parentDraft.manifest);
+      } catch {
+        res.status(500).json({ error: "Corrupt parent manifest" }); return;
+      }
+
+      const jobIds: string[] = [];
+
+      for (const seg of parsed.data.segments) {
+        const shortDraftId = nanoid();
+        const jobId = nanoid();
+        const now = new Date().toISOString();
+
+        // Create a Shorts manifest from the segment
+        const shortsManifest = {
+          ...parentManifest,
+          projectTitle: seg.title,
+          composition: {
+            ...(parentManifest.composition as Record<string, unknown> || {}),
+            width: 1080,
+            height: 1920,
+          },
+          shortsMetadata: {
+            parentDraftId: draftId,
+            startTime: seg.startTime,
+            endTime: seg.endTime,
+            hookText: seg.hookText,
+            ctaText: seg.ctaText,
+            burnSubtitles: seg.burnSubtitles,
+          },
+        };
+
+        db.prepare(
+          `INSERT INTO director_drafts (id, title, manifest, thumbnail, production_mode, created_at, updated_at, status)
+           VALUES (?, ?, ?, ?, ?, ?, ?, 'draft')`,
+        ).run(shortDraftId, seg.title, JSON.stringify(shortsManifest), null, "shorts", now, now);
+
+        db.prepare(
+          `INSERT INTO director_renders (id, draft_id, job_id, quality, status, created_at, updated_at)
+           VALUES (?, ?, ?, 'standard', 'queued', ?, ?)`,
+        ).run(nanoid(), shortDraftId, jobId, now, now);
+
+        if (renderOrchestrator) {
+          await renderOrchestrator.submit({ manifest: shortsManifest as never });
+        }
+
+        jobIds.push(jobId);
+      }
+
+      logger.info(`[Director API] Queued ${jobIds.length} Short render(s) from draft ${draftId}`);
+      res.json({ jobIds });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      logger.error(`[Director API] POST /drafts/:draftId/shorts/render failed: ${msg}`);
       res.status(500).json({ error: msg });
     }
   });

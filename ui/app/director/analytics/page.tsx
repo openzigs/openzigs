@@ -202,7 +202,7 @@ export default function AnalyticsPage() {
               <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
               <XAxis type="number" tickFormatter={formatCount} tick={{ fontSize: 11 }} />
               <YAxis type="category" dataKey="name" width={120} tick={{ fontSize: 11 }} />
-              <Tooltip formatter={(v: number) => formatCount(v)} />
+              <Tooltip formatter={(v) => formatCount(Number(v ?? 0))} />
               <Bar dataKey="views" fill="hsl(var(--primary))" radius={[0, 4, 4, 0]} />
             </BarChart>
           </ResponsiveContainer>

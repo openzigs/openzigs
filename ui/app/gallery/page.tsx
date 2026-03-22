@@ -185,12 +185,14 @@ export default function GalleryPage() {
   // ── Queries ─────────────────────────────────────────
 
   const assetsQuery = useQuery({
-    queryKey: ["gallery-assets", typeFilter, sourceFilter, folderFilter],
+    queryKey: ["gallery-assets", typeFilter, sourceFilter, folderFilter, activeCollection, activeTags],
     queryFn: () => {
       const params = new URLSearchParams();
       if (typeFilter) params.set("type", typeFilter);
       if (sourceFilter) params.set("source", sourceFilter);
       if (folderFilter) params.set("folder", folderFilter);
+      if (activeCollection) params.set("collection", activeCollection);
+      if (activeTags.length > 0) params.set("tags", activeTags.join(","));
       params.set("limit", "100");
       return fetchJson<{ assets: GalleryAsset[]; total: number }>(`/api/queue/assets?${params.toString()}`);
     },
@@ -288,6 +290,7 @@ export default function GalleryPage() {
   });
 
   const assets = assetsQuery.data?.assets ?? [];
+
   const stats = statsQuery.data;
   const nodes = nodesQuery.data?.nodes ?? [];
 

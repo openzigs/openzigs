@@ -18,8 +18,9 @@ vi.mock("../logging/logger.js", () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 
+let _nanoidCounter = 0;
 vi.mock("nanoid", () => ({
-  nanoid: () => "test-nano-id-123",
+  nanoid: () => `test-nano-id-${++_nanoidCounter}`,
 }));
 
 vi.mock("../video/templates/template-registry.js", () => ({
@@ -68,6 +69,10 @@ vi.mock("../video/assets/asset-manager.js", () => ({
     getLocalAssets: vi.fn().mockReturnValue([{ id: "local1", name: "My Song", filePath: "/lib/song.mp3" }]),
     remove: vi.fn().mockResolvedValue(true),
   })),
+}));
+
+vi.mock("../config/user-model.js", () => ({
+  getUserSelectedModel: vi.fn().mockResolvedValue(null),
 }));
 
 // ── Helpers ──────────────────────────────────────────────────
@@ -188,6 +193,7 @@ function buildApp(overrides: Partial<DirectorRouterOptions> = {}) {
 
 describe("Director API router", () => {
   beforeEach(() => {
+    _nanoidCounter = 0;
     testDb = initTestDb();
   });
 
@@ -283,7 +289,7 @@ describe("Director API router", () => {
         productionMode: "presentation",
       });
       expect(res.status).toBe(200);
-      expect(res.body.id).toBe("test-nano-id-123");
+      expect(res.body.id).toBe("test-nano-id-1");
       expect(res.body.title).toBe("My Video");
       expect(res.body.status).toBe("draft");
     });
@@ -2324,6 +2330,460 @@ describe("Director API router", () => {
       const res = await request(app).post("/director/hero-reel/process-inspiration").send({ filePath: "/tmp/nonexistent-file-xyz.md" });
       expect(res.status).toBe(404);
       expect(res.body.error).toContain("not found");
+    });
+  });
+
+  // ── Gallery Tags (Issue #520) ─────────────────────────────
+
+  describe("GET /gallery/tags", () => {
+    it("returns tags with counts when no query params", async () => {
+      const { app } = buildApp();
+      // Create gallery_tags table (ensured lazily on first route hit)
+      // Seed some tag data
+      testDb.exec(`
+        CREATE TABLE IF NOT EXISTS gallery_collections (id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS gallery_collection_items (collection_id TEXT NOT NULL, asset_path TEXT NOT NULL, PRIMARY KEY (collection_id, asset_path));
+        CREATE TABLE IF NOT EXISTS gallery_tags (asset_path TEXT NOT NULL, tag TEXT NOT NULL, PRIMARY KEY (asset_path, tag));
+      `);
+      testDb.prepare(`INSERT INTO gallery_tags (asset_path, tag) VALUES (?, ?)`).run("/img/a.png", "landscape");
+      testDb.prepare(`INSERT INTO gallery_tags (asset_path, tag) VALUES (?, ?)`).run("/img/b.png", "landscape");
+      testDb.prepare(`INSERT INTO gallery_tags (asset_path, tag) VALUES (?, ?)`).run("/img/a.png", "sunset");
+
+      const res = await request(app).get("/director/gallery/tags");
+      expect(res.status).toBe(200);
+      expect(Array.isArray(res.body.tags)).toBe(true);
+      // Should return { tag, count } objects
+      expect(res.body.tags[0]).toHaveProperty("tag");
+      expect(res.body.tags[0]).toHaveProperty("count");
+      // "landscape" has count 2, "sunset" has count 1
+      const landscape = res.body.tags.find((t: { tag: string }) => t.tag === "landscape");
+      expect(landscape).toBeDefined();
+      expect(landscape.count).toBe(2);
+    });
+
+    it("returns tags for a specific asset", async () => {
+      const { app } = buildApp();
+      testDb.exec(`
+        CREATE TABLE IF NOT EXISTS gallery_collections (id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS gallery_collection_items (collection_id TEXT NOT NULL, asset_path TEXT NOT NULL, PRIMARY KEY (collection_id, asset_path));
+        CREATE TABLE IF NOT EXISTS gallery_tags (asset_path TEXT NOT NULL, tag TEXT NOT NULL, PRIMARY KEY (asset_path, tag));
+      `);
+      testDb.prepare(`INSERT INTO gallery_tags (asset_path, tag) VALUES (?, ?)`).run("/img/x.png", "nature");
+
+      const res = await request(app).get("/director/gallery/tags?assetPath=/img/x.png");
+      expect(res.status).toBe(200);
+      expect(res.body.tags).toEqual(["nature"]);
+    });
+  });
+
+  // ── Batch Render (Issue #522) ─────────────────────────────
+
+  describe("POST /render/batch", () => {
+    it("returns 400 for missing draftIds", async () => {
+      const { app } = buildApp();
+      const res = await request(app).post("/director/render/batch").send({});
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain("draftIds");
+    });
+
+    it("returns 400 for empty draftIds array", async () => {
+      const { app } = buildApp();
+      const res = await request(app).post("/director/render/batch").send({ draftIds: [] });
+      expect(res.status).toBe(400);
+    });
+
+    it("reports not-found for missing drafts", async () => {
+      const mockOrch = createMockRenderOrchestrator();
+      const { app } = buildApp({ renderOrchestrator: mockOrch as never });
+      const res = await request(app).post("/director/render/batch").send({ draftIds: ["nonexistent"] });
+      expect(res.status).toBe(200);
+      expect(res.body.failed).toBe(1);
+      expect(res.body.results[0].error).toContain("not found");
+    });
+
+    it("queues valid drafts and reports results", async () => {
+      const mockOrch = createMockRenderOrchestrator();
+      const { app } = buildApp({ renderOrchestrator: mockOrch as never });
+
+      // Seed a draft
+      const now = new Date().toISOString();
+      const manifest = JSON.stringify({ projectTitle: "Test", timeline: [], composition: {} });
+      testDb.prepare(
+        `INSERT INTO director_drafts (id, title, manifest, production_mode, created_at, updated_at, status) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      ).run("draft-1", "Test Draft", manifest, "presentation", now, now, "draft");
+
+      const res = await request(app).post("/director/render/batch").send({ draftIds: ["draft-1"] });
+      expect(res.status).toBe(200);
+      expect(res.body.queued).toBe(1);
+      expect(res.body.failed).toBe(0);
+      expect(res.body.results[0]).toHaveProperty("jobId");
+      expect(mockOrch.submit).toHaveBeenCalledTimes(1);
+    });
+
+    it("handles mixed valid and invalid drafts", async () => {
+      const mockOrch = createMockRenderOrchestrator();
+      const { app } = buildApp({ renderOrchestrator: mockOrch as never });
+
+      const now = new Date().toISOString();
+      const manifest = JSON.stringify({ projectTitle: "Test", timeline: [], composition: {} });
+      testDb.prepare(
+        `INSERT INTO director_drafts (id, title, manifest, production_mode, created_at, updated_at, status) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      ).run("draft-ok", "Good Draft", manifest, "presentation", now, now, "draft");
+
+      const res = await request(app).post("/director/render/batch").send({ draftIds: ["draft-ok", "missing-draft"] });
+      expect(res.status).toBe(200);
+      expect(res.body.total).toBe(2);
+      expect(res.body.queued).toBe(1);
+      expect(res.body.failed).toBe(1);
+    });
+  });
+
+  // ── Shorts Propose (Issue #519) ───────────────────────────
+
+  describe("POST /drafts/:draftId/shorts/propose", () => {
+    it("returns 404 for non-existent draft", async () => {
+      const { app } = buildApp();
+      const res = await request(app).post("/director/drafts/no-such-draft/shorts/propose").send({ maxShorts: 3 });
+      expect(res.status).toBe(404);
+    });
+
+    it("returns 400 for draft with empty timeline", async () => {
+      const { app } = buildApp();
+      const now = new Date().toISOString();
+      const manifest = JSON.stringify({ projectTitle: "Empty", timeline: [], composition: {} });
+      testDb.prepare(
+        `INSERT INTO director_drafts (id, title, manifest, production_mode, created_at, updated_at, status) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      ).run("empty-draft", "Empty", manifest, "presentation", now, now, "draft");
+
+      const res = await request(app).post("/director/drafts/empty-draft/shorts/propose").send({});
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain("timeline");
+    });
+
+    it("returns proposals from LLM response", async () => {
+      const mockCopilot = createMockCopilot();
+      // Make the mock chat return an async generator with JSON
+      const llmResponse = JSON.stringify([
+        {
+          startSceneIndex: 0,
+          endSceneIndex: 1,
+          title: "Mind-blowing intro",
+          hookText: "You won't believe this",
+          ctaText: "Subscribe for more",
+          reason: "Strong hook",
+          score: 90,
+        },
+      ]);
+      (mockCopilot.chat as ReturnType<typeof vi.fn>).mockReturnValue(
+        (async function* () { yield llmResponse; })(),
+      );
+      const { app } = buildApp({ copilot: mockCopilot });
+
+      const now = new Date().toISOString();
+      const manifest = JSON.stringify({
+        projectTitle: "My Video",
+        timeline: [
+          { title: "Scene 1", scriptText: "Hello world", duration: 10000 },
+          { title: "Scene 2", scriptText: "Amazing content", duration: 15000 },
+          { title: "Scene 3", scriptText: "Final scene", duration: 8000 },
+        ],
+        composition: {},
+      });
+      testDb.prepare(
+        `INSERT INTO director_drafts (id, title, manifest, production_mode, created_at, updated_at, status) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      ).run("video-draft", "My Video", manifest, "presentation", now, now, "draft");
+
+      const res = await request(app).post("/director/drafts/video-draft/shorts/propose").send({ maxShorts: 3 });
+      expect(res.status).toBe(200);
+      expect(Array.isArray(res.body.proposals)).toBe(true);
+      expect(res.body.proposals.length).toBe(1);
+      const proposal = res.body.proposals[0];
+      expect(proposal).toHaveProperty("startTime");
+      expect(proposal).toHaveProperty("endTime");
+      expect(proposal).toHaveProperty("title");
+      expect(proposal).toHaveProperty("hookText");
+      expect(proposal).toHaveProperty("ctaText");
+      expect(proposal).toHaveProperty("score");
+      expect(proposal).toHaveProperty("reason");
+      expect(typeof proposal.startTime).toBe("number");
+      expect(typeof proposal.endTime).toBe("number");
+    });
+  });
+
+  // ── Shorts Render (Issue #519) ────────────────────────────
+
+  describe("POST /drafts/:draftId/shorts/render", () => {
+    it("returns 404 for non-existent parent draft", async () => {
+      const { app } = buildApp();
+      const res = await request(app).post("/director/drafts/missing/shorts/render").send({
+        segments: [{ startTime: 0, endTime: 30, title: "Test Short" }],
+      });
+      expect(res.status).toBe(404);
+    });
+
+    it("returns 400 for empty segments", async () => {
+      const { app } = buildApp();
+      const now = new Date().toISOString();
+      testDb.prepare(
+        `INSERT INTO director_drafts (id, title, manifest, production_mode, created_at, updated_at, status) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      ).run("parent-d", "Parent", JSON.stringify({ timeline: [] }), "presentation", now, now, "draft");
+
+      const res = await request(app).post("/director/drafts/parent-d/shorts/render").send({ segments: [] });
+      expect(res.status).toBe(400);
+    });
+
+    it("creates Short drafts and returns jobIds", async () => {
+      const mockOrch = createMockRenderOrchestrator();
+      const { app } = buildApp({ renderOrchestrator: mockOrch as never });
+
+      const now = new Date().toISOString();
+      const manifest = JSON.stringify({ projectTitle: "Long Video", timeline: [{ title: "s1" }], composition: { width: 1920, height: 1080 } });
+      testDb.prepare(
+        `INSERT INTO director_drafts (id, title, manifest, production_mode, created_at, updated_at, status) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      ).run("parent-draft", "Long Video", manifest, "presentation", now, now, "draft");
+
+      const res = await request(app).post("/director/drafts/parent-draft/shorts/render").send({
+        segments: [
+          { startTime: 0, endTime: 30, title: "Short 1", hookText: "Hook", ctaText: "CTA" },
+          { startTime: 45, endTime: 60, title: "Short 2" },
+        ],
+      });
+      expect(res.status).toBe(200);
+      expect(Array.isArray(res.body.jobIds)).toBe(true);
+      expect(res.body.jobIds.length).toBe(2);
+      expect(mockOrch.submit).toHaveBeenCalledTimes(2);
+
+      // Verify Short drafts were created in DB
+      const drafts = testDb.prepare(`SELECT * FROM director_drafts WHERE production_mode = 'shorts'`).all();
+      expect(drafts.length).toBe(2);
+    });
+  });
+
+  // ── Brand Kit PUT validation (Issue #523) ─────────────────
+
+  describe("PUT /brand-kits/:id", () => {
+    function ensureBrandKitsTable() {
+      testDb.exec(`
+        CREATE TABLE IF NOT EXISTS brand_kits (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL UNIQUE,
+          primary_color TEXT NOT NULL DEFAULT '#000000',
+          secondary_color TEXT NOT NULL DEFAULT '#ffffff',
+          accent_color TEXT NOT NULL DEFAULT '#0066ff',
+          font_family TEXT NOT NULL DEFAULT 'Inter',
+          logo_path TEXT,
+          watermark_path TEXT,
+          intro_template_id TEXT,
+          outro_template_id TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+      `);
+      const now = new Date().toISOString();
+      testDb.prepare(
+        `INSERT OR IGNORE INTO brand_kits (id, name, primary_color, secondary_color, accent_color, font_family, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run("bk-1", "Test Kit", "#000000", "#ffffff", "#0066ff", "Inter", now, now);
+    }
+
+    it("returns 404 for non-existent brand kit", async () => {
+      const { app } = buildApp();
+      ensureBrandKitsTable();
+      const res = await request(app).put("/director/brand-kits/nonexistent").send({ name: "New Name" });
+      expect(res.status).toBe(404);
+    });
+
+    it("rejects invalid fields", async () => {
+      const { app } = buildApp();
+      ensureBrandKitsTable();
+      const res = await request(app).put("/director/brand-kits/bk-1").send({
+        name: "Valid",
+        maliciousField: "DROP TABLE brand_kits",
+        __proto__: { admin: true },
+      });
+      expect(res.status).toBe(400);
+    });
+
+    it("updates allowed fields only", async () => {
+      const { app } = buildApp();
+      ensureBrandKitsTable();
+      const res = await request(app).put("/director/brand-kits/bk-1").send({
+        name: "Updated Kit",
+        primaryColor: "#ff0000",
+      });
+      expect(res.status).toBe(200);
+      expect(res.body.name).toBe("Updated Kit");
+      expect(res.body.primaryColor).toBe("#ff0000");
+    });
+  });
+
+  // ── Batch Render Sequential (Issue #522 fix) ──────────────
+
+  describe("POST /render/batch — sequential processing", () => {
+    it("processes drafts sequentially, not in parallel", async () => {
+      const mockOrch = createMockRenderOrchestrator();
+      const callOrder: number[] = [];
+      let callCount = 0;
+      (mockOrch.submit as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+        const myOrder = ++callCount;
+        // Small delay to detect parallelism
+        await new Promise((r) => setTimeout(r, 10));
+        callOrder.push(myOrder);
+        return `job-${myOrder}`;
+      });
+      const { app } = buildApp({ renderOrchestrator: mockOrch as never });
+
+      const now = new Date().toISOString();
+      const manifest = JSON.stringify({ projectTitle: "Test", timeline: [], composition: {} });
+      testDb.prepare(
+        `INSERT INTO director_drafts (id, title, manifest, production_mode, created_at, updated_at, status) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      ).run("seq-1", "Draft 1", manifest, "presentation", now, now, "draft");
+      testDb.prepare(
+        `INSERT INTO director_drafts (id, title, manifest, production_mode, created_at, updated_at, status) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      ).run("seq-2", "Draft 2", manifest, "presentation", now, now, "draft");
+      testDb.prepare(
+        `INSERT INTO director_drafts (id, title, manifest, production_mode, created_at, updated_at, status) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      ).run("seq-3", "Draft 3", manifest, "presentation", now, now, "draft");
+
+      const res = await request(app)
+        .post("/director/render/batch")
+        .send({ draftIds: ["seq-1", "seq-2", "seq-3"] });
+      expect(res.status).toBe(200);
+      expect(res.body.queued).toBe(3);
+      // If sequential, call order should be strictly 1, 2, 3
+      expect(callOrder).toEqual([1, 2, 3]);
+    });
+  });
+
+  // ── Shorts Propose (Issue #519) ─────────────────────────
+
+  describe("POST /drafts/:draftId/shorts/propose", () => {
+    it("returns 404 for non-existent draft", async () => {
+      const { app } = buildApp();
+      const res = await request(app)
+        .post("/director/drafts/nonexistent/shorts/propose")
+        .send({});
+      expect(res.status).toBe(404);
+      expect(res.body.error).toContain("not found");
+    });
+
+    it("returns 400 when manifest has no timeline scenes", async () => {
+      const { app } = buildApp();
+      const now = new Date().toISOString();
+      testDb.prepare(
+        `INSERT INTO director_drafts (id, title, manifest, production_mode, created_at, updated_at, status) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      ).run("empty-tl", "No Timeline", JSON.stringify({ projectTitle: "Test", timeline: [] }), "presentation", now, now, "draft");
+
+      const res = await request(app)
+        .post("/director/drafts/empty-tl/shorts/propose")
+        .send({});
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain("no timeline");
+    });
+
+    it("returns proposals from LLM analysis", async () => {
+      const mockCopilot = createMockCopilot();
+      const proposals = JSON.stringify([
+        { startSceneIndex: 0, endSceneIndex: 1, title: "Hook", hookText: "Watch this", ctaText: "Subscribe", reason: "Great opening", score: 90 },
+      ]);
+      (mockCopilot.chat as ReturnType<typeof vi.fn>).mockImplementation(async function* () {
+        yield proposals;
+      });
+
+      const { app } = buildApp({ copilot: mockCopilot });
+      const now = new Date().toISOString();
+      const manifest = JSON.stringify({
+        projectTitle: "Test",
+        timeline: [
+          { title: "Intro", scriptText: "Welcome to the video", duration: 5000 },
+          { title: "Scene 1", scriptText: "Here is the main content", duration: 10000 },
+          { title: "Outro", scriptText: "Thanks for watching", duration: 3000 },
+        ],
+      });
+      testDb.prepare(
+        `INSERT INTO director_drafts (id, title, manifest, production_mode, created_at, updated_at, status) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      ).run("propose-1", "My Video", manifest, "presentation", now, now, "draft");
+
+      const res = await request(app)
+        .post("/director/drafts/propose-1/shorts/propose")
+        .send({ maxShorts: 2 });
+      expect(res.status).toBe(200);
+      expect(Array.isArray(res.body.proposals)).toBe(true);
+      expect(res.body.proposals.length).toBeGreaterThan(0);
+      expect(res.body.proposals[0]).toHaveProperty("startTime");
+      expect(res.body.proposals[0]).toHaveProperty("endTime");
+      expect(res.body.proposals[0]).toHaveProperty("title");
+      expect(res.body.proposals[0]).toHaveProperty("score");
+    });
+  });
+
+  // ── Shorts Render (Issue #519) ──────────────────────────
+
+  describe("POST /drafts/:draftId/shorts/render", () => {
+    it("returns 404 for non-existent parent draft", async () => {
+      const { app } = buildApp();
+      const res = await request(app)
+        .post("/director/drafts/nonexistent/shorts/render")
+        .send({ segments: [{ startTime: 0, endTime: 10, title: "Test Short" }] });
+      expect(res.status).toBe(404);
+    });
+
+    it("returns 400 for empty segments array", async () => {
+      const { app } = buildApp();
+      const now = new Date().toISOString();
+      testDb.prepare(
+        `INSERT INTO director_drafts (id, title, manifest, production_mode, created_at, updated_at, status) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      ).run("render-parent", "Parent", JSON.stringify({ projectTitle: "Test", timeline: [], composition: {} }), "presentation", now, now, "draft");
+
+      const res = await request(app)
+        .post("/director/drafts/render-parent/shorts/render")
+        .send({ segments: [] });
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain("Invalid");
+    });
+
+    it("creates short drafts and queues render jobs", async () => {
+      const mockOrch = createMockRenderOrchestrator();
+      const { app } = buildApp({ renderOrchestrator: mockOrch as never });
+      const now = new Date().toISOString();
+      const manifest = JSON.stringify({ projectTitle: "Parent Video", timeline: [{ title: "Scene" }], composition: { width: 1920, height: 1080 } });
+      testDb.prepare(
+        `INSERT INTO director_drafts (id, title, manifest, production_mode, created_at, updated_at, status) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      ).run("short-parent", "Parent", manifest, "presentation", now, now, "draft");
+
+      const res = await request(app)
+        .post("/director/drafts/short-parent/shorts/render")
+        .send({
+          segments: [
+            { startTime: 0, endTime: 15, title: "My Short", hookText: "Watch this!", ctaText: "Subscribe" },
+          ],
+        });
+      expect(res.status).toBe(200);
+      expect(Array.isArray(res.body.jobIds)).toBe(true);
+      expect(res.body.jobIds.length).toBe(1);
+      expect(mockOrch.submit).toHaveBeenCalledTimes(1);
+
+      // Verify a child draft was created with shorts metadata
+      const childDraft = testDb.prepare(`SELECT * FROM director_drafts WHERE id != 'short-parent'`).get() as Record<string, unknown> | undefined;
+      expect(childDraft).toBeDefined();
+      const childManifest = JSON.parse(childDraft!.manifest as string) as Record<string, unknown>;
+      expect(childManifest.shortsMetadata).toBeDefined();
+      expect((childManifest.composition as Record<string, unknown>).width).toBe(1080);
+      expect((childManifest.composition as Record<string, unknown>).height).toBe(1920);
+    });
+
+    it("validates segment schema with Zod", async () => {
+      const { app } = buildApp();
+      const now = new Date().toISOString();
+      testDb.prepare(
+        `INSERT INTO director_drafts (id, title, manifest, production_mode, created_at, updated_at, status) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      ).run("zod-parent", "Parent", JSON.stringify({ projectTitle: "Test", timeline: [], composition: {} }), "presentation", now, now, "draft");
+
+      // Missing required 'title' field
+      const res = await request(app)
+        .post("/director/drafts/zod-parent/shorts/render")
+        .send({ segments: [{ startTime: 0, endTime: 10 }] });
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain("Invalid");
     });
   });
 });

@@ -9,6 +9,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import { logger } from "../logging/logger.js";
+import { getDatabase } from "../productivity/database.js";
 import type { QueueMaster } from "../queue/queue-master.js";
 import type { MediaQueueRepository } from "../queue/media-queue-repository.js";
 import type { CreateMediaJobInput, MediaJobType, MediaJobStatus, TargetNode, MediaJobPayload } from "../queue/types.js";
@@ -439,11 +440,53 @@ export const createQueueRouter = ({ queueMaster, repo, characterRepo, knowledgeS
       const projectId = req.query.projectId as string | undefined;
       const folder = req.query.folder as string | undefined;
       const q = req.query.q as string | undefined;
+      const collection = req.query.collection as string | undefined;
+      const tags = req.query.tags as string | undefined;
       const limit = req.query.limit ? Number(req.query.limit) : 50;
       const offset = req.query.offset ? Number(req.query.offset) : 0;
 
-      const assets = repo.listAssets({ type, source, projectId, folder, q, limit, offset });
-      const total = repo.countAssets({ type, source, projectId, folder, q });
+      let assets = repo.listAssets({ type, source, projectId, folder, q, limit, offset });
+      let total = repo.countAssets({ type, source, projectId, folder, q });
+
+      // Server-side filtering by collection and/or tags from gallery tables
+      if (collection || tags) {
+        try {
+          const dirDb = getDatabase();
+          let allowedPaths: Set<string> | null = null;
+
+          if (collection) {
+            const rows = dirDb.prepare(
+              `SELECT asset_path FROM gallery_collection_items WHERE collection_id = ?`,
+            ).all(collection) as Array<{ asset_path: string }>;
+            allowedPaths = new Set(rows.map((r) => r.asset_path));
+          }
+
+          if (tags) {
+            const tagList = tags.split(",").map((t) => t.trim()).filter(Boolean);
+            for (const tag of tagList) {
+              const rows = dirDb.prepare(
+                `SELECT asset_path FROM gallery_tags WHERE tag = ?`,
+              ).all(tag.toLowerCase()) as Array<{ asset_path: string }>;
+              const tagPaths = new Set(rows.map((r) => r.asset_path));
+              if (allowedPaths) {
+                allowedPaths = new Set([...allowedPaths].filter((p) => tagPaths.has(p)));
+              } else {
+                allowedPaths = tagPaths;
+              }
+            }
+          }
+
+          if (allowedPaths !== null) {
+            assets = assets.filter(
+              (a) => allowedPaths!.has(String(a.file_path)) || allowedPaths!.has(String(a.filename)),
+            );
+            total = assets.length;
+          }
+        } catch {
+          // Gallery tables may not exist yet — fall through without filtering
+        }
+      }
+
       res.json({ assets, total });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
