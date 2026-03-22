@@ -16,6 +16,7 @@
   - [Scheduler](#scheduler)
   - [Workbench (Project Editor)](#workbench-project-editor)
   - [Tasks (Background Agents)](#tasks-background-agents)
+  - [Agent Switching & In-Session Subagents](#agent-switching--in-session-subagents)
   - [Visual Workflow Graph](#visual-workflow-graph)
   - [Studio: Capture & Trim](#studio-capture--trim)
 - [Advanced: Agent Chaining Patterns](#advanced-agent-chaining-patterns)
@@ -1493,20 +1494,101 @@ curl -H "Authorization: Bearer <token>" \
   http://localhost:3000/api/tasks/roots?limit=20&offset=0
 ```
 
+### Agent Switching & In-Session Subagents
+
+OpenZigs supports two ways to delegate work to specialized agents: **in-session** (SDK-native) and **background** (TaskEngine). This section covers the in-session mode and how to switch agents during a chat.
+
+#### Agent Selector
+
+The **Agent Selector** dropdown appears in the chat toolbar (next to the reasoning effort selector). It lets you choose a specialized agent for the current conversation.
+
+**How to use:**
+1. Click the agent dropdown in the chat header
+2. Select an agent (e.g., "researcher", "coder", "writer")
+3. All subsequent messages in that session use the selected agent's persona, system prompt, and tool scoping
+4. Select "Default" to return to the standard assistant
+
+When you switch agents, the SDK session is reset so the new agent starts with a clean context.
+
+#### In-Session vs Background Agents
+
+| Feature | In-Session (SDK-Native) | Background (spawn-agent) |
+|---------|------------------------|-------------------------|
+| **How it starts** | SDK auto-delegates or user selects agent | AI calls `spawn-agent` tool |
+| **Session context** | Shares the current chat session | Creates a new independent session |
+| **Blocking** | Runs within the current chat turn | Runs asynchronously in background |
+| **Survives page close** | No | Yes |
+| **SQLite audit trail** | No | Yes (full task lifecycle) |
+| **UI indicator** | Inline status in chat (blue "In-Session" badge) | Floating progress panel (amber "Background" badge) |
+| **Premium requests** | Shares parent's single request | 1 additional request per agent |
+| **Best for** | Quick specialist work during conversation | Long-running research, pipelines, scheduled jobs |
+
+#### When to Use Which Mode
+
+```mermaid
+flowchart TD
+    A{Need async/background?} -->|Yes| B[Use spawn-agent]
+    A -->|No| C{Need persistence/audit?}
+    C -->|Yes| B
+    C -->|No| D{Interactive chat?}
+    D -->|Yes| E[Use SDK-native subagent]
+    D -->|No| F{Scheduled task?}
+    F -->|Yes| B
+    F -->|No| E
+```
+
+**Use in-session agents when:**
+- You're chatting and want the AI to quickly consult a specialist (e.g., "Have the coder review this function")
+- You want cost-efficient delegation (no extra premium requests)
+- The task is short and doesn't need to survive a page refresh
+
+**Use background agents when:**
+- The task takes minutes (deep research, multi-step pipelines)
+- You want a full audit trail in the Tasks page
+- You need the task to survive browser close
+- You're running scheduled or cron-triggered jobs
+
+#### Cost Optimization
+
+In-session subagents are significantly more cost-efficient than background agents:
+
+- **In-session**: All subagent work happens within the parent session's single premium request. A chat turn that delegates to 3 specialists still uses **1 premium request**.
+- **Background**: Each `spawn-agent` call creates a new SDK session and consumes **1 additional premium request**. A parent that spawns 3 agents uses **4 total requests** (1 parent + 3 agents).
+
+For interactive conversations where you need specialist input, prefer in-session agents to minimize premium request consumption.
+
+#### Agent Configuration (Admin)
+
+Agents are configured in **Admin → Agents**. Key settings:
+
+| Setting | Description |
+|---------|-------------|
+| **Name** | Unique identifier (e.g., `researcher`, `coder`) |
+| **Display Name** | Shown in the agent selector dropdown |
+| **Instructions** | System prompt defining the agent's persona and expertise |
+| **Tools** | Optional allowlist restricting which tools the agent can use |
+| **Infer** | When enabled (default), the SDK can auto-invoke this agent. When disabled, the agent shows a "Manual only" badge and must be explicitly selected via the dropdown. |
+
+**Auto-invoke vs Manual only:**
+- **Auto-invoke** (infer: true) — The SDK decides when to delegate to this agent based on the conversation. Shown with a green "Auto-invoke" badge with tooltip "SDK can auto-delegate to this agent".
+- **Manual only** (infer: false) — The agent is only used when explicitly selected by the user via the Agent Selector dropdown. Shown with a muted "Manual only" badge.
+
 ### Subagent Live Progress Panel
 
-When sub-agents are running during a chat conversation, a **live progress panel** appears above the input area in the chat view. This panel shows real-time activity for every spawned background agent.
+When sub-agents are running during a chat conversation, a **live progress panel** appears above the input area in the chat view. This panel shows real-time activity for both **in-session** (SDK-native) and **background** (TaskEngine) agents in a unified view.
 
 **What you'll see:**
 - **Agent cards** — one card per spawned sub-agent, showing its goal and status
+- **Mode badge** — blue "In-Session" for SDK-native agents, amber "Background" for TaskEngine agents
 - **Tool call log** — real-time tool invocations with tool names and durations
 - **Progress updates** — stage-level progress messages from the agent
 - **Token usage** — accumulated token counts when the agent completes
 - **Elapsed time** — running timer per agent
+- **Filter toggle** — buttons to filter by All / Background / In-Session
 
 **Behavior:**
 - The panel appears automatically when sub-agents start running
-- Cards update in real-time via Socket.IO events
+- Cards update in real-time via Socket.IO events (`task:*` for background, `subagent:*` for in-session)
 - The panel auto-collapses when all agents finish
 - Click the **X** button to dismiss the panel
 - Click the header to collapse/expand

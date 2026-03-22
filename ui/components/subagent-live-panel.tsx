@@ -1,16 +1,24 @@
 "use client";
 
-import { useCallback, useEffect, useReducer, useRef } from "react";
+import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { useSocket } from "@/lib/socket-context";
 import type {
   TaskToolCallEvent,
   TaskToolResultEvent,
   TaskChunkEvent,
   TaskProgressEvent,
+  SubagentStartedEvent,
+  SubagentCompletedEvent,
+  SubagentFailedEvent,
+  SubagentSelectedEvent,
+  SubagentDeselectedEvent,
 } from "@/lib/types";
 import { ChevronDown, ChevronUp, X, Bot, Wrench, CheckCircle2, XCircle, Clock, Loader2 } from "lucide-react";
 
 /* ── Types ── */
+
+export type AgentMode = "background" | "in-session";
+export type FilterMode = "all" | "background" | "in-session";
 
 type AgentEvent =
   | { type: "tool-call"; toolName: string; ts: number }
@@ -23,6 +31,7 @@ type AgentState = {
   taskId: string;
   goal: string;
   agentName: string;
+  mode: AgentMode;
   status: "running" | "completed" | "failed";
   startedAt: number;
   completedAt: number | null;
@@ -37,12 +46,17 @@ type PanelState = {
 };
 
 type PanelAction =
-  | { type: "ADD_AGENT"; taskId: string; goal: string; agentName: string }
+  | { type: "ADD_AGENT"; taskId: string; goal: string; agentName: string; mode?: AgentMode }
   | { type: "TOOL_CALL"; taskId: string; toolName: string }
   | { type: "TOOL_RESULT"; taskId: string; toolName: string; durationMs: number }
   | { type: "CHUNK"; taskId: string; text: string }
   | { type: "PROGRESS"; taskId: string; stage: string; message: string }
   | { type: "STATUS"; taskId: string; status: string; tokenUsage?: { totalTokens: number } | null }
+  | { type: "SDK_STARTED"; agentName: string }
+  | { type: "SDK_COMPLETED"; agentName: string; summary?: string }
+  | { type: "SDK_FAILED"; agentName: string; error: string }
+  | { type: "SDK_SELECTED"; agentName: string }
+  | { type: "SDK_DESELECTED"; agentName: string }
   | { type: "TOGGLE_COLLAPSE" }
   | { type: "DISMISS" }
   | { type: "RESET" };
@@ -63,6 +77,7 @@ function panelReducer(state: PanelState, action: PanelAction): PanelState {
           taskId: action.taskId,
           goal: action.goal,
           agentName: action.agentName,
+          mode: action.mode ?? "background",
           status: "running",
           startedAt: Date.now(),
           completedAt: null,
@@ -133,6 +148,75 @@ function panelReducer(state: PanelState, action: PanelAction): PanelState {
       const allDone = [...agents.values()].every((a) => a.status !== "running");
       return { ...state, agents, collapsed: allDone ? true : state.collapsed };
     }
+    case "SDK_STARTED": {
+      const key = `sdk:${action.agentName}`;
+      const agents = new Map(state.agents);
+      agents.set(key, {
+        taskId: key,
+        goal: `In-session: ${action.agentName}`,
+        agentName: action.agentName,
+        mode: "in-session",
+        status: "running",
+        startedAt: Date.now(),
+        completedAt: null,
+        tokenUsage: null,
+        events: [{ type: "status", status: "started", ts: Date.now() }],
+      });
+      return { ...state, agents, collapsed: false, dismissed: false };
+    }
+    case "SDK_COMPLETED": {
+      const key = `sdk:${action.agentName}`;
+      const agents = new Map(state.agents);
+      const a = agents.get(key);
+      if (a) {
+        agents.set(key, {
+          ...a,
+          status: "completed",
+          completedAt: Date.now(),
+          events: addEvent(a.events, { type: "status", status: `completed${action.summary ? `: ${action.summary}` : ""}`, ts: Date.now() }),
+        });
+      }
+      const allDone = [...agents.values()].every((x) => x.status !== "running");
+      return { ...state, agents, collapsed: allDone ? true : state.collapsed };
+    }
+    case "SDK_FAILED": {
+      const key = `sdk:${action.agentName}`;
+      const agents = new Map(state.agents);
+      const a = agents.get(key);
+      if (a) {
+        agents.set(key, {
+          ...a,
+          status: "failed",
+          completedAt: Date.now(),
+          events: addEvent(a.events, { type: "status", status: `failed: ${action.error}`, ts: Date.now() }),
+        });
+      }
+      return { ...state, agents };
+    }
+    case "SDK_SELECTED": {
+      const key = `sdk:${action.agentName}`;
+      const agents = new Map(state.agents);
+      const a = agents.get(key);
+      if (a) {
+        agents.set(key, {
+          ...a,
+          events: addEvent(a.events, { type: "tool-call", toolName: "subagent active", ts: Date.now() }),
+        });
+      }
+      return { ...state, agents };
+    }
+    case "SDK_DESELECTED": {
+      const key = `sdk:${action.agentName}`;
+      const agents = new Map(state.agents);
+      const a = agents.get(key);
+      if (a) {
+        agents.set(key, {
+          ...a,
+          events: addEvent(a.events, { type: "tool-result", toolName: "subagent idle", durationMs: 0, ts: Date.now() }),
+        });
+      }
+      return { ...state, agents };
+    }
     case "TOGGLE_COLLAPSE":
       return { ...state, collapsed: !state.collapsed };
     case "DISMISS":
@@ -167,6 +251,9 @@ function AgentCard({ agent }: { agent: AgentState }) {
         {statusIcon}
         <span className="text-xs font-medium text-foreground truncate flex-1">
           {agent.agentName || "agent"}
+        </span>
+        <span className={`text-[9px] rounded-full px-1.5 py-0.5 font-medium ${agent.mode === "in-session" ? "bg-blue-500/15 text-blue-600 dark:text-blue-400" : "bg-amber-500/15 text-amber-600 dark:text-amber-400"}`}>
+          {agent.mode === "in-session" ? "In-Session" : "Background"}
         </span>
         <span className="text-[10px] text-muted-foreground font-mono">
           {(elapsed / 1000).toFixed(1)}s
@@ -222,6 +309,7 @@ export function SubagentLivePanel({ sessionId }: { sessionId: string | null }) {
     collapsed: false,
     dismissed: false,
   });
+  const [filter, setFilter] = useState<FilterMode>("all");
 
   const handleToolCall = useCallback(
     (ev: TaskToolCallEvent) => {
@@ -268,6 +356,43 @@ export function SubagentLivePanel({ sessionId }: { sessionId: string | null }) {
     [sessionId]
   );
 
+  // SDK-native subagent handlers
+  const handleSdkStarted = useCallback(
+    (ev: SubagentStartedEvent) => {
+      if (ev.sessionId !== sessionId) return;
+      dispatch({ type: "SDK_STARTED", agentName: ev.agentName });
+    },
+    [sessionId]
+  );
+  const handleSdkCompleted = useCallback(
+    (ev: SubagentCompletedEvent) => {
+      if (ev.sessionId !== sessionId) return;
+      dispatch({ type: "SDK_COMPLETED", agentName: ev.agentName, summary: ev.summary });
+    },
+    [sessionId]
+  );
+  const handleSdkFailed = useCallback(
+    (ev: SubagentFailedEvent) => {
+      if (ev.sessionId !== sessionId) return;
+      dispatch({ type: "SDK_FAILED", agentName: ev.agentName, error: ev.error });
+    },
+    [sessionId]
+  );
+  const handleSdkSelected = useCallback(
+    (ev: SubagentSelectedEvent) => {
+      if (ev.sessionId !== sessionId) return;
+      dispatch({ type: "SDK_SELECTED", agentName: ev.agentName });
+    },
+    [sessionId]
+  );
+  const handleSdkDeselected = useCallback(
+    (ev: SubagentDeselectedEvent) => {
+      if (ev.sessionId !== sessionId) return;
+      dispatch({ type: "SDK_DESELECTED", agentName: ev.agentName });
+    },
+    [sessionId]
+  );
+
   // Reset agent state when the user navigates to a different session
   useEffect(() => {
     dispatch({ type: "RESET" });
@@ -280,28 +405,54 @@ export function SubagentLivePanel({ sessionId }: { sessionId: string | null }) {
     socket.on("task:chunk", handleChunk);
     socket.on("task:progress", handleProgress);
     socket.on("task:status", handleTaskStatus);
+    socket.on("subagent:started", handleSdkStarted);
+    socket.on("subagent:completed", handleSdkCompleted);
+    socket.on("subagent:failed", handleSdkFailed);
+    socket.on("subagent:selected", handleSdkSelected);
+    socket.on("subagent:deselected", handleSdkDeselected);
     return () => {
       socket.off("task:tool-call", handleToolCall);
       socket.off("task:tool-result", handleToolResult);
       socket.off("task:chunk", handleChunk);
       socket.off("task:progress", handleProgress);
       socket.off("task:status", handleTaskStatus);
+      socket.off("subagent:started", handleSdkStarted);
+      socket.off("subagent:completed", handleSdkCompleted);
+      socket.off("subagent:failed", handleSdkFailed);
+      socket.off("subagent:selected", handleSdkSelected);
+      socket.off("subagent:deselected", handleSdkDeselected);
     };
-  }, [socket, handleToolCall, handleToolResult, handleChunk, handleProgress, handleTaskStatus]);
+  }, [socket, handleToolCall, handleToolResult, handleChunk, handleProgress, handleTaskStatus, handleSdkStarted, handleSdkCompleted, handleSdkFailed, handleSdkSelected, handleSdkDeselected]);
 
   if (state.agents.size === 0 || state.dismissed) return null;
 
-  const agents = [...state.agents.values()];
-  const running = agents.filter((a) => a.status === "running").length;
-  const total = agents.length;
+  const allAgents = [...state.agents.values()];
+  const filteredAgents = filter === "all" ? allAgents : allAgents.filter((a) => a.mode === filter);
+  const running = allAgents.filter((a) => a.status === "running").length;
+  const bgCount = allAgents.filter((a) => a.mode === "background").length;
+  const isCount = allAgents.filter((a) => a.mode === "in-session").length;
 
   return (
-    <div className="mx-4 mb-3 rounded-xl border border-border bg-card/80 backdrop-blur">
+    <div className="mx-4 mb-3 rounded-xl border border-border bg-card/80 backdrop-blur" data-testid="subagent-live-panel">
       <div className="flex items-center gap-2 px-3 py-2 cursor-pointer" onClick={() => dispatch({ type: "TOGGLE_COLLAPSE" })}>
         <Bot className="h-4 w-4 text-primary" />
         <span className="text-xs font-semibold text-foreground flex-1">
-          Active Agents ({running} running / {total} total)
+          Active Agents ({running} running / {allAgents.length} total)
         </span>
+        {/* Filter buttons */}
+        <div className="flex gap-1" onClick={(e) => e.stopPropagation()}>
+          {(["all", "background", "in-session"] as const).map((f) => (
+            <button
+              key={f}
+              type="button"
+              onClick={() => setFilter(f)}
+              className={`text-[9px] px-1.5 py-0.5 rounded-full ${filter === f ? "bg-primary/15 text-primary font-medium" : "text-muted-foreground hover:text-foreground"}`}
+              aria-label={`Filter: ${f}`}
+            >
+              {f === "all" ? `All` : f === "background" ? `BG (${bgCount})` : `IS (${isCount})`}
+            </button>
+          ))}
+        </div>
         <button
           onClick={(e) => { e.stopPropagation(); dispatch({ type: "DISMISS" }); }}
           className="text-muted-foreground hover:text-foreground"
@@ -312,9 +463,13 @@ export function SubagentLivePanel({ sessionId }: { sessionId: string | null }) {
       </div>
       {!state.collapsed && (
         <div className="px-3 pb-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
-          {agents.map((agent) => (
-            <AgentCard key={agent.taskId} agent={agent} />
-          ))}
+          {filteredAgents.length === 0 ? (
+            <p className="text-xs text-muted-foreground col-span-full text-center py-2">No agents match this filter.</p>
+          ) : (
+            filteredAgents.map((agent) => (
+              <AgentCard key={agent.taskId} agent={agent} />
+            ))
+          )}
         </div>
       )}
     </div>

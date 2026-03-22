@@ -44,6 +44,9 @@ let _tunnelPublicUrl: string | null = null;
 export function setTunnelPublicUrl(url: string | null): void { _tunnelPublicUrl = url; }
 export function getTunnelPublicUrl(): string | null { return _tunnelPublicUrl; }
 
+let _messageRouter: import("../routing/message-router.js").MessageRouter | null = null;
+export function setAdminMessageRouter(router: import("../routing/message-router.js").MessageRouter): void { _messageRouter = router; }
+
 type EnvEntry = {
   name: string;
   configured: boolean;
@@ -3038,6 +3041,42 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
       const message = error instanceof Error ? error.message : String(error);
       return res.status(500).json({ error: message });
     }
+  });
+
+  // ── Session-level Agent Switching (#499) ──
+
+  router.post("/sessions/:sessionId/agent", (req, res) => {
+    if (!_messageRouter) {
+      return res.status(503).json({ error: "MessageRouter not available" });
+    }
+    const { sessionId } = req.params;
+    const body = req.body as Record<string, unknown>;
+    const agentName = body.agentName as string | null | undefined;
+
+    if (agentName !== null && agentName !== undefined && typeof agentName !== "string") {
+      return res.status(400).json({ error: "agentName must be a string or null" });
+    }
+
+    // Validate agent exists when setting (not clearing)
+    if (agentName) {
+      const agents = copilot?.getCustomAgents() ?? [];
+      if (!agents.some((a) => a.name === agentName)) {
+        return res.status(404).json({ error: `Agent '${agentName}' not found` });
+      }
+    }
+
+    _messageRouter.setSessionAgent(sessionId, agentName ?? null);
+    logger.info(`Session ${sessionId} agent set to: ${agentName ?? "default"}`);
+    return res.json({ ok: true, sessionId, agentName: agentName ?? null });
+  });
+
+  router.get("/sessions/:sessionId/agent", (req, res) => {
+    if (!_messageRouter) {
+      return res.status(503).json({ error: "MessageRouter not available" });
+    }
+    const { sessionId } = req.params;
+    const agentName = _messageRouter.getSessionAgent(sessionId);
+    return res.json({ sessionId, agentName });
   });
 
   // ── Native MCP Servers Management ──

@@ -8,14 +8,16 @@ import { CopilotWrapperService, type CopilotModel } from "./copilot-wrapper.js";
 
 class FakeSession {
   readonly sessionId: string;
-  private handlers = new Map<string, Array<(event: { data?: { deltaContent?: string } }) => void>>();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private handlers = new Map<string, Array<(event: any) => void>>();
   destroyed = false;
 
   constructor(sessionId = "fake-session-id") {
     this.sessionId = sessionId;
   }
 
-  on(event: string, handler: (event: { data?: { deltaContent?: string } }) => void): () => void {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  on(event: string, handler: (event: any) => void): () => void {
     const list = this.handlers.get(event) ?? [];
     list.push(handler);
     this.handlers.set(event, list);
@@ -30,15 +32,16 @@ class FakeSession {
     if (!prompt) {
       throw new Error("Missing prompt");
     }
-    this.emit("assistant.message_delta", { data: { deltaContent: "hello" } });
-    this.emit("session.idle", {});
+    this.emitEvent("assistant.message_delta", { data: { deltaContent: "hello" } });
+    this.emitEvent("session.idle", {});
   }
 
   async destroy() {
     this.destroyed = true;
   }
 
-  private emit(event: string, payload: { data?: { deltaContent?: string } }) {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  emitEvent(event: string, payload: any) {
     const list = this.handlers.get(event) ?? [];
     for (const handler of list) {
       handler(payload);
@@ -984,5 +987,40 @@ describe("copilot wrapper", () => {
     expect(wrapper.getProvider()).toBeDefined();
     wrapper.setProvider(undefined);
     expect(wrapper.getProvider()).toBeUndefined();
+  });
+
+  it("forwards subagent.* SDK events as subagent: EventEmitter events", async () => {
+    const client = new FakeCopilotClient();
+    const wrapper = new CopilotWrapperService({ client });
+
+    // Trigger a chat to create a session with wireSessionEvents
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    for await (const _chunk of wrapper.chat("test", { conversationId: "sub-test" })) {
+      // drain
+    }
+
+    const session = client.sessions[client.sessions.length - 1];
+
+    // Collect emitted events
+    const events: Array<{ type: string; payload: unknown }> = [];
+    wrapper.on("subagent:started", (p) => events.push({ type: "started", payload: p }));
+    wrapper.on("subagent:completed", (p) => events.push({ type: "completed", payload: p }));
+    wrapper.on("subagent:failed", (p) => events.push({ type: "failed", payload: p }));
+    wrapper.on("subagent:selected", (p) => events.push({ type: "selected", payload: p }));
+    wrapper.on("subagent:deselected", (p) => events.push({ type: "deselected", payload: p }));
+
+    // Emit SDK events on the fake session
+    session.emitEvent("subagent.started", { data: { agentName: "coder" } });
+    session.emitEvent("subagent.completed", { data: { agentName: "coder", summary: "Done" } });
+    session.emitEvent("subagent.failed", { data: { agentName: "researcher", error: "timeout" } });
+    session.emitEvent("subagent.selected", { data: { agentName: "writer" } });
+    session.emitEvent("subagent.deselected", { data: { agentName: "writer" } });
+
+    expect(events).toHaveLength(5);
+    expect(events[0]).toEqual({ type: "started", payload: { sessionId: "sub-test", agentName: "coder", parentSessionId: undefined } });
+    expect(events[1]).toEqual({ type: "completed", payload: { sessionId: "sub-test", agentName: "coder", summary: "Done" } });
+    expect(events[2]).toEqual({ type: "failed", payload: { sessionId: "sub-test", agentName: "researcher", error: "timeout" } });
+    expect(events[3]).toEqual({ type: "selected", payload: { sessionId: "sub-test", agentName: "writer" } });
+    expect(events[4]).toEqual({ type: "deselected", payload: { sessionId: "sub-test", agentName: "writer" } });
   });
 });

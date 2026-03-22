@@ -94,6 +94,12 @@ describe("AgentsPanel", () => {
     expect(screen.getByText("Auto-invoke")).toBeInTheDocument();
   });
 
+  it("shows manual-only badge for agents with infer disabled", () => {
+    render(<AgentsPanel />, { wrapper: createWrapper(mockAgents) });
+
+    expect(screen.getByText("Manual only")).toBeInTheDocument();
+  });
+
   it("shows New Agent button", () => {
     render(<AgentsPanel />, { wrapper: createWrapper(mockAgents) });
 

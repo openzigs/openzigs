@@ -170,9 +170,20 @@ const AgentCard = ({
         <span className="text-sm font-semibold text-foreground">{agent.displayName}</span>
       </div>
       {agent.infer && (
-        <span className="flex items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold text-primary">
+        <span
+          className="flex items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold text-primary"
+          title="Model can automatically delegate to this agent during chat"
+        >
           <Zap className="h-3 w-3" />
           Auto-invoke
+        </span>
+      )}
+      {agent.infer === false && (
+        <span
+          className="rounded-full bg-muted px-2 py-0.5 text-[10px] text-muted-foreground"
+          title="This agent must be explicitly selected via the Agent Selector dropdown"
+        >
+          Manual only
         </span>
       )}
     </div>

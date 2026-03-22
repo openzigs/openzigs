@@ -720,3 +720,35 @@ export type TaskTreeUpdateEvent = {
   status: string;
   updatedFields: Record<string, unknown>;
 };
+
+/* ── SDK-native subagent event types (#496) ── */
+
+export type SubagentStartedEvent = {
+  sessionId: string;
+  agentName: string;
+  parentSessionId?: string;
+};
+
+export type SubagentCompletedEvent = {
+  sessionId: string;
+  agentName: string;
+  summary?: string;
+};
+
+export type SubagentFailedEvent = {
+  sessionId: string;
+  agentName: string;
+  error: string;
+};
+
+export type SubagentSelectedEvent = {
+  sessionId: string;
+  agentName: string;
+};
+
+export type SubagentDeselectedEvent = {
+  sessionId: string;
+  agentName: string;
+};
+
+export type SubagentStatus = "idle" | "running" | "tool-active" | "completed" | "failed";

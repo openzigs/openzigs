@@ -21,6 +21,7 @@ import type { Logger } from "winston";
 import { AuditLogger } from "./logging/audit-logger.js";
 import { ApprovalQueue } from "./approvals/index.js";
 import { CopilotWrapperService } from "./copilot/index.js";
+import { SubagentEventRelay } from "./copilot/subagent-event-relay.js";
 import { createHooksConfig } from "./copilot/hooks.js";
 import { ToolRegistry } from "./mcp/tool-registry.js";
 import { registerMcpTools } from "./mcp/index.js";
@@ -28,7 +29,7 @@ import { MessageRouter } from "./routing/index.js";
 import { SessionManager } from "./sessions/index.js";
 import { CloudflareTunnel } from "./tunnel/index.js";
 import { createModelsRouter } from "./api/models.js";
-import { createAdminRouter, pinterestOAuthStates, exchangePinterestCode, refreshPinterestToken, linkedinOAuthStates, exchangeLinkedInCode, refreshLinkedInToken, tiktokOAuthStates, exchangeTikTokCode, youtubeOAuthStates, exchangeYouTubeCode, refreshYouTubeToken, ensurePinterestScheduledJob, setAdminIO, setTunnelPublicUrl } from "./api/admin.js";
+import { createAdminRouter, pinterestOAuthStates, exchangePinterestCode, refreshPinterestToken, linkedinOAuthStates, exchangeLinkedInCode, refreshLinkedInToken, tiktokOAuthStates, exchangeTikTokCode, youtubeOAuthStates, exchangeYouTubeCode, refreshYouTubeToken, ensurePinterestScheduledJob, setAdminIO, setTunnelPublicUrl, setAdminMessageRouter } from "./api/admin.js";
 import { createTasksRouter } from "./api/tasks.js";
 import { createFilesRouter } from "./api/files.js";
 import { launchChrome, killChrome } from "./browser/chrome-launcher.js";
@@ -2210,6 +2211,9 @@ new MediaNotificationService({
 const taskEventStreamer = new TaskEventStreamer({ io });
 taskWorker.setEventStreamer(taskEventStreamer);
 
+// Wire SubagentEventRelay for SDK-native subagent events (#497)
+const subagentRelay = new SubagentEventRelay({ io, copilot });
+
 // Wire ResultInjector for inline result injection into parent sessions (#487)
 new ResultInjector({ taskEngine, sessionManager, io });
 
@@ -2542,7 +2546,7 @@ if (webConfig?.enabled !== false) {
 
   await webChatChannel.connect();
   channelManager.register(webChatChannel);
-
+  setAdminMessageRouter(router);
   // When a user clears their chat, invalidate the router's cached session
   // so the next message creates a brand new session.
   webChatChannel.onClear(({ userId }) => {
@@ -2773,6 +2777,7 @@ const gracefulShutdown = () => {
   socialIngestion.stopAllPolling();
   outboxPoller.stop();
   queueMaster.stop();
+  subagentRelay.dispose();
   closeDatabase();
   killChrome();
   vaultService.lock();

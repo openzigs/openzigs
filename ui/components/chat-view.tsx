@@ -35,6 +35,9 @@ import { ContextFuelGauge } from "@/components/chat/context-fuel-gauge";
 import { VoiceControls } from "@/components/voice";
 import { useTokenUsage } from "@/lib/hooks/use-token-usage";
 import { SubagentLivePanel } from "@/components/subagent-live-panel";
+import { AgentSelector } from "@/components/chat/agent-selector";
+import { SubagentInlineView } from "@/components/chat/subagent-inline-view";
+import { useSubagentEvents } from "@/lib/hooks/use-subagent-events";
 import type {
   ModelInfo,
   ToolInfo,
@@ -92,6 +95,7 @@ export const ChatView = () => {
   const selectedModelInfo = models.find((m) => m.id === selectedModel);
   const contextWindowSize = (selectedModelInfo as unknown as { contextWindow?: number })?.contextWindow ?? null;
   const { usage: tokenUsage, compacting: tokenCompacting, fillRatio, reset: resetTokenUsage } = useTokenUsage(contextWindowSize);
+  const { agents: subagentEntries } = useSubagentEvents(chatId);
 
   const streamRef = useRef<{ id: string; content: string } | null>(null);
   const inputStuckTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -614,6 +618,7 @@ export const ChatView = () => {
       <header className="flex items-center gap-4 border-b border-border bg-card px-5 py-3">
         <h1 className="text-lg font-semibold text-foreground">OpenZigs</h1>
         <div className="ml-auto flex items-center gap-3">
+          <AgentSelector sessionId={chatId} />
           <ReasoningEffortSelector
             value={reasoningEffort}
             onChange={setReasoningEffort}
@@ -825,6 +830,11 @@ export const ChatView = () => {
         )}
 
         {/* Thinking indicator */}
+        {/* Inline subagent activity */}
+        {subagentEntries.size > 0 && (
+          <SubagentInlineView entries={Array.from(subagentEntries.values())} className="mx-11" />
+        )}
+
         {thinking && (
           <div className="flex items-start gap-3 animate-slide-in">
             <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground">
