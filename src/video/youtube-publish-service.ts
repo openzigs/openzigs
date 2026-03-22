@@ -63,12 +63,43 @@ export class YouTubePublishService {
    * Publish a video to YouTube.
    * Looks up the rendered MP4 from the default output path if not provided.
    */
+  /** Allowed base directories for video file paths (defense-in-depth). */
+  private static readonly ALLOWED_DIRS = [
+    resolvePath("~/.openzigs/video-output"),
+    resolvePath("~/.openzigs/renders"),
+  ];
+
   async publish(request: YouTubePublishRequest): Promise<YouTubePublishResult> {
     const publishId = nanoid(12);
     const now = new Date().toISOString();
 
     // Resolve the video file path
-    const filePath = request.filePath ?? this.resolveRenderOutputPath(request.draftId);
+    const filePath = request.filePath ? resolvePath(request.filePath) : this.resolveRenderOutputPath(request.draftId);
+
+    // Defense-in-depth: validate file path is within allowed directories
+    if (filePath) {
+      const resolved = path.resolve(filePath);
+      const allowed = YouTubePublishService.ALLOWED_DIRS.some(
+        (dir) => resolved.startsWith(dir + path.sep) || resolved === dir,
+      );
+      if (!allowed) {
+        const errorMsg = "File path is outside allowed directories";
+        this.publishRepo.insert({
+          id: publishId,
+          draft_id: request.draftId,
+          video_id: null,
+          video_url: null,
+          title: request.title,
+          privacy_status: request.privacyStatus ?? "private",
+          published_at: null,
+          status: "failed",
+          error_message: errorMsg,
+          created_at: now,
+          updated_at: now,
+        });
+        return { publishId, videoId: null, videoUrl: null, status: "failed", error: errorMsg };
+      }
+    }
     if (!filePath || !fs.existsSync(filePath)) {
       const errorMsg = `Video file not found: ${filePath ?? "(no render output)"}`;
       this.publishRepo.insert({

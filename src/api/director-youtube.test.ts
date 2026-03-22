@@ -184,10 +184,10 @@ function seedDraft(manifest?: Record<string, unknown>) {
       projectTitle: "My Video Title",
       composition: { width: 1920, height: 1080, fps: 30 },
       timeline: [
-        { type: "title_card", title: "Intro", durationInFrames: 90, scriptText: "Welcome to our show" },
-        { type: "image_scene", title: "Topic One", durationInFrames: 300, scriptText: "Today we cover topic one" },
-        { type: "image_scene", title: "Topic Two", durationInFrames: 450, scriptText: "Now let's discuss topic two" },
-        { type: "outro_card", title: "Outro", durationInFrames: 90, scriptText: "Thanks for watching" },
+        { type: "title_card", title: "Intro", durationInFrames: 300, scriptText: "Welcome to our show" },
+        { type: "image_scene", title: "Topic One", durationInFrames: 600, scriptText: "Today we cover topic one" },
+        { type: "image_scene", title: "Topic Two", durationInFrames: 900, scriptText: "Now let's discuss topic two" },
+        { type: "outro_card", title: "Outro", durationInFrames: 300, scriptText: "Thanks for watching" },
       ],
     }),
     "ai",
@@ -245,17 +245,33 @@ describe("Director API — YouTube Routes", () => {
     it("returns failed when video file does not exist", async () => {
       seedDraft();
       const app = buildApp();
+      const os = await import("node:os");
       const res = await request(app)
         .post("/director/youtube/publish")
         .send({
           draftId: "draft-yt-1",
-          filePath: "/nonexistent/video.mp4",
+          filePath: os.homedir() + "/.openzigs/renders/nonexistent-video.mp4",
           title: "Test Upload",
         })
         .expect(200);
 
       expect(res.body.status).toBe("failed");
       expect(res.body.error).toContain("Video file not found");
+    });
+
+    it("rejects file paths outside allowed directories", async () => {
+      seedDraft();
+      const app = buildApp();
+      const res = await request(app)
+        .post("/director/youtube/publish")
+        .send({
+          draftId: "draft-yt-1",
+          filePath: "/etc/passwd",
+          title: "Malicious Upload",
+        })
+        .expect(403);
+
+      expect(res.body.error).toContain("outside allowed directories");
     });
 
     it("returns 503 when no tool registry", async () => {

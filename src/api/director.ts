@@ -30,9 +30,11 @@
  */
 
 import path from "node:path";
+import os from "node:os";
 import { spawn } from "node:child_process";
 import { Router, raw } from "express";
 import { nanoid } from "nanoid";
+import { z } from "zod";
 import { logger } from "../logging/logger.js";
 import { getDatabase } from "../productivity/database.js";
 import type { CopilotWrapper } from "../copilot/copilot-wrapper.js";
@@ -4643,7 +4645,6 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
       const { YouTubePublishService } = await import("../video/youtube-publish-service.js");
       const { YouTubePublishRepository } = await import("../video/youtube-publish-repository.js");
       const publishRepo = new YouTubePublishRepository(getDatabase());
-      publishRepo.migrate();
       _youtubePublishService = new YouTubePublishService({
         toolRegistry: toolRegistry!,
         publishRepo,
@@ -4652,6 +4653,24 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
     }
     return _youtubePublishService;
   }
+
+  const youtubePublishSchema = z.object({
+    draftId: z.string({ required_error: "draftId is required" }).min(1, "draftId is required"),
+    filePath: z.string().optional(),
+    title: z.string({ required_error: "title is required" }).min(1, "title is required").transform((s) => s.trim()),
+    description: z.string().optional(),
+    tags: z.array(z.string()).optional(),
+    categoryId: z.string().optional(),
+    privacyStatus: z.enum(["public", "unlisted", "private"]).optional(),
+    notifySubscribers: z.boolean().optional(),
+    scheduledPublishTime: z.string().optional(),
+  });
+
+  /** Allowed base directories for YouTube publish file paths. */
+  const YOUTUBE_PUBLISH_ALLOWED_DIRS = [
+    path.join(os.homedir(), ".openzigs", "video-output"),
+    path.join(os.homedir(), ".openzigs", "renders"),
+  ];
 
   /**
    * POST /youtube/publish — Start a YouTube publish job for a draft.
@@ -4664,32 +4683,29 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
         return;
       }
 
-      const { draftId, filePath, title, description, tags, categoryId, privacyStatus, notifySubscribers, scheduledPublishTime } = req.body as {
-        draftId?: string;
-        filePath?: string;
-        title?: string;
-        description?: string;
-        tags?: string[];
-        categoryId?: string;
-        privacyStatus?: "public" | "unlisted" | "private";
-        notifySubscribers?: boolean;
-        scheduledPublishTime?: string;
-      };
-
-      if (!draftId || typeof draftId !== "string") {
-        res.status(400).json({ error: "draftId is required" });
+      const parsed = youtubePublishSchema.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({ error: parsed.error.issues.map((i) => i.message).join("; ") });
         return;
       }
-      if (!title || typeof title !== "string" || title.trim().length === 0) {
-        res.status(400).json({ error: "title is required" });
-        return;
+
+      const { draftId, filePath, title, description, tags, categoryId, privacyStatus, notifySubscribers, scheduledPublishTime } = parsed.data;
+
+      // Path traversal guard: filePath must resolve to an allowed directory
+      if (filePath) {
+        const resolved = path.resolve(filePath.startsWith("~") ? path.join(os.homedir(), filePath.slice(1)) : filePath);
+        const allowed = YOUTUBE_PUBLISH_ALLOWED_DIRS.some((dir) => resolved.startsWith(dir + path.sep) || resolved === dir);
+        if (!allowed) {
+          res.status(403).json({ error: "File path is outside allowed directories" });
+          return;
+        }
       }
 
       const service = await getYouTubePublishService();
       const result = await service.publish({
         draftId,
         filePath,
-        title: title.trim(),
+        title,
         description,
         tags,
         categoryId,

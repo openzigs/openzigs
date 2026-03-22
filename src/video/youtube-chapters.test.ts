@@ -41,41 +41,41 @@ describe("generateChapters", () => {
     const manifest: ManifestForChapters = {
       composition: { fps: 30 },
       timeline: [
-        { type: "title_card", title: "Intro", durationInFrames: 90 },
-        { type: "image_scene", title: "Topic One", durationInFrames: 150 },
-        { type: "image_scene", title: "Topic Two", durationInFrames: 180 },
+        { type: "title_card", title: "Intro", duration: 15 },
+        { type: "image_scene", title: "Topic One", duration: 20 },
+        { type: "image_scene", title: "Topic Two", duration: 25 },
       ],
     };
 
     const chapters = generateChapters(manifest);
     expect(chapters).toHaveLength(3);
     expect(chapters[0]).toEqual({ timestamp: "0:00", label: "Intro" });
-    expect(chapters[1]).toEqual({ timestamp: "0:03", label: "Topic One" });
-    expect(chapters[2]).toEqual({ timestamp: "0:08", label: "Topic Two" });
+    expect(chapters[1]).toEqual({ timestamp: "0:15", label: "Topic One" });
+    expect(chapters[2]).toEqual({ timestamp: "0:35", label: "Topic Two" });
   });
 
   it("skips transitions and overlays", () => {
     const manifest: ManifestForChapters = {
       composition: { fps: 30 },
       timeline: [
-        { type: "image_scene", title: "Scene 1", duration: 5 },
+        { type: "image_scene", title: "Scene 1", duration: 15 },
         { type: "transition", duration: 1 },
-        { type: "image_scene", title: "Scene 2", duration: 5 },
+        { type: "image_scene", title: "Scene 2", duration: 15 },
       ],
     };
 
     const chapters = generateChapters(manifest);
     expect(chapters).toHaveLength(2);
     expect(chapters[0].label).toBe("Scene 1");
-    // 5s scene + 1s transition = 6s start for scene 2
-    expect(chapters[1].timestamp).toBe("0:06");
+    // 15s scene + 1s transition = 16s start for scene 2
+    expect(chapters[1].timestamp).toBe("0:16");
   });
 
   it("derives label from scriptText when no title", () => {
     const manifest: ManifestForChapters = {
       composition: { fps: 30 },
       timeline: [
-        { type: "image_scene", scriptText: "Welcome to the show", duration: 5 },
+        { type: "image_scene", scriptText: "Welcome to the show", duration: 15 },
       ],
     };
 
@@ -87,7 +87,7 @@ describe("generateChapters", () => {
     const longText = "A".repeat(60);
     const manifest: ManifestForChapters = {
       composition: { fps: 30 },
-      timeline: [{ type: "image_scene", scriptText: longText, duration: 5 }],
+      timeline: [{ type: "image_scene", scriptText: longText, duration: 15 }],
     };
 
     const chapters = generateChapters(manifest);
@@ -98,8 +98,8 @@ describe("generateChapters", () => {
     const manifest: ManifestForChapters = {
       composition: { fps: 30 },
       timeline: [
-        { type: "image_scene", duration: 5 },
-        { type: "image_scene", duration: 5 },
+        { type: "image_scene", duration: 15 },
+        { type: "image_scene", duration: 15 },
       ],
     };
 
@@ -112,9 +112,9 @@ describe("generateChapters", () => {
     const manifest: ManifestForChapters = {
       composition: { fps: 30 },
       timeline: [
-        { type: "intro_card", duration: 3 },
-        { type: "image_scene", title: "Main", duration: 10 },
-        { type: "outro_card", duration: 3 },
+        { type: "intro_card", duration: 10 },
+        { type: "image_scene", title: "Main", duration: 30 },
+        { type: "outro_card", duration: 10 },
       ],
     };
 
@@ -134,6 +134,24 @@ describe("generateChapters", () => {
 
     const chapters = generateChapters(manifest);
     expect(chapters[1].timestamp).toBe("0:10");
+  });
+
+  it("skips chapters shorter than 10 seconds", () => {
+    const manifest: ManifestForChapters = {
+      composition: { fps: 30 },
+      timeline: [
+        { type: "image_scene", title: "Long Scene", duration: 30 },
+        { type: "image_scene", title: "Short Scene", duration: 5 },
+        { type: "image_scene", title: "Another Long", duration: 20 },
+      ],
+    };
+
+    const chapters = generateChapters(manifest);
+    expect(chapters).toHaveLength(2);
+    expect(chapters[0].label).toBe("Long Scene");
+    expect(chapters[1].label).toBe("Another Long");
+    // 30s + 5s (skipped but still accumulates) = 35s
+    expect(chapters[1].timestamp).toBe("0:35");
   });
 });
 

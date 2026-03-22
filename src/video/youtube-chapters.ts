@@ -41,10 +41,14 @@ export interface ManifestForChapters {
   timeline?: TimelineScene[];
 }
 
+/** YouTube requires each chapter to be at least 10 seconds. */
+const MIN_CHAPTER_DURATION_MS = 10_000;
+
 /**
  * Generate YouTube chapter entries from a manifest's timeline scenes.
  * Accumulates durations to produce timestamps. Requires at least 3 chapters
- * (YouTube's minimum) for the output to be valid.
+ * (YouTube's minimum) for the output to be valid. Chapters shorter than 10s
+ * are merged into the previous chapter (YouTube rejects chapters < 10s).
  */
 export function generateChapters(manifest: ManifestForChapters): ChapterEntry[] {
   const timeline = manifest.timeline;
@@ -63,13 +67,20 @@ export function generateChapters(manifest: ManifestForChapters): ChapterEntry[] 
       continue;
     }
 
+    const durationMs = getSceneDurationMs(scene, fps);
+
+    // Skip chapters shorter than 10s — YouTube requires minimum 10s per chapter
+    if (durationMs < MIN_CHAPTER_DURATION_MS) {
+      currentMs += durationMs;
+      continue;
+    }
+
     const label = deriveLabel(scene, chapters.length);
     chapters.push({
       timestamp: formatTimestamp(currentMs),
       label,
     });
 
-    const durationMs = getSceneDurationMs(scene, fps);
     currentMs += durationMs;
   }
 
