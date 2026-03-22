@@ -138,7 +138,7 @@ Before you begin, ensure the following are installed and available:
 ### 1. Clone the Repository
 
 ```bash
-git clone https://github.com/mgcronin/openzigs.git
+git clone https://github.com/openzigs/openzigs.git
 cd openzigs
 ```
 
@@ -267,14 +267,14 @@ OpenZigs runs on Windows via native Node.js. The AI sidecars (Audio STT/TTS, Ima
 
 ```powershell
 # Download and run the installer
-Invoke-WebRequest -Uri "https://raw.githubusercontent.com/mgcronin/openzigs/main/install.ps1" -OutFile "install.ps1"
+Invoke-WebRequest -Uri "https://raw.githubusercontent.com/openzigs/openzigs/main/install.ps1" -OutFile "install.ps1"
 .\install.ps1
 ```
 
 Or clone and run locally:
 
 ```powershell
-git clone https://github.com/mgcronin/openzigs.git
+git clone https://github.com/openzigs/openzigs.git
 cd openzigs
 .\install.ps1
 ```
@@ -303,7 +303,7 @@ Or download manually:
 #### 2. Clone the Repository
 
 ```powershell
-git clone https://github.com/mgcronin/openzigs.git
+git clone https://github.com/openzigs/openzigs.git
 cd openzigs
 ```
 
@@ -406,7 +406,7 @@ The following table shows what features are available on Windows:
 5. **WSL Alternative**: You can also run OpenZigs in WSL2 (Windows Subsystem for Linux) for a Unix-like experience:
    ```bash
    # In WSL2 terminal
-   git clone https://github.com/mgcronin/openzigs.git
+   git clone https://github.com/openzigs/openzigs.git
    cd openzigs
    ./install.sh
    ```
@@ -4292,7 +4292,7 @@ Manage repositories, issues, pull requests, and code search.
 **Source:** [github/github-mcp-server](https://github.com/github/github-mcp-server)
 
 ```
-You: List open issues in mgcronin/openzigs
+You: List open issues in openzigs/openzigs
 Agent: [calls github-list-issues] Found 12 open issues: ...
 
 You: Search for files containing "ToolRegistry" in the repo
@@ -5143,7 +5143,7 @@ Real-time streaming for Q&A answers:
 
 ### Multiplayer Watch Parties (P2P)
 
-Issue: [Epic #282](https://github.com/mgcronin/openzigs/issues/282)
+Issue: [Epic #282](https://github.com/openzigs/openzigs/issues/282)
 
 Multiplayer extends the solo Presenter experience into a real-time collaborative watch party. A host creates a room backed by a presentation, invites guests via secure JWT links, and all participants watch in sync with P2P voice chat.
 

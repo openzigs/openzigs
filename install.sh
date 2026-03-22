@@ -717,7 +717,7 @@ echo ""
 echo -e "${BOLD}Installing OpenZigs to $install_dir...${RESET}"
 echo ""
 
-git clone --recurse-submodules https://github.com/mgcronin/openzigs.git "$install_dir"
+git clone --recurse-submodules https://github.com/openzigs/openzigs.git "$install_dir"
 cd "$install_dir"
 git submodule update --init
 

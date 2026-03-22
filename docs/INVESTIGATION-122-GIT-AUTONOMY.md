@@ -1,6 +1,6 @@
 # Investigation #122: Git & Dependabot Autonomous Workflow
 
-> **Status:** Complete — implements the investigation requirements for [Issue #122](https://github.com/mgcronin/openzigs/issues/122).
+> **Status:** Complete — implements the investigation requirements for [Issue #122](https://github.com/openzigs/openzigs/issues/122).
 >
 > **Dependency:** #121 (Per-Run Approval Overrides) — now implemented on branch `feature/issue-118-advanced-orchestration`.
 
@@ -121,7 +121,7 @@ The orchestrator prompt would dispatch three agents via `orchestrate-agents`:
   "agents": [
     {
       "goal": "Audit npm dependencies in /tmp/openzigs-ws/repo — run npm outdated, identify security advisories",
-      "context": "Clone https://github.com/mgcronin/openzigs to /tmp/openzigs-ws/repo if not present. Report outdated packages as JSON.",
+      "context": "Clone https://github.com/openzigs/openzigs to /tmp/openzigs-ws/repo if not present. Report outdated packages as JSON.",
       "model": "gpt-4o-mini",
       "auto_approve_tools": ["shell-execute", "web-search"]
     },

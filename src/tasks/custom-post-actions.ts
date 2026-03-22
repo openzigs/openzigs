@@ -226,6 +226,7 @@ function createScriptHandler(
 
       // Pipe stage output to stdin
       if (child.stdin) {
+        child.stdin.on("error", () => { /* ignore EPIPE — child may exit before write completes */ });
         child.stdin.write(stageOutput);
         child.stdin.end();
       }

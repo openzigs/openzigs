@@ -9,7 +9,7 @@ OpenZigs gives you a "God Mode" AI assistant that can read files, search the web
 ## Quick Start
 
 ```bash
-git clone --recurse-submodules https://github.com/mgcronin/openzigs.git && cd openzigs
+git clone --recurse-submodules https://github.com/openzigs/openzigs.git && cd openzigs
 pnpm install
 pnpm dev
 ```
@@ -82,14 +82,16 @@ git submodule update --init
 
 | Epic | Description | Status |
 |---|---|---|
-| [#21 — Container & Tunnel Infra](https://github.com/mgcronin/openzigs/issues/21) | Docker orchestration, install scripts | In Progress |
-| [#11 — Security & Control UI](https://github.com/mgcronin/openzigs/issues/11) | Full Web UI for tool toggles, approval viewer, audit logs | In Progress |
-| [#15 — Messaging Bridge](https://github.com/mgcronin/openzigs/issues/15) | Channel abstraction, routing, Slack support | In Progress |
+| [#21 — Container & Tunnel Infra](https://github.com/openzigs/openzigs/issues/21) | Docker orchestration, install scripts | In Progress |
+| [#11 — Security & Control UI](https://github.com/openzigs/openzigs/issues/11) | Full Web UI for tool toggles, approval viewer, audit logs | In Progress |
+| [#15 — Messaging Bridge](https://github.com/openzigs/openzigs/issues/15) | Channel abstraction, routing, Slack support | In Progress |
 
-See [Issues](https://github.com/mgcronin/openzigs/issues) for detailed progress.
+See [Issues](https://github.com/openzigs/openzigs/issues) for detailed progress.
 
 ---
 
 ## License
 
-MIT
+[FSL-1.1-MIT](LICENSE.md) — Functional Source License, Version 1.1, with MIT future license. See [LICENSE.md](LICENSE.md) for full terms.
+
+Copyright 2026 Zylos Labs LLC.

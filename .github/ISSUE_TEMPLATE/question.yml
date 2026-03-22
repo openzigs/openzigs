@@ -1,0 +1,30 @@
+name: Question
+description: Ask a question about OpenZigs
+title: "[Question]: "
+labels: ["question"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Have a question? We're happy to help. Please provide as much context as possible.
+
+  - type: textarea
+    id: question
+    attributes:
+      label: Question
+      description: What would you like to know?
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: Any relevant context — what you've tried, what you're trying to accomplish, etc.
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: OpenZigs version (if applicable)
+      placeholder: "0.1.0"

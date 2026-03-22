@@ -1,8 +1,8 @@
 # RFC: Tool Limits & Dynamic Selection Strategy
 
 **Status**: Draft  
-**Issue**: [#114](https://github.com/mgcronin/openzigs/issues/114)  
-**Epic**: [#112 — Tool Context Optimization & Scoping](https://github.com/mgcronin/openzigs/issues/112)  
+**Issue**: [#114](https://github.com/openzigs/openzigs/issues/114)  
+**Epic**: [#112 — Tool Context Optimization & Scoping](https://github.com/openzigs/openzigs/issues/112)  
 **Date**: 2026-02-10  
 
 ---
