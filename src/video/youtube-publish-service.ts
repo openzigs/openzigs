@@ -192,7 +192,8 @@ export class YouTubePublishService {
       logger.info(`[YouTubePublish] Published ${publishId} → ${videoId ?? "unknown"}`);
       return { publishId, videoId, videoUrl, status: finalStatus };
     } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : String(error);
+      const rawMsg = error instanceof Error ? error.message : String(error);
+      const errorMsg = YouTubePublishService.parseYouTubeError(rawMsg);
       this.publishRepo.updateStatus(publishId, "failed", {
         error_message: errorMsg,
       });
@@ -301,5 +302,27 @@ export class YouTubePublishService {
 
   private emitError(draftId: string, publishId: string, error: string): void {
     this.io?.emit("youtube:publish:error", { draftId, publishId, error });
+  }
+
+  /** Parse raw YouTube error strings into user-friendly messages. */
+  static parseYouTubeError(raw: string): string {
+    // Already a clean message from the Python MCP layer
+    if (raw.startsWith("Daily YouTube API quota")) return raw;
+    if (raw.startsWith("YouTube API rate limit")) return raw;
+    if (raw.startsWith("Access denied.")) return raw;
+    if (raw.startsWith("Insufficient permissions.")) return raw;
+    if (raw.startsWith("YouTube authorization expired.")) return raw;
+
+    // Try to extract reason from embedded JSON
+    const quotaMatch = raw.match(/"reason"\s*:\s*"quotaExceeded"/);
+    if (quotaMatch) return "Daily YouTube API quota exceeded. Quota resets at midnight Pacific Time.";
+
+    const authMatch = raw.match(/"reason"\s*:\s*"(unauthorized|authError)"/);
+    if (authMatch) return "YouTube authorization expired. Please re-connect your YouTube account in Settings.";
+
+    const forbiddenMatch = raw.match(/"reason"\s*:\s*"(forbidden|insufficientPermissions)"/);
+    if (forbiddenMatch) return "Access denied. Check that your YouTube OAuth token has upload permissions.";
+
+    return raw;
   }
 }
