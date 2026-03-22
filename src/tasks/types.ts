@@ -30,6 +30,8 @@ export type PipelineStage = {
    *   - "create-github-issues": Parse findings from stage output and create GitHub issues.
    */
   postAction?: PipelinePostAction;
+  /** When true, the LLM can delegate to subagents within this stage's SDK session. */
+  enableInSessionSubagents?: boolean;
 };
 
 /** A group of pipeline nodes executed concurrently via Promise.all. */
@@ -96,6 +98,8 @@ export type AgentTask = {
   disabledSkills: string[] | null;
   /** Custom agent name for specialized task execution. null = default agent. */
   agentName: string | null;
+  /** When true, the LLM can delegate to subagents within this task's SDK session. */
+  enableInSessionSubagents: boolean;
 };
 
 export type CreateTaskInput = {
@@ -125,6 +129,8 @@ export type CreateTaskInput = {
   disabledSkills?: string[];
   /** Custom agent name for specialized task execution. */
   agentName?: string;
+  /** When true, the LLM can delegate to subagents within this task's SDK session. */
+  enableInSessionSubagents?: boolean;
 };
 
 /** SQLite row shape for the agent_tasks table. */
@@ -156,6 +162,7 @@ export type StoredTask = {
   skill_body: string | null;
   disabled_skills: string | null;
   agent_name: string | null;
+  enable_in_session_subagents: number;
 };
 
 /** Recursion / safety limits for agent chaining. */

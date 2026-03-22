@@ -26,6 +26,8 @@ export type TaskWorkerOptions = {
   customAgentsConfig?: CustomAgentDefinition[];
   /** Optional event streamer for real-time Socket.IO events during task execution. */
   eventStreamer?: TaskEventStreamer;
+  /** Known valid model IDs for pipeline stage validation. */
+  validModels?: string[];
 };
 
 /**
@@ -44,6 +46,7 @@ export class TaskWorker extends EventEmitter {
   private log: Pick<typeof logger, "info" | "warn" | "error">;
   private customAgentsConfig: CustomAgentDefinition[];
   private eventStreamer?: TaskEventStreamer;
+  private validModels: string[];
   private timer: ReturnType<typeof setInterval> | null = null;
   private running = 0;
   private stopped = false;
@@ -57,6 +60,7 @@ export class TaskWorker extends EventEmitter {
     log: logOverride,
     customAgentsConfig,
     eventStreamer,
+    validModels,
   }: TaskWorkerOptions) {
     super();
     this.engine = engine;
@@ -67,6 +71,7 @@ export class TaskWorker extends EventEmitter {
     this.log = logOverride ?? logger;
     this.customAgentsConfig = customAgentsConfig ?? [];
     this.eventStreamer = eventStreamer;
+    this.validModels = validModels ?? [];
   }
 
   /** Start the polling loop. Idempotent. */
@@ -186,6 +191,13 @@ export class TaskWorker extends EventEmitter {
       // Resolve custom agents for task-specific agent persona
       const customAgents = this.resolveCustomAgents(task);
 
+      // Resolve enableSubagents for SDK-native in-session delegation
+      const enableSubagents = task.enableInSessionSubagents || false;
+      // When enableSubagents is true but no specific agent persona, pass all custom agents
+      const chatCustomAgents = enableSubagents && !customAgents
+        ? (this.customAgentsConfig.length > 0 ? this.customAgentsConfig : undefined)
+        : customAgents;
+
       for await (const chunk of this.copilot.chat(prompt, {
         model: task.model ?? undefined,
         reasoningEffort: task.reasoningEffort ?? undefined,
@@ -193,7 +205,8 @@ export class TaskWorker extends EventEmitter {
         autoApproveTools: effectiveAutoApprove,
         systemMessage,
         disabledSkills: task.disabledSkills ?? undefined,
-        customAgents,
+        customAgents: chatCustomAgents,
+        enableSubagents: enableSubagents || undefined,
         onToolCall: (toolName, args) => {
           this.log.info(`TaskWorker tool call [${task.id}]: ${toolName}(${JSON.stringify(args).slice(0, 200)})`);
           toolCallLog.push({ tool: toolName, timestamp: Date.now() });
@@ -431,6 +444,18 @@ export class TaskWorker extends EventEmitter {
     const stageLabel = `[${stageIndex + 1}/${totalStages}] ${stage.name}`;
     const timeoutMs = (stage.timeoutSeconds ?? 300) * 1_000;
 
+    // Validate model override if specified and valid models are configured
+    if (stage.model && this.validModels.length > 0 && !this.validModels.includes(stage.model)) {
+      const errorMsg = `Invalid model "${stage.model}" for stage "${stage.name}" — not in configured models`;
+      this.log.error(errorMsg);
+      return this.executeNodeResult(
+        [{ name: stage.name, status: "failed", error: errorMsg }],
+        "",
+        true,
+        errorMsg
+      );
+    }
+
     const stagePrompt = this.buildStagePrompt(
       stage.prompt,
       accumulatedContext,
@@ -458,6 +483,7 @@ export class TaskWorker extends EventEmitter {
         sessionId: task.sessionId ?? undefined,
         channelType: task.channelType ?? undefined,
         chatId: task.chatId ?? undefined,
+        enableInSessionSubagents: stage.enableInSessionSubagents ?? task.enableInSessionSubagents ?? undefined,
       },
       { mode: "background" }
     );

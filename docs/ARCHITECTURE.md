@@ -2819,6 +2819,14 @@ CREATE INDEX IF NOT EXISTS idx_tasks_parent ON agent_tasks(parent_task_id);
 | `GET` | `/api/tasks/:id/children` | List direct child tasks |
 | `GET` | `/api/tasks/stats` | Aggregate counts by status |
 
+### Cost Optimization Features
+
+**Background Task Default Model** — Configure a default model for all non-interactive tasks (cron, webhook, agent-spawned) via the admin API (`PUT /api/admin/models/config` with `backgroundTaskDefaultModel`). When set, tasks without an explicit model inherit this default, allowing cost-efficient models (e.g., `gpt-4.1-mini`) for unattended work while keeping interactive chat on the full model. The setting is persisted in the user config (`~/.openzigs/config.json` under `tasks.backgroundTaskDefaultModel`) and can be changed at runtime via `TaskEngine.setBackgroundTaskDefaultModel()`.
+
+**Per-Stage Model Overrides** — Pipeline stages support a `model` field, allowing different models per stage. For example, use `gpt-4.1` for a research stage that needs strong reasoning and `gpt-4.1-mini` for a summarization stage. The pipeline editor UI exposes a "Model Override" text input per stage. Model values are validated against configured valid models at execution time — invalid models cause the stage to fail immediately rather than charging for a bad request.
+
+**In-Session Subagent Delegation** — Pipeline stages can enable `enableInSessionSubagents: true` to allow the SDK's native subagent delegation within a task session. When enabled, the `TaskWorker` passes `enableSubagents: true` and the full `customAgents` configuration to `CopilotWrapper.chat()`, allowing the LLM to autonomously spin up specialized subagents within the same session context. This is propagated to child tasks automatically.
+
 #### Scheduler API
 
 | Method | Path | Description |

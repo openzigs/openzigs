@@ -32,6 +32,7 @@ export const toTask = (row: StoredTask): AgentTask => ({
   skillBody: row.skill_body ?? null,
   disabledSkills: row.disabled_skills ? (JSON.parse(row.disabled_skills) as string[]) : null,
   agentName: row.agent_name ?? null,
+  enableInSessionSubagents: row.enable_in_session_subagents === 1,
 });
 
 /**
@@ -127,6 +128,11 @@ export class TaskRepository {
       this.db.exec("ALTER TABLE agent_tasks ADD COLUMN agent_name TEXT DEFAULT NULL");
     }
 
+    // Add 'enable_in_session_subagents' column — opt-in for SDK-native subagent delegation
+    if (!columns.some((c) => c.name === "enable_in_session_subagents")) {
+      this.db.exec("ALTER TABLE agent_tasks ADD COLUMN enable_in_session_subagents INTEGER NOT NULL DEFAULT 0");
+    }
+
     // ── Backfill: link orphaned agent tasks to their parent ──
     // Before the parentTaskId propagation fix, spawn-agent/orchestrate-agents
     // never set parentTaskId. This backfill matches orphaned agent tasks to
@@ -191,8 +197,8 @@ export class TaskRepository {
         `INSERT INTO agent_tasks
           (id, parent_task_id, trigger, status, goal, context,
            session_id, channel_type, chat_id, model, reasoning_effort, allowed_tools, auto_approve_tools,
-           pipeline, notify_on_complete, depth, created_at, spawned_by, skill_name, skill_body, disabled_skills, agent_name)
-         VALUES (?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+           pipeline, notify_on_complete, depth, created_at, spawned_by, skill_name, skill_body, disabled_skills, agent_name, enable_in_session_subagents)
+         VALUES (?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         id,
@@ -215,7 +221,8 @@ export class TaskRepository {
         input.skillName ?? null,
         input.skillBody ?? null,
         input.disabledSkills ? JSON.stringify(input.disabledSkills) : null,
-        input.agentName ?? null
+        input.agentName ?? null,
+        input.enableInSessionSubagents ? 1 : 0
       );
 
     return this.getById(id)!;

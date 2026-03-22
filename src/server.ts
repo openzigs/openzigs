@@ -171,7 +171,10 @@ const promptManager = new PromptManager({ db });
 const personalityManager = new PersonalityManager({ db });
 const brandVoiceRepo = new BrandVoiceRepository(db);
 const taskRepository = new TaskRepository(db);
-const taskEngine = new TaskEngine({ repository: taskRepository });
+const taskEngine = new TaskEngine({
+  repository: taskRepository,
+  backgroundTaskDefaultModel: config.tasks?.backgroundTaskDefaultModel ?? undefined,
+});
 
 // ── Orchestration Templates ──
 const orchTemplateRepo = new TemplateRepository(db);

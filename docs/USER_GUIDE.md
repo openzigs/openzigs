@@ -561,7 +561,7 @@ The admin page at `/admin` consolidates all configuration:
 ![Brand Voice panel — analyze samples, view rulebook, activate/deactivate](images/admin-brand-voice.png)
 ![Model Configuration — reasoning effort and BYOK provider settings](images/admin-model-config.png)
 
-- **Model Configuration** — Set the default reasoning effort (Low / Medium / High / xHigh) for reasoning models. Enable **BYOK (Bring Your Own Key)** to configure a custom provider (OpenAI, Azure, Anthropic, Ollama, or Custom) with base URL, API key (masked by default), and optional Azure API version. Test the connection before saving, or clear the provider to revert to GitHub Copilot.
+- **Model Configuration** — Set the default reasoning effort (Low / Medium / High / xHigh) for reasoning models. Enable **BYOK (Bring Your Own Key)** to configure a custom provider (OpenAI, Azure, Anthropic, Ollama, or Custom) with base URL, API key (masked by default), and optional Azure API version. Test the connection before saving, or clear the provider to revert to GitHub Copilot. Set a **Background Task Default Model** to automatically assign a cost-effective model to all non-interactive (cron, webhook, agent-spawned) tasks that don't specify their own model.
 - **Task Engine** — Adjust the maximum concurrent background agents (1–10) at runtime, view live queue stats (running, queued, concurrency limit). Configure the **tool limit per request** (1–128) to control how many tools are sent to the LLM in each call — see [Tool Limit Configuration](#tool-limit-configuration) below.
 ![Custom Agents — agent cards with tool badges and infer indicators](images/admin-custom-agents.png)
 
@@ -798,7 +798,7 @@ The library at `/library` provides a visual interface for managing saved prompt 
 - **Search** prompts by name, content, or tags.
 - **Variable preview** — `{{variable}}` placeholders are highlighted and listed.
 - **Preferred Tools** — Restrict which tools a prompt can use via a ToolMultiSelect dropdown grouped by category. When set, only the selected tools (plus always-on tools) are available during execution.
-- **Pipeline Stages** — Attach a multi-stage pipeline to any prompt. When the prompt is executed by the scheduler, stages run sequentially (or in parallel groups) with per-stage prompts, tool restrictions, model overrides, timeouts, auto-approve tools, and optional post-actions (e.g., "create GitHub issues from findings").
+- **Pipeline Stages** — Attach a multi-stage pipeline to any prompt. When the prompt is executed by the scheduler, stages run sequentially (or in parallel groups) with per-stage prompts, tool restrictions, model overrides, timeouts, auto-approve tools, in-session subagent delegation, and optional post-actions (e.g., "create GitHub issues from findings"). Use the **Model Override** field to assign different models per stage for cost optimization (e.g., gpt-4.1 for research, gpt-4.1-mini for summarization). Enable **In-Session Subagents** to allow a stage to delegate work to SDK-native subagents.
 - **Use as System Prompt** — Apply any saved prompt as the active system instruction in the AI Personality panel.
 - **Export** — Download any prompt as a portable `.openzigs-template.json` file for sharing across instances.
 - **Import** — Upload a `.openzigs-template.json` file via the Import Wizard to add a shared template to your library.

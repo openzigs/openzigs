@@ -6,6 +6,8 @@ import type { AgentTask, CreateTaskInput, TaskMode, TaskStatus } from "./types.j
 export type TaskEngineOptions = {
   repository: TaskRepository;
   clock?: () => Date;
+  /** Default model for background tasks (cron/webhook/agent triggers). */
+  backgroundTaskDefaultModel?: string | null;
 };
 
 export type SubmitOptions = {
@@ -23,10 +25,12 @@ export type SubmitOptions = {
  */
 export class TaskEngine extends EventEmitter {
   private repository: TaskRepository;
+  private backgroundTaskDefaultModel: string | null;
 
-  constructor({ repository }: TaskEngineOptions) {
+  constructor({ repository, backgroundTaskDefaultModel }: TaskEngineOptions) {
     super();
     this.repository = repository;
+    this.backgroundTaskDefaultModel = backgroundTaskDefaultModel ?? null;
   }
 
   /** Expose repository for direct queries (e.g., execution history). */
@@ -51,7 +55,13 @@ export class TaskEngine extends EventEmitter {
       }
     }
 
-    const task = this.repository.insert(input);
+    // Apply background default model for non-interactive triggers without explicit model
+    const resolvedInput = { ...input };
+    if (!resolvedInput.model && resolvedInput.trigger !== "chat" && this.backgroundTaskDefaultModel) {
+      resolvedInput.model = this.backgroundTaskDefaultModel;
+    }
+
+    const task = this.repository.insert(resolvedInput);
 
     if (options.mode === "immediate") {
       this.repository.markRunning(task.id);
@@ -105,6 +115,15 @@ export class TaskEngine extends EventEmitter {
   /** Get children of a task. */
   getChildren(taskId: string): AgentTask[] {
     return this.repository.getChildren(taskId);
+  }
+
+  /** Get or update the background task default model at runtime. */
+  getBackgroundTaskDefaultModel(): string | undefined {
+    return this.backgroundTaskDefaultModel ?? undefined;
+  }
+
+  setBackgroundTaskDefaultModel(model: string | undefined): void {
+    this.backgroundTaskDefaultModel = model ?? null;
   }
 
   /**

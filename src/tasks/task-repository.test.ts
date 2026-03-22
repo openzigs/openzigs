@@ -151,6 +151,28 @@ describe("TaskRepository", () => {
       expect(task.agentName).toBeNull();
     });
 
+    it("stores and retrieves enableInSessionSubagents", () => {
+      const task = repo.insert({
+        trigger: "cron",
+        goal: "Subagent task",
+        enableInSessionSubagents: true,
+      });
+
+      expect(task.enableInSessionSubagents).toBe(true);
+
+      const fetched = repo.getById(task.id);
+      expect(fetched!.enableInSessionSubagents).toBe(true);
+    });
+
+    it("defaults enableInSessionSubagents to false", () => {
+      const task = repo.insert({
+        trigger: "chat",
+        goal: "No subagents",
+      });
+
+      expect(task.enableInSessionSubagents).toBe(false);
+    });
+
     it("sets depth from parent", () => {
       const parent = repo.insert({ trigger: "chat", goal: "Parent" });
       const child = repo.insert({

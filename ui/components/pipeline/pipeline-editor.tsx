@@ -32,6 +32,7 @@ export type PromptStageData = {
   tools: string[] | null;
   autoApproveTools?: string[] | null;
   model?: string;
+  enableInSessionSubagents?: boolean;
   timeoutSeconds?: number;
   postAction?: PipelinePostAction;
 };
@@ -113,6 +114,7 @@ export type BackendPipelineNode = {
   tools?: string[] | null;
   autoApproveTools?: string[] | null;
   model?: string;
+  enableInSessionSubagents?: boolean;
   timeoutSeconds?: number;
   postAction?: PipelinePostAction;
   branches?: BackendPipelineNode[];
@@ -162,6 +164,7 @@ const pipelineToFlow = (
           tools: stage.tools ?? null,
           autoApproveTools: stage.autoApproveTools,
           model: stage.model,
+          enableInSessionSubagents: stage.enableInSessionSubagents,
           timeoutSeconds: stage.timeoutSeconds ?? 300,
           postAction: stage.postAction,
         } satisfies PromptStageData,
@@ -238,6 +241,7 @@ const flowToPipeline = (nodes: Node[], edges: Edge[]): BackendPipelineNode[] => 
         tools: pd.tools,
         autoApproveTools: pd.autoApproveTools,
         model: pd.model,
+        enableInSessionSubagents: pd.enableInSessionSubagents,
         timeoutSeconds: pd.timeoutSeconds,
         postAction: pd.postAction,
       });
@@ -654,6 +658,24 @@ const StageEditor = ({
           value={promptData.timeoutSeconds ?? 300}
           onChange={(e) => onChange(node.id, { ...promptData, timeoutSeconds: Number(e.target.value) })}
         />
+      </label>
+      <label className="block">
+        <span className="text-xs text-muted-foreground">Model Override</span>
+        <input
+          className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-1.5 text-sm"
+          placeholder="Default (inherit from task)"
+          value={promptData.model ?? ""}
+          onChange={(e) => onChange(node.id, { ...promptData, model: e.target.value || undefined })}
+        />
+      </label>
+      <label className="flex items-center gap-2">
+        <input
+          type="checkbox"
+          className="h-4 w-4 rounded border-border"
+          checked={promptData.enableInSessionSubagents ?? false}
+          onChange={(e) => onChange(node.id, { ...promptData, enableInSessionSubagents: e.target.checked || undefined })}
+        />
+        <span className="text-xs text-muted-foreground">Enable in-session subagents</span>
       </label>
       <PostActionEditor
         postAction={promptData.postAction}
