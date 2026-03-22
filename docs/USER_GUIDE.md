@@ -1778,6 +1778,74 @@ You can also use Studio tools from the chat interface via the **Media Director**
 
 ---
 
+### Subtitle Export (SRT/VTT)
+
+Export subtitles from any Director draft's narration timeline:
+
+1. Open a draft in **Studio**.
+2. Click the **Subtitles** dropdown in the toolbar.
+3. Choose **SRT** (SubRip) or **VTT** (WebVTT) format.
+4. The subtitle file downloads automatically with timestamps synchronized to each scene's narration.
+
+**API:** `GET /api/admin/director/drafts/:id/subtitles/srt` or `/vtt`
+
+### Brand Kit System
+
+Create reusable brand kits for consistent video styling:
+
+1. Go to **Director** → **Brand Kit** tab.
+2. Click **New Kit** and set:
+   - **Name** — e.g., "Company Brand"
+   - **Colors** — Primary, secondary, and accent (hex color picker)
+   - **Font Family** — Select from available fonts
+3. The live **Preview** shows your color swatches and font.
+4. Brand kits are stored in SQLite and available across all productions.
+
+### Batch Render Queue
+
+Render multiple drafts at once:
+
+1. Go to **Director** → **Batch Render** tab.
+2. Select drafts using checkboxes (or **Select All**).
+3. Click **Render Selected (N)** to queue them all.
+4. The **Last Batch Results** panel shows per-job status (queued/failed).
+
+**API:** `POST /api/admin/director/render/batch` with `{ draftIds: string[] }`
+
+### Gallery Collections & Tagging
+
+Organize assets into collections and tag them for easy filtering:
+
+- **Collections Sidebar** — Appears on the left of the Gallery page. Create, rename, and delete collections. Click a collection to filter assets.
+- **Tag Filter** — Tag chips appear above the asset grid. Click to filter by tags; click again to remove. Supports multi-tag filtering.
+- **API Routes:**
+  - `GET/POST/PUT/DELETE /api/admin/director/gallery/collections` — Collection CRUD
+  - `POST/DELETE /api/admin/director/gallery/collections/:id/items` — Add/remove assets
+  - `GET/POST/DELETE /api/admin/director/gallery/tags` — Tag management
+
+### Shorts Generator
+
+Auto-generate YouTube Shorts from long-form video drafts:
+
+1. Open a draft in **Studio**.
+2. Scroll to the **Shorts Generator** panel in the right sidebar.
+3. Set **Max Shorts** (1–5) and click **Generate Proposals**.
+4. The LLM analyzes your video transcript and proposes the most engaging 30–60 second segments, each with a title, hook text, CTA, engagement score, and justification.
+5. **Accept/Reject** individual proposals, or click **Edit** to customize.
+6. Click **Render N Shorts** to queue accepted segments for rendering.
+
+### YouTube Analytics Dashboard
+
+View channel and per-video metrics at `/director/analytics`:
+
+- **Channel Overview** — Subscriber count, total views, total videos.
+- **Top Videos Chart** — Recharts bar chart of top 10 videos by views.
+- **Video Metrics Table** — Sortable by views, likes, comments, or date. Searchable by title. Shows thumbnail, like ratio, and publish date.
+- Data is fetched from the YouTube MCP server and cached with 5-minute stale time.
+- **Empty state** displays when YouTube OAuth is not configured.
+
+---
+
 ## Advanced: Agent Chaining Patterns
 
 The **Recursive Agent Chaining** system lets you orchestrate multi-step, long-running workflows by composing background sub-agents. Under the hood, the agent uses the `spawn-agent` MCP tool to create independent `AgentTask` entries in the SQLite queue. Each task executes asynchronously via the `TaskWorker`, persists its result to the database, and notifies you when it completes — even if you close the browser.

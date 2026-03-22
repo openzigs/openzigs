@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useCallback, useEffect } from "react";
-import { ArrowLeft, Save, Film, Loader2, Check, Youtube, ExternalLink } from "lucide-react";
+import { ArrowLeft, Save, Film, Loader2, Check, Youtube, ExternalLink, Subtitles, ChevronDown } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { fetchJson } from "@/lib/api";
 import { showToast } from "@/components/toast";
@@ -31,6 +31,7 @@ export function StudioToolbar({ title, draftId, manifest, onSave, onRestore, dir
   const [ytOpen, setYtOpen] = useState(false);
   const [publishing, setPublishing] = useState(false);
   const [publishStatus, setPublishStatus] = useState<{ status: string; videoUrl?: string } | null>(null);
+  const [subtitleMenuOpen, setSubtitleMenuOpen] = useState(false);
 
   const handleSave = useCallback(async () => {
     setSaving(true);
@@ -162,6 +163,40 @@ export function StudioToolbar({ title, draftId, manifest, onSave, onRestore, dir
         {draftId && <ThumbnailPanel draftId={draftId} />}
         {draftId && <RenderHistory draftId={draftId} />}
         {draftId && <YouTubePublishHistory draftId={draftId} />}
+
+        {/* Export Subtitles */}
+        {draftId && (
+          <div className="relative">
+            <button
+              onClick={() => setSubtitleMenuOpen(!subtitleMenuOpen)}
+              className="flex items-center gap-1.5 rounded-md bg-muted px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted/80 transition"
+            >
+              <Subtitles className="h-3.5 w-3.5" />
+              Subtitles
+              <ChevronDown className="h-3 w-3" />
+            </button>
+            {subtitleMenuOpen && (
+              <div className="absolute right-0 top-full mt-1 z-50 w-36 rounded-md border border-border bg-popover p-1 shadow-md">
+                <a
+                  href={`${process.env.NEXT_PUBLIC_OPENZIGS_API_BASE ?? ""}/api/admin/director/drafts/${draftId}/subtitles/srt${process.env.NEXT_PUBLIC_OPENZIGS_TOKEN ? `?token=${encodeURIComponent(process.env.NEXT_PUBLIC_OPENZIGS_TOKEN)}` : ""}`}
+                  download
+                  onClick={() => setSubtitleMenuOpen(false)}
+                  className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-xs text-foreground hover:bg-accent transition"
+                >
+                  Export .srt
+                </a>
+                <a
+                  href={`${process.env.NEXT_PUBLIC_OPENZIGS_API_BASE ?? ""}/api/admin/director/drafts/${draftId}/subtitles/vtt${process.env.NEXT_PUBLIC_OPENZIGS_TOKEN ? `?token=${encodeURIComponent(process.env.NEXT_PUBLIC_OPENZIGS_TOKEN)}` : ""}`}
+                  download
+                  onClick={() => setSubtitleMenuOpen(false)}
+                  className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-xs text-foreground hover:bg-accent transition"
+                >
+                  Export .vtt
+                </a>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* YouTube Publish */}
         {draftId && publishStatus?.status === "published" && publishStatus.videoUrl ? (

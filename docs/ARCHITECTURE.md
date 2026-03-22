@@ -5642,3 +5642,40 @@ Studio Toolbar → YouTubeMetadataEditor (modal) → POST /director/youtube/publ
 - `youtube:publish:error` — Upload failure with error message
 
 ### Tracking: [Epic #510](https://github.com/mgcronin/openzigs/issues/510)
+
+---
+
+## Studio & Gallery Professional Enhancements (Epic #511)
+
+Professional-grade features for video production and asset management.
+
+### Subtitle Export (#521)
+- **`src/video/subtitle-export.ts`** — Generates SRT/VTT from manifest timeline narration segments.
+- Functions: `extractSubtitleSegments()`, `generateSrt()`, `generateVtt()`, `generateSubtitles(manifest, format)`
+- API: `GET /api/admin/director/drafts/:id/subtitles/:format` (format: `srt` or `vtt`)
+- UI: Subtitles dropdown in `studio-toolbar.tsx`
+
+### Brand Kit System (#523)
+- **`src/video/brand-kit.ts`** — `BrandKitRepository` with SQLite CRUD for `brand_kits` table.
+- Schema: id, name, primaryColor, secondaryColor, accentColor, fontFamily, logoPath, watermarkPath, timestamps.
+- API: Full CRUD at `/api/admin/director/brand-kits`
+- UI: **`brand-kit-editor.tsx`** — Create/edit/delete brand kits with color pickers and font selector. Wired as "Brand Kit" tab on Director page.
+
+### Batch Render Queue (#522)
+- API: `POST /api/admin/director/render/batch` — accepts `{ draftIds }`, queues each for rendering via `RenderOrchestrator.submit()`.
+- UI: **`batch-render-panel.tsx`** — Select drafts with checkboxes, render selected, view batch results. Wired as "Batch Render" tab on Director page.
+
+### Gallery Collections & Tagging (#520)
+- **DDL in `director.ts`**: `gallery_collections`, `gallery_collection_items`, `gallery_tags` tables (lazy-created via `ensureGalleryTables()`).
+- API: Collection CRUD, item add/remove, tag CRUD at `/api/admin/director/gallery/*`.
+- UI: **`collection-sidebar.tsx`** — Collections sidebar with create/rename/delete. **`tag-filter.tsx`** — Tag chip filter. Both wired into Gallery page.
+
+### Shorts Generator (#519)
+- API: `POST /api/admin/director/shorts/from-manifest` — LLM analysis of manifest narration for shorts-worthy segments.
+- UI: **`shorts-proposal-panel.tsx`** — Generate proposals, accept/reject/edit, render selected shorts. Wired into Studio right panel.
+
+### YouTube Analytics Dashboard (#518)
+- API: `GET /api/admin/director/youtube/analytics/channel`, `GET /youtube/analytics/videos` — Proxies YouTube MCP tools.
+- UI: **`ui/app/director/analytics/page.tsx`** — Channel overview cards, Recharts bar chart (top 10 by views), sortable/searchable video metrics table.
+
+### Tracking: [Epic #511](https://github.com/mgcronin/openzigs/issues/511)
