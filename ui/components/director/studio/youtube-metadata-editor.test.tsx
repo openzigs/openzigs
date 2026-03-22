@@ -11,6 +11,14 @@ vi.mock("@/components/toast", () => ({
   showToast: vi.fn(),
 }));
 
+vi.mock("@/components/model-picker-select", () => ({
+  InlineModelPicker: ({ value, onChange }: { value: string; onChange: (v: string) => void }) => (
+    <select data-testid="model-picker" value={value} onChange={(e) => onChange(e.target.value)}>
+      <option value="gpt-4o">gpt-4o</option>
+    </select>
+  ),
+}));
+
 import { fetchJson } from "@/lib/api";
 const mockFetchJson = fetchJson as ReturnType<typeof vi.fn>;
 
