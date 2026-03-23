@@ -111,7 +111,7 @@
       "socket.io-parser": ">=4.2.6",
       "flatted": ">=3.4.2",
       "tar": ">=7.5.11",
-      "@github/copilot": ">=0.0.423",
+      "@github/copilot": "0.0.420",
       "dompurify": ">=3.3.2",
       "@tootallnate/once": ">=3.0.1"
     }
