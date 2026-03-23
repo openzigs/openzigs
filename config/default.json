@@ -167,7 +167,7 @@
       "youtube": {
         "enabled": false,
         "mode": "polling",
-        "pollIntervalSeconds": 300,
+        "pollIntervalSeconds": 3600,
         "accessToken": "${YOUTUBE_API_KEY}",
         "channelId": "${YOUTUBE_CHANNEL_ID}",
         "channelHandle": "${YOUTUBE_CHANNEL_HANDLE}"
