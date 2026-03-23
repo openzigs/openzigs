@@ -155,13 +155,14 @@ describe("createXlsxConverter", () => {
     expect(result.text).toContain("42");
   });
 
-  it("handles rich text cells by using .text property", async () => {
+  it("handles rich text cells by joining richText array fragments", async () => {
     const richTextSheet: MockSheet = {
       name: "Rich",
       eachRow: (cb) => {
         const mockRow: MockRow = {
           eachCell: (_opts, cellCb) => {
-            cellCb({ value: { richText: [], text: "Hello World" } }, 1);
+            // ExcelJS rich text shape: { richText: [{ text, font? }] }
+            cellCb({ value: { richText: [{ text: "Hello" }, { text: " World" }] } }, 1);
           },
         };
         cb(mockRow, 1);
@@ -174,6 +175,29 @@ describe("createXlsxConverter", () => {
 
     expect(result.success).toBe(true);
     expect(result.text).toContain("Hello World");
+  });
+
+  it("RFC-4180 escapes CSV cells containing commas, quotes, or newlines", async () => {
+    const csvSheet: MockSheet = {
+      name: "CSV",
+      eachRow: (cb) => {
+        const mockRow: MockRow = {
+          eachCell: (_opts, cellCb) => {
+            cellCb({ value: 'say "hello", world' }, 1);
+            cellCb({ value: "plain" }, 2);
+          },
+        };
+        cb(mockRow, 1);
+      },
+    };
+    mockSheets.push(csvSheet);
+
+    const reg = await createXlsxConverter();
+    const result = await reg.convert("/data/csv.xlsx");
+
+    expect(result.success).toBe(true);
+    // Cell with comma+quote should be double-quote wrapped with internal quotes doubled
+    expect(result.text).toContain('"say ""hello"", world",plain');
   });
 });
 

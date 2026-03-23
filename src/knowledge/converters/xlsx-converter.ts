@@ -11,6 +11,13 @@ import type { ConverterRegistration } from "./types.js";
 
 const XLSX_EXTENSIONS = [".xlsx", ".xls"];
 
+function csvEscape(value: string): string {
+  if (/[,"\n\r]/.test(value)) {
+    return `"${value.replace(/"/g, '""')}"`;
+  }
+  return value;
+}
+
 export async function createXlsxConverter(): Promise<ConverterRegistration> {
   let ExcelJS: typeof import("exceljs") | null = null;
 
@@ -60,18 +67,31 @@ export async function createXlsxConverter(): Promise<ConverterRegistration> {
             const val = cell.value;
             if (val === null || val === undefined) {
               cells.push("");
-            } else if (typeof val === "object" && "result" in val) {
-              // Formula cell — use computed result
-              cells.push(String((val as { result?: unknown }).result ?? ""));
-            } else if (typeof val === "object" && "text" in val) {
-              // Rich text cell
-              cells.push(String((val as { text?: unknown }).text ?? ""));
+            } else if (typeof val === "object") {
+              if ("richText" in val) {
+                // ExcelJS rich text cell: { richText: [{ text, font? }] }
+                cells.push(
+                  (val as { richText: Array<{ text: string }> }).richText
+                    .map((r) => r.text)
+                    .join(""),
+                );
+              } else if ("result" in val) {
+                // Formula cell: { formula, result }
+                cells.push(String((val as { result?: unknown }).result ?? ""));
+              } else if ("text" in val) {
+                // Hyperlink cell: { text, hyperlink }
+                cells.push(String((val as { text?: unknown }).text ?? ""));
+              } else if ("error" in val) {
+                cells.push("");
+              } else {
+                cells.push(String(val));
+              }
             } else {
               cells.push(String(val));
             }
           });
           if (cells.length > 0) {
-            rows.push(cells.join(","));
+            rows.push(cells.map(csvEscape).join(","));
           }
         });
 
