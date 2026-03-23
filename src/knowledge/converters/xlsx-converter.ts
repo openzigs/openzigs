@@ -1,99 +1,111 @@
 /**
  * Excel converter — extracts text from .xlsx/.xls spreadsheets.
  *
- * Uses the `xlsx` package to read workbook sheets and converts each sheet
+ * Uses the `exceljs` package to read workbook sheets and converts each sheet
  * to CSV text blocks in markdown so they can be chunked/indexed by the
  * Knowledge pipeline.
  */
 
-import fs from "node:fs/promises";
 import path from "node:path";
 import type { ConverterRegistration } from "./types.js";
 
 const XLSX_EXTENSIONS = [".xlsx", ".xls"];
 
-type Worksheet = Record<string, unknown>;
-type Workbook = {
-  SheetNames: string[];
-  Sheets: Record<string, Worksheet>;
-};
-
-type XlsxModule = {
-  read(data: Buffer | Uint8Array, opts?: Record<string, unknown>): Workbook;
-  utils: {
-    sheet_to_csv(sheet: Worksheet, opts?: Record<string, unknown>): string;
-  };
-};
+function csvEscape(value: string): string {
+  if (/[,"\n\r]/.test(value)) {
+    return `"${value.replace(/"/g, '""')}"`;
+  }
+  return value;
+}
 
 export async function createXlsxConverter(): Promise<ConverterRegistration> {
-  let xlsx: XlsxModule | null = null;
+  let ExcelJS: typeof import("exceljs") | null = null;
 
   try {
-    const mod: unknown = await import("xlsx");
-    const m = mod as Record<string, unknown>;
-    const candidate = (m.default ?? m) as unknown;
-
-    if (candidate && typeof candidate === "object") {
-      const maybe = candidate as Record<string, unknown>;
-      if (typeof maybe.read === "function" && maybe.utils && typeof maybe.utils === "object") {
-        const utils = maybe.utils as Record<string, unknown>;
-        if (typeof utils.sheet_to_csv === "function") {
-          xlsx = maybe as unknown as XlsxModule;
-        }
-      }
-    }
+    ExcelJS = await import("exceljs");
   } catch {
-    // xlsx not installed.
+    // exceljs not installed.
   }
 
-  if (!xlsx) {
+  if (!ExcelJS) {
     return {
       name: "xlsx",
       extensions: XLSX_EXTENSIONS,
       available: false,
-      unavailableReason: "Install xlsx: pnpm add xlsx",
+      unavailableReason: "Install exceljs: pnpm add exceljs",
       convert: async () => ({
         text: "",
         success: false,
         converter: "xlsx",
-        error: "xlsx is not installed",
+        error: "exceljs is not installed",
       }),
     };
   }
 
-  const parser = xlsx;
+  const ExcelJSRef = ExcelJS;
 
   return {
     name: "xlsx",
     extensions: XLSX_EXTENSIONS,
     available: true,
     convert: async (filePath: string) => {
-      const buffer = await fs.readFile(filePath);
-      const workbook = parser.read(buffer, {
-        type: "buffer",
-        cellDates: true,
-        raw: false,
-      });
+      const workbook = new ExcelJSRef.Workbook();
+      await workbook.xlsx.readFile(filePath);
 
       const fileName = path.basename(filePath, path.extname(filePath));
       const parts: string[] = [`# ${fileName}`, ""];
       let nonEmptySheets = 0;
+      let totalSheets = 0;
 
-      for (const sheetName of workbook.SheetNames) {
-        const sheet = workbook.Sheets[sheetName];
-        if (!sheet) continue;
+      workbook.eachSheet((worksheet) => {
+        totalSheets += 1;
+        const rows: string[] = [];
 
-        const csv = parser.utils.sheet_to_csv(sheet, { blankrows: false }).trim();
-        if (!csv) continue;
+        worksheet.eachRow((row) => {
+          const cells: string[] = [];
+          row.eachCell({ includeEmpty: false }, (cell) => {
+            const val = cell.value;
+            if (val === null || val === undefined) {
+              cells.push("");
+            } else if (typeof val === "object") {
+              if ("richText" in val) {
+                // ExcelJS rich text cell: { richText: [{ text, font? }] }
+                cells.push(
+                  (val as { richText: Array<{ text: string }> }).richText
+                    .map((r) => r.text)
+                    .join(""),
+                );
+              } else if ("result" in val) {
+                // Formula cell: { formula, result }
+                cells.push(String((val as { result?: unknown }).result ?? ""));
+              } else if ("text" in val) {
+                // Hyperlink cell: { text, hyperlink }
+                cells.push(String((val as { text?: unknown }).text ?? ""));
+              } else if ("error" in val) {
+                cells.push("");
+              } else {
+                cells.push(String(val));
+              }
+            } else {
+              cells.push(String(val));
+            }
+          });
+          if (cells.length > 0) {
+            rows.push(cells.map(csvEscape).join(","));
+          }
+        });
+
+        const csv = rows.join("\n").trim();
+        if (!csv) return;
 
         nonEmptySheets += 1;
-        parts.push(`## Sheet: ${sheetName}`);
+        parts.push(`## Sheet: ${worksheet.name}`);
         parts.push("");
         parts.push("```csv");
         parts.push(csv);
         parts.push("```");
         parts.push("");
-      }
+      });
 
       if (nonEmptySheets === 0) {
         return {
@@ -102,7 +114,7 @@ export async function createXlsxConverter(): Promise<ConverterRegistration> {
           converter: "xlsx",
           error: "No readable cells found in workbook",
           metadata: {
-            sheetCount: workbook.SheetNames.length,
+            sheetCount: totalSheets,
             nonEmptySheets,
           },
         };
@@ -113,7 +125,7 @@ export async function createXlsxConverter(): Promise<ConverterRegistration> {
         success: true,
         converter: "xlsx",
         metadata: {
-          sheetCount: workbook.SheetNames.length,
+          sheetCount: totalSheets,
           nonEmptySheets,
         },
       };

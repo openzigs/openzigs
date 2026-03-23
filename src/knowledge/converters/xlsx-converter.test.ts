@@ -1,27 +1,66 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createXlsxConverter } from "./xlsx-converter.js";
 
-const mockRead = vi.fn();
-const mockSheetToCsv = vi.fn();
+// --- exceljs mock setup ---
 
-vi.mock("xlsx", () => ({
-  default: {
-    read: (...args: unknown[]) => mockRead(...args),
-    utils: {
-      sheet_to_csv: (...args: unknown[]) => mockSheetToCsv(...args),
-    },
+type MockRow = {
+  eachCell: (opts: { includeEmpty: boolean }, cb: (cell: { value: unknown }, col: number) => void) => void;
+};
+
+type MockSheet = {
+  name: string;
+  eachRow: (cb: (row: MockRow, rowNumber: number) => void) => void;
+};
+
+const mockSheets: MockSheet[] = [];
+
+const mockWorkbook = {
+  xlsx: {
+    readFile: vi.fn().mockResolvedValue(undefined),
   },
+  eachSheet: vi.fn((cb: (sheet: MockSheet, id: number) => void) => {
+    mockSheets.forEach((sheet, i) => cb(sheet, i + 1));
+  }),
+};
+
+const MockWorkbookConstructor = vi.fn(() => mockWorkbook);
+
+vi.mock("exceljs", () => ({
+  default: {
+    Workbook: MockWorkbookConstructor,
+  },
+  Workbook: MockWorkbookConstructor,
 }));
-vi.mock("node:fs/promises", () => ({
-  default: { readFile: vi.fn().mockResolvedValue(Buffer.from("fake-xlsx-data")) },
-}));
+
+function makeSheet(name: string, rows: string[][]): MockSheet {
+  return {
+    name,
+    eachRow: (cb) => {
+      rows.forEach((cells, i) => {
+        const mockRow: MockRow = {
+          eachCell: (_opts, cellCb) => {
+            cells.forEach((val, j) => {
+              cellCb({ value: val }, j + 1);
+            });
+          },
+        };
+        cb(mockRow, i + 1);
+      });
+    },
+  };
+}
 
 describe("createXlsxConverter", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockSheets.length = 0;
+    mockWorkbook.xlsx.readFile.mockResolvedValue(undefined);
+    mockWorkbook.eachSheet.mockImplementation((cb: (sheet: MockSheet, id: number) => void) => {
+      mockSheets.forEach((sheet, i) => cb(sheet, i + 1));
+    });
   });
 
-  it("returns an available converter when xlsx is installed", async () => {
+  it("returns an available converter when exceljs is installed", async () => {
     const reg = await createXlsxConverter();
     expect(reg.name).toBe("xlsx");
     expect(reg.extensions).toEqual([".xlsx", ".xls"]);
@@ -29,12 +68,7 @@ describe("createXlsxConverter", () => {
   });
 
   it("converts a single-sheet workbook", async () => {
-    const sheetData = { "!ref": "A1:B2" };
-    mockRead.mockReturnValue({
-      SheetNames: ["Sheet1"],
-      Sheets: { Sheet1: sheetData },
-    });
-    mockSheetToCsv.mockReturnValue("Name,Age\nAlice,30\nBob,25");
+    mockSheets.push(makeSheet("Sheet1", [["Name", "Age"], ["Alice", "30"], ["Bob", "25"]]));
 
     const reg = await createXlsxConverter();
     const result = await reg.convert("/data/people.xlsx");
@@ -50,16 +84,10 @@ describe("createXlsxConverter", () => {
   });
 
   it("converts a multi-sheet workbook", async () => {
-    mockRead.mockReturnValue({
-      SheetNames: ["Users", "Orders"],
-      Sheets: {
-        Users: {},
-        Orders: {},
-      },
-    });
-    mockSheetToCsv
-      .mockReturnValueOnce("id,name\n1,Alice")
-      .mockReturnValueOnce("id,product\n1,Widget");
+    mockSheets.push(
+      makeSheet("Users", [["id", "name"], ["1", "Alice"]]),
+      makeSheet("Orders", [["id", "product"], ["1", "Widget"]]),
+    );
 
     const reg = await createXlsxConverter();
     const result = await reg.convert("/data/report.xlsx");
@@ -71,11 +99,10 @@ describe("createXlsxConverter", () => {
   });
 
   it("returns failure when all sheets are empty", async () => {
-    mockRead.mockReturnValue({
-      SheetNames: ["Empty1", "Empty2"],
-      Sheets: { Empty1: {}, Empty2: {} },
-    });
-    mockSheetToCsv.mockReturnValue("");
+    mockSheets.push(
+      makeSheet("Empty1", []),
+      makeSheet("Empty2", []),
+    );
 
     const reg = await createXlsxConverter();
     const result = await reg.convert("/data/empty.xlsx");
@@ -85,12 +112,11 @@ describe("createXlsxConverter", () => {
     expect(result.metadata?.nonEmptySheets).toBe(0);
   });
 
-  it("skips null sheets", async () => {
-    mockRead.mockReturnValue({
-      SheetNames: ["Good", "Bad"],
-      Sheets: { Good: {}, Bad: null },
-    });
-    mockSheetToCsv.mockReturnValue("data");
+  it("skips sheets with no rows", async () => {
+    mockSheets.push(
+      makeSheet("Good", [["data", "more"]]),
+      makeSheet("Empty", []),
+    );
 
     const reg = await createXlsxConverter();
     const result = await reg.convert("/data/partial.xlsx");
@@ -99,43 +125,95 @@ describe("createXlsxConverter", () => {
     expect(result.metadata?.nonEmptySheets).toBe(1);
   });
 
-  it("passes correct read options", async () => {
-    mockRead.mockReturnValue({ SheetNames: ["S1"], Sheets: { S1: {} } });
-    mockSheetToCsv.mockReturnValue("a,b");
+  it("calls xlsx.readFile with the provided file path", async () => {
+    mockSheets.push(makeSheet("S1", [["a", "b"]]));
 
     const reg = await createXlsxConverter();
     await reg.convert("/data/test.xlsx");
 
-    expect(mockRead).toHaveBeenCalledWith(expect.any(Buffer), {
-      type: "buffer",
-      cellDates: true,
-      raw: false,
-    });
+    expect(mockWorkbook.xlsx.readFile).toHaveBeenCalledWith("/data/test.xlsx");
   });
 
-  it("passes blankrows:false to sheet_to_csv", async () => {
-    mockRead.mockReturnValue({ SheetNames: ["S1"], Sheets: { S1: {} } });
-    mockSheetToCsv.mockReturnValue("data");
+  it("handles formula cells by using result value", async () => {
+    const formulaSheet: MockSheet = {
+      name: "Formulas",
+      eachRow: (cb) => {
+        const mockRow: MockRow = {
+          eachCell: (_opts, cellCb) => {
+            cellCb({ value: { formula: "=A1+A2", result: 42 } }, 1);
+          },
+        };
+        cb(mockRow, 1);
+      },
+    };
+    mockSheets.push(formulaSheet);
 
     const reg = await createXlsxConverter();
-    await reg.convert("/data/test.xlsx");
+    const result = await reg.convert("/data/formulas.xlsx");
 
-    expect(mockSheetToCsv).toHaveBeenCalledWith({}, { blankrows: false });
+    expect(result.success).toBe(true);
+    expect(result.text).toContain("42");
+  });
+
+  it("handles rich text cells by joining richText array fragments", async () => {
+    const richTextSheet: MockSheet = {
+      name: "Rich",
+      eachRow: (cb) => {
+        const mockRow: MockRow = {
+          eachCell: (_opts, cellCb) => {
+            // ExcelJS rich text shape: { richText: [{ text, font? }] }
+            cellCb({ value: { richText: [{ text: "Hello" }, { text: " World" }] } }, 1);
+          },
+        };
+        cb(mockRow, 1);
+      },
+    };
+    mockSheets.push(richTextSheet);
+
+    const reg = await createXlsxConverter();
+    const result = await reg.convert("/data/rich.xlsx");
+
+    expect(result.success).toBe(true);
+    expect(result.text).toContain("Hello World");
+  });
+
+  it("RFC-4180 escapes CSV cells containing commas, quotes, or newlines", async () => {
+    const csvSheet: MockSheet = {
+      name: "CSV",
+      eachRow: (cb) => {
+        const mockRow: MockRow = {
+          eachCell: (_opts, cellCb) => {
+            cellCb({ value: 'say "hello", world' }, 1);
+            cellCb({ value: "plain" }, 2);
+          },
+        };
+        cb(mockRow, 1);
+      },
+    };
+    mockSheets.push(csvSheet);
+
+    const reg = await createXlsxConverter();
+    const result = await reg.convert("/data/csv.xlsx");
+
+    expect(result.success).toBe(true);
+    // Cell with comma+quote should be double-quote wrapped with internal quotes doubled
+    expect(result.text).toContain('"say ""hello"", world",plain');
   });
 });
 
 describe("createXlsxConverter (unavailable)", () => {
-  it("returns unavailable converter when xlsx is missing", async () => {
-    vi.doMock("xlsx", () => {
-      throw new Error("Cannot find module 'xlsx'");
+  it("returns unavailable converter when exceljs is missing", async () => {
+    vi.doMock("exceljs", () => {
+      throw new Error("Cannot find module 'exceljs'");
     });
-    // Re-import to get fresh module
+    // The top-level mock will still be in play; verify converter structure is correct
     const { createXlsxConverter: create } = await import("./xlsx-converter.js");
     const reg = await create();
 
-    // The mock from the top-level will still be in play, so we test the real flow
-    // by checking the converter structure. The top-level mock makes it available.
     expect(reg.name).toBe("xlsx");
     expect(reg.extensions).toEqual([".xlsx", ".xls"]);
   });
 });
+
+
+
