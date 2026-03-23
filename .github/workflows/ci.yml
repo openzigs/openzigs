@@ -12,13 +12,7 @@ concurrency:
 
 jobs:
   api:
-    strategy:
-      matrix:
-        runner:
-          - ubuntu-latest
-          - [self-hosted, macOS, ARM64]
-      fail-fast: false
-    runs-on: ${{ matrix.runner }}
+    runs-on: ubuntu-latest
     env:
       NODE_ENV: development
       NPM_CONFIG_PRODUCTION: "false"
@@ -52,13 +46,7 @@ jobs:
         run: pnpm test
 
   ui:
-    strategy:
-      matrix:
-        runner:
-          - ubuntu-latest
-          - [self-hosted, macOS, ARM64]
-      fail-fast: false
-    runs-on: ${{ matrix.runner }}
+    runs-on: ubuntu-latest
     env:
       NPM_CONFIG_PRODUCTION: "false"
     steps:
