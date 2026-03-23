@@ -129,3 +129,6 @@ external/**/test_tokens.py
 
 # Accidental file copies
 "ui/public/openzigs-icon copy.png"
+
+# Workspace uses root lockfile; stale ui lockfile triggers false Dependabot alerts
+ui/pnpm-lock.yaml

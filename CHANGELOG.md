@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- Remove stale `ui/pnpm-lock.yaml` that pinned vulnerable versions of next, flatted, socket.io-parser, and glob — resolves 8 Dependabot alerts (#29–31, #39–43)
+- Add `.gitignore` guard to prevent stale `ui/pnpm-lock.yaml` from being re-committed
+
 ### Changed
 
 - Upgrade Next.js 14.2.35 → 15.5.14 (App Router, no breaking changes for client components)
