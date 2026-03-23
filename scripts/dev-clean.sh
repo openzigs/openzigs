@@ -5,6 +5,62 @@ set -e
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 PROJECT_ROOT="$(dirname "$DIR")"
 
+# ── Port helpers ─────────────────────────────────────────────────────────────
+
+# Return the first PID listening on a given port, or empty string
+port_pid() {
+  lsof -ti:"$1" 2>/dev/null | head -1 || true
+}
+
+# Return 0 if the PID's command contains PROJECT_ROOT (i.e. it's an OpenZigs process)
+is_own_pid() {
+  local pid="$1"
+  [ -z "$pid" ] && return 1
+  ps -p "$pid" -o command= 2>/dev/null | grep -q "$PROJECT_ROOT"
+}
+
+# Find the lowest free port >= the given port
+find_free_port() {
+  local port="$1"
+  while lsof -ti:"$port" >/dev/null 2>&1; do
+    port=$((port + 1))
+  done
+  echo "$port"
+}
+
+# Resolve the effective port for a service.
+#   • Port is free              → use default
+#   • Port has an OpenZigs proc → use default (it will be killed below)
+#   • Port has a foreign app    → bump to next free port
+resolve_port() {
+  local default_port="$1"
+  local service_name="$2"
+  local pid
+  pid=$(port_pid "$default_port")
+  if [ -z "$pid" ]; then
+    echo "$default_port"
+    return
+  fi
+  if is_own_pid "$pid"; then
+    echo "[clean-start] OpenZigs $service_name detected on port $default_port – will restart" >&2
+    echo "$default_port"
+  else
+    local free_port
+    free_port=$(find_free_port $((default_port + 1)))
+    echo "[clean-start] Port $default_port is in use by another app (PID $pid); $service_name will use port $free_port" >&2
+    echo "$free_port"
+  fi
+}
+
+BACKEND_PORT=$(resolve_port 3000 "backend")
+UI_PORT=$(resolve_port 3001 "UI")
+# Ensure backend and UI never share the same port
+if [ "$UI_PORT" -eq "$BACKEND_PORT" ]; then
+  UI_PORT=$(find_free_port $((BACKEND_PORT + 1)))
+  echo "[clean-start] UI port adjusted to $UI_PORT to avoid collision with backend"
+fi
+
+# ── Kill existing OpenZigs processes ─────────────────────────────────────────
 echo "[clean-start] Killing existing OpenZigs processes..."
 
 # Kill common OpenZigs dev/watch processes by full command path
@@ -29,61 +85,15 @@ for PID in $(pgrep -f "$PROJECT_ROOT" 2>/dev/null || true); do
   fi
 done
 
-# Kill processes on port 3000 (default port)
-PID=$(lsof -ti:3000 2>/dev/null || true)
-if [ -n "$PID" ]; then
-  echo "[clean-start] Killing process on port 3000 (PID $PID)"
-  kill -9 $PID || true
-fi
-
-# Kill processes on port 3001 (Next.js dev proxy — dev-server.mjs)
-PID=$(lsof -ti:3001 2>/dev/null || true)
-if [ -n "$PID" ]; then
-  echo "[clean-start] Killing process on port 3001 (PID $PID)"
-  kill -9 $PID || true
-fi
-
-# Kill processes on port 3101 (Next.js internal port, PROXY_PORT+100 in dev-server.mjs)
-PID=$(lsof -ti:3101 2>/dev/null || true)
-if [ -n "$PID" ]; then
-  echo "[clean-start] Killing process on port 3101 (PID $PID)"
-  kill -9 $PID || true
-fi
-
-# Kill processes on port 5005 (image-gen sidecar)
-PID=$(lsof -ti:5005 2>/dev/null || true)
-if [ -n "$PID" ]; then
-  echo "[clean-start] Killing process on port 5005 (PID $PID)"
-  kill -9 $PID || true
-fi
-
-# Kill processes on port 5006 (audio sidecar)
-PID=$(lsof -ti:5006 2>/dev/null || true)
-if [ -n "$PID" ]; then
-  echo "[clean-start] Killing process on port 5006 (PID $PID)"
-  kill -9 $PID || true
-fi
-
-# Kill processes on port 9880 (GPT-SoVITS Engine B)
-PID=$(lsof -ti:9880 2>/dev/null || true)
-if [ -n "$PID" ]; then
-  echo "[clean-start] Killing process on port 9880 (PID $PID)"
-  kill -9 $PID || true
-fi
-
-# Kill processes on port 5009 (music generation sidecar)
-PID=$(lsof -ti:5009 2>/dev/null || true)
-if [ -n "$PID" ]; then
-  echo "[clean-start] Killing process on port 5009 (PID $PID)"
-  kill -9 $PID || true
-fi
-
-# Kill processes on port 5010 (music-studio sidecar)
-PID=$(lsof -ti:5010 2>/dev/null || true)
-if [ -n "$PID" ]; then
-  echo "[clean-start] Killing process on port 5010 (PID $PID)"
-  kill -9 $PID || true
-fi
+# Force-clear any OpenZigs stragglers still holding their ports after the sweep.
+# Non-OpenZigs apps on those ports are intentionally left untouched.
+for _port in "$BACKEND_PORT" "$UI_PORT" 3101 5005 5006 9880 5009 5010; do
+  STALE_PID=$(port_pid "$_port")
+  if [ -n "$STALE_PID" ] && is_own_pid "$STALE_PID"; then
+    echo "[clean-start] Killing stale OpenZigs process on port $_port (PID $STALE_PID)"
+    kill -9 "$STALE_PID" 2>/dev/null || true
+  fi
+done
 
 # Kill zombie Chrome instances associated with OpenZigs
 # This matches the profile path used in chrome-launcher.ts
@@ -98,7 +108,7 @@ if [ -f "$CONFIG_FILE" ]; then
   TOKEN=$(python3 -c "import json; print(json.load(open('$CONFIG_FILE'))['auth']['token'])" 2>/dev/null || true)
   INVITE_SECRET=$(python3 -c "import json; d=json.load(open('$CONFIG_FILE')); print(d.get('presenter',{}).get('inviteSecret',''))" 2>/dev/null || true)
   if [ -n "$TOKEN" ]; then
-    echo "NEXT_PUBLIC_OPENZIGS_API_BASE=http://localhost:3000" > "$UI_ENV"
+    echo "NEXT_PUBLIC_OPENZIGS_API_BASE=http://localhost:$BACKEND_PORT" > "$UI_ENV"
     echo "NEXT_PUBLIC_OPENZIGS_TOKEN=$TOKEN" >> "$UI_ENV"
     if [ -n "$INVITE_SECRET" ]; then
       echo "PRESENTER_INVITE_SECRET=$INVITE_SECRET" >> "$UI_ENV"
@@ -147,13 +157,13 @@ start_health_probe() {
 }
 
 echo "[clean-start] Starting backend first..."
-pnpm dev > "$DEV_LOG" 2>&1 &
+PORT="$BACKEND_PORT" pnpm dev > "$DEV_LOG" 2>&1 &
 BACKEND_PID=$!
 echo "[clean-start] Backend logs: $DEV_LOG"
 
-echo "[clean-start] Waiting for backend on port 3000..."
+echo "[clean-start] Waiting for backend on port $BACKEND_PORT..."
 for _ in {1..30}; do
-  if lsof -ti:3000 >/dev/null 2>&1; then
+  if lsof -ti:"$BACKEND_PORT" >/dev/null 2>&1; then
     break
   fi
   sleep 1
@@ -162,14 +172,14 @@ done
 echo "[clean-start] Starting UI..."
 (
   cd "$PROJECT_ROOT/ui"
-  PORT=3001 pnpm dev > "$UI_LOG" 2>&1
+  PORT=$UI_PORT pnpm dev > "$UI_LOG" 2>&1
 ) &
 UI_PID=$!
 echo "[clean-start] UI logs: $UI_LOG"
 
-echo "[clean-start] Waiting for UI on port 3001..."
+echo "[clean-start] Waiting for UI on port $UI_PORT..."
 for _ in {1..30}; do
-  if lsof -ti:3001 >/dev/null 2>&1; then
+  if lsof -ti:"$UI_PORT" >/dev/null 2>&1; then
     break
   fi
   sleep 1
@@ -384,12 +394,12 @@ cleanup() {
       kill -9 "$probe_pid" 2>/dev/null || true
     done
   fi
-  pkill -f "next.*dev" || true
-  pkill -f "sidecars/image-gen/server.py" || true
-  pkill -f "sidecars/audio/server.py" || true
-  pkill -f "sidecars/music/server.py" || true
-  pkill -f "sidecars/music-studio/server.py" || true
-  pkill -f "api_v2.py" || true
+  pkill -f "$PROJECT_ROOT.*next.*dev" || true
+  pkill -f "$PROJECT_ROOT/sidecars/image-gen/server.py" || true
+  pkill -f "$PROJECT_ROOT/sidecars/audio/server.py" || true
+  pkill -f "$PROJECT_ROOT/sidecars/music/server.py" || true
+  pkill -f "$PROJECT_ROOT/sidecars/music-studio/server.py" || true
+  pkill -f "$PROJECT_ROOT.*api_v2.py" || true
 }
 
 trap cleanup EXIT
