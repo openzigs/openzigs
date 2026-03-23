@@ -228,6 +228,14 @@ export class LocalMcpServerManager extends EventEmitter {
   private instances: Map<string, LocalServerInstance> = new Map();
   private statuses: Map<string, LocalServerStatus> = new Map();
 
+  /** Tracks consecutive crash counts per server for auto-restart backoff. */
+  private crashCounts: Map<string, number> = new Map();
+  /** Active restart timers so they can be cancelled on shutdown. */
+  private restartTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
+
+  private static MAX_AUTO_RESTARTS = 3;
+  private static RESTART_DELAYS_MS = [2_000, 5_000, 15_000];
+
   constructor(options: LocalMcpServerManagerOptions = {}) {
     super();
     this.definitions = options.definitions ?? DEFAULT_LOCAL_SERVER_DEFINITIONS;
@@ -308,6 +316,11 @@ export class LocalMcpServerManager extends EventEmitter {
 
   /** Stop all running local MCP servers. */
   async stopAll(): Promise<void> {
+    // Cancel all pending auto-restart timers
+    for (const timer of this.restartTimers.values()) clearTimeout(timer);
+    this.restartTimers.clear();
+    this.crashCounts.clear();
+
     for (const [name, instance] of this.instances) {
       try {
         await this.stopServer(name, instance);
@@ -323,6 +336,15 @@ export class LocalMcpServerManager extends EventEmitter {
   async restartServer(name: string): Promise<LocalServerStatus | null> {
     const def = this.definitions.find((d) => d.name === name);
     if (!def) return null;
+
+    // Cancel any pending auto-restart timer
+    const pending = this.restartTimers.get(name);
+    if (pending) {
+      clearTimeout(pending);
+      this.restartTimers.delete(name);
+    }
+    // Reset crash counter on manual restart
+    this.crashCounts.set(name, 0);
 
     const existing = this.instances.get(name);
     if (existing) {
@@ -572,12 +594,63 @@ export class LocalMcpServerManager extends EventEmitter {
     if (!instance) return;
 
     this.instances.delete(name);
-    this.setStatus(instance.definition, {
+    this.emit("server:error", name, new Error("Process crashed or closed unexpectedly"));
+    this.scheduleAutoRestart(name, instance.definition);
+  }
+
+  /**
+   * Schedule an auto-restart with exponential backoff.
+   * Gives up after MAX_AUTO_RESTARTS consecutive failures.
+   */
+  private scheduleAutoRestart(
+    name: string,
+    def: LocalMcpServerDefinition
+  ): void {
+    const count = (this.crashCounts.get(name) ?? 0) + 1;
+    this.crashCounts.set(name, count);
+
+    if (count > LocalMcpServerManager.MAX_AUTO_RESTARTS) {
+      logger.error(
+        `Local MCP server "${name}" crashed ${count} times — giving up auto-restart. Use the admin panel to restart manually.`
+      );
+      this.setStatus(def, {
+        running: false,
+        toolCount: 0,
+        error: "process_crashed",
+      });
+      return;
+    }
+
+    const delay =
+      LocalMcpServerManager.RESTART_DELAYS_MS[
+        Math.min(count - 1, LocalMcpServerManager.RESTART_DELAYS_MS.length - 1)
+      ];
+    logger.warn(
+      `Local MCP server "${name}" crashed (attempt ${count}/${LocalMcpServerManager.MAX_AUTO_RESTARTS}). ` +
+        `Auto-restarting in ${delay / 1000}s…`
+    );
+    this.setStatus(def, {
       running: false,
       toolCount: 0,
-      error: "process_crashed",
+      error: `process_crashed (restarting ${count}/${LocalMcpServerManager.MAX_AUTO_RESTARTS})`,
     });
-    this.emit("server:error", name, new Error("Process crashed or closed unexpectedly"));
+
+    const timer = setTimeout(async () => {
+      this.restartTimers.delete(name);
+      try {
+        await this.startServer(def);
+        this.crashCounts.set(name, 0);
+        logger.info(`Local MCP server "${name}" auto-restarted successfully`);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        logger.error(`Auto-restart of "${name}" failed: ${msg}`);
+        this.setStatus(def, { running: false, toolCount: 0, error: msg });
+        // startServer threw before transport was established, so handleServerCrash
+        // won't fire — schedule the next attempt directly.
+        this.scheduleAutoRestart(name, def);
+      }
+    }, delay);
+    this.restartTimers.set(name, timer);
   }
 
   private setStatus(

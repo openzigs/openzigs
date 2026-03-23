@@ -7,6 +7,7 @@ const internalApi = process.env.OPENZIGS_INTERNAL_API || "http://localhost:3000"
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
+  devIndicators: false,
   // Prevent Next.js from stripping trailing slashes via 308 redirect.
   // Socket.IO requires /socket.io/ (with trailing slash); without this flag
   // the 308 redirect breaks Socket.IO polling through the rewrite proxy

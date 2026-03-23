@@ -7,8 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Upgrade Next.js 14.2.35 → 15.5.14 (App Router, no breaking changes for client components)
+- Upgrade React 18.3.1 → 19.2.4 and React DOM 18.3.1 → 19.2.4
+- Upgrade @types/react 18.x → 19.x and @types/react-dom 18.x → 19.x
+- Upgrade eslint-config-next 14.x → 15.x
+
+### Fixed
+
+- Fix React 19 type narrowing for `ReactElement.props` access in chat-markdown renderer
+- Fix `img` component type for `src` prop (now `string | Blob | undefined` in React 19)
+
 ### Security
 
+- Resolve 10 Dependabot alerts (#19, #24–28, #30–31, #40, #43) for Next.js CVEs via upgrade to 15.5.14
 - Bump jspdf 4.2.0 → 4.2.1 to fix prototype pollution vulnerability (CVE-2025-26791)
 - Add pnpm override for socket.io-parser ≥4.2.6 (CVE-2025-27108 — insufficient input validation)
 - Update pnpm override for undici ≥6.23.0 → ≥7.24.0 (CVE-2025-22150 — insufficient randomness in request boundary)

@@ -2,7 +2,7 @@
 
 import { useState, useCallback } from "react";
 import { ImageIcon, Loader2, RefreshCw, Download, Sparkles, Wand2, ArrowLeft } from "lucide-react";
-import { fetchJson } from "@/lib/api";
+import { fetchJson, buildMediaUrl } from "@/lib/api";
 import { showToast } from "@/components/toast";
 
 type ClickbaitOverlay = "none" | "arrows" | "circles" | "emoji" | "badge";
@@ -215,7 +215,7 @@ export function ThumbnailPanel({ draftId }: ThumbnailPanelProps) {
                   <p className="text-[10px] font-medium text-muted-foreground">Most Clickable Frame</p>
                   <div className="relative aspect-video w-full overflow-hidden rounded-md border border-border bg-muted">
                     <img
-                      src={rawFrameUrl}
+                      src={buildMediaUrl(rawFrameUrl)}
                       alt="Selected frame"
                       className="h-full w-full object-cover"
                     />
@@ -337,7 +337,7 @@ export function ThumbnailPanel({ draftId }: ThumbnailPanelProps) {
               <div className="space-y-2">
                 <div className="relative aspect-video w-full overflow-hidden rounded-md border border-border bg-muted">
                   <img
-                    src={result.thumbnailUrl}
+                    src={buildMediaUrl(result.thumbnailUrl)}
                     alt="Generated thumbnail"
                     className="h-full w-full object-cover"
                   />
@@ -357,7 +357,7 @@ export function ThumbnailPanel({ draftId }: ThumbnailPanelProps) {
                     Tweak
                   </button>
                   <a
-                    href={result.thumbnailUrl}
+                    href={buildMediaUrl(result.thumbnailUrl)}
                     download
                     className="flex flex-1 items-center justify-center gap-1 rounded bg-primary px-2 py-1 text-[11px] font-medium text-primary-foreground hover:bg-primary/90 transition"
                   >

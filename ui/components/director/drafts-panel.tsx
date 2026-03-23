@@ -82,10 +82,13 @@ export function DraftsPanel() {
   return (
     <div className="space-y-2">
       {drafts.map((d) => (
-        <button
+        <div
           key={d.id}
+          role="button"
+          tabIndex={0}
           onClick={() => router.push(`/director/studio/${d.id}`)}
-          className="group flex w-full items-center gap-3 rounded-lg border border-border bg-card p-3 text-left transition hover:border-primary/50 hover:bg-muted/50"
+          onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") router.push(`/director/studio/${d.id}`); }}
+          className="group flex w-full cursor-pointer items-center gap-3 rounded-lg border border-border bg-card p-3 text-left transition hover:border-primary/50 hover:bg-muted/50"
         >
           {/* Thumbnail or placeholder */}
           <div className="flex h-14 w-20 shrink-0 items-center justify-center rounded-md bg-muted">
@@ -126,7 +129,7 @@ export function DraftsPanel() {
               <Trash2 className="h-4 w-4" />
             )}
           </button>
-        </button>
+        </div>
       ))}
     </div>
   );
