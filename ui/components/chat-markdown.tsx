@@ -56,8 +56,9 @@ function isMediaUrl(href: string): "audio" | "video" | null {
 function extractLinkText(children: ReactNode): string {
   if (typeof children === "string") return children;
   if (Array.isArray(children)) return children.map(extractLinkText).join("");
-  if (isValidElement(children) && children.props?.children) {
-    return extractLinkText(children.props.children as ReactNode);
+  if (isValidElement(children)) {
+    const props = children.props as { children?: ReactNode };
+    if (props?.children) return extractLinkText(props.children);
   }
   return "";
 }
@@ -173,7 +174,7 @@ export const ChatMarkdown = memo(function ChatMarkdown({ content, isStreaming, o
 
           // Images with lightbox, download, and proper sizing
           img({ src, alt }) {
-            return <ChatImageBlock src={src} alt={alt} />;
+            return <ChatImageBlock src={typeof src === "string" ? src : undefined} alt={alt} />;
           },
 
           // Ordered lists: render as interactive choice pills when onChoiceSelect is provided
