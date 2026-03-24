@@ -33,7 +33,7 @@ import { TemplateService } from "../productivity/template-service.js";
 import { CopilotNativeMcpTester, type NativeMcpDiscoveredTool, type NativeMcpTester } from "../mcp/native-mcp-test-service.js";
 import { AVAILABLE_VOICES } from "../voice/types.js";
 import { loadSkillMetadata } from "../skills/skill-loader.js";
-import { isAllowedWebhookUrl } from "../security/url-validation.js";
+import { isAllowedNetworkNodeUrl } from "../security/url-validation.js";
 import type { PipelineTemplateManager } from "../productivity/pipeline-template-manager.js";
 import type { Server as SocketIOServer } from "socket.io";
 import { CronExpressionParser } from "cron-parser";
@@ -3820,7 +3820,7 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
       if (!/^https?:\/\/.+/.test(url)) {
         return res.status(400).json({ error: "url must be a valid HTTP(S) URL" });
       }
-      if (!isAllowedWebhookUrl(url)) {
+      if (!isAllowedNetworkNodeUrl(url)) {
         return res.status(400).json({ error: "URL points to a blocked internal/private network" });
       }
       targetUrl = url.replace(/\/$/, "");
@@ -3919,7 +3919,7 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
       if (!/^https?:\/\/.+/.test(url)) {
         return res.status(400).json({ error: "url must be a valid HTTP(S) URL" });
       }
-      if (!isAllowedWebhookUrl(url)) {
+      if (!isAllowedNetworkNodeUrl(url)) {
         return res.status(400).json({ error: "URL points to a blocked internal/private network" });
       }
       targetUrl = url.replace(/\/$/, "");
@@ -4018,7 +4018,7 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
       if (!/^https?:\/\/.+/.test(url)) {
         return res.status(400).json({ error: "url must be a valid HTTP(S) URL" });
       }
-      if (!isAllowedWebhookUrl(url)) {
+      if (!isAllowedNetworkNodeUrl(url)) {
         return res.status(400).json({ error: "URL points to a blocked internal/private network" });
       }
       targetUrl = url.replace(/\/$/, "");

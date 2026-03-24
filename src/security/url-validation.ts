@@ -39,3 +39,38 @@ export function isAllowedWebhookUrl(urlString: string): boolean {
 
   return true;
 }
+
+/**
+ * Validate a user-configured network node URL (image-gen, video-gen, music-gen workers).
+ * Less restrictive than isAllowedWebhookUrl — permits private LAN IPs since these are
+ * admin-configured worker nodes on the user's own network. Still blocks metadata
+ * endpoints, loopback addresses, and non-HTTP protocols to prevent accidental SSRF.
+ */
+export function isAllowedNetworkNodeUrl(urlString: string): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(urlString);
+  } catch {
+    return false;
+  }
+
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return false;
+
+  const hostname = parsed.hostname.toLowerCase();
+
+  // Block loopback and unspecified
+  if (hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]") return false;
+  if (hostname === "0.0.0.0") return false;
+
+  // Block cloud metadata endpoints
+  if (hostname === "169.254.169.254" || hostname === "metadata.google.internal") return false;
+  if (hostname.startsWith("169.254.")) return false;
+
+  // Block IPv6 link-local/unique-local
+  if (hostname.startsWith("[fe80:") || hostname.startsWith("[fc") || hostname.startsWith("[fd"))
+    return false;
+
+  // Private LAN IPs (10.x, 192.168.x, 172.16-31.x) are allowed — these are legitimate worker nodes.
+
+  return true;
+}
