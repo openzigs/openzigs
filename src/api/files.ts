@@ -3,7 +3,6 @@ import path from "node:path";
 import fs from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { isPathAllowed } from "../mcp/tools/path-utils.js";
-import { sanitizePath } from "../security/path-validator.js";
 
 /**
  * Promise wrapper for execFile that returns { stdout, stderr }.

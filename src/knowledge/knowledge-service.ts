@@ -1004,7 +1004,7 @@ export class KnowledgeIngestionService extends EventEmitter {
 
       // Copy each keyframe JPEG to the persistent directory
       for (const kf of keyframeFiles) {
-        if (/[\/\\\x00]|\.\./.test(kf.filename)) continue;
+        if (kf.filename.includes("..") || kf.filename.includes("/") || kf.filename.includes("\\") || kf.filename.includes("\0")) continue;
         const srcPath = path.join(keyframeTempDir, kf.filename);
         const destPath = path.join(destDir, kf.filename);
         try {
@@ -1077,14 +1077,14 @@ export class KnowledgeIngestionService extends EventEmitter {
    * @returns The JPEG path, or null if the keyframe doesn't exist.
    */
   async getKeyframeImagePath(documentId: string, frameIndex: number): Promise<string | null> {
-    if (/[\/\\\x00]|\.\./.test(documentId)) return null;
+    if (documentId.includes("..") || documentId.includes("/") || documentId.includes("\\") || documentId.includes("\0")) return null;
     const manifest = await this.getKeyframeManifest(documentId);
     if (!manifest) return null;
 
     const entry = manifest.frames.find((f) => f.index === frameIndex);
     if (!entry) return null;
 
-    if (/[\/\\\x00]|\.\./.test(entry.filename)) return null;
+    if (entry.filename.includes("..") || entry.filename.includes("/") || entry.filename.includes("\\") || entry.filename.includes("\0")) return null;
     const imagePath = path.join(this.keyframesDir, documentId, entry.filename);
     try {
       await fs.access(imagePath);
