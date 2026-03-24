@@ -220,7 +220,7 @@ export function TikTokPanel() {
                 className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm font-mono text-foreground placeholder:text-muted-foreground/50"
                 value={clientKeyInput}
                 onChange={(e) => setClientKeyInput(e.target.value)}
-                placeholder={creds?.hasClientKey ? "(already set — enter new value to update)" : "awiq8ehn…"}
+                placeholder={creds?.hasClientKey ? "(already set — enter new value to update)" : "Your TikTok client key"}
               />
             </div>
             <div className="flex flex-col gap-2">

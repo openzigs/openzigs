@@ -23,7 +23,7 @@ function mcpResult(success: boolean, data: unknown = null, error: string | null 
 const SINCE = "2026-01-01T00:00:00Z";
 
 // Mock INSTAGRAM_BUSINESS_ACCOUNT_ID for self-comment filtering
-const BUSINESS_ACCOUNT_ID = "17841439350400283";
+const BUSINESS_ACCOUNT_ID = "17841400000000000";
 
 describe("createInstagramPollFn", () => {
   beforeEach(() => {

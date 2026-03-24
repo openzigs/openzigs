@@ -4025,7 +4025,7 @@ Facebook Page publishing shares the same Meta App as Instagram. If you already s
 FACEBOOK_APP_ID=123456789012345
 FACEBOOK_APP_SECRET=abcdef1234567890abcdef1234567890
 FACEBOOK_PAGE_TOKEN=EAAL...your-page-token...
-FACEBOOK_PAGE_ID=955369944333833
+FACEBOOK_PAGE_ID=123456789012345
 ```
 
 **Create the venv:**

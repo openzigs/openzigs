@@ -1137,7 +1137,7 @@ If you already created a Meta App for Instagram (above), you can reuse the same 
 FACEBOOK_APP_ID=123456789012345
 FACEBOOK_APP_SECRET=abcdef1234567890abcdef1234567890
 FACEBOOK_PAGE_TOKEN=EAAL...your-page-token...
-FACEBOOK_PAGE_ID=955369944333833
+FACEBOOK_PAGE_ID=123456789012345
 ```
 
 #### Step 5 — Create the Python venv

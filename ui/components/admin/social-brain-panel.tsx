@@ -320,7 +320,7 @@ export function SocialBrainPanel() {
             <p className="text-xs text-muted-foreground">Business account: <code className="font-mono">{creds.instagram.businessAccountId}</code></p>
           )}
           <InputRow label="Instagram Access Token" value={igToken} onChange={setIgToken} placeholder="EAAM…" hint="Long-lived user token from Meta Developer Console (graph.instagram.com/v19.0)" />
-          <InputRow label="Instagram Business Account ID" value={igAccountId} onChange={setIgAccountId} placeholder="17841439350400283" hint="Your Instagram Business or Creator account ID (optional — used for account-level queries)" />
+          <InputRow label="Instagram Business Account ID" value={igAccountId} onChange={setIgAccountId} placeholder="17841400000000000" hint="Your Instagram Business or Creator account ID (optional — used for account-level queries)" />
           <div className="flex justify-end">
             <button
               onClick={() => handleSaveCreds("instagram")}
@@ -344,9 +344,9 @@ export function SocialBrainPanel() {
             <p className="text-xs text-muted-foreground">Page token: <code className="font-mono bg-muted/30 px-1 rounded">{creds.facebook.pageToken}</code></p>
           )}
           <InputRow label="Facebook Page Access Token" value={fbPageToken} onChange={setFbPageToken} placeholder="EAAM…" hint="Page-level access token — required for posting and Messenger" />
-          <InputRow label="Facebook App ID" value={fbAppId} onChange={setFbAppId} placeholder="908978228709054" hint={creds?.facebook.appId ? `Current: ${creds.facebook.appId}` : "Your Meta App ID"} />
+          <InputRow label="Facebook App ID" value={fbAppId} onChange={setFbAppId} placeholder="123456789012345" hint={creds?.facebook.appId ? `Current: ${creds.facebook.appId}` : "Your Meta App ID"} />
           <InputRow label="Facebook App Secret" value={fbAppSecret} onChange={setFbAppSecret} type="password" placeholder="••••••••" hint={creds?.facebook.hasAppSecret ? "App secret is set (••••)" : "Required for webhook verification"} />
-          <InputRow label="Facebook Page ID" value={fbPageId} onChange={setFbPageId} placeholder="955369944333833" hint={creds?.facebook.pageId ? `Current: ${creds.facebook.pageId}` : "Your Facebook Page numeric ID"} />
+          <InputRow label="Facebook Page ID" value={fbPageId} onChange={setFbPageId} placeholder="123456789012345" hint={creds?.facebook.pageId ? `Current: ${creds.facebook.pageId}` : "Your Facebook Page numeric ID"} />
           <div className="flex justify-end">
             <button
               onClick={() => handleSaveCreds("facebook")}

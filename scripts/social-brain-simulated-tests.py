@@ -11,15 +11,20 @@ Usage:
 """
 
 import json
+import os
 import sys
 import time
 import urllib.request
 import urllib.error
 from datetime import datetime, timezone
 
-BASE = "http://localhost:3000"
-TOKEN = "1528efb2267d94dca746741e8e8e037d469e2a26b3ecc5d6b57518df7a814193"
-VERIFY_TOKEN = "b7610e77c7cc7059b6c967eefc6fc463"
+BASE = os.environ.get("OPENZIGS_BASE_URL", "http://localhost:3000")
+TOKEN = os.environ.get("OPENZIGS_TOKEN", "")
+VERIFY_TOKEN = os.environ.get("SOCIAL_WEBHOOK_VERIFY_TOKEN", "")
+if not TOKEN:
+    sys.exit("ERROR: OPENZIGS_TOKEN env var is required (from ~/.openzigs/config.json auth.token)")
+if not VERIFY_TOKEN:
+    sys.exit("ERROR: SOCIAL_WEBHOOK_VERIFY_TOKEN env var is required (from .env)")
 RUN_ID = f"test_{int(time.time())}"
 
 PASS_COUNT = 0
