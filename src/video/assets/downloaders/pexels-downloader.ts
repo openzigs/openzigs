@@ -163,6 +163,15 @@ export class PexelsDownloader {
    * Download a photo from Pexels to the local cache.
    */
   async download(downloadUrl: string, assetName: string): Promise<string> {
+    // SSRF protection: validate download URL is from expected Pexels CDN
+    const parsed = new URL(downloadUrl);
+    if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+      throw new Error(`Invalid protocol for Pexels download: ${parsed.protocol}`);
+    }
+    if (!parsed.hostname.endsWith(".pexels.com") && parsed.hostname !== "images.pexels.com" && parsed.hostname !== "videos.pexels.com") {
+      throw new Error(`Unexpected download domain: ${parsed.hostname}`);
+    }
+
     await fs.mkdir(this.downloadDir, { recursive: true });
 
     const ext = downloadUrl.includes(".mp4") ? "mp4" : "jpg";

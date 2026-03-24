@@ -445,7 +445,7 @@ export const createSocialRouter = (opts: SocialRouterOptions): Router => {
 
     if (mode === "subscribe" && token && challenge && verifyToken && token === verifyToken) {
       logger.info(`[Social] Webhook verification for ${req.params.platform}`);
-      res.status(200).send(challenge);
+      res.type("text/plain").status(200).send(String(challenge));
       return;
     }
     res.status(403).send("Forbidden");

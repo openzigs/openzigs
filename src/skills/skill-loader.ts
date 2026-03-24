@@ -161,6 +161,7 @@ export async function loadSkillMetadata(
   const skills: SkillMetadata[] = [];
 
   for (const dir of skillDirectories) {
+    if (dir.includes("\0")) continue;
     const skillMdPath = path.join(dir, "SKILL.md");
     try {
       const raw = await fs.readFile(skillMdPath, "utf-8");

@@ -46,6 +46,10 @@ function getCharactersDir(): string {
 }
 
 function getPhotosDir(characterId: string): string {
+  // Prevent path traversal via character ID
+  if (characterId.includes("..") || characterId.includes("/") || characterId.includes("\\") || characterId.includes("\0")) {
+    throw new Error("Invalid character ID");
+  }
   return path.join(getCharactersDir(), characterId, "photos");
 }
 
@@ -187,7 +191,12 @@ export function createCharacterRouter({ characterRepo, copilot }: CharacterRoute
       }
 
       // Delete associated files (photos, LoRA weights)
-      const charDir = path.join(getCharactersDir(), req.params.id);
+      const sanitizedId = String(req.params.id);
+      if (sanitizedId.includes("..") || sanitizedId.includes("/") || sanitizedId.includes("\\") || sanitizedId.includes("\0")) {
+        res.status(400).json({ error: "Invalid character ID" });
+        return;
+      }
+      const charDir = path.join(getCharactersDir(), sanitizedId);
       try {
         await fs.rm(charDir, { recursive: true, force: true });
       } catch {
@@ -257,7 +266,7 @@ export function createCharacterRouter({ characterRepo, copilot }: CharacterRoute
 
       // Append to existing photos
       const allPhotos = [...character.referencePhotos, ...newPhotoPaths];
-      characterRepo.update(req.params.id, { referencePhotos: allPhotos });
+      characterRepo.update(String(req.params.id), { referencePhotos: allPhotos });
 
       logger.info(`[Characters] Uploaded ${files.length} photos for '${character.name}'`);
       res.json({ uploaded: newPhotoPaths.length, totalPhotos: allPhotos.length, paths: newPhotoPaths });

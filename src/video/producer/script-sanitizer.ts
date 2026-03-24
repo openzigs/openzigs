@@ -190,11 +190,16 @@ export function sanitizeNarrationScript(raw: string): SanitizationResult {
     text = text.replace(SHELL_OPERATORS_RE, ",");
   }
 
-  // 8. HTML / XML tags
+  // 8. HTML / XML tags (loop to catch nested/re-formed tags after first pass)
   if (HTML_TAG_RE.test(text)) {
     threats.push("html_tag");
     HTML_TAG_RE.lastIndex = 0;
-    text = text.replace(HTML_TAG_RE, "");
+    let prev = "";
+    while (text !== prev) {
+      prev = text;
+      HTML_TAG_RE.lastIndex = 0;
+      text = text.replace(HTML_TAG_RE, "");
+    }
   }
 
   // 9. LLM scaffolding tokens

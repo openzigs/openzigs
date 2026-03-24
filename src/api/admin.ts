@@ -33,6 +33,7 @@ import { TemplateService } from "../productivity/template-service.js";
 import { CopilotNativeMcpTester, type NativeMcpDiscoveredTool, type NativeMcpTester } from "../mcp/native-mcp-test-service.js";
 import { AVAILABLE_VOICES } from "../voice/types.js";
 import { loadSkillMetadata } from "../skills/skill-loader.js";
+import { isAllowedWebhookUrl } from "../security/url-validation.js";
 import type { PipelineTemplateManager } from "../productivity/pipeline-template-manager.js";
 import type { Server as SocketIOServer } from "socket.io";
 import { CronExpressionParser } from "cron-parser";
@@ -3819,6 +3820,9 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
       if (!/^https?:\/\/.+/.test(url)) {
         return res.status(400).json({ error: "url must be a valid HTTP(S) URL" });
       }
+      if (!isAllowedWebhookUrl(url)) {
+        return res.status(400).json({ error: "URL points to a blocked internal/private network" });
+      }
       targetUrl = url.replace(/\/$/, "");
       targetToken = token;
     } else {
@@ -3915,6 +3919,9 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
       if (!/^https?:\/\/.+/.test(url)) {
         return res.status(400).json({ error: "url must be a valid HTTP(S) URL" });
       }
+      if (!isAllowedWebhookUrl(url)) {
+        return res.status(400).json({ error: "URL points to a blocked internal/private network" });
+      }
       targetUrl = url.replace(/\/$/, "");
       targetToken = token;
     } else {
@@ -4010,6 +4017,9 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
     if (url) {
       if (!/^https?:\/\/.+/.test(url)) {
         return res.status(400).json({ error: "url must be a valid HTTP(S) URL" });
+      }
+      if (!isAllowedWebhookUrl(url)) {
+        return res.status(400).json({ error: "URL points to a blocked internal/private network" });
       }
       targetUrl = url.replace(/\/$/, "");
       targetToken = token;
@@ -4273,7 +4283,7 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
       }
 
       // Extract the generated skill name from frontmatter
-      const nameMatch = content.match(/^name:\s*(.+)$/m);
+      const nameMatch = content.match(/^name:\s*(\S.*)$/m);
       const generatedName = nameMatch?.[1]?.trim() ?? "";
 
       return res.json({ content, generatedName });
@@ -4290,8 +4300,8 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
     if (!content.trim()) return res.status(400).json({ error: "content is required" });
 
     // Check frontmatter has name
-    const nameMatch = content.match(/^name:\s*(.+)$/m);
-    const toolsMatch = content.match(/^allowed-tools:\s*(.+)$/m);
+    const nameMatch = content.match(/^name:\s*(\S.*)$/m);
+    const toolsMatch = content.match(/^allowed-tools:\s*(\S.*)$/m);
     const errors: string[] = [];
     if (!nameMatch) errors.push("Missing 'name' in YAML frontmatter");
     if (toolsMatch) {
@@ -4336,6 +4346,7 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
     const content = typeof body.content === "string" ? body.content : "";
     const skillName = req.params.name;
     if (!content) return res.status(400).json({ error: "content is required" });
+    if (/[/\\.]/.test(skillName)) return res.status(400).json({ error: "Invalid skill name" });
 
     // Check both built-in and user directories
     const dirs = copilot?.getSkillDirectories?.() ?? [];

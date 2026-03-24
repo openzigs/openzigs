@@ -87,7 +87,7 @@ const proxy = createServer((req, res) => {
     // Only log non-ECONNREFUSED errors — backend being down during dev is
     // normal (e.g. restarting) and Socket.IO polls retry automatically.
     if (err.code !== "ECONNREFUSED") {
-      console.error(`Proxy error for ${req.url}:`, err.message);
+      console.error(`Proxy error for ${String(req.url)}: ${err.message}`);
     }
     if (!res.headersSent) res.writeHead(502).end("Bad Gateway");
   });

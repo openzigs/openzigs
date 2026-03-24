@@ -360,8 +360,9 @@ export const createKnowledgeRouter = ({ knowledgeService }: KnowledgeRouterOptio
         return;
       }
 
-      // Resolve ~ in paths
+      // Resolve ~ in paths and reject traversal attempts
       const resolvedPaths = paths.map((p) => {
+        if (p.includes("\0")) throw new Error("Invalid path");
         if (p === "~") return os.homedir();
         if (p.startsWith("~/")) return path.join(os.homedir(), p.slice(2));
         return path.resolve(p);

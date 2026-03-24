@@ -3,6 +3,7 @@ import path from "node:path";
 import fs from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { isPathAllowed } from "../mcp/tools/path-utils.js";
+import { sanitizePath } from "../security/path-validator.js";
 
 /**
  * Promise wrapper for execFile that returns { stdout, stderr }.
@@ -95,11 +96,16 @@ export const createFilesRouter = ({ allowedDirs, markitdownUrl }: FilesRouterOpt
     if (!rawPath || typeof rawPath !== "string") {
       return { error: "path query parameter is required" };
     }
-    const resolved = path.resolve(rawPath);
-    if (!isPathAllowed(resolved, allowedDirs)) {
+    try {
+      // Use centralized path validation — checks null bytes + traversal
+      const resolved = sanitizePath(rawPath, allowedDirs[0]);
+      if (!isPathAllowed(resolved, allowedDirs)) {
+        return { error: "Access denied" };
+      }
+      return { resolved };
+    } catch {
       return { error: "Access denied" };
     }
-    return { resolved };
   };
 
   /** Send a guardPath error with the appropriate status code. */

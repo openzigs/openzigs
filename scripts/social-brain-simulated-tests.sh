@@ -17,8 +17,8 @@
 
 set -uo pipefail
 
-BASE="http://localhost:3000"
-TOKEN="${OPENZIGS_TOKEN:-1528efb2267d94dca746741e8e8e037d469e2a26b3ecc5d6b57518df7a814193}"
+BASE="${OPENZIGS_BASE_URL:-http://localhost:3000}"
+TOKEN="${OPENZIGS_TOKEN:?Set OPENZIGS_TOKEN env var (from ~/.openzigs/config.json auth.token)}"
 AUTH="Authorization: Bearer $TOKEN"
 CT="Content-Type: application/json"
 PASS=0
@@ -277,7 +277,7 @@ echo ""
 # =============================================================================
 bold "─── Section 3: Webhook Verification (Meta) ───"
 
-VERIFY_TOKEN="b7610e77c7cc7059b6c967eefc6fc463"
+VERIFY_TOKEN="${SOCIAL_WEBHOOK_VERIFY_TOKEN:?Set SOCIAL_WEBHOOK_VERIFY_TOKEN env var}"
 
 # 3a. Instagram webhook verify
 RESP=$(curl -s -w "\n%{http_code}" "$BASE/api/social/webhooks/instagram?hub.mode=subscribe&hub.verify_token=$VERIFY_TOKEN&hub.challenge=test_challenge_123")

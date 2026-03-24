@@ -166,7 +166,7 @@ const evaluateSelectorText = async (webSocketUrl: string, selector: string): Pro
       }
 
       const resolver = pending.get(id);
-      if (!resolver) {
+      if (!resolver || typeof resolver !== "function") {
         return;
       }
       pending.delete(id);

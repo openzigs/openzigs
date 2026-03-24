@@ -1079,11 +1079,11 @@ const extractFromOgTitle: AnnotationStrategy = {
     if (pipeIdx < 0) return [];
     const suffix = title.slice(pipeIdx + 1).trim();
     if (!suffix) return [];
-    // Split on comma, clean up HTML entities and whitespace
+    // Split on comma, clean up HTML entities and whitespace (&amp; decoded LAST)
     return suffix
       .replace(/&quot;/g, '"')
-      .replace(/&amp;/g, "&")
       .replace(/&#x27;/g, "'")
+      .replace(/&amp;/g, "&")
       .split(/,/)
       .map((s) => s.trim())
       .filter((s) => s.length >= 2 && s.length <= 60);

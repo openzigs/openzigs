@@ -80,6 +80,9 @@ export const createPinterestRouter = (options?: { copilotWrapper?: CopilotWrappe
       if (board_section_id) pin.board_section_id = board_section_id;
 
       if (image_path) {
+        if (typeof image_path !== "string" || image_path.includes("..") || image_path.includes("\0")) {
+          return res.status(400).json({ error: "Invalid image_path" });
+        }
         const absPath = path.resolve(image_path);
         if (!fs.existsSync(absPath)) {
           return res.status(400).json({ error: `Image file not found: ${absPath}` });

@@ -191,7 +191,7 @@ export class ApprovalQueue extends EventEmitter {
     };
 
     const waiter = this.waiters.get(id);
-    if (waiter) {
+    if (waiter && typeof waiter === "function") {
       waiter(result);
       this.waiters.delete(id);
     }

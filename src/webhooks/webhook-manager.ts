@@ -1,4 +1,4 @@
-import { randomBytes, createHash, createHmac, timingSafeEqual } from "node:crypto";
+import { randomBytes, createHmac, timingSafeEqual, scryptSync } from "node:crypto";
 import { nanoid } from "nanoid";
 
 /* ── Types ── */
@@ -11,8 +11,10 @@ export type WebhookConfig = {
   actionPayload: Record<string, unknown>;
   /** HMAC secret for verifying inbound webhook signatures. Hex-encoded. */
   secret: string;
-  /** Hashed API key for authentication (SHA-256). */
+  /** Hashed API key for authentication (scrypt). */
   apiKeyHash: string;
+  /** Per-webhook random salt for scrypt key derivation. Hex-encoded. */
+  apiKeySalt: string;
   enabled: boolean;
   /** Optional allowlist of source IPs (CIDR or single IPs). Empty = allow all. */
   allowedIps: string[];
@@ -54,7 +56,8 @@ export class WebhookManager {
   create(input: CreateWebhookInput): { webhook: WebhookConfig; apiKey: string } {
     const id = nanoid(12);
     const apiKey = `whk_${randomBytes(24).toString("hex")}`;
-    const apiKeyHash = this.hashKey(apiKey);
+    const salt = randomBytes(16).toString("hex");
+    const apiKeyHash = this.hashKey(apiKey, salt);
     const secret = randomBytes(32).toString("hex");
 
     const webhook: WebhookConfig = {
@@ -64,6 +67,7 @@ export class WebhookManager {
       actionPayload: input.actionPayload,
       secret,
       apiKeyHash,
+      apiKeySalt: salt,
       enabled: true,
       allowedIps: input.allowedIps ?? [],
       rateLimit: input.rateLimit ?? 60,
@@ -106,7 +110,9 @@ export class WebhookManager {
     const wh = this.webhooks.get(id);
     if (!wh) return undefined;
     const apiKey = `whk_${randomBytes(24).toString("hex")}`;
-    wh.apiKeyHash = this.hashKey(apiKey);
+    const salt = randomBytes(16).toString("hex");
+    wh.apiKeySalt = salt;
+    wh.apiKeyHash = this.hashKey(apiKey, salt);
     wh.updatedAt = new Date().toISOString();
     return { apiKey };
   }
@@ -115,8 +121,8 @@ export class WebhookManager {
 
   /** Authenticate a request by API key (Bearer token). Returns the webhook or undefined. */
   authenticateByApiKey(apiKey: string): WebhookConfig | undefined {
-    const hash = this.hashKey(apiKey);
     for (const wh of this.webhooks.values()) {
+      const hash = this.hashKey(apiKey, wh.apiKeySalt);
       if (this.safeCompare(hash, wh.apiKeyHash)) {
         return wh;
       }
@@ -169,8 +175,8 @@ export class WebhookManager {
 
   /* ── Helpers ── */
 
-  private hashKey(key: string): string {
-    return createHash("sha256").update(key).digest("hex");
+  private hashKey(key: string, salt: string): string {
+    return scryptSync(key, salt, 32).toString("hex");
   }
 
   private safeCompare(a: string, b: string): boolean {

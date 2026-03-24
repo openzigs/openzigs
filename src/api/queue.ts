@@ -151,7 +151,8 @@ export const createQueueCallbackRouter = ({ queueMaster, repo, knowledgeService,
         // Legacy base64 callback (kept for backward compat with other sidecars)
         await ensureGalleryDir();
         const ext = mimeToExtension(media_type);
-        const filename = `${job_id}${ext}`;
+        const safeJobId = String(job_id).replace(/[^a-zA-Z0-9_-]/g, "_");
+        const filename = `${safeJobId}${ext}`;
         const filePath = path.join(GALLERY_DIR, filename);
         const buffer = Buffer.from(media_base64, "base64");
         await fs.writeFile(filePath, buffer);

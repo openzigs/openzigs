@@ -159,6 +159,7 @@ export function extractKeyframesFromManifest(
 
   for (const entry of manifest.timeline) {
     if (entry.type === "image_scene") {
+      if (typeof entry.src === "string" && (entry.src.includes("..") || entry.src.includes("\0"))) continue;
       const imgPath = path.isAbsolute(entry.src) ? entry.src : path.join(outputDir, entry.src);
       if (fs.existsSync(imgPath)) {
         keyframes.push({

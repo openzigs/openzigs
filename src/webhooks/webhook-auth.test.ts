@@ -11,6 +11,7 @@ function makeWebhook(overrides: Partial<WebhookConfig> = {}): WebhookConfig {
     actionPayload: {},
     secret: "secret123",
     apiKeyHash: "hash",
+    apiKeySalt: "salt",
     enabled: true,
     allowedIps: [],
     rateLimit: 60,
