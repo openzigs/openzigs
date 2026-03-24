@@ -168,7 +168,7 @@ export class PexelsDownloader {
     if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
       throw new Error(`Invalid protocol for Pexels download: ${parsed.protocol}`);
     }
-    if (!parsed.hostname.endsWith(".pexels.com") && !parsed.hostname.endsWith(".pxhere.com") && parsed.hostname !== "images.pexels.com" && parsed.hostname !== "videos.pexels.com") {
+    if (!parsed.hostname.endsWith(".pexels.com") && parsed.hostname !== "images.pexels.com" && parsed.hostname !== "videos.pexels.com") {
       throw new Error(`Unexpected download domain: ${parsed.hostname}`);
     }
 

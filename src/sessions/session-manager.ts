@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import { randomUUID } from "node:crypto";
+import { sanitizePathComponent } from "../security/path-validator.js";
 
 export type SessionChannel = "web" | "discord" | "telegram" | "slack";
 
@@ -256,16 +257,12 @@ export class SessionManager {
   }
 
   private sessionPath(id: string) {
-    if (id.includes("..") || id.includes("/") || id.includes("\\") || id.includes("\0")) {
-      throw new Error("Invalid session ID");
-    }
+    sanitizePathComponent(id, "session ID");
     return path.join(this.baseDir, `${id}.json`);
   }
 
   private eventsPath(id: string) {
-    if (id.includes("..") || id.includes("/") || id.includes("\\") || id.includes("\0")) {
-      throw new Error("Invalid session ID");
-    }
+    sanitizePathComponent(id, "session ID");
     return path.join(this.baseDir, `${id}.jsonl`);
   }
 

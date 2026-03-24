@@ -7,6 +7,7 @@
  */
 
 import { logger } from "../../logging/logger.js";
+import { resolve4, resolve6 } from "node:dns/promises";
 
 // ── Types ────────────────────────────────────────────────────
 
@@ -58,13 +59,17 @@ const BLOCKED_HOSTS = new Set([
   "169.254.169.254",
 ]);
 
-function isPrivateIp(hostname: string): boolean {
+function isPrivateIp(ip: string): boolean {
   // IPv4 private ranges
-  if (/^10\./.test(hostname)) return true;
-  if (/^172\.(1[6-9]|2\d|3[01])\./.test(hostname)) return true;
-  if (/^192\.168\./.test(hostname)) return true;
+  if (/^10\./.test(ip)) return true;
+  if (/^172\.(1[6-9]|2\d|3[01])\./.test(ip)) return true;
+  if (/^192\.168\./.test(ip)) return true;
+  // Loopback
+  if (/^127\./.test(ip)) return true;
   // Link-local
-  if (/^169\.254\./.test(hostname)) return true;
+  if (/^169\.254\./.test(ip)) return true;
+  // IPv6 loopback / private
+  if (ip === "::1" || ip.startsWith("fe80:") || ip.startsWith("fc00:") || ip.startsWith("fd")) return true;
   return false;
 }
 
@@ -278,6 +283,21 @@ function htmlToText(html: string): string {
  */
 export async function extractBlog(url: string): Promise<ExtractedBlog> {
   const validated = validateUrl(url);
+
+  // DNS-level SSRF protection: resolve hostname and verify IPs are public
+  try {
+    const ips: string[] = [];
+    try { ips.push(...(await resolve4(validated.hostname))); } catch { /* no A records */ }
+    try { ips.push(...(await resolve6(validated.hostname))); } catch { /* no AAAA records */ }
+    for (const ip of ips) {
+      if (isPrivateIp(ip)) {
+        throw new Error(`DNS resolved to private IP (${ip}) — SSRF blocked for ${validated.hostname}`);
+      }
+    }
+  } catch (err) {
+    if (err instanceof Error && err.message.includes("SSRF blocked")) throw err;
+    // DNS resolution failure for non-IP hostnames — let fetch handle it
+  }
 
   logger.info(`[BlogExtractor] Fetching: ${validated.href}`);
 

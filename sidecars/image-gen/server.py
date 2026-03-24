@@ -72,6 +72,22 @@ def safe_join(base_dir: str, user_path: str) -> str:
     return joined
 
 
+def _sanitize_path(user_path: str) -> str:
+    """Validate a user-supplied file path for basic safety.
+
+    Rejects null bytes and path traversal sequences.  For paths that must
+    reside under a specific base directory, use ``safe_join`` instead.
+    """
+    s = str(user_path)
+    if "\x00" in s:
+        raise ValueError("Path contains null bytes")
+    # Normalise and reject any remaining traversal
+    normed = os.path.normpath(s)
+    if ".." in normed.split(os.sep):
+        raise ValueError(f"Path traversal detected: {user_path}")
+    return normed
+
+
 def _get_training_dir(character_id: str) -> str:
     """Return persistent training directory for a character."""
     # Validate character_id doesn't contain path traversal

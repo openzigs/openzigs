@@ -49,3 +49,22 @@ export function validateResolvedPath(resolvedPath: string, baseDir: string): str
   }
   return normalizedPath;
 }
+
+/**
+ * Validate a single path component (filename, session ID, document ID, etc.)
+ * that must not contain directory separators, traversal sequences, or null bytes.
+ *
+ * @param component   Untrusted path component
+ * @param label       Human-readable label for error messages (e.g. "session ID")
+ * @returns           The validated component string
+ * @throws            Error if the component is invalid
+ */
+export function sanitizePathComponent(component: string, label = "path component"): string {
+  if (component.includes("\0")) {
+    throw new Error(`${label} contains null bytes`);
+  }
+  if (component.includes("..") || component.includes("/") || component.includes("\\")) {
+    throw new Error(`Invalid ${label}: ${component}`);
+  }
+  return component;
+}

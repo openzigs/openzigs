@@ -103,7 +103,7 @@ export class JamendoDownloader {
     if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
       throw new Error(`Invalid protocol for Jamendo download: ${parsed.protocol}`);
     }
-    if (!parsed.hostname.endsWith(".jamendo.com") && !parsed.hostname.endsWith("cdn.jamendo.com")) {
+    if (parsed.hostname !== "jamendo.com" && !parsed.hostname.endsWith(".jamendo.com")) {
       throw new Error(`Unexpected download domain: ${parsed.hostname}`);
     }
 
@@ -158,13 +158,13 @@ export class JamendoDownloader {
   }
 
   private parseCCLicense(url: string): string {
-    if (url.includes("by-sa")) return "CC BY-SA";
+    if (url.includes("publicdomain") || url.includes("zero")) return "CC0 / Public Domain";
     if (url.includes("by-nc-sa")) return "CC BY-NC-SA";
     if (url.includes("by-nc-nd")) return "CC BY-NC-ND";
     if (url.includes("by-nc")) return "CC BY-NC";
+    if (url.includes("by-sa")) return "CC BY-SA";
     if (url.includes("by-nd")) return "CC BY-ND";
     if (url.includes("by")) return "CC BY";
-    if (url.includes("publicdomain") || url.includes("zero")) return "CC0 / Public Domain";
     return "Creative Commons";
   }
 }
