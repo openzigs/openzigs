@@ -638,7 +638,9 @@ function getTimelineDuration(manifest: DirectorManifest): number {
 }
 
 function normalizePath(p: string): string {
-  return p.toLowerCase().replace(/\/+$/, "");
+  let s = p.toLowerCase();
+  while (s.endsWith("/")) s = s.slice(0, -1);
+  return s;
 }
 
 function pathBasename(p: string): string {

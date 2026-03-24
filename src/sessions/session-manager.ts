@@ -256,10 +256,16 @@ export class SessionManager {
   }
 
   private sessionPath(id: string) {
+    if (id.includes("..") || id.includes("/") || id.includes("\\") || id.includes("\0")) {
+      throw new Error("Invalid session ID");
+    }
     return path.join(this.baseDir, `${id}.json`);
   }
 
   private eventsPath(id: string) {
+    if (id.includes("..") || id.includes("/") || id.includes("\\") || id.includes("\0")) {
+      throw new Error("Invalid session ID");
+    }
     return path.join(this.baseDir, `${id}.jsonl`);
   }
 

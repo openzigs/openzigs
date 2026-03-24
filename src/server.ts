@@ -862,7 +862,7 @@ app.get("/api/social/webhooks/:platform", (req, res) => {
   const verifyToken = process.env.SOCIAL_WEBHOOK_VERIFY_TOKEN;
   if (mode === "subscribe" && token && challenge && verifyToken && token === verifyToken) {
     logger.info(`[Social] Meta webhook verification for ${platform}`);
-    res.status(200).send(challenge);
+    res.type("text/plain").status(200).send(String(challenge));
     return;
   }
 

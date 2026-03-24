@@ -22,15 +22,17 @@ import os
 import tempfile
 import time
 import traceback
+import ipaddress
+import re as _re
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 from urllib.error import URLError
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 import shutil
 import uuid
 import uvicorn
@@ -40,6 +42,57 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(message)s",
 )
 logger = logging.getLogger("music-studio-sidecar")
+
+
+# ── Security Utilities ───────────────────────────────────────
+
+def validate_callback_url(url: str) -> str:
+    """Validate that a callback/webhook URL is safe (SSRF protection).
+
+    Allows only http/https schemes and blocks private/internal networks.
+    Returns the validated URL string, or raises ValueError.
+    """
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        raise ValueError(f"URL scheme must be http or https, got: {parsed.scheme}")
+    hostname = parsed.hostname or ""
+    if not hostname:
+        raise ValueError("URL must have a hostname")
+    # Block well-known internal hostnames
+    _blocked = {"localhost", "0.0.0.0", "metadata.google.internal"}
+    if hostname.lower() in _blocked:
+        raise ValueError(f"Blocked hostname: {hostname}")
+    # Check if hostname is an IP and block private ranges
+    try:
+        addr = ipaddress.ip_address(hostname.strip("[]"))
+        if addr.is_private or addr.is_loopback or addr.is_link_local or addr.is_reserved:
+            raise ValueError(f"Blocked private/internal IP: {addr}")
+    except ValueError as e:
+        if "Blocked" in str(e):
+            raise
+        # Not an IP literal — hostname is fine
+    return url
+
+
+def safe_join(base_dir: str, user_path: str) -> str:
+    """Safely join a base directory with a user-supplied path component.
+
+    Resolves symlinks and ensures the result stays under base_dir.
+    Raises ValueError on path traversal attempts.
+    """
+    base = os.path.realpath(base_dir)
+    joined = os.path.realpath(os.path.join(base, user_path))
+    if not joined.startswith(base + os.sep) and joined != base:
+        raise ValueError(f"Path traversal blocked: {user_path}")
+    return joined
+
+
+def _safe_urlopen(url: str, data: bytes | None = None, timeout: int = 30) -> None:
+    """urlopen wrapper that validates the URL first (SSRF protection)."""
+    validate_callback_url(url)
+    req = Request(url, data=data, headers={"Content-Type": "application/json"}, method="POST")
+    urlopen(req, timeout=timeout)
+
 
 # ── Configuration ────────────────────────────────────────────
 
@@ -154,6 +207,24 @@ class GenerateRequest(BaseModel):
     callback_url: Optional[str] = None
     progress_url: Optional[str] = None
 
+    @field_validator("source_path", "voice_reference_path", mode="before")
+    @classmethod
+    def _validate_paths(cls, v: Any) -> Any:
+        if v is not None:
+            s = str(v)
+            if "\x00" in s or ".." in s:
+                raise ValueError(f"Invalid path: {v}")
+        return v
+
+    @field_validator("source_asset_id", "voice_reference_id", mode="before")
+    @classmethod
+    def _validate_ids(cls, v: Any) -> Any:
+        if v is not None:
+            s = str(v)
+            if "\x00" in s or ".." in s or "/" in s or "\\" in s:
+                raise ValueError(f"Invalid asset/reference ID: {v}")
+        return v
+
 
 # ── Pipeline ─────────────────────────────────────────────────
 
@@ -181,14 +252,8 @@ def report_progress(
                 "progress": progress,
                 "message": message,
             }).encode()
-            req = Request(
-                progress_url,
-                data=data,
-                headers={"Content-Type": "application/json"},
-                method="POST",
-            )
-            urlopen(req, timeout=5)
-        except (URLError, OSError) as e:
+            _safe_urlopen(progress_url, data=data, timeout=5)
+        except (URLError, OSError, ValueError) as e:
             logger.debug(f"Progress webhook failed: {e}")
 
 
@@ -196,18 +261,22 @@ def resolve_source_path(source_asset_id: Optional[str], source_path: Optional[st
     """Resolve the source audio file path from asset ID or direct path."""
     if source_path:
         p = Path(source_path)
-        if not p.exists():
+        # Block path traversal
+        resolved = p.resolve()
+        if ".." in source_path or "\x00" in source_path:
+            raise ValueError(f"Invalid source path: {source_path}")
+        if not resolved.exists():
             raise FileNotFoundError(f"Source file not found: {source_path}")
-        return str(p)
+        return str(resolved)
 
     if source_asset_id:
         # Look for the asset in the gallery directory
         gallery = Path(GALLERY_DIR)
-        # Asset files are named with their job_id
+        # Asset files are named with their job_id — use safe_join to prevent traversal
         for ext in [".wav", ".mp3", ".flac", ".m4a", ".ogg", ".mp4"]:
-            candidate = gallery / f"{source_asset_id}{ext}"
-            if candidate.exists():
-                return str(candidate)
+            candidate = safe_join(str(gallery), f"{source_asset_id}{ext}")
+            if os.path.exists(candidate):
+                return candidate
         # Also try matching files that contain the asset ID
         for f in gallery.iterdir():
             if source_asset_id in f.stem and f.suffix in (".wav", ".mp3", ".flac", ".m4a"):
@@ -223,18 +292,21 @@ def resolve_voice_reference(req: GenerateRequest) -> str:
     """Resolve voice reference audio path from ID or direct path."""
     if req.voice_reference_path:
         p = Path(req.voice_reference_path)
-        if not p.exists():
+        resolved = p.resolve()
+        if ".." in req.voice_reference_path or "\x00" in req.voice_reference_path:
+            raise ValueError(f"Invalid reference path: {req.voice_reference_path}")
+        if not resolved.exists():
             raise FileNotFoundError(f"Reference file not found: {req.voice_reference_path}")
-        return str(p)
+        return str(resolved)
 
     if req.voice_reference_id:
-        ref_dir = Path(VOICE_REFS_DIR) / req.voice_reference_id
-        audio_file = ref_dir / "audio.wav"
-        if audio_file.exists():
-            return str(audio_file)
+        ref_dir = safe_join(VOICE_REFS_DIR, req.voice_reference_id)
+        audio_file = os.path.join(ref_dir, "audio.wav")
+        if os.path.exists(audio_file):
+            return audio_file
         # Try any audio file in the reference directory
         for ext in [".wav", ".mp3", ".m4a", ".ogg", ".webm"]:
-            candidates = list(ref_dir.glob(f"*{ext}"))
+            candidates = list(Path(ref_dir).glob(f"*{ext}"))
             if candidates:
                 return str(candidates[0])
         raise FileNotFoundError(
@@ -363,15 +435,9 @@ async def process_job(req: GenerateRequest):
                     "media_type": result["media_type"],
                     "metadata": result["metadata"],
                 }).encode()
-                cb_req = Request(
-                    req.callback_url,
-                    data=data,
-                    headers={"Content-Type": "application/json"},
-                    method="POST",
-                )
-                urlopen(cb_req, timeout=30)
+                _safe_urlopen(req.callback_url, data=data, timeout=30)
                 logger.info(f"Callback sent for job {job_id}")
-            except (URLError, OSError) as e:
+            except (URLError, OSError, ValueError) as e:
                 logger.error(f"Callback failed for job {job_id}: {e}")
 
     except Exception as e:
@@ -396,14 +462,8 @@ async def process_job(req: GenerateRequest):
                     "status": "failed",
                     "error": error_msg,
                 }).encode()
-                cb_req = Request(
-                    req.callback_url,
-                    data=data,
-                    headers={"Content-Type": "application/json"},
-                    method="POST",
-                )
-                urlopen(cb_req, timeout=10)
-            except (URLError, OSError):
+                _safe_urlopen(req.callback_url, data=data, timeout=10)
+            except (URLError, OSError, ValueError):
                 pass
 
     finally:
@@ -657,12 +717,12 @@ async def upload_voice_reference_multipart(
 @app.get("/voice-references/{ref_id}")
 async def get_voice_reference(ref_id: str):
     """Get metadata for a specific voice reference."""
-    ref_dir = Path(VOICE_REFS_DIR) / ref_id
-    meta_file = ref_dir / "metadata.json"
-    if not ref_dir.exists() or not meta_file.exists():
+    ref_dir = safe_join(VOICE_REFS_DIR, ref_id)
+    meta_file = os.path.join(ref_dir, "metadata.json")
+    if not os.path.isdir(ref_dir) or not os.path.isfile(meta_file):
         raise HTTPException(status_code=404, detail="Voice reference not found")
 
-    meta = json.loads(meta_file.read_text())
+    meta = json.loads(Path(meta_file).read_text())
     return {"id": ref_id, **meta}
 
 
@@ -670,24 +730,24 @@ async def get_voice_reference(ref_id: str):
 async def get_voice_reference_audio(ref_id: str):
     """Stream the voice reference audio file."""
     from fastapi.responses import FileResponse
-    audio_path = Path(VOICE_REFS_DIR) / ref_id / "audio.wav"
-    if not audio_path.exists():
+    audio_path = os.path.join(safe_join(VOICE_REFS_DIR, ref_id), "audio.wav")
+    if not os.path.exists(audio_path):
         raise HTTPException(status_code=404, detail="Voice reference audio not found")
-    return FileResponse(str(audio_path), media_type="audio/wav")
+    return FileResponse(audio_path, media_type="audio/wav")
 
 
 @app.patch("/voice-references/{ref_id}")
 async def update_voice_reference(ref_id: str, name: str = None):
     """Update voice reference metadata (e.g. rename)."""
-    ref_dir = Path(VOICE_REFS_DIR) / ref_id
-    meta_file = ref_dir / "metadata.json"
-    if not ref_dir.exists() or not meta_file.exists():
+    ref_dir = safe_join(VOICE_REFS_DIR, ref_id)
+    meta_file = os.path.join(ref_dir, "metadata.json")
+    if not os.path.isdir(ref_dir) or not os.path.isfile(meta_file):
         raise HTTPException(status_code=404, detail="Voice reference not found")
 
-    meta = json.loads(meta_file.read_text())
+    meta = json.loads(Path(meta_file).read_text())
     if name is not None:
         meta["name"] = name
-    meta_file.write_text(json.dumps(meta, indent=2))
+    Path(meta_file).write_text(json.dumps(meta, indent=2))
     return {"id": ref_id, **meta}
 
 
@@ -720,6 +780,24 @@ class RemixAnalyzeRequest(BaseModel):
     progress_url: Optional[str] = None
     device: str = "cpu"
 
+    @field_validator("source_path", mode="before")
+    @classmethod
+    def _validate_source_path(cls, v: Any) -> Any:
+        if v is not None:
+            s = str(v)
+            if "\x00" in s or ".." in s:
+                raise ValueError(f"Invalid source path: {v}")
+        return v
+
+    @field_validator("source_asset_id", mode="before")
+    @classmethod
+    def _validate_source_asset_id(cls, v: Any) -> Any:
+        if v is not None:
+            s = str(v)
+            if "\x00" in s or ".." in s or "/" in s or "\\" in s:
+                raise ValueError(f"Invalid asset ID: {v}")
+        return v
+
 
 class RemixReplaceStemRequest(BaseModel):
     """Request body for melody-preserving instrument replacement."""
@@ -734,6 +812,14 @@ class RemixReplaceStemRequest(BaseModel):
     original_key: Optional[str] = None
     callback_url: Optional[str] = None
     progress_url: Optional[str] = None
+
+    @field_validator("source_stem_url", mode="before")
+    @classmethod
+    def _validate_source_stem_url(cls, v: Any) -> Any:
+        s = str(v)
+        if "\x00" in s or ".." in s:
+            raise ValueError(f"Invalid stem path: {v}")
+        return v
 
 
 class RemixMasterRequest(BaseModel):
@@ -760,6 +846,16 @@ class RemixMasterRequest(BaseModel):
     )
     callback_url: Optional[str] = None
     progress_url: Optional[str] = None
+
+    @field_validator("stem_paths", mode="before")
+    @classmethod
+    def _validate_stem_paths(cls, v: Any) -> Any:
+        if isinstance(v, dict):
+            for key, path in v.items():
+                s = str(path)
+                if "\x00" in s or ".." in s:
+                    raise ValueError(f"Invalid stem path for {key}: {path}")
+        return v
 
 
 async def _run_remix_analyze(req: RemixAnalyzeRequest):
@@ -822,13 +918,8 @@ async def _run_remix_analyze(req: RemixAnalyzeRequest):
                     "type": "remix_analyze",
                     **result,
                 }).encode()
-                cb_req = Request(
-                    req.callback_url, data=data,
-                    headers={"Content-Type": "application/json"},
-                    method="POST",
-                )
-                urlopen(cb_req, timeout=30)
-            except (URLError, OSError) as e:
+                _safe_urlopen(req.callback_url, data=data, timeout=30)
+            except (URLError, OSError, ValueError) as e:
                 logger.error(f"Analyze callback failed: {e}")
 
     except Exception as e:
@@ -848,12 +939,8 @@ async def _run_remix_analyze(req: RemixAnalyzeRequest):
                     "status": "failed",
                     "error": error_msg,
                 }).encode()
-                urlopen(Request(
-                    req.callback_url, data=data,
-                    headers={"Content-Type": "application/json"},
-                    method="POST",
-                ), timeout=10)
-            except (URLError, OSError):
+                _safe_urlopen(req.callback_url, data=data, timeout=10)
+            except (URLError, OSError, ValueError):
                 pass
     finally:
         worker_state["is_busy"] = False
@@ -926,12 +1013,8 @@ async def _run_remix_replace(req: RemixReplaceStemRequest):
                     "type": "remix_replace",
                     **result,
                 }).encode()
-                urlopen(Request(
-                    req.callback_url, data=data,
-                    headers={"Content-Type": "application/json"},
-                    method="POST",
-                ), timeout=30)
-            except (URLError, OSError) as e:
+                _safe_urlopen(req.callback_url, data=data, timeout=30)
+            except (URLError, OSError, ValueError) as e:
                 logger.error(f"Replace callback failed: {e}")
 
     except Exception as e:
@@ -951,12 +1034,8 @@ async def _run_remix_replace(req: RemixReplaceStemRequest):
                     "status": "failed",
                     "error": error_msg,
                 }).encode()
-                urlopen(Request(
-                    req.callback_url, data=data,
-                    headers={"Content-Type": "application/json"},
-                    method="POST",
-                ), timeout=10)
-            except (URLError, OSError):
+                _safe_urlopen(req.callback_url, data=data, timeout=10)
+            except (URLError, OSError, ValueError):
                 pass
     finally:
         worker_state["is_busy"] = False
@@ -1060,12 +1139,8 @@ async def _run_remix_master(req: RemixMasterRequest):
                         "vibe": req.vibe,
                     },
                 }).encode()
-                urlopen(Request(
-                    req.callback_url, data=data,
-                    headers={"Content-Type": "application/json"},
-                    method="POST",
-                ), timeout=30)
-            except (URLError, OSError) as e:
+                _safe_urlopen(req.callback_url, data=data, timeout=30)
+            except (URLError, OSError, ValueError) as e:
                 logger.error(f"Master callback failed: {e}")
 
     except Exception as e:
@@ -1085,12 +1160,8 @@ async def _run_remix_master(req: RemixMasterRequest):
                     "status": "failed",
                     "error": error_msg,
                 }).encode()
-                urlopen(Request(
-                    req.callback_url, data=data,
-                    headers={"Content-Type": "application/json"},
-                    method="POST",
-                ), timeout=10)
-            except (URLError, OSError):
+                _safe_urlopen(req.callback_url, data=data, timeout=10)
+            except (URLError, OSError, ValueError):
                 pass
     finally:
         worker_state["is_busy"] = False

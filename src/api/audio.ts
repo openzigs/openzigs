@@ -794,7 +794,7 @@ export const createAudioRouter = ({ db, sidecarUrl }: AudioRouterOptions): Route
           return;
         }
 
-        const rawName = req.header("x-file-name") ?? "reference.wav";
+        const rawName = String(req.header("x-file-name") || "reference.wav");
         let decodedName: string;
         try {
           decodedName = decodeURIComponent(rawName);
@@ -1187,7 +1187,7 @@ export const createAudioRouter = ({ db, sidecarUrl }: AudioRouterOptions): Route
           return;
         }
 
-        const rawName = req.header("x-file-name") ?? "reference.wav";
+        const rawName = String(req.header("x-file-name") || "reference.wav");
         let decodedName: string;
         try {
           decodedName = decodeURIComponent(rawName);

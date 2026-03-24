@@ -151,6 +151,10 @@ async function getAudioDurationSeconds(file: File): Promise<number> {
       reject(new Error("Could not read audio metadata."));
     };
 
+    if (!objectUrl.startsWith("blob:")) {
+      reject(new Error("Invalid object URL"));
+      return;
+    }
     audio.src = objectUrl;
   });
 }

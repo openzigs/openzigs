@@ -873,16 +873,20 @@ function extractTextFromHtml(html: string): string {
 
   // Replace block-level tags with newlines
   text = text.replace(/<\/?(p|div|br|h[1-6]|li|tr|blockquote)[^>]*>/gi, "\n");
-  // Remove all remaining tags
-  text = text.replace(/<[^>]+>/g, " ");
-  // Decode common HTML entities
+  // Remove all remaining tags (loop to catch nested/malformed tags)
+  let prev = "";
+  while (text !== prev) {
+    prev = text;
+    text = text.replace(/<[^>]+>/g, " ");
+  }
+  // Decode common HTML entities (&amp; decoded LAST to prevent double-decoding)
   text = text
-    .replace(/&amp;/g, "&")
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")
     .replace(/&quot;/g, '"')
     .replace(/&#039;/g, "'")
-    .replace(/&nbsp;/g, " ");
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&");
   // Normalize whitespace
   text = text.replace(/[ \t]+/g, " ").replace(/\n\s*\n/g, "\n").trim();
   // Truncate to ~4000 chars to avoid bloating the prompt

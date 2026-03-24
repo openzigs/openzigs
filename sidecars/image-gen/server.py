@@ -48,7 +48,7 @@ from typing import Any, Optional
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Depends, Header
 from fastapi.responses import Response
 from PIL import Image
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 # ── Persistent Training Directory ──────────────────────────────
 # Training output MUST be persistent — NOT in /tmp or tempfile.gettempdir().
@@ -56,9 +56,28 @@ from pydantic import BaseModel, Field
 # adapters after a reboot.  Use ~/.openzigs/training/ instead.
 _TRAINING_BASE_DIR = os.path.join(os.path.expanduser("~"), ".openzigs", "training")
 
+
+# ── Security Utilities ─────────────────────────────────────────
+
+def safe_join(base_dir: str, user_path: str) -> str:
+    """Safely join a base directory with a user-supplied path component.
+
+    Resolves symlinks and ensures the result stays under base_dir.
+    Raises ValueError on path traversal attempts.
+    """
+    base = os.path.realpath(base_dir)
+    joined = os.path.realpath(os.path.join(base, user_path))
+    if not joined.startswith(base + os.sep) and joined != base:
+        raise ValueError(f"Path traversal blocked: {user_path}")
+    return joined
+
+
 def _get_training_dir(character_id: str) -> str:
     """Return persistent training directory for a character."""
-    d = os.path.join(_TRAINING_BASE_DIR, character_id)
+    # Validate character_id doesn't contain path traversal
+    if os.sep in character_id or "/" in character_id or "\\" in character_id or ".." in character_id:
+        raise ValueError(f"Invalid character ID: {character_id}")
+    d = safe_join(_TRAINING_BASE_DIR, character_id)
     os.makedirs(d, exist_ok=True)
     return d
 
@@ -568,6 +587,16 @@ class GenerateRequest(BaseModel):
         description="Scale factor for each LoRA adapter (default: 1.0 each)",
     )
 
+    @field_validator("lora_paths", mode="before")
+    @classmethod
+    def _validate_lora_paths(cls, v: Any) -> Any:
+        if v is None:
+            return v
+        for p in v:
+            if "\x00" in p or ".." in p:
+                raise ValueError(f"Invalid LoRA path: {p}")
+        return v
+
 
 class HealthResponse(BaseModel):
     """Health check response."""
@@ -607,6 +636,14 @@ class Img2ImgRequest(BaseModel):
         default=None,
         description="Absolute path to the input image on this server's filesystem. Use for local calls.",
     )
+
+    @field_validator("image_path", mode="before")
+    @classmethod
+    def _validate_image_path(cls, v: Any) -> Any:
+        if v is not None and ("\x00" in v or ".." in str(v)):
+            raise ValueError(f"Invalid image path: {v}")
+        return v
+
     # 'strength' is the field name ImageGenService sends; 'image_strength' is the alias
     strength: Optional[float] = Field(
         default=None,
@@ -677,6 +714,14 @@ class KontextRequest(BaseModel):
         default=None,
         description="Absolute path to the input image on this server's filesystem.",
     )
+
+    @field_validator("image_path", mode="before")
+    @classmethod
+    def _validate_image_path(cls, v: Any) -> Any:
+        if v is not None and ("\x00" in v or ".." in str(v)):
+            raise ValueError(f"Invalid image path: {v}")
+        return v
+
     width: int = Field(
         default=1024,
         ge=256,
@@ -1330,6 +1375,22 @@ class TrainRequest(BaseModel):
     photos: Optional[list[TrainPhotoItem]] = Field(None, description="Base64-encoded training photos (network mode)")
     character_id: Optional[str] = Field(None, description="Character ID for organizing output")
 
+    @field_validator("train_config_path", mode="before")
+    @classmethod
+    def _validate_train_config_path(cls, v: Any) -> Any:
+        if v is not None:
+            _sanitize_path(v)
+        return v
+
+    @field_validator("character_id", mode="before")
+    @classmethod
+    def _validate_character_id(cls, v: Any) -> Any:
+        if v is not None:
+            s = str(v)
+            if "\x00" in s or ".." in s or "/" in s or "\\" in s:
+                raise ValueError(f"Invalid character ID: {v}")
+        return v
+
 
 class TrainResponse(BaseModel):
     """Response from the training endpoint."""
@@ -1573,9 +1634,12 @@ async def train_lora(req: TrainRequest, background_tasks: BackgroundTasks):
     # Determine config path
     if req.train_config_path:
         # Local mode — config file on this machine
-        if not os.path.isfile(req.train_config_path):
+        resolved_cfg = os.path.realpath(req.train_config_path)
+        if ".." in req.train_config_path or not resolved_cfg.startswith(os.path.realpath(_TRAINING_BASE_DIR)):
+            raise HTTPException(status_code=400, detail="train_config_path must be within the training directory")
+        if not os.path.isfile(resolved_cfg):
             raise HTTPException(status_code=400, detail=f"Config file not found: {req.train_config_path}")
-        config_path = req.train_config_path
+        config_path = resolved_cfg
     elif req.train_config and req.photos:
         # Network mode — materialize photos + config
         try:
@@ -1747,6 +1811,21 @@ class RecoverTrainRequest(BaseModel):
     character_id: str = Field(..., description="Character UUID whose LoRA adapter to recover")
     checkpoint_path: Optional[str] = Field(None, description="Specific checkpoint .zip path; latest is used if omitted")
 
+    @field_validator("character_id", mode="before")
+    @classmethod
+    def _validate_character_id(cls, v: Any) -> Any:
+        s = str(v)
+        if "\x00" in s or ".." in s or "/" in s or "\\" in s:
+            raise ValueError(f"Invalid character ID: {v}")
+        return v
+
+    @field_validator("checkpoint_path", mode="before")
+    @classmethod
+    def _validate_checkpoint_path(cls, v: Any) -> Any:
+        if v is not None:
+            _sanitize_path(v)
+        return v
+
 
 @app.post("/train-recover", dependencies=[Depends(verify_token)])
 async def recover_trained_lora(req: RecoverTrainRequest):
@@ -1777,9 +1856,15 @@ async def recover_trained_lora(req: RecoverTrainRequest):
                     candidate_zips.append(os.path.join(root, f))
 
     if req.checkpoint_path:
-        if not os.path.isfile(req.checkpoint_path):
+        resolved_cp = os.path.realpath(req.checkpoint_path)
+        if not os.path.isfile(resolved_cp):
             raise HTTPException(status_code=404, detail=f"Checkpoint not found: {req.checkpoint_path}")
-        target_zip = req.checkpoint_path
+        # Validate checkpoint is within training or temp dir
+        training_base = os.path.realpath(_TRAINING_BASE_DIR)
+        temp_base = os.path.realpath(os.path.join(tempfile.gettempdir(), "openzigs-training"))
+        if not (resolved_cp.startswith(training_base + os.sep) or resolved_cp.startswith(temp_base + os.sep)):
+            raise HTTPException(status_code=400, detail="checkpoint_path must be within the training directory")
+        target_zip = resolved_cp
     elif candidate_zips:
         candidate_zips.sort()
         target_zip = candidate_zips[-1]  # highest iteration number
@@ -1813,6 +1898,19 @@ class ResumeTrainRequest(BaseModel):
     checkpoint_path: str = Field(..., description="Absolute path to a checkpoint .zip file on this machine")
     output_dir: Optional[str] = Field(None, description="Override output directory (defaults to sibling of checkpoint)")
 
+    @field_validator("checkpoint_path", mode="before")
+    @classmethod
+    def _validate_checkpoint_path(cls, v: Any) -> Any:
+        _sanitize_path(v)
+        return v
+
+    @field_validator("output_dir", mode="before")
+    @classmethod
+    def _validate_output_dir(cls, v: Any) -> Any:
+        if v is not None:
+            _sanitize_path(v)
+        return v
+
 
 @app.post("/train-resume", response_model=TrainResponse, dependencies=[Depends(verify_token)])
 async def resume_train_lora(req: ResumeTrainRequest, background_tasks: BackgroundTasks):
@@ -1836,6 +1934,12 @@ async def resume_train_lora(req: ResumeTrainRequest, background_tasks: Backgroun
         raise HTTPException(status_code=400, detail=f"Checkpoint not found: {req.checkpoint_path}")
     if not req.checkpoint_path.endswith(".zip"):
         raise HTTPException(status_code=400, detail="checkpoint_path must be a .zip file")
+    # Validate checkpoint is within training or temp dir
+    resolved_cp = os.path.realpath(req.checkpoint_path)
+    training_base = os.path.realpath(_TRAINING_BASE_DIR)
+    temp_base = os.path.realpath(os.path.join(tempfile.gettempdir(), "openzigs-training"))
+    if not (resolved_cp.startswith(training_base + os.sep) or resolved_cp.startswith(temp_base + os.sep)):
+        raise HTTPException(status_code=400, detail="checkpoint_path must be within the training directory")
 
     # Output dir defaults to the lora/ directory that is a sibling of the checkpoints/ folder
     lora_output = req.output_dir or os.path.dirname(os.path.dirname(req.checkpoint_path))
@@ -2008,6 +2112,14 @@ def _bg_train_resume(checkpoint_path: str) -> None:
 class DeleteTrainDataRequest(BaseModel):
     """Request body for deleting all training output for a character."""
     character_id: str = Field(..., description="Character UUID whose training files should be removed")
+
+    @field_validator("character_id", mode="before")
+    @classmethod
+    def _validate_character_id(cls, v: Any) -> Any:
+        s = str(v)
+        if "\x00" in s or ".." in s or "/" in s or "\\" in s:
+            raise ValueError(f"Invalid character ID: {v}")
+        return v
 
 
 _LORAS_DIR = os.path.join(os.path.expanduser("~"), ".openzigs", "loras")

@@ -547,6 +547,10 @@ export const createDirectorRouter = ({
         res.status(400).json({ error: "filePath is required" });
         return;
       }
+      if (srcPath.includes("..") || srcPath.includes("\0")) {
+        res.status(400).json({ error: "Invalid file path" });
+        return;
+      }
 
       const fs = await import("node:fs");
       const pathMod = await import("node:path");
@@ -624,7 +628,7 @@ export const createDirectorRouter = ({
       const fs = await import("node:fs/promises");
       const pathMod = await import("node:path");
 
-      const rawNameHeader = req.header("x-file-name") ?? "upload.bin";
+      const rawNameHeader = String(req.header("x-file-name") || "upload.bin");
       const decodedName = (() => {
         try {
           return decodeURIComponent(rawNameHeader);
@@ -645,7 +649,7 @@ export const createDirectorRouter = ({
       const filePath = pathMod.join(targetDir, uniqueName);
       await fs.writeFile(filePath, body);
 
-      const mimeType = req.header("x-file-type") || "application/octet-stream";
+      const mimeType = String(req.header("x-file-type") || "application/octet-stream");
       logger.info(`[Director API] Uploaded ${kind} file: ${filePath} (${body.length} bytes)`);
 
       res.json({
@@ -692,7 +696,7 @@ export const createDirectorRouter = ({
       const pathMod = await import("node:path");
       const osMod = await import("node:os");
 
-      const rawName = req.header("x-file-name") ?? "asset.bin";
+      const rawName = String(req.header("x-file-name") || "asset.bin");
       let decodedName: string;
       try { decodedName = decodeURIComponent(rawName); } catch { decodedName = rawName; }
       const safeName = pathMod.basename(decodedName).replace(/[^a-zA-Z0-9._-]/g, "_");
@@ -833,6 +837,10 @@ Respond with ONLY a valid JSON array. No explanation. Example:
 
       if (!backgroundPath || typeof backgroundPath !== "string") {
         res.status(400).json({ error: "backgroundPath is required" });
+        return;
+      }
+      if (backgroundPath.includes("..") || backgroundPath.includes("\0")) {
+        res.status(400).json({ error: "Invalid backgroundPath" });
         return;
       }
       if (!placements || !Array.isArray(placements) || placements.length === 0) {
@@ -990,6 +998,18 @@ Respond with ONLY a valid JSON array. No explanation. Example:
       // Validate mode-specific required fields before creating the job
       if (mode === "presentation" && !inputFile) {
         res.status(400).json({ error: "'inputFile' is required for presentation mode" });
+        return;
+      }
+      if (inputFile && (inputFile.includes("\0") || inputFile.includes(".."))) {
+        res.status(400).json({ error: "Invalid inputFile path" });
+        return;
+      }
+      if (scriptPath && (scriptPath.includes("\0") || scriptPath.includes(".."))) {
+        res.status(400).json({ error: "Invalid scriptPath" });
+        return;
+      }
+      if (musicTrackPath && (musicTrackPath.includes("\0") || musicTrackPath.includes(".."))) {
+        res.status(400).json({ error: "Invalid musicTrackPath" });
         return;
       }
       if (mode === "hero-reel" && !heroReelOverview?.trim()) {
@@ -2291,7 +2311,11 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
       const pathMod = await import("node:path");
       const osMod = await import("node:os");
 
-      // Path traversal guard: only allow files under home directory or configured outputDir
+      // Path traversal guard: reject traversal sequences and only allow files under home directory
+      if (manifestPath.includes("..") || manifestPath.includes("\0") || outputDir.includes("..") || outputDir.includes("\0")) {
+        res.status(400).json({ error: "Invalid path" });
+        return;
+      }
       const normalizedManifestPath = pathMod.resolve(manifestPath);
       const normalizedOutputDir = pathMod.resolve(outputDir);
       const homeDir = osMod.homedir();
@@ -2397,6 +2421,10 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
 
       if (!srcPath || typeof srcPath !== "string") {
         res.status(400).json({ error: "filePath is required" });
+        return;
+      }
+      if (srcPath.includes("..") || srcPath.includes("\0")) {
+        res.status(400).json({ error: "Invalid file path" });
         return;
       }
 
@@ -3459,6 +3487,11 @@ Return ONLY the new narration text, no explanations or formatting.`;
         return;
       }
 
+      if (sourceVideo.includes("..") || sourceVideo.includes("\0")) {
+        res.status(400).json({ error: "Invalid sourceVideo path" });
+        return;
+      }
+
       const fsMod = await import("node:fs");
       if (!fsMod.existsSync(sourceVideo)) {
         res.status(404).json({ error: `Source video not found: ${sourceVideo}` });
@@ -3532,6 +3565,11 @@ Return ONLY the new narration text, no explanations or formatting.`;
 
       if (!url || typeof url !== "string") {
         res.status(400).json({ error: "url is required" });
+        return;
+      }
+
+      if (musicTrackPath && (musicTrackPath.includes("\0") || musicTrackPath.includes(".."))) {
+        res.status(400).json({ error: "Invalid musicTrackPath" });
         return;
       }
 
@@ -4433,6 +4471,10 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
         res.status(400).json({ error: "filePath is required" });
         return;
       }
+      if (inputPath.includes("..") || inputPath.includes("\0")) {
+        res.status(400).json({ error: "Invalid file path" });
+        return;
+      }
 
       const fs = await import("node:fs/promises");
       const pathMod = await import("node:path");
@@ -5264,7 +5306,8 @@ Generate the following as JSON (and ONLY JSON, no markdown fences):
     try {
       const db = getDatabase();
       ensureGalleryTables(db);
-      const { assetPath, tag } = req.query as { assetPath?: string; tag?: string };
+      const assetPath = typeof req.query.assetPath === "string" ? req.query.assetPath : undefined;
+      const tag = typeof req.query.tag === "string" ? req.query.tag : undefined;
       if (assetPath) {
         const rows = db.prepare(`SELECT tag FROM gallery_tags WHERE asset_path = ?`).all(assetPath) as Array<{ tag: string }>;
         res.json({ tags: rows.map((r) => r.tag) });
@@ -5384,9 +5427,8 @@ Generate the following as JSON (and ONLY JSON, no markdown fences):
   });
 
   router.get("/youtube/analytics/videos", async (req, res) => {
-    const { maxResults, limit } = req.query as {
-      maxResults?: string; limit?: string;
-    };
+    const maxResults = typeof req.query.maxResults === "string" ? req.query.maxResults : undefined;
+    const limit = typeof req.query.limit === "string" ? req.query.limit : undefined;
     const max = parseInt(maxResults ?? limit ?? "50", 10) || 50;
     const CACHE_KEY = `videos:${max}`;
     try {

@@ -43,8 +43,8 @@ export const toTelegramMarkdownV2 = (text: string): string => {
         const url = mermaidToInkUrl(seg.content);
         return `[Diagram](${escapeMarkdownV2(url)})`;
       }
-      // Preserve code blocks verbatim in pre tags (no escaping inside pre)
-      const escapedContent = seg.content.replace(/`/g, "\\`").replace(/\\/g, "\\\\");
+      // Preserve code blocks verbatim in pre tags (escape \ before ` to prevent double-escaping)
+      const escapedContent = seg.content.replace(/\\/g, "\\\\").replace(/`/g, "\\`");
       if (seg.lang) {
         return `\`\`\`${seg.lang}\n${escapedContent}\n\`\`\``;
       }

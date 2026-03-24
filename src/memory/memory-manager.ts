@@ -498,7 +498,7 @@ export function formatMemoryFile(
 ): string {
   return [
     "---",
-    `title: "${title.replace(/"/g, '\\"')}"`,
+    `title: "${title.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`,
     `createdAt: "${createdAt}"`,
     `updatedAt: "${updatedAt}"`,
     "---",
@@ -534,6 +534,7 @@ export function slugify(text: string): string {
   return text
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
+    .replace(/^-+/, "")
+    .replace(/-+$/, "")
     .slice(0, 80);
 }

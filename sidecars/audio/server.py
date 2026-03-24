@@ -66,13 +66,14 @@ from typing import Any, Literal, Optional
 
 import subprocess
 import tempfile
+import ipaddress
 
 import httpx
 import numpy as np
 import soundfile as sf
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 # ── Logging ────────────────────────────────────────────────────
 logging.basicConfig(
@@ -81,6 +82,35 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 log = logging.getLogger("audio-sidecar")
+
+
+# ── Security Utilities ─────────────────────────────────────────
+
+def safe_join(base_dir: str, user_path: str) -> str:
+    """Safely join a base directory with a user-supplied path component.
+
+    Resolves symlinks and ensures the result stays under base_dir.
+    Raises ValueError on path traversal attempts.
+    """
+    base = os.path.realpath(base_dir)
+    joined = os.path.realpath(os.path.join(base, user_path))
+    if not joined.startswith(base + os.sep) and joined != base:
+        raise ValueError(f"Path traversal blocked: {user_path}")
+    return joined
+
+
+def validate_file_path(file_path: str) -> str:
+    """Validate that a file path is safe to use in subprocess calls.
+
+    Ensures the path exists, is a regular file, and doesn't contain
+    null bytes or other dangerous characters.
+    """
+    if "\x00" in file_path:
+        raise ValueError("Path contains null bytes")
+    resolved = os.path.realpath(file_path)
+    if not os.path.isfile(resolved):
+        raise ValueError(f"Not a valid file: {file_path}")
+    return resolved
 
 # ── Voice Presets ──────────────────────────────────────────────
 VOICE_PRESETS: dict[str, dict] = {
@@ -515,6 +545,16 @@ class TTSRequest(BaseModel):
         default=None,
         description="Absolute path to the reference audio WAV — Engine B only",
     )
+
+    @field_validator("ref_audio_path", mode="before")
+    @classmethod
+    def _validate_ref_audio_path(cls, v: Any) -> Any:
+        if v is not None:
+            s = str(v)
+            if "\x00" in s or ".." in s:
+                raise ValueError(f"Invalid ref_audio_path: {v}")
+        return v
+
     ref_text: Optional[str] = Field(
         default=None,
         description="Verbatim transcript of the reference audio — Engine B only",
@@ -561,6 +601,15 @@ class F5TTSClip(BaseModel):
         ...,
         description="Absolute path to the reference audio file",
     )
+
+    @field_validator("ref_audio_path", mode="before")
+    @classmethod
+    def _validate_ref_audio_path(cls, v: Any) -> Any:
+        s = str(v)
+        if "\x00" in s or ".." in s:
+            raise ValueError(f"Invalid ref_audio_path: {v}")
+        return v
+
     ref_text: str = Field(
         ...,
         min_length=1,
@@ -922,6 +971,8 @@ def _trim_audio_to_max(file_path: str, max_seconds: float) -> tuple[str, bool]:
     Returns (path_to_use, is_temp). If is_temp is True the caller must
     delete the file after use.
     """
+    # Validate file path before passing to subprocess
+    file_path = validate_file_path(file_path)
     is_wav = file_path.lower().endswith(".wav")
     duration = _probe_audio_duration(file_path)
     needs_trim = duration is not None and duration > max_seconds

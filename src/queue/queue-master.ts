@@ -1070,7 +1070,8 @@ export class QueueMaster extends EventEmitter {
         : result.media_type === "image/jpeg" ? ".jpg"
         : result.media_type === "image/webp" ? ".webp"
         : ".bin";
-      const filename = `${jobId}${ext}`;
+      const safeJobId = String(jobId).replace(/[^a-zA-Z0-9_-]/g, "_");
+      const filename = `${safeJobId}${ext}`;
       const filePath = path.join(galleryDir, filename);
       const buffer = Buffer.from(result.media_base64, "base64");
       await fs.writeFile(filePath, buffer);

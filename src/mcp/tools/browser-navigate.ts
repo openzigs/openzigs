@@ -103,7 +103,7 @@ const connectToTarget = (
       const id = typeof payload.id === "number" ? payload.id : undefined;
       if (id) {
         const resolver = pending.get(id);
-        if (resolver) {
+        if (resolver && typeof resolver === "function") {
           pending.delete(id);
           resolver(payload);
         }

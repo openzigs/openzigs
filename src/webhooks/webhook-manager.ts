@@ -1,4 +1,4 @@
-import { randomBytes, createHash, createHmac, timingSafeEqual } from "node:crypto";
+import { randomBytes, createHmac, timingSafeEqual, scryptSync } from "node:crypto";
 import { nanoid } from "nanoid";
 
 /* ── Types ── */
@@ -170,7 +170,7 @@ export class WebhookManager {
   /* ── Helpers ── */
 
   private hashKey(key: string): string {
-    return createHash("sha256").update(key).digest("hex");
+    return scryptSync(key, "openzigs-webhook-key", 32).toString("hex");
   }
 
   private safeCompare(a: string, b: string): boolean {

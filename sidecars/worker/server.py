@@ -25,11 +25,40 @@ from pathlib import Path
 from typing import Optional
 
 import httpx
+import ipaddress
 from fastapi import Depends, FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger("m2pro-worker")
+
+
+# ── Security Utilities ───────────────────────────────────────
+
+def validate_callback_url(url: str) -> str:
+    """Validate that a callback URL is safe (SSRF protection).
+
+    Allows only http/https and blocks private/internal networks.
+    """
+    from urllib.parse import urlparse
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        raise ValueError(f"URL scheme must be http or https, got: {parsed.scheme}")
+    hostname = parsed.hostname or ""
+    if not hostname:
+        raise ValueError("URL must have a hostname")
+    _blocked = {"localhost", "0.0.0.0", "metadata.google.internal"}
+    if hostname.lower() in _blocked:
+        raise ValueError(f"Blocked hostname: {hostname}")
+    try:
+        addr = ipaddress.ip_address(hostname.strip("[]"))
+        if addr.is_private or addr.is_loopback or addr.is_link_local or addr.is_reserved:
+            raise ValueError(f"Blocked private/internal IP: {addr}")
+    except ValueError as e:
+        if "Blocked" in str(e):
+            raise
+    return url
+
 
 # ── Constants ────────────────────────────────────────────────
 
@@ -442,8 +471,9 @@ async def run_generation_job(request: GenerateRequest):
             },
         }
 
+        validated_url = validate_callback_url(request.callback_url)
         async with httpx.AsyncClient(timeout=60.0) as client:
-            resp = await client.post(request.callback_url, json=payload)
+            resp = await client.post(validated_url, json=payload)
             logger.info(f"Webhook callback: {resp.status_code}")
 
     except Exception as e:
@@ -452,8 +482,9 @@ async def run_generation_job(request: GenerateRequest):
 
         # Notify failure
         try:
+            validated_url = validate_callback_url(request.callback_url)
             async with httpx.AsyncClient(timeout=30.0) as client:
-                await client.post(request.callback_url, json={
+                await client.post(validated_url, json={
                     "job_id": request.job_id,
                     "status": "failed",
                     "error": str(e),

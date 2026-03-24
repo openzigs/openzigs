@@ -79,7 +79,7 @@ type Section = {
  */
 const splitBySections = (text: string): Section[] => {
   // Match lines that start with one or more # chars
-  const headingPattern = /^(#{1,6})\s+(.+)$/gm;
+  const headingPattern = /^(#{1,6})\s+(\S.*)$/gm;
   const sections: Section[] = [];
 
   let lastIndex = 0;

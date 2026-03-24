@@ -49,7 +49,7 @@ class TwitterClient:
         sorted_params = "&".join(f"{quote(k, safe='')}={quote(str(v), safe='')}" for k, v in sorted(all_params.items()))
         base_string = f"{method.upper()}&{quote(url, safe='')}&{quote(sorted_params, safe='')}"
         signing_key = f"{quote(s.twitter_api_secret, safe='')}&{quote(s.twitter_access_token_secret, safe='')}"
-        sig = base64.b64encode(hmac.new(signing_key.encode(), base_string.encode(), hashlib.sha1).digest()).decode()
+        sig = base64.b64encode(hmac.new(signing_key.encode(), base_string.encode(), hashlib.sha1).digest()).decode()  # noqa: S303 — OAuth 1.0a spec mandates HMAC-SHA1
         oauth_params["oauth_signature"] = sig
         auth_header = "OAuth " + ", ".join(f'{quote(k, safe="")}="{quote(v, safe="")}"' for k, v in sorted(oauth_params.items()))
         return {"Authorization": auth_header, "Content-Type": "application/json"}

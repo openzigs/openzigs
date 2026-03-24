@@ -81,6 +81,15 @@ export class PixabayDownloader {
    * Download a track from Pixabay to the local cache.
    */
   async download(previewUrl: string, assetName: string): Promise<string> {
+    // SSRF protection: validate download URL is from expected Pixabay CDN
+    const parsed = new URL(previewUrl);
+    if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+      throw new Error(`Invalid protocol for Pixabay download: ${parsed.protocol}`);
+    }
+    if (!parsed.hostname.endsWith(".pixabay.com") && parsed.hostname !== "pixabay.com") {
+      throw new Error(`Unexpected download domain: ${parsed.hostname}`);
+    }
+
     await fs.mkdir(this.downloadDir, { recursive: true });
 
     const fileName = `pixabay_${nanoid(8)}_${assetName.replace(/[^a-zA-Z0-9_-]/g, "_")}.mp3`;

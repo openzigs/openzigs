@@ -330,7 +330,7 @@ export class MessageRouter {
    * Returns the skill's allowedTools or undefined if the skill can't be resolved.
    */
   private async resolveSkillTools(content: string): Promise<{ tools: string[]; skillBody?: string } | undefined> {
-    const match = content.match(/\[Using (.+?) skill\]/);
+    const match = content.match(/\[Using ([^\]]+?) skill\]/);
     if (!match) return undefined;
 
     const skillDisplayName = match[1].toLowerCase();

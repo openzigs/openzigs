@@ -261,7 +261,12 @@ describe("translatePacingTags", () => {
       const input = "Welcome [PAUSE: 1s] to *OpenZigs* [SPEED: 1.2x]fast[/SPEED] [VOICE: am_adam]deep";
       const htmlTagRe =
         /<\/?[a-zA-Z][a-zA-Z0-9-]*(?:\s[^>]*)?\/?>/g;
-      const afterSanitizer = input.replace(htmlTagRe, "");
+      let afterSanitizer = input;
+      let prev = "";
+      while (afterSanitizer !== prev) {
+        prev = afterSanitizer;
+        afterSanitizer = afterSanitizer.replace(htmlTagRe, "");
+      }
 
       // Brackets survive
       expect(afterSanitizer).toContain("[PAUSE: 1s]");
@@ -280,7 +285,12 @@ describe("translatePacingTags", () => {
       const input = 'Welcome <break time="2s"/> to <emphasis>OpenZigs</emphasis>';
       const htmlTagRe =
         /<\/?[a-zA-Z][a-zA-Z0-9-]*(?:\s[^>]*)?\/?>/g;
-      const afterSanitizer = input.replace(htmlTagRe, "");
+      let afterSanitizer = input;
+      let prev = "";
+      while (afterSanitizer !== prev) {
+        prev = afterSanitizer;
+        afterSanitizer = afterSanitizer.replace(htmlTagRe, "");
+      }
 
       // SSML tags are stripped
       expect(afterSanitizer).not.toContain("<break");

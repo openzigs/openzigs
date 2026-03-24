@@ -206,12 +206,12 @@ function extractSurroundingText(html: string, imgPosition: number): string {
   const text = snippet
     .replace(/<img[^>]*>/gi, "") // remove image tags from context
     .replace(/<[^>]+>/g, " ")   // strip HTML
-    .replace(/&amp;/g, "&")
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")
     .replace(/&quot;/g, '"')
     .replace(/&#39;/g, "'")
     .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
     .replace(/\s+/g, " ")
     .trim();
 
@@ -241,18 +241,22 @@ function htmlToText(html: string): string {
   // Paragraph & div boundaries
   text = text.replace(/<\/?(p|div|section|article|blockquote|li|tr|br\s*\/?)[^>]*>/gi, "\n\n");
 
-  // Remove remaining HTML tags
-  text = text.replace(/<[^>]+>/g, "");
+  // Remove remaining HTML tags (loop to handle nested/malformed tags)
+  let prev = "";
+  while (text !== prev) {
+    prev = text;
+    text = text.replace(/<[^>]+>/g, "");
+  }
 
-  // Decode common HTML entities
+  // Decode common HTML entities (&amp; decoded LAST to prevent double-decoding)
   text = text
-    .replace(/&amp;/g, "&")
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")
     .replace(/&quot;/g, '"')
     .replace(/&#39;/g, "'")
     .replace(/&nbsp;/g, " ")
-    .replace(/&#\d+;/g, "");
+    .replace(/&#\d+;/g, "")
+    .replace(/&amp;/g, "&");
 
   // Normalize whitespace: collapse internal spaces per line, then collapse blank lines
   text = text
