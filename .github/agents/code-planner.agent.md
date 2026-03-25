@@ -15,8 +15,14 @@ tools:
   - context7/*
   - cve-search-mcp/*
   - chrome-devtools/*
-  - tavily/*
+  - tavily-mcp/*
+agents:
+  - Research
 handoffs:
+  - label: Gather Research First
+    agent: Research
+    prompt: "Gather research material before planning. Read the research-gather skill at .github/skills/research-gather/SKILL.md for the full workflow."
+    send: false
   - label: Start Implementation
     agent: Code Issue
     prompt: "Implement the epics and issues created by the Code Planner. Start with the first epic in Phase 1."
@@ -47,7 +53,8 @@ You are an Autonomous Project Planning Agent. You operate in two modes:
 - Use `#tool:mcp_github_issue_write` and `#tool:mcp_github_sub_issue_write` for all GitHub issue operations
 - Use `#tool:mcp_github_create_repository` to create new repos when needed
 - Use `#tool:mcp_context7_resolve-library-id` + `#tool:mcp_context7_query-docs` for framework/library research
-- **Web search**: prefer `#tool:mcp_tavily_tavily_search` for discovering best practices, architecture patterns, and unfamiliar topics. Fall back to `#tool:fetch_webpage` when Tavily is unavailable or when you already have a specific URL to fetch
+- **Web search**: prefer `#tool:mcp_tavily-mcp_tavily_search` for discovering best practices, architecture patterns, and unfamiliar topics. Fall back to `#tool:fetch_webpage` when Tavily is unavailable or when you already have a specific URL to fetch
+- **Research delegation**: for complex multi-source research, invoke the **Research** subagent via `#tool:agent/runSubagent` rather than doing it all inline
 - If GitHub MCP tools fail, fall back to `git` and `gh` CLI commands in terminal
 
 ## Workflow Overview
@@ -59,9 +66,10 @@ You are an Autonomous Project Planning Agent. You operate in two modes:
 │     • If repo exists → skip to research/planning     │
 ├──────────────────────────────────────────────────────┤
 │  2. RESEARCH — Gather requirements from all sources  │
-│     • Local documents: DOCX, PDF, XLSX (optional)    │
+│     • Local files via read_file (optional)            │
 │     • Web URLs and documentation (optional)          │
 │     • Context7 library docs (automatic)              │
+│     • Can delegate to Research subagent              │
 ├──────────────────────────────────────────────────────┤
 │  3. PLAN — Design the epic structure                 │
 │     • Single feature → 1 epic + sub-issues           │
@@ -79,14 +87,15 @@ You are an Autonomous Project Planning Agent. You operate in two modes:
 │     • docs/USER_GUIDE.md (initial skeleton)          │
 ├──────────────────────────────────────────────────────┤
 │  6. HANDOFF — Present summary, offer next steps      │
+│     • Hand off to Research agent for deeper research  │
 │     • Hand off to Code Issue agent for implementation │
 │     • Or hand off to Code Review for plan review      │
 └──────────────────────────────────────────────────────┘
 ```
 
-## Skills
+## Skills & Subagents
 
-This agent orchestrates three skills in sequence:
+This agent orchestrates three skills and one optional subagent:
 
 ### 1. `repo-scaffold` — Repository Setup
 Read the full skill at `.github/skills/repo-scaffold/SKILL.md`.
@@ -103,13 +112,15 @@ Read the full skill at `.github/skills/repo-scaffold/SKILL.md`.
 ### 2. `research-gather` — Requirements Research
 Read the full skill at `.github/skills/research-gather/SKILL.md`.
 
-**Triggers**: User wants to plan epics, user provides local docs path, user provides web URLs.
+**Triggers**: User wants to plan epics, user provides local docs path, or user provides web URLs.
 
 **What it does**:
-- Converts local DOCX/PDF/XLSX/PPTX to Markdown (optional)
+- Reads local files for reference material (optional)
 - Fetches web pages for reference material (optional)
 - Looks up library/framework docs via Context7
 - Produces a structured research summary
+
+**Alternative**: For complex multi-source research, invoke the **Research** subagent via `#tool:agent/runSubagent` instead.
 
 ### 3. `epic-planner` — Epic & Issue Creation
 Read the full skill at `.github/skills/epic-planner/SKILL.md`.
@@ -132,8 +143,11 @@ User invokes Code Planner
 │  │
 │  ├─ Run repo-scaffold skill (interview → scaffold → push)
 │  ├─ Does the user need to gather research?
-│  │  ├─ Yes → Run research-gather skill
-│  │  └─ No → Continue with description only
+│  ├─ Local docs path provided → Run research-gather (local files)
+│  │  └─ or delegate to Research subagent for complex multi-source
+│  ├─ Web URLs provided → Run research-gather (web flow)
+│  ├─ Multiple sources → Delegate to Research subagent
+│  └─ No research needed → Continue with description only
 │  ├─ Full system → Master epic + child epics + sub-issues
 │  ├─ Run epic-planner skill
 │  ├─ Create/update docs/ARCHITECTURE.md and docs/USER_GUIDE.md
@@ -146,8 +160,11 @@ User invokes Code Planner
 │  │  └─ No → Use the current workspace repo
 │  ├─ Read existing codebase: docs/, README, project structure, open issues
 │  ├─ Does the user need to gather research?
-│  │  ├─ Yes → Run research-gather skill
-│  │  └─ No → Continue with description only
+│  ├─ Local docs path provided → Run research-gather (local files)
+│  │  └─ or delegate to Research subagent for complex multi-source
+│  ├─ Web URLs provided → Run research-gather (web flow)
+│  ├─ Multiple sources → Delegate to Research subagent
+│  └─ No research needed → Continue with description only
 │  ├─ What is the scope?
 │  │  ├─ Single feature → 1 epic + sub-issues
 │  │  ├─ Multiple features → epics per feature
@@ -156,7 +173,16 @@ User invokes Code Planner
 │  ├─ Update docs/ARCHITECTURE.md and docs/USER_GUIDE.md
 │  └─ Present summary and offer handoff
 │
+├─ MODE C: PRE-GATHERED RESEARCH (called by Orchestrator with research summary)
+│  │
+│  ├─ Skip research — use the provided research summary as requirements input
+│  ├─ Read existing codebase context
+│  ├─ Run epic-planner skill with research summary as context
+│  ├─ Create/update docs/ARCHITECTURE.md and docs/USER_GUIDE.md
+│  └─ Present summary and offer handoff
+│
 └─ HANDOFF
+   ├─ "Gather Research First" → Research agent
    ├─ "Start Implementation" → Code Issue agent
    └─ "Review Plan" → Code Review agent
 ```
@@ -193,6 +219,11 @@ User invokes Code Planner
 **With local research docs:**
 ```
 @Code Planner I have requirements docs in ~/Documents/project-specs — plan epics for this system
+```
+
+**With pre-gathered research (called by Orchestrator):**
+```
+@Code Planner The Research agent gathered the following material: {research summary}. Create epics and sub-issues based on these findings.
 ```
 
 **Add a feature to the current repo:**

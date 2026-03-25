@@ -282,7 +282,57 @@ Initial architecture document (living document — maintained by Code Issue agen
 Initial user guide (living document — maintained by Code Issue agent).
 
 #### `.github/copilot-instructions.md`
-Project-specific Copilot instructions with tech stack, conventions, and commands.
+Project-specific Copilot instructions covering everything an agent needs to work efficiently in this repo without excessive exploration. Generate it with high intent — this file is used by Copilot Chat, Copilot code review, and the Copilot coding agent on every request.
+
+Generate content covering all of the following sections (keep total file under 2 pages / ~150 lines):
+
+```markdown
+# {Project Name} — Copilot Instructions
+
+## Project Summary
+{1-2 sentence description of what the app does and who it's for}
+
+## Tech Stack
+| Layer | Technology | Version |
+|-------|-----------|---------|
+| ...   | ...       | ...     |
+
+## Build & Run Commands
+<!-- Always run these before building — list exact commands in order -->
+- Install: `{install command}`
+- Build: `{build command}`
+- Test: `{test command}`
+- Test with coverage: `{coverage command}`
+- Lint: `{lint command}`
+- Run dev server: `{dev command}`
+
+## Project Layout
+{Key directories and their purpose — 6-10 lines max}
+- `src/` — ...
+- `tests/` — ...
+- `.github/` — CI, agents, skills, instructions, prompts
+
+## Architecture Overview
+{2-4 sentences on how the system is structured — layers, services, data flow}
+
+## Coding Conventions
+- Language: {TypeScript/Python/Go/etc.} with {strict/standard} mode
+- Style: {ESLint/Prettier/Black/gofmt config locations}
+- Naming: {brief naming conventions}
+- Testing: {framework, co-located vs. separate test directory, coverage threshold}
+- Error handling: {pattern used in the project}
+
+## CI / Validation Pipeline
+{List GitHub Actions jobs or other CI steps and what they check}
+
+## Known Gotchas
+{Optional — document any non-obvious setup steps, timing issues, or workarounds}
+
+## Trust These Instructions
+Rely on this file rather than exploring the codebase from scratch. Only search if this file is incomplete or appears out of date.
+```
+
+> **Note**: This file is a **living document** — the Code Issue agent updates it whenever architectural changes occur (new modules, changed commands, new conventions). See `.github/instructions/` for path-specific rules.
 
 #### `README.md`
 Project README with:

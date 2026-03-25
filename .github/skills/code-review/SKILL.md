@@ -189,9 +189,11 @@ Based on [Google's code review checklist](https://google.github.io/eng-practices
 |-------|----------|
 | **Inline docs** | Are public APIs documented? Are complex algorithms explained? |
 | **README** | If behavior changed, is the README updated? |
-| **Changelog** | Are breaking changes noted? |
+| **CHANGELOG.md** | If the PR has any user-facing changes and `CHANGELOG.md` exists, is `## [Unreleased]` updated with entries under `### Added`, `### Changed`, `### Fixed`, `### Removed`, or `### Security`? A missing changelog entry with user-facing changes is a **blocking** issue. |
+| **Architecture docs** | If new modules, services, API endpoints, or data models were introduced: is `docs/ARCHITECTURE.md` updated? Specifically check for new Mermaid diagram nodes, updated project structure, new endpoint contracts, and updated tech stack table. Flag as blocking if architectural changes lack documentation. |
+| **User Guide** | If user-facing features, config options, or CLI commands changed: is `docs/USER_GUIDE.md` updated? |
 | **Migration** | If there are schema/API changes, is there a migration guide? |
-| **Removed code** | If features were removed, is the documentation also updated? |
+| **Removed code** | If features were removed, is the documentation also removed? |
 
 ### Step 9: Publish Review
 
@@ -239,7 +241,9 @@ gh pr review {PR_NUMBER} --request-changes --body "$(cat review-body.md)"
 - Missing: edge case for empty input
 
 ### Documentation: {UP TO DATE|NEEDS UPDATE}
-- README needs update for new API endpoint
+- CHANGELOG.md: ✅ Updated under `### Added`
+- docs/ARCHITECTURE.md: ⚠️ New `/api/widgets` endpoint not documented
+- README: No changes needed
 
 ### Verdict: REQUEST_CHANGES
 ```

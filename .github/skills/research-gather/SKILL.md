@@ -1,6 +1,6 @@
 ---
 name: research-gather
-description: "Gathers research material from multiple sources: local files (DOCX/PDF/XLSX/PPTX), web pages, and library documentation via Context7. Converts everything to Markdown for analysis. Use before epic planning to build a rich requirements base."
+description: "Gathers research material from multiple sources: local files, web pages, and library documentation via Context7. Compiles everything into a structured research summary. Use before epic planning to build a rich requirements base."
 argument-hint: "[topic or path] — describe what to research or provide a local directory path"
 ---
 
@@ -8,12 +8,12 @@ argument-hint: "[topic or path] — describe what to research or provide a local
 
 ## Purpose
 
-This skill collects and converts research material from multiple sources into Markdown for use by the **Code Planner** and **Epic Planner** workflows. It bridges the gap between raw requirements data (local files, web content, library docs) and structured GitHub issues.
+This skill collects and converts research material from multiple sources into a structured summary for use by the **Research**, **Code Planner**, and **Epic Planner** workflows.
 
 ## When to Use
 
 - Before epic planning, to gather requirements and context
-- The user has local documents (Word, PDF, Excel, PowerPoint) to analyze
+- The user has local documents or files to analyze
 - The user provides web URLs with reference material, specs, or designs
 - The user says "research", "gather requirements", "pull in docs", or "analyze documents"
 
@@ -21,6 +21,7 @@ This skill collects and converts research material from multiple sources into Ma
 
 | Tool | Purpose |
 |------|---------|
+| `read_file` | Read local files directly |
 | `mcp_tavily_tavily_search` | Web search — search queries against the live web (preferred for discovery) |
 | `mcp_tavily_tavily_extract` | Extract structured content from specific URLs |
 | `fetch_webpage` | Fetch a specific URL when Tavily is unavailable |
@@ -35,26 +36,29 @@ Present this menu:
 
 > **Where should I gather research material from?** (Choose all that apply)
 >
-> 1. � **Local directory** — Read documents from a folder on disk (DOCX, PDF, XLSX, PPTX → Markdown)
+> 1. 📁 **Local files** — Read documents from a folder on disk
 > 2. 🌐 **Web URLs** — Fetch content from web pages you provide
 > 3. 📚 **Library docs** — Look up framework/library documentation via Context7
 >
-> *Provide paths, URLs, or search terms for each source you'd like to use.*
+> *Provide paths, URLs, or topics for each source.*
 
 ### Step 2: Local Documents (if selected)
 
 #### 2a. Get the Path
-Ask the user for the directory or file path:
+If not already provided:
 > *"What is the path to your local documents?"*
 
-#### 2b. Read and Analyze
-- Read the documents in the specified directory
+#### 2b. Read Documents
+Use `read_file` to read files from the provided path. For text-based files (Markdown, plain text, JSON, YAML, code files), read them directly. For binary formats (DOCX, PDF, XLSX, PPTX), inform the user that structured conversion is not available and do your best to extract readable content.
+
+#### 2c. Read and Analyze
+- Read the generated Markdown files
 - Extract requirements, business rules, data models, and specifications
 - Note the source file for each finding
 
 ### Step 3: Web Research (if selected)
 
-#### 3a. Get URLs
+#### 3a. Get URLs or Search
 Ask the user for URLs, or infer from the project context:
 > *"What URLs should I fetch? (documentation, design specs, API references, etc.)"*
 
@@ -113,12 +117,18 @@ Produce a structured research summary that the epic-planner skill can consume:
 ### User Roles & Permissions
 {User types and their access levels}
 
+### Technology Recommendations
+{Based on library docs research — frameworks, tools, patterns}
+
 ### Open Questions
 1. {Question needing user clarification}
 2. {Ambiguity found in documents}
 
 ### Constraints & Assumptions
 - {Constraint or assumption identified during research}
+
+### Security Considerations
+- {Any security requirements, compliance needs, or sensitive data handling noted in the source documents}
 ```
 
 Present the summary to the user and ask:
@@ -135,6 +145,7 @@ Pass the research summary to the epic-planner skill as context for issue creatio
 | Local path doesn't exist | Ask user to verify the path |
 | File conversion fails | Log error, skip file, continue with others |
 | Web fetch fails | Note URL as inaccessible, continue with other sources |
+| Tavily unavailable | Fall back to `fetch_webpage` |
 | Context7 unavailable | Skip library docs, use Tavily or web research as fallback |
 
 ## Tips
