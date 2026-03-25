@@ -1,0 +1,51 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.6.0.schema.json
+#
+# OpenZigs winget manifest
+# This is a TEMPLATE. Actual submission requires code-signed builds.
+#
+# To submit to microsoft/winget-pkgs:
+#   1. Sign the NSIS installer with a code signing certificate
+#   2. Use wingetcreate to generate the manifest:
+#      wingetcreate new https://github.com/openzigs/openzigs/releases/download/v0.1.0/OpenZigs-Setup-0.1.0.exe
+#   3. Submit PR to microsoft/winget-pkgs
+#
+# Note: winget requires signed installers for submission to the public repository.
+# Unsigned installers will fail validation.
+
+PackageIdentifier: openzigs.OpenZigs
+PackageVersion: "0.1.0"
+PackageLocale: en-US
+Publisher: OpenZigs
+PublisherUrl: https://github.com/openzigs
+PublisherSupportUrl: https://github.com/openzigs/openzigs/issues
+Author: OpenZigs Contributors
+PackageName: OpenZigs
+PackageUrl: https://github.com/openzigs/openzigs
+License: BSL-1.1
+LicenseUrl: https://github.com/openzigs/openzigs/blob/main/LICENSE.md
+Copyright: Copyright (c) 2026 OpenZigs Contributors
+ShortDescription: Open-source AI assistant & automation platform
+Description: |
+  OpenZigs is an open-source AI automation platform built on GitHub Copilot SDK.
+  It combines chat, task automation, social media management, video production,
+  voice synthesis, image generation, and human-in-the-loop safety controls.
+Tags:
+  - ai
+  - automation
+  - copilot
+  - chat
+  - assistant
+  - productivity
+  - open-source
+ReleaseDate: "2026-01-01"
+Installers:
+  - Architecture: x64
+    InstallerType: nullsoft
+    InstallerUrl: https://github.com/openzigs/openzigs/releases/download/v0.1.0/OpenZigs-Setup-0.1.0.exe
+    InstallerSha256: SHA256_HASH_PLACEHOLDER
+    InstallerSwitches:
+      Silent: /S
+      SilentWithProgress: /S
+    UpgradeBehavior: install
+ManifestType: installer
+ManifestVersion: "1.6.0"

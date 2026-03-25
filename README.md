@@ -1,6 +1,10 @@
 # OpenZigs — Open-source AI Assistant & Automation Platform
 
-> **⚠️ ALPHA — This project is under active development. Expect breaking changes between releases. Only tested on macOS.**
+[![Release](https://img.shields.io/github/v/release/openzigs/openzigs?include_prereleases&style=flat-square)](https://github.com/openzigs/openzigs/releases)
+[![License](https://img.shields.io/github/license/openzigs/openzigs?style=flat-square)](LICENSE.md)
+[![Build](https://img.shields.io/github/actions/workflow/status/openzigs/openzigs/desktop-release.yml?style=flat-square&label=desktop%20build)](https://github.com/openzigs/openzigs/actions/workflows/desktop-release.yml)
+
+> **⚠️ ALPHA — This project is under active development. Expect breaking changes between releases.**
 
 > An open-source AI automation platform built on GitHub Copilot SDK, combining chat, task automation, social media management, video production, voice synthesis, image generation, and human-in-the-loop safety controls.
 
@@ -8,13 +12,25 @@ OpenZigs gives you a "God Mode" AI assistant that can read files, search the web
 
 ---
 
-## Platform Status
+## Download
 
-**ALPHA** — Core systems are functional and actively used in production by the maintainers, but APIs and configuration formats may change without notice between releases. macOS is the only tested platform. Windows and Linux are untested.
+| Platform | Download | Package Manager |
+|----------|----------|-----------------|
+| **Windows** | [Download .exe](https://github.com/openzigs/openzigs/releases/latest) | `scoop install openzigs` |
+| **macOS (Apple Silicon)** | [Download .dmg (arm64)](https://github.com/openzigs/openzigs/releases/latest) | `brew install openzigs/tap/openzigs` |
+| **macOS (Intel)** | [Download .dmg (x64)](https://github.com/openzigs/openzigs/releases/latest) | `brew install openzigs/tap/openzigs` |
+
+See [**Installation Guide**](docs/INSTALL.md) for detailed instructions, system requirements, and troubleshooting.
 
 ---
 
-## Quick Start
+## Platform Status
+
+**ALPHA** — Core systems are functional and actively used in production by the maintainers, but APIs and configuration formats may change without notice between releases. Windows and macOS desktop apps are available. Linux is development-only (run from source).
+
+---
+
+## Quick Start (Development)
 
 ```bash
 git clone --recurse-submodules https://github.com/openzigs/openzigs.git && cd openzigs
@@ -55,8 +71,9 @@ Open **http://localhost:3001** for the UI. The API server runs on **http://local
 
 | Document | Description |
 |---|---|
+| **[Installation](docs/INSTALL.md)** | Download links, system requirements, platform-specific setup instructions. |
 | **[Architecture](docs/ARCHITECTURE.md)** | System design, component breakdown, security model, Mermaid diagrams. |
-| **[User Guide](docs/USER_GUIDE.md)** | Installation, configuration, connecting channels, tool management. |
+| **[User Guide](docs/USER_GUIDE.md)** | Configuration, connecting channels, tool management. |
 
 ---
 
