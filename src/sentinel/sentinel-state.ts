@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import { z } from "zod";
+import { secureDirOptions, secureWriteOptions } from "../config/file-permissions.js";
 
 // ── Zod Schemas ──────────────────────────────────────────────────────
 
@@ -96,7 +97,7 @@ export const getStatusMdPath = () => STATUS_MD_FILE;
 
 /** Ensure the sentinel directory exists. */
 export const ensureSentinelDir = async (): Promise<void> => {
-  await fs.mkdir(SENTINEL_DIR, { recursive: true, mode: 0o700 });
+  await fs.mkdir(SENTINEL_DIR, secureDirOptions());
 };
 
 /** Create a fresh default state. */
@@ -127,7 +128,7 @@ export const readState = async (clock?: () => Date): Promise<SentinelState> => {
 export const writeState = async (state: SentinelState): Promise<void> => {
   await ensureSentinelDir();
   const tmp = `${STATE_FILE}.tmp`;
-  await fs.writeFile(tmp, JSON.stringify(state, null, 2), { encoding: "utf-8", mode: 0o600 });
+  await fs.writeFile(tmp, JSON.stringify(state, null, 2), secureWriteOptions());
   await fs.rename(tmp, STATE_FILE);
 };
 

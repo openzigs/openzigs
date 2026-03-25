@@ -33,12 +33,15 @@ import { TikTokPanel } from "@/components/admin/tiktok-panel";
 import { SocialBrainPanel } from "@/components/admin/social-brain-panel";
 import { OrchestrationTemplatesPanel } from "@/components/admin/orchestration-templates-panel";
 import { ToastContainer, showToast } from "@/components/toast";
+import { PlatformBadge } from "@/components/platform-badge";
+import { usePlatform } from "@/lib/hooks/use-platform";
 import { RotateCw } from "lucide-react";
 import { AskAiPanel, AskAiButton, PAGE_CONTEXTS } from "@/components/ask-ai";
 
 export default function AdminPage() {
   const [restarting, setRestarting] = useState(false);
   const [askAiOpen, setAskAiOpen] = useState(false);
+  const { data: platformData } = usePlatform();
 
   const toolsQuery = useQuery({
     queryKey: ["tools"],
@@ -133,15 +136,15 @@ export default function AdminPage() {
           <DirectorPanel />
         </SectionCard>
 
-        <SectionCard title="Image Generation Node" defaultOpen={false}>
+        <SectionCard title={<span className="flex items-center gap-2">Image Generation Node <PlatformBadge feature={platformData?.features?.imageGeneration} /></span>} defaultOpen={false}>
           <ImageGenPanel />
         </SectionCard>
 
-        <SectionCard title="Video Generation Node" defaultOpen={false}>
+        <SectionCard title={<span className="flex items-center gap-2">Video Generation Node <PlatformBadge feature={platformData?.features?.videoRendering} /></span>} defaultOpen={false}>
           <VideoGenPanel />
         </SectionCard>
 
-        <SectionCard title="Music Generation Node" defaultOpen={false}>
+        <SectionCard title={<span className="flex items-center gap-2">Music Generation Node <PlatformBadge feature={platformData?.features?.musicGeneration} /></span>} defaultOpen={false}>
           <MusicGenPanel />
         </SectionCard>
 

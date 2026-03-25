@@ -16,6 +16,7 @@ import os from "node:os";
 import path from "node:path";
 import { execFile } from "node:child_process";
 import { postActionRegistry } from "./post-action-registry.js";
+import { secureDirOptions, secureWriteOptions } from "../config/file-permissions.js";
 import type {
   PostActionDefinition,
   ConfigSchema,
@@ -106,11 +107,8 @@ export async function loadCustomPostActions(): Promise<CustomPostActionDefinitio
 }
 
 async function saveCustomPostActions(defs: CustomPostActionDefinition[]): Promise<void> {
-  await fs.mkdir(DATA_DIR, { recursive: true, mode: 0o700 });
-  await fs.writeFile(DATA_FILE, JSON.stringify(defs, null, 2), {
-    encoding: "utf-8",
-    mode: 0o600,
-  });
+  await fs.mkdir(DATA_DIR, secureDirOptions());
+  await fs.writeFile(DATA_FILE, JSON.stringify(defs, null, 2), secureWriteOptions());
 }
 
 /* ------------------------------------------------------------------ */

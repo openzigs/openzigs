@@ -7,9 +7,15 @@ import { logger } from "../logging/logger.js";
 
 /**
  * Resolve the Docker socket path for the current platform.
- * macOS Docker Desktop uses ~/.docker/run/docker.sock instead of /var/run/docker.sock.
+ * Windows Docker Desktop uses a named pipe; macOS Docker Desktop uses
+ * ~/.docker/run/docker.sock instead of /var/run/docker.sock.
  */
-function resolveDockerSocketPath(): string {
+export function resolveDockerSocketPath(): string {
+  // Windows Docker Desktop uses a named pipe instead of Unix sockets
+  if (process.platform === "win32") {
+    return "//./pipe/docker_engine";
+  }
+
   const candidates = [
     "/var/run/docker.sock",
     path.join(os.homedir(), ".docker", "run", "docker.sock"),

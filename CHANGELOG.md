@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Cross-platform Windows compatibility (Phase 1) (#590)
+  - Docker socket resolution now supports Windows named pipes (`//./pipe/docker_engine`) (#596)
+  - Platform capability detection module (`src/config/platform.ts`) — detects OS, arch, Docker, sidecar support, Chrome path (#599)
+  - `/api/admin/platform` endpoint exposes platform capabilities and feature availability to the UI (#601)
+  - Admin panel shows platform-appropriate availability badges on sidecar-dependent features (Image Gen, Music Gen) (#601)
+  - `usePlatform()` React hook and `PlatformBadge` component for UI feature gating (#601)
+
+### Changed
+
+- File permission operations (`chmod`, `mode: 0o600/0o700`) now use cross-platform helpers that skip on Windows NTFS (#598)
+  - New `src/config/file-permissions.ts` module with `secureFileOptions()`, `secureDirOptions()`, `chmodSecureFile()`, `secureWriteOptions()`
+  - Applied across config, CLI setup, Copilot auth, Sentinel state, Vault, audit logger, session manager, task post-actions, and server config persistence
+- Server startup logs platform capabilities and gracefully skips native sidecars on non-macOS platforms (#600)
+
+### Fixed
+
+- Remotion media resolver already had hard-link → copy fallback; confirmed no changes needed (#597)
+
 ### Security
 
 - Resolve 175 CodeQL security alerts (28 critical, 147 high) across Python sidecars and JS/TS backend (#574)

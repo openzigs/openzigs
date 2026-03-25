@@ -3,6 +3,7 @@ import path from "node:path";
 import os from "node:os";
 import { randomBytes } from "node:crypto";
 import * as z from "zod";
+import { secureDirOptions, secureWriteOptions, chmodSecureFile } from "./file-permissions.js";
 import { logger } from "../logging/logger.js";
 import { PROJECT_ROOT } from "../project-root.js";
 import type { Role } from "../auth/auth.js";
@@ -614,9 +615,9 @@ const deepMerge = (base: Record<string, unknown>, override: Record<string, unkno
 };
 
 const writeJsonFile = async (filePath: string, data: unknown) => {
-  await fs.mkdir(path.dirname(filePath), { recursive: true, mode: 0o700 });
-  await fs.writeFile(filePath, JSON.stringify(data, null, 2), { encoding: "utf-8", mode: 0o600 });
-  await fs.chmod(filePath, 0o600);
+  await fs.mkdir(path.dirname(filePath), secureDirOptions());
+  await fs.writeFile(filePath, JSON.stringify(data, null, 2), secureWriteOptions());
+  await chmodSecureFile(filePath);
 };
 
 const toObject = (value: unknown): Record<string, unknown> => {

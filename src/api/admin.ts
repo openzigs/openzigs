@@ -13,6 +13,7 @@ import type { CopilotWrapper } from "../copilot/index.js";
 import type { ReasoningEffort, ProviderConfig, CustomAgentDefinition, NativeMcpServerDefinition } from "../copilot/index.js";
 import type { DockerSidecarManager } from "../mcp/docker-sidecar-manager.js";
 import type { LocalMcpServerManager } from "../mcp/local-mcp-server-manager.js";
+import { getPlatformCapabilities } from "../config/platform.js";
 import { type PromptManager, interpolateTemplate } from "../productivity/prompt-manager.js";
 import type { Scheduler } from "../productivity/scheduler.js";
 import type { PersonalityManager } from "../personality/personality-manager.js";
@@ -1051,6 +1052,19 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
         process.exit(0);
       }
     }, 500);
+  });
+
+  // ── Platform Info (#601) ──
+  router.get("/platform", (_req, res) => {
+    const caps = getPlatformCapabilities();
+    const features = {
+      imageGeneration: { available: caps.sidecarsSupported, reason: caps.sidecarsSupported ? undefined : "Requires macOS ARM (Apple Silicon)" },
+      audioProcessing: { available: caps.sidecarsSupported, reason: caps.sidecarsSupported ? undefined : "Requires macOS ARM (Apple Silicon)" },
+      musicGeneration: { available: caps.sidecarsSupported, reason: caps.sidecarsSupported ? undefined : "Requires macOS ARM (Apple Silicon)" },
+      videoRendering: { available: true },
+      docker: { available: caps.dockerAvailable, reason: caps.dockerAvailable ? undefined : "Docker not detected" },
+    };
+    res.json({ platform: caps, features });
   });
 
   router.get("/tools", async (_req, res) => {
