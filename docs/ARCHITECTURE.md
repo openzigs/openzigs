@@ -8,6 +8,7 @@
 - [UI Architecture](#ui-architecture)
 - [Cloudflare Tunnel (Sidecar Pattern)](#cloudflare-tunnel-sidecar-pattern)
 - [Python AI Sidecars](#python-ai-sidecars)
+- [Platform Capability Detection](#platform-capability-detection)
 - [MCP Host Architecture](#mcp-host-architecture)
 - [Component Breakdown](#component-breakdown)
 - [Voice Interface Layer](#voice-interface-layer)
@@ -507,6 +508,68 @@ Sidecars are selected at install time and can be added later by re-running `inst
 ```
 
 All sidecars are stateless HTTP servers. The agent's MCP tool layer routes capability requests (`generate-image`, `transcribe-audio`, `generate-music`, `voice-convert`, `separate-stems`) to the appropriate sidecar via the tool registry (`src/mcp/tool-registry.ts`).
+
+---
+
+## Platform Capability Detection
+
+OpenZigs detects the host platform at startup and exposes capability flags to both server-side code and the UI. This enables graceful feature degradation on Windows (where native Apple Silicon sidecars are unavailable) and cross-platform compatibility for core text/tool agent functionality.
+
+### Detection Module
+
+**`src/config/platform.ts`** — Synchronous detection at startup:
+
+| Capability | Description |
+|------------|-------------|
+| `os` | Normalised platform: `"darwin"`, `"win32"`, `"linux"` |
+| `arch` | CPU architecture: `"arm64"`, `"x64"`, etc. |
+| `dockerAvailable` | `true` if `docker info` succeeds (5s timeout) |
+| `sidecarsSupported` | `true` only on macOS ARM64 (Apple Silicon) |
+| `chromePath` | Resolved path to Chrome/Chromium, or `null` |
+| `isWindows` / `isMacOS` / `isLinux` | Boolean convenience flags |
+
+### Cross-Platform File Permissions
+
+**`src/config/file-permissions.ts`** — Helpers for secure file/directory creation:
+
+- `secureFileOptions()` — Returns `{ mode: 0o600 }` on Unix, `{}` on Windows
+- `secureDirOptions()` — Returns `{ recursive: true, mode: 0o700 }` on Unix
+- `chmodSecureFile(path)` — Sets 0o600 on Unix, no-op on Windows
+
+NTFS silently ignores Unix permission modes; these helpers centralise the platform check so callers don't need to branch.
+
+### Admin API Endpoint
+
+**`GET /api/admin/platform`** — Returns the capabilities object:
+
+```json
+{
+  "os": "darwin",
+  "arch": "arm64",
+  "dockerAvailable": true,
+  "sidecarsSupported": true,
+  "chromePath": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+  "isWindows": false,
+  "isMacOS": true,
+  "isLinux": false
+}
+```
+
+The UI fetches this on load and uses it to:
+- Show/hide sidecar-dependent features (Voice Lab, Image Gen, Music Studio)
+- Display a platform badge in the Admin panel
+- Conditionally render setup instructions
+
+### Platform Support Matrix
+
+| Feature | macOS (ARM) | macOS (Intel) | Windows | Linux |
+|---------|-------------|---------------|---------|-------|
+| Core agent (text chat, tools) | ✅ | ✅ | ✅ | ✅ |
+| Docker sidecars | ✅ | ✅ | ✅ | ✅ |
+| Native AI sidecars (MLX) | ✅ | ❌ | ❌ | ❌ |
+| Browser automation | ✅ | ✅ | ✅ | ✅ |
+
+> **Note:** Native sidecars (image-gen, audio, music, music-studio, worker) require Apple Silicon. On other platforms, these features are unavailable but the core agent remains fully functional.
 
 ---
 
