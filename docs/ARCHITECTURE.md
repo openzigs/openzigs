@@ -9,6 +9,7 @@
 - [Cloudflare Tunnel (Sidecar Pattern)](#cloudflare-tunnel-sidecar-pattern)
 - [Python AI Sidecars](#python-ai-sidecars)
 - [Platform Capability Detection](#platform-capability-detection)
+- [Desktop Shell (Electron)](#desktop-shell-electron)
 - [MCP Host Architecture](#mcp-host-architecture)
 - [Component Breakdown](#component-breakdown)
 - [Voice Interface Layer](#voice-interface-layer)
@@ -570,6 +571,54 @@ The UI fetches this on load and uses it to:
 | Browser automation | ✅ | ✅ | ✅ | ✅ |
 
 > **Note:** Native sidecars (image-gen, audio, music, music-studio, worker) require Apple Silicon. On other platforms, these features are unavailable but the core agent remains fully functional.
+
+---
+
+## Desktop Shell (Electron)
+
+OpenZigs ships as a native desktop application via Electron. The desktop shell wraps the existing Express backend + Next.js UI inside a managed BrowserWindow, adding system tray integration, lifecycle management, and auto-update support.
+
+### Architecture
+
+```
+┌──────────────────────────────────┐
+│         Electron Main Process    │
+│  ┌───────────┐  ┌────────────┐  │
+│  │ Backend   │  │ Window     │  │
+│  │ Manager   │  │ Manager    │  │
+│  └─────┬─────┘  └─────┬──────┘  │
+│        │              │          │
+│  ┌─────┴─────┐  ┌─────┴──────┐  │
+│  │ Express   │  │ BrowserWin │  │
+│  │ (child    │  │ (loads     │  │
+│  │  process) │  │  localhost) │  │
+│  └───────────┘  └────────────┘  │
+│  ┌───────────┐  ┌────────────┐  │
+│  │ Tray      │  │ IPC Bridge │  │
+│  │ Manager   │  │            │  │
+│  └───────────┘  └────────────┘  │
+└──────────────────────────────────┘
+```
+
+### Module Breakdown
+
+| Module | File | Purpose |
+|--------|------|---------|
+| **BackendManager** | `desktop/src/backend.ts` | Spawns Express as a child process, health-polls `/health`, manages start/stop/restart lifecycle |
+| **WindowManager** | `desktop/src/window.ts` | BrowserWindow creation, close-to-tray, window state persistence (position/size) |
+| **TrayManager** | `desktop/src/tray.ts` | System tray icon with status-aware colors (green/yellow/red), context menu |
+| **IpcBridge** | `desktop/src/ipc.ts` | IPC handlers bridging renderer ↔ main process (backend control, app info, window ops) |
+| **Preload** | `desktop/src/preload.ts` | `contextBridge` exposing `window.openzigs` API to the renderer (secure bridge) |
+| **Updater** | `desktop/src/updater.ts` | Auto-update via `electron-updater` + GitHub Releases |
+
+### Key Design Decisions
+
+- **Child process isolation**: The Express backend runs as a separate `node` process, not inside the Electron main process. This keeps the main process responsive and allows independent restart/health-check.
+- **Free port discovery**: `BackendManager` probes ports 3000–3100 at startup to avoid conflicts with developer instances.
+- **Close-to-tray**: Closing the window hides it to the system tray rather than quitting. Quit is explicit via tray menu or `Cmd+Q`/`Alt+F4`.
+- **Window state persistence**: Position, size, and maximized state are saved to `~/.openzigs/window-state.json` and restored on next launch.
+- **Single instance lock**: `app.requestSingleInstanceLock()` prevents duplicate app instances; second launch focuses the existing window.
+- **contextIsolation + nodeIntegration:false**: Renderer has no direct Node.js access; all backend communication goes through the preload bridge.
 
 ---
 
