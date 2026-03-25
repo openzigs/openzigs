@@ -620,6 +620,27 @@ OpenZigs ships as a native desktop application via Electron. The desktop shell w
 - **Single instance lock**: `app.requestSingleInstanceLock()` prevents duplicate app instances; second launch focuses the existing window.
 - **contextIsolation + nodeIntegration:false**: Renderer has no direct Node.js access; all backend communication goes through the preload bridge.
 
+### Build & Packaging Pipeline
+
+Desktop builds use **electron-builder** with platform-specific targets:
+
+| Target | Platform | Format | Runner |
+|--------|----------|--------|--------|
+| Windows x64 | `windows-latest` | NSIS `.exe` | GitHub Actions |
+| macOS arm64 | `macos-latest` | DMG | GitHub Actions |
+| macOS x64 | `macos-13` | DMG | GitHub Actions |
+
+**Trigger**: Pushing a tag matching `v*` (e.g., `git tag v0.2.0 && git push --tags`) triggers `.github/workflows/desktop-release.yml`.
+
+**Bundled resources** (via `extraResources`):
+- `backend/` — compiled Express server (`dist/`)
+- `frontend/` — Next.js standalone output (`ui/.next/standalone/`)
+- `config/` — default configuration files
+
+**Code signing**: Stubs are in place for both platforms. Currently disabled (`CSC_IDENTITY_AUTO_DISCOVERY: false`). See `docs/code-signing.md` for setup instructions.
+
+**Artifacts**: Published to GitHub Releases with naming convention `OpenZigs-{version}-{os}-{arch}.{ext}`.
+
 ---
 
 ## MCP Host Architecture

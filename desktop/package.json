@@ -11,24 +11,35 @@
     "start": "electron dist/main.js",
     "pack": "electron-builder --dir",
     "dist": "electron-builder",
-    "dist:win": "electron-builder --win",
-    "dist:mac": "electron-builder --mac"
+    "dist:win": "electron-builder --win --x64",
+    "dist:mac": "electron-builder --mac",
+    "dist:mac:arm64": "electron-builder --mac --arm64",
+    "dist:mac:x64": "electron-builder --mac --x64"
   },
   "build": {
     "appId": "com.openzigs.desktop",
     "productName": "OpenZigs",
+    "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
     "directories": {
-      "output": "release"
+      "output": "release",
+      "buildResources": "assets"
     },
     "files": [
       "dist/**/*",
-      "assets/**/*"
+      "assets/**/*",
+      "!assets/*.psd",
+      "!assets/*.sketch"
     ],
     "extraResources": [
       {
         "from": "../dist",
         "to": "backend",
-        "filter": ["**/*"]
+        "filter": [
+          "**/*",
+          "!**/*.test.*",
+          "!**/*.spec.*",
+          "!**/__tests__/**"
+        ]
       },
       {
         "from": "../ui/.next/standalone",
@@ -36,41 +47,58 @@
         "filter": ["**/*"]
       },
       {
-        "from": "../node_modules",
-        "to": "backend/node_modules",
+        "from": "../config",
+        "to": "config",
         "filter": ["**/*"]
       }
     ],
     "win": {
-      "target": "nsis",
-      "icon": "assets/icon.ico"
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        }
+      ],
+      "icon": "assets/icon.png",
+      "signDlls": false,
+      "sign": null
     },
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
-      "installerIcon": "assets/icon.ico",
-      "uninstallerIcon": "assets/icon.ico",
-      "installerHeaderIcon": "assets/icon.ico"
+      "perMachine": false,
+      "allowElevation": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "OpenZigs",
+      "uninstallDisplayName": "OpenZigs"
     },
     "mac": {
       "target": [
         { "target": "dmg", "arch": ["arm64", "x64"] }
       ],
-      "icon": "assets/icon.icns",
+      "icon": "assets/icon.png",
       "category": "public.app-category.developer-tools",
-      "identity": null
+      "identity": null,
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist"
     },
     "dmg": {
       "contents": [
         { "x": 130, "y": 220 },
         { "x": 410, "y": 220, "type": "link", "path": "/Applications" }
-      ]
+      ],
+      "sign": false
     },
     "publish": {
       "provider": "github",
       "owner": "openzigs",
-      "repo": "openzigs"
-    }
+      "repo": "openzigs",
+      "releaseType": "release"
+    },
+    "afterSign": "scripts/notarize.cjs"
   },
   "dependencies": {
     "electron-updater": "^6.3.9"
