@@ -4,7 +4,7 @@ import { BackendManager } from "./backend.js";
 import { WindowManager } from "./window.js";
 import { TrayManager } from "./tray.js";
 import { IpcBridge } from "./ipc.js";
-import { setupUpdater } from "./updater.js";
+import { setupUpdater, type AutoUpdateManager } from "./updater.js";
 
 const isDev = !app.isPackaged;
 
@@ -12,6 +12,7 @@ let backendManager: BackendManager;
 let windowManager: WindowManager;
 let trayManager: TrayManager;
 let ipcBridge: IpcBridge;
+let updateManager: AutoUpdateManager;
 
 // Single instance lock — prevent multiple app instances
 const gotTheLock = app.requestSingleInstanceLock();
@@ -65,8 +66,9 @@ app.whenReady().then(async () => {
   const port = backendManager.getPort();
   await windowManager.createWindow(port);
 
-  // Setup auto-updater (stub for now)
-  setupUpdater();
+  // Setup auto-updater (checks on startup, periodic every 4h)
+  updateManager = setupUpdater();
+  ipcBridge.setUpdateManager(updateManager);
 });
 
 // macOS: re-create window when dock icon clicked and no windows open
@@ -88,5 +90,6 @@ app.on("window-all-closed", () => {
 
 app.on("before-quit", () => {
   windowManager?.setForceQuit(true);
+  updateManager?.destroy();
   backendManager?.stop();
 });
