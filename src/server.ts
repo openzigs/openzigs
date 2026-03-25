@@ -103,6 +103,7 @@ import { createStudioRouter } from "./api/studio.js";
 import { createCharacterRouter, setCharacterIO, setCharacterChannelManager, resumeStaleTrainingPolls } from "./api/characters.js";
 import { TemplateRepository, TemplateService } from "./orchestration/index.js";
 import { createOrchestrationRouter } from "./api/orchestration.js";
+import setupRouter from "./api/setup.js";
 import { CharacterRepository } from "./characters/character-repository.js";
 import { PROJECT_ROOT } from "./project-root.js";
 
@@ -800,6 +801,9 @@ const webhookManager = new WebhookManager();
 // Model API routes
 const modelsRouter = createModelsRouter({ copilot });
 app.use("/api/models", authMiddleware, modelsRouter);
+
+// Setup API routes — no auth required (needed before auth is configured)
+app.use("/api/setup", setupRouter);
 
 // Pipeline Template Manager
 const pipelineTemplateManager = new PipelineTemplateManager(path.join(import.meta.dirname, "..", "config", "pipeline-templates.json"));
