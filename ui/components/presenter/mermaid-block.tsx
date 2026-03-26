@@ -1,20 +1,27 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import mermaid from "mermaid";
 import { RotateCcw, ZoomIn, ZoomOut } from "lucide-react";
 
+// Lazily load mermaid (browser-only) to avoid webpack/langium ESM build errors.
+let mermaidInstance: typeof import("mermaid").default | null = null;
 let mermaidInitialized = false;
 
-function initMermaid() {
-  if (mermaidInitialized) return;
-  mermaid.initialize({
-    startOnLoad: false,
-    theme: "neutral",
-    securityLevel: "antiscript",
-    fontFamily: "Inter, system-ui, sans-serif",
-  });
-  mermaidInitialized = true;
+async function getMermaid() {
+  if (!mermaidInstance) {
+    const mod = await import("mermaid");
+    mermaidInstance = mod.default;
+  }
+  if (!mermaidInitialized) {
+    mermaidInstance.initialize({
+      startOnLoad: false,
+      theme: "neutral",
+      securityLevel: "antiscript",
+      fontFamily: "Inter, system-ui, sans-serif",
+    });
+    mermaidInitialized = true;
+  }
+  return mermaidInstance;
 }
 
 let renderCounter = 0;
@@ -60,13 +67,12 @@ export function MermaidBlock({ definition }: { definition: string }) {
   useEffect(() => {
     const sanitized = sanitizeMermaidDefinition(definition);
     if (!sanitized.trim()) return;
-    initMermaid();
 
     let cancelled = false;
     const renderId = `mermaid-${++renderCounter}`;
 
-    void mermaid
-      .render(renderId, sanitized)
+    void getMermaid()
+      .then((m) => m.render(renderId, sanitized))
       .then(({ svg }) => {
         if (cancelled || !contentRef.current) return;
         contentRef.current.innerHTML = svg;

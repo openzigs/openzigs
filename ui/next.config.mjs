@@ -13,6 +13,20 @@ const nextConfig = {
   // the 308 redirect breaks Socket.IO polling through the rewrite proxy
   // (e.g. when guests connect via Cloudflare tunnel → Next.js → Express).
   skipTrailingSlashRedirect: true,
+  // langium@4.2.1 (pulled in by mermaid → @mermaid-js/parser) is "type: module"
+  // (strict ESM), so webpack's static analysis fails to enumerate named exports
+  // when langium does `export * from 'vscode-jsonrpc/lib/common/cancellation.js'`
+  // (a CJS module). Setting exportsPresence to false for langium files suppresses
+  // the static-analysis error; the exports resolve correctly at runtime via the
+  // CJS module's own exports object.
+  webpack(config) {
+    config.module.rules.push({
+      test: /\.js$/,
+      include: /node_modules[\\/](?:langium|@mermaid-js[\\/]parser)[\\/]/,
+      parser: { exportsPresence: false },
+    });
+    return config;
+  },
   async rewrites() {
     return [
       {

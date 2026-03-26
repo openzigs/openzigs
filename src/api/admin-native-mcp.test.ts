@@ -184,4 +184,63 @@ describe("Admin Native MCP API", () => {
     const toolNames = toolsRes.body.tools["user mcp: my-db"].map((tool: { name: string }) => tool.name);
     expect(toolNames).toContain("mcp:my-db:db-query");
   });
+
+  describe("prototype pollution guard", () => {
+    const poisonedNames = ["__proto__", "constructor", "prototype"];
+
+    for (const badName of poisonedNames) {
+      it(`POST /native-mcp-servers/${badName} returns 400`, async () => {
+        const { app } = await createApp();
+        const res = await request(app)
+          .post(`/api/admin/native-mcp-servers/${badName}`)
+          .send({ type: "local", command: "node", args: ["server.js"] });
+        expect(res.status).toBe(400);
+        expect(res.body.error).toBe("Invalid server name");
+      });
+
+      it(`PUT /native-mcp-servers/${badName} returns 400`, async () => {
+        const { app } = await createApp();
+        const res = await request(app)
+          .put(`/api/admin/native-mcp-servers/${badName}`)
+          .send({ type: "local", command: "node", args: ["server.js"] });
+        expect(res.status).toBe(400);
+        expect(res.body.error).toBe("Invalid server name");
+      });
+
+      it(`POST /native-mcp-servers/${badName}/tools/add returns 400`, async () => {
+        const { app } = await createApp();
+        const res = await request(app)
+          .post(`/api/admin/native-mcp-servers/${badName}/tools/add`)
+          .send({ toolName: "some-tool" });
+        expect(res.status).toBe(400);
+        expect(res.body.error).toBe("Invalid server name");
+      });
+
+      it(`POST /native-mcp-servers/${badName}/tools/foo/toggle returns 400`, async () => {
+        const { app } = await createApp();
+        const res = await request(app)
+          .post(`/api/admin/native-mcp-servers/${badName}/tools/foo/toggle`)
+          .send({ enabled: true });
+        expect(res.status).toBe(400);
+        expect(res.body.error).toBe("Invalid server name");
+      });
+
+      it(`POST /native-mcp-servers/${badName}/tools/foo/remove returns 400`, async () => {
+        const { app } = await createApp();
+        const res = await request(app)
+          .post(`/api/admin/native-mcp-servers/${badName}/tools/foo/remove`);
+        expect(res.status).toBe(400);
+        expect(res.body.error).toBe("Invalid server name");
+      });
+    }
+
+    it("allows legitimate server names", async () => {
+      const { app } = await createApp();
+      const res = await request(app)
+        .post("/api/admin/native-mcp-servers/my-valid-server")
+        .send({ type: "local", command: "node", args: ["server.js"] });
+      expect(res.status).toBe(201);
+      expect(res.body.ok).toBe(true);
+    });
+  });
 });
