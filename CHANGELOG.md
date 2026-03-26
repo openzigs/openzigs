@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- F5-TTS text normalizer now expands acronyms to phonetic spoken forms instead of dotted notation that caused BPE tokenizer hallucinations (#641)
+- Sidecar sentence splitter no longer splits text at abbreviation dots (e.g. "U.S.A." treated as one segment) (#642)
+- Intro video manuscript updated to remove dotted abbreviations and technical jargon that confused F5-TTS (#644)
+
+### Changed
+
+- Narration editor helper text now documents which directives are supported per TTS engine (F5-TTS vs Kokoro) (#643)
+
 ### Security
 
 - Fix prototype pollution in native MCP server admin routes (CodeQL finding, #634)
