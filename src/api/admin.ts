@@ -3291,8 +3291,13 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
     }
   });
 
+  const POISONED_KEYS = new Set(["__proto__", "constructor", "prototype"]);
+
   router.post("/native-mcp-servers/:name", async (req, res) => {
     const { name } = req.params;
+    if (POISONED_KEYS.has(name)) {
+      return res.status(400).json({ error: "Invalid server name" });
+    }
     const parsed = mcpServerConfigSchema.safeParse(req.body);
     if (!parsed.success) {
       return res.status(400).json({ error: parsed.error.issues.map((i) => i.message).join(", ") });
@@ -3333,6 +3338,9 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
 
   router.put("/native-mcp-servers/:name", async (req, res) => {
     const { name } = req.params;
+    if (POISONED_KEYS.has(name)) {
+      return res.status(400).json({ error: "Invalid server name" });
+    }
     const parsed = mcpServerConfigSchema.safeParse(req.body);
     if (!parsed.success) {
       return res.status(400).json({ error: parsed.error.issues.map((i) => i.message).join(", ") });
@@ -3452,6 +3460,9 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
   // MUST be registered before the `:toolName` param routes to avoid matching "add" as a toolName.
   router.post("/native-mcp-servers/:name/tools/add", async (req, res) => {
     const { name } = req.params;
+    if (POISONED_KEYS.has(name)) {
+      return res.status(400).json({ error: "Invalid server name" });
+    }
     const { toolName } = req.body as { toolName?: string };
     if (!toolName || typeof toolName !== "string" || !toolName.trim()) {
       return res.status(400).json({ error: "toolName is required" });
@@ -3490,6 +3501,9 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
 
   router.post("/native-mcp-servers/:name/tools/:toolName/toggle", async (req, res) => {
     const { name, toolName } = req.params;
+    if (POISONED_KEYS.has(name)) {
+      return res.status(400).json({ error: "Invalid server name" });
+    }
     const { enabled } = req.body as { enabled?: boolean };
     if (typeof enabled !== "boolean") {
       return res.status(400).json({ error: "enabled must be a boolean" });
@@ -3530,6 +3544,9 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
   // Remove a tool from the server definition's tools array and disabledTools
   router.post("/native-mcp-servers/:name/tools/:toolName/remove", async (req, res) => {
     const { name, toolName } = req.params;
+    if (POISONED_KEYS.has(name)) {
+      return res.status(400).json({ error: "Invalid server name" });
+    }
     const current = copilot?.getNativeMcpServers() ?? {};
     const server = current[name];
     if (!server) {

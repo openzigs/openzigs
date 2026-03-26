@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- Fix prototype pollution in native MCP server admin routes (CodeQL finding, #634)
+- Fix picomatch ReDoS and method injection via `pnpm.overrides` — picomatch ≥ 2.3.2 (CVE-2026-33671, CVE-2026-33672, #635)
+- Fix `@github/copilot` shell expansion vulnerability — update override to ≥ 0.0.423 and bump `@github/copilot-sdk` to 0.1.32 (CVE-2026-29783, #636)
+- Patch `vscode-jsonrpc` to add ESM `exports` field (fixes test suite breakage from SDK update)
+
 ### Added
 
 - Cross-platform Windows compatibility (Phase 1) (#590)
