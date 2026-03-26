@@ -430,7 +430,6 @@ _EMOTION_TAG_RE = re.compile(r"\(([A-Za-z][A-Za-z0-9_ ]{0,30})\)")
 # Defense-in-depth: uses a smarter split function instead of a simple regex
 # to avoid splitting at abbreviation dots (e.g. "A.I.", "U.S.A.").
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?;:])\s+")
-_ABBREV_DOT_RE = re.compile(r"(?<=[A-Z])\.\s+(?=[A-Z]\.)")
 
 
 def _split_sentences(text: str) -> list[str]:

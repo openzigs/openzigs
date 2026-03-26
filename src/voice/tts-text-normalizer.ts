@@ -188,6 +188,20 @@ function spellOutLetters(letters: string): string {
 }
 
 /**
+ * Common compound number expansions, hoisted to module level to avoid per-call allocation.
+ */
+const COMMON_NUMBERS: Record<number, string> = {
+  10: "ten", 11: "eleven", 12: "twelve", 13: "thirteen", 14: "fourteen",
+  15: "fifteen", 16: "sixteen", 17: "seventeen", 18: "eighteen", 19: "nineteen",
+  20: "twenty", 30: "thirty", 40: "forty", 50: "fifty", 60: "sixty",
+  64: "sixty four", 70: "seventy", 80: "eighty", 90: "ninety",
+  100: "one hundred", 128: "one twenty eight", 256: "two fifty six",
+  264: "two sixty four", 265: "two sixty five", 320: "three twenty",
+  360: "three sixty", 480: "four eighty", 720: "seven twenty",
+  1080: "ten eighty",
+};
+
+/**
  * Expand a number string to its spoken word form.
  */
 function expandNumber(num: string): string {
@@ -195,17 +209,6 @@ function expandNumber(num: string): string {
   if (isNaN(n)) return num;
   // Simple cases
   if (n >= 0 && n <= 9) return DIGIT_WORDS[num] ?? num;
-  // Common compound numbers
-  const COMMON_NUMBERS: Record<number, string> = {
-    10: "ten", 11: "eleven", 12: "twelve", 13: "thirteen", 14: "fourteen",
-    15: "fifteen", 16: "sixteen", 17: "seventeen", 18: "eighteen", 19: "nineteen",
-    20: "twenty", 30: "thirty", 40: "forty", 50: "fifty", 60: "sixty",
-    64: "sixty four", 70: "seventy", 80: "eighty", 90: "ninety",
-    100: "one hundred", 128: "one twenty eight", 256: "two fifty six",
-    264: "two sixty four", 265: "two sixty five", 320: "three twenty",
-    360: "three sixty", 480: "four eighty", 720: "seven twenty",
-    1080: "ten eighty",
-  };
   if (COMMON_NUMBERS[n]) return COMMON_NUMBERS[n];
   // Fall back to digit-by-digit for unfamiliar numbers
   return num.split("").map((d) => DIGIT_WORDS[d] ?? d).join(" ");
@@ -278,7 +281,7 @@ export function normalizeForTTS(text: string): string {
   // Step 4: Expand mixed alphanumeric terms (MP4 → em pee four, H264 → aitch two sixty four)
   result = result.replace(MIXED_ALPHANUM_RE, (_match, letters: string, digits: string) => {
     if (PRONOUNCEABLE_UPPERCASE.has(letters)) return _match;
-    if (SPOKEN_EXPANSIONS[_match.toLowerCase()]) return result; // already handled
+    if (SPOKEN_EXPANSIONS[_match.toLowerCase()]) return _match; // already handled
     const letterPart = spellOutLetters(letters);
     const numPart = expandNumber(digits);
     return `${letterPart} ${numPart}`;
