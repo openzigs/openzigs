@@ -950,7 +950,7 @@ async def generate(req: GenerateRequest):
     if _loading:
         raise HTTPException(status_code=409, detail="A model is currently being loaded")
 
-    # Stop training if active — can't run both (each needs ~28GB unified memory)
+    # Stop any active training to free memory before inference
     _stop_training_for_inference()
 
     # ── Lazy load / model switch ───────────────────────────────
@@ -1043,7 +1043,7 @@ async def img2img(req: Img2ImgRequest):
     if _loading:
         raise HTTPException(status_code=409, detail="A model is currently being loaded")
 
-    # Stop training if active — can't run both (each needs ~28GB unified memory)
+    # Stop any active training to free memory before inference
     _stop_training_for_inference()
 
     # ── Resolve source image to a local path ───────────────────
@@ -1170,7 +1170,7 @@ async def kontext_edit(req: KontextRequest):
     if _loading:
         raise HTTPException(status_code=409, detail="A model is currently being loaded")
 
-    # Stop training if active — can't run both (each needs ~28GB unified memory)
+    # Stop any active training to free memory before inference
     _stop_training_for_inference()
 
     # ── Resolve source image to a local path ───────────────────
@@ -1293,7 +1293,7 @@ async def generate_controlnet(req: ControlNetRequest):
     if _loading:
         raise HTTPException(status_code=409, detail="A model is currently being loaded")
 
-    # Stop training if active — can't run both (each needs ~28GB unified memory)
+    # Stop any active training to free memory before inference
     _stop_training_for_inference()
 
     if not os.path.isfile(req.controlnet_image_path):
@@ -1502,7 +1502,7 @@ def _materialize_network_training(req: TrainRequest) -> str:
 
     cfg = req.train_config or {}
     trigger_word = cfg.get("trigger_word", "TOK")
-    lora_rank = int(cfg.get("lora_rank", 16))
+    lora_rank = int(cfg.get("lora_rank", 8))
     steps = int(cfg.get("steps", 9))
 
     # Max training image dimension — larger images cause OOM on 32GB Macs.
@@ -1556,16 +1556,13 @@ def _materialize_network_training(req: TrainRequest) -> str:
     num_epochs = int(cfg.get("num_epochs", 1))
 
     # Build the correct mflux training config format
-    # Matches the official mflux training example:
-    #   https://github.com/filipstrand/mflux/blob/main/src/mflux/models/common/training/_example/train.json
-    #   - ALL transformer blocks (0-30) with rank 16 for subject fidelity
-    #   - 9 module targets: Q/K/V/output attention + FFN (w1/w2/w3) + cap_embedder + final_layer
-    #   - cap_embedder.1 is CRITICAL: maps trigger word → visual concept
-    #   - feed_forward layers learn visual patterns between attention ops
-    #   - quantize=8 for 32GB Macs (model is ~31GB unquantized)
+    # Based on official z-image-turbo example config from mflux repo (2026):
+    #   - quantize=8 is REQUIRED for 32GB Macs (model is ~31GB unquantized)
+    #   - Train ALL blocks (0-30), not just upper — lower blocks encode structure/identity
+    #   - Include cap_embedder (text→trigger word association) and feed_forward layers
+    #   - all_final_layer is needed so the generation pipeline can reproduce the subject
     #   - timestep_low/high constrain noise schedule for turbo model
     #   - MUST satisfy: timestep_high <= steps (mflux validation)
-    #   - monitoring.generate_image_frequency produces sample images during training
     ts_high = min(9, steps)
     ts_low = min(4, ts_high)
     config: dict[str, Any] = {
@@ -1589,10 +1586,6 @@ def _materialize_network_training(req: TrainRequest) -> str:
         "checkpoint": {
             "save_frequency": max(1, num_epochs // 5) if num_epochs > 5 else num_epochs,
             "output_path": lora_output,
-        },
-        "monitoring": {
-            "plot_frequency": 1,
-            "generate_image_frequency": max(1, num_epochs // 5) if num_epochs > 5 else num_epochs,
         },
         "lora_layers": {
             "targets": [
@@ -1973,6 +1966,92 @@ async def resume_train_lora(req: ResumeTrainRequest, background_tasks: Backgroun
     )
 
 
+class DeleteTrainDataRequest(BaseModel):
+    """Request body for deleting all training output for a character."""
+    character_id: str = Field(..., description="Character UUID whose training files should be removed")
+
+    @field_validator("character_id", mode="before")
+    @classmethod
+    def _validate_character_id(cls, v: Any) -> Any:
+        s = str(v)
+        if "\x00" in s or ".." in s or "/" in s or "\\" in s:
+            raise ValueError(f"Invalid character ID: {v}")
+        return v
+
+
+_LORAS_DIR = os.path.join(os.path.expanduser("~"), ".openzigs", "loras")
+
+
+def _relocate_adapter(character_id: str, search_dir: str) -> Optional[str]:
+    """Move the first adapter .safetensors out of the training dir into the
+    permanent ``~/.openzigs/loras/`` directory so it survives cleanup.
+
+    Returns the new absolute path, or None if no adapter was found.
+    """
+    import shutil as _sh
+
+    for root, _dirs, files in os.walk(search_dir):
+        for f in files:
+            if f.endswith(".safetensors") and "adapter" in f:
+                src = os.path.join(root, f)
+                os.makedirs(_LORAS_DIR, exist_ok=True)
+                dest = os.path.join(_LORAS_DIR, f"{character_id}_adapter.safetensors")
+                _sh.move(src, dest)
+                log.info(f"[train-data] Relocated adapter {src} -> {dest}")
+                return dest
+    return None
+
+
+@app.delete("/train-data", dependencies=[Depends(verify_token)])
+async def delete_train_data(req: DeleteTrainDataRequest):
+    """Delete all training output for a character on this machine.
+
+    Before removing the training directory, relocates any extracted adapter
+    ``.safetensors`` to ``~/.openzigs/loras/`` so inference can still load it.
+
+    Returns ``{"removed": true, "paths": [...], "lora_path": "..."}`` on
+    success or ``{"removed": false, "reason": "..."}`` if nothing was found.
+    """
+    import shutil as _shutil
+    import tempfile
+
+    if not req.character_id or "/" in req.character_id or ".." in req.character_id:
+        raise HTTPException(status_code=400, detail="Invalid character_id")
+
+    removed_paths: list[str] = []
+    relocated_lora: Optional[str] = None
+
+    # Persistent training dir
+    persistent_dir = os.path.join(_TRAINING_BASE_DIR, req.character_id)
+    if os.path.isdir(persistent_dir):
+        # Relocate adapter before nuking the directory
+        relocated_lora = _relocate_adapter(req.character_id, persistent_dir)
+        try:
+            _shutil.rmtree(persistent_dir)
+            removed_paths.append(persistent_dir)
+            log.info(f"[train-data] Removed persistent training dir: {persistent_dir}")
+        except Exception as exc:
+            log.error(f"[train-data] Failed to remove {persistent_dir}: {exc}")
+            raise HTTPException(status_code=500, detail=f"Failed to remove {persistent_dir}: {exc}")
+
+    # Legacy macOS temp dir (may not exist after a reboot, but clean up when present)
+    legacy_dir = os.path.join(tempfile.gettempdir(), "openzigs-training", req.character_id)
+    if os.path.isdir(legacy_dir):
+        if relocated_lora is None:
+            relocated_lora = _relocate_adapter(req.character_id, legacy_dir)
+        try:
+            _shutil.rmtree(legacy_dir)
+            removed_paths.append(legacy_dir)
+            log.info(f"[train-data] Removed legacy temp training dir: {legacy_dir}")
+        except Exception as exc:
+            log.warning(f"[train-data] Could not remove legacy dir {legacy_dir}: {exc}")
+            # Non-fatal — temp dirs are ephemeral
+
+    if removed_paths:
+        return {"removed": True, "paths": removed_paths, "lora_path": relocated_lora}
+    return {"removed": False, "reason": f"No training data found for character {req.character_id}"}
+
+
 def _find_trained_lora(dir_path: str) -> Optional[str]:
     """Find a trained .safetensors LoRA adapter in the output directory.
 
@@ -2069,15 +2148,12 @@ def _bg_train_resume(checkpoint_path: str) -> None:
                                 f"creating placeholder at {alt_data} for resume"
                             )
                             os.makedirs(alt_data, exist_ok=True)
-                            # Write a minimal placeholder image + caption so mflux
-                            # can enumerate at least one data item.
                             placeholder_img = os.path.join(alt_data, "placeholder.jpg")
                             placeholder_txt = os.path.join(alt_data, "placeholder.txt")
                             try:
                                 img = Image.new("RGB", (512, 512), color=(128, 128, 128))
                                 img.save(placeholder_img, format="JPEG")
                             except Exception:
-                                # Fallback: write a tiny valid JPEG
                                 with open(placeholder_img, "wb") as fp:
                                     fp.write(b"\xff\xd8\xff\xe0" + b"\x00" * 100 + b"\xff\xd9")
                             with open(placeholder_txt, "w") as fp:
@@ -2123,92 +2199,6 @@ def _bg_train_resume(checkpoint_path: str) -> None:
             mx.clear_cache()
         except Exception:
             pass
-
-
-class DeleteTrainDataRequest(BaseModel):
-    """Request body for deleting all training output for a character."""
-    character_id: str = Field(..., description="Character UUID whose training files should be removed")
-
-    @field_validator("character_id", mode="before")
-    @classmethod
-    def _validate_character_id(cls, v: Any) -> Any:
-        s = str(v)
-        if "\x00" in s or ".." in s or "/" in s or "\\" in s:
-            raise ValueError(f"Invalid character ID: {v}")
-        return v
-
-
-_LORAS_DIR = os.path.join(os.path.expanduser("~"), ".openzigs", "loras")
-
-
-def _relocate_adapter(character_id: str, search_dir: str) -> Optional[str]:
-    """Move the first adapter .safetensors out of the training dir into the
-    permanent ``~/.openzigs/loras/`` directory so it survives cleanup.
-
-    Returns the new absolute path, or None if no adapter was found.
-    """
-    import shutil as _sh
-
-    for root, _dirs, files in os.walk(search_dir):
-        for f in files:
-            if f.endswith(".safetensors") and "adapter" in f:
-                src = os.path.join(root, f)
-                os.makedirs(_LORAS_DIR, exist_ok=True)
-                dest = os.path.join(_LORAS_DIR, f"{character_id}_adapter.safetensors")
-                _sh.move(src, dest)
-                log.info(f"[train-data] Relocated adapter {src} -> {dest}")
-                return dest
-    return None
-
-
-@app.delete("/train-data", dependencies=[Depends(verify_token)])
-async def delete_train_data(req: DeleteTrainDataRequest):
-    """Delete all training output for a character on this machine.
-
-    Before removing the training directory, relocates any extracted adapter
-    ``.safetensors`` to ``~/.openzigs/loras/`` so inference can still load it.
-
-    Returns ``{"removed": true, "paths": [...], "lora_path": "..."}`` on
-    success or ``{"removed": false, "reason": "..."}`` if nothing was found.
-    """
-    import shutil as _shutil
-    import tempfile
-
-    if not req.character_id or "/" in req.character_id or ".." in req.character_id:
-        raise HTTPException(status_code=400, detail="Invalid character_id")
-
-    removed_paths: list[str] = []
-    relocated_lora: Optional[str] = None
-
-    # Persistent training dir
-    persistent_dir = os.path.join(_TRAINING_BASE_DIR, req.character_id)
-    if os.path.isdir(persistent_dir):
-        # Relocate adapter before nuking the directory
-        relocated_lora = _relocate_adapter(req.character_id, persistent_dir)
-        try:
-            _shutil.rmtree(persistent_dir)
-            removed_paths.append(persistent_dir)
-            log.info(f"[train-data] Removed persistent training dir: {persistent_dir}")
-        except Exception as exc:
-            log.error(f"[train-data] Failed to remove {persistent_dir}: {exc}")
-            raise HTTPException(status_code=500, detail=f"Failed to remove {persistent_dir}: {exc}")
-
-    # Legacy macOS temp dir (may not exist after a reboot, but clean up when present)
-    legacy_dir = os.path.join(tempfile.gettempdir(), "openzigs-training", req.character_id)
-    if os.path.isdir(legacy_dir):
-        if relocated_lora is None:
-            relocated_lora = _relocate_adapter(req.character_id, legacy_dir)
-        try:
-            _shutil.rmtree(legacy_dir)
-            removed_paths.append(legacy_dir)
-            log.info(f"[train-data] Removed legacy temp training dir: {legacy_dir}")
-        except Exception as exc:
-            log.warning(f"[train-data] Could not remove legacy dir {legacy_dir}: {exc}")
-            # Non-fatal — temp dirs are ephemeral
-
-    if removed_paths:
-        return {"removed": True, "paths": removed_paths, "lora_path": relocated_lora}
-    return {"removed": False, "reason": f"No training data found for character {req.character_id}"}
 
 
 def _cleanup_training_data(config_path: str) -> None:
@@ -2272,12 +2262,8 @@ def _bg_train(config_path: str) -> None:
                     log.info(f"[train] Output dir contents ({len(all_files)} files): {all_files}")
                 except Exception:
                     pass
-            # NOTE: We intentionally do NOT clean up training data here.
-            # The data directory is needed if the calling server missed the
-            # completion event (client detached, server restart) and later
-            # tries to resume from a checkpoint.  Data is cleaned up via
-            # the explicit DELETE /train-data endpoint when the character
-            # is confirmed as 'ready' by the orchestrator.
+            # Clean up training input data (images + config) to reclaim disk
+            _cleanup_training_data(config_path)
         else:
             err_msg = "\n".join(last_lines) if last_lines else f"exit code {rc}"
             _train_error = err_msg
