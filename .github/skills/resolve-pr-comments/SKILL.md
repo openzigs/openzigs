@@ -79,12 +79,49 @@ For each unresolved comment thread, classify it:
 | **already-resolved** | Comment was on code that's since been updated | Reply noting resolution |
 | **disagree** | Comment suggests a change that would introduce a bug or conflict with requirements | Explain reasoning, ask user to decide |
 | **nit** | Style/cosmetic suggestion, valid but minor | Fix it (cheap to address) |
+| **scanner-finding** | Comment from `github-advanced-security`, `dependabot`, `snyk`, or another security bot | Treat as actionable — scanner findings are authoritative |
+| **copilot-review** | Comment from GitHub Copilot automated review (`copilot`, `github-copilot`, `copilot-pull-request-reviewer`) | Validate first — Copilot can produce false positives on complex code. If valid → fix. If false positive → reply explaining why. |
+
+**Identifying comment authors:**
+
+When fetching review comments, check the `author` field to categorize the source:
+
+| Author Pattern | Category | Priority |
+|----------------|----------|----------|
+| `github-advanced-security` | Scanner (CodeQL/GHAS) | **Highest** — static analysis, authoritative |
+| `dependabot` | Scanner (dependency) | **Highest** — known CVE alerts |
+| `snyk`, `sonarcloud` | Scanner (third-party) | **High** — verify but treat seriously |
+| `copilot`, `github-copilot`, `copilot-pull-request-reviewer` | Copilot automated review | **Medium** — validate each finding individually |
+| Any other non-PR-author username | Human reviewer | **High** — understands business context |
+| `codecov`, `coveralls` | Coverage bot | **Low** — informational only |
+
+Scanner comments have a distinct format — they link to a code scanning alert page (e.g., `https://github.com/{owner}/{repo}/security/code-scanning/{N}`). These are **not opinion-based** — they are static analysis findings that should be treated with higher authority than typical reviewer comments.
+
+**Triage rules for scanner findings:**
+- `is_outdated: true` → Code changed after the finding. **Read the current code** to verify if the fix actually addressed the issue. If yes → `already-resolved`. If the vulnerability moved rather than being fixed → `actionable`.
+- `is_outdated: false` → Code has NOT changed. Finding is **presumed still valid**. Classify as `actionable`.
+- `is_resolved: true` → Explicitly resolved by a reviewer. Can be skipped.
+- **Severity escalation**: CodeQL `High` and `Critical` findings must be prioritized above all human reviewer comments. Fix these first.
+
+**Triage rules for Copilot review comments:**
+- Copilot comments are suggestions, not authoritative findings. Each must be validated against the actual code context.
+- If Copilot flags an unused import or dead code → likely valid, fix it.
+- If Copilot suggests a refactor or design change → check if it aligns with project conventions and the linked issue requirements. If it conflicts, classify as `disagree`.
+- If Copilot flags a security issue → cross-reference with your own analysis and any scanner findings. Copilot security suggestions overlap with but are less authoritative than CodeQL.
+
+**Triage rules for human reviewer comments:**
+- Human comments carry high trust — they understand the business context.
+- Comments marked with 🔴, "CRITICAL", "BLOCKING", or "REQUEST_CHANGES" severity → treat as highest priority within human comments.
+- Comments prefixed with `nit:` → classify as `nit`.
+- Comments asking a question without requesting a change → classify as `clarification-needed`.
 
 **Validation checks for each comment:**
 - Does the suggested change align with the linked issue/epic requirements?
 - Does the suggested change follow project conventions?
 - Does `context7` docs confirm the reviewer's claim about API usage?
 - Would the suggested change break existing tests?
+- For scanner findings: Does the current code at the flagged line still exhibit the vulnerability?
+- For Copilot comments: Is the suggestion actually correct for this code context?
 
 ### Step 3: Context Loading
 
@@ -177,6 +214,23 @@ Present a summary to the user:
 
 ### Already Resolved (N comments)
 - Comment on line 20 of old diff — code was rewritten in previous commit
+
+### Scanner Findings (N comments)
+| # | Scanner | File | Finding | Severity | Fix |
+|---|---------|------|---------|----------|-----|
+| 1 | CodeQL | src/api/m365.ts:151 | Missing rate limiting | High | Added express-rate-limit middleware |
+| 2 | CodeQL | src/m365/file-parser.ts:132 | Incomplete string escaping | Medium | Added backslash escaping |
+
+### Copilot Review (N comments)
+| # | File | Comment | Triage | Action |
+|---|------|---------|--------|--------|
+| 1 | ui/lib/api.ts:42 | Unused import | Valid | Removed import |
+| 2 | src/utils.ts:18 | Suggest using optional chaining | False positive | Replied with explanation |
+
+### Human Reviewer (N comments)
+| # | Reviewer | File | Comment | Fix |
+|---|----------|------|---------|-----|
+| 1 | mgcronin | src/api/m365.ts:102 | Rate limit /cleanup | Added middleware |
 
 **Commit:** `abc1234`
 **Tests:** All passing (87% coverage)
