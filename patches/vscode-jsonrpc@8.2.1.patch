@@ -1,8 +1,8 @@
 diff --git a/package.json b/package.json
-index d0080b2ad03f6471915c5527bfd11debbbffeefa..2959fb97fd5d37d30560ef535b5f9559b30f9f09 100644
+index d0080b2ad03f6471915c5527bfd11debbbffeefa..06b313d6856fb2e47781868b626d730658b36c28 100644
 --- a/package.json
 +++ b/package.json
-@@ -1,45 +1,52 @@
+@@ -1,45 +1,54 @@
  {
 -	"name": "vscode-jsonrpc",
 -	"description": "A json rpc implementation over streams",
@@ -95,6 +95,8 @@ index d0080b2ad03f6471915c5527bfd11debbbffeefa..2959fb97fd5d37d30560ef535b5f9559
 +    "./node": "./node.js",
 +    "./node.js": "./node.js",
 +    "./browser": "./browser.js",
-+    "./browser.js": "./browser.js"
++    "./browser.js": "./browser.js",
++    "./lib/common/cancellation.js": "./lib/common/cancellation.js",
++    "./lib/common/events.js": "./lib/common/events.js"
 +  }
  }
