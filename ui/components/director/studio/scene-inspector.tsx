@@ -57,6 +57,8 @@ export function SceneInspector({ inspector, manifest, draftId, onManifestUpdate,
   const [voiceEngines, setVoiceEngines] = useState<VoiceEngine[]>([]);
   const [selectedEngine, setSelectedEngine] = useState<string>("auto");
   const [reRecording, setReRecording] = useState(false);
+  const [reRecordingAll, setReRecordingAll] = useState(false);
+  const [reRecordAllProgress, setReRecordAllProgress] = useState<{ current: number; total: number } | null>(null);
   const [voicePreviewPlaying, setVoicePreviewPlaying] = useState(false);
   const [f5Params, setF5Params] = useState({
     speed: 1.0,
@@ -282,6 +284,78 @@ export function SceneInspector({ inspector, manifest, draftId, onManifestUpdate,
       setReRecording(false);
     }
   }, [inspector.sceneIndex, scriptText, draftId, selectedEngine, f5Params, fps, updateTimelineEntry, startActivity]);
+
+  const handleReRecordAll = useCallback(async () => {
+    if (!manifest?.timeline) return;
+    const voiceableScenes = manifest.timeline
+      .map((e, i) => ({ entry: e, index: i }))
+      .filter(({ entry: e }) =>
+        (e.type === "video_clip" || e.type === "image_scene") && (e.scriptText as string | undefined)?.trim(),
+      );
+    if (voiceableScenes.length === 0) return;
+
+    setReRecordingAll(true);
+    setReRecordAllProgress({ current: 0, total: voiceableScenes.length });
+    let latestManifest = manifest;
+
+    try {
+      for (let i = 0; i < voiceableScenes.length; i++) {
+        const { entry: sceneEntry, index: sceneIndex } = voiceableScenes[i];
+        setReRecordAllProgress({ current: i + 1, total: voiceableScenes.length });
+
+        const body: Record<string, unknown> = {
+          draftId,
+          text: (sceneEntry.scriptText as string).trim(),
+        };
+        if (selectedEngine !== "auto") body.engine = selectedEngine;
+        if (selectedEngine === "f5tts") body.f5ttsParams = f5Params;
+
+        const result = await fetchJson<{
+          sceneIndex: number;
+          voiceoverPath: string;
+          durationSec: number;
+          engine: string;
+        }>(`/api/admin/director/scenes/${sceneIndex}/re-record`, {
+          method: "POST",
+          body: JSON.stringify(body),
+        });
+
+        // Update the manifest entry
+        const updatedTimeline = [...(latestManifest.timeline ?? [])];
+        const existing = updatedTimeline[sceneIndex];
+        if (existing) {
+          updatedTimeline[sceneIndex] = {
+            ...existing,
+            voiceover: result.voiceoverPath,
+            duration: Math.max(Math.round((result.durationSec + 0.35) * fps), fps),
+          };
+        }
+        latestManifest = { ...latestManifest, timeline: updatedTimeline };
+      }
+
+      // Persist the fully updated manifest
+      await fetchJson(`/api/admin/director/drafts/${draftId}`, {
+        method: "PUT",
+        body: JSON.stringify({ manifest: latestManifest }),
+      });
+      onManifestUpdate(latestManifest);
+    } catch (err) {
+      console.error("Re-record all failed:", err);
+      // Still persist partial progress
+      if (latestManifest !== manifest) {
+        try {
+          await fetchJson(`/api/admin/director/drafts/${draftId}`, {
+            method: "PUT",
+            body: JSON.stringify({ manifest: latestManifest }),
+          });
+          onManifestUpdate(latestManifest);
+        } catch { /* best effort */ }
+      }
+    } finally {
+      setReRecordingAll(false);
+      setReRecordAllProgress(null);
+    }
+  }, [manifest, draftId, selectedEngine, f5Params, fps, onManifestUpdate]);
 
   const toggleVoicePreview = useCallback(() => {
     const audio = voicePreviewRef.current;
@@ -948,6 +1022,25 @@ export function SceneInspector({ inspector, manifest, draftId, onManifestUpdate,
               <>
                 <Mic className="h-3.5 w-3.5" />
                 Re-record Voiceover
+              </>
+            )}
+          </button>
+
+          {/* Re-voiceover all scenes */}
+          <button
+            onClick={handleReRecordAll}
+            disabled={reRecordingAll || reRecording}
+            className="flex w-full items-center justify-center gap-1.5 rounded-md border border-primary/50 bg-primary/10 px-3 py-1.5 text-xs font-medium text-primary hover:bg-primary/20 transition disabled:opacity-50"
+          >
+            {reRecordingAll ? (
+              <>
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                Re-voicing {reRecordAllProgress?.current}/{reRecordAllProgress?.total}…
+              </>
+            ) : (
+              <>
+                <RefreshCw className="h-3.5 w-3.5" />
+                Re-voiceover All Scenes
               </>
             )}
           </button>

@@ -173,6 +173,18 @@ export function NarrationEditor({
     }
   }, [selectedIdx, showAutocomplete]);
 
+  // Auto-size textarea to fit content
+  const autoSize = useCallback(() => {
+    const ta = textareaRef.current;
+    if (!ta) return;
+    ta.style.height = "auto";
+    ta.style.height = `${ta.scrollHeight}px`;
+  }, []);
+
+  useEffect(() => {
+    autoSize();
+  }, [value, autoSize]);
+
   return (
     <div className="rounded-lg border border-border p-3">
       <div className="mb-2 flex items-center justify-between">
@@ -260,9 +272,9 @@ export function NarrationEditor({
             }
           }}
           disabled={disabled}
-          rows={4}
+          rows={2}
           placeholder="Enter narration script… Type [ for speech directives"
-          className="w-full resize-none rounded-md border border-border bg-background px-2 py-1.5 text-xs font-mono leading-relaxed placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50"
+          className="w-full resize-none rounded-md border border-border bg-background px-2 py-1.5 text-xs font-mono leading-relaxed placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50 overflow-hidden"
         />
 
         {/* Autocomplete dropdown */}

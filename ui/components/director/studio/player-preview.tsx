@@ -257,12 +257,12 @@ export function PlayerPreview({
         )}
 
         {/* Frame overlay */}
-        <div className="absolute bottom-2 right-2 rounded bg-black/70 px-2 py-0.5 text-xs text-white/80 tabular-nums">
+        <div className="absolute bottom-2 right-2 rounded bg-black/70 px-2 py-0.5 text-xs text-white/80 tabular-nums pointer-events-none">
           {formatTime(currentFrame)} / {formatTime(totalFrames)}
         </div>
 
         {/* Render info */}
-        <div className="absolute bottom-2 left-2 rounded bg-black/70 px-2 py-0.5 text-[9px] text-white/50">
+        <div className="absolute bottom-2 left-2 rounded bg-black/70 px-2 py-0.5 text-[9px] text-white/50 pointer-events-none">
           Captions &amp; effects render with final video
         </div>
 
@@ -439,7 +439,7 @@ function ScriptTextOverlay({
 
       {/* Script text (narration) — click to expand full text */}
       {scriptText && (
-        <div className="absolute bottom-[2%] left-0 right-0 flex justify-center px-2">
+        <div className="absolute bottom-[2%] left-0 right-0 z-10 flex justify-center px-2">
           {expanded ? (
             <div
               className="max-w-[90%] max-h-[60%] overflow-y-auto rounded bg-black/80 px-3 py-2 text-center text-white/90 cursor-pointer pointer-events-auto"

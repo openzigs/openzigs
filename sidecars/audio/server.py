@@ -431,6 +431,70 @@ _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?;:])\s+")
 
 F5TTS_MAX_REF_AUDIO_SECONDS = 30.0
 
+# Words-per-second ceiling used to cap F5-TTS duration estimates.
+# A comfortable narration pace is ~2.5 words/sec.  We use 2.0 wps
+# (slightly slower) as the floor so the model has breathing room,
+# then add a fixed pad.  This prevents generate() from creating
+# 40+ seconds of audio for a 10-word sentence.
+_F5TTS_MIN_WPS = 2.0    # slowest reasonable speech rate
+_F5TTS_PAD_SEC = 1.0    # fixed padding per sentence
+
+
+def _estimate_max_duration(sentence: str) -> float:
+    """Return a sane maximum duration (seconds) for a single sentence.
+
+    Based on word count at a conservative speaking rate + padding.
+    Minimum 2s so very short sentences still get space.
+    """
+    words = len(sentence.split())
+    return max(2.0, words / _F5TTS_MIN_WPS + _F5TTS_PAD_SEC)
+
+
+def _trim_trailing_silence(wav_bytes: bytes, threshold_db: float = -40.0,
+                           min_trail_sec: float = 0.3) -> bytes:
+    """Trim silence/noise from the end of a WAV buffer.
+
+    After F5-TTS overestimates duration, the tail is typically silence
+    or low-level hallucination noise.  We find the last sample above
+    *threshold_db* and keep only a short fade-out tail after it.
+    """
+    buf = io.BytesIO(wav_bytes)
+    try:
+        data, sr = sf.read(buf, dtype="float32")
+    except Exception:
+        return wav_bytes  # can't parse — return as-is
+
+    if len(data) == 0:
+        return wav_bytes
+
+    # Convert threshold from dB to linear amplitude
+    threshold = 10.0 ** (threshold_db / 20.0)
+
+    # Find the last sample whose absolute value exceeds the threshold
+    above = np.where(np.abs(data) > threshold)[0]
+    if len(above) == 0:
+        return wav_bytes  # entirely silent — return as-is
+
+    last_sound_idx = int(above[-1])
+    # Keep a short tail after the last audible sample for natural decay
+    trail_samples = int(sr * min_trail_sec)
+    cut_idx = min(last_sound_idx + trail_samples, len(data))
+
+    if cut_idx >= len(data) - int(sr * 0.1):
+        return wav_bytes  # nothing meaningful to trim
+
+    trimmed = data[:cut_idx]
+
+    # Apply a quick fade-out to avoid a click at the cut point
+    fade_len = min(int(sr * 0.05), len(trimmed))
+    if fade_len > 0:
+        fade = np.linspace(1.0, 0.0, fade_len, dtype=np.float32)
+        trimmed[-fade_len:] *= fade
+
+    out_buf = io.BytesIO()
+    sf.write(out_buf, trimmed, sr, format="WAV", subtype="PCM_16")
+    return out_buf.getvalue()
+
 
 def _split_text_by_emotion(text: str, default_emotion: str = "Regular") -> list[tuple[str, str]]:
     """Split text into (segment_text, emotion_label) pairs.
@@ -1165,13 +1229,26 @@ async def synthesize_f5tts(req: F5TTSRequest):
                 os.close(fd)
                 temp_files.append(out_path)
 
+                # Cap the duration so F5-TTS doesn't over-generate.
+                # estimate_duration uses ref-audio pace which can wildly
+                # over-shoot for slow reference clips, producing hallucinated
+                # gibberish after the real speech ends.
+                max_dur = _estimate_max_duration(sentence)
+                log.info(
+                    f"[Engine C] Sentence ({len(sentence.split())} words, "
+                    f"max {max_dur:.1f}s): '{sentence[:60]}...'"
+                    if len(sentence) > 60
+                    else f"[Engine C] Sentence ({len(sentence.split())} words, "
+                    f"max {max_dur:.1f}s): '{sentence}'"
+                )
+
                 # NOTE: generate() is synchronous and blocks the event loop,
                 # but MLX Metal is NOT thread-safe so we cannot use to_thread().
                 generate(
                     generation_text=sentence,
+                    duration=max_dur,
                     ref_audio_path=ref_path,
                     ref_audio_text=clip.ref_text,
-                    estimate_duration=True,
                     steps=req.steps,
                     method=req.method,
                     cfg_strength=req.cfg_strength,
@@ -1184,9 +1261,10 @@ async def synthesize_f5tts(req: F5TTSRequest):
                 # Refresh timestamp after each sentence to prevent idle unload
                 _f5tts_last_used = time.monotonic()
 
-                # Read the generated WAV
+                # Read the generated WAV and trim trailing silence/hallucination
                 with open(out_path, "rb") as f:
-                    wav_chunks.append(f.read())
+                    raw_wav = f.read()
+                wav_chunks.append(_trim_trailing_silence(raw_wav))
 
         if not wav_chunks:
             raise HTTPException(status_code=500, detail="F5-TTS generation produced no audio")
