@@ -32,7 +32,11 @@
     "docker:up": "docker compose up -d",
     "docker:down": "docker compose down",
     "docker:logs": "docker compose logs -f",
-    "docker:dev": "docker compose -f docker-compose.yml -f docker-compose.dev.yml up"
+    "docker:dev": "docker compose -f docker-compose.yml -f docker-compose.dev.yml up",
+    "dev:desktop": "cd desktop && pnpm dev",
+    "build:desktop": "cd desktop && pnpm build",
+    "pack:desktop": "pnpm build && cd ui && npx next build && cd ../desktop && pnpm build && pnpm pack",
+    "dist:desktop": "pnpm build && cd ui && npx next build && cd ../desktop && pnpm build && pnpm dist"
   },
   "dependencies": {
     "@github/copilot-sdk": "^0.1.29",

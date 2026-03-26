@@ -10,7 +10,7 @@ export const SectionCard = ({
   className,
   defaultOpen = true,
 }: {
-  title: string;
+  title: ReactNode;
   children: ReactNode;
   className?: string;
   defaultOpen?: boolean;

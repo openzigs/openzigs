@@ -1,0 +1,305 @@
+name: Installation Smoke Tests
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version to test (e.g., 0.1.0)'
+        required: true
+
+jobs:
+  test-windows-direct:
+    name: Windows Direct Install
+    runs-on: windows-latest
+    steps:
+      - name: Get version
+        id: version
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "release" ]; then
+            VERSION="${{ github.event.release.tag_name }}"
+            VERSION="${VERSION#v}"
+          else
+            VERSION="${{ github.event.inputs.version }}"
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Download installer
+        shell: pwsh
+        run: |
+          $version = "${{ steps.version.outputs.version }}"
+          $url = "https://github.com/openzigs/openzigs/releases/download/v$version/OpenZigs-Setup-$version.exe"
+          Invoke-WebRequest -Uri $url -OutFile "OpenZigs-Setup.exe"
+
+      - name: Install OpenZigs
+        shell: pwsh
+        run: |
+          Start-Process -FilePath ".\OpenZigs-Setup.exe" -ArgumentList '/S' -Wait -NoNewWindow
+          Start-Sleep -Seconds 10
+
+      - name: Verify installation
+        shell: pwsh
+        run: |
+          # Check if app is installed
+          $appPath = "$env:LOCALAPPDATA\Programs\OpenZigs\OpenZigs.exe"
+          if (Test-Path $appPath) {
+            Write-Host "✓ OpenZigs installed at $appPath"
+          } else {
+            Write-Error "✗ OpenZigs not found at $appPath"
+            exit 1
+          }
+
+      - name: Start and verify health
+        shell: pwsh
+        timeout-minutes: 3
+        run: |
+          $appPath = "$env:LOCALAPPDATA\Programs\OpenZigs\OpenZigs.exe"
+          Start-Process -FilePath $appPath
+          Start-Sleep -Seconds 30
+          
+          # Check health endpoint with retries
+          $maxRetries = 10
+          $retryCount = 0
+          while ($retryCount -lt $maxRetries) {
+            try {
+              $response = Invoke-WebRequest -Uri "http://localhost:3000/health" -UseBasicParsing -TimeoutSec 5
+              if ($response.StatusCode -eq 200) {
+                Write-Host "✓ Health check passed"
+                exit 0
+              }
+            } catch {
+              $retryCount++
+              Write-Host "Retry $retryCount/$maxRetries..."
+              Start-Sleep -Seconds 5
+            }
+          }
+          Write-Error "✗ Health check failed after $maxRetries retries"
+          exit 1
+
+      - name: Uninstall
+        shell: pwsh
+        run: |
+          $uninstaller = "$env:LOCALAPPDATA\Programs\OpenZigs\Uninstall OpenZigs.exe"
+          if (Test-Path $uninstaller) {
+            Start-Process -FilePath $uninstaller -ArgumentList '/S' -Wait
+            Write-Host "✓ Uninstall completed"
+          }
+
+  test-windows-scoop:
+    name: Windows Scoop Install
+    runs-on: windows-latest
+    # Skip until scoop bucket is published
+    if: false
+    steps:
+      - name: Install Scoop
+        shell: pwsh
+        run: |
+          Set-ExecutionPolicy RemoteSigned -Scope CurrentUser -Force
+          Invoke-RestMethod -Uri https://get.scoop.sh | Invoke-Expression
+
+      - name: Add OpenZigs bucket and install
+        shell: pwsh
+        run: |
+          scoop bucket add openzigs https://github.com/openzigs/scoop-openzigs
+          scoop install openzigs
+
+      - name: Verify and health check
+        shell: pwsh
+        timeout-minutes: 3
+        run: |
+          # Launch app
+          Start-Process -FilePath "$env:USERPROFILE\scoop\apps\openzigs\current\OpenZigs.exe"
+          Start-Sleep -Seconds 30
+          
+          # Health check
+          $response = Invoke-WebRequest -Uri "http://localhost:3000/health" -UseBasicParsing
+          if ($response.StatusCode -eq 200) {
+            Write-Host "✓ Health check passed"
+          } else {
+            exit 1
+          }
+
+      - name: Uninstall
+        shell: pwsh
+        run: |
+          scoop uninstall openzigs
+
+  test-macos-arm64-direct:
+    name: macOS ARM64 Direct Install
+    runs-on: macos-14  # ARM64 runner
+    steps:
+      - name: Get version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "release" ]; then
+            VERSION="${{ github.event.release.tag_name }}"
+            VERSION="${VERSION#v}"
+          else
+            VERSION="${{ github.event.inputs.version }}"
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Download DMG
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          curl -sLO "https://github.com/openzigs/openzigs/releases/download/v${VERSION}/OpenZigs-${VERSION}-arm64.dmg"
+
+      - name: Mount and install
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          hdiutil attach "OpenZigs-${VERSION}-arm64.dmg" -nobrowse -mountpoint /Volumes/OpenZigs
+          cp -R /Volumes/OpenZigs/OpenZigs.app /Applications/
+          hdiutil detach /Volumes/OpenZigs
+          
+          # Remove quarantine for unsigned build
+          xattr -rd com.apple.quarantine /Applications/OpenZigs.app || true
+
+      - name: Verify installation
+        run: |
+          if [ -d "/Applications/OpenZigs.app" ]; then
+            echo "✓ OpenZigs installed"
+          else
+            echo "✗ OpenZigs not found"
+            exit 1
+          fi
+
+      - name: Start and verify health
+        timeout-minutes: 3
+        run: |
+          open /Applications/OpenZigs.app
+          sleep 30
+          
+          # Health check with retries
+          for i in {1..10}; do
+            if curl -s http://localhost:3000/health | grep -q "ok"; then
+              echo "✓ Health check passed"
+              exit 0
+            fi
+            echo "Retry $i/10..."
+            sleep 5
+          done
+          echo "✗ Health check failed"
+          exit 1
+
+      - name: Cleanup
+        if: always()
+        run: |
+          pkill -f OpenZigs || true
+          rm -rf /Applications/OpenZigs.app
+
+  test-macos-x64-direct:
+    name: macOS x64 Direct Install
+    runs-on: macos-13  # Intel runner
+    steps:
+      - name: Get version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "release" ]; then
+            VERSION="${{ github.event.release.tag_name }}"
+            VERSION="${VERSION#v}"
+          else
+            VERSION="${{ github.event.inputs.version }}"
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Download DMG
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          curl -sLO "https://github.com/openzigs/openzigs/releases/download/v${VERSION}/OpenZigs-${VERSION}-x64.dmg"
+
+      - name: Mount and install
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          hdiutil attach "OpenZigs-${VERSION}-x64.dmg" -nobrowse -mountpoint /Volumes/OpenZigs
+          cp -R /Volumes/OpenZigs/OpenZigs.app /Applications/
+          hdiutil detach /Volumes/OpenZigs
+          xattr -rd com.apple.quarantine /Applications/OpenZigs.app || true
+
+      - name: Verify installation
+        run: |
+          if [ -d "/Applications/OpenZigs.app" ]; then
+            echo "✓ OpenZigs installed"
+          else
+            echo "✗ OpenZigs not found"
+            exit 1
+          fi
+
+      - name: Start and verify health
+        timeout-minutes: 3
+        run: |
+          open /Applications/OpenZigs.app
+          sleep 30
+          
+          for i in {1..10}; do
+            if curl -s http://localhost:3000/health | grep -q "ok"; then
+              echo "✓ Health check passed"
+              exit 0
+            fi
+            echo "Retry $i/10..."
+            sleep 5
+          done
+          echo "✗ Health check failed"
+          exit 1
+
+      - name: Cleanup
+        if: always()
+        run: |
+          pkill -f OpenZigs || true
+          rm -rf /Applications/OpenZigs.app
+
+  test-macos-homebrew:
+    name: macOS Homebrew Install
+    runs-on: macos-14
+    # Skip until homebrew tap is published
+    if: false
+    steps:
+      - name: Tap and install
+        run: |
+          brew tap openzigs/tap
+          brew install --cask openzigs
+
+      - name: Verify installation
+        run: |
+          if [ -d "/Applications/OpenZigs.app" ]; then
+            echo "✓ OpenZigs installed via Homebrew"
+          else
+            exit 1
+          fi
+
+      - name: Start and verify health
+        timeout-minutes: 3
+        run: |
+          open /Applications/OpenZigs.app
+          sleep 30
+          
+          for i in {1..10}; do
+            if curl -s http://localhost:3000/health | grep -q "ok"; then
+              echo "✓ Health check passed"
+              exit 0
+            fi
+            sleep 5
+          done
+          exit 1
+
+      - name: Uninstall
+        run: |
+          pkill -f OpenZigs || true
+          brew uninstall --cask openzigs
+
+  report:
+    name: Report Results
+    runs-on: ubuntu-latest
+    needs: [test-windows-direct, test-macos-arm64-direct, test-macos-x64-direct]
+    if: always()
+    steps:
+      - name: Summary
+        run: |
+          echo "## Installation Smoke Test Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Platform | Method | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|--------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Windows x64 | Direct | ${{ needs.test-windows-direct.result == 'success' && '✓ Pass' || '✗ Fail' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| macOS ARM64 | Direct | ${{ needs.test-macos-arm64-direct.result == 'success' && '✓ Pass' || '✗ Fail' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| macOS x64 | Direct | ${{ needs.test-macos-x64-direct.result == 'success' && '✓ Pass' || '✗ Fail' }} |" >> $GITHUB_STEP_SUMMARY

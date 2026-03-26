@@ -3,6 +3,7 @@ import path from "node:path";
 import os from "node:os";
 import { randomUUID } from "node:crypto";
 import { sanitizePathComponent } from "../security/path-validator.js";
+import { secureDirOptions } from "../config/file-permissions.js";
 
 export type SessionChannel = "web" | "discord" | "telegram" | "slack";
 
@@ -120,7 +121,7 @@ export class SessionManager {
   }
 
   async createSession(config: SessionConfig): Promise<Session> {
-    await fs.mkdir(this.baseDir, { recursive: true, mode: 0o700 });
+    await fs.mkdir(this.baseDir, secureDirOptions());
 
     const now = this.clock();
     const session: Session = {

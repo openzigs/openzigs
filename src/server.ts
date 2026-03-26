@@ -42,6 +42,8 @@ import { Scheduler } from "./productivity/scheduler.js";
 import { PersonalityManager } from "./personality/personality-manager.js";
 import { DockerSidecarManager } from "./mcp/docker-sidecar-manager.js";
 import { LocalMcpServerManager } from "./mcp/local-mcp-server-manager.js";
+import { secureDirOptions, secureWriteOptions } from "./config/file-permissions.js";
+import { getPlatformCapabilities } from "./config/platform.js";
 import { registerBuiltinPostActions } from "./tasks/post-actions.js";
 import { CustomPostActionManager } from "./tasks/custom-post-actions.js";
 import { SentinelService, SentinelConfigSchema } from "./sentinel/index.js";
@@ -101,6 +103,7 @@ import { createStudioRouter } from "./api/studio.js";
 import { createCharacterRouter, setCharacterIO, setCharacterChannelManager, resumeStaleTrainingPolls } from "./api/characters.js";
 import { TemplateRepository, TemplateService } from "./orchestration/index.js";
 import { createOrchestrationRouter } from "./api/orchestration.js";
+import setupRouter from "./api/setup.js";
 import { CharacterRepository } from "./characters/character-repository.js";
 import { PROJECT_ROOT } from "./project-root.js";
 
@@ -326,6 +329,13 @@ scheduler.startAll();
 // Auto-create the daily Pinterest job if a token is already configured
 if ((process.env.PINTEREST_ACCESS_TOKEN ?? "").trim()) {
   ensurePinterestScheduledJob(scheduler, promptManager);
+}
+
+// ── Platform Capabilities ──
+const platformCaps = getPlatformCapabilities();
+logger.info(`Platform: ${platformCaps.os}/${platformCaps.arch} | Docker: ${platformCaps.dockerAvailable} | Sidecars: ${platformCaps.sidecarsSupported}`);
+if (!platformCaps.sidecarsSupported) {
+  logger.info("Native sidecars (image-gen, audio, music) are only available on macOS ARM — skipping on this platform");
 }
 
 // ── MCP Sidecar Auto-Provisioning ──
@@ -792,6 +802,9 @@ const webhookManager = new WebhookManager();
 const modelsRouter = createModelsRouter({ copilot });
 app.use("/api/models", authMiddleware, modelsRouter);
 
+// Setup API routes — no auth required (needed before auth is configured)
+app.use("/api/setup", setupRouter);
+
 // Pipeline Template Manager
 const pipelineTemplateManager = new PipelineTemplateManager(path.join(import.meta.dirname, "..", "config", "pipeline-templates.json"));
 await pipelineTemplateManager.load();
@@ -1232,14 +1245,14 @@ if (!presenterInviteSecret) {
   const cfgPath = process.env.OPENZIGS_CONFIG_PATH ?? path.join(os.homedir(), ".openzigs", "config.json");
   (async () => {
     try {
-      await fs.mkdir(path.dirname(cfgPath), { recursive: true, mode: 0o700 });
+      await fs.mkdir(path.dirname(cfgPath), secureDirOptions());
       let userCfg: Record<string, unknown> = {};
       try { userCfg = JSON.parse(await fs.readFile(cfgPath, "utf-8")); } catch { /* new file */ }
       const presenter = (userCfg.presenter && typeof userCfg.presenter === "object")
         ? (userCfg.presenter as Record<string, unknown>) : {};
       presenter.inviteSecret = presenterInviteSecret;
       userCfg.presenter = presenter;
-      await fs.writeFile(cfgPath, JSON.stringify(userCfg, null, 2), { encoding: "utf-8", mode: 0o600 });
+      await fs.writeFile(cfgPath, JSON.stringify(userCfg, null, 2), secureWriteOptions());
       logger.info("Persisted presenter invite secret to config");
     } catch (err) {
       logger.warn(`Failed to persist invite secret: ${err instanceof Error ? err.message : err}`);

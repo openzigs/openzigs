@@ -30,11 +30,15 @@ Execute with the **Code Review** agent (`code-review.agent.md`), which has the s
 ┌───────────────────────────────────────────────────────┐
 │  1. ORIENT — Read PR, linked issues, and docs/        │
 ├───────────────────────────────────────────────────────┤
+│  1b. SCANNER — Fetch CodeQL / GHAS bot comments       │
+├───────────────────────────────────────────────────────┤
+│  1c. PRIOR REVIEWS — Analyze human & Copilot comments │
+├───────────────────────────────────────────────────────┤
 │  2. REQUIREMENTS — Validate completeness against spec │
 ├───────────────────────────────────────────────────────┤
 │  3. DESIGN — Evaluate architecture and design choices │
 ├───────────────────────────────────────────────────────┤
-│  4. SECURITY — OWASP Top 10 + CVE scan               │
+│  4. SECURITY — OWASP Top 10 + CVE scan + scanner xref │
 ├───────────────────────────────────────────────────────┤
 │  5. QUALITY — Code quality, complexity, naming, style │
 ├───────────────────────────────────────────────────────┤
@@ -74,6 +78,111 @@ Execute with the **Code Review** agent (`code-review.agent.md`), which has the s
    gh pr view {PR_NUMBER} --json files --jq '.files[].path'
    ```
 6. **Read each changed file in full** — not just the diff hunks. Context matters.
+
+### Step 1b: Security Scanner Comments (CodeQL / GHAS)
+
+**Goal:** Collect all findings from automated security scanners so they can be cross-referenced during the security review and tracked in the final verdict.
+
+GitHub Advanced Security (GHAS) runs CodeQL analysis on PRs and posts review comments from the `github-advanced-security` bot. These comments identify real vulnerabilities (injection, path traversal, missing rate limiting, XSS, etc.) that the human/agent reviewer must acknowledge.
+
+**Procedure:**
+
+1. **Fetch all review comments** on the PR:
+   ```
+   mcp_github_pull_request_read  method=get_review_comments  perPage=100
+   ```
+
+2. **Filter for scanner bot comments** — identify comments where `author` is `github-advanced-security` (CodeQL), `dependabot`, `snyk`, or any other known security bot. These are distinct from human reviewer comments.
+
+3. **Classify each scanner finding:**
+
+   | Status | Meaning |
+   |--------|---------|
+   | `is_outdated: true` | The code was changed after the comment — finding MAY be resolved. **Read the current file at the flagged location to verify.** |
+   | `is_outdated: false` | The code has NOT changed since the comment — finding is **likely still present**. |
+   | `is_resolved: true` | Explicitly resolved by a reviewer — can be skipped. |
+
+4. **Build a scanner findings table** for use in Step 4 and Step 9:
+
+   ```markdown
+   | # | Bot | File:Line | Finding | Severity | Outdated? | Verified? |
+   |---|-----|-----------|---------|----------|-----------|----------|
+   | 1 | CodeQL | src/api/m365.ts:151 | Missing rate limiting | High | No | Pending |
+   | 2 | CodeQL | src/m365/file-parser.ts:132 | Incomplete string escaping | Medium | No | Pending |
+   ```
+
+5. **For each non-outdated, non-resolved finding**, read the current file at the flagged line to understand the context. These are your **pre-seeded security findings** for Step 4.
+
+6. **For each outdated finding**, still verify by reading the current code — "outdated" means the diff changed, NOT that the issue was fixed. A refactor might move the vulnerability rather than fix it.
+
+**Important:** Scanner findings are authoritative signals. A CodeQL High/Critical that remains unaddressed after your review is a **blocking** issue that must appear in your verdict, even if your own manual analysis didn't independently flag it.
+
+### Step 1c: Existing Reviewer Comments (Human & Copilot)
+
+**Goal:** Identify and analyze all prior review comments from human reviewers, GitHub Copilot, or any other non-scanner reviewer so their feedback is incorporated into the review verdict.
+
+Other people or automated reviewers (e.g., GitHub Copilot code review) may have already left comments on the PR. These comments represent prior review work that should not be ignored or duplicated.
+
+**Procedure:**
+
+1. **From the same review comments fetched in Step 1b**, filter for all comments where `author` is NOT a known scanner bot (`github-advanced-security`, `dependabot`, `snyk`, `sonarcloud`) and is NOT the PR author themselves.
+
+2. **Identify the reviewer type** for each comment:
+
+   | Author Pattern | Type | Trust Level |
+   |----------------|------|-------------|
+   | `copilot` / `github-copilot` / `copilot-pull-request-reviewer` | GitHub Copilot automated review | Medium — good at patterns, may miss context |
+   | Any human username | Human reviewer | High — understands business context |
+   | Other bots (e.g., `codecov`, `sonarcloud`) | Quality/coverage bots | Medium — data-driven, verify claims |
+
+3. **Classify each existing comment:**
+
+   | Status | Meaning |
+   |--------|---------|
+   | `is_outdated: true` + code changed | May be resolved — **verify by reading current code** |
+   | `is_outdated: false` | Comment likely still applies |
+   | `is_resolved: true` | Explicitly resolved — note but don't re-open unless the fix is wrong |
+   | Thread has replies | Read the full thread to understand the discussion before judging |
+
+4. **Build an existing comments table** for tracking:
+
+   ```markdown
+   | # | Reviewer | Type | File:Line | Comment Summary | Outdated? | Status |
+   |---|----------|------|-----------|-----------------|-----------|--------|
+   | 1 | mgcronin | Human | src/api/m365.ts:102 | Missing rate limiting on /cleanup | No | Unresolved |
+   | 2 | copilot | Copilot | ui/lib/api.ts:42 | Unused import | Yes | Verify |
+   ```
+
+5. **For each unresolved, non-outdated comment:**
+   - Read the current code at the flagged location
+   - Determine if the comment is valid, already addressed, or a false concern
+   - If valid and unaddressed: include it in your review findings (do NOT duplicate it as a new inline comment — reference the existing thread instead)
+   - If addressed by subsequent commits: note it as resolved in your review summary
+
+6. **For outdated comments with replies:**
+   - Read the full thread to understand the discussion
+   - Check if the code change that made it "outdated" actually addressed the concern
+   - If the concern persists despite the code change, flag it as still-open
+
+7. **Cross-reference with your own findings:**
+   - If a prior reviewer already flagged something you also found, reference their comment rather than duplicating
+   - If a prior reviewer flagged something you disagree with, explain your reasoning
+   - If a prior reviewer's comment was addressed but introduced a new issue, flag the regression
+
+**Priority of existing comments:**
+- 🔴 **Blocking comments** from humans (marked with "CRITICAL", "BLOCKING", or severity indicators) → must be addressed before APPROVE
+- 🟡 **Copilot suggestions** → validate each one; Copilot can produce false positives on complex code
+- 🟢 **Nit / style comments** → nice to fix but not blocking
+- **Resolved threads** → verify the fix is correct, then skip
+
+**Include in Step 9 (Publish) review body:**
+```markdown
+### Prior Review Comments: {N total, M unresolved}
+| Reviewer | Unresolved | Addressed | Disagreed |
+|----------|------------|-----------|-----------|
+| mgcronin | 2 | 3 | 0 |
+| copilot | 0 | 1 | 1 (false positive) |
+```
 
 ### Step 2: Requirements Validation
 
@@ -132,6 +241,32 @@ Scan all changed files for these OWASP Top 10 categories:
 - API keys / secrets not committed (check `.env` patterns, config files)
 - Path traversal protection on file operations
 - CSRF tokens present on state-changing requests
+
+**Cross-reference with scanner findings (Step 1b):**
+
+For each finding in the scanner table built during Step 1b:
+
+1. **Read the current code** at the flagged file and line.
+2. **Verify** whether the finding is still valid, a false positive, or already fixed.
+3. **Update the Verified column**: `Still present`, `Fixed`, or `False positive (reason)`.
+4. **For findings still present**: Add them to your review as inline comments with the scanner's severity. Prefix with the scanner name for traceability:
+   ```
+   🔒 **CodeQL: Missing rate limiting (High)** — This route handler performs file system access without rate limiting.
+   Recommend: Add express-rate-limit middleware to this route group.
+   ```
+5. **For false positives**: Optionally add a comment explaining why the finding doesn't apply, so the scanner comment can be resolved.
+6. **Any CodeQL High or Critical finding that is `Still present` is automatically a blocking issue** — it must contribute to a `REQUEST_CHANGES` verdict regardless of other review dimensions.
+
+**Scanner-specific patterns to check:**
+
+| Scanner Finding | What to Verify |
+|-----------------|----------------|
+| Missing rate limiting | Is the route behind auth middleware? Does it do I/O? Add `express-rate-limit` if exposed. |
+| Incomplete string escaping | Is the output used in HTML/SQL context? Check if backslash, quote, and angle bracket escaping are all handled. |
+| Incomplete multi-character sanitization | Does the sanitizer handle nested/reconstructed tags? Test with `<scr<script>ipt>` input mentally. |
+| Double escaping/unescaping | Trace the data flow: does an entity decode (`&amp;` → `&`) feed into another decode or an HTML context? |
+| Uncontrolled data in path expression | Is `path.resolve()` + `startsWith(allowedDir)` used? Check for symlink bypasses. |
+| Polynomial ReDoS | Is the regex applied to user input? Check for nested quantifiers. |
 
 **Severity ratings:** Critical / High / Medium / Low / Informational
 
@@ -245,8 +380,28 @@ gh pr review {PR_NUMBER} --request-changes --body "$(cat review-body.md)"
 - docs/ARCHITECTURE.md: ⚠️ New `/api/widgets` endpoint not documented
 - README: No changes needed
 
+### Security Scanners: {CLEAN|FINDINGS}
+| Scanner | Finding | File | Severity | Status |
+|---------|---------|------|----------|--------|
+| CodeQL | Missing rate limiting | src/api/m365.ts:151 | High | Still present |
+| CodeQL | Path traversal | src/api/m365.ts:122 | Critical | Fixed |
+
+### Prior Review Comments: {N total, M unresolved}
+| Reviewer | Type | Unresolved | Addressed | Disagreed |
+|----------|------|------------|-----------|-----------|
+| mgcronin | Human | 2 | 3 | 0 |
+| copilot | Copilot | 0 | 1 | 1 (false positive) |
+
 ### Verdict: REQUEST_CHANGES
 ```
+
+**Verdict escalation rules:**
+- Any `Still present` CodeQL **Critical** or **High** → `REQUEST_CHANGES` (blocking)
+- Any `Still present` CodeQL **Medium** → `COMMENT` (non-blocking, but noted)
+- All scanner findings `Fixed` or `False positive` → no impact on verdict
+- Any **unresolved blocking comment from a human reviewer** → `REQUEST_CHANGES`
+- Any unresolved Copilot suggestion → does NOT block on its own (validate first, may be false positive)
+- If the only issues are resolved scanner findings and addressed reviewer comments → eligible for `APPROVE`
 
 ### Step 10: Handoff (Optional)
 

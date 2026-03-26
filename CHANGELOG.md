@@ -7,6 +7,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Cross-platform Windows compatibility (Phase 1) (#590)
+  - Docker socket resolution now supports Windows named pipes (`//./pipe/docker_engine`) (#596)
+  - Platform capability detection module (`src/config/platform.ts`) — detects OS, arch, Docker, sidecar support, Chrome path (#599)
+  - `/api/admin/platform` endpoint exposes platform capabilities and feature availability to the UI (#601)
+  - Admin panel shows platform-appropriate availability badges on sidecar-dependent features (Image Gen, Music Gen) (#601)
+  - `usePlatform()` React hook and `PlatformBadge` component for UI feature gating (#601)
+- Electron desktop shell for Windows and macOS (Phase 2) (#595)
+  - `desktop/` workspace with Electron 34 entry point, IPC bridge, tray icon
+  - Backend process spawning with embedded Node.js runtime
+  - System tray with context menu (show/hide, open UI, quit)
+  - Single instance lock to prevent multiple app windows
+- Desktop build pipeline (Phase 3) (#592)
+  - `electron-builder` configuration for NSIS (Windows) and DMG (macOS arm64/x64)
+  - GitHub Actions workflow `desktop-release.yml` for tag-triggered builds
+  - Code signing stubs for Azure Trusted Signing and Apple Developer ID
+- Auto-update system (Phase 4) (#591)
+  - `electron-updater` integration with GitHub Releases backend
+  - Stable/beta channel switching with IPC handlers
+  - 4-hour automatic update check interval
+- First-run setup wizard (Phase 5) (#594)
+  - `/api/setup/*` endpoints for prerequisites check, config write, completion flag
+  - Multi-step wizard UI at `/setup` with GitHub auth, channel config, feature selection
+  - Works alongside existing `.env` file and admin panel configuration
+- Package manager distribution (Phase 6) (#593)
+  - Scoop bucket template (`pkg-templates/scoop/`) for Windows
+  - Homebrew cask formula template (`pkg-templates/homebrew/`) for macOS
+  - winget manifest template (`pkg-templates/winget/`) for future signed builds
+  - GitHub Actions workflow `update-package-manifests.yml` for automatic manifest updates
+  - Installation smoke test workflow `installation-smoke-tests.yml`
+  - Comprehensive installation documentation (`docs/INSTALL.md`)
+  - README.md updated with download badges and installation links
+
+### Changed
+
+- File permission operations (`chmod`, `mode: 0o600/0o700`) now use cross-platform helpers that skip on Windows NTFS (#598)
+  - New `src/config/file-permissions.ts` module with `secureFileOptions()`, `secureDirOptions()`, `chmodSecureFile()`, `secureWriteOptions()`
+  - Applied across config, CLI setup, Copilot auth, Sentinel state, Vault, audit logger, session manager, task post-actions, and server config persistence
+- Server startup logs platform capabilities and gracefully skips native sidecars on non-macOS platforms (#600)
+
+### Fixed
+
+- Remotion media resolver already had hard-link → copy fallback; confirmed no changes needed (#597)
+
 ### Security
 
 - Resolve 175 CodeQL security alerts (28 critical, 147 high) across Python sidecars and JS/TS backend (#574)

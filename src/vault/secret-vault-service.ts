@@ -19,6 +19,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import { logger } from "../logging/logger.js";
+import { secureDirOptions, secureWriteOptions, chmodSecureFile } from "../config/file-permissions.js";
 import type {
   SecretEntry,
   SecretEntryWithValue,
@@ -299,15 +300,12 @@ export class SecretVaultService {
       data: data.toString("hex"),
     };
 
-    await fs.mkdir(path.dirname(this.vaultPath), { recursive: true, mode: 0o700 });
+    await fs.mkdir(path.dirname(this.vaultPath), secureDirOptions());
     // Write to temp file first, then rename for atomicity
     const tmpPath = `${this.vaultPath}.tmp`;
-    await fs.writeFile(tmpPath, JSON.stringify(vault, null, 2), {
-      encoding: "utf-8",
-      mode: 0o600,
-    });
+    await fs.writeFile(tmpPath, JSON.stringify(vault, null, 2), secureWriteOptions());
     await fs.rename(tmpPath, this.vaultPath);
-    await fs.chmod(this.vaultPath, 0o600);
+    await chmodSecureFile(this.vaultPath);
   }
 
   private stripValue(entry: SecretEntryWithValue): SecretEntry {

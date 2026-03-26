@@ -1,0 +1,37 @@
+{
+  "version": "0.1.0",
+  "description": "Open-source AI assistant & automation platform",
+  "homepage": "https://github.com/openzigs/openzigs",
+  "license": "BSL-1.1",
+  "architecture": {
+    "64bit": {
+      "url": "https://github.com/openzigs/openzigs/releases/download/v0.1.0/OpenZigs-Setup-0.1.0.exe",
+      "hash": "SHA256_HASH_PLACEHOLDER"
+    }
+  },
+  "installer": {
+    "script": [
+      "Start-Process -FilePath \"$dir\\$fname\" -ArgumentList '/S', '/D=$dir' -Wait"
+    ]
+  },
+  "uninstaller": {
+    "script": [
+      "Start-Process -FilePath \"$dir\\Uninstall OpenZigs.exe\" -ArgumentList '/S' -Wait"
+    ]
+  },
+  "bin": [],
+  "shortcuts": [
+    ["OpenZigs.exe", "OpenZigs"]
+  ],
+  "notes": "OpenZigs desktop app. After installation, open from Start Menu or run 'openzigs' in terminal.",
+  "checkver": {
+    "github": "https://github.com/openzigs/openzigs"
+  },
+  "autoupdate": {
+    "architecture": {
+      "64bit": {
+        "url": "https://github.com/openzigs/openzigs/releases/download/v$version/OpenZigs-Setup-$version.exe"
+      }
+    }
+  }
+}

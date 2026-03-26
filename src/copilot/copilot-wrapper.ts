@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import fs from "node:fs/promises";
 import { CopilotClient, defineTool } from "@github/copilot-sdk";
+import { secureDirOptions, secureFileOptions, chmodSecureFile } from "../config/file-permissions.js";
 import type { ToolDefinition, ToolRegistry } from "../mcp/tool-registry.js";
 import { ALWAYS_ON_TOOLS, ESSENTIAL_TOOLS, CONTEXTUAL_TOOLS } from "../mcp/constants.js";
 import { TokenTracker } from "./token-tracker.js";
@@ -456,9 +457,9 @@ const readAuthState = async (authPath: string): Promise<AuthState | null> => {
 };
 
 const writeAuthState = async (authPath: string, state: AuthState) => {
-  await fs.mkdir(path.dirname(authPath), { recursive: true, mode: 0o700 });
-  await fs.writeFile(authPath, JSON.stringify(state, null, 2), { mode: 0o600 });
-  await fs.chmod(authPath, 0o600);
+  await fs.mkdir(path.dirname(authPath), secureDirOptions());
+  await fs.writeFile(authPath, JSON.stringify(state, null, 2), secureFileOptions());
+  await chmodSecureFile(authPath);
 };
 
 const normalizeAuthResult = (result: unknown): DeviceAuthResult => {

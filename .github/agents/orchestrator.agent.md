@@ -129,7 +129,7 @@ Call the **Code Review** subagent with `#tool:agent/runSubagent`:
 
 - **agentName**: `Code Review`
 - **description**: `Reviewing PR #{N} against epic #{M}`
-- **prompt**: *"Review PR #{PR_NUMBER} against epic #{EPIC_NUMBER}. Read the code-review skill at `.github/skills/code-review/SKILL.md` for the full workflow. Check requirements, security (OWASP), code quality, performance, tests, and documentation. Publish a structured GitHub review. When done, report your verdict (APPROVE, COMMENT, or REQUEST_CHANGES) and list any blocking issues."*
+- **prompt**: *"Review PR #{PR_NUMBER} against epic #{EPIC_NUMBER}. Read the code-review skill at `.github/skills/code-review/SKILL.md` for the full workflow. Check requirements, security (OWASP), code quality, performance, tests, and documentation. IMPORTANT: Execute Step 1b (Security Scanner Comments) — fetch all review comments and identify any from `github-advanced-security` (CodeQL), `dependabot`, or other security bots. Cross-reference their findings during your security review. Any unresolved CodeQL High/Critical is automatically blocking. Also execute Step 1c (Prior Review Comments) — analyze all existing comments from human reviewers and GitHub Copilot. Validate each, note which are addressed vs. still open. Unresolved blocking human comments are also blocking. Publish a structured GitHub review. When done, report your verdict (APPROVE, COMMENT, or REQUEST_CHANGES) and list any blocking issues, including unresolved scanner findings and unresolved reviewer comments."*
 
 **Extract from the result**: The verdict and any blocking issues.
 

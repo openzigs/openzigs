@@ -4,6 +4,7 @@ import os from "node:os";
 import readline from "node:readline/promises";
 import { spawn } from "node:child_process";
 import dotenv from "dotenv";
+import { secureDirOptions, secureWriteOptions, chmodSecureFile } from "../config/file-permissions.js";
 
 export type SetupIO = {
   prompt: (message: string) => Promise<string>;
@@ -122,9 +123,9 @@ const writeToolsConfig = async (toolsPath: string, config: ToolsConfig) => {
 };
 
 const writeConfig = async (configPath: string, config: Record<string, unknown>) => {
-  await fs.mkdir(path.dirname(configPath), { recursive: true, mode: 0o700 });
-  await fs.writeFile(configPath, JSON.stringify(config, null, 2), { encoding: "utf-8", mode: 0o600 });
-  await fs.chmod(configPath, 0o600);
+  await fs.mkdir(path.dirname(configPath), secureDirOptions());
+  await fs.writeFile(configPath, JSON.stringify(config, null, 2), secureWriteOptions());
+  await chmodSecureFile(configPath);
 };
 
 const runCommandDefault = (command: string, args: string[]) => {

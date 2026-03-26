@@ -3,6 +3,7 @@ import * as fsSync from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { randomUUID } from "node:crypto";
+import { secureDirOptions } from "../config/file-permissions.js";
 import readline from "node:readline";
 
 export const AUDIT_LEVELS = ["info", "warn", "error", "security"] as const;
@@ -141,7 +142,7 @@ export class AuditLogger {
       details: redactedDetails
     };
 
-    await fs.mkdir(this.baseDir, { recursive: true, mode: 0o700 });
+    await fs.mkdir(this.baseDir, secureDirOptions());
     const filePath = path.join(this.baseDir, `audit-${formatDate(timestamp)}.jsonl`);
     const stored: StoredAuditEntry = {
       ...fullEntry,

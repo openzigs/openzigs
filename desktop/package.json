@@ -1,0 +1,111 @@
+{
+  "name": "openzigs-desktop",
+  "version": "0.1.0",
+  "description": "OpenZigs Desktop – Electron shell for the OpenZigs platform",
+  "private": true,
+  "type": "module",
+  "main": "dist/main.js",
+  "scripts": {
+    "dev": "tsx src/main.ts",
+    "build": "tsc",
+    "start": "electron dist/main.js",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder",
+    "dist:win": "electron-builder --win --x64",
+    "dist:mac": "electron-builder --mac",
+    "dist:mac:arm64": "electron-builder --mac --arm64",
+    "dist:mac:x64": "electron-builder --mac --x64"
+  },
+  "build": {
+    "appId": "com.openzigs.desktop",
+    "productName": "OpenZigs",
+    "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
+    "directories": {
+      "output": "release",
+      "buildResources": "assets"
+    },
+    "files": [
+      "dist/**/*",
+      "assets/**/*",
+      "!assets/*.psd",
+      "!assets/*.sketch"
+    ],
+    "extraResources": [
+      {
+        "from": "../dist",
+        "to": "backend",
+        "filter": [
+          "**/*",
+          "!**/*.test.*",
+          "!**/*.spec.*",
+          "!**/__tests__/**"
+        ]
+      },
+      {
+        "from": "../ui/.next/standalone",
+        "to": "frontend",
+        "filter": ["**/*"]
+      },
+      {
+        "from": "../config",
+        "to": "config",
+        "filter": ["**/*"]
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        }
+      ],
+      "icon": "assets/icon.png",
+      "signDlls": false,
+      "sign": null
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "perMachine": false,
+      "allowElevation": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "OpenZigs",
+      "uninstallDisplayName": "OpenZigs"
+    },
+    "mac": {
+      "target": [
+        { "target": "dmg", "arch": ["arm64", "x64"] }
+      ],
+      "icon": "assets/icon.png",
+      "category": "public.app-category.developer-tools",
+      "identity": null,
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist"
+    },
+    "dmg": {
+      "contents": [
+        { "x": 130, "y": 220 },
+        { "x": 410, "y": 220, "type": "link", "path": "/Applications" }
+      ],
+      "sign": false
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "openzigs",
+      "repo": "openzigs",
+      "releaseType": "release"
+    },
+    "afterSign": "scripts/notarize.cjs"
+  },
+  "dependencies": {
+    "electron-updater": "^6.3.9"
+  },
+  "devDependencies": {
+    "electron": "^34.2.0",
+    "electron-builder": "^25.1.8",
+    "typescript": "^5.8.2"
+  }
+}

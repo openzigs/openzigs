@@ -8,6 +8,8 @@
 - [UI Architecture](#ui-architecture)
 - [Cloudflare Tunnel (Sidecar Pattern)](#cloudflare-tunnel-sidecar-pattern)
 - [Python AI Sidecars](#python-ai-sidecars)
+- [Platform Capability Detection](#platform-capability-detection)
+- [Desktop Shell (Electron)](#desktop-shell-electron)
 - [MCP Host Architecture](#mcp-host-architecture)
 - [Component Breakdown](#component-breakdown)
 - [Voice Interface Layer](#voice-interface-layer)
@@ -507,6 +509,137 @@ Sidecars are selected at install time and can be added later by re-running `inst
 ```
 
 All sidecars are stateless HTTP servers. The agent's MCP tool layer routes capability requests (`generate-image`, `transcribe-audio`, `generate-music`, `voice-convert`, `separate-stems`) to the appropriate sidecar via the tool registry (`src/mcp/tool-registry.ts`).
+
+---
+
+## Platform Capability Detection
+
+OpenZigs detects the host platform at startup and exposes capability flags to both server-side code and the UI. This enables graceful feature degradation on Windows (where native Apple Silicon sidecars are unavailable) and cross-platform compatibility for core text/tool agent functionality.
+
+### Detection Module
+
+**`src/config/platform.ts`** — Synchronous detection at startup:
+
+| Capability | Description |
+|------------|-------------|
+| `os` | Normalised platform: `"darwin"`, `"win32"`, `"linux"` |
+| `arch` | CPU architecture: `"arm64"`, `"x64"`, etc. |
+| `dockerAvailable` | `true` if `docker info` succeeds (5s timeout) |
+| `sidecarsSupported` | `true` only on macOS ARM64 (Apple Silicon) |
+| `chromePath` | Resolved path to Chrome/Chromium, or `null` |
+| `isWindows` / `isMacOS` / `isLinux` | Boolean convenience flags |
+
+### Cross-Platform File Permissions
+
+**`src/config/file-permissions.ts`** — Helpers for secure file/directory creation:
+
+- `secureFileOptions()` — Returns `{ mode: 0o600 }` on Unix, `{}` on Windows
+- `secureDirOptions()` — Returns `{ recursive: true, mode: 0o700 }` on Unix
+- `chmodSecureFile(path)` — Sets 0o600 on Unix, no-op on Windows
+
+NTFS silently ignores Unix permission modes; these helpers centralise the platform check so callers don't need to branch.
+
+### Admin API Endpoint
+
+**`GET /api/admin/platform`** — Returns the capabilities object:
+
+```json
+{
+  "os": "darwin",
+  "arch": "arm64",
+  "dockerAvailable": true,
+  "sidecarsSupported": true,
+  "chromePath": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+  "isWindows": false,
+  "isMacOS": true,
+  "isLinux": false
+}
+```
+
+The UI fetches this on load and uses it to:
+- Show/hide sidecar-dependent features (Voice Lab, Image Gen, Music Studio)
+- Display a platform badge in the Admin panel
+- Conditionally render setup instructions
+
+### Platform Support Matrix
+
+| Feature | macOS (ARM) | macOS (Intel) | Windows | Linux |
+|---------|-------------|---------------|---------|-------|
+| Core agent (text chat, tools) | ✅ | ✅ | ✅ | ✅ |
+| Docker sidecars | ✅ | ✅ | ✅ | ✅ |
+| Native AI sidecars (MLX) | ✅ | ❌ | ❌ | ❌ |
+| Browser automation | ✅ | ✅ | ✅ | ✅ |
+
+> **Note:** Native sidecars (image-gen, audio, music, music-studio, worker) require Apple Silicon. On other platforms, these features are unavailable but the core agent remains fully functional.
+
+---
+
+## Desktop Shell (Electron)
+
+OpenZigs ships as a native desktop application via Electron. The desktop shell wraps the existing Express backend + Next.js UI inside a managed BrowserWindow, adding system tray integration, lifecycle management, and auto-update support.
+
+### Architecture
+
+```
+┌──────────────────────────────────┐
+│         Electron Main Process    │
+│  ┌───────────┐  ┌────────────┐  │
+│  │ Backend   │  │ Window     │  │
+│  │ Manager   │  │ Manager    │  │
+│  └─────┬─────┘  └─────┬──────┘  │
+│        │              │          │
+│  ┌─────┴─────┐  ┌─────┴──────┐  │
+│  │ Express   │  │ BrowserWin │  │
+│  │ (child    │  │ (loads     │  │
+│  │  process) │  │  localhost) │  │
+│  └───────────┘  └────────────┘  │
+│  ┌───────────┐  ┌────────────┐  │
+│  │ Tray      │  │ IPC Bridge │  │
+│  │ Manager   │  │            │  │
+│  └───────────┘  └────────────┘  │
+└──────────────────────────────────┘
+```
+
+### Module Breakdown
+
+| Module | File | Purpose |
+|--------|------|---------|
+| **BackendManager** | `desktop/src/backend.ts` | Spawns Express as a child process, health-polls `/health`, manages start/stop/restart lifecycle |
+| **WindowManager** | `desktop/src/window.ts` | BrowserWindow creation, close-to-tray, window state persistence (position/size) |
+| **TrayManager** | `desktop/src/tray.ts` | System tray icon with status-aware colors (green/yellow/red), context menu |
+| **IpcBridge** | `desktop/src/ipc.ts` | IPC handlers bridging renderer ↔ main process (backend control, app info, window ops) |
+| **Preload** | `desktop/src/preload.ts` | `contextBridge` exposing `window.openzigs` API to the renderer (secure bridge) |
+| **Updater** | `desktop/src/updater.ts` | Auto-update via `electron-updater` + GitHub Releases |
+
+### Key Design Decisions
+
+- **Child process isolation**: The Express backend runs as a separate `node` process, not inside the Electron main process. This keeps the main process responsive and allows independent restart/health-check.
+- **Free port discovery**: `BackendManager` probes ports 3000–3100 at startup to avoid conflicts with developer instances.
+- **Close-to-tray**: Closing the window hides it to the system tray rather than quitting. Quit is explicit via tray menu or `Cmd+Q`/`Alt+F4`.
+- **Window state persistence**: Position, size, and maximized state are saved to `~/.openzigs/window-state.json` and restored on next launch.
+- **Single instance lock**: `app.requestSingleInstanceLock()` prevents duplicate app instances; second launch focuses the existing window.
+- **contextIsolation + nodeIntegration:false**: Renderer has no direct Node.js access; all backend communication goes through the preload bridge.
+
+### Build & Packaging Pipeline
+
+Desktop builds use **electron-builder** with platform-specific targets:
+
+| Target | Platform | Format | Runner |
+|--------|----------|--------|--------|
+| Windows x64 | `windows-latest` | NSIS `.exe` | GitHub Actions |
+| macOS arm64 | `macos-latest` | DMG | GitHub Actions |
+| macOS x64 | `macos-13` | DMG | GitHub Actions |
+
+**Trigger**: Pushing a tag matching `v*` (e.g., `git tag v0.2.0 && git push --tags`) triggers `.github/workflows/desktop-release.yml`.
+
+**Bundled resources** (via `extraResources`):
+- `backend/` — compiled Express server (`dist/`)
+- `frontend/` — Next.js standalone output (`ui/.next/standalone/`)
+- `config/` — default configuration files
+
+**Code signing**: Stubs are in place for both platforms. Currently disabled (`CSC_IDENTITY_AUTO_DISCOVERY: false`). See `docs/code-signing.md` for setup instructions.
+
+**Artifacts**: Published to GitHub Releases with naming convention `OpenZigs-{version}-{os}-{arch}.{ext}`.
 
 ---
 

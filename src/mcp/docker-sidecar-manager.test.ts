@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { DockerSidecarManager, DEFAULT_SIDECAR_DEFINITIONS } from "./docker-sidecar-manager.js";
+import { DockerSidecarManager, DEFAULT_SIDECAR_DEFINITIONS, resolveDockerSocketPath } from "./docker-sidecar-manager.js";
 import type { SidecarDefinition } from "./docker-sidecar-manager.js";
 
 // ── Mock Docker ──────────────────────────────────────────────────────────────
@@ -482,5 +482,22 @@ describe("DockerSidecarManager", () => {
     it("is empty (all sidecars migrated to native MCP servers)", () => {
       expect(DEFAULT_SIDECAR_DEFINITIONS).toHaveLength(0);
     });
+  });
+});
+
+describe("resolveDockerSocketPath", () => {
+  it("returns a string path", () => {
+    const socketPath = resolveDockerSocketPath();
+    expect(typeof socketPath).toBe("string");
+    expect(socketPath.length).toBeGreaterThan(0);
+  });
+
+  it("returns a Unix socket path on non-Windows platforms", () => {
+    // On the macOS/Linux test runner, it should resolve to a Unix socket
+    if (process.platform !== "win32") {
+      const socketPath = resolveDockerSocketPath();
+      expect(socketPath).toMatch(/docker/);
+      expect(socketPath).not.toBe("//./pipe/docker_engine");
+    }
   });
 });
