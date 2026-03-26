@@ -20,12 +20,11 @@
 import path from "node:path";
 import os from "node:os";
 import fs from "node:fs/promises";
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn } from "node:child_process";
 import { Router, raw } from "express";
 import { nanoid } from "nanoid";
 import Database from "better-sqlite3";
 import { logger } from "../logging/logger.js";
-import { PROJECT_ROOT } from "../project-root.js";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -111,7 +110,7 @@ function formatSidecarErrorMessage(rawBody: string): string {
   }
 
   if (extracted.includes("3-10 second range")) {
-    return "Reference audio was auto-trimmed but still rejected by GPT-SoVITS. Try a shorter clip.";
+    return "Reference audio was auto-trimmed but still rejected. Try a shorter clip.";
   }
 
   return extracted;
@@ -226,12 +225,12 @@ export const createAudioRouter = ({ db, sidecarUrl }: AudioRouterOptions): Route
 
   /**
    * POST /engine/switch — switch the active TTS engine.
-   * Body: { engine: "kokoro" | "sovits" | "f5tts" }
+   * Body: { engine: "kokoro" | "f5tts" }
    */
   router.post("/engine/switch", async (req, res) => {
     const { engine } = req.body as { engine?: string };
-    if (!engine || !["kokoro", "sovits", "f5tts"].includes(engine)) {
-      res.status(400).json({ error: "engine must be 'kokoro', 'sovits', or 'f5tts'" });
+    if (!engine || !["kokoro", "f5tts"].includes(engine)) {
+      res.status(400).json({ error: "engine must be 'kokoro' or 'f5tts'" });
       return;
     }
     try {
@@ -279,237 +278,6 @@ export const createAudioRouter = ({ db, sidecarUrl }: AudioRouterOptions): Route
     }
   });
 
-  // ── GPT-SoVITS Install (push-button from UI) ─────────────────────────────
-
-  /** Singleton guard — only one install process at a time. */
-  let sovitsInstallProc: ChildProcess | null = null;
-
-  /**
-   * GET /engine/sovits-install-status — check whether GPT-SoVITS is installed.
-   * Returns: { installed: boolean }
-   */
-  router.get("/engine/sovits-install-status", async (_req, res) => {
-    const installDir = path.join(os.homedir(), ".openzigs", "sidecars", "gptsovits");
-    try {
-      const requiredPaths = [
-        path.join(installDir, ".git"),
-        path.join(
-          installDir,
-          "GPT_SoVITS",
-          "pretrained_models",
-          "gsv-v2final-pretrained",
-          "s1bert25hz-5kh-longer-epoch=12-step=369668.ckpt",
-        ),
-        path.join(
-          installDir,
-          "GPT_SoVITS",
-          "pretrained_models",
-          "gsv-v2final-pretrained",
-          "s2G2333k.pth",
-        ),
-      ];
-      await Promise.all(requiredPaths.map((pathToCheck) => fs.access(pathToCheck)));
-      res.json({ installed: true, installing: sovitsInstallProc !== null });
-    } catch {
-      res.json({ installed: false, installing: sovitsInstallProc !== null });
-    }
-  });
-
-  /**
-   * POST /engine/install-sovits — run the GPT-SoVITS setup script and stream
-   * output via Server-Sent Events so the UI can show real-time progress.
-   *
-   * The response is `text/event-stream`. Each line of stdout/stderr is sent as
-   * a `data:` event with JSON `{ line, stream }`. A final `event: done` carries
-   * `{ code }` (0 = success).
-   */
-  router.post("/engine/install-sovits", (req, res) => {
-    if (sovitsInstallProc) {
-      res.status(409).json({ error: "Install already in progress." });
-      return;
-    }
-
-    const scriptPath = path.resolve(PROJECT_ROOT, "scripts", "setup-gptsovits.sh");
-
-    // SSE headers
-    res.writeHead(200, {
-      "Content-Type": "text/event-stream",
-      "Cache-Control": "no-cache",
-      Connection: "keep-alive",
-    });
-
-    const send = (obj: Record<string, unknown>) => {
-      res.write(`data: ${JSON.stringify(obj)}\n\n`);
-    };
-
-    send({ line: "Starting GPT-SoVITS installer…", stream: "system" });
-
-    sovitsInstallProc = spawn("bash", [scriptPath], {
-      cwd: PROJECT_ROOT,
-      env: { ...process.env, TERM: "dumb" },
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-
-    const handleLine = (stream: "stdout" | "stderr") => (chunk: Buffer) => {
-      const lines = chunk.toString("utf-8").split("\n");
-      for (const line of lines) {
-        if (line.length > 0) send({ line, stream });
-      }
-    };
-
-    sovitsInstallProc.stdout?.on("data", handleLine("stdout"));
-    sovitsInstallProc.stderr?.on("data", handleLine("stderr"));
-
-    sovitsInstallProc.on("close", (code) => {
-      sovitsInstallProc = null;
-      const success = code === 0;
-      logger.info(`[Audio API] GPT-SoVITS install exited with code ${code}`);
-      send({ line: success ? "Installation complete!" : `Install exited with code ${code}`, stream: "system" });
-      res.write(`event: done\ndata: ${JSON.stringify({ code })}\n\n`);
-      res.end();
-    });
-
-    sovitsInstallProc.on("error", (err) => {
-      sovitsInstallProc = null;
-      logger.error(`[Audio API] GPT-SoVITS install spawn error: ${err.message}`);
-      send({ line: `Spawn error: ${err.message}`, stream: "stderr" });
-      res.write(`event: done\ndata: ${JSON.stringify({ code: 1 })}\n\n`);
-      res.end();
-    });
-
-    // If the client disconnects, kill the install process
-    req.on("close", () => {
-      if (sovitsInstallProc) {
-        sovitsInstallProc.kill("SIGTERM");
-        sovitsInstallProc = null;
-      }
-    });
-  });
-
-  // ── GPT-SoVITS Server Lifecycle ───────────────────────────────────────────
-
-  /** Singleton — managed GPT-SoVITS server process. */
-  let sovitsServerProc: ChildProcess | null = null;
-
-  /**
-   * POST /engine/start-sovits — start the GPT-SoVITS API server as a managed
-   * background process. Streams output via SSE until the server is reachable,
-   * then sends `event: ready`.
-   */
-  router.post("/engine/start-sovits", async (_req, res) => {
-    if (sovitsServerProc) {
-      res.status(409).json({ error: "GPT-SoVITS server is already running." });
-      return;
-    }
-
-    const startScript = path.join(os.homedir(), ".openzigs", "sidecars", "gptsovits", "start.sh");
-    try {
-      await fs.access(startScript);
-    } catch {
-      res.status(400).json({ error: "GPT-SoVITS is not installed. Run the installer first." });
-      return;
-    }
-
-    res.writeHead(200, {
-      "Content-Type": "text/event-stream",
-      "Cache-Control": "no-cache",
-      Connection: "keep-alive",
-    });
-
-    const send = (obj: Record<string, unknown>) => {
-      res.write(`data: ${JSON.stringify(obj)}\n\n`);
-    };
-
-    send({ line: "Starting GPT-SoVITS server…", stream: "system" });
-
-    sovitsServerProc = spawn("bash", [startScript], {
-      cwd: path.join(os.homedir(), ".openzigs", "sidecars", "gptsovits"),
-      env: { ...process.env, TERM: "dumb" },
-      stdio: ["ignore", "pipe", "pipe"],
-      detached: true,
-    });
-
-    const handleLine = (stream: "stdout" | "stderr") => (chunk: Buffer) => {
-      const lines = chunk.toString("utf-8").split("\n");
-      for (const line of lines) {
-        if (line.length > 0) send({ line, stream });
-      }
-    };
-
-    sovitsServerProc.stdout?.on("data", handleLine("stdout"));
-    sovitsServerProc.stderr?.on("data", handleLine("stderr"));
-
-    // Poll for readiness for up to 120 s.
-    // GPT-SoVITS api_v2.py does not expose /health; probe /docs instead.
-    const sovitsUrl = "http://127.0.0.1:9880";
-    let ready = false;
-    const pollStart = Date.now();
-    const pollInterval = setInterval(async () => {
-      if (ready || Date.now() - pollStart > 120_000) {
-        clearInterval(pollInterval);
-        if (!ready) {
-          send({ line: "Timed out waiting for GPT-SoVITS server to respond.", stream: "stderr" });
-          res.write(`event: done\ndata: ${JSON.stringify({ code: 1 })}\n\n`);
-          res.end();
-        }
-        return;
-      }
-      try {
-        const r = await fetch(`${sovitsUrl}/docs`, { signal: AbortSignal.timeout(2000) });
-        if (r.status < 500) {
-          ready = true;
-          clearInterval(pollInterval);
-          send({ line: `GPT-SoVITS server is ready at ${sovitsUrl}`, stream: "system" });
-          res.write(`event: ready\ndata: ${JSON.stringify({ url: sovitsUrl })}\n\n`);
-          res.end();
-        }
-      } catch {
-        /* not ready yet */
-      }
-    }, 3000);
-
-    sovitsServerProc.on("close", (code) => {
-      sovitsServerProc = null;
-      clearInterval(pollInterval);
-      if (!ready) {
-        send({ line: `GPT-SoVITS server exited with code ${code}`, stream: "stderr" });
-        res.write(`event: done\ndata: ${JSON.stringify({ code: code ?? 1 })}\n\n`);
-        res.end();
-      }
-    });
-
-    sovitsServerProc.on("error", (err) => {
-      sovitsServerProc = null;
-      clearInterval(pollInterval);
-      send({ line: `Spawn error: ${err.message}`, stream: "stderr" });
-      res.write(`event: done\ndata: ${JSON.stringify({ code: 1 })}\n\n`);
-      res.end();
-    });
-
-    // Don't kill the GPT-SoVITS server when the SSE connection closes —
-    // it should keep running. Just unref so Node can exit cleanly.
-    sovitsServerProc.unref();
-  });
-
-  /**
-   * POST /engine/stop-sovits — stop the managed GPT-SoVITS server.
-   */
-  router.post("/engine/stop-sovits", (_req, res) => {
-    if (!sovitsServerProc) {
-      res.json({ stopped: false, message: "No managed GPT-SoVITS process running." });
-      return;
-    }
-    try {
-      sovitsServerProc.kill("SIGTERM");
-      sovitsServerProc = null;
-      logger.info("[Audio API] GPT-SoVITS server stopped by user.");
-      res.json({ stopped: true });
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      res.status(500).json({ error: msg });
-    }
-  });
-
   // ── Voice Presets (Engine A / Kokoro) ─────────────────────────────────────
 
   /**
@@ -526,7 +294,7 @@ export const createAudioRouter = ({ db, sidecarUrl }: AudioRouterOptions): Route
     }
   });
 
-  // ── Voice Profiles (Engine B / GPT-SoVITS) ───────────────────────────────
+  // ── Voice Profiles (legacy) ───────────────────────────────────────────────
 
   /**
    * GET /profiles — list all saved voice profiles.
@@ -732,7 +500,7 @@ export const createAudioRouter = ({ db, sidecarUrl }: AudioRouterOptions): Route
       const testText: string = (req.body as { text?: string }).text?.trim()
         || "Hello, this is a voice cloning test.";
 
-      // Duration validation removed — sidecar auto-trims long clips for GPT-SoVITS
+      // Duration validation removed — sidecar auto-trims long clips
 
       const payload = {
         text: testText,

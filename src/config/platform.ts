@@ -112,7 +112,7 @@ export function getPlatformCapabilities(
     os: currentOS,
     arch,
     dockerAvailable: isDockerAvailableSync(),
-    // Native sidecars (GPT-SoVITS, image-gen, music-studio etc.)
+    // Native sidecars (image-gen, music-studio etc.)
     // only work on macOS ARM (Apple Silicon) currently
     sidecarsSupported: currentOS === "darwin" && arch === "arm64",
     chromePath: findChromePath(),

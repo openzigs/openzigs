@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useCallback, useImperativeHandle, useRef, useMemo, type MutableRefObject } from "react";
+import { useEffect, useCallback, useImperativeHandle, useRef, useMemo, useState, type MutableRefObject } from "react";
 import { Play, Pause } from "lucide-react";
 import { buildMediaUrl } from "@/lib/api";
 import type { DirectorManifest } from "../types";
@@ -369,6 +369,7 @@ function ScriptTextOverlay({
   manifest: DirectorManifest;
   currentFrame: number;
 }) {
+  const [expanded, setExpanded] = useState(false);
   // Find SmartCaptions overlay
   const captionOverlay = manifest.timeline?.find(
     (e) => e.type === "overlay" && (e as Record<string, unknown>).component === "SmartCaptions",
@@ -436,15 +437,27 @@ function ScriptTextOverlay({
         </div>
       )}
 
-      {/* Script text (narration) */}
+      {/* Script text (narration) — click to expand full text */}
       {scriptText && (
-        <div className="absolute bottom-[2%] left-0 right-0 flex justify-center px-2 pointer-events-none">
-          <p
-            className="max-w-[90%] truncate rounded bg-black/60 px-2 py-0.5 text-center text-white/70"
-            style={{ fontSize: "clamp(8px, 1.5vw, 11px)" }}
-          >
-            {scriptText}
-          </p>
+        <div className="absolute bottom-[2%] left-0 right-0 flex justify-center px-2">
+          {expanded ? (
+            <div
+              className="max-w-[90%] max-h-[60%] overflow-y-auto rounded bg-black/80 px-3 py-2 text-center text-white/90 cursor-pointer pointer-events-auto"
+              style={{ fontSize: "clamp(9px, 1.5vw, 12px)" }}
+              onClick={() => setExpanded(false)}
+            >
+              {scriptText}
+            </div>
+          ) : (
+            <p
+              className="max-w-[90%] truncate rounded bg-black/60 px-2 py-0.5 text-center text-white/70 cursor-pointer pointer-events-auto"
+              style={{ fontSize: "clamp(8px, 1.5vw, 11px)" }}
+              onClick={() => setExpanded(true)}
+              title="Click to show full narration"
+            >
+              {scriptText}
+            </p>
+          )}
         </div>
       )}
     </>

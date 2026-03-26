@@ -7,7 +7,6 @@ import { Router, type Request, type Response, type NextFunction } from "express"
 import fs from "node:fs";
 import path from "node:path";
 import { SignJWT } from "jose";
-import type Database from "better-sqlite3";
 import type { PresentationRepository } from "../presenter/presentation-repository.js";
 import type { TeacherAgent } from "../presenter/teacher-agent.js";
 import type { QuizGenerator } from "../presenter/quiz-generator.js";
@@ -22,28 +21,13 @@ export interface PresenterRouterDeps {
   teacherAgent?: TeacherAgent;
   quizGenerator?: QuizGenerator;
   voiceService?: VoiceService;
-  db?: Database.Database;
   copilotWrapper?: CopilotWrapper;
   knowledgeService?: KnowledgeIngestionService;
   inviteSecret?: string;
   baseUrl?: string;
 }
 
-type VoiceProfileRow = {
-  id: string;
-  ref_audio_path: string;
-  ref_text: string;
-  language: string;
-  top_p: number;
-  temperature: number;
-  text_split_method: string;
-  speed_factor: number;
-  repetition_penalty: number;
-  top_k: number;
-  sample_steps: number;
-};
-
-export function createPresenterRouter({ presentationRepo, teacherAgent, quizGenerator, voiceService, db, copilotWrapper, knowledgeService, inviteSecret, baseUrl }: PresenterRouterDeps): Router {
+export function createPresenterRouter({ presentationRepo, teacherAgent, quizGenerator, voiceService, copilotWrapper, knowledgeService, inviteSecret, baseUrl }: PresenterRouterDeps): Router {
   const transcriptClassifier = copilotWrapper ? new TranscriptClassifier(copilotWrapper) : null;
   const router = Router();
 
@@ -66,7 +50,7 @@ export function createPresenterRouter({ presentationRepo, teacherAgent, quizGene
   // POST /api/presentations/tts-prompt — Get TTS audio for the "ask your question" prompt
   // Must be before /:id routes to avoid matching as a presentation ID
   router.post("/tts-prompt", async (req, res) => {
-    const { text, presentationId } = req.body as { text?: string; presentationId?: string };
+    const { text } = req.body as { text?: string };
     const promptText = text ?? "Please ask your question out loud.";
 
     if (!voiceService || !voiceService.isReady()) {
@@ -79,64 +63,9 @@ export function createPresenterRouter({ presentationRepo, teacherAgent, quizGene
       if (provider === "local") {
         const sidecarUrl = voiceService.getSidecarUrl().replace(/\/$/, "");
         const healthResp = await fetch(`${sidecarUrl}/health`);
-        if (healthResp.ok) {
-          const health = (await healthResp.json()) as { active_engine?: "kokoro" | "sovits" };
-          if (health.active_engine === "sovits") {
-            if (!db) {
-              res.status(503).json({ error: "Database unavailable for Engine B voice profile lookup" });
-              return;
-            }
-
-            const presentationVoiceId = presentationId
-              ? presentationRepo.findById(presentationId)?.voice_id
-              : null;
-
-            const profile = (presentationVoiceId
-              ? db.prepare("SELECT * FROM voice_profiles WHERE id = ?").get(presentationVoiceId)
-              : db.prepare("SELECT * FROM voice_profiles ORDER BY updated_at DESC LIMIT 1").get()) as VoiceProfileRow | undefined;
-
-            if (!profile) {
-              res.status(409).json({
-                error: "Engine B is active, but no GPT-SoVITS voice profile is configured.",
-              });
-              return;
-            }
-
-            const payload = {
-              text: promptText,
-              ref_audio_path: profile.ref_audio_path,
-              ref_text: profile.ref_text,
-              ref_language: profile.language,
-              top_p: profile.top_p,
-              temperature: profile.temperature,
-              text_split_method: profile.text_split_method,
-              speed_factor: profile.speed_factor,
-              repetition_penalty: profile.repetition_penalty,
-              top_k: profile.top_k,
-              sample_steps: profile.sample_steps,
-            };
-
-            const audioResp = await fetch(`${sidecarUrl}/tts`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify(payload),
-            });
-
-            if (!audioResp.ok) {
-              const errorBody = await audioResp.text().catch(() => "");
-              res.status(502).json({ error: errorBody || "Engine B synthesis failed" });
-              return;
-            }
-
-            const audioBuffer = Buffer.from(await audioResp.arrayBuffer());
-            res.set({
-              "Content-Type": audioResp.headers.get("content-type") ?? "audio/wav",
-              "Content-Length": String(audioBuffer.length),
-              "Cache-Control": "public, max-age=86400",
-            });
-            res.send(audioBuffer);
-            return;
-          }
+        if (!healthResp.ok) {
+          res.status(503).json({ error: "Audio sidecar health check failed" });
+          return;
         }
       }
 

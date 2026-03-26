@@ -173,58 +173,6 @@ export const createDirectorRouter = ({
     });
   }
 
-  /**
-   * Split text into sentence-level chunks for higher-quality GPT-SoVITS synthesis.
-   * Short text (≤1 sentence) is returned as-is; longer text is split at sentence
-   * boundaries so each chunk stays under ~200 characters. This avoids the quality
-   * degradation GPT-SoVITS exhibits on long passages.
-   */
-  function splitIntoSentences(text: string): string[] {
-    // Split on sentence-ending punctuation while keeping the delimiter attached
-    const raw = text.match(/[^.!?]+[.!?]+[\s]*/g);
-    if (!raw || raw.length <= 1) return [text.trim()];
-    // Merge very short fragments (<30 chars) with the previous sentence
-    const merged: string[] = [];
-    for (const seg of raw) {
-      const trimmed = seg.trim();
-      if (!trimmed) continue;
-      if (merged.length > 0 && trimmed.length < 30) {
-        merged[merged.length - 1] += " " + trimmed;
-      } else {
-        merged.push(trimmed);
-      }
-    }
-    return merged.length > 0 ? merged : [text.trim()];
-  }
-
-  /**
-   * Concatenate multiple WAV files into one using ffmpeg's concat demuxer.
-   * Returns the path to the combined output file.
-   */
-  async function concatWavFiles(wavPaths: string[], outputDir: string): Promise<string> {
-    const fs = await import("node:fs/promises");
-    const listPath = path.join(outputDir, `concat-list-${nanoid(6)}.txt`);
-    const outPath = path.join(outputDir, `openzigs-vo-concat-${nanoid(8)}.wav`);
-    // Build ffmpeg concat file list
-    const lines = wavPaths.map((p) => `file '${p.replace(/'/g, "'\\''")}'`);
-    await fs.writeFile(listPath, lines.join("\n"), "utf-8");
-    return await new Promise<string>((resolve, reject) => {
-      const proc = spawn("ffmpeg", [
-        "-y", "-f", "concat", "-safe", "0",
-        "-i", listPath,
-        "-c:a", "pcm_s16le",
-        outPath,
-      ]);
-      proc.on("error", reject);
-      proc.on("close", async (code) => {
-        // Clean up list file
-        await fs.unlink(listPath).catch(() => {});
-        if (code !== 0) reject(new Error(`ffmpeg concat exited with ${code}`));
-        else resolve(outPath);
-      });
-    });
-  }
-
   // Mutable runtime config (overlaid on top of file-based config)
   const runtimeConfig = {
     pixabayApiKey: config.assets.pixabayApiKey,
@@ -1166,31 +1114,17 @@ Respond with ONLY a valid JSON array. No explanation. Example:
         // visually distinct image even when style anchors are shared.
         const baseSeed = Date.now() % 100_000;
 
-        // Step C.1: Detect GPT-SoVITS voice profile for presentation voiceover
-        // When the audio sidecar has Engine B (GPT-SoVITS) active, we synthesize
-        // voiceover directly via the sidecar's /tts endpoint with the user's
-        // voice profile parameters, bypassing VoiceService (which only knows Kokoro).
-        interface SovitsProfileParams {
-          ref_audio_path: string;
-          ref_text: string;
-          language: string;
-          top_p: number;
-          temperature: number;
-          text_split_method: string;
-          speed_factor: number;
-          repetition_penalty: number;
-          top_k: number;
-          sample_steps: number;
-        }
+        // Step C.1: Detect F5-TTS voice profile for presentation voiceover
+        // When the audio sidecar has F5-TTS active, we synthesize
+        // voiceover via the sidecar's /f5tts endpoint with the user's
+        // voice profile clips, bypassing VoiceService (which only knows Kokoro).
         interface F5TTSClipRow {
           emotion: string;
           ref_audio_path: string;
           ref_text: string;
         }
-        let sovitsProfile: SovitsProfileParams | null = null;
         let f5ttsClips: F5TTSClipRow[] = [];
         let sidecarBaseUrl = "";
-        let useSovitsVoice = false;
         let useF5TTSVoice = false;
 
         if (voiceService) {
@@ -1199,20 +1133,7 @@ Respond with ONLY a valid JSON array. No explanation. Example:
             const healthResp = await fetch(`${sidecarBaseUrl}/health`, { signal: AbortSignal.timeout(3000) });
             if (healthResp.ok) {
               const health = await healthResp.json() as { active_engine?: string };
-              if (health.active_engine === "sovits") {
-                // Load the first available voice profile from the DB
-                const db = getDatabase();
-                const profile = db.prepare(
-                  `SELECT ref_audio_path, ref_text, language, top_p, temperature,
-                          text_split_method, speed_factor, repetition_penalty, top_k, sample_steps
-                   FROM voice_profiles ORDER BY updated_at DESC LIMIT 1`,
-                ).get() as SovitsProfileParams | undefined;
-                if (profile && profile.ref_audio_path) {
-                  sovitsProfile = profile;
-                  useSovitsVoice = true;
-                  logger.info(`[Director API] GPT-SoVITS voice detected — using profile ref: ${profile.ref_audio_path}`);
-                }
-              } else if (health.active_engine === "f5tts") {
+              if (health.active_engine === "f5tts") {
                 // Load F5-TTS clips from the most recently updated F5-TTS profile
                 const db = getDatabase();
                 const f5Profile = db.prepare(
@@ -1277,57 +1198,7 @@ Respond with ONLY a valid JSON array. No explanation. Example:
           if (!scene.voiceover) return { index: scene.index, voiceoverPath: undefined };
           let voiceoverPath: string | undefined;
 
-          if (useSovitsVoice && sovitsProfile) {
-            try {
-              const sentences = splitIntoSentences(scene.voiceover);
-              const chunkPaths: string[] = [];
-              for (const sentence of sentences) {
-                const ttsResp = await fetch(`${sidecarBaseUrl}/tts`, {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({
-                    text: sentence,
-                    ref_audio_path: sovitsProfile.ref_audio_path,
-                    ref_text: sovitsProfile.ref_text,
-                    ref_language: sovitsProfile.language,
-                    top_p: sovitsProfile.top_p,
-                    temperature: sovitsProfile.temperature,
-                    text_split_method: sovitsProfile.text_split_method,
-                    speed_factor: sovitsProfile.speed_factor,
-                    repetition_penalty: sovitsProfile.repetition_penalty,
-                    top_k: sovitsProfile.top_k,
-                    sample_steps: sovitsProfile.sample_steps,
-                    fragment_interval: 0.25,
-                    parallel_infer: true,
-                    split_bucket: true,
-                    seed: -1,
-                  }),
-                  signal: AbortSignal.timeout(120_000),
-                });
-                if (ttsResp.ok) {
-                  const audioBuffer = Buffer.from(await ttsResp.arrayBuffer());
-                  const chunkPath = path.join(imageOutputDir, `openzigs-vo-chunk-${nanoid(8)}.wav`);
-                  await fs.writeFile(chunkPath, audioBuffer);
-                  chunkPaths.push(chunkPath);
-                } else {
-                  const errText = await ttsResp.text().catch(() => "");
-                  logger.warn(`[Director API] SoVITS chunk failed (${ttsResp.status}): ${errText.substring(0, 200)}`);
-                }
-              }
-              if (chunkPaths.length > 0) {
-                if (chunkPaths.length === 1) {
-                  voiceoverPath = chunkPaths[0];
-                } else {
-                  voiceoverPath = await concatWavFiles(chunkPaths, imageOutputDir);
-                  for (const cp of chunkPaths) { await fs.unlink(cp).catch(() => {}); }
-                }
-                logger.info(`[Director API] SoVITS voiceover for scene ${scene.index}: ${sentences.length} sentence(s) stitched`);
-              }
-            } catch (sovitsErr) {
-              const msg = sovitsErr instanceof Error ? sovitsErr.message : String(sovitsErr);
-              logger.warn(`[Director API] SoVITS voiceover failed for scene ${scene.index}: ${msg}`);
-            }
-          } else if (useF5TTSVoice && f5ttsClips.length > 0 && voiceService) {
+          if (useF5TTSVoice && f5ttsClips.length > 0 && voiceService) {
             try {
               const f5Result = await voiceService.synthesizeF5TTS(
                 scene.voiceover,
@@ -1396,21 +1267,19 @@ Respond with ONLY a valid JSON array. No explanation. Example:
 
         const voiceGenStream = (async (): Promise<SceneVoiceResult[]> => {
           // Pre-flight: re-verify sidecar is still alive before burning time on TTS
-          if ((useF5TTSVoice || useSovitsVoice) && voiceService) {
+          if (useF5TTSVoice && voiceService) {
             try {
               const ping = await fetch(`${sidecarBaseUrl}/health`, { signal: AbortSignal.timeout(5000) });
               if (!ping.ok) {
                 logger.warn(`[Director API] Audio sidecar health check failed before voiceover generation (${ping.status}) — falling back to Kokoro`);
                 useF5TTSVoice = false;
-                useSovitsVoice = false;
               }
             } catch {
               logger.warn("[Director API] Audio sidecar unreachable before voiceover generation — falling back to Kokoro");
               useF5TTSVoice = false;
-              useSovitsVoice = false;
             }
           }
-          const engine = useF5TTSVoice ? "F5-TTS" : useSovitsVoice ? "SoVITS" : "Kokoro";
+          const engine = useF5TTSVoice ? "F5-TTS" : "Kokoro";
           logger.info(`[Director API] Starting voiceover generation (engine=${engine}, scenes=${storyboard.scenes.length})`);
           const results: SceneVoiceResult[] = [];
           for (const scene of storyboard.scenes) {

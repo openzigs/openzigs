@@ -32,7 +32,7 @@ The Music Studio has two tabs:
 - **Conversion Mode**: "Singing (40kHz)" for music/vocals, "Speech (25kHz)" for spoken content
 - **Pitch Shift**: Adjusts semitones (-12 to +12). Use +4 to +6 when converting male→female, -4 to -6 for female→male
 - **Advanced Settings**: F0 method (rmvpe recommended), index rate (0-1, higher = more like training voice), filter radius, volume envelope
-- **Technology**: GPT-SoVITS v2 with RVC-style voice conversion; requires a trained voice model (train in Characters page)
+- **Technology**: RVC-style voice conversion; requires a trained voice model (train in Characters page)
 
 ### Tips for better V2V results:
 - Clean source audio without background noise produces best results
@@ -58,7 +58,7 @@ The Music Studio has two tabs:
 
 ## Underlying Technologies
 - **Demucs htdemucs_6s**: Facebook/Meta's hybrid transformer model for music source separation (6 stems)
-- **GPT-SoVITS**: Voice conversion model using VITS architecture
+- **RVC**: Voice conversion model using VITS architecture
 - **basic-pitch**: Spotify's audio-to-MIDI transcription model
 - **pyfluidsynth**: SoundFont synthesizer for MIDI→audio
 - **matchering**: Auto-mastering library for EQ matching and loudness normalization

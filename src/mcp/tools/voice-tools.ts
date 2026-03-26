@@ -6,7 +6,7 @@ const synthesizeSpeechSchema = z.object({
   action: z.enum(["synthesize", "list_voices", "health", "switch_engine"]),
   text: z.string().optional().describe("Text to synthesize (for synthesize)"),
   voice: z.string().optional().describe("Voice preset ID (e.g., 'af_heart', 'am_adam')"),
-  engine: z.enum(["kokoro", "sovits", "f5tts"]).optional().describe("TTS engine (for switch_engine)"),
+  engine: z.enum(["kokoro", "f5tts"]).optional().describe("TTS engine (for switch_engine)"),
 });
 
 export type VoiceToolsOptions = {
@@ -18,14 +18,14 @@ export const createVoiceTools = ({ voiceService }: VoiceToolsOptions): ToolDefin
     {
       name: "synthesize-speech",
       description:
-        "Text-to-speech synthesis with 54+ voice presets across Kokoro, GPT-SoVITS, and F5-TTS engines. List available voices, check sidecar health, or generate speech audio.",
+        "Text-to-speech synthesis with 54+ voice presets across Kokoro and F5-TTS engines. List available voices, check sidecar health, or generate speech audio.",
       inputSchema: {
         type: "object",
         properties: {
           action: { type: "string", enum: ["synthesize", "list_voices", "health", "switch_engine"] },
           text: { type: "string" },
           voice: { type: "string" },
-          engine: { type: "string", enum: ["kokoro", "sovits", "f5tts"] },
+          engine: { type: "string", enum: ["kokoro", "f5tts"] },
         },
         required: ["action"],
       },

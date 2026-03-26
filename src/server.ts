@@ -1266,7 +1266,6 @@ const presenterRouter = createPresenterRouter({
   teacherAgent,
   quizGenerator,
   voiceService,
-  db,
   copilotWrapper: copilot,
   knowledgeService,
   inviteSecret: presenterInviteSecret,

@@ -148,15 +148,10 @@ describe("Audio API router", () => {
       expect(res.status).toBe(200);
     });
 
-    it("returns 502 on sidecar failure", async () => {
-      globalThis.fetch = vi.fn().mockResolvedValue({
-        ok: false,
-        status: 500,
-        text: () => Promise.resolve("Internal Server Error"),
-      });
+    it("returns 400 for invalid engine", async () => {
       const { app } = buildApp();
       const res = await request(app).post("/audio/engine/switch").send({ engine: "sovits" });
-      expect(res.status).toBe(502);
+      expect(res.status).toBe(400);
     });
   });
 
@@ -480,17 +475,6 @@ describe("Audio API router", () => {
     });
   });
 
-  // ── Engine stop-sovits ─────────────────────────────────────
-
-  describe("POST /engine/stop-sovits", () => {
-    it("reports no process running", async () => {
-      const { app } = buildApp();
-      const res = await request(app).post("/audio/engine/stop-sovits");
-      expect(res.status).toBe(200);
-      expect(res.body.stopped).toBe(false);
-    });
-  });
-
   // ── SoVITS Profile test (proxy) ────────────────────────────
 
   describe("POST /profiles/:id/test", () => {
@@ -698,36 +682,6 @@ describe("Audio API router", () => {
     });
   });
 
-  // ── GET /engine/sovits-install-status ──────────────────
-
-  describe("GET /engine/sovits-install-status", () => {
-    it("returns install status with expected shape", async () => {
-      const { app } = buildApp();
-      const res = await request(app).get("/audio/engine/sovits-install-status");
-      expect(res.status).toBe(200);
-      expect(res.body).toHaveProperty("installed");
-      expect(res.body).toHaveProperty("installing");
-      expect(typeof res.body.installed).toBe("boolean");
-      expect(res.body.installing).toBe(false);
-    });
-  });
-
-  // ── POST /engine/install-sovits (conflict) ────────────
-
-  describe("POST /engine/install-sovits", () => {
-    // The SSE route is hard to test fully, but we can verify the 409 branch
-    // by noting that the singleton guard should not be set initially
-    // (since install-sovits spawns a process that immediately fails in test env)
-    it("starts install (SSE response)", async () => {
-      const { app } = buildApp();
-      // The endpoint writes SSE headers and streams — supertest will get
-      // the response once the process closes (which happens quickly in test)
-      const res = await request(app).post("/audio/engine/install-sovits");
-      expect(res.status).toBe(200);
-      expect(res.headers["content-type"]).toContain("text/event-stream");
-    });
-  });
-
   // ── Engine switch to f5tts (clip push branch) ─────────────
 
   describe("POST /engine/switch (f5tts clip push)", () => {
@@ -805,21 +759,6 @@ describe("Audio API router", () => {
       });
 
       const res = await request(app).post("/audio/engine/switch").send({ engine: "f5tts" });
-      expect(res.status).toBe(200);
-      expect(globalThis.fetch).toHaveBeenCalledTimes(1);
-    });
-  });
-
-  // ── Engine switch to sovits (no clip push) ────────────────
-
-  describe("POST /engine/switch (sovits)", () => {
-    it("switches to sovits without clip push", async () => {
-      globalThis.fetch = vi.fn().mockResolvedValue({
-        ok: true,
-        json: () => Promise.resolve({ engine: "sovits" }),
-      });
-      const { app } = buildApp();
-      const res = await request(app).post("/audio/engine/switch").send({ engine: "sovits" });
       expect(res.status).toBe(200);
       expect(globalThis.fetch).toHaveBeenCalledTimes(1);
     });
@@ -1276,58 +1215,6 @@ describe("Audio API router", () => {
       const { app } = buildApp();
       const res = await request(app).get("/audio/engine/status");
       expect(res.status).toBe(503);
-    });
-  });
-
-  // ── GPT-SoVITS Install Status ──────────────────────────
-
-  describe("GET /engine/sovits-install-status", () => {
-    it("returns installed: false when paths do not exist", async () => {
-      // fs.access is mocked to reject by default
-      const { app } = buildApp();
-      const res = await request(app).get("/audio/engine/sovits-install-status");
-      expect(res.status).toBe(200);
-      expect(res.body.installed).toBe(false);
-      expect(res.body.installing).toBe(false);
-    });
-
-    it("returns installed: true when all paths exist", async () => {
-      const fsPromises = await import("node:fs/promises");
-      (fsPromises.default.access as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
-      const { app } = buildApp();
-      const res = await request(app).get("/audio/engine/sovits-install-status");
-      expect(res.status).toBe(200);
-      expect(res.body.installed).toBe(true);
-      // Restore default behavior
-      (fsPromises.default.access as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("ENOENT"));
-    });
-  });
-
-  // ── GPT-SoVITS Install Conflict ────────────────────────
-
-  describe("POST /engine/install-sovits", () => {
-    it("returns 409 if install already in progress", async () => {
-      // We need to simulate a running install process. Since we can't easily
-      // set the internal singleton, we test the non-conflict path indirectly
-      // by verifying the endpoint responds (SSE or 409).
-      const { app } = buildApp();
-      // The spawn mock creates a process that closes immediately, so the first
-      // call will complete fast. Two rapid calls should at least not crash.
-      const res = await request(app).post("/audio/engine/install-sovits");
-      // SSE response starts with 200 and event-stream content type
-      expect(res.status).toBe(200);
-    });
-  });
-
-  // ── GPT-SoVITS Start (not installed) ──────────────────
-
-  describe("POST /engine/start-sovits", () => {
-    it("returns 400 when GPT-SoVITS is not installed", async () => {
-      // fs.access mocked to reject (ENOENT) by default
-      const { app } = buildApp();
-      const res = await request(app).post("/audio/engine/start-sovits");
-      expect(res.status).toBe(400);
-      expect(res.body.error).toContain("not installed");
     });
   });
 

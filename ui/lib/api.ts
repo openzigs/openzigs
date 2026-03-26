@@ -61,3 +61,18 @@ export const fetchJson = async <T>(path: string, options?: RequestInit): Promise
   }
   return response.json() as Promise<T>;
 };
+
+/**
+ * Fetch a binary response (audio, images, etc.) with auth headers.
+ * Returns the raw Response so callers can read .blob(), .arrayBuffer(), etc.
+ */
+export const fetchWithAuth = async (path: string, options?: RequestInit): Promise<Response> => {
+  const headers = new Headers(options?.headers);
+  if (AUTH_TOKEN) {
+    headers.set("Authorization", `Bearer ${AUTH_TOKEN}`);
+  }
+
+  const url = buildUrl(path);
+  const response = await fetch(url, { ...options, headers });
+  return response;
+};
