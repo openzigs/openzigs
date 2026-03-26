@@ -71,7 +71,7 @@ export class IpcBridge {
     });
 
     ipcMain.handle("update:check", async () => {
-      return this.updateManager?.checkForUpdates() ?? null;
+      return (await this.updateManager?.checkForUpdates()) ?? null;
     });
 
     ipcMain.handle("update:download", async () => {

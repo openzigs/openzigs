@@ -7,7 +7,7 @@ import { secureDirOptions, secureWriteOptions } from "../config/file-permissions
 import { getPlatformCapabilities } from "../config/platform.js";
 import { logger } from "../logging/logger.js";
 
-const router = Router();
+const router: Router = Router();
 
 const OPENZIGS_DIR = path.join(os.homedir(), ".openzigs");
 const CONFIG_PATH = path.join(OPENZIGS_DIR, "config.json");
