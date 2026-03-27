@@ -451,13 +451,14 @@ export const TemplateComposition: React.FC<CompositionInputProps> = (props) => {
           // SmartCaptions word timings use absolute composition frame numbers,
           // so always render from frame 0 to avoid offset mismatches.
           const isSmartCaptions = overlay.type === "overlay" && overlay.component === "SmartCaptions";
+          const overlayDur = "durationInFrames" in overlay ? overlay.durationInFrames : undefined;
+          // Skip overlays with zero/negative duration — Remotion requires positive durationInFrames
+          if (overlayDur != null && overlayDur <= 0) return null;
           return (
             <Sequence
               key={`overlay-${i}`}
               from={isSmartCaptions ? 0 : overlay.startAtFrame}
-              durationInFrames={
-                "durationInFrames" in overlay ? overlay.durationInFrames : undefined
-              }
+              durationInFrames={overlayDur}
             >
               {renderOverlay(overlay, branding)}
             </Sequence>

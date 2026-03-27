@@ -315,7 +315,14 @@ export function NarrationEditor({
       )}
 
       <p className="mt-1 text-[9px] text-muted-foreground">
-        Type <span className="font-mono">[</span> for speech directives • <span className="font-mono">(Emotion)</span> for F5-TTS • <span className="font-mono">*word*</span> for emphasis
+        Type <span className="font-mono">[</span> for speech directives •{" "}
+        <span className="font-medium">F5-TTS:</span>{" "}
+        <span className="font-mono">[PAUSE: Xs]</span> → pauses via punctuation,{" "}
+        <span className="font-mono">(Emotion)</span> for voice switching,{" "}
+        <span className="font-mono">*emphasis*</span> stripped (not supported) •{" "}
+        <span className="font-medium">Kokoro:</span>{" "}
+        <span className="font-mono">[PAUSE: Xs]</span> native,{" "}
+        <span className="font-mono">*emphasis*</span> native
       </p>
     </div>
   );

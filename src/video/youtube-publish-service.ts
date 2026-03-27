@@ -8,6 +8,7 @@ import os from "node:os";
 import fs from "node:fs";
 import { nanoid } from "nanoid";
 import { logger } from "../logging/logger.js";
+import { extractSubtitleSegments, generateSrt } from "./subtitle-export.js";
 import type { ToolRegistry } from "../mcp/tool-registry.js";
 import type { YouTubePublishRepository } from "./youtube-publish-repository.js";
 import type { Server as SocketIOServer } from "socket.io";
@@ -189,6 +190,21 @@ export class YouTubePublishService {
       // Try to set thumbnail if one exists
       await this.trySetThumbnail(request.draftId, videoId);
 
+      // Try to upload captions if the draft has subtitles
+      if (videoId) {
+        const srtContent = this.generateSrtForDraft(request.draftId);
+        if (srtContent) {
+          // Fire and forget — caption upload failure should not block publish success.
+          // Delay 15s: YouTube may reject caption uploads with 404 while the video is
+          // still processing after upload. A brief wait reduces spurious failures;
+          // users can also retry manually via the UI.
+          const captionDelay = new Promise<void>((r) => setTimeout(r, 15_000));
+          captionDelay.then(() => this.uploadCaptions(publishId)).catch((err) => {
+            logger.warn(`[YouTubePublish] Auto caption upload failed: ${err instanceof Error ? err.message : String(err)}`);
+          });
+        }
+      }
+
       logger.info(`[YouTubePublish] Published ${publishId} → ${videoId ?? "unknown"}`);
       return { publishId, videoId, videoUrl, status: finalStatus };
     } catch (error) {
@@ -219,6 +235,127 @@ export class YouTubePublishService {
   /** Get all publishes for a draft. */
   getPublishHistory(draftId: string) {
     return this.publishRepo.getByDraftId(draftId);
+  }
+
+  /**
+   * Check whether a previously published YouTube video still exists.
+   * If the video has been deleted from YouTube, updates the publish record status to "deleted".
+   * Returns the updated status.
+   */
+  async checkVideoExists(publishId: string): Promise<{ exists: boolean; status: string }> {
+    const record = this.publishRepo.getById(publishId);
+    if (!record) {
+      return { exists: false, status: "not_found" };
+    }
+    if (!record.video_id) {
+      return { exists: false, status: record.status };
+    }
+
+    const tool = this.toolRegistry.getToolDefinition("youtube-check-video-exists");
+    if (!tool) {
+      logger.warn("[YouTubePublish] youtube-check-video-exists tool not available");
+      return { exists: true, status: record.status };
+    }
+
+    try {
+      const result = await tool.handler({ video_id: record.video_id });
+      if (result.isError) {
+        logger.warn(`[YouTubePublish] Video existence check failed: ${result.text}`);
+        return { exists: true, status: record.status };
+      }
+
+      const response = JSON.parse(result.text) as { success: boolean; data?: { exists: boolean } };
+      const exists = response.data?.exists ?? true;
+
+      if (!exists && record.status === "published") {
+        this.publishRepo.updateStatus(publishId, "deleted");
+        this.io?.emit("youtube:publish:status-changed", {
+          draftId: record.draft_id,
+          publishId,
+          status: "deleted",
+        });
+        logger.info(`[YouTubePublish] Video ${record.video_id} no longer exists, marked as deleted`);
+        return { exists: false, status: "deleted" };
+      }
+
+      return { exists, status: record.status };
+    } catch (error) {
+      logger.warn(`[YouTubePublish] Video existence check error: ${error instanceof Error ? error.message : String(error)}`);
+      return { exists: true, status: record.status };
+    }
+  }
+
+  /**
+   * Upload SRT captions to YouTube for a published video.
+   * Reads the manifest from the draft to generate subtitle content.
+   */
+  async uploadCaptions(
+    publishId: string,
+    options?: { language?: string; captionName?: string },
+  ): Promise<{ success: boolean; error?: string }> {
+    const record = this.publishRepo.getById(publishId);
+    if (!record?.video_id) {
+      return { success: false, error: "No video ID found for this publish" };
+    }
+
+    const srtContent = this.generateSrtForDraft(record.draft_id);
+    if (!srtContent) {
+      return { success: false, error: "No subtitle content available for this draft" };
+    }
+
+    const tool = this.toolRegistry.getToolDefinition("youtube-upload-captions");
+    if (!tool) {
+      return { success: false, error: "youtube-upload-captions tool not available" };
+    }
+
+    try {
+      const result = await tool.handler({
+        video_id: record.video_id,
+        language: options?.language ?? "en",
+        caption_name: options?.captionName ?? "English",
+        srt_content: srtContent,
+      });
+
+      if (result.isError) {
+        return { success: false, error: result.text };
+      }
+
+      const response = JSON.parse(result.text) as { success: boolean; error?: string };
+      if (!response.success) {
+        return { success: false, error: response.error ?? "Caption upload failed" };
+      }
+
+      logger.info(`[YouTubePublish] Captions uploaded for video ${record.video_id}`);
+      return { success: true };
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      logger.error(`[YouTubePublish] Caption upload failed: ${msg}`);
+      return { success: false, error: msg };
+    }
+  }
+
+  /**
+   * Generate SRT content for a draft by reading its manifest from the DB.
+   */
+  generateSrtForDraft(draftId: string): string | null {
+    if (!this.db) return null;
+
+    try {
+      const row = this.db.prepare(
+        `SELECT manifest FROM director_drafts WHERE id = ?`,
+      ).get(draftId) as { manifest: string } | undefined;
+
+      if (!row?.manifest) return null;
+
+      const manifest = JSON.parse(row.manifest);
+      const segments = extractSubtitleSegments(manifest);
+      if (segments.length === 0) return null;
+
+      return generateSrt(segments);
+    } catch (error) {
+      logger.warn(`[YouTubePublish] Failed to generate SRT for draft ${draftId}: ${error instanceof Error ? error.message : String(error)}`);
+      return null;
+    }
   }
 
   // ── Private helpers ────────────────────────────────────────

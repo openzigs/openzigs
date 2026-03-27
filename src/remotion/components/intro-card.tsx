@@ -78,7 +78,7 @@ export const IntroCard: React.FC<Omit<IntroCardProps, "startAtFrame" | "duration
           style={{
             width: "100%",
             height: "100%",
-            objectFit: "cover",
+            objectFit: "contain",
           }}
         />
       ) : (

@@ -61,6 +61,34 @@ class YouTubeMCPServer:
                         "required": ["file_path", "title"],
                     },
                 ),
+                Tool(
+                    name="yt_check_video_exists",
+                    description="Check whether a YouTube video still exists (not deleted or made private). Costs 1 quota unit.",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "video_id": {"type": "string", "description": "YouTube video ID to check"},
+                        },
+                        "required": ["video_id"],
+                    },
+                ),
+                Tool(
+                    name="yt_upload_captions",
+                    description=(
+                        "Upload SRT captions to a YouTube video. Requires OAuth2 with youtube.force-ssl scope. "
+                        "Costs 400 quota units per call. Wait for video processing to complete before uploading."
+                    ),
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "video_id": {"type": "string", "description": "YouTube video ID"},
+                            "language": {"type": "string", "description": "BCP-47 language tag (default: 'en')", "default": "en"},
+                            "caption_name": {"type": "string", "description": "Display name for the caption track (default: 'English')", "default": "English"},
+                            "srt_content": {"type": "string", "description": "SRT subtitle file content"},
+                        },
+                        "required": ["video_id", "srt_content"],
+                    },
+                ),
             ]
 
         @self.server.call_tool()
@@ -92,6 +120,16 @@ class YouTubeMCPServer:
                         category_id=arguments.get("category_id", "22"),
                         privacy_status=arguments.get("privacy_status", "private"),
                         notify_subscribers=arguments.get("notify_subscribers", True),
+                    )
+                elif name == "yt_check_video_exists":
+                    exists = await client.check_video_exists(arguments["video_id"])
+                    data = {"exists": exists, "video_id": arguments["video_id"]}
+                elif name == "yt_upload_captions":
+                    data = await client.upload_captions(
+                        video_id=arguments["video_id"],
+                        language=arguments.get("language", "en"),
+                        name=arguments.get("caption_name", "English"),
+                        srt_content=arguments["srt_content"],
                     )
                 else:
                     return [TextContent(type="text", text=_result(False, error=f"Unknown tool: {name}"))]

@@ -11,7 +11,7 @@
 A developer sits at a glowing terminal surrounded by dozens of open browser tabs. AI chat windows, API dashboards, social media panels, video editing timelines — all separate, all disconnected. The look on their face: exhausted.
 
 **Narration:**
-Your AI assistant can answer questions. But it can't ship a video. Post to Instagram. Generate music. Monitor your systems. And orchestrate five agents at once — while asking for your approval before doing anything dangerous.
+Your AI assistant can answer questions. But it can't ship a video. Post to Instagram. Generate music. Monitor your systems. And orchestrate five agents at once, while asking for your approval before doing anything dangerous.
 
 Until now.
 
@@ -37,10 +37,10 @@ The agent loop is agentic by design. It doesn't take orders — it takes goals. 
 
 ## Scene 4 — Director Mode
 
-A markdown document labeled "Blog Post" flows into a pipeline. Scenes generate. Voiceover synthesizes. Music composes. A timeline assembles in real time. An MP4 renders out. The whole pipeline takes under two minutes.
+A markdown document labeled "Blog Post" flows into a pipeline. Scenes generate. Voiceover synthesizes. Music composes. A timeline assembles in real time. A finished video renders out. The whole pipeline takes under two minutes.
 
 **Narration:**
-Director Mode turns any script into a produced video. Write your narration. Choose your voice. The system generates scene visuals, synthesizes speech with F5-TTS, lays in original AI music, and renders a finished MP4 — without you touching a timeline.
+Director Mode turns any script into a produced video. Write your narration. Choose your voice. The system generates scene visuals, synthesizes speech with F5 TTS, lays in original AI music, and renders a finished video, without you touching a timeline.
 
 ---
 

@@ -50,6 +50,17 @@ const uploadVideoSchema = z.object({
   notify_subscribers: z.boolean().optional().describe("Notify channel subscribers (default: true)"),
 });
 
+const checkVideoExistsSchema = z.object({
+  video_id: z.string().describe("YouTube video ID to check"),
+});
+
+const uploadCaptionsSchema = z.object({
+  video_id: z.string().describe("YouTube video ID"),
+  language: z.string().optional().describe("Caption language code (default: 'en')"),
+  caption_name: z.string().optional().describe("Caption track name (default: 'English')"),
+  srt_content: z.string().describe("SRT subtitle content"),
+});
+
 const callLocalServer = async (
   manager: LocalMcpServerManager | undefined,
   toolName: string,
@@ -162,6 +173,41 @@ export const createYouTubeTools = (options: YouTubeToolsOptions): ToolDefinition
       riskLevel: "high",
       source: "youtube",
       handler: async (args) => callLocalServer(mgr, "yt_upload_video", args),
+    },
+    {
+      name: "youtube-check-video-exists",
+      description: "Check if a YouTube video still exists (not deleted/removed). Costs 1 quota unit.",
+      inputSchema: {
+        type: "object",
+        properties: { video_id: { type: "string", description: "YouTube video ID to check" } },
+        required: ["video_id"],
+      },
+      zodSchema: checkVideoExistsSchema,
+      category: "social",
+      riskLevel: "low",
+      source: "youtube",
+      handler: async (args) => callLocalServer(mgr, "yt_check_video_exists", args),
+    },
+    {
+      name: "youtube-upload-captions",
+      description:
+        "Upload SRT captions/subtitles to a YouTube video. Costs 400 quota units. " +
+        "Video must be fully processed before captions can be uploaded.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          video_id: { type: "string", description: "YouTube video ID" },
+          language: { type: "string", description: "Caption language code (default 'en')" },
+          caption_name: { type: "string", description: "Caption track name (default 'English')" },
+          srt_content: { type: "string", description: "SRT subtitle content" },
+        },
+        required: ["video_id", "srt_content"],
+      },
+      zodSchema: uploadCaptionsSchema,
+      category: "social",
+      riskLevel: "high",
+      source: "youtube",
+      handler: async (args) => callLocalServer(mgr, "yt_upload_captions", args),
     },
   ];
 };

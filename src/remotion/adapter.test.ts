@@ -1054,4 +1054,38 @@ describe("adaptManifest transition overlap layout", () => {
     const result = adaptManifest(manifest, outputDir);
     expect(result.durationInFrames).toBe(180);
   });
+
+  it("drops overlays that start beyond the composition duration", () => {
+    const manifest: DirectorManifest = {
+      projectTitle: "Out-of-Bounds Overlay",
+      templateId: "Minimalist",
+      composition: { width: 1920, height: 1080, fps: 30 },
+      audioLayer: { music: null, voiceover: null },
+      timeline: [
+        { type: "video_clip", source: "/a.mp4", startAtFrame: 0, trimStart: 0, duration: 90 },
+        // Overlay starts well beyond the 90-frame composition
+        { type: "overlay", component: "ImageOverlay", props: { src: "/img.png" }, startAtFrame: 200, duration: 30 },
+      ],
+    };
+    const result = adaptManifest(manifest, outputDir);
+    const overlays = result.timeline.filter((t) => t.type === "overlay");
+    expect(overlays).toHaveLength(0);
+  });
+
+  it("keeps overlays that start within the composition duration", () => {
+    const manifest: DirectorManifest = {
+      projectTitle: "In-Bounds Overlay",
+      templateId: "Minimalist",
+      composition: { width: 1920, height: 1080, fps: 30 },
+      audioLayer: { music: null, voiceover: null },
+      timeline: [
+        { type: "video_clip", source: "/a.mp4", startAtFrame: 0, trimStart: 0, duration: 90 },
+        { type: "overlay", component: "ImageOverlay", props: { src: "/img.png" }, startAtFrame: 10, duration: 30 },
+      ],
+    };
+    const result = adaptManifest(manifest, outputDir);
+    const overlays = result.timeline.filter((t) => t.type === "overlay");
+    expect(overlays).toHaveLength(1);
+    expect(overlays[0].startAtFrame).toBe(10);
+  });
 });

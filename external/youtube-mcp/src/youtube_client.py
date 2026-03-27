@@ -246,6 +246,81 @@ class YouTubeClient:
             pass
         return f"{prefix} (HTTP {resp.status_code}): {resp.text[:200]}"
 
+    async def check_video_exists(self, video_id: str) -> bool:
+        """Check whether a YouTube video still exists (not deleted/private).
+
+        Uses videos.list with part=id — costs only 1 quota unit.
+        Returns True if the video is accessible, False otherwise.
+        """
+        try:
+            data = await self._request("GET", "videos", params={"part": "id", "id": video_id})
+            items = data.get("items", [])
+            return len(items) > 0
+        except YouTubeAPIError:
+            return False
+
+    _CAPTION_UPLOAD_BASE = "https://www.googleapis.com/upload/youtube/v3/captions"
+
+    async def upload_captions(
+        self,
+        video_id: str,
+        language: str = "en",
+        name: str = "English",
+        srt_content: str = "",
+    ) -> Dict[str, Any]:
+        """Upload an SRT caption track to a YouTube video.
+
+        Uses the captions.insert endpoint with multipart upload.
+        Costs 400 quota units per call.
+        """
+        if not self.settings.youtube_oauth_token:
+            raise YouTubeAPIError("OAuth token required for caption uploads")
+        if not srt_content.strip():
+            raise YouTubeAPIError("SRT content is empty")
+
+        import json as _json
+
+        snippet = {
+            "snippet": {
+                "videoId": video_id,
+                "language": language,
+                "name": name[:150],
+                "isDraft": False,
+            }
+        }
+
+        import uuid as _uuid
+        boundary = f"caption_boundary_{_uuid.uuid4().hex}"
+        body_parts = [
+            f"--{boundary}\r\n"
+            f"Content-Type: application/json; charset=UTF-8\r\n\r\n"
+            f"{_json.dumps(snippet)}\r\n",
+            f"--{boundary}\r\n"
+            f"Content-Type: application/x-subrip\r\n\r\n"
+            f"{srt_content}\r\n",
+            f"--{boundary}--\r\n",
+        ]
+        body = "".join(body_parts)
+
+        auth_headers = {
+            "Authorization": f"Bearer {self.settings.youtube_oauth_token}",
+            "Content-Type": f"multipart/related; boundary={boundary}",
+        }
+
+        async with httpx.AsyncClient(timeout=60.0) as c:
+            resp = await c.post(
+                self._CAPTION_UPLOAD_BASE,
+                params={"uploadType": "multipart", "part": "snippet"},
+                headers=auth_headers,
+                content=body.encode("utf-8"),
+            )
+        if resp.status_code >= 400:
+            raise YouTubeAPIError(
+                self._parse_api_error(resp, "Caption upload failed"),
+                resp.status_code,
+            )
+        return resp.json()
+
     @staticmethod
     def _guess_mime(path: Path) -> str:
         ext = path.suffix.lower()

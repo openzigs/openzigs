@@ -427,7 +427,40 @@ _EMOTION_TAG_RE = re.compile(r"\(([A-Za-z][A-Za-z0-9_ ]{0,30})\)")
 
 # Sentence splitter for long text — avoids upstream f5-tts-mlx duration
 # variable shadowing bug in multi-sentence generate() loop.
+# Defense-in-depth: uses a smarter split function instead of a simple regex
+# to avoid splitting at abbreviation dots (e.g. "A.I.", "U.S.A.").
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?;:])\s+")
+
+
+def _split_sentences(text: str) -> list[str]:
+    """Split text into sentences, avoiding splits at abbreviation dots.
+
+    Uses the standard sentence-split regex but then re-joins fragments
+    that were incorrectly split at single-letter abbreviation boundaries
+    (e.g. "U.S.A. is great" should not split between "U." and "S.").
+    """
+    # First pass: naive split on sentence-ending punctuation + whitespace
+    raw_parts = [s.strip() for s in _SENTENCE_SPLIT_RE.split(text) if s.strip()]
+    if len(raw_parts) <= 1:
+        return raw_parts
+
+    # Second pass: re-join fragments that look like abbreviation splits.
+    # A fragment ending with a single uppercase letter followed by the
+    # previous part ending in a dot suggests an abbreviation was split.
+    merged: list[str] = [raw_parts[0]]
+    for part in raw_parts[1:]:
+        prev = merged[-1]
+        # If the previous fragment ends with a single uppercase letter + dot
+        # and this fragment starts with an uppercase letter + dot (or is short),
+        # it's likely a split abbreviation — rejoin.
+        if (
+            re.search(r"\b[A-Z]\.$", prev)
+            and re.match(r"^[A-Z]\.", part)
+        ):
+            merged[-1] = prev + " " + part
+        else:
+            merged.append(part)
+    return merged
 
 F5TTS_MAX_REF_AUDIO_SECONDS = 30.0
 
@@ -1215,7 +1248,7 @@ async def synthesize_f5tts(req: F5TTSRequest):
             # f5-tts-mlx duration variable shadowing bug in the multi-sentence
             # loop of generate(). By passing one sentence at a time,
             # is_single_generation=True and the bug is bypassed.
-            sentences = [s.strip() for s in _SENTENCE_SPLIT_RE.split(segment_text) if s.strip()]
+            sentences = _split_sentences(segment_text)
             if not sentences:
                 sentences = [segment_text.strip()]
 

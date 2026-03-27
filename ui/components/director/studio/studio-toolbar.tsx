@@ -162,7 +162,11 @@ export function StudioToolbar({ title, draftId, manifest, onSave, onRestore, dir
         )}
         {draftId && <ThumbnailPanel draftId={draftId} />}
         {draftId && <RenderHistory draftId={draftId} />}
-        {draftId && <YouTubePublishHistory draftId={draftId} />}
+        {draftId && <YouTubePublishHistory draftId={draftId} onStatusChange={() => {
+          fetchJson<{ status: string; videoUrl?: string }>(
+            `/api/admin/director/youtube/publish/${draftId}/status`,
+          ).then(setPublishStatus).catch(() => {});
+        }} />}
 
         {/* Export Subtitles */}
         {draftId && (

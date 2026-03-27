@@ -344,6 +344,75 @@ describe("Director API — YouTube Routes", () => {
     });
   });
 
+  describe("POST /youtube/publish/:publishId/check", () => {
+    it("returns not_found for unknown publishId", async () => {
+      const app = buildApp();
+      const res = await request(app)
+        .post("/director/youtube/publish/nonexistent/check")
+        .expect(200);
+
+      expect(res.body.exists).toBe(false);
+      expect(res.body.status).toBe("not_found");
+    });
+
+    it("returns exists:true when check-video-exists tool is missing", async () => {
+      seedDraft();
+      const now = new Date().toISOString();
+      testDb.prepare(
+        `INSERT INTO youtube_publishes (id, draft_id, video_id, video_url, title, privacy_status, status, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run("pub-check-1", "draft-yt-1", "vid-xyz", "https://youtube.com/watch?v=vid-xyz", "Check Me", "public", "published", now, now);
+
+      // Build app with a registry that has NO youtube-check-video-exists tool
+      const app = buildApp();
+      const res = await request(app)
+        .post("/director/youtube/publish/pub-check-1/check")
+        .expect(200);
+
+      // Without the tool, service falls back to assuming the video exists
+      expect(res.body.exists).toBe(true);
+      expect(res.body.status).toBe("published");
+    });
+
+    it("marks video as deleted when check-video-exists reports false", async () => {
+      seedDraft();
+      const now = new Date().toISOString();
+      testDb.prepare(
+        `INSERT INTO youtube_publishes (id, draft_id, video_id, video_url, title, privacy_status, status, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run("pub-check-2", "draft-yt-1", "vid-deleted", "https://youtube.com/watch?v=vid-deleted", "Deleted Video", "public", "published", now, now);
+
+      // Register the check tool that reports the video was deleted
+      const registry = createMockToolRegistry();
+      const checkTool: ToolDefinition = {
+        name: "youtube-check-video-exists",
+        description: "Check video exists",
+        inputSchema: { type: "object", properties: {} },
+        zodSchema: z.object({}),
+        handler: vi.fn().mockResolvedValue({
+          text: JSON.stringify({ success: true, data: { exists: false } }),
+          isError: false,
+        }),
+        category: "social",
+        riskLevel: "low",
+        source: "youtube",
+      };
+      registry.registerTool(checkTool);
+
+      const app = buildApp({ toolRegistry: registry });
+      const res = await request(app)
+        .post("/director/youtube/publish/pub-check-2/check")
+        .expect(200);
+
+      expect(res.body.exists).toBe(false);
+      expect(res.body.status).toBe("deleted");
+
+      // Verify the DB was updated
+      const row = testDb.prepare("SELECT status FROM youtube_publishes WHERE id = ?").get("pub-check-2") as { status: string };
+      expect(row.status).toBe("deleted");
+    });
+  });
+
   describe("POST /youtube/generate-metadata", () => {
     it("rejects missing draftId", async () => {
       const app = buildApp();

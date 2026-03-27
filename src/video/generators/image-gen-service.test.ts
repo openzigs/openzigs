@@ -4,7 +4,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { ImageGenService } from "./image-gen-service.js";
+import { ImageGenService, readPngWidth, readPngHeight } from "./image-gen-service.js";
 // ImageGenResult type used implicitly in assertions
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -787,5 +787,55 @@ describe("ImageGenService", () => {
 
       vi.unstubAllGlobals();
     });
+  });
+});
+
+describe("readPngWidth / readPngHeight", () => {
+  /** Build a minimal valid PNG header with given width/height. */
+  function makePngHeader(width: number, height: number): Buffer {
+    const buf = Buffer.alloc(24);
+    // PNG signature
+    buf[0] = 0x89;
+    buf[1] = 0x50; // P
+    buf[2] = 0x4e; // N
+    buf[3] = 0x47; // G
+    buf[4] = 0x0d;
+    buf[5] = 0x0a;
+    buf[6] = 0x1a;
+    buf[7] = 0x0a;
+    // IHDR chunk length
+    buf.writeUInt32BE(13, 8);
+    // "IHDR"
+    buf.write("IHDR", 12, 4, "ascii");
+    // Width at offset 16
+    buf.writeUInt32BE(width, 16);
+    // Height at offset 20
+    buf.writeUInt32BE(height, 20);
+    return buf;
+  }
+
+  it("reads correct dimensions from a valid PNG header", () => {
+    const buf = makePngHeader(1280, 720);
+    expect(readPngWidth(buf)).toBe(1280);
+    expect(readPngHeight(buf)).toBe(720);
+  });
+
+  it("returns null for a buffer that is too short", () => {
+    const buf = Buffer.alloc(10);
+    expect(readPngWidth(buf)).toBeNull();
+    expect(readPngHeight(buf)).toBeNull();
+  });
+
+  it("returns null for a non-PNG buffer", () => {
+    const buf = Buffer.alloc(24);
+    buf.write("NOT_PNG!", 0, 8, "ascii");
+    expect(readPngWidth(buf)).toBeNull();
+    expect(readPngHeight(buf)).toBeNull();
+  });
+
+  it("handles large dimensions", () => {
+    const buf = makePngHeader(3840, 2160);
+    expect(readPngWidth(buf)).toBe(3840);
+    expect(readPngHeight(buf)).toBe(2160);
   });
 });

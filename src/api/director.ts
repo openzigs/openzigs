@@ -4729,6 +4729,22 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
   });
 
   /**
+   * POST /youtube/publish/:publishId/check — Check if a published video still exists on YouTube.
+   * If deleted, updates the publish status to "deleted".
+   */
+  router.post("/youtube/publish/:publishId/check", async (req, res) => {
+    try {
+      const service = await getYouTubePublishService();
+      const result = await service.checkVideoExists(req.params.publishId);
+      res.json(result);
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      logger.error(`[Director API] POST /youtube/publish check failed: ${msg}`);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  /**
    * GET /youtube/publish/:draftId/history — Get all publish attempts for a draft.
    */
   router.get("/youtube/publish/:draftId/history", async (req, res) => {
