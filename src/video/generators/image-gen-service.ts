@@ -9,6 +9,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
+import { Agent } from "undici";
 import { logger } from "../../logging/logger.js";
 
 // Optional dependency — loaded dynamically at runtime to avoid hard compile-time requirement.
@@ -131,6 +132,20 @@ export class ImageGenService {
 
   constructor(config?: ImageGenServiceConfig) {
     this.config = { ...getDefaultConfig(), ...config };
+  }
+
+  /**
+   * Create an undici Agent with headersTimeout/bodyTimeout matching localTimeoutMs.
+   * Node.js fetch() uses undici internally; its default headersTimeout (300s)
+   * is far too short for Kontext edits (~15 min). Passing a custom dispatcher
+   * overrides those defaults so the AbortSignal is the sole timeout authority.
+   */
+  private longRunningDispatcher(): Agent {
+    return new Agent({
+      headersTimeout: this.config.localTimeoutMs,
+      bodyTimeout: this.config.localTimeoutMs,
+      connectTimeout: 30_000,
+    });
   }
 
   /**
@@ -417,7 +432,8 @@ export class ImageGenService {
         headers,
         body,
         signal: AbortSignal.timeout(this.config.localTimeoutMs),
-      });
+        dispatcher: this.longRunningDispatcher(),
+      } as RequestInit);
 
       if (!response.ok) {
         const errorText = await response.text().catch(() => "unknown");
@@ -664,7 +680,8 @@ export class ImageGenService {
       headers,
       body,
       signal: AbortSignal.timeout(this.config.localTimeoutMs),
-    });
+      dispatcher: this.longRunningDispatcher(),
+    } as RequestInit);
 
     if (!response.ok) {
       const errorText = await response.text().catch(() => "unknown");
@@ -726,7 +743,8 @@ export class ImageGenService {
       headers,
       body,
       signal: AbortSignal.timeout(this.config.localTimeoutMs),
-    });
+      dispatcher: this.longRunningDispatcher(),
+    } as RequestInit);
 
     if (!response.ok) {
       const errorText = await response.text().catch(() => "unknown");

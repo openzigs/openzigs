@@ -2937,7 +2937,8 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
             if (_io) _io.emit("thumbnail:complete", { thumbnailJobId, draftId: req.params.id, ...resultPayload });
             logger.info(`[Director API] Thumbnail job ${thumbnailJobId} complete`);
           } catch (bgErr) {
-            const bgMsg = bgErr instanceof Error ? bgErr.message : String(bgErr);
+            const cause = bgErr instanceof Error && bgErr.cause ? ` (cause: ${bgErr.cause instanceof Error ? bgErr.cause.message : String(bgErr.cause)})` : "";
+            const bgMsg = (bgErr instanceof Error ? bgErr.message : String(bgErr)) + cause;
             job.status = "failed";
             job.error = bgMsg;
             job.completedAt = Date.now();
@@ -3019,7 +3020,8 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
             if (_io) _io.emit("thumbnail:complete", { thumbnailJobId, draftId: req.params.id, ...resultPayload });
             logger.info(`[Director API] Thumbnail job ${thumbnailJobId} complete`);
           } catch (bgErr) {
-            const bgMsg = bgErr instanceof Error ? bgErr.message : String(bgErr);
+            const cause = bgErr instanceof Error && bgErr.cause ? ` (cause: ${bgErr.cause instanceof Error ? bgErr.cause.message : String(bgErr.cause)})` : "";
+            const bgMsg = (bgErr instanceof Error ? bgErr.message : String(bgErr)) + cause;
             job.status = "failed";
             job.error = bgMsg;
             job.completedAt = Date.now();
