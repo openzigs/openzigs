@@ -730,16 +730,39 @@ export class ImageGenService {
 
     if (!response.ok) {
       const errorText = await response.text().catch(() => "unknown");
-      throw new Error(`Kontext sidecar returned ${response.status}: ${errorText}`);
+      // Try to parse JSON error detail from sidecar (FastAPI returns {"detail": "..."})
+      let errorMessage = errorText;
+      try {
+        const parsed = JSON.parse(errorText);
+        if (typeof parsed.detail === "string") {
+          errorMessage = parsed.detail;
+        } else if (typeof parsed.error === "string") {
+          errorMessage = parsed.error;
+        } else if (typeof parsed.message === "string") {
+          errorMessage = parsed.message;
+        }
+      } catch {
+        // Not JSON — use raw text
+      }
+      throw new Error(`Kontext sidecar returned ${response.status}: ${errorMessage}`);
     }
 
     const resultBuffer = Buffer.from(await response.arrayBuffer());
+
+    if (resultBuffer.length < 8) {
+      throw new Error(`Kontext sidecar returned empty or invalid response (${resultBuffer.length} bytes)`);
+    }
+
     const filePath = await this.saveImage(resultBuffer, "kontext");
 
     const elapsed = Date.now() - start;
     logger.info(`[ImageGenService] Kontext edit in ${elapsed}ms`);
 
-    return { filePath, provider: "local", generationTimeMs: elapsed, width: options?.width ?? 0, height: options?.height ?? 0 };
+    // Read actual dimensions from PNG header if available, fall back to options
+    const actualWidth = readPngWidth(resultBuffer) ?? options?.width ?? 0;
+    const actualHeight = readPngHeight(resultBuffer) ?? options?.height ?? 0;
+
+    return { filePath, provider: "local", generationTimeMs: elapsed, width: actualWidth, height: actualHeight };
   }
 
   private async checkLocalHealth(): Promise<boolean> {
@@ -760,4 +783,26 @@ export class ImageGenService {
       return false;
     }
   }
+}
+
+/**
+ * Read width from a PNG file's IHDR chunk (bytes 16-19, big-endian uint32).
+ * Returns null if the buffer is not a valid PNG.
+ */
+export function readPngWidth(buf: Buffer): number | null {
+  // PNG signature (8 bytes) + IHDR length (4 bytes) + "IHDR" (4 bytes) + width (4 bytes) = need at least 24 bytes
+  if (buf.length < 24) return null;
+  // Check PNG signature: 0x89 P N G
+  if (buf[0] !== 0x89 || buf[1] !== 0x50 || buf[2] !== 0x4e || buf[3] !== 0x47) return null;
+  return buf.readUInt32BE(16);
+}
+
+/**
+ * Read height from a PNG file's IHDR chunk (bytes 20-23, big-endian uint32).
+ * Returns null if the buffer is not a valid PNG.
+ */
+export function readPngHeight(buf: Buffer): number | null {
+  if (buf.length < 24) return null;
+  if (buf[0] !== 0x89 || buf[1] !== 0x50 || buf[2] !== 0x4e || buf[3] !== 0x47) return null;
+  return buf.readUInt32BE(20);
 }

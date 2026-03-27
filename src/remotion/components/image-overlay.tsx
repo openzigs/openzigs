@@ -55,12 +55,12 @@ export const ImageOverlay: React.FC<ImageOverlayProps> = ({
         {isVideo ? (
           <OffthreadVideo
             src={src}
-            style={{ width: "100%", height: "100%", objectFit: "fill", display: "block" }}
+            style={{ width: "100%", height: "100%", objectFit: "contain", display: "block" }}
           />
         ) : (
           <Img
             src={src}
-            style={{ width: "100%", height: "100%", objectFit: "fill", display: "block" }}
+            style={{ width: "100%", height: "100%", objectFit: "contain", display: "block" }}
           />
         )}
       </div>

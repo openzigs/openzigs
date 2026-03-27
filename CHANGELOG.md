@@ -9,9 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Director Studio: image/video overlays now use `objectFit: "contain"` instead of `"fill"` to prevent stretching non-16:9 assets
+- Director Studio: Kontext thumbnail enhance now parses JSON error responses (extracts `detail`/`error`/`message`) and reads actual PNG dimensions from IHDR header instead of trusting request options
+- Director Studio: YouTube publish history correctly detects deleted videos and shows "Deleted from YouTube" status with republish option
+- Director Studio: `formatDate` in YouTube publish history no longer displays "Invalid Date" for malformed timestamps
 - F5-TTS text normalizer now expands acronyms to phonetic spoken forms instead of dotted notation that caused BPE tokenizer hallucinations (#641)
 - Sidecar sentence splitter no longer splits text at abbreviation dots (e.g. "U.S.A." treated as one segment) (#642)
 - Intro video manuscript updated to remove dotted abbreviations and technical jargon that confused F5-TTS (#644)
+
+### Added
+
+- YouTube MCP: `yt_check_video_exists` tool to verify whether a published video still exists on YouTube
+- YouTube MCP: `yt_upload_captions` tool to upload SRT captions to a published YouTube video
+- Director Studio: auto-uploads SRT captions after YouTube publish when the draft has narration timeline segments
+- Director Studio: "Check Status" button on published YouTube videos to detect deletions
+- Director Studio: "Republish" button for videos marked as deleted from YouTube
 
 ### Changed
 

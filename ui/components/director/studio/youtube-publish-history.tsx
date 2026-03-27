@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { Youtube, Loader2, CheckCircle, XCircle, Clock, ExternalLink } from "lucide-react";
+import { Youtube, Loader2, CheckCircle, XCircle, Clock, ExternalLink, RefreshCw, AlertTriangle, RotateCcw } from "lucide-react";
 import { fetchJson } from "@/lib/api";
 
 interface PublishRecord {
@@ -20,16 +20,20 @@ const STATUS_ICON: Record<string, React.ReactNode> = {
   published: <CheckCircle className="h-3.5 w-3.5 text-green-500" />,
   failed: <XCircle className="h-3.5 w-3.5 text-destructive" />,
   uploading: <Loader2 className="h-3.5 w-3.5 animate-spin text-blue-500" />,
+  deleted: <AlertTriangle className="h-3.5 w-3.5 text-amber-500" />,
 };
 
 const STATUS_LABEL: Record<string, string> = {
   published: "Published",
   failed: "Failed",
   uploading: "Uploading",
+  deleted: "Deleted from YouTube",
 };
 
 function formatDate(iso: string): string {
-  return new Date(iso).toLocaleString(undefined, {
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "";
+  return d.toLocaleString(undefined, {
     month: "short",
     day: "numeric",
     hour: "2-digit",
@@ -37,9 +41,10 @@ function formatDate(iso: string): string {
   });
 }
 
-export function YouTubePublishHistory({ draftId }: { draftId: string }) {
+export function YouTubePublishHistory({ draftId, onRepublish }: { draftId: string; onRepublish?: () => void }) {
   const [publishes, setPublishes] = useState<PublishRecord[]>([]);
   const [loading, setLoading] = useState(false);
+  const [checking, setChecking] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
 
   const load = useCallback(async () => {
@@ -68,6 +73,21 @@ export function YouTubePublishHistory({ draftId }: { draftId: string }) {
     const timer = setInterval(load, 5000);
     return () => clearInterval(timer);
   }, [open, publishes, load]);
+
+  const handleCheckStatus = useCallback(async (publishId: string) => {
+    setChecking(publishId);
+    try {
+      await fetchJson(
+        `/api/admin/director/youtube/publish/${publishId}/check`,
+        { method: "POST" },
+      );
+      await load();
+    } catch {
+      /* silent */
+    } finally {
+      setChecking(null);
+    }
+  }, [load]);
 
   return (
     <div className="relative">
@@ -107,22 +127,49 @@ export function YouTubePublishHistory({ draftId }: { draftId: string }) {
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-xs font-medium text-foreground">{p.title}</p>
                     <p className="text-[10px] text-muted-foreground">
-                      {STATUS_LABEL[p.status] ?? p.status} · {p.privacyStatus} · {formatDate(p.createdAt)}
+                      {STATUS_LABEL[p.status] ?? p.status} · {p.privacyStatus}
+                      {formatDate(p.createdAt) ? ` · ${formatDate(p.createdAt)}` : ""}
                     </p>
                     {p.errorMessage && (
                       <p className="mt-0.5 truncate text-[10px] text-destructive">{p.errorMessage}</p>
                     )}
                   </div>
-                  {p.videoUrl && (
-                    <a
-                      href={p.videoUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="shrink-0 rounded p-1 text-muted-foreground hover:text-foreground transition"
-                    >
-                      <ExternalLink className="h-3.5 w-3.5" />
-                    </a>
-                  )}
+                  <div className="flex shrink-0 items-center gap-1">
+                    {p.status === "published" && (
+                      <button
+                        onClick={() => handleCheckStatus(p.id)}
+                        disabled={checking === p.id}
+                        className="rounded p-1 text-muted-foreground hover:text-foreground transition disabled:opacity-50"
+                        title="Check if video still exists on YouTube"
+                      >
+                        {checking === p.id ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <RefreshCw className="h-3.5 w-3.5" />
+                        )}
+                      </button>
+                    )}
+                    {p.status === "deleted" && onRepublish && (
+                      <button
+                        onClick={onRepublish}
+                        className="flex items-center gap-1 rounded bg-red-500/10 px-2 py-0.5 text-[10px] font-medium text-red-600 hover:bg-red-500/20 transition"
+                        title="Republish this video to YouTube"
+                      >
+                        <RotateCcw className="h-3 w-3" />
+                        Republish
+                      </button>
+                    )}
+                    {p.videoUrl && p.status !== "deleted" && (
+                      <a
+                        href={p.videoUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="rounded p-1 text-muted-foreground hover:text-foreground transition"
+                      >
+                        <ExternalLink className="h-3.5 w-3.5" />
+                      </a>
+                    )}
+                  </div>
                 </div>
               ))}
             </div>

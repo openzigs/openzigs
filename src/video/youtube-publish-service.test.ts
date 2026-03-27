@@ -389,4 +389,315 @@ describe("YouTubePublishService", () => {
       expect(result.error).toContain("outside allowed directories");
     });
   });
+
+  describe("checkVideoExists", () => {
+    it("returns not_found when publish ID does not exist", async () => {
+      const registry = createMockToolRegistry();
+      const service = new YouTubePublishService({ toolRegistry: registry, publishRepo });
+
+      const result = await service.checkVideoExists("nonexistent");
+      expect(result.exists).toBe(false);
+      expect(result.status).toBe("not_found");
+    });
+
+    it("returns current status when no video_id is set", async () => {
+      const registry = createMockToolRegistry();
+      const service = new YouTubePublishService({ toolRegistry: registry, publishRepo });
+
+      publishRepo.insert({
+        id: "pub-check-1",
+        draft_id: "draft-1",
+        video_id: null,
+        video_url: null,
+        title: "No Video ID",
+        privacy_status: "private",
+        published_at: null,
+        status: "failed",
+        error_message: "Upload failed",
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      });
+
+      const result = await service.checkVideoExists("pub-check-1");
+      expect(result.exists).toBe(false);
+      expect(result.status).toBe("failed");
+    });
+
+    it("marks video as deleted when check tool reports it does not exist", async () => {
+      const registry = createMockToolRegistry();
+      const checkTool: ToolDefinition = {
+        name: "youtube-check-video-exists",
+        description: "Check video",
+        inputSchema: { type: "object", properties: {} },
+        zodSchema: z.object({}),
+        handler: vi.fn().mockResolvedValue({
+          text: JSON.stringify({ success: true, data: { exists: false, video_id: "deleted123" } }),
+          isError: false,
+        }),
+        category: "social",
+        riskLevel: "low",
+        source: "youtube",
+      };
+      registry.registerTool(checkTool);
+
+      const service = new YouTubePublishService({ toolRegistry: registry, publishRepo });
+
+      publishRepo.insert({
+        id: "pub-check-2",
+        draft_id: "draft-1",
+        video_id: "deleted123",
+        video_url: "https://youtube.com/watch?v=deleted123",
+        title: "Deleted Video",
+        privacy_status: "public",
+        published_at: new Date().toISOString(),
+        status: "published",
+        error_message: null,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      });
+
+      const result = await service.checkVideoExists("pub-check-2");
+      expect(result.exists).toBe(false);
+      expect(result.status).toBe("deleted");
+
+      // Verify DB was updated
+      const row = publishRepo.getById("pub-check-2")!;
+      expect(row.status).toBe("deleted");
+    });
+
+    it("keeps published status when video still exists", async () => {
+      const registry = createMockToolRegistry();
+      const checkTool: ToolDefinition = {
+        name: "youtube-check-video-exists",
+        description: "Check video",
+        inputSchema: { type: "object", properties: {} },
+        zodSchema: z.object({}),
+        handler: vi.fn().mockResolvedValue({
+          text: JSON.stringify({ success: true, data: { exists: true, video_id: "live123" } }),
+          isError: false,
+        }),
+        category: "social",
+        riskLevel: "low",
+        source: "youtube",
+      };
+      registry.registerTool(checkTool);
+
+      const service = new YouTubePublishService({ toolRegistry: registry, publishRepo });
+
+      publishRepo.insert({
+        id: "pub-check-3",
+        draft_id: "draft-1",
+        video_id: "live123",
+        video_url: "https://youtube.com/watch?v=live123",
+        title: "Live Video",
+        privacy_status: "public",
+        published_at: new Date().toISOString(),
+        status: "published",
+        error_message: null,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      });
+
+      const result = await service.checkVideoExists("pub-check-3");
+      expect(result.exists).toBe(true);
+      expect(result.status).toBe("published");
+    });
+
+    it("returns true when check tool is not available", async () => {
+      const registry = new ToolRegistry({ statePath: "/tmp/test-yt-no-check-tool.json" });
+      const service = new YouTubePublishService({ toolRegistry: registry, publishRepo });
+
+      publishRepo.insert({
+        id: "pub-check-4",
+        draft_id: "draft-1",
+        video_id: "v123",
+        video_url: "https://youtube.com/watch?v=v123",
+        title: "No Tool",
+        privacy_status: "public",
+        published_at: new Date().toISOString(),
+        status: "published",
+        error_message: null,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      });
+
+      const result = await service.checkVideoExists("pub-check-4");
+      expect(result.exists).toBe(true);
+      expect(result.status).toBe("published");
+    });
+  });
+
+  describe("generateSrtForDraft", () => {
+    it("returns null when no database is set", () => {
+      const registry = createMockToolRegistry();
+      const service = new YouTubePublishService({ toolRegistry: registry, publishRepo });
+      expect(service.generateSrtForDraft("draft-1")).toBeNull();
+    });
+
+    it("returns null when draft has no subtitle segments", () => {
+      const registry = createMockToolRegistry();
+      const service = new YouTubePublishService({ toolRegistry: registry, publishRepo, db });
+
+      // Draft-1 has manifest "{}" which has no timeline
+      expect(service.generateSrtForDraft("draft-1")).toBeNull();
+    });
+
+    it("generates SRT from manifest with timeline", () => {
+      const registry = createMockToolRegistry();
+      const manifest = JSON.stringify({
+        composition: { fps: 30 },
+        timeline: [
+          { type: "narration", scriptText: "Hello world", durationInFrames: 90 },
+          { type: "narration", scriptText: "Second line", durationInFrames: 60 },
+        ],
+      });
+      db.prepare(`UPDATE director_drafts SET manifest = ? WHERE id = ?`).run(manifest, "draft-1");
+
+      const service = new YouTubePublishService({ toolRegistry: registry, publishRepo, db });
+      const srt = service.generateSrtForDraft("draft-1");
+
+      expect(srt).not.toBeNull();
+      expect(srt).toContain("Hello world");
+      expect(srt).toContain("Second line");
+      expect(srt).toContain("-->");
+    });
+
+    it("returns null for non-existent draft", () => {
+      const registry = createMockToolRegistry();
+      const service = new YouTubePublishService({ toolRegistry: registry, publishRepo, db });
+      expect(service.generateSrtForDraft("nonexistent")).toBeNull();
+    });
+  });
+
+  describe("uploadCaptions", () => {
+    it("returns error when publish has no video ID", async () => {
+      const registry = createMockToolRegistry();
+      const service = new YouTubePublishService({ toolRegistry: registry, publishRepo, db });
+
+      publishRepo.insert({
+        id: "pub-cap-1",
+        draft_id: "draft-1",
+        video_id: null,
+        video_url: null,
+        title: "No Video",
+        privacy_status: "private",
+        published_at: null,
+        status: "failed",
+        error_message: null,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      });
+
+      const result = await service.uploadCaptions("pub-cap-1");
+      expect(result.success).toBe(false);
+      expect(result.error).toContain("No video ID");
+    });
+
+    it("returns error when no subtitle content exists", async () => {
+      const registry = createMockToolRegistry();
+      const service = new YouTubePublishService({ toolRegistry: registry, publishRepo, db });
+
+      publishRepo.insert({
+        id: "pub-cap-2",
+        draft_id: "draft-1",
+        video_id: "v123",
+        video_url: "https://youtube.com/watch?v=v123",
+        title: "No Subs",
+        privacy_status: "public",
+        published_at: new Date().toISOString(),
+        status: "published",
+        error_message: null,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      });
+
+      const result = await service.uploadCaptions("pub-cap-2");
+      expect(result.success).toBe(false);
+      expect(result.error).toContain("No subtitle content");
+    });
+
+    it("returns error when caption upload tool is not available", async () => {
+      const registry = createMockToolRegistry();
+      const manifest = JSON.stringify({
+        composition: { fps: 30 },
+        timeline: [{ type: "narration", scriptText: "Hello", durationInFrames: 90 }],
+      });
+      db.prepare(`UPDATE director_drafts SET manifest = ? WHERE id = ?`).run(manifest, "draft-1");
+
+      const service = new YouTubePublishService({ toolRegistry: registry, publishRepo, db });
+
+      publishRepo.insert({
+        id: "pub-cap-3",
+        draft_id: "draft-1",
+        video_id: "v123",
+        video_url: "https://youtube.com/watch?v=v123",
+        title: "No Tool",
+        privacy_status: "public",
+        published_at: new Date().toISOString(),
+        status: "published",
+        error_message: null,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      });
+
+      const result = await service.uploadCaptions("pub-cap-3");
+      expect(result.success).toBe(false);
+      expect(result.error).toContain("youtube-upload-captions tool not available");
+    });
+
+    it("uploads captions successfully", async () => {
+      const registry = createMockToolRegistry();
+      const captionTool: ToolDefinition = {
+        name: "youtube-upload-captions",
+        description: "Upload captions",
+        inputSchema: { type: "object", properties: {} },
+        zodSchema: z.object({}),
+        handler: vi.fn().mockResolvedValue({
+          text: JSON.stringify({ success: true, data: { id: "cap-1" } }),
+          isError: false,
+        }),
+        category: "social",
+        riskLevel: "medium",
+        source: "youtube",
+      };
+      registry.registerTool(captionTool);
+
+      const manifest = JSON.stringify({
+        composition: { fps: 30 },
+        timeline: [{ type: "narration", scriptText: "Hello world", durationInFrames: 90 }],
+      });
+      db.prepare(`UPDATE director_drafts SET manifest = ? WHERE id = ?`).run(manifest, "draft-1");
+
+      const service = new YouTubePublishService({ toolRegistry: registry, publishRepo, db });
+
+      publishRepo.insert({
+        id: "pub-cap-4",
+        draft_id: "draft-1",
+        video_id: "v456",
+        video_url: "https://youtube.com/watch?v=v456",
+        title: "With Subs",
+        privacy_status: "public",
+        published_at: new Date().toISOString(),
+        status: "published",
+        error_message: null,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      });
+
+      const result = await service.uploadCaptions("pub-cap-4");
+      expect(result.success).toBe(true);
+
+      // Verify tool was called with correct args
+      expect(captionTool.handler).toHaveBeenCalledWith(
+        expect.objectContaining({
+          video_id: "v456",
+          language: "en",
+          caption_name: "English",
+        }),
+      );
+      // Verify SRT content was included
+      const callArgs = (captionTool.handler as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      expect(callArgs.srt_content).toContain("Hello world");
+    });
+  });
 });
