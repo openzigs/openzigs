@@ -5,6 +5,7 @@ import { ImageIcon, Loader2, RefreshCw, Download, Sparkles, Wand2, ArrowLeft } f
 import { fetchJson, buildMediaUrl } from "@/lib/api";
 import { showToast } from "@/components/toast";
 import { useSocket } from "@/lib/socket-context";
+import { useQuery } from "@tanstack/react-query";
 
 type ClickbaitOverlay = "none" | "arrows" | "circles" | "emoji" | "badge";
 type Step = "pick-frame" | "customize" | "final";
@@ -44,9 +45,44 @@ export function ThumbnailPanel({ draftId }: ThumbnailPanelProps) {
   const [rawFrameUrl, setRawFrameUrl] = useState<string | null>(null);
   const [rationale, setRationale] = useState("");
   const { socket } = useSocket();
+  const [thumbnailJobId, setThumbnailJobId] = useState<string | null>(null);
   const pendingJobRef = useRef<string | null>(null);
 
-  // Listen for async thumbnail job completion via Socket.IO
+  // Primary: poll GET /thumbnail-job/:jobId every 3s (mirrors produce pipeline pattern)
+  const thumbJobQuery = useQuery({
+    queryKey: ["thumbnail-job", thumbnailJobId],
+    queryFn: () => fetchJson<{ status: string; thumbnailUrl?: string; suggestedText?: string[]; selectedFrame?: { timestamp: number; rationale: string }; mode?: string; error?: string; elapsedMs?: number }>(`/api/admin/director/thumbnail-job/${thumbnailJobId}`),
+    enabled: !!thumbnailJobId && generating,
+    refetchInterval: 3000,
+  });
+
+  // React to thumbnail job status changes from polling
+  useEffect(() => {
+    if (!thumbJobQuery.data) return;
+    const data = thumbJobQuery.data;
+
+    if (data.status === "complete" && data.thumbnailUrl) {
+      pendingJobRef.current = null;
+      setThumbnailJobId(null);
+      setResult({
+        thumbnailUrl: data.thumbnailUrl,
+        suggestedText: data.suggestedText ?? [],
+        selectedFrame: data.selectedFrame ?? { timestamp: 0, rationale: "" },
+        mode: data.mode ?? "unknown",
+      });
+      setTextOverride(data.suggestedText ?? []);
+      setStep("final");
+      setGenerating(false);
+      showToast("Thumbnail ready!", "success");
+    } else if (data.status === "failed") {
+      pendingJobRef.current = null;
+      setThumbnailJobId(null);
+      setGenerating(false);
+      showToast(data.error || "Thumbnail generation failed", "error");
+    }
+  }, [thumbJobQuery.data]);
+
+  // Secondary fast-path: Socket.IO delivers result instantly if connection is alive
   useEffect(() => {
     if (!socket) return;
 
@@ -61,6 +97,7 @@ export function ThumbnailPanel({ draftId }: ThumbnailPanelProps) {
       if (data.draftId !== draftId) return;
       if (pendingJobRef.current && data.thumbnailJobId !== pendingJobRef.current) return;
       pendingJobRef.current = null;
+      setThumbnailJobId(null);
       setResult({
         thumbnailUrl: data.thumbnailUrl,
         suggestedText: data.suggestedText,
@@ -77,6 +114,7 @@ export function ThumbnailPanel({ draftId }: ThumbnailPanelProps) {
       if (data.draftId !== draftId) return;
       if (pendingJobRef.current && data.thumbnailJobId !== pendingJobRef.current) return;
       pendingJobRef.current = null;
+      setThumbnailJobId(null);
       setGenerating(false);
       showToast(data.error || "Thumbnail generation failed", "error");
     };
@@ -129,8 +167,9 @@ export function ThumbnailPanel({ draftId }: ThumbnailPanelProps) {
         `/api/admin/director/drafts/${draftId}/thumbnail`,
         { method: "POST", body: JSON.stringify(body) },
       );
-      // 202 accepted — job running in background, Socket.IO will deliver result
+      // 202 accepted — job running in background, polling + Socket.IO will deliver result
       pendingJobRef.current = res.thumbnailJobId;
+      setThumbnailJobId(res.thumbnailJobId);
       showToast("Enhancing thumbnail — this may take a few minutes…", "info");
     } catch (err) {
       showToast(err instanceof Error ? err.message : "Enhancement failed", "error");
@@ -151,8 +190,9 @@ export function ThumbnailPanel({ draftId }: ThumbnailPanelProps) {
         `/api/admin/director/drafts/${draftId}/thumbnail`,
         { method: "POST", body: JSON.stringify(body) },
       );
-      // 202 accepted — job running in background, Socket.IO will deliver result
+      // 202 accepted — job running in background, polling + Socket.IO will deliver result
       pendingJobRef.current = res.thumbnailJobId;
+      setThumbnailJobId(res.thumbnailJobId);
       showToast("Generating thumbnail — this may take a few minutes…", "info");
     } catch (err) {
       showToast(err instanceof Error ? err.message : "Generation failed", "error");

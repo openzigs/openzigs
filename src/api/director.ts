@@ -197,6 +197,23 @@ export const createDirectorRouter = ({
   }
   const produceJobs = new Map<string, ProduceJob>();
 
+  // ── Thumbnail job tracking (mirrors produce job pattern) ──
+  interface ThumbnailJob {
+    id: string;
+    draftId: string;
+    status: "running" | "complete" | "failed";
+    result?: {
+      thumbnailUrl: string;
+      suggestedText: string[];
+      selectedFrame: { timestamp: number; rationale: string };
+      mode: string;
+    };
+    error?: string;
+    startedAt: number;
+    completedAt?: number;
+  }
+  const thumbnailJobs = new Map<string, ThumbnailJob>();
+
   /** Lazy singleton asset manager (hoisted so config PUT can reset it). */
   let assetManagerInstance: import("../video/assets/asset-manager.js").AssetManager | null = null;
 
@@ -2860,7 +2877,7 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
         }
 
       } else if (effectiveMode === "flux-enhance") {
-        // Long-running Kontext edit — return 202, run in background, notify via Socket.IO
+        // Long-running Kontext edit — return 202, run in background, poll or Socket.IO for result
         const frame = await resolveBaseFrame();
         if (!frame) {
           res.status(400).json({ error: "No scene images found — ensure the draft has generated images" });
@@ -2868,6 +2885,13 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
         }
 
         const thumbnailJobId = nanoid();
+        const job: ThumbnailJob = { id: thumbnailJobId, draftId: req.params.id, status: "running", startedAt: Date.now() };
+        thumbnailJobs.set(thumbnailJobId, job);
+        // Evict old completed jobs (keep last 20)
+        const allThumbJobs = [...thumbnailJobs.values()];
+        const finishedThumb = allThumbJobs.filter(j => j.status !== "running").sort((a, b) => (a.completedAt ?? 0) - (b.completedAt ?? 0));
+        while (finishedThumb.length > 20) { thumbnailJobs.delete(finishedThumb.shift()!.id); }
+
         res.status(202).json({ thumbnailJobId, mode: effectiveMode });
         logger.info(`[Director API] Thumbnail job ${thumbnailJobId} accepted (flux-enhance) — running in background`);
 
@@ -2901,17 +2925,22 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
             db.prepare(`UPDATE director_drafts SET thumbnail = ?, updated_at = ? WHERE id = ?`)
               .run(thumbnailFilename, new Date().toISOString(), req.params.id);
 
-            if (_io) _io.emit("thumbnail:complete", {
-              thumbnailJobId,
-              draftId: req.params.id,
+            const resultPayload = {
               thumbnailUrl: `/api/admin/director/files/${thumbnailFilename}`,
               suggestedText: textLines,
               selectedFrame: { timestamp: frame.timestamp, rationale: `Enhanced with: "${enhancePrompt.slice(0, 80)}"` },
               mode: effectiveMode,
-            });
+            };
+            job.status = "complete";
+            job.result = resultPayload;
+            job.completedAt = Date.now();
+            if (_io) _io.emit("thumbnail:complete", { thumbnailJobId, draftId: req.params.id, ...resultPayload });
             logger.info(`[Director API] Thumbnail job ${thumbnailJobId} complete`);
           } catch (bgErr) {
             const bgMsg = bgErr instanceof Error ? bgErr.message : String(bgErr);
+            job.status = "failed";
+            job.error = bgMsg;
+            job.completedAt = Date.now();
             logger.error(`[Director API] Thumbnail job ${thumbnailJobId} failed: ${bgMsg}`);
             if (_io) _io.emit("thumbnail:failed", { thumbnailJobId, draftId: req.params.id, error: bgMsg });
           }
@@ -2921,6 +2950,12 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
       } else {
         // flux-generate: completely new image — also long-running, same async pattern
         const thumbnailJobId = nanoid();
+        const job: ThumbnailJob = { id: thumbnailJobId, draftId: req.params.id, status: "running", startedAt: Date.now() };
+        thumbnailJobs.set(thumbnailJobId, job);
+        const allThumbJobs = [...thumbnailJobs.values()];
+        const finishedThumb = allThumbJobs.filter(j => j.status !== "running").sort((a, b) => (a.completedAt ?? 0) - (b.completedAt ?? 0));
+        while (finishedThumb.length > 20) { thumbnailJobs.delete(finishedThumb.shift()!.id); }
+
         res.status(202).json({ thumbnailJobId, mode: effectiveMode });
         logger.info(`[Director API] Thumbnail job ${thumbnailJobId} accepted (flux-generate) — running in background`);
 
@@ -2972,17 +3007,22 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
             db.prepare(`UPDATE director_drafts SET thumbnail = ?, updated_at = ? WHERE id = ?`)
               .run(thumbnailFilename, new Date().toISOString(), req.params.id);
 
-            if (_io) _io.emit("thumbnail:complete", {
-              thumbnailJobId,
-              draftId: req.params.id,
+            const resultPayload = {
               thumbnailUrl: `/api/admin/director/files/${thumbnailFilename}`,
               suggestedText: textLines,
               selectedFrame: { timestamp: 0, rationale: `AI-generated from prompt: "${thumbnailPrompt.slice(0, 100)}"` },
               mode: effectiveMode,
-            });
+            };
+            job.status = "complete";
+            job.result = resultPayload;
+            job.completedAt = Date.now();
+            if (_io) _io.emit("thumbnail:complete", { thumbnailJobId, draftId: req.params.id, ...resultPayload });
             logger.info(`[Director API] Thumbnail job ${thumbnailJobId} complete`);
           } catch (bgErr) {
             const bgMsg = bgErr instanceof Error ? bgErr.message : String(bgErr);
+            job.status = "failed";
+            job.error = bgMsg;
+            job.completedAt = Date.now();
             logger.error(`[Director API] Thumbnail job ${thumbnailJobId} failed: ${bgMsg}`);
             if (_io) _io.emit("thumbnail:failed", { thumbnailJobId, draftId: req.params.id, error: bgMsg });
           }
@@ -3025,6 +3065,24 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
       logger.error(`[Director API] POST /drafts/:id/thumbnail failed: ${msg}`);
       res.status(500).json({ error: msg });
     }
+  });
+
+  // ── Thumbnail job polling endpoint (mirrors GET /produce/:id pattern) ──
+  router.get("/thumbnail-job/:jobId", (req, res) => {
+    const job = thumbnailJobs.get(req.params.jobId);
+    if (!job) {
+      res.status(404).json({ error: "Thumbnail job not found" });
+      return;
+    }
+    if (job.status === "running") {
+      res.json({ status: "running", elapsedMs: Date.now() - job.startedAt });
+      return;
+    }
+    if (job.status === "failed") {
+      res.json({ status: "failed", error: job.error });
+      return;
+    }
+    res.json({ status: "complete", ...job.result });
   });
 
   /**
