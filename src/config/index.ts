@@ -281,6 +281,9 @@ export type AppConfig = {
   voice?: VoiceAppConfig;
   vault?: VaultAppConfig;
   memory?: MemoryAppConfig;
+  workbench?: {
+    directories?: string[];
+  };
 };
 
 const rateLimitSchema = z.object({
@@ -554,6 +557,9 @@ const appConfigSchema = z.object({
     repo: z.string().optional(),
     cacheTtlMs: z.number().min(0).optional(),
   }).optional(),
+  workbench: z.object({
+    directories: z.array(z.string()).optional().default([]),
+  }).optional().default({}),
 });
 
 export type LoadConfigOptions = {

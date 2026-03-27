@@ -21,6 +21,7 @@ type FileEntry = {
 
 type FileSidebarProps = {
   rootDir: string;
+  extraDirs?: string[];
   onFileSelect: (filePath: string) => void;
   activeFile: string | null;
   collapsed: boolean;
@@ -125,6 +126,7 @@ const FolderNode = ({ dirPath, name, depth, onFileSelect, activeFile }: FolderNo
 
 export const FileSidebar = ({
   rootDir,
+  extraDirs,
   onFileSelect,
   activeFile,
   collapsed,
@@ -224,6 +226,24 @@ export const FileSidebar = ({
             </button>
           );
         })}
+        {extraDirs && extraDirs.length > 0 && (
+          <>
+            <div className="mx-2 my-1 border-t border-border" />
+            {extraDirs.map((dir) => {
+              const dirName = dir.split("/").pop() ?? dir;
+              return (
+                <FolderNode
+                  key={dir}
+                  dirPath={dir}
+                  name={dirName}
+                  depth={0}
+                  onFileSelect={onFileSelect}
+                  activeFile={activeFile}
+                />
+              );
+            })}
+          </>
+        )}
       </div>
     </div>
   );

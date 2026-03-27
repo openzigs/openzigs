@@ -788,6 +788,37 @@ One native MCP tool for saving generated media to project-scoped draft directori
 |---|---|---|
 | `save-draft-media` | 🟡 medium | Copies generated images, videos, or audio to `~/.openzigs/files/drafts/<project_id>/` with sanitized filenames |
 
+#### SEO Gap Analysis Tools
+
+**Source:** `src/mcp/tools/seo-gap-tools.ts` + `src/mcp/tools/seo/` (built-in, no sidecar)
+
+Two native MCP tools for content gap analysis against top-ranking competitors. Registered via `createSeoGapTools()` factory in `src/mcp/server.ts`.
+
+| Tool | Risk | Description |
+|---|---|---|
+| `seo-gap-analysis` | 🟢 low | Full pipeline: fetch target → discover competitors (Serper/Brave) → extract content → generate metrics report → save to `~/.openzigs/seo-reports/` |
+| `seo-extract-content` | 🟢 low | Extract structured content from a single URL: headings, word count, TF-IDF keywords, Flesch-Kincaid readability |
+
+**Data Flow:**
+```
+targetUrl + keyword
+  → Competitor Discovery (Serper.dev primary, Brave Search fallback)
+  → Content Extraction (cheerio HTML parsing, noise removal)
+  → Metrics Computation (TF-IDF keywords via natural, Flesch-Kincaid readability)
+  → Report Generation (Markdown with comparison tables, Mermaid charts)
+  → File Output (~/.openzigs/seo-reports/<domain>-<keyword>-<date>.md)
+```
+
+**Components:**
+- `src/mcp/tools/seo/html-extractor.ts` — Cheerio-based HTML extraction, noise removal, TF-IDF keyword extraction, readability scoring
+- `src/mcp/tools/seo/competitor-discovery.ts` — SERP API integration (Serper primary, Brave fallback), PAA/related searches extraction
+- `src/mcp/tools/seo/report-generator.ts` — Markdown report generation with LLM prompt builder, metrics tables, Mermaid xychart
+- `src/skills/seo-analyst/SKILL.md` — Autonomous SEO analyst skill
+- `config/agents.json` — `seo-analyst` agent archetype
+- `ui/components/workbench/seo-analysis-dialog.tsx` — Workbench dialog for launching SEO analysis
+
+**Config:** Set `SERPER_API_KEY` env var for Serper.dev, or `BRAVE_API_KEY` for Brave Search fallback. Workbench directories (including `~/.openzigs/seo-reports`) are configurable via `workbench.directories` in `~/.openzigs/config.json` or the admin API (`GET/PUT /api/admin/workbench/directories`).
+
 **YouTube `order` Extension:** The `youtube-search-videos` tool (proxied through the YouTube MCP sidecar) now accepts an `order` parameter (`date`, `rating`, `relevance`, `title`, `viewCount`) passed through to the YouTube Data API v3 `search.list` endpoint.
 
 **Data Flow:**

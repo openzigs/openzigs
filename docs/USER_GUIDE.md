@@ -7572,6 +7572,100 @@ If no `project_id` is specified, files save to `~/.openzigs/files/drafts/default
 
 ---
 
+## SEO Gap Analysis Engine
+
+The SEO Gap Analysis Engine compares your page's content against top-ranking competitors for a given keyword, producing a comprehensive Markdown report with metrics, keyword gaps, and actionable recommendations.
+
+### Quick Start
+
+#### From Chat
+
+Ask the agent directly:
+
+```
+Analyze the SEO gaps for https://mysite.com/blog/best-coffee-makers targeting "best coffee makers"
+```
+
+Or use the `seo-analyst` agent for a dedicated SEO analysis session.
+
+#### From Workbench
+
+1. Navigate to `/workbench`.
+2. Click the **SEO** button (🔍 search icon) in the toolbar.
+3. Fill the SEO Analysis dialog:
+
+| Field | Required | Description |
+|---|---|---|
+| **Target URL** | Yes | The page URL to analyze |
+| **Target Keyword** | Yes | The primary search keyword to compare against |
+| **Search Provider** | No | `auto` (default), `serper`, or `brave` |
+| **Model** | No | LLM model for enhanced analysis |
+
+4. Click **Analyze**. The agent fetches your page, discovers competitors, and generates a gap report.
+
+### How It Works
+
+| Step | What happens |
+|---|---|
+| 1. Fetch Target | Downloads and parses your page HTML |
+| 2. Discover Competitors | Searches the keyword via Serper.dev (or Brave) for top 5 results |
+| 3. Extract Content | Uses cheerio to extract headings, body text, and metadata from each page |
+| 4. Compute Metrics | TF-IDF keywords (via natural), Flesch-Kincaid readability, word counts |
+| 5. Generate Report | Produces a Markdown report with comparison tables and Mermaid charts |
+| 6. Save | Writes the report to `~/.openzigs/seo-reports/` |
+
+### MCP Tools
+
+| Tool | Risk | Description |
+|---|---|---|
+| `seo-gap-analysis` | 🟢 low | Full SEO gap analysis pipeline |
+| `seo-extract-content` | 🟢 low | Extract structured content metrics from a single URL |
+
+### Configuration
+
+**Serper.dev API Key** (recommended — provides PAA, related searches, featured snippet data):
+
+Set the `SERPER_API_KEY` environment variable, or add to `~/.openzigs/config.json`:
+
+```json
+{
+  "seo": {
+    "serperApiKey": "your-serper-api-key"
+  }
+}
+```
+
+**Brave Search** (fallback): Set `BRAVE_API_KEY` environment variable.
+
+### Viewing Reports
+
+Reports are saved as Markdown files in `~/.openzigs/seo-reports/` with the naming pattern:
+
+```
+<domain>-<keyword-slug>-<YYYY-MM-DD>.md
+```
+
+These files are visible in the Workbench file sidebar (under the `seo-reports` directory) and can be opened directly in the editor.
+
+### Configurable Workbench Directories
+
+The Workbench file sidebar shows configurable directories. Defaults include:
+
+- `~/.openzigs/research/`
+- `~/.openzigs/pinterest-reports/`
+- `~/.openzigs/seo-reports/`
+
+Manage via the admin API:
+
+```
+GET  /api/admin/workbench/directories
+PUT  /api/admin/workbench/directories  { "directories": ["~/.openzigs/research", "~/.openzigs/custom-dir"] }
+```
+
+Or add to `~/.openzigs/config.json` under `workbench.directories`.
+
+---
+
 ## Media Queue & Asset Gallery
 
 The Media Queue is a push-based distributed job system for generating images, videos, and music across networked GPU nodes. Jobs are dispatched to workers asynchronously — the worker accepts the job immediately (HTTP 202) and POSTs a completion callback back to the primary Mac when done. The Asset Gallery provides a visual interface for browsing, filtering, and managing all generated and uploaded media.

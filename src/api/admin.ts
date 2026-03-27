@@ -5292,5 +5292,59 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
     }
   });
 
+  // ── Workbench directories ──────────────────────────────────────────────
+
+  router.get("/workbench/directories", async (_req, res) => {
+    try {
+      const config = await loadConfig();
+      const dirs = config.workbench?.directories ?? [];
+      return res.json({ directories: dirs });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return res.status(500).json({ error: message });
+    }
+  });
+
+  router.put("/workbench/directories", async (req, res) => {
+    try {
+      const schema = z.object({
+        directories: z.array(z.string().min(1)).min(0),
+      });
+      const body = schema.parse(req.body);
+
+      // Validate each directory path
+      for (const dir of body.directories) {
+        if (dir.includes("..")) {
+          return res.status(400).json({ error: `Invalid path (contains ".."): ${dir}` });
+        }
+      }
+
+      const configPath = path.join(os.homedir(), ".openzigs", "config.json");
+      let userConfig: Record<string, unknown> = {};
+      try {
+        const raw = await fs.readFile(configPath, "utf-8");
+        userConfig = JSON.parse(raw) as Record<string, unknown>;
+      } catch {
+        // File may not exist yet
+      }
+
+      const workbench = (userConfig.workbench ?? {}) as Record<string, unknown>;
+      workbench.directories = body.directories;
+      userConfig.workbench = workbench;
+
+      await fs.mkdir(path.dirname(configPath), { recursive: true });
+      await fs.writeFile(configPath, JSON.stringify(userConfig, null, 2), { mode: 0o600 });
+
+      logger.info("Updated workbench directories via admin API");
+      return res.json({ success: true, directories: body.directories });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: error.errors });
+      }
+      const message = error instanceof Error ? error.message : String(error);
+      return res.status(500).json({ error: message });
+    }
+  });
+
   return router;
 };

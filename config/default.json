@@ -210,6 +210,13 @@
     "repo": "openzigs-memory",
     "cacheTtlMs": 300000
   },
+  "workbench": {
+    "directories": [
+      "~/.openzigs/research",
+      "~/.openzigs/pinterest-reports",
+      "~/.openzigs/seo-reports"
+    ]
+  },
   "sentinel": {
     "enabled": false,
     "model": "gpt-4o-mini",

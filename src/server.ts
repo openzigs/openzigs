@@ -1621,6 +1621,7 @@ const effectiveAllowedDirs = Array.from(new Set([
   expandTilde("~/.openzigs"),
   expandTilde(directorConfig?.outputDir ?? "~/.openzigs/video-output"),
   expandTilde("~/.openzigs/renders"),
+  expandTilde("~/.openzigs/seo-reports"),
 ]));
 const filesRouter = createFilesRouter({
   allowedDirs: effectiveAllowedDirs,
