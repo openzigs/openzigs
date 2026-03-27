@@ -2860,64 +2860,141 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
         }
 
       } else if (effectiveMode === "flux-enhance") {
-        // User wants to modify the selected frame with a prompt via img2img
+        // Long-running Kontext edit — return 202, run in background, notify via Socket.IO
         const frame = await resolveBaseFrame();
         if (!frame) {
           res.status(400).json({ error: "No scene images found — ensure the draft has generated images" });
           return;
         }
-        frameInfo = { timestamp: frame.timestamp, rationale: frame.rationale };
-        suggestedText = frame.text;
 
-        const enhancePrompt = prompt ?? style ?? "YouTube thumbnail style, highly saturated, expressive, high contrast, vibrant colors, professional";
-        const enhanced = await imageService.kontextEdit(frame.path, enhancePrompt, {
-          width: 1280,
-          height: 720,
-          steps: 20,
-          guidance: 2.5,
-        });
-        backgroundPath = enhanced.filePath;
-        frameInfo.rationale = `Enhanced with: "${enhancePrompt.slice(0, 80)}"`;
-        logger.info(`[Director API] Thumbnail img2img enhanced: ${enhanced.filePath} (${enhanced.generationTimeMs}ms)`);
+        const thumbnailJobId = nanoid();
+        res.status(202).json({ thumbnailJobId, mode: effectiveMode });
+        logger.info(`[Director API] Thumbnail job ${thumbnailJobId} accepted (flux-enhance) — running in background`);
+
+        (async () => {
+          try {
+            const enhancePrompt = prompt ?? style ?? "YouTube thumbnail style, highly saturated, expressive, high contrast, vibrant colors, professional";
+            const enhanced = await imageService.kontextEdit(frame.path, enhancePrompt, {
+              width: 1280,
+              height: 720,
+              steps: 20,
+              guidance: 2.5,
+            });
+            logger.info(`[Director API] Thumbnail img2img enhanced: ${enhanced.filePath} (${enhanced.generationTimeMs}ms)`);
+
+            const textLines = Array.isArray(textOverride) && textOverride.length > 0
+              ? textOverride.filter((t): t is string => typeof t === "string").slice(0, 3)
+              : frame.text;
+
+            const { compositeThumbnail } = await import("../video/thumbnails/thumbnail-compositor.js");
+            const thumbnailFilename = `thumb_${req.params.id}_${Date.now()}.jpg`;
+            const thumbnailPath = pathMod.join(outputDir, thumbnailFilename);
+            await compositeThumbnail({
+              backgroundPath: enhanced.filePath,
+              textLines,
+              textPlacement: "bottom",
+              textColor: "#ffffff",
+              outputPath: thumbnailPath,
+              clickbaitOverlay: clickbaitOverlay !== "none" ? clickbaitOverlay : undefined,
+            });
+
+            db.prepare(`UPDATE director_drafts SET thumbnail = ?, updated_at = ? WHERE id = ?`)
+              .run(thumbnailFilename, new Date().toISOString(), req.params.id);
+
+            if (_io) _io.emit("thumbnail:complete", {
+              thumbnailJobId,
+              draftId: req.params.id,
+              thumbnailUrl: `/api/admin/director/files/${thumbnailFilename}`,
+              suggestedText: textLines,
+              selectedFrame: { timestamp: frame.timestamp, rationale: `Enhanced with: "${enhancePrompt.slice(0, 80)}"` },
+              mode: effectiveMode,
+            });
+            logger.info(`[Director API] Thumbnail job ${thumbnailJobId} complete`);
+          } catch (bgErr) {
+            const bgMsg = bgErr instanceof Error ? bgErr.message : String(bgErr);
+            logger.error(`[Director API] Thumbnail job ${thumbnailJobId} failed: ${bgMsg}`);
+            if (_io) _io.emit("thumbnail:failed", { thumbnailJobId, draftId: req.params.id, error: bgMsg });
+          }
+        })();
+        return;
 
       } else {
-        // flux-generate: completely new image from text prompt
-        const thumbnailPrompt = prompt
-          ?? `YouTube thumbnail for "${manifest.projectTitle}", highly saturated, expressive, high contrast, vibrant colors, dramatic lighting, professional photography, 4K`;
+        // flux-generate: completely new image — also long-running, same async pattern
+        const thumbnailJobId = nanoid();
+        res.status(202).json({ thumbnailJobId, mode: effectiveMode });
+        logger.info(`[Director API] Thumbnail job ${thumbnailJobId} accepted (flux-generate) — running in background`);
 
-        const genResult = await imageService.generateImage(thumbnailPrompt, {
-          width: 1280,
-          height: 720,
-        });
-        backgroundPath = genResult.filePath;
-        frameInfo = { timestamp: 0, rationale: `AI-generated from prompt: "${thumbnailPrompt.slice(0, 100)}"` };
-        suggestedText = [manifest.projectTitle.toUpperCase()];
+        (async () => {
+          try {
+            const thumbnailPrompt = prompt
+              ?? `YouTube thumbnail for "${manifest.projectTitle}", highly saturated, expressive, high contrast, vibrant colors, dramatic lighting, professional photography, 4K`;
 
-        // Ask LLM for clickbait text suggestions
-        try {
-          const thumbModel2 = await getUserSelectedModel();
-          const textChunks: string[] = [];
-          const textStream = copilot.chat(
-            `You are a YouTube clickbait expert. Given this video title: "${manifest.projectTitle}", suggest 2 short, bold, enticing text overlay lines for the thumbnail. ALL CAPS, max 25 chars per line. Respond with JSON: { "suggestedText": ["LINE1", "LINE2"] }`,
-            { tools: [], ...(thumbModel2 ? { model: thumbModel2 } : {}) },
-          );
-          for await (const chunk of textStream) textChunks.push(chunk);
-          let jsonText = textChunks.join("").trim();
-          if (jsonText.startsWith("```")) jsonText = jsonText.replace(/^```(?:json)?\n?/, "").replace(/\n?```$/, "");
-          const parsed = JSON.parse(jsonText) as { suggestedText?: string[] };
-          if (Array.isArray(parsed.suggestedText)) {
-            suggestedText = parsed.suggestedText.filter((t): t is string => typeof t === "string").slice(0, 3);
+            const genResult = await imageService.generateImage(thumbnailPrompt, {
+              width: 1280,
+              height: 720,
+            });
+            let genSuggestedText: string[] = [manifest.projectTitle.toUpperCase()];
+
+            try {
+              const thumbModel2 = await getUserSelectedModel();
+              const textChunks: string[] = [];
+              const textStream = copilot.chat(
+                `You are a YouTube clickbait expert. Given this video title: "${manifest.projectTitle}", suggest 2 short, bold, enticing text overlay lines for the thumbnail. ALL CAPS, max 25 chars per line. Respond with JSON: { "suggestedText": ["LINE1", "LINE2"] }`,
+                { tools: [], ...(thumbModel2 ? { model: thumbModel2 } : {}) },
+              );
+              for await (const chunk of textStream) textChunks.push(chunk);
+              let jsonText = textChunks.join("").trim();
+              if (jsonText.startsWith("```")) jsonText = jsonText.replace(/^```(?:json)?\n?/, "").replace(/\n?```$/, "");
+              const parsed = JSON.parse(jsonText) as { suggestedText?: string[] };
+              if (Array.isArray(parsed.suggestedText)) {
+                genSuggestedText = parsed.suggestedText.filter((t): t is string => typeof t === "string").slice(0, 3);
+              }
+            } catch {
+              logger.warn("[Director API] Thumbnail text suggestion failed, using project title");
+            }
+
+            const textLines = Array.isArray(textOverride) && textOverride.length > 0
+              ? textOverride.filter((t): t is string => typeof t === "string").slice(0, 3)
+              : genSuggestedText;
+
+            const { compositeThumbnail } = await import("../video/thumbnails/thumbnail-compositor.js");
+            const thumbnailFilename = `thumb_${req.params.id}_${Date.now()}.jpg`;
+            const thumbnailPath = pathMod.join(outputDir, thumbnailFilename);
+            await compositeThumbnail({
+              backgroundPath: genResult.filePath,
+              textLines,
+              textPlacement: "bottom",
+              textColor: "#ffffff",
+              outputPath: thumbnailPath,
+              clickbaitOverlay: clickbaitOverlay !== "none" ? clickbaitOverlay : undefined,
+            });
+
+            db.prepare(`UPDATE director_drafts SET thumbnail = ?, updated_at = ? WHERE id = ?`)
+              .run(thumbnailFilename, new Date().toISOString(), req.params.id);
+
+            if (_io) _io.emit("thumbnail:complete", {
+              thumbnailJobId,
+              draftId: req.params.id,
+              thumbnailUrl: `/api/admin/director/files/${thumbnailFilename}`,
+              suggestedText: textLines,
+              selectedFrame: { timestamp: 0, rationale: `AI-generated from prompt: "${thumbnailPrompt.slice(0, 100)}"` },
+              mode: effectiveMode,
+            });
+            logger.info(`[Director API] Thumbnail job ${thumbnailJobId} complete`);
+          } catch (bgErr) {
+            const bgMsg = bgErr instanceof Error ? bgErr.message : String(bgErr);
+            logger.error(`[Director API] Thumbnail job ${thumbnailJobId} failed: ${bgMsg}`);
+            if (_io) _io.emit("thumbnail:failed", { thumbnailJobId, draftId: req.params.id, error: bgMsg });
           }
-        } catch {
-          logger.warn("[Director API] Thumbnail text suggestion failed, using project title");
-        }
+        })();
+        return;
       }
 
+      // frame-select mode reaches here — composite and respond synchronously
       const textLines = Array.isArray(textOverride) && textOverride.length > 0
         ? textOverride.filter((t): t is string => typeof t === "string").slice(0, 3)
         : suggestedText;
 
-      // Composite text overlay with optional clickbait decorations
       const { compositeThumbnail } = await import("../video/thumbnails/thumbnail-compositor.js");
       const thumbnailFilename = `thumb_${req.params.id}_${Date.now()}.jpg`;
       const thumbnailPath = pathMod.join(outputDir, thumbnailFilename);
@@ -2930,7 +3007,6 @@ Respond ONLY with a bare JSON object — no markdown, no code fences:
         clickbaitOverlay: clickbaitOverlay !== "none" ? clickbaitOverlay : undefined,
       });
 
-      // Update draft thumbnail reference
       db.prepare(`UPDATE director_drafts SET thumbnail = ?, updated_at = ? WHERE id = ?`)
         .run(thumbnailFilename, new Date().toISOString(), req.params.id);
 

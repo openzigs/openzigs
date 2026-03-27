@@ -1,9 +1,10 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { ImageIcon, Loader2, RefreshCw, Download, Sparkles, Wand2, ArrowLeft } from "lucide-react";
 import { fetchJson, buildMediaUrl } from "@/lib/api";
 import { showToast } from "@/components/toast";
+import { useSocket } from "@/lib/socket-context";
 
 type ClickbaitOverlay = "none" | "arrows" | "circles" | "emoji" | "badge";
 type Step = "pick-frame" | "customize" | "final";
@@ -42,6 +43,52 @@ export function ThumbnailPanel({ draftId }: ThumbnailPanelProps) {
   const [step, setStep] = useState<Step>("pick-frame");
   const [rawFrameUrl, setRawFrameUrl] = useState<string | null>(null);
   const [rationale, setRationale] = useState("");
+  const { socket } = useSocket();
+  const pendingJobRef = useRef<string | null>(null);
+
+  // Listen for async thumbnail job completion via Socket.IO
+  useEffect(() => {
+    if (!socket) return;
+
+    const onComplete = (data: {
+      thumbnailJobId: string;
+      draftId: string;
+      thumbnailUrl: string;
+      suggestedText: string[];
+      selectedFrame: { timestamp: number; rationale: string };
+      mode: string;
+    }) => {
+      if (data.draftId !== draftId) return;
+      if (pendingJobRef.current && data.thumbnailJobId !== pendingJobRef.current) return;
+      pendingJobRef.current = null;
+      setResult({
+        thumbnailUrl: data.thumbnailUrl,
+        suggestedText: data.suggestedText,
+        selectedFrame: data.selectedFrame,
+        mode: data.mode,
+      });
+      setTextOverride(data.suggestedText);
+      setStep("final");
+      setGenerating(false);
+      showToast("Thumbnail enhanced!", "success");
+    };
+
+    const onFailed = (data: { thumbnailJobId: string; draftId: string; error: string }) => {
+      if (data.draftId !== draftId) return;
+      if (pendingJobRef.current && data.thumbnailJobId !== pendingJobRef.current) return;
+      pendingJobRef.current = null;
+      setGenerating(false);
+      showToast(data.error || "Thumbnail generation failed", "error");
+    };
+
+    socket.on("thumbnail:complete", onComplete);
+    socket.on("thumbnail:failed", onFailed);
+
+    return () => {
+      socket.off("thumbnail:complete", onComplete);
+      socket.off("thumbnail:failed", onFailed);
+    };
+  }, [socket, draftId]);
 
   // Step 1: Pick the most clickable frame (fast, no enhancement)
   const handlePickFrame = useCallback(async () => {
@@ -78,17 +125,15 @@ export function ThumbnailPanel({ draftId }: ThumbnailPanelProps) {
         baseFrameUrl: rawFrameUrl,
       };
       if (editing && textOverride.length > 0) body.textOverride = textOverride;
-      const res = await fetchJson<ThumbnailResult>(
+      const res = await fetchJson<{ thumbnailJobId: string; mode: string }>(
         `/api/admin/director/drafts/${draftId}/thumbnail`,
         { method: "POST", body: JSON.stringify(body) },
       );
-      setResult(res);
-      setTextOverride(res.suggestedText);
-      setStep("final");
-      showToast("Thumbnail enhanced!", "success");
+      // 202 accepted — job running in background, Socket.IO will deliver result
+      pendingJobRef.current = res.thumbnailJobId;
+      showToast("Enhancing thumbnail — this may take a few minutes…", "info");
     } catch (err) {
       showToast(err instanceof Error ? err.message : "Enhancement failed", "error");
-    } finally {
       setGenerating(false);
     }
   }, [draftId, prompt, overlay, rawFrameUrl, editing, textOverride]);
@@ -102,17 +147,15 @@ export function ThumbnailPanel({ draftId }: ThumbnailPanelProps) {
       };
       if (prompt.trim()) body.prompt = prompt.trim();
       if (editing && textOverride.length > 0) body.textOverride = textOverride;
-      const res = await fetchJson<ThumbnailResult>(
+      const res = await fetchJson<{ thumbnailJobId: string; mode: string }>(
         `/api/admin/director/drafts/${draftId}/thumbnail`,
         { method: "POST", body: JSON.stringify(body) },
       );
-      setResult(res);
-      setTextOverride(res.suggestedText);
-      setStep("final");
-      showToast("New thumbnail generated!", "success");
+      // 202 accepted — job running in background, Socket.IO will deliver result
+      pendingJobRef.current = res.thumbnailJobId;
+      showToast("Generating thumbnail — this may take a few minutes…", "info");
     } catch (err) {
       showToast(err instanceof Error ? err.message : "Generation failed", "error");
-    } finally {
       setGenerating(false);
     }
   }, [draftId, prompt, overlay, editing, textOverride]);
