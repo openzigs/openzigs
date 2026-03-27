@@ -10,9 +10,9 @@ function createMockLocalServerManager(opts: { running?: boolean; callResult?: { 
 }
 
 describe("youtube-tools", () => {
-  it("returns 8 tool definitions", () => {
+  it("returns 10 tool definitions", () => {
     const tools = createYouTubeTools({});
-    expect(tools).toHaveLength(8);
+    expect(tools).toHaveLength(10);
   });
 
   it("all tools have category social", () => {
@@ -29,6 +29,7 @@ describe("youtube-tools", () => {
       "youtube-get-channel-info", "youtube-get-channel-videos", "youtube-get-video-details",
       "youtube-get-video-comments", "youtube-reply-to-comment", "youtube-search-videos",
       "youtube-get-channel-analytics", "youtube-upload-video",
+      "youtube-check-video-exists", "youtube-upload-captions",
     ]));
   });
 

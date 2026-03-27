@@ -41,7 +41,7 @@ function formatDate(iso: string): string {
   });
 }
 
-export function YouTubePublishHistory({ draftId, onRepublish }: { draftId: string; onRepublish?: () => void }) {
+export function YouTubePublishHistory({ draftId, onRepublish, onStatusChange }: { draftId: string; onRepublish?: () => void; onStatusChange?: () => void }) {
   const [publishes, setPublishes] = useState<PublishRecord[]>([]);
   const [loading, setLoading] = useState(false);
   const [checking, setChecking] = useState<string | null>(null);
@@ -82,12 +82,13 @@ export function YouTubePublishHistory({ draftId, onRepublish }: { draftId: strin
         { method: "POST" },
       );
       await load();
+      onStatusChange?.();
     } catch {
       /* silent */
     } finally {
       setChecking(null);
     }
-  }, [load]);
+  }, [load, onStatusChange]);
 
   return (
     <div className="relative">
