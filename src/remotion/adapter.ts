@@ -330,7 +330,7 @@ export function adaptManifest(manifest: DirectorManifest, outputDir: string): Co
   const { composition, timeline } = manifest;
   const durationInFrames = calculateDuration(timeline, composition.fps);
 
-  // Adapt entries and clamp overlay durations so they don't exceed visual content
+  // Adapt entries, clamp overlay durations, and drop overlays that start beyond the composition
   const adaptedTimeline = timeline.map((entry) => {
     const adapted = adaptTimelineEntry(entry, outputDir);
     if (adapted.type === "overlay" && "durationInFrames" in adapted && adapted.durationInFrames != null) {
@@ -346,6 +346,14 @@ export function adaptManifest(manifest: DirectorManifest, outputDir: string): Co
       logger.info(`[Adapter] Overlay: component=${adapted.component}, from=${adapted.startAtFrame}, dur=${adapted.durationInFrames ?? "∞"}, wordsCount=${wordsCount}`);
     }
     return adapted;
+  }).filter((item) => {
+    // Drop overlays whose start frame is at or beyond the composition end —
+    // they can't be visible and Remotion throws if durationInFrames is 0.
+    if (item.type === "overlay" && item.startAtFrame >= durationInFrames) {
+      logger.warn(`[Adapter] Dropping out-of-bounds overlay: component=${item.component}, from=${item.startAtFrame}, compositionDur=${durationInFrames}`);
+      return false;
+    }
+    return true;
   });
 
   // Compute actual rendered positions accounting for TransitionSeries overlaps.
