@@ -194,8 +194,12 @@ export class YouTubePublishService {
       if (videoId) {
         const srtContent = this.generateSrtForDraft(request.draftId);
         if (srtContent) {
-          // Fire and forget — caption upload failure should not block publish success
-          this.uploadCaptions(publishId).catch((err) => {
+          // Fire and forget — caption upload failure should not block publish success.
+          // Delay 15s: YouTube may reject caption uploads with 404 while the video is
+          // still processing after upload. A brief wait reduces spurious failures;
+          // users can also retry manually via the UI.
+          const captionDelay = new Promise<void>((r) => setTimeout(r, 15_000));
+          captionDelay.then(() => this.uploadCaptions(publishId)).catch((err) => {
             logger.warn(`[YouTubePublish] Auto caption upload failed: ${err instanceof Error ? err.message : String(err)}`);
           });
         }

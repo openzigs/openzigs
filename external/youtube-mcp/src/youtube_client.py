@@ -289,7 +289,8 @@ class YouTubeClient:
             }
         }
 
-        boundary = "caption_boundary_openzigs"
+        import uuid as _uuid
+        boundary = f"caption_boundary_{_uuid.uuid4().hex}"
         body_parts = [
             f"--{boundary}\r\n"
             f"Content-Type: application/json; charset=UTF-8\r\n\r\n"

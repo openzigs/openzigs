@@ -55,6 +55,9 @@ export const ImageOverlay: React.FC<ImageOverlayProps> = ({
         {isVideo ? (
           <OffthreadVideo
             src={src}
+            // "contain" preserves the full image (no cropping), accepting possible letterboxing.
+            // KenBurns scenes use "cover" to fill the frame; overlays use "contain" so the user
+            // sees the entire uploaded asset without any edges being clipped.
             style={{ width: "100%", height: "100%", objectFit: "contain", display: "block" }}
           />
         ) : (
