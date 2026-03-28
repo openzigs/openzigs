@@ -24,11 +24,14 @@ type SeoAnalysisDialogProps = {
   onSubmitted?: () => void;
 };
 
+type AnalysisMode = "standard" | "deep";
+
 function buildSeoPrompt(params: {
   targetUrl: string;
   targetKeyword: string;
   searchProvider: string;
   exportPdf: boolean;
+  analysisMode: AnalysisMode;
 }): string {
   const toolArgs: Record<string, string> = { targetUrl: params.targetUrl };
   if (params.targetKeyword) toolArgs.targetKeyword = params.targetKeyword;
@@ -46,25 +49,48 @@ function buildSeoPrompt(params: {
   steps.push(`STEP 2: The tool returns JSON with reportPath, analysisPrompt, and targetMetrics.`);
   steps.push(`Read the saved report using read-file with the exact reportPath.`);
   steps.push(``);
-  steps.push(`STEP 3: Use orchestrate-agents to run parallel deep analysis with these sub-tasks:`);
-  steps.push(`  Agent 1 — "Content Depth Analyst": Analyze topical coverage gaps. What subtopics do competitors cover that the target misses? What entities and concepts are underrepresented? Rate content depth 0-100.`);
-  steps.push(`  Agent 2 — "Technical SEO Auditor": Review meta tags, schema markup, image optimization, internal linking quality, and mobile-readiness. Provide specific fix recommendations.`);
-  steps.push(`  Agent 3 — "SERP Strategy Analyst": Analyze the People Also Ask questions and related searches. Identify which SERP features the target could capture. Recommend content additions for featured snippets.`);
-  steps.push(``);
-  steps.push(`STEP 4: Synthesize all agent results into a unified enhanced analysis with:`);
+
+  let nextStep = 3;
+
+  if (params.analysisMode === "deep") {
+    // Fan-out: parallel sub-agents via orchestrate-agents (faster, uses multiple API calls)
+    steps.push(`STEP ${nextStep}: Use orchestrate-agents to run parallel deep analysis with these sub-tasks:`);
+    steps.push(`  Agent 1 — "Content Depth Analyst": Analyze topical coverage gaps. What subtopics do competitors cover that the target misses? What entities and concepts are underrepresented? Rate content depth 0-100.`);
+    steps.push(`  Agent 2 — "Technical SEO Auditor": Review meta tags, schema markup, image optimization, internal linking quality, and mobile-readiness. Provide specific fix recommendations.`);
+    steps.push(`  Agent 3 — "SERP Strategy Analyst": Analyze the People Also Ask questions and related searches. Identify which SERP features the target could capture. Recommend content additions for featured snippets.`);
+    steps.push(``);
+    nextStep++;
+    steps.push(`STEP ${nextStep}: Synthesize all agent results into a unified enhanced analysis with:`);
+  } else {
+    // Sequential: single-session analysis (slower, uses 1 API call)
+    steps.push(`STEP ${nextStep}: Perform the following deep analysis yourself, sequentially. Do NOT use orchestrate-agents or spawn-agent — complete everything in this single session.`);
+    steps.push(``);
+    steps.push(`Part A — Content Depth Analysis: Analyze topical coverage gaps. What subtopics do competitors cover that the target misses? What entities and concepts are underrepresented? Rate content depth 0-100.`);
+    steps.push(``);
+    steps.push(`Part B — Technical SEO Audit: Review meta tags, schema markup, image optimization, internal linking quality, and mobile-readiness. Provide specific fix recommendations.`);
+    steps.push(``);
+    steps.push(`Part C — SERP Strategy Analysis: Analyze the People Also Ask questions and related searches. Identify which SERP features the target could capture. Recommend content additions for featured snippets.`);
+    steps.push(``);
+    nextStep++;
+    steps.push(`STEP ${nextStep}: Synthesize your analysis from Parts A, B, and C into a unified enhanced analysis with:`);
+  }
   steps.push(`  - Executive summary with overall SEO health score (0-100)`);
   steps.push(`  - Top 5 prioritized recommendations with Impact and Effort ratings`);
   steps.push(`  - Content brief outline for updates`);
   steps.push(``);
-  steps.push(`STEP 5: APPEND your enhanced analysis to the EXISTING report file using write-file with the EXACT reportPath from Step 2.`);
+
+  nextStep++;
+  steps.push(`STEP ${nextStep}: APPEND your enhanced analysis to the EXISTING report file using write-file with the EXACT reportPath from Step 2.`);
   steps.push(`IMPORTANT: First read the existing report content, then write back the FULL content: the original metrics report followed by a separator line "---" and then your enhanced analysis. Do NOT overwrite or remove the original metrics, tables, and charts. The final file must contain BOTH sections.`);
   steps.push(`Reports are saved under ~/.openzigs/seo-reports/<domain>/ — the write-file tool has access to this directory and all subdirectories.`);
   steps.push(``);
   if (params.exportPdf) {
-    steps.push(`STEP 6: Call the export-pdf tool with the reportPath to regenerate the PDF with the enhanced content.`);
+    nextStep++;
+    steps.push(`STEP ${nextStep}: Call the export-pdf tool with the reportPath to regenerate the PDF with the enhanced content.`);
     steps.push(``);
   }
-  steps.push(`STEP ${params.exportPdf ? '7' : '6'}: Respond with a summary of key findings and the report paths (markdown and PDF).`);
+  nextStep++;
+  steps.push(`STEP ${nextStep}: Respond with a summary of key findings and the report paths (markdown and PDF).`);
   return steps.join("\n");
 }
 
@@ -79,6 +105,7 @@ export const SeoAnalysisDialog = ({
   const [targetKeyword, setTargetKeyword] = useState("");
   const [searchProvider, setSearchProvider] = useState("auto");
   const [model, setModel] = useState("claude-sonnet-4.6");
+  const [analysisMode, setAnalysisMode] = useState<AnalysisMode>("standard");
   const [exportPdf, setExportPdf] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -104,6 +131,7 @@ export const SeoAnalysisDialog = ({
       targetKeyword: targetKeyword.trim(),
       searchProvider,
       exportPdf,
+      analysisMode,
     });
 
     try {
@@ -114,7 +142,7 @@ export const SeoAnalysisDialog = ({
           "seo-gap-analysis", "seo-extract-content", "export-pdf",
           "web-search", "browser-navigate",
           "read-file", "write-file", "list-directory",
-          "orchestrate-agents", "spawn-agent",
+          ...(analysisMode === "deep" ? ["orchestrate-agents", "spawn-agent"] : []),
         ],
       });
       onSubmitted?.();
@@ -124,12 +152,13 @@ export const SeoAnalysisDialog = ({
       setTargetKeyword("");
       setSearchProvider("auto");
       setModel("claude-sonnet-4.6");
+      setAnalysisMode("standard");
       setExportPdf(true);
     } catch {
       setError("Failed to send analysis request. Check connection.");
       setSubmitting(false);
     }
-  }, [isValid, socket, connected, targetUrl, targetKeyword, searchProvider, model, exportPdf, onOpenChange, onSubmitted]);
+  }, [isValid, socket, connected, targetUrl, targetKeyword, searchProvider, model, analysisMode, exportPdf, onOpenChange, onSubmitted]);
 
   const handleOpenChange = useCallback(
     (nextOpen: boolean) => {
@@ -221,6 +250,27 @@ export const SeoAnalysisDialog = ({
             />
             <p className="mt-0.5 text-[10px] text-muted-foreground">
               claude-sonnet-4.6 recommended for thorough analysis
+            </p>
+          </div>
+
+          {/* Analysis Mode */}
+          <div>
+            <label htmlFor="seo-mode" className="mb-1 block text-xs font-medium text-foreground">
+              Analysis Mode
+            </label>
+            <select
+              id="seo-mode"
+              value={analysisMode}
+              onChange={(e) => setAnalysisMode(e.target.value as AnalysisMode)}
+              className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
+            >
+              <option value="standard">Standard — single session, 1 API call</option>
+              <option value="deep">Deep — parallel agents, faster but ~5 API calls</option>
+            </select>
+            <p className="mt-0.5 text-[10px] text-muted-foreground">
+              {analysisMode === "standard"
+                ? "Runs all analysis sequentially in one session. Takes longer but uses minimal API calls."
+                : "Dispatches 3 specialist agents in parallel. Faster results but uses more API calls."}
             </p>
           </div>
 
