@@ -81,6 +81,7 @@
     "sharp": "^0.34.5",
     "socket.io": "^4.8.3",
     "tesseract.js": "^7.0.0",
+    "undici": "^7.24.5",
     "whisper-node": "^1.1.1",
     "winston": "^3.19.0",
     "zod": "^3.25.76"

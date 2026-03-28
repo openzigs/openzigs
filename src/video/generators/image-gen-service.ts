@@ -433,7 +433,7 @@ export class ImageGenService {
         body,
         signal: AbortSignal.timeout(this.config.localTimeoutMs),
         dispatcher: this.longRunningDispatcher(),
-      } as RequestInit);
+      } as unknown as RequestInit);
 
       if (!response.ok) {
         const errorText = await response.text().catch(() => "unknown");
@@ -681,7 +681,7 @@ export class ImageGenService {
       body,
       signal: AbortSignal.timeout(this.config.localTimeoutMs),
       dispatcher: this.longRunningDispatcher(),
-    } as RequestInit);
+    } as unknown as RequestInit);
 
     if (!response.ok) {
       const errorText = await response.text().catch(() => "unknown");
@@ -744,7 +744,7 @@ export class ImageGenService {
       body,
       signal: AbortSignal.timeout(this.config.localTimeoutMs),
       dispatcher: this.longRunningDispatcher(),
-    } as RequestInit);
+    } as unknown as RequestInit);
 
     if (!response.ok) {
       const errorText = await response.text().catch(() => "unknown");
