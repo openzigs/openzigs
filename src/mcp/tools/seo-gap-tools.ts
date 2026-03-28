@@ -6,6 +6,7 @@ import type { ToolDefinition } from "../tool-registry.js";
 import { extractContent } from "./seo/html-extractor.js";
 import { discoverCompetitors } from "./seo/competitor-discovery.js";
 import { buildAnalysisPrompt, generateMetricsReport, buildReportFilename, type AnalysisInput } from "./seo/report-generator.js";
+import { discoverKeyword } from "./seo/keyword-discovery.js";
 
 // ── Constants ────────────────────────────────────────────────────────────
 
@@ -15,7 +16,7 @@ const SEO_REPORTS_DIR = path.join(os.homedir(), ".openzigs", "seo-reports");
 
 const seoGapAnalysisSchema = z.object({
   targetUrl: z.string().url().describe("URL of the page to analyze"),
-  targetKeyword: z.string().min(1).describe("Primary keyword / search query to analyze for"),
+  targetKeyword: z.string().min(1).optional().describe("Primary keyword / search query to analyze for. Leave blank to auto-detect from page content."),
   searchProvider: z
     .enum(["serper", "brave"])
     .optional()
@@ -66,17 +67,17 @@ export const createSeoGapTools = (opts: SeoGapToolsOptions = {}): ToolDefinition
       type: "object",
       properties: {
         targetUrl: { type: "string", description: "URL of the page to analyze" },
-        targetKeyword: { type: "string", description: "Primary keyword / search query" },
+        targetKeyword: { type: "string", description: "Primary keyword / search query (leave blank to auto-detect)" },
         searchProvider: { type: "string", enum: ["serper", "brave"], description: "Search provider (default: auto)" },
         model: { type: "string", description: "LLM model for enhanced analysis" },
       },
-      required: ["targetUrl", "targetKeyword"],
+      required: ["targetUrl"],
     },
     zodSchema: seoGapAnalysisSchema,
     category: "search",
     riskLevel: "medium",
     handler: async (args) => {
-      const { targetUrl, targetKeyword, searchProvider } = seoGapAnalysisSchema.parse(args);
+      const { targetUrl, targetKeyword: providedKeyword, searchProvider } = seoGapAnalysisSchema.parse(args);
 
       try {
         await ensureReportsDir();
@@ -84,6 +85,22 @@ export const createSeoGapTools = (opts: SeoGapToolsOptions = {}): ToolDefinition
         // 1. Fetch & extract target content
         const targetHtml = await fetchHtml(targetUrl);
         const targetContent = extractContent(targetHtml);
+
+        // 1b. Auto-detect keyword if not provided
+        let targetKeyword = providedKeyword ?? "";
+        let detectedKeyword: { keyword: string; alternatives: string[]; intent: string } | undefined;
+
+        if (!targetKeyword) {
+          const discovery = discoverKeyword(targetContent, targetUrl);
+          if (!discovery) {
+            return {
+              text: "Could not auto-detect a target keyword from the page content. Please provide a keyword manually.",
+              isError: true,
+            };
+          }
+          targetKeyword = discovery.keyword;
+          detectedKeyword = discovery;
+        }
 
         // 2. Discover competitors
         const apiKeys: { serperApiKey?: string; braveApiKey?: string } = {};
@@ -135,6 +152,8 @@ export const createSeoGapTools = (opts: SeoGapToolsOptions = {}): ToolDefinition
           text: JSON.stringify({
             reportPath,
             filename,
+            ...(detectedKeyword ? { detectedKeyword } : {}),
+            targetKeyword,
             targetMetrics: {
               wordCount: targetContent.wordCount,
               headingCount: targetContent.headingCount,
@@ -150,7 +169,7 @@ export const createSeoGapTools = (opts: SeoGapToolsOptions = {}): ToolDefinition
             },
             searchProvider: discovery.provider,
             analysisPrompt,
-            message: `SEO gap analysis complete. Report saved to ${reportPath}. ${competitors.length} competitors analyzed. Use the analysisPrompt with an LLM for enhanced recommendations.`,
+            message: `SEO gap analysis complete.${detectedKeyword ? ` Auto-detected keyword: "${targetKeyword}" (${detectedKeyword.intent}).` : ""} Report saved to ${reportPath}. ${competitors.length} competitors analyzed. Use the analysisPrompt with an LLM for enhanced recommendations.`,
           }, null, 2),
         };
       } catch (error) {

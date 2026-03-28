@@ -32,7 +32,7 @@ describe("seo-gap-tools", () => {
       const extract = tools.find((t) => t.name === "seo-extract-content")!;
 
       expect(gap.inputSchema.required).toContain("targetUrl");
-      expect(gap.inputSchema.required).toContain("targetKeyword");
+      expect(gap.inputSchema.required).not.toContain("targetKeyword");
       expect(extract.inputSchema.required).toContain("url");
     });
   });
@@ -65,7 +65,7 @@ describe("seo-gap-tools", () => {
       expect(result.success).toBe(false);
     });
 
-    it("rejects empty keyword", () => {
+    it("rejects empty keyword when explicitly provided", () => {
       const tools = createSeoGapTools();
       const tool = tools.find((t) => t.name === "seo-gap-analysis")!;
       const result = tool.zodSchema!.safeParse({
@@ -73,6 +73,15 @@ describe("seo-gap-tools", () => {
         targetKeyword: "",
       });
       expect(result.success).toBe(false);
+    });
+
+    it("accepts missing keyword (auto-detect)", () => {
+      const tools = createSeoGapTools();
+      const tool = tools.find((t) => t.name === "seo-gap-analysis")!;
+      const result = tool.zodSchema!.safeParse({
+        targetUrl: "https://example.com",
+      });
+      expect(result.success).toBe(true);
     });
 
     it("accepts optional searchProvider", () => {
@@ -353,6 +362,96 @@ describe("seo-gap-tools", () => {
 
       // Should fail since no keys are valid, but it exercises the fallback branch
       expect(result.isError).toBe(true);
+    });
+
+    it("auto-detects keyword when targetKeyword is omitted", async () => {
+      const targetHtml = `
+        <html><body>
+          <h1>Best React Performance Optimization Tips</h1>
+          <p>React performance optimization is essential for modern web apps. These tips help you optimize React rendering and improve user experience with better performance.</p>
+        </body></html>
+      `;
+
+      const serperResponse = {
+        organic: [
+          { link: "https://comp1.com/page", title: "Comp 1", snippet: "Snippet 1", position: 1 },
+        ],
+        peopleAlsoAsk: [],
+        relatedSearches: [],
+      };
+
+      globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+        if (typeof url === "string" && url.includes("serper.dev")) {
+          return Promise.resolve({ ok: true, json: () => Promise.resolve(serperResponse) });
+        }
+        return Promise.resolve({ ok: true, text: () => Promise.resolve(targetHtml) });
+      });
+
+      vi.spyOn(fs, "writeFile").mockResolvedValue();
+      vi.spyOn(fs, "mkdir").mockResolvedValue(undefined);
+
+      const tools = createSeoGapTools({ serperApiKey: "test-key" });
+      const tool = tools.find((t) => t.name === "seo-gap-analysis")!;
+
+      const result = await tool.handler({ targetUrl: "https://mysite.com/react-perf" });
+
+      expect(result.isError).toBeUndefined();
+      const parsed = JSON.parse(result.text);
+      expect(parsed.detectedKeyword).toBeDefined();
+      expect(parsed.detectedKeyword.keyword).toBeTruthy();
+      expect(parsed.detectedKeyword.intent).toBeDefined();
+      expect(parsed.targetKeyword).toBe(parsed.detectedKeyword.keyword);
+      expect(parsed.message).toContain("Auto-detected keyword");
+    });
+
+    it("returns error when auto-detection fails on empty page", async () => {
+      const emptyHtml = `<html><body></body></html>`;
+
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(emptyHtml),
+      });
+
+      const tools = createSeoGapTools({ serperApiKey: "test-key" });
+      const tool = tools.find((t) => t.name === "seo-gap-analysis")!;
+
+      const result = await tool.handler({ targetUrl: "https://empty.example.com" });
+
+      expect(result.isError).toBe(true);
+      expect(result.text).toContain("Could not auto-detect");
+    });
+
+    it("does not include detectedKeyword when keyword is provided explicitly", async () => {
+      const targetHtml = `<html><body><h1>Target</h1><p>Content here with enough words for the analysis threshold.</p></body></html>`;
+
+      const serperResponse = {
+        organic: [{ link: "https://comp1.com", title: "C1", snippet: "S1", position: 1 }],
+        peopleAlsoAsk: [],
+        relatedSearches: [],
+      };
+
+      globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+        if (typeof url === "string" && url.includes("serper.dev")) {
+          return Promise.resolve({ ok: true, json: () => Promise.resolve(serperResponse) });
+        }
+        return Promise.resolve({ ok: true, text: () => Promise.resolve(targetHtml) });
+      });
+
+      vi.spyOn(fs, "writeFile").mockResolvedValue();
+      vi.spyOn(fs, "mkdir").mockResolvedValue(undefined);
+
+      const tools = createSeoGapTools({ serperApiKey: "key" });
+      const tool = tools.find((t) => t.name === "seo-gap-analysis")!;
+
+      const result = await tool.handler({
+        targetUrl: "https://mysite.com",
+        targetKeyword: "manual keyword",
+      });
+
+      expect(result.isError).toBeUndefined();
+      const parsed = JSON.parse(result.text);
+      expect(parsed.detectedKeyword).toBeUndefined();
+      expect(parsed.targetKeyword).toBe("manual keyword");
     });
   });
 });

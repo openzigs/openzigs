@@ -33,7 +33,11 @@ function buildSeoPrompt(params: {
   steps.push(`[Using SEO Analyst skill]`);
   steps.push(`Run a full SEO content gap analysis.`);
   steps.push(`Target URL: ${params.targetUrl}`);
-  steps.push(`Target Keyword: "${params.targetKeyword}"`);
+  if (params.targetKeyword) {
+    steps.push(`Target Keyword: "${params.targetKeyword}"`);
+  } else {
+    steps.push(`Target Keyword: (auto-detect from page content)`);
+  }
   if (params.searchProvider !== "auto") {
     steps.push(`Search Provider: ${params.searchProvider}`);
   }
@@ -64,7 +68,7 @@ export const SeoAnalysisDialog = ({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const isValid = targetUrl.trim().length > 0 && targetKeyword.trim().length > 0;
+  const isValid = targetUrl.trim().length > 0;
 
   const handleSubmit = useCallback(() => {
     if (!isValid || !socket || !connected) return;
@@ -152,7 +156,7 @@ export const SeoAnalysisDialog = ({
           {/* Target Keyword */}
           <div>
             <label htmlFor="seo-keyword" className="mb-1 block text-xs font-medium text-foreground">
-              Target Keyword <span className="text-destructive">*</span>
+              Target Keyword
             </label>
             <input
               id="seo-keyword"
@@ -163,6 +167,9 @@ export const SeoAnalysisDialog = ({
               placeholder="e.g. best project management tools"
               className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
             />
+            <p className="mt-0.5 text-[10px] text-muted-foreground">
+              Leave blank to auto-detect from page content
+            </p>
           </div>
 
           {/* Search Provider */}
