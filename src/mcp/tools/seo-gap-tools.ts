@@ -74,7 +74,7 @@ export const createSeoGapTools = (opts: SeoGapToolsOptions = {}): ToolDefinition
     },
     zodSchema: seoGapAnalysisSchema,
     category: "search",
-    riskLevel: "low",
+    riskLevel: "medium",
     handler: async (args) => {
       const { targetUrl, targetKeyword, searchProvider } = seoGapAnalysisSchema.parse(args);
 
@@ -174,7 +174,7 @@ export const createSeoGapTools = (opts: SeoGapToolsOptions = {}): ToolDefinition
     },
     zodSchema: seoExtractContentSchema,
     category: "search",
-    riskLevel: "low",
+    riskLevel: "medium",
     handler: async (args) => {
       const { url } = seoExtractContentSchema.parse(args);
 

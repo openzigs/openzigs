@@ -22,7 +22,7 @@ describe("seo-gap-tools", () => {
       const tools = createSeoGapTools();
       for (const tool of tools) {
         expect(tool.category).toBe("search");
-        expect(tool.riskLevel).toBe("low");
+        expect(tool.riskLevel).toBe("medium");
       }
     });
 
