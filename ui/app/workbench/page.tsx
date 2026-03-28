@@ -29,6 +29,8 @@ export default function WorkbenchPage() {
   const [researchOpen, setResearchOpen] = useState(false);
   const [seoOpen, setSeoOpen] = useState(false);
   const [askAiOpen, setAskAiOpen] = useState(false);
+  // Increment to force AskAiPanel to clear stale messages when a new analysis starts
+  const [panelKey, setPanelKey] = useState(0);
   const [viewMode, setViewMode] = useState<"edit" | "preview">("preview");
 
   // Fetch configurable workbench directories
@@ -278,15 +280,15 @@ export default function WorkbenchPage() {
       <ResearchGenerateDialog
         open={researchOpen}
         onOpenChange={setResearchOpen}
-        onSubmitted={() => setAskAiOpen(true)}
+        onSubmitted={() => { setPanelKey((k) => k + 1); setAskAiOpen(true); }}
       />
       {/* SEO Gap Analysis Dialog */}
       <SeoAnalysisDialog
         open={seoOpen}
         onOpenChange={setSeoOpen}
-        onSubmitted={() => setAskAiOpen(true)}
+        onSubmitted={() => { setPanelKey((k) => k + 1); setAskAiOpen(true); }}
       />
-      <AskAiPanel pageContext={PAGE_CONTEXTS["workbench"]} open={askAiOpen} onClose={() => setAskAiOpen(false)} />
+      <AskAiPanel key={panelKey} pageContext={PAGE_CONTEXTS["workbench"]} open={askAiOpen} onClose={() => setAskAiOpen(false)} />
     </div>
   );
 }
