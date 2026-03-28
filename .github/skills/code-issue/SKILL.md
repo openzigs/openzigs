@@ -157,6 +157,7 @@ Before creating the PR, perform a comprehensive security review:
 1. Check for CI configuration (`.github/workflows/`, `Jenkinsfile`, etc.)
 2. Run CI tasks locally where possible
 2. Verify: all tests pass, linter clean, **coverage ≥80% (run `pnpm test:coverage` and check the summary table)**
+3. **Check remote CI status** after pushing: `gh pr checks {PR_NUMBER}`. If ANY job is failing — even failures that pre-date this PR — fix them. We do not merge into a red pipeline. Pre-existing failures (e.g., type errors in unrelated files) must be resolved in this branch as a prerequisite to approval.
 
 ### Step 5.5: Update Living Documents
 

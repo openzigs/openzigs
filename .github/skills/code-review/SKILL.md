@@ -34,6 +34,9 @@ Execute with the **Code Review** agent (`code-review.agent.md`), which has the s
 ├───────────────────────────────────────────────────────┤
 │  1c. PRIOR REVIEWS — Analyze human & Copilot comments │
 ├───────────────────────────────────────────────────────┤
+│  1d. CI STATUS — Verify pipeline green (all failures  │
+│      block, including pre-existing)                   │
+├───────────────────────────────────────────────────────┤
 │  2. REQUIREMENTS — Validate completeness against spec │
 ├───────────────────────────────────────────────────────┤
 │  3. DESIGN — Evaluate architecture and design choices │
@@ -183,7 +186,39 @@ Other people or automated reviewers (e.g., GitHub Copilot code review) may have 
 | mgcronin | 2 | 3 | 0 |
 | copilot | 0 | 1 | 1 (false positive) |
 ```
+### Step 1d: CI Status Check
 
+**Goal:** Verify the CI pipeline is fully green before proceeding with the review. ALL failing CI jobs are blocking — including pre-existing failures not introduced by this PR.
+
+**Procedure:**
+
+1. **Fetch CI job status:**
+   ```bash
+   gh pr checks {PR_NUMBER}
+   ```
+
+2. **Build a CI status table:**
+
+   ```markdown
+   | Job | Status | Introduced by PR? | Notes |
+   |-----|--------|--------------------|-------|
+   | api | ❌ FAILED | No — pre-existing `undici` type error | Blocking |
+   | ui | ✅ Passed | — | — |
+   | CodeQL (JS) | ✅ Passed | — | — |
+   ```
+
+3. **For each failing job:**
+   - Fetch the failure logs: `gh run view {RUN_ID} --log-failed` or check the Actions tab URL
+   - Determine **root cause** — is it a type error, test failure, lint error, build error?
+   - Determine **whether this PR introduced it** — check if the same job fails on `main` branch
+   - **Regardless of origin, the failure is blocking.** Pre-existing failures must be fixed in this PR as a prerequisite to merging. We do not merge into a red pipeline.
+
+4. **Include the CI status table in Step 9 (Publish) review body** and in the verdict.
+
+**Gate logic:**
+- **Any failing CI job** → `REQUEST_CHANGES` (blocking). The PR must fix it, even if the failure is pre-existing.
+- The review body must include remediation guidance: what file/line causes the failure and how to fix it.
+- If ALL jobs pass → no CI impact on verdict.
 ### Step 2: Requirements Validation
 
 **Goal:** Ensure the PR delivers what was asked for — no more, no less.
@@ -386,6 +421,13 @@ gh pr review {PR_NUMBER} --request-changes --body "$(cat review-body.md)"
 | CodeQL | Missing rate limiting | src/api/m365.ts:151 | High | Still present |
 | CodeQL | Path traversal | src/api/m365.ts:122 | Critical | Fixed |
 
+### CI Status: {ALL GREEN|FAILURES}
+| Job | Status | Introduced by PR? | Blocking? |
+|-----|--------|--------------------|-----------|
+| api | ❌ FAILED — `undici` type error in image-gen-service.ts:12 | No — pre-existing | Yes |
+| ui | ✅ Passed | — | — |
+| CodeQL (JavaScript) | ✅ Passed | — | — |
+
 ### Prior Review Comments: {N total, M unresolved}
 | Reviewer | Type | Unresolved | Addressed | Disagreed |
 |----------|------|------------|-----------|-----------|
@@ -396,6 +438,7 @@ gh pr review {PR_NUMBER} --request-changes --body "$(cat review-body.md)"
 ```
 
 **Verdict escalation rules:**
+- Any **failing CI job** (regardless of whether this PR introduced it) → `REQUEST_CHANGES` (blocking). Pre-existing failures must be fixed as a prerequisite to merge.
 - Any `Still present` CodeQL **Critical** or **High** → `REQUEST_CHANGES` (blocking)
 - Any `Still present` CodeQL **Medium** → `COMMENT` (non-blocking, but noted)
 - All scanner findings `Fixed` or `False positive` → no impact on verdict
