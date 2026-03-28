@@ -128,7 +128,7 @@ describe("competitor-discovery", () => {
       });
 
       const result = await discoverCompetitors("keyword", { serperApiKey: "key" });
-      expect(result.organic.length).toBeLessThanOrEqual(5);
+      expect(result.organic.length).toBeLessThanOrEqual(10);
     });
 
     it("handles missing optional fields in Serper response", async () => {

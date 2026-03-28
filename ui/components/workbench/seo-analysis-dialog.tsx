@@ -43,27 +43,25 @@ function buildSeoPrompt(params: {
   steps.push(JSON.stringify(toolArgs, null, 2));
   steps.push(`\`\`\``);
   steps.push(``);
-  steps.push(`STEP 2: The tool returns JSON. Extract the "reportPath" and "analysisPrompt" fields.`);
-  steps.push(`- reportPath: the absolute path under ~/.openzigs/seo-reports/ where the markdown report was saved`);
-  steps.push(`- pdfPath: the PDF path (if Chrome was available), or null`);
-  steps.push(`- analysisPrompt: the detailed prompt for enhanced analysis`);
+  steps.push(`STEP 2: The tool returns JSON with reportPath, analysisPrompt, and targetMetrics.`);
+  steps.push(`Read the saved report using read-file with the exact reportPath.`);
   steps.push(``);
-  steps.push(`STEP 3: Read the saved report from the exact reportPath using read-file.`);
+  steps.push(`STEP 3: Use orchestrate-agents to run parallel deep analysis with these sub-tasks:`);
+  steps.push(`  Agent 1 — "Content Depth Analyst": Analyze topical coverage gaps. What subtopics do competitors cover that the target misses? What entities and concepts are underrepresented? Rate content depth 0-100.`);
+  steps.push(`  Agent 2 — "Technical SEO Auditor": Review meta tags, schema markup, image optimization, internal linking quality, and mobile-readiness. Provide specific fix recommendations.`);
+  steps.push(`  Agent 3 — "SERP Strategy Analyst": Analyze the People Also Ask questions and related searches. Identify which SERP features the target could capture. Recommend content additions for featured snippets.`);
   steps.push(``);
-  steps.push(`STEP 4: Using the analysisPrompt data, provide your enhanced LLM analysis with:`);
-  steps.push(`  - Executive summary with a gap score (0-100)`);
-  steps.push(`  - Key content gaps and missing subtopics`);
-  steps.push(`  - Top 5 prioritized recommendations (with Impact and Effort ratings)`);
-  steps.push(`  - Content brief outline for page updates`);
+  steps.push(`STEP 4: Synthesize all agent results into a unified enhanced analysis with:`);
+  steps.push(`  - Executive summary with overall SEO health score (0-100)`);
+  steps.push(`  - Top 5 prioritized recommendations with Impact and Effort ratings`);
+  steps.push(`  - Content brief outline for updates`);
   steps.push(``);
   steps.push(`STEP 5: Append your enhanced analysis to the SAME report file using write-file with the EXACT reportPath from Step 2.`);
-  steps.push(`IMPORTANT: The path MUST start with the user home directory path to ~/.openzigs/seo-reports/. Do NOT write to any other directory.`);
+  steps.push(`IMPORTANT: The path MUST start with the user home directory path to ~/.openzigs/seo-reports/.`);
   steps.push(``);
-  steps.push(`STEP 6: Respond with:`);
-  steps.push(`  - A summary of key findings`);
-  steps.push(`  - The report path: {reportPath}`);
+  steps.push(`STEP 6: Respond with a summary of key findings and the report path.`);
   if (params.exportPdf) {
-    steps.push(`  - The PDF path: {pdfPath} (the tool generates this automatically)`);
+    steps.push(`  Include the PDF path from the tool response.`);
   }
   return steps.join("\n");
 }
@@ -114,6 +112,7 @@ export const SeoAnalysisDialog = ({
           "seo-gap-analysis", "seo-extract-content",
           "web-search", "browser-navigate",
           "read-file", "write-file", "list-directory",
+          "orchestrate-agents", "spawn-agent",
         ],
       });
       onSubmitted?.();

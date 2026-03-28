@@ -102,9 +102,9 @@ describe("report-generator", () => {
 
     it("includes analysis task instructions", () => {
       const prompt = buildAnalysisPrompt(makeInput());
-      expect(prompt).toContain("Executive Summary");
-      expect(prompt).toContain("Actionable Recommendations");
-      expect(prompt).toContain("Content Brief");
+      expect(prompt).toContain("Content Depth & Topical Coverage");
+      expect(prompt).toContain("Actionable Content Brief");
+      expect(prompt).toContain("Search Intent Alignment");
     });
 
     it("includes keyword TF-IDF scores", () => {
@@ -145,6 +145,29 @@ describe("report-generator", () => {
       expect(report).toContain("500");
     });
 
+    it("includes Target Page SEO Audit section", () => {
+      const report = generateMetricsReport(makeInput());
+      expect(report).toContain("## Target Page SEO Audit");
+      expect(report).toContain("### Content Quality");
+      expect(report).toContain("### Meta Tags");
+      expect(report).toContain("### Technical SEO");
+      expect(report).toContain("### Top Keywords (TF-IDF)");
+    });
+
+    it("includes Topic Landscape section when SERP features present", () => {
+      const report = generateMetricsReport(makeInput());
+      expect(report).toContain("## Topic Landscape");
+      expect(report).toContain("### People Also Ask");
+      expect(report).toContain("### Related Searches");
+    });
+
+    it("includes Content Gap Score section", () => {
+      const report = generateMetricsReport(makeInput());
+      expect(report).toContain("## Content Gap Score");
+      expect(report).toContain("Competitor Avg Word Count");
+      expect(report).toContain("Content Gap");
+    });
+
     it("includes competitor entries in the table", () => {
       const report = generateMetricsReport(makeInput());
       expect(report).toContain("comp1.com");
@@ -158,9 +181,9 @@ describe("report-generator", () => {
       expect(report).toContain("```");
     });
 
-    it("includes header structure", () => {
+    it("includes header structure in collapsible section", () => {
       const report = generateMetricsReport(makeInput());
-      expect(report).toContain("## Header Structure");
+      expect(report).toContain("Header Structure Comparison");
       expect(report).toContain("**H1**: Main Heading");
       expect(report).toContain("**H2**: Sub Heading");
     });
@@ -259,9 +282,9 @@ describe("report-generator", () => {
       expect(prompt).toContain("External Links");
     });
 
-    it("includes Technical SEO Assessment in task instructions", () => {
+    it("includes Technical SEO Gaps in task instructions", () => {
       const prompt = buildAnalysisPrompt(makeInput());
-      expect(prompt).toContain("Technical SEO Assessment");
+      expect(prompt).toContain("Technical SEO Gaps");
     });
   });
 

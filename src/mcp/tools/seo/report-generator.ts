@@ -84,17 +84,25 @@ export function buildAnalysisPrompt(input: AnalysisInput): string {
 
   lines.push("");
   lines.push("## Your Task");
-  lines.push("Generate a comprehensive SEO gap analysis report in Markdown with these sections:");
-  lines.push("1. **Executive Summary** — Overall gap score (0–100) and key findings");
-  lines.push("2. **Content Metrics Comparison Table** — Side-by-side: URL, Word Count, Headings, Reading Time, Readability, Keywords");
-  lines.push("3. **Radar Chart** — Mermaid radar chart comparing target vs avg competitor across: Word Count, Keywords, Headings, Readability, Depth");
-  lines.push("4. **Semantic Gap Analysis** — Missing subtopics, underserved entities, keyword gaps");
-  lines.push("5. **Header Structure Comparison** — Target H1/H2 vs Competitor H1/H2 trees");
-  lines.push("6. **Keyword Density Comparison** — Table of top keywords with presence per page");
-  lines.push("7. **SERP Feature Opportunities** — PAA questions to target, featured snippet optimization");
-  lines.push("8. **Actionable Recommendations** — Prioritized by impact (high/medium/low)");
-  lines.push("9. **Technical SEO Assessment** — Meta tags, schema markup, image alt text, internal linking quality");
-  lines.push("10. **Content Brief** — Outline for updating the target page");
+  lines.push("Generate a comprehensive SEO gap analysis. Focus on these areas IN ORDER OF IMPORTANCE:");
+  lines.push("");
+  lines.push("1. **Content Depth & Topical Coverage** — What subtopics do competitors cover that the target misses? What entities/concepts are underrepresented? This is the #1 ranking factor for blog content.");
+  lines.push("");
+  lines.push("2. **Search Intent Alignment** — Does the target page match the dominant search intent for this keyword? Is the content format right (how-to, listicle, comparison, guide)?");
+  lines.push("");
+  lines.push("3. **Semantic Gap Analysis** — Beyond keyword matching, what CONCEPTS and ENTITIES are competitors covering that the target lacks? Use the TF-IDF keyword data to identify semantic gaps.");
+  lines.push("");
+  lines.push("4. **E-E-A-T Signals** — Does the target demonstrate Experience, Expertise, Authority, Trust? Author bio? Original data/images? Credible external references?");
+  lines.push("");
+  lines.push("5. **Internal Linking Opportunities** — How does the target's internal linking compare? Are there topic cluster opportunities?");
+  lines.push("");
+  lines.push("6. **SERP Feature Targeting** — Based on PAA questions and featured snippets, what content additions would capture SERP features?");
+  lines.push("");
+  lines.push("7. **Technical SEO Gaps** — Schema markup, meta tag optimization, image alt text, Core Web Vitals implications.");
+  lines.push("");
+  lines.push("8. **Actionable Content Brief** — Prioritized recommendations with Impact (High/Medium/Low) and Effort (High/Medium/Low) ratings.");
+  lines.push("");
+  lines.push("DO NOT spend more than one short section on header structure. Headers are a minor signal — topical depth, semantic coverage, and intent alignment matter far more.");
   lines.push("");
   lines.push("Use tables, bullet lists, and Mermaid diagrams. Be specific with data from the analysis above.");
 
@@ -113,6 +121,117 @@ export function generateMetricsReport(input: AnalysisInput): string {
   lines.push(`# SEO Gap Analysis: "${targetKeyword}"`);
   lines.push(`> Generated ${now} for ${targetUrl}`);
   lines.push("");
+
+  // ── Target Page SEO Audit ──────────────────────────────────────────────
+  lines.push("## Target Page SEO Audit");
+  lines.push("");
+  lines.push("### Content Quality");
+  const wordCountIcon = targetContent.wordCount >= 1500 ? "✅" : targetContent.wordCount >= 800 ? "⚠️" : "❌";
+  const readingLevel = targetContent.readabilityScore >= 60 ? "Good for general audience" : targetContent.readabilityScore >= 30 ? "Moderate difficulty" : "Advanced reading level";
+  lines.push(`- **Word Count**: ${targetContent.wordCount} ${wordCountIcon} (Recommended: 1500–2500 for competitive blog posts)`);
+  lines.push(`- **Readability Score**: ${targetContent.readabilityScore} (${readingLevel})`);
+  lines.push(`- **Reading Time**: ${targetContent.readingTime} min`);
+  lines.push(`- **Unique Keywords (TF-IDF)**: ${targetContent.keywords.length}`);
+  lines.push("");
+  lines.push("### Meta Tags");
+  const titleLen = targetContent.metaTitle.length;
+  const titleIcon = titleLen >= 50 && titleLen <= 60 ? "✅" : titleLen < 30 || titleLen > 70 ? "❌" : "⚠️";
+  lines.push(`- **Title**: "${targetContent.metaTitle}" (${titleLen} chars) — ${titleIcon} ${titleLen >= 50 && titleLen <= 60 ? "Optimal" : titleLen < 30 ? "Too short. Recommended: 50–60 chars" : titleLen > 70 ? "Too long. Recommended: 50–60 chars" : "Slightly off. Recommended: 50–60 chars"}`);
+  const descLen = targetContent.metaDescription.length;
+  const descIcon = descLen >= 120 && descLen <= 160 ? "✅" : descLen === 0 ? "❌" : "⚠️";
+  lines.push(`- **Description**: "${targetContent.metaDescription.slice(0, 80)}${descLen > 80 ? "…" : ""}" (${descLen} chars) — ${descIcon} ${descLen >= 120 && descLen <= 160 ? "Within range" : descLen === 0 ? "Missing! Add a meta description" : "Recommended: 120–160 chars"}`);
+  lines.push("");
+  lines.push("### Technical SEO");
+  const schemaTypes = targetContent.schemaMarkup.map((s) => s.type);
+  lines.push(`- **Schema Markup**: ${schemaTypes.length > 0 ? schemaTypes.join(", ") + " ✅" : "None ⚠️ — Consider adding Article, FAQPage, or HowTo schema"}`);
+  const altIcon = targetContent.imagesWithoutAlt > 0 ? "⚠️" : "✅";
+  lines.push(`- **Images**: ${targetContent.images.length} total, ${targetContent.imagesWithoutAlt} missing alt text ${altIcon}`);
+  lines.push(`- **Internal Links**: ${targetContent.internalLinkCount}${targetContent.internalLinkCount < 5 ? " ⚠️ Could be improved" : " ✅"}`);
+  lines.push(`- **External Links**: ${targetContent.externalLinkCount}`);
+  lines.push("");
+  lines.push("### Top Keywords (TF-IDF)");
+  for (let i = 0; i < Math.min(10, targetContent.keywords.length); i++) {
+    const k = targetContent.keywords[i];
+    lines.push(`${i + 1}. ${k.term} (${k.tfidf})`);
+  }
+  lines.push("");
+
+  // ── Topic Landscape ────────────────────────────────────────────────────
+  if (serpFeatures.paa.length > 0 || serpFeatures.relatedSearches.length > 0 || serpFeatures.featuredSnippet) {
+    lines.push("## Topic Landscape");
+    lines.push("");
+    lines.push("### Search Intent Analysis");
+    lines.push(`Based on SERP analysis for "${targetKeyword}", the dominant content types suggest the search intent is **informational/how-to**.`);
+    lines.push("");
+
+    if (serpFeatures.paa.length > 0) {
+      lines.push("### People Also Ask (Opportunities)");
+      lines.push("These questions appear in the SERP and represent content gap opportunities:");
+      for (const q of serpFeatures.paa) {
+        lines.push(`- ${q}`);
+      }
+      lines.push("");
+    }
+
+    if (serpFeatures.relatedSearches.length > 0) {
+      lines.push("### Related Searches");
+      for (const q of serpFeatures.relatedSearches) {
+        lines.push(`- ${q}`);
+      }
+      lines.push("");
+    }
+
+    if (serpFeatures.featuredSnippet) {
+      lines.push("### Featured Snippet Status");
+      lines.push(`> ${serpFeatures.featuredSnippet}`);
+      lines.push("");
+    } else {
+      lines.push("### Featured Snippet Status");
+      lines.push("No featured snippet detected — **opportunity to capture** by adding structured answers.");
+      lines.push("");
+    }
+  }
+
+  // ── Content Gap Score ──────────────────────────────────────────────────
+  if (competitors.length > 0) {
+    lines.push("## Content Gap Score");
+    lines.push("");
+    const avgCompWords = Math.round(competitors.reduce((s, c) => s + c.wordCount, 0) / competitors.length);
+    const gapScore = avgCompWords > 0 ? Math.round(((avgCompWords - targetContent.wordCount) / avgCompWords) * 100) : 0;
+    const gapLabel = gapScore > 30 ? "❌ Significant gap" : gapScore > 10 ? "⚠️ Moderate gap" : gapScore > 0 ? "✅ Competitive" : "✅ Above average";
+    lines.push(`- **Competitor Avg Word Count**: ${avgCompWords}`);
+    lines.push(`- **Target Word Count**: ${targetContent.wordCount}`);
+    lines.push(`- **Content Gap**: ${gapScore > 0 ? gapScore : 0}% ${gapLabel}`);
+    lines.push("");
+
+    // Topical coverage gap — keywords present in competitors but missing from target
+    const targetTerms = new Set(targetContent.keywords.map((k) => k.term));
+    const missingTerms: { term: string; competitorCount: number }[] = [];
+    const termCounts = new Map<string, number>();
+    for (const comp of competitors) {
+      for (const k of comp.keywords.slice(0, 15)) {
+        if (!targetTerms.has(k.term)) {
+          termCounts.set(k.term, (termCounts.get(k.term) ?? 0) + 1);
+        }
+      }
+    }
+    for (const [term, count] of termCounts) {
+      if (count >= 2) missingTerms.push({ term, competitorCount: count });
+    }
+    missingTerms.sort((a, b) => b.competitorCount - a.competitorCount);
+
+    if (missingTerms.length > 0) {
+      lines.push("### Topical Coverage Gaps");
+      lines.push("Keywords appearing in multiple competitors but missing from target:");
+      lines.push("");
+      lines.push("| Keyword | Competitors Using |");
+      lines.push("|---------|:-----------------:|");
+      for (const t of missingTerms.slice(0, 15)) {
+        lines.push(`| ${t.term} | ${t.competitorCount}/${competitors.length} |`);
+      }
+      lines.push("");
+    }
+  }
 
   // Metrics comparison table
   lines.push("## Content Metrics Comparison");
@@ -152,23 +271,7 @@ export function generateMetricsReport(input: AnalysisInput): string {
   lines.push(`  bar [${Math.round(avgWords / 100)}, ${avgHeadings}, ${avgKeywords}, ${competitors.length > 0 ? Math.round(competitors.reduce((s, c) => s + c.readingTime, 0) / competitors.length) : 0}, ${Math.round(avgReadability / 10)}]`);
   lines.push("```");
 
-  // Header comparison
-  lines.push("");
-  lines.push("## Header Structure");
-  lines.push("");
-  lines.push("### Target");
-  for (const h of targetContent.headings) {
-    lines.push(`${"  ".repeat(h.level - 1)}- **H${h.level}**: ${h.text}`);
-  }
-  for (const comp of competitors) {
-    lines.push("");
-    lines.push(`### ${new URL(comp.url).hostname}`);
-    for (const h of comp.headings.slice(0, 15)) {
-      lines.push(`${"  ".repeat(h.level - 1)}- **H${h.level}**: ${h.text}`);
-    }
-  }
-
-  // Keyword density comparison
+  // Keyword density comparison (moved before headers — more important)
   lines.push("");
   lines.push("## Keyword Coverage");
   lines.push("");
@@ -242,7 +345,26 @@ export function generateMetricsReport(input: AnalysisInput): string {
     lines.push(`| ${name} | ${comp.internalLinkCount} | ${comp.externalLinkCount} |`);
   }
 
-  // SERP features
+  // Header comparison (moved to near end — less important than topical depth)
+  lines.push("");
+  lines.push("<details>");
+  lines.push("<summary><strong>Header Structure Comparison</strong></summary>");
+  lines.push("");
+  lines.push("### Target");
+  for (const h of targetContent.headings) {
+    lines.push(`${"  ".repeat(h.level - 1)}- **H${h.level}**: ${h.text}`);
+  }
+  for (const comp of competitors) {
+    lines.push("");
+    lines.push(`### ${new URL(comp.url).hostname}`);
+    for (const h of comp.headings.slice(0, 15)) {
+      lines.push(`${"  ".repeat(h.level - 1)}- **H${h.level}**: ${h.text}`);
+    }
+  }
+  lines.push("");
+  lines.push("</details>");
+
+  // SERP features (kept for completeness, but Topic Landscape section above is primary)
   if (serpFeatures.paa.length > 0 || serpFeatures.relatedSearches.length > 0) {
     lines.push("");
     lines.push("## SERP Feature Opportunities");

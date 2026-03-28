@@ -104,7 +104,13 @@ export const createSeoGapTools = (opts: SeoGapToolsOptions = {}): ToolDefinition
         }
 
         // 2. Discover competitors
-        const apiKeys: { serperApiKey?: string; braveApiKey?: string } = {};
+        let targetDomain: string | undefined;
+        try {
+          targetDomain = new URL(targetUrl).hostname.replace(/^www\./, "");
+        } catch { /* ignore */ }
+
+        const apiKeys: { serperApiKey?: string; braveApiKey?: string; targetDomain?: string } = {};
+        if (targetDomain) apiKeys.targetDomain = targetDomain;
         if (searchProvider === "serper" || (!searchProvider && opts.serperApiKey)) {
           apiKeys.serperApiKey = opts.serperApiKey;
         }

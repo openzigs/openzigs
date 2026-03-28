@@ -35,7 +35,16 @@ export function findChromeBinaryForPdf(): string | undefined {
 // ── HTML wrapper ────────────────────────────────────────────────────────
 
 export function wrapMarkdownAsHtml(markdownContent: string): string {
-  const body = marked(markdownContent) as string;
+  // Strip mermaid blocks — headless Chrome can't render them without mermaid.js
+  const processedMarkdown = markdownContent.replace(
+    /```mermaid\n([\s\S]*?)```/g,
+    (_match, content: string) => {
+      const titleMatch = content.match(/title\s+"([^"]+)"/);
+      const title = titleMatch ? titleMatch[1] : "Chart";
+      return `> **[Chart: ${title}]** — _View the Markdown report for interactive diagrams._`;
+    },
+  );
+  const body = marked(processedMarkdown) as string;
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
