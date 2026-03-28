@@ -19,6 +19,7 @@
 - Admin API is a single large Router in [src/api/admin.ts](src/api/admin.ts) (~1800 lines) mounted at `/api/admin`. Separate routers exist for tasks/models/files; future work should continue splitting admin domains into dedicated routers instead of expanding this file.
 - Pipeline post-actions are deterministic code, not LLM calls — see [src/tasks/post-actions.ts](src/tasks/post-actions.ts) and [post-action-registry.ts](src/tasks/post-action-registry.ts).
 - `spawn-agent`/`orchestrate-agents` tools get chat context via module-level `setActiveChatContext()` setters (workaround for SDK process boundary losing `AsyncLocalStorage`).
+- `orchestrate-agents` supports two modes: `task` (fan-out via TaskEngine, ~N+1 API calls) and `session` (SDK subagent delegation via `enableSubagents`, ~2 API calls). Mode is per-invocation or defaulted via `tasks.defaultOrchestrationMode`.
 
 ## Prompt & Template System
 - Saved prompts are SQLite-backed in [src/productivity/prompt-manager.ts](src/productivity/prompt-manager.ts) with optional staged pipelines (`stages`) and preferred tool scoping (`preferredTools`).

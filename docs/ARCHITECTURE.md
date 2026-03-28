@@ -2170,7 +2170,7 @@ Logs are queryable via `GET /api/logs` with filters for `category`, `level`, `si
 | Tool | Category | Risk | Description |
 |---|---|---|---|
 | `spawn-agent` | productivity | 🟡 medium | Spawn an asynchronous background sub-agent for long-running or independent tasks. |
-| `orchestrate-agents` | productivity | 🟡 medium | Fan-out/fan-in: dispatch multiple agents in parallel, wait for all results, optionally aggregate via Copilot. |
+| `orchestrate-agents` | productivity | 🟡 medium | Fan-out/fan-in or SDK subagent delegation: dispatch multiple agents in parallel (task mode) or delegate via a single SDK session (session mode), optionally aggregate via Copilot. |
 
 ### Social Media Tools (Native MCP Servers)
 
@@ -3036,7 +3036,14 @@ CREATE INDEX IF NOT EXISTS idx_tasks_parent ON agent_tasks(parent_task_id);
 
 ### Orchestration Engine (`orchestrate-agents`)
 
-The `orchestrate-agents` tool implements a **fan-out / fan-in** pattern that dispatches multiple background sub-agents concurrently, waits for all to reach a terminal state, and optionally synthesizes their outputs via a Copilot aggregation call.
+The `orchestrate-agents` tool supports two orchestration modes selectable per-invocation or via global config (`tasks.defaultOrchestrationMode`):
+
+| Mode | Mechanism | API Calls | Best For |
+|------|-----------|-----------|----------|
+| **`task`** (default) | Fan-out/fan-in via `TaskEngine` — spawns N background tasks, waits for completion, optionally aggregates | ~N+1 | Maximum parallelism; long-running sub-agents with independent tool access |
+| **`session`** | SDK subagent delegation — composes a single prompt with all agent goals, calls `copilot.chat()` with `enableSubagents: true` | ~2 | Lower latency & cost; simpler workflows where agents share context |
+
+#### Task Mode (fan-out / fan-in)
 
 ```mermaid
 flowchart TB
@@ -3092,6 +3099,15 @@ curl -X PUT -H "Authorization: Bearer <token>" \
 ```
 
 ### Tracking: [Epic #81](https://github.com/openzigs/openzigs/issues/81)
+
+#### Session Mode (SDK subagent delegation)
+
+When `mode: "session"` is specified (or `tasks.defaultOrchestrationMode` is `"session"`), the handler composes all agent goals into a single prompt and delegates to the Copilot SDK's built-in subagent system:
+
+1. **Prompt Composition:** All agent names and goals are formatted into a numbered list, followed by the optional `aggregation_prompt`.
+2. **Single Chat Call:** `copilot.chat()` is called with `enableSubagents: true` and `customAgents` from agent config. The SDK internally delegates subtasks to specialist agents.
+3. **Tracking Task:** A single tracking task with a `[session]` prefix is created in the TaskEngine for audit and UI visibility.
+4. **Result:** The response is returned in the same JSON structure as task mode (`metadata.mode: "session"`), making it a drop-in replacement from the caller's perspective.
 
 ### Real-Time Subagent Event Streaming (#488)
 

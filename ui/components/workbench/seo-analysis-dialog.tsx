@@ -24,14 +24,14 @@ type SeoAnalysisDialogProps = {
   onSubmitted?: () => void;
 };
 
-type AnalysisMode = "standard" | "deep";
+type OrchestrationMode = "standard" | "session" | "task";
 
 function buildSeoPrompt(params: {
   targetUrl: string;
   targetKeyword: string;
   searchProvider: string;
   exportPdf: boolean;
-  analysisMode: AnalysisMode;
+  orchestrationMode: OrchestrationMode;
 }): string {
   const toolArgs: Record<string, string> = { targetUrl: params.targetUrl };
   if (params.targetKeyword) toolArgs.targetKeyword = params.targetKeyword;
@@ -52,17 +52,26 @@ function buildSeoPrompt(params: {
 
   let nextStep = 3;
 
-  if (params.analysisMode === "deep") {
-    // Fan-out: parallel sub-agents via orchestrate-agents (faster, uses multiple API calls)
-    steps.push(`STEP ${nextStep}: Use orchestrate-agents to run parallel deep analysis with these sub-tasks:`);
+  if (params.orchestrationMode === "task") {
+    // Fan-out: parallel sub-agents via orchestrate-agents in task mode (fastest, uses ~5 API calls)
+    steps.push(`STEP ${nextStep}: Use orchestrate-agents with mode "task" to run parallel deep analysis with these sub-tasks:`);
     steps.push(`  Agent 1 — "Content Depth Analyst": Analyze topical coverage gaps. What subtopics do competitors cover that the target misses? What entities and concepts are underrepresented? Rate content depth 0-100.`);
     steps.push(`  Agent 2 — "Technical SEO Auditor": Review meta tags, schema markup, image optimization, internal linking quality, and mobile-readiness. Provide specific fix recommendations.`);
     steps.push(`  Agent 3 — "SERP Strategy Analyst": Analyze the People Also Ask questions and related searches. Identify which SERP features the target could capture. Recommend content additions for featured snippets.`);
     steps.push(``);
     nextStep++;
     steps.push(`STEP ${nextStep}: Synthesize all agent results into a unified enhanced analysis with:`);
+  } else if (params.orchestrationMode === "session") {
+    // SDK subagent delegation: orchestrate-agents in session mode (~2 API calls)
+    steps.push(`STEP ${nextStep}: Use orchestrate-agents with mode "session" to delegate deep analysis to SDK subagents. The tool will compose the following specialist goals into a single session with subagent delegation:`);
+    steps.push(`  — Content Depth Analysis: topical coverage gaps, missing subtopics, entity coverage, depth score 0-100.`);
+    steps.push(`  — Technical SEO Audit: meta tags, schema markup, image optimization, internal linking, mobile-readiness.`);
+    steps.push(`  — SERP Strategy Analysis: People Also Ask, SERP features, competitor positioning, featured snippet opportunities.`);
+    steps.push(``);
+    nextStep++;
+    steps.push(`STEP ${nextStep}: Synthesize the orchestration results into a unified enhanced analysis with:`);
   } else {
-    // Sequential: single-session analysis (slower, uses 1 API call)
+    // Sequential: single-session analysis (uses 1 API call)
     steps.push(`STEP ${nextStep}: Perform the following deep analysis yourself, sequentially. Do NOT use orchestrate-agents or spawn-agent — complete everything in this single session.`);
     steps.push(``);
     steps.push(`Part A — Content Depth Analysis: Analyze topical coverage gaps. What subtopics do competitors cover that the target misses? What entities and concepts are underrepresented? Rate content depth 0-100.`);
@@ -105,7 +114,7 @@ export const SeoAnalysisDialog = ({
   const [targetKeyword, setTargetKeyword] = useState("");
   const [searchProvider, setSearchProvider] = useState("auto");
   const [model, setModel] = useState("claude-sonnet-4.6");
-  const [analysisMode, setAnalysisMode] = useState<AnalysisMode>("standard");
+  const [orchestrationMode, setOrchestrationMode] = useState<OrchestrationMode>("standard");
   const [exportPdf, setExportPdf] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -131,7 +140,7 @@ export const SeoAnalysisDialog = ({
       targetKeyword: targetKeyword.trim(),
       searchProvider,
       exportPdf,
-      analysisMode,
+      orchestrationMode,
     });
 
     try {
@@ -142,7 +151,8 @@ export const SeoAnalysisDialog = ({
           "seo-gap-analysis", "seo-extract-content", "export-pdf",
           "web-search", "browser-navigate",
           "read-file", "write-file", "list-directory",
-          ...(analysisMode === "deep" ? ["orchestrate-agents", "spawn-agent"] : []),
+          ...(orchestrationMode === "task" ? ["orchestrate-agents", "spawn-agent"] : []),
+          ...(orchestrationMode === "session" ? ["orchestrate-agents"] : []),
         ],
       });
       onSubmitted?.();
@@ -152,13 +162,13 @@ export const SeoAnalysisDialog = ({
       setTargetKeyword("");
       setSearchProvider("auto");
       setModel("claude-sonnet-4.6");
-      setAnalysisMode("standard");
+      setOrchestrationMode("standard");
       setExportPdf(true);
     } catch {
       setError("Failed to send analysis request. Check connection.");
       setSubmitting(false);
     }
-  }, [isValid, socket, connected, targetUrl, targetKeyword, searchProvider, model, analysisMode, exportPdf, onOpenChange, onSubmitted]);
+  }, [isValid, socket, connected, targetUrl, targetKeyword, searchProvider, model, orchestrationMode, exportPdf, onOpenChange, onSubmitted]);
 
   const handleOpenChange = useCallback(
     (nextOpen: boolean) => {
@@ -260,17 +270,20 @@ export const SeoAnalysisDialog = ({
             </label>
             <select
               id="seo-mode"
-              value={analysisMode}
-              onChange={(e) => setAnalysisMode(e.target.value as AnalysisMode)}
+              value={orchestrationMode}
+              onChange={(e) => setOrchestrationMode(e.target.value as OrchestrationMode)}
               className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
             >
               <option value="standard">Standard — single session, 1 API call</option>
-              <option value="deep">Deep — parallel agents, faster but ~5 API calls</option>
+              <option value="session">Session — SDK subagent delegation, ~2 API calls</option>
+              <option value="task">Parallel — fan-out agents, ~5 API calls</option>
             </select>
             <p className="mt-0.5 text-[10px] text-muted-foreground">
-              {analysisMode === "standard"
-                ? "Runs all analysis sequentially in one session. Takes longer but uses minimal API calls."
-                : "Dispatches 3 specialist agents in parallel. Faster results but uses more API calls."}
+              {orchestrationMode === "standard"
+                ? "Runs all analysis sequentially in one session. Uses minimal API calls."
+                : orchestrationMode === "session"
+                  ? "Delegates to SDK subagents in a single session. Balanced speed and cost."
+                  : "Dispatches 3 specialist agents in parallel. Fastest results but uses more API calls."}
             </p>
           </div>
 

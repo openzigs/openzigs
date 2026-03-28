@@ -58,7 +58,8 @@
   },
   "tasks": {
     "maxConcurrent": 2,
-    "backgroundTaskDefaultModel": null
+    "backgroundTaskDefaultModel": null,
+    "defaultOrchestrationMode": "task"
   },
   "session": {
     "historyWindow": 20,

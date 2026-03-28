@@ -1999,13 +1999,19 @@ Root Agent (Depth 0) — "Build a Python pricing scraper"
 
 #### `orchestrate-agents` Tool Parameters
 
-The `orchestrate-agents` tool provides a **fan-out / fan-in** pattern: it dispatches multiple sub-agents in parallel, waits for all to finish (or timeout), and optionally aggregates their results via a Copilot call.
+The `orchestrate-agents` tool dispatches multiple sub-agents and waits for results. It supports two orchestration modes:
+
+| Mode | Mechanism | API Calls | Best For |
+|------|-----------|-----------|----------|
+| `task` (default) | Fan-out/fan-in via TaskEngine background tasks | ~N+1 | Maximum parallelism; long-running sub-agents with independent tool access |
+| `session` | SDK subagent delegation in a single `copilot.chat()` call | ~2 | Lower latency & cost; simpler workflows where agents share context |
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | `agents` | array | Yes | — | Array of 1–10 agent definitions, each with `goal` (string, required) and optional `context` (string). |
-| `aggregation_prompt` | string | No | — | If provided, a final Copilot call synthesizes the agent outputs into a single deliverable. |
-| `timeout_seconds` | number | No | `300` | Maximum time to wait for all agents (30–600 seconds). |
+| `mode` | `"task"` \| `"session"` | No | `tasks.defaultOrchestrationMode` | Orchestration strategy. `task` uses background TaskEngine jobs; `session` uses SDK subagent delegation. |
+| `aggregation_prompt` | string | No | — | If provided, a final Copilot call synthesizes the agent outputs into a single deliverable (task mode) or is appended to the composed prompt (session mode). |
+| `timeout_seconds` | number | No | `300` | Maximum time to wait for all agents (30–600 seconds). Task mode only. |
 
 **When to use `orchestrate-agents` vs `spawn-agent`:**
 

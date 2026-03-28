@@ -90,6 +90,7 @@ export type McpServersConfig = {
 export type TasksConfig = {
   maxConcurrent: number;
   backgroundTaskDefaultModel?: string | null;
+  defaultOrchestrationMode?: "task" | "session";
 };
 
 export type InfiniteSessionConfig = {
@@ -369,6 +370,7 @@ const mcpServersSchema = z.object({
 const tasksSchema = z.object({
   maxConcurrent: z.number().int().min(1).max(10).default(2),
   backgroundTaskDefaultModel: z.string().nullable().optional().default(null),
+  defaultOrchestrationMode: z.enum(["task", "session"]).optional().default("task"),
 }).optional();
 
 const infiniteSessionsSchema = z.object({

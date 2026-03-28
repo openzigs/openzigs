@@ -98,6 +98,7 @@ type SessionCreateConfig = {
     context: { sessionId: string }
   ) => Promise<{ answer: string; wasFreeform?: boolean }>;
   disabledSkills?: string[];
+  enableSubagents?: boolean;
 };
 
 // ── SDK Session Event / Metadata types (re-exported for consumers) ──
@@ -884,6 +885,7 @@ export class CopilotWrapperService extends EventEmitter implements CopilotWrappe
         mcpServers: options?.mcpServers,
         autoApproveTools: options?.autoApproveTools,
         disabledSkills: options?.disabledSkills,
+        enableSubagents: options?.enableSubagents,
       }
     );
 
@@ -1109,6 +1111,7 @@ export class CopilotWrapperService extends EventEmitter implements CopilotWrappe
       mcpServers?: Record<string, NativeMcpServerDefinition>;
       autoApproveTools?: string[];
       disabledSkills?: string[];
+      enableSubagents?: boolean;
     }
   ): SessionCreateConfig {
     const effectiveHooks = this.hooksConfig;
@@ -1160,6 +1163,7 @@ export class CopilotWrapperService extends EventEmitter implements CopilotWrappe
       ...(Object.keys(sdkMcpServers).length > 0 ? { mcpServers: sdkMcpServers } : {}),
       ...(this.skillDirectoriesConfig.length > 0 ? { skillDirectories: this.skillDirectoriesConfig } : {}),
       ...(extra?.disabledSkills?.length ? { disabledSkills: extra.disabledSkills } : {}),
+      ...(extra?.enableSubagents ? { enableSubagents: true } : {}),
       ...(effectiveHooks ? {
         hooks: {
           ...effectiveHooks,
@@ -1216,6 +1220,7 @@ export class CopilotWrapperService extends EventEmitter implements CopilotWrappe
       mcpServers?: Record<string, NativeMcpServerDefinition>;
       autoApproveTools?: string[];
       disabledSkills?: string[];
+      enableSubagents?: boolean;
     }
   ): Promise<CopilotSessionLike> {
     const requestedSignature = this.computeSessionConfigSignature(model, tools, extra);
@@ -1297,6 +1302,7 @@ export class CopilotWrapperService extends EventEmitter implements CopilotWrappe
       customAgents?: CustomAgentDefinition[];
       mcpServers?: Record<string, NativeMcpServerDefinition>;
       autoApproveTools?: string[];
+      enableSubagents?: boolean;
     }
   ): string {
     const toolNames = (tools as Array<{ name?: string }>)
@@ -1314,6 +1320,7 @@ export class CopilotWrapperService extends EventEmitter implements CopilotWrappe
       reasoningEffort: extra?.reasoningEffort,
       systemMode: extra?.systemMessage?.mode,
       systemContent: extra?.systemMessage?.content,
+      enableSubagents: extra?.enableSubagents ?? false,
     });
   }
 

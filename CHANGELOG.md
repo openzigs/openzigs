@@ -28,6 +28,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Markdown report generation with comparison tables, Mermaid xychart, keyword coverage matrix, and SERP feature opportunities (#651)
 - Configurable workbench directories via `workbench.directories` config key and admin API (`GET/PUT /api/admin/workbench/directories`) (#654)
 - YouTube MCP: `yt_check_video_exists` tool to verify whether a published video still exists on YouTube
+- In-session SDK subagent orchestration mode for `orchestrate-agents` tool — `mode: "session"` delegates to Copilot SDK subagents in a single chat call (~2 API calls vs ~5 for task mode) (#657)
+- `enableSubagents` flag wired through `CopilotWrapper` session lifecycle (create, resume, cache signature) (#658)
+- Orchestration mode selector in SEO Analysis dialog: Standard (1 call), Session (~2 calls), Parallel (~5 calls) (#661)
+- Three SEO specialist agent archetypes: `seo-content-analyst`, `seo-technical-auditor`, `seo-serp-strategist` (#660)
+- `tasks.defaultOrchestrationMode` config key (`"task"` | `"session"`) for global orchestration mode default (#659)
 - YouTube MCP: `yt_upload_captions` tool to upload SRT captions to a published YouTube video
 - Director Studio: auto-uploads SRT captions after YouTube publish when the draft has narration timeline segments
 - Director Studio: "Check Status" button on published YouTube videos to detect deletions

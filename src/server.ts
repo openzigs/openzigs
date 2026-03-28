@@ -784,6 +784,7 @@ registerMcpTools(toolRegistry, {
   analyzeWorker,
   memoryManager,
   outboxRepo,
+  tasksConfig: config.tasks,
 });
 
 // ── Task Background Worker ──

@@ -140,6 +140,8 @@ export type McpServerOptions = {
   outboxRepo?: import("../outbox/outbox-repository.js").OutboxRepository;
   /** Serper.dev API key for SEO gap analysis tools. */
   serperApiKey?: string;
+  /** Tasks config for orchestration mode default. */
+  tasksConfig?: import("../config/index.js").TasksConfig;
 };
 
 export type RegisterMcpToolsOptions = Pick<
@@ -188,6 +190,7 @@ export type RegisterMcpToolsOptions = Pick<
   | "memoryManager"
   | "outboxRepo"
   | "serperApiKey"
+  | "tasksConfig"
 >;
 
 const readFileSchema = z.object({ path: z.string() });
@@ -609,6 +612,7 @@ export const registerMcpTools = (toolRegistry: ToolRegistry, options: RegisterMc
     const orchestrateTools = createOrchestrateAgentsTools({
       taskEngine: options.taskEngine,
       copilot: options.copilot,
+      tasksConfig: options.tasksConfig,
     });
     for (const tool of orchestrateTools) {
       registerTool(tool);
