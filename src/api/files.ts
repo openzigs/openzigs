@@ -1,5 +1,6 @@
 import { Router } from "express";
 import path from "node:path";
+import os from "node:os";
 import fs from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { isPathAllowed } from "../mcp/tools/path-utils.js";
@@ -97,7 +98,23 @@ export const createFilesRouter = ({ allowedDirs, markitdownUrl }: FilesRouterOpt
       return { error: "path query parameter is required" };
     }
     try {
-      // Use centralized path validation — checks null bytes + traversal
+      // Expand leading tilde to home directory (only ~/... or bare ~)
+      let effectivePath = rawPath;
+      if (effectivePath.startsWith("~/") || effectivePath === "~") {
+        effectivePath = path.join(os.homedir(), effectivePath.slice(1));
+      }
+      if (effectivePath.includes("\0")) {
+        return { error: "Access denied" };
+      }
+      // Tilde-expanded or absolute paths: resolve directly and validate
+      if (rawPath.startsWith("~/") || rawPath === "~" || path.isAbsolute(rawPath)) {
+        const resolved = path.resolve(effectivePath);
+        if (!isPathAllowed(resolved, allowedDirs)) {
+          return { error: "Access denied" };
+        }
+        return { resolved };
+      }
+      // Relative paths: use centralized path validation — checks null bytes + traversal
       const resolved = sanitizePath(rawPath, allowedDirs[0]);
       if (!isPathAllowed(resolved, allowedDirs)) {
         return { error: "Access denied" };

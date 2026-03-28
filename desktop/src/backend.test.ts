@@ -99,7 +99,7 @@ describe("BackendManager", () => {
       res.end(JSON.stringify({ status: "ok" }));
     });
 
-    const port = 3000;
+    const port = await manager.findFreePort();
     await new Promise<void>((resolve) => server.listen(port, "127.0.0.1", resolve));
 
     // Set env var so dev mode uses this port

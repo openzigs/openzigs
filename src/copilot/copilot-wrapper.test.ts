@@ -1023,4 +1023,45 @@ describe("copilot wrapper", () => {
     expect(events[3]).toEqual({ type: "selected", payload: { sessionId: "sub-test", agentName: "writer" } });
     expect(events[4]).toEqual({ type: "deselected", payload: { sessionId: "sub-test", agentName: "writer" } });
   });
+
+  // ── enableSubagents ──
+
+  it("passes enableSubagents: true to session config when set in chat options", async () => {
+    const client = new FakeCopilotClient();
+    const agents = [{ name: "researcher", displayName: "Researcher", prompt: "You research." }];
+    const wrapper = new CopilotWrapperService({ client, customAgents: agents });
+
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    for await (const _chunk of wrapper.chat("Hello", { enableSubagents: true })) { /* drain */ }
+
+    const config = client.lastSessionConfig as Record<string, unknown>;
+    expect(config.enableSubagents).toBe(true);
+  });
+
+  it("omits enableSubagents from session config when not set", async () => {
+    const client = new FakeCopilotClient();
+    const wrapper = new CopilotWrapperService({ client });
+
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    for await (const _chunk of wrapper.chat("Hello")) { /* drain */ }
+
+    const config = client.lastSessionConfig as Record<string, unknown>;
+    expect(config.enableSubagents).toBeUndefined();
+  });
+
+  it("enableSubagents change triggers session recreation", async () => {
+    const client = new FakeCopilotClient();
+    const wrapper = new CopilotWrapperService({ client });
+
+    // First call without enableSubagents
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    for await (const _chunk of wrapper.chat("Hello", { conversationId: "sub-conv" })) { /* drain */ }
+    expect(client.sessions).toHaveLength(1);
+
+    // Second call WITH enableSubagents — should recreate session
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    for await (const _chunk of wrapper.chat("Hello again", { conversationId: "sub-conv", enableSubagents: true })) { /* drain */ }
+    expect(client.sessions).toHaveLength(2);
+    expect(client.sessions[0].destroyed).toBe(true);
+  });
 });

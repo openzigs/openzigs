@@ -9,7 +9,9 @@ import { ForwardRefEditor } from "@/components/workbench/forward-ref-editor";
 import { FileSidebar } from "@/components/workbench/file-sidebar";
 import { ImportDocumentDialog } from "@/components/workbench/import-document-dialog";
 import { ResearchGenerateDialog } from "@/components/workbench/research-generate-dialog";
-import { Save, FileText, Circle, FileUp, Microscope } from "lucide-react";
+import { SeoAnalysisDialog } from "@/components/workbench/seo-analysis-dialog";
+import { ChatMarkdown } from "@/components/chat-markdown";
+import { Save, FileText, Circle, FileUp, Microscope, Search, Eye, Pencil } from "lucide-react";
 import { showToast } from "@/components/toast";
 import { AskAiPanel, AskAiButton, PAGE_CONTEXTS } from "@/components/ask-ai";
 
@@ -25,7 +27,18 @@ export default function WorkbenchPage() {
   const [localContent, setLocalContent] = useState("# Welcome to the Workbench\n\nStart writing or open a file from the sidebar.");
   const [importOpen, setImportOpen] = useState(false);
   const [researchOpen, setResearchOpen] = useState(false);
+  const [seoOpen, setSeoOpen] = useState(false);
   const [askAiOpen, setAskAiOpen] = useState(false);
+  // Increment to force AskAiPanel to clear stale messages when a new analysis starts
+  const [panelKey, setPanelKey] = useState(0);
+  const [viewMode, setViewMode] = useState<"edit" | "preview">("preview");
+
+  // Fetch configurable workbench directories
+  const { data: wbDirs } = useQuery({
+    queryKey: ["admin", "workbench", "directories"],
+    queryFn: () => fetchJson<{ directories: string[] }>("/api/admin/workbench/directories"),
+    staleTime: 60_000,
+  });
 
   // Fetch file content when a file is selected
   const { isFetching } = useQuery({
@@ -136,6 +149,7 @@ export default function WorkbenchPage() {
       {/* File Sidebar */}
       <FileSidebar
         rootDir={DEFAULT_ROOT}
+        extraDirs={wbDirs?.directories}
         onFileSelect={(p) => void handleFileSelect(p)}
         activeFile={activeFile}
         collapsed={sidebarCollapsed}
@@ -159,7 +173,41 @@ export default function WorkbenchPage() {
             )}
           </div>
           <div className="flex items-center gap-2">
+            <div className="flex items-center rounded-lg border border-border bg-muted/30">
+              <button
+                onClick={() => setViewMode("edit")}
+                className={cn(
+                  "flex items-center gap-1 rounded-l-lg px-2.5 py-1 text-xs font-medium transition",
+                  viewMode === "edit"
+                    ? "bg-primary text-primary-foreground"
+                    : "text-muted-foreground hover:text-foreground"
+                )}
+              >
+                <Pencil className="h-3 w-3" />
+                Edit
+              </button>
+              <button
+                onClick={() => setViewMode("preview")}
+                className={cn(
+                  "flex items-center gap-1 rounded-r-lg px-2.5 py-1 text-xs font-medium transition",
+                  viewMode === "preview"
+                    ? "bg-primary text-primary-foreground"
+                    : "text-muted-foreground hover:text-foreground"
+                )}
+              >
+                <Eye className="h-3 w-3" />
+                Preview
+              </button>
+            </div>
             <AskAiButton onClick={() => setAskAiOpen(true)} />
+            <button
+              onClick={() => setSeoOpen(true)}
+              className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold text-muted-foreground transition hover:bg-muted hover:text-foreground"
+              title="SEO Gap Analysis — compare your page against top competitors"
+            >
+              <Search className="h-3.5 w-3.5" />
+              SEO
+            </button>
             <button
               onClick={() => setResearchOpen(true)}
               className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold text-muted-foreground transition hover:bg-muted hover:text-foreground"
@@ -192,15 +240,21 @@ export default function WorkbenchPage() {
           </div>
         </div>
 
-        {/* Editor */}
+        {/* Editor / Preview */}
         <div className="workbench-editor min-h-0 flex-1 overflow-y-auto bg-background p-4">
           <div className="mx-auto max-w-4xl">
-            <ForwardRefEditor
-              ref={editorRef}
-              markdown={localContent}
-              onChange={handleChange}
-              contentEditableClassName="prose dark:prose-invert max-w-none min-h-[60vh] focus:outline-none"
-            />
+            {viewMode === "edit" ? (
+              <ForwardRefEditor
+                ref={editorRef}
+                markdown={localContent}
+                onChange={handleChange}
+                contentEditableClassName="prose dark:prose-invert max-w-none min-h-[60vh] focus:outline-none"
+              />
+            ) : (
+              <div className="prose dark:prose-invert max-w-none min-h-[60vh]">
+                <ChatMarkdown content={localContent} isStreaming={false} />
+              </div>
+            )}
           </div>
         </div>
 
@@ -226,9 +280,15 @@ export default function WorkbenchPage() {
       <ResearchGenerateDialog
         open={researchOpen}
         onOpenChange={setResearchOpen}
-        onSubmitted={() => setAskAiOpen(true)}
+        onSubmitted={() => { setPanelKey((k) => k + 1); setAskAiOpen(true); }}
       />
-      <AskAiPanel pageContext={PAGE_CONTEXTS["workbench"]} open={askAiOpen} onClose={() => setAskAiOpen(false)} />
+      {/* SEO Gap Analysis Dialog */}
+      <SeoAnalysisDialog
+        open={seoOpen}
+        onOpenChange={setSeoOpen}
+        onSubmitted={() => { setPanelKey((k) => k + 1); setAskAiOpen(true); }}
+      />
+      <AskAiPanel key={panelKey} pageContext={PAGE_CONTEXTS["workbench"]} open={askAiOpen} onClose={() => setAskAiOpen(false)} />
     </div>
   );
 }

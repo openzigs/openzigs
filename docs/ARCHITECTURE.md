@@ -788,6 +788,37 @@ One native MCP tool for saving generated media to project-scoped draft directori
 |---|---|---|
 | `save-draft-media` | 🟡 medium | Copies generated images, videos, or audio to `~/.openzigs/files/drafts/<project_id>/` with sanitized filenames |
 
+#### SEO Gap Analysis Tools
+
+**Source:** `src/mcp/tools/seo-gap-tools.ts` + `src/mcp/tools/seo/` (built-in, no sidecar)
+
+Two native MCP tools for content gap analysis against top-ranking competitors. Registered via `createSeoGapTools()` factory in `src/mcp/server.ts`.
+
+| Tool | Risk | Description |
+|---|---|---|
+| `seo-gap-analysis` | � medium | Full pipeline: fetch target → discover competitors (Serper/Brave) → extract content → generate metrics report → save to `~/.openzigs/seo-reports/` |
+| `seo-extract-content` | 🟡 medium | Extract structured content from a single URL: headings, word count, TF-IDF keywords, Flesch-Kincaid readability |
+
+**Data Flow:**
+```
+targetUrl + keyword
+  → Competitor Discovery (Serper.dev primary, Brave Search fallback)
+  → Content Extraction (cheerio HTML parsing, noise removal)
+  → Metrics Computation (TF-IDF keywords via natural, Flesch-Kincaid readability)
+  → Report Generation (Markdown with comparison tables, Mermaid charts)
+  → File Output (~/.openzigs/seo-reports/<domain>-<keyword>-<date>.md)
+```
+
+**Components:**
+- `src/mcp/tools/seo/html-extractor.ts` — Cheerio-based HTML extraction, noise removal, TF-IDF keyword extraction, readability scoring
+- `src/mcp/tools/seo/competitor-discovery.ts` — SERP API integration (Serper primary, Brave fallback), PAA/related searches extraction
+- `src/mcp/tools/seo/report-generator.ts` — Markdown report generation with LLM prompt builder, metrics tables, Mermaid xychart
+- `src/skills/seo-analyst/SKILL.md` — Autonomous SEO analyst skill
+- `config/agents.json` — `seo-analyst` agent archetype
+- `ui/components/workbench/seo-analysis-dialog.tsx` — Workbench dialog for launching SEO analysis
+
+**Config:** Set `SERPER_API_KEY` env var for Serper.dev, or `BRAVE_API_KEY` for Brave Search fallback. Workbench directories (including `~/.openzigs/seo-reports`) are configurable via `workbench.directories` in `~/.openzigs/config.json` or the admin API (`GET/PUT /api/admin/workbench/directories`).
+
 **YouTube `order` Extension:** The `youtube-search-videos` tool (proxied through the YouTube MCP sidecar) now accepts an `order` parameter (`date`, `rating`, `relevance`, `title`, `viewCount`) passed through to the YouTube Data API v3 `search.list` endpoint.
 
 **Data Flow:**
@@ -2139,7 +2170,7 @@ Logs are queryable via `GET /api/logs` with filters for `category`, `level`, `si
 | Tool | Category | Risk | Description |
 |---|---|---|---|
 | `spawn-agent` | productivity | 🟡 medium | Spawn an asynchronous background sub-agent for long-running or independent tasks. |
-| `orchestrate-agents` | productivity | 🟡 medium | Fan-out/fan-in: dispatch multiple agents in parallel, wait for all results, optionally aggregate via Copilot. |
+| `orchestrate-agents` | productivity | 🟡 medium | Fan-out/fan-in or SDK subagent delegation: dispatch multiple agents in parallel (task mode) or delegate via a single SDK session (session mode), optionally aggregate via Copilot. |
 
 ### Social Media Tools (Native MCP Servers)
 
@@ -3005,7 +3036,14 @@ CREATE INDEX IF NOT EXISTS idx_tasks_parent ON agent_tasks(parent_task_id);
 
 ### Orchestration Engine (`orchestrate-agents`)
 
-The `orchestrate-agents` tool implements a **fan-out / fan-in** pattern that dispatches multiple background sub-agents concurrently, waits for all to reach a terminal state, and optionally synthesizes their outputs via a Copilot aggregation call.
+The `orchestrate-agents` tool supports two orchestration modes selectable per-invocation or via global config (`tasks.defaultOrchestrationMode`):
+
+| Mode | Mechanism | API Calls | Best For |
+|------|-----------|-----------|----------|
+| **`task`** (default) | Fan-out/fan-in via `TaskEngine` — spawns N background tasks, waits for completion, optionally aggregates | ~N+1 | Maximum parallelism; long-running sub-agents with independent tool access |
+| **`session`** | SDK subagent delegation — composes a single prompt with all agent goals, calls `copilot.chat()` with `enableSubagents: true` | ~2 | Lower latency & cost; simpler workflows where agents share context |
+
+#### Task Mode (fan-out / fan-in)
 
 ```mermaid
 flowchart TB
@@ -3061,6 +3099,15 @@ curl -X PUT -H "Authorization: Bearer <token>" \
 ```
 
 ### Tracking: [Epic #81](https://github.com/openzigs/openzigs/issues/81)
+
+#### Session Mode (SDK subagent delegation)
+
+When `mode: "session"` is specified (or `tasks.defaultOrchestrationMode` is `"session"`), the handler composes all agent goals into a single prompt and delegates to the Copilot SDK's built-in subagent system:
+
+1. **Prompt Composition:** All agent names and goals are formatted into a numbered list, followed by the optional `aggregation_prompt`.
+2. **Single Chat Call:** `copilot.chat()` is called with `enableSubagents: true` and `customAgents` from agent config. The SDK internally delegates subtasks to specialist agents.
+3. **Tracking Task:** A single tracking task with a `[session]` prefix is created in the TaskEngine for audit and UI visibility.
+4. **Result:** The response is returned in the same JSON structure as task mode (`metadata.mode: "session"`), making it a drop-in replacement from the caller's perspective.
 
 ### Real-Time Subagent Event Streaming (#488)
 

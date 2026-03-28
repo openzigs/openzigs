@@ -52,6 +52,7 @@ import { createTranscribeAudioTools } from "./tools/transcribe-audio-tools.js";
 import { createStudioTools } from "./tools/studio-tools.js";
 import { createMemoryTools } from "./tools/memory-tools.js";
 import { createOutboxTools } from "./tools/outbox-tools.js";
+import { createSeoGapTools } from "./tools/seo-gap-tools.js";
 import { ToolRegistry, type ToolDefinition } from "./tool-registry.js";
 import type { LocalMcpServerManager } from "./local-mcp-server-manager.js";
 import { AuditLogger } from "../logging/audit-logger.js";
@@ -137,6 +138,10 @@ export type McpServerOptions = {
   memoryManager?: import("../memory/memory-manager.js").MemoryManager;
   /** OutboxRepository for publishing queue tools. */
   outboxRepo?: import("../outbox/outbox-repository.js").OutboxRepository;
+  /** Serper.dev API key for SEO gap analysis tools. */
+  serperApiKey?: string;
+  /** Tasks config for orchestration mode default. */
+  tasksConfig?: import("../config/index.js").TasksConfig;
 };
 
 export type RegisterMcpToolsOptions = Pick<
@@ -184,6 +189,8 @@ export type RegisterMcpToolsOptions = Pick<
   | "analyzeWorker"
   | "memoryManager"
   | "outboxRepo"
+  | "serperApiKey"
+  | "tasksConfig"
 >;
 
 const readFileSchema = z.object({ path: z.string() });
@@ -518,6 +525,15 @@ export const registerMcpTools = (toolRegistry: ToolRegistry, options: RegisterMc
     registerTool(tool);
   }
 
+  // ── SEO Gap Analysis Tools ──
+  const seoGapTools = createSeoGapTools({
+    serperApiKey: options.serperApiKey ?? process.env.SERPER_API_KEY,
+    braveApiKey: options.braveApiKey,
+  });
+  for (const tool of seoGapTools) {
+    registerTool(tool);
+  }
+
   // ── Document Intelligence Tools (PDF native, Word/Calendar via local MCP servers) ──
   const docTools = createDocumentIntelligenceTools({
     localServerManager: options.localServerManager,
@@ -596,6 +612,7 @@ export const registerMcpTools = (toolRegistry: ToolRegistry, options: RegisterMc
     const orchestrateTools = createOrchestrateAgentsTools({
       taskEngine: options.taskEngine,
       copilot: options.copilot,
+      tasksConfig: options.tasksConfig,
     });
     for (const tool of orchestrateTools) {
       registerTool(tool);

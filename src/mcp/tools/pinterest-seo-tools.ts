@@ -2,9 +2,8 @@ import * as z from "zod";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { spawn } from "node:child_process";
-import { marked } from "marked";
 import type { ToolDefinition } from "../tool-registry.js";
+import { saveReportPdf } from "./shared/pdf-export.js";
 
 // ── Shared constants ────────────────────────────────────────────────────────
 
@@ -274,105 +273,7 @@ function generateIdeaTitle(keyword: string, topic: string): string {
   return templates[Math.floor(Math.random() * templates.length)];
 }
 
-// ── PDF export ──────────────────────────────────────────────────────────────
-
-const CHROME_PATHS_FOR_PDF: Record<string, string[]> = {
-  darwin: [
-    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-    "/Applications/Google Chrome Canary.app/Contents/MacOS/Google Chrome Canary",
-    "/Applications/Chromium.app/Contents/MacOS/Chromium",
-    "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
-  ],
-  linux: [
-    "/usr/bin/google-chrome",
-    "/usr/bin/google-chrome-stable",
-    "/usr/bin/chromium-browser",
-    "/usr/bin/chromium",
-    "/snap/bin/chromium",
-  ],
-  win32: [
-    "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
-    "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
-    `${process.env.LOCALAPPDATA ?? ""}\\Google\\Chrome\\Application\\chrome.exe`,
-  ],
-};
-
-function findChromeBinaryForPdf(): string | undefined {
-  const paths = CHROME_PATHS_FOR_PDF[os.platform()] ?? [];
-  return paths.find((p) => fs.existsSync(p));
-}
-
-function wrapMarkdownAsHtml(markdownContent: string): string {
-  const body = marked(markdownContent) as string;
-  return `<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<style>
-  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif; font-size: 13px; line-height: 1.5; color: #1a1a1a; max-width: 900px; margin: 0 auto; padding: 24px 32px; }
-  h1 { font-size: 22px; color: #e60023; border-bottom: 2px solid #e60023; padding-bottom: 8px; margin-bottom: 16px; }
-  h2 { font-size: 16px; color: #333; border-bottom: 1px solid #ddd; padding-bottom: 4px; margin-top: 24px; }
-  h3 { font-size: 14px; color: #444; margin-top: 16px; }
-  table { border-collapse: collapse; width: 100%; margin: 12px 0; font-size: 12px; }
-  th { background: #f0f0f0; border: 1px solid #ccc; padding: 6px 10px; text-align: left; font-weight: 600; }
-  td { border: 1px solid #ddd; padding: 5px 10px; vertical-align: top; }
-  tr:nth-child(even) td { background: #fafafa; }
-  ul, ol { padding-left: 20px; margin: 8px 0; }
-  li { margin: 3px 0; }
-  code { background: #f4f4f4; padding: 1px 4px; border-radius: 3px; font-size: 11px; }
-  pre { background: #f4f4f4; padding: 12px; border-radius: 4px; overflow-x: auto; font-size: 11px; }
-  blockquote { border-left: 3px solid #e60023; margin: 8px 0; padding: 4px 12px; color: #555; background: #fff5f5; }
-  details { display: none; }
-  strong { font-weight: 600; }
-  em { color: #555; }
-  hr { border: none; border-top: 1px solid #eee; margin: 20px 0; }
-  @media print { body { padding: 0; } }
-</style>
-</head>
-<body>
-${body}
-</body>
-</html>`;
-}
-
-/**
- * Saves a markdown report as PDF using the system Chrome headless print feature.
- * Returns the PDF file path on success, or null if Chrome is not found.
- */
-async function saveReportPdf(basename: string, markdownContent: string): Promise<string | null> {
-  const chrome = findChromeBinaryForPdf();
-  if (!chrome) return null;
-
-  ensureReportsDir();
-  const htmlContent = wrapMarkdownAsHtml(markdownContent);
-  const tempHtml = path.join(os.tmpdir(), `${basename}.html`);
-  const pdfPath = path.join(REPORTS_DIR, `${basename}.pdf`);
-
-  try {
-    fs.writeFileSync(tempHtml, htmlContent, "utf-8");
-    await new Promise<void>((resolve, reject) => {
-      const proc = spawn(chrome, [
-        "--headless=new",
-        "--disable-gpu",
-        "--no-sandbox",
-        "--disable-dev-shm-usage",
-        `--print-to-pdf=${pdfPath}`,
-        "--print-to-pdf-no-header",
-        `--virtual-time-budget=5000`,
-        tempHtml,
-      ], { stdio: "ignore" });
-      proc.on("close", (code) => (code === 0 ? resolve() : reject(new Error(`Chrome exited ${code}`))));
-      proc.on("error", reject);
-      setTimeout(() => { proc.kill(); reject(new Error("Chrome PDF timeout")); }, 20000);
-    });
-    return fs.existsSync(pdfPath) ? pdfPath : null;
-  } catch {
-    return null;
-  } finally {
-    fs.rmSync(tempHtml, { force: true });
-  }
-}
+// PDF export is provided by ./shared/pdf-export.js (imported at top)
 
 interface EnrichedKeyword {
   keyword: string;
@@ -1568,7 +1469,7 @@ export function createPinterestSeoTools(): ToolDefinition[] {
         const baseName = `trends-${input.region}-${input.trend_type}-${ts}`;
         const filePath = saveReport(`${baseName}.md`, md);
         saveReportJson(baseName, { type: "trends", region: input.region, trend_type: input.trend_type, generated: new Date().toISOString(), data });
-        const pdfPathTrends = await saveReportPdf(baseName, md);
+        const pdfPathTrends = await saveReportPdf(baseName, md, REPORTS_DIR);
         return { text: `${md}\n\n---\n_Report saved to ${filePath}${pdfPathTrends ? ` · PDF: ${pdfPathTrends}` : ""}_` };
       },
     },
@@ -1619,7 +1520,7 @@ export function createPinterestSeoTools(): ToolDefinition[] {
         const baseName = `keyword-metrics-${slug}-${ts}`;
         const filePath = saveReport(`${baseName}.md`, md);
         saveReportJson(baseName, { type: "keyword-metrics", keywords: input.keywords, country: input.country, generated: new Date().toISOString(), data: enrichedKws });
-        const pdfPathKw = await saveReportPdf(baseName, md);
+        const pdfPathKw = await saveReportPdf(baseName, md, REPORTS_DIR);
         return { text: `${md}\n\n---\n_Report saved to ${filePath}${pdfPathKw ? ` · PDF: ${pdfPathKw}` : ""}_` };
       },
     },
@@ -1700,7 +1601,7 @@ export function createPinterestSeoTools(): ToolDefinition[] {
           const baseName = `analytics-${input.action}-${ts}`;
           const filePath = saveReport(`${baseName}.md`, md);
           saveReportJson(baseName, { type: "analytics", action: input.action, start_date: input.start_date, end_date: input.end_date, generated: new Date().toISOString(), data });
-          const pdfPathAnalytics = await saveReportPdf(baseName, md);
+          const pdfPathAnalytics = await saveReportPdf(baseName, md, REPORTS_DIR);
           return { text: `${md}\n\n---\n_Report saved to ${filePath}${pdfPathAnalytics ? ` · PDF: ${pdfPathAnalytics}` : ""}_` };
         });
       },
@@ -1794,7 +1695,7 @@ export function createPinterestSeoTools(): ToolDefinition[] {
         const baseName = `seo-analysis-${pinIds[0]}-${ts}`;
         const filePath = saveReport(`${baseName}.md`, md);
         saveReportJson(baseName, { type: "seo-analysis", pin_ids: pinIds, generated: new Date().toISOString(), data: results, keywordMetrics: keywordData });
-        const pdfPathSeo = await saveReportPdf(baseName, md);
+        const pdfPathSeo = await saveReportPdf(baseName, md, REPORTS_DIR);
         return { text: `${md}\n\n---\n_Report saved to ${filePath}${pdfPathSeo ? ` · PDF: ${pdfPathSeo}` : ""}_` };
       },
     },
@@ -2016,7 +1917,7 @@ export function createPinterestSeoTools(): ToolDefinition[] {
         const baseName = `pin-insights-${slug}-${ts}`;
         const filePath = saveReport(`${baseName}.md`, md);
         saveReportJson(baseName, { type: "pin-insights", ...insights, generated: new Date().toISOString() });
-        const pdfPathInsights = await saveReportPdf(baseName, md);
+        const pdfPathInsights = await saveReportPdf(baseName, md, REPORTS_DIR);
         return { text: `${md}\n\n---\n_Report saved to ${filePath}${pdfPathInsights ? ` · PDF: ${pdfPathInsights}` : ""}_` };
       },
     },
@@ -2209,7 +2110,7 @@ export function createPinterestSeoTools(): ToolDefinition[] {
         const baseName = `search-pins-${slug}-${ts}`;
         const filePath = saveReport(`${baseName}.md`, md);
         saveReportJson(baseName, { type: "search-pins", ...result, generated: new Date().toISOString() });
-        const pdfPathSearch = await saveReportPdf(baseName, md);
+        const pdfPathSearch = await saveReportPdf(baseName, md, REPORTS_DIR);
         const pdfSuffix = pdfPathSearch ? ` · PDF: ${pdfPathSearch}` : "";
 
         if (discoveredPins.length === 0 && uniqueSeeds.length === 0) {
@@ -2528,7 +2429,7 @@ export function createPinterestSeoTools(): ToolDefinition[] {
           generated: new Date().toISOString(),
           keywords: scored,
         });
-        const pdfPathRelated = await saveReportPdf(baseName, md);
+        const pdfPathRelated = await saveReportPdf(baseName, md, REPORTS_DIR);
 
         return { text: `${md}\n\n---\n_Report saved to ${filePath}${pdfPathRelated ? ` · PDF: ${pdfPathRelated}` : ""}_` };
       },

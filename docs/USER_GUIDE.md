@@ -1999,13 +1999,19 @@ Root Agent (Depth 0) — "Build a Python pricing scraper"
 
 #### `orchestrate-agents` Tool Parameters
 
-The `orchestrate-agents` tool provides a **fan-out / fan-in** pattern: it dispatches multiple sub-agents in parallel, waits for all to finish (or timeout), and optionally aggregates their results via a Copilot call.
+The `orchestrate-agents` tool dispatches multiple sub-agents and waits for results. It supports two orchestration modes:
+
+| Mode | Mechanism | API Calls | Best For |
+|------|-----------|-----------|----------|
+| `task` (default) | Fan-out/fan-in via TaskEngine background tasks | ~N+1 | Maximum parallelism; long-running sub-agents with independent tool access |
+| `session` | SDK subagent delegation in a single `copilot.chat()` call | ~2 | Lower latency & cost; simpler workflows where agents share context |
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | `agents` | array | Yes | — | Array of 1–10 agent definitions, each with `goal` (string, required) and optional `context` (string). |
-| `aggregation_prompt` | string | No | — | If provided, a final Copilot call synthesizes the agent outputs into a single deliverable. |
-| `timeout_seconds` | number | No | `300` | Maximum time to wait for all agents (30–600 seconds). |
+| `mode` | `"task"` \| `"session"` | No | `tasks.defaultOrchestrationMode` | Orchestration strategy. `task` uses background TaskEngine jobs; `session` uses SDK subagent delegation. |
+| `aggregation_prompt` | string | No | — | If provided, a final Copilot call synthesizes the agent outputs into a single deliverable (task mode) or is appended to the composed prompt (session mode). |
+| `timeout_seconds` | number | No | `300` | Maximum time to wait for all agents (30–600 seconds). Task mode only. |
 
 **When to use `orchestrate-agents` vs `spawn-agent`:**
 
@@ -7569,6 +7575,100 @@ Generated media from research sessions is saved to:
 ```
 
 If no `project_id` is specified, files save to `~/.openzigs/files/drafts/default/`.
+
+---
+
+## SEO Gap Analysis Engine
+
+The SEO Gap Analysis Engine compares your page's content against top-ranking competitors for a given keyword, producing a comprehensive Markdown report with metrics, keyword gaps, and actionable recommendations.
+
+### Quick Start
+
+#### From Chat
+
+Ask the agent directly:
+
+```
+Analyze the SEO gaps for https://mysite.com/blog/best-coffee-makers targeting "best coffee makers"
+```
+
+Or use the `seo-analyst` agent for a dedicated SEO analysis session.
+
+#### From Workbench
+
+1. Navigate to `/workbench`.
+2. Click the **SEO** button (🔍 search icon) in the toolbar.
+3. Fill the SEO Analysis dialog:
+
+| Field | Required | Description |
+|---|---|---|
+| **Target URL** | Yes | The page URL to analyze |
+| **Target Keyword** | Yes | The primary search keyword to compare against |
+| **Search Provider** | No | `auto` (default), `serper`, or `brave` |
+| **Model** | No | LLM model for enhanced analysis |
+
+4. Click **Analyze**. The agent fetches your page, discovers competitors, and generates a gap report.
+
+### How It Works
+
+| Step | What happens |
+|---|---|
+| 1. Fetch Target | Downloads and parses your page HTML |
+| 2. Discover Competitors | Searches the keyword via Serper.dev (or Brave) for top 5 results |
+| 3. Extract Content | Uses cheerio to extract headings, body text, and metadata from each page |
+| 4. Compute Metrics | TF-IDF keywords (via natural), Flesch-Kincaid readability, word counts |
+| 5. Generate Report | Produces a Markdown report with comparison tables and Mermaid charts |
+| 6. Save | Writes the report to `~/.openzigs/seo-reports/` |
+
+### MCP Tools
+
+| Tool | Risk | Description |
+|---|---|---|
+| `seo-gap-analysis` | � medium | Full SEO gap analysis pipeline |
+| `seo-extract-content` | 🟡 medium | Extract structured content metrics from a single URL |
+
+### Configuration
+
+**Serper.dev API Key** (recommended — provides PAA, related searches, featured snippet data):
+
+Set the `SERPER_API_KEY` environment variable, or add to `~/.openzigs/config.json`:
+
+```json
+{
+  "seo": {
+    "serperApiKey": "your-serper-api-key"
+  }
+}
+```
+
+**Brave Search** (fallback): Set `BRAVE_API_KEY` environment variable.
+
+### Viewing Reports
+
+Reports are saved as Markdown files in `~/.openzigs/seo-reports/` with the naming pattern:
+
+```
+<domain>-<keyword-slug>-<YYYY-MM-DD>.md
+```
+
+These files are visible in the Workbench file sidebar (under the `seo-reports` directory) and can be opened directly in the editor.
+
+### Configurable Workbench Directories
+
+The Workbench file sidebar shows configurable directories. Defaults include:
+
+- `~/.openzigs/research/`
+- `~/.openzigs/pinterest-reports/`
+- `~/.openzigs/seo-reports/`
+
+Manage via the admin API:
+
+```
+GET  /api/admin/workbench/directories
+PUT  /api/admin/workbench/directories  { "directories": ["~/.openzigs/research", "~/.openzigs/custom-dir"] }
+```
+
+Or add to `~/.openzigs/config.json` under `workbench.directories`.
 
 ---
 

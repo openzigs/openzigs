@@ -206,6 +206,11 @@ export class ToolRegistry extends EventEmitter {
     );
   }
 
+  /** Return all registered tools regardless of enabled/disabled state. */
+  listAllTools(): ToolDefinition[] {
+    return Array.from(this.tools.values());
+  }
+
   isEnabled(name: string): boolean {
     if (this.enabledTools === null) {
       return true;

@@ -397,4 +397,132 @@ describe("orchestrate-agents tool", () => {
     expect(subAgents.length).toBe(2);
     expect(subAgents.map((a) => a.goal).sort()).toEqual(["Research AWS", "Research GCP"]);
   }, 15_000);
+
+  // ── Session Mode ──
+
+  it("session mode composes a single prompt and calls copilot.chat() with enableSubagents", async () => {
+    const mockCopilot = createMockCopilot(["session orchestration result"]);
+
+    const tools = createOrchestrateAgentsTools({ taskEngine: engine, copilot: mockCopilot });
+    const orchestrateTool = tools[0];
+
+    const result = await orchestrateTool.handler({
+      agents: [
+        { goal: "Analyze content depth", context: "Focus on word count" },
+        { goal: "Audit technical SEO" },
+      ],
+      mode: "session",
+      timeout_seconds: 60,
+    });
+
+    expect(result.isError).toBeUndefined();
+    const parsed = JSON.parse(result.text);
+    expect(parsed.aggregated_result).toContain("session orchestration result");
+    expect(parsed.metadata.mode).toBe("session");
+    expect(parsed.metadata.total).toBe(2);
+    expect(parsed.metadata.completed).toBe(2);
+    expect(parsed.metadata.failed).toBe(0);
+
+    // Verify copilot.chat() was called with enableSubagents
+    expect(mockCopilot.chat).toHaveBeenCalledTimes(1);
+    const chatCall = mockCopilot.chat.mock.calls[0];
+    const prompt = chatCall[0] as string;
+    expect(prompt).toContain("Task 1: Analyze content depth");
+    expect(prompt).toContain("Focus on word count");
+    expect(prompt).toContain("Task 2: Audit technical SEO");
+    const opts = chatCall[1] as Record<string, unknown>;
+    expect(opts.enableSubagents).toBe(true);
+  });
+
+  it("session mode includes aggregation_prompt in composed prompt", async () => {
+    const mockCopilot = createMockCopilot(["synthesized report"]);
+
+    const tools = createOrchestrateAgentsTools({ taskEngine: engine, copilot: mockCopilot });
+    const orchestrateTool = tools[0];
+
+    const result = await orchestrateTool.handler({
+      agents: [{ goal: "Research topic A" }],
+      aggregation_prompt: "Combine findings into a comprehensive report.",
+      mode: "session",
+      timeout_seconds: 60,
+    });
+
+    expect(result.isError).toBeUndefined();
+    const prompt = (mockCopilot.chat.mock.calls[0][0]) as string;
+    expect(prompt).toContain("Combine findings into a comprehensive report.");
+  });
+
+  it("session mode creates a tracking task with [session] prefix", async () => {
+    const mockCopilot = createMockCopilot(["done"]);
+
+    const tools = createOrchestrateAgentsTools({ taskEngine: engine, copilot: mockCopilot });
+    const orchestrateTool = tools[0];
+
+    await orchestrateTool.handler({
+      agents: [{ goal: "Quick analysis" }],
+      mode: "session",
+      timeout_seconds: 60,
+    });
+
+    const allTasks = engine.listTasks({});
+    expect(allTasks.length).toBe(1);
+    expect(allTasks[0].goal).toContain("[session]");
+    expect(allTasks[0].status).toBe("completed");
+  });
+
+  it("session mode returns isError on failure", async () => {
+    const mockCopilot = {
+      ...createMockCopilot(),
+      chat: vi.fn().mockImplementation(() => {
+        // Return an async iterable that throws on first iteration
+        return {
+          [Symbol.asyncIterator]: () => ({
+            next: () => Promise.reject(new Error("SDK connection lost")),
+          }),
+        };
+      }),
+      getCustomAgents: vi.fn().mockReturnValue([]),
+    };
+
+    const tools = createOrchestrateAgentsTools({ taskEngine: engine, copilot: mockCopilot });
+    const orchestrateTool = tools[0];
+
+    const result = await orchestrateTool.handler({
+      agents: [{ goal: "Will fail" }],
+      mode: "session",
+      timeout_seconds: 60,
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.text).toContain("Session orchestration failed");
+  });
+
+  it("defaults to task mode when no mode specified", async () => {
+    const mockCopilot = createMockCopilot(["done"]);
+
+    worker = new TaskWorker({
+      engine,
+      copilot: mockCopilot,
+      maxConcurrent: 2,
+      pollIntervalMs: 50,
+      log: silentLog,
+    });
+    worker.start();
+
+    const tools = createOrchestrateAgentsTools({ taskEngine: engine, copilot: mockCopilot });
+    const orchestrateTool = tools[0];
+
+    const result = await orchestrateTool.handler({
+      agents: [{ goal: "Default mode test" }],
+      timeout_seconds: 30,
+    });
+
+    expect(result.isError).toBeUndefined();
+    const parsed = JSON.parse(result.text);
+    // Task mode doesn't include mode field in metadata
+    expect(parsed.metadata.mode).toBeUndefined();
+    // Task mode creates parent + child tasks
+    const allTasks = engine.listTasks({});
+    expect(allTasks.length).toBe(2); // orchestration parent + 1 sub-agent
+  }, 15_000);
 });

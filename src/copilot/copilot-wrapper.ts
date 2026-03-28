@@ -98,6 +98,7 @@ type SessionCreateConfig = {
     context: { sessionId: string }
   ) => Promise<{ answer: string; wasFreeform?: boolean }>;
   disabledSkills?: string[];
+  enableSubagents?: boolean;
 };
 
 // ── SDK Session Event / Metadata types (re-exported for consumers) ──
@@ -784,20 +785,22 @@ export class CopilotWrapperService extends EventEmitter implements CopilotWrappe
     }
 
     const effectiveModel = options?.model ?? this.model;
-    let toolList = options?.tools ?? this.toolRegistry?.listEnabledTools() ?? [];
     const perCallToolCallback = options?.onToolCall;
 
     // When availableTools is specified (skill scoping or explicit client filter),
-    // pre-filter tool definitions to only those in the allow-list.
-    // Merge ESSENTIAL_TOOLS so skill sessions always retain core capabilities
-    // (file I/O, web search, shell, delegation) without the caller needing to
-    // declare them explicitly.
+    // draw from ALL registered tools (not just enabled ones) so that tools
+    // explicitly requested by a dialog or skill are available even if the user
+    // hasn't toggled them on in the admin panel.
+    let toolList: ToolDefinition[];
     if (options?.availableTools && options.availableTools.length > 0) {
       const scopedSet = new Set(options.availableTools);
       for (const essential of ESSENTIAL_TOOLS) {
         scopedSet.add(essential);
       }
-      toolList = toolList.filter((t) => scopedSet.has(t.name));
+      const allTools = options?.tools ?? this.toolRegistry?.listAllTools() ?? [];
+      toolList = allTools.filter((t) => scopedSet.has(t.name));
+    } else {
+      toolList = options?.tools ?? this.toolRegistry?.listEnabledTools() ?? [];
     }
 
     // Enforce maxToolsPerRequest with tiered priority:
@@ -882,6 +885,7 @@ export class CopilotWrapperService extends EventEmitter implements CopilotWrappe
         mcpServers: options?.mcpServers,
         autoApproveTools: options?.autoApproveTools,
         disabledSkills: options?.disabledSkills,
+        enableSubagents: options?.enableSubagents,
       }
     );
 
@@ -1107,6 +1111,7 @@ export class CopilotWrapperService extends EventEmitter implements CopilotWrappe
       mcpServers?: Record<string, NativeMcpServerDefinition>;
       autoApproveTools?: string[];
       disabledSkills?: string[];
+      enableSubagents?: boolean;
     }
   ): SessionCreateConfig {
     const effectiveHooks = this.hooksConfig;
@@ -1158,6 +1163,7 @@ export class CopilotWrapperService extends EventEmitter implements CopilotWrappe
       ...(Object.keys(sdkMcpServers).length > 0 ? { mcpServers: sdkMcpServers } : {}),
       ...(this.skillDirectoriesConfig.length > 0 ? { skillDirectories: this.skillDirectoriesConfig } : {}),
       ...(extra?.disabledSkills?.length ? { disabledSkills: extra.disabledSkills } : {}),
+      ...(extra?.enableSubagents ? { enableSubagents: true } : {}),
       ...(effectiveHooks ? {
         hooks: {
           ...effectiveHooks,
@@ -1214,6 +1220,7 @@ export class CopilotWrapperService extends EventEmitter implements CopilotWrappe
       mcpServers?: Record<string, NativeMcpServerDefinition>;
       autoApproveTools?: string[];
       disabledSkills?: string[];
+      enableSubagents?: boolean;
     }
   ): Promise<CopilotSessionLike> {
     const requestedSignature = this.computeSessionConfigSignature(model, tools, extra);
@@ -1295,6 +1302,7 @@ export class CopilotWrapperService extends EventEmitter implements CopilotWrappe
       customAgents?: CustomAgentDefinition[];
       mcpServers?: Record<string, NativeMcpServerDefinition>;
       autoApproveTools?: string[];
+      enableSubagents?: boolean;
     }
   ): string {
     const toolNames = (tools as Array<{ name?: string }>)
@@ -1312,6 +1320,7 @@ export class CopilotWrapperService extends EventEmitter implements CopilotWrappe
       reasoningEffort: extra?.reasoningEffort,
       systemMode: extra?.systemMessage?.mode,
       systemContent: extra?.systemMessage?.content,
+      enableSubagents: extra?.enableSubagents ?? false,
     });
   }
 

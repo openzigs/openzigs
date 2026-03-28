@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useCallback, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { fetchJson } from "@/lib/api";
 import { cn } from "@/lib/utils";
@@ -21,6 +21,7 @@ type FileEntry = {
 
 type FileSidebarProps = {
   rootDir: string;
+  extraDirs?: string[];
   onFileSelect: (filePath: string) => void;
   activeFile: string | null;
   collapsed: boolean;
@@ -125,6 +126,7 @@ const FolderNode = ({ dirPath, name, depth, onFileSelect, activeFile }: FolderNo
 
 export const FileSidebar = ({
   rootDir,
+  extraDirs,
   onFileSelect,
   activeFile,
   collapsed,
@@ -145,6 +147,35 @@ export const FileSidebar = ({
     return a.name.localeCompare(b.name);
   });
 
+  const [width, setWidth] = useState(256);
+  const isResizing = useRef(false);
+
+  const handleMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    isResizing.current = true;
+    const startX = e.clientX;
+    const startWidth = width;
+
+    const onMouseMove = (ev: MouseEvent) => {
+      if (!isResizing.current) return;
+      const newWidth = Math.min(Math.max(startWidth + (ev.clientX - startX), 180), 600);
+      setWidth(newWidth);
+    };
+
+    const onMouseUp = () => {
+      isResizing.current = false;
+      document.removeEventListener("mousemove", onMouseMove);
+      document.removeEventListener("mouseup", onMouseUp);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    };
+
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+    document.addEventListener("mousemove", onMouseMove);
+    document.addEventListener("mouseup", onMouseUp);
+  }, [width]);
+
   if (collapsed) {
     return (
       <div className="flex w-10 flex-col items-center border-r border-border bg-card pt-3">
@@ -160,7 +191,12 @@ export const FileSidebar = ({
   }
 
   return (
-    <div className="flex w-64 flex-col border-r border-border bg-card">
+    <div className="relative flex flex-col border-r border-border bg-card" style={{ width }}>
+      {/* Resize handle */}
+      <div
+        onMouseDown={handleMouseDown}
+        className="absolute right-0 top-0 z-10 h-full w-1 cursor-col-resize transition-colors hover:bg-primary/40"
+      />
       <div className="flex items-center justify-between border-b border-border px-3 py-2">
         <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
           Files
@@ -224,6 +260,24 @@ export const FileSidebar = ({
             </button>
           );
         })}
+        {extraDirs && extraDirs.length > 0 && (
+          <>
+            <div className="mx-2 my-1 border-t border-border" />
+            {extraDirs.map((dir) => {
+              const dirName = dir.split("/").pop() ?? dir;
+              return (
+                <FolderNode
+                  key={dir}
+                  dirPath={dir}
+                  name={dirName}
+                  depth={0}
+                  onFileSelect={onFileSelect}
+                  activeFile={activeFile}
+                />
+              );
+            })}
+          </>
+        )}
       </div>
     </div>
   );
