@@ -5,6 +5,7 @@ import {
   extractKeywords,
   fleschKincaid,
   countSyllables,
+  extractJsonLdTypes,
 } from "./html-extractor.js";
 
 describe("html-extractor", () => {
@@ -268,6 +269,10 @@ describe("html-extractor", () => {
       expect(result.metaTags).toEqual([]);
       expect(result.images).toEqual([]);
       expect(result.imagesWithoutAlt).toBe(0);
+      expect(result.imagesMissingAlt).toBe(0);
+      expect(result.imagesEmptyAlt).toBe(0);
+      expect(result.imagesAriaHidden).toBe(0);
+      expect(result.imagesLazyLoaded).toBe(0);
       expect(result.schemaMarkup).toEqual([]);
       expect(result.internalLinks).toEqual([]);
       expect(result.externalLinks).toEqual([]);
@@ -352,9 +357,9 @@ describe("html-extractor", () => {
       `;
       const result = extractContent(html);
       expect(result.images).toHaveLength(3);
-      expect(result.images[0]).toEqual({ src: "/img/hero.jpg", alt: "Hero image", hasAlt: true });
-      expect(result.images[1]).toEqual({ src: "/img/chart.png", alt: "", hasAlt: false });
-      expect(result.images[2]).toEqual({ src: "/img/logo.svg", alt: "", hasAlt: false });
+      expect(result.images[0]).toMatchObject({ src: "/img/hero.jpg", alt: "Hero image", hasAlt: true, altStatus: "present" });
+      expect(result.images[1]).toMatchObject({ src: "/img/chart.png", alt: "", hasAlt: false, altStatus: "empty" });
+      expect(result.images[2]).toMatchObject({ src: "/img/logo.svg", alt: "", hasAlt: false, altStatus: "missing" });
       expect(result.imagesWithoutAlt).toBe(2);
     });
 
@@ -398,6 +403,175 @@ describe("html-extractor", () => {
       const result = extractContent(html);
       expect(result.externalLinks.length).toBe(1);
       expect(result.externalLinks[0].href).toBe("https://real.com");
+    });
+
+    // ── #665: @graph pattern ─────────────────────────────────────────
+
+    it("extracts schema types from @graph wrapper (Yoast/WordPress)", () => {
+      const html = `
+        <html><head>
+          <script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"Article","headline":"Test"},{"@type":"WebPage","name":"Page"},{"@type":"BreadcrumbList","itemListElement":[]}]}</script>
+        </head><body><p>Content.</p></body></html>
+      `;
+      const result = extractContent(html);
+      const types = result.schemaMarkup.map((s) => s.type);
+      expect(types).toContain("Article");
+      expect(types).toContain("WebPage");
+      expect(types).toContain("BreadcrumbList");
+    });
+
+    it("extracts both root @type and @graph entries", () => {
+      const html = `
+        <html><head>
+          <script type="application/ld+json">{"@context":"https://schema.org","@type":"WebSite","name":"MySite","@graph":[{"@type":"Organization","name":"Acme"}]}</script>
+        </head><body><p>Content.</p></body></html>
+      `;
+      const result = extractContent(html);
+      const types = result.schemaMarkup.map((s) => s.type);
+      expect(types).toContain("WebSite");
+      expect(types).toContain("Organization");
+    });
+
+    // ── #666: Recursive nested @type ─────────────────────────────────
+
+    it("extracts nested @type from publisher/mainEntity", () => {
+      const html = `
+        <html><head>
+          <script type="application/ld+json">{"@context":"https://schema.org","@type":"Article","headline":"Test","publisher":{"@type":"Organization","name":"Acme","logo":{"@type":"ImageObject","url":"logo.png"}}}</script>
+        </head><body><p>Content.</p></body></html>
+      `;
+      const result = extractContent(html);
+      const types = result.schemaMarkup.map((s) => s.type);
+      expect(types).toContain("Article");
+      expect(types).toContain("Organization");
+      expect(types).toContain("ImageObject");
+    });
+
+    it("extracts nested types from @graph entries", () => {
+      const html = `
+        <html><head>
+          <script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"Article","headline":"Test","author":{"@type":"Person","name":"Jane"}}]}</script>
+        </head><body><p>Content.</p></body></html>
+      `;
+      const result = extractContent(html);
+      const types = result.schemaMarkup.map((s) => s.type);
+      expect(types).toContain("Article");
+      expect(types).toContain("Person");
+    });
+
+    // ── #667: Nuanced image alt text classification ──────────────────
+
+    it("classifies altStatus as present, empty, or missing", () => {
+      const html = `
+        <html><body>
+          <img src="a.jpg" alt="Good alt">
+          <img src="b.jpg" alt="">
+          <img src="c.jpg">
+        </body></html>
+      `;
+      const result = extractContent(html);
+      expect(result.images[0].altStatus).toBe("present");
+      expect(result.images[1].altStatus).toBe("empty");
+      expect(result.images[2].altStatus).toBe("missing");
+      expect(result.imagesMissingAlt).toBe(1);
+      expect(result.imagesEmptyAlt).toBe(1);
+      expect(result.imagesWithoutAlt).toBe(2); // backward compat: missing + empty
+    });
+
+    it("detects aria-hidden images", () => {
+      const html = `
+        <html><body>
+          <img src="d.jpg" alt="" aria-hidden="true">
+          <img src="e.jpg" alt="visible">
+        </body></html>
+      `;
+      const result = extractContent(html);
+      expect(result.images[0].isAriaHidden).toBe(true);
+      expect(result.images[1].isAriaHidden).toBe(false);
+      expect(result.imagesAriaHidden).toBe(1);
+    });
+
+    it("detects lazy-loaded images", () => {
+      const html = `
+        <html><body>
+          <img src="data:image/svg+xml,..." data-src="real.jpg" alt="">
+          <img src="placeholder.jpg" data-srcset="real-2x.jpg 2x" alt="">
+          <img src="eager.jpg" alt="not lazy">
+        </body></html>
+      `;
+      const result = extractContent(html);
+      expect(result.images[0].isLazyLoaded).toBe(true);
+      expect(result.images[1].isLazyLoaded).toBe(true);
+      expect(result.images[2].isLazyLoaded).toBe(false);
+      expect(result.imagesLazyLoaded).toBe(2);
+    });
+  });
+
+  // ── extractJsonLdTypes unit tests ──────────────────────────────────
+
+  describe("extractJsonLdTypes", () => {
+    it("handles flat @type object", () => {
+      const out: { type: string; properties: string[] }[] = [];
+      extractJsonLdTypes({ "@type": "Article", headline: "Test" }, out);
+      expect(out).toHaveLength(1);
+      expect(out[0].type).toBe("Article");
+      expect(out[0].properties).toContain("headline");
+    });
+
+    it("handles @graph array", () => {
+      const out: { type: string; properties: string[] }[] = [];
+      extractJsonLdTypes({
+        "@context": "https://schema.org",
+        "@graph": [
+          { "@type": "Article", headline: "Test" },
+          { "@type": "WebPage", name: "Page" },
+        ],
+      }, out);
+      const types = out.map((s) => s.type);
+      expect(types).toContain("Article");
+      expect(types).toContain("WebPage");
+    });
+
+    it("recursively extracts nested types", () => {
+      const out: { type: string; properties: string[] }[] = [];
+      extractJsonLdTypes({
+        "@type": "Article",
+        headline: "Test",
+        publisher: { "@type": "Organization", name: "Acme" },
+      }, out);
+      const types = out.map((s) => s.type);
+      expect(types).toContain("Article");
+      expect(types).toContain("Organization");
+    });
+
+    it("handles multi-type arrays", () => {
+      const out: { type: string; properties: string[] }[] = [];
+      extractJsonLdTypes({ "@type": ["Article", "NewsArticle"], headline: "Test" }, out);
+      const types = out.map((s) => s.type);
+      expect(types).toContain("Article");
+      expect(types).toContain("NewsArticle");
+    });
+
+    it("respects max depth limit", () => {
+      // Build a deeply nested object (depth 10)
+      let obj: Record<string, unknown> = { "@type": "Leaf", name: "deep" };
+      for (let i = 0; i < 10; i++) {
+        obj = { "@type": `Level${i}`, child: obj };
+      }
+      const out: { type: string; properties: string[] }[] = [];
+      extractJsonLdTypes(obj, out);
+      // Should not extract all 11 levels — bounded by MAX_JSONLD_DEPTH (5)
+      expect(out.length).toBeLessThan(11);
+      expect(out.length).toBeGreaterThan(0);
+    });
+
+    it("ignores null/undefined/primitives", () => {
+      const out: { type: string; properties: string[] }[] = [];
+      extractJsonLdTypes(null, out);
+      extractJsonLdTypes(undefined, out);
+      extractJsonLdTypes("string", out);
+      extractJsonLdTypes(42, out);
+      expect(out).toHaveLength(0);
     });
   });
 });

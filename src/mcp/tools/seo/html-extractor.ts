@@ -14,7 +14,14 @@ export type KeywordEntry = {
 };
 
 export type MetaTag = { name: string; content: string };
-export type ImageInfo = { src: string; alt: string; hasAlt: boolean };
+export type ImageInfo = {
+  src: string;
+  alt: string;
+  hasAlt: boolean;
+  altStatus: "present" | "empty" | "missing";
+  isAriaHidden: boolean;
+  isLazyLoaded: boolean;
+};
 export type SchemaMarkup = { type: string; properties: string[] };
 export type LinkInfo = { href: string; text: string; isInternal: boolean };
 
@@ -33,6 +40,10 @@ export type ExtractedContent = {
   metaTags: MetaTag[];
   images: ImageInfo[];
   imagesWithoutAlt: number;
+  imagesMissingAlt: number;
+  imagesEmptyAlt: number;
+  imagesAriaHidden: number;
+  imagesLazyLoaded: number;
   schemaMarkup: SchemaMarkup[];
   internalLinks: LinkInfo[];
   externalLinks: LinkInfo[];
@@ -78,6 +89,56 @@ export function countSyllables(word: string): number {
   return count;
 }
 
+const MAX_JSONLD_DEPTH = 5;
+
+/**
+ * Recursively extract all `@type` entries from a JSON-LD object.
+ * Handles `@graph` arrays (Yoast/WordPress pattern) and nested typed
+ * entities like `publisher`, `mainEntity`, etc.
+ */
+export function extractJsonLdTypes(
+  obj: unknown,
+  out: SchemaMarkup[],
+  depth = 0,
+): void {
+  if (depth > MAX_JSONLD_DEPTH || obj == null || typeof obj !== "object") return;
+  if (Array.isArray(obj)) {
+    for (const entry of obj) {
+      extractJsonLdTypes(entry, out, depth + 1);
+    }
+    return;
+  }
+
+  const record = obj as Record<string, unknown>;
+
+  // Handle @graph wrapper
+  if (Array.isArray(record["@graph"])) {
+    for (const entry of record["@graph"]) {
+      extractJsonLdTypes(entry, out, depth + 1);
+    }
+  }
+
+  // Extract this node's @type
+  const type = record["@type"];
+  if (type) {
+    const types = Array.isArray(type) ? type : [type];
+    for (const t of types) {
+      if (typeof t === "string") {
+        const properties = Object.keys(record).filter((k) => !k.startsWith("@"));
+        out.push({ type: t, properties });
+      }
+    }
+  }
+
+  // Recurse into nested typed objects (publisher, mainEntity, etc.)
+  for (const [key, value] of Object.entries(record)) {
+    if (key.startsWith("@")) continue;
+    if (value != null && typeof value === "object") {
+      extractJsonLdTypes(value, out, depth + 1);
+    }
+  }
+}
+
 /**
  * Extract structured content from raw HTML.
  * Strips navigation/footer/sidebar noise, extracts headings, body text,
@@ -114,14 +175,7 @@ export function extractContent(html: string, sourceUrl?: string): ExtractedConte
       const parsed = JSON.parse(raw);
       const items = Array.isArray(parsed) ? parsed : [parsed];
       for (const item of items) {
-        const type = item["@type"];
-        if (type) {
-          const types = Array.isArray(type) ? type : [type];
-          for (const t of types) {
-            const properties = Object.keys(item).filter((k) => !k.startsWith("@"));
-            schemaMarkup.push({ type: t, properties });
-          }
-        }
+        extractJsonLdTypes(item, schemaMarkup);
       }
     } catch {
       // Ignore malformed JSON-LD
@@ -132,13 +186,21 @@ export function extractContent(html: string, sourceUrl?: string): ExtractedConte
   const images: ImageInfo[] = [];
   $("img").each((_i, el) => {
     const src = $(el).attr("src")?.trim() ?? "";
-    const alt = $(el).attr("alt")?.trim() ?? "";
-    const hasAlt = $(el).attr("alt") !== undefined && alt.length > 0;
+    const rawAlt = $(el).attr("alt");
+    const alt = rawAlt?.trim() ?? "";
+    const altStatus: ImageInfo["altStatus"] = rawAlt === undefined ? "missing" : alt.length > 0 ? "present" : "empty";
+    const hasAlt = altStatus === "present";
+    const isAriaHidden = $(el).attr("aria-hidden") === "true";
+    const isLazyLoaded = $(el).attr("data-src") !== undefined || $(el).attr("data-srcset") !== undefined;
     if (src) {
-      images.push({ src, alt, hasAlt });
+      images.push({ src, alt, hasAlt, altStatus, isAriaHidden, isLazyLoaded });
     }
   });
   const imagesWithoutAlt = images.filter((img) => !img.hasAlt).length;
+  const imagesMissingAlt = images.filter((img) => img.altStatus === "missing").length;
+  const imagesEmptyAlt = images.filter((img) => img.altStatus === "empty").length;
+  const imagesAriaHidden = images.filter((img) => img.isAriaHidden).length;
+  const imagesLazyLoaded = images.filter((img) => img.isLazyLoaded).length;
 
   // Links — classify as internal vs external
   let sourceHostname: string | undefined;
@@ -233,6 +295,10 @@ export function extractContent(html: string, sourceUrl?: string): ExtractedConte
     metaTags,
     images,
     imagesWithoutAlt,
+    imagesMissingAlt,
+    imagesEmptyAlt,
+    imagesAriaHidden,
+    imagesLazyLoaded,
     schemaMarkup,
     internalLinks,
     externalLinks,

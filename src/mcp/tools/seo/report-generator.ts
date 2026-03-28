@@ -31,7 +31,7 @@ export function buildAnalysisPrompt(input: AnalysisInput): string {
   lines.push(`- **Meta Title**: "${targetContent.metaTitle}" (${targetContent.metaTitle.length} chars)`);
   lines.push(`- **Meta Description**: "${targetContent.metaDescription.slice(0, 80)}${targetContent.metaDescription.length > 80 ? "…" : ""}" (${targetContent.metaDescription.length} chars)`);
   lines.push(`- **Schema Types**: ${targetContent.schemaMarkup.map((s) => s.type).join(", ") || "None"}`);
-  lines.push(`- **Images**: ${targetContent.images.length} total, ${targetContent.imagesWithoutAlt} missing alt text`);
+  lines.push(`- **Images**: ${targetContent.images.length} total | ${targetContent.imagesMissingAlt} truly missing alt | ${targetContent.imagesEmptyAlt} decorative (empty alt) | ${targetContent.imagesAriaHidden} aria-hidden | ${targetContent.imagesLazyLoaded} lazy-loaded`);
   lines.push(`- **Internal Links**: ${targetContent.internalLinkCount}`);
   lines.push(`- **External Links**: ${targetContent.externalLinkCount}`);
   lines.push("");
@@ -52,7 +52,7 @@ export function buildAnalysisPrompt(input: AnalysisInput): string {
     lines.push(`- **Readability**: ${comp.readabilityScore}`);
     lines.push(`- **Top Keywords**: ${comp.keywords.slice(0, 10).map((k) => `${k.term} (${k.tfidf})`).join(", ")}`);
     lines.push(`- **Schema Types**: ${comp.schemaMarkup.map((s) => s.type).join(", ") || "None"}`);
-    lines.push(`- **Images**: ${comp.images.length} total, ${comp.imagesWithoutAlt} missing alt`);
+    lines.push(`- **Images**: ${comp.images.length} total | ${comp.imagesMissingAlt} missing alt | ${comp.imagesEmptyAlt} decorative | ${comp.imagesAriaHidden} aria-hidden | ${comp.imagesLazyLoaded} lazy-loaded`);
     lines.push(`- **Internal Links**: ${comp.internalLinkCount}, **External Links**: ${comp.externalLinkCount}`);
     lines.push("#### Competitor Headings");
     for (const h of comp.headings) {
@@ -157,7 +157,7 @@ export function generateMetricsReport(input: AnalysisInput): string {
   const schemaTypes = targetContent.schemaMarkup.map((s) => s.type);
   lines.push(`- **Schema Markup**: ${schemaTypes.length > 0 ? schemaTypes.join(", ") + " ✅" : "None ⚠️ — Consider adding Article, FAQPage, or HowTo schema"}`);
   const altIcon = targetContent.imagesWithoutAlt > 0 ? "⚠️" : "✅";
-  lines.push(`- **Images**: ${targetContent.images.length} total, ${targetContent.imagesWithoutAlt} missing alt text ${altIcon}`);
+  lines.push(`- **Images**: ${targetContent.images.length} total | ${targetContent.imagesMissingAlt} truly missing alt | ${targetContent.imagesEmptyAlt} decorative (empty alt) | ${targetContent.imagesAriaHidden} aria-hidden | ${targetContent.imagesLazyLoaded} lazy-loaded ${altIcon}`);
   lines.push(`- **Internal Links**: ${targetContent.internalLinkCount}${targetContent.internalLinkCount < 5 ? " ⚠️ Could be improved" : " ✅"}`);
   lines.push(`- **External Links**: ${targetContent.externalLinkCount}`);
   lines.push("");
