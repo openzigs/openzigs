@@ -48,6 +48,8 @@ export type OrchestrateContext = {
   chatId?: string;
   /** When set (by MessageRouter), sub-tasks inherit this as their parentTaskId. */
   parentTaskId?: string;
+  /** Model override from the originating request — sub-agents inherit this unless they specify their own. */
+  model?: string;
 };
 
 export type OrchestrateAgentsOptions = {
@@ -166,7 +168,7 @@ export const createOrchestrateAgentsTools = ({
                 trigger: "agent",
                 goal: agent.goal,
                 context: agent.context,
-                model: agent.model,
+                model: agent.model ?? activeOrchestrateContext.model,
                 autoApproveTools: agent.auto_approve_tools,
                 notifyOnComplete: false, // Orchestrator handles notification
                 parentTaskId: orchestrationTask.id,
@@ -246,10 +248,9 @@ export const createOrchestrateAgentsTools = ({
               aggregationInput,
             ].join("\n");
 
-            const { getUserSelectedModel } = await import("../../config/user-model.js");
-            const orchModel = await getUserSelectedModel();
+            const aggModel = activeOrchestrateContext.model;
             let aggregated = "";
-            for await (const chunk of copilot.chat(prompt, { tools: [], ...(orchModel ? { model: orchModel } : {}) })) {
+            for await (const chunk of copilot.chat(prompt, { tools: [], ...(aggModel ? { model: aggModel } : {}) })) {
               aggregated += chunk;
             }
 

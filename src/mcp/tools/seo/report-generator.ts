@@ -122,6 +122,18 @@ export function generateMetricsReport(input: AnalysisInput): string {
   lines.push(`> Generated ${now} for ${targetUrl}`);
   lines.push("");
 
+  // ── Competitor Articles ────────────────────────────────────────────────
+  if (competitors.length > 0) {
+    lines.push("## Competitor Articles Analyzed");
+    lines.push("");
+    for (let i = 0; i < competitors.length; i++) {
+      const comp = competitors[i];
+      const hostname = new URL(comp.url).hostname;
+      lines.push(`${i + 1}. [${comp.title || hostname}](${comp.url}) — ${comp.wordCount} words, ${comp.headingCount} headings`);
+    }
+    lines.push("");
+  }
+
   // ── Target Page SEO Audit ──────────────────────────────────────────────
   lines.push("## Target Page SEO Audit");
   lines.push("");
@@ -241,7 +253,7 @@ export function generateMetricsReport(input: AnalysisInput): string {
   lines.push(`| **Target** | ${targetContent.wordCount} | ${targetContent.headingCount} | ${targetContent.readingTime} min | ${targetContent.readabilityScore} |`);
   for (const comp of competitors) {
     const name = new URL(comp.url).hostname;
-    lines.push(`| ${name} | ${comp.wordCount} | ${comp.headingCount} | ${comp.readingTime} min | ${comp.readabilityScore} |`);
+    lines.push(`| [${name}](${comp.url}) | ${comp.wordCount} | ${comp.headingCount} | ${comp.readingTime} min | ${comp.readabilityScore} |`);
   }
 
   // Compute averages for radar
@@ -309,7 +321,7 @@ export function generateMetricsReport(input: AnalysisInput): string {
   for (const comp of competitors) {
     const name = new URL(comp.url).hostname;
     const compSchemaTypes = comp.schemaMarkup.map((s) => s.type).join(", ") || "None";
-    lines.push(`| ${name} | ${comp.metaTitle.length} | ${comp.metaDescription.length} | ${compSchemaTypes} | ${comp.images.length} | ${comp.imagesWithoutAlt} | ${comp.internalLinkCount} | ${comp.externalLinkCount} |`);
+    lines.push(`| [${name}](${comp.url}) | ${comp.metaTitle.length} | ${comp.metaDescription.length} | ${compSchemaTypes} | ${comp.images.length} | ${comp.imagesWithoutAlt} | ${comp.internalLinkCount} | ${comp.externalLinkCount} |`);
   }
 
   // Schema Markup Comparison
@@ -342,7 +354,7 @@ export function generateMetricsReport(input: AnalysisInput): string {
   lines.push(`| **Target** | ${targetContent.internalLinkCount} | ${targetContent.externalLinkCount} |`);
   for (const comp of competitors) {
     const name = new URL(comp.url).hostname;
-    lines.push(`| ${name} | ${comp.internalLinkCount} | ${comp.externalLinkCount} |`);
+    lines.push(`| [${name}](${comp.url}) | ${comp.internalLinkCount} | ${comp.externalLinkCount} |`);
   }
 
   // Header comparison (moved to near end — less important than topical depth)

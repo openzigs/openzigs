@@ -29,7 +29,7 @@ export default function WorkbenchPage() {
   const [researchOpen, setResearchOpen] = useState(false);
   const [seoOpen, setSeoOpen] = useState(false);
   const [askAiOpen, setAskAiOpen] = useState(false);
-  const [viewMode, setViewMode] = useState<"edit" | "preview">("edit");
+  const [viewMode, setViewMode] = useState<"edit" | "preview">("preview");
 
   // Fetch configurable workbench directories
   const { data: wbDirs } = useQuery({

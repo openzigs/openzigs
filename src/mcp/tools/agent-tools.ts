@@ -28,6 +28,8 @@ export type ChatContext = {
   chatId?: string;
   /** When set (by MessageRouter), spawned agents inherit this as their parentTaskId. */
   parentTaskId?: string;
+  /** Model override from the originating request — sub-agents inherit this unless they specify their own. */
+  model?: string;
 };
 
 export type AgentToolsOptions = {
@@ -97,7 +99,7 @@ export const createAgentTools = ({ taskEngine }: AgentToolsOptions): ToolDefinit
               goal: input.goal,
               context: input.context,
               notifyOnComplete: input.notify_user ?? true,
-              model: input.model,
+              model: input.model ?? activeChatContext.model,
               autoApproveTools: input.auto_approve_tools,
               parentTaskId: input.parentTaskId ?? activeChatContext.parentTaskId,
               sessionId,

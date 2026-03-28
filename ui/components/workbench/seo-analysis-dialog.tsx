@@ -56,7 +56,8 @@ function buildSeoPrompt(params: {
   steps.push(`  - Top 5 prioritized recommendations with Impact and Effort ratings`);
   steps.push(`  - Content brief outline for updates`);
   steps.push(``);
-  steps.push(`STEP 5: Write your enhanced analysis to the SAME report file using write-file with the EXACT reportPath from Step 2.`);
+  steps.push(`STEP 5: APPEND your enhanced analysis to the EXISTING report file using write-file with the EXACT reportPath from Step 2.`);
+  steps.push(`IMPORTANT: First read the existing report content, then write back the FULL content: the original metrics report followed by a separator line "---" and then your enhanced analysis. Do NOT overwrite or remove the original metrics, tables, and charts. The final file must contain BOTH sections.`);
   steps.push(`Reports are saved under ~/.openzigs/seo-reports/<domain>/ — the write-file tool has access to this directory and all subdirectories.`);
   steps.push(``);
   if (params.exportPdf) {

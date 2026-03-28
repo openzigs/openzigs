@@ -204,12 +204,14 @@ export class MessageRouter {
         channelType: message.channelType as import("../channels/types.js").ChannelType,
         chatId: message.chatId,
         parentTaskId: taskId,
+        model: options?.model,
       });
       setActiveOrchestrateContext({
         sessionId,
         channelType: message.channelType as import("../channels/types.js").ChannelType,
         chatId: message.chatId,
         parentTaskId: taskId,
+        model: options?.model,
       });
       // Set wizard context so workflow-wizard can present interactive preview cards
       setActiveWizardContext({
