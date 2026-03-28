@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import http from "node:http";
 import os from "node:os";
 import { spawn } from "node:child_process";
 import { marked } from "marked";
@@ -35,14 +36,12 @@ export function findChromeBinaryForPdf(): string | undefined {
 // ── HTML wrapper ────────────────────────────────────────────────────────
 
 export function wrapMarkdownAsHtml(markdownContent: string): string {
-  // Strip mermaid blocks — headless Chrome can't render them without mermaid.js
+  // Convert mermaid code blocks into <pre class="mermaid"> elements so
+  // the mermaid.js library (loaded below) renders them as inline SVGs.
   const processedMarkdown = markdownContent.replace(
     /```mermaid\n([\s\S]*?)```/g,
-    (_match, content: string) => {
-      const titleMatch = content.match(/title\s+"([^"]+)"/);
-      const title = titleMatch ? titleMatch[1] : "Chart";
-      return `> **[Chart: ${title}]** — _View the Markdown report for interactive diagrams._`;
-    },
+    (_match, content: string) =>
+      `<pre class="mermaid">\n${content.trim()}\n</pre>`,
   );
   const body = marked(processedMarkdown) as string;
   return `<!DOCTYPE html>
@@ -69,7 +68,11 @@ export function wrapMarkdownAsHtml(markdownContent: string): string {
   em { color: #555; }
   hr { border: none; border-top: 1px solid #eee; margin: 20px 0; }
   @media print { body { padding: 0; } }
+  .mermaid { text-align: center; margin: 16px 0; }
+  .mermaid svg { max-width: 100%; height: auto; }
 </style>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script>mermaid.initialize({ startOnLoad: true, theme: "default" });</script>
 </head>
 <body>
 ${body}
@@ -95,31 +98,43 @@ export async function saveReportPdf(
   if (!chrome) return null;
 
   fs.mkdirSync(outputDir, { recursive: true });
-  const htmlContent = wrapMarkdownAsHtml(markdownContent);
-  const tempHtml = path.join(os.tmpdir(), `${basename}.html`);
   const pdfPath = path.join(outputDir, `${basename}.pdf`);
 
   try {
-    fs.writeFileSync(tempHtml, htmlContent, "utf-8");
-    await new Promise<void>((resolve, reject) => {
-      const proc = spawn(chrome, [
-        "--headless=new",
-        "--disable-gpu",
-        "--no-sandbox",
-        "--disable-dev-shm-usage",
-        `--print-to-pdf=${pdfPath}`,
-        "--print-to-pdf-no-header",
-        `--virtual-time-budget=5000`,
-        tempHtml,
-      ], { stdio: "ignore" });
-      proc.on("close", (code) => (code === 0 ? resolve() : reject(new Error(`Chrome exited ${code}`))));
-      proc.on("error", reject);
-      setTimeout(() => { proc.kill(); reject(new Error("Chrome PDF timeout")); }, 20000);
+    // Serve via a local HTTP server so Chrome can fetch the mermaid CDN script.
+    const htmlContent = wrapMarkdownAsHtml(markdownContent);
+    const server = http.createServer((_req, res) => {
+      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+      res.end(htmlContent);
     });
+    const serverPort = await new Promise<number>((resolve) => {
+      server.listen(0, "127.0.0.1", () => {
+        const addr = server.address();
+        resolve(typeof addr === "object" && addr ? addr.port : 0);
+      });
+    });
+
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const proc = spawn(chrome, [
+          "--headless=new",
+          "--disable-gpu",
+          "--no-sandbox",
+          "--disable-dev-shm-usage",
+          `--print-to-pdf=${pdfPath}`,
+          "--print-to-pdf-no-header",
+          `--virtual-time-budget=10000`,
+          `http://127.0.0.1:${serverPort}`,
+        ], { stdio: "ignore" });
+        proc.on("close", (code) => (code === 0 ? resolve() : reject(new Error(`Chrome exited ${code}`))));
+        proc.on("error", reject);
+        setTimeout(() => { proc.kill(); reject(new Error("Chrome PDF timeout")); }, 30000);
+      });
+    } finally {
+      server.close();
+    }
     return fs.existsSync(pdfPath) ? pdfPath : null;
   } catch {
     return null;
-  } finally {
-    fs.rmSync(tempHtml, { force: true });
   }
 }

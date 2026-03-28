@@ -56,7 +56,7 @@ export function useAskAi({ pageContext, model, reasoningEffort }: UseAskAiOption
         ...prev,
         { id: `err-${Date.now()}`, role: "error", content: "No response received. Check server logs." },
       ]);
-    }, 120_000);
+    }, 600_000);
   }, [clearStuckTimer, finalizeStream]);
 
   // Listen for socket events
@@ -99,14 +99,14 @@ export function useAskAi({ pageContext, model, reasoningEffort }: UseAskAiOption
     socket.on("chat:stream:end", onStreamEnd);
     socket.on("chat:response", onResponse);
     socket.on("chat:error", onError);
-    socket.on("chat:tool-call", onToolCall);
+    socket.on("chat:tool_call", onToolCall);
 
     return () => {
       socket.off("chat:stream", onStream);
       socket.off("chat:stream:end", onStreamEnd);
       socket.off("chat:response", onResponse);
       socket.off("chat:error", onError);
-      socket.off("chat:tool-call", onToolCall);
+      socket.off("chat:tool_call", onToolCall);
     };
   }, [socket, resetStuckTimer, finalizeStream]);
 
