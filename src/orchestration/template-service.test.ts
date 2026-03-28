@@ -533,6 +533,43 @@ describe("TemplateService", () => {
       // Should use task mode (background submit)
       expect(fakeEngine.submit.mock.calls[0][1]).toEqual({ mode: "background" });
     });
+
+    it("setCopilot enables session mode after construction", async () => {
+      const fakeEngine = {
+        submit: vi.fn().mockReturnValue({ id: "deferred-1", status: "queued" }),
+        complete: vi.fn(),
+        fail: vi.fn(),
+      };
+      const svc = new TemplateService({
+        repository: repo,
+        taskEngine: fakeEngine as never,
+        // copilot intentionally NOT passed at construction
+      });
+      const t = svc.create(SAMPLE_INPUT);
+
+      // Session mode should throw before setCopilot
+      expect(() => svc.execute(t.id, { variables: { topic: "AI" }, mode: "session" })).toThrow(
+        "CopilotWrapper not available"
+      );
+
+      // Wire copilot via setter
+      const fakeCopilot = {
+        getCustomAgents: vi.fn().mockReturnValue([]),
+        chat: vi.fn().mockImplementation(async function* () {
+          yield "Deferred session OK";
+        }),
+      };
+      svc.setCopilot(fakeCopilot as never);
+
+      // Now session mode should work
+      const result = svc.execute(t.id, { variables: { topic: "AI" }, mode: "session" });
+      expect(result.taskIds).toEqual(["deferred-1"]);
+      expect(fakeEngine.submit.mock.calls[0][1]).toEqual({ mode: "immediate" });
+
+      await vi.waitFor(() => {
+        expect(fakeCopilot.chat).toHaveBeenCalledTimes(1);
+      });
+    });
   });
 });
 

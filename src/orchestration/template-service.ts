@@ -52,6 +52,11 @@ export class TemplateService {
     this.copilot = opts.copilot;
   }
 
+  /** Deferred injection — call after CopilotWrapper is initialised. */
+  setCopilot(copilot: CopilotWrapper): void {
+    this.copilot = copilot;
+  }
+
   create(input: unknown): OrchestrationTemplate {
     const parsed = CreateOrchestrationTemplateSchema.parse(input);
     return this.repo.insert(parsed);

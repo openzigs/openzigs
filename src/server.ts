@@ -459,6 +459,7 @@ const copilot = new CopilotWrapperService({
   skillDirectories: resolvedSkillDirectories,
 });
 copilotRef = copilot;
+orchTemplateService.setCopilot(copilot);
 
 // ── Brand Voice Service ──
 const brandVoiceService = new BrandVoiceService({ repository: brandVoiceRepo, copilot });
