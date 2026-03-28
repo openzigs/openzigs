@@ -85,7 +85,7 @@ export const createSeoGapTools = (opts: SeoGapToolsOptions = {}): ToolDefinition
 
         // 1. Fetch & extract target content
         const targetHtml = await fetchHtml(targetUrl);
-        const targetContent = extractContent(targetHtml);
+        const targetContent = extractContent(targetHtml, targetUrl);
 
         // 1b. Auto-detect keyword if not provided
         let targetKeyword = providedKeyword ?? "";
@@ -123,7 +123,7 @@ export const createSeoGapTools = (opts: SeoGapToolsOptions = {}): ToolDefinition
         const competitorResults = await Promise.allSettled(
           discovery.organic.map(async (result) => {
             const html = await fetchHtml(result.url);
-            const content = extractContent(html);
+            const content = extractContent(html, result.url);
             return { ...content, url: result.url };
           }),
         );
@@ -154,7 +154,7 @@ export const createSeoGapTools = (opts: SeoGapToolsOptions = {}): ToolDefinition
         const pdfPath = await saveReportPdf(pdfBasename, report, SEO_REPORTS_DIR);
 
         return {
-          text: JSON.stringify({
+          text: `REPORT SAVED: ${reportPath}\n${pdfPath ? `PDF SAVED: ${pdfPath}` : "PDF: Not generated (Chrome not found)"}\nCompetitors analyzed: ${competitors.length}\n${detectedKeyword ? `Auto-detected keyword: "${targetKeyword}" (${detectedKeyword.intent})` : ""}\nUse the analysisPrompt field for enhanced LLM analysis. Write enhanced results to the SAME reportPath.\n\n` + JSON.stringify({
             reportPath,
             pdfPath: pdfPath ?? null,
             filename,
@@ -166,6 +166,13 @@ export const createSeoGapTools = (opts: SeoGapToolsOptions = {}): ToolDefinition
               readingTime: targetContent.readingTime,
               readabilityScore: targetContent.readabilityScore,
               topKeywords: targetContent.keywords.slice(0, 5).map((k) => k.term),
+              metaTitleLength: targetContent.metaTitle.length,
+              metaDescriptionLength: targetContent.metaDescription.length,
+              schemaTypes: targetContent.schemaMarkup.map((s) => s.type),
+              imagesTotal: targetContent.images.length,
+              imagesWithoutAlt: targetContent.imagesWithoutAlt,
+              internalLinks: targetContent.internalLinkCount,
+              externalLinks: targetContent.externalLinkCount,
             },
             competitorsAnalyzed: competitors.length,
             serpFeatures: {
@@ -175,7 +182,6 @@ export const createSeoGapTools = (opts: SeoGapToolsOptions = {}): ToolDefinition
             },
             searchProvider: discovery.provider,
             analysisPrompt,
-            message: `SEO gap analysis complete.${detectedKeyword ? ` Auto-detected keyword: "${targetKeyword}" (${detectedKeyword.intent}).` : ""} Report saved to ${reportPath}.${pdfPath ? ` PDF saved to ${pdfPath}.` : ""} ${competitors.length} competitors analyzed. Use the analysisPrompt with an LLM for enhanced recommendations.`,
           }, null, 2),
         };
       } catch (error) {
@@ -205,7 +211,7 @@ export const createSeoGapTools = (opts: SeoGapToolsOptions = {}): ToolDefinition
 
       try {
         const html = await fetchHtml(url);
-        const content = extractContent(html);
+        const content = extractContent(html, url);
 
         return {
           text: JSON.stringify({
@@ -218,6 +224,13 @@ export const createSeoGapTools = (opts: SeoGapToolsOptions = {}): ToolDefinition
             readingTime: content.readingTime,
             readabilityScore: content.readabilityScore,
             keywords: content.keywords,
+            metaTitle: content.metaTitle,
+            metaDescription: content.metaDescription,
+            schemaTypes: content.schemaMarkup.map((s) => s.type),
+            imagesTotal: content.images.length,
+            imagesWithoutAlt: content.imagesWithoutAlt,
+            internalLinks: content.internalLinkCount,
+            externalLinks: content.externalLinkCount,
             bodyTextPreview: content.bodyText.slice(0, 500) + (content.bodyText.length > 500 ? "…" : ""),
           }, null, 2),
         };

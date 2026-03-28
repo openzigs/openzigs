@@ -23,6 +23,19 @@ const makeContent = (overrides = {}) => ({
     { term: "content", tfidf: 0.9 },
   ],
   readabilityScore: 65.2,
+  metaTitle: "Test Page - Example",
+  metaDescription: "A test page for SEO analysis with detailed content.",
+  metaTags: [{ name: "description", content: "A test page for SEO analysis with detailed content." }],
+  images: [
+    { src: "/img/hero.jpg", alt: "Hero image", hasAlt: true },
+    { src: "/img/chart.png", alt: "", hasAlt: false },
+  ],
+  imagesWithoutAlt: 1,
+  schemaMarkup: [{ type: "Article", properties: ["headline", "author", "datePublished"] }],
+  internalLinks: [{ href: "/about", text: "About Us", isInternal: true }],
+  externalLinks: [{ href: "https://external.com", text: "External", isInternal: false }],
+  internalLinkCount: 1,
+  externalLinkCount: 1,
   ...overrides,
 });
 
@@ -190,6 +203,65 @@ describe("report-generator", () => {
       const report = generateMetricsReport(makeInput());
       // Date format: YYYY-MM-DD
       expect(report).toMatch(/\d{4}-\d{2}-\d{2}/);
+    });
+
+    it("includes On-Page SEO Signals table", () => {
+      const report = generateMetricsReport(makeInput());
+      expect(report).toContain("## On-Page SEO Signals");
+      expect(report).toContain("Meta Title (len)");
+      expect(report).toContain("Schema Types");
+      expect(report).toContain("Imgs No Alt");
+    });
+
+    it("includes Schema Markup Comparison when schema exists", () => {
+      const report = generateMetricsReport(makeInput());
+      expect(report).toContain("## Schema Markup Comparison");
+      expect(report).toContain("Article");
+    });
+
+    it("omits Schema Markup Comparison when no schema present", () => {
+      const report = generateMetricsReport(
+        makeInput({
+          targetContent: makeContent({ schemaMarkup: [] }),
+          competitors: [
+            { ...makeContent({ title: "C1", wordCount: 800, schemaMarkup: [] }), url: "https://comp1.com/page" },
+          ],
+        }),
+      );
+      expect(report).not.toContain("## Schema Markup Comparison");
+    });
+
+    it("includes Internal Linking Profile table", () => {
+      const report = generateMetricsReport(makeInput());
+      expect(report).toContain("## Internal Linking Profile");
+      expect(report).toContain("Internal Links");
+      expect(report).toContain("External Links");
+    });
+  });
+
+  describe("buildAnalysisPrompt includes technical SEO data", () => {
+    it("includes meta title and description info", () => {
+      const prompt = buildAnalysisPrompt(makeInput());
+      expect(prompt).toContain("Meta Title");
+      expect(prompt).toContain("Meta Description");
+    });
+
+    it("includes schema types in prompt", () => {
+      const prompt = buildAnalysisPrompt(makeInput());
+      expect(prompt).toContain("Schema Types");
+      expect(prompt).toContain("Article");
+    });
+
+    it("includes image and link data in prompt", () => {
+      const prompt = buildAnalysisPrompt(makeInput());
+      expect(prompt).toContain("Images");
+      expect(prompt).toContain("Internal Links");
+      expect(prompt).toContain("External Links");
+    });
+
+    it("includes Technical SEO Assessment in task instructions", () => {
+      const prompt = buildAnalysisPrompt(makeInput());
+      expect(prompt).toContain("Technical SEO Assessment");
     });
   });
 

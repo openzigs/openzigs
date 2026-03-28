@@ -28,6 +28,12 @@ export function buildAnalysisPrompt(input: AnalysisInput): string {
   lines.push(`- **Reading Time**: ${targetContent.readingTime} min`);
   lines.push(`- **Readability (Flesch-Kincaid)**: ${targetContent.readabilityScore}`);
   lines.push(`- **Top Keywords**: ${targetContent.keywords.slice(0, 10).map((k) => `${k.term} (${k.tfidf})`).join(", ")}`);
+  lines.push(`- **Meta Title**: "${targetContent.metaTitle}" (${targetContent.metaTitle.length} chars)`);
+  lines.push(`- **Meta Description**: "${targetContent.metaDescription.slice(0, 80)}${targetContent.metaDescription.length > 80 ? "…" : ""}" (${targetContent.metaDescription.length} chars)`);
+  lines.push(`- **Schema Types**: ${targetContent.schemaMarkup.map((s) => s.type).join(", ") || "None"}`);
+  lines.push(`- **Images**: ${targetContent.images.length} total, ${targetContent.imagesWithoutAlt} missing alt text`);
+  lines.push(`- **Internal Links**: ${targetContent.internalLinkCount}`);
+  lines.push(`- **External Links**: ${targetContent.externalLinkCount}`);
   lines.push("");
   lines.push("### Target Headings");
   for (const h of targetContent.headings) {
@@ -45,6 +51,9 @@ export function buildAnalysisPrompt(input: AnalysisInput): string {
     lines.push(`- **Reading Time**: ${comp.readingTime} min`);
     lines.push(`- **Readability**: ${comp.readabilityScore}`);
     lines.push(`- **Top Keywords**: ${comp.keywords.slice(0, 10).map((k) => `${k.term} (${k.tfidf})`).join(", ")}`);
+    lines.push(`- **Schema Types**: ${comp.schemaMarkup.map((s) => s.type).join(", ") || "None"}`);
+    lines.push(`- **Images**: ${comp.images.length} total, ${comp.imagesWithoutAlt} missing alt`);
+    lines.push(`- **Internal Links**: ${comp.internalLinkCount}, **External Links**: ${comp.externalLinkCount}`);
     lines.push("#### Competitor Headings");
     for (const h of comp.headings) {
       lines.push(`${"  ".repeat(h.level - 1)}- H${h.level}: ${h.text}`);
@@ -84,7 +93,8 @@ export function buildAnalysisPrompt(input: AnalysisInput): string {
   lines.push("6. **Keyword Density Comparison** — Table of top keywords with presence per page");
   lines.push("7. **SERP Feature Opportunities** — PAA questions to target, featured snippet optimization");
   lines.push("8. **Actionable Recommendations** — Prioritized by impact (high/medium/low)");
-  lines.push("9. **Content Brief** — Outline for updating the target page");
+  lines.push("9. **Technical SEO Assessment** — Meta tags, schema markup, image alt text, internal linking quality");
+  lines.push("10. **Content Brief** — Outline for updating the target page");
   lines.push("");
   lines.push("Use tables, bullet lists, and Mermaid diagrams. Be specific with data from the analysis above.");
 
@@ -183,6 +193,53 @@ export function generateMetricsReport(input: AnalysisInput): string {
       return v !== undefined ? String(v) : "—";
     });
     lines.push(`| ${term} | ${cells.join(" | ")} |`);
+  }
+
+  // On-Page SEO Signals
+  lines.push("");
+  lines.push("## On-Page SEO Signals");
+  lines.push("");
+  lines.push("| Page | Meta Title (len) | Meta Description (len) | Schema Types | Images | Imgs No Alt | Internal Links | External Links |");
+  lines.push("|------|:----------------:|:---------------------:|:------------:|:------:|:-----------:|:--------------:|:--------------:|");
+  const targetSchemaTypes = targetContent.schemaMarkup.map((s) => s.type).join(", ") || "None";
+  lines.push(`| **Target** | ${targetContent.metaTitle.length} | ${targetContent.metaDescription.length} | ${targetSchemaTypes} | ${targetContent.images.length} | ${targetContent.imagesWithoutAlt} | ${targetContent.internalLinkCount} | ${targetContent.externalLinkCount} |`);
+  for (const comp of competitors) {
+    const name = new URL(comp.url).hostname;
+    const compSchemaTypes = comp.schemaMarkup.map((s) => s.type).join(", ") || "None";
+    lines.push(`| ${name} | ${comp.metaTitle.length} | ${comp.metaDescription.length} | ${compSchemaTypes} | ${comp.images.length} | ${comp.imagesWithoutAlt} | ${comp.internalLinkCount} | ${comp.externalLinkCount} |`);
+  }
+
+  // Schema Markup Comparison
+  const allSchemaPages = [
+    { label: "Target", schemas: targetContent.schemaMarkup },
+    ...competitors.map((c) => ({ label: new URL(c.url).hostname, schemas: c.schemaMarkup })),
+  ];
+  const hasAnySchema = allSchemaPages.some((p) => p.schemas.length > 0);
+  if (hasAnySchema) {
+    lines.push("");
+    lines.push("## Schema Markup Comparison");
+    lines.push("");
+    for (const page of allSchemaPages) {
+      if (page.schemas.length > 0) {
+        lines.push(`### ${page.label}`);
+        for (const s of page.schemas) {
+          lines.push(`- **${s.type}**: ${s.properties.slice(0, 8).join(", ")}`);
+        }
+        lines.push("");
+      }
+    }
+  }
+
+  // Internal Linking Profile
+  lines.push("");
+  lines.push("## Internal Linking Profile");
+  lines.push("");
+  lines.push("| Page | Internal Links | External Links |");
+  lines.push("|------|:--------------:|:--------------:|");
+  lines.push(`| **Target** | ${targetContent.internalLinkCount} | ${targetContent.externalLinkCount} |`);
+  for (const comp of competitors) {
+    const name = new URL(comp.url).hostname;
+    lines.push(`| ${name} | ${comp.internalLinkCount} | ${comp.externalLinkCount} |`);
   }
 
   // SERP features

@@ -13,6 +13,11 @@ export type KeywordEntry = {
   tfidf: number;
 };
 
+export type MetaTag = { name: string; content: string };
+export type ImageInfo = { src: string; alt: string; hasAlt: boolean };
+export type SchemaMarkup = { type: string; properties: string[] };
+export type LinkInfo = { href: string; text: string; isInternal: boolean };
+
 export type ExtractedContent = {
   title: string;
   headings: Heading[];
@@ -23,6 +28,16 @@ export type ExtractedContent = {
   readingTime: number;
   keywords: KeywordEntry[];
   readabilityScore: number;
+  metaTitle: string;
+  metaDescription: string;
+  metaTags: MetaTag[];
+  images: ImageInfo[];
+  imagesWithoutAlt: number;
+  schemaMarkup: SchemaMarkup[];
+  internalLinks: LinkInfo[];
+  externalLinks: LinkInfo[];
+  internalLinkCount: number;
+  externalLinkCount: number;
 };
 
 /** Selectors for elements that are navigation/chrome, not article content. */
@@ -68,8 +83,97 @@ export function countSyllables(word: string): number {
  * Strips navigation/footer/sidebar noise, extracts headings, body text,
  * and computes metrics.
  */
-export function extractContent(html: string): ExtractedContent {
+export function extractContent(html: string, sourceUrl?: string): ExtractedContent {
   const $ = cheerio.load(html);
+
+  // ── Pre-noise-removal extraction (meta, schema, images, links) ─────
+
+  // Meta title from <title> tag
+  const metaTitle = $("title").first().text().trim();
+
+  // Meta description
+  const metaDescription =
+    $('meta[name="description"]').attr("content")?.trim() ?? "";
+
+  // All meta tags with name+content
+  const metaTags: MetaTag[] = [];
+  $("meta[name][content]").each((_i, el) => {
+    const name = $(el).attr("name")?.trim() ?? "";
+    const content = $(el).attr("content")?.trim() ?? "";
+    if (name && content) {
+      metaTags.push({ name, content });
+    }
+  });
+
+  // Schema markup (JSON-LD)
+  const schemaMarkup: SchemaMarkup[] = [];
+  $('script[type="application/ld+json"]').each((_i, el) => {
+    try {
+      const raw = $(el).html();
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      const items = Array.isArray(parsed) ? parsed : [parsed];
+      for (const item of items) {
+        const type = item["@type"];
+        if (type) {
+          const types = Array.isArray(type) ? type : [type];
+          for (const t of types) {
+            const properties = Object.keys(item).filter((k) => !k.startsWith("@"));
+            schemaMarkup.push({ type: t, properties });
+          }
+        }
+      }
+    } catch {
+      // Ignore malformed JSON-LD
+    }
+  });
+
+  // Images
+  const images: ImageInfo[] = [];
+  $("img").each((_i, el) => {
+    const src = $(el).attr("src")?.trim() ?? "";
+    const alt = $(el).attr("alt")?.trim() ?? "";
+    const hasAlt = $(el).attr("alt") !== undefined && alt.length > 0;
+    if (src) {
+      images.push({ src, alt, hasAlt });
+    }
+  });
+  const imagesWithoutAlt = images.filter((img) => !img.hasAlt).length;
+
+  // Links — classify as internal vs external
+  let sourceHostname: string | undefined;
+  if (sourceUrl) {
+    try {
+      sourceHostname = new URL(sourceUrl).hostname.replace(/^www\./, "");
+    } catch {
+      // Invalid sourceUrl — all links will be classified as external
+    }
+  }
+  const internalLinks: LinkInfo[] = [];
+  const externalLinks: LinkInfo[] = [];
+  $("a[href]").each((_i, el) => {
+    const href = $(el).attr("href")?.trim() ?? "";
+    const text = $(el).text().trim();
+    if (!href || href.startsWith("#") || href.startsWith("javascript:") || href.startsWith("mailto:")) return;
+    let isInternal = false;
+    if (sourceHostname) {
+      try {
+        const linkHost = new URL(href, sourceUrl).hostname.replace(/^www\./, "");
+        isInternal = linkHost === sourceHostname;
+      } catch {
+        // relative urls are internal
+        isInternal = !href.startsWith("http");
+      }
+    }
+    const info: LinkInfo = { href, text, isInternal };
+    if (isInternal) {
+      internalLinks.push(info);
+    } else {
+      externalLinks.push(info);
+    }
+  });
+
+  // ── Noise removal ──────────────────────────────────────────────────
 
   // Remove noise elements
   for (const sel of NOISE_SELECTORS) {
@@ -124,6 +228,16 @@ export function extractContent(html: string): ExtractedContent {
     readingTime,
     keywords,
     readabilityScore,
+    metaTitle,
+    metaDescription,
+    metaTags,
+    images,
+    imagesWithoutAlt,
+    schemaMarkup,
+    internalLinks,
+    externalLinks,
+    internalLinkCount: internalLinks.length,
+    externalLinkCount: externalLinks.length,
   };
 }
 

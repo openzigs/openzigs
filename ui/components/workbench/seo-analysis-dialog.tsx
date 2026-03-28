@@ -30,31 +30,41 @@ function buildSeoPrompt(params: {
   searchProvider: string;
   exportPdf: boolean;
 }): string {
+  const toolArgs: Record<string, string> = { targetUrl: params.targetUrl };
+  if (params.targetKeyword) toolArgs.targetKeyword = params.targetKeyword;
+  if (params.searchProvider !== "auto") toolArgs.searchProvider = params.searchProvider;
+
   const steps: string[] = [];
   steps.push(`[Using SEO Analyst skill]`);
-  steps.push(`Run a full SEO content gap analysis.`);
-  steps.push(`Target URL: ${params.targetUrl}`);
-  if (params.targetKeyword) {
-    steps.push(`Target Keyword: "${params.targetKeyword}"`);
-  } else {
-    steps.push(`Target Keyword: (auto-detect from page content)`);
-  }
-  if (params.searchProvider !== "auto") {
-    steps.push(`Search Provider: ${params.searchProvider}`);
-  }
-  steps.push("");
-  steps.push("STEP 1: Call seo-gap-analysis with the target URL and keyword. Wait for results.");
-  steps.push("STEP 2: The tool returns JSON with a `reportPath` field (under ~/.openzigs/seo-reports/). Read the generated report from that exact reportPath.");
-  steps.push("STEP 3: Using the returned analysisPrompt, provide enhanced LLM analysis with:");
-  steps.push("  - Executive summary with gap score");
-  steps.push("  - Key content gaps and missing subtopics");
-  steps.push("  - Top 5 prioritized recommendations");
-  steps.push("  - Content brief outline for page updates");
-  steps.push("STEP 4: Append the enhanced analysis to the report file at the EXACT reportPath returned by seo-gap-analysis (under ~/.openzigs/seo-reports/). Do NOT save to any other directory.");
+  steps.push(`You MUST call the seo-gap-analysis tool. Do NOT skip the tool call or fabricate results.`);
+  steps.push(``);
+  steps.push(`STEP 1 (MANDATORY): Call the seo-gap-analysis tool with these exact parameters:`);
+  steps.push(`\`\`\`json`);
+  steps.push(JSON.stringify(toolArgs, null, 2));
+  steps.push(`\`\`\``);
+  steps.push(``);
+  steps.push(`STEP 2: The tool returns JSON. Extract the "reportPath" and "analysisPrompt" fields.`);
+  steps.push(`- reportPath: the absolute path under ~/.openzigs/seo-reports/ where the markdown report was saved`);
+  steps.push(`- pdfPath: the PDF path (if Chrome was available), or null`);
+  steps.push(`- analysisPrompt: the detailed prompt for enhanced analysis`);
+  steps.push(``);
+  steps.push(`STEP 3: Read the saved report from the exact reportPath using read-file.`);
+  steps.push(``);
+  steps.push(`STEP 4: Using the analysisPrompt data, provide your enhanced LLM analysis with:`);
+  steps.push(`  - Executive summary with a gap score (0-100)`);
+  steps.push(`  - Key content gaps and missing subtopics`);
+  steps.push(`  - Top 5 prioritized recommendations (with Impact and Effort ratings)`);
+  steps.push(`  - Content brief outline for page updates`);
+  steps.push(``);
+  steps.push(`STEP 5: Append your enhanced analysis to the SAME report file using write-file with the EXACT reportPath from Step 2.`);
+  steps.push(`IMPORTANT: The path MUST start with the user home directory path to ~/.openzigs/seo-reports/. Do NOT write to any other directory.`);
+  steps.push(``);
+  steps.push(`STEP 6: Respond with:`);
+  steps.push(`  - A summary of key findings`);
+  steps.push(`  - The report path: {reportPath}`);
   if (params.exportPdf) {
-    steps.push("NOTE: The tool also generates a PDF version alongside the markdown report. The `pdfPath` field in the response contains the PDF location (or null if Chrome was unavailable).");
+    steps.push(`  - The PDF path: {pdfPath} (the tool generates this automatically)`);
   }
-  steps.push("STEP 5: Respond with a summary of key findings, the markdown report path, and the PDF report path (if generated).");
   return steps.join("\n");
 }
 

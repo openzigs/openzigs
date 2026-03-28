@@ -259,5 +259,145 @@ describe("html-extractor", () => {
       expect(result.bodyText).toContain("list item");
       expect(result.bodyText).toContain("Table cell");
     });
+
+    it("provides default values for new fields when no metadata present", () => {
+      const html = "<html><body><h1>Title</h1><p>Some content here for testing.</p></body></html>";
+      const result = extractContent(html);
+      expect(result.metaTitle).toBe("");
+      expect(result.metaDescription).toBe("");
+      expect(result.metaTags).toEqual([]);
+      expect(result.images).toEqual([]);
+      expect(result.imagesWithoutAlt).toBe(0);
+      expect(result.schemaMarkup).toEqual([]);
+      expect(result.internalLinks).toEqual([]);
+      expect(result.externalLinks).toEqual([]);
+      expect(result.internalLinkCount).toBe(0);
+      expect(result.externalLinkCount).toBe(0);
+    });
+
+    it("extracts meta title from <title> tag", () => {
+      const html = `<html><head><title>My SEO Title</title></head><body><h1>H1</h1><p>Content.</p></body></html>`;
+      const result = extractContent(html);
+      expect(result.metaTitle).toBe("My SEO Title");
+    });
+
+    it("extracts meta description", () => {
+      const html = `<html><head><meta name="description" content="A great page about testing."></head><body><p>Content.</p></body></html>`;
+      const result = extractContent(html);
+      expect(result.metaDescription).toBe("A great page about testing.");
+    });
+
+    it("extracts all meta tags with name and content", () => {
+      const html = `
+        <html><head>
+          <meta name="description" content="Page desc">
+          <meta name="keywords" content="test,seo">
+          <meta name="robots" content="index,follow">
+          <meta charset="utf-8">
+        </head><body><p>Content.</p></body></html>
+      `;
+      const result = extractContent(html);
+      expect(result.metaTags).toHaveLength(3);
+      expect(result.metaTags).toContainEqual({ name: "description", content: "Page desc" });
+      expect(result.metaTags).toContainEqual({ name: "keywords", content: "test,seo" });
+      expect(result.metaTags).toContainEqual({ name: "robots", content: "index,follow" });
+    });
+
+    it("extracts schema markup from JSON-LD", () => {
+      const html = `
+        <html><head>
+          <script type="application/ld+json">
+            {"@context":"https://schema.org","@type":"Article","headline":"Test","author":"John"}
+          </script>
+        </head><body><p>Content.</p></body></html>
+      `;
+      const result = extractContent(html);
+      expect(result.schemaMarkup).toHaveLength(1);
+      expect(result.schemaMarkup[0].type).toBe("Article");
+      expect(result.schemaMarkup[0].properties).toContain("headline");
+      expect(result.schemaMarkup[0].properties).toContain("author");
+    });
+
+    it("handles multiple JSON-LD blocks", () => {
+      const html = `
+        <html><head>
+          <script type="application/ld+json">{"@type":"Article","headline":"H"}</script>
+          <script type="application/ld+json">{"@type":"BreadcrumbList","itemListElement":[]}</script>
+        </head><body><p>Content.</p></body></html>
+      `;
+      const result = extractContent(html);
+      expect(result.schemaMarkup).toHaveLength(2);
+      const types = result.schemaMarkup.map((s) => s.type);
+      expect(types).toContain("Article");
+      expect(types).toContain("BreadcrumbList");
+    });
+
+    it("ignores malformed JSON-LD gracefully", () => {
+      const html = `
+        <html><head>
+          <script type="application/ld+json">NOT VALID JSON</script>
+        </head><body><p>Content.</p></body></html>
+      `;
+      const result = extractContent(html);
+      expect(result.schemaMarkup).toEqual([]);
+    });
+
+    it("extracts images with alt text info", () => {
+      const html = `
+        <html><body>
+          <img src="/img/hero.jpg" alt="Hero image">
+          <img src="/img/chart.png" alt="">
+          <img src="/img/logo.svg">
+        </body></html>
+      `;
+      const result = extractContent(html);
+      expect(result.images).toHaveLength(3);
+      expect(result.images[0]).toEqual({ src: "/img/hero.jpg", alt: "Hero image", hasAlt: true });
+      expect(result.images[1]).toEqual({ src: "/img/chart.png", alt: "", hasAlt: false });
+      expect(result.images[2]).toEqual({ src: "/img/logo.svg", alt: "", hasAlt: false });
+      expect(result.imagesWithoutAlt).toBe(2);
+    });
+
+    it("classifies internal and external links with sourceUrl", () => {
+      const html = `
+        <html><body>
+          <a href="/about">About</a>
+          <a href="https://example.com/contact">Contact</a>
+          <a href="https://external.com/page">External</a>
+        </body></html>
+      `;
+      const result = extractContent(html, "https://example.com/page");
+      expect(result.internalLinks.length).toBe(2);
+      expect(result.externalLinks.length).toBe(1);
+      expect(result.internalLinkCount).toBe(2);
+      expect(result.externalLinkCount).toBe(1);
+      expect(result.externalLinks[0].href).toBe("https://external.com/page");
+    });
+
+    it("classifies all links as external when no sourceUrl provided", () => {
+      const html = `
+        <html><body>
+          <a href="https://example.com/page">Link 1</a>
+          <a href="https://other.com/page">Link 2</a>
+        </body></html>
+      `;
+      const result = extractContent(html);
+      expect(result.internalLinks.length).toBe(0);
+      expect(result.externalLinks.length).toBe(2);
+    });
+
+    it("skips hash-only and javascript: and mailto: links", () => {
+      const html = `
+        <html><body>
+          <a href="#">Anchor</a>
+          <a href="javascript:void(0)">JS</a>
+          <a href="mailto:a@b.com">Email</a>
+          <a href="https://real.com">Real</a>
+        </body></html>
+      `;
+      const result = extractContent(html);
+      expect(result.externalLinks.length).toBe(1);
+      expect(result.externalLinks[0].href).toBe("https://real.com");
+    });
   });
 });

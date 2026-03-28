@@ -240,7 +240,9 @@ describe("seo-gap-tools", () => {
       });
 
       expect(result.isError).toBeUndefined();
-      const parsed = JSON.parse(result.text);
+      // Text starts with a human-readable header, JSON follows after blank line
+      const jsonStart = result.text.indexOf("{");
+      const parsed = JSON.parse(result.text.slice(jsonStart));
       expect(parsed.reportPath).toContain("seo-reports");
       expect(parsed.pdfPath).toBe("/home/user/.openzigs/seo-reports/test.pdf");
       expect(parsed.filename).toMatch(/^mysite\.com-seo-analysis-\d{4}-\d{2}-\d{2}\.md$/);
@@ -249,8 +251,9 @@ describe("seo-gap-tools", () => {
       expect(parsed.competitorsAnalyzed).toBeGreaterThanOrEqual(0);
       expect(parsed.searchProvider).toBe("serper");
       expect(parsed.analysisPrompt).toContain("expert SEO strategist");
-      expect(parsed.message).toContain("SEO gap analysis complete");
-      expect(parsed.message).toContain("PDF saved to");
+      // Human-readable header contains report info
+      expect(result.text).toContain("REPORT SAVED:");
+      expect(result.text).toContain("PDF SAVED:");
 
       fsSpy.mockRestore();
       mkdirSpy.mockRestore();
@@ -312,7 +315,8 @@ describe("seo-gap-tools", () => {
 
       // Should still succeed even if competitors failed
       expect(result.isError).toBeUndefined();
-      const parsed = JSON.parse(result.text);
+      const jsonStart = result.text.indexOf("{");
+      const parsed = JSON.parse(result.text.slice(jsonStart));
       expect(parsed.competitorsAnalyzed).toBe(0);
       expect(parsed.pdfPath).toBeNull();
     });
@@ -352,7 +356,8 @@ describe("seo-gap-tools", () => {
       });
 
       expect(result.isError).toBeUndefined();
-      const parsed = JSON.parse(result.text);
+      const jsonStart = result.text.indexOf("{");
+      const parsed = JSON.parse(result.text.slice(jsonStart));
       expect(parsed.searchProvider).toBe("brave");
     });
 
@@ -405,12 +410,13 @@ describe("seo-gap-tools", () => {
       const result = await tool.handler({ targetUrl: "https://mysite.com/react-perf" });
 
       expect(result.isError).toBeUndefined();
-      const parsed = JSON.parse(result.text);
+      const jsonStart = result.text.indexOf("{");
+      const parsed = JSON.parse(result.text.slice(jsonStart));
       expect(parsed.detectedKeyword).toBeDefined();
       expect(parsed.detectedKeyword.keyword).toBeTruthy();
       expect(parsed.detectedKeyword.intent).toBeDefined();
       expect(parsed.targetKeyword).toBe(parsed.detectedKeyword.keyword);
-      expect(parsed.message).toContain("Auto-detected keyword");
+      expect(result.text).toContain("Auto-detected keyword");
     });
 
     it("returns error when auto-detection fails on empty page", async () => {
@@ -459,7 +465,8 @@ describe("seo-gap-tools", () => {
       });
 
       expect(result.isError).toBeUndefined();
-      const parsed = JSON.parse(result.text);
+      const jsonStart = result.text.indexOf("{");
+      const parsed = JSON.parse(result.text.slice(jsonStart));
       expect(parsed.detectedKeyword).toBeUndefined();
       expect(parsed.targetKeyword).toBe("manual keyword");
     });

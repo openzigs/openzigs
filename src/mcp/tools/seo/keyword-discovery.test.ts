@@ -27,6 +27,16 @@ function makeContent(overrides: Partial<ExtractedContent> = {}): ExtractedConten
       { term: "tracking", tfidf: 1.0 },
     ],
     readabilityScore: 62.5,
+    metaTitle: "",
+    metaDescription: "",
+    metaTags: [],
+    images: [],
+    imagesWithoutAlt: 0,
+    schemaMarkup: [],
+    internalLinks: [],
+    externalLinks: [],
+    internalLinkCount: 0,
+    externalLinkCount: 0,
     ...overrides,
   };
 }
