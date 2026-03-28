@@ -1,4 +1,4 @@
-import { test, expect, navigateTo } from './helpers';
+import { test, expect } from './helpers';
 import { WorkbenchPage } from './pages/workbench.page';
 
 test.describe('Workbench SEO Gap Analysis (#647)', () => {

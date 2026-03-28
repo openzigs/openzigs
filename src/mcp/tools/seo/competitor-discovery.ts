@@ -33,7 +33,7 @@ function isContentCompetitor(url: string, targetDomain: string): boolean {
   try {
     const hostname = new URL(url).hostname.replace(/^www\./, "");
     if (hostname === targetDomain) return false;
-    if (NON_CONTENT_DOMAINS.has(hostname)) return false;
+    if ([...NON_CONTENT_DOMAINS].some(d => hostname === d || hostname.endsWith(`.${d}`))) return false;
     const pathname = new URL(url).pathname.toLowerCase();
     if (pathname.includes("/dp/") || pathname.includes("/product/") || pathname.includes("/shop/")) return false;
     return true;

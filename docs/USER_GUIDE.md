@@ -7618,8 +7618,8 @@ Or use the `seo-analyst` agent for a dedicated SEO analysis session.
 
 | Tool | Risk | Description |
 |---|---|---|
-| `seo-gap-analysis` | 🟢 low | Full SEO gap analysis pipeline |
-| `seo-extract-content` | 🟢 low | Extract structured content metrics from a single URL |
+| `seo-gap-analysis` | � medium | Full SEO gap analysis pipeline |
+| `seo-extract-content` | 🟡 medium | Extract structured content metrics from a single URL |
 
 ### Configuration
 

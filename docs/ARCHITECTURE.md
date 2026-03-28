@@ -796,8 +796,8 @@ Two native MCP tools for content gap analysis against top-ranking competitors. R
 
 | Tool | Risk | Description |
 |---|---|---|
-| `seo-gap-analysis` | 🟢 low | Full pipeline: fetch target → discover competitors (Serper/Brave) → extract content → generate metrics report → save to `~/.openzigs/seo-reports/` |
-| `seo-extract-content` | 🟢 low | Extract structured content from a single URL: headings, word count, TF-IDF keywords, Flesch-Kincaid readability |
+| `seo-gap-analysis` | � medium | Full pipeline: fetch target → discover competitors (Serper/Brave) → extract content → generate metrics report → save to `~/.openzigs/seo-reports/` |
+| `seo-extract-content` | 🟡 medium | Extract structured content from a single URL: headings, word count, TF-IDF keywords, Flesch-Kincaid readability |
 
 **Data Flow:**
 ```
