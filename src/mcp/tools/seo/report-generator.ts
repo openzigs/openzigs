@@ -394,16 +394,22 @@ export function generateMetricsReport(input: AnalysisInput): string {
 }
 
 /**
+ * Extract sanitized domain from a URL (for use as a subdirectory name).
+ */
+export function buildReportSubdir(targetUrl: string): string {
+  try {
+    return new URL(targetUrl).hostname.replace(/^www\./, "");
+  } catch {
+    return "unknown";
+  }
+}
+
+/**
  * Build the file name for saving the report.
  * Format: `<domain>-<keyword-slug>-<YYYY-MM-DD>.md`
  */
 export function buildReportFilename(targetUrl: string, keyword: string): string {
-  let domain: string;
-  try {
-    domain = new URL(targetUrl).hostname.replace(/^www\./, "");
-  } catch {
-    domain = "unknown";
-  }
+  const domain = buildReportSubdir(targetUrl);
   const slug = keyword
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")

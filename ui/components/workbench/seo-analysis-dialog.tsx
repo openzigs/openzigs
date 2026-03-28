@@ -57,7 +57,7 @@ function buildSeoPrompt(params: {
   steps.push(`  - Content brief outline for updates`);
   steps.push(``);
   steps.push(`STEP 5: Write your enhanced analysis to the SAME report file using write-file with the EXACT reportPath from Step 2.`);
-  steps.push(`The reportPath is inside ~/.openzigs/seo-reports/ — the write-file tool has access to this directory.`);
+  steps.push(`Reports are saved under ~/.openzigs/seo-reports/<domain>/ — the write-file tool has access to this directory and all subdirectories.`);
   steps.push(``);
   if (params.exportPdf) {
     steps.push(`STEP 6: Call the export-pdf tool with the reportPath to regenerate the PDF with the enhanced content.`);

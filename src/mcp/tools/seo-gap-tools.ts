@@ -5,7 +5,7 @@ import os from "node:os";
 import type { ToolDefinition } from "../tool-registry.js";
 import { extractContent } from "./seo/html-extractor.js";
 import { discoverCompetitors } from "./seo/competitor-discovery.js";
-import { buildAnalysisPrompt, generateMetricsReport, buildReportFilename, type AnalysisInput } from "./seo/report-generator.js";
+import { buildAnalysisPrompt, generateMetricsReport, buildReportFilename, buildReportSubdir, type AnalysisInput } from "./seo/report-generator.js";
 import { discoverKeyword } from "./seo/keyword-discovery.js";
 import { saveReportPdf } from "./shared/pdf-export.js";
 
@@ -154,14 +154,17 @@ export const createSeoGapTools = (opts: SeoGapToolsOptions = {}): ToolDefinition
         const report = generateMetricsReport(input);
         const analysisPrompt = buildAnalysisPrompt(input);
 
-        // 5. Save report
+        // 5. Save report in domain subdirectory
         const filename = buildReportFilename(targetUrl, targetKeyword);
-        const reportPath = path.join(SEO_REPORTS_DIR, filename);
+        const subdir = buildReportSubdir(targetUrl);
+        const reportDir = path.join(SEO_REPORTS_DIR, subdir);
+        await fs.mkdir(reportDir, { recursive: true });
+        const reportPath = path.join(reportDir, filename);
         await fs.writeFile(reportPath, report, "utf-8");
 
         // 5b. Generate PDF alongside markdown
         const pdfBasename = filename.replace(/\.md$/, "");
-        const pdfPath = await saveReportPdf(pdfBasename, report, SEO_REPORTS_DIR);
+        const pdfPath = await saveReportPdf(pdfBasename, report, reportDir);
 
         return {
           text: `REPORT SAVED: ${reportPath}\n${pdfPath ? `PDF SAVED: ${pdfPath}` : "PDF: Not generated (Chrome not found)"}\nCompetitors analyzed: ${competitors.length}\n${detectedKeyword ? `Auto-detected keyword: "${targetKeyword}" (${detectedKeyword.intent})` : ""}\nUse the analysisPrompt field for enhanced LLM analysis. Write enhanced results to the SAME reportPath.\n\n` + JSON.stringify({

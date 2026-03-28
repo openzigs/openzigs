@@ -10,7 +10,8 @@ import { FileSidebar } from "@/components/workbench/file-sidebar";
 import { ImportDocumentDialog } from "@/components/workbench/import-document-dialog";
 import { ResearchGenerateDialog } from "@/components/workbench/research-generate-dialog";
 import { SeoAnalysisDialog } from "@/components/workbench/seo-analysis-dialog";
-import { Save, FileText, Circle, FileUp, Microscope, Search } from "lucide-react";
+import { ChatMarkdown } from "@/components/chat-markdown";
+import { Save, FileText, Circle, FileUp, Microscope, Search, Eye, Pencil } from "lucide-react";
 import { showToast } from "@/components/toast";
 import { AskAiPanel, AskAiButton, PAGE_CONTEXTS } from "@/components/ask-ai";
 
@@ -28,6 +29,7 @@ export default function WorkbenchPage() {
   const [researchOpen, setResearchOpen] = useState(false);
   const [seoOpen, setSeoOpen] = useState(false);
   const [askAiOpen, setAskAiOpen] = useState(false);
+  const [viewMode, setViewMode] = useState<"edit" | "preview">("edit");
 
   // Fetch configurable workbench directories
   const { data: wbDirs } = useQuery({
@@ -169,6 +171,32 @@ export default function WorkbenchPage() {
             )}
           </div>
           <div className="flex items-center gap-2">
+            <div className="flex items-center rounded-lg border border-border bg-muted/30">
+              <button
+                onClick={() => setViewMode("edit")}
+                className={cn(
+                  "flex items-center gap-1 rounded-l-lg px-2.5 py-1 text-xs font-medium transition",
+                  viewMode === "edit"
+                    ? "bg-primary text-primary-foreground"
+                    : "text-muted-foreground hover:text-foreground"
+                )}
+              >
+                <Pencil className="h-3 w-3" />
+                Edit
+              </button>
+              <button
+                onClick={() => setViewMode("preview")}
+                className={cn(
+                  "flex items-center gap-1 rounded-r-lg px-2.5 py-1 text-xs font-medium transition",
+                  viewMode === "preview"
+                    ? "bg-primary text-primary-foreground"
+                    : "text-muted-foreground hover:text-foreground"
+                )}
+              >
+                <Eye className="h-3 w-3" />
+                Preview
+              </button>
+            </div>
             <AskAiButton onClick={() => setAskAiOpen(true)} />
             <button
               onClick={() => setSeoOpen(true)}
@@ -210,15 +238,21 @@ export default function WorkbenchPage() {
           </div>
         </div>
 
-        {/* Editor */}
+        {/* Editor / Preview */}
         <div className="workbench-editor min-h-0 flex-1 overflow-y-auto bg-background p-4">
           <div className="mx-auto max-w-4xl">
-            <ForwardRefEditor
-              ref={editorRef}
-              markdown={localContent}
-              onChange={handleChange}
-              contentEditableClassName="prose dark:prose-invert max-w-none min-h-[60vh] focus:outline-none"
-            />
+            {viewMode === "edit" ? (
+              <ForwardRefEditor
+                ref={editorRef}
+                markdown={localContent}
+                onChange={handleChange}
+                contentEditableClassName="prose dark:prose-invert max-w-none min-h-[60vh] focus:outline-none"
+              />
+            ) : (
+              <div className="prose dark:prose-invert max-w-none min-h-[60vh]">
+                <ChatMarkdown content={localContent} isStreaming={false} />
+              </div>
+            )}
           </div>
         </div>
 

@@ -3,6 +3,7 @@ import {
   buildAnalysisPrompt,
   generateMetricsReport,
   buildReportFilename,
+  buildReportSubdir,
   type AnalysisInput,
 } from "./report-generator.js";
 
@@ -322,6 +323,24 @@ describe("report-generator", () => {
       const name = buildReportFilename("https://example.com", "test");
       const date = new Date().toISOString().split("T")[0];
       expect(name).toContain(date);
+    });
+  });
+
+  describe("buildReportSubdir", () => {
+    it("extracts the domain from a URL", () => {
+      expect(buildReportSubdir("https://example.com/page")).toBe("example.com");
+    });
+
+    it("strips www. prefix", () => {
+      expect(buildReportSubdir("https://www.example.com/page")).toBe("example.com");
+    });
+
+    it("returns 'unknown' for invalid URLs", () => {
+      expect(buildReportSubdir("not-a-url")).toBe("unknown");
+    });
+
+    it("preserves subdomains other than www", () => {
+      expect(buildReportSubdir("https://blog.example.com/post")).toBe("blog.example.com");
     });
   });
 });
