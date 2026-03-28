@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import fs from "node:fs/promises";
 import { createSeoGapTools } from "./seo-gap-tools.js";
+import * as pdfExport from "./shared/pdf-export.js";
 
 describe("seo-gap-tools", () => {
   const originalFetch = globalThis.fetch;
@@ -228,6 +229,7 @@ describe("seo-gap-tools", () => {
       // Mock fs.writeFile and fs.mkdir to avoid filesystem side effects
       const fsSpy = vi.spyOn(fs, "writeFile").mockResolvedValue();
       const mkdirSpy = vi.spyOn(fs, "mkdir").mockResolvedValue(undefined);
+      const pdfSpy = vi.spyOn(pdfExport, "saveReportPdf").mockResolvedValue("/home/user/.openzigs/seo-reports/test.pdf");
 
       const tools = createSeoGapTools({ serperApiKey: "test-key" });
       const tool = tools.find((t) => t.name === "seo-gap-analysis")!;
@@ -240,6 +242,7 @@ describe("seo-gap-tools", () => {
       expect(result.isError).toBeUndefined();
       const parsed = JSON.parse(result.text);
       expect(parsed.reportPath).toContain("seo-reports");
+      expect(parsed.pdfPath).toBe("/home/user/.openzigs/seo-reports/test.pdf");
       expect(parsed.filename).toMatch(/^mysite\.com-seo-analysis-\d{4}-\d{2}-\d{2}\.md$/);
       expect(parsed.targetMetrics).toBeDefined();
       expect(parsed.targetMetrics.wordCount).toBeGreaterThan(0);
@@ -247,9 +250,11 @@ describe("seo-gap-tools", () => {
       expect(parsed.searchProvider).toBe("serper");
       expect(parsed.analysisPrompt).toContain("expert SEO strategist");
       expect(parsed.message).toContain("SEO gap analysis complete");
+      expect(parsed.message).toContain("PDF saved to");
 
       fsSpy.mockRestore();
       mkdirSpy.mockRestore();
+      pdfSpy.mockRestore();
     });
 
     it("returns error when search API and fetch both fail", async () => {
@@ -295,6 +300,7 @@ describe("seo-gap-tools", () => {
 
       vi.spyOn(fs, "writeFile").mockResolvedValue();
       vi.spyOn(fs, "mkdir").mockResolvedValue(undefined);
+      vi.spyOn(pdfExport, "saveReportPdf").mockResolvedValue(null);
 
       const tools = createSeoGapTools({ serperApiKey: "key" });
       const tool = tools.find((t) => t.name === "seo-gap-analysis")!;
@@ -308,6 +314,7 @@ describe("seo-gap-tools", () => {
       expect(result.isError).toBeUndefined();
       const parsed = JSON.parse(result.text);
       expect(parsed.competitorsAnalyzed).toBe(0);
+      expect(parsed.pdfPath).toBeNull();
     });
 
     it("uses brave provider when searchProvider is explicitly set to brave", async () => {
@@ -333,6 +340,7 @@ describe("seo-gap-tools", () => {
 
       vi.spyOn(fs, "writeFile").mockResolvedValue();
       vi.spyOn(fs, "mkdir").mockResolvedValue(undefined);
+      vi.spyOn(pdfExport, "saveReportPdf").mockResolvedValue(null);
 
       const tools = createSeoGapTools({ braveApiKey: "brave-key", serperApiKey: "serper-key" });
       const tool = tools.find((t) => t.name === "seo-gap-analysis")!;
@@ -389,6 +397,7 @@ describe("seo-gap-tools", () => {
 
       vi.spyOn(fs, "writeFile").mockResolvedValue();
       vi.spyOn(fs, "mkdir").mockResolvedValue(undefined);
+      vi.spyOn(pdfExport, "saveReportPdf").mockResolvedValue(null);
 
       const tools = createSeoGapTools({ serperApiKey: "test-key" });
       const tool = tools.find((t) => t.name === "seo-gap-analysis")!;
@@ -439,6 +448,7 @@ describe("seo-gap-tools", () => {
 
       vi.spyOn(fs, "writeFile").mockResolvedValue();
       vi.spyOn(fs, "mkdir").mockResolvedValue(undefined);
+      vi.spyOn(pdfExport, "saveReportPdf").mockResolvedValue(null);
 
       const tools = createSeoGapTools({ serperApiKey: "key" });
       const tool = tools.find((t) => t.name === "seo-gap-analysis")!;

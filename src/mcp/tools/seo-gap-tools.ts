@@ -7,6 +7,7 @@ import { extractContent } from "./seo/html-extractor.js";
 import { discoverCompetitors } from "./seo/competitor-discovery.js";
 import { buildAnalysisPrompt, generateMetricsReport, buildReportFilename, type AnalysisInput } from "./seo/report-generator.js";
 import { discoverKeyword } from "./seo/keyword-discovery.js";
+import { saveReportPdf } from "./shared/pdf-export.js";
 
 // ── Constants ────────────────────────────────────────────────────────────
 
@@ -148,9 +149,14 @@ export const createSeoGapTools = (opts: SeoGapToolsOptions = {}): ToolDefinition
         const reportPath = path.join(SEO_REPORTS_DIR, filename);
         await fs.writeFile(reportPath, report, "utf-8");
 
+        // 5b. Generate PDF alongside markdown
+        const pdfBasename = filename.replace(/\.md$/, "");
+        const pdfPath = await saveReportPdf(pdfBasename, report, SEO_REPORTS_DIR);
+
         return {
           text: JSON.stringify({
             reportPath,
+            pdfPath: pdfPath ?? null,
             filename,
             ...(detectedKeyword ? { detectedKeyword } : {}),
             targetKeyword,
@@ -169,7 +175,7 @@ export const createSeoGapTools = (opts: SeoGapToolsOptions = {}): ToolDefinition
             },
             searchProvider: discovery.provider,
             analysisPrompt,
-            message: `SEO gap analysis complete.${detectedKeyword ? ` Auto-detected keyword: "${targetKeyword}" (${detectedKeyword.intent}).` : ""} Report saved to ${reportPath}. ${competitors.length} competitors analyzed. Use the analysisPrompt with an LLM for enhanced recommendations.`,
+            message: `SEO gap analysis complete.${detectedKeyword ? ` Auto-detected keyword: "${targetKeyword}" (${detectedKeyword.intent}).` : ""} Report saved to ${reportPath}.${pdfPath ? ` PDF saved to ${pdfPath}.` : ""} ${competitors.length} competitors analyzed. Use the analysisPrompt with an LLM for enhanced recommendations.`,
           }, null, 2),
         };
       } catch (error) {

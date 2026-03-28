@@ -28,6 +28,7 @@ function buildSeoPrompt(params: {
   targetUrl: string;
   targetKeyword: string;
   searchProvider: string;
+  exportPdf: boolean;
 }): string {
   const steps: string[] = [];
   steps.push(`[Using SEO Analyst skill]`);
@@ -43,14 +44,17 @@ function buildSeoPrompt(params: {
   }
   steps.push("");
   steps.push("STEP 1: Call seo-gap-analysis with the target URL and keyword. Wait for results.");
-  steps.push("STEP 2: Read the generated report from the returned reportPath.");
+  steps.push("STEP 2: The tool returns JSON with a `reportPath` field (under ~/.openzigs/seo-reports/). Read the generated report from that exact reportPath.");
   steps.push("STEP 3: Using the returned analysisPrompt, provide enhanced LLM analysis with:");
   steps.push("  - Executive summary with gap score");
   steps.push("  - Key content gaps and missing subtopics");
   steps.push("  - Top 5 prioritized recommendations");
   steps.push("  - Content brief outline for page updates");
-  steps.push("STEP 4: Write the enhanced analysis to the same report file (append to existing content).");
-  steps.push("STEP 5: Respond with a summary of key findings and the report file path.");
+  steps.push("STEP 4: Append the enhanced analysis to the report file at the EXACT reportPath returned by seo-gap-analysis (under ~/.openzigs/seo-reports/). Do NOT save to any other directory.");
+  if (params.exportPdf) {
+    steps.push("NOTE: The tool also generates a PDF version alongside the markdown report. The `pdfPath` field in the response contains the PDF location (or null if Chrome was unavailable).");
+  }
+  steps.push("STEP 5: Respond with a summary of key findings, the markdown report path, and the PDF report path (if generated).");
   return steps.join("\n");
 }
 
@@ -65,6 +69,7 @@ export const SeoAnalysisDialog = ({
   const [targetKeyword, setTargetKeyword] = useState("");
   const [searchProvider, setSearchProvider] = useState("auto");
   const [model, setModel] = useState("claude-sonnet-4.6");
+  const [exportPdf, setExportPdf] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -88,6 +93,7 @@ export const SeoAnalysisDialog = ({
       targetUrl: targetUrl.trim(),
       targetKeyword: targetKeyword.trim(),
       searchProvider,
+      exportPdf,
     });
 
     try {
@@ -107,11 +113,12 @@ export const SeoAnalysisDialog = ({
       setTargetKeyword("");
       setSearchProvider("auto");
       setModel("claude-sonnet-4.6");
+      setExportPdf(true);
     } catch {
       setError("Failed to send analysis request. Check connection.");
       setSubmitting(false);
     }
-  }, [isValid, socket, connected, targetUrl, targetKeyword, searchProvider, model, onOpenChange, onSubmitted]);
+  }, [isValid, socket, connected, targetUrl, targetKeyword, searchProvider, model, exportPdf, onOpenChange, onSubmitted]);
 
   const handleOpenChange = useCallback(
     (nextOpen: boolean) => {
@@ -205,6 +212,17 @@ export const SeoAnalysisDialog = ({
               claude-sonnet-4.6 recommended for thorough analysis
             </p>
           </div>
+
+          {/* PDF Export */}
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={exportPdf}
+              onChange={(e) => setExportPdf(e.target.checked)}
+              className="h-3.5 w-3.5 rounded border-border text-primary focus:ring-primary/50"
+            />
+            <span className="text-xs font-medium text-foreground">Also export as PDF</span>
+          </label>
         </div>
 
         {error && (
