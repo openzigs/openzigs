@@ -784,20 +784,22 @@ export class CopilotWrapperService extends EventEmitter implements CopilotWrappe
     }
 
     const effectiveModel = options?.model ?? this.model;
-    let toolList = options?.tools ?? this.toolRegistry?.listEnabledTools() ?? [];
     const perCallToolCallback = options?.onToolCall;
 
     // When availableTools is specified (skill scoping or explicit client filter),
-    // pre-filter tool definitions to only those in the allow-list.
-    // Merge ESSENTIAL_TOOLS so skill sessions always retain core capabilities
-    // (file I/O, web search, shell, delegation) without the caller needing to
-    // declare them explicitly.
+    // draw from ALL registered tools (not just enabled ones) so that tools
+    // explicitly requested by a dialog or skill are available even if the user
+    // hasn't toggled them on in the admin panel.
+    let toolList: ToolDefinition[];
     if (options?.availableTools && options.availableTools.length > 0) {
       const scopedSet = new Set(options.availableTools);
       for (const essential of ESSENTIAL_TOOLS) {
         scopedSet.add(essential);
       }
-      toolList = toolList.filter((t) => scopedSet.has(t.name));
+      const allTools = options?.tools ?? this.toolRegistry?.listAllTools() ?? [];
+      toolList = allTools.filter((t) => scopedSet.has(t.name));
+    } else {
+      toolList = options?.tools ?? this.toolRegistry?.listEnabledTools() ?? [];
     }
 
     // Enforce maxToolsPerRequest with tiered priority:
