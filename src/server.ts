@@ -741,8 +741,15 @@ const analyzeWorker = new AnalyzeWorker({
   audioSidecarUrl: process.env.OPENZIGS_AUDIO_SIDECAR_URL ?? "http://localhost:5006",
 });
 
+// Always include ~/.openzigs/seo-reports so the write-file tool can save
+// enhanced reports even when OPENZIGS_ALLOWED_DIRS is restricted.
+const mcpAllowedDirs = Array.from(new Set([
+  ...(allowedDirs.length > 0 ? allowedDirs : [PROJECT_ROOT, os.tmpdir(), os.homedir(), "/tmp", "/private/tmp"]),
+  expandTilde("~/.openzigs/seo-reports"),
+]));
+
 registerMcpTools(toolRegistry, {
-  allowedDirs: allowedDirs.length > 0 ? allowedDirs : [PROJECT_ROOT, os.tmpdir(), os.homedir(), "/tmp", "/private/tmp"],
+  allowedDirs: mcpAllowedDirs,
   shellAllowlist: (process.env.OPENZIGS_SHELL_ALLOWLIST ?? "git,find,ls,cat,head,tail,grep,wc,echo,pwd,mkdir,cp,mv,rm,which,date,curl,bash,sh,java,javac,python3,node,pip,brew").split(",").map(s => s.trim()).filter(Boolean),
   braveApiKey: process.env.BRAVE_API_KEY,
   chromeDebugHost: process.env.CHROME_DEBUG_HOST,

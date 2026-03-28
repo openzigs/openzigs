@@ -56,13 +56,14 @@ function buildSeoPrompt(params: {
   steps.push(`  - Top 5 prioritized recommendations with Impact and Effort ratings`);
   steps.push(`  - Content brief outline for updates`);
   steps.push(``);
-  steps.push(`STEP 5: Append your enhanced analysis to the SAME report file using write-file with the EXACT reportPath from Step 2.`);
-  steps.push(`IMPORTANT: The path MUST start with the user home directory path to ~/.openzigs/seo-reports/.`);
+  steps.push(`STEP 5: Write your enhanced analysis to the SAME report file using write-file with the EXACT reportPath from Step 2.`);
+  steps.push(`The reportPath is inside ~/.openzigs/seo-reports/ — the write-file tool has access to this directory.`);
   steps.push(``);
-  steps.push(`STEP 6: Respond with a summary of key findings and the report path.`);
   if (params.exportPdf) {
-    steps.push(`  Include the PDF path from the tool response.`);
+    steps.push(`STEP 6: Call the export-pdf tool with the reportPath to regenerate the PDF with the enhanced content.`);
+    steps.push(``);
   }
+  steps.push(`STEP ${params.exportPdf ? '7' : '6'}: Respond with a summary of key findings and the report paths (markdown and PDF).`);
   return steps.join("\n");
 }
 
@@ -109,7 +110,7 @@ export const SeoAnalysisDialog = ({
         content: prompt,
         model: model || "claude-sonnet-4.6",
         tools: [
-          "seo-gap-analysis", "seo-extract-content",
+          "seo-gap-analysis", "seo-extract-content", "export-pdf",
           "web-search", "browser-navigate",
           "read-file", "write-file", "list-directory",
           "orchestrate-agents", "spawn-agent",

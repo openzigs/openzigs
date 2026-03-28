@@ -29,6 +29,10 @@ const seoExtractContentSchema = z.object({
   url: z.string().url().describe("URL of the page to extract content from"),
 });
 
+const exportPdfSchema = z.object({
+  markdownPath: z.string().min(1).describe("Absolute path to the markdown file to convert to PDF"),
+});
+
 // ── Helpers ──────────────────────────────────────────────────────────────
 
 async function fetchHtml(url: string): Promise<string> {
@@ -243,6 +247,43 @@ export const createSeoGapTools = (opts: SeoGapToolsOptions = {}): ToolDefinition
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
         return { text: `Content extraction failed: ${msg}`, isError: true };
+      }
+    },
+  });
+
+  // ── export-pdf ────────────────────────────────────────────────────────
+  tools.push({
+    name: "export-pdf",
+    description:
+      "Convert a markdown file to PDF using Chrome headless. Reads the file, renders it (including mermaid diagrams), and writes a .pdf alongside the source.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        markdownPath: { type: "string", description: "Absolute path to the markdown file" },
+      },
+      required: ["markdownPath"],
+    },
+    zodSchema: exportPdfSchema,
+    category: "filesystem",
+    riskLevel: "medium",
+    handler: async (args) => {
+      const { markdownPath } = exportPdfSchema.parse(args);
+
+      try {
+        const resolved = path.resolve(markdownPath.replace(/^~\//, `${os.homedir()}/`));
+        const content = await fs.readFile(resolved, "utf-8");
+        const outputDir = path.dirname(resolved);
+        const basename = path.basename(resolved, ".md");
+        const pdfPath = await saveReportPdf(basename, content, outputDir);
+
+        if (!pdfPath) {
+          return { text: "PDF not generated — Chrome binary not found on this system.", isError: true };
+        }
+
+        return { text: `PDF exported: ${pdfPath}` };
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        return { text: `PDF export failed: ${msg}`, isError: true };
       }
     },
   });

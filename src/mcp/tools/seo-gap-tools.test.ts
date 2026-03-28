@@ -12,17 +12,18 @@ describe("seo-gap-tools", () => {
   });
 
   describe("createSeoGapTools", () => {
-    it("returns two tools", () => {
+    it("returns three tools", () => {
       const tools = createSeoGapTools();
-      expect(tools).toHaveLength(2);
+      expect(tools).toHaveLength(3);
       expect(tools[0].name).toBe("seo-gap-analysis");
       expect(tools[1].name).toBe("seo-extract-content");
+      expect(tools[2].name).toBe("export-pdf");
     });
 
     it("tools have correct category and riskLevel", () => {
       const tools = createSeoGapTools();
       for (const tool of tools) {
-        expect(tool.category).toBe("search");
+        expect(["search", "filesystem"]).toContain(tool.category);
         expect(tool.riskLevel).toBe("medium");
       }
     });
@@ -469,6 +470,43 @@ describe("seo-gap-tools", () => {
       const parsed = JSON.parse(result.text.slice(jsonStart));
       expect(parsed.detectedKeyword).toBeUndefined();
       expect(parsed.targetKeyword).toBe("manual keyword");
+    });
+  });
+
+  describe("export-pdf", () => {
+    it("calls saveReportPdf and returns the path", async () => {
+      vi.spyOn(pdfExport, "saveReportPdf").mockResolvedValue("/tmp/report.pdf");
+      vi.spyOn(fs, "readFile").mockResolvedValue("# Report Content");
+
+      const tools = createSeoGapTools();
+      const tool = tools.find((t) => t.name === "export-pdf")!;
+      const result = await tool.handler({ markdownPath: "/tmp/report.md" });
+
+      expect(result.text).toContain("/tmp/report.pdf");
+      expect(pdfExport.saveReportPdf).toHaveBeenCalledWith("report", "# Report Content", "/tmp");
+    });
+
+    it("returns error when Chrome not found", async () => {
+      vi.spyOn(pdfExport, "saveReportPdf").mockResolvedValue(null);
+      vi.spyOn(fs, "readFile").mockResolvedValue("# Content");
+
+      const tools = createSeoGapTools();
+      const tool = tools.find((t) => t.name === "export-pdf")!;
+      const result = await tool.handler({ markdownPath: "/tmp/report.md" });
+
+      expect(result.isError).toBe(true);
+      expect(result.text).toContain("Chrome binary not found");
+    });
+
+    it("returns error for missing file", async () => {
+      vi.spyOn(fs, "readFile").mockRejectedValue(new Error("ENOENT: no such file"));
+
+      const tools = createSeoGapTools();
+      const tool = tools.find((t) => t.name === "export-pdf")!;
+      const result = await tool.handler({ markdownPath: "/tmp/missing.md" });
+
+      expect(result.isError).toBe(true);
+      expect(result.text).toContain("ENOENT");
     });
   });
 });
