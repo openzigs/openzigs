@@ -2,6 +2,7 @@ import type Database from "better-sqlite3";
 import { randomUUID } from "node:crypto";
 import type {
   OrchestrationTemplate,
+  OrchestrationMode,
   CreateOrchestrationTemplateInput,
   UpdateOrchestrationTemplateInput,
   StoredOrchestrationTemplate,
@@ -16,6 +17,7 @@ const toTemplate = (row: StoredOrchestrationTemplate): OrchestrationTemplate => 
   stages: OrchestrationStageSchema.array().parse(JSON.parse(row.stages_json)),
   variables: TemplateVariableSchema.array().parse(JSON.parse(row.variables_json)),
   aggregationPrompt: row.aggregation_prompt,
+  defaultMode: (row.default_mode as OrchestrationMode) ?? undefined,
   isBuiltIn: row.is_built_in === 1,
   createdAt: row.created_at,
   updatedAt: row.updated_at,
@@ -40,11 +42,19 @@ export class TemplateRepository {
         stages_json TEXT NOT NULL,
         variables_json TEXT NOT NULL DEFAULT '[]',
         aggregation_prompt TEXT,
+        default_mode TEXT,
         is_built_in INTEGER NOT NULL DEFAULT 0,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
       );
     `);
+
+    // Add default_mode column to existing tables
+    try {
+      this.db.exec(`ALTER TABLE orchestration_templates ADD COLUMN default_mode TEXT`);
+    } catch {
+      // Column already exists
+    }
   }
 
   insert(input: CreateOrchestrationTemplateInput, isBuiltIn = false): OrchestrationTemplate {
@@ -54,8 +64,8 @@ export class TemplateRepository {
     this.db
       .prepare(
         `INSERT INTO orchestration_templates
-          (id, name, description, category, stages_json, variables_json, aggregation_prompt, is_built_in, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          (id, name, description, category, stages_json, variables_json, aggregation_prompt, default_mode, is_built_in, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         id,
@@ -65,6 +75,7 @@ export class TemplateRepository {
         JSON.stringify(input.stages),
         JSON.stringify(input.variables),
         input.aggregationPrompt ?? null,
+        input.defaultMode ?? null,
         isBuiltIn ? 1 : 0,
         now,
         now
@@ -107,12 +118,15 @@ export class TemplateRepository {
     const aggregationPrompt = input.aggregationPrompt !== undefined
       ? input.aggregationPrompt
       : existing.aggregationPrompt;
+    const defaultMode = input.defaultMode !== undefined
+      ? input.defaultMode
+      : existing.defaultMode;
 
     this.db
       .prepare(
         `UPDATE orchestration_templates
          SET name = ?, description = ?, category = ?, stages_json = ?,
-             variables_json = ?, aggregation_prompt = ?, updated_at = ?
+             variables_json = ?, aggregation_prompt = ?, default_mode = ?, updated_at = ?
          WHERE id = ?`
       )
       .run(
@@ -122,6 +136,7 @@ export class TemplateRepository {
         JSON.stringify(stages),
         JSON.stringify(variables),
         aggregationPrompt,
+        defaultMode ?? null,
         now,
         id
       );

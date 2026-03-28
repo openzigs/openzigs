@@ -209,17 +209,20 @@ function TemplateExecuteModal({
     }
     return init;
   });
+  const [mode, setMode] = useState<"task" | "session">(
+    template.defaultMode === "session" ? "session" : "task"
+  );
   const [taskIds, setTaskIds] = useState<string[] | null>(null);
 
   const executeMut = useMutation({
     mutationFn: () =>
       fetchJson<{ taskIds: string[] }>(`/api/admin/orchestration/${template.id}/execute`, {
         method: "POST",
-        body: JSON.stringify({ variables: vars }),
+        body: JSON.stringify({ variables: vars, mode }),
       }),
     onSuccess: (data) => {
       setTaskIds(data.taskIds);
-      showToast(`Spawned ${data.taskIds.length} task(s)`, "success");
+      showToast(`Spawned ${data.taskIds.length} task(s) in ${mode} mode`, "success");
     },
     onError: (err: Error) => showToast(err.message, "error"),
   });
@@ -231,6 +234,58 @@ function TemplateExecuteModal({
           <h3 className="text-lg font-semibold text-foreground">Execute: {template.name}</h3>
           <button onClick={onClose} className="text-muted-foreground hover:text-foreground"><X className="h-5 w-5" /></button>
         </div>
+
+        {/* Orchestration Mode Selector */}
+        <div className="space-y-2">
+          <label className="block text-xs font-medium text-muted-foreground">Orchestration Mode</label>
+          <div className="grid grid-cols-2 gap-2">
+            <label
+              className={`flex flex-col gap-1 rounded-lg border p-3 cursor-pointer transition ${
+                mode === "task"
+                  ? "border-primary bg-primary/5"
+                  : "border-border hover:border-muted-foreground/40"
+              }`}
+            >
+              <div className="flex items-center gap-2">
+                <input
+                  type="radio"
+                  name="orchestration-mode"
+                  value="task"
+                  checked={mode === "task"}
+                  onChange={() => setMode("task")}
+                  className="accent-primary"
+                />
+                <span className="text-sm font-medium text-foreground">Task Mode</span>
+              </div>
+              <p className="text-[10px] text-muted-foreground pl-5">
+                Fan-out background tasks in parallel (~N+1 API calls)
+              </p>
+            </label>
+            <label
+              className={`flex flex-col gap-1 rounded-lg border p-3 cursor-pointer transition ${
+                mode === "session"
+                  ? "border-primary bg-primary/5"
+                  : "border-border hover:border-muted-foreground/40"
+              }`}
+            >
+              <div className="flex items-center gap-2">
+                <input
+                  type="radio"
+                  name="orchestration-mode"
+                  value="session"
+                  checked={mode === "session"}
+                  onChange={() => setMode("session")}
+                  className="accent-primary"
+                />
+                <span className="text-sm font-medium text-foreground">Session Mode</span>
+              </div>
+              <p className="text-[10px] text-muted-foreground pl-5">
+                Single session with subagent delegation (~2 API calls, saves premium requests)
+              </p>
+            </label>
+          </div>
+        </div>
+
         {template.variables.length > 0 && (
           <div className="space-y-3">
             {template.variables.map((v) => (

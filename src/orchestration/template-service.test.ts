@@ -8,6 +8,11 @@ import {
   interpolateTemplate,
 } from "./template-service.js";
 import type { CreateOrchestrationTemplateInput } from "./types.js";
+import {
+  ExecuteTemplateSchema,
+  CreateOrchestrationTemplateSchema,
+  OrchestrationModeSchema,
+} from "./types.js";
 
 function makeDb() {
   const db = new Database(":memory:");
@@ -436,5 +441,177 @@ describe("TemplateService", () => {
       expect(fakeEngine.submit).toHaveBeenCalledTimes(3);
       expect(fakeEngine.submit.mock.calls[2][0].goal).toBe("Merge AI");
     });
+  });
+
+  describe("execute (session mode)", () => {
+    it("throws if copilot not available for session mode", () => {
+      const fakeEngine = {
+        submit: vi.fn().mockReturnValue({ id: "task-1" }),
+      };
+      const svc = new TemplateService({
+        repository: repo,
+        taskEngine: fakeEngine as never,
+      });
+      const t = svc.create(SAMPLE_INPUT);
+      expect(() => svc.execute(t.id, { variables: { topic: "AI" }, mode: "session" })).toThrow(
+        "CopilotWrapper not available"
+      );
+    });
+
+    it("uses session mode via copilot.chat() with enableSubagents", async () => {
+      const fakeEngine = {
+        submit: vi.fn().mockReturnValue({ id: "session-task-1", status: "queued" }),
+        complete: vi.fn(),
+        fail: vi.fn(),
+      };
+      const fakeCopilot = {
+        getCustomAgents: vi.fn().mockReturnValue([]),
+        chat: vi.fn().mockImplementation(async function* () {
+          yield "Session result";
+        }),
+      };
+      const svc = new TemplateService({
+        repository: repo,
+        taskEngine: fakeEngine as never,
+        copilot: fakeCopilot as never,
+      });
+      const t = svc.create(SAMPLE_INPUT);
+      const result = svc.execute(t.id, { variables: { topic: "AI" }, mode: "session" });
+
+      expect(result.taskIds).toEqual(["session-task-1"]);
+      // Submitted as immediate for tracking
+      expect(fakeEngine.submit).toHaveBeenCalledTimes(1);
+      expect(fakeEngine.submit.mock.calls[0][1]).toEqual({ mode: "immediate" });
+
+      // Wait for async chat to complete
+      await vi.waitFor(() => {
+        expect(fakeCopilot.chat).toHaveBeenCalledTimes(1);
+      });
+
+      const chatCall = fakeCopilot.chat.mock.calls[0];
+      expect(chatCall[0]).toContain("Research AI");
+      expect(chatCall[1].enableSubagents).toBe(true);
+    });
+
+    it("falls back to template defaultMode when input mode not specified", () => {
+      const fakeEngine = {
+        submit: vi.fn().mockReturnValue({ id: "task-1", status: "queued" }),
+        complete: vi.fn(),
+        fail: vi.fn(),
+      };
+      const fakeCopilot = {
+        getCustomAgents: vi.fn().mockReturnValue([]),
+        chat: vi.fn().mockImplementation(async function* () {
+          yield "done";
+        }),
+      };
+      const svc = new TemplateService({
+        repository: repo,
+        taskEngine: fakeEngine as never,
+        copilot: fakeCopilot as never,
+      });
+      // Create template with defaultMode: "session"
+      const t = svc.create({ ...SAMPLE_INPUT, defaultMode: "session" });
+      svc.execute(t.id, { variables: { topic: "AI" } });
+
+      // Should use session mode (immediate submit, copilot called)
+      expect(fakeEngine.submit.mock.calls[0][1]).toEqual({ mode: "immediate" });
+    });
+
+    it("explicit mode overrides template defaultMode", () => {
+      const fakeEngine = {
+        submit: vi.fn().mockReturnValue({ id: "task-1", status: "queued" }),
+      };
+      const svc = new TemplateService({
+        repository: repo,
+        taskEngine: fakeEngine as never,
+      });
+      // Template defaults to session but we explicitly pick task
+      const t = svc.create({ ...SAMPLE_INPUT, defaultMode: "session" });
+      svc.execute(t.id, { variables: { topic: "AI" }, mode: "task" });
+
+      // Should use task mode (background submit)
+      expect(fakeEngine.submit.mock.calls[0][1]).toEqual({ mode: "background" });
+    });
+  });
+});
+
+// ── Zod Schema Tests (#670) ──────────────────────────────────────────
+
+describe("OrchestrationModeSchema", () => {
+  it("accepts 'task'", () => {
+    expect(OrchestrationModeSchema.parse("task")).toBe("task");
+  });
+
+  it("accepts 'session'", () => {
+    expect(OrchestrationModeSchema.parse("session")).toBe("session");
+  });
+
+  it("rejects invalid values", () => {
+    expect(() => OrchestrationModeSchema.parse("invalid")).toThrow();
+  });
+});
+
+describe("ExecuteTemplateSchema with mode", () => {
+  it("accepts mode: task", () => {
+    const result = ExecuteTemplateSchema.parse({ mode: "task" });
+    expect(result.mode).toBe("task");
+  });
+
+  it("accepts mode: session", () => {
+    const result = ExecuteTemplateSchema.parse({ mode: "session" });
+    expect(result.mode).toBe("session");
+  });
+
+  it("allows mode to be omitted", () => {
+    const result = ExecuteTemplateSchema.parse({});
+    expect(result.mode).toBeUndefined();
+  });
+
+  it("rejects invalid mode", () => {
+    expect(() => ExecuteTemplateSchema.parse({ mode: "bad" })).toThrow();
+  });
+});
+
+describe("CreateOrchestrationTemplateSchema with defaultMode", () => {
+  it("accepts defaultMode: session", () => {
+    const result = CreateOrchestrationTemplateSchema.parse({
+      name: "test",
+      stages: [{ name: "s1", type: "parallel", agents: [{ archetype: "writer", goal: "do stuff" }] }],
+      defaultMode: "session",
+    });
+    expect(result.defaultMode).toBe("session");
+  });
+
+  it("allows defaultMode to be omitted", () => {
+    const result = CreateOrchestrationTemplateSchema.parse({
+      name: "test",
+      stages: [{ name: "s1", type: "parallel", agents: [{ archetype: "writer", goal: "do stuff" }] }],
+    });
+    expect(result.defaultMode).toBeUndefined();
+  });
+});
+
+describe("TemplateRepository defaultMode persistence", () => {
+  it("persists and retrieves defaultMode", () => {
+    const { repo } = makeRepo();
+    const t = repo.insert({ ...SAMPLE_INPUT, defaultMode: "session" });
+    expect(t.defaultMode).toBe("session");
+
+    const fetched = repo.getById(t.id);
+    expect(fetched?.defaultMode).toBe("session");
+  });
+
+  it("defaults to undefined when not set", () => {
+    const { repo } = makeRepo();
+    const t = repo.insert(SAMPLE_INPUT);
+    expect(t.defaultMode).toBeUndefined();
+  });
+
+  it("updates defaultMode", () => {
+    const { repo } = makeRepo();
+    const t = repo.insert(SAMPLE_INPUT);
+    const updated = repo.update(t.id, { defaultMode: "session" });
+    expect(updated?.defaultMode).toBe("session");
   });
 });

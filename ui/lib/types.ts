@@ -77,6 +77,7 @@ export type ScheduledJob = {
   actionPayload: Record<string, unknown>;
   model?: string | null;
   reasoningEffort?: ReasoningEffort | null;
+  orchestrationMode?: "task" | "session" | null;
   allowedTools?: string[] | null;
   autoApproveTools?: string[] | null;
   notifyChannels?: string[] | null;
@@ -635,6 +636,7 @@ export type OrchestrationTemplate = {
   stages: OrchestrationStage[];
   variables: TemplateVariable[];
   aggregationPrompt: string | null;
+  defaultMode?: "task" | "session";
   isBuiltIn: boolean;
   createdAt: string;
   updatedAt: string;

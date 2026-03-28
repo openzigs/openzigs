@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Orchestration Mode (Task vs Session) for orchestration templates (#669)
+  - `OrchestrationModeSchema` and `mode` field on `ExecuteTemplateSchema` for per-execution mode selection (#670)
+  - `defaultMode` on `CreateOrchestrationTemplateSchema` and `OrchestrationTemplate` with SQLite migration (#670)
+  - Session mode execution path in `TemplateService` — composes all agent goals into a single `CopilotWrapper.chat()` call with `enableSubagents: true` (#672)
+  - `enableInSessionSubagents` flag on `ChatContext` for `spawn-agent` session mode awareness (#674)
+  - Orchestration Mode radio selector in `TemplateExecuteModal` (Task/Session with descriptions) (#676)
+  - Orchestration Mode selector on Scheduler prompt/pipeline job form (#675)
+  - USER_GUIDE.md documentation for session orchestration mode (#671)
+  - ARCHITECTURE.md documentation for session mode data flow and integration (#673)
+
 ### Fixed
 
 - SEO extraction: JSON-LD `@graph` wrapper (Yoast/WordPress pattern) is now parsed — previously only root `@type` was detected (#665)

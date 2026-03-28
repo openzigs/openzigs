@@ -111,11 +111,13 @@ export const createAgentTools = ({ taskEngine }: AgentToolsOptions): ToolDefinit
             { mode: "background" }
           );
 
+          const inSessionMode = activeChatContext.enableInSessionSubagents === true;
           return {
             text: JSON.stringify({
               taskId: task.id,
               status: task.status,
               message: `Background task created: "${input.goal.slice(0, 100)}". The user will be notified when it completes.`,
+              ...(inSessionMode ? { sessionMode: true, note: "Spawned within a session-mode orchestration context. The SDK may delegate to subagents within this session." } : {}),
             }),
           };
         } catch (error) {
