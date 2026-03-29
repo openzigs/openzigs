@@ -486,6 +486,11 @@ describe("DockerSidecarManager", () => {
 });
 
 describe("resolveDockerSocketPath", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
   it("returns a string path", () => {
     const socketPath = resolveDockerSocketPath();
     expect(typeof socketPath).toBe("string");
@@ -498,6 +503,40 @@ describe("resolveDockerSocketPath", () => {
       const socketPath = resolveDockerSocketPath();
       expect(socketPath).toMatch(/docker/);
       expect(socketPath).not.toBe("//./pipe/docker_engine");
+    }
+  });
+
+  it("returns Windows named pipe when process.platform is win32", () => {
+    // Mock process.platform to "win32" using Object.defineProperty
+    const originalPlatform = process.platform;
+    Object.defineProperty(process, "platform", { value: "win32", configurable: true });
+    try {
+      const socketPath = resolveDockerSocketPath();
+      expect(socketPath).toBe("//./pipe/docker_engine");
+    } finally {
+      Object.defineProperty(process, "platform", { value: originalPlatform, configurable: true });
+    }
+  });
+
+  it("does not return Windows named pipe on darwin", () => {
+    const originalPlatform = process.platform;
+    Object.defineProperty(process, "platform", { value: "darwin", configurable: true });
+    try {
+      const socketPath = resolveDockerSocketPath();
+      expect(socketPath).not.toBe("//./pipe/docker_engine");
+    } finally {
+      Object.defineProperty(process, "platform", { value: originalPlatform, configurable: true });
+    }
+  });
+
+  it("does not return Windows named pipe on linux", () => {
+    const originalPlatform = process.platform;
+    Object.defineProperty(process, "platform", { value: "linux", configurable: true });
+    try {
+      const socketPath = resolveDockerSocketPath();
+      expect(socketPath).not.toBe("//./pipe/docker_engine");
+    } finally {
+      Object.defineProperty(process, "platform", { value: originalPlatform, configurable: true });
     }
   });
 });

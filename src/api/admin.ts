@@ -3783,6 +3783,23 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
     }
   });
 
+  // ── Sidecar platform gate (#599) ──
+  // Native macOS-only sidecar routes return 501 on non-macOS platforms.
+  const sidecarPlatformGate: import("express").RequestHandler = (_req, res, next) => {
+    const caps = getPlatformCapabilities();
+    if (!caps.sidecarsSupported) {
+      res.status(501).json({
+        error: "This feature requires macOS ARM (Apple Silicon). Native sidecars are not available on this platform.",
+        platform: caps.os,
+        arch: caps.arch,
+      });
+      return;
+    }
+    next();
+  };
+  router.use("/image-gen", sidecarPlatformGate);
+  router.use("/music-studio", sidecarPlatformGate);
+
   // ── Image Generation Node Configuration ──
   router.get("/image-gen/config", async (_req, res) => {
     try {

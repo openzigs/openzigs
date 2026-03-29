@@ -561,6 +561,20 @@ The UI fetches this on load and uses it to:
 - Display a platform badge in the Admin panel
 - Conditionally render setup instructions
 
+### Sidecar API Gating
+
+Admin API routes for native macOS-only sidecars (`/api/admin/image-gen/*`, `/api/admin/music-studio/*`) are guarded by a platform gate middleware. On non-macOS ARM platforms, these routes return HTTP 501 with an informative JSON error:
+
+```json
+{
+  "error": "This feature requires macOS ARM (Apple Silicon). Native sidecars are not available on this platform.",
+  "platform": "win32",
+  "arch": "x64"
+}
+```
+
+Additionally, the Docker sidecar auto-provisioning step in `server.ts` is skipped entirely when `sidecarsSupported === false`, avoiding unnecessary Docker socket connection attempts on unsupported platforms.
+
 ### Platform Support Matrix
 
 | Feature | macOS (ARM) | macOS (Intel) | Windows | Linux |

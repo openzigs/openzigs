@@ -348,7 +348,9 @@ const sidecarManager = new DockerSidecarManager({
 
 let sidecarUrls = new Map<string, string>();
 
-if (mcpServersConfig?.autoProvision !== false) {
+if (!platformCaps.sidecarsSupported) {
+  logger.info("Skipping Docker sidecar provisioning — sidecars are only supported on macOS ARM");
+} else if (mcpServersConfig?.autoProvision !== false) {
   const dockerAvailable = await sidecarManager.isDockerAvailable();
   if (dockerAvailable) {
     logger.info("Docker detected — auto-provisioning MCP sidecars...");
