@@ -350,6 +350,9 @@ const JobForm = ({ existing, onClose, createFromPrompt }: { existing: ScheduledJ
   const [autoApproveTools, setAutoApproveTools] = useState<string[]>(
     existing?.autoApproveTools ?? []
   );
+  const [orchestrationMode, setOrchestrationMode] = useState<"task" | "session">(
+    existing?.orchestrationMode === "session" ? "session" : "task"
+  );
   const [templateVars, setTemplateVars] = useState<Record<string, string>>(
     (existing?.actionType === "prompt" && existing?.actionPayload?.variables
       ? (existing.actionPayload.variables as Record<string, string>)
@@ -653,6 +656,13 @@ const JobForm = ({ existing, onClose, createFromPrompt }: { existing: ScheduledJ
       payload.reasoningEffort = reasoningEffort;
     } else if (existing) {
       payload.reasoningEffort = null;
+    }
+
+    // Orchestration mode (applies to prompt and pipeline jobs)
+    if (actionType === "prompt" || actionType === "pipeline") {
+      payload.orchestrationMode = orchestrationMode;
+    } else if (existing) {
+      payload.orchestrationMode = null;
     }
 
     // Auto-approve tools: for pipelines, derived from stage tools; for others, manual selection
@@ -988,6 +998,57 @@ const JobForm = ({ existing, onClose, createFromPrompt }: { existing: ScheduledJ
                 <option key={effort} value={effort}>{effort}</option>
               ))}
             </select>
+          </Field>
+        )}
+
+        {(actionType === "prompt" || actionType === "pipeline") && (
+          <Field label="Orchestration Mode" hint="How agents are dispatched when this job runs.">
+            <div className="grid grid-cols-2 gap-2">
+              <label
+                className={`flex flex-col gap-1 rounded-lg border p-3 cursor-pointer transition ${
+                  orchestrationMode === "task"
+                    ? "border-primary bg-primary/5"
+                    : "border-border hover:border-muted-foreground/40"
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  <input
+                    type="radio"
+                    name="orch-mode"
+                    value="task"
+                    checked={orchestrationMode === "task"}
+                    onChange={() => setOrchestrationMode("task")}
+                    className="accent-primary"
+                  />
+                  <span className="text-sm font-medium text-foreground">Task Mode</span>
+                </div>
+                <p className="text-[10px] text-muted-foreground pl-5">
+                  Fan-out background tasks in parallel (~N+1 API calls)
+                </p>
+              </label>
+              <label
+                className={`flex flex-col gap-1 rounded-lg border p-3 cursor-pointer transition ${
+                  orchestrationMode === "session"
+                    ? "border-primary bg-primary/5"
+                    : "border-border hover:border-muted-foreground/40"
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  <input
+                    type="radio"
+                    name="orch-mode"
+                    value="session"
+                    checked={orchestrationMode === "session"}
+                    onChange={() => setOrchestrationMode("session")}
+                    className="accent-primary"
+                  />
+                  <span className="text-sm font-medium text-foreground">Session Mode</span>
+                </div>
+                <p className="text-[10px] text-muted-foreground pl-5">
+                  Single session with subagent delegation (~2 API calls, saves premium requests)
+                </p>
+              </label>
+            </div>
           </Field>
         )}
 

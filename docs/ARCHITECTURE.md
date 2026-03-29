@@ -3169,6 +3169,60 @@ POST /api/admin/orchestration/:id/execute
 
 **Seed Templates** (5 built-in): research-synthesize, multi-perspective-analysis, code-review-pipeline, content-creation, competitive-analysis.
 
+### Orchestration Mode — Task vs Session (Epic #669)
+
+Orchestration templates support two execution modes controlled by the `mode` field on `ExecuteTemplateSchema`:
+
+```mermaid
+flowchart TB
+    REQ["POST /orchestration/:id/execute<br/>{mode, variables}"] --> SVC[TemplateService.execute]
+    SVC -->|"mode == 'task' (default)"| TASK[TaskEngine path]
+    SVC -->|"mode == 'session'"| SESSION[Session path]
+
+    TASK --> TE[TaskEngine.submit per agent per stage]
+    TE --> TW[TaskWorker — async background tasks]
+
+    SESSION --> COMPOSE[Compose all agent goals into single prompt]
+    COMPOSE --> CW[CopilotWrapper.chat — enableSubagents: true]
+    CW --> SDK[SDK delegates to custom agents inline]
+    CW --> TRACK[TaskEngine.submit — immediate mode tracking task]
+```
+
+**Mode resolution precedence:** `execute request mode` → `template.defaultMode` → `"task"`
+
+| Aspect | Task Mode | Session Mode |
+|--------|-----------|--------------|
+| **Execution** | N separate background tasks via TaskEngine | Single CopilotWrapper.chat() call |
+| **Persistence** | Full SQLite audit trail per agent | One tracking task for observability |
+| **Premium Requests** | 1 per agent (N total) | 1 total (SDK subagent reuse) |
+| **Stage ordering** | Sequential stages with parallel agents | All goals composed into one prompt |
+| **SDK feature** | TaskWorker → CopilotWrapper.chat() per task | enableSubagents + customAgents |
+| **Best for** | Scheduled jobs, long-running pipelines | Quick interactive multi-agent work |
+
+**Data flow — Session mode:**
+
+```
+TemplateService.execute({ mode: "session" })
+  → executeSessionMode(template, resolvedVariables)
+    → Compose prompt: "Execute these agent goals: 1. {goal1} 2. {goal2} ..."
+    → CopilotWrapper.chat(prompt, { enableSubagents: true, customAgents })
+    → Stream response chunks → collect full result
+    → TaskEngine.submit({ mode: "immediate" }) for tracking
+    → Return { taskIds: [trackingTaskId] }
+```
+
+**Schema additions:**
+- `OrchestrationModeSchema`: `z.enum(["task", "session"])` — validates mode values.
+- `ExecuteTemplateSchema.mode`: Optional mode override per execution.
+- `CreateOrchestrationTemplateSchema.defaultMode`: Optional default persisted with the template.
+- `OrchestrationTemplate.defaultMode`: Mapped from `default_mode` column (SQLite, added via ALTER TABLE migration).
+
+**UI surfaces:**
+- **TemplateExecuteModal** (`orchestration-templates-panel.tsx`): Radio selector pre-filled from `template.defaultMode`.
+- **Scheduler JobForm** (`scheduler/page.tsx`): Orchestration Mode selector on prompt/pipeline jobs.
+
+**spawn-agent integration:** When `ChatContext.enableInSessionSubagents` is true, `spawn-agent` returns a `sessionMode: true` flag and note explaining goals execute as in-session subagent delegation rather than separate background tasks.
+
 ### Task Tree API & Visualization (#486, #492)
 
 The Task Tree API provides recursive hierarchical views of task DAGs using SQLite recursive CTEs.

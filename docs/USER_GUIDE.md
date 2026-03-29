@@ -1638,7 +1638,37 @@ curl -X POST -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
   -d '{"variables": {"topic": "AI trends 2026"}}' \
   http://localhost:3000/api/admin/orchestration/<id>/execute
+
+# Execute a template in session mode
+curl -X POST -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"variables": {"topic": "AI trends 2026"}, "mode": "session"}' \
+  http://localhost:3000/api/admin/orchestration/<id>/execute
 ```
+
+#### Orchestration Mode (Task vs Session)
+
+Every orchestration template execution supports an **orchestration mode** that controls how sub-agents are dispatched:
+
+| Mode | How agents run | Best for |
+|------|---------------|----------|
+| **Task** (default) | Each agent spawns as a separate background task via the TaskEngine. Agents run asynchronously and persist in SQLite. | Long-running workflows, audit trails, scheduled jobs |
+| **Session** | All agent goals are composed into a single prompt and executed in one SDK session with `enableSubagents: true`. The SDK delegates to specialized agents inline. | Quick multi-agent work, cost-efficient delegation (1 premium request), interactive use |
+
+**Choosing a mode:**
+
+- **Use Task mode** when you need persistence, audit trails, or the workflow runs unattended (e.g., cron jobs, deep research pipelines).
+- **Use Session mode** when you want fast, cost-efficient results in a single turn — all agents share one session context and one premium request.
+
+**Setting the mode:**
+
+1. **Execute modal** — When you click **Execute** on a template, a radio selector lets you pick Task or Session mode.
+2. **Template default** — Each template has an optional `defaultMode` field. Set it during creation to pre-select the mode on every execute.
+3. **Scheduler** — Prompt and pipeline jobs include an Orchestration Mode selector (Task/Session) saved with the job.
+4. **REST API** — Pass `"mode": "session"` or `"mode": "task"` in the execute request body.
+5. **Config default** — If no mode is specified anywhere, the system defaults to `"task"`.
+
+**Mode precedence:** Execute request `mode` → template `defaultMode` → `"task"`.
 
 ### Inline Result Injection
 

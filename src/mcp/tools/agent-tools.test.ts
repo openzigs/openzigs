@@ -150,4 +150,30 @@ describe("agent-tools (spawn-agent)", () => {
     expect(tool.riskLevel).toBe("medium");
     expect(tool.inputSchema.required).toEqual(["goal"]);
   });
+
+  it("includes sessionMode info when enableInSessionSubagents is active", async () => {
+    setActiveChatContext({
+      sessionId: "sess-session",
+      enableInSessionSubagents: true,
+    });
+
+    const result = await tool.handler({ goal: "Session-mode child" });
+    const parsed = JSON.parse(result.text);
+
+    expect(parsed.sessionMode).toBe(true);
+    expect(parsed.note).toContain("session-mode orchestration context");
+    expect(parsed.taskId).toBeTruthy();
+  });
+
+  it("does not include sessionMode info when enableInSessionSubagents is not set", async () => {
+    setActiveChatContext({
+      sessionId: "sess-normal",
+    });
+
+    const result = await tool.handler({ goal: "Normal child" });
+    const parsed = JSON.parse(result.text);
+
+    expect(parsed.sessionMode).toBeUndefined();
+    expect(parsed.note).toBeUndefined();
+  });
 });

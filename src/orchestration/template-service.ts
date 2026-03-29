@@ -1,8 +1,10 @@
 import type { TemplateRepository } from "./template-repository.js";
 import type { TaskEngine } from "../tasks/task-engine.js";
+import type { CopilotWrapper } from "../copilot/copilot-wrapper.js";
 import type {
   OrchestrationTemplate,
   CreateOrchestrationTemplateInput,
+  OrchestrationMode,
 } from "./types.js";
 import {
   CreateOrchestrationTemplateSchema,
@@ -36,15 +38,23 @@ export function interpolateTemplate(
 export type TemplateServiceOptions = {
   repository: TemplateRepository;
   taskEngine?: TaskEngine;
+  copilot?: CopilotWrapper;
 };
 
 export class TemplateService {
   private repo: TemplateRepository;
   private taskEngine?: TaskEngine;
+  private copilot?: CopilotWrapper;
 
   constructor(opts: TemplateServiceOptions) {
     this.repo = opts.repository;
     this.taskEngine = opts.taskEngine;
+    this.copilot = opts.copilot;
+  }
+
+  /** Deferred injection — call after CopilotWrapper is initialised. */
+  setCopilot(copilot: CopilotWrapper): void {
+    this.copilot = copilot;
   }
 
   create(input: unknown): OrchestrationTemplate {
@@ -78,12 +88,12 @@ export class TemplateService {
 
   /**
    * Execute a template by interpolating variables and submitting tasks.
-   * Returns the created task IDs.
+   * Returns the created task IDs, or a sessionResponse when using session mode.
    */
   execute(
     id: string,
     rawInput: unknown
-  ): { taskIds: string[] } {
+  ): { taskIds: string[]; sessionResponse?: string } {
     const template = this.repo.getById(id);
     if (!template) {
       throw new TemplateNotFoundError(id);
@@ -94,6 +104,13 @@ export class TemplateService {
 
     const input = ExecuteTemplateSchema.parse(rawInput);
     const vars = input.variables;
+
+    // Resolve effective mode: explicit > template default > "task"
+    const effectiveMode: OrchestrationMode = input.mode ?? template.defaultMode ?? "task";
+
+    if (effectiveMode === "session") {
+      return this.executeSessionMode(template, input, vars);
+    }
 
     // Validate required variables
     for (const v of template.variables) {
@@ -192,6 +209,88 @@ export class TemplateService {
     }
 
     return { taskIds };
+  }
+
+  /**
+   * Session mode: compose all agent goals into a single prompt and execute
+   * via copilot.chat() with enableSubagents: true.
+   */
+  private executeSessionMode(
+    template: OrchestrationTemplate,
+    input: { variables: Record<string, string>; sessionId?: string; model?: string },
+    vars: Record<string, string>,
+  ): { taskIds: string[]; sessionResponse?: string } {
+    if (!this.copilot) {
+      throw new Error("CopilotWrapper not available for session mode execution");
+    }
+
+    // Validate required variables
+    for (const v of template.variables) {
+      if (v.required && !vars[v.name] && !v.defaultValue) {
+        throw new Error(`Missing required variable: ${v.name}`);
+      }
+      if (!vars[v.name] && v.defaultValue) {
+        vars[v.name] = v.defaultValue;
+      }
+    }
+
+    const engine = this.taskEngine!;
+    const copilot = this.copilot;
+
+    // Compose a single prompt from all stages/agents
+    const allAgents = template.stages.flatMap((s) => s.agents);
+    const taskSections = allAgents.map((agent, i) => {
+      const goal = interpolateTemplate(agent.goal, vars);
+      return `## Task ${i + 1}: ${goal}`;
+    });
+
+    const composedPrompt = [
+      "You are an orchestrator coordinating multiple analysis tasks.",
+      "Complete each task sequentially, using the most appropriate specialist approach for each.",
+      "",
+      ...taskSections,
+      "",
+      ...(template.aggregationPrompt
+        ? [interpolateTemplate(template.aggregationPrompt, vars)]
+        : []),
+    ].join("\n");
+
+    // Create a tracking task (submitted as immediate, completed asynchronously)
+    const orchestrationGoal = `[session] Template "${template.name}": ${allAgents.length} agents`;
+    const trackingTask = engine.submit(
+      {
+        trigger: "agent",
+        goal: orchestrationGoal,
+        context: JSON.stringify({ templateId: template.id, mode: "session" }),
+        model: input.model,
+        sessionId: input.sessionId,
+      },
+      { mode: "immediate" },
+    );
+
+    // Fire the session chat asynchronously (non-blocking)
+    const customAgents = copilot.getCustomAgents();
+    const chatAndComplete = async () => {
+      try {
+        let fullResponse = "";
+        for await (const chunk of copilot.chat(composedPrompt, {
+          enableSubagents: true,
+          tools: [],
+          ...(customAgents.length > 0 ? { customAgents } : {}),
+          ...(input.model ? { model: input.model } : {}),
+        })) {
+          fullResponse += chunk;
+        }
+        engine.complete(trackingTask.id, fullResponse.slice(0, 500));
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        logger.error("Template session mode execution failed", { templateId: template.id, error: msg });
+        engine.fail(trackingTask.id, msg);
+      }
+    };
+    chatAndComplete().catch(() => {});
+
+    return { taskIds: [trackingTask.id] };
   }
 
   /** Seed built-in example templates if they don't already exist. */

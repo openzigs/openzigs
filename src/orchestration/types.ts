@@ -32,6 +32,8 @@ export const TemplateCategorySchema = z.enum([
   "custom",
 ]);
 
+export const OrchestrationModeSchema = z.enum(["task", "session"]);
+
 export const CreateOrchestrationTemplateSchema = z.object({
   name: z.string().min(1).max(200),
   description: z.string().default(""),
@@ -39,6 +41,7 @@ export const CreateOrchestrationTemplateSchema = z.object({
   stages: z.array(OrchestrationStageSchema).min(1),
   variables: z.array(TemplateVariableSchema).default([]),
   aggregationPrompt: z.string().nullable().default(null),
+  defaultMode: OrchestrationModeSchema.optional(),
 });
 
 export const UpdateOrchestrationTemplateSchema =
@@ -48,6 +51,7 @@ export const ExecuteTemplateSchema = z.object({
   variables: z.record(z.string()).default({}),
   sessionId: z.string().optional(),
   model: z.string().optional(),
+  mode: OrchestrationModeSchema.optional(),
 });
 
 // ── TypeScript types ──────────────────────────────────────────────────
@@ -57,6 +61,8 @@ export type OrchestrationStage = z.infer<typeof OrchestrationStageSchema>;
 export type TemplateVariable = z.infer<typeof TemplateVariableSchema>;
 export type TemplateCategory = z.infer<typeof TemplateCategorySchema>;
 
+export type OrchestrationMode = z.infer<typeof OrchestrationModeSchema>;
+
 export interface OrchestrationTemplate {
   id: string;
   name: string;
@@ -65,6 +71,7 @@ export interface OrchestrationTemplate {
   stages: OrchestrationStage[];
   variables: TemplateVariable[];
   aggregationPrompt: string | null;
+  defaultMode?: OrchestrationMode;
   isBuiltIn: boolean;
   createdAt: string;
   updatedAt: string;
@@ -91,6 +98,7 @@ export interface StoredOrchestrationTemplate {
   stages_json: string;
   variables_json: string;
   aggregation_prompt: string | null;
+  default_mode: string | null;
   is_built_in: number;
   created_at: string;
   updated_at: string;
