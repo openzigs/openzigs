@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Windows named pipe Docker socket detection (`//./pipe/docker_engine`) for Docker Desktop on Windows (#598)
+- Hard link → `fs.copyFileSync` fallback in Remotion media staging for cross-device/Windows compatibility (#597)
+- Platform capability detection service (`src/config/platform.ts`) with OS, arch, Docker, Chrome, and sidecar support detection (#600)
+- `GET /api/admin/platform` endpoint exposing platform capabilities and feature availability to the UI (#600)
+- `usePlatform()` React hook and `PlatformBadge` component for platform-aware UI rendering (#601)
+- Admin panel shows platform availability badges on Image Generation, Video, and Music sidecar sections (#601)
+- Sidecar API platform gate: `/image-gen/*` and `/music-studio/*` endpoints return HTTP 501 with informative message on non-macOS platforms (#599)
+- Sidecar auto-provisioning is skipped entirely on non-macOS ARM platforms (#599)
+- Unit tests for Windows Docker socket path, Remotion media staging fallback, sidecar platform gating, and platform detection (#590)
+
 - Orchestration Mode (Task vs Session) for orchestration templates (#669)
   - `OrchestrationModeSchema` and `mode` field on `ExecuteTemplateSchema` for per-execution mode selection (#670)
   - `defaultMode` on `CreateOrchestrationTemplateSchema` and `OrchestrationTemplate` with SQLite migration (#670)

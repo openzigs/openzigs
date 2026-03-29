@@ -80,6 +80,21 @@ vi.mock("../skills/skill-loader.js", () => ({
   }]),
 }));
 
+const mockGetPlatformCapabilities = vi.fn().mockReturnValue({
+  os: "darwin",
+  arch: "arm64",
+  dockerAvailable: true,
+  sidecarsSupported: true,
+  chromePath: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+  isWindows: false,
+  isMacOS: true,
+  isLinux: false,
+});
+
+vi.mock("../config/platform.js", () => ({
+  getPlatformCapabilities: (...args: unknown[]) => mockGetPlatformCapabilities(...args),
+}));
+
 vi.mock("../productivity/template-service.js", () => ({
   TemplateService: vi.fn().mockImplementation(() => ({
     export: vi.fn().mockImplementation((id: string) => {
@@ -3067,5 +3082,99 @@ describe("Admin API router", () => {
         expect(res.body.success).toBe(true);
       });
     });
+  });
+});
+
+// ── Sidecar Platform Gating Tests (#599) ─────────────────────────────────
+
+describe("sidecar platform gate", () => {
+  function buildGatedApp() {
+    const app = express();
+    const toolRegistry = createMockToolRegistry();
+    const router = createAdminRouter({
+      toolRegistry: toolRegistry as unknown as AdminRouterOptions["toolRegistry"],
+      promptManager: createMockPromptManager() as unknown as AdminRouterOptions["promptManager"],
+      scheduler: createMockScheduler() as unknown as AdminRouterOptions["scheduler"],
+      personalityManager: createMockPersonalityManager() as unknown as AdminRouterOptions["personalityManager"],
+      sessionManager: undefined as unknown as AdminRouterOptions["sessionManager"],
+      localServerManager: undefined as unknown as AdminRouterOptions["localServerManager"],
+      sidecarManager: undefined as unknown as AdminRouterOptions["sidecarManager"],
+      copilot: undefined as unknown as AdminRouterOptions["copilot"],
+      taskWorker: undefined as unknown as AdminRouterOptions["taskWorker"],
+      taskEngine: undefined as unknown as AdminRouterOptions["taskEngine"],
+    });
+    app.use("/admin", router);
+    return app;
+  }
+
+  it("allows image-gen routes on macOS ARM (sidecarsSupported=true)", async () => {
+    mockGetPlatformCapabilities.mockReturnValue({
+      os: "darwin", arch: "arm64", dockerAvailable: true, sidecarsSupported: true,
+      chromePath: null, isWindows: false, isMacOS: true, isLinux: false,
+    });
+    const app = buildGatedApp();
+    const res = await request(app).get("/admin/image-gen/config");
+    expect(res.status).toBe(200);
+  });
+
+  it("returns 501 for image-gen routes on Windows (sidecarsSupported=false)", async () => {
+    mockGetPlatformCapabilities.mockReturnValue({
+      os: "win32", arch: "x64", dockerAvailable: false, sidecarsSupported: false,
+      chromePath: null, isWindows: true, isMacOS: false, isLinux: false,
+    });
+    const app = buildGatedApp();
+    const res = await request(app).get("/admin/image-gen/config");
+    expect(res.status).toBe(501);
+    expect(res.body.error).toContain("macOS ARM");
+    expect(res.body.platform).toBe("win32");
+  });
+
+  it("returns 501 for music-studio routes on Linux (sidecarsSupported=false)", async () => {
+    mockGetPlatformCapabilities.mockReturnValue({
+      os: "linux", arch: "x64", dockerAvailable: true, sidecarsSupported: false,
+      chromePath: null, isWindows: false, isMacOS: false, isLinux: true,
+    });
+    const app = buildGatedApp();
+    const res = await request(app).get("/admin/music-studio/models");
+    expect(res.status).toBe(501);
+    expect(res.body.error).toContain("macOS ARM");
+    expect(res.body.platform).toBe("linux");
+  });
+
+  it("allows music-studio routes on macOS ARM", async () => {
+    mockGetPlatformCapabilities.mockReturnValue({
+      os: "darwin", arch: "arm64", dockerAvailable: true, sidecarsSupported: true,
+      chromePath: null, isWindows: false, isMacOS: true, isLinux: false,
+    });
+    const app = buildGatedApp();
+    // music-studio/models proxies to sidecar — will fail with network error,
+    // but the gate should let it through (not 501)
+    const res = await request(app).get("/admin/music-studio/models");
+    expect(res.status).not.toBe(501);
+  });
+
+  it("GET /platform returns capabilities on any platform", async () => {
+    mockGetPlatformCapabilities.mockReturnValue({
+      os: "win32", arch: "x64", dockerAvailable: false, sidecarsSupported: false,
+      chromePath: null, isWindows: true, isMacOS: false, isLinux: false,
+    });
+    const app = buildGatedApp();
+    const res = await request(app).get("/admin/platform");
+    expect(res.status).toBe(200);
+    expect(res.body.platform.os).toBe("win32");
+    expect(res.body.features.imageGeneration.available).toBe(false);
+    expect(res.body.features.imageGeneration.reason).toContain("macOS ARM");
+  });
+
+  it("GET /platform returns features available on macOS ARM", async () => {
+    mockGetPlatformCapabilities.mockReturnValue({
+      os: "darwin", arch: "arm64", dockerAvailable: true, sidecarsSupported: true,
+      chromePath: null, isWindows: false, isMacOS: true, isLinux: false,
+    });
+    const app = buildGatedApp();
+    const res = await request(app).get("/admin/platform");
+    expect(res.status).toBe(200);
+    expect(res.body.platform.os).toBe("darwin");
+    expect(res.body.features.imageGeneration.available).toBe(true);
   });
 });
