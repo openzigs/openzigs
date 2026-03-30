@@ -3971,7 +3971,7 @@ Each template contains:
 
 ### Overview
 
-Sentinel is an autonomous background daemon that continuously monitors the health and performance of the OpenZigs platform. It operates on three axes: **task health review**, **prompt quality auditing**, and **daily digest generation**, with an integrated **SRE alerting** pipeline that supports multi-channel routing.
+Sentinel is an autonomous background daemon that continuously monitors the health and performance of the OpenZigs platform. It operates on four axes: **task health review**, **RAG knowledge base health**, **prompt quality auditing**, and **daily digest generation**, with an integrated **SRE alerting** pipeline that supports multi-channel routing.
 
 ### Architecture
 
@@ -4004,6 +4004,7 @@ Sentinel is an autonomous background daemon that continuously monitors the healt
 | `src/sentinel/prompt-auditor.ts` | Samples recent user prompts from session JSONL files and sends them to a lightweight Copilot model for efficiency analysis. Returns per-prompt scores, suggestions, and rewrites. |
 | `src/sentinel/digest-generator.ts` | Aggregates task review + prompt audit into `DigestRecord` with per-prompt `PromptRecommendation[]`. Persists to JSONL with configurable retention. Generates human-readable `status.md`. |
 | `src/sentinel/sre-alerter.ts` | Multi-channel alert dispatch (`admin` via Socket.IO, external channels via `ChannelManager`). Per-type deduplication with configurable cooldowns. Only critical alerts route to external channels. |
+| `src/sentinel/rag-health-check.ts` | Probes LanceDB accessibility, ingestion service state, and queue depth. Emits alerts for unreachable DB, downed ingestion, and excessive queue depth. Gracefully degrades when knowledge service is not configured. |
 | `src/sentinel/sentinel-state.ts` | Zod schemas, file-based state persistence (`~/.openzigs/sentinel/`), digest JSONL history, `status.md` read/write, digest pruning. |
 
 ### Scheduling
@@ -4023,6 +4024,9 @@ Sentinel is an autonomous background daemon that continuously monitors the healt
 | `queue-depth` | Warning | Task queue exceeds threshold (default: 10) |
 | `orphaned-task` | Warning | Task running > 30 minutes |
 | `success-rate-drop` | Critical | Success rate drops below 50% (≥3 resolved tasks) |
+| `rag-db-unreachable` | Critical | LanceDB knowledge base is unreachable |
+| `rag-ingestion-down` | Warning | RAG ingestion service is not running (auto-restart attempted) |
+| `rag-queue-depth` | Warning | RAG ingestion queue depth exceeds threshold (default: 100) |
 
 ### Multi-Channel Alert Routing (#196)
 
@@ -4056,7 +4060,7 @@ The Sentinel panel appears on the Admin page (`/admin`) under "Sentinel Monitor"
 ```json
 {
   "sentinel": {
-    "enabled": false,
+    "enabled": true,
     "model": "gpt-4o-mini",
     "checkIntervalMinutes": 15,
     "jitterMinutes": 15,
@@ -4064,6 +4068,7 @@ The Sentinel panel appears on the Admin page (`/admin`) under "Sentinel Monitor"
     "auditHour": 2,
     "consecutiveFailureThreshold": 3,
     "queueDepthThreshold": 10,
+    "ragQueueDepthThreshold": 100,
     "persistMarkdownDigest": true,
     "markdownDigestPath": null,
     "digestRetentionDays": 30,

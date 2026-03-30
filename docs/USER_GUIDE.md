@@ -6324,7 +6324,7 @@ Sentinel is a background daemon that continuously monitors the health of your Op
 
 ### Enabling Sentinel
 
-Sentinel is disabled by default. Enable it in the Admin panel or in your config:
+Sentinel is enabled by default. You can configure it in the Admin panel or in your config:
 
 ```json
 {
@@ -6347,6 +6347,7 @@ Or toggle it live from the Admin UI:
 - **Orphaned tasks**: Tasks running longer than 30 minutes
 - **Slow tasks**: Tasks that took longer than 5 minutes
 - **Prompt quality**: Samples recent user prompts and scores them for clarity and token efficiency
+- **RAG knowledge base health**: LanceDB accessibility, ingestion service state, and ingestion queue depth
 
 ### Alerts
 
@@ -6358,6 +6359,9 @@ Sentinel generates real-time alerts delivered via Socket.IO to the Admin UI:
 | Queue Depth | Warning | Task queue exceeds 10 items |
 | Orphaned Task | Warning | A task has been running > 30 min |
 | Success Rate Drop | Critical | Success rate below 50% |
+| RAG DB Unreachable | Critical | LanceDB knowledge base is unreachable |
+| RAG Ingestion Down | Warning | RAG ingestion service is not running (auto-restart attempted) |
+| RAG Queue Depth | Warning | RAG ingestion queue exceeds threshold (default: 100) |
 
 Alerts include automatic deduplication — critical alerts have a configurable cooldown (default: 5 minutes for critical, 30 minutes for warnings).
 
@@ -6435,7 +6439,7 @@ curl -X POST http://localhost:3001/api/admin/sentinel/run-now
 
 | Key | Default | Description |
 |---|---|---|
-| `enabled` | `false` | Enable/disable Sentinel |
+| `enabled` | `true` | Enable/disable Sentinel |
 | `model` | `gpt-4o-mini` | Model used for prompt audits |
 | `checkIntervalMinutes` | `15` | How often to run task health checks |
 | `jitterMinutes` | `15` | Random delay (up to N minutes) added after each check interval |
