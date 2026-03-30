@@ -113,7 +113,7 @@
   "pnpm": {
     "overrides": {
       "glob": ">=10.5.0",
-      "serialize-javascript": ">=7.0.3",
+      "serialize-javascript": ">=7.0.5",
       "undici": ">=7.24.0",
       "esbuild": ">=0.25.0",
       "socket.io-parser": ">=4.2.6",
@@ -122,7 +122,10 @@
       "@github/copilot": ">=0.0.423",
       "dompurify": ">=3.3.2",
       "@tootallnate/once": ">=3.0.1",
-      "picomatch": ">=2.3.2"
+      "picomatch": ">=4.0.4",
+      "brace-expansion": ">=5.0.5",
+      "express>path-to-regexp": "0.1.13",
+      "router>path-to-regexp": ">=8.4.0"
     },
     "patchedDependencies": {
       "vscode-jsonrpc@8.2.1": "patches/vscode-jsonrpc@8.2.1.patch"

@@ -93,9 +93,9 @@ After the PR branch exists, run a CVE dependency audit against the project's dep
    gh pr view {PR_NUMBER} --json headRefName --jq '.headRefName'
    git show origin/{branch}:package.json
    ```
-2. **Audit via package manager**:
+2. **Audit via package manager** (this is a pnpm workspace — never use `npm audit`, it hangs without `package-lock.json`):
    ```bash
-   npm audit --audit-level=moderate
+   pnpm audit --audit-level=moderate
    ```
 3. **CVE lookup for critical direct dependencies** using `#tool:mcp_cve-search-mc_vul_vendor_product_cve` — check the top 5–10 direct production dependencies. Use the npm package name as `product` and the org/publisher as `vendor`.
 4. **Look up any flagged CVE IDs** using `#tool:mcp_cve-search-mc_vul_cve_search` to get full severity and CVSS scores.
@@ -129,7 +129,7 @@ Call the **Code Review** subagent with `#tool:agent/runSubagent`:
 
 - **agentName**: `Code Review`
 - **description**: `Reviewing PR #{N} against epic #{M}`
-- **prompt**: *"Review PR #{PR_NUMBER} against epic #{EPIC_NUMBER}. Read the code-review skill at `.github/skills/code-review/SKILL.md` for the full workflow. Check requirements, security (OWASP), code quality, performance, tests, and documentation. IMPORTANT: Execute Step 1b (Security Scanner Comments) — fetch all review comments and identify any from `github-advanced-security` (CodeQL), `dependabot`, or other security bots. Cross-reference their findings during your security review. Any unresolved CodeQL High/Critical is automatically blocking. Also execute Step 1c (Prior Review Comments) — analyze all existing comments from human reviewers and GitHub Copilot. Validate each, note which are addressed vs. still open. Unresolved blocking human comments are also blocking. Also execute Step 1d (CI Status) — run `gh pr checks` and verify every job is green. ALL failing CI jobs are blocking, even pre-existing failures not introduced by this PR. The PR must fix them before approval. Publish a structured GitHub review. When done, report your verdict (APPROVE, COMMENT, or REQUEST_CHANGES) and list any blocking issues, including unresolved scanner findings, unresolved reviewer comments, and failing CI jobs."*
+- **prompt**: *"Review PR #{PR_NUMBER} against epic #{EPIC_NUMBER}. Read the code-review skill at `.github/skills/code-review/SKILL.md` for the full workflow. Check requirements, security (OWASP), code quality, performance, tests, and documentation. Execute Step 1b (Security Scanner Comments) — fetch all review comments and check for any from `github-advanced-security`, `dependabot`, or other security bots. NOTE: CodeQL does NOT run on PRs in this repo (only on push-to-main and weekly cron), so scanner comments will typically not exist — if none are found, skip to Step 1c and rely on your manual OWASP review in Step 4 as the primary security gate. Do NOT wait for or block on missing CodeQL checks. Also execute Step 1c (Prior Review Comments) — analyze all existing comments from human reviewers and GitHub Copilot. Validate each, note which are addressed vs. still open. Unresolved blocking human comments are blocking. Also execute Step 1d (CI Status) — run `gh pr checks` and verify every CI job is green. Only `api` and `ui` jobs appear (no CodeQL). ALL failing CI jobs are blocking, even pre-existing failures not introduced by this PR. The PR must fix them before approval. Publish a structured GitHub review. When done, report your verdict (APPROVE, COMMENT, or REQUEST_CHANGES) and list any blocking issues, including unresolved reviewer comments and failing CI jobs."*
 
 **Extract from the result**: The verdict and any blocking issues.
 
