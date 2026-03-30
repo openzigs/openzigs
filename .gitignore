@@ -105,7 +105,8 @@ downloads/
 # Screenshots (user-generated)
 screenshots/
 
-# Debug screenshots (root-level)
+# Debug screenshots (root-level) and any stray PNGs from UI Vision / Playwright sessions
+/*.png
 automation-architecture-section.png
 architecture-integrations-cta.png
 hero-section.png
