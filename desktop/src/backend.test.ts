@@ -25,6 +25,7 @@ describe("BackendManager", () => {
   it("initializes with stopped status", () => {
     expect(manager.getStatus()).toBe("stopped");
     expect(manager.getPort()).toBeNull();
+    expect(manager.getHealthData()).toBeNull();
   });
 
   it("finds a free port", async () => {
@@ -45,7 +46,7 @@ describe("BackendManager", () => {
     // Start a tiny HTTP server that responds like the real health endpoint
     const server = http.createServer((_req, res) => {
       res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ status: "ok" }));
+      res.end(JSON.stringify({ status: "ok", uptime: 42.5, memoryMB: 128.75 }));
     });
 
     const port = await manager.findFreePort();
@@ -54,6 +55,24 @@ describe("BackendManager", () => {
     try {
       const healthy = await manager.checkHealth(port);
       expect(healthy).toBe(true);
+    } finally {
+      server.close();
+    }
+  });
+
+  it("stores enriched health data after successful checkHealth", async () => {
+    const server = http.createServer((_req, res) => {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ status: "ok", uptime: 100.0, memoryMB: 256.5 }));
+    });
+
+    const port = await manager.findFreePort();
+    await new Promise<void>((resolve) => server.listen(port, "127.0.0.1", resolve));
+
+    try {
+      await manager.checkHealth(port);
+      const data = manager.getHealthData();
+      expect(data).toEqual({ status: "ok", uptime: 100.0, memoryMB: 256.5 });
     } finally {
       server.close();
     }
@@ -96,7 +115,7 @@ describe("BackendManager", () => {
   it("start() in dev mode detects running server", async () => {
     const server = http.createServer((_req, res) => {
       res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ status: "ok" }));
+      res.end(JSON.stringify({ status: "ok", uptime: 10.0, memoryMB: 64.0 }));
     });
 
     const port = await manager.findFreePort();
