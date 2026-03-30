@@ -9,10 +9,19 @@ export interface UpdateState {
   error?: string;
 }
 
+export interface HealthData {
+  status: string;
+  uptime: number;
+  memoryMB: number;
+}
+
 contextBridge.exposeInMainWorld("openzigs", {
+  isElectron: true,
+
   backend: {
     getStatus: (): Promise<BackendStatus> => ipcRenderer.invoke("backend:getStatus"),
     getPort: (): Promise<number | null> => ipcRenderer.invoke("backend:getPort"),
+    getHealth: (): Promise<HealthData | null> => ipcRenderer.invoke("backend:getHealth"),
     start: (): Promise<void> => ipcRenderer.invoke("backend:start"),
     stop: (): Promise<void> => ipcRenderer.invoke("backend:stop"),
     onStatusChanged: (callback: (status: BackendStatus) => void): (() => void) => {

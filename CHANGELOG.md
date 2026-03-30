@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Enriched `/health` endpoint response with `uptime` (seconds) and `memoryMB` (RSS in MB) fields (#607)
+- `backend:getHealth` IPC handler returns enriched health data to the Electron renderer (#607)
+- `window.openzigs.isElectron` flag in preload for runtime Electron detection (#607)
+- `window.openzigs.backend.getHealth()` IPC method exposes backend health data to the UI (#607)
+- Tray tooltip shows uptime and memory when backend is running (e.g., "OpenZigs — running (2h 15m, 120MB)") (#607)
+
+### Changed
+
+- `BackendManager.checkHealth()` now stores enriched health JSON (status, uptime, memoryMB) from the backend (#607)
+
 ### Changed
 
 - Sentinel autonomous monitor is now **enabled by default** — new installations start with Sentinel active; set `sentinel.enabled: false` in config to disable (#217)
