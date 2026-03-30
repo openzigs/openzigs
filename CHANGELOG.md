@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Sentinel autonomous monitor is now **enabled by default** — new installations start with Sentinel active; set `sentinel.enabled: false` in config to disable (#217)
+
+### Added
+
+- RAG Knowledge Base health check integrated into Sentinel periodic checks — monitors DB accessibility, ingestion status, and queue depth (#218)
+- New alert types: `rag-db-unreachable` (critical), `rag-ingestion-down` (warning), `rag-queue-depth` (warning) (#218)
+- `ragQueueDepthThreshold` config option (default: 100) to control when Sentinel alerts on RAG ingestion backlog (#218)
+- Knowledge Base Health section in Sentinel status markdown digest (#218)
+- `isRunning` getter and `restart()` method on `KnowledgeIngestionService` (#218)
+
 ### Security
 
 - Bumped `serialize-javascript` override from >=7.0.3 to >=7.0.5 (prototype pollution, moderate)

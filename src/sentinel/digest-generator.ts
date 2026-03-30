@@ -6,12 +6,14 @@ import {
   type DigestRecord,
   type PromptRecommendation,
   type SentinelConfig,
+  type RAGHealthStatus,
 } from "./sentinel-state.js";
 
 export interface DigestReport {
   taskReview: TaskReviewResult;
   promptAudit: PromptAuditResult | null;
   tokenBurn: TokenBurnSummary | null;
+  ragHealth?: RAGHealthStatus | null;
 }
 
 export interface TokenBurnSummary {
@@ -40,7 +42,7 @@ export class DigestGenerator {
 
   /** Generate a digest record from aggregated results. */
   async generate(report: DigestReport): Promise<DigestRecord> {
-    const { taskReview, promptAudit, tokenBurn } = report;
+    const { taskReview, promptAudit, tokenBurn, ragHealth } = report;
     const now = new Date().toISOString();
 
     // Extract per-prompt recommendations from audit data (#195)
@@ -86,7 +88,7 @@ export class DigestGenerator {
 
     // Write status.md if enabled (#195)
     if (this.config.persistMarkdownDigest !== false) {
-      const markdown = this.generateStatusMarkdown(record);
+      const markdown = this.generateStatusMarkdown(record, ragHealth);
       await writeStatusMarkdown(markdown, this.config.markdownDigestPath);
     }
 
@@ -154,7 +156,7 @@ export class DigestGenerator {
   }
 
   /** Generate a human-readable Markdown status file from a digest record. */
-  generateStatusMarkdown(record: DigestRecord): string {
+  generateStatusMarkdown(record: DigestRecord, ragHealth?: RAGHealthStatus | null): string {
     const tz = this.config.timezone ?? "UTC";
     const date = new Date(record.timestamp).toLocaleDateString("en-US", {
       year: "numeric",
@@ -227,6 +229,25 @@ export class DigestGenerator {
           lines.push("```");
         }
         lines.push("");
+      }
+    }
+
+    // RAG Knowledge Base Health (#218)
+    if (ragHealth) {
+      lines.push("", "## Knowledge Base Health", "");
+      if (!ragHealth.available) {
+        if (ragHealth.alerts.some((a) => a.type === "rag-db-unreachable")) {
+          lines.push("- **Status**: ❌ Unreachable");
+        } else {
+          lines.push("- **Status**: Not configured");
+        }
+      } else {
+        const hasWarnings = ragHealth.alerts.length > 0;
+        lines.push(`- **Status**: ${hasWarnings ? "⚠️ Degraded" : "✅ Healthy"}`);
+        lines.push(`- **Documents**: ${ragHealth.totalDocuments} indexed (${ragHealth.totalChunks} chunks)`);
+        lines.push(`- **Pending**: ${ragHealth.pendingDocuments} files`);
+        lines.push(`- **Last Indexed**: ${ragHealth.lastIndexedAt ?? "Never"}`);
+        lines.push(`- **Ingestion**: ${ragHealth.ingestionRunning ? "Running" : "Stopped"}`);
       }
     }
 

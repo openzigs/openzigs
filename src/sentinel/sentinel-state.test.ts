@@ -57,10 +57,11 @@ describe("sentinel-state", () => {
 
     it("applies defaults for missing fields", () => {
       const parsed = SentinelConfigSchema.parse({});
-      expect(parsed.enabled).toBe(false);
+      expect(parsed.enabled).toBe(true);
       expect(parsed.model).toBe("gpt-4o-mini");
       expect(parsed.checkIntervalMinutes).toBe(15);
       expect(parsed.consecutiveFailureThreshold).toBe(3);
+      expect(parsed.ragQueueDepthThreshold).toBe(100);
     });
 
     it("rejects invalid values", () => {

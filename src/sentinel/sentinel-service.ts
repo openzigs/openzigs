@@ -13,11 +13,13 @@ import {
   type SentinelState,
   type SentinelConfig,
   type DigestRecord,
+  type RAGHealthStatus,
 } from "./sentinel-state.js";
 import { TaskReviewer, type TaskReviewResult } from "./task-reviewer.js";
 import { PromptAuditor, type PromptAuditResult } from "./prompt-auditor.js";
 import { DigestGenerator } from "./digest-generator.js";
 import { SREAlerter, type AlertChannelManager } from "./sre-alerter.js";
+import { RAGHealthCheck, type KnowledgeServiceLike } from "./rag-health-check.js";
 
 export interface SentinelStatus {
   enabled: boolean;
@@ -40,6 +42,7 @@ export interface SentinelDependencies {
   clock?: () => Date;
   io?: { emit: (event: string, data: unknown) => void };
   channelManager?: AlertChannelManager;
+  knowledgeService?: KnowledgeServiceLike | null;
 }
 
 /**
@@ -69,9 +72,11 @@ export class SentinelService extends EventEmitter {
   private promptAuditor: PromptAuditor;
   private digestGenerator: DigestGenerator;
   private alerter: SREAlerter;
+  private ragHealthCheck: RAGHealthCheck;
 
   // Pending results for digest aggregation
   private pendingAuditResult: PromptAuditResult | null = null;
+  private lastRAGHealthStatus: RAGHealthStatus | null = null;
 
   // Concurrency lock to prevent overlapping check/audit/digest runs
   private isChecking = false;
@@ -109,6 +114,12 @@ export class SentinelService extends EventEmitter {
       notifyChannels: this.config.notifyChannels,
       criticalCooldownMinutes: this.config.criticalCooldownMinutes,
       warningCooldownMinutes: this.config.warningCooldownMinutes,
+      clock: this.clock,
+    });
+
+    this.ragHealthCheck = new RAGHealthCheck({
+      knowledgeService: deps.knowledgeService,
+      config: this.config,
       clock: this.clock,
     });
   }
@@ -223,6 +234,17 @@ export class SentinelService extends EventEmitter {
     this.state.totalTasksReviewed += result.totalTasks;
     this.state.consecutiveFailures = result.consecutiveFailures;
 
+    // Run RAG health check (#218)
+    try {
+      const ragResult = await this.ragHealthCheck.check();
+      this.lastRAGHealthStatus = ragResult.status;
+      if (ragResult.alerts.length > 0) {
+        result.alerts.push(...ragResult.alerts);
+      }
+    } catch (err) {
+      logger.error(`[Sentinel] RAG health check error: ${err instanceof Error ? err.message : String(err)}`);
+    }
+
     // Fire immediate alerts
     if (result.alerts.length > 0) {
       await this.alerter.fireAlerts(result.alerts);
@@ -285,6 +307,7 @@ export class SentinelService extends EventEmitter {
         taskReview,
         promptAudit: this.pendingAuditResult,
         tokenBurn: null, // Token burn from observability if available
+        ragHealth: this.lastRAGHealthStatus,
       });
 
       this.state.lastDigestAt = this.clock().toISOString();

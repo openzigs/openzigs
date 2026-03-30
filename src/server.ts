@@ -804,6 +804,7 @@ const sentinel = new SentinelService({
   sessionManager,
   config: sentinelConfig,
   channelManager,
+  knowledgeService,
 });
 
 // ── Webhook Manager ──
@@ -2032,12 +2033,14 @@ sentinel.setIO(io);
 if (sentinelConfig.enabled) {
   void sentinel.start()
     .then(() => {
-      logger.info("Sentinel autonomous monitor started");
+      logger.info("Sentinel autonomous monitor started (enabled by default)");
     })
     .catch((error) => {
       const details = error instanceof Error ? error.message : String(error);
       logger.error(`Failed to start Sentinel autonomous monitor: ${details}`);
     });
+} else {
+  logger.info("Sentinel autonomous monitor disabled by configuration");
 }
 
 // Wire Knowledge Base Socket.IO event forwarding
