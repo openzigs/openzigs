@@ -133,3 +133,6 @@ external/**/test_tokens.py
 # Workspace uses root lockfile; stale ui lockfile triggers false Dependabot alerts
 ui/pnpm-lock.yaml
 docs/research/
+
+# Agent hook runtime logs (auto-generated, not versioned)
+.github/hooks/logs/*.log
