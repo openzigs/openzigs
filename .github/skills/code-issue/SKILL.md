@@ -131,12 +131,12 @@ If the issue involves UI changes:
 Before creating the PR, perform a comprehensive security review:
 
 1. **Dependency audit**:
-   - Run the package manager audit: `npm audit --audit-level=moderate` (Node.js), `gradle dependencies` (Gradle), or `mvn dependency:check` (Maven)
+   - Run the package manager audit: `pnpm audit --audit-level=moderate` (pnpm workspaces — never use `npm audit`, it hangs without `package-lock.json`), `gradle dependencies` (Gradle), or `mvn dependency:check` (Maven)
    - **CVE lookup for direct dependencies** — for the top direct dependencies (from `package.json` `dependencies`/`devDependencies`, `pom.xml`, or `build.gradle`), use the cve-search tools:
      ```
      mcp_cve-search-mc_vul_vendor_product_cve with vendor "{vendor}" product "{package-name}"
      ```
-   - For any CVE IDs returned by `npm audit`, look up the full record:
+   - For any CVE IDs returned by `pnpm audit`, look up the full record:
      ```
      mcp_cve-search-mc_vul_cve_search with cve_id "CVE-XXXX-XXXXX"
      ```

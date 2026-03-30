@@ -93,9 +93,9 @@ After the PR branch exists, run a CVE dependency audit against the project's dep
    gh pr view {PR_NUMBER} --json headRefName --jq '.headRefName'
    git show origin/{branch}:package.json
    ```
-2. **Audit via package manager**:
+2. **Audit via package manager** (this is a pnpm workspace — never use `npm audit`, it hangs without `package-lock.json`):
    ```bash
-   npm audit --audit-level=moderate
+   pnpm audit --audit-level=moderate
    ```
 3. **CVE lookup for critical direct dependencies** using `#tool:mcp_cve-search-mc_vul_vendor_product_cve` — check the top 5–10 direct production dependencies. Use the npm package name as `product` and the org/publisher as `vendor`.
 4. **Look up any flagged CVE IDs** using `#tool:mcp_cve-search-mc_vul_cve_search` to get full severity and CVSS scores.
