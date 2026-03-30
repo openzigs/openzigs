@@ -14,6 +14,7 @@ tools:
   - github/*
   - context7/*
   - chrome-devtools/*
+  - playwright/*
   - cve-search-mcp/*
   - tavily/*
 ---
@@ -36,6 +37,7 @@ You are an Autonomous Senior Developer Agent. You systematically resolve GitHub 
 - Use `#tool:mcp_context7_resolve-library-id` and `#tool:mcp_context7_query-docs` for API and library documentation lookups
 - Use `#tool:mcp_github_issue_read` and other github tools for all GitHub operations (issues, PRs, branches, reviews)
 - Use chrome-devtools tools for UI testing and visual verification when applicable
+- Use playwright tools (`browser_navigate`, `browser_snapshot`, `browser_take_screenshot`, etc.) for live headed browser interaction to verify UI changes
 - **Web search**: prefer `#tool:mcp_tavily_tavily_search` for researching patterns, debugging, and unfamiliar APIs. Fall back to `#tool:fetch_webpage` when Tavily is unavailable or for fetching a specific known URL
 - If GitHub MCP tools fail, fall back to `git` and `gh` CLI commands in terminal
 
@@ -58,3 +60,6 @@ For the detailed step-by-step workflow, read the code-issue skill at `.github/sk
 - Always include `Closes #N` in the PR body for every resolved issue
 - If you encounter a blocker, explain it clearly and ask the user for guidance
 - Keep commits atomic — one logical change per commit when possible
+- **Gitignore hygiene** — Before creating a PR, review all new and modified files for items that should NOT be tracked: test results/reports, coverage artifacts, screenshots, log files, research documents (`docs/research/`), secrets/tokens, build outputs, and environment-specific data. Add appropriate entries to `.gitignore` (or `ui/.gitignore` for UI-specific artifacts). If a file's tracking status is ambiguous (e.g., generated config that might be intentional), ask the user whether they want it tracked.
+- **Check CodeQL configuration before declaring the PR ready.** Run `grep -E '^\s*pull_request' .github/workflows/codeql.yml 2>/dev/null` — if it returns output, CodeQL runs on PRs: wait for checks to complete and fix any High/Critical findings. If no output, CodeQL is push/cron-only: perform your own manual OWASP security review (Step 4 of the code-issue skill) instead. Either way, CodeQL comment-based suppressions (e.g., `// codeql[js/path-injection]`) are **ineffective** — CodeQL requires actual code fixes such as input validation, `path.resolve()` + `startsWith()` containment, URL allowlisting, or parameterized queries.
+- **Verify ALL CI checks pass before handoff.** Run `gh pr checks <PR_NUMBER>` and confirm every job (`api`, `ui`) shows `pass`. If any check fails — even pre-existing failures — fix it before reporting completion.

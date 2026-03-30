@@ -14,6 +14,7 @@ tools:
   - github/*
   - context7/*
   - chrome-devtools/*
+  - playwright/*
   - tavily/*
 ---
 
