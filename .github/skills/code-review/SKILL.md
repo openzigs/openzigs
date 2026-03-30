@@ -86,6 +86,8 @@ Execute with the **Code Review** agent (`code-review.agent.md`), which has the s
 
 **Goal:** Collect all findings from automated security scanners so they can be cross-referenced during the security review and tracked in the final verdict.
 
+> **Note:** In this repository, the CodeQL workflow (`codeql.yml`) only triggers on pushes to `main` and a weekly cron schedule — it does **not** run on pull requests. This means `github-advanced-security` bot comments will typically **not** exist on PRs. If no scanner comments are found, skip to Step 1c. Do NOT wait for or block on CodeQL results that will never arrive. Your manual OWASP review in Step 4 serves as the primary security gate for PRs.
+
 GitHub Advanced Security (GHAS) runs CodeQL analysis on PRs and posts review comments from the `github-advanced-security` bot. These comments identify real vulnerabilities (injection, path traversal, missing rate limiting, XSS, etc.) that the human/agent reviewer must acknowledge.
 
 **Procedure:**
@@ -204,8 +206,9 @@ Other people or automated reviewers (e.g., GitHub Copilot code review) may have 
    |-----|--------|--------------------|-------|
    | api | ❌ FAILED | No — pre-existing `undici` type error | Blocking |
    | ui | ✅ Passed | — | — |
-   | CodeQL (JS) | ✅ Passed | — | — |
    ```
+
+   > **Note:** CodeQL is NOT a PR check in this repository. The `codeql.yml` workflow only runs on pushes to `main` and weekly cron. Do not expect or wait for CodeQL entries in `gh pr checks` output. Only CI jobs (`api`, `ui`) will appear.
 
 3. **For each failing job:**
    - Fetch the failure logs: `gh run view {RUN_ID} --log-failed` or check the Actions tab URL
@@ -415,7 +418,10 @@ gh pr review {PR_NUMBER} --request-changes --body "$(cat review-body.md)"
 - docs/ARCHITECTURE.md: ⚠️ New `/api/widgets` endpoint not documented
 - README: No changes needed
 
-### Security Scanners: {CLEAN|FINDINGS}
+### Security Scanners: {CLEAN|FINDINGS|N/A}
+
+> If CodeQL does not run on PRs (as in this repo), write "N/A — CodeQL runs on push-to-main only; manual OWASP review performed in Step 4" and skip the scanner table.
+
 | Scanner | Finding | File | Severity | Status |
 |---------|---------|------|----------|--------|
 | CodeQL | Missing rate limiting | src/api/m365.ts:151 | High | Still present |
@@ -426,7 +432,7 @@ gh pr review {PR_NUMBER} --request-changes --body "$(cat review-body.md)"
 |-----|--------|--------------------|-----------|
 | api | ❌ FAILED — `undici` type error in image-gen-service.ts:12 | No — pre-existing | Yes |
 | ui | ✅ Passed | — | — |
-| CodeQL (JavaScript) | ✅ Passed | — | — |
+
 
 ### Prior Review Comments: {N total, M unresolved}
 | Reviewer | Type | Unresolved | Addressed | Disagreed |
