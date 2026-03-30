@@ -132,3 +132,4 @@ external/**/test_tokens.py
 
 # Workspace uses root lockfile; stale ui lockfile triggers false Dependabot alerts
 ui/pnpm-lock.yaml
+docs/research/
