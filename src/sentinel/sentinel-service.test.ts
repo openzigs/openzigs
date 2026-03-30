@@ -43,6 +43,7 @@ const testConfig: SentinelConfig = {
   auditHour: 2,
   consecutiveFailureThreshold: 3,
   queueDepthThreshold: 10,
+  ragQueueDepthThreshold: 100,
   persistMarkdownDigest: false,
   markdownDigestPath: null,
   digestRetentionDays: 30,
@@ -330,6 +331,58 @@ describe("SentinelService", () => {
       await sentinel.start();
       expect(sentinel.isRunning).toBe(true);
       await sentinel.stop();
+    });
+  });
+
+  describe("RAG health check integration", () => {
+    it("runs RAG health check during runCheck when knowledgeService provided", async () => {
+      deps = createMockDeps();
+      deps.knowledgeService = {
+        getStats: vi.fn().mockResolvedValue({
+          totalDocuments: 10,
+          totalChunks: 100,
+          pendingDocuments: 2,
+          lastIndexedAt: "2026-01-15T11:00:00Z",
+        }),
+        get isRunning() { return true; },
+        restart: vi.fn(),
+      };
+      sentinel = new SentinelService(deps);
+      await sentinel.start();
+      const result = await sentinel.runCheck();
+      expect(result).toBeDefined();
+      // No RAG alerts for healthy service
+      const ragAlerts = result.alerts.filter((a) =>
+        ["rag-db-unreachable", "rag-ingestion-down", "rag-queue-depth"].includes(a.type)
+      );
+      expect(ragAlerts).toHaveLength(0);
+    });
+
+    it("includes RAG alerts when knowledge DB is unreachable", async () => {
+      deps = createMockDeps();
+      deps.knowledgeService = {
+        getStats: vi.fn().mockRejectedValue(new Error("DB failed")),
+        get isRunning() { return false; },
+        restart: vi.fn(),
+      };
+      sentinel = new SentinelService(deps);
+      await sentinel.start();
+      const result = await sentinel.runCheck();
+      const ragAlerts = result.alerts.filter((a) => a.type === "rag-db-unreachable");
+      expect(ragAlerts).toHaveLength(1);
+      expect(ragAlerts[0].priority).toBe("critical");
+    });
+
+    it("works without knowledgeService (no RAG alerts)", async () => {
+      deps = createMockDeps();
+      // knowledgeService not set
+      sentinel = new SentinelService(deps);
+      await sentinel.start();
+      const result = await sentinel.runCheck();
+      const ragAlerts = result.alerts.filter((a) =>
+        a.type.startsWith("rag-")
+      );
+      expect(ragAlerts).toHaveLength(0);
     });
   });
 });

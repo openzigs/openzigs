@@ -17,7 +17,7 @@ export interface TaskReviewResult {
 }
 
 export interface SentinelAlert {
-  type: "consecutive-failures" | "queue-depth" | "orphaned-task" | "sidecar-down" | "success-rate-drop";
+  type: "consecutive-failures" | "queue-depth" | "orphaned-task" | "sidecar-down" | "success-rate-drop" | "rag-db-unreachable" | "rag-ingestion-down" | "rag-queue-depth";
   priority: "critical" | "warning";
   message: string;
   data: Record<string, unknown>;

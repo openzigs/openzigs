@@ -230,8 +230,18 @@ export class KnowledgeIngestionService extends EventEmitter {
     logger.info("[Knowledge] Knowledge Ingestion Service stopped");
   }
 
+  /** Whether the service is currently running. */
+  get isRunning(): boolean {
+    return this.running;
+  }
+
+  /** Stop and restart the service. */
+  async restart(): Promise<void> {
+    await this.stop();
+    await this.start();
+  }
+
   /**
-   * Search the knowledge base using the configured search mode and min score.
    * Callers can override mode/minScore for specific queries.
    */
   async search(

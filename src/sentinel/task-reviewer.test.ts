@@ -17,6 +17,7 @@ const defaultConfig: SentinelConfig = {
   auditHour: 2,
   consecutiveFailureThreshold: 3,
   queueDepthThreshold: 10,
+  ragQueueDepthThreshold: 100,
   persistMarkdownDigest: true,
   markdownDigestPath: null,
   digestRetentionDays: 30,

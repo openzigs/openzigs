@@ -7,6 +7,8 @@ export type { PromptAuditResult, PromptAudit } from "./prompt-auditor.js";
 export { DigestGenerator } from "./digest-generator.js";
 export type { DigestReport, TokenBurnSummary } from "./digest-generator.js";
 export { SREAlerter } from "./sre-alerter.js";
+export { RAGHealthCheck } from "./rag-health-check.js";
+export type { KnowledgeServiceLike } from "./rag-health-check.js";
 export {
   SentinelConfigSchema,
   SentinelStateSchema,
@@ -16,7 +18,7 @@ export {
   appendDigestRecord,
   defaultState,
 } from "./sentinel-state.js";
-export type { SentinelConfig, SentinelState, DigestRecord, PromptRecommendation } from "./sentinel-state.js";
+export type { SentinelConfig, SentinelState, DigestRecord, PromptRecommendation, RAGHealthStatus } from "./sentinel-state.js";
 export {
   writeStatusMarkdown,
   readStatusMarkdown,

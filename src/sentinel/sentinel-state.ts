@@ -20,7 +20,7 @@ export const SentinelStateSchema = z.object({
 export type SentinelState = z.infer<typeof SentinelStateSchema>;
 
 export const SentinelConfigSchema = z.object({
-  enabled: z.boolean().default(false),
+  enabled: z.boolean().default(true),
   model: z.string().default("gpt-4o-mini"),
   checkIntervalMinutes: z.number().min(1).default(15),
   jitterMinutes: z.number().min(0).default(15),
@@ -38,6 +38,8 @@ export const SentinelConfigSchema = z.object({
   notifyChannels: z.array(z.string()).default(["admin"]),
   criticalCooldownMinutes: z.number().min(1).default(5),
   warningCooldownMinutes: z.number().min(1).default(30),
+  // #218: RAG health check
+  ragQueueDepthThreshold: z.number().min(1).default(100),
   // #197: Advanced scheduler (node-cron v4)
   timezone: z.string().default("UTC"),
   noOverlap: z.boolean().default(true),
@@ -45,6 +47,19 @@ export const SentinelConfigSchema = z.object({
 });
 
 export type SentinelConfig = z.infer<typeof SentinelConfigSchema>;
+
+// ── RAG Health Status (#218) ─────────────────────────────────────────
+
+export interface RAGHealthStatus {
+  available: boolean;
+  dbAccessible: boolean;
+  ingestionRunning: boolean;
+  totalDocuments: number;
+  totalChunks: number;
+  pendingDocuments: number;
+  lastIndexedAt: string | null;
+  alerts: Array<{ type: string; priority: "critical" | "warning"; message: string }>;
+}
 
 // ── Prompt Recommendation ────────────────────────────────────────────
 
