@@ -86,7 +86,16 @@ Execute with the **Code Review** agent (`code-review.agent.md`), which has the s
 
 **Goal:** Collect all findings from automated security scanners so they can be cross-referenced during the security review and tracked in the final verdict.
 
-> **Note:** In this repository, the CodeQL workflow (`codeql.yml`) only triggers on pushes to `main` and a weekly cron schedule — it does **not** run on pull requests. This means `github-advanced-security` bot comments will typically **not** exist on PRs. If no scanner comments are found, skip to Step 1c. Do NOT wait for or block on CodeQL results that will never arrive. Your manual OWASP review in Step 4 serves as the primary security gate for PRs.
+#### Auto-detect CodeQL PR Status
+
+Before fetching scanner comments, determine whether CodeQL actually runs on pull requests in this repository:
+
+```bash
+grep -E '^\s*pull_request' .github/workflows/codeql.yml 2>/dev/null
+```
+
+- **Output found** (active `pull_request:` trigger exists): CodeQL runs on PRs. Continue with the full procedure below — scanner comments may exist and unresolved High/Critical findings are blocking.
+- **No output** (file missing or `pull_request:` trigger is commented out): CodeQL does **not** run on PRs. `github-advanced-security` bot comments will not exist. **Skip to Step 1c** and rely on manual OWASP review in Step 4 as the security gate. Do NOT wait for or block on CodeQL results.
 
 GitHub Advanced Security (GHAS) runs CodeQL analysis on PRs and posts review comments from the `github-advanced-security` bot. These comments identify real vulnerabilities (injection, path traversal, missing rate limiting, XSS, etc.) that the human/agent reviewer must acknowledge.
 
