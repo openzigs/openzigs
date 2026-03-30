@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- Bumped `serialize-javascript` override from >=7.0.3 to >=7.0.5 (prototype pollution, moderate)
+- Bumped `picomatch` override from >=2.3.2 to >=4.0.4 (ReDoS, moderate)
+- Added `brace-expansion` override >=5.0.5 (ReDoS, moderate)
+- Added scoped `express>path-to-regexp` override pinned to 0.1.13 (ReDoS in express@4, high)
+- Added scoped `router>path-to-regexp` override >=8.4.0 (ReDoS via MCP SDK express@5 → router, high)
+- Bumped `electron` from ^34.2.0 to ^35.7.5 (multiple Chromium CVEs, high)
+
 ### Changed
 
 - Upgraded `@modelcontextprotocol/sdk` from v1.27.1 to v1.28.0 (latest v1 release) (#333)
