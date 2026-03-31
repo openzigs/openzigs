@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import type { ToolDefinition } from "../tool-registry.js";
-import { extractContent } from "./seo/html-extractor.js";
+import { extractContent, type ExtractedContent } from "./seo/html-extractor.js";
 import { discoverCompetitors } from "./seo/competitor-discovery.js";
 import { buildAnalysisPrompt, generateMetricsReport, buildReportFilename, buildReportSubdir, type AnalysisInput } from "./seo/report-generator.js";
 import { discoverKeyword } from "./seo/keyword-discovery.js";
@@ -51,6 +51,64 @@ async function fetchHtml(url: string): Promise<string> {
     throw new Error(`Failed to fetch ${url}: ${resp.status} ${resp.statusText}`);
   }
   return resp.text();
+}
+
+/**
+ * Merge multiple ExtractedContent results from individual pages into one.
+ * Sums numeric metrics, concatenates arrays, uses first page's meta info.
+ */
+function mergeExtractedContents(pages: ExtractedContent[]): ExtractedContent {
+  if (pages.length === 1) return pages[0];
+
+  const first = pages[0];
+  const merged: ExtractedContent = {
+    title: first.title,
+    metaTitle: first.metaTitle,
+    metaDescription: first.metaDescription,
+    headings: pages.flatMap((p) => p.headings),
+    bodyText: pages.map((p) => p.bodyText).join("\n\n"),
+    wordCount: pages.reduce((s, p) => s + p.wordCount, 0),
+    headingCount: pages.reduce((s, p) => s + p.headingCount, 0),
+    paragraphCount: pages.reduce((s, p) => s + p.paragraphCount, 0),
+    readingTime: pages.reduce((s, p) => s + p.readingTime, 0),
+    readabilityScore: Math.round(pages.reduce((s, p) => s + p.readabilityScore, 0) / pages.length * 10) / 10,
+    metaTags: deduplicateBy(pages.flatMap((p) => p.metaTags), (t) => `${t.name}:${t.content}`),
+    images: pages.flatMap((p) => p.images),
+    imagesWithoutAlt: pages.reduce((s, p) => s + p.imagesWithoutAlt, 0),
+    imagesMissingAlt: pages.reduce((s, p) => s + p.imagesMissingAlt, 0),
+    imagesEmptyAlt: pages.reduce((s, p) => s + p.imagesEmptyAlt, 0),
+    imagesAriaHidden: pages.reduce((s, p) => s + p.imagesAriaHidden, 0),
+    imagesLazyLoaded: pages.reduce((s, p) => s + p.imagesLazyLoaded, 0),
+    schemaMarkup: deduplicateBy(pages.flatMap((p) => p.schemaMarkup), (s) => s.type),
+    internalLinks: deduplicateBy(pages.flatMap((p) => p.internalLinks), (l) => l.href),
+    externalLinks: deduplicateBy(pages.flatMap((p) => p.externalLinks), (l) => l.href),
+    internalLinkCount: 0,
+    externalLinkCount: 0,
+    keywords: mergeKeywords(pages.flatMap((p) => p.keywords)),
+  };
+  merged.internalLinkCount = merged.internalLinks.length;
+  merged.externalLinkCount = merged.externalLinks.length;
+  return merged;
+}
+
+function deduplicateBy<T>(items: T[], key: (item: T) => string): T[] {
+  const seen = new Set<string>();
+  return items.filter((item) => {
+    const k = key(item);
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+}
+
+function mergeKeywords(keywords: { term: string; tfidf: number }[]): { term: string; tfidf: number }[] {
+  const byTerm = new Map<string, number>();
+  for (const kw of keywords) {
+    byTerm.set(kw.term, Math.max(byTerm.get(kw.term) ?? 0, kw.tfidf));
+  }
+  return [...byTerm.entries()]
+    .map(([term, tfidf]) => ({ term, tfidf }))
+    .sort((a, b) => b.tfidf - a.tfidf);
 }
 
 async function ensureReportsDir(): Promise<void> {
@@ -157,11 +215,13 @@ export const createSeoGapTools = (opts: SeoGapToolsOptions = {}): ToolDefinition
                 maxDepth: crawlDepth,
                 scrapeOptions: { formats: ["html"] },
               });
-              const allHtml = crawlResult.pages
+              // Extract content from each page individually, then merge
+              const pageContents = crawlResult.pages
                 .filter((p) => p.html)
-                .map((p) => p.html)
-                .join("\n");
-              const content = extractContent(allHtml || "<html></html>", result.url);
+                .map((p) => extractContent(p.html!, p.url || result.url));
+              const content = pageContents.length > 0
+                ? mergeExtractedContents(pageContents)
+                : extractContent("<html></html>", result.url);
               return { ...content, url: result.url, crawledPages: crawlResult.totalPages };
             }),
           );

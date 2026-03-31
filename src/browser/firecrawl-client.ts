@@ -148,9 +148,11 @@ export function isBlockedUrl(urlString: string): boolean {
 class DomainRateLimiter {
   private lastRequestTime = new Map<string, number>();
   private minIntervalMs: number;
+  private maxEntries: number;
 
-  constructor(minIntervalMs = 1000) {
+  constructor(minIntervalMs = 1000, maxEntries = 1000) {
     this.minIntervalMs = minIntervalMs;
+    this.maxEntries = maxEntries;
   }
 
   async waitForDomain(domain: string): Promise<void> {
@@ -164,11 +166,27 @@ class DomainRateLimiter {
     }
 
     this.lastRequestTime.set(domain, Date.now());
+    this.evictIfNeeded();
+  }
+
+  /** Evict oldest half of entries when map exceeds maxEntries */
+  private evictIfNeeded(): void {
+    if (this.lastRequestTime.size <= this.maxEntries) return;
+    const entries = [...this.lastRequestTime.entries()].sort((a, b) => a[1] - b[1]);
+    const toRemove = Math.floor(entries.length / 2);
+    for (let i = 0; i < toRemove; i++) {
+      this.lastRequestTime.delete(entries[i][0]);
+    }
   }
 
   /** For testing: clear rate limit state */
   clear(): void {
     this.lastRequestTime.clear();
+  }
+
+  /** For testing: current map size */
+  get size(): number {
+    return this.lastRequestTime.size;
   }
 }
 
