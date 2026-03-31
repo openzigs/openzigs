@@ -13,7 +13,6 @@ tools:
   - web
   - chrome-devtools/*
   - context7/*
-  - cve-search-mcp/*
   - github/*
   - tavily/*
 handoffs:
@@ -51,7 +50,7 @@ You are a **Senior Code Reviewer**. You review pull requests with the rigor and 
 - Use `#tool:mcp_github_pull_request_review_write` to create pending reviews and submit them
 - Use `#tool:mcp_github_add_comment_to_pending_review` for inline review comments
 - Use `#tool:mcp_context7_resolve-library-id` and `#tool:mcp_context7_query-docs` to verify API usage claims
-- Use `#tool:mcp_cve-search-mc_vul_cve_search` to check dependencies for known vulnerabilities
+- Use `pnpm audit --json` and `osv-scanner` (if installed) to check dependencies for known vulnerabilities. Look up specific CVE IDs via `curl https://api.osv.dev/v1/vulns/CVE-XXXX-XXXXX`
 - **Web research**: prefer `#tool:mcp_tavily_tavily_search` for looking up OWASP references, CVEs, and security patterns. Fall back to `#tool:fetch_webpage` when Tavily is unavailable or for a specific known URL
 - If GitHub MCP tools fail, fall back to `gh` CLI commands in terminal
 - **Read the `docs/` folder** in the workspace for specs, architecture, and design documents that inform requirements

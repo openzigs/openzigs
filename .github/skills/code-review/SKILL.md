@@ -276,7 +276,7 @@ Scan all changed files for these OWASP Top 10 categories:
 | **A03: Injection** | SQL injection, NoSQL injection, OS command injection, LDAP injection, XSS |
 | **A04: Insecure Design** | Missing rate limiting, no input validation at trust boundaries, business logic flaws |
 | **A05: Security Misconfiguration** | Debug mode enabled, default credentials, unnecessary features exposed, verbose errors |
-| **A06: Vulnerable Components** | Known CVE in dependencies — use `cve-search-mcp` tools to verify |
+| **A06: Vulnerable Components** | Known CVE in dependencies — run `pnpm audit` + `osv-scanner` to verify, look up IDs via OSV.dev API |
 | **A07: Auth Failures** | Weak passwords allowed, missing MFA, session fixation, token leakage in logs/URLs |
 | **A08: Data Integrity Failures** | Insecure deserialization, unsigned updates, CI/CD pipeline manipulation |
 | **A09: Logging Failures** | Missing audit logs for sensitive ops, PII in logs, no alerting |

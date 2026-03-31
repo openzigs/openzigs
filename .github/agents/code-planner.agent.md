@@ -13,7 +13,6 @@ tools:
   - web
   - github/*
   - context7/*
-  - cve-search-mcp/*
   - chrome-devtools/*
   - tavily-mcp/*
 agents:
