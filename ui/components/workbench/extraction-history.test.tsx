@@ -1,6 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
+import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import { ExtractionHistory } from "./extraction-history";
 
 // ── Mocks ────────────────────────────────────────────────────────────────
@@ -86,7 +85,6 @@ describe("ExtractionHistory", () => {
         scrapedMarkdown: "# Full Pricing Content\n- Basic: $10/mo",
       });
 
-    const user = userEvent.setup();
     render(<ExtractionHistory />);
 
     await waitFor(() => {
@@ -94,7 +92,7 @@ describe("ExtractionHistory", () => {
     });
 
     const row = screen.getByText(/example.com\/pricing/);
-    await user.click(row);
+    fireEvent.click(row);
 
     await waitFor(() => {
       expect(screen.getByText(/Extraction #1/)).toBeDefined();
