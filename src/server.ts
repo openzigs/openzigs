@@ -36,6 +36,7 @@ import { launchChrome, killChrome } from "./browser/chrome-launcher.js";
 import { TaskRepository, TaskEngine, TaskWorker, NotificationDispatcher, TaskEventStreamer, ResultInjector } from "./tasks/index.js";
 import { getDatabase, closeDatabase } from "./productivity/database.js";
 import { WebhookManager } from "./webhooks/webhook-manager.js";
+import { WebhookRepository } from "./webhooks/webhook-repository.js";
 import { createWebhookRouter } from "./webhooks/webhook-routes.js";
 import { PromptManager } from "./productivity/prompt-manager.js";
 import { Scheduler } from "./productivity/scheduler.js";
@@ -807,8 +808,10 @@ const sentinel = new SentinelService({
   knowledgeService,
 });
 
-// ── Webhook Manager ──
-const webhookManager = new WebhookManager();
+// ── Webhook Manager (SQLite-backed) ──
+const webhookRepo = new WebhookRepository(db);
+webhookRepo.migrate();
+const webhookManager = new WebhookManager(webhookRepo);
 
 // Model API routes
 const modelsRouter = createModelsRouter({ copilot });

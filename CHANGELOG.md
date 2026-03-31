@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Webhook configurations are now persisted to SQLite (`webhooks` table) and survive server restarts (#690)
+- New `WebhookRepository` class providing SQLite-backed CRUD for webhook configs (#692)
+
+### Changed
+
+- `WebhookManager` now delegates all storage to `WebhookRepository` instead of an in-memory `Map` (#694)
+- Rate-limit state remains intentionally in-memory (resets on restart) (#690)
+
+### Added
+
 - Enriched `/health` endpoint response with `uptime` (seconds) and `memoryMB` (RSS in MB) fields (#607)
 - `backend:getHealth` IPC handler returns enriched health data to the Electron renderer (#607)
 - `window.openzigs.isElectron` flag in preload for runtime Electron detection (#607)

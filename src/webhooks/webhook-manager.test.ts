@@ -1,12 +1,24 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { createHmac } from "node:crypto";
+import Database from "better-sqlite3";
 import { WebhookManager } from "./webhook-manager.js";
+import { WebhookRepository } from "./webhook-repository.js";
+
+const createTestDb = () => {
+  const db = new Database(":memory:");
+  db.pragma("journal_mode = WAL");
+  db.pragma("foreign_keys = ON");
+  return db;
+};
 
 describe("WebhookManager", () => {
   let manager: WebhookManager;
 
   beforeEach(() => {
-    manager = new WebhookManager();
+    const db = createTestDb();
+    const repo = new WebhookRepository(db);
+    repo.migrate();
+    manager = new WebhookManager(repo);
   });
 
   it("creates a webhook with API key", () => {
