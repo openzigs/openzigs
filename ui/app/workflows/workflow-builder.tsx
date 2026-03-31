@@ -29,6 +29,7 @@ import { ConditionNode } from "./components/nodes/condition-node";
 import { NodePalette } from "./components/sidebar/node-palette";
 import { NodeConfigPanel } from "./components/sidebar/node-config-panel";
 import { useWorkflowExecution } from "./hooks/use-workflow-execution";
+import { topologicalSort } from "@/lib/topological-sort";
 
 // ── Node type registry ─────────────────────────────────────────────
 
@@ -355,34 +356,10 @@ function graphToBasicStages(
   nodes: Node[],
   edges: Edge[],
 ): Array<{ type: string; name: string; prompt?: string; tools?: string[] | null; model?: string }> {
-  // Simplified topological sort for execution
-  const inDegree = new Map<string, number>();
-  const adj = new Map<string, string[]>();
-
-  for (const n of nodes) {
-    inDegree.set(n.id, 0);
-    adj.set(n.id, []);
-  }
-  for (const e of edges) {
-    adj.get(e.source)?.push(e.target);
-    inDegree.set(e.target, (inDegree.get(e.target) ?? 0) + 1);
-  }
-
-  const queue: string[] = [];
-  for (const [id, deg] of inDegree) {
-    if (deg === 0) queue.push(id);
-  }
-
-  const sorted: string[] = [];
-  while (queue.length > 0) {
-    const cur = queue.shift()!;
-    sorted.push(cur);
-    for (const nb of adj.get(cur) ?? []) {
-      const d = (inDegree.get(nb) ?? 1) - 1;
-      inDegree.set(nb, d);
-      if (d === 0) queue.push(nb);
-    }
-  }
+  const { sorted } = topologicalSort(
+    nodes.map((n) => n.id),
+    edges,
+  );
 
   const nodeMap = new Map(nodes.map((n) => [n.id, n]));
 

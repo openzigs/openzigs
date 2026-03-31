@@ -31,6 +31,55 @@ export type FlowGraph = {
   viewport?: { x: number; y: number; zoom: number };
 };
 
+// ── Shared topological sort (Kahn's algorithm) ────────────────────────
+
+export type TopoSortResult = {
+  sorted: string[];
+  hasCycle: boolean;
+};
+
+/**
+ * Kahn's algorithm topological sort.
+ * Returns the sorted node IDs and whether a cycle was detected.
+ */
+export function topologicalSort(
+  nodeIds: string[],
+  edges: ReadonlyArray<{ source: string; target: string }>,
+): TopoSortResult {
+  const inDegree = new Map<string, number>();
+  const adj = new Map<string, string[]>();
+
+  for (const id of nodeIds) {
+    inDegree.set(id, 0);
+    adj.set(id, []);
+  }
+
+  for (const edge of edges) {
+    if (adj.has(edge.source) && inDegree.has(edge.target)) {
+      adj.get(edge.source)!.push(edge.target);
+      inDegree.set(edge.target, (inDegree.get(edge.target) ?? 0) + 1);
+    }
+  }
+
+  const queue: string[] = [];
+  for (const [id, deg] of inDegree) {
+    if (deg === 0) queue.push(id);
+  }
+
+  const sorted: string[] = [];
+  while (queue.length > 0) {
+    const current = queue.shift()!;
+    sorted.push(current);
+    for (const neighbor of adj.get(current) ?? []) {
+      const newDeg = (inDegree.get(neighbor) ?? 1) - 1;
+      inDegree.set(neighbor, newDeg);
+      if (newDeg === 0) queue.push(neighbor);
+    }
+  }
+
+  return { sorted, hasCycle: sorted.length !== nodeIds.length };
+}
+
 // ── Validation ─────────────────────────────────────────────────────────
 
 export type ValidationResult = {
@@ -85,38 +134,8 @@ export function validateGraph(graph: FlowGraph): ValidationResult {
  * Returns true if a cycle exists.
  */
 function detectCycle(nodes: FlowNode[], edges: FlowEdge[]): boolean {
-  const inDegree = new Map<string, number>();
-  const adj = new Map<string, string[]>();
-
-  for (const node of nodes) {
-    inDegree.set(node.id, 0);
-    adj.set(node.id, []);
-  }
-
-  for (const edge of edges) {
-    if (adj.has(edge.source) && inDegree.has(edge.target)) {
-      adj.get(edge.source)!.push(edge.target);
-      inDegree.set(edge.target, (inDegree.get(edge.target) ?? 0) + 1);
-    }
-  }
-
-  const queue: string[] = [];
-  for (const [id, deg] of inDegree) {
-    if (deg === 0) queue.push(id);
-  }
-
-  let visited = 0;
-  while (queue.length > 0) {
-    const current = queue.shift()!;
-    visited++;
-    for (const neighbor of adj.get(current) ?? []) {
-      const newDeg = (inDegree.get(neighbor) ?? 1) - 1;
-      inDegree.set(neighbor, newDeg);
-      if (newDeg === 0) queue.push(neighbor);
-    }
-  }
-
-  return visited !== nodes.length;
+  const ids = nodes.map((n) => n.id);
+  return topologicalSort(ids, edges).hasCycle;
 }
 
 // ── graphToStages ──────────────────────────────────────────────────────
@@ -137,39 +156,20 @@ export function graphToStages(graph: FlowGraph): PipelineNode[] {
     throw new Error(`Invalid graph: ${validation.errors.join("; ")}`);
   }
 
-  // Build adjacency for topological sort
-  const inDegree = new Map<string, number>();
+  // Topological sort + reverse adjacency for postAction attachment
+  const ids = graph.nodes.map((n) => n.id);
+  const { sorted } = topologicalSort(ids, graph.edges);
+
   const adj = new Map<string, string[]>();
   const reverseAdj = new Map<string, string[]>();
-
   for (const node of graph.nodes) {
-    inDegree.set(node.id, 0);
     adj.set(node.id, []);
     reverseAdj.set(node.id, []);
   }
-
   for (const edge of graph.edges) {
-    if (adj.has(edge.source) && inDegree.has(edge.target)) {
+    if (adj.has(edge.source) && adj.has(edge.target)) {
       adj.get(edge.source)!.push(edge.target);
       reverseAdj.get(edge.target)!.push(edge.source);
-      inDegree.set(edge.target, (inDegree.get(edge.target) ?? 0) + 1);
-    }
-  }
-
-  // Kahn's topological sort
-  const queue: string[] = [];
-  for (const [id, deg] of inDegree) {
-    if (deg === 0) queue.push(id);
-  }
-
-  const sorted: string[] = [];
-  while (queue.length > 0) {
-    const current = queue.shift()!;
-    sorted.push(current);
-    for (const neighbor of adj.get(current) ?? []) {
-      const newDeg = (inDegree.get(neighbor) ?? 1) - 1;
-      inDegree.set(neighbor, newDeg);
-      if (newDeg === 0) queue.push(neighbor);
     }
   }
 
@@ -430,40 +430,16 @@ function stageToNodeData(stage: PipelineStage): Record<string, unknown> {
  * The UI applies dagre for more sophisticated positioning.
  */
 function applySimpleLayout(nodes: FlowNode[], edges: FlowEdge[]): void {
-  // Build adjacency for topological ordering
-  const inDegree = new Map<string, number>();
-  const adj = new Map<string, string[]>();
+  const ids = nodes.map((n) => n.id);
+  const { sorted } = topologicalSort(ids, edges);
 
-  for (const n of nodes) {
-    inDegree.set(n.id, 0);
-    adj.set(n.id, []);
-  }
-  for (const e of edges) {
-    adj.get(e.source)?.push(e.target);
-    inDegree.set(e.target, (inDegree.get(e.target) ?? 0) + 1);
-  }
+  // O(n) lookup instead of O(n²) find()
+  const nodeMap = new Map(nodes.map((n) => [n.id, n]));
 
-  const queue: string[] = [];
-  for (const [id, deg] of inDegree) {
-    if (deg === 0) queue.push(id);
-  }
-
-  const sorted: string[] = [];
-  while (queue.length > 0) {
-    const cur = queue.shift()!;
-    sorted.push(cur);
-    for (const nb of adj.get(cur) ?? []) {
-      const d = (inDegree.get(nb) ?? 1) - 1;
-      inDegree.set(nb, d);
-      if (d === 0) queue.push(nb);
-    }
-  }
-
-  // Assign positions in topological order
   const yGap = 120;
   let y = 0;
   for (const id of sorted) {
-    const node = nodes.find((n) => n.id === id);
+    const node = nodeMap.get(id);
     if (node) {
       node.position = { x: 250, y };
       y += yGap;
