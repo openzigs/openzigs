@@ -2350,6 +2350,43 @@ Each social platform has a dedicated set of tools backed by its native MCP serve
 | `social-close-handoff` | social | 🟡 medium | Close an active human handoff for a contact. |
 | `social-brain-stats` | social | 🟢 low | Get Social Brain dashboard statistics. |
 
+### SEO Tools (Firecrawl-Powered)
+
+SEO tooling follows a **three-layer architecture**:
+
+1. **Firecrawl** (self-hosted sidecar) — Pure web crawling; returns HTML/Markdown
+2. **MCP Tools** (TypeScript handlers) — All SEO analysis logic (audits, scoring, issue detection)
+3. **LLM** — Interprets user intent, calls tools, and summarizes results
+
+This design means Firecrawl has **no embedded LLM instructions**. The SEO analysis is deterministic TypeScript code that runs on the server. Skills and sub-agents are not required — tools work directly via the MCP protocol.
+
+| Tool | Category | Risk | Description |
+|---|---|---|---|
+| `seo-site-audit` | seo | 🟡 medium | Full-site SEO audit: crawls up to 500 pages, analyzes titles, meta, headings, images, links, and performance. Generates Markdown + PDF reports to `~/.openzigs/seo-reports/`. |
+| `knowledge-ingest-website` | seo | 🟡 medium | Crawl a website and ingest pages into the local knowledge base for RAG. Supports max pages, depth, and path filters. |
+| `competitive-monitor-add` | seo | 🟢 low | Add a competitor domain to the monitoring list. |
+| `competitive-monitor-snapshot` | seo | 🟡 medium | Take a point-in-time snapshot of a competitor's SEO metrics. |
+| `competitive-monitor-report` | seo | 🟢 low | Generate a comparison report across tracked competitors. |
+| `competitive-monitor-list` | seo | 🟢 low | List all tracked competitor domains. |
+
+**Firecrawl Setup**: Run `docker compose -f docker-compose.firecrawl.yml up -d` to start the self-hosted Firecrawl sidecar (5 containers: api, redis, playwright-service, postgres, rabbitmq). Enable in Admin → Settings or via `~/.openzigs/config.json`:
+
+```json
+{
+  "firecrawl": {
+    "enabled": true,
+    "url": "http://localhost:3002"
+  }
+}
+```
+
+**Report Output**: The `seo-site-audit` tool saves reports to `~/.openzigs/seo-reports/{domain}/` with filenames like `audit-{domain}-{timestamp}.md` and `.pdf`. Reports include:
+
+- Page-by-page SEO scores (title, meta, headings, images, links)
+- Site-wide issue detection (duplicate titles, missing descriptions, broken links)
+- Category breakdowns (Critical, High, Medium, Low issues)
+- Actionable recommendations
+
 ### Path Restrictions
 
 Filesystem tools, shell tools, and the File System REST API (`/api/files/*`) all enforce the same `allowedDirs` sandbox via `isPathAllowed()` from `src/mcp/tools/path-utils.ts`. Any path outside these directories is rejected with a 403 `Access denied`.

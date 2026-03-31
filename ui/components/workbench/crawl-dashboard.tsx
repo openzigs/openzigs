@@ -4,6 +4,7 @@ import { useState, useCallback, useEffect } from "react";
 import { cn } from "@/lib/utils";
 import { useSocket } from "@/lib/socket-context";
 import { fetchJson } from "@/lib/api";
+import { InlineModelPicker } from "@/components/model-picker-select";
 import {
   Dialog,
   DialogContent,
@@ -56,6 +57,9 @@ export function CrawlDashboardDialog({
   const [monitorAction, setMonitorAction] = useState<"add" | "snapshot" | "report" | "list">("add");
   const [competitorName, setCompetitorName] = useState("");
 
+  // Model selection for LLM-powered analysis
+  const [model, setModel] = useState("");
+
   // Firecrawl status
   const [firecrawlEnabled, setFirecrawlEnabled] = useState<boolean | null>(null);
 
@@ -101,6 +105,7 @@ export function CrawlDashboardDialog({
 
     socket.emit("chat:message", {
       content: prompt,
+      model: model || undefined,
       tools: [
         "seo-site-audit", "ingest-website", "competitive-monitor",
         "read-file", "write-file", "list-directory",
@@ -109,7 +114,7 @@ export function CrawlDashboardDialog({
     setLoading(false);
     onOpenChange(false);
     onSubmitted?.();
-  }, [action, url, maxPages, maxDepth, category, visibility, monitorAction, competitorName, socket, connected, onOpenChange, onSubmitted]);
+  }, [action, url, maxPages, maxDepth, category, visibility, monitorAction, competitorName, model, socket, connected, onOpenChange, onSubmitted]);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -289,6 +294,12 @@ export function CrawlDashboardDialog({
               )}
             </div>
           )}
+
+          {/* Model selector */}
+          <div>
+            <label className="mb-1 block text-sm font-medium">Model</label>
+            <InlineModelPicker value={model} onChange={setModel} />
+          </div>
 
           {error && (
             <div className="flex items-center gap-2 text-sm text-destructive">
