@@ -283,6 +283,7 @@ The frontend is a **Next.js 14 App Router** application in the `ui/` directory. 
 | `/social` | `social/page.tsx` | Social Brain — unified inbox, CRM, automation rules, AI auto-reply |
 | `/director` | `director/page.tsx` | Director Mode — Video Wizard tab (production pipeline) + Blog to YouTube tab (blog conversion) + My Drafts tab (browse/reopen saved drafts) + Capture & Trim tab (screen recorder, video trimmer, AI auto-cut) |
 | `/director/studio/[id]` | `director/studio/[id]/page.tsx` | Timeline Studio — @remotion/player preview, multi-track timeline, scene inspector, save/auto-save, render history, YouTube direct publishing (metadata editor, chapters, SEO generation) |
+| `/workflows` | `workflows/page.tsx` | Visual Workflow Builder — drag-and-drop React Flow canvas for composing multi-stage LLM pipelines, with save/run/import/export toolbar and node config panel |
 | `/workbench` | `workbench/page.tsx` | Rich Markdown editor (MDXEditor) with file sidebar, live file system CRUD, Cmd/Ctrl+S save |
 
 ### Component Structure
@@ -305,6 +306,12 @@ ui/
 │   ├── scheduler/page.tsx  # Scheduler route
 │   ├── tasks/page.tsx      # Tasks route
 │   ├── social/page.tsx     # Social Brain route
+│   ├── workflows/          # Visual Workflow Builder route
+│   │   ├── page.tsx
+│   │   ├── workflow-builder.tsx
+│   │   ├── components/nodes/   # Custom React Flow node types
+│   │   ├── components/sidebar/ # NodePalette + NodeConfigPanel
+│   │   └── hooks/              # useWorkflowExecution
 │   └── workbench/page.tsx  # Workbench route (MDXEditor + file sidebar)
 ├── components/
 │   ├── nav-bar.tsx         # Sticky top navigation
@@ -1168,7 +1175,8 @@ Maps user intents to expected tool sequences via keyword/pattern matching. Used 
 Embedded SQLite-backed subsystem for saved prompts and cron scheduling:
 
 - **Database** (`database.ts`) — Shared `better-sqlite3` singleton with WAL mode. Tables: `saved_prompts`, `scheduled_jobs`.
-- **PromptManager** (`prompt-manager.ts`) — CRUD for saved prompts with `{{variable}}` template interpolation, optional pipeline stages (`stages: PipelineStage[] | null`) for multi-step execution, and preferred tool scoping (`preferredTools: string[] | null`). The `resolveWithStages()` method returns interpolated text, preferred tools, and pipeline stages in a single call — used by the scheduler to execute prompt-as-pipeline workflows.
+- **PromptManager** (`prompt-manager.ts`) — CRUD for saved prompts with `{{variable}}` template interpolation, optional pipeline stages (`stages: PipelineStage[] | null`) for multi-step execution, preferred tool scoping (`preferredTools: string[] | null`), and optional `graph_layout TEXT` column for persisting React Flow viewport/nodes/edges from the Visual Workflow Builder. The `resolveWithStages()` method returns interpolated text, preferred tools, and pipeline stages in a single call — used by the scheduler to execute prompt-as-pipeline workflows.
+- **GraphSerializer** (`graph-serializer.ts`) — Bidirectional serialization between React Flow graph JSON and `PipelineNode[]`. Exports: `graphToStages()` (converts nodes/edges → pipeline stages via Kahn's topological sort with cycle detection, parallel branch support, and postAction attachment), `stagesToGraph()` (converts pipeline stages → positioned nodes/edges with simple top-down layout), `validateGraph()` (cycle + orphan detection), and `topologicalSort()` (shared Kahn's algorithm utility).
 - **Scheduler** (`scheduler.ts`) — `node-cron` v4 in-process scheduler with JSONL audit logs and `EventEmitter` hooks for Socket.IO notifications.
 
 ### Brand Voice (`src/personality/brand-voice-*.ts`)
@@ -2394,6 +2402,8 @@ The shell executor uses a **command allowlist**. If the allowlist is empty, the 
 | `POST` | `/api/social/approvals/:id/reject` | Token | Reject a pending AI reply. |
 | `POST` | `/api/social/approvals/:id/edit` | Token | Edit content and approve a pending reply. |
 | `POST` | `/api/social/contacts/:id/reply` | Token | Send a manual reply to a contact. |
+| `GET` | `/api/social/analytics/v2` | Token | Advanced aggregated analytics: time-series data, summary cards (total, inbound, outbound, automation rate), platform breakdown. Query params: `since`, `until`, `platform`. |
+| `GET` | `/api/social/analytics/v2/export` | Token | Server-side CSV export of analytics data. Query params: `since`, `until`, `platform`. |
 | `POST` | `/api/admin/director/drafts` | Token | Create a draft from a manifest. |
 | `GET` | `/api/admin/director/drafts` | Token | List all drafts (paginated). |
 | `GET` | `/api/admin/director/drafts/:id` | Token | Get draft with full manifest. |

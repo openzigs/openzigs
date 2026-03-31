@@ -62,6 +62,7 @@ import { createDirectorRouter, setDirectorIO } from "./api/director.js";
 import { createAudioRouter } from "./api/audio.js";
 import { createPresenterRouter } from "./api/presenter.js";
 import { createSocialRouter, dispatchApprovedReply } from "./api/social.js";
+import { createSocialAnalyticsRouter } from "./api/social-analytics.js";
 import { createPinterestRouter } from "./api/pinterest.js";
 import { SocialRepository } from "./channels/social/social-repository.js";
 import { SocialIngestionService, TwitterAdapter, LinkedInAdapter, InstagramAdapter, FacebookAdapter, GenericPollAdapter } from "./channels/social/social-ingestion.js";
@@ -927,6 +928,10 @@ app.post("/api/social/webhooks/:platform", (req, res) => {
 });
 
 app.use("/api/social", authMiddleware, socialRouter);
+
+// Social analytics (advanced aggregation + time-series + CSV export)
+const socialAnalyticsRouter = createSocialAnalyticsRouter({ socialRepo: socialRepository, db });
+app.use("/api/social/analytics/v2", authMiddleware, socialAnalyticsRouter);
 
 // Pinterest OAuth callback — no auth middleware (redirected from Pinterest)
 // MUST be registered before the /api/pinterest router mount to avoid auth middleware intercept

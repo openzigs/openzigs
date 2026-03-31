@@ -15,7 +15,6 @@ tools:
   - context7/*
   - chrome-devtools/*
   - playwright/*
-  - cve-search-mcp/*
   - tavily/*
 ---
 

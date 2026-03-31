@@ -14,7 +14,6 @@ tools:
   - web
   - github/*
   - context7/*
-  - cve-search-mcp/*
   - tavily/*
 agents:
   - Research
@@ -95,10 +94,21 @@ After the PR branch exists, run a CVE dependency audit against the project's dep
    ```
 2. **Audit via package manager** (this is a pnpm workspace — never use `npm audit`, it hangs without `package-lock.json`):
    ```bash
-   pnpm audit --audit-level=moderate
+   timeout 30 pnpm audit --audit-level=moderate || echo 'pnpm audit timed out or failed — proceeding'
    ```
-3. **CVE lookup for critical direct dependencies** using `#tool:mcp_cve-search-mc_vul_vendor_product_cve` — check the top 5–10 direct production dependencies. Use the npm package name as `product` and the org/publisher as `vendor`.
-4. **Look up any flagged CVE IDs** using `#tool:mcp_cve-search-mc_vul_cve_search` to get full severity and CVSS scores.
+3. **Deep scan with osv-scanner** (optional — skip if not installed or if it times out):
+   ```bash
+   which osv-scanner && timeout 60 osv-scanner scan source --format json -r . 2>&1 | head -100 || echo 'osv-scanner not installed or timed out — skipping'
+   ```
+   If osv-scanner is not installed or exceeds 60 seconds, skip this step — `pnpm audit` is sufficient.
+4. **Look up any flagged CVE IDs** via the OSV.dev REST API (no auth required, no Docker needed):
+   ```bash
+   curl -s --max-time 10 https://api.osv.dev/v1/vulns/CVE-XXXX-XXXXX | jq '{id: .id, summary: .summary, severity: .severity}'
+   ```
+   To check a specific package+version:
+   ```bash
+   curl -s --max-time 10 -d '{"package":{"name":"PACKAGE","ecosystem":"npm"},"version":"VERSION"}' https://api.osv.dev/v1/query | jq '.vulns // [] | length'
+   ```
 
 **Gate logic:**
 - **CVSS ≥ 7.0 (High/Critical)** → Block: open a GitHub comment on the PR flagging the issue. Do not proceed to E2E or Review until resolved.

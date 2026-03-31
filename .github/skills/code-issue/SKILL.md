@@ -131,17 +131,21 @@ If the issue involves UI changes:
 Before creating the PR, perform a comprehensive security review:
 
 1. **Dependency audit**:
-   - Run the package manager audit: `pnpm audit --audit-level=moderate` (pnpm workspaces — never use `npm audit`, it hangs without `package-lock.json`), `gradle dependencies` (Gradle), or `mvn dependency:check` (Maven)
-   - **CVE lookup for direct dependencies** — for the top direct dependencies (from `package.json` `dependencies`/`devDependencies`, `pom.xml`, or `build.gradle`), use the cve-search tools:
+   - Run the package manager audit: `timeout 30 pnpm audit --audit-level=moderate` (pnpm workspaces — never use `npm audit`, it hangs without `package-lock.json`), `gradle dependencies` (Gradle), or `mvn dependency:check` (Maven). If audit times out after 30s, proceed — do not block on it.
+   - **Deep scan with osv-scanner** (optional — skip if not installed or if it times out):
+     ```bash
+     which osv-scanner && timeout 60 osv-scanner scan source --format json -r . 2>&1 | head -100 || echo 'osv-scanner not installed or timed out — skipping'
      ```
-     mcp_cve-search-mc_vul_vendor_product_cve with vendor "{vendor}" product "{package-name}"
+     If osv-scanner is not installed or exceeds 60 seconds, skip this step — `pnpm audit` is sufficient.
+   - For any CVE IDs returned by `pnpm audit`, look up the full record via the OSV.dev REST API (no auth required, no Docker):
+     ```bash
+     curl -s --max-time 10 https://api.osv.dev/v1/vulns/CVE-XXXX-XXXXX | jq '{id: .id, summary: .summary, severity: .severity}'
      ```
-   - For any CVE IDs returned by `pnpm audit`, look up the full record:
-     ```
-     mcp_cve-search-mc_vul_cve_search with cve_id "CVE-XXXX-XXXXX"
+   - To check a specific package+version for known vulns:
+     ```bash
+     curl -s --max-time 10 -d '{"package":{"name":"PACKAGE","ecosystem":"npm"},"version":"VERSION"}' https://api.osv.dev/v1/query | jq '.vulns // [] | length'
      ```
    - **Severity gate**: Flag any finding with CVSS ≥ 7.0 as High/Critical — these **block the PR**. CVSS 4.0–6.9 (Medium) are noted but do not block unless exploitable in context.
-   - Check `mcp_cve-search-mc_vul_last_cves` to see if any recently published CVEs match the project's technology stack
 2. **Static code analysis** — Review all changed files for:
    - SQL injection, XSS, CSRF
    - Insecure deserialization

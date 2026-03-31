@@ -22,7 +22,7 @@ This skill processes **unresolved review comments** on a pull request, fixes val
 Execute with the **Code Issue** agent (`code-issue.agent.md`). The agent has the required MCP tools:
 - `github/*` — Read PR comments, reply to threads, push files
 - `context7/*` — Look up library/API docs when evaluating a comment's validity
-- `cve-search-mcp/*` — Verify security-related comments against CVE databases
+- Shell tools (`pnpm audit`, `osv-scanner`, `curl` to OSV.dev API) — Verify security-related comments against CVE databases
 - Built-in tools — `edit`, `execute`, `read`, `search`, `todo`
 
 ## Workflow Overview

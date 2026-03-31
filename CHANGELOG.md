@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Visual Workflow Builder** (`/workflows`) — full-screen drag-and-drop canvas for composing multi-stage LLM pipelines (#687)
+  - React Flow canvas with custom node types: Prompt Stage, Parallel Group, Post-Action, Condition (coming soon) (#706, #708)
+  - Draggable node palette sidebar and node config panel for editing node properties (#707, #710)
+  - Bidirectional graph serializer (`graphToStages`/`stagesToGraph`) with cycle detection and topological sort (#709)
+  - Save/load workflows to the prompt library with `graph_layout` column for persisting visual layout (#711)
+  - Workflow execution via task API with real-time Socket.IO status overlay on nodes (#712)
+  - JSON import/export for workflow templates (#713)
+  - "Workflows" link added to the Automation nav group (#714)
+- **Social Analytics Dashboard** — enhanced analytics tab with rich charts and export (#689)
+  - Bar chart (messages by platform), pie chart (platform distribution), automation rate card (#696, #697)
+  - Date range picker, platform filter, and CSV export button (#698, #699)
+  - Advanced analytics API router (`/api/social/analytics/v2`) with time-series aggregation and CSV export (#700)
+
 - Webhook configurations are now persisted to SQLite (`webhooks` table) and survive server restarts (#690)
 - New `WebhookRepository` class providing SQLite-backed CRUD for webhook configs (#692)
 
