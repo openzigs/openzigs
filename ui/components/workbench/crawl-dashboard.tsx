@@ -1,8 +1,9 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { cn } from "@/lib/utils";
 import { useSocket } from "@/lib/socket-context";
+import { fetchJson } from "@/lib/api";
 import {
   Dialog,
   DialogContent,
@@ -15,6 +16,7 @@ import {
   Globe,
   Loader2,
   AlertCircle,
+  Info,
   Search,
   Database,
   BarChart3,
@@ -53,6 +55,18 @@ export function CrawlDashboardDialog({
   // Competitive monitor
   const [monitorAction, setMonitorAction] = useState<"add" | "snapshot" | "report" | "list">("add");
   const [competitorName, setCompetitorName] = useState("");
+
+  // Firecrawl status
+  const [firecrawlEnabled, setFirecrawlEnabled] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    fetchJson<{ enabled: boolean }>("/api/admin/firecrawl/status")
+      .then((data) => { if (!cancelled) setFirecrawlEnabled(data.enabled); })
+      .catch(() => { if (!cancelled) setFirecrawlEnabled(false); });
+    return () => { cancelled = true; };
+  }, [open]);
 
   const handleSubmit = useCallback(() => {
     if (!url.trim() && action !== "competitive-monitor") {
@@ -111,6 +125,23 @@ export function CrawlDashboardDialog({
         </DialogHeader>
 
         <div className="space-y-4 py-2">
+          {/* Firecrawl disabled banner */}
+          {firecrawlEnabled === false && (
+            <div className="flex items-start gap-2 rounded-md border border-blue-200 bg-blue-50 p-3 text-sm text-blue-800 dark:border-blue-800 dark:bg-blue-950 dark:text-blue-200">
+              <Info className="mt-0.5 h-4 w-4 shrink-0" />
+              <div>
+                <p className="font-medium">Firecrawl is not configured</p>
+                <p className="mt-1 text-xs">
+                  Run{" "}
+                  <code className="rounded bg-blue-100 px-1 dark:bg-blue-900">
+                    docker compose -f docker-compose.firecrawl.yml up -d
+                  </code>{" "}
+                  to start the Firecrawl sidecar, then enable it in Admin → Settings.
+                </p>
+              </div>
+            </div>
+          )}
+
           {/* Action selector */}
           <div className="grid grid-cols-3 gap-2">
             <ActionButton
@@ -197,6 +228,7 @@ export function CrawlDashboardDialog({
                   onChange={(e) => setCategory(e.target.value)}
                   className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
                 >
+                  <option value="general">General</option>
                   <option value="document">Document</option>
                   <option value="reference">Reference</option>
                   <option value="tutorial">Tutorial</option>
@@ -277,7 +309,7 @@ export function CrawlDashboardDialog({
           <button
             type="button"
             onClick={handleSubmit}
-            disabled={loading}
+            disabled={loading || firecrawlEnabled === false}
             className="inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
           >
             {loading ? (

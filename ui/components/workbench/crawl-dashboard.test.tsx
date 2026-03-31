@@ -1,4 +1,4 @@
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { CrawlDashboardDialog } from "./crawl-dashboard";
 
@@ -11,9 +11,16 @@ vi.mock("@/lib/socket-context", () => ({
   }),
 }));
 
+const mockFetchJson = vi.fn();
+vi.mock("@/lib/api", () => ({
+  fetchJson: (...args: unknown[]) => mockFetchJson(...args),
+}));
+
 describe("CrawlDashboardDialog", () => {
   beforeEach(() => {
     mockEmit.mockClear();
+    mockFetchJson.mockReset();
+    mockFetchJson.mockResolvedValue({ enabled: true });
   });
 
   it("renders dialog title when open", () => {
@@ -66,6 +73,15 @@ describe("CrawlDashboardDialog", () => {
     expect(screen.getByLabelText("Visibility")).toBeTruthy();
   });
 
+  it("includes General option in category dropdown", () => {
+    render(<CrawlDashboardDialog open={true} onOpenChange={() => {}} />);
+    fireEvent.click(screen.getByText("Ingest"));
+    const categorySelect = screen.getByLabelText("Category") as HTMLSelectElement;
+    const options = Array.from(categorySelect.options).map((o) => o.value);
+    expect(options).toContain("general");
+    expect(options[0]).toBe("general");
+  });
+
   it("shows monitor action select when Monitor is selected", () => {
     render(<CrawlDashboardDialog open={true} onOpenChange={() => {}} />);
     fireEvent.click(screen.getByText("Monitor"));
@@ -75,5 +91,43 @@ describe("CrawlDashboardDialog", () => {
   it("does not render when closed", () => {
     render(<CrawlDashboardDialog open={false} onOpenChange={() => {}} />);
     expect(screen.queryByText("Firecrawl Dashboard")).toBeNull();
+  });
+
+  it("shows disabled banner when firecrawl is not enabled", async () => {
+    mockFetchJson.mockResolvedValue({ enabled: false });
+    render(<CrawlDashboardDialog open={true} onOpenChange={() => {}} />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Firecrawl is not configured")).toBeTruthy();
+    });
+  });
+
+  it("disables submit button when firecrawl is not enabled", async () => {
+    mockFetchJson.mockResolvedValue({ enabled: false });
+    render(<CrawlDashboardDialog open={true} onOpenChange={() => {}} />);
+
+    await waitFor(() => {
+      const submitBtn = screen.getByText("Run Audit").closest("button")!;
+      expect(submitBtn.disabled).toBe(true);
+    });
+  });
+
+  it("does not show disabled banner when firecrawl is enabled", async () => {
+    mockFetchJson.mockResolvedValue({ enabled: true });
+    render(<CrawlDashboardDialog open={true} onOpenChange={() => {}} />);
+
+    await waitFor(() => {
+      expect(mockFetchJson).toHaveBeenCalledWith("/api/admin/firecrawl/status");
+    });
+    expect(screen.queryByText("Firecrawl is not configured")).toBeNull();
+  });
+
+  it("treats fetch failure as disabled", async () => {
+    mockFetchJson.mockRejectedValue(new Error("network"));
+    render(<CrawlDashboardDialog open={true} onOpenChange={() => {}} />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Firecrawl is not configured")).toBeTruthy();
+    });
   });
 });

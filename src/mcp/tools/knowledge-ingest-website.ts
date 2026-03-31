@@ -48,7 +48,7 @@ const ingestWebsiteSchema = z.object({
     .optional()
     .describe("Regex patterns to exclude URL paths"),
   category: z
-    .enum(["document", "reference", "tutorial", "api-docs", "blog"])
+    .enum(["general", "document", "reference", "tutorial", "api-docs", "blog"])
     .optional()
     .default("document")
     .describe("Knowledge category for ingested pages (default: document)"),
@@ -78,7 +78,7 @@ export function createIngestWebsiteTool(
         maxDepth: { type: "number", description: "Max crawl depth (default: 3)" },
         includePaths: { type: "array", description: "Regex patterns to include specific paths" },
         excludePaths: { type: "array", description: "Regex patterns to exclude paths" },
-        category: { type: "string", enum: ["document", "reference", "tutorial", "api-docs", "blog"], description: "Knowledge category" },
+        category: { type: "string", enum: ["general", "document", "reference", "tutorial", "api-docs", "blog"], description: "Knowledge category" },
         visibility: { type: "string", enum: ["internal", "public"], description: "Document visibility" },
       },
       required: ["url"],

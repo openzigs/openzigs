@@ -5365,5 +5365,17 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
     }
   });
 
+  // ── Firecrawl Status ──
+  router.get("/firecrawl/status", async (_req, res) => {
+    try {
+      const config = await loadConfig();
+      const enabled = config.firecrawl?.enabled ?? false;
+      return res.json({ enabled });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return res.status(500).json({ error: message });
+    }
+  });
+
   return router;
 };
