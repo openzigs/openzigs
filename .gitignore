@@ -137,3 +137,4 @@ docs/research/
 
 # Agent hook runtime logs (auto-generated, not versioned)
 .github/hooks/logs/*.log
+external/firecrawl/

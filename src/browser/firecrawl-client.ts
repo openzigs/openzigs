@@ -26,10 +26,15 @@ export interface ScrapeOptions {
 }
 
 export interface ScrapeAction {
-  type: "wait" | "click" | "type" | "screenshot";
+  type: "wait" | "click" | "write" | "press" | "scroll" | "screenshot" | "scrape" | "executeJavascript" | "pdf";
   selector?: string;
   text?: string;
+  key?: string;
   milliseconds?: number;
+  direction?: "up" | "down";
+  fullPage?: boolean;
+  script?: string;
+  all?: boolean;
 }
 
 export interface ScrapeResult {
@@ -61,8 +66,26 @@ export interface CrawlResult {
   jobId?: string;
 }
 
+export interface MapOptions {
+  search?: string;
+  limit?: number;
+  ignoreSitemap?: boolean;
+}
+
 export interface MapResult {
   urls: string[];
+}
+
+export interface BatchScrapeOptions {
+  formats?: ("markdown" | "html")[];
+  actions?: ScrapeAction[];
+  waitFor?: number;
+}
+
+export interface BatchScrapeResult {
+  results: ScrapeResult[];
+  totalUrls: number;
+  jobId?: string;
 }
 
 export interface FirecrawlConfig {
@@ -281,16 +304,62 @@ export class FirecrawlClient {
   /**
    * Map a website to discover all URLs without scraping content.
    */
-  async map(url: string): Promise<MapResult> {
+  async map(url: string, options?: MapOptions): Promise<MapResult> {
     this.validateUrl(url);
     await this.ensureRunning();
     await this.rateLimiter.waitForDomain(this.getDomain(url));
     this.resetIdleTimer();
 
-    const resp = await this.request("/v1/map", { url });
+    const body: Record<string, unknown> = { url };
+    if (options?.search) body.search = options.search;
+    if (options?.limit) body.limit = options.limit;
+    if (options?.ignoreSitemap !== undefined) body.ignoreSitemap = options.ignoreSitemap;
+
+    const resp = await this.request("/v1/map", body);
     return {
       urls: (resp.links ?? resp.urls ?? []) as string[],
     };
+  }
+
+  /**
+   * Batch scrape multiple URLs concurrently.
+   * Polls the async batch job until completion.
+   */
+  async batchScrape(urls: string[], options?: BatchScrapeOptions): Promise<BatchScrapeResult> {
+    for (const u of urls) this.validateUrl(u);
+    if (urls.length === 0) return { results: [], totalUrls: 0 };
+    await this.ensureRunning();
+    await this.rateLimiter.waitForDomain(this.getDomain(urls[0]));
+    this.resetIdleTimer();
+
+    const body: Record<string, unknown> = {
+      urls,
+      formats: options?.formats ?? ["markdown"],
+    };
+    if (options?.actions) body.actions = options.actions;
+    if (options?.waitFor) body.waitFor = options.waitFor;
+
+    const startResp = await this.request("/v1/batch/scrape", body);
+    const jobId = (startResp.id ?? startResp.jobId) as string | undefined;
+
+    if (!jobId) {
+      // Synchronous response
+      const syncData = startResp.data as Record<string, unknown>[] | undefined;
+      if (syncData && Array.isArray(syncData)) {
+        return {
+          results: syncData.map((d) => ({
+            markdown: d.markdown as string | undefined,
+            html: d.html as string | undefined,
+            metadata: d.metadata as Record<string, unknown> | undefined,
+            url: ((d.metadata as Record<string, unknown>)?.sourceURL ?? d.url ?? "") as string,
+          })),
+          totalUrls: syncData.length,
+        };
+      }
+      throw new Error("Firecrawl batch scrape response missing job ID");
+    }
+
+    return this.pollBatchJob(jobId);
   }
 
   /**
@@ -504,6 +573,48 @@ export class FirecrawlClient {
     }
 
     throw new Error(`Firecrawl crawl job ${jobId} timed out after ${maxPolls} seconds`);
+  }
+
+  private async pollBatchJob(jobId: string): Promise<BatchScrapeResult> {
+    const maxPolls = 300;
+    const pollInterval = 1000;
+
+    for (let i = 0; i < maxPolls; i++) {
+      this.resetIdleTimer();
+
+      const resp = await this._fetch(`${this.config.url}/v1/batch/scrape/${jobId}`, {
+        signal: AbortSignal.timeout(10_000),
+      });
+
+      if (!resp.ok) {
+        throw new Error(`Firecrawl batch poll failed: ${resp.status}`);
+      }
+
+      const data = (await resp.json()) as Record<string, unknown>;
+      const status = data.status as string;
+
+      if (status === "completed") {
+        const results = (data.data as Record<string, unknown>[]) ?? [];
+        return {
+          results: results.map((d) => ({
+            markdown: d.markdown as string | undefined,
+            html: d.html as string | undefined,
+            metadata: d.metadata as Record<string, unknown> | undefined,
+            url: ((d.metadata as Record<string, unknown>)?.sourceURL ?? d.url ?? "") as string,
+          })),
+          totalUrls: results.length,
+          jobId,
+        };
+      }
+
+      if (status === "failed") {
+        throw new Error(`Firecrawl batch job ${jobId} failed: ${data.error ?? "unknown error"}`);
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, pollInterval));
+    }
+
+    throw new Error(`Firecrawl batch job ${jobId} timed out after ${maxPolls} seconds`);
   }
 }
 

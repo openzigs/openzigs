@@ -18,6 +18,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `extractAnnotationsViaFirecrawl()` — Firecrawl Strategy 0 for Pinterest SEO annotation extraction on JS-rendered pages (#728)
   - `competitive-monitor` tool — SQLite-backed competitor tracking with add/remove/snapshot/report/list actions (#729)
   - Firecrawl Dashboard UI — dialog with Site Audit, Ingest, and Monitor actions (#730)
+  - `web-extract` tool — LLM-powered structured data extraction from any web page with JSON schema or natural language prompt (#731)
+  - `lead-extract` tool — automated contact and company extraction via site mapping and batch scraping (#731)
+  - `price-monitor` tool — track prices with historical SQLite snapshots and change detection (#731)
+  - `site-to-dataset` tool — crawl websites and produce structured datasets in markdown, JSONL, or CSV (#731)
+  - Full Firecrawl action support: scroll, write, press, executeJavascript, PDF, scrape (#731)
+  - Batch scrape (`batchScrape`) and enhanced map with search filtering (#731)
+  - Crawl Dashboard expanded with Extract, Leads, Prices, and Dataset action panels (#731)
   - Firecrawl config section in `config/default.json` (`firecrawl.enabled`, `firecrawl.url`, `firecrawl.idleTimeoutMs`)
 
 - **Visual Workflow Builder** (`/workflows`) — full-screen drag-and-drop canvas for composing multi-stage LLM pipelines (#687)
