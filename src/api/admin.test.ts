@@ -3178,3 +3178,30 @@ describe("sidecar platform gate", () => {
     expect(res.body.features.imageGeneration.available).toBe(true);
   });
 });
+
+describe("firecrawl status endpoint", () => {
+  it("GET /firecrawl/status returns enabled: false by default", async () => {
+    const { app } = buildApp();
+
+    const res = await request(app).get("/admin/firecrawl/status");
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ enabled: false });
+  });
+
+  it("GET /firecrawl/status returns enabled: true when configured", async () => {
+    const { loadConfig } = await import("../config/index.js");
+    (loadConfig as ReturnType<typeof vi.fn>).mockReturnValueOnce({
+      copilot: {},
+      voice: {},
+      session: {},
+      tasks: {},
+      firecrawl: { enabled: true, url: "http://localhost:3002", idleTimeoutMs: 600000 },
+    });
+
+    const { app } = buildApp();
+
+    const res = await request(app).get("/admin/firecrawl/status");
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ enabled: true });
+  });
+});

@@ -5,6 +5,7 @@ import {
   calculatePinScore,
   generateSeoRecommendations,
   extractAnnotationsFromHtml,
+  extractAnnotationsViaFirecrawl,
 } from "./pinterest-seo-tools.js";
 import type { ToolDefinition } from "../tool-registry.js";
 
@@ -18,6 +19,17 @@ vi.mock("node:fs", () => ({
 
 const mockAddContentIdea = vi.fn();
 const mockMigrate = vi.fn();
+
+const mockScrape = vi.fn();
+const mockGetConfig = vi.fn();
+
+vi.mock("../../browser/firecrawl-client.js", () => ({
+  getFirecrawlClient: () => ({
+    scrape: mockScrape,
+    getConfig: mockGetConfig,
+  }),
+  isBlockedUrl: (url: string) => url.includes("127.0.0.1") || url.includes("localhost"),
+}));
 
 vi.mock("../../productivity/database.js", () => ({
   getDatabase: vi.fn(() => ({})),
@@ -1329,6 +1341,69 @@ describe("Pinterest SEO Tools", () => {
 
       const result = await callTool({ seed: "home office decor" });
       expect(result.text).toContain("Report saved to");
+    });
+  });
+
+  // ─── extractAnnotationsViaFirecrawl ──────────────────
+
+  describe("extractAnnotationsViaFirecrawl", () => {
+    beforeEach(() => {
+      mockScrape.mockReset();
+      mockGetConfig.mockReset();
+    });
+
+    it("extracts annotations from Firecrawl-rendered HTML", async () => {
+      mockGetConfig.mockReturnValue({ enabled: true });
+      mockScrape.mockResolvedValue({
+        html: `<html><head>
+          <meta property="og:interest" content="summer outfits">
+          <meta property="og:interest" content="beach style">
+        </head><body><p>Pin content</p></body></html>`,
+      });
+
+      const result = await extractAnnotationsViaFirecrawl("https://www.pinterest.com/pin/12345/");
+      expect(result).not.toBeNull();
+      expect(result!.length).toBeGreaterThan(0);
+    });
+
+    it("returns null when Firecrawl is disabled", async () => {
+      mockGetConfig.mockReturnValue({ enabled: false });
+
+      const result = await extractAnnotationsViaFirecrawl("https://www.pinterest.com/pin/12345/");
+      expect(result).toBeNull();
+      expect(mockScrape).not.toHaveBeenCalled();
+    });
+
+    it("returns null when scrape returns empty HTML", async () => {
+      mockGetConfig.mockReturnValue({ enabled: true });
+      mockScrape.mockResolvedValue({ html: null });
+
+      const result = await extractAnnotationsViaFirecrawl("https://www.pinterest.com/pin/12345/");
+      expect(result).toBeNull();
+    });
+
+    it("returns null when scrape returns HTML with no annotations", async () => {
+      mockGetConfig.mockReturnValue({ enabled: true });
+      mockScrape.mockResolvedValue({ html: "<html><body><p>No pins here</p></body></html>" });
+
+      const result = await extractAnnotationsViaFirecrawl("https://www.pinterest.com/pin/12345/");
+      expect(result).toBeNull();
+    });
+
+    it("returns null when Firecrawl client throws", async () => {
+      mockGetConfig.mockReturnValue({ enabled: true });
+      mockScrape.mockRejectedValue(new Error("Connection refused"));
+
+      const result = await extractAnnotationsViaFirecrawl("https://www.pinterest.com/pin/12345/");
+      expect(result).toBeNull();
+    });
+
+    it("returns null for blocked URLs", async () => {
+      mockGetConfig.mockReturnValue({ enabled: true });
+
+      const result = await extractAnnotationsViaFirecrawl("http://127.0.0.1/pin/123");
+      expect(result).toBeNull();
+      expect(mockScrape).not.toHaveBeenCalled();
     });
   });
 });

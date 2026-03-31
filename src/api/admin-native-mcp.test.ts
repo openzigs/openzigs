@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import fs from "node:fs/promises";
+import fsSync from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import express from "express";
@@ -71,8 +72,10 @@ class FakeTester implements NativeMcpTester {
 describe("Admin Native MCP API", () => {
   const cleanupDirs: string[] = [];
 
-  afterEach(async () => {
-    await Promise.all(cleanupDirs.splice(0).map((dir) => fs.rm(dir, { recursive: true, force: true })));
+  afterEach(() => {
+    for (const dir of cleanupDirs.splice(0)) {
+      fsSync.rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   const createApp = async ({

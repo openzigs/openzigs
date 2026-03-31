@@ -217,7 +217,7 @@ Other people or automated reviewers (e.g., GitHub Copilot code review) may have 
    | ui | ✅ Passed | — | — |
    ```
 
-   > **Note:** CodeQL is NOT a PR check in this repository. The `codeql.yml` workflow only runs on pushes to `main` and weekly cron. Do not expect or wait for CodeQL entries in `gh pr checks` output. Only CI jobs (`api`, `ui`) will appear.
+   > **Note:** CodeQL IS a PR check in this repository. The `codeql.yml` workflow runs on `pull_request` targeting `main`, on pushes to `main`/`feature/**`/`fix/**`, and on daily cron. CodeQL results (javascript-typescript, python) will appear in `gh pr checks` output. Wait for them before finalizing the verdict — any unresolved High/Critical finding is blocking.
 
 3. **For each failing job:**
    - Fetch the failure logs: `gh run view {RUN_ID} --log-failed` or check the Actions tab URL
@@ -429,7 +429,7 @@ gh pr review {PR_NUMBER} --request-changes --body "$(cat review-body.md)"
 
 ### Security Scanners: {CLEAN|FINDINGS|N/A}
 
-> If CodeQL does not run on PRs (as in this repo), write "N/A — CodeQL runs on push-to-main only; manual OWASP review performed in Step 4" and skip the scanner table.
+> CodeQL **does** run on PRs in this repo (javascript-typescript and python). Wait for `CodeQL/Analyze` checks to complete before submitting the review. Unresolved High/Critical findings are blocking.
 
 | Scanner | Finding | File | Severity | Status |
 |---------|---------|------|----------|--------|
@@ -468,6 +468,33 @@ After publishing the review, offer the user:
 > **Review published. Would you like me to switch to the Code Issue agent to fix the flagged issues?**
 
 If yes, invoke the `resolve-pr-comments` skill with the same PR number to address the review comments just created.
+
+### Step 11: Re-Review Acknowledgment (Re-reviews only)
+
+When this is a **re-review** (i.e., a previous review with REQUEST_CHANGES exists on the same PR), do the following after publishing the new review:
+
+1. **Fetch all threads from the prior review** (`mcp_github_pull_request_read` with `get_review_comments`).
+2. **For each thread that was `REQUEST_CHANGES` in the prior review:**
+   - If the issue is now **fixed** → reply on the thread: `✅ Fixed in {short_sha} — {one-line description}` then resolve the thread using the GraphQL mutation:
+     ```bash
+     gh api graphql -f query='
+       mutation { resolveReviewThread(input: {threadId: "THREAD_NODE_ID"}) { thread { isResolved } } }'
+     ```
+   - If the issue is **still present** → reply: `⚠️ Still open — {what remains to be fixed}` (do not resolve)
+   - If the issue was **partially addressed** → reply: `🔶 Partially fixed in {short_sha} — {what was fixed, what remains}`
+3. **Leave a top-level PR comment** summarizing which prior findings are resolved vs. still open:
+   ```bash
+   gh pr comment {PR_NUMBER} --body "## Re-Review Summary
+   
+   **Prior findings now resolved:** {N}
+   {list each with ✅ and short description}
+   
+   **Still open:** {N}
+   {list each with ⚠️ and what remains}
+   
+   Full review: #{REVIEW_ID}"
+   ```
+4. **Only after posting replies** update the verdict. If all prior blocking issues are resolved and no new blockers were found → `APPROVE`.
 
 ## Review Comment Style Guide
 

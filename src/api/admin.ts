@@ -5365,5 +5365,52 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
     }
   });
 
+  // ── Firecrawl Status ──
+  router.get("/firecrawl/status", async (_req, res) => {
+    try {
+      const config = await loadConfig();
+      const enabled = config.firecrawl?.enabled ?? false;
+      return res.json({ enabled });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return res.status(500).json({ error: message });
+    }
+  });
+
+  // ── Extraction History ──
+  router.get("/extractions", async (req, res) => {
+    try {
+      const { ExtractionRepository } = await import("../mcp/tools/web-extract.js");
+      const repo = new ExtractionRepository();
+      const limit = Math.min(Number(req.query.limit) || 50, 200);
+      const offset = Math.max(Number(req.query.offset) || 0, 0);
+      const rows = repo.listExtractions(limit, offset);
+      const total = repo.count();
+      return res.json({ rows, total, limit, offset });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return res.status(500).json({ error: message });
+    }
+  });
+
+  router.get("/extractions/:id", async (req, res) => {
+    try {
+      const { ExtractionRepository } = await import("../mcp/tools/web-extract.js");
+      const repo = new ExtractionRepository();
+      const id = Number(req.params.id);
+      if (isNaN(id) || id <= 0) {
+        return res.status(400).json({ error: "Invalid extraction ID" });
+      }
+      const row = repo.getExtraction(id);
+      if (!row) {
+        return res.status(404).json({ error: "Extraction not found" });
+      }
+      return res.json(row);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return res.status(500).json({ error: message });
+    }
+  });
+
   return router;
 };

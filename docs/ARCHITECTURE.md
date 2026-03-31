@@ -813,12 +813,39 @@ One native MCP tool for saving generated media to project-scoped draft directori
 
 **Source:** `src/mcp/tools/seo-gap-tools.ts` + `src/mcp/tools/seo/` (built-in, no sidecar)
 
-Two native MCP tools for content gap analysis against top-ranking competitors. Registered via `createSeoGapTools()` factory in `src/mcp/server.ts`.
+Two native MCP tools for content gap analysis against top-ranking competitors. Registered via `createSeoGapTools()` factory in `src/mcp/server.ts`. Supports optional `deepCrawl` mode powered by Firecrawl for multi-page competitor analysis.
 
 | Tool | Risk | Description |
 |---|---|---|
-| `seo-gap-analysis` | � medium | Full pipeline: fetch target → discover competitors (Serper/Brave) → extract content → generate metrics report → save to `~/.openzigs/seo-reports/` |
+| `seo-gap-analysis` | 🟡 medium | Full pipeline: fetch target → discover competitors (Serper/Brave) → extract content → generate metrics report → save to `~/.openzigs/seo-reports/`. Set `deepCrawl=true` to use Firecrawl for multi-page competitor crawling. |
 | `seo-extract-content` | 🟡 medium | Extract structured content from a single URL: headings, word count, TF-IDF keywords, Flesch-Kincaid readability |
+
+#### Firecrawl Integration
+
+**Source:** `src/browser/firecrawl-client.ts` + `docker-compose.firecrawl.yml`
+
+Self-hosted Firecrawl sidecar for deep website crawling with browser rendering. Starts/stops Docker containers on demand with idle timeout (default 10 min). All URLs validated against SSRF blocklist before crawling.
+
+| Tool | Risk | Description |
+|---|---|---|
+| `seo-site-audit` | 🟡 medium | Full-site SEO audit: crawl all pages, check meta tags, headings, thin content, images, schema, internal linking. Report saved to `~/.openzigs/seo-reports/`. |
+| `ingest-website` | 🟡 medium | Crawl a website and ingest all pages into the knowledge base as vector-indexed documents for RAG retrieval. |
+| `competitive-monitor` | 🟡 medium | SQLite-backed competitor tracking: add/remove competitors, snapshot their sites via Firecrawl, generate diff reports showing content changes over time. Supports `extractSchema` for structured data extraction from competitor snapshots and `computeContentDiff()` for field-by-field change detection. |
+| `web-extract` | 🟡 medium | Structured data extraction from any URL. Firecrawl scrapes → markdown → LLM extracts structured JSON per user schema or built-in template. Results persisted to SQLite `web_extractions` table. Templates: `contacts`, `pricing`, `jobs`, `products`. |
+| `web-map` | 🟢 low | Site URL discovery without scraping content. Returns grouped URL lists for a domain. Optional subdomain inclusion and search filtering. Results persisted to SQLite `web_maps` table. |
+
+**Components:**
+- `src/browser/firecrawl-client.ts` — HTTP client with Docker sidecar lifecycle, SSRF protection, per-domain rate limiting
+- `docker-compose.firecrawl.yml` — Firecrawl API + Playwright + Redis services on `openzigs-network`
+- `src/mcp/tools/seo/site-audit.ts` — Full-site SEO audit with per-page and site-wide issue detection
+- `src/mcp/tools/knowledge-ingest-website.ts` — Website-to-knowledge-base ingestion using Firecrawl + KnowledgeIngestionService
+- `src/mcp/tools/competitive-monitor.ts` — Competitive intelligence with SQLite persistence (`competitive_monitors` + `competitive_snapshots` tables), structured extraction via `extractSchema`, and `computeContentDiff()` for field-level diff reports
+- `src/mcp/tools/web-extract.ts` — Structured data extraction with template system, `ExtractionRepository` SQLite persistence (`web_extractions` table)
+- `src/mcp/tools/web-map.ts` — Site map discovery with `MapRepository` SQLite persistence (`web_maps` table), URL grouping by path section
+- `ui/components/workbench/crawl-dashboard.tsx` — UI dialog for launching audits, ingestion, monitoring, extraction (with template picker), and site mapping
+- `ui/components/workbench/extraction-history.tsx` — Extraction history panel with pagination, detail view, CSV/JSON export
+
+**Config:** Set `firecrawl.enabled=true` and optionally `firecrawl.url` (default `http://localhost:3002`) and `firecrawl.idleTimeoutMs` (default 600000) in `~/.openzigs/config.json`.
 
 **Data Flow:**
 ```
@@ -2327,6 +2354,43 @@ Each social platform has a dedicated set of tools backed by its native MCP serve
 | `social-crm-tag` | social | 🟢 low | Add or remove a tag on a CRM contact. |
 | `social-close-handoff` | social | 🟡 medium | Close an active human handoff for a contact. |
 | `social-brain-stats` | social | 🟢 low | Get Social Brain dashboard statistics. |
+
+### SEO Tools (Firecrawl-Powered)
+
+SEO tooling follows a **three-layer architecture**:
+
+1. **Firecrawl** (self-hosted sidecar) — Pure web crawling; returns HTML/Markdown
+2. **MCP Tools** (TypeScript handlers) — All SEO analysis logic (audits, scoring, issue detection)
+3. **LLM** — Interprets user intent, calls tools, and summarizes results
+
+This design means Firecrawl has **no embedded LLM instructions**. The SEO analysis is deterministic TypeScript code that runs on the server. Skills and sub-agents are not required — tools work directly via the MCP protocol.
+
+| Tool | Category | Risk | Description |
+|---|---|---|---|
+| `seo-site-audit` | seo | 🟡 medium | Full-site SEO audit: crawls up to 500 pages, analyzes titles, meta, headings, images, links, and performance. Generates Markdown + PDF reports to `~/.openzigs/seo-reports/`. |
+| `knowledge-ingest-website` | seo | 🟡 medium | Crawl a website and ingest pages into the local knowledge base for RAG. Supports max pages, depth, and path filters. |
+| `competitive-monitor-add` | seo | 🟢 low | Add a competitor domain to the monitoring list. |
+| `competitive-monitor-snapshot` | seo | 🟡 medium | Take a point-in-time snapshot of a competitor's SEO metrics. |
+| `competitive-monitor-report` | seo | 🟢 low | Generate a comparison report across tracked competitors. |
+| `competitive-monitor-list` | seo | 🟢 low | List all tracked competitor domains. |
+
+**Firecrawl Setup**: Run `docker compose -f docker-compose.firecrawl.yml up -d` to start the self-hosted Firecrawl sidecar (5 containers: api, redis, playwright-service, postgres, rabbitmq). Enable in Admin → Settings or via `~/.openzigs/config.json`:
+
+```json
+{
+  "firecrawl": {
+    "enabled": true,
+    "url": "http://localhost:3002"
+  }
+}
+```
+
+**Report Output**: The `seo-site-audit` tool saves reports to `~/.openzigs/seo-reports/{domain}/` with filenames like `audit-{domain}-{timestamp}.md` and `.pdf`. Reports include:
+
+- Page-by-page SEO scores (title, meta, headings, images, links)
+- Site-wide issue detection (duplicate titles, missing descriptions, broken links)
+- Category breakdowns (Critical, High, Medium, Low issues)
+- Actionable recommendations
 
 ### Path Restrictions
 

@@ -4,6 +4,7 @@ import path from "node:path";
 import os from "node:os";
 import type { ToolDefinition } from "../tool-registry.js";
 import { saveReportPdf } from "./shared/pdf-export.js";
+import { getFirecrawlClient, isBlockedUrl } from "../../browser/firecrawl-client.js";
 
 // ── Shared constants ────────────────────────────────────────────────────────
 
@@ -1023,6 +1024,34 @@ const ANNOTATION_STRATEGIES: AnnotationStrategy[] = [
   extractFromOgTitle,
   extractFromIdeaUrls,
 ];
+
+/**
+ * Strategy 0 (async): Use Firecrawl to scrape a Pinterest URL for richer content.
+ * Falls back to null if Firecrawl is not available.
+ */
+export async function extractAnnotationsViaFirecrawl(url: string): Promise<string[] | null> {
+  try {
+    if (isBlockedUrl(url)) return null;
+    const client = getFirecrawlClient();
+    if (!client.getConfig().enabled) return null;
+
+    const result = await client.scrape(url, { formats: ["html"] });
+    if (!result.html) return null;
+
+    // Run existing strategies on the Firecrawl-rendered HTML (which includes JS-rendered content)
+    for (const strategy of ANNOTATION_STRATEGIES) {
+      try {
+        const annotations = strategy.extract(result.html);
+        if (annotations.length > 0) return annotations;
+      } catch {
+        continue;
+      }
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Try multiple extraction strategies in order.

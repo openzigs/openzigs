@@ -9,6 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Firecrawl Self-Hosted Integration** — on-demand Docker sidecar for deep website crawling (#723)
+  - `docker-compose.firecrawl.yml` with API, Playwright, and Redis services (#724)
+  - `FirecrawlClient` class with SSRF protection, per-domain rate limiting (1 req/sec), auto-start/stop sidecar lifecycle, and injectable fetch for testing (#724)
+  - `seo-site-audit` tool — full-site SEO audit via deep crawling: meta tags, headings, thin content, images, schema, internal linking (#725)
+  - `deepCrawl` mode for `seo-gap-analysis` — Firecrawl-powered multi-page competitor content extraction (#726)
+  - `ingest-website` tool — crawl a website and ingest all pages into the knowledge base with vector embeddings (#727)
+  - `extractAnnotationsViaFirecrawl()` — Firecrawl Strategy 0 for Pinterest SEO annotation extraction on JS-rendered pages (#728)
+  - `competitive-monitor` tool — SQLite-backed competitor tracking with add/remove/snapshot/report/list actions (#729)
+  - Firecrawl Dashboard UI — dialog with Site Audit, Ingest, and Monitor actions (#730)
+  - `web-extract` tool — LLM-powered structured data extraction from any web page with JSON schema or natural language prompt (#731)
+  - `lead-extract` tool — automated contact and company extraction via site mapping and batch scraping (#731)
+  - `price-monitor` tool — track prices with historical SQLite snapshots and change detection (#731)
+  - `site-to-dataset` tool — crawl websites and produce structured datasets in markdown, JSONL, or CSV (#731)
+  - Full Firecrawl action support: scroll, write, press, executeJavascript, PDF, scrape (#731)
+  - Batch scrape (`batchScrape`) and enhanced map with search filtering (#731)
+  - Crawl Dashboard expanded with Extract, Leads, Prices, and Dataset action panels (#731)
+  - Firecrawl config section in `config/default.json` (`firecrawl.enabled`, `firecrawl.url`, `firecrawl.idleTimeoutMs`)
+
 - **Visual Workflow Builder** (`/workflows`) — full-screen drag-and-drop canvas for composing multi-stage LLM pipelines (#687)
   - React Flow canvas with custom node types: Prompt Stage, Parallel Group, Post-Action, Condition (coming soon) (#706, #708)
   - Draggable node palette sidebar and node config panel for editing node properties (#707, #710)

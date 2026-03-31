@@ -64,6 +64,7 @@
 - [Secret Vault — Zero-Trust Credential Storage](#secret-vault--zero-trust-credential-storage)
 - [Security Hardening](#security-hardening)
 - [Telegram Notifications for Async Jobs](#telegram-notifications-for-async-jobs)
+- [Firecrawl SEO Tools](#firecrawl-seo-tools)
 - [Pinterest SEO Engine](#pinterest-seo-engine)
 - [TikTok Content Publishing](#tiktok-content-publishing)
 - [Research & Content Synthesis Engine](#research--content-synthesis-engine)
@@ -7327,6 +7328,119 @@ When asking the AI agent to generate media, you can request a notification:
 > "Create a 4-second video of a sunset and send me a Telegram when it's done."
 
 The agent will automatically set `notify_via_telegram: true` on the job (see the Media Director and Remix Engineer skill guides).
+
+---
+
+## Firecrawl SEO Tools
+
+OpenZigs includes a self-hosted **Firecrawl** integration for comprehensive website SEO auditing, competitive monitoring, and knowledge base ingestion. Firecrawl is a powerful web crawler that handles JavaScript rendering, anti-bot bypass, and large-scale site crawling.
+
+### Architecture Overview
+
+The SEO tools follow a **three-layer architecture**:
+
+1. **Firecrawl** (self-hosted Docker sidecar) — Pure web crawling; returns HTML/Markdown content
+2. **MCP Tools** (TypeScript handlers) — All SEO analysis logic is deterministic code (audits, scoring, issue detection)
+3. **LLM** — Interprets user intent, calls the appropriate tools, and summarizes results
+
+This design means Firecrawl has **no embedded LLM instructions** — you don't need to configure agents, skills, or sub-agents. The SEO analysis runs as pure TypeScript code on your server.
+
+### Setup
+
+1. **Start the Firecrawl sidecar** (5 Docker containers: api, redis, playwright-service, postgres, rabbitmq):
+
+   ```bash
+   docker compose -f docker-compose.firecrawl.yml up -d
+   ```
+
+2. **Enable in config** — Add to `~/.openzigs/config.json`:
+
+   ```json
+   {
+     "firecrawl": {
+       "enabled": true,
+       "url": "http://localhost:3002"
+     }
+   }
+   ```
+
+   Or enable via **Admin → Settings** in the UI.
+
+3. **Verify** — Check Firecrawl health: `curl http://localhost:3002/`
+
+### Available Tools
+
+| Tool | Description |
+|---|---|
+| `seo-site-audit` | Full-site SEO audit: crawls up to 500 pages, analyzes titles, meta descriptions, headings, images, links, and performance |
+| `knowledge-ingest-website` | Crawl a website and ingest pages into the local knowledge base for RAG queries |
+| `competitive-monitor-add` | Add a competitor domain to the monitoring list |
+| `competitive-monitor-snapshot` | Take a point-in-time snapshot of a competitor's SEO metrics. Supports `extractSchema` for structured data extraction |
+| `competitive-monitor-report` | Generate a comparison report across tracked competitors with field-level content diffs |
+| `competitive-monitor-list` | List all tracked competitor domains |
+| `web-extract` | Extract structured data from any URL using Firecrawl + LLM. Supports built-in templates (contacts, pricing, jobs, products) or custom JSON schemas. Results saved to SQLite |
+| `web-map` | Discover all URLs on a site without scraping content. Groups URLs by path section. Supports subdomain inclusion and keyword search filtering |
+
+### Using the Crawl Dashboard
+
+The **Workbench** tab in the UI includes a **Crawl Dashboard** dialog with these modes:
+
+- **Site Audit** — Run a full SEO audit on any website
+- **Ingest** — Crawl and add pages to your knowledge base
+- **Monitor** — Track competitors over time
+- **Extract** — Scrape and extract structured data using templates or custom schemas
+- **Leads** — Extract contact information from websites
+- **Prices** — Monitor product prices over time
+- **Dataset** — Convert a website into a structured dataset
+
+Each mode supports:
+- **Model selection** — Choose which LLM to use for summarizing results
+- **Max pages / depth limits** — Control crawl scope
+- **Path filters** — Include/exclude specific URL patterns
+
+### Output Reports
+
+The `seo-site-audit` tool generates detailed reports saved to `~/.openzigs/seo-reports/{domain}/`:
+
+- **Markdown report** (`audit-{domain}-{timestamp}.md`) — Human-readable with full details
+- **PDF report** (`audit-{domain}-{timestamp}.pdf`) — Formatted for sharing/archiving
+
+Reports include:
+- Page-by-page SEO scores (title, meta, headings, images, links)
+- Site-wide issue detection (duplicate titles, missing descriptions, broken links)
+- Category breakdowns (Critical, High, Medium, Low issues)
+- Actionable recommendations
+
+### Example Prompts
+
+```
+"Run an SEO audit on https://example.com with a max of 100 pages"
+
+"Crawl the docs at https://docs.example.com and add them to my knowledge base under the 'api-docs' category"
+
+"Add competitor.com to my competitive monitoring list as 'Main Competitor'"
+
+"Take a snapshot of competitor.com and compare it to last month's baseline"
+
+"Generate a competitive analysis report for all tracked domains"
+
+"Extract all product names and prices from https://shop.example.com using the pricing template"
+
+"Extract contacts from https://example.com/team using the contacts template"
+
+"Map all URLs on https://docs.example.com to see the site structure"
+
+"Use web-extract to get job listings from https://example.com/careers with the jobs template"
+```
+
+### Troubleshooting
+
+| Issue | Solution |
+|---|---|
+| "Firecrawl is not configured" banner | Run `docker compose -f docker-compose.firecrawl.yml up -d` and enable in config |
+| 400 error on audit | Check that Firecrawl containers are healthy: `docker compose -f docker-compose.firecrawl.yml ps` |
+| Slow crawls | Reduce `maxPages` or `maxDepth`; Firecrawl renders JS pages which takes time |
+| Missing pages | Some sites block crawlers — try reducing concurrency or adding delays |
 
 ---
 

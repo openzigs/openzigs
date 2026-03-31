@@ -2,6 +2,7 @@
   "enabledTools": [
     "browser-navigate",
     "browser-read",
+    "competitive-monitor",
     "convert-to-markdown",
     "create-word-doc",
     "delete-job",
@@ -58,6 +59,7 @@
     "github-update-issue",
     "github-update-pr",
     "github-update-pr-branch",
+    "ingest-website",
     "ingest-youtube",
     "linkedin-create-post",
     "linkedin-get-company",
@@ -102,6 +104,7 @@
     "send_dm",
     "seo-extract-content",
     "seo-gap-analysis",
+    "seo-site-audit",
     "shell-execute",
     "social-brain-stats",
     "social-close-handoff",

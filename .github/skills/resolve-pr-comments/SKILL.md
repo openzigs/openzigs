@@ -162,21 +162,36 @@ For each **actionable** and **nit** comment:
 
 ### Step 6: Respond to Threads
 
-For each resolved comment, reply with the fix details:
+For **every** actioned comment (fixed, already-resolved, or disagreed-with), post a reply on the thread **before** attempting to resolve it. Silence is not acceptable — reviewers need to know their feedback was seen and acted on.
+
+**Reply templates:**
+
+| Outcome | Reply format |
+|---------|-------------|
+| Fixed | `Fixed in {short_sha}: {one-line description of what changed and why}` |
+| Already resolved | `Already addressed — {explain what the current code does at that location}` |
+| Disagree / Won't fix | `Not changing: {clear technical reason}. {Offer to discuss if appropriate}` |
+| Clarification needed | `Question: {what you need to know before fixing this}` |
+| Nit fixed | `nit applied in {short_sha}` |
 
 **Primary method** — GitHub MCP tools:
 - Use `mcp_github_add_reply_to_pull_request_comment` to reply to the thread
+- After replying, resolve the thread (if fixed/already-resolved) using the GraphQL mutation below
 
-**Fallback** — `gh` CLI:
+**Thread resolution via GraphQL:**
 ```bash
-# Reply to a specific comment
-gh api POST /repos/{owner}/{repo}/pulls/comments/{comment_id}/replies \
-  -f body="Fixed in $(git rev-parse --short HEAD). [description of change]"
-```
+# Get the thread node ID first
+gh api graphql -f query='
+  { repository(owner: "{owner}", name: "{repo}") {
+    pullRequest(number: {PR_NUMBER}) {
+      reviewThreads(first: 100) {
+        nodes { id isResolved comments(first: 1) { nodes { body } } }
+      }
+    }
+  }
+}'
 
-**Thread resolution** (if supported):
-```bash
-# Get the thread node ID, then resolve it
+# Then resolve a specific thread by its node ID
 gh api graphql -f query='
   mutation {
     resolveReviewThread(input: {threadId: "THREAD_NODE_ID"}) {
@@ -186,14 +201,19 @@ gh api graphql -f query='
 '
 ```
 
-**Fallback** — summary review comment:
+**Fallback** — summary review comment if individual replies or resolution fail:
 ```bash
+COMMIT=$(git rev-parse --short HEAD)
 gh pr review {PR_NUMBER} --comment \
-  -b "Addressed all review comments in $(git rev-parse --short HEAD):
-  - Fixed X in file.ts
-  - Fixed Y in other.ts
-  - Question about Z — see inline reply"
+  -b "Addressed review comments in ${COMMIT}:
+- Fixed: [list each fixed comment with file:line]
+- Already resolved: [list]
+- Won't fix: [list with reasons]"
 ```
+
+**Order of operations for each thread:**
+1. Post the reply first (always)
+2. Resolve the thread only after the push is confirmed (so the reply references the real commit SHA)
 
 ### Step 7: Report
 

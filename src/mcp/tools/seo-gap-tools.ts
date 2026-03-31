@@ -3,11 +3,12 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import type { ToolDefinition } from "../tool-registry.js";
-import { extractContent } from "./seo/html-extractor.js";
+import { extractContent, type ExtractedContent } from "./seo/html-extractor.js";
 import { discoverCompetitors } from "./seo/competitor-discovery.js";
 import { buildAnalysisPrompt, generateMetricsReport, buildReportFilename, buildReportSubdir, type AnalysisInput } from "./seo/report-generator.js";
 import { discoverKeyword } from "./seo/keyword-discovery.js";
 import { saveReportPdf } from "./shared/pdf-export.js";
+import { getFirecrawlClient, isBlockedUrl as isBlockedFirecrawlUrl } from "../../browser/firecrawl-client.js";
 
 // ── Constants ────────────────────────────────────────────────────────────
 
@@ -23,6 +24,9 @@ const seoGapAnalysisSchema = z.object({
     .optional()
     .describe("Search provider for competitor discovery (default: auto-detect from available API keys)"),
   model: z.string().optional().describe("LLM model to use for analysis (passed through — the orchestrator handles model routing)"),
+  deepCrawl: z.boolean().optional().default(false).describe("When true, use Firecrawl to deep-crawl competitor sites for richer content extraction (requires firecrawl.enabled=true)"),
+  crawlDepth: z.number().int().min(1).max(5).optional().default(2).describe("Max crawl depth when deepCrawl is enabled (default: 2)"),
+  crawlLimit: z.number().int().min(1).max(50).optional().default(10).describe("Max pages per competitor when deepCrawl is enabled (default: 10)"),
 });
 
 const seoExtractContentSchema = z.object({
@@ -49,6 +53,64 @@ async function fetchHtml(url: string): Promise<string> {
   return resp.text();
 }
 
+/**
+ * Merge multiple ExtractedContent results from individual pages into one.
+ * Sums numeric metrics, concatenates arrays, uses first page's meta info.
+ */
+function mergeExtractedContents(pages: ExtractedContent[]): ExtractedContent {
+  if (pages.length === 1) return pages[0];
+
+  const first = pages[0];
+  const merged: ExtractedContent = {
+    title: first.title,
+    metaTitle: first.metaTitle,
+    metaDescription: first.metaDescription,
+    headings: pages.flatMap((p) => p.headings),
+    bodyText: pages.map((p) => p.bodyText).join("\n\n"),
+    wordCount: pages.reduce((s, p) => s + p.wordCount, 0),
+    headingCount: pages.reduce((s, p) => s + p.headingCount, 0),
+    paragraphCount: pages.reduce((s, p) => s + p.paragraphCount, 0),
+    readingTime: pages.reduce((s, p) => s + p.readingTime, 0),
+    readabilityScore: Math.round(pages.reduce((s, p) => s + p.readabilityScore, 0) / pages.length * 10) / 10,
+    metaTags: deduplicateBy(pages.flatMap((p) => p.metaTags), (t) => `${t.name}:${t.content}`),
+    images: pages.flatMap((p) => p.images),
+    imagesWithoutAlt: pages.reduce((s, p) => s + p.imagesWithoutAlt, 0),
+    imagesMissingAlt: pages.reduce((s, p) => s + p.imagesMissingAlt, 0),
+    imagesEmptyAlt: pages.reduce((s, p) => s + p.imagesEmptyAlt, 0),
+    imagesAriaHidden: pages.reduce((s, p) => s + p.imagesAriaHidden, 0),
+    imagesLazyLoaded: pages.reduce((s, p) => s + p.imagesLazyLoaded, 0),
+    schemaMarkup: deduplicateBy(pages.flatMap((p) => p.schemaMarkup), (s) => s.type),
+    internalLinks: deduplicateBy(pages.flatMap((p) => p.internalLinks), (l) => l.href),
+    externalLinks: deduplicateBy(pages.flatMap((p) => p.externalLinks), (l) => l.href),
+    internalLinkCount: 0,
+    externalLinkCount: 0,
+    keywords: mergeKeywords(pages.flatMap((p) => p.keywords)),
+  };
+  merged.internalLinkCount = merged.internalLinks.length;
+  merged.externalLinkCount = merged.externalLinks.length;
+  return merged;
+}
+
+function deduplicateBy<T>(items: T[], key: (item: T) => string): T[] {
+  const seen = new Set<string>();
+  return items.filter((item) => {
+    const k = key(item);
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+}
+
+function mergeKeywords(keywords: { term: string; tfidf: number }[]): { term: string; tfidf: number }[] {
+  const byTerm = new Map<string, number>();
+  for (const kw of keywords) {
+    byTerm.set(kw.term, Math.max(byTerm.get(kw.term) ?? 0, kw.tfidf));
+  }
+  return [...byTerm.entries()]
+    .map(([term, tfidf]) => ({ term, tfidf }))
+    .sort((a, b) => b.tfidf - a.tfidf);
+}
+
 async function ensureReportsDir(): Promise<void> {
   await fs.mkdir(SEO_REPORTS_DIR, { recursive: true });
 }
@@ -67,7 +129,7 @@ export const createSeoGapTools = (opts: SeoGapToolsOptions = {}): ToolDefinition
   tools.push({
     name: "seo-gap-analysis",
     description:
-      "Run a full SEO content gap analysis: fetch the target page, discover top-ranking competitors, extract content from each, compare metrics, and generate a comprehensive Markdown report saved to ~/.openzigs/seo-reports/. Returns the report path and a metrics summary. Use the `model` parameter to request LLM-enhanced analysis.",
+      "Run a full SEO content gap analysis: fetch the target page, discover top-ranking competitors, extract content from each, compare metrics, and generate a comprehensive Markdown report saved to ~/.openzigs/seo-reports/. Returns the report path and a metrics summary. Use the `model` parameter to request LLM-enhanced analysis. Enable `deepCrawl` to use Firecrawl for richer multi-page competitor analysis.",
     inputSchema: {
       type: "object",
       properties: {
@@ -75,6 +137,9 @@ export const createSeoGapTools = (opts: SeoGapToolsOptions = {}): ToolDefinition
         targetKeyword: { type: "string", description: "Primary keyword / search query (leave blank to auto-detect)" },
         searchProvider: { type: "string", enum: ["serper", "brave"], description: "Search provider (default: auto)" },
         model: { type: "string", description: "LLM model for enhanced analysis" },
+        deepCrawl: { type: "boolean", description: "Use Firecrawl to deep-crawl competitors (requires firecrawl.enabled)" },
+        crawlDepth: { type: "number", description: "Max crawl depth for deep crawl (default: 2)" },
+        crawlLimit: { type: "number", description: "Max pages per competitor for deep crawl (default: 10)" },
       },
       required: ["targetUrl"],
     },
@@ -82,7 +147,7 @@ export const createSeoGapTools = (opts: SeoGapToolsOptions = {}): ToolDefinition
     category: "search",
     riskLevel: "medium",
     handler: async (args) => {
-      const { targetUrl, targetKeyword: providedKeyword, searchProvider } = seoGapAnalysisSchema.parse(args);
+      const { targetUrl, targetKeyword: providedKeyword, searchProvider, deepCrawl, crawlDepth, crawlLimit } = seoGapAnalysisSchema.parse(args);
 
       try {
         await ensureReportsDir();
@@ -130,17 +195,52 @@ export const createSeoGapTools = (opts: SeoGapToolsOptions = {}): ToolDefinition
         const discovery = await discoverCompetitors(targetKeyword, apiKeys);
 
         // 3. Fetch & extract competitor content (parallel, with error tolerance)
-        const competitorResults = await Promise.allSettled(
-          discovery.organic.map(async (result) => {
-            const html = await fetchHtml(result.url);
-            const content = extractContent(html, result.url);
-            return { ...content, url: result.url };
-          }),
-        );
+        type CompetitorResult = ReturnType<typeof extractContent> & { url: string; crawledPages?: number };
+        let competitors: CompetitorResult[];
 
-        const competitors = competitorResults
-          .filter((r): r is PromiseFulfilledResult<ReturnType<typeof extractContent> & { url: string }> => r.status === "fulfilled")
-          .map((r) => r.value);
+        const firecrawlClient = (() => {
+          try { return getFirecrawlClient(); } catch { return null; }
+        })();
+        const useFirecrawl = deepCrawl && firecrawlClient?.getConfig().enabled;
+
+        if (useFirecrawl && firecrawlClient) {
+          // Deep crawl mode: use Firecrawl to crawl each competitor site
+          const crawlResults = await Promise.allSettled(
+            discovery.organic.map(async (result): Promise<CompetitorResult> => {
+              if (isBlockedFirecrawlUrl(result.url)) {
+                throw new Error(`SSRF blocked: ${result.url}`);
+              }
+              const crawlResult = await firecrawlClient.crawl(result.url, {
+                limit: crawlLimit,
+                maxDepth: crawlDepth,
+                scrapeOptions: { formats: ["html"] },
+              });
+              // Extract content from each page individually, then merge
+              const pageContents = crawlResult.pages
+                .filter((p) => p.html)
+                .map((p) => extractContent(p.html!, p.url || result.url));
+              const content = pageContents.length > 0
+                ? mergeExtractedContents(pageContents)
+                : extractContent("<html></html>", result.url);
+              return { ...content, url: result.url, crawledPages: crawlResult.totalPages };
+            }),
+          );
+          competitors = crawlResults
+            .filter((r): r is PromiseFulfilledResult<CompetitorResult> => r.status === "fulfilled")
+            .map((r) => r.value);
+        } else {
+          // Standard mode: fetch single pages
+          const competitorResults = await Promise.allSettled(
+            discovery.organic.map(async (result): Promise<CompetitorResult> => {
+              const html = await fetchHtml(result.url);
+              const content = extractContent(html, result.url);
+              return { ...content, url: result.url };
+            }),
+          );
+          competitors = competitorResults
+            .filter((r): r is PromiseFulfilledResult<CompetitorResult> => r.status === "fulfilled")
+            .map((r) => r.value);
+        }
 
         // 4. Generate metrics report
         const input: AnalysisInput = {
@@ -192,6 +292,7 @@ export const createSeoGapTools = (opts: SeoGapToolsOptions = {}): ToolDefinition
               externalLinks: targetContent.externalLinkCount,
             },
             competitorsAnalyzed: competitors.length,
+            deepCrawlEnabled: !!useFirecrawl,
             serpFeatures: {
               paaCount: discovery.serpFeatures.paa.length,
               relatedSearchCount: discovery.serpFeatures.relatedSearches.length,

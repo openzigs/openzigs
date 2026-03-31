@@ -239,5 +239,10 @@
     "timezone": "UTC",
     "noOverlap": true,
     "maxRandomDelayMs": 0
+  },
+  "firecrawl": {
+    "enabled": false,
+    "url": "http://localhost:3002",
+    "idleTimeoutMs": 600000
   }
 }

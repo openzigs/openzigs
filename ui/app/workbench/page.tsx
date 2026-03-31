@@ -10,8 +10,9 @@ import { FileSidebar } from "@/components/workbench/file-sidebar";
 import { ImportDocumentDialog } from "@/components/workbench/import-document-dialog";
 import { ResearchGenerateDialog } from "@/components/workbench/research-generate-dialog";
 import { SeoAnalysisDialog } from "@/components/workbench/seo-analysis-dialog";
+import { CrawlDashboardDialog } from "@/components/workbench/crawl-dashboard";
 import { ChatMarkdown } from "@/components/chat-markdown";
-import { Save, FileText, Circle, FileUp, Microscope, Search, Eye, Pencil } from "lucide-react";
+import { Save, FileText, Circle, FileUp, Microscope, Search, Eye, Pencil, Globe } from "lucide-react";
 import { showToast } from "@/components/toast";
 import { AskAiPanel, AskAiButton, PAGE_CONTEXTS } from "@/components/ask-ai";
 
@@ -28,6 +29,7 @@ export default function WorkbenchPage() {
   const [importOpen, setImportOpen] = useState(false);
   const [researchOpen, setResearchOpen] = useState(false);
   const [seoOpen, setSeoOpen] = useState(false);
+  const [crawlOpen, setCrawlOpen] = useState(false);
   const [askAiOpen, setAskAiOpen] = useState(false);
   // Increment to force AskAiPanel to clear stale messages when a new analysis starts
   const [panelKey, setPanelKey] = useState(0);
@@ -201,6 +203,14 @@ export default function WorkbenchPage() {
             </div>
             <AskAiButton onClick={() => setAskAiOpen(true)} />
             <button
+              onClick={() => setCrawlOpen(true)}
+              className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold text-muted-foreground transition hover:bg-muted hover:text-foreground"
+              title="Firecrawl Dashboard — crawl websites for SEO audits, ingestion, or monitoring"
+            >
+              <Globe className="h-3.5 w-3.5" />
+              Crawl
+            </button>
+            <button
               onClick={() => setSeoOpen(true)}
               className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold text-muted-foreground transition hover:bg-muted hover:text-foreground"
               title="SEO Gap Analysis — compare your page against top competitors"
@@ -280,6 +290,12 @@ export default function WorkbenchPage() {
       <ResearchGenerateDialog
         open={researchOpen}
         onOpenChange={setResearchOpen}
+        onSubmitted={() => { setPanelKey((k) => k + 1); setAskAiOpen(true); }}
+      />
+      {/* Crawl Dashboard Dialog */}
+      <CrawlDashboardDialog
+        open={crawlOpen}
+        onOpenChange={setCrawlOpen}
         onSubmitted={() => { setPanelKey((k) => k + 1); setAskAiOpen(true); }}
       />
       {/* SEO Gap Analysis Dialog */}
