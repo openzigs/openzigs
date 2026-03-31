@@ -9,6 +9,7 @@ import { BrandVoiceRepository } from "../personality/brand-voice-repository.js";
 import { CharacterRepository } from "../characters/character-repository.js";
 import { PinterestTrackerRepository } from "../mcp/tools/pinterest-tracker.js";
 import { OutboxRepository } from "../outbox/outbox-repository.js";
+import { WebhookRepository } from "../webhooks/webhook-repository.js";
 import { YouTubePublishRepository } from "../video/youtube-publish-repository.js";
 import { BrandKitRepository } from "../video/brand-kit.js";
 
@@ -69,6 +70,10 @@ export const getDatabase = (options: DatabaseOptions = {}): Database.Database =>
   // Run Brand Kit migration (brand_kits table)
   const brandKitRepo = new BrandKitRepository(db);
   brandKitRepo.migrate();
+
+  // Run Webhook migration (webhooks table)
+  const webhookRepo = new WebhookRepository(db);
+  webhookRepo.migrate();
 
   sharedDb = db;
   return db;

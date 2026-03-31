@@ -47,4 +47,4 @@
 - Always-on tools (`read-file`, `list-directory`, `web-search`, `browser-navigate`, `shell-execute`, `spawn-agent`, `orchestrate-agents`) are always included regardless of tool limit filtering.
 - Logging: Winston logger + `AuditLogger` with JSONL persistence at `~/.openzigs/logs/`, value redaction, categories: `session`, `message`, `tool`, `security`, `system`.
 - Sentinel state persists to `~/.openzigs/sentinel/`; uses atomic write-to-temp-then-rename for state files.
-- Webhook configs in [src/webhooks/webhook-manager.ts](src/webhooks/webhook-manager.ts) are currently in-memory (non-persistent across restart); treat as an MVP limitation when debugging webhook behavior.
+- Webhook configs are persisted to SQLite via [src/webhooks/webhook-repository.ts](src/webhooks/webhook-repository.ts) (WAL mode). Rate-limit state is intentionally in-memory (resets on restart).

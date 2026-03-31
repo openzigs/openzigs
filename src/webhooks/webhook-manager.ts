@@ -1,5 +1,6 @@
 import { randomBytes, createHmac, timingSafeEqual, scryptSync } from "node:crypto";
 import { nanoid } from "nanoid";
+import type { WebhookRepository } from "./webhook-repository.js";
 
 /* ── Types ── */
 
@@ -42,15 +43,22 @@ export type WebhookEvent = {
 };
 
 /**
- * In-memory webhook manager with JSON file persistence.
+ * SQLite-backed webhook manager.
  *
- * Production note: For real enterprise deployments, replace this with
- * a proper database (SQLite, Postgres) — the in-memory approach keeps
- * things simple for the initial MVP.
+ * All webhook configuration is persisted through `WebhookRepository`.
+ * Rate-limit state is intentionally kept in-memory (ephemeral by design —
+ * counters reset on restart, which is the safe default).
  */
 export class WebhookManager {
-  private webhooks = new Map<string, WebhookConfig>();
+  private repo: WebhookRepository;
+  private clock: () => Date;
+  /** In-memory rate-limit counters — intentionally ephemeral. */
   private rateCounts = new Map<string, { count: number; windowStart: number }>();
+
+  constructor(repo: WebhookRepository, clock?: () => Date) {
+    this.repo = repo;
+    this.clock = clock ?? (() => new Date());
+  }
 
   /** Create a new webhook and return it with the plaintext API key (shown once). */
   create(input: CreateWebhookInput): { webhook: WebhookConfig; apiKey: string } {
@@ -59,6 +67,7 @@ export class WebhookManager {
     const salt = randomBytes(16).toString("hex");
     const apiKeyHash = this.hashKey(apiKey, salt);
     const secret = randomBytes(32).toString("hex");
+    const now = this.clock().toISOString();
 
     const webhook: WebhookConfig = {
       id,
@@ -71,49 +80,46 @@ export class WebhookManager {
       enabled: true,
       allowedIps: input.allowedIps ?? [],
       rateLimit: input.rateLimit ?? 60,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
+      createdAt: now,
+      updatedAt: now,
       lastTriggeredAt: null,
       triggerCount: 0,
     };
 
-    this.webhooks.set(id, webhook);
+    this.repo.insert(webhook);
     return { webhook, apiKey };
   }
 
   /** List all webhooks (secrets are included — filter for external display). */
   list(): WebhookConfig[] {
-    return [...this.webhooks.values()];
+    return this.repo.list();
   }
 
   /** Get a single webhook by ID. */
   get(id: string): WebhookConfig | undefined {
-    return this.webhooks.get(id);
+    return this.repo.getById(id);
   }
 
   /** Toggle enabled state. */
   toggle(id: string, enabled: boolean): WebhookConfig | undefined {
-    const wh = this.webhooks.get(id);
-    if (!wh) return undefined;
-    wh.enabled = enabled;
-    wh.updatedAt = new Date().toISOString();
-    return wh;
+    return this.repo.update(id, { enabled });
   }
 
   /** Delete a webhook. */
   delete(id: string): boolean {
-    return this.webhooks.delete(id);
+    return this.repo.deleteById(id);
   }
 
   /** Rotate the API key — returns new plaintext key. */
   rotateKey(id: string): { apiKey: string } | undefined {
-    const wh = this.webhooks.get(id);
+    const wh = this.repo.getById(id);
     if (!wh) return undefined;
     const apiKey = `whk_${randomBytes(24).toString("hex")}`;
     const salt = randomBytes(16).toString("hex");
-    wh.apiKeySalt = salt;
-    wh.apiKeyHash = this.hashKey(apiKey, salt);
-    wh.updatedAt = new Date().toISOString();
+    this.repo.update(id, {
+      apiKeySalt: salt,
+      apiKeyHash: this.hashKey(apiKey, salt),
+    });
     return { apiKey };
   }
 
@@ -121,7 +127,8 @@ export class WebhookManager {
 
   /** Authenticate a request by API key (Bearer token). Returns the webhook or undefined. */
   authenticateByApiKey(apiKey: string): WebhookConfig | undefined {
-    for (const wh of this.webhooks.values()) {
+    const all = this.repo.list();
+    for (const wh of all) {
       const hash = this.hashKey(apiKey, wh.apiKeySalt);
       if (this.safeCompare(hash, wh.apiKeyHash)) {
         return wh;
@@ -132,7 +139,7 @@ export class WebhookManager {
 
   /** Verify an HMAC-SHA256 signature. */
   verifySignature(webhookId: string, body: string, signature: string): boolean {
-    const wh = this.webhooks.get(webhookId);
+    const wh = this.repo.getById(webhookId);
     if (!wh) return false;
 
     const expected = createHmac("sha256", wh.secret)
@@ -146,11 +153,11 @@ export class WebhookManager {
     }
   }
 
-  /* ── Rate Limiting ── */
+  /* ── Rate Limiting (in-memory — intentionally ephemeral) ── */
 
   /** Check (and consume) a rate-limit slot. Returns true if allowed. */
   checkRateLimit(webhookId: string): boolean {
-    const wh = this.webhooks.get(webhookId);
+    const wh = this.repo.getById(webhookId);
     if (!wh || wh.rateLimit === 0) return true;
 
     const now = Date.now();
@@ -166,11 +173,12 @@ export class WebhookManager {
 
   /** Record a successful trigger. */
   recordTrigger(webhookId: string): void {
-    const wh = this.webhooks.get(webhookId);
+    const wh = this.repo.getById(webhookId);
     if (!wh) return;
-    wh.triggerCount += 1;
-    wh.lastTriggeredAt = new Date().toISOString();
-    wh.updatedAt = new Date().toISOString();
+    this.repo.update(webhookId, {
+      triggerCount: wh.triggerCount + 1,
+      lastTriggeredAt: this.clock().toISOString(),
+    });
   }
 
   /* ── Helpers ── */
