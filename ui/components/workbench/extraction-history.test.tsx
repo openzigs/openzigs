@@ -57,7 +57,7 @@ describe("ExtractionHistory", () => {
     render(<ExtractionHistory />);
     await waitFor(() => {
       expect(screen.getByText(/example.com\/pricing/)).toBeDefined();
-      expect(screen.getByText(/jobs.example.com\/careers/)).toBeDefined();
+      expect(screen.getByText(/jobs\.example.com\/careers/)).toBeDefined();
     });
   });
 
