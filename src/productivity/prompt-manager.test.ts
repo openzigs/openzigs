@@ -486,4 +486,39 @@ describe("PromptManager", () => {
     expect(updated.suggestedSkill).toBe("system-operator");
     expect(updated.preferredTools).toEqual(["web-search"]);
   });
+
+  it("stores and retrieves graphLayout", () => {
+    const layout = JSON.stringify({ nodes: [{ id: "1", position: { x: 0, y: 0 } }], edges: [] });
+    const prompt = pm.create({
+      name: "workflow-prompt",
+      template: "Workflow: test",
+      graphLayout: layout,
+    });
+
+    expect(prompt.graphLayout).toBe(layout);
+    const found = pm.getById(prompt.id);
+    expect(found?.graphLayout).toBe(layout);
+  });
+
+  it("updates graphLayout", () => {
+    const prompt = pm.create({
+      name: "layout-update",
+      template: "text",
+      graphLayout: '{"nodes":[]}',
+    });
+
+    const updated = pm.update(prompt.id, { graphLayout: '{"nodes":[{"id":"2"}]}' });
+    expect(updated.graphLayout).toBe('{"nodes":[{"id":"2"}]}');
+  });
+
+  it("clears graphLayout when set to null", () => {
+    const prompt = pm.create({
+      name: "layout-clear",
+      template: "text",
+      graphLayout: '{"nodes":[]}',
+    });
+
+    const updated = pm.update(prompt.id, { graphLayout: null });
+    expect(updated.graphLayout).toBeNull();
+  });
 });

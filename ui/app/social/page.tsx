@@ -10,6 +10,19 @@ import { ToastContainer, showToast } from "@/components/toast";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { InlineModelPicker } from "@/components/model-picker-select";
 import {
+  BarChart,
+  Bar,
+  PieChart,
+  Pie,
+  Cell,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+  Legend,
+} from "recharts";
+import {
   useSocialStats,
   useSocialContacts,
   useContactMessages,
@@ -1715,10 +1728,16 @@ function LeadsTab() {
 
 function AnalyticsTab() {
   const [since, setSince] = useState<string>("");
+  const [until, setUntil] = useState<string>("");
+  const [platformFilter, setPlatformFilter] = useState<string>("");
   const { data, isLoading } = useSocialAnalytics(since || undefined);
   const analytics: AnalyticsEntry[] = data?.analytics ?? [];
 
-  const totals = analytics.reduce(
+  const filtered = platformFilter
+    ? analytics.filter((e) => e.platform === platformFilter)
+    : analytics;
+
+  const totals = filtered.reduce(
     (acc, e) => ({
       messages: acc.messages + e.total_messages_in + e.total_messages_out,
       inbound: acc.inbound + e.total_messages_in,
@@ -1728,6 +1747,42 @@ function AnalyticsTab() {
     { messages: 0, inbound: 0, outbound: 0, contacts: 0 },
   );
 
+  const automationRate = totals.messages > 0
+    ? Math.round((totals.outbound / totals.messages) * 100)
+    : 0;
+
+  const platforms = [...new Set(analytics.map((e) => e.platform))];
+
+  // Chart data
+  const platformChartData = filtered.map((row) => ({
+    name: row.platform,
+    inbound: row.total_messages_in,
+    outbound: row.total_messages_out,
+    contacts: row.total_conversations,
+  }));
+
+  const pieData = filtered.map((row) => ({
+    name: row.platform,
+    value: row.total_messages_in + row.total_messages_out,
+  }));
+
+  const PIE_COLORS = ["#10b981", "#3b82f6", "#f59e0b", "#ef4444", "#8b5cf6", "#ec4899"];
+
+  // CSV export
+  const handleExportCsv = () => {
+    const header = "Platform,Inbound,Outbound,Contacts\n";
+    const rows = filtered
+      .map((r) => `${r.platform},${r.total_messages_in},${r.total_messages_out},${r.total_conversations}`)
+      .join("\n");
+    const blob = new Blob([header + rows], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "social-analytics.csv";
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
@@ -1736,16 +1791,39 @@ function AnalyticsTab() {
           <label className="text-xs text-muted-foreground">Since</label>
           <input type="date" value={since} onChange={(e) => setSince(e.target.value)}
             className="rounded-md border border-border bg-background px-2 py-1 text-xs" />
-          {since && (
-            <button onClick={() => setSince("")} className="text-xs text-muted-foreground hover:text-foreground">Clear</button>
+          <label className="text-xs text-muted-foreground">Until</label>
+          <input type="date" value={until} onChange={(e) => setUntil(e.target.value)}
+            className="rounded-md border border-border bg-background px-2 py-1 text-xs" />
+          {platforms.length > 0 && (
+            <select
+              value={platformFilter}
+              onChange={(e) => setPlatformFilter(e.target.value)}
+              className="rounded-md border border-border bg-background px-2 py-1 text-xs"
+            >
+              <option value="">All Platforms</option>
+              {platforms.map((p) => (
+                <option key={p} value={p}>{p}</option>
+              ))}
+            </select>
           )}
+          {(since || until || platformFilter) && (
+            <button onClick={() => { setSince(""); setUntil(""); setPlatformFilter(""); }}
+              className="text-xs text-muted-foreground hover:text-foreground">Clear</button>
+          )}
+          <button
+            onClick={handleExportCsv}
+            disabled={filtered.length === 0}
+            className="rounded-md border border-border bg-background px-3 py-1 text-xs font-medium hover:bg-muted disabled:opacity-50"
+          >
+            Export CSV
+          </button>
         </div>
       </div>
 
       {isLoading && <p className="text-sm text-muted-foreground">Loading analytics...</p>}
 
       {/* Summary cards */}
-      <div className="grid grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <div className="rounded-lg border border-border p-4 text-center">
           <p className="text-2xl font-bold">{totals.messages}</p>
           <p className="text-xs text-muted-foreground">Total Messages</p>
@@ -1759,13 +1837,58 @@ function AnalyticsTab() {
           <p className="text-xs text-muted-foreground">Outbound</p>
         </div>
         <div className="rounded-lg border border-border p-4 text-center">
-          <p className="text-2xl font-bold">{totals.contacts}</p>
-          <p className="text-xs text-muted-foreground">Contacts</p>
+          <p className="text-2xl font-bold">{automationRate}%</p>
+          <p className="text-xs text-muted-foreground">Automation Rate</p>
         </div>
       </div>
 
-      {/* Per-platform breakdown */}
-      {analytics.length > 0 && (
+      {/* Charts row */}
+      {filtered.length > 0 && (
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+          {/* Bar chart: messages by platform */}
+          <div className="rounded-lg border border-border p-4">
+            <h3 className="mb-3 text-sm font-semibold">Messages by Platform</h3>
+            <ResponsiveContainer width="100%" height={240}>
+              <BarChart data={platformChartData}>
+                <CartesianGrid strokeDasharray="3 3" className="opacity-30" />
+                <XAxis dataKey="name" tick={{ fontSize: 11 }} />
+                <YAxis tick={{ fontSize: 11 }} />
+                <Tooltip contentStyle={{ fontSize: 12 }} />
+                <Legend wrapperStyle={{ fontSize: 11 }} />
+                <Bar dataKey="inbound" fill="#3b82f6" name="Inbound" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="outbound" fill="#10b981" name="Outbound" radius={[4, 4, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+
+          {/* Pie chart: platform distribution */}
+          <div className="rounded-lg border border-border p-4">
+            <h3 className="mb-3 text-sm font-semibold">Platform Distribution</h3>
+            <ResponsiveContainer width="100%" height={240}>
+              <PieChart>
+                <Pie
+                  data={pieData}
+                  cx="50%"
+                  cy="50%"
+                  innerRadius={50}
+                  outerRadius={90}
+                  dataKey="value"
+                  label={({ name, percent }) => `${name} ${((percent ?? 0) * 100).toFixed(0)}%`}
+                  labelLine={false}
+                >
+                  {pieData.map((_, idx) => (
+                    <Cell key={idx} fill={PIE_COLORS[idx % PIE_COLORS.length]} />
+                  ))}
+                </Pie>
+                <Tooltip contentStyle={{ fontSize: 12 }} />
+              </PieChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+      )}
+
+      {/* Per-platform breakdown table */}
+      {filtered.length > 0 && (
         <div className="rounded-lg border border-border overflow-hidden">
           <table className="w-full text-sm">
             <thead className="border-b border-border bg-muted/30">
@@ -1778,7 +1901,7 @@ function AnalyticsTab() {
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
-              {analytics.map((row) => (
+              {filtered.map((row) => (
                 <tr key={row.platform} className="hover:bg-muted/20">
                   <td className="px-4 py-2"><PlatformBadge platform={row.platform} /></td>
                   <td className="px-4 py-2 text-right font-mono">{row.total_messages_in + row.total_messages_out}</td>
