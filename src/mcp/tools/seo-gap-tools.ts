@@ -8,6 +8,7 @@ import { discoverCompetitors } from "./seo/competitor-discovery.js";
 import { buildAnalysisPrompt, generateMetricsReport, buildReportFilename, buildReportSubdir, type AnalysisInput } from "./seo/report-generator.js";
 import { discoverKeyword } from "./seo/keyword-discovery.js";
 import { saveReportPdf } from "./shared/pdf-export.js";
+import { getFirecrawlClient, isBlockedUrl as isBlockedFirecrawlUrl } from "../../browser/firecrawl-client.js";
 
 // ── Constants ────────────────────────────────────────────────────────────
 
@@ -23,6 +24,9 @@ const seoGapAnalysisSchema = z.object({
     .optional()
     .describe("Search provider for competitor discovery (default: auto-detect from available API keys)"),
   model: z.string().optional().describe("LLM model to use for analysis (passed through — the orchestrator handles model routing)"),
+  deepCrawl: z.boolean().optional().default(false).describe("When true, use Firecrawl to deep-crawl competitor sites for richer content extraction (requires firecrawl.enabled=true)"),
+  crawlDepth: z.number().int().min(1).max(5).optional().default(2).describe("Max crawl depth when deepCrawl is enabled (default: 2)"),
+  crawlLimit: z.number().int().min(1).max(50).optional().default(10).describe("Max pages per competitor when deepCrawl is enabled (default: 10)"),
 });
 
 const seoExtractContentSchema = z.object({
@@ -67,7 +71,7 @@ export const createSeoGapTools = (opts: SeoGapToolsOptions = {}): ToolDefinition
   tools.push({
     name: "seo-gap-analysis",
     description:
-      "Run a full SEO content gap analysis: fetch the target page, discover top-ranking competitors, extract content from each, compare metrics, and generate a comprehensive Markdown report saved to ~/.openzigs/seo-reports/. Returns the report path and a metrics summary. Use the `model` parameter to request LLM-enhanced analysis.",
+      "Run a full SEO content gap analysis: fetch the target page, discover top-ranking competitors, extract content from each, compare metrics, and generate a comprehensive Markdown report saved to ~/.openzigs/seo-reports/. Returns the report path and a metrics summary. Use the `model` parameter to request LLM-enhanced analysis. Enable `deepCrawl` to use Firecrawl for richer multi-page competitor analysis.",
     inputSchema: {
       type: "object",
       properties: {
@@ -75,6 +79,9 @@ export const createSeoGapTools = (opts: SeoGapToolsOptions = {}): ToolDefinition
         targetKeyword: { type: "string", description: "Primary keyword / search query (leave blank to auto-detect)" },
         searchProvider: { type: "string", enum: ["serper", "brave"], description: "Search provider (default: auto)" },
         model: { type: "string", description: "LLM model for enhanced analysis" },
+        deepCrawl: { type: "boolean", description: "Use Firecrawl to deep-crawl competitors (requires firecrawl.enabled)" },
+        crawlDepth: { type: "number", description: "Max crawl depth for deep crawl (default: 2)" },
+        crawlLimit: { type: "number", description: "Max pages per competitor for deep crawl (default: 10)" },
       },
       required: ["targetUrl"],
     },
@@ -82,7 +89,7 @@ export const createSeoGapTools = (opts: SeoGapToolsOptions = {}): ToolDefinition
     category: "search",
     riskLevel: "medium",
     handler: async (args) => {
-      const { targetUrl, targetKeyword: providedKeyword, searchProvider } = seoGapAnalysisSchema.parse(args);
+      const { targetUrl, targetKeyword: providedKeyword, searchProvider, deepCrawl, crawlDepth, crawlLimit } = seoGapAnalysisSchema.parse(args);
 
       try {
         await ensureReportsDir();
@@ -130,17 +137,50 @@ export const createSeoGapTools = (opts: SeoGapToolsOptions = {}): ToolDefinition
         const discovery = await discoverCompetitors(targetKeyword, apiKeys);
 
         // 3. Fetch & extract competitor content (parallel, with error tolerance)
-        const competitorResults = await Promise.allSettled(
-          discovery.organic.map(async (result) => {
-            const html = await fetchHtml(result.url);
-            const content = extractContent(html, result.url);
-            return { ...content, url: result.url };
-          }),
-        );
+        type CompetitorResult = ReturnType<typeof extractContent> & { url: string; crawledPages?: number };
+        let competitors: CompetitorResult[];
 
-        const competitors = competitorResults
-          .filter((r): r is PromiseFulfilledResult<ReturnType<typeof extractContent> & { url: string }> => r.status === "fulfilled")
-          .map((r) => r.value);
+        const firecrawlClient = (() => {
+          try { return getFirecrawlClient(); } catch { return null; }
+        })();
+        const useFirecrawl = deepCrawl && firecrawlClient?.getConfig().enabled;
+
+        if (useFirecrawl && firecrawlClient) {
+          // Deep crawl mode: use Firecrawl to crawl each competitor site
+          const crawlResults = await Promise.allSettled(
+            discovery.organic.map(async (result): Promise<CompetitorResult> => {
+              if (isBlockedFirecrawlUrl(result.url)) {
+                throw new Error(`SSRF blocked: ${result.url}`);
+              }
+              const crawlResult = await firecrawlClient.crawl(result.url, {
+                limit: crawlLimit,
+                maxDepth: crawlDepth,
+                scrapeOptions: { formats: ["html"] },
+              });
+              const allHtml = crawlResult.pages
+                .filter((p) => p.html)
+                .map((p) => p.html)
+                .join("\n");
+              const content = extractContent(allHtml || "<html></html>", result.url);
+              return { ...content, url: result.url, crawledPages: crawlResult.totalPages };
+            }),
+          );
+          competitors = crawlResults
+            .filter((r): r is PromiseFulfilledResult<CompetitorResult> => r.status === "fulfilled")
+            .map((r) => r.value);
+        } else {
+          // Standard mode: fetch single pages
+          const competitorResults = await Promise.allSettled(
+            discovery.organic.map(async (result): Promise<CompetitorResult> => {
+              const html = await fetchHtml(result.url);
+              const content = extractContent(html, result.url);
+              return { ...content, url: result.url };
+            }),
+          );
+          competitors = competitorResults
+            .filter((r): r is PromiseFulfilledResult<CompetitorResult> => r.status === "fulfilled")
+            .map((r) => r.value);
+        }
 
         // 4. Generate metrics report
         const input: AnalysisInput = {
@@ -192,6 +232,7 @@ export const createSeoGapTools = (opts: SeoGapToolsOptions = {}): ToolDefinition
               externalLinks: targetContent.externalLinkCount,
             },
             competitorsAnalyzed: competitors.length,
+            deepCrawlEnabled: !!useFirecrawl,
             serpFeatures: {
               paaCount: discovery.serpFeatures.paa.length,
               relatedSearchCount: discovery.serpFeatures.relatedSearches.length,

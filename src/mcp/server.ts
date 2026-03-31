@@ -53,6 +53,9 @@ import { createStudioTools } from "./tools/studio-tools.js";
 import { createMemoryTools } from "./tools/memory-tools.js";
 import { createOutboxTools } from "./tools/outbox-tools.js";
 import { createSeoGapTools } from "./tools/seo-gap-tools.js";
+import { createSeoSiteAuditTool } from "./tools/seo/site-audit.js";
+import { createIngestWebsiteTool } from "./tools/knowledge-ingest-website.js";
+import { createCompetitorMonitorTool } from "./tools/competitive-monitor.js";
 import { ToolRegistry, type ToolDefinition } from "./tool-registry.js";
 import type { LocalMcpServerManager } from "./local-mcp-server-manager.js";
 import { AuditLogger } from "../logging/audit-logger.js";
@@ -533,6 +536,15 @@ export const registerMcpTools = (toolRegistry: ToolRegistry, options: RegisterMc
   for (const tool of seoGapTools) {
     registerTool(tool);
   }
+
+  // ── SEO Site Audit Tool (Firecrawl-powered) ──
+  registerTool(createSeoSiteAuditTool());
+
+  // ── Website-to-Knowledge-Base Ingestion Tool ──
+  registerTool(createIngestWebsiteTool(options.knowledgeService ?? null));
+
+  // ── Competitive Intelligence Monitor Tool ──
+  registerTool(createCompetitorMonitorTool());
 
   // ── Document Intelligence Tools (PDF native, Word/Calendar via local MCP servers) ──
   const docTools = createDocumentIntelligenceTools({

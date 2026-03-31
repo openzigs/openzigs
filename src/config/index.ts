@@ -257,6 +257,12 @@ export type SocialBrainAppConfig = {
   connections?: Record<string, SocialBrainPlatformConnectionConfig>;
 };
 
+export type FirecrawlAppConfig = {
+  enabled?: boolean;
+  url?: string;
+  idleTimeoutMs?: number;
+};
+
 export type AppConfig = {
   server: {
     port: number;
@@ -282,6 +288,7 @@ export type AppConfig = {
   voice?: VoiceAppConfig;
   vault?: VaultAppConfig;
   memory?: MemoryAppConfig;
+  firecrawl?: FirecrawlAppConfig;
   workbench?: {
     directories?: string[];
   };
@@ -558,6 +565,11 @@ const appConfigSchema = z.object({
     owner: z.string().optional(),
     repo: z.string().optional(),
     cacheTtlMs: z.number().min(0).optional(),
+  }).optional(),
+  firecrawl: z.object({
+    enabled: z.boolean().optional().default(false),
+    url: z.string().optional().default("http://localhost:3002"),
+    idleTimeoutMs: z.number().min(0).optional().default(600000),
   }).optional(),
   workbench: z.object({
     directories: z.array(z.string()).optional().default([]),

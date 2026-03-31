@@ -1,0 +1,70 @@
+version: "3.9"
+
+# Firecrawl on-demand sidecar for web crawling.
+# Started automatically by FirecrawlClient when firecrawl.enabled is true.
+# Stops after idle timeout (~10 min of no requests).
+#
+# Usage:
+#   docker compose -f docker-compose.firecrawl.yml up -d
+#   docker compose -f docker-compose.firecrawl.yml down
+
+services:
+  firecrawl-api:
+    image: ghcr.io/mendableai/firecrawl:latest
+    container_name: openzigs-firecrawl-api
+    restart: unless-stopped
+    ports:
+      - "${FIRECRAWL_PORT:-3002}:3002"
+    environment:
+      - PORT=3002
+      - HOST=0.0.0.0
+      - REDIS_URL=redis://firecrawl-redis:6379
+      - REDIS_RATE_LIMIT_URL=redis://firecrawl-redis:6379
+      - PLAYWRIGHT_MICROSERVICE_URL=http://firecrawl-playwright:3000/scrape
+      - USE_DB_AUTHENTICATION=false
+      - NUM_WORKERS_PER_QUEUE=4
+      - CRAWL_CONCURRENT_REQUESTS=5
+      - MAX_CONCURRENT_JOBS=3
+      - BULL_AUTH_KEY=${FIRECRAWL_BULL_AUTH_KEY:-openzigs-firecrawl}
+      # No OPENAI_API_KEY — LLM analysis stays in Copilot SDK
+    depends_on:
+      - firecrawl-redis
+      - firecrawl-playwright
+    networks:
+      - openzigs-network
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:3002/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    cpus: 2.0
+    mem_limit: 4G
+
+  firecrawl-playwright:
+    image: ghcr.io/mendableai/firecrawl-playwright:latest
+    container_name: openzigs-firecrawl-playwright
+    restart: unless-stopped
+    environment:
+      - PORT=3000
+      - PROXY_SERVER=${FIRECRAWL_PROXY_SERVER:-}
+      - BLOCK_MEDIA=${FIRECRAWL_BLOCK_MEDIA:-true}
+      - MAX_CONCURRENT_PAGES=${FIRECRAWL_MAX_CONCURRENT:-5}
+    networks:
+      - openzigs-network
+    cpus: 1.5
+    mem_limit: 3G
+    tmpfs:
+      - /tmp/.cache:noexec,nosuid,size=512m
+
+  firecrawl-redis:
+    image: redis:alpine
+    container_name: openzigs-firecrawl-redis
+    restart: unless-stopped
+    command: redis-server --bind 0.0.0.0 --maxmemory 256mb --maxmemory-policy allkeys-lru
+    networks:
+      - openzigs-network
+
+networks:
+  openzigs-network:
+    external: true
