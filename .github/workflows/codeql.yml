@@ -6,9 +6,8 @@ on:
       - main
       - "feature/**"
       - "fix/**"
-  # pull_request trigger disabled until GitHub Advanced Security is enabled
-  # pull_request:
-  #   branches: [main]
+  pull_request:
+    branches: [main]
   schedule:
     # Daily at 06:00 UTC (was weekly — increased frequency to catch regressions sooner)
     - cron: "0 6 * * *"

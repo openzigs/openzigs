@@ -217,7 +217,7 @@ Other people or automated reviewers (e.g., GitHub Copilot code review) may have 
    | ui | ✅ Passed | — | — |
    ```
 
-   > **Note:** CodeQL is NOT a PR check in this repository. The `codeql.yml` workflow runs on pushes to `main`, `feature/**`, and `fix/**` branches, plus daily cron — but NOT on `pull_request` events. Do not expect or wait for CodeQL entries in `gh pr checks` output. Only CI jobs (`api`, `ui`) will appear.
+   > **Note:** CodeQL IS a PR check in this repository. The `codeql.yml` workflow runs on `pull_request` targeting `main`, on pushes to `main`/`feature/**`/`fix/**`, and on daily cron. CodeQL results (javascript-typescript, python) will appear in `gh pr checks` output. Wait for them before finalizing the verdict — any unresolved High/Critical finding is blocking.
 
 3. **For each failing job:**
    - Fetch the failure logs: `gh run view {RUN_ID} --log-failed` or check the Actions tab URL
@@ -429,7 +429,7 @@ gh pr review {PR_NUMBER} --request-changes --body "$(cat review-body.md)"
 
 ### Security Scanners: {CLEAN|FINDINGS|N/A}
 
-> If CodeQL does not run on PRs (as in this repo), write "N/A — CodeQL runs on push to main/feature/fix branches and daily cron, not on PRs; manual OWASP review performed in Step 4" and skip the scanner table.
+> CodeQL **does** run on PRs in this repo (javascript-typescript and python). Wait for `CodeQL/Analyze` checks to complete before submitting the review. Unresolved High/Critical findings are blocking.
 
 | Scanner | Finding | File | Severity | Status |
 |---------|---------|------|----------|--------|
