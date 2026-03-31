@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import Database from "better-sqlite3";
-import { CompetitorRepository, computeDiff, aggregatePages, createCompetitorMonitorTool, type CompetitorSnapshot } from "./competitive-monitor.js";
+import { CompetitorRepository, computeDiff, computeContentDiff, aggregatePages, createCompetitorMonitorTool, type CompetitorSnapshot } from "./competitive-monitor.js";
 import type { ExtractedContent } from "./seo/html-extractor.js";
 
 // ── Helpers ──────────────────────────────────────────────────────────────
@@ -319,5 +319,93 @@ describe("createCompetitorMonitorTool", () => {
     const result = await tool.handler({ action: "snapshot", url: "https://example.com" });
     expect(result.isError).toBe(true);
     expect(result.text).toContain("not enabled");
+  });
+
+  it("report action includes content diff when extracted data exists", async () => {
+    const repo = makeInMemoryRepo();
+    repo.addCompetitor("https://example.com");
+    repo.saveSnapshot("https://example.com", {
+      pageCount: 10,
+      totalWordCount: 5000,
+      avgReadability: 65,
+      schemaTypes: "[]",
+      topKeywords: "[]",
+      metaTitles: "[]",
+    }, { price: "$10", plan: "Basic" });
+    repo.saveSnapshot("https://example.com", {
+      pageCount: 10,
+      totalWordCount: 5000,
+      avgReadability: 65,
+      schemaTypes: "[]",
+      topKeywords: "[]",
+      metaTitles: "[]",
+    }, { price: "$15", plan: "Basic" });
+    const tool = createCompetitorMonitorTool(repo);
+    const result = await tool.handler({ action: "report", url: "https://example.com" });
+    expect(result.text).toContain("extracted.price");
+    expect(result.text).toContain("changed");
+  });
+});
+
+// ── computeContentDiff ───────────────────────────────────────────────────
+
+describe("computeContentDiff", () => {
+  it("returns empty array when both are null", () => {
+    expect(computeContentDiff(null, null)).toEqual([]);
+  });
+
+  it("returns empty when one side is null", () => {
+    expect(computeContentDiff({ a: 1 }, null)).toEqual([]);
+    expect(computeContentDiff(null, { a: 1 })).toEqual([]);
+  });
+
+  it("detects field value changes", () => {
+    const changes = computeContentDiff(
+      { price: "$15", plan: "Pro" },
+      { price: "$10", plan: "Pro" },
+    );
+    expect(changes).toHaveLength(1);
+    expect(changes[0].field).toBe("extracted.price");
+    expect(changes[0].direction).toBe("changed");
+  });
+
+  it("detects numeric increases", () => {
+    const changes = computeContentDiff(
+      { count: 20 },
+      { count: 10 },
+    );
+    expect(changes[0].direction).toBe("increased");
+  });
+
+  it("detects numeric decreases", () => {
+    const changes = computeContentDiff(
+      { count: 5 },
+      { count: 10 },
+    );
+    expect(changes[0].direction).toBe("decreased");
+  });
+
+  it("detects added keys", () => {
+    const changes = computeContentDiff(
+      { a: 1, b: 2 },
+      { a: 1 },
+    );
+    expect(changes).toHaveLength(1);
+    expect(changes[0].field).toBe("extracted.b");
+    expect(changes[0].previous).toBe("(not present)");
+  });
+
+  it("detects removed keys", () => {
+    const changes = computeContentDiff(
+      { a: 1 },
+      { a: 1, b: 2 },
+    );
+    expect(changes).toHaveLength(1);
+    expect(changes[0].field).toBe("extracted.b");
+    expect(changes[0].current).toBe("(removed)");
+  });
+
+  it("returns empty for identical objects", () => {
+    expect(computeContentDiff({ a: 1, b: "x" }, { a: 1, b: "x" })).toEqual([]);
   });
 });

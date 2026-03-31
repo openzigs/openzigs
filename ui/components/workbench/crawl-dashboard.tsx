@@ -25,7 +25,9 @@ import {
   Users,
   DollarSign,
   HardDrive,
+  History,
 } from "lucide-react";
+import { ExtractionHistory } from "./extraction-history";
 
 // ── Types ────────────────────────────────────────────────────────────────
 
@@ -64,6 +66,10 @@ export function CrawlDashboardDialog({
   // Web extract
   const [extractSchema, setExtractSchema] = useState("");
   const [extractPrompt, setExtractPrompt] = useState("");
+  const [extractTemplate, setExtractTemplate] = useState<string>("custom");
+  const [scrollForContent, setScrollForContent] = useState(false);
+  const [waitForDynamic, setWaitForDynamic] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
 
   // Price monitor
   const [priceAction, setPriceAction] = useState<"snapshot" | "compare" | "history" | "list">("snapshot");
@@ -123,7 +129,7 @@ export function CrawlDashboardDialog({
         prompt = buildMonitorPrompt(monitorAction, url, competitorName, maxPages);
         break;
       case "web-extract":
-        prompt = buildExtractPrompt(url, extractSchema, extractPrompt, maxPages);
+        prompt = buildExtractPrompt(url, extractSchema, extractPrompt, maxPages, extractTemplate, scrollForContent, waitForDynamic);
         break;
       case "lead-extract":
         prompt = buildLeadPrompt(url, maxPages);
@@ -141,14 +147,14 @@ export function CrawlDashboardDialog({
       model: model || undefined,
       tools: [
         "seo-site-audit", "ingest-website", "competitive-monitor",
-        "web-extract", "lead-extract", "price-monitor", "site-to-dataset",
+        "web-extract", "web-map", "lead-extract", "price-monitor", "site-to-dataset",
         "read-file", "write-file", "list-directory",
       ],
     });
     setLoading(false);
     onOpenChange(false);
     onSubmitted?.();
-  }, [action, url, maxPages, maxDepth, category, visibility, monitorAction, competitorName, extractSchema, extractPrompt, priceAction, scrollToLoad, priceLabel, datasetFormat, includePaths, excludePaths, model, socket, connected, onOpenChange, onSubmitted]);
+  }, [action, url, maxPages, maxDepth, category, visibility, monitorAction, competitorName, extractSchema, extractPrompt, extractTemplate, scrollForContent, waitForDynamic, priceAction, scrollToLoad, priceLabel, datasetFormat, includePaths, excludePaths, model, socket, connected, onOpenChange, onSubmitted]);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -356,8 +362,25 @@ export function CrawlDashboardDialog({
           )}
 
           {/* Web extract fields */}
-          {action === "web-extract" && (
+          {action === "web-extract" && !showHistory && (
             <div className="space-y-3">
+              <div>
+                <label htmlFor="extract-template" className="mb-1 block text-sm font-medium">
+                  Template
+                </label>
+                <select
+                  id="extract-template"
+                  value={extractTemplate}
+                  onChange={(e) => setExtractTemplate(e.target.value)}
+                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                >
+                  <option value="custom">Custom</option>
+                  <option value="contacts">Contacts</option>
+                  <option value="pricing">Pricing</option>
+                  <option value="jobs">Job Listings</option>
+                  <option value="products">Products</option>
+                </select>
+              </div>
               <div>
                 <label htmlFor="extract-prompt" className="mb-1 block text-sm font-medium">
                   What to extract
@@ -371,20 +394,57 @@ export function CrawlDashboardDialog({
                   className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
                 />
               </div>
-              <div>
-                <label htmlFor="extract-schema" className="mb-1 block text-sm font-medium">
-                  JSON Schema (optional)
+              {extractTemplate === "custom" && (
+                <div>
+                  <label htmlFor="extract-schema" className="mb-1 block text-sm font-medium">
+                    JSON Schema (optional)
+                  </label>
+                  <textarea
+                    id="extract-schema"
+                    value={extractSchema}
+                    onChange={(e) => setExtractSchema(e.target.value)}
+                    placeholder='{"products": [{"name": "string", "price": "number"}]}'
+                    rows={3}
+                    className="w-full rounded-md border border-input bg-background px-3 py-2 font-mono text-xs shadow-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                  />
+                </div>
+              )}
+              <div className="flex items-center gap-4">
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={scrollForContent}
+                    onChange={(e) => setScrollForContent(e.target.checked)}
+                    className="rounded border-input"
+                  />
+                  Scroll to load all content
                 </label>
-                <textarea
-                  id="extract-schema"
-                  value={extractSchema}
-                  onChange={(e) => setExtractSchema(e.target.value)}
-                  placeholder='{"products": [{"name": "string", "price": "number"}]}'
-                  rows={3}
-                  className="w-full rounded-md border border-input bg-background px-3 py-2 font-mono text-xs shadow-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
-                />
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={waitForDynamic}
+                    onChange={(e) => setWaitForDynamic(e.target.checked)}
+                    className="rounded border-input"
+                  />
+                  Wait for dynamic content
+                </label>
               </div>
             </div>
+          )}
+          {action === "web-extract" && showHistory && (
+            <div className="max-h-64 overflow-y-auto">
+              <ExtractionHistory />
+            </div>
+          )}
+          {action === "web-extract" && (
+            <button
+              type="button"
+              onClick={() => setShowHistory(!showHistory)}
+              className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+            >
+              <History className="h-3 w-3" />
+              {showHistory ? "Back to extract" : "View extraction history"}
+            </button>
           )}
 
           {/* Price monitor fields */}
@@ -616,9 +676,11 @@ function buildMonitorPrompt(
   ].join("\n");
 }
 
-function buildExtractPrompt(url: string, schema: string, prompt: string, maxPages: number): string {
+function buildExtractPrompt(url: string, schema: string, prompt: string, maxPages: number, template: string, scrollForContent: boolean, waitForDynamic: boolean): string {
   const args: Record<string, unknown> = { url };
-  if (schema.trim()) {
+  if (template !== "custom") {
+    args.template = template;
+  } else if (schema.trim()) {
     try {
       args.schema = JSON.parse(schema);
     } catch {
@@ -628,6 +690,10 @@ function buildExtractPrompt(url: string, schema: string, prompt: string, maxPage
   if (prompt.trim()) args.prompt = prompt;
   if (maxPages > 1) args.maxPages = maxPages;
 
+  const hints: string[] = [];
+  if (scrollForContent) hints.push("Scroll the page to load all lazy content before extraction.");
+  if (waitForDynamic) hints.push("Wait for dynamic/JavaScript-rendered content to fully load.");
+
   return [
     `Use the web-extract tool to scrape and extract structured data.`,
     ``,
@@ -635,6 +701,7 @@ function buildExtractPrompt(url: string, schema: string, prompt: string, maxPage
     "```json",
     JSON.stringify(args, null, 2),
     "```",
+    ...(hints.length ? [``, ...hints] : []),
     ``,
     `After extraction, present the structured results clearly.`,
   ].join("\n");

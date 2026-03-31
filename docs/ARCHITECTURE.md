@@ -830,15 +830,20 @@ Self-hosted Firecrawl sidecar for deep website crawling with browser rendering. 
 |---|---|---|
 | `seo-site-audit` | 🟡 medium | Full-site SEO audit: crawl all pages, check meta tags, headings, thin content, images, schema, internal linking. Report saved to `~/.openzigs/seo-reports/`. |
 | `ingest-website` | 🟡 medium | Crawl a website and ingest all pages into the knowledge base as vector-indexed documents for RAG retrieval. |
-| `competitive-monitor` | 🟡 medium | SQLite-backed competitor tracking: add/remove competitors, snapshot their sites via Firecrawl, generate diff reports showing content changes over time. |
+| `competitive-monitor` | 🟡 medium | SQLite-backed competitor tracking: add/remove competitors, snapshot their sites via Firecrawl, generate diff reports showing content changes over time. Supports `extractSchema` for structured data extraction from competitor snapshots and `computeContentDiff()` for field-by-field change detection. |
+| `web-extract` | 🟡 medium | Structured data extraction from any URL. Firecrawl scrapes → markdown → LLM extracts structured JSON per user schema or built-in template. Results persisted to SQLite `web_extractions` table. Templates: `contacts`, `pricing`, `jobs`, `products`. |
+| `web-map` | 🟢 low | Site URL discovery without scraping content. Returns grouped URL lists for a domain. Optional subdomain inclusion and search filtering. Results persisted to SQLite `web_maps` table. |
 
 **Components:**
 - `src/browser/firecrawl-client.ts` — HTTP client with Docker sidecar lifecycle, SSRF protection, per-domain rate limiting
 - `docker-compose.firecrawl.yml` — Firecrawl API + Playwright + Redis services on `openzigs-network`
 - `src/mcp/tools/seo/site-audit.ts` — Full-site SEO audit with per-page and site-wide issue detection
 - `src/mcp/tools/knowledge-ingest-website.ts` — Website-to-knowledge-base ingestion using Firecrawl + KnowledgeIngestionService
-- `src/mcp/tools/competitive-monitor.ts` — Competitive intelligence with SQLite persistence (`competitive_monitors` + `competitive_snapshots` tables)
-- `ui/components/workbench/crawl-dashboard.tsx` — UI dialog for launching audits, ingestion, and monitoring
+- `src/mcp/tools/competitive-monitor.ts` — Competitive intelligence with SQLite persistence (`competitive_monitors` + `competitive_snapshots` tables), structured extraction via `extractSchema`, and `computeContentDiff()` for field-level diff reports
+- `src/mcp/tools/web-extract.ts` — Structured data extraction with template system, `ExtractionRepository` SQLite persistence (`web_extractions` table)
+- `src/mcp/tools/web-map.ts` — Site map discovery with `MapRepository` SQLite persistence (`web_maps` table), URL grouping by path section
+- `ui/components/workbench/crawl-dashboard.tsx` — UI dialog for launching audits, ingestion, monitoring, extraction (with template picker), and site mapping
+- `ui/components/workbench/extraction-history.tsx` — Extraction history panel with pagination, detail view, CSV/JSON export
 
 **Config:** Set `firecrawl.enabled=true` and optionally `firecrawl.url` (default `http://localhost:3002`) and `firecrawl.idleTimeoutMs` (default 600000) in `~/.openzigs/config.json`.
 

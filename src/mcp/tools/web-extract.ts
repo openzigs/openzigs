@@ -3,15 +3,84 @@
  *
  * Scrapes a URL via Firecrawl and returns structured content for LLM extraction.
  * The conversation LLM performs the actual data extraction from the markdown.
- * Persists raw content to ~/.openzigs/extractions/ for future reference.
+ * Persists raw content to SQLite `web_extractions` table and filesystem.
  */
 
 import * as z from "zod";
+import Database from "better-sqlite3";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import type { ToolDefinition } from "../tool-registry.js";
 import { getFirecrawlClient, isBlockedUrl, type ScrapeAction } from "../../browser/firecrawl-client.js";
+
+// ── Extraction Templates ─────────────────────────────────────────────────
+
+export const EXTRACTION_TEMPLATES: Record<string, { name: string; schema: Record<string, unknown> }> = {
+  contacts: {
+    name: "Contacts / Team Members",
+    schema: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          name: { type: "string" },
+          title: { type: "string" },
+          email: { type: "string" },
+          phone: { type: "string" },
+          linkedin: { type: "string" },
+        },
+      },
+    },
+  },
+  pricing: {
+    name: "Pricing Plans",
+    schema: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          plan_name: { type: "string" },
+          price: { type: "string" },
+          billing_cycle: { type: "string" },
+          features: { type: "array", items: { type: "string" } },
+        },
+      },
+    },
+  },
+  jobs: {
+    name: "Job Listings",
+    schema: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          title: { type: "string" },
+          location: { type: "string" },
+          salary_range: { type: "string" },
+          requirements: { type: "array", items: { type: "string" } },
+          url: { type: "string" },
+        },
+      },
+    },
+  },
+  products: {
+    name: "Products / Services",
+    schema: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          name: { type: "string" },
+          description: { type: "string" },
+          price: { type: "string" },
+          category: { type: "string" },
+          url: { type: "string" },
+        },
+      },
+    },
+  },
+};
 
 // ── Zod Schema ───────────────────────────────────────────────────────────
 
@@ -31,12 +100,92 @@ const webExtractSchema = z.object({
   url: z.string().url().describe("URL to scrape and extract data from"),
   schema: z.record(z.unknown()).optional().describe("JSON schema describing desired output structure"),
   prompt: z.string().optional().describe("Natural language description of what to extract"),
+  template: z.enum(["contacts", "pricing", "jobs", "products"]).optional().describe("Pre-built extraction template name"),
   actions: z.array(scrapeActionSchema).optional().describe("Actions to perform before extraction (click, scroll, etc.)"),
   maxPages: z.number().int().min(1).max(50).optional().default(1).describe("If >1, crawl and extract from multiple pages"),
   outputFormat: z.enum(["json", "csv", "markdown"]).optional().default("json").describe("Desired output format"),
 });
 
 export type WebExtractInput = z.infer<typeof webExtractSchema>;
+
+// ── SQLite Repository ────────────────────────────────────────────────────
+
+export class ExtractionRepository {
+  private db: Database.Database;
+
+  constructor(db?: Database.Database) {
+    if (db) {
+      this.db = db;
+    } else {
+      const dbPath = path.join(os.homedir(), ".openzigs", "openzigs.db");
+      this.db = new Database(dbPath);
+      this.db.pragma("journal_mode = WAL");
+    }
+    this.ensureTables();
+  }
+
+  private ensureTables(): void {
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS web_extractions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        url TEXT NOT NULL,
+        prompt TEXT NOT NULL,
+        schema_json TEXT,
+        scraped_markdown TEXT NOT NULL,
+        extracted_at TEXT NOT NULL DEFAULT (datetime('now')),
+        domain TEXT NOT NULL
+      );
+    `);
+  }
+
+  saveExtraction(url: string, prompt: string, markdown: string, schema?: Record<string, unknown>): number {
+    const domain = sanitizeDomain(url);
+    const result = this.db.prepare(`
+      INSERT INTO web_extractions (url, prompt, schema_json, scraped_markdown, domain)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(url, prompt, schema ? JSON.stringify(schema) : null, markdown, domain);
+    return Number(result.lastInsertRowid);
+  }
+
+  listExtractions(limit = 50, offset = 0): ExtractionRow[] {
+    return this.db.prepare(`
+      SELECT id, url, prompt, schema_json as schemaJson, extracted_at as extractedAt, domain,
+             substr(scraped_markdown, 1, 200) as preview
+      FROM web_extractions
+      ORDER BY id DESC
+      LIMIT ? OFFSET ?
+    `).all(limit, offset) as ExtractionRow[];
+  }
+
+  getExtraction(id: number): ExtractionRow | undefined {
+    return this.db.prepare(`
+      SELECT id, url, prompt, schema_json as schemaJson, scraped_markdown as scrapedMarkdown,
+             extracted_at as extractedAt, domain
+      FROM web_extractions
+      WHERE id = ?
+    `).get(id) as ExtractionRow | undefined;
+  }
+
+  count(): number {
+    const row = this.db.prepare("SELECT count(*) as cnt FROM web_extractions").get() as { cnt: number };
+    return row.cnt;
+  }
+
+  getDb(): Database.Database {
+    return this.db;
+  }
+}
+
+export interface ExtractionRow {
+  id: number;
+  url: string;
+  prompt: string;
+  schemaJson: string | null;
+  scrapedMarkdown?: string;
+  extractedAt: string;
+  domain: string;
+  preview?: string;
+}
 
 // ── Helpers ──────────────────────────────────────────────────────────────
 
@@ -75,20 +224,23 @@ function persistExtraction(url: string, markdown: string, schema?: Record<string
 
 // ── Tool Factory ─────────────────────────────────────────────────────────
 
-export function createWebExtractTool(): ToolDefinition {
+export function createWebExtractTool(repo?: ExtractionRepository): ToolDefinition {
+  const repository = repo ?? new ExtractionRepository();
+
   return {
     name: "web-extract",
     description:
-      "Scrape a web page and extract structured data. Provide a URL and optionally a JSON schema " +
-      "or natural language prompt describing what to extract. The tool scrapes the page via Firecrawl " +
-      "and returns the content for structured extraction. Supports browser actions (click, scroll, etc.) " +
-      "for dynamic pages. Results are persisted to ~/.openzigs/extractions/.",
+      "Scrape a web page and extract structured data. Provide a URL and optionally a JSON schema, " +
+      "natural language prompt, or template name (contacts, pricing, jobs, products). The tool scrapes " +
+      "the page via Firecrawl and returns the content for structured extraction. Supports browser actions " +
+      "(click, scroll, etc.) for dynamic pages. Results are persisted to SQLite and filesystem.",
     inputSchema: {
       type: "object",
       properties: {
         url: { type: "string", description: "URL to scrape and extract data from" },
         schema: { type: "object", description: "JSON schema describing desired output structure" },
         prompt: { type: "string", description: "Natural language description of what to extract" },
+        template: { type: "string", enum: ["contacts", "pricing", "jobs", "products"], description: "Pre-built extraction template" },
         actions: {
           type: "array",
           description: "Actions to perform before extraction (click, scroll, etc.)",
@@ -103,7 +255,13 @@ export function createWebExtractTool(): ToolDefinition {
     riskLevel: "medium",
     handler: async (args) => {
       const parsed = webExtractSchema.parse(args);
-      const { url, schema, prompt, actions, maxPages, outputFormat } = parsed;
+      const { url, prompt, actions, maxPages, outputFormat, template } = parsed;
+      let { schema } = parsed;
+
+      // Apply template if specified (template provides default schema)
+      if (template && EXTRACTION_TEMPLATES[template] && !schema) {
+        schema = EXTRACTION_TEMPLATES[template].schema;
+      }
 
       // SSRF check
       if (isBlockedUrl(url)) {
@@ -120,7 +278,7 @@ export function createWebExtractTool(): ToolDefinition {
 
       if (!schema && !prompt) {
         return {
-          text: "Either 'schema' (JSON schema) or 'prompt' (natural language description) is required for extraction.",
+          text: "Either 'schema' (JSON schema), 'prompt' (natural language description), or 'template' (contacts/pricing/jobs/products) is required for extraction.",
           isError: true,
         };
       }
@@ -130,7 +288,6 @@ export function createWebExtractTool(): ToolDefinition {
         let pageCount = 0;
 
         if (maxPages && maxPages > 1) {
-          // Multi-page: crawl then collect
           const crawlResult = await client.crawl(url, {
             limit: maxPages,
             scrapeOptions: {
@@ -143,7 +300,6 @@ export function createWebExtractTool(): ToolDefinition {
             .map((p, i) => `### Page ${i + 1}: ${p.url}\n\n${p.markdown ?? "(no content)"}`)
             .join("\n\n---\n\n");
         } else {
-          // Single page scrape
           const result = await client.scrape(url, {
             formats: ["markdown"],
             actions: actions as ScrapeAction[] | undefined,
@@ -152,8 +308,12 @@ export function createWebExtractTool(): ToolDefinition {
           allMarkdown = result.markdown ?? "(no content extracted)";
         }
 
-        // Persist raw content
+        // Persist to filesystem
         const savedPath = persistExtraction(url, allMarkdown, schema as Record<string, unknown> | undefined, prompt);
+
+        // Persist to SQLite
+        const extractionPrompt = prompt ?? (template ? `Template: ${EXTRACTION_TEMPLATES[template]?.name ?? template}` : "Schema-based extraction");
+        repository.saveExtraction(url, extractionPrompt, allMarkdown, schema as Record<string, unknown> | undefined);
 
         // Build response for the conversation LLM to do extraction
         const lines: string[] = [
@@ -161,8 +321,9 @@ export function createWebExtractTool(): ToolDefinition {
           `**URL**: ${url}`,
           `**Pages scraped**: ${pageCount}`,
           `**Output format**: ${outputFormat}`,
+          template ? `**Template**: ${EXTRACTION_TEMPLATES[template]?.name ?? template}` : "",
           `**Raw content saved to**: ${savedPath}\n`,
-        ];
+        ].filter(Boolean);
 
         if (schema) {
           lines.push("### Extraction Schema\n");
@@ -176,7 +337,6 @@ export function createWebExtractTool(): ToolDefinition {
         }
 
         lines.push("### Page Content\n");
-        // Truncate very large content to avoid overwhelming context
         const maxContentLength = 50_000;
         if (allMarkdown.length > maxContentLength) {
           lines.push(allMarkdown.slice(0, maxContentLength));

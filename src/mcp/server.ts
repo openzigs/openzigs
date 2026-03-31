@@ -57,6 +57,7 @@ import { createSeoSiteAuditTool } from "./tools/seo/site-audit.js";
 import { createIngestWebsiteTool } from "./tools/knowledge-ingest-website.js";
 import { createCompetitorMonitorTool } from "./tools/competitive-monitor.js";
 import { createWebExtractTool } from "./tools/web-extract.js";
+import { createWebMapTool } from "./tools/web-map.js";
 import { createLeadExtractTool } from "./tools/lead-extract.js";
 import { createPriceMonitorTool } from "./tools/price-monitor.js";
 import { createSiteToDatasetTool } from "./tools/site-to-dataset.js";
@@ -552,6 +553,7 @@ export const registerMcpTools = (toolRegistry: ToolRegistry, options: RegisterMc
 
   // ── Firecrawl-powered Extraction Tools ──
   registerTool(createWebExtractTool());
+  registerTool(createWebMapTool());
   registerTool(createLeadExtractTool());
   registerTool(createPriceMonitorTool());
   registerTool(createSiteToDatasetTool());

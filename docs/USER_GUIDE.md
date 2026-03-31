@@ -7375,17 +7375,23 @@ This design means Firecrawl has **no embedded LLM instructions** — you don't n
 | `seo-site-audit` | Full-site SEO audit: crawls up to 500 pages, analyzes titles, meta descriptions, headings, images, links, and performance |
 | `knowledge-ingest-website` | Crawl a website and ingest pages into the local knowledge base for RAG queries |
 | `competitive-monitor-add` | Add a competitor domain to the monitoring list |
-| `competitive-monitor-snapshot` | Take a point-in-time snapshot of a competitor's SEO metrics |
-| `competitive-monitor-report` | Generate a comparison report across tracked competitors |
+| `competitive-monitor-snapshot` | Take a point-in-time snapshot of a competitor's SEO metrics. Supports `extractSchema` for structured data extraction |
+| `competitive-monitor-report` | Generate a comparison report across tracked competitors with field-level content diffs |
 | `competitive-monitor-list` | List all tracked competitor domains |
+| `web-extract` | Extract structured data from any URL using Firecrawl + LLM. Supports built-in templates (contacts, pricing, jobs, products) or custom JSON schemas. Results saved to SQLite |
+| `web-map` | Discover all URLs on a site without scraping content. Groups URLs by path section. Supports subdomain inclusion and keyword search filtering |
 
 ### Using the Crawl Dashboard
 
-The **Workbench** tab in the UI includes a **Crawl Dashboard** dialog with three modes:
+The **Workbench** tab in the UI includes a **Crawl Dashboard** dialog with these modes:
 
 - **Site Audit** — Run a full SEO audit on any website
 - **Ingest** — Crawl and add pages to your knowledge base
 - **Monitor** — Track competitors over time
+- **Extract** — Scrape and extract structured data using templates or custom schemas
+- **Leads** — Extract contact information from websites
+- **Prices** — Monitor product prices over time
+- **Dataset** — Convert a website into a structured dataset
 
 Each mode supports:
 - **Model selection** — Choose which LLM to use for summarizing results
@@ -7417,6 +7423,14 @@ Reports include:
 "Take a snapshot of competitor.com and compare it to last month's baseline"
 
 "Generate a competitive analysis report for all tracked domains"
+
+"Extract all product names and prices from https://shop.example.com using the pricing template"
+
+"Extract contacts from https://example.com/team using the contacts template"
+
+"Map all URLs on https://docs.example.com to see the site structure"
+
+"Use web-extract to get job listings from https://example.com/careers with the jobs template"
 ```
 
 ### Troubleshooting
