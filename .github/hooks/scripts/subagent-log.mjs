@@ -14,8 +14,10 @@ let parsed;
 try {
   parsed = JSON.parse(input);
 } catch {}
-const event = parsed?.hookEventName ?? "unknown";
-const agent = parsed?.agentName ?? "unknown";
+// Event name: prefer CLI arg (injected by hooks.json), fall back to payload field
+const event = process.argv[2] ?? parsed?.hookEventName ?? "unknown";
+// Agent name: VS Code sends agent_type (e.g. "Code Issue", "Code Review")
+const agent = parsed?.agent_type ?? parsed?.agentName ?? "unknown";
 
 let repoRoot = ".";
 try {

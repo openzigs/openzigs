@@ -10,14 +10,14 @@
     "SubagentStart": [
       {
         "type": "command",
-        "command": "node .github/hooks/scripts/subagent-log.mjs",
+        "command": "node .github/hooks/scripts/subagent-log.mjs SubagentStart",
         "timeout": 5
       }
     ],
     "SubagentStop": [
       {
         "type": "command",
-        "command": "node .github/hooks/scripts/subagent-log.mjs",
+        "command": "node .github/hooks/scripts/subagent-log.mjs SubagentStop",
         "timeout": 5
       }
     ],

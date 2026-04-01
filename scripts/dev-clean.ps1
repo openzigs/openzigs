@@ -53,6 +53,16 @@ foreach ($Port in $Ports) {
 # Give processes time to terminate
 Start-Sleep -Seconds 1
 
+# Stop Firecrawl Docker containers if running
+$FirecrawlCompose = Join-Path $ProjectRoot "docker-compose.firecrawl.yml"
+if ((Test-Path $FirecrawlCompose) -and (Get-Command docker -ErrorAction SilentlyContinue)) {
+    $running = docker compose -f $FirecrawlCompose ps -q 2>$null
+    if ($running) {
+        Write-Info "Stopping Firecrawl Docker containers..."
+        docker compose -f $FirecrawlCompose down 2>$null
+    }
+}
+
 # ── Configure UI environment ──────────────────────────────────────────────────
 $ConfigFile = Join-Path $env:USERPROFILE ".openzigs\config.json"
 $UiEnvFile = Join-Path $ProjectRoot "ui\.env.local"
@@ -64,6 +74,7 @@ if (Test-Path $ConfigFile) {
         if ($token) {
             @"
 NEXT_PUBLIC_OPENZIGS_API_BASE=http://localhost:3000
+OPENZIGS_INTERNAL_API=http://localhost:3000
 NEXT_PUBLIC_OPENZIGS_TOKEN=$token
 "@ | Set-Content $UiEnvFile -Encoding UTF8
             Write-Info "Wrote auth token to ui/.env.local"
@@ -199,6 +210,11 @@ try {
         foreach ($conn in $connections) {
             Stop-Process -Id $conn.OwningProcess -Force -ErrorAction SilentlyContinue
         }
+    }
+
+    # Stop Firecrawl Docker containers on exit
+    if ((Test-Path $FirecrawlCompose) -and (Get-Command docker -ErrorAction SilentlyContinue)) {
+        docker compose -f $FirecrawlCompose down 2>$null
     }
     
     Write-Ok "Shutdown complete."

@@ -99,6 +99,15 @@ done
 # This matches the profile path used in chrome-launcher.ts
 pkill -f "openzigs-chrome-profile" || true
 
+# Stop Firecrawl Docker containers if running (they survive process kills)
+FIRECRAWL_COMPOSE="$PROJECT_ROOT/docker-compose.firecrawl.yml"
+if [ -f "$FIRECRAWL_COMPOSE" ] && command -v docker >/dev/null 2>&1; then
+  if docker compose -f "$FIRECRAWL_COMPOSE" ps -q 2>/dev/null | grep -q .; then
+    echo "[clean-start] Stopping Firecrawl Docker containers..."
+    docker compose -f "$FIRECRAWL_COMPOSE" down 2>/dev/null || true
+  fi
+fi
+
 echo "[clean-start] Starting OpenZigs in dev mode (backend + UI)..."
 
 # Auto-populate UI .env.local with auth token from ~/.openzigs/config.json
@@ -109,6 +118,7 @@ if [ -f "$CONFIG_FILE" ]; then
   INVITE_SECRET=$(python3 -c "import json; d=json.load(open('$CONFIG_FILE')); print(d.get('presenter',{}).get('inviteSecret',''))" 2>/dev/null || true)
   if [ -n "$TOKEN" ]; then
     echo "NEXT_PUBLIC_OPENZIGS_API_BASE=http://localhost:$BACKEND_PORT" > "$UI_ENV"
+    echo "OPENZIGS_INTERNAL_API=http://localhost:$BACKEND_PORT" >> "$UI_ENV"
     echo "NEXT_PUBLIC_OPENZIGS_TOKEN=$TOKEN" >> "$UI_ENV"
     if [ -n "$INVITE_SECRET" ]; then
       echo "PRESENTER_INVITE_SECRET=$INVITE_SECRET" >> "$UI_ENV"
@@ -400,6 +410,10 @@ cleanup() {
   pkill -f "$PROJECT_ROOT/sidecars/music/server.py" || true
   pkill -f "$PROJECT_ROOT/sidecars/music-studio/server.py" || true
   pkill -f "$PROJECT_ROOT.*api_v2.py" || true
+  # Stop Firecrawl Docker containers on exit
+  if [ -f "$FIRECRAWL_COMPOSE" ] && command -v docker >/dev/null 2>&1; then
+    docker compose -f "$FIRECRAWL_COMPOSE" down 2>/dev/null || true
+  fi
 }
 
 trap cleanup EXIT
