@@ -20,6 +20,8 @@ import { watch, type FSWatcher } from "chokidar";
 import { chunkText } from "./chunker.js";
 import { generateEmbedding, shutdownEmbedder } from "./embedder.js";
 import { LanceDBStore } from "./lancedb-store.js";
+import type { VectorStore } from "./vector-store/types.js";
+import { createVectorStore } from "./vector-store/factory.js";
 import { ConverterRegistry, createDefaultRegistry, shutdownConverters } from "./converters/index.js";
 import type {
   KnowledgeDocument,
@@ -47,6 +49,8 @@ export type KnowledgeServiceOptions = {
   audioSidecarUrl?: string;
   /** CopilotWrapper for vision-based keyframe description (video files). */
   copilot?: CopilotWrapper;
+  /** Optional pre-configured VectorStore instance (DI). If omitted, created from config. */
+  vectorStore?: VectorStore;
 };
 
 type IndexFileOptions = {
@@ -124,7 +128,7 @@ const resolveKnowledgeDirectory = (input?: string): string => {
 
 export class KnowledgeIngestionService extends EventEmitter {
   private config: KnowledgeConfig;
-  private store: LanceDBStore;
+  private store: VectorStore;
   private watcher: FSWatcher | null = null;
   private documents = new Map<string, KnowledgeDocument>();
   private running = false;
@@ -164,7 +168,7 @@ export class KnowledgeIngestionService extends EventEmitter {
     this.dbPath = path.join(os.homedir(), ".openzigs", "knowledge-db");
     this.metadataPath = path.join(this.dbPath, "documents.json");
     this.keyframesDir = path.join(this.dbPath, "keyframes");
-    this.store = new LanceDBStore({ dbPath: this.dbPath });
+    this.store = options.vectorStore ?? createVectorStore({ provider: "lancedb", dbPath: this.dbPath });
   }
 
   /**

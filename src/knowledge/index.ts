@@ -32,3 +32,9 @@ export { classifyQuery } from "./query-classifier.js";
 export type { QueryClassification } from "./query-classifier.js";
 export { multimodalSearch, applyMultimodalReranking, formatCitation } from "./multimodal-retriever.js";
 export type { MultimodalSearchOptions, MultimodalSearchResult } from "./multimodal-retriever.js";
+
+// Vector store abstraction layer (#691)
+export type { VectorStore, VectorStoreProvider, VectorStoreConfig } from "./vector-store/types.js";
+export { LanceDBVectorStore } from "./vector-store/lancedb-vector-store.js";
+export type { LanceDBVectorStoreOptions } from "./vector-store/lancedb-vector-store.js";
+export { createVectorStore } from "./vector-store/factory.js";

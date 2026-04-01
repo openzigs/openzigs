@@ -443,5 +443,52 @@ export function createPresenterRouter({ presentationRepo, teacherAgent, quizGene
     }
   });
 
+  // POST /api/presentations/:id/scorm — Export presentation as SCORM 1.2 package (#703)
+  router.post("/:id/scorm", requireAdmin, async (req, res) => {
+    try {
+      const presentation = presentationRepo.findById(req.params.id);
+      if (!presentation) {
+        res.status(404).json({ error: "Presentation not found" });
+        return;
+      }
+
+      let chapters: Array<{ title: string; startSeconds: number; endSeconds: number }>;
+      try {
+        chapters = JSON.parse(presentation.chapters);
+      } catch {
+        chapters = [];
+      }
+
+      let scriptSegments: Array<{ text: string; startTime: number; endTime: number }>;
+      try {
+        scriptSegments = JSON.parse(presentation.script_json);
+      } catch {
+        scriptSegments = [];
+      }
+
+      const quizQuestions = presentationRepo.getQuizzes(presentation.id);
+
+      const { buildScormPackage } = await import("../presenter/scorm-packager.js");
+      const result = await buildScormPackage({
+        id: presentation.id,
+        title: presentation.title,
+        chapters,
+        quizQuestions,
+        scriptSegments,
+      });
+
+      res.set({
+        "Content-Type": "application/zip",
+        "Content-Disposition": `attachment; filename="${result.filename}"`,
+        "Content-Length": String(result.buffer.length),
+      });
+      res.send(result.buffer);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Unknown error";
+      logger.error(`[Presenter] SCORM export failed: ${msg}`);
+      res.status(500).json({ error: "SCORM export failed" });
+    }
+  });
+
   return router;
 }

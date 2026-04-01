@@ -173,6 +173,10 @@ export type KnowledgeAppConfig = {
   excludePatterns?: string[];
   watchEnabled?: boolean;
   mediaModel?: string;
+  vectorStore?: {
+    provider?: "lancedb";
+    options?: Record<string, unknown>;
+  };
 };
 
 export type VaultAppConfig = {
@@ -544,6 +548,10 @@ const appConfigSchema = z.object({
     excludePatterns: z.array(z.string()).optional(),
     watchEnabled: z.boolean().optional(),
     mediaModel: z.string().optional(),
+    vectorStore: z.object({
+      provider: z.enum(["lancedb"]).optional().default("lancedb"),
+      options: z.record(z.unknown()).optional(),
+    }).optional(),
   }).optional(),
   voice: z.object({
     enabled: z.boolean().optional(),

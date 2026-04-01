@@ -87,7 +87,10 @@
     "includeExtensions": [],
     "excludePatterns": ["node_modules", ".git", "dist", "build", ".DS_Store"],
     "watchEnabled": true,
-    "mediaModel": "base.en"
+    "mediaModel": "base.en",
+    "vectorStore": {
+      "provider": "lancedb"
+    }
   },
   "voice": {
     "enabled": false,
