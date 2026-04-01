@@ -12,13 +12,14 @@ import { LanceDBVectorStore } from "./lancedb-vector-store.js";
  */
 export function createVectorStore(config: VectorStoreConfig & { dbPath?: string }): VectorStore {
   switch (config.provider) {
-    case "lancedb":
-    default: {
+    case "lancedb": {
       const dbPath = (config.options?.dbPath as string | undefined) ?? config.dbPath;
       if (!dbPath) {
         throw new Error("LanceDB vector store requires a dbPath option");
       }
       return new LanceDBVectorStore({ dbPath });
     }
+    default:
+      throw new Error(`Unknown vectorStore provider: ${config.provider}`);
   }
 }

@@ -145,13 +145,14 @@ test.describe('SCORM Export', () => {
   // which would inject the auth token). A POST without a Bearer token must
   // be rejected with 401 Unauthorized.
   //
-  // Requires the backend to be running at http://localhost:3000.
+  // Requires the backend to be running at http://localhost:3000 (or E2E_API_BASE_URL).
   test('should return 401 for unauthenticated POST to SCORM export endpoint', async ({
     request,
   }) => {
+    const apiBase = process.env.E2E_API_BASE_URL ?? 'http://localhost:3000';
     // Direct backend URL — bypasses Next.js middleware auth injection.
     const response = await request.post(
-      'http://localhost:3000/api/presentations/nonexistent-id/scorm',
+      `${apiBase}/api/presentations/nonexistent-id/scorm`,
       {
         headers: {}, // explicitly no Authorization header
         failOnStatusCode: false,

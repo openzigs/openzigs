@@ -125,8 +125,8 @@ export default function PresenterPlayerPage() {
       // presenter.baseUrl (public tunnel domain) — guests are remote
       // and can't reach localhost.
       await navigator.clipboard.writeText(data.inviteUrl);
-    } catch {
-      // silently ignore
+    } catch (err) {
+      console.error("[presenter] Failed to copy invite URL:", err);
     }
   }, [id]);
 
@@ -157,8 +157,8 @@ export default function PresenterPlayerPage() {
       a.click();
       a.remove();
       URL.revokeObjectURL(url);
-    } catch {
-      // silently ignore
+    } catch (err) {
+      console.error("[presenter] SCORM export failed:", err);
     } finally {
       setScormExporting(false);
     }

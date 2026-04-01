@@ -3,6 +3,8 @@
  * Issue #703: Creates a valid SCORM 1.2 package for LMS upload.
  */
 
+import archiver from "archiver";
+import { PassThrough } from "node:stream";
 import { generateManifest } from "./scorm-manifest.js";
 import { renderScormHtml } from "./scorm-html-renderer.js";
 import type { Chapter, QuizCacheRow } from "./presentation-repository.js";
@@ -57,9 +59,6 @@ export async function buildScormPackage(input: ScormPackageInput): Promise<Scorm
   });
 
   // Build the zip archive
-  const archiver = (await import("archiver")).default;
-  const { PassThrough } = await import("node:stream");
-
   return new Promise<ScormPackageResult>((resolve, reject) => {
     const chunks: Buffer[] = [];
     const passthrough = new PassThrough();

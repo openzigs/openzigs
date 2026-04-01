@@ -27,12 +27,24 @@ export interface ScormHtmlOptions {
  * - cmi.core.score.max — 100
  * - cmi.core.lesson_status — "passed" (≥80%) / "failed" (<80%) / "completed" (no quiz)
  */
+/**
+ * Serialize a value to JSON safe for inline embedding in a <script> block.
+ * JSON.stringify alone does not escape `<`, `>`, or `&`, so a string like
+ * `</script>` in user content would break out of the script block (XSS).
+ */
+function toInlineJson(value: unknown): string {
+  return JSON.stringify(value)
+    .replace(/</g, "\\u003c")
+    .replace(/>/g, "\\u003e")
+    .replace(/&/g, "\\u0026");
+}
+
 export function renderScormHtml(options: ScormHtmlOptions): string {
   const { title, chapters, quizQuestions, scriptSegments } = options;
   const hasQuiz = quizQuestions.length > 0;
 
-  const chaptersJson = JSON.stringify(chapters);
-  const quizJson = JSON.stringify(
+  const chaptersJson = toInlineJson(chapters);
+  const quizJson = toInlineJson(
     quizQuestions.map((q) => ({
       question: q.question,
       options: typeof q.options === "string" ? JSON.parse(q.options) : q.options,
@@ -41,7 +53,7 @@ export function renderScormHtml(options: ScormHtmlOptions): string {
       chapterIndex: q.chapter_index,
     })),
   );
-  const scriptJson = JSON.stringify(scriptSegments);
+  const scriptJson = toInlineJson(scriptSegments);
 
   return `<!DOCTYPE html>
 <html lang="en">
