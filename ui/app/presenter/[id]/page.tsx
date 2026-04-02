@@ -101,6 +101,7 @@ export default function PresenterPlayerPage() {
   const ttsPromptPlayedRef = useRef(false);
   const [showChapterEditor, setShowChapterEditor] = useState(false);
   const [userChapters, setUserChapters] = useState<UserChapter[] | null>(null);
+  const [scormExporting, setScormExporting] = useState(false);
   const [questionAttribution, setQuestionAttribution] = useState<{
     askedBy: string;
     question: string;
@@ -124,8 +125,8 @@ export default function PresenterPlayerPage() {
       // presenter.baseUrl (public tunnel domain) — guests are remote
       // and can't reach localhost.
       await navigator.clipboard.writeText(data.inviteUrl);
-    } catch {
-      // silently ignore
+    } catch (err) {
+      console.error("[presenter] Failed to copy invite URL:", err);
     }
   }, [id]);
 
@@ -134,6 +135,34 @@ export default function PresenterPlayerPage() {
     await fetch("/api/invite/logout", { method: "POST" }).catch(() => {});
     router.push("/presenter");
   }, [router]);
+
+  const handleScormExport = useCallback(async () => {
+    if (scormExporting) return;
+    setScormExporting(true);
+    try {
+      const resp = await fetch(
+        buildUrl(`/api/presentations/${id}/scorm`),
+        { method: "POST" },
+      );
+      if (!resp.ok) throw new Error("Export failed");
+      const blob = await resp.blob();
+      const disposition = resp.headers.get("content-disposition") ?? "";
+      const match = disposition.match(/filename="?([^"]+)"?/);
+      const filename = match?.[1] ?? "presentation-scorm.zip";
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error("[presenter] SCORM export failed:", err);
+    } finally {
+      setScormExporting(false);
+    }
+  }, [id, scormExporting]);
 
   // Sync userChapters from fetched presentation data (first load only)
   const presentationUserChapters = presentation?.user_chapters ?? [];
@@ -390,6 +419,14 @@ export default function PresenterPlayerPage() {
             {presentation.quiz_enabled && " · Quizzes enabled"}
           </p>
         </div>
+        <button
+          onClick={handleScormExport}
+          disabled={scormExporting}
+          className="rounded-lg bg-white/10 px-3 py-1.5 text-xs text-white/70 transition-colors hover:bg-white/20 disabled:opacity-50"
+          title="Export as SCORM 1.2 package"
+        >
+          {scormExporting ? "Exporting…" : "Export SCORM"}
+        </button>
         {roomState.memberCount > 1 && (
           <div className="flex items-center gap-1.5 rounded-full bg-white/10 px-2.5 py-1 text-[10px] text-white/70">
             <span className="inline-block h-1.5 w-1.5 rounded-full bg-green-400" />

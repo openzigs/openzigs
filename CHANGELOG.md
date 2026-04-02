@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **SCORM 1.2 Export** — export any presentation as a SCORM 1.2-compliant package for upload to any LMS (Moodle, Canvas, Blackboard, SCORM Cloud) (#688)
+  - `generateManifest()` — generates valid `imsmanifest.xml` with ADL SCORM 1.2 schema, mastery score = 80 (#704)
+  - `renderScormHtml()` — self-contained SCO HTML with embedded SCORM API adapter, chapter navigation, and quiz engine (#703)
+  - `buildScormPackage()` — orchestrates manifest + HTML + ZIP bundling via `archiver`, returns `Buffer` (#702)
+  - `POST /api/presentations/:id/scorm` — streams a zip attachment; validates admin access (#705)
+  - Quiz score → SCORM mapping: `cmi.core.score.raw/min/max` and `lesson_status` (`passed` ≥80%, `failed` <80%, `completed` for no-quiz) (#705)
+  - "Export SCORM" button in presenter player UI with loading spinner (#701)
+
+- **VectorStore Abstraction Layer** — pluggable vector store backend for the RAG knowledge base (#691)
+  - `VectorStore` interface in `src/knowledge/vector-store/types.ts` enabling LanceDB, Qdrant, Chroma, and other providers (#718)
+  - `LanceDBVectorStore` adapter in `src/knowledge/vector-store/lancedb-vector-store.ts` — thin wrapper over `LanceDBStore` satisfying the interface (#715)
+  - `createVectorStore(config)` factory in `src/knowledge/vector-store/factory.ts` — config-driven provider selection (#716)
+  - `knowledge.vectorStore.provider` config key in `config/default.json` (default: `"lancedb"`) and Zod schema (#717)
+  - `KnowledgeIngestionService` accepts optional `vectorStore?: VectorStore` via DI constructor (#716)
+  - VectorStore interface + `LanceDBVectorStore` exported from `src/knowledge/index.ts` (#719)
+  - ARCHITECTURE.md updated to document the abstraction layer (#720)
+
 - **Firecrawl Self-Hosted Integration** — on-demand Docker sidecar for deep website crawling (#723)
   - `docker-compose.firecrawl.yml` with API, Playwright, and Redis services (#724)
   - `FirecrawlClient` class with SSRF protection, per-domain rate limiting (1 req/sec), auto-start/stop sidecar lifecycle, and injectable fetch for testing (#724)

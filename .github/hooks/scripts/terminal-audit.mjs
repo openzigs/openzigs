@@ -14,7 +14,8 @@ let parsed;
 try {
   parsed = JSON.parse(input);
 } catch {}
-const command = parsed?.command ?? null;
+// VS Code may put tool input at root level OR nested under tool_input — check both.
+const command = parsed?.tool_input?.command ?? parsed?.command ?? null;
 
 let repoRoot = ".";
 try {

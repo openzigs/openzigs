@@ -32,9 +32,11 @@
 - [Template Portability & Sharing](#template-portability--sharing-epic-188)
 - [Sentinel — Autonomous System Monitor & SRE Agent](#sentinel--autonomous-system-monitor--sre-agent-epic-179--194)
 - [Local Knowledge Base — Markdown-First RAG](#local-knowledge-base--markdown-first-rag-epic-215)
+- [VectorStore Abstraction Layer](#vectorstore-abstraction-layer-epic-691)
 - [Agent Memory — GitHub Repository-Backed Persistent Memory](#agent-memory--github-repository-backed-persistent-memory-epic-334)
 - [Secret Vault & Browser Hardening](#secret-vault--browser-hardening)
 - [Presenter Mode (Interactive Playback, Blackboard & Quizzes)](#presenter-mode-interactive-playback-blackboard--quizzes)
+- [SCORM Export for Presentations](#scorm-export-for-presentations-epic-688)
 - [Multiplayer Presenter Mode — P2P Watch Party & Guest Invite](#multiplayer-presenter-mode--p2p-watch-party--guest-invite)
 - [Social Brain — Unified Social Inbox, CRM & AI Automation](#social-brain--unified-social-inbox-crm--ai-automation-epic-291)
 - [Director Mode Studio & Advanced Compositing](#director-mode-studio--advanced-compositing-epic-313)
@@ -4216,6 +4218,9 @@ graph LR
 | **Chunker** | `src/knowledge/chunker.ts` | Markdown-aware text splitting: headings → paragraphs → sentences, with configurable chunk size and overlap. Overlap snaps to word boundaries to avoid splitting mid-word. |
 | **Embedder** | `src/knowledge/embedder.ts` | Hugging Face Transformers.js embedding (`Xenova/all-MiniLM-L6-v2`, 384-dim). Lazy-loaded singleton with hash-based fallback. Text truncation snaps to word boundaries. |
 | **LanceDB Store** | `src/knowledge/lancedb-store.ts` | Vector database wrapper: upsert chunks, vector search (cosine), full-text search (FTS index), hybrid search (RRF merging), delete by document ID, score threshold filtering |
+| **VectorStore Interface** | `src/knowledge/vector-store/types.ts` | Provider-agnostic `VectorStore` interface enabling pluggable backends (LanceDB, Qdrant, Chroma, pgvector). `KnowledgeIngestionService` only interacts with this contract. |
+| **LanceDBVectorStore** | `src/knowledge/vector-store/lancedb-vector-store.ts` | Adapter implementing `VectorStore` over the concrete `LanceDBStore`. Thin delegation layer — all logic stays in `LanceDBStore`. |
+| **VectorStore Factory** | `src/knowledge/vector-store/factory.ts` | `createVectorStore(config)` — config-driven factory. Currently supports `"lancedb"`; extend here to add future providers. |
 | **Converter Registry** | `src/knowledge/converters/` | Auto-detects available converters: text, PDF (pdf-parse), DOCX (mammoth), XLSX, image OCR (tesseract.js), media (ffmpeg + whisper-node) |
 | **Media Converter** | `src/knowledge/converters/media-converter.ts` | Audio/video transcription via ffmpeg → whisper-node with configurable model (tiny.en through large-v1) |
 | **Ingestion Service** | `src/knowledge/knowledge-service.ts` | Central coordinator (`EventEmitter`): directory scanning, file watching (chokidar), SHA-256 change detection, document metadata persistence (JSON file), chunk→embed→store pipeline |
@@ -4389,6 +4394,59 @@ When the AI retrieves media assets from the knowledge base, it can format them f
 - **Video**: `[🎬 filename](/api/queue/assets/{id}/file)` → rendered by `ChatVideoBlock` (preview + lightbox)
 
 ### Tracking: [Epic #215](https://github.com/openzigs/openzigs/issues/215)
+
+---
+
+## VectorStore Abstraction Layer (Epic #691)
+
+Issues: [#718](https://github.com/openzigs/openzigs/issues/718) · [#715](https://github.com/openzigs/openzigs/issues/715) · [#716](https://github.com/openzigs/openzigs/issues/716) · [#717](https://github.com/openzigs/openzigs/issues/717) · [#719](https://github.com/openzigs/openzigs/issues/719) · [#720](https://github.com/openzigs/openzigs/issues/720)
+
+The VectorStore abstraction layer decouples `KnowledgeIngestionService` from the LanceDB implementation, enabling future migration to alternative vector store backends without modifying business logic.
+
+### Design
+
+```
+src/knowledge/
+├── lancedb-store.ts          ← concrete implementation (unchanged)
+└── vector-store/
+    ├── types.ts              ← VectorStore interface + VectorStoreConfig types
+    ├── lancedb-vector-store.ts ← LanceDBVectorStore: thin adapter over LanceDBStore
+    ├── factory.ts            ← createVectorStore(config) — provider-selectable factory
+    └── index.ts              ← barrel export
+```
+
+### VectorStore Interface
+
+```typescript
+interface VectorStore {
+  initialize(): Promise<void>;
+  close(): Promise<void>;
+  addChunks(chunks: KnowledgeChunk[]): Promise<void>;
+  deleteByDocumentId(documentId: string): Promise<void>;
+  search(query, limit?, minScore?, filter?): Promise<KnowledgeSearchResult[]>;
+  fullTextSearch(query, limit?, minScore?, filter?): Promise<KnowledgeSearchResult[]>;
+  hybridSearch(query, limit?, minScore?, filter?): Promise<KnowledgeSearchResult[]>;
+  searchByMode(query, limit?, mode?, minScore?, filter?): Promise<KnowledgeSearchResult[]>;
+  rebuildFtsIndex(): Promise<void>;
+  countChunks(): Promise<number>;
+  listDocumentIds(): Promise<string[]>;
+}
+```
+
+### Dependency Injection
+
+`KnowledgeIngestionService` constructor accepts an optional `vectorStore?: VectorStore`. When omitted, it creates one via `createVectorStore()` using the config-driven provider:
+
+```json
+// config/default.json
+"knowledge": {
+  "vectorStore": { "provider": "lancedb" }
+}
+```
+
+**Supported providers:** `"lancedb"` (default). Future providers (Qdrant, Chroma, pgvector) can be added to `factory.ts` without touching service code.
+
+### Tracking: [Epic #691](https://github.com/openzigs/openzigs/issues/691)
 
 ---
 
@@ -4655,6 +4713,60 @@ Presenter Mode transforms rendered Director Mode videos into interactive learnin
 | `presenter:answer:error` | server → client | Error during answer generation |
 
 ### Tracking: [Epic #275](https://github.com/openzigs/openzigs/issues/275)
+
+---
+
+## SCORM Export for Presentations (Epic #688)
+
+Issues: [#704](https://github.com/openzigs/openzigs/issues/704) · [#703](https://github.com/openzigs/openzigs/issues/703) · [#702](https://github.com/openzigs/openzigs/issues/702) · [#705](https://github.com/openzigs/openzigs/issues/705) · [#701](https://github.com/openzigs/openzigs/issues/701)
+
+Presenter Mode supports exporting any presentation as a **SCORM 1.2-compliant package** for upload to any Learning Management System (LMS) — Moodle, Canvas, Blackboard, SCORM Cloud, etc.
+
+### Package Structure
+
+```
+scorm-package.zip
+├── imsmanifest.xml   # SCORM 1.2 manifest (ADL SCORM, schemaversion 1.2)
+└── index.html        # Self-contained SCO with SCORM API adapter + quiz
+```
+
+The `index.html` is a fully self-contained HTML file that:
+- Bootstraps the SCORM 1.2 API adapter (`findAPI()` window tree traversal)
+- Calls `LMSInitialize` on load and `LMSFinish` on exit
+- Renders presentation chapters and transcript as navigable content
+- Embeds quiz questions (if the presentation has quizzes enabled)
+- On quiz completion: maps the score to `cmi.core.score.raw/min/max` and `cmi.core.lesson_status` (`passed` ≥80%, `failed` <80%, `completed` for no-quiz presentations)
+
+### API Endpoint
+
+`POST /api/presentations/:id/scorm` — generates and streams the zip file.
+
+| Header | Value |
+|---|---|
+| `Content-Type` | `application/zip` |
+| `Content-Disposition` | `attachment; filename="{title}-scorm.zip"` |
+
+Access control: admin-only (`requireAdmin` middleware — guests cannot export).
+
+### Key Modules
+
+| Module | Path | Purpose |
+|---|---|---|
+| `generateManifest` | `src/presenter/scorm-manifest.ts` | Generate `imsmanifest.xml` with SCORM 1.2 compliant structure, mastery score 80 |
+| `renderScormHtml` | `src/presenter/scorm-html-renderer.ts` | Self-contained SCO HTML with SCORM API adapter, chapter nav, quiz engine |
+| `buildScormPackage` | `src/presenter/scorm-packager.ts` | Orchestrates manifest + HTML + `archiver` zip bundling → `Buffer` |
+| Export button | `ui/app/presenter/[id]/page.tsx` | "Export SCORM" button in presenter toolbar; shows loading spinner during download |
+
+### SCORM 1.2 Score Mapping (#705)
+
+| SCORM Field | Value |
+|---|---|
+| `cmi.core.score.raw` | Percentage correct (0–100) |
+| `cmi.core.score.min` | `0` |
+| `cmi.core.score.max` | `100` |
+| `cmi.core.lesson_status` | `"passed"` (≥80%), `"failed"` (<80%), `"completed"` (no quiz) |
+
+### Tracking: [Epic #688](https://github.com/openzigs/openzigs/issues/688)
 
 ---
 

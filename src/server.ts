@@ -470,6 +470,14 @@ const brandVoiceService = new BrandVoiceService({ repository: brandVoiceRepo, co
 
 // ── Knowledge Ingestion Service ──
 const knowledgeConfig = config.knowledge;
+const vectorStoreConfig = knowledgeConfig?.vectorStore;
+const knowledgeVectorStore = vectorStoreConfig
+  ? (await import("./knowledge/vector-store/factory.js")).createVectorStore({
+      provider: vectorStoreConfig.provider ?? "lancedb",
+      dbPath: path.join(os.homedir(), ".openzigs", "knowledge-db"),
+      options: vectorStoreConfig.options,
+    })
+  : undefined;
 const knowledgeService = new KnowledgeIngestionService({
   config: {
     enabled: knowledgeConfig?.enabled !== false,
@@ -482,6 +490,7 @@ const knowledgeService = new KnowledgeIngestionService({
   } as Partial<import("./knowledge/types.js").KnowledgeConfig>,
   audioSidecarUrl: resolveSidecarUrl("audio", "AUDIO_SIDECAR_URL", 5006),
   copilot,
+  vectorStore: knowledgeVectorStore,
 });
 
 // ── Memory Manager ──

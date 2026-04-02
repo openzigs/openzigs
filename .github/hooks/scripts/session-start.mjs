@@ -15,6 +15,9 @@ function git(...args) {
   }
 }
 
+import { mkdirSync, appendFileSync } from "fs";
+import { join } from "path";
+
 const branch = git("rev-parse", "--abbrev-ref", "HEAD") ?? "detached";
 const sha = git("rev-parse", "--short", "HEAD") ?? "unknown";
 let dirty = "clean";
@@ -25,9 +28,32 @@ try {
 }
 const lastCommit = git("log", "-1", "--format=%s") ?? "no commits";
 
+let repoRoot = ".";
+try {
+  repoRoot = execFileSync("git", ["rev-parse", "--show-toplevel"], {
+    encoding: "utf8",
+    stdio: ["pipe", "pipe", "pipe"],
+  }).trim();
+} catch {}
+
+const logDir = join(repoRoot, ".github", "hooks", "logs");
+mkdirSync(logDir, { recursive: true });
+const ts = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
+appendFileSync(
+  join(logDir, "session.log"),
+  `${ts} | SessionStart | branch=${branch} sha=${sha} (${dirty}) | ${lastCommit}\n`,
+);
+
+const contextMsg = `Session context — branch: ${branch}, commit: ${sha} (${dirty}), last: ${lastCommit}`;
+
+// Use hookSpecificOutput.additionalContext to inject context into the model's conversation.
+// (systemMessage only shows as a user-visible warning and never reaches the model.)
 process.stdout.write(
   JSON.stringify({
     continue: true,
-    systemMessage: `Session context — branch: ${branch}, commit: ${sha} (${dirty}), last: ${lastCommit}`,
+    hookSpecificOutput: {
+      hookEventName: "SessionStart",
+      additionalContext: contextMsg,
+    },
   }) + "\n",
 );
