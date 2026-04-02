@@ -2138,7 +2138,8 @@ if (firecrawlUseWebhooks) {
   );
   fc.setWebhookHandler(firecrawlWebhookHandler);
 
-  // Set env vars for Docker compose (Firecrawl container needs the secret)
+  // Set env vars for Docker compose (Firecrawl container needs the secret).
+  // These are inherited by the child `docker compose up` process at sidecar start.
   process.env.FIRECRAWL_WEBHOOK_SECRET = webhookSecret;
   process.env.FIRECRAWL_WEBHOOK_URL = `http://host.docker.internal:${config.server.port}/api/webhooks/firecrawl`;
 

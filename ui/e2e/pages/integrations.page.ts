@@ -52,31 +52,39 @@ export class IntegrationsPage {
 
     // Scope to the Airtable bordered container first, then locate inputs
     this.airtableSection = page
-      .locator('div.rounded-lg')
-      .filter({ has: page.getByRole('heading', { name: 'Airtable', exact: true }) });
-    this.airtableKeyInput = this.airtableSection.locator('input[type="password"]');
-    this.airtableSaveButton = this.airtableSection.getByRole('button', {
-      name: 'Save',
+      .locator("div.rounded-lg")
+      .filter({
+        has: page.getByRole("heading", { name: "Airtable", exact: true }),
+      });
+    this.airtableKeyInput = this.airtableSection.locator(
+      'input[type="password"]',
+    );
+    this.airtableSaveButton = this.airtableSection.getByRole("button", {
+      name: "Save",
     });
-    this.airtableTestButton = this.airtableSection.getByRole('button', {
+    this.airtableTestButton = this.airtableSection.getByRole("button", {
       name: /Test Connection/i,
     });
 
     // -- Google Sheets --
-    this.sheetsHeading = page.getByRole('heading', { name: 'Google Sheets' });
-    this.sheetsApiKeyLabel = page.getByText('API Key (read-only access)');
-    this.sheetsOAuthLabel = page.getByText('OAuth2 Access Token (read/write)');
+    this.sheetsHeading = page.getByRole("heading", { name: "Google Sheets" });
+    this.sheetsApiKeyLabel = page.getByText("API Key (read-only access)");
+    this.sheetsOAuthLabel = page.getByText("OAuth2 Access Token (read/write)");
 
     this.sheetsSection = page
-      .locator('div.rounded-lg')
-      .filter({ has: page.getByRole('heading', { name: 'Google Sheets' }) });
+      .locator("div.rounded-lg")
+      .filter({ has: page.getByRole("heading", { name: "Google Sheets" }) });
     // Sheets has two password inputs: API key (first) and OAuth token (second)
-    this.sheetsApiKeyInput = this.sheetsSection.locator('input[type="password"]').first();
-    this.sheetsOAuthInput = this.sheetsSection.locator('input[type="password"]').last();
-    this.sheetsSaveButton = this.sheetsSection.getByRole('button', {
-      name: 'Save',
+    this.sheetsApiKeyInput = this.sheetsSection
+      .locator('input[type="password"]')
+      .first();
+    this.sheetsOAuthInput = this.sheetsSection
+      .locator('input[type="password"]')
+      .last();
+    this.sheetsSaveButton = this.sheetsSection.getByRole("button", {
+      name: "Save",
     });
-    this.sheetsTestButton = this.sheetsSection.getByRole('button', {
+    this.sheetsTestButton = this.sheetsSection.getByRole("button", {
       name: /Test Connection/i,
     });
   }

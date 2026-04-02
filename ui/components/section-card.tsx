@@ -18,7 +18,12 @@ export const SectionCard = ({
   const [open, setOpen] = useState(defaultOpen);
 
   return (
-    <section className={cn("rounded-2xl border border-border bg-card shadow-sm", className)}>
+    <section
+      className={cn(
+        "rounded-2xl border border-border bg-card shadow-sm",
+        className,
+      )}
+    >
       <button
         type="button"
         className="flex w-full items-center justify-between p-6 text-left"

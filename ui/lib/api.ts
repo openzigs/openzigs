@@ -12,7 +12,9 @@ function resolveApiBase(): string {
     if (base.origin !== window.location.origin) {
       return "";
     }
-  } catch { /* malformed URL, use as-is */ }
+  } catch {
+    /* malformed URL, use as-is */
+  }
   return RAW_API_BASE;
 }
 
@@ -37,7 +39,10 @@ export const buildMediaUrl = (path: string): string => {
   return `${base}${sep}token=${encodeURIComponent(AUTH_TOKEN)}`;
 };
 
-export const fetchJson = async <T>(path: string, options?: RequestInit): Promise<T> => {
+export const fetchJson = async <T>(
+  path: string,
+  options?: RequestInit,
+): Promise<T> => {
   const headers = new Headers(options?.headers);
   if (!headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
@@ -66,7 +71,10 @@ export const fetchJson = async <T>(path: string, options?: RequestInit): Promise
  * Fetch a binary response (audio, images, etc.) with auth headers.
  * Returns the raw Response so callers can read .blob(), .arrayBuffer(), etc.
  */
-export const fetchWithAuth = async (path: string, options?: RequestInit): Promise<Response> => {
+export const fetchWithAuth = async (
+  path: string,
+  options?: RequestInit,
+): Promise<Response> => {
   const headers = new Headers(options?.headers);
   if (AUTH_TOKEN) {
     headers.set("Authorization", `Bearer ${AUTH_TOKEN}`);
