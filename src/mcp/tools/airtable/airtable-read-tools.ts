@@ -56,7 +56,10 @@ function recordsToMarkdownTable(
       const val = r.fields[col];
       if (val === undefined || val === null) return "";
       if (Array.isArray(val)) return val.join(", ");
-      return String(val).replace(/\|/g, "\\|").replace(/\n/g, " ");
+      return String(val)
+        .replace(/\\/g, "\\\\")
+        .replace(/\|/g, "\\|")
+        .replace(/\n/g, " ");
     });
     return `| ${r.id} | ${cells.join(" | ")} |`;
   });

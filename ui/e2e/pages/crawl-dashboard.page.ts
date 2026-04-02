@@ -1,4 +1,4 @@
-import type { Page, Locator } from '@playwright/test';
+import type { Page, Locator } from "@playwright/test";
 
 /**
  * Page Object for the Firecrawl Crawl Dashboard dialog.
@@ -80,81 +80,96 @@ export class CrawlDashboardPage {
     this.page = page;
 
     // Toolbar button
-    this.crawlButton = page.getByRole('button', { name: 'Crawl' });
+    this.crawlButton = page.getByRole("button", { name: "Crawl" });
 
     // Dialog elements
-    this.dialogTitle = page.getByRole('heading', { name: 'Firecrawl Dashboard' });
-    this.dialogDescription = page.getByText('Crawl websites for SEO audits, data extraction, price monitoring, and more.');
-    this.cancelButton = page.getByRole('button', { name: 'Cancel' });
-    this.submitButton = page.getByRole('button', { name: /Run Audit|Start Ingestion|Execute|Extract Data|Find Leads|Monitor Prices|Build Dataset/ });
+    this.dialogTitle = page.getByRole("heading", {
+      name: "Firecrawl Dashboard",
+    });
+    this.dialogDescription = page.getByText(
+      "Crawl websites for SEO audits, data extraction, price monitoring, and more.",
+    );
+    this.cancelButton = page.getByRole("button", { name: "Cancel" });
+    this.submitButton = page.getByRole("button", {
+      name: /Run Audit|Start Ingestion|Execute|Extract Data|Find Leads|Monitor Prices|Build Dataset/,
+    });
 
     // Action mode buttons
-    this.siteAuditButton = page.getByRole('button', { name: 'Site Audit' });
-    this.ingestButton = page.getByRole('button', { name: 'Ingest' });
-    this.monitorButton = page.getByRole('button', { name: 'Monitor' });
-    this.extractButton = page.getByRole('button', { name: 'Extract' });
-    this.leadsButton = page.getByRole('button', { name: 'Leads' });
-    this.pricesButton = page.getByRole('button', { name: 'Prices' });
-    this.datasetButton = page.getByRole('button', { name: 'Dataset' });
+    this.siteAuditButton = page.getByRole("button", { name: "Site Audit" });
+    this.ingestButton = page.getByRole("button", { name: "Ingest" });
+    this.monitorButton = page.getByRole("button", { name: "Monitor" });
+    this.extractButton = page.getByRole("button", { name: "Extract" });
+    this.leadsButton = page.getByRole("button", { name: "Leads" });
+    this.pricesButton = page.getByRole("button", { name: "Prices" });
+    this.datasetButton = page.getByRole("button", { name: "Dataset" });
 
     // Form fields
-    this.urlInput = page.getByLabel('Website URL');
-    this.maxPagesInput = page.getByLabel('Max Pages');
-    this.maxDepthInput = page.getByLabel('Max Depth');
+    this.urlInput = page.getByLabel("Website URL");
+    this.maxPagesInput = page.getByLabel("Max Pages");
+    this.maxDepthInput = page.getByLabel("Max Depth");
 
     // Ingest-specific
-    this.categorySelect = page.getByLabel('Category');
-    this.visibilitySelect = page.getByLabel('Visibility');
+    this.categorySelect = page.getByLabel("Category");
+    this.visibilitySelect = page.getByLabel("Visibility");
 
     // Monitor-specific
-    this.monitorActionSelect = page.getByLabel('Action');
-    this.competitorNameInput = page.getByLabel('Name (optional)');
+    this.monitorActionSelect = page.getByLabel("Action");
+    this.competitorNameInput = page.getByLabel("Name (optional)");
 
     // Extract-specific
-    this.extractTemplateSelect = page.getByLabel('Template');
-    this.extractPromptTextarea = page.getByLabel('What to extract');
-    this.extractSchemaTextarea = page.getByLabel('JSON Schema (optional)');
-    this.scrollForContentCheckbox = page.getByLabel('Scroll to load all content');
-    this.waitForDynamicCheckbox = page.getByLabel('Wait for dynamic content');
-    this.historyToggleButton = page.getByRole('button', { name: /View extraction history|Back to extract/ });
+    this.extractTemplateSelect = page.getByLabel("Template");
+    this.extractPromptTextarea = page.getByLabel("What to extract");
+    this.extractSchemaTextarea = page.getByLabel("JSON Schema (optional)");
+    this.scrollForContentCheckbox = page.getByLabel(
+      "Scroll to load all content",
+    );
+    this.waitForDynamicCheckbox = page.getByLabel("Wait for dynamic content");
+    this.historyToggleButton = page.getByRole("button", {
+      name: /View extraction history|Back to extract/,
+    });
 
     // Extraction history
     this.extractionHistoryHeading = page.getByText(/Extraction History/);
-    this.exportCsvButton = page.getByRole('button', { name: 'Export CSV' });
-    this.exportJsonButton = page.getByRole('button', { name: 'Export JSON' });
-    this.backToListButton = page.getByRole('button', { name: 'Back to list' });
-    this.emptyHistoryMessage = page.getByText('No extractions yet');
-    this.extractionTable = page.locator('table');
+    this.exportCsvButton = page.getByRole("button", { name: "Export CSV" });
+    this.exportJsonButton = page.getByRole("button", { name: "Export JSON" });
+    this.backToListButton = page.getByRole("button", { name: "Back to list" });
+    this.emptyHistoryMessage = page.getByText("No extractions yet");
+    this.extractionTable = page.locator("table");
 
     // Price monitor
-    this.priceActionSelect = page.getByLabel('Action');
-    this.priceLabelInput = page.getByLabel('Label (optional)');
-    this.scrollToLoadCheckbox = page.getByLabel('Scroll to load dynamic content');
+    this.priceActionSelect = page.getByLabel("Action");
+    this.priceLabelInput = page.getByLabel("Label (optional)");
+    this.scrollToLoadCheckbox = page.getByLabel(
+      "Scroll to load dynamic content",
+    );
 
     // Site-to-dataset
-    this.datasetFormatSelect = page.getByLabel('Output Format');
-    this.includePathsInput = page.getByLabel('Include paths (comma-separated)');
-    this.excludePathsInput = page.getByLabel('Exclude paths (comma-separated)');
+    this.datasetFormatSelect = page.getByLabel("Output Format");
+    this.includePathsInput = page.getByLabel("Include paths (comma-separated)");
+    this.excludePathsInput = page.getByLabel("Exclude paths (comma-separated)");
 
     // Model selector
-    this.modelLabel = page.getByText('Model', { exact: true });
+    this.modelLabel = page.getByText("Model", { exact: true });
 
     // Firecrawl status
-    this.firecrawlStatusBanner = page.getByText('Firecrawl is not configured');
+    this.firecrawlStatusBanner = page.getByText("Firecrawl is not configured");
 
     // Error
-    this.errorMessage = page.getByText('URL is required');
+    this.errorMessage = page.getByText("URL is required");
   }
 
   async goto() {
-    await this.page.goto('/workbench');
-    await this.page.waitForLoadState('domcontentloaded');
-    await this.page.locator('main').first().waitFor({ state: 'visible', timeout: 15_000 });
+    await this.page.goto("/workbench");
+    await this.page.waitForLoadState("domcontentloaded");
+    await this.page
+      .locator("main")
+      .first()
+      .waitFor({ state: "visible", timeout: 15_000 });
   }
 
   async openDialog() {
     await this.crawlButton.click();
-    await this.dialogTitle.waitFor({ state: 'visible', timeout: 5_000 });
+    await this.dialogTitle.waitFor({ state: "visible", timeout: 5_000 });
   }
 
   async selectSiteAudit() {

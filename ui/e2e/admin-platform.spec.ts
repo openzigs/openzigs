@@ -1,5 +1,5 @@
-import { test, expect } from './helpers';
-import { AdminPage } from './pages/admin.page';
+import { test, expect } from "./helpers";
+import { AdminPage } from "./pages/admin.page";
 
 /**
  * E2E tests for platform capability awareness on the Admin page.
@@ -17,7 +17,7 @@ import { AdminPage } from './pages/admin.page';
  * does not reliably hydrate client components in Playwright.
  */
 
-test.describe('Admin Platform Capabilities', () => {
+test.describe("Admin Platform Capabilities", () => {
   let adminPage: AdminPage;
 
   test.beforeEach(async ({ page }) => {
@@ -25,7 +25,7 @@ test.describe('Admin Platform Capabilities', () => {
   });
 
   // ── AC1: Admin page loads and displays platform information ───────────
-  test('should display the admin page heading and description', async () => {
+  test("should display the admin page heading and description", async () => {
     await adminPage.goto();
 
     await expect(adminPage.heading).toBeVisible();
@@ -34,7 +34,7 @@ test.describe('Admin Platform Capabilities', () => {
   });
 
   // ── AC3: Sidecar-dependent sections are present on admin page ─────────
-  test('should render sidecar-dependent sections with platform badge slots', async () => {
+  test("should render sidecar-dependent sections with platform badge slots", async () => {
     await adminPage.goto();
 
     // Verify Image Generation, Video Generation, and Music Generation
@@ -50,66 +50,81 @@ test.describe('Admin Platform Capabilities', () => {
   });
 
   // ── AC4: Platform API endpoint returns expected structure ─────────────
-  test('should return well-structured platform API response', async () => {
+  test("should return well-structured platform API response", async () => {
     await adminPage.goto();
     const data = await adminPage.fetchPlatformApi();
 
     // Verify top-level structure
-    expect(data).toHaveProperty('platform');
-    expect(data).toHaveProperty('features');
+    expect(data).toHaveProperty("platform");
+    expect(data).toHaveProperty("features");
 
     // Verify platform object shape
-    const platform = data['platform'] as Record<string, unknown>;
-    expect(platform).toHaveProperty('os');
-    expect(platform).toHaveProperty('arch');
-    expect(platform).toHaveProperty('dockerAvailable');
-    expect(platform).toHaveProperty('sidecarsSupported');
-    expect(platform).toHaveProperty('isWindows');
-    expect(platform).toHaveProperty('isMacOS');
-    expect(platform).toHaveProperty('isLinux');
+    const platform = data["platform"] as Record<string, unknown>;
+    expect(platform).toHaveProperty("os");
+    expect(platform).toHaveProperty("arch");
+    expect(platform).toHaveProperty("dockerAvailable");
+    expect(platform).toHaveProperty("sidecarsSupported");
+    expect(platform).toHaveProperty("isWindows");
+    expect(platform).toHaveProperty("isMacOS");
+    expect(platform).toHaveProperty("isLinux");
 
     // OS must be a known value
-    expect(['darwin', 'win32', 'linux']).toContain(platform['os']);
+    expect(["darwin", "win32", "linux"]).toContain(platform["os"]);
     // Exactly one OS flag should be true
-    const osFlags = [platform['isWindows'], platform['isMacOS'], platform['isLinux']];
+    const osFlags = [
+      platform["isWindows"],
+      platform["isMacOS"],
+      platform["isLinux"],
+    ];
     expect(osFlags.filter(Boolean)).toHaveLength(1);
   });
 
   // ── AC2: Platform API returns correct feature availability per OS ─────
-  test('should return feature availability that matches platform capabilities', async () => {
+  test("should return feature availability that matches platform capabilities", async () => {
     await adminPage.goto();
     const data = await adminPage.fetchPlatformApi();
-    const platform = data['platform'] as Record<string, unknown>;
-    const features = data['features'] as Record<string, { available: boolean; reason?: string }>;
+    const platform = data["platform"] as Record<string, unknown>;
+    const features = data["features"] as Record<
+      string,
+      { available: boolean; reason?: string }
+    >;
 
     // All expected feature keys must exist
-    for (const key of ['imageGeneration', 'audioProcessing', 'musicGeneration', 'videoRendering', 'docker']) {
+    for (const key of [
+      "imageGeneration",
+      "audioProcessing",
+      "musicGeneration",
+      "videoRendering",
+      "docker",
+    ]) {
       expect(features).toHaveProperty(key);
-      expect(features[key]).toHaveProperty('available');
+      expect(features[key]).toHaveProperty("available");
     }
 
     // Sidecar features should match sidecarsSupported flag
-    if (platform['sidecarsSupported']) {
-      expect(features['imageGeneration'].available).toBe(true);
-      expect(features['audioProcessing'].available).toBe(true);
-      expect(features['musicGeneration'].available).toBe(true);
+    if (platform["sidecarsSupported"]) {
+      expect(features["imageGeneration"].available).toBe(true);
+      expect(features["audioProcessing"].available).toBe(true);
+      expect(features["musicGeneration"].available).toBe(true);
     } else {
-      expect(features['imageGeneration'].available).toBe(false);
-      expect(features['imageGeneration'].reason).toBeTruthy();
+      expect(features["imageGeneration"].available).toBe(false);
+      expect(features["imageGeneration"].reason).toBeTruthy();
     }
 
     // Docker feature should match dockerAvailable
-    expect(features['docker'].available).toBe(!!platform['dockerAvailable']);
+    expect(features["docker"].available).toBe(!!platform["dockerAvailable"]);
 
     // Video rendering is always available
-    expect(features['videoRendering'].available).toBe(true);
+    expect(features["videoRendering"].available).toBe(true);
   });
 
   // ── AC5: Platform badge gracefully handles loading/error states ───────
-  test('should render admin page even when platform API fails', async ({ page }) => {
+  test("should render admin page even when platform API fails", async ({
+    page,
+  }) => {
     // Block the platform API to simulate a failure
-    await page.route('**/api/admin/platform', (route) =>
-      route.fulfill({ status: 500, body: 'Internal Server Error' }),
+    await page.route("**/api/admin/platform", (route) =>
+      route.fulfill({ status: 500, body: "Internal Server Error" }),
     );
 
     await adminPage.goto();

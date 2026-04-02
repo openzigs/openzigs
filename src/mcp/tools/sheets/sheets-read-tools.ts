@@ -53,7 +53,10 @@ function valuesToMarkdownTable(values: unknown[][]): string {
     const cells = headers.map((_, i) => {
       const val = row[i];
       if (val === undefined || val === null) return "";
-      return String(val).replace(/\|/g, "\\|").replace(/\n/g, " ");
+      return String(val)
+        .replace(/\\/g, "\\\\")
+        .replace(/\|/g, "\\|")
+        .replace(/\n/g, " ");
     });
     return `| ${cells.join(" | ")} |`;
   });
