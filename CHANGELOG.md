@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Firecrawl Search** — `search()` method on `FirecrawlClient` calling `/v2/search` (DuckDuckGo fallback, no API key needed) with SSRF filtering on returned URLs (#753)
+  - `firecrawl-search` standalone MCP tool for explicit Firecrawl web search
+  - `web-search` tool now falls back to Firecrawl search when Brave API key is unavailable and Firecrawl sidecar is running
+- **Firecrawl Webhook Callbacks** — async crawl and batch scrape jobs now use webhook callbacks instead of polling when available (#751)
+  - `POST /api/webhooks/firecrawl` endpoint with HMAC-SHA256 signature validation
+  - Automatic fallback to polling when webhooks fail or are disabled
+  - `firecrawl.useWebhooks` config option (default: `true`)
+  - Rate limiting on webhook endpoint (100 req/min)
+  - Graceful shutdown: pending webhook promises rejected on server stop
+
 - **SCORM 1.2 Export** — export any presentation as a SCORM 1.2-compliant package for upload to any LMS (Moodle, Canvas, Blackboard, SCORM Cloud) (#688)
   - `generateManifest()` — generates valid `imsmanifest.xml` with ADL SCORM 1.2 schema, mastery score = 80 (#704)
   - `renderScormHtml()` — self-contained SCO HTML with embedded SCORM API adapter, chapter navigation, and quiz engine (#703)

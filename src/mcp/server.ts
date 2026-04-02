@@ -1,5 +1,8 @@
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
+import {
+  CallToolRequestSchema,
+  ListToolsRequestSchema,
+} from "@modelcontextprotocol/sdk/types.js";
 import path from "node:path";
 import * as z from "zod";
 import { PROJECT_ROOT } from "../project-root.js";
@@ -58,6 +61,8 @@ import { createIngestWebsiteTool } from "./tools/knowledge-ingest-website.js";
 import { createCompetitorMonitorTool } from "./tools/competitive-monitor.js";
 import { createWebExtractTool } from "./tools/web-extract.js";
 import { createWebMapTool } from "./tools/web-map.js";
+import { createFirecrawlSearchTool } from "./tools/firecrawl-search.js";
+import { getFirecrawlClient } from "../browser/firecrawl-client.js";
 import { createLeadExtractTool } from "./tools/lead-extract.js";
 import { createPriceMonitorTool } from "./tools/price-monitor.js";
 import { createSiteToDatasetTool } from "./tools/site-to-dataset.js";
@@ -202,22 +207,37 @@ export type RegisterMcpToolsOptions = Pick<
 >;
 
 const readFileSchema = z.object({ path: z.string() });
-const listDirectorySchema = z.object({ path: z.string(), recursive: z.boolean().optional() });
+const listDirectorySchema = z.object({
+  path: z.string(),
+  recursive: z.boolean().optional(),
+});
 const writeFileSchema = z.object({ path: z.string(), content: z.string() });
-const webSearchSchema = z.object({ query: z.string(), count: z.number().optional() });
+const webSearchSchema = z.object({
+  query: z.string(),
+  count: z.number().optional(),
+});
 const browserReadSchema = z.object({ selector: z.string().optional() });
 const browserNavigateSchema = z.object({
-  action: z.enum(["navigate", "click", "type", "screenshot", "get-text", "list-tabs", "evaluate", "snapshot-dom"]),
+  action: z.enum([
+    "navigate",
+    "click",
+    "type",
+    "screenshot",
+    "get-text",
+    "list-tabs",
+    "evaluate",
+    "snapshot-dom",
+  ]),
   url: z.string().optional(),
   selector: z.string().optional(),
   text: z.string().optional(),
-  expression: z.string().optional()
+  expression: z.string().optional(),
 });
 const shellExecuteSchema = z.object({
   command: z.string(),
   args: z.array(z.string()).optional(),
   cwd: z.string().optional(),
-  timeout: z.number().optional()
+  timeout: z.number().optional(),
 });
 
 type ReadFileInput = z.infer<typeof readFileSchema>;
@@ -233,7 +253,7 @@ const parseArgs = (schema: z.ZodSchema, args: Record<string, unknown>) => {
   if (!parsed.success) {
     return {
       ok: false as const,
-      error: parsed.error.message
+      error: parsed.error.message,
     };
   }
   return { ok: true as const, data: parsed.data };
@@ -244,11 +264,13 @@ export const createMcpServer = (options: McpServerOptions) => {
     { name: "openzigs", version: "0.1.0" },
     { capabilities: { tools: {} } },
   );
-  const toolRegistry = options.toolRegistry
-    ?? new ToolRegistry({
-      statePath: options.toolStatePath
-        ?? path.resolve(PROJECT_ROOT, "config", "tools.json"),
-      defaultEnabledTools: options.defaultEnabledTools
+  const toolRegistry =
+    options.toolRegistry ??
+    new ToolRegistry({
+      statePath:
+        options.toolStatePath ??
+        path.resolve(PROJECT_ROOT, "config", "tools.json"),
+      defaultEnabledTools: options.defaultEnabledTools,
     });
 
   registerMcpTools(toolRegistry, options);
@@ -258,8 +280,8 @@ export const createMcpServer = (options: McpServerOptions) => {
       tools: toolRegistry.listEnabledTools().map((tool) => ({
         name: tool.name,
         description: tool.description,
-        inputSchema: tool.inputSchema
-      }))
+        inputSchema: tool.inputSchema,
+      })),
     };
   });
 
@@ -270,14 +292,14 @@ export const createMcpServer = (options: McpServerOptions) => {
     if (!tool) {
       return {
         content: [{ type: "text", text: `Unknown tool: ${toolName}` }],
-        isError: true
+        isError: true,
       };
     }
 
     if (!toolRegistry.isEnabled(toolName)) {
       return {
         content: [{ type: "text", text: `Tool disabled: ${toolName}` }],
-        isError: true
+        isError: true,
       };
     }
 
@@ -286,7 +308,7 @@ export const createMcpServer = (options: McpServerOptions) => {
     if (!validated.ok) {
       return {
         content: [{ type: "text", text: validated.error }],
-        isError: true
+        isError: true,
       };
     }
 
@@ -303,29 +325,32 @@ export const createMcpServer = (options: McpServerOptions) => {
 
     return {
       content: [{ type: "text", text: result.text }],
-      isError: result.isError ?? false
+      isError: result.isError ?? false,
     };
   });
 
   return server;
 };
 
-export const registerMcpTools = (toolRegistry: ToolRegistry, options: RegisterMcpToolsOptions) => {
+export const registerMcpTools = (
+  toolRegistry: ToolRegistry,
+  options: RegisterMcpToolsOptions,
+) => {
   const disabledToolSet = new Set(
-    Object.values(options.disabledTools ?? {}).flat()
+    Object.values(options.disabledTools ?? {}).flat(),
   );
 
   const filesystemHandlers = createFilesystemHandlers({
-    allowedDirs: options.allowedDirs
+    allowedDirs: options.allowedDirs,
   });
 
   const braveSearchHandler = createBraveSearchHandler({
-    apiKey: options.braveApiKey ?? ""
+    apiKey: options.braveApiKey ?? "",
   });
 
   const chromeDevtoolsHandler = createChromeDevtoolsHandler({
     host: options.chromeDebugHost ?? "",
-    port: options.chromeDebugPort ?? 9222
+    port: options.chromeDebugPort ?? 9222,
   });
 
   const browserNavigateHandler = createBrowserNavigateHandler({
@@ -337,7 +362,7 @@ export const registerMcpTools = (toolRegistry: ToolRegistry, options: RegisterMc
   const shellExecuteHandler = createShellExecuteHandler({
     allowlist: options.shellAllowlist,
     allowedDirs: options.allowedDirs,
-    auditLogger: options.auditLogger
+    auditLogger: options.auditLogger,
   });
 
   const registerTool = (tool: ToolDefinition) => {
@@ -353,7 +378,7 @@ export const registerMcpTools = (toolRegistry: ToolRegistry, options: RegisterMc
     inputSchema: {
       type: "object",
       properties: { path: { type: "string" } },
-      required: ["path"]
+      required: ["path"],
     },
     zodSchema: readFileSchema,
     category: "filesystem",
@@ -362,19 +387,24 @@ export const registerMcpTools = (toolRegistry: ToolRegistry, options: RegisterMc
       const { path } = args as ReadFileInput;
       const output = await filesystemHandlers.readFile({ path });
       return { text: output.content };
-    }
+    },
   });
 
   registerTool({
     name: "list-directory",
-    description: "List directory entries from allowed directories. Set recursive=true to list all files and subdirectories recursively.",
+    description:
+      "List directory entries from allowed directories. Set recursive=true to list all files and subdirectories recursively.",
     inputSchema: {
       type: "object",
       properties: {
         path: { type: "string" },
-        recursive: { type: "boolean", description: "When true, list all entries recursively including nested subdirectories" }
+        recursive: {
+          type: "boolean",
+          description:
+            "When true, list all entries recursively including nested subdirectories",
+        },
       },
-      required: ["path"]
+      required: ["path"],
     },
     zodSchema: listDirectorySchema,
     category: "filesystem",
@@ -382,12 +412,14 @@ export const registerMcpTools = (toolRegistry: ToolRegistry, options: RegisterMc
     handler: async (args) => {
       const { path: dirPath, recursive } = args as ListDirectoryInput;
       if (recursive) {
-        const output = await filesystemHandlers.listDirectoryRecursive({ path: dirPath });
+        const output = await filesystemHandlers.listDirectoryRecursive({
+          path: dirPath,
+        });
         return { text: JSON.stringify(output) };
       }
       const output = await filesystemHandlers.listDirectory({ path: dirPath });
       return { text: JSON.stringify(output) };
-    }
+    },
   });
 
   registerTool({
@@ -396,7 +428,7 @@ export const registerMcpTools = (toolRegistry: ToolRegistry, options: RegisterMc
     inputSchema: {
       type: "object",
       properties: { path: { type: "string" }, content: { type: "string" } },
-      required: ["path", "content"]
+      required: ["path", "content"],
     },
     zodSchema: writeFileSchema,
     category: "filesystem",
@@ -405,25 +437,57 @@ export const registerMcpTools = (toolRegistry: ToolRegistry, options: RegisterMc
       const { path, content } = args as WriteFileInput;
       const output = await filesystemHandlers.writeFile({ path, content });
       return { text: JSON.stringify(output) };
-    }
+    },
   });
 
   registerTool({
     name: "web-search",
-    description: "Search the web using Brave Search API",
+    description:
+      "Search the web using Brave Search API (primary) or Firecrawl search (fallback when Brave API key is not configured and Firecrawl sidecar is running)",
     inputSchema: {
       type: "object",
       properties: { query: { type: "string" }, count: { type: "number" } },
-      required: ["query"]
+      required: ["query"],
     },
     zodSchema: webSearchSchema,
     category: "search",
     riskLevel: "low",
     handler: async (args) => {
       const { query, count } = args as WebSearchInput;
-      const output = await braveSearchHandler({ query, count });
-      return { text: JSON.stringify(output) };
-    }
+
+      // Try Brave Search first
+      try {
+        const output = await braveSearchHandler({ query, count });
+        return { text: JSON.stringify(output) };
+      } catch {
+        // Brave failed (no API key or network error) — try Firecrawl fallback
+      }
+
+      // Firecrawl fallback
+      try {
+        const fc = getFirecrawlClient();
+        if (fc.getConfig().enabled && (await fc.isAvailable())) {
+          const results = await fc.search(query, {
+            limit: count ?? 10,
+          });
+          const output = {
+            results: results.map((r) => ({
+              title: r.title,
+              url: r.url,
+              snippet: r.description ?? r.markdown.slice(0, 200),
+            })),
+          };
+          return { text: JSON.stringify(output) };
+        }
+      } catch {
+        // Firecrawl also failed — fall through to error
+      }
+
+      return {
+        text: "Web search unavailable: no search provider is configured. Set BRAVE_API_KEY or enable Firecrawl.",
+        isError: true,
+      };
+    },
   });
 
   registerTool({
@@ -431,7 +495,7 @@ export const registerMcpTools = (toolRegistry: ToolRegistry, options: RegisterMc
     description: "Read information from a Chrome tab via DevTools",
     inputSchema: {
       type: "object",
-      properties: { selector: { type: "string" } }
+      properties: { selector: { type: "string" } },
     },
     zodSchema: browserReadSchema,
     category: "browser",
@@ -439,22 +503,35 @@ export const registerMcpTools = (toolRegistry: ToolRegistry, options: RegisterMc
     handler: async (args) => {
       const output = await chromeDevtoolsHandler(args as BrowserReadInput);
       return { text: JSON.stringify(output) };
-    }
+    },
   });
 
   registerTool({
     name: "browser-navigate",
-    description: "Control Chrome browser: navigate to URLs, click elements, type text, take screenshots, extract text, list tabs, snapshot DOM, or evaluate JavaScript. Supports {{SECRET:<uuid>}} tokens in the 'text' parameter — use get-secret to retrieve a token, then pass it to the type action for secure credential injection. Requires Chrome with --remote-debugging-port.",
+    description:
+      "Control Chrome browser: navigate to URLs, click elements, type text, take screenshots, extract text, list tabs, snapshot DOM, or evaluate JavaScript. Supports {{SECRET:<uuid>}} tokens in the 'text' parameter — use get-secret to retrieve a token, then pass it to the type action for secure credential injection. Requires Chrome with --remote-debugging-port.",
     inputSchema: {
       type: "object",
       properties: {
-        action: { type: "string", enum: ["navigate", "click", "type", "screenshot", "get-text", "list-tabs", "evaluate", "snapshot-dom"] },
+        action: {
+          type: "string",
+          enum: [
+            "navigate",
+            "click",
+            "type",
+            "screenshot",
+            "get-text",
+            "list-tabs",
+            "evaluate",
+            "snapshot-dom",
+          ],
+        },
         url: { type: "string" },
         selector: { type: "string" },
         text: { type: "string" },
-        expression: { type: "string" }
+        expression: { type: "string" },
       },
-      required: ["action"]
+      required: ["action"],
     },
     zodSchema: browserNavigateSchema,
     category: "browser",
@@ -463,7 +540,7 @@ export const registerMcpTools = (toolRegistry: ToolRegistry, options: RegisterMc
       const input = args as BrowserNavigateInput;
       const output = await browserNavigateHandler(input);
       return { text: JSON.stringify(output) };
-    }
+    },
   });
 
   registerTool({
@@ -475,36 +552,52 @@ export const registerMcpTools = (toolRegistry: ToolRegistry, options: RegisterMc
         command: { type: "string" },
         args: { type: "array", items: { type: "string" } },
         cwd: { type: "string" },
-        timeout: { type: "number" }
+        timeout: { type: "number" },
       },
-      required: ["command"]
+      required: ["command"],
     },
     zodSchema: shellExecuteSchema,
     category: "shell",
     riskLevel: "high",
     handler: async (args) => {
-      const { command, args: commandArgs, cwd, timeout } = args as ShellExecuteInput;
-      const output = await shellExecuteHandler({ command, args: commandArgs, cwd, timeout });
+      const {
+        command,
+        args: commandArgs,
+        cwd,
+        timeout,
+      } = args as ShellExecuteInput;
+      const output = await shellExecuteHandler({
+        command,
+        args: commandArgs,
+        cwd,
+        timeout,
+      });
       return { text: JSON.stringify(output) };
-    }
+    },
   });
 
   // ── Productivity Tools (Saved Prompts + Scheduler) ──
   if (options.promptManager) {
-    const promptTools = createPromptTools({ promptManager: options.promptManager });
+    const promptTools = createPromptTools({
+      promptManager: options.promptManager,
+    });
     for (const tool of promptTools) {
       registerTool(tool);
     }
 
     // System Configuration Tools (create-prompt — high-risk, requires approval)
-    const systemConfigTools = createSystemConfigTools({ promptManager: options.promptManager });
+    const systemConfigTools = createSystemConfigTools({
+      promptManager: options.promptManager,
+    });
     for (const tool of systemConfigTools) {
       registerTool(tool);
     }
   }
 
   if (options.scheduler) {
-    const schedulerTools = createSchedulerTools({ scheduler: options.scheduler });
+    const schedulerTools = createSchedulerTools({
+      scheduler: options.scheduler,
+    });
     for (const tool of schedulerTools) {
       registerTool(tool);
     }
@@ -512,7 +605,9 @@ export const registerMcpTools = (toolRegistry: ToolRegistry, options: RegisterMc
 
   // ── Personality Tools ──
   if (options.personalityManager) {
-    const personalityToolList = createPersonalityTools({ personalityManager: options.personalityManager });
+    const personalityToolList = createPersonalityTools({
+      personalityManager: options.personalityManager,
+    });
     for (const tool of personalityToolList) {
       registerTool(tool);
     }
@@ -554,6 +649,7 @@ export const registerMcpTools = (toolRegistry: ToolRegistry, options: RegisterMc
   // ── Firecrawl-powered Extraction Tools ──
   registerTool(createWebExtractTool());
   registerTool(createWebMapTool());
+  registerTool(createFirecrawlSearchTool());
   registerTool(createLeadExtractTool());
   registerTool(createPriceMonitorTool());
   registerTool(createSiteToDatasetTool());
@@ -600,28 +696,52 @@ export const registerMcpTools = (toolRegistry: ToolRegistry, options: RegisterMc
   }
 
   // ── Twitter Tools (Local python MCP server) ──
-  const twitterTools = createTwitterTools({ localServerManager: options.localServerManager });
-  for (const tool of twitterTools) { registerTool(tool); }
+  const twitterTools = createTwitterTools({
+    localServerManager: options.localServerManager,
+  });
+  for (const tool of twitterTools) {
+    registerTool(tool);
+  }
 
   // ── YouTube Tools (Local python MCP server) ──
-  const youtubeTools = createYouTubeTools({ localServerManager: options.localServerManager });
-  for (const tool of youtubeTools) { registerTool(tool); }
+  const youtubeTools = createYouTubeTools({
+    localServerManager: options.localServerManager,
+  });
+  for (const tool of youtubeTools) {
+    registerTool(tool);
+  }
 
   // ── LinkedIn Tools (Local python MCP server) ──
-  const linkedinTools = createLinkedInTools({ localServerManager: options.localServerManager });
-  for (const tool of linkedinTools) { registerTool(tool); }
+  const linkedinTools = createLinkedInTools({
+    localServerManager: options.localServerManager,
+  });
+  for (const tool of linkedinTools) {
+    registerTool(tool);
+  }
 
   // ── Reddit Tools (Local python MCP server) ──
-  const redditTools = createRedditTools({ localServerManager: options.localServerManager });
-  for (const tool of redditTools) { registerTool(tool); }
+  const redditTools = createRedditTools({
+    localServerManager: options.localServerManager,
+  });
+  for (const tool of redditTools) {
+    registerTool(tool);
+  }
 
   // ── Facebook Tools (Local python MCP server) ──
-  const facebookTools = createFacebookTools({ localServerManager: options.localServerManager });
-  for (const tool of facebookTools) { registerTool(tool); }
+  const facebookTools = createFacebookTools({
+    localServerManager: options.localServerManager,
+  });
+  for (const tool of facebookTools) {
+    registerTool(tool);
+  }
 
   // ── Instagram Tools (Local python MCP server) ──
-  const instagramTools = createInstagramTools({ localServerManager: options.localServerManager });
-  for (const tool of instagramTools) { registerTool(tool); }
+  const instagramTools = createInstagramTools({
+    localServerManager: options.localServerManager,
+  });
+  for (const tool of instagramTools) {
+    registerTool(tool);
+  }
 
   // ── Agent / Task Tools (spawn-agent) ──
   if (options.taskEngine) {
@@ -657,7 +777,9 @@ export const registerMcpTools = (toolRegistry: ToolRegistry, options: RegisterMc
 
   // ── Knowledge Base (local RAG search) ──
   if (options.knowledgeService) {
-    const knowledgeTools = createKnowledgeTools({ knowledgeService: options.knowledgeService });
+    const knowledgeTools = createKnowledgeTools({
+      knowledgeService: options.knowledgeService,
+    });
     for (const tool of knowledgeTools) {
       registerTool(tool);
     }
@@ -665,7 +787,9 @@ export const registerMcpTools = (toolRegistry: ToolRegistry, options: RegisterMc
 
   // ── Secret Vault Tools (get-secret, list-secrets) ──
   if (options.vaultService) {
-    const secretTools = createSecretTools({ vaultService: options.vaultService });
+    const secretTools = createSecretTools({
+      vaultService: options.vaultService,
+    });
     for (const tool of secretTools) {
       registerTool(tool);
     }
@@ -724,8 +848,12 @@ export const registerMcpTools = (toolRegistry: ToolRegistry, options: RegisterMc
   // ── Agent Architecture Tools (Epic #394) ──
 
   if (options.mediaQueueRepo) {
-    const galleryTools = createGalleryTools({ mediaQueueRepo: options.mediaQueueRepo });
-    for (const tool of galleryTools) { registerTool(tool); }
+    const galleryTools = createGalleryTools({
+      mediaQueueRepo: options.mediaQueueRepo,
+    });
+    for (const tool of galleryTools) {
+      registerTool(tool);
+    }
   }
 
   if (options.mediaQueueRepo && options.queueMaster) {
@@ -733,62 +861,100 @@ export const registerMcpTools = (toolRegistry: ToolRegistry, options: RegisterMc
       mediaQueueRepo: options.mediaQueueRepo,
       queueMaster: options.queueMaster,
     });
-    for (const tool of mqTools) { registerTool(tool); }
+    for (const tool of mqTools) {
+      registerTool(tool);
+    }
   }
 
   if (options.characterRepo) {
-    const charTools = createCharacterTools({ characterRepo: options.characterRepo });
-    for (const tool of charTools) { registerTool(tool); }
+    const charTools = createCharacterTools({
+      characterRepo: options.characterRepo,
+    });
+    for (const tool of charTools) {
+      registerTool(tool);
+    }
   }
 
   if (options.mediaQueueRepo) {
-    const remixTools = createRemixTools({ mediaQueueRepo: options.mediaQueueRepo });
-    for (const tool of remixTools) { registerTool(tool); }
+    const remixTools = createRemixTools({
+      mediaQueueRepo: options.mediaQueueRepo,
+    });
+    for (const tool of remixTools) {
+      registerTool(tool);
+    }
   }
 
   // ── Outbox Publishing Queue Tools (Epic #458) ──
   if (options.outboxRepo) {
     const outboxTools = createOutboxTools({ outboxRepo: options.outboxRepo });
-    for (const tool of outboxTools) { registerTool(tool); }
+    for (const tool of outboxTools) {
+      registerTool(tool);
+    }
   }
 
   if (options.brandVoiceService) {
-    const bvTools = createBrandVoiceTools({ brandVoiceService: options.brandVoiceService });
-    for (const tool of bvTools) { registerTool(tool); }
+    const bvTools = createBrandVoiceTools({
+      brandVoiceService: options.brandVoiceService,
+    });
+    for (const tool of bvTools) {
+      registerTool(tool);
+    }
   }
 
   if (options.voiceService) {
     const voiceTools = createVoiceTools({ voiceService: options.voiceService });
-    for (const tool of voiceTools) { registerTool(tool); }
+    for (const tool of voiceTools) {
+      registerTool(tool);
+    }
   }
 
-  if (options.presentationRepo && options.quizGenerator && options.teacherAgent) {
+  if (
+    options.presentationRepo &&
+    options.quizGenerator &&
+    options.teacherAgent
+  ) {
     const presTools = createPresenterTools({
       presentationRepo: options.presentationRepo,
       quizGenerator: options.quizGenerator,
       teacherAgent: options.teacherAgent,
     });
-    for (const tool of presTools) { registerTool(tool); }
+    for (const tool of presTools) {
+      registerTool(tool);
+    }
   }
 
   if (options.knowledgeService) {
-    const kmTools = createKnowledgeManagementTools({ knowledgeService: options.knowledgeService });
-    for (const tool of kmTools) { registerTool(tool); }
+    const kmTools = createKnowledgeManagementTools({
+      knowledgeService: options.knowledgeService,
+    });
+    for (const tool of kmTools) {
+      registerTool(tool);
+    }
   }
 
   if (options.webhookManager) {
-    const whTools = createWebhookTools({ webhookManager: options.webhookManager });
-    for (const tool of whTools) { registerTool(tool); }
+    const whTools = createWebhookTools({
+      webhookManager: options.webhookManager,
+    });
+    for (const tool of whTools) {
+      registerTool(tool);
+    }
   }
 
   if (options.sentinelService) {
-    const sentTools = createSentinelTools({ sentinelService: options.sentinelService });
-    for (const tool of sentTools) { registerTool(tool); }
+    const sentTools = createSentinelTools({
+      sentinelService: options.sentinelService,
+    });
+    for (const tool of sentTools) {
+      registerTool(tool);
+    }
   }
 
   // ── Draft Media Tools (Research Synthesis Engine) ──
   const draftMediaTools = createDraftMediaTools();
-  for (const tool of draftMediaTools) { registerTool(tool); }
+  for (const tool of draftMediaTools) {
+    registerTool(tool);
+  }
 
   // ── Notification Tool (Telegram/Discord outbound, used by research-synthesizer & universal-publisher skills) ──
   if (options.channelManager) {
@@ -797,7 +963,9 @@ export const registerMcpTools = (toolRegistry: ToolRegistry, options: RegisterMc
       fallbackChatId: options.notificationChatId,
       discordNotificationChannelId: options.discordNotificationChannelId,
     });
-    for (const tool of notifTools) { registerTool(tool); }
+    for (const tool of notifTools) {
+      registerTool(tool);
+    }
   }
 
   // ── Transcribe Audio Tool (Whisper STT via audio sidecar) ──
@@ -806,7 +974,9 @@ export const registerMcpTools = (toolRegistry: ToolRegistry, options: RegisterMc
       audioSidecarUrl: options.audioSidecarUrl,
       knowledgeService: options.knowledgeService,
     });
-    for (const tool of transcribeTools) { registerTool(tool); }
+    for (const tool of transcribeTools) {
+      registerTool(tool);
+    }
   }
 
   // ── Studio Tools (trim-video, analyze-video-redundancy) ──
@@ -816,12 +986,18 @@ export const registerMcpTools = (toolRegistry: ToolRegistry, options: RegisterMc
       analyzeWorker: options.analyzeWorker,
       mediaQueueRepo: options.mediaQueueRepo,
     });
-    for (const tool of studioTools) { registerTool(tool); }
+    for (const tool of studioTools) {
+      registerTool(tool);
+    }
   }
 
   // ── Memory Tools (save-memory, recall-memories) ──
   if (options.memoryManager) {
-    const memTools = createMemoryTools({ memoryManager: options.memoryManager });
-    for (const tool of memTools) { registerTool(tool); }
+    const memTools = createMemoryTools({
+      memoryManager: options.memoryManager,
+    });
+    for (const tool of memTools) {
+      registerTool(tool);
+    }
   }
 };
