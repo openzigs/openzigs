@@ -44,7 +44,11 @@ type LocalServerInstance = {
   definition: LocalMcpServerDefinition;
   client: Client;
   transport: StdioClientTransport;
-  tools: Array<{ name: string; description?: string; inputSchema?: Record<string, unknown> }>;
+  tools: Array<{
+    name: string;
+    description?: string;
+    inputSchema?: Record<string, unknown>;
+  }>;
 };
 
 type LocalServerManagerEvents = {
@@ -127,7 +131,13 @@ export const DEFAULT_LOCAL_SERVER_DEFINITIONS: LocalMcpServerDefinition[] = [
     command: path.join(PROJECT_ROOT, "external/twitter-mcp/.venv/bin/python"),
     args: ["-m", "src.twitter_mcp_server"],
     env: { PYTHONPATH: path.join(PROJECT_ROOT, "external/twitter-mcp") },
-    requiredEnvVars: ["TWITTER_BEARER_TOKEN", "TWITTER_API_KEY", "TWITTER_API_SECRET", "TWITTER_ACCESS_TOKEN", "TWITTER_ACCESS_TOKEN_SECRET"],
+    requiredEnvVars: [
+      "TWITTER_BEARER_TOKEN",
+      "TWITTER_API_KEY",
+      "TWITTER_API_SECRET",
+      "TWITTER_ACCESS_TOKEN",
+      "TWITTER_ACCESS_TOKEN_SECRET",
+    ],
     runtime: "python",
     category: "social",
     requiresCredentials: true,
@@ -185,7 +195,11 @@ export const DEFAULT_LOCAL_SERVER_DEFINITIONS: LocalMcpServerDefinition[] = [
     command: path.join(PROJECT_ROOT, "external/ig-mcp/.venv/bin/python"),
     args: ["-B", "-m", "src.instagram_mcp_server"],
     env: { PYTHONPATH: path.join(PROJECT_ROOT, "external/ig-mcp") },
-    requiredEnvVars: ["INSTAGRAM_ACCESS_TOKEN", "FACEBOOK_APP_ID", "FACEBOOK_APP_SECRET"],
+    requiredEnvVars: [
+      "INSTAGRAM_ACCESS_TOKEN",
+      "FACEBOOK_APP_ID",
+      "FACEBOOK_APP_SECRET",
+    ],
     runtime: "python",
     category: "social",
     requiresCredentials: true,
@@ -196,7 +210,11 @@ export const DEFAULT_LOCAL_SERVER_DEFINITIONS: LocalMcpServerDefinition[] = [
     command: path.join(PROJECT_ROOT, "external/fb-mcp/.venv/bin/python"),
     args: ["-B", "-m", "src.facebook_mcp_server"],
     env: { PYTHONPATH: path.join(PROJECT_ROOT, "external/fb-mcp") },
-    requiredEnvVars: ["FACEBOOK_PAGE_TOKEN", "FACEBOOK_APP_ID", "FACEBOOK_APP_SECRET"],
+    requiredEnvVars: [
+      "FACEBOOK_PAGE_TOKEN",
+      "FACEBOOK_APP_ID",
+      "FACEBOOK_APP_SECRET",
+    ],
     runtime: "python",
     category: "social",
     requiresCredentials: true,
@@ -250,7 +268,7 @@ export class LocalMcpServerManager extends EventEmitter {
     for (const def of this.definitions) {
       if (this.skipUnconfigured && !this.hasRequiredCredentials(def)) {
         logger.info(
-          `Skipping local MCP server "${def.name}": missing required env vars (${(def.requiredEnvVars ?? []).join(", ")})`
+          `Skipping local MCP server "${def.name}": missing required env vars (${(def.requiredEnvVars ?? []).join(", ")})`,
         );
         this.setStatus(def, {
           running: false,
@@ -269,7 +287,7 @@ export class LocalMcpServerManager extends EventEmitter {
 
       if (!this.isRuntimeAvailable(def)) {
         logger.info(
-          `Skipping local MCP server "${def.name}": runtime "${def.runtime}" not available (${def.command} not found)`
+          `Skipping local MCP server "${def.name}": runtime "${def.runtime}" not available (${def.command} not found)`,
         );
         this.setStatus(def, {
           running: false,
@@ -290,11 +308,11 @@ export class LocalMcpServerManager extends EventEmitter {
           errMsg.includes("invalid") ||
           errMsg.includes("access token") ||
           errMsg.includes("oauthexception");
-        if (isTokenError && (def.category === "social")) {
+        if (isTokenError && def.category === "social") {
           logger.error(
             `Local MCP server "${def.name}" failed: access token is expired or invalid. ` +
-            `Please generate a new long-lived token from https://developers.facebook.com/tools/explorer/ ` +
-            `and update the environment variable(s): ${(def.requiredEnvVars ?? []).join(", ")}`
+              `Please generate a new long-lived token from https://developers.facebook.com/tools/explorer/ ` +
+              `and update the environment variable(s): ${(def.requiredEnvVars ?? []).join(", ")}`,
           );
           this.setStatus(def, {
             running: false,
@@ -302,7 +320,9 @@ export class LocalMcpServerManager extends EventEmitter {
             error: "token_expired",
           });
         } else {
-          logger.error(`Failed to start local MCP server "${def.name}": ${err.message}`);
+          logger.error(
+            `Failed to start local MCP server "${def.name}": ${err.message}`,
+          );
           this.setStatus(def, {
             running: false,
             toolCount: 0,
@@ -373,7 +393,7 @@ export class LocalMcpServerManager extends EventEmitter {
   async callTool(
     serverName: string,
     toolName: string,
-    args: Record<string, unknown>
+    args: Record<string, unknown>,
   ): Promise<{ text: string; isError?: boolean }> {
     const instance = this.instances.get(serverName);
     if (!instance) {
@@ -390,11 +410,14 @@ export class LocalMcpServerManager extends EventEmitter {
       });
 
       // MCP callTool returns { content: Array<{ type, text }>, isError? }
-      const content = result.content as Array<{ type: string; text?: string }> | undefined;
-      const text = content
-        ?.filter((c) => c.type === "text" && c.text)
-        .map((c) => c.text)
-        .join("\n") ?? JSON.stringify(result);
+      const content = result.content as
+        | Array<{ type: string; text?: string }>
+        | undefined;
+      const text =
+        content
+          ?.filter((c) => c.type === "text" && c.text)
+          .map((c) => c.text)
+          .join("\n") ?? JSON.stringify(result);
       const isError = result.isError === true;
 
       return { text, isError };
@@ -405,7 +428,11 @@ export class LocalMcpServerManager extends EventEmitter {
   }
 
   /** Get the list of tools discovered from a specific server. */
-  getServerTools(serverName: string): Array<{ name: string; description?: string; inputSchema?: Record<string, unknown> }> {
+  getServerTools(serverName: string): Array<{
+    name: string;
+    description?: string;
+    inputSchema?: Record<string, unknown>;
+  }> {
     return this.instances.get(serverName)?.tools ?? [];
   }
 
@@ -472,32 +499,43 @@ export class LocalMcpServerManager extends EventEmitter {
     const reqFile = path.join(serverDir, "requirements.txt");
     if (!fs.existsSync(reqFile)) return false;
 
-    logger.info(`Auto-provisioning Python venv for "${def.name}" at ${venvDir}`);
+    logger.info(
+      `Auto-provisioning Python venv for "${def.name}" at ${venvDir}`,
+    );
     try {
-      execFileSync("python3", ["-m", "venv", venvDir], { stdio: "pipe", timeout: 30_000 });
-      execFileSync(path.join(venvDir, "bin", "pip"), ["install", "-r", reqFile, "--quiet"], {
+      execFileSync("python3", ["-m", "venv", venvDir], {
         stdio: "pipe",
-        timeout: 120_000,
+        timeout: 30_000,
       });
+      execFileSync(
+        path.join(venvDir, "bin", "pip"),
+        ["install", "-r", reqFile, "--quiet"],
+        {
+          stdio: "pipe",
+          timeout: 120_000,
+        },
+      );
       logger.info(`Python venv provisioned for "${def.name}"`);
       return true;
     } catch (err) {
-      logger.error(`Failed to provision Python venv for "${def.name}": ${err instanceof Error ? err.message : String(err)}`);
+      logger.error(
+        `Failed to provision Python venv for "${def.name}": ${err instanceof Error ? err.message : String(err)}`,
+      );
       return false;
     }
   }
 
   private async startServer(def: LocalMcpServerDefinition): Promise<void> {
     logger.info(
-      `Starting local MCP server "${def.name}": ${def.command} ${def.args.join(" ")}`
+      `Starting local MCP server "${def.name}": ${def.command} ${def.args.join(" ")}`,
     );
 
     // Build environment: inherit process.env + definition overrides + required vars
     const env: Record<string, string> = {
       ...Object.fromEntries(
         Object.entries(process.env).filter(
-          (entry): entry is [string, string] => entry[1] !== undefined
-        )
+          (entry): entry is [string, string] => entry[1] !== undefined,
+        ),
       ),
     };
 
@@ -522,13 +560,16 @@ export class LocalMcpServerManager extends EventEmitter {
       env,
     });
 
-    const client = new Client(
-      { name: `openzigs-${def.name}`, version: "0.1.0" },
-    );
+    const client = new Client({
+      name: `openzigs-${def.name}`,
+      version: "0.1.0",
+    });
 
     // Set up error handling on transport
     transport.onerror = (error) => {
-      logger.error(`Local MCP server "${def.name}" transport error: ${error.message}`);
+      logger.error(
+        `Local MCP server "${def.name}" transport error: ${error.message}`,
+      );
       this.handleServerCrash(def.name);
     };
 
@@ -541,9 +582,14 @@ export class LocalMcpServerManager extends EventEmitter {
     const connectPromise = client.connect(transport);
     const timeoutPromise = new Promise<never>((_, reject) =>
       setTimeout(
-        () => reject(new Error(`Connection to "${def.name}" timed out after ${this.connectTimeout}ms`)),
-        this.connectTimeout
-      )
+        () =>
+          reject(
+            new Error(
+              `Connection to "${def.name}" timed out after ${this.connectTimeout}ms`,
+            ),
+          ),
+        this.connectTimeout,
+      ),
     );
 
     await Promise.race([connectPromise, timeoutPromise]);
@@ -557,14 +603,20 @@ export class LocalMcpServerManager extends EventEmitter {
     }));
 
     logger.info(
-      `Local MCP server "${def.name}" connected — discovered ${tools.length} tools`
+      `Local MCP server "${def.name}" connected — discovered ${tools.length} tools`,
     );
 
-    const instance: LocalServerInstance = { definition: def, client, transport, tools };
+    const instance: LocalServerInstance = {
+      definition: def,
+      client,
+      transport,
+      tools,
+    };
     this.instances.set(def.name, instance);
 
     // Try to get the child process PID
-    const pid = (transport as unknown as { _process?: { pid?: number } })._process?.pid;
+    const pid = (transport as unknown as { _process?: { pid?: number } })
+      ._process?.pid;
 
     this.setStatus(def, {
       running: true,
@@ -575,7 +627,10 @@ export class LocalMcpServerManager extends EventEmitter {
     this.emit("server:started", this.statuses.get(def.name)!);
   }
 
-  private async stopServer(name: string, instance: LocalServerInstance): Promise<void> {
+  private async stopServer(
+    name: string,
+    instance: LocalServerInstance,
+  ): Promise<void> {
     logger.info(`Stopping local MCP server "${name}"`);
 
     try {
@@ -594,7 +649,11 @@ export class LocalMcpServerManager extends EventEmitter {
     if (!instance) return;
 
     this.instances.delete(name);
-    this.emit("server:error", name, new Error("Process crashed or closed unexpectedly"));
+    this.emit(
+      "server:error",
+      name,
+      new Error("Process crashed or closed unexpectedly"),
+    );
     this.scheduleAutoRestart(name, instance.definition);
   }
 
@@ -604,14 +663,14 @@ export class LocalMcpServerManager extends EventEmitter {
    */
   private scheduleAutoRestart(
     name: string,
-    def: LocalMcpServerDefinition
+    def: LocalMcpServerDefinition,
   ): void {
     const count = (this.crashCounts.get(name) ?? 0) + 1;
     this.crashCounts.set(name, count);
 
     if (count > LocalMcpServerManager.MAX_AUTO_RESTARTS) {
       logger.error(
-        `Local MCP server "${name}" crashed ${count} times — giving up auto-restart. Use the admin panel to restart manually.`
+        `Local MCP server "${name}" crashed ${count} times — giving up auto-restart. Use the admin panel to restart manually.`,
       );
       this.setStatus(def, {
         running: false,
@@ -627,7 +686,7 @@ export class LocalMcpServerManager extends EventEmitter {
       ];
     logger.warn(
       `Local MCP server "${name}" crashed (attempt ${count}/${LocalMcpServerManager.MAX_AUTO_RESTARTS}). ` +
-        `Auto-restarting in ${delay / 1000}s…`
+        `Auto-restarting in ${delay / 1000}s…`,
     );
     this.setStatus(def, {
       running: false,
@@ -655,7 +714,7 @@ export class LocalMcpServerManager extends EventEmitter {
 
   private setStatus(
     def: LocalMcpServerDefinition,
-    partial: Partial<LocalServerStatus>
+    partial: Partial<LocalServerStatus>,
   ): void {
     const existing = this.statuses.get(def.name);
     this.statuses.set(def.name, {
@@ -673,7 +732,7 @@ export class LocalMcpServerManager extends EventEmitter {
 
   override on<K extends keyof LocalServerManagerEvents>(
     event: K,
-    listener: LocalServerManagerEvents[K]
+    listener: LocalServerManagerEvents[K],
   ): this {
     return super.on(event, listener);
   }

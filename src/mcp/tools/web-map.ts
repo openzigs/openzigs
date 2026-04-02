@@ -11,14 +11,28 @@ import Database from "better-sqlite3";
 import path from "node:path";
 import os from "node:os";
 import type { ToolDefinition } from "../tool-registry.js";
-import { getFirecrawlClient, isBlockedUrl } from "../../browser/firecrawl-client.js";
+import {
+  getFirecrawlClient,
+  isBlockedUrl,
+} from "../../browser/firecrawl-client.js";
 
 // ── Zod Schema ───────────────────────────────────────────────────────────
 
 const webMapSchema = z.object({
   url: z.string().url().describe("Root URL to map"),
-  includeSubdomains: z.boolean().optional().default(false).describe("Include subdomains in map results"),
-  limit: z.number().int().min(1).max(5000).optional().default(100).describe("Max number of URLs to discover (default: 100, max: 5000)"),
+  includeSubdomains: z
+    .boolean()
+    .optional()
+    .default(false)
+    .describe("Include subdomains in map results"),
+  limit: z
+    .number()
+    .int()
+    .min(1)
+    .max(5000)
+    .optional()
+    .default(100)
+    .describe("Max number of URLs to discover (default: 100, max: 5000)"),
   search: z.string().optional().describe("Filter URLs matching this query"),
 });
 
@@ -56,15 +70,27 @@ export class MapRepository {
 
   saveMap(rootUrl: string, urls: string[], searchQuery?: string): number {
     const domain = sanitizeDomain(rootUrl);
-    const result = this.db.prepare(`
+    const result = this.db
+      .prepare(
+        `
       INSERT INTO web_maps (root_url, search_query, url_count, urls_json, domain)
       VALUES (?, ?, ?, ?, ?)
-    `).run(rootUrl, searchQuery ?? null, urls.length, JSON.stringify(urls), domain);
+    `,
+      )
+      .run(
+        rootUrl,
+        searchQuery ?? null,
+        urls.length,
+        JSON.stringify(urls),
+        domain,
+      );
     return Number(result.lastInsertRowid);
   }
 
   getLatestMap(rootUrl: string): MapRow | undefined {
-    return this.db.prepare(`
+    return this.db
+      .prepare(
+        `
       SELECT id, root_url as rootUrl, search_query as searchQuery,
              url_count as urlCount, urls_json as urlsJson,
              mapped_at as mappedAt, domain
@@ -72,17 +98,23 @@ export class MapRepository {
       WHERE root_url = ?
       ORDER BY id DESC
       LIMIT 1
-    `).get(rootUrl) as MapRow | undefined;
+    `,
+      )
+      .get(rootUrl) as MapRow | undefined;
   }
 
   listMaps(limit = 50): MapRow[] {
-    return this.db.prepare(`
+    return this.db
+      .prepare(
+        `
       SELECT id, root_url as rootUrl, search_query as searchQuery,
              url_count as urlCount, mapped_at as mappedAt, domain
       FROM web_maps
       ORDER BY id DESC
       LIMIT ?
-    `).all(limit) as MapRow[];
+    `,
+      )
+      .all(limit) as MapRow[];
   }
 
   getDb(): Database.Database {
@@ -125,9 +157,18 @@ export function createWebMapTool(repo?: MapRepository): ToolDefinition {
       type: "object",
       properties: {
         url: { type: "string", description: "Root URL to map" },
-        includeSubdomains: { type: "boolean", description: "Include subdomains (default: false)" },
-        limit: { type: "number", description: "Max URLs to discover (default: 100, max: 5000)" },
-        search: { type: "string", description: "Filter URLs matching this query" },
+        includeSubdomains: {
+          type: "boolean",
+          description: "Include subdomains (default: false)",
+        },
+        limit: {
+          type: "number",
+          description: "Max URLs to discover (default: 100, max: 5000)",
+        },
+        search: {
+          type: "string",
+          description: "Filter URLs matching this query",
+        },
       },
       required: ["url"],
     },
@@ -140,7 +181,10 @@ export function createWebMapTool(repo?: MapRepository): ToolDefinition {
 
       // SSRF check
       if (isBlockedUrl(url)) {
-        return { text: `SSRF blocked: "${url}" targets an internal/private network address`, isError: true };
+        return {
+          text: `SSRF blocked: "${url}" targets an internal/private network address`,
+          isError: true,
+        };
       }
 
       const client = getFirecrawlClient();
@@ -213,7 +257,10 @@ export function createWebMapTool(repo?: MapRepository): ToolDefinition {
 
         return { text: lines.join("\n") };
       } catch (err) {
-        return { text: `Web map failed: ${err instanceof Error ? err.message : String(err)}`, isError: true };
+        return {
+          text: `Web map failed: ${err instanceof Error ? err.message : String(err)}`,
+          isError: true,
+        };
       }
     },
   };

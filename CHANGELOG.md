@@ -9,6 +9,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Airtable MCP Integration** — Full Airtable API client with per-base rate limiting and read/write MCP tools (#738, #743, #745, #746)
+  - `AirtableClient` with automatic exponential backoff, non-retryable error detection, and `RateLimiter` (≤5 req/sec per base)
+  - Read tools: `airtable-list-bases`, `airtable-list-tables`, `airtable-read-records`, `airtable-list-views`, `airtable-get-fields`
+  - Write tools: `airtable-create-records`, `airtable-update-records`, `airtable-delete-records` (batch ≤10, typecast support)
+  - Formula validation utility with cheatsheet for NL query translation (#744)
+- **Google Sheets MCP Integration** — Sheets API v4 client with OAuth2 token refresh and read/write MCP tools (#738, #741, #747, #742)
+  - `SheetsClient` with `SheetsRateLimiter` (≤60 req/min sliding window), A1 notation validation, and automatic OAuth2 token refresh
+  - Read tools: `sheets-list-spreadsheets`, `sheets-read-range`, `sheets-get-metadata`
+  - Write tools: `sheets-write-range`, `sheets-append-rows`, `sheets-create-spreadsheet`, `sheets-create-sheet`, `sheets-format-cells`
+  - Column helper utilities (`columnToLetter`, `letterToColumn`) and formula cheatsheet (#744)
+- **Data Output Helper** — shared utility for writing structured row data to Airtable/Sheets from any tool (#748)
+  - `site-to-dataset` and `lead-extract` tools now accept optional `outputTo` parameter for direct Airtable/Sheets export
+  - Graceful degradation: if export fails, text results are still returned
+- **Integrations Admin Panel** — UI for configuring Airtable & Google Sheets credentials (#740)
+  - `POST /api/admin/integrations/save` — save credentials to Secret Vault
+  - `POST /api/admin/integrations/test` — test connectivity
+  - `GET /api/admin/integrations/status` — check configuration status
+  - `SecretVaultService.getByLabel()` helper for credential lookup by label
+
+- **Firecrawl Search** — `search()` method on `FirecrawlClient` calling `/v2/search` (DuckDuckGo fallback, no API key needed) with SSRF filtering on returned URLs (#753)
+  - `firecrawl-search` standalone MCP tool for explicit Firecrawl web search
+  - `web-search` tool now falls back to Firecrawl search when Brave API key is unavailable and Firecrawl sidecar is running
+- **Firecrawl Webhook Callbacks** — async crawl and batch scrape jobs now use webhook callbacks instead of polling when available (#751)
+  - `POST /api/webhooks/firecrawl` endpoint with HMAC-SHA256 signature validation
+  - Automatic fallback to polling when webhooks fail or are disabled
+  - `firecrawl.useWebhooks` config option (default: `true`)
+  - Rate limiting on webhook endpoint (100 req/min)
+  - Graceful shutdown: pending webhook promises rejected on server stop
+
 - **SCORM 1.2 Export** — export any presentation as a SCORM 1.2-compliant package for upload to any LMS (Moodle, Canvas, Blackboard, SCORM Cloud) (#688)
   - `generateManifest()` — generates valid `imsmanifest.xml` with ADL SCORM 1.2 schema, mastery score = 80 (#704)
   - `renderScormHtml()` — self-contained SCO HTML with embedded SCORM API adapter, chapter navigation, and quiz engine (#703)

@@ -67,7 +67,7 @@
     "dynamicToolLoading": false,
     "infiniteSessions": {
       "enabled": true,
-      "backgroundCompactionThreshold": 0.80,
+      "backgroundCompactionThreshold": 0.8,
       "bufferExhaustionThreshold": 0.95
     }
   },
@@ -246,6 +246,7 @@
   "firecrawl": {
     "enabled": false,
     "url": "http://localhost:3002",
-    "idleTimeoutMs": 600000
+    "idleTimeoutMs": 600000,
+    "useWebhooks": true
   }
 }

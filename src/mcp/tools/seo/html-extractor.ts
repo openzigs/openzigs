@@ -53,11 +53,28 @@ export type ExtractedContent = {
 
 /** Selectors for elements that are navigation/chrome, not article content. */
 const NOISE_SELECTORS = [
-  "nav", "header", "footer", "aside",
-  "[role='navigation']", "[role='banner']", "[role='contentinfo']",
-  ".sidebar", ".nav", ".footer", ".header", ".menu", ".breadcrumb",
-  ".advertisement", ".ad", ".cookie-banner", ".popup",
-  "script", "style", "noscript", "iframe", "svg",
+  "nav",
+  "header",
+  "footer",
+  "aside",
+  "[role='navigation']",
+  "[role='banner']",
+  "[role='contentinfo']",
+  ".sidebar",
+  ".nav",
+  ".footer",
+  ".header",
+  ".menu",
+  ".breadcrumb",
+  ".advertisement",
+  ".ad",
+  ".cookie-banner",
+  ".popup",
+  "script",
+  "style",
+  "noscript",
+  "iframe",
+  "svg",
 ];
 
 /**
@@ -74,17 +91,20 @@ export function fleschKincaid(text: string): number {
   const avgSentenceLen = words.length / sentences.length;
   const avgSyllablesPerWord = syllables / words.length;
 
-  return Math.round(
-    (206.835 - 1.015 * avgSentenceLen - 84.6 * avgSyllablesPerWord) * 10,
-  ) / 10;
+  return (
+    Math.round(
+      (206.835 - 1.015 * avgSentenceLen - 84.6 * avgSyllablesPerWord) * 10,
+    ) / 10
+  );
 }
 
 /** Approximate syllable count for an English word. */
 export function countSyllables(word: string): number {
   const w = word.toLowerCase().replace(/[^a-z]/g, "");
   if (w.length <= 3) return 1;
-  let count = w.replace(/(?:[^laeiouy]es|ed|[^laeiouy]e)$/, "")
-    .match(/[aeiouy]{1,2}/g)?.length ?? 0;
+  let count =
+    w.replace(/(?:[^laeiouy]es|ed|[^laeiouy]e)$/, "").match(/[aeiouy]{1,2}/g)
+      ?.length ?? 0;
   if (count === 0) count = 1;
   return count;
 }
@@ -101,7 +121,8 @@ export function extractJsonLdTypes(
   out: SchemaMarkup[],
   depth = 0,
 ): void {
-  if (depth > MAX_JSONLD_DEPTH || obj == null || typeof obj !== "object") return;
+  if (depth > MAX_JSONLD_DEPTH || obj == null || typeof obj !== "object")
+    return;
   if (Array.isArray(obj)) {
     for (const entry of obj) {
       extractJsonLdTypes(entry, out, depth + 1);
@@ -124,7 +145,9 @@ export function extractJsonLdTypes(
     const types = Array.isArray(type) ? type : [type];
     for (const t of types) {
       if (typeof t === "string") {
-        const properties = Object.keys(record).filter((k) => !k.startsWith("@"));
+        const properties = Object.keys(record).filter(
+          (k) => !k.startsWith("@"),
+        );
         out.push({ type: t, properties });
       }
     }
@@ -144,7 +167,10 @@ export function extractJsonLdTypes(
  * Strips navigation/footer/sidebar noise, extracts headings, body text,
  * and computes metrics.
  */
-export function extractContent(html: string, sourceUrl?: string): ExtractedContent {
+export function extractContent(
+  html: string,
+  sourceUrl?: string,
+): ExtractedContent {
   const $ = cheerio.load(html);
 
   // ── Pre-noise-removal extraction (meta, schema, images, links) ─────
@@ -188,17 +214,24 @@ export function extractContent(html: string, sourceUrl?: string): ExtractedConte
     const src = $(el).attr("src")?.trim() ?? "";
     const rawAlt = $(el).attr("alt");
     const alt = rawAlt?.trim() ?? "";
-    const altStatus: ImageInfo["altStatus"] = rawAlt === undefined ? "missing" : alt.length > 0 ? "present" : "empty";
+    const altStatus: ImageInfo["altStatus"] =
+      rawAlt === undefined ? "missing" : alt.length > 0 ? "present" : "empty";
     const hasAlt = altStatus === "present";
     const isAriaHidden = $(el).attr("aria-hidden") === "true";
-    const isLazyLoaded = $(el).attr("data-src") !== undefined || $(el).attr("data-srcset") !== undefined;
+    const isLazyLoaded =
+      $(el).attr("data-src") !== undefined ||
+      $(el).attr("data-srcset") !== undefined;
     if (src) {
       images.push({ src, alt, hasAlt, altStatus, isAriaHidden, isLazyLoaded });
     }
   });
   const imagesWithoutAlt = images.filter((img) => !img.hasAlt).length;
-  const imagesMissingAlt = images.filter((img) => img.altStatus === "missing").length;
-  const imagesEmptyAlt = images.filter((img) => img.altStatus === "empty").length;
+  const imagesMissingAlt = images.filter(
+    (img) => img.altStatus === "missing",
+  ).length;
+  const imagesEmptyAlt = images.filter(
+    (img) => img.altStatus === "empty",
+  ).length;
   const imagesAriaHidden = images.filter((img) => img.isAriaHidden).length;
   const imagesLazyLoaded = images.filter((img) => img.isLazyLoaded).length;
 
@@ -216,11 +249,22 @@ export function extractContent(html: string, sourceUrl?: string): ExtractedConte
   $("a[href]").each((_i, el) => {
     const href = $(el).attr("href")?.trim() ?? "";
     const text = $(el).text().trim();
-    if (!href || href.startsWith("#") || href.startsWith("javascript:") || href.startsWith("mailto:")) return;
+    if (
+      !href ||
+      href.startsWith("#") ||
+      href.startsWith("javascript:") ||
+      href.startsWith("mailto:") ||
+      href.startsWith("data:") ||
+      href.startsWith("vbscript:")
+    )
+      return;
     let isInternal = false;
     if (sourceHostname) {
       try {
-        const linkHost = new URL(href, sourceUrl).hostname.replace(/^www\./, "");
+        const linkHost = new URL(href, sourceUrl).hostname.replace(
+          /^www\./,
+          "",
+        );
         isInternal = linkHost === sourceHostname;
       } catch {
         // relative urls are internal
@@ -265,7 +309,8 @@ export function extractContent(html: string, sourceUrl?: string): ExtractedConte
     }
   });
 
-  const bodyText = cleanText(textBlocks.join("\n\n"));
+  // Cheerio's .text() already decodes HTML entities — no entity re-decoding needed.
+  const bodyText = textBlocks.join("\n\n").replace(/\s+/g, " ").trim();
 
   // Compute metrics
   const words = bodyText.split(/\s+/).filter((w) => w.length > 0);
@@ -329,7 +374,10 @@ export function extractKeywords(text: string, topN = 15): KeywordEntry[] {
   tfidf.listTerms(0).forEach((item) => {
     // Skip very short terms and stopwords
     if (item.term.length >= 3) {
-      terms.push({ term: item.term, tfidf: Math.round(item.tfidf * 1000) / 1000 });
+      terms.push({
+        term: item.term,
+        tfidf: Math.round(item.tfidf * 1000) / 1000,
+      });
     }
   });
 

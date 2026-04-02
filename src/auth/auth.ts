@@ -12,7 +12,7 @@ type RateLimitState = {
 const roleRank: Record<Role, number> = {
   viewer: 0,
   operator: 1,
-  admin: 2
+  admin: 2,
 };
 
 const hasPermission = (role: Role, required: Role) => {
@@ -74,7 +74,10 @@ const resolveRole = (config: AuthConfig): Role => {
 };
 
 export const createAuthMiddleware = (config: AuthConfig) => {
-  const limiter = new FailedAuthLimiter(config.rateLimit.windowMs, config.rateLimit.max);
+  const limiter = new FailedAuthLimiter(
+    config.rateLimit.windowMs,
+    config.rateLimit.max,
+  );
 
   return (req: Request, res: Response, next: NextFunction) => {
     const now = Date.now();
@@ -100,8 +103,9 @@ export const createAuthMiddleware = (config: AuthConfig) => {
 
     const tokenBuffer = Buffer.from(token);
     const expectedBuffer = Buffer.from(expectedToken);
-    const isMatch = tokenBuffer.length === expectedBuffer.length
-      && timingSafeEqual(tokenBuffer, expectedBuffer);
+    const isMatch =
+      tokenBuffer.length === expectedBuffer.length &&
+      timingSafeEqual(tokenBuffer, expectedBuffer);
     if (!isMatch) {
       limiter.registerFailure(key, now);
       return res.status(401).json({ error: "Unauthorized" });
@@ -115,7 +119,10 @@ export const createAuthMiddleware = (config: AuthConfig) => {
 
 export const checkRole = (requiredRole: Role) => {
   return (req: Request, res: Response, next: NextFunction) => {
-    const role = ((req as unknown as Record<string, unknown>).userRole as Role | undefined) ?? "viewer";
+    const role =
+      ((req as unknown as Record<string, unknown>).userRole as
+        | Role
+        | undefined) ?? "viewer";
     if (!hasPermission(role, requiredRole)) {
       return res.status(403).json({ error: "Forbidden" });
     }

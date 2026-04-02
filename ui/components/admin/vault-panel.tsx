@@ -4,7 +4,16 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { fetchJson } from "@/lib/api";
 import { showToast } from "@/components/toast";
-import { Lock, Unlock, Plus, Trash2, Eye, EyeOff, Key, Shield } from "lucide-react";
+import {
+  Lock,
+  Unlock,
+  Plus,
+  Trash2,
+  Eye,
+  EyeOff,
+  Key,
+  Shield,
+} from "lucide-react";
 
 type SecretEntry = {
   id: string;
@@ -47,7 +56,8 @@ export const VaultPanel = () => {
 
   const secretsQuery = useQuery({
     queryKey: ["vault-secrets"],
-    queryFn: () => fetchJson<{ secrets: SecretEntry[] }>("/api/admin/vault/secrets"),
+    queryFn: () =>
+      fetchJson<{ secrets: SecretEntry[] }>("/api/admin/vault/secrets"),
     enabled: statusQuery.data?.unlocked === true,
   });
 
@@ -82,8 +92,7 @@ export const VaultPanel = () => {
   });
 
   const lockMutation = useMutation({
-    mutationFn: () =>
-      fetchJson("/api/admin/vault/lock", { method: "POST" }),
+    mutationFn: () => fetchJson("/api/admin/vault/lock", { method: "POST" }),
     onSuccess: () => {
       showToast("Vault locked", "info");
       void queryClient.invalidateQueries({ queryKey: ["vault-status"] });
@@ -93,7 +102,12 @@ export const VaultPanel = () => {
   });
 
   const addSecretMutation = useMutation({
-    mutationFn: (data: { label: string; value: string; service?: string; username?: string }) =>
+    mutationFn: (data: {
+      label: string;
+      value: string;
+      service?: string;
+      username?: string;
+    }) =>
       fetchJson("/api/admin/vault/secrets", {
         method: "POST",
         body: JSON.stringify(data),
@@ -162,7 +176,11 @@ export const VaultPanel = () => {
               onClick={() => setShowPassword(!showPassword)}
               className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
             >
-              {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              {showPassword ? (
+                <EyeOff className="h-4 w-4" />
+              ) : (
+                <Eye className="h-4 w-4" />
+              )}
             </button>
           </div>
           <button
@@ -205,7 +223,11 @@ export const VaultPanel = () => {
               onClick={() => setShowPassword(!showPassword)}
               className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
             >
-              {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              {showPassword ? (
+                <EyeOff className="h-4 w-4" />
+              ) : (
+                <Eye className="h-4 w-4" />
+              )}
             </button>
           </div>
           <button
@@ -228,7 +250,9 @@ export const VaultPanel = () => {
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2 text-sm text-emerald-500">
           <Unlock className="h-4 w-4" />
-          <span>{secrets.length} secret{secrets.length !== 1 ? "s" : ""} stored</span>
+          <span>
+            {secrets.length} secret{secrets.length !== 1 ? "s" : ""} stored
+          </span>
         </div>
         <div className="flex gap-2">
           <button
@@ -257,7 +281,9 @@ export const VaultPanel = () => {
       {/* Change password form */}
       {showChangePassword && (
         <div className="rounded-lg border border-border bg-card p-4 space-y-3">
-          <p className="text-sm font-medium text-foreground">Change Master Password</p>
+          <p className="text-sm font-medium text-foreground">
+            Change Master Password
+          </p>
           <input
             type="password"
             placeholder="Current password"
@@ -274,11 +300,19 @@ export const VaultPanel = () => {
           />
           <div className="flex gap-2">
             <button
-              onClick={() => changePasswordMutation.mutate({ currentPassword, newPassword })}
-              disabled={!currentPassword || newPassword.length < 8 || changePasswordMutation.isPending}
+              onClick={() =>
+                changePasswordMutation.mutate({ currentPassword, newPassword })
+              }
+              disabled={
+                !currentPassword ||
+                newPassword.length < 8 ||
+                changePasswordMutation.isPending
+              }
               className="rounded-lg bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-40"
             >
-              {changePasswordMutation.isPending ? "Changing…" : "Change Password"}
+              {changePasswordMutation.isPending
+                ? "Changing…"
+                : "Change Password"}
             </button>
             <button
               onClick={() => {
@@ -317,7 +351,11 @@ export const VaultPanel = () => {
               onClick={() => setShowNewValue(!showNewValue)}
               className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
             >
-              {showNewValue ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              {showNewValue ? (
+                <EyeOff className="h-4 w-4" />
+              ) : (
+                <Eye className="h-4 w-4" />
+              )}
             </button>
           </div>
           <div className="grid grid-cols-2 gap-3">
@@ -367,17 +405,26 @@ export const VaultPanel = () => {
 
       {/* Secrets list */}
       {secrets.length === 0 ? (
-        <p className="text-sm text-muted-foreground">No secrets stored yet. Click &ldquo;Add Secret&rdquo; to get started.</p>
+        <p className="text-sm text-muted-foreground">
+          No secrets stored yet. Click &ldquo;Add Secret&rdquo; to get started.
+        </p>
       ) : (
         <div className="divide-y divide-border rounded-lg border border-border">
           {secrets.map((secret) => (
-            <div key={secret.id} className="flex items-center justify-between px-4 py-3">
+            <div
+              key={secret.id}
+              className="flex items-center justify-between px-4 py-3"
+            >
               <div className="flex items-center gap-3">
                 <Key className="h-4 w-4 shrink-0 text-muted-foreground" />
                 <div>
-                  <p className="text-sm font-medium text-foreground">{secret.label}</p>
+                  <p className="text-sm font-medium text-foreground">
+                    {secret.label}
+                  </p>
                   <p className="text-xs text-muted-foreground">
-                    {[secret.service, secret.username].filter(Boolean).join(" · ") ||
+                    {[secret.service, secret.username]
+                      .filter(Boolean)
+                      .join(" · ") ||
                       `Added ${new Date(secret.createdAt).toLocaleDateString()}`}
                   </p>
                 </div>

@@ -25,7 +25,7 @@ export function resolveDockerSocketPath(): string {
       "Containers",
       "com.docker.docker",
       "Data",
-      "docker.raw.sock"
+      "docker.raw.sock",
     ),
   ];
 
@@ -152,9 +152,13 @@ export class DockerSidecarManager extends EventEmitter {
     for (const def of this.definitions) {
       if (this.skipUnconfigured && !this.hasRequiredCredentials(def)) {
         logger.info(
-          `Skipping sidecar "${def.name}": missing required env vars (${(def.requiredEnvVars ?? []).join(", ")})`
+          `Skipping sidecar "${def.name}": missing required env vars (${(def.requiredEnvVars ?? []).join(", ")})`,
         );
-        this.setStatus(def, { running: false, healthy: false, error: "credentials_missing" });
+        this.setStatus(def, {
+          running: false,
+          healthy: false,
+          error: "credentials_missing",
+        });
         continue;
       }
 
@@ -178,7 +182,11 @@ export class DockerSidecarManager extends EventEmitter {
       } catch (error) {
         const err = error instanceof Error ? error : new Error(String(error));
         logger.error(`Failed to start sidecar "${def.name}": ${err.message}`);
-        this.setStatus(def, { running: false, healthy: false, error: err.message });
+        this.setStatus(def, {
+          running: false,
+          healthy: false,
+          error: err.message,
+        });
         this.emit("sidecar:error", def.name, err);
       }
     }
@@ -219,7 +227,11 @@ export class DockerSidecarManager extends EventEmitter {
       return this.statuses.get(name) ?? null;
     } catch (error) {
       const err = error instanceof Error ? error : new Error(String(error));
-      this.setStatus(def, { running: false, healthy: false, error: err.message });
+      this.setStatus(def, {
+        running: false,
+        healthy: false,
+        error: err.message,
+      });
       return this.statuses.get(name) ?? null;
     }
   }
@@ -239,7 +251,7 @@ export class DockerSidecarManager extends EventEmitter {
     try {
       const ping = this.docker.ping();
       const timeout = new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error("Docker ping timed out")), 5000)
+        setTimeout(() => reject(new Error("Docker ping timed out")), 5000),
       );
       await Promise.race([ping, timeout]);
       return true;
@@ -296,11 +308,15 @@ export class DockerSidecarManager extends EventEmitter {
     if (existing) {
       const info = await existing.inspect();
       if (info.State.Running) {
-        logger.debug(`Sidecar "${def.name}" already running (${existing.id.slice(0, 12)})`);
+        logger.debug(
+          `Sidecar "${def.name}" already running (${existing.id.slice(0, 12)})`,
+        );
         return;
       }
       // Exists but stopped — start it
-      logger.info(`Starting existing sidecar "${def.name}" (${existing.id.slice(0, 12)})`);
+      logger.info(
+        `Starting existing sidecar "${def.name}" (${existing.id.slice(0, 12)})`,
+      );
       await existing.start();
       return;
     }
@@ -338,7 +354,9 @@ export class DockerSidecarManager extends EventEmitter {
       },
     });
 
-    logger.info(`Created sidecar "${def.name}" container (${container.id.slice(0, 12)})`);
+    logger.info(
+      `Created sidecar "${def.name}" container (${container.id.slice(0, 12)})`,
+    );
     await container.start();
     logger.info(`Started sidecar "${def.name}"`);
   }
@@ -393,7 +411,7 @@ export class DockerSidecarManager extends EventEmitter {
   }
 
   private async findContainer(
-    containerName: string
+    containerName: string,
   ): Promise<Docker.Container | null> {
     try {
       const containers = await this.docker.listContainers({
@@ -403,7 +421,7 @@ export class DockerSidecarManager extends EventEmitter {
 
       // Docker name filter is prefix-based, so exact-match
       const match = containers.find((c) =>
-        c.Names.some((n) => n === `/${containerName}`)
+        c.Names.some((n) => n === `/${containerName}`),
       );
       if (!match) return null;
       return this.docker.getContainer(match.Id);
@@ -412,7 +430,9 @@ export class DockerSidecarManager extends EventEmitter {
     }
   }
 
-  private async getContainerId(def: SidecarDefinition): Promise<string | undefined> {
+  private async getContainerId(
+    def: SidecarDefinition,
+  ): Promise<string | undefined> {
     const container = await this.findContainer(def.containerName);
     if (!container) return undefined;
     const info = await container.inspect();
@@ -427,9 +447,8 @@ export class DockerSidecarManager extends EventEmitter {
       logger.info(`Pulling image "${imageName}"...`);
       const stream = await this.docker.pull(imageName);
       await new Promise<void>((resolve, reject) => {
-        this.docker.modem.followProgress(
-          stream,
-          (err: Error | null) => (err ? reject(err) : resolve())
+        this.docker.modem.followProgress(stream, (err: Error | null) =>
+          err ? reject(err) : resolve(),
         );
       });
       logger.info(`Pulled image "${imageName}"`);
@@ -438,7 +457,7 @@ export class DockerSidecarManager extends EventEmitter {
 
   private async waitForHealthy(
     def: SidecarDefinition,
-    baseUrl: string
+    baseUrl: string,
   ): Promise<boolean> {
     const healthPath = def.healthCheckPath ?? "/health";
     const timeout = def.healthCheckTimeout ?? 5000;
@@ -453,7 +472,9 @@ export class DockerSidecarManager extends EventEmitter {
         clearTimeout(timer);
 
         if (response.ok) {
-          logger.info(`Sidecar "${def.name}" healthy after ${attempt + 1} attempt(s)`);
+          logger.info(
+            `Sidecar "${def.name}" healthy after ${attempt + 1} attempt(s)`,
+          );
           return true;
         }
       } catch {
@@ -486,7 +507,7 @@ export class DockerSidecarManager extends EventEmitter {
     }
 
     logger.warn(
-      `Sidecar "${def.name}" failed health check after ${this.healthRetries} attempts`
+      `Sidecar "${def.name}" failed health check after ${this.healthRetries} attempts`,
     );
     return false;
   }
@@ -497,7 +518,7 @@ export class DockerSidecarManager extends EventEmitter {
 
   private setStatus(
     def: SidecarDefinition,
-    partial: Partial<SidecarStatus>
+    partial: Partial<SidecarStatus>,
   ): void {
     const existing = this.statuses.get(def.name);
     this.statuses.set(def.name, {
@@ -515,7 +536,7 @@ export class DockerSidecarManager extends EventEmitter {
 
   override on<K extends keyof SidecarManagerEvents>(
     event: K,
-    listener: SidecarManagerEvents[K]
+    listener: SidecarManagerEvents[K],
   ): this {
     return super.on(event, listener);
   }

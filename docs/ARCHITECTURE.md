@@ -849,6 +849,73 @@ Self-hosted Firecrawl sidecar for deep website crawling with browser rendering. 
 
 **Config:** Set `firecrawl.enabled=true` and optionally `firecrawl.url` (default `http://localhost:3002`) and `firecrawl.idleTimeoutMs` (default 600000) in `~/.openzigs/config.json`.
 
+#### Firecrawl Search & Webhook Architecture (Epic #739)
+
+**Search provider chain:** The `web-search` tool uses a two-tier fallback: Brave Search (primary, requires `BRAVE_API_KEY`) → Firecrawl search (fallback when Brave key is absent and the Firecrawl sidecar is running). The standalone `firecrawl-search` tool provides direct access to Firecrawl's `/v2/search` endpoint (DuckDuckGo-backed in self-hosted mode).
+
+**Webhook endpoint:** `/api/webhooks/firecrawl` — internal-only POST endpoint for async crawl/batch scrape completion callbacks from the Firecrawl Docker sidecar.
+
+- **HMAC-SHA256 validation:** Every payload is verified against a per-session random secret (`generateWebhookSecret()`). Raw body bytes are captured via `express.json({ verify })` middleware and verified with timing-safe comparison.
+- **Localhost enforcement:** Only requests from loopback addresses (`127.0.0.1`, `::1`, `::ffff:127.0.0.1`) are accepted, validated via `req.socket.remoteAddress` (not the `Host` header).
+- **Polling fallback:** When `firecrawl.useWebhooks` is `false` (or the webhook handler is unavailable), the `FirecrawlClient` falls back to polling the Firecrawl status API on a 2-second interval.
+- **Source:** `src/browser/firecrawl-webhooks.ts` (handler + router), `src/server.ts` (mount + raw-body middleware).
+
+#### Airtable & Google Sheets Integration (Epic #738)
+
+Two API clients (`AirtableClient`, `SheetsClient`) expose 16 MCP tools for reading and writing spreadsheet/database data. Both clients use the Secret Vault for credential storage and include built-in rate limiting.
+
+**Airtable Client** (`src/mcp/tools/airtable/airtable-client.ts`):
+- Pure REST client using `fetch()` — no SDK dependency
+- Rate limiter: ≤5 requests/second per base with token-bucket queuing
+- Auth: Personal access token retrieved from Secret Vault via label `airtable-api-key`
+- Error handling: 401/403/404/422/429 with exponential backoff respecting `Retry-After`
+
+**Google Sheets Client** (`src/mcp/tools/sheets/sheets-client.ts`):
+- Uses `googleapis` npm package (Google Sheets API v4)
+- Rate limiter: ≤60 requests/minute per user with sliding-window enforcement
+- Auth: API key OR OAuth2 token from Secret Vault (labels `google-sheets-api-key`, `google-sheets-oauth-token`)
+- OAuth2 auto-refresh via `google-auth-library` (bundled with `googleapis`)
+
+**MCP Tools (16 total):**
+
+| Tool | Risk | Description |
+|------|------|-------------|
+| `airtable-list-bases` | 🟢 low | Lists all accessible Airtable bases |
+| `airtable-list-tables` | 🟢 low | Lists tables in a base with field summaries |
+| `airtable-read-records` | 🟢 low | Reads records with filterByFormula, sort, pagination, view, field selection |
+| `airtable-list-views` | 🟢 low | Lists views in a table |
+| `airtable-get-fields` | 🟢 low | Returns field metadata (name, type, options) |
+| `airtable-create-records` | 🟡 medium | Creates 1–10 records (batch) |
+| `airtable-update-records` | 🟡 medium | Updates 1–10 records with optional typecast |
+| `airtable-delete-records` | 🟡 medium | Deletes 1–10 records by ID |
+| `sheets-list-spreadsheets` | 🟢 low | Lists recent/accessible spreadsheets |
+| `sheets-read-range` | 🟢 low | Reads cell values from A1-notation range, returns markdown table |
+| `sheets-get-metadata` | 🟢 low | Returns spreadsheet metadata (sheets, rows, columns, named ranges) |
+| `sheets-write-range` | 🟡 medium | Writes values to a specific range |
+| `sheets-append-rows` | 🟡 medium | Appends rows after last data row |
+| `sheets-create-spreadsheet` | 🟡 medium | Creates a new spreadsheet |
+| `sheets-create-sheet` | 🟡 medium | Adds a sheet tab to an existing spreadsheet |
+| `sheets-format-cells` | 🟡 medium | Applies formatting (bold, colors, borders, number format) via batchUpdate |
+
+**Formula Validation Utilities:**
+- `validateAirtableFormula()` (`src/mcp/tools/airtable/airtable-formula-utils.ts`) — catches unmatched braces, invalid operators, unterminated strings
+- `validateA1Notation()` (`src/mcp/tools/sheets/sheets-formula-utils.ts`) — validates range references like `Sheet1!A1:D10`
+- Read tool descriptions include formula syntax cheat sheets so the LLM generates valid formulas directly
+
+**Data Output Integration:**
+- `site-to-dataset` and `lead-extract` tools accept an optional `outputTo` parameter:
+  - `{ type: "airtable", baseId, tableIdOrName }` — creates records via AirtableClient
+  - `{ type: "sheets", spreadsheetId, range }` — appends rows via SheetsClient
+- Graceful degradation: if output fails, extracted data is still returned as text
+- Source: `src/mcp/tools/data-output-helper.ts`
+
+**Admin Configuration:**
+- `POST /api/admin/integrations/airtable/test` — tests Airtable connection (calls `listBases()`)
+- `POST /api/admin/integrations/sheets/test` — tests Sheets connection (calls `listSpreadsheets()`)
+- `PUT /api/admin/integrations/airtable` — saves Airtable API key to Secret Vault
+- `PUT /api/admin/integrations/sheets` — saves Sheets API key / OAuth2 token to Secret Vault
+- UI: `ui/src/app/admin/integrations/page.tsx` — masked API key inputs, test/save buttons, status indicators
+
 **Data Flow:**
 ```
 targetUrl + keyword

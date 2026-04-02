@@ -5,16 +5,29 @@ import path from "node:path";
 import { randomUUID, randomBytes, createHash } from "node:crypto";
 import multer from "multer";
 import { z } from "zod";
-import { loadConfig, customAgentSchema, mcpServerConfigSchema, nativeMcpServersSchema } from "../config/index.js";
+import {
+  loadConfig,
+  customAgentSchema,
+  mcpServerConfigSchema,
+  nativeMcpServersSchema,
+} from "../config/index.js";
 import { logger } from "../logging/logger.js";
 import { ALWAYS_ON_TOOLS } from "../mcp/constants.js";
 import type { ToolRegistry, RiskLevel } from "../mcp/tool-registry.js";
 import type { CopilotWrapper } from "../copilot/index.js";
-import type { ReasoningEffort, ProviderConfig, CustomAgentDefinition, NativeMcpServerDefinition } from "../copilot/index.js";
+import type {
+  ReasoningEffort,
+  ProviderConfig,
+  CustomAgentDefinition,
+  NativeMcpServerDefinition,
+} from "../copilot/index.js";
 import type { DockerSidecarManager } from "../mcp/docker-sidecar-manager.js";
 import type { LocalMcpServerManager } from "../mcp/local-mcp-server-manager.js";
 import { getPlatformCapabilities } from "../config/platform.js";
-import { type PromptManager, interpolateTemplate } from "../productivity/prompt-manager.js";
+import {
+  type PromptManager,
+  interpolateTemplate,
+} from "../productivity/prompt-manager.js";
 import type { Scheduler } from "../productivity/scheduler.js";
 import type { PersonalityManager } from "../personality/personality-manager.js";
 import type { SessionManager } from "../sessions/session-manager.js";
@@ -31,7 +44,11 @@ import type { KnowledgeIngestionService } from "../knowledge/index.js";
 import type { BrandVoiceService } from "../personality/brand-voice-service.js";
 import { SentinelConfigSchema, readStatusMarkdown } from "../sentinel/index.js";
 import { TemplateService } from "../productivity/template-service.js";
-import { CopilotNativeMcpTester, type NativeMcpDiscoveredTool, type NativeMcpTester } from "../mcp/native-mcp-test-service.js";
+import {
+  CopilotNativeMcpTester,
+  type NativeMcpDiscoveredTool,
+  type NativeMcpTester,
+} from "../mcp/native-mcp-test-service.js";
 import { AVAILABLE_VOICES } from "../voice/types.js";
 import { loadSkillMetadata } from "../skills/skill-loader.js";
 import { isAllowedNetworkNodeUrl } from "../security/url-validation.js";
@@ -40,14 +57,26 @@ import type { Server as SocketIOServer } from "socket.io";
 import { CronExpressionParser } from "cron-parser";
 
 let _adminIo: SocketIOServer | null = null;
-export function setAdminIO(io: SocketIOServer): void { _adminIo = io; }
+export function setAdminIO(io: SocketIOServer): void {
+  _adminIo = io;
+}
 
 let _tunnelPublicUrl: string | null = null;
-export function setTunnelPublicUrl(url: string | null): void { _tunnelPublicUrl = url; }
-export function getTunnelPublicUrl(): string | null { return _tunnelPublicUrl; }
+export function setTunnelPublicUrl(url: string | null): void {
+  _tunnelPublicUrl = url;
+}
+export function getTunnelPublicUrl(): string | null {
+  return _tunnelPublicUrl;
+}
 
-let _messageRouter: import("../routing/message-router.js").MessageRouter | null = null;
-export function setAdminMessageRouter(router: import("../routing/message-router.js").MessageRouter): void { _messageRouter = router; }
+let _messageRouter:
+  | import("../routing/message-router.js").MessageRouter
+  | null = null;
+export function setAdminMessageRouter(
+  router: import("../routing/message-router.js").MessageRouter,
+): void {
+  _messageRouter = router;
+}
 
 type EnvEntry = {
   name: string;
@@ -65,20 +94,31 @@ export const linkedinOAuthStates = new Map<string, number>();
 
 // ── TikTok OAuth state ────────────────────────────────────────────────────
 /** CSRF state + PKCE code_verifier for pending TikTok OAuth flows (short-lived, single-user) */
-export const tiktokOAuthStates = new Map<string, { ts: number; codeVerifier: string }>();
+export const tiktokOAuthStates = new Map<
+  string,
+  { ts: number; codeVerifier: string }
+>();
 
 // ── YouTube OAuth state ───────────────────────────────────────────────────
 /** CSRF state tokens for pending YouTube/Google OAuth flows (short-lived, single-user) */
 export const youtubeOAuthStates = new Map<string, number>();
 
 /** Refresh the Pinterest access token using the stored refresh token. */
-export async function refreshPinterestToken(): Promise<{ ok: boolean; expiresAt?: string; error?: string }> {
+export async function refreshPinterestToken(): Promise<{
+  ok: boolean;
+  expiresAt?: string;
+  error?: string;
+}> {
   const appId = (process.env.PINTEREST_APP_ID ?? "").trim();
   const appSecret = (process.env.PINTEREST_APP_SECRET ?? "").trim();
   const refreshToken = (process.env.PINTEREST_REFRESH_TOKEN ?? "").trim();
 
   if (!appId || !appSecret || !refreshToken) {
-    return { ok: false, error: "Missing PINTEREST_APP_ID, PINTEREST_APP_SECRET, or PINTEREST_REFRESH_TOKEN" };
+    return {
+      ok: false,
+      error:
+        "Missing PINTEREST_APP_ID, PINTEREST_APP_SECRET, or PINTEREST_REFRESH_TOKEN",
+    };
   }
 
   const basic = Buffer.from(`${appId}:${appSecret}`).toString("base64");
@@ -96,7 +136,10 @@ export async function refreshPinterestToken(): Promise<{ ok: boolean; expiresAt?
 
   if (!tokenRes.ok) {
     const errText = await tokenRes.text();
-    return { ok: false, error: `Pinterest token refresh failed (${tokenRes.status}): ${errText}` };
+    return {
+      ok: false,
+      error: `Pinterest token refresh failed (${tokenRes.status}): ${errText}`,
+    };
   }
 
   const tokenData = (await tokenRes.json()) as {
@@ -106,7 +149,9 @@ export async function refreshPinterestToken(): Promise<{ ok: boolean; expiresAt?
     refresh_token_expires_in?: number;
   };
 
-  const expiresAt = new Date(Date.now() + tokenData.expires_in * 1000).toISOString();
+  const expiresAt = new Date(
+    Date.now() + tokenData.expires_in * 1000,
+  ).toISOString();
   const envPath = defaultEnvPath();
   const updates: Record<string, string> = {
     PINTEREST_ACCESS_TOKEN: tokenData.access_token,
@@ -137,11 +182,16 @@ export async function exchangePinterestCode(code: string): Promise<{
   const appSecret = (process.env.PINTEREST_APP_SECRET ?? "").trim();
 
   if (!appId || !appSecret) {
-    return { ok: false, error: "PINTEREST_APP_ID and PINTEREST_APP_SECRET must be configured" };
+    return {
+      ok: false,
+      error: "PINTEREST_APP_ID and PINTEREST_APP_SECRET must be configured",
+    };
   }
 
   const backendPort = Number(process.env.PORT ?? 3000);
-  const redirectUri = (process.env.PINTEREST_REDIRECT_URI ?? "").trim() || `http://localhost:${backendPort}/api/pinterest/oauth/callback`;
+  const redirectUri =
+    (process.env.PINTEREST_REDIRECT_URI ?? "").trim() ||
+    `http://localhost:${backendPort}/api/pinterest/oauth/callback`;
   const basic = Buffer.from(`${appId}:${appSecret}`).toString("base64");
 
   const tokenRes = await fetch("https://api.pinterest.com/v5/oauth/token", {
@@ -160,7 +210,10 @@ export async function exchangePinterestCode(code: string): Promise<{
 
   if (!tokenRes.ok) {
     const errText = await tokenRes.text();
-    return { ok: false, error: `Pinterest token exchange failed (${tokenRes.status}): ${errText}` };
+    return {
+      ok: false,
+      error: `Pinterest token exchange failed (${tokenRes.status}): ${errText}`,
+    };
   }
 
   const tokenData = (await tokenRes.json()) as {
@@ -171,7 +224,9 @@ export async function exchangePinterestCode(code: string): Promise<{
     scope: string;
   };
 
-  const expiresAt = new Date(Date.now() + tokenData.expires_in * 1000).toISOString();
+  const expiresAt = new Date(
+    Date.now() + tokenData.expires_in * 1000,
+  ).toISOString();
   const envPath = defaultEnvPath();
   await upsertEnvFile(envPath, {
     PINTEREST_ACCESS_TOKEN: tokenData.access_token,
@@ -182,7 +237,9 @@ export async function exchangePinterestCode(code: string): Promise<{
   process.env.PINTEREST_REFRESH_TOKEN = tokenData.refresh_token;
   process.env.PINTEREST_TOKEN_EXPIRES_AT = expiresAt;
 
-  logger.info(`Pinterest OAuth completed — token expires at ${expiresAt}, scopes: ${tokenData.scope}`);
+  logger.info(
+    `Pinterest OAuth completed — token expires at ${expiresAt}, scopes: ${tokenData.scope}`,
+  );
   return {
     ok: true,
     accessToken: tokenData.access_token,
@@ -195,29 +252,43 @@ export async function exchangePinterestCode(code: string): Promise<{
 // ── LinkedIn OAuth helpers ─────────────────────────────────────────────────
 
 /** Refresh the LinkedIn access token using the stored refresh token. */
-export async function refreshLinkedInToken(): Promise<{ ok: boolean; expiresAt?: string; error?: string }> {
+export async function refreshLinkedInToken(): Promise<{
+  ok: boolean;
+  expiresAt?: string;
+  error?: string;
+}> {
   const clientId = (process.env.LINKEDIN_CLIENT_ID ?? "").trim();
   const clientSecret = (process.env.LINKEDIN_CLIENT_SECRET ?? "").trim();
   const refreshToken = (process.env.LINKEDIN_REFRESH_TOKEN ?? "").trim();
 
   if (!clientId || !clientSecret || !refreshToken) {
-    return { ok: false, error: "Missing LINKEDIN_CLIENT_ID, LINKEDIN_CLIENT_SECRET, or LINKEDIN_REFRESH_TOKEN" };
+    return {
+      ok: false,
+      error:
+        "Missing LINKEDIN_CLIENT_ID, LINKEDIN_CLIENT_SECRET, or LINKEDIN_REFRESH_TOKEN",
+    };
   }
 
-  const tokenRes = await fetch("https://www.linkedin.com/oauth/v2/accessToken", {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      grant_type: "refresh_token",
-      refresh_token: refreshToken,
-      client_id: clientId,
-      client_secret: clientSecret,
-    }).toString(),
-  });
+  const tokenRes = await fetch(
+    "https://www.linkedin.com/oauth/v2/accessToken",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        grant_type: "refresh_token",
+        refresh_token: refreshToken,
+        client_id: clientId,
+        client_secret: clientSecret,
+      }).toString(),
+    },
+  );
 
   if (!tokenRes.ok) {
     const errText = await tokenRes.text();
-    return { ok: false, error: `LinkedIn token refresh failed (${tokenRes.status}): ${errText}` };
+    return {
+      ok: false,
+      error: `LinkedIn token refresh failed (${tokenRes.status}): ${errText}`,
+    };
   }
 
   const tokenData = (await tokenRes.json()) as {
@@ -227,7 +298,9 @@ export async function refreshLinkedInToken(): Promise<{ ok: boolean; expiresAt?:
     refresh_token_expires_in?: number;
   };
 
-  const expiresAt = new Date(Date.now() + tokenData.expires_in * 1000).toISOString();
+  const expiresAt = new Date(
+    Date.now() + tokenData.expires_in * 1000,
+  ).toISOString();
   const envPath = defaultEnvPath();
   const updates: Record<string, string> = {
     LINKEDIN_ACCESS_TOKEN: tokenData.access_token,
@@ -258,27 +331,38 @@ export async function exchangeLinkedInCode(code: string): Promise<{
   const clientSecret = (process.env.LINKEDIN_CLIENT_SECRET ?? "").trim();
 
   if (!clientId || !clientSecret) {
-    return { ok: false, error: "LINKEDIN_CLIENT_ID and LINKEDIN_CLIENT_SECRET must be configured" };
+    return {
+      ok: false,
+      error: "LINKEDIN_CLIENT_ID and LINKEDIN_CLIENT_SECRET must be configured",
+    };
   }
 
   const backendPort = Number(process.env.PORT ?? 3000);
-  const redirectUri = (process.env.LINKEDIN_REDIRECT_URI ?? "").trim() || `http://localhost:${backendPort}/api/linkedin/oauth/callback`;
+  const redirectUri =
+    (process.env.LINKEDIN_REDIRECT_URI ?? "").trim() ||
+    `http://localhost:${backendPort}/api/linkedin/oauth/callback`;
 
-  const tokenRes = await fetch("https://www.linkedin.com/oauth/v2/accessToken", {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      grant_type: "authorization_code",
-      code,
-      client_id: clientId,
-      client_secret: clientSecret,
-      redirect_uri: redirectUri,
-    }).toString(),
-  });
+  const tokenRes = await fetch(
+    "https://www.linkedin.com/oauth/v2/accessToken",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        grant_type: "authorization_code",
+        code,
+        client_id: clientId,
+        client_secret: clientSecret,
+        redirect_uri: redirectUri,
+      }).toString(),
+    },
+  );
 
   if (!tokenRes.ok) {
     const errText = await tokenRes.text();
-    return { ok: false, error: `LinkedIn token exchange failed (${tokenRes.status}): ${errText}` };
+    return {
+      ok: false,
+      error: `LinkedIn token exchange failed (${tokenRes.status}): ${errText}`,
+    };
   }
 
   const tokenData = (await tokenRes.json()) as {
@@ -290,7 +374,9 @@ export async function exchangeLinkedInCode(code: string): Promise<{
     id_token?: string;
   };
 
-  const expiresAt = new Date(Date.now() + tokenData.expires_in * 1000).toISOString();
+  const expiresAt = new Date(
+    Date.now() + tokenData.expires_in * 1000,
+  ).toISOString();
   const envPath = defaultEnvPath();
   const updates: Record<string, string> = {
     LINKEDIN_ACCESS_TOKEN: tokenData.access_token,
@@ -304,7 +390,9 @@ export async function exchangeLinkedInCode(code: string): Promise<{
     try {
       const parts = tokenData.id_token.split(".");
       if (parts.length === 3) {
-        const payload = JSON.parse(Buffer.from(parts[1], "base64url").toString()) as { sub?: string };
+        const payload = JSON.parse(
+          Buffer.from(parts[1], "base64url").toString(),
+        ) as { sub?: string };
         if (payload.sub) {
           updates.LINKEDIN_PERSON_ID = payload.sub;
         }
@@ -330,7 +418,9 @@ export async function exchangeLinkedInCode(code: string): Promise<{
     process.env.LINKEDIN_PERSON_ID = updates.LINKEDIN_PERSON_ID;
   }
 
-  logger.info(`LinkedIn OAuth completed — token expires at ${expiresAt}, scopes: ${tokenData.scope ?? "unknown"}, personId: ${updates.LINKEDIN_PERSON_ID ?? "unknown"}`);
+  logger.info(
+    `LinkedIn OAuth completed — token expires at ${expiresAt}, scopes: ${tokenData.scope ?? "unknown"}, personId: ${updates.LINKEDIN_PERSON_ID ?? "unknown"}`,
+  );
   return {
     ok: true,
     accessToken: tokenData.access_token,
@@ -343,13 +433,21 @@ export async function exchangeLinkedInCode(code: string): Promise<{
 // ── TikTok OAuth helpers ───────────────────────────────────────────────────
 
 /** Refresh the YouTube/Google access token using the stored refresh token. */
-export async function refreshYouTubeToken(): Promise<{ ok: boolean; expiresAt?: string; error?: string }> {
+export async function refreshYouTubeToken(): Promise<{
+  ok: boolean;
+  expiresAt?: string;
+  error?: string;
+}> {
   const clientId = (process.env.YOUTUBE_CLIENT_ID ?? "").trim();
   const clientSecret = (process.env.YOUTUBE_CLIENT_SECRET ?? "").trim();
   const refreshToken = (process.env.YOUTUBE_REFRESH_TOKEN ?? "").trim();
 
   if (!clientId || !clientSecret || !refreshToken) {
-    return { ok: false, error: "Missing YOUTUBE_CLIENT_ID, YOUTUBE_CLIENT_SECRET, or YOUTUBE_REFRESH_TOKEN" };
+    return {
+      ok: false,
+      error:
+        "Missing YOUTUBE_CLIENT_ID, YOUTUBE_CLIENT_SECRET, or YOUTUBE_REFRESH_TOKEN",
+    };
   }
 
   const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
@@ -365,7 +463,10 @@ export async function refreshYouTubeToken(): Promise<{ ok: boolean; expiresAt?: 
 
   if (!tokenRes.ok) {
     const errText = await tokenRes.text();
-    return { ok: false, error: `YouTube token refresh failed (${tokenRes.status}): ${errText}` };
+    return {
+      ok: false,
+      error: `YouTube token refresh failed (${tokenRes.status}): ${errText}`,
+    };
   }
 
   const tokenData = (await tokenRes.json()) as {
@@ -376,7 +477,9 @@ export async function refreshYouTubeToken(): Promise<{ ok: boolean; expiresAt?: 
     token_type: string;
   };
 
-  const expiresAt = new Date(Date.now() + tokenData.expires_in * 1000).toISOString();
+  const expiresAt = new Date(
+    Date.now() + tokenData.expires_in * 1000,
+  ).toISOString();
   const envPath = defaultEnvPath();
   const updates: Record<string, string> = {
     YOUTUBE_OAUTH_TOKEN: tokenData.access_token,
@@ -407,11 +510,16 @@ export async function exchangeYouTubeCode(code: string): Promise<{
   const clientSecret = (process.env.YOUTUBE_CLIENT_SECRET ?? "").trim();
 
   if (!clientId || !clientSecret) {
-    return { ok: false, error: "YOUTUBE_CLIENT_ID and YOUTUBE_CLIENT_SECRET must be configured" };
+    return {
+      ok: false,
+      error: "YOUTUBE_CLIENT_ID and YOUTUBE_CLIENT_SECRET must be configured",
+    };
   }
 
   const backendPort = Number(process.env.PORT ?? 3000);
-  const redirectUri = (process.env.YOUTUBE_REDIRECT_URI ?? "").trim() || `http://localhost:${backendPort}/api/youtube/oauth/callback`;
+  const redirectUri =
+    (process.env.YOUTUBE_REDIRECT_URI ?? "").trim() ||
+    `http://localhost:${backendPort}/api/youtube/oauth/callback`;
 
   const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
     method: "POST",
@@ -427,7 +535,10 @@ export async function exchangeYouTubeCode(code: string): Promise<{
 
   if (!tokenRes.ok) {
     const errText = await tokenRes.text();
-    return { ok: false, error: `YouTube token exchange failed (${tokenRes.status}): ${errText}` };
+    return {
+      ok: false,
+      error: `YouTube token exchange failed (${tokenRes.status}): ${errText}`,
+    };
   }
 
   const tokenData = (await tokenRes.json()) as {
@@ -438,7 +549,9 @@ export async function exchangeYouTubeCode(code: string): Promise<{
     token_type: string;
   };
 
-  const expiresAt = new Date(Date.now() + tokenData.expires_in * 1000).toISOString();
+  const expiresAt = new Date(
+    Date.now() + tokenData.expires_in * 1000,
+  ).toISOString();
   const envPath = defaultEnvPath();
   const updates: Record<string, string> = {
     YOUTUBE_OAUTH_TOKEN: tokenData.access_token,
@@ -454,7 +567,9 @@ export async function exchangeYouTubeCode(code: string): Promise<{
     process.env.YOUTUBE_REFRESH_TOKEN = tokenData.refresh_token;
   }
 
-  logger.info(`YouTube OAuth completed — token expires at ${expiresAt}, scopes: ${tokenData.scope ?? "unknown"}`);
+  logger.info(
+    `YouTube OAuth completed — token expires at ${expiresAt}, scopes: ${tokenData.scope ?? "unknown"}`,
+  );
   return {
     ok: true,
     accessToken: tokenData.access_token,
@@ -465,13 +580,21 @@ export async function exchangeYouTubeCode(code: string): Promise<{
 }
 
 /** Refresh the TikTok access token using the stored refresh token. */
-export async function refreshTikTokToken(): Promise<{ ok: boolean; expiresAt?: string; error?: string }> {
+export async function refreshTikTokToken(): Promise<{
+  ok: boolean;
+  expiresAt?: string;
+  error?: string;
+}> {
   const clientKey = (process.env.TIKTOK_CLIENT_KEY ?? "").trim();
   const clientSecret = (process.env.TIKTOK_CLIENT_SECRET ?? "").trim();
   const refreshToken = (process.env.TIKTOK_REFRESH_TOKEN ?? "").trim();
 
   if (!clientKey || !clientSecret || !refreshToken) {
-    return { ok: false, error: "Missing TIKTOK_CLIENT_KEY, TIKTOK_CLIENT_SECRET, or TIKTOK_REFRESH_TOKEN" };
+    return {
+      ok: false,
+      error:
+        "Missing TIKTOK_CLIENT_KEY, TIKTOK_CLIENT_SECRET, or TIKTOK_REFRESH_TOKEN",
+    };
   }
 
   const tokenRes = await fetch("https://open.tiktokapis.com/v2/oauth/token/", {
@@ -487,7 +610,10 @@ export async function refreshTikTokToken(): Promise<{ ok: boolean; expiresAt?: s
 
   if (!tokenRes.ok) {
     const errText = await tokenRes.text();
-    return { ok: false, error: `TikTok token refresh failed (${tokenRes.status}): ${errText}` };
+    return {
+      ok: false,
+      error: `TikTok token refresh failed (${tokenRes.status}): ${errText}`,
+    };
   }
 
   const tokenData = (await tokenRes.json()) as {
@@ -501,10 +627,15 @@ export async function refreshTikTokToken(): Promise<{ ok: boolean; expiresAt?: s
   };
 
   if (!tokenData.access_token) {
-    return { ok: false, error: `TikTok token refresh returned no access_token: ${JSON.stringify(tokenData)}` };
+    return {
+      ok: false,
+      error: `TikTok token refresh returned no access_token: ${JSON.stringify(tokenData)}`,
+    };
   }
 
-  const expiresAt = new Date(Date.now() + tokenData.expires_in * 1000).toISOString();
+  const expiresAt = new Date(
+    Date.now() + tokenData.expires_in * 1000,
+  ).toISOString();
   const envPath = defaultEnvPath();
   const updates: Record<string, string> = {
     TIKTOK_ACCESS_TOKEN: tokenData.access_token,
@@ -527,7 +658,10 @@ export async function refreshTikTokToken(): Promise<{ ok: boolean; expiresAt?: s
 }
 
 /** Exchange a TikTok authorization code for access + refresh tokens. */
-export async function exchangeTikTokCode(code: string, codeVerifier?: string): Promise<{
+export async function exchangeTikTokCode(
+  code: string,
+  codeVerifier?: string,
+): Promise<{
   ok: boolean;
   accessToken?: string;
   refreshToken?: string;
@@ -540,12 +674,18 @@ export async function exchangeTikTokCode(code: string, codeVerifier?: string): P
   const clientSecret = (process.env.TIKTOK_CLIENT_SECRET ?? "").trim();
 
   if (!clientKey || !clientSecret) {
-    return { ok: false, error: "TIKTOK_CLIENT_KEY and TIKTOK_CLIENT_SECRET must be configured" };
+    return {
+      ok: false,
+      error: "TIKTOK_CLIENT_KEY and TIKTOK_CLIENT_SECRET must be configured",
+    };
   }
 
   const backendPort = Number(process.env.PORT ?? 3000);
-  const redirectUri = (process.env.TIKTOK_REDIRECT_URI ?? "").trim()
-    || (_tunnelPublicUrl ? `${_tunnelPublicUrl}/api/tiktok/oauth/callback` : `https://localhost:${backendPort}/api/tiktok/oauth/callback`);
+  const redirectUri =
+    (process.env.TIKTOK_REDIRECT_URI ?? "").trim() ||
+    (_tunnelPublicUrl
+      ? `${_tunnelPublicUrl}/api/tiktok/oauth/callback`
+      : `https://localhost:${backendPort}/api/tiktok/oauth/callback`);
 
   const tokenParams: Record<string, string> = {
     client_key: clientKey,
@@ -566,7 +706,10 @@ export async function exchangeTikTokCode(code: string, codeVerifier?: string): P
 
   if (!tokenRes.ok) {
     const errText = await tokenRes.text();
-    return { ok: false, error: `TikTok token exchange failed (${tokenRes.status}): ${errText}` };
+    return {
+      ok: false,
+      error: `TikTok token exchange failed (${tokenRes.status}): ${errText}`,
+    };
   }
 
   const tokenData = (await tokenRes.json()) as {
@@ -580,10 +723,15 @@ export async function exchangeTikTokCode(code: string, codeVerifier?: string): P
   };
 
   if (!tokenData.access_token) {
-    return { ok: false, error: `TikTok token exchange returned no access_token: ${JSON.stringify(tokenData)}` };
+    return {
+      ok: false,
+      error: `TikTok token exchange returned no access_token: ${JSON.stringify(tokenData)}`,
+    };
   }
 
-  const expiresAt = new Date(Date.now() + tokenData.expires_in * 1000).toISOString();
+  const expiresAt = new Date(
+    Date.now() + tokenData.expires_in * 1000,
+  ).toISOString();
   const envPath = defaultEnvPath();
   const updates: Record<string, string> = {
     TIKTOK_ACCESS_TOKEN: tokenData.access_token,
@@ -605,7 +753,9 @@ export async function exchangeTikTokCode(code: string, codeVerifier?: string): P
     process.env.TIKTOK_OPEN_ID = tokenData.open_id;
   }
 
-  logger.info(`TikTok OAuth completed — token expires at ${expiresAt}, scopes: ${tokenData.scope ?? "unknown"}, open_id: ${tokenData.open_id ?? "unknown"}`);
+  logger.info(
+    `TikTok OAuth completed — token expires at ${expiresAt}, scopes: ${tokenData.scope ?? "unknown"}, open_id: ${tokenData.open_id ?? "unknown"}`,
+  );
   return {
     ok: true,
     accessToken: tokenData.access_token,
@@ -629,9 +779,14 @@ const PINTEREST_DAILY_PROMPT_TEMPLATE = {
     "Finally, for each active pin in the tracker, fetch its latest metrics from the Pinterest API " +
     "and record a new snapshot.\n\n" +
     "Save a brief summary of today's top trends and any new content ideas to a file.",
-  description: "Daily Pinterest trend discovery, content ideation, and pin metric snapshots",
+  description:
+    "Daily Pinterest trend discovery, content ideation, and pin metric snapshots",
   tags: ["pinterest", "seo", "daily", "automated"],
-  preferredTools: ["pinterest-trends", "pinterest-content-ideas", "pinterest-related-keywords"] as string[],
+  preferredTools: [
+    "pinterest-trends",
+    "pinterest-content-ideas",
+    "pinterest-related-keywords",
+  ] as string[],
   suggestedSkill: "pinterest-marketer",
 };
 
@@ -640,7 +795,10 @@ const PINTEREST_DAILY_PROMPT_TEMPLATE = {
  * Called whenever a Pinterest access token is saved so the job is always present
  * when the integration is active. Safe to call multiple times.
  */
-export function ensurePinterestScheduledJob(scheduler: Scheduler, promptManager?: PromptManager): void {
+export function ensurePinterestScheduledJob(
+  scheduler: Scheduler,
+  promptManager?: PromptManager,
+): void {
   // Ensure the saved prompt exists (if prompt manager is available)
   if (promptManager && !promptManager.getByName(PINTEREST_DAILY_PROMPT_NAME)) {
     try {
@@ -673,7 +831,7 @@ export function ensurePinterestScheduledJob(scheduler: Scheduler, promptManager?
     logger.info("[Pinterest] Created daily trends & metrics scheduled job");
   } catch (err) {
     logger.warn(
-      `[Pinterest] Failed to create daily scheduled job: ${err instanceof Error ? err.message : String(err)}`
+      `[Pinterest] Failed to create daily scheduled job: ${err instanceof Error ? err.message : String(err)}`,
     );
   }
 }
@@ -740,44 +898,100 @@ type LocalServerCredential = {
   envVars: { name: string; configured: boolean }[];
 };
 
-const LOCAL_SERVER_CREDENTIALS: Array<{ server: string; label: string; runtime: string; envVars: string[] }> = [
+const LOCAL_SERVER_CREDENTIALS: Array<{
+  server: string;
+  label: string;
+  runtime: string;
+  envVars: string[];
+}> = [
   // Non-social servers (migrated from Docker sidecars — Issue #312)
   { server: "markitdown", label: "MarkItDown", runtime: "python", envVars: [] },
-  { server: "gmail", label: "Gmail", runtime: "node", envVars: ["GOOGLE_OAUTH_CREDENTIALS"] },
-  { server: "database", label: "Database (JDBC)", runtime: "other", envVars: ["JDBC_URL", "DB_PASSWORD"] },
-  { server: "github", label: "GitHub", runtime: "node", envVars: ["GITHUB_PERSONAL_ACCESS_TOKEN"] },
+  {
+    server: "gmail",
+    label: "Gmail",
+    runtime: "node",
+    envVars: ["GOOGLE_OAUTH_CREDENTIALS"],
+  },
+  {
+    server: "database",
+    label: "Database (JDBC)",
+    runtime: "other",
+    envVars: ["JDBC_URL", "DB_PASSWORD"],
+  },
+  {
+    server: "github",
+    label: "GitHub",
+    runtime: "node",
+    envVars: ["GITHUB_PERSONAL_ACCESS_TOKEN"],
+  },
   { server: "word", label: "Word / Office", runtime: "python", envVars: [] },
-  { server: "calendar", label: "Google Calendar", runtime: "node", envVars: ["GOOGLE_OAUTH_CREDENTIALS"] },
+  {
+    server: "calendar",
+    label: "Google Calendar",
+    runtime: "node",
+    envVars: ["GOOGLE_OAUTH_CREDENTIALS"],
+  },
   // Social platform servers (Issue #301–#305)
   {
     server: "twitter",
     label: "Twitter / X",
     runtime: "python",
-    envVars: ["TWITTER_BEARER_TOKEN", "TWITTER_API_KEY", "TWITTER_API_SECRET", "TWITTER_ACCESS_TOKEN", "TWITTER_ACCESS_TOKEN_SECRET"],
+    envVars: [
+      "TWITTER_BEARER_TOKEN",
+      "TWITTER_API_KEY",
+      "TWITTER_API_SECRET",
+      "TWITTER_ACCESS_TOKEN",
+      "TWITTER_ACCESS_TOKEN_SECRET",
+    ],
   },
   {
     server: "youtube",
     label: "YouTube",
     runtime: "python",
-    envVars: ["YOUTUBE_API_KEY", "YOUTUBE_CHANNEL_ID", "YOUTUBE_CHANNEL_HANDLE", "YOUTUBE_CLIENT_ID", "YOUTUBE_CLIENT_SECRET", "YOUTUBE_OAUTH_TOKEN", "YOUTUBE_REFRESH_TOKEN", "YOUTUBE_TOKEN_EXPIRES_AT"],
+    envVars: [
+      "YOUTUBE_API_KEY",
+      "YOUTUBE_CHANNEL_ID",
+      "YOUTUBE_CHANNEL_HANDLE",
+      "YOUTUBE_CLIENT_ID",
+      "YOUTUBE_CLIENT_SECRET",
+      "YOUTUBE_OAUTH_TOKEN",
+      "YOUTUBE_REFRESH_TOKEN",
+      "YOUTUBE_TOKEN_EXPIRES_AT",
+    ],
   },
   {
     server: "linkedin",
     label: "LinkedIn",
     runtime: "python",
-    envVars: ["LINKEDIN_ACCESS_TOKEN", "LINKEDIN_CLIENT_ID", "LINKEDIN_CLIENT_SECRET", "LINKEDIN_REFRESH_TOKEN", "LINKEDIN_PERSON_ID"],
+    envVars: [
+      "LINKEDIN_ACCESS_TOKEN",
+      "LINKEDIN_CLIENT_ID",
+      "LINKEDIN_CLIENT_SECRET",
+      "LINKEDIN_REFRESH_TOKEN",
+      "LINKEDIN_PERSON_ID",
+    ],
   },
   {
     server: "reddit",
     label: "Reddit",
     runtime: "python",
-    envVars: ["REDDIT_CLIENT_ID", "REDDIT_CLIENT_SECRET", "REDDIT_USERNAME", "REDDIT_PASSWORD"],
+    envVars: [
+      "REDDIT_CLIENT_ID",
+      "REDDIT_CLIENT_SECRET",
+      "REDDIT_USERNAME",
+      "REDDIT_PASSWORD",
+    ],
   },
   {
     server: "tiktok",
     label: "TikTok",
     runtime: "node",
-    envVars: ["TIKTOK_CLIENT_KEY", "TIKTOK_CLIENT_SECRET", "TIKTOK_ACCESS_TOKEN", "TIKTOK_REFRESH_TOKEN"],
+    envVars: [
+      "TIKTOK_CLIENT_KEY",
+      "TIKTOK_CLIENT_SECRET",
+      "TIKTOK_ACCESS_TOKEN",
+      "TIKTOK_REFRESH_TOKEN",
+    ],
   },
 ];
 
@@ -786,13 +1000,18 @@ const LOCAL_SERVER_CREDENTIALS: Array<{ server: string; label: string; runtime: 
 import { PROJECT_ROOT } from "../project-root.js";
 
 const defaultEnvPath = () =>
-  path.resolve(process.env.OPENZIGS_ENV_PATH ?? path.join(PROJECT_ROOT, ".env"));
+  path.resolve(
+    process.env.OPENZIGS_ENV_PATH ?? path.join(PROJECT_ROOT, ".env"),
+  );
 
 /**
  * Upsert key=value pairs into a .env file, preserving comments and ordering.
  * New keys are appended under a dedicated "# MCP Credentials" section.
  */
-const upsertEnvFile = async (envPath: string, updates: Record<string, string>): Promise<void> => {
+const upsertEnvFile = async (
+  envPath: string,
+  updates: Record<string, string>,
+): Promise<void> => {
   let content = "";
   try {
     content = await fs.readFile(envPath, "utf-8");
@@ -820,7 +1039,9 @@ const upsertEnvFile = async (envPath: string, updates: Record<string, string>): 
 
   // Append new keys — only add the section header if it isn't already present
   if (remaining.size > 0) {
-    const alreadyHasSection = updatedLines.some((l) => l.trim() === "# MCP Credentials");
+    const alreadyHasSection = updatedLines.some(
+      (l) => l.trim() === "# MCP Credentials",
+    );
     if (!alreadyHasSection) {
       updatedLines.push("");
       updatedLines.push("# MCP Credentials");
@@ -830,30 +1051,46 @@ const upsertEnvFile = async (envPath: string, updates: Record<string, string>): 
     }
   }
 
-  await fs.writeFile(envPath, updatedLines.join("\n"), { encoding: "utf-8", mode: 0o600 });
+  await fs.writeFile(envPath, updatedLines.join("\n"), {
+    encoding: "utf-8",
+    mode: 0o600,
+  });
 };
 
 const TELEGRAM_TOKEN_PLACEHOLDER = "${TELEGRAM_BOT_TOKEN}";
 const DISCORD_TOKEN_PLACEHOLDER = "${DISCORD_BOT_TOKEN}";
 
-const defaultConfigPath = () => process.env.OPENZIGS_CONFIG_PATH
-  ?? path.join(os.homedir(), ".openzigs", "config.json");
+const defaultConfigPath = () =>
+  process.env.OPENZIGS_CONFIG_PATH ??
+  path.join(os.homedir(), ".openzigs", "config.json");
 
-const readUserConfig = async (configPath: string): Promise<Record<string, unknown>> => {
+const readUserConfig = async (
+  configPath: string,
+): Promise<Record<string, unknown>> => {
   try {
     const raw = await fs.readFile(configPath, "utf-8");
     return JSON.parse(raw) as Record<string, unknown>;
   } catch (error) {
-    if (error instanceof Error && "code" in error && (error as { code?: string }).code === "ENOENT") {
+    if (
+      error instanceof Error &&
+      "code" in error &&
+      (error as { code?: string }).code === "ENOENT"
+    ) {
       return {};
     }
     throw error;
   }
 };
 
-const writeUserConfig = async (configPath: string, data: Record<string, unknown>) => {
+const writeUserConfig = async (
+  configPath: string,
+  data: Record<string, unknown>,
+) => {
   await fs.mkdir(path.dirname(configPath), { recursive: true, mode: 0o700 });
-  await fs.writeFile(configPath, JSON.stringify(data, null, 2), { encoding: "utf-8", mode: 0o600 });
+  await fs.writeFile(configPath, JSON.stringify(data, null, 2), {
+    encoding: "utf-8",
+    mode: 0o600,
+  });
   await fs.chmod(configPath, 0o600);
 };
 
@@ -861,9 +1098,10 @@ const writeUserConfig = async (configPath: string, data: Record<string, unknown>
 const updateCopilotConfig = async (key: string, value: unknown) => {
   const configPath = defaultConfigPath();
   const userConfig = await readUserConfig(configPath);
-  const existingCopilot = (userConfig.copilot && typeof userConfig.copilot === "object")
-    ? (userConfig.copilot as Record<string, unknown>)
-    : {};
+  const existingCopilot =
+    userConfig.copilot && typeof userConfig.copilot === "object"
+      ? (userConfig.copilot as Record<string, unknown>)
+      : {};
   existingCopilot[key] = value;
   userConfig.copilot = existingCopilot;
   await writeUserConfig(configPath, userConfig);
@@ -873,9 +1111,10 @@ const updateCopilotConfig = async (key: string, value: unknown) => {
 const updateVoiceConfig = async (updates: Record<string, unknown>) => {
   const configPath = defaultConfigPath();
   const userConfig = await readUserConfig(configPath);
-  const existingVoice = (userConfig.voice && typeof userConfig.voice === "object")
-    ? (userConfig.voice as Record<string, unknown>)
-    : {};
+  const existingVoice =
+    userConfig.voice && typeof userConfig.voice === "object"
+      ? (userConfig.voice as Record<string, unknown>)
+      : {};
   userConfig.voice = { ...existingVoice, ...updates };
   await writeUserConfig(configPath, userConfig);
 };
@@ -889,20 +1128,27 @@ const toStringArray = (value: unknown): string[] => {
     .filter(Boolean);
 };
 
-type NativeMcpToolCache = Record<string, {
-  tools: NativeMcpDiscoveredTool[];
-  connected: boolean;
-  error?: string;
-  updatedAt: string;
-}>;
+type NativeMcpToolCache = Record<
+  string,
+  {
+    tools: NativeMcpDiscoveredTool[];
+    connected: boolean;
+    error?: string;
+    updatedAt: string;
+  }
+>;
 
-const getNativeMcpToolCache = (config: Record<string, unknown>): NativeMcpToolCache => {
-  const copilot = (config.copilot && typeof config.copilot === "object")
-    ? (config.copilot as Record<string, unknown>)
-    : {};
-  const raw = (copilot.nativeMcpToolCache && typeof copilot.nativeMcpToolCache === "object")
-    ? (copilot.nativeMcpToolCache as Record<string, unknown>)
-    : {};
+const getNativeMcpToolCache = (
+  config: Record<string, unknown>,
+): NativeMcpToolCache => {
+  const copilot =
+    config.copilot && typeof config.copilot === "object"
+      ? (config.copilot as Record<string, unknown>)
+      : {};
+  const raw =
+    copilot.nativeMcpToolCache && typeof copilot.nativeMcpToolCache === "object"
+      ? (copilot.nativeMcpToolCache as Record<string, unknown>)
+      : {};
 
   const cache: NativeMcpToolCache = {};
   for (const [serverName, entry] of Object.entries(raw)) {
@@ -915,7 +1161,8 @@ const getNativeMcpToolCache = (config: Record<string, unknown>): NativeMcpToolCa
         const t = tool as Record<string, unknown>;
         const name = typeof t.name === "string" ? t.name.trim() : "";
         if (!name) return null;
-        const description = typeof t.description === "string" ? t.description : "";
+        const description =
+          typeof t.description === "string" ? t.description : "";
         return { name, description };
       })
       .filter((tool): tool is NativeMcpDiscoveredTool => !!tool);
@@ -924,7 +1171,10 @@ const getNativeMcpToolCache = (config: Record<string, unknown>): NativeMcpToolCa
       tools,
       connected: obj.connected !== false,
       error: typeof obj.error === "string" ? obj.error : undefined,
-      updatedAt: typeof obj.updatedAt === "string" ? obj.updatedAt : new Date(0).toISOString(),
+      updatedAt:
+        typeof obj.updatedAt === "string"
+          ? obj.updatedAt
+          : new Date(0).toISOString(),
     };
   }
   return cache;
@@ -981,23 +1231,43 @@ const extractJsonBlock = (text: string): string | null => {
 
 const normalizeSchedulerSuggestion = (
   raw: unknown,
-  promptNames: string[]
+  promptNames: string[],
 ): SchedulerSuggestion => {
-  const data = (raw && typeof raw === "object") ? (raw as Record<string, unknown>) : {};
-  const promptName = typeof data.promptName === "string" ? data.promptName.trim() : "";
-  const actionType = (data.actionType === "prompt" || data.actionType === "shell" || data.actionType === "custom" || data.actionType === "outbox")
-    ? data.actionType
-    : (promptName ? "prompt" : "custom");
-  const actionPayload = (data.actionPayload && typeof data.actionPayload === "object" && !Array.isArray(data.actionPayload))
-    ? (data.actionPayload as Record<string, unknown>)
-    : undefined;
+  const data =
+    raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+  const promptName =
+    typeof data.promptName === "string" ? data.promptName.trim() : "";
+  const actionType =
+    data.actionType === "prompt" ||
+    data.actionType === "shell" ||
+    data.actionType === "custom" ||
+    data.actionType === "outbox"
+      ? data.actionType
+      : promptName
+        ? "prompt"
+        : "custom";
+  const actionPayload =
+    data.actionPayload &&
+    typeof data.actionPayload === "object" &&
+    !Array.isArray(data.actionPayload)
+      ? (data.actionPayload as Record<string, unknown>)
+      : undefined;
   const model = typeof data.model === "string" ? data.model.trim() : undefined;
   const notifyChannels = Array.isArray(data.notifyChannels)
-    ? (data.notifyChannels as string[]).filter(c => c === "telegram" || c === "discord")
+    ? (data.notifyChannels as string[]).filter(
+        (c) => c === "telegram" || c === "discord",
+      )
     : undefined;
-  const name = typeof data.name === "string" && data.name.trim() ? data.name.trim() : "scheduled-job";
-  const cronExpression = typeof data.cronExpression === "string" ? data.cronExpression.trim() : "";
-  const timezone = typeof data.timezone === "string" && data.timezone.trim() ? data.timezone.trim() : "UTC";
+  const name =
+    typeof data.name === "string" && data.name.trim()
+      ? data.name.trim()
+      : "scheduled-job";
+  const cronExpression =
+    typeof data.cronExpression === "string" ? data.cronExpression.trim() : "";
+  const timezone =
+    typeof data.timezone === "string" && data.timezone.trim()
+      ? data.timezone.trim()
+      : "UTC";
   const promptNameValid = promptName && promptNames.includes(promptName);
 
   return {
@@ -1008,11 +1278,17 @@ const normalizeSchedulerSuggestion = (
     promptName: promptNameValid ? promptName : undefined,
     actionPayload,
     model: model || undefined,
-    notifyChannels: notifyChannels && notifyChannels.length > 0 ? notifyChannels : undefined,
+    notifyChannels:
+      notifyChannels && notifyChannels.length > 0 ? notifyChannels : undefined,
   };
 };
 
-const VALID_REASONING_EFFORTS = new Set<ReasoningEffort>(["low", "medium", "high", "xhigh"]);
+const VALID_REASONING_EFFORTS = new Set<ReasoningEffort>([
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+]);
 
 const parseReasoningEffort = (value: unknown): ReasoningEffort | undefined => {
   if (typeof value !== "string") return undefined;
@@ -1022,7 +1298,25 @@ const parseReasoningEffort = (value: unknown): ReasoningEffort | undefined => {
     : undefined;
 };
 
-export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerManager, promptManager, scheduler, personalityManager, sessionManager, copilot, taskWorker, taskEngine, webhookManager, customPostActionManager, sentinel, brandVoiceService, nativeMcpTester, pipelineTemplateManager, socialBrain }: AdminRouterOptions): Router => {
+export const createAdminRouter = ({
+  toolRegistry,
+  sidecarManager,
+  localServerManager,
+  promptManager,
+  scheduler,
+  personalityManager,
+  sessionManager,
+  copilot,
+  taskWorker,
+  taskEngine,
+  webhookManager,
+  customPostActionManager,
+  sentinel,
+  brandVoiceService,
+  nativeMcpTester,
+  pipelineTemplateManager,
+  socialBrain,
+}: AdminRouterOptions): Router => {
   const router = Router();
   const mcpTester = nativeMcpTester ?? new CopilotNativeMcpTester();
 
@@ -1058,25 +1352,46 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
   router.get("/platform", (_req, res) => {
     const caps = getPlatformCapabilities();
     const features = {
-      imageGeneration: { available: caps.sidecarsSupported, reason: caps.sidecarsSupported ? undefined : "Requires macOS ARM (Apple Silicon)" },
-      audioProcessing: { available: caps.sidecarsSupported, reason: caps.sidecarsSupported ? undefined : "Requires macOS ARM (Apple Silicon)" },
-      musicGeneration: { available: caps.sidecarsSupported, reason: caps.sidecarsSupported ? undefined : "Requires macOS ARM (Apple Silicon)" },
+      imageGeneration: {
+        available: caps.sidecarsSupported,
+        reason: caps.sidecarsSupported
+          ? undefined
+          : "Requires macOS ARM (Apple Silicon)",
+      },
+      audioProcessing: {
+        available: caps.sidecarsSupported,
+        reason: caps.sidecarsSupported
+          ? undefined
+          : "Requires macOS ARM (Apple Silicon)",
+      },
+      musicGeneration: {
+        available: caps.sidecarsSupported,
+        reason: caps.sidecarsSupported
+          ? undefined
+          : "Requires macOS ARM (Apple Silicon)",
+      },
       videoRendering: { available: true },
-      docker: { available: caps.dockerAvailable, reason: caps.dockerAvailable ? undefined : "Docker not detected" },
+      docker: {
+        available: caps.dockerAvailable,
+        reason: caps.dockerAvailable ? undefined : "Docker not detected",
+      },
     };
     res.json({ platform: caps, features });
   });
 
   router.get("/tools", async (_req, res) => {
-    const tools = toolRegistry.getAllTools() as unknown as Record<string, Array<{
-      name: string;
-      description: string;
-      category: string;
-      riskLevel: string;
-      enabled: boolean;
-      source?: string;
-      globalApprovalRequired?: boolean;
-    }>>;
+    const tools = toolRegistry.getAllTools() as unknown as Record<
+      string,
+      Array<{
+        name: string;
+        description: string;
+        category: string;
+        riskLevel: string;
+        enabled: boolean;
+        source?: string;
+        globalApprovalRequired?: boolean;
+      }>
+    >;
 
     try {
       const configPath = defaultConfigPath();
@@ -1090,7 +1405,10 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
         const configuredTools = serverDef?.tools;
 
         const visibleTools = entry.tools.map((tool) => {
-          const enabled = !configuredTools || configuredTools.includes("*") || configuredTools.includes(tool.name);
+          const enabled =
+            !configuredTools ||
+            configuredTools.includes("*") ||
+            configuredTools.includes(tool.name);
           return {
             name: `mcp:${serverName}:${tool.name}`,
             description: tool.description || "MCP-discovered tool",
@@ -1103,14 +1421,16 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
 
         const disconnectedMarker = entry.connected
           ? []
-          : [{
-              name: `mcp:${serverName}:__disconnected__`,
-              description: `⚠️ Disconnected — tools unavailable${entry.error ? ` (${entry.error})` : ""}`,
-              category: groupName,
-              riskLevel: "medium",
-              enabled: false,
-              source: `mcp:${serverName}`,
-            }];
+          : [
+              {
+                name: `mcp:${serverName}:__disconnected__`,
+                description: `⚠️ Disconnected — tools unavailable${entry.error ? ` (${entry.error})` : ""}`,
+                category: groupName,
+                riskLevel: "medium",
+                enabled: false,
+                source: `mcp:${serverName}`,
+              },
+            ];
 
         tools[groupName] = [...visibleTools, ...disconnectedMarker];
       }
@@ -1146,7 +1466,9 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
       const serverName = parts[1];
       const toolName = parts.slice(2).join(":");
       if (toolName === "__disconnected__") {
-        return res.status(400).json({ error: "Cannot toggle disconnected marker" });
+        return res
+          .status(400)
+          .json({ error: "Cannot toggle disconnected marker" });
       }
 
       if (!copilot) {
@@ -1166,25 +1488,38 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
       const current = copilot.getNativeMcpServers();
       const server = current[serverName];
       if (!server) {
-        return res.status(404).json({ error: `Server '${serverName}' not found` });
+        return res
+          .status(404)
+          .json({ error: `Server '${serverName}' not found` });
       }
 
       const configPath = defaultConfigPath();
       const userConfig = await readUserConfig(configPath);
       const cache = getNativeMcpToolCache(userConfig);
-      const discovered = (cache[serverName]?.tools ?? []).map((tool) => tool.name);
+      const discovered = (cache[serverName]?.tools ?? []).map(
+        (tool) => tool.name,
+      );
       if (discovered.length === 0) {
-        return res.status(400).json({ error: `No discovered tools found for server '${serverName}'. Re-test the server first.` });
+        return res.status(400).json({
+          error: `No discovered tools found for server '${serverName}'. Re-test the server first.`,
+        });
       }
 
-      const existingTools = Array.isArray(server.tools) ? [...server.tools] : ["*"];
-      const explicitlyListed = existingTools.includes("*") ? [...discovered] : [...existingTools];
+      const existingTools = Array.isArray(server.tools)
+        ? [...server.tools]
+        : ["*"];
+      const explicitlyListed = existingTools.includes("*")
+        ? [...discovered]
+        : [...existingTools];
       const nextSet = new Set(explicitlyListed);
       if (enabled) nextSet.add(toolName);
       else nextSet.delete(toolName);
 
       const nextTools = discovered.filter((t) => nextSet.has(t));
-      const nextServer: NativeMcpServerDefinition = { ...server, tools: nextTools };
+      const nextServer: NativeMcpServerDefinition = {
+        ...server,
+        tools: nextTools,
+      };
       const updated = { ...current, [serverName]: nextServer };
 
       copilot.setNativeMcpServers(updated);
@@ -1200,7 +1535,9 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
     const { name } = req.params;
     const { riskLevel } = req.body as { riskLevel?: string };
     if (!riskLevel || !["low", "medium", "high"].includes(riskLevel)) {
-      return res.status(400).json({ error: "riskLevel must be 'low', 'medium', or 'high'" });
+      return res
+        .status(400)
+        .json({ error: "riskLevel must be 'low', 'medium', or 'high'" });
     }
     try {
       await toolRegistry.setRiskOverride(name, riskLevel as RiskLevel);
@@ -1220,7 +1557,11 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
     }
     try {
       await toolRegistry.setGlobalApprovalOverride(name, required);
-      return res.json({ ok: true, tool: name, globalApprovalRequired: required });
+      return res.json({
+        ok: true,
+        tool: name,
+        globalApprovalRequired: required,
+      });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return res.status(400).json({ error: message });
@@ -1247,14 +1588,15 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
   /** @deprecated Use /api/admin/local-servers/:name/tools instead. */
   router.put("/sidecars/:name/tools", async (_req, res) => {
     return res.status(410).json({
-      error: "Docker MCP sidecars have been deprecated. Use local-server tool management instead.",
+      error:
+        "Docker MCP sidecars have been deprecated. Use local-server tool management instead.",
     });
   });
 
   router.get("/env", (_req, res) => {
     const env: EnvEntry[] = ENV_CHECKS.map((name) => ({
       name,
-      configured: !!(process.env[name] && process.env[name]!.trim().length > 0)
+      configured: !!(process.env[name] && process.env[name]!.trim().length > 0),
     }));
     res.json({ env });
   });
@@ -1303,7 +1645,9 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
 
     try {
       const envPath = defaultEnvPath();
-      await upsertEnvFile(envPath, { GOOGLE_APPLICATION_CREDENTIALS: normalized });
+      await upsertEnvFile(envPath, {
+        GOOGLE_APPLICATION_CREDENTIALS: normalized,
+      });
 
       if (normalized) {
         process.env.GOOGLE_APPLICATION_CREDENTIALS = normalized;
@@ -1322,10 +1666,14 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
   router.get("/voice-settings", async (_req, res) => {
     try {
       const userConfig = await readUserConfig(defaultConfigPath());
-      const voiceConfig = (userConfig.voice && typeof userConfig.voice === "object")
-        ? (userConfig.voice as Record<string, unknown>)
-        : {};
-      const configuredVoice = typeof voiceConfig.voiceName === "string" ? voiceConfig.voiceName.trim() : "";
+      const voiceConfig =
+        userConfig.voice && typeof userConfig.voice === "object"
+          ? (userConfig.voice as Record<string, unknown>)
+          : {};
+      const configuredVoice =
+        typeof voiceConfig.voiceName === "string"
+          ? voiceConfig.voiceName.trim()
+          : "";
       const currentVoiceName = configuredVoice || "en-US-Standard-C";
       return res.json({
         voiceName: currentVoiceName,
@@ -1340,7 +1688,8 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
 
   router.post("/voice-settings", async (req, res) => {
     const body = req.body as Record<string, unknown>;
-    const voiceName = typeof body.voiceName === "string" ? body.voiceName.trim() : "";
+    const voiceName =
+      typeof body.voiceName === "string" ? body.voiceName.trim() : "";
 
     if (!voiceName) {
       return res.status(400).json({ error: "voiceName is required" });
@@ -1366,9 +1715,10 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
   router.get("/voice-config", async (_req, res) => {
     try {
       const userConfig = await readUserConfig(defaultConfigPath());
-      const voiceConfig = (userConfig.voice && typeof userConfig.voice === "object")
-        ? (userConfig.voice as Record<string, unknown>)
-        : {};
+      const voiceConfig =
+        userConfig.voice && typeof userConfig.voice === "object"
+          ? (userConfig.voice as Record<string, unknown>)
+          : {};
       return res.json({
         enabled: voiceConfig.enabled ?? false,
         provider: voiceConfig.provider ?? "google",
@@ -1391,9 +1741,12 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
     const updates: Record<string, unknown> = {};
 
     if (typeof body.enabled === "boolean") updates.enabled = body.enabled;
-    if (body.provider === "google" || body.provider === "local") updates.provider = body.provider;
-    if (typeof body.voiceName === "string" && body.voiceName.trim()) updates.voiceName = body.voiceName.trim();
-    if (typeof body.sidecarUrl === "string") updates.sidecarUrl = body.sidecarUrl.trim();
+    if (body.provider === "google" || body.provider === "local")
+      updates.provider = body.provider;
+    if (typeof body.voiceName === "string" && body.voiceName.trim())
+      updates.voiceName = body.voiceName.trim();
+    if (typeof body.sidecarUrl === "string")
+      updates.sidecarUrl = body.sidecarUrl.trim();
 
     if (typeof body.speakingRate === "number") {
       const rate = Math.max(0.25, Math.min(4.0, body.speakingRate));
@@ -1416,7 +1769,9 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
 
     try {
       await updateVoiceConfig(updates);
-      logger.info(`Updated voice config via admin UI: ${JSON.stringify(updates)}`);
+      logger.info(
+        `Updated voice config via admin UI: ${JSON.stringify(updates)}`,
+      );
       return res.json({ ok: true, updated: updates, restartRequired: true });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -1436,13 +1791,13 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
             webhookUrl: telegram?.webhookUrl ?? "",
             adminUserId: telegram?.adminUserId ?? "",
             allowedUsers: telegram?.allowedUsers ?? [],
-            model: telegram?.model ?? ""
+            model: telegram?.model ?? "",
           },
           discord: {
             enabled: discord?.enabled ?? false,
-            allowedGuilds: discord?.allowedGuilds ?? []
-          }
-        }
+            allowedGuilds: discord?.allowedGuilds ?? [],
+          },
+        },
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -1459,51 +1814,79 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
     const discordEnabled = discordBody.enabled === true;
 
     if (telegramEnabled && !(process.env.TELEGRAM_BOT_TOKEN ?? "").trim()) {
-      return res.status(400).json({ error: "TELEGRAM_BOT_TOKEN is required to enable Telegram." });
+      return res
+        .status(400)
+        .json({ error: "TELEGRAM_BOT_TOKEN is required to enable Telegram." });
     }
     if (discordEnabled && !(process.env.DISCORD_BOT_TOKEN ?? "").trim()) {
-      return res.status(400).json({ error: "DISCORD_BOT_TOKEN is required to enable Discord." });
+      return res
+        .status(400)
+        .json({ error: "DISCORD_BOT_TOKEN is required to enable Discord." });
     }
 
     try {
       const configPath = defaultConfigPath();
       const userConfig = await readUserConfig(configPath);
-      const existingChannels = (userConfig.channels && typeof userConfig.channels === "object")
-        ? (userConfig.channels as Record<string, unknown>)
-        : {};
-      const existingTelegram = (existingChannels.telegram && typeof existingChannels.telegram === "object")
-        ? (existingChannels.telegram as Record<string, unknown>)
-        : {};
-      const existingDiscord = (existingChannels.discord && typeof existingChannels.discord === "object")
-        ? (existingChannels.discord as Record<string, unknown>)
-        : {};
+      const existingChannels =
+        userConfig.channels && typeof userConfig.channels === "object"
+          ? (userConfig.channels as Record<string, unknown>)
+          : {};
+      const existingTelegram =
+        existingChannels.telegram &&
+        typeof existingChannels.telegram === "object"
+          ? (existingChannels.telegram as Record<string, unknown>)
+          : {};
+      const existingDiscord =
+        existingChannels.discord && typeof existingChannels.discord === "object"
+          ? (existingChannels.discord as Record<string, unknown>)
+          : {};
 
-      const telegramToken = typeof existingTelegram.token === "string" && existingTelegram.token.trim().length > 0
-        ? existingTelegram.token
-        : TELEGRAM_TOKEN_PLACEHOLDER;
-      const discordToken = typeof existingDiscord.token === "string" && existingDiscord.token.trim().length > 0
-        ? existingDiscord.token
-        : DISCORD_TOKEN_PLACEHOLDER;
+      const telegramToken =
+        typeof existingTelegram.token === "string" &&
+        existingTelegram.token.trim().length > 0
+          ? existingTelegram.token
+          : TELEGRAM_TOKEN_PLACEHOLDER;
+      const discordToken =
+        typeof existingDiscord.token === "string" &&
+        existingDiscord.token.trim().length > 0
+          ? existingDiscord.token
+          : DISCORD_TOKEN_PLACEHOLDER;
 
-      const telegramAllowedUsers = toStringArray(telegramBody.allowedUsers ?? existingTelegram.allowedUsers);
-      const discordAllowedGuilds = toStringArray(discordBody.allowedGuilds ?? existingDiscord.allowedGuilds);
-      const telegramWebhookUrl = typeof telegramBody.webhookUrl === "string"
-        ? telegramBody.webhookUrl.trim()
-        : (typeof existingTelegram.webhookUrl === "string" ? existingTelegram.webhookUrl : "");
-      const telegramWebhookSecret = typeof telegramBody.webhookSecret === "string"
-        ? telegramBody.webhookSecret.trim()
-        : (typeof existingTelegram.webhookSecret === "string" ? existingTelegram.webhookSecret : "");
-      const telegramAdminUserId = typeof telegramBody.adminUserId === "string"
-        ? telegramBody.adminUserId.trim()
-        : (typeof existingTelegram.adminUserId === "string" ? existingTelegram.adminUserId : "");
-      const telegramModel = typeof telegramBody.model === "string"
-        ? telegramBody.model.trim()
-        : (typeof existingTelegram.model === "string" ? existingTelegram.model : "");
+      const telegramAllowedUsers = toStringArray(
+        telegramBody.allowedUsers ?? existingTelegram.allowedUsers,
+      );
+      const discordAllowedGuilds = toStringArray(
+        discordBody.allowedGuilds ?? existingDiscord.allowedGuilds,
+      );
+      const telegramWebhookUrl =
+        typeof telegramBody.webhookUrl === "string"
+          ? telegramBody.webhookUrl.trim()
+          : typeof existingTelegram.webhookUrl === "string"
+            ? existingTelegram.webhookUrl
+            : "";
+      const telegramWebhookSecret =
+        typeof telegramBody.webhookSecret === "string"
+          ? telegramBody.webhookSecret.trim()
+          : typeof existingTelegram.webhookSecret === "string"
+            ? existingTelegram.webhookSecret
+            : "";
+      const telegramAdminUserId =
+        typeof telegramBody.adminUserId === "string"
+          ? telegramBody.adminUserId.trim()
+          : typeof existingTelegram.adminUserId === "string"
+            ? existingTelegram.adminUserId
+            : "";
+      const telegramModel =
+        typeof telegramBody.model === "string"
+          ? telegramBody.model.trim()
+          : typeof existingTelegram.model === "string"
+            ? existingTelegram.model
+            : "";
 
       const telegramConfig: Record<string, unknown> = {
         enabled: telegramEnabled,
         token: telegramToken,
-        allowedUsers: telegramAllowedUsers
+        allowedUsers: telegramAllowedUsers,
       };
       if (telegramWebhookUrl) {
         telegramConfig.webhookUrl = telegramWebhookUrl;
@@ -1521,18 +1904,18 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
       const discordConfig: Record<string, unknown> = {
         enabled: discordEnabled,
         token: discordToken,
-        allowedGuilds: discordAllowedGuilds
+        allowedGuilds: discordAllowedGuilds,
       };
 
       const nextChannels = {
         ...existingChannels,
         telegram: telegramConfig,
-        discord: discordConfig
+        discord: discordConfig,
       };
 
       const nextConfig = {
         ...userConfig,
-        channels: nextChannels
+        channels: nextChannels,
       };
 
       await writeUserConfig(configPath, nextConfig);
@@ -1555,14 +1938,16 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
       credentials: [] as SidecarCredential[],
       dockerAvailable,
       deprecated: true,
-      message: "All MCP servers have been migrated to native subprocess transport. Use /api/admin/local-servers instead.",
+      message:
+        "All MCP servers have been migrated to native subprocess transport. Use /api/admin/local-servers instead.",
     });
   });
 
   /** @deprecated Use local-server toggle instead. */
   router.post("/sidecars/:name/toggle", async (_req, res) => {
     return res.status(410).json({
-      error: "Docker MCP sidecars have been deprecated. Use /api/admin/local-servers/:name/toggle instead.",
+      error:
+        "Docker MCP sidecars have been deprecated. Use /api/admin/local-servers/:name/toggle instead.",
     });
   });
 
@@ -1572,17 +1957,23 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
     const credentials = body.credentials as Record<string, string> | undefined;
 
     if (!credentials || typeof credentials !== "object") {
-      return res.status(400).json({ error: "credentials must be an object of { ENV_VAR: value }" });
+      return res
+        .status(400)
+        .json({ error: "credentials must be an object of { ENV_VAR: value }" });
     }
 
-    const allEnvVars = new Set(LOCAL_SERVER_CREDENTIALS.flatMap((c) => c.envVars));
+    const allEnvVars = new Set(
+      LOCAL_SERVER_CREDENTIALS.flatMap((c) => c.envVars),
+    );
     const filtered: Record<string, string> = {};
     for (const [key, value] of Object.entries(credentials)) {
       if (!allEnvVars.has(key)) {
         return res.status(400).json({ error: `Unknown credential: ${key}` });
       }
       if (typeof value !== "string") {
-        return res.status(400).json({ error: `Value for ${key} must be a string` });
+        return res
+          .status(400)
+          .json({ error: `Value for ${key} must be a string` });
       }
       filtered[key] = value.trim();
     }
@@ -1610,7 +2001,8 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
   /** @deprecated Use /api/admin/local-servers/:name/restart instead. */
   router.post("/sidecars/:name/restart", async (_req, res) => {
     return res.status(410).json({
-      error: "Docker MCP sidecars have been deprecated. Use /api/admin/local-servers/:name/restart instead.",
+      error:
+        "Docker MCP sidecars have been deprecated. Use /api/admin/local-servers/:name/restart instead.",
     });
   });
 
@@ -1620,15 +2012,19 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
     const definitions = localServerManager?.getDefinitions() ?? [];
     const configured = localServerManager?.getConfiguredServers() ?? [];
 
-    const credentials: LocalServerCredential[] = LOCAL_SERVER_CREDENTIALS.map((cred) => ({
-      server: cred.server,
-      label: cred.label,
-      runtime: cred.runtime,
-      envVars: cred.envVars.map((name) => ({
-        name,
-        configured: !!(process.env[name] && process.env[name]!.trim().length > 0),
-      })),
-    }));
+    const credentials: LocalServerCredential[] = LOCAL_SERVER_CREDENTIALS.map(
+      (cred) => ({
+        server: cred.server,
+        label: cred.label,
+        runtime: cred.runtime,
+        envVars: cred.envVars.map((name) => ({
+          name,
+          configured: !!(
+            process.env[name] && process.env[name]!.trim().length > 0
+          ),
+        })),
+      }),
+    );
 
     return res.json({
       servers: statuses,
@@ -1649,7 +2045,9 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
   router.post("/local-servers/:name/restart", async (req, res) => {
     const { name } = req.params;
     if (!localServerManager) {
-      return res.status(503).json({ error: "Local MCP server manager not available" });
+      return res
+        .status(503)
+        .json({ error: "Local MCP server manager not available" });
     }
     try {
       const status = await localServerManager.restartServer(name);
@@ -1679,7 +2077,9 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
   router.post("/local-servers/:name/stop", async (req, res) => {
     const { name } = req.params;
     if (!localServerManager) {
-      return res.status(503).json({ error: "Local MCP server manager not available" });
+      return res
+        .status(503)
+        .json({ error: "Local MCP server manager not available" });
     }
     if (!localServerManager.isRunning(name)) {
       return res.status(404).json({ error: `Server "${name}" is not running` });
@@ -1708,7 +2108,9 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
 
   router.get("/post-actions/custom/:type", (req, res) => {
     if (!customPostActionManager) {
-      return res.status(404).json({ error: "Custom post-actions not available" });
+      return res
+        .status(404)
+        .json({ error: "Custom post-actions not available" });
     }
     const def = customPostActionManager.getByType(req.params.type);
     return def ? res.json(def) : res.status(404).json({ error: "Not found" });
@@ -1758,11 +2160,15 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
 
   router.post("/post-actions/custom", async (req, res) => {
     if (!customPostActionManager) {
-      return res.status(503).json({ error: "Custom post-actions not available" });
+      return res
+        .status(503)
+        .json({ error: "Custom post-actions not available" });
     }
     const parsed = createCustomPostActionSchema.safeParse(req.body);
     if (!parsed.success) {
-      return res.status(400).json({ error: parsed.error.issues.map((i) => i.message).join("; ") });
+      return res
+        .status(400)
+        .json({ error: parsed.error.issues.map((i) => i.message).join("; ") });
     }
     try {
       const def = await customPostActionManager.create(parsed.data);
@@ -1775,14 +2181,21 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
 
   router.put("/post-actions/custom/:type", async (req, res) => {
     if (!customPostActionManager) {
-      return res.status(503).json({ error: "Custom post-actions not available" });
+      return res
+        .status(503)
+        .json({ error: "Custom post-actions not available" });
     }
     const parsed = updateCustomPostActionSchema.safeParse(req.body);
     if (!parsed.success) {
-      return res.status(400).json({ error: parsed.error.issues.map((i) => i.message).join("; ") });
+      return res
+        .status(400)
+        .json({ error: parsed.error.issues.map((i) => i.message).join("; ") });
     }
     try {
-      const updated = await customPostActionManager.update(req.params.type, parsed.data);
+      const updated = await customPostActionManager.update(
+        req.params.type,
+        parsed.data,
+      );
       return res.json(updated);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -1792,7 +2205,9 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
 
   router.delete("/post-actions/custom/:type", async (req, res) => {
     if (!customPostActionManager) {
-      return res.status(503).json({ error: "Custom post-actions not available" });
+      return res
+        .status(503)
+        .json({ error: "Custom post-actions not available" });
     }
     const deleted = await customPostActionManager.delete(req.params.type);
     return deleted
@@ -1804,7 +2219,9 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
   if (promptManager) {
     router.get("/prompts", (req, res) => {
       const query = typeof req.query.q === "string" ? req.query.q : undefined;
-      const prompts = query ? promptManager.search(query) : promptManager.list();
+      const prompts = query
+        ? promptManager.search(query)
+        : promptManager.list();
       return res.json({ prompts });
     });
 
@@ -1820,22 +2237,35 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
       const name = typeof body.name === "string" ? body.name.trim() : "";
       const template = typeof body.template === "string" ? body.template : "";
       if (!name || !template) {
-        return res.status(400).json({ error: "name and template are required" });
+        return res
+          .status(400)
+          .json({ error: "name and template are required" });
       }
       const MAX_PROMPT_LENGTH = 100_000;
       if (template.length > MAX_PROMPT_LENGTH) {
-        return res.status(400).json({ error: `Prompt template exceeds ${MAX_PROMPT_LENGTH} characters` });
+        return res.status(400).json({
+          error: `Prompt template exceeds ${MAX_PROMPT_LENGTH} characters`,
+        });
       }
       try {
         const prompt = promptManager.create({
           name,
           template,
-          description: typeof body.description === "string" ? body.description : undefined,
+          description:
+            typeof body.description === "string" ? body.description : undefined,
           tags: Array.isArray(body.tags) ? (body.tags as string[]) : undefined,
-          preferredTools: Array.isArray(body.preferredTools) ? (body.preferredTools as string[]) : undefined,
-          stages: Array.isArray(body.stages) ? (body.stages as PipelineStage[]) : undefined,
-          suggestedSkill: typeof body.suggestedSkill === "string" ? body.suggestedSkill : undefined,
-          graphLayout: typeof body.graphLayout === "string" ? body.graphLayout : undefined,
+          preferredTools: Array.isArray(body.preferredTools)
+            ? (body.preferredTools as string[])
+            : undefined,
+          stages: Array.isArray(body.stages)
+            ? (body.stages as PipelineStage[])
+            : undefined,
+          suggestedSkill:
+            typeof body.suggestedSkill === "string"
+              ? body.suggestedSkill
+              : undefined,
+          graphLayout:
+            typeof body.graphLayout === "string" ? body.graphLayout : undefined,
         });
         return res.status(201).json(prompt);
       } catch (error) {
@@ -1849,13 +2279,33 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
       try {
         const updated = promptManager.update(req.params.id, {
           name: typeof body.name === "string" ? body.name.trim() : undefined,
-          template: typeof body.template === "string" ? body.template : undefined,
-          description: typeof body.description === "string" ? body.description : undefined,
+          template:
+            typeof body.template === "string" ? body.template : undefined,
+          description:
+            typeof body.description === "string" ? body.description : undefined,
           tags: Array.isArray(body.tags) ? (body.tags as string[]) : undefined,
-          preferredTools: Array.isArray(body.preferredTools) ? (body.preferredTools as string[]) : (body.preferredTools === null ? null : undefined),
-          stages: Array.isArray(body.stages) ? (body.stages as PipelineStage[]) : (body.stages === null ? null : undefined),
-          suggestedSkill: typeof body.suggestedSkill === "string" ? body.suggestedSkill : (body.suggestedSkill === null ? null : undefined),
-          graphLayout: typeof body.graphLayout === "string" ? body.graphLayout : (body.graphLayout === null ? null : undefined),
+          preferredTools: Array.isArray(body.preferredTools)
+            ? (body.preferredTools as string[])
+            : body.preferredTools === null
+              ? null
+              : undefined,
+          stages: Array.isArray(body.stages)
+            ? (body.stages as PipelineStage[])
+            : body.stages === null
+              ? null
+              : undefined,
+          suggestedSkill:
+            typeof body.suggestedSkill === "string"
+              ? body.suggestedSkill
+              : body.suggestedSkill === null
+                ? null
+                : undefined,
+          graphLayout:
+            typeof body.graphLayout === "string"
+              ? body.graphLayout
+              : body.graphLayout === null
+                ? null
+                : undefined,
         });
         return res.json(updated);
       } catch (error) {
@@ -1882,7 +2332,10 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
         const template = templateService.export(req.params.id);
         const filename = `${template.prompt.name.toLowerCase().replace(/\s+/g, "-")}.openzigs-template.json`;
         res.setHeader("Content-Type", "application/json");
-        res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+        res.setHeader(
+          "Content-Disposition",
+          `attachment; filename="${filename}"`,
+        );
         return res.json(template);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -1908,11 +2361,23 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
         const prompt = templateService.import(templateData, placeholders);
         return res.status(201).json({ success: true, prompt });
       } catch (error) {
-        if (error instanceof Error && error.name === "TemplateValidationError") {
-          return res.status(400).json({ error: error.message, issues: (error as { issues?: unknown }).issues });
+        if (
+          error instanceof Error &&
+          error.name === "TemplateValidationError"
+        ) {
+          return res.status(400).json({
+            error: error.message,
+            issues: (error as { issues?: unknown }).issues,
+          });
         }
-        if (error instanceof Error && error.name === "PlaceholderResolutionError") {
-          return res.status(400).json({ error: error.message, missing: (error as { missing?: unknown }).missing });
+        if (
+          error instanceof Error &&
+          error.name === "PlaceholderResolutionError"
+        ) {
+          return res.status(400).json({
+            error: error.message,
+            missing: (error as { missing?: unknown }).missing,
+          });
         }
         const message = error instanceof Error ? error.message : String(error);
         return res.status(400).json({ error: message });
@@ -1924,9 +2389,12 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
   if (scheduler) {
     router.get("/jobs", (req, res) => {
       const jobs = scheduler.list();
-      const promptName = typeof req.query.promptName === "string" ? req.query.promptName : undefined;
+      const promptName =
+        typeof req.query.promptName === "string"
+          ? req.query.promptName
+          : undefined;
       if (promptName) {
-        const filtered = jobs.filter(j => {
+        const filtered = jobs.filter((j) => {
           const payload = j.actionPayload as Record<string, unknown>;
           return payload.promptName === promptName;
         });
@@ -1939,10 +2407,18 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
     router.get("/automations", (_req, res) => {
       const jobs = scheduler.list();
       const automations = jobs.map((job) => {
-        const payload = job.actionPayload as Record<string, unknown> | undefined;
+        const payload = job.actionPayload as
+          | Record<string, unknown>
+          | undefined;
         const promptNameVal = payload?.promptName as string | undefined;
-        const prompt = promptNameVal && promptManager ? promptManager.getByName(promptNameVal) : null;
-        const skillName = (payload?.skillName as string | undefined) ?? prompt?.suggestedSkill ?? null;
+        const prompt =
+          promptNameVal && promptManager
+            ? promptManager.getByName(promptNameVal)
+            : null;
+        const skillName =
+          (payload?.skillName as string | undefined) ??
+          prompt?.suggestedSkill ??
+          null;
 
         let lastExecution = null;
         if (taskEngine) {
@@ -1955,12 +2431,16 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
                 status: ex.status,
                 startedAt: ex.startedAt,
                 completedAt: ex.completedAt,
-                duration: ex.startedAt && ex.completedAt
-                  ? new Date(ex.completedAt).getTime() - new Date(ex.startedAt).getTime()
-                  : null,
+                duration:
+                  ex.startedAt && ex.completedAt
+                    ? new Date(ex.completedAt).getTime() -
+                      new Date(ex.startedAt).getTime()
+                    : null,
               };
             }
-          } catch { /* ignore */ }
+          } catch {
+            /* ignore */
+          }
         }
 
         return {
@@ -1974,12 +2454,14 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
             runCount: job.runCount,
             lastRunAt: job.lastRunAt,
           },
-          prompt: prompt ? {
-            name: prompt.name,
-            suggestedSkill: prompt.suggestedSkill,
-            template: prompt.template.slice(0, 200),
-            stages: prompt.stages?.length ?? 0,
-          } : null,
+          prompt: prompt
+            ? {
+                name: prompt.name,
+                suggestedSkill: prompt.suggestedSkill,
+                template: prompt.template.slice(0, 200),
+                stages: prompt.stages?.length ?? 0,
+              }
+            : null,
           skillName,
           lastExecution,
         };
@@ -1997,26 +2479,47 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
     router.post("/jobs", (req, res) => {
       const body = req.body as Record<string, unknown>;
       const name = typeof body.name === "string" ? body.name.trim() : "";
-      const cronExpression = typeof body.cronExpression === "string" ? body.cronExpression.trim() : "";
+      const cronExpression =
+        typeof body.cronExpression === "string"
+          ? body.cronExpression.trim()
+          : "";
       const reasoningEffort = parseReasoningEffort(body.reasoningEffort);
       if (!name || !cronExpression) {
-        return res.status(400).json({ error: "name and cronExpression are required" });
+        return res
+          .status(400)
+          .json({ error: "name and cronExpression are required" });
       }
-      if (body.reasoningEffort !== undefined && body.reasoningEffort !== null && !reasoningEffort) {
-        return res.status(400).json({ error: "reasoningEffort must be 'low', 'medium', 'high', or 'xhigh'" });
+      if (
+        body.reasoningEffort !== undefined &&
+        body.reasoningEffort !== null &&
+        !reasoningEffort
+      ) {
+        return res.status(400).json({
+          error: "reasoningEffort must be 'low', 'medium', 'high', or 'xhigh'",
+        });
       }
       try {
         const job = scheduler.create({
           name,
           cronExpression,
-          timezone: typeof body.timezone === "string" ? body.timezone : undefined,
-          actionType: typeof body.actionType === "string" ? (body.actionType as "prompt" | "shell" | "custom" | "outbox") : undefined,
+          timezone:
+            typeof body.timezone === "string" ? body.timezone : undefined,
+          actionType:
+            typeof body.actionType === "string"
+              ? (body.actionType as "prompt" | "shell" | "custom" | "outbox")
+              : undefined,
           actionPayload: (body.actionPayload ?? {}) as Record<string, unknown>,
           model: typeof body.model === "string" ? body.model : undefined,
           reasoningEffort,
-          allowedTools: Array.isArray(body.allowedTools) ? (body.allowedTools as string[]) : undefined,
-          autoApproveTools: Array.isArray(body.autoApproveTools) ? (body.autoApproveTools as string[]) : undefined,
-          notifyChannels: Array.isArray(body.notifyChannels) ? (body.notifyChannels as import("../channels/types.js").ChannelType[]) : undefined,
+          allowedTools: Array.isArray(body.allowedTools)
+            ? (body.allowedTools as string[])
+            : undefined,
+          autoApproveTools: Array.isArray(body.autoApproveTools)
+            ? (body.autoApproveTools as string[])
+            : undefined,
+          notifyChannels: Array.isArray(body.notifyChannels)
+            ? (body.notifyChannels as import("../channels/types.js").ChannelType[])
+            : undefined,
           enabled: typeof body.enabled === "boolean" ? body.enabled : undefined,
         });
         return res.status(201).json(job);
@@ -2029,20 +2532,52 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
     router.put("/jobs/:id", (req, res) => {
       const body = req.body as Record<string, unknown>;
       const reasoningEffort = parseReasoningEffort(body.reasoningEffort);
-      if (body.reasoningEffort !== undefined && body.reasoningEffort !== null && !reasoningEffort) {
-        return res.status(400).json({ error: "reasoningEffort must be 'low', 'medium', 'high', 'xhigh', or null" });
+      if (
+        body.reasoningEffort !== undefined &&
+        body.reasoningEffort !== null &&
+        !reasoningEffort
+      ) {
+        return res.status(400).json({
+          error:
+            "reasoningEffort must be 'low', 'medium', 'high', 'xhigh', or null",
+        });
       }
       try {
         const updated = scheduler.update(req.params.id, {
           name: typeof body.name === "string" ? body.name.trim() : undefined,
-          cronExpression: typeof body.cronExpression === "string" ? body.cronExpression.trim() : undefined,
-          timezone: typeof body.timezone === "string" ? body.timezone : undefined,
-          actionPayload: body.actionPayload as Record<string, unknown> | undefined,
-          model: typeof body.model === "string" ? body.model : (body.model === null ? null : undefined),
-          reasoningEffort: reasoningEffort ?? (body.reasoningEffort === null ? null : undefined),
-          allowedTools: Array.isArray(body.allowedTools) ? (body.allowedTools as string[]) : (body.allowedTools === null ? null : undefined),
-          autoApproveTools: Array.isArray(body.autoApproveTools) ? (body.autoApproveTools as string[]) : (body.autoApproveTools === null ? null : undefined),
-          notifyChannels: Array.isArray(body.notifyChannels) ? (body.notifyChannels as import("../channels/types.js").ChannelType[]) : (body.notifyChannels === null ? null : undefined),
+          cronExpression:
+            typeof body.cronExpression === "string"
+              ? body.cronExpression.trim()
+              : undefined,
+          timezone:
+            typeof body.timezone === "string" ? body.timezone : undefined,
+          actionPayload: body.actionPayload as
+            | Record<string, unknown>
+            | undefined,
+          model:
+            typeof body.model === "string"
+              ? body.model
+              : body.model === null
+                ? null
+                : undefined,
+          reasoningEffort:
+            reasoningEffort ??
+            (body.reasoningEffort === null ? null : undefined),
+          allowedTools: Array.isArray(body.allowedTools)
+            ? (body.allowedTools as string[])
+            : body.allowedTools === null
+              ? null
+              : undefined,
+          autoApproveTools: Array.isArray(body.autoApproveTools)
+            ? (body.autoApproveTools as string[])
+            : body.autoApproveTools === null
+              ? null
+              : undefined,
+          notifyChannels: Array.isArray(body.notifyChannels)
+            ? (body.notifyChannels as import("../channels/types.js").ChannelType[])
+            : body.notifyChannels === null
+              ? null
+              : undefined,
           enabled: typeof body.enabled === "boolean" ? body.enabled : undefined,
         });
         return res.json(updated);
@@ -2054,7 +2589,8 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
 
     router.post("/jobs/:id/toggle", (req, res) => {
       const body = req.body as Record<string, unknown>;
-      const enabled = typeof body.enabled === "boolean" ? body.enabled : undefined;
+      const enabled =
+        typeof body.enabled === "boolean" ? body.enabled : undefined;
       if (enabled === undefined) {
         return res.status(400).json({ error: "enabled must be a boolean" });
       }
@@ -2080,7 +2616,9 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
         return res.status(404).json({ error: "Job not found" });
       }
       if (!job.enabled) {
-        return res.status(400).json({ error: "Job is disabled and cannot be run." });
+        return res
+          .status(400)
+          .json({ error: "Job is disabled and cannot be run." });
       }
 
       const dryRun = req.query.dry_run === "true";
@@ -2096,11 +2634,17 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
         };
 
         // Resolve prompt + skill details for rich preview
-        if (job.actionType === "prompt" && typeof job.actionPayload.promptName === "string" && promptManager) {
+        if (
+          job.actionType === "prompt" &&
+          typeof job.actionPayload.promptName === "string" &&
+          promptManager
+        ) {
           const promptName = job.actionPayload.promptName;
-          const templateVars = typeof job.actionPayload.templateVars === "object" && job.actionPayload.templateVars
-            ? (job.actionPayload.templateVars as Record<string, string>)
-            : {};
+          const templateVars =
+            typeof job.actionPayload.templateVars === "object" &&
+            job.actionPayload.templateVars
+              ? (job.actionPayload.templateVars as Record<string, string>)
+              : {};
           const prompt = promptManager.getByName(promptName);
           if (prompt) {
             // Compute scheduled variables
@@ -2166,7 +2710,10 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
 
       try {
         const repo = taskEngine.getRepository();
-        const limit = Math.min(Math.max(parseInt(String(req.query.limit ?? "10"), 10) || 10, 1), 50);
+        const limit = Math.min(
+          Math.max(parseInt(String(req.query.limit ?? "10"), 10) || 10, 1),
+          50,
+        );
         const executions = repo.findByJobName(job.name, limit);
         return res.json({ executions });
       } catch {
@@ -2179,9 +2726,12 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
   if (copilot) {
     router.post("/scheduler/assist", async (req, res) => {
       const body = req.body as Record<string, unknown>;
-      const message = typeof body.message === "string" ? body.message.trim() : "";
+      const message =
+        typeof body.message === "string" ? body.message.trim() : "";
       const promptNames = Array.isArray(body.promptNames)
-        ? body.promptNames.filter((entry): entry is string => typeof entry === "string")
+        ? body.promptNames.filter(
+            (entry): entry is string => typeof entry === "string",
+          )
         : [];
       const bodyModel = typeof body.model === "string" ? body.model.trim() : "";
 
@@ -2189,9 +2739,10 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
         return res.status(400).json({ error: "message is required" });
       }
 
-      const promptList = promptNames.length > 0
-        ? `Available saved prompts: ${promptNames.join(", ")}.`
-        : "No saved prompts are available.";
+      const promptList =
+        promptNames.length > 0
+          ? `Available saved prompts: ${promptNames.join(", ")}.`
+          : "No saved prompts are available.";
 
       const instructions = [
         "You are a scheduling assistant for OpenZigs.",
@@ -2204,27 +2755,37 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
         "If actionType is prompt, promptName must be one of the available saved prompts.",
         promptList,
         "User request:",
-        message
+        message,
       ].join("\n");
 
       try {
         let response = "";
-        const nlModel = bodyModel || (await getUserSelectedModel() ?? "gpt-5-mini");
-        for await (const chunk of copilot.chat(instructions, { model: nlModel, tools: [] })) {
+        const nlModel =
+          bodyModel || ((await getUserSelectedModel()) ?? "gpt-5-mini");
+        for await (const chunk of copilot.chat(instructions, {
+          model: nlModel,
+          tools: [],
+        })) {
           response += chunk;
         }
 
         const jsonText = extractJsonBlock(response);
         if (!jsonText) {
-          return res.status(400).json({ error: "Assistant response was not JSON.", raw: response });
+          return res
+            .status(400)
+            .json({ error: "Assistant response was not JSON.", raw: response });
         }
 
         let parsed: unknown;
         try {
           parsed = JSON.parse(jsonText);
         } catch (error) {
-          const details = error instanceof Error ? error.message : String(error);
-          return res.status(400).json({ error: `Invalid JSON from assistant: ${details}`, raw: response });
+          const details =
+            error instanceof Error ? error.message : String(error);
+          return res.status(400).json({
+            error: `Invalid JSON from assistant: ${details}`,
+            raw: response,
+          });
         }
 
         const suggestion = normalizeSchedulerSuggestion(parsed, promptNames);
@@ -2241,7 +2802,8 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
     router.post("/pipeline/plan", async (req, res) => {
       const body = req.body as Record<string, unknown>;
       const goal = typeof body.goal === "string" ? body.goal.trim() : "";
-      const model = typeof body.model === "string" ? body.model.trim() : undefined;
+      const model =
+        typeof body.model === "string" ? body.model.trim() : undefined;
 
       if (!goal) {
         return res.status(400).json({ error: "goal is required" });
@@ -2251,7 +2813,10 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
 
       try {
         const planner = new PipelinePlanner(copilot);
-        const result = await planner.plan(goal, { availableTools, model: model || undefined });
+        const result = await planner.plan(goal, {
+          availableTools,
+          model: model || undefined,
+        });
         return res.json(result);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -2263,7 +2828,8 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
     router.post("/automation/plan", async (req, res) => {
       const body = req.body as Record<string, unknown>;
       const goal = typeof body.goal === "string" ? body.goal.trim() : "";
-      const model = typeof body.model === "string" ? body.model.trim() : undefined;
+      const model =
+        typeof body.model === "string" ? body.model.trim() : undefined;
 
       if (!goal) {
         return res.status(400).json({ error: "goal is required" });
@@ -2274,27 +2840,54 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
       try {
         // 1. Get pipeline plan
         const planner = new PipelinePlanner(copilot);
-        const pipelineResult = await planner.plan(goal, { availableTools, model: model || undefined });
+        const pipelineResult = await planner.plan(goal, {
+          availableTools,
+          model: model || undefined,
+        });
 
         // 2. Match best skill
         const dirs = copilot?.getSkillDirectories?.() ?? [];
         const skills = await loadSkillMetadata(dirs);
         const goalLower = goal.toLowerCase();
-        let bestSkill: { name: string; confidence: number; reason: string } | null = null;
+        let bestSkill: {
+          name: string;
+          confidence: number;
+          reason: string;
+        } | null = null;
         for (const sk of skills) {
-          const nameMatch = goalLower.includes(sk.name.replace(/-/g, " ")) || goalLower.includes(sk.name);
-          const descMatch = sk.description && goalLower.split(" ").some((w: string) => w.length > 3 && sk.description.toLowerCase().includes(w));
+          const nameMatch =
+            goalLower.includes(sk.name.replace(/-/g, " ")) ||
+            goalLower.includes(sk.name);
+          const descMatch =
+            sk.description &&
+            goalLower
+              .split(" ")
+              .some(
+                (w: string) =>
+                  w.length > 3 && sk.description.toLowerCase().includes(w),
+              );
           if (nameMatch) {
-            bestSkill = { name: sk.name, confidence: 0.9, reason: `Goal mentions ${sk.displayName}` };
+            bestSkill = {
+              name: sk.name,
+              confidence: 0.9,
+              reason: `Goal mentions ${sk.displayName}`,
+            };
             break;
           }
           if (descMatch && (!bestSkill || bestSkill.confidence < 0.6)) {
-            bestSkill = { name: sk.name, confidence: 0.6, reason: `Goal overlaps with ${sk.displayName} domain` };
+            bestSkill = {
+              name: sk.name,
+              confidence: 0.6,
+              reason: `Goal overlaps with ${sk.displayName} domain`,
+            };
           }
         }
 
         // 3. Generate prompt template suggestion
-        const variableHints = goal.match(/\b(region|topic|limit|keyword|query|date|platform|url)\b/gi) ?? [];
+        const variableHints =
+          goal.match(
+            /\b(region|topic|limit|keyword|query|date|platform|url)\b/gi,
+          ) ?? [];
         const variables: Record<string, string> = {};
         for (const v of variableHints) variables[v.toLowerCase()] = "";
 
@@ -2303,7 +2896,7 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
           template: goal,
           variables,
           preferredTools: bestSkill
-            ? skills.find((s) => s.name === bestSkill!.name)?.tools ?? []
+            ? (skills.find((s) => s.name === bestSkill!.name)?.tools ?? [])
             : [],
         };
 
@@ -2328,18 +2921,22 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
           cronHumanReadable = "Every hour";
         }
         if (/eastern|ET\b|new.?york/i.test(goal)) timezone = "America/New_York";
-        else if (/pacific|PT\b|los.?angeles/i.test(goal)) timezone = "America/Los_Angeles";
-        else if (/central|CT\b|chicago/i.test(goal)) timezone = "America/Chicago";
+        else if (/pacific|PT\b|los.?angeles/i.test(goal))
+          timezone = "America/Los_Angeles";
+        else if (/central|CT\b|chicago/i.test(goal))
+          timezone = "America/Chicago";
 
         return res.json({
           ...pipelineResult,
           skill: bestSkill,
           prompt: promptSuggestion,
-          schedule: cronExpression ? {
-            cronExpression,
-            cronHumanReadable,
-            timezone,
-          } : null,
+          schedule: cronExpression
+            ? {
+                cronExpression,
+                cronHumanReadable,
+                timezone,
+              }
+            : null,
           autoApproveTools: promptSuggestion.preferredTools.slice(0, 5),
         });
       } catch (error) {
@@ -2362,7 +2959,8 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
 
     router.get("/pipeline-templates/:id", async (req, res) => {
       const template = pipelineTemplateManager.getById(req.params.id);
-      if (!template) return res.status(404).json({ error: "Template not found" });
+      if (!template)
+        return res.status(404).json({ error: "Template not found" });
       return res.json(template);
     });
 
@@ -2373,10 +2971,16 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
       try {
         const template = await pipelineTemplateManager.create({
           name,
-          description: typeof body.description === "string" ? body.description : "",
+          description:
+            typeof body.description === "string" ? body.description : "",
           icon: typeof body.icon === "string" ? body.icon : "📋",
-          tags: Array.isArray(body.tags) ? body.tags.filter((t): t is string => typeof t === "string") : [],
-          suggestedSkill: typeof body.suggestedSkill === "string" ? body.suggestedSkill : null,
+          tags: Array.isArray(body.tags)
+            ? body.tags.filter((t): t is string => typeof t === "string")
+            : [],
+          suggestedSkill:
+            typeof body.suggestedSkill === "string"
+              ? body.suggestedSkill
+              : null,
           template: typeof body.template === "string" ? body.template : "",
           stages: Array.isArray(body.stages) ? body.stages : [],
           variables: Array.isArray(body.variables) ? body.variables : [],
@@ -2392,15 +2996,22 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
       const body = req.body as Record<string, unknown>;
       const updates: Record<string, unknown> = {};
       if (typeof body.name === "string") updates.name = body.name.trim();
-      if (typeof body.description === "string") updates.description = body.description;
+      if (typeof body.description === "string")
+        updates.description = body.description;
       if (typeof body.icon === "string") updates.icon = body.icon;
       if (typeof body.template === "string") updates.template = body.template;
       if (Array.isArray(body.tags)) updates.tags = body.tags;
       if (Array.isArray(body.stages)) updates.stages = body.stages;
       if (Array.isArray(body.variables)) updates.variables = body.variables;
       try {
-        const template = await pipelineTemplateManager.update(req.params.id, updates as Partial<Record<string, unknown>>);
-        if (!template) return res.status(404).json({ error: "Template not found or is built-in" });
+        const template = await pipelineTemplateManager.update(
+          req.params.id,
+          updates as Partial<Record<string, unknown>>,
+        );
+        if (!template)
+          return res
+            .status(404)
+            .json({ error: "Template not found or is built-in" });
         return res.json(template);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -2411,7 +3022,10 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
     router.delete("/pipeline-templates/:id", async (req, res) => {
       try {
         const removed = await pipelineTemplateManager.remove(req.params.id);
-        if (!removed) return res.status(404).json({ error: "Template not found or is built-in" });
+        if (!removed)
+          return res
+            .status(404)
+            .json({ error: "Template not found or is built-in" });
         return res.json({ success: true });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -2430,11 +3044,19 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
       const body = req.body as Record<string, unknown>;
       try {
         const updated = personalityManager.update({
-          systemInstruction: typeof body.systemInstruction === "string" ? body.systemInstruction : undefined,
-          prePrompt: typeof body.prePrompt === "string" ? body.prePrompt : undefined,
-          postPrompt: typeof body.postPrompt === "string" ? body.postPrompt : undefined,
+          systemInstruction:
+            typeof body.systemInstruction === "string"
+              ? body.systemInstruction
+              : undefined,
+          prePrompt:
+            typeof body.prePrompt === "string" ? body.prePrompt : undefined,
+          postPrompt:
+            typeof body.postPrompt === "string" ? body.postPrompt : undefined,
           enabled: typeof body.enabled === "boolean" ? body.enabled : undefined,
-          mode: body.mode === "append" || body.mode === "replace" ? body.mode : undefined,
+          mode:
+            body.mode === "append" || body.mode === "replace"
+              ? body.mode
+              : undefined,
         });
         return res.json(updated);
       } catch (error) {
@@ -2462,21 +3084,27 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
 
     router.get("/brand-voice/:id", (req, res) => {
       const voice = brandVoiceService.getById(req.params.id);
-      if (!voice) return res.status(404).json({ error: "Brand voice not found" });
+      if (!voice)
+        return res.status(404).json({ error: "Brand voice not found" });
       return res.json(voice);
     });
 
     router.post("/brand-voice/analyze", async (req, res) => {
       const body = req.body as Record<string, unknown>;
       const samples = Array.isArray(body.samples)
-        ? (body.samples as unknown[]).filter((s): s is string => typeof s === "string")
+        ? (body.samples as unknown[]).filter(
+            (s): s is string => typeof s === "string",
+          )
         : [];
       const name = typeof body.name === "string" ? body.name.trim() : "";
       const active = body.active === true;
-      const model = typeof body.model === "string" ? body.model.trim() : undefined;
+      const model =
+        typeof body.model === "string" ? body.model.trim() : undefined;
 
       if (samples.length === 0) {
-        return res.status(400).json({ error: "At least one writing sample is required" });
+        return res
+          .status(400)
+          .json({ error: "At least one writing sample is required" });
       }
       if (!name) {
         return res.status(400).json({ error: "Name is required" });
@@ -2484,12 +3112,17 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
       const MAX_SAMPLE_LENGTH = 10_000;
       for (const sample of samples) {
         if (sample.length > MAX_SAMPLE_LENGTH) {
-          return res.status(400).json({ error: `Sample exceeds ${MAX_SAMPLE_LENGTH} characters` });
+          return res
+            .status(400)
+            .json({ error: `Sample exceeds ${MAX_SAMPLE_LENGTH} characters` });
         }
       }
 
       try {
-        const voice = await brandVoiceService.analyzeAndSave(name, samples, { active, model });
+        const voice = await brandVoiceService.analyzeAndSave(name, samples, {
+          active,
+          model,
+        });
         return res.json(voice);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -2498,24 +3131,33 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
       }
     });
 
-    const BrandVoiceRulebookUpdateSchema = z.object({
-      tone: z.string(),
-      sentence_structure: z.string(),
-      vocabulary_level: z.string(),
-      formatting_quirks: z.string(),
-      banned_words: z.array(z.string()),
-    }).partial().strict();
+    const BrandVoiceRulebookUpdateSchema = z
+      .object({
+        tone: z.string(),
+        sentence_structure: z.string(),
+        vocabulary_level: z.string(),
+        formatting_quirks: z.string(),
+        banned_words: z.array(z.string()),
+      })
+      .partial()
+      .strict();
 
     router.put("/brand-voice/:id", (req, res) => {
       const body = req.body as Record<string, unknown>;
 
-      let rulebook: import("../personality/brand-voice-repository.js").BrandVoiceRulebook | undefined;
+      let rulebook:
+        | import("../personality/brand-voice-repository.js").BrandVoiceRulebook
+        | undefined;
       if (body.rulebook !== undefined) {
         const result = BrandVoiceRulebookUpdateSchema.safeParse(body.rulebook);
         if (!result.success) {
-          return res.status(400).json({ error: "Invalid rulebook structure", issues: result.error.issues });
+          return res.status(400).json({
+            error: "Invalid rulebook structure",
+            issues: result.error.issues,
+          });
         }
-        rulebook = result.data as import("../personality/brand-voice-repository.js").BrandVoiceRulebook;
+        rulebook =
+          result.data as import("../personality/brand-voice-repository.js").BrandVoiceRulebook;
       }
 
       const updated = brandVoiceService.update(req.params.id, {
@@ -2523,30 +3165,42 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
         rulebook,
         active: typeof body.active === "boolean" ? body.active : undefined,
       });
-      if (!updated) return res.status(404).json({ error: "Brand voice not found" });
+      if (!updated)
+        return res.status(404).json({ error: "Brand voice not found" });
       return res.json(updated);
     });
 
     router.post("/brand-voice/:id/activate", (req, res) => {
       const voice = brandVoiceService.setActive(req.params.id);
-      if (!voice) return res.status(404).json({ error: "Brand voice not found" });
+      if (!voice)
+        return res.status(404).json({ error: "Brand voice not found" });
       return res.json(voice);
     });
 
     router.post("/brand-voice/:id/reanalyze", async (req, res) => {
       const body = req.body as Record<string, unknown>;
       const samples = Array.isArray(body.samples)
-        ? (body.samples as unknown[]).filter((s): s is string => typeof s === "string")
+        ? (body.samples as unknown[]).filter(
+            (s): s is string => typeof s === "string",
+          )
         : [];
-      const model = typeof body.model === "string" ? body.model.trim() : undefined;
+      const model =
+        typeof body.model === "string" ? body.model.trim() : undefined;
 
       if (samples.length === 0) {
-        return res.status(400).json({ error: "At least one writing sample is required" });
+        return res
+          .status(400)
+          .json({ error: "At least one writing sample is required" });
       }
 
       try {
-        const voice = await brandVoiceService.reanalyze(req.params.id, samples, model);
-        if (!voice) return res.status(404).json({ error: "Brand voice not found" });
+        const voice = await brandVoiceService.reanalyze(
+          req.params.id,
+          samples,
+          model,
+        );
+        if (!voice)
+          return res.status(404).json({ error: "Brand voice not found" });
         return res.json(voice);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -2569,64 +3223,83 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
         if ([".pdf", ".docx", ".doc", ".txt"].includes(ext)) {
           cb(null, true);
         } else {
-          cb(new Error("Unsupported file type. Accepted: .pdf, .docx, .doc, .txt"));
+          cb(
+            new Error(
+              "Unsupported file type. Accepted: .pdf, .docx, .doc, .txt",
+            ),
+          );
         }
       },
     });
 
-    router.post("/brand-voice/upload-samples", sampleUpload.array("files", 10), async (req, res) => {
-      const files = req.files as Express.Multer.File[] | undefined;
-      if (!files || files.length === 0) {
-        return res.status(400).json({ error: "No files uploaded" });
-      }
-
-      const samples: string[] = [];
-      const errors: string[] = [];
-
-      for (const file of files) {
-        const ext = path.extname(file.originalname).toLowerCase();
-        try {
-          let text = "";
-          if (ext === ".txt") {
-            text = file.buffer.toString("utf-8");
-          } else if (ext === ".docx" || ext === ".doc") {
-            const mod: unknown = await import("mammoth");
-            const m = mod as Record<string, unknown>;
-            const mammoth = (m.default ?? m) as Record<string, unknown>;
-            if (typeof mammoth.extractRawText !== "function") {
-              throw new Error("mammoth.extractRawText is not a function — unexpected module shape");
-            }
-            const result = await (mammoth.extractRawText as (opts: { buffer: Buffer }) => Promise<{ value: string }>)({ buffer: file.buffer });
-            text = result.value;
-          } else if (ext === ".pdf") {
-            const mod: unknown = await import("pdf-parse");
-            const m = mod as Record<string, unknown>;
-            const pdf = (m.default ?? m) as (data: Buffer) => Promise<{ text: string }>;
-            if (typeof pdf !== "function") {
-              throw new Error("pdf-parse default export is not a function — unexpected module shape");
-            }
-            const data = await pdf(file.buffer);
-            text = data.text;
-          }
-
-          const trimmed = text.trim();
-          if (trimmed) {
-            samples.push(trimmed);
-          } else {
-            errors.push(`${file.originalname}: extracted text was empty`);
-          }
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
-          errors.push(`${file.originalname}: ${msg}`);
+    router.post(
+      "/brand-voice/upload-samples",
+      sampleUpload.array("files", 10),
+      async (req, res) => {
+        const files = req.files as Express.Multer.File[] | undefined;
+        if (!files || files.length === 0) {
+          return res.status(400).json({ error: "No files uploaded" });
         }
-      }
 
-      return res.json({ samples, errors });
-    });
+        const samples: string[] = [];
+        const errors: string[] = [];
+
+        for (const file of files) {
+          const ext = path.extname(file.originalname).toLowerCase();
+          try {
+            let text = "";
+            if (ext === ".txt") {
+              text = file.buffer.toString("utf-8");
+            } else if (ext === ".docx" || ext === ".doc") {
+              const mod: unknown = await import("mammoth");
+              const m = mod as Record<string, unknown>;
+              const mammoth = (m.default ?? m) as Record<string, unknown>;
+              if (typeof mammoth.extractRawText !== "function") {
+                throw new Error(
+                  "mammoth.extractRawText is not a function — unexpected module shape",
+                );
+              }
+              const result = await (
+                mammoth.extractRawText as (opts: {
+                  buffer: Buffer;
+                }) => Promise<{ value: string }>
+              )({ buffer: file.buffer });
+              text = result.value;
+            } else if (ext === ".pdf") {
+              const mod: unknown = await import("pdf-parse");
+              const m = mod as Record<string, unknown>;
+              const pdf = (m.default ?? m) as (
+                data: Buffer,
+              ) => Promise<{ text: string }>;
+              if (typeof pdf !== "function") {
+                throw new Error(
+                  "pdf-parse default export is not a function — unexpected module shape",
+                );
+              }
+              const data = await pdf(file.buffer);
+              text = data.text;
+            }
+
+            const trimmed = text.trim();
+            if (trimmed) {
+              samples.push(trimmed);
+            } else {
+              errors.push(`${file.originalname}: extracted text was empty`);
+            }
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            errors.push(`${file.originalname}: ${msg}`);
+          }
+        }
+
+        return res.json({ samples, errors });
+      },
+    );
 
     router.delete("/brand-voice/:id", (req, res) => {
       const deleted = brandVoiceService.delete(req.params.id);
-      if (!deleted) return res.status(404).json({ error: "Brand voice not found" });
+      if (!deleted)
+        return res.status(404).json({ error: "Brand voice not found" });
       return res.json({ ok: true });
     });
   }
@@ -2667,8 +3340,12 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
     router.post("/sessions/:id/fork", async (req, res) => {
       try {
         const body = req.body as Record<string, unknown>;
-        const upToIndex = typeof body.upToIndex === "number" ? body.upToIndex : 0;
-        const forked = await sessionManager.forkSession(req.params.id, upToIndex);
+        const upToIndex =
+          typeof body.upToIndex === "number" ? body.upToIndex : 0;
+        const forked = await sessionManager.forkSession(
+          req.params.id,
+          upToIndex,
+        );
         return res.status(201).json(forked);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -2704,11 +3381,16 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
     router.get("/copilot-sessions", async (req, res) => {
       try {
         const filter: Record<string, string> = {};
-        if (typeof req.query.repository === "string") filter.repository = req.query.repository;
-        if (typeof req.query.branch === "string") filter.branch = req.query.branch;
+        if (typeof req.query.repository === "string")
+          filter.repository = req.query.repository;
+        if (typeof req.query.branch === "string")
+          filter.branch = req.query.branch;
         if (typeof req.query.cwd === "string") filter.cwd = req.query.cwd;
-        if (typeof req.query.gitRoot === "string") filter.gitRoot = req.query.gitRoot;
-        const sessions = await copilot.listSdkSessions(Object.keys(filter).length > 0 ? filter : undefined);
+        if (typeof req.query.gitRoot === "string")
+          filter.gitRoot = req.query.gitRoot;
+        const sessions = await copilot.listSdkSessions(
+          Object.keys(filter).length > 0 ? filter : undefined,
+        );
         return res.json({ sessions });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -2732,7 +3414,9 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
       try {
         // Verify the session exists in the SDK listing
         const sessions = await copilot.listSdkSessions();
-        const target = sessions.find((s) => s.sessionId === req.params.sessionId);
+        const target = sessions.find(
+          (s) => s.sessionId === req.params.sessionId,
+        );
         if (!target) {
           return res.status(404).json({ error: "SDK session not found" });
         }
@@ -2754,7 +3438,9 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
     // Phase 3: Get conversation events for replay
     router.get("/copilot-sessions/:sessionId/messages", async (req, res) => {
       try {
-        const events = await copilot.getSdkSessionMessages(req.params.sessionId);
+        const events = await copilot.getSdkSessionMessages(
+          req.params.sessionId,
+        );
         return res.json({ events });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -2774,7 +3460,9 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
   router.put("/session/config", async (req, res) => {
     const body = req.body as Record<string, unknown>;
     const maxToolsPerRequest =
-      typeof body.maxToolsPerRequest === "number" ? body.maxToolsPerRequest : undefined;
+      typeof body.maxToolsPerRequest === "number"
+        ? body.maxToolsPerRequest
+        : undefined;
 
     if (
       maxToolsPerRequest === undefined ||
@@ -2782,7 +3470,9 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
       maxToolsPerRequest < 1 ||
       maxToolsPerRequest > 128
     ) {
-      return res.status(400).json({ error: "maxToolsPerRequest must be an integer between 1 and 128" });
+      return res.status(400).json({
+        error: "maxToolsPerRequest must be an integer between 1 and 128",
+      });
     }
 
     try {
@@ -2828,10 +3518,18 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
 
   router.put("/tasks/config", async (req, res) => {
     const body = req.body as Record<string, unknown>;
-    const maxConcurrent = typeof body.maxConcurrent === "number" ? body.maxConcurrent : undefined;
+    const maxConcurrent =
+      typeof body.maxConcurrent === "number" ? body.maxConcurrent : undefined;
 
-    if (maxConcurrent === undefined || !Number.isInteger(maxConcurrent) || maxConcurrent < 1 || maxConcurrent > 10) {
-      return res.status(400).json({ error: "maxConcurrent must be an integer between 1 and 10" });
+    if (
+      maxConcurrent === undefined ||
+      !Number.isInteger(maxConcurrent) ||
+      maxConcurrent < 1 ||
+      maxConcurrent > 10
+    ) {
+      return res
+        .status(400)
+        .json({ error: "maxConcurrent must be an integer between 1 and 10" });
     }
 
     try {
@@ -2842,9 +3540,10 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
       // Persist to user config
       const configPath = defaultConfigPath();
       const userConfig = await readUserConfig(configPath);
-      const existingTasks = (userConfig.tasks && typeof userConfig.tasks === "object")
-        ? (userConfig.tasks as Record<string, unknown>)
-        : {};
+      const existingTasks =
+        userConfig.tasks && typeof userConfig.tasks === "object"
+          ? (userConfig.tasks as Record<string, unknown>)
+          : {};
       userConfig.tasks = { ...existingTasks, maxConcurrent };
       await writeUserConfig(configPath, userConfig);
 
@@ -2861,8 +3560,14 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
     const reasoningEffort = copilot?.getReasoningEffort() ?? "medium";
     const provider = copilot?.getProvider() ?? null;
     const workingDirectory = copilot?.getWorkingDirectory() ?? null;
-    const backgroundTaskDefaultModel = taskEngine?.getBackgroundTaskDefaultModel() ?? null;
-    return res.json({ reasoningEffort, provider, workingDirectory, backgroundTaskDefaultModel });
+    const backgroundTaskDefaultModel =
+      taskEngine?.getBackgroundTaskDefaultModel() ?? null;
+    return res.json({
+      reasoningEffort,
+      provider,
+      workingDirectory,
+      backgroundTaskDefaultModel,
+    });
   });
 
   router.put("/models/config", async (req, res) => {
@@ -2871,14 +3576,26 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
     const validEfforts = new Set(["low", "medium", "high", "xhigh"]);
 
     if (body.reasoningEffort !== undefined) {
-      if (body.reasoningEffort !== null && (typeof body.reasoningEffort !== "string" || !validEfforts.has(body.reasoningEffort))) {
-        return res.status(400).json({ error: "reasoningEffort must be 'low', 'medium', 'high', 'xhigh', or null" });
+      if (
+        body.reasoningEffort !== null &&
+        (typeof body.reasoningEffort !== "string" ||
+          !validEfforts.has(body.reasoningEffort))
+      ) {
+        return res.status(400).json({
+          error:
+            "reasoningEffort must be 'low', 'medium', 'high', 'xhigh', or null",
+        });
       }
     }
 
     if (body.workingDirectory !== undefined) {
-      if (body.workingDirectory !== null && typeof body.workingDirectory !== "string") {
-        return res.status(400).json({ error: "workingDirectory must be a string or null" });
+      if (
+        body.workingDirectory !== null &&
+        typeof body.workingDirectory !== "string"
+      ) {
+        return res
+          .status(400)
+          .json({ error: "workingDirectory must be a string or null" });
       }
     }
 
@@ -2886,18 +3603,32 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
       if (body.provider !== null) {
         const prov = body.provider as Record<string, unknown>;
         const validTypes = new Set(["openai", "azure", "anthropic", "ollama"]);
-        if (!prov || typeof prov !== "object" || !validTypes.has(prov.type as string)) {
-          return res.status(400).json({ error: "provider.type must be 'openai', 'azure', 'anthropic', or 'ollama'" });
+        if (
+          !prov ||
+          typeof prov !== "object" ||
+          !validTypes.has(prov.type as string)
+        ) {
+          return res.status(400).json({
+            error:
+              "provider.type must be 'openai', 'azure', 'anthropic', or 'ollama'",
+          });
         }
         if (typeof prov.baseUrl !== "string" || !prov.baseUrl) {
-          return res.status(400).json({ error: "provider.baseUrl is required" });
+          return res
+            .status(400)
+            .json({ error: "provider.baseUrl is required" });
         }
       }
     }
 
     if (body.backgroundTaskDefaultModel !== undefined) {
-      if (body.backgroundTaskDefaultModel !== null && typeof body.backgroundTaskDefaultModel !== "string") {
-        return res.status(400).json({ error: "backgroundTaskDefaultModel must be a string or null" });
+      if (
+        body.backgroundTaskDefaultModel !== null &&
+        typeof body.backgroundTaskDefaultModel !== "string"
+      ) {
+        return res.status(400).json({
+          error: "backgroundTaskDefaultModel must be a string or null",
+        });
       }
     }
 
@@ -2906,36 +3637,46 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
       if (copilot) {
         if (body.reasoningEffort !== undefined) {
           copilot.setReasoningEffort(
-            body.reasoningEffort === null ? undefined : (body.reasoningEffort as ReasoningEffort)
+            body.reasoningEffort === null
+              ? undefined
+              : (body.reasoningEffort as ReasoningEffort),
           );
         }
         if (body.workingDirectory !== undefined) {
           copilot.setWorkingDirectory(
-            body.workingDirectory === null ? undefined : (body.workingDirectory as string)
+            body.workingDirectory === null
+              ? undefined
+              : (body.workingDirectory as string),
           );
         }
         if (body.provider !== undefined) {
           copilot.setProvider(
-            body.provider === null ? undefined : (body.provider as ProviderConfig)
+            body.provider === null
+              ? undefined
+              : (body.provider as ProviderConfig),
           );
         }
       }
 
       if (body.backgroundTaskDefaultModel !== undefined && taskEngine) {
         taskEngine.setBackgroundTaskDefaultModel(
-          body.backgroundTaskDefaultModel === null ? undefined : (body.backgroundTaskDefaultModel as string)
+          body.backgroundTaskDefaultModel === null
+            ? undefined
+            : (body.backgroundTaskDefaultModel as string),
         );
       }
 
       // Persist to user config
       const configPath = defaultConfigPath();
       const userConfig = await readUserConfig(configPath);
-      const existingCopilot = (userConfig.copilot && typeof userConfig.copilot === "object")
-        ? (userConfig.copilot as Record<string, unknown>)
-        : {};
+      const existingCopilot =
+        userConfig.copilot && typeof userConfig.copilot === "object"
+          ? (userConfig.copilot as Record<string, unknown>)
+          : {};
 
       if (body.reasoningEffort !== undefined) {
-        existingCopilot.defaultReasoningEffort = body.reasoningEffort ?? "medium";
+        existingCopilot.defaultReasoningEffort =
+          body.reasoningEffort ?? "medium";
       }
       if (body.workingDirectory !== undefined) {
         existingCopilot.defaultWorkingDirectory = body.workingDirectory;
@@ -2947,10 +3688,12 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
       userConfig.copilot = existingCopilot;
 
       if (body.backgroundTaskDefaultModel !== undefined) {
-        const existingTasks = (userConfig.tasks && typeof userConfig.tasks === "object")
-          ? (userConfig.tasks as Record<string, unknown>)
-          : {};
-        existingTasks.backgroundTaskDefaultModel = body.backgroundTaskDefaultModel;
+        const existingTasks =
+          userConfig.tasks && typeof userConfig.tasks === "object"
+            ? (userConfig.tasks as Record<string, unknown>)
+            : {};
+        existingTasks.backgroundTaskDefaultModel =
+          body.backgroundTaskDefaultModel;
         userConfig.tasks = existingTasks;
       }
 
@@ -2962,7 +3705,8 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
         reasoningEffort: copilot?.getReasoningEffort() ?? "medium",
         provider: copilot?.getProvider() ?? null,
         workingDirectory: copilot?.getWorkingDirectory() ?? null,
-        backgroundTaskDefaultModel: taskEngine?.getBackgroundTaskDefaultModel() ?? null,
+        backgroundTaskDefaultModel:
+          taskEngine?.getBackgroundTaskDefaultModel() ?? null,
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -2988,7 +3732,9 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
       const result = customAgentSchema.safeParse(agent);
       if (!result.success) {
         const name = (agent as Record<string, unknown>).name ?? "unknown";
-        return res.status(400).json({ error: `Agent '${name}': ${result.error.issues.map((i) => i.message).join(", ")}` });
+        return res.status(400).json({
+          error: `Agent '${name}': ${result.error.issues.map((i) => i.message).join(", ")}`,
+        });
       }
     }
 
@@ -3000,7 +3746,10 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
       await updateCopilotConfig("customAgents", agents);
 
       logger.info(`Custom agents updated: ${agents.length} agent(s)`);
-      return res.json({ ok: true, agents: copilot?.getCustomAgents() ?? agents });
+      return res.json({
+        ok: true,
+        agents: copilot?.getCustomAgents() ?? agents,
+      });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return res.status(500).json({ error: message });
@@ -3010,13 +3759,17 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
   router.post("/agents", async (req, res) => {
     const parsed = customAgentSchema.safeParse(req.body);
     if (!parsed.success) {
-      return res.status(400).json({ error: parsed.error.issues.map((i) => i.message).join(", ") });
+      return res
+        .status(400)
+        .json({ error: parsed.error.issues.map((i) => i.message).join(", ") });
     }
 
     try {
       const current = copilot?.getCustomAgents() ?? [];
       if (current.some((a) => a.name === parsed.data.name)) {
-        return res.status(409).json({ error: `Agent '${parsed.data.name}' already exists` });
+        return res
+          .status(409)
+          .json({ error: `Agent '${parsed.data.name}' already exists` });
       }
 
       const newAgent = parsed.data as CustomAgentDefinition;
@@ -3037,7 +3790,9 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
     const { name } = req.params;
     const parsed = customAgentSchema.safeParse(req.body);
     if (!parsed.success) {
-      return res.status(400).json({ error: parsed.error.issues.map((i) => i.message).join(", ") });
+      return res
+        .status(400)
+        .json({ error: parsed.error.issues.map((i) => i.message).join(", ") });
     }
 
     try {
@@ -3093,15 +3848,23 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
     const body = req.body as Record<string, unknown>;
     const agentName = body.agentName as string | null | undefined;
 
-    if (agentName !== null && agentName !== undefined && typeof agentName !== "string") {
-      return res.status(400).json({ error: "agentName must be a string or null" });
+    if (
+      agentName !== null &&
+      agentName !== undefined &&
+      typeof agentName !== "string"
+    ) {
+      return res
+        .status(400)
+        .json({ error: "agentName must be a string or null" });
     }
 
     // Validate agent exists when setting (not clearing)
     if (agentName) {
       const agents = copilot?.getCustomAgents() ?? [];
       if (!agents.some((a) => a.name === agentName)) {
-        return res.status(404).json({ error: `Agent '${agentName}' not found` });
+        return res
+          .status(404)
+          .json({ error: `Agent '${agentName}' not found` });
       }
     }
 
@@ -3122,7 +3885,10 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
   // ── Native MCP Servers Management ──
 
   /** Background tool discovery: spawn/connect to MCP server, cache discovered tools, then tear down. */
-  const discoverAndCacheTools = async (name: string, def: NativeMcpServerDefinition) => {
+  const discoverAndCacheTools = async (
+    name: string,
+    def: NativeMcpServerDefinition,
+  ) => {
     try {
       logger.info(`Background tool discovery starting for "${name}"`);
       const result = await mcpTester.testServer(name, def);
@@ -3137,7 +3903,9 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
           connected: true,
           updatedAt: new Date().toISOString(),
         };
-        logger.info(`Background tool discovery for "${name}" found ${result.tools.length} tools`);
+        logger.info(
+          `Background tool discovery for "${name}" found ${result.tools.length} tools`,
+        );
       } else {
         cache[name] = {
           tools: cache[name]?.tools ?? [],
@@ -3145,7 +3913,9 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
           error: result.error,
           updatedAt: new Date().toISOString(),
         };
-        logger.warn(`Background tool discovery for "${name}" failed: ${result.error}`);
+        logger.warn(
+          `Background tool discovery for "${name}" failed: ${result.error}`,
+        );
       }
 
       await setNativeMcpToolCache(cache);
@@ -3176,13 +3946,19 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
     const body = req.body as Record<string, unknown>;
     const servers = body.servers;
     if (!servers || typeof servers !== "object" || Array.isArray(servers)) {
-      return res.status(400).json({ error: "servers must be an object (Record<string, ServerConfig>)" });
+      return res.status(400).json({
+        error: "servers must be an object (Record<string, ServerConfig>)",
+      });
     }
 
     // Validate the entire servers record against the Zod schema
     const parsed = nativeMcpServersSchema.safeParse(servers);
     if (!parsed.success) {
-      return res.status(400).json({ error: parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join(", ") });
+      return res.status(400).json({
+        error: parsed.error.issues
+          .map((i) => `${i.path.join(".")}: ${i.message}`)
+          .join(", "),
+      });
     }
 
     const stats = taskEngine?.getStats() ?? { queued: 0, running: 0 };
@@ -3197,13 +3973,20 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
 
     try {
       if (copilot) {
-        copilot.setNativeMcpServers(parsed.data as Record<string, NativeMcpServerDefinition>);
+        copilot.setNativeMcpServers(
+          parsed.data as Record<string, NativeMcpServerDefinition>,
+        );
       }
 
       await updateCopilotConfig("nativeMcpServers", parsed.data);
 
-      logger.info(`Native MCP servers updated: ${Object.keys(parsed.data).length} server(s)`);
-      return res.json({ ok: true, servers: copilot?.getNativeMcpServers() ?? parsed.data });
+      logger.info(
+        `Native MCP servers updated: ${Object.keys(parsed.data).length} server(s)`,
+      );
+      return res.json({
+        ok: true,
+        servers: copilot?.getNativeMcpServers() ?? parsed.data,
+      });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return res.status(500).json({ error: message });
@@ -3212,17 +3995,28 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
 
   router.post("/native-mcp-servers/test", async (req, res) => {
     const body = req.body as Record<string, unknown>;
-    const serverName = typeof body.serverName === "string" ? body.serverName.trim() : "test";
+    const serverName =
+      typeof body.serverName === "string" ? body.serverName.trim() : "test";
 
     const parsed = mcpServerConfigSchema.safeParse(body.server ?? body);
     if (!parsed.success) {
-      return res.status(400).json({ error: parsed.error.issues.map((i) => i.message).join(", ") });
+      return res
+        .status(400)
+        .json({ error: parsed.error.issues.map((i) => i.message).join(", ") });
     }
 
     try {
       const result = await Promise.race([
-        mcpTester.testServer(serverName, parsed.data as NativeMcpServerDefinition),
-        new Promise<never>((_, reject) => setTimeout(() => reject(new Error("Connection test timed out after 15s")), 15_000)),
+        mcpTester.testServer(
+          serverName,
+          parsed.data as NativeMcpServerDefinition,
+        ),
+        new Promise<never>((_, reject) =>
+          setTimeout(
+            () => reject(new Error("Connection test timed out after 15s")),
+            15_000,
+          ),
+        ),
       ]);
 
       const configPath = defaultConfigPath();
@@ -3262,7 +4056,12 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
     try {
       const result = await Promise.race([
         mcpTester.testServer(name, server),
-        new Promise<never>((_, reject) => setTimeout(() => reject(new Error("Connection test timed out after 15s")), 15_000)),
+        new Promise<never>((_, reject) =>
+          setTimeout(
+            () => reject(new Error("Connection test timed out after 15s")),
+            15_000,
+          ),
+        ),
       ]);
 
       const configPath = defaultConfigPath();
@@ -3289,7 +4088,9 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
       return res.json(result);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      return res.status(500).json({ ok: false, serverName: name, error: message });
+      return res
+        .status(500)
+        .json({ ok: false, serverName: name, error: message });
     }
   });
 
@@ -3302,7 +4103,9 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
     }
     const parsed = mcpServerConfigSchema.safeParse(req.body);
     if (!parsed.success) {
-      return res.status(400).json({ error: parsed.error.issues.map((i) => i.message).join(", ") });
+      return res
+        .status(400)
+        .json({ error: parsed.error.issues.map((i) => i.message).join(", ") });
     }
 
     const stats = taskEngine?.getStats() ?? { queued: 0, running: 0 };
@@ -3318,10 +4121,15 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
     try {
       const current = copilot?.getNativeMcpServers() ?? {};
       if (name in current) {
-        return res.status(409).json({ error: `Server '${name}' already exists` });
+        return res
+          .status(409)
+          .json({ error: `Server '${name}' already exists` });
       }
 
-      const updated = { ...current, [name]: parsed.data as NativeMcpServerDefinition };
+      const updated = {
+        ...current,
+        [name]: parsed.data as NativeMcpServerDefinition,
+      };
       if (copilot) copilot.setNativeMcpServers(updated);
 
       await updateCopilotConfig("nativeMcpServers", updated);
@@ -3329,7 +4137,10 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
       logger.info(`Native MCP server added: ${name}`);
 
       // Fire-and-forget: background tool discovery so cache is populated immediately
-      void discoverAndCacheTools(name, parsed.data as NativeMcpServerDefinition);
+      void discoverAndCacheTools(
+        name,
+        parsed.data as NativeMcpServerDefinition,
+      );
 
       return res.status(201).json({ ok: true, server: parsed.data });
     } catch (error) {
@@ -3345,7 +4156,9 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
     }
     const parsed = mcpServerConfigSchema.safeParse(req.body);
     if (!parsed.success) {
-      return res.status(400).json({ error: parsed.error.issues.map((i) => i.message).join(", ") });
+      return res
+        .status(400)
+        .json({ error: parsed.error.issues.map((i) => i.message).join(", ") });
     }
 
     const stats = taskEngine?.getStats() ?? { queued: 0, running: 0 };
@@ -3364,7 +4177,10 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
         return res.status(404).json({ error: `Server '${name}' not found` });
       }
 
-      const updated = { ...current, [name]: parsed.data as NativeMcpServerDefinition };
+      const updated = {
+        ...current,
+        [name]: parsed.data as NativeMcpServerDefinition,
+      };
       if (copilot) copilot.setNativeMcpServers(updated);
 
       await updateCopilotConfig("nativeMcpServers", updated);
@@ -3372,7 +4188,10 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
       logger.info(`Native MCP server updated: ${name}`);
 
       // Fire-and-forget: background tool discovery so cache is refreshed
-      void discoverAndCacheTools(name, parsed.data as NativeMcpServerDefinition);
+      void discoverAndCacheTools(
+        name,
+        parsed.data as NativeMcpServerDefinition,
+      );
 
       return res.json({ ok: true, server: parsed.data });
     } catch (error) {
@@ -3401,7 +4220,10 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
     try {
       const remaining = { ...current };
       delete remaining[name];
-      if (copilot) copilot.setNativeMcpServers(remaining as Record<string, NativeMcpServerDefinition>);
+      if (copilot)
+        copilot.setNativeMcpServers(
+          remaining as Record<string, NativeMcpServerDefinition>,
+        );
 
       await updateCopilotConfig("nativeMcpServers", remaining);
 
@@ -3439,8 +4261,15 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
       // Fallback: if cache is empty but the server definition has a `tools`
       // allowlist (plain tool-name strings), synthesise entries so the UI
       // can still render toggles for known tools even while disconnected.
-      if (discoveredTools.length === 0 && server.tools && server.tools.length > 0) {
-        discoveredTools = server.tools.map((t) => ({ name: t, description: "" }));
+      if (
+        discoveredTools.length === 0 &&
+        server.tools &&
+        server.tools.length > 0
+      ) {
+        discoveredTools = server.tools.map((t) => ({
+          name: t,
+          description: "",
+        }));
       }
 
       const disabledSet = new Set(server.disabledTools ?? []);
@@ -3451,7 +4280,11 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
         enabled: !disabledSet.has(tool.name),
       }));
 
-      return res.json({ server: name, tools, connected: entry?.connected ?? false });
+      return res.json({
+        server: name,
+        tools,
+        connected: entry?.connected ?? false,
+      });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return res.status(500).json({ error: message });
@@ -3489,7 +4322,10 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
       };
 
       const updated = { ...current, [name]: updatedDef };
-      if (copilot) copilot.setNativeMcpServers(updated as Record<string, NativeMcpServerDefinition>);
+      if (copilot)
+        copilot.setNativeMcpServers(
+          updated as Record<string, NativeMcpServerDefinition>,
+        );
 
       await updateCopilotConfig("nativeMcpServers", updated);
 
@@ -3501,96 +4337,118 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
     }
   });
 
-  router.post("/native-mcp-servers/:name/tools/:toolName/toggle", async (req, res) => {
-    const { name, toolName } = req.params;
-    if (POISONED_KEYS.has(name)) {
-      return res.status(400).json({ error: "Invalid server name" });
-    }
-    const { enabled } = req.body as { enabled?: boolean };
-    if (typeof enabled !== "boolean") {
-      return res.status(400).json({ error: "enabled must be a boolean" });
-    }
-
-    const current = copilot?.getNativeMcpServers() ?? {};
-    const server = current[name];
-    if (!server) {
-      return res.status(404).json({ error: `Server '${name}' not found` });
-    }
-
-    try {
-      const disabledSet = new Set(server.disabledTools ?? []);
-      if (enabled) {
-        disabledSet.delete(toolName);
-      } else {
-        disabledSet.add(toolName);
+  router.post(
+    "/native-mcp-servers/:name/tools/:toolName/toggle",
+    async (req, res) => {
+      const { name, toolName } = req.params;
+      if (POISONED_KEYS.has(name)) {
+        return res.status(400).json({ error: "Invalid server name" });
+      }
+      const { enabled } = req.body as { enabled?: boolean };
+      if (typeof enabled !== "boolean") {
+        return res.status(400).json({ error: "enabled must be a boolean" });
       }
 
-      const updatedDef = {
-        ...server,
-        disabledTools: disabledSet.size > 0 ? Array.from(disabledSet) : undefined,
-      };
+      const current = copilot?.getNativeMcpServers() ?? {};
+      const server = current[name];
+      if (!server) {
+        return res.status(404).json({ error: `Server '${name}' not found` });
+      }
 
-      const updated = { ...current, [name]: updatedDef };
-      if (copilot) copilot.setNativeMcpServers(updated as Record<string, NativeMcpServerDefinition>);
+      try {
+        const disabledSet = new Set(server.disabledTools ?? []);
+        if (enabled) {
+          disabledSet.delete(toolName);
+        } else {
+          disabledSet.add(toolName);
+        }
 
-      await updateCopilotConfig("nativeMcpServers", updated);
+        const updatedDef = {
+          ...server,
+          disabledTools:
+            disabledSet.size > 0 ? Array.from(disabledSet) : undefined,
+        };
 
-      logger.info(`Native MCP tool "${toolName}" ${enabled ? "enabled" : "disabled"} on server "${name}"`);
-      return res.json({ ok: true, tool: toolName, enabled });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return res.status(500).json({ error: message });
-    }
-  });
+        const updated = { ...current, [name]: updatedDef };
+        if (copilot)
+          copilot.setNativeMcpServers(
+            updated as Record<string, NativeMcpServerDefinition>,
+          );
+
+        await updateCopilotConfig("nativeMcpServers", updated);
+
+        logger.info(
+          `Native MCP tool "${toolName}" ${enabled ? "enabled" : "disabled"} on server "${name}"`,
+        );
+        return res.json({ ok: true, tool: toolName, enabled });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return res.status(500).json({ error: message });
+      }
+    },
+  );
 
   // Remove a tool from the server definition's tools array and disabledTools
-  router.post("/native-mcp-servers/:name/tools/:toolName/remove", async (req, res) => {
-    const { name, toolName } = req.params;
-    if (POISONED_KEYS.has(name)) {
-      return res.status(400).json({ error: "Invalid server name" });
-    }
-    const current = copilot?.getNativeMcpServers() ?? {};
-    const server = current[name];
-    if (!server) {
-      return res.status(404).json({ error: `Server '${name}' not found` });
-    }
-
-    try {
-      const existingTools = (server.tools ?? []).filter((t) => t !== toolName);
-      const disabledTools = (server.disabledTools ?? []).filter((t) => t !== toolName);
-
-      const updatedDef = {
-        ...server,
-        tools: existingTools.length > 0 ? existingTools : undefined,
-        disabledTools: disabledTools.length > 0 ? disabledTools : undefined,
-      };
-
-      const updated = { ...current, [name]: updatedDef };
-      if (copilot) copilot.setNativeMcpServers(updated as Record<string, NativeMcpServerDefinition>);
-
-      await updateCopilotConfig("nativeMcpServers", updated);
-
-      // Also remove from cache
-      const configPath = defaultConfigPath();
-      const userConfig = await readUserConfig(configPath);
-      const cache = getNativeMcpToolCache(userConfig);
-      if (cache[name]) {
-        cache[name].tools = cache[name].tools.filter((t) => t.name !== toolName);
-        await setNativeMcpToolCache(cache);
+  router.post(
+    "/native-mcp-servers/:name/tools/:toolName/remove",
+    async (req, res) => {
+      const { name, toolName } = req.params;
+      if (POISONED_KEYS.has(name)) {
+        return res.status(400).json({ error: "Invalid server name" });
+      }
+      const current = copilot?.getNativeMcpServers() ?? {};
+      const server = current[name];
+      if (!server) {
+        return res.status(404).json({ error: `Server '${name}' not found` });
       }
 
-      logger.info(`Tool "${toolName}" removed from server "${name}"`);
-      return res.json({ ok: true, tool: toolName });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return res.status(500).json({ error: message });
-    }
-  });
+      try {
+        const existingTools = (server.tools ?? []).filter(
+          (t) => t !== toolName,
+        );
+        const disabledTools = (server.disabledTools ?? []).filter(
+          (t) => t !== toolName,
+        );
+
+        const updatedDef = {
+          ...server,
+          tools: existingTools.length > 0 ? existingTools : undefined,
+          disabledTools: disabledTools.length > 0 ? disabledTools : undefined,
+        };
+
+        const updated = { ...current, [name]: updatedDef };
+        if (copilot)
+          copilot.setNativeMcpServers(
+            updated as Record<string, NativeMcpServerDefinition>,
+          );
+
+        await updateCopilotConfig("nativeMcpServers", updated);
+
+        // Also remove from cache
+        const configPath = defaultConfigPath();
+        const userConfig = await readUserConfig(configPath);
+        const cache = getNativeMcpToolCache(userConfig);
+        if (cache[name]) {
+          cache[name].tools = cache[name].tools.filter(
+            (t) => t.name !== toolName,
+          );
+          await setNativeMcpToolCache(cache);
+        }
+
+        logger.info(`Tool "${toolName}" removed from server "${name}"`);
+        return res.json({ ok: true, tool: toolName });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return res.status(500).json({ error: message });
+      }
+    },
+  );
 
   // ── Webhooks ──
 
   router.get("/webhooks", (_req, res) => {
-    if (!webhookManager) return res.status(501).json({ error: "Webhooks not enabled" });
+    if (!webhookManager)
+      return res.status(501).json({ error: "Webhooks not enabled" });
     const webhooks = webhookManager.list().map((wh) => ({
       id: wh.id,
       name: wh.name,
@@ -3607,10 +4465,16 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
   });
 
   router.post("/webhooks", (req, res) => {
-    if (!webhookManager) return res.status(501).json({ error: "Webhooks not enabled" });
-    const { name, action, actionPayload, allowedIps, rateLimit } = req.body ?? {};
-    if (!name || typeof name !== "string") return res.status(400).json({ error: "name is required" });
-    if (action !== "prompt" && action !== "goal") return res.status(400).json({ error: "action must be 'prompt' or 'goal'" });
+    if (!webhookManager)
+      return res.status(501).json({ error: "Webhooks not enabled" });
+    const { name, action, actionPayload, allowedIps, rateLimit } =
+      req.body ?? {};
+    if (!name || typeof name !== "string")
+      return res.status(400).json({ error: "name is required" });
+    if (action !== "prompt" && action !== "goal")
+      return res
+        .status(400)
+        .json({ error: "action must be 'prompt' or 'goal'" });
 
     const { webhook, apiKey } = webhookManager.create({
       name: name.trim(),
@@ -3636,16 +4500,19 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
   });
 
   router.post("/webhooks/:id/toggle", (req, res) => {
-    if (!webhookManager) return res.status(501).json({ error: "Webhooks not enabled" });
+    if (!webhookManager)
+      return res.status(501).json({ error: "Webhooks not enabled" });
     const { enabled } = req.body ?? {};
-    if (typeof enabled !== "boolean") return res.status(400).json({ error: "enabled is required (boolean)" });
+    if (typeof enabled !== "boolean")
+      return res.status(400).json({ error: "enabled is required (boolean)" });
     const webhook = webhookManager.toggle(req.params.id, enabled);
     if (!webhook) return res.status(404).json({ error: "Webhook not found" });
     return res.json({ ok: true, enabled: webhook.enabled });
   });
 
   router.post("/webhooks/:id/rotate-key", (req, res) => {
-    if (!webhookManager) return res.status(501).json({ error: "Webhooks not enabled" });
+    if (!webhookManager)
+      return res.status(501).json({ error: "Webhooks not enabled" });
     const result = webhookManager.rotateKey(req.params.id);
     if (!result) return res.status(404).json({ error: "Webhook not found" });
     logger.info(`API key rotated for webhook ${req.params.id}`);
@@ -3653,7 +4520,8 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
   });
 
   router.delete("/webhooks/:id", (req, res) => {
-    if (!webhookManager) return res.status(501).json({ error: "Webhooks not enabled" });
+    if (!webhookManager)
+      return res.status(501).json({ error: "Webhooks not enabled" });
     const deleted = webhookManager.delete(req.params.id);
     if (!deleted) return res.status(404).json({ error: "Webhook not found" });
     logger.info(`Webhook deleted: ${req.params.id}`);
@@ -3669,7 +4537,9 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
     router.put("/sentinel/config", async (req, res) => {
       const parsed = SentinelConfigSchema.partial().safeParse(req.body);
       if (!parsed.success) {
-        return res.status(400).json({ error: parsed.error.issues.map((i) => i.message).join("; ") });
+        return res.status(400).json({
+          error: parsed.error.issues.map((i) => i.message).join("; "),
+        });
       }
       try {
         await sentinel.updateConfig(parsed.data);
@@ -3713,10 +4583,12 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
     });
 
     router.get("/sentinel/digests", async (req, res) => {
-      const parsedLimit = typeof req.query.limit === "string"
-        ? Number.parseInt(req.query.limit, 10)
-        : Number.NaN;
-      const limit = Number.isFinite(parsedLimit) && parsedLimit > 0 ? parsedLimit : 20;
+      const parsedLimit =
+        typeof req.query.limit === "string"
+          ? Number.parseInt(req.query.limit, 10)
+          : Number.NaN;
+      const limit =
+        Number.isFinite(parsedLimit) && parsedLimit > 0 ? parsedLimit : 20;
       try {
         const digests = await sentinel.getDigestHistory(limit);
         return res.json({ digests });
@@ -3729,9 +4601,14 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
     // #198: Download status.md digest markdown
     router.get("/sentinel/digest-markdown", async (_req, res) => {
       try {
-        const markdown = await readStatusMarkdown(sentinel.getStatus().config.markdownDigestPath);
+        const markdown = await readStatusMarkdown(
+          sentinel.getStatus().config.markdownDigestPath,
+        );
         if (!markdown) {
-          return res.status(404).json({ error: "No status.md found. Enable persistMarkdownDigest in Sentinel config." });
+          return res.status(404).json({
+            error:
+              "No status.md found. Enable persistMarkdownDigest in Sentinel config.",
+          });
         }
         res.setHeader("Content-Type", "text/markdown; charset=utf-8");
         return res.send(markdown);
@@ -3765,7 +4642,9 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
       return res.status(400).json({ error: "baseUrl must be a string" });
     }
     if (baseUrl && !/^https?:\/\/.+/.test(baseUrl)) {
-      return res.status(400).json({ error: "baseUrl must be a valid HTTP(S) URL" });
+      return res
+        .status(400)
+        .json({ error: "baseUrl must be a valid HTTP(S) URL" });
     }
 
     try {
@@ -3774,11 +4653,17 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
       const existing = (userConfig.presenter ?? {}) as Record<string, unknown>;
       userConfig.presenter = {
         ...existing,
-        ...(baseUrl !== undefined ? { baseUrl: baseUrl.replace(/\/$/, "") } : {}),
+        ...(baseUrl !== undefined
+          ? { baseUrl: baseUrl.replace(/\/$/, "") }
+          : {}),
       };
       await writeUserConfig(configPath, userConfig);
       logger.info(`[Admin] Presenter baseUrl updated: ${baseUrl}`);
-      return res.json({ ok: true, baseUrl: (userConfig.presenter as Record<string, unknown>).baseUrl ?? "" });
+      return res.json({
+        ok: true,
+        baseUrl:
+          (userConfig.presenter as Record<string, unknown>).baseUrl ?? "",
+      });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return res.status(500).json({ error: message });
@@ -3787,11 +4672,16 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
 
   // ── Sidecar platform gate (#599) ──
   // Native macOS-only sidecar routes return 501 on non-macOS platforms.
-  const sidecarPlatformGate: import("express").RequestHandler = (_req, res, next) => {
+  const sidecarPlatformGate: import("express").RequestHandler = (
+    _req,
+    res,
+    next,
+  ) => {
     const caps = getPlatformCapabilities();
     if (!caps.sidecarsSupported) {
       res.status(501).json({
-        error: "This feature requires macOS ARM (Apple Silicon). Native sidecars are not available on this platform.",
+        error:
+          "This feature requires macOS ARM (Apple Silicon). Native sidecars are not available on this platform.",
         platform: caps.os,
         arch: caps.arch,
       });
@@ -3826,13 +4716,17 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
     const networkNodeToken = body.networkNodeToken as string | undefined;
 
     if (mode !== undefined && mode !== "local" && mode !== "network") {
-      return res.status(400).json({ error: "mode must be 'local' or 'network'" });
+      return res
+        .status(400)
+        .json({ error: "mode must be 'local' or 'network'" });
     }
     if (networkNodeUrl !== undefined && typeof networkNodeUrl !== "string") {
       return res.status(400).json({ error: "networkNodeUrl must be a string" });
     }
     if (networkNodeUrl && !/^https?:\/\/.+/.test(networkNodeUrl)) {
-      return res.status(400).json({ error: "networkNodeUrl must be a valid HTTP(S) URL" });
+      return res
+        .status(400)
+        .json({ error: "networkNodeUrl must be a valid HTTP(S) URL" });
     }
 
     try {
@@ -3842,7 +4736,8 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
       const updated: Record<string, unknown> = { ...existing };
       if (mode !== undefined) updated.mode = mode;
       if (networkNodeUrl !== undefined) updated.networkNodeUrl = networkNodeUrl;
-      if (networkNodeToken !== undefined) updated.networkNodeToken = networkNodeToken;
+      if (networkNodeToken !== undefined)
+        updated.networkNodeToken = networkNodeToken;
       userConfig.imageGen = updated;
       await writeUserConfig(configPath, userConfig);
 
@@ -3861,24 +4756,31 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
 
   router.get("/image-gen/health", async (req, res) => {
     const url = typeof req.query.url === "string" ? req.query.url : undefined;
-    const token = typeof req.query.token === "string" ? req.query.token : undefined;
+    const token =
+      typeof req.query.token === "string" ? req.query.token : undefined;
 
     // Determine target: explicit query params or saved config
     let targetUrl: string;
     let targetToken: string | undefined;
     if (url) {
       if (!/^https?:\/\/.+/.test(url)) {
-        return res.status(400).json({ error: "url must be a valid HTTP(S) URL" });
+        return res
+          .status(400)
+          .json({ error: "url must be a valid HTTP(S) URL" });
       }
       if (!isAllowedNetworkNodeUrl(url)) {
-        return res.status(400).json({ error: "URL points to a blocked internal/private network" });
+        return res
+          .status(400)
+          .json({ error: "URL points to a blocked internal/private network" });
       }
       targetUrl = url.replace(/\/$/, "");
       targetToken = token;
     } else {
       const userConfig = await readUserConfig(defaultConfigPath());
       const imageGen = (userConfig.imageGen ?? {}) as Record<string, unknown>;
-      targetUrl = ((imageGen.networkNodeUrl as string) || "http://127.0.0.1:5005").replace(/\/$/, "");
+      targetUrl = (
+        (imageGen.networkNodeUrl as string) || "http://127.0.0.1:5005"
+      ).replace(/\/$/, "");
       targetToken = imageGen.networkNodeToken as string | undefined;
     }
 
@@ -3892,9 +4794,13 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
         signal: AbortSignal.timeout(5000),
       });
       if (!response.ok) {
-        return res.json({ ok: false, status: response.status, error: `HTTP ${response.status}` });
+        return res.json({
+          ok: false,
+          status: response.status,
+          error: `HTTP ${response.status}`,
+        });
       }
-      const data = await response.json() as Record<string, unknown>;
+      const data = (await response.json()) as Record<string, unknown>;
       return res.json({ ok: true, ...data });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -3926,13 +4832,17 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
     const networkNodeToken = body.networkNodeToken as string | undefined;
 
     if (mode !== undefined && mode !== "local" && mode !== "network") {
-      return res.status(400).json({ error: "mode must be 'local' or 'network'" });
+      return res
+        .status(400)
+        .json({ error: "mode must be 'local' or 'network'" });
     }
     if (networkNodeUrl !== undefined && typeof networkNodeUrl !== "string") {
       return res.status(400).json({ error: "networkNodeUrl must be a string" });
     }
     if (networkNodeUrl && !/^https?:\/\/.+/.test(networkNodeUrl)) {
-      return res.status(400).json({ error: "networkNodeUrl must be a valid HTTP(S) URL" });
+      return res
+        .status(400)
+        .json({ error: "networkNodeUrl must be a valid HTTP(S) URL" });
     }
 
     try {
@@ -3942,7 +4852,8 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
       const updated: Record<string, unknown> = { ...existing };
       if (mode !== undefined) updated.mode = mode;
       if (networkNodeUrl !== undefined) updated.networkNodeUrl = networkNodeUrl;
-      if (networkNodeToken !== undefined) updated.networkNodeToken = networkNodeToken;
+      if (networkNodeToken !== undefined)
+        updated.networkNodeToken = networkNodeToken;
       userConfig.videoGen = updated;
       await writeUserConfig(configPath, userConfig);
 
@@ -3961,23 +4872,30 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
 
   router.get("/video-gen/health", async (req, res) => {
     const url = typeof req.query.url === "string" ? req.query.url : undefined;
-    const token = typeof req.query.token === "string" ? req.query.token : undefined;
+    const token =
+      typeof req.query.token === "string" ? req.query.token : undefined;
 
     let targetUrl: string;
     let targetToken: string | undefined;
     if (url) {
       if (!/^https?:\/\/.+/.test(url)) {
-        return res.status(400).json({ error: "url must be a valid HTTP(S) URL" });
+        return res
+          .status(400)
+          .json({ error: "url must be a valid HTTP(S) URL" });
       }
       if (!isAllowedNetworkNodeUrl(url)) {
-        return res.status(400).json({ error: "URL points to a blocked internal/private network" });
+        return res
+          .status(400)
+          .json({ error: "URL points to a blocked internal/private network" });
       }
       targetUrl = url.replace(/\/$/, "");
       targetToken = token;
     } else {
       const userConfig = await readUserConfig(defaultConfigPath());
       const videoGen = (userConfig.videoGen ?? {}) as Record<string, unknown>;
-      targetUrl = ((videoGen.networkNodeUrl as string) || "http://127.0.0.1:5007").replace(/\/$/, "");
+      targetUrl = (
+        (videoGen.networkNodeUrl as string) || "http://127.0.0.1:5007"
+      ).replace(/\/$/, "");
       targetToken = videoGen.networkNodeToken as string | undefined;
     }
 
@@ -3991,9 +4909,13 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
         signal: AbortSignal.timeout(5000),
       });
       if (!response.ok) {
-        return res.json({ ok: false, status: response.status, error: `HTTP ${response.status}` });
+        return res.json({
+          ok: false,
+          status: response.status,
+          error: `HTTP ${response.status}`,
+        });
       }
-      const data = await response.json() as Record<string, unknown>;
+      const data = (await response.json()) as Record<string, unknown>;
       return res.json({ ok: true, ...data });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -4025,13 +4947,17 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
     const networkNodeToken = body.networkNodeToken as string | undefined;
 
     if (mode !== undefined && mode !== "local" && mode !== "network") {
-      return res.status(400).json({ error: "mode must be 'local' or 'network'" });
+      return res
+        .status(400)
+        .json({ error: "mode must be 'local' or 'network'" });
     }
     if (networkNodeUrl !== undefined && typeof networkNodeUrl !== "string") {
       return res.status(400).json({ error: "networkNodeUrl must be a string" });
     }
     if (networkNodeUrl && !/^https?:\/\/.+/.test(networkNodeUrl)) {
-      return res.status(400).json({ error: "networkNodeUrl must be a valid HTTP(S) URL" });
+      return res
+        .status(400)
+        .json({ error: "networkNodeUrl must be a valid HTTP(S) URL" });
     }
 
     try {
@@ -4041,7 +4967,8 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
       const updated: Record<string, unknown> = { ...existing };
       if (mode !== undefined) updated.mode = mode;
       if (networkNodeUrl !== undefined) updated.networkNodeUrl = networkNodeUrl;
-      if (networkNodeToken !== undefined) updated.networkNodeToken = networkNodeToken;
+      if (networkNodeToken !== undefined)
+        updated.networkNodeToken = networkNodeToken;
       userConfig.musicGen = updated;
       await writeUserConfig(configPath, userConfig);
 
@@ -4060,23 +4987,30 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
 
   router.get("/music-gen/health", async (req, res) => {
     const url = typeof req.query.url === "string" ? req.query.url : undefined;
-    const token = typeof req.query.token === "string" ? req.query.token : undefined;
+    const token =
+      typeof req.query.token === "string" ? req.query.token : undefined;
 
     let targetUrl: string;
     let targetToken: string | undefined;
     if (url) {
       if (!/^https?:\/\/.+/.test(url)) {
-        return res.status(400).json({ error: "url must be a valid HTTP(S) URL" });
+        return res
+          .status(400)
+          .json({ error: "url must be a valid HTTP(S) URL" });
       }
       if (!isAllowedNetworkNodeUrl(url)) {
-        return res.status(400).json({ error: "URL points to a blocked internal/private network" });
+        return res
+          .status(400)
+          .json({ error: "URL points to a blocked internal/private network" });
       }
       targetUrl = url.replace(/\/$/, "");
       targetToken = token;
     } else {
       const userConfig = await readUserConfig(defaultConfigPath());
       const musicGen = (userConfig.musicGen ?? {}) as Record<string, unknown>;
-      targetUrl = ((musicGen.networkNodeUrl as string) || "http://127.0.0.1:5009").replace(/\/$/, "");
+      targetUrl = (
+        (musicGen.networkNodeUrl as string) || "http://127.0.0.1:5009"
+      ).replace(/\/$/, "");
       targetToken = musicGen.networkNodeToken as string | undefined;
     }
 
@@ -4090,9 +5024,13 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
         signal: AbortSignal.timeout(5000),
       });
       if (!response.ok) {
-        return res.json({ ok: false, status: response.status, error: `HTTP ${response.status}` });
+        return res.json({
+          ok: false,
+          status: response.status,
+          error: `HTTP ${response.status}`,
+        });
       }
-      const data = await response.json() as Record<string, unknown>;
+      const data = (await response.json()) as Record<string, unknown>;
       return res.json({ ok: true, ...data });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -4106,7 +5044,10 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
   async function musicStudioBaseUrl(): Promise<string> {
     const userConfig = await readUserConfig(defaultConfigPath());
     const ms = (userConfig.musicStudio ?? {}) as Record<string, unknown>;
-    return ((ms.networkNodeUrl as string) || "http://localhost:5010").replace(/\/$/, "");
+    return ((ms.networkNodeUrl as string) || "http://localhost:5010").replace(
+      /\/$/,
+      "",
+    );
   }
 
   router.get("/music-studio/models", async (_req, res) => {
@@ -4116,13 +5057,17 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
         signal: AbortSignal.timeout(5000),
       });
       if (!response.ok) {
-        return res.status(502).json({ error: `Sidecar returned HTTP ${response.status}` });
+        return res
+          .status(502)
+          .json({ error: `Sidecar returned HTTP ${response.status}` });
       }
-      const data = await response.json() as Record<string, unknown>;
+      const data = (await response.json()) as Record<string, unknown>;
       return res.json(data);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      return res.status(502).json({ models: [], voice_references: [], error: message });
+      return res
+        .status(502)
+        .json({ models: [], voice_references: [], error: message });
     }
   });
 
@@ -4135,9 +5080,11 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
         signal: AbortSignal.timeout(5000),
       });
       if (!response.ok) {
-        return res.status(502).json({ error: `Sidecar HTTP ${response.status}` });
+        return res
+          .status(502)
+          .json({ error: `Sidecar HTTP ${response.status}` });
       }
-      const data = await response.json() as Record<string, unknown>;
+      const data = (await response.json()) as Record<string, unknown>;
       return res.json(data);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -4166,7 +5113,7 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
         const text = await response.text();
         return res.status(response.status).json({ error: text });
       }
-      const data = await response.json() as Record<string, unknown>;
+      const data = (await response.json()) as Record<string, unknown>;
       return res.json(data);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -4177,13 +5124,18 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
   router.get("/music-studio/voice-references/:refId", async (req, res) => {
     try {
       const baseUrl = await musicStudioBaseUrl();
-      const response = await fetch(`${baseUrl}/voice-references/${encodeURIComponent(req.params.refId)}`, {
-        signal: AbortSignal.timeout(5000),
-      });
+      const response = await fetch(
+        `${baseUrl}/voice-references/${encodeURIComponent(req.params.refId)}`,
+        {
+          signal: AbortSignal.timeout(5000),
+        },
+      );
       if (!response.ok) {
-        return res.status(response.status).json({ error: `Sidecar HTTP ${response.status}` });
+        return res
+          .status(response.status)
+          .json({ error: `Sidecar HTTP ${response.status}` });
       }
-      const data = await response.json() as Record<string, unknown>;
+      const data = (await response.json()) as Record<string, unknown>;
       return res.json(data);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -4191,38 +5143,53 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
     }
   });
 
-  router.get("/music-studio/voice-references/:refId/audio", async (req, res) => {
-    try {
-      const baseUrl = await musicStudioBaseUrl();
-      const response = await fetch(`${baseUrl}/voice-references/${encodeURIComponent(req.params.refId)}/audio`, {
-        signal: AbortSignal.timeout(30_000),
-      });
-      if (!response.ok) {
-        return res.status(response.status).json({ error: `Sidecar HTTP ${response.status}` });
+  router.get(
+    "/music-studio/voice-references/:refId/audio",
+    async (req, res) => {
+      try {
+        const baseUrl = await musicStudioBaseUrl();
+        const response = await fetch(
+          `${baseUrl}/voice-references/${encodeURIComponent(req.params.refId)}/audio`,
+          {
+            signal: AbortSignal.timeout(30_000),
+          },
+        );
+        if (!response.ok) {
+          return res
+            .status(response.status)
+            .json({ error: `Sidecar HTTP ${response.status}` });
+        }
+        res.setHeader(
+          "Content-Type",
+          response.headers.get("content-type") ?? "audio/wav",
+        );
+        const arrayBuf = await response.arrayBuffer();
+        return res.send(Buffer.from(arrayBuf));
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return res.status(502).json({ error: message });
       }
-      res.setHeader("Content-Type", response.headers.get("content-type") ?? "audio/wav");
-      const arrayBuf = await response.arrayBuffer();
-      return res.send(Buffer.from(arrayBuf));
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return res.status(502).json({ error: message });
-    }
-  });
+    },
+  );
 
   router.patch("/music-studio/voice-references/:refId", async (req, res) => {
     try {
       const baseUrl = await musicStudioBaseUrl();
       const { name } = req.body as { name?: string };
-      const url = new URL(`${baseUrl}/voice-references/${encodeURIComponent(req.params.refId)}`);
+      const url = new URL(
+        `${baseUrl}/voice-references/${encodeURIComponent(req.params.refId)}`,
+      );
       if (name) url.searchParams.set("name", name);
       const response = await fetch(url.toString(), {
         method: "PATCH",
         signal: AbortSignal.timeout(5000),
       });
       if (!response.ok) {
-        return res.status(response.status).json({ error: `Sidecar HTTP ${response.status}` });
+        return res
+          .status(response.status)
+          .json({ error: `Sidecar HTTP ${response.status}` });
       }
-      const data = await response.json() as Record<string, unknown>;
+      const data = (await response.json()) as Record<string, unknown>;
       return res.json(data);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -4233,14 +5200,19 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
   router.delete("/music-studio/voice-references/:refId", async (req, res) => {
     try {
       const baseUrl = await musicStudioBaseUrl();
-      const response = await fetch(`${baseUrl}/voice-references/${encodeURIComponent(req.params.refId)}`, {
-        method: "DELETE",
-        signal: AbortSignal.timeout(5000),
-      });
+      const response = await fetch(
+        `${baseUrl}/voice-references/${encodeURIComponent(req.params.refId)}`,
+        {
+          method: "DELETE",
+          signal: AbortSignal.timeout(5000),
+        },
+      );
       if (!response.ok) {
-        return res.status(response.status).json({ error: `Sidecar HTTP ${response.status}` });
+        return res
+          .status(response.status)
+          .json({ error: `Sidecar HTTP ${response.status}` });
       }
-      const data = await response.json() as Record<string, unknown>;
+      const data = (await response.json()) as Record<string, unknown>;
       return res.json(data);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -4270,7 +5242,9 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
       return res.json(skill);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      logger.error(`Failed to load skill content for '${req.params.name}': ${message}`);
+      logger.error(
+        `Failed to load skill content for '${req.params.name}': ${message}`,
+      );
       return res.status(500).json({ error: message });
     }
   });
@@ -4279,20 +5253,26 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
   const userSkillsDir = path.join(os.homedir(), ".openzigs", "skills");
 
   router.post("/skills/generate", async (req, res) => {
-    if (!copilot) return res.status(503).json({ error: "Copilot not available" });
+    if (!copilot)
+      return res.status(503).json({ error: "Copilot not available" });
 
     const body = req.body as Record<string, unknown>;
-    const description = typeof body.description === "string" ? body.description.trim() : "";
-    const selectedTools = Array.isArray(body.tools) ? (body.tools as string[]).filter((t) => typeof t === "string") : [];
+    const description =
+      typeof body.description === "string" ? body.description.trim() : "";
+    const selectedTools = Array.isArray(body.tools)
+      ? (body.tools as string[]).filter((t) => typeof t === "string")
+      : [];
     const bodyModel = typeof body.model === "string" ? body.model : undefined;
 
-    if (!description) return res.status(400).json({ error: "description is required" });
+    if (!description)
+      return res.status(400).json({ error: "description is required" });
 
     // Build available tools context for the prompt
     const allTools = toolRegistry.listEnabledTools();
-    const toolContext = selectedTools.length > 0
-      ? `The user selected these tools: ${selectedTools.join(", ")}`
-      : `Available tools the user can choose from:\n${allTools.map((t) => `- ${t.name}: ${t.description}`).join("\n")}`;
+    const toolContext =
+      selectedTools.length > 0
+        ? `The user selected these tools: ${selectedTools.join(", ")}`
+        : `Available tools the user can choose from:\n${allTools.map((t) => `- ${t.name}: ${t.description}`).join("\n")}`;
 
     const prompt = [
       "You are a Skill Generator for the OpenZigs AI platform.",
@@ -4321,7 +5301,8 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
 
     try {
       let response = "";
-      const model = bodyModel || (await getUserSelectedModel() ?? "gpt-5-mini");
+      const model =
+        bodyModel || ((await getUserSelectedModel()) ?? "gpt-5-mini");
       for await (const chunk of copilot.chat(prompt, { model, tools: [] })) {
         response += chunk;
       }
@@ -4329,7 +5310,10 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
       // Strip any accidental code fences wrapping the response
       let content = response.trim();
       if (content.startsWith("```")) {
-        content = content.replace(/^```\w*\n?/, "").replace(/\n?```$/, "").trim();
+        content = content
+          .replace(/^```\w*\n?/, "")
+          .replace(/\n?```$/, "")
+          .trim();
       }
 
       // Extract the generated skill name from frontmatter
@@ -4347,7 +5331,8 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
   router.post("/skills/validate", (req, res) => {
     const body = req.body as Record<string, unknown>;
     const content = typeof body.content === "string" ? body.content : "";
-    if (!content.trim()) return res.status(400).json({ error: "content is required" });
+    if (!content.trim())
+      return res.status(400).json({ error: "content is required" });
 
     // Check frontmatter has name
     const nameMatch = content.match(/^name:\s*(\S.*)$/m);
@@ -4356,21 +5341,29 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
     if (!nameMatch) errors.push("Missing 'name' in YAML frontmatter");
     if (toolsMatch) {
       const tools = toolsMatch[1].trim().split(/\s+/);
-      const available = new Set(toolRegistry.listEnabledTools().map((t) => t.name));
+      const available = new Set(
+        toolRegistry.listEnabledTools().map((t) => t.name),
+      );
       const invalid = tools.filter((t) => !available.has(t));
       if (invalid.length) errors.push(`Unknown tools: ${invalid.join(", ")}`);
     }
-    return res.json({ valid: errors.length === 0, errors, parsedName: nameMatch?.[1]?.trim() });
+    return res.json({
+      valid: errors.length === 0,
+      errors,
+      parsedName: nameMatch?.[1]?.trim(),
+    });
   });
 
   router.post("/skills", async (req, res) => {
     const body = req.body as Record<string, unknown>;
     const name = typeof body.name === "string" ? body.name.trim() : "";
     const content = typeof body.content === "string" ? body.content : "";
-    if (!name || !content) return res.status(400).json({ error: "name and content are required" });
+    if (!name || !content)
+      return res.status(400).json({ error: "name and content are required" });
 
     // Reject path-traversal characters
-    if (/[/\\.]/.test(name)) return res.status(400).json({ error: "Invalid skill name" });
+    if (/[/\\.]/.test(name))
+      return res.status(400).json({ error: "Invalid skill name" });
 
     try {
       const skillDir = path.join(userSkillsDir, name);
@@ -4396,12 +5389,16 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
     const content = typeof body.content === "string" ? body.content : "";
     const skillName = req.params.name;
     if (!content) return res.status(400).json({ error: "content is required" });
-    if (/[/\\.]/.test(skillName)) return res.status(400).json({ error: "Invalid skill name" });
+    if (/[/\\.]/.test(skillName))
+      return res.status(400).json({ error: "Invalid skill name" });
 
     // Check both built-in and user directories
     const dirs = copilot?.getSkillDirectories?.() ?? [];
-    const builtInDir = dirs.find((d) => path.basename(d) === skillName && d.includes("src/skills"));
-    if (builtInDir) return res.status(403).json({ error: "Built-in skills are read-only" });
+    const builtInDir = dirs.find(
+      (d) => path.basename(d) === skillName && d.includes("src/skills"),
+    );
+    if (builtInDir)
+      return res.status(403).json({ error: "Built-in skills are read-only" });
 
     try {
       const skillDir = path.join(userSkillsDir, skillName);
@@ -4423,11 +5420,15 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
 
   router.delete("/skills/:name", async (req, res) => {
     const skillName = req.params.name;
-    if (/[/\\.]/.test(skillName)) return res.status(400).json({ error: "Invalid skill name" });
+    if (/[/\\.]/.test(skillName))
+      return res.status(400).json({ error: "Invalid skill name" });
 
     const dirs = copilot?.getSkillDirectories?.() ?? [];
-    const builtInDir = dirs.find((d) => path.basename(d) === skillName && d.includes("src/skills"));
-    if (builtInDir) return res.status(403).json({ error: "Cannot delete built-in skills" });
+    const builtInDir = dirs.find(
+      (d) => path.basename(d) === skillName && d.includes("src/skills"),
+    );
+    if (builtInDir)
+      return res.status(403).json({ error: "Cannot delete built-in skills" });
 
     try {
       const skillDir = path.join(userSkillsDir, skillName);
@@ -4463,8 +5464,10 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
   /** POST /api/admin/pinterest/credentials — save Pinterest credentials to .env */
   router.post("/pinterest/credentials", async (req, res) => {
     const body = req.body as Record<string, unknown>;
-    const accessToken = typeof body.accessToken === "string" ? body.accessToken.trim() : "";
-    const adAccountId = typeof body.adAccountId === "string" ? body.adAccountId.trim() : "";
+    const accessToken =
+      typeof body.accessToken === "string" ? body.accessToken.trim() : "";
+    const adAccountId =
+      typeof body.adAccountId === "string" ? body.adAccountId.trim() : "";
 
     if (!accessToken) {
       return res.status(400).json({ error: "accessToken is required" });
@@ -4472,7 +5475,9 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
 
     try {
       const envPath = defaultEnvPath();
-      const updates: Record<string, string> = { PINTEREST_ACCESS_TOKEN: accessToken };
+      const updates: Record<string, string> = {
+        PINTEREST_ACCESS_TOKEN: accessToken,
+      };
       if (adAccountId) {
         updates.PINTEREST_AD_ACCOUNT_ID = adAccountId;
       }
@@ -4501,15 +5506,21 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
   router.post("/pinterest/app-credentials", async (req, res) => {
     const body = req.body as Record<string, unknown>;
     const appId = typeof body.appId === "string" ? body.appId.trim() : "";
-    const appSecret = typeof body.appSecret === "string" ? body.appSecret.trim() : "";
+    const appSecret =
+      typeof body.appSecret === "string" ? body.appSecret.trim() : "";
 
     if (!appId || !appSecret) {
-      return res.status(400).json({ error: "appId and appSecret are required" });
+      return res
+        .status(400)
+        .json({ error: "appId and appSecret are required" });
     }
 
     try {
       const envPath = defaultEnvPath();
-      await upsertEnvFile(envPath, { PINTEREST_APP_ID: appId, PINTEREST_APP_SECRET: appSecret });
+      await upsertEnvFile(envPath, {
+        PINTEREST_APP_ID: appId,
+        PINTEREST_APP_SECRET: appSecret,
+      });
       process.env.PINTEREST_APP_ID = appId;
       process.env.PINTEREST_APP_SECRET = appSecret;
       logger.info("Updated Pinterest OAuth app credentials via admin UI");
@@ -4524,11 +5535,15 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
   router.get("/pinterest/oauth/authorize", (_req, res) => {
     const appId = (process.env.PINTEREST_APP_ID ?? "").trim();
     if (!appId) {
-      return res.status(400).json({ error: "PINTEREST_APP_ID not configured. Set your App ID first." });
+      return res.status(400).json({
+        error: "PINTEREST_APP_ID not configured. Set your App ID first.",
+      });
     }
 
     const backendPort = Number(process.env.PORT ?? 3000);
-    const redirectUri = (process.env.PINTEREST_REDIRECT_URI ?? "").trim() || `http://localhost:${backendPort}/api/pinterest/oauth/callback`;
+    const redirectUri =
+      (process.env.PINTEREST_REDIRECT_URI ?? "").trim() ||
+      `http://localhost:${backendPort}/api/pinterest/oauth/callback`;
 
     // CSRF state token
     const state = randomUUID();
@@ -4540,13 +5555,24 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
     }
 
     const scopes = [
-      "ads:read", "ads:write",
-      "boards:read", "boards:write", "boards:read_secret", "boards:write_secret",
-      "catalogs:read", "catalogs:write",
-      "pins:read", "pins:write", "pins:read_secret", "pins:write_secret",
-      "user_accounts:read", "user_accounts:write",
-      "billing:read", "billing:write",
-      "biz_access:read", "biz_access:write",
+      "ads:read",
+      "ads:write",
+      "boards:read",
+      "boards:write",
+      "boards:read_secret",
+      "boards:write_secret",
+      "catalogs:read",
+      "catalogs:write",
+      "pins:read",
+      "pins:write",
+      "pins:read_secret",
+      "pins:write_secret",
+      "user_accounts:read",
+      "user_accounts:write",
+      "billing:read",
+      "billing:write",
+      "biz_access:read",
+      "biz_access:write",
     ];
 
     const params = new URLSearchParams({
@@ -4595,14 +5621,23 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
   router.get("/pinterest/status", async (_req, res) => {
     const token = process.env.PINTEREST_ACCESS_TOKEN;
     if (!token) {
-      return res.json({ connected: false, message: "PINTEREST_ACCESS_TOKEN not configured" });
+      return res.json({
+        connected: false,
+        message: "PINTEREST_ACCESS_TOKEN not configured",
+      });
     }
     try {
       const apiRes = await fetch("https://api.pinterest.com/v5/user_account", {
-        headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: "application/json",
+        },
       });
       if (!apiRes.ok) {
-        return res.status(502).json({ connected: false, message: `Pinterest API error: ${apiRes.status}` });
+        return res.status(502).json({
+          connected: false,
+          message: `Pinterest API error: ${apiRes.status}`,
+        });
       }
       const profile = await apiRes.json();
       return res.json({ connected: true, profile });
@@ -4615,15 +5650,23 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
   router.get("/pinterest/trends", async (req, res) => {
     const token = process.env.PINTEREST_ACCESS_TOKEN;
     if (!token) {
-      return res.status(400).json({ error: "PINTEREST_ACCESS_TOKEN not configured" });
+      return res
+        .status(400)
+        .json({ error: "PINTEREST_ACCESS_TOKEN not configured" });
     }
-    const region = typeof req.query.region === "string" ? req.query.region : "US";
+    const region =
+      typeof req.query.region === "string" ? req.query.region : "US";
     const limit = typeof req.query.limit === "string" ? req.query.limit : "10";
     try {
-      const url = new URL(`https://api.pinterest.com/v5/trends/keywords/${encodeURIComponent(region)}/top/growing`);
+      const url = new URL(
+        `https://api.pinterest.com/v5/trends/keywords/${encodeURIComponent(region)}/top/growing`,
+      );
       url.searchParams.set("limit", limit);
       const apiRes = await fetch(url.toString(), {
-        headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: "application/json",
+        },
       });
       if (!apiRes.ok) {
         const body = await apiRes.text();
@@ -4640,18 +5683,31 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
   router.get("/pinterest/stats", async (req, res) => {
     const token = process.env.PINTEREST_ACCESS_TOKEN;
     if (!token) {
-      return res.status(400).json({ error: "PINTEREST_ACCESS_TOKEN not configured" });
+      return res
+        .status(400)
+        .json({ error: "PINTEREST_ACCESS_TOKEN not configured" });
     }
-    const days = typeof req.query.days === "string" ? parseInt(req.query.days, 10) : 7;
+    const days =
+      typeof req.query.days === "string" ? parseInt(req.query.days, 10) : 7;
     const endDate = new Date().toISOString().split("T")[0];
-    const startDate = new Date(Date.now() - days * 86_400_000).toISOString().split("T")[0];
+    const startDate = new Date(Date.now() - days * 86_400_000)
+      .toISOString()
+      .split("T")[0];
     try {
-      const url = new URL("https://api.pinterest.com/v5/user_account/analytics");
+      const url = new URL(
+        "https://api.pinterest.com/v5/user_account/analytics",
+      );
       url.searchParams.set("start_date", startDate);
       url.searchParams.set("end_date", endDate);
-      url.searchParams.set("metric_types", "IMPRESSION,PIN_CLICK,OUTBOUND_CLICK,SAVE,ENGAGEMENT");
+      url.searchParams.set(
+        "metric_types",
+        "IMPRESSION,PIN_CLICK,OUTBOUND_CLICK,SAVE,ENGAGEMENT",
+      );
       const apiRes = await fetch(url.toString(), {
-        headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: "application/json",
+        },
       });
       if (!apiRes.ok) {
         const body = await apiRes.text();
@@ -4688,16 +5744,23 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
   /** POST /api/admin/linkedin/app-credentials — save LinkedIn Client ID + Secret for OAuth */
   router.post("/linkedin/app-credentials", async (req, res) => {
     const body = req.body as Record<string, unknown>;
-    const clientId = typeof body.clientId === "string" ? body.clientId.trim() : "";
-    const clientSecret = typeof body.clientSecret === "string" ? body.clientSecret.trim() : "";
+    const clientId =
+      typeof body.clientId === "string" ? body.clientId.trim() : "";
+    const clientSecret =
+      typeof body.clientSecret === "string" ? body.clientSecret.trim() : "";
 
     if (!clientId || !clientSecret) {
-      return res.status(400).json({ error: "clientId and clientSecret are required" });
+      return res
+        .status(400)
+        .json({ error: "clientId and clientSecret are required" });
     }
 
     try {
       const envPath = defaultEnvPath();
-      await upsertEnvFile(envPath, { LINKEDIN_CLIENT_ID: clientId, LINKEDIN_CLIENT_SECRET: clientSecret });
+      await upsertEnvFile(envPath, {
+        LINKEDIN_CLIENT_ID: clientId,
+        LINKEDIN_CLIENT_SECRET: clientSecret,
+      });
       process.env.LINKEDIN_CLIENT_ID = clientId;
       process.env.LINKEDIN_CLIENT_SECRET = clientSecret;
       logger.info("Updated LinkedIn OAuth app credentials via admin UI");
@@ -4712,11 +5775,15 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
   router.get("/linkedin/oauth/authorize", (_req, res) => {
     const clientId = (process.env.LINKEDIN_CLIENT_ID ?? "").trim();
     if (!clientId) {
-      return res.status(400).json({ error: "LINKEDIN_CLIENT_ID not configured. Set your Client ID first." });
+      return res.status(400).json({
+        error: "LINKEDIN_CLIENT_ID not configured. Set your Client ID first.",
+      });
     }
 
     const backendPort = Number(process.env.PORT ?? 3000);
-    const redirectUri = (process.env.LINKEDIN_REDIRECT_URI ?? "").trim() || `http://localhost:${backendPort}/api/linkedin/oauth/callback`;
+    const redirectUri =
+      (process.env.LINKEDIN_REDIRECT_URI ?? "").trim() ||
+      `http://localhost:${backendPort}/api/linkedin/oauth/callback`;
 
     // CSRF state token
     const state = randomUUID();
@@ -4782,7 +5849,10 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
   router.get("/linkedin/status", async (_req, res) => {
     const token = process.env.LINKEDIN_ACCESS_TOKEN;
     if (!token) {
-      return res.json({ connected: false, message: "LINKEDIN_ACCESS_TOKEN not configured" });
+      return res.json({
+        connected: false,
+        message: "LINKEDIN_ACCESS_TOKEN not configured",
+      });
     }
     try {
       // Validate token via introspection or a lightweight versioned API call.
@@ -4791,17 +5861,37 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
       const clientId = (process.env.LINKEDIN_CLIENT_ID ?? "").trim();
       const clientSecret = (process.env.LINKEDIN_CLIENT_SECRET ?? "").trim();
       if (clientId && clientSecret) {
-        const introspectRes = await fetch("https://www.linkedin.com/oauth/v2/introspectToken", {
-          method: "POST",
-          headers: { "Content-Type": "application/x-www-form-urlencoded" },
-          body: new URLSearchParams({ token, client_id: clientId, client_secret: clientSecret }).toString(),
-        });
+        const introspectRes = await fetch(
+          "https://www.linkedin.com/oauth/v2/introspectToken",
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/x-www-form-urlencoded" },
+            body: new URLSearchParams({
+              token,
+              client_id: clientId,
+              client_secret: clientSecret,
+            }).toString(),
+          },
+        );
         if (introspectRes.ok) {
-          const info = (await introspectRes.json()) as { active?: boolean; scope?: string; client_id?: string };
+          const info = (await introspectRes.json()) as {
+            active?: boolean;
+            scope?: string;
+            client_id?: string;
+          };
           if (info.active) {
-            return res.json({ connected: true, profile: { scope: info.scope, personId: process.env.LINKEDIN_PERSON_ID ?? "" } });
+            return res.json({
+              connected: true,
+              profile: {
+                scope: info.scope,
+                personId: process.env.LINKEDIN_PERSON_ID ?? "",
+              },
+            });
           }
-          return res.json({ connected: false, message: "LinkedIn token is expired or revoked" });
+          return res.json({
+            connected: false,
+            message: "LinkedIn token is expired or revoked",
+          });
         }
       }
       // Fallback: assume connected if token is set and not expired
@@ -4839,8 +5929,11 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
     const clientKey = (process.env.TIKTOK_CLIENT_KEY ?? "").trim();
     const clientSecret = (process.env.TIKTOK_CLIENT_SECRET ?? "").trim();
     const backendPort = Number(process.env.PORT ?? 3000);
-    const redirectUri = (process.env.TIKTOK_REDIRECT_URI ?? "").trim()
-      || (_tunnelPublicUrl ? `${_tunnelPublicUrl}/api/tiktok/oauth/callback` : `https://localhost:${backendPort}/api/tiktok/oauth/callback`);
+    const redirectUri =
+      (process.env.TIKTOK_REDIRECT_URI ?? "").trim() ||
+      (_tunnelPublicUrl
+        ? `${_tunnelPublicUrl}/api/tiktok/oauth/callback`
+        : `https://localhost:${backendPort}/api/tiktok/oauth/callback`);
     res.json({
       accessToken: token ? `${token.slice(0, 8)}…${token.slice(-4)}` : "",
       configured: !!token,
@@ -4855,14 +5948,23 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
 
   /** POST /api/admin/tiktok/oauth/credentials — save TikTok client key + secret */
   router.post("/tiktok/oauth/credentials", async (req, res) => {
-    const clientKey = typeof req.body?.clientKey === "string" ? req.body.clientKey.trim() : "";
-    const clientSecret = typeof req.body?.clientSecret === "string" ? req.body.clientSecret.trim() : "";
+    const clientKey =
+      typeof req.body?.clientKey === "string" ? req.body.clientKey.trim() : "";
+    const clientSecret =
+      typeof req.body?.clientSecret === "string"
+        ? req.body.clientSecret.trim()
+        : "";
     if (!clientKey || !clientSecret) {
-      return res.status(400).json({ error: "clientKey and clientSecret are required" });
+      return res
+        .status(400)
+        .json({ error: "clientKey and clientSecret are required" });
     }
     try {
       const envPath = defaultEnvPath();
-      await upsertEnvFile(envPath, { TIKTOK_CLIENT_KEY: clientKey, TIKTOK_CLIENT_SECRET: clientSecret });
+      await upsertEnvFile(envPath, {
+        TIKTOK_CLIENT_KEY: clientKey,
+        TIKTOK_CLIENT_SECRET: clientSecret,
+      });
       process.env.TIKTOK_CLIENT_KEY = clientKey;
       process.env.TIKTOK_CLIENT_SECRET = clientSecret;
       logger.info("Updated TikTok OAuth app credentials via admin UI");
@@ -4877,19 +5979,26 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
   router.get("/tiktok/oauth/authorize", (_req, res) => {
     const clientKey = (process.env.TIKTOK_CLIENT_KEY ?? "").trim();
     if (!clientKey) {
-      return res.status(400).json({ error: "TIKTOK_CLIENT_KEY not configured. Set your Client Key first." });
+      return res.status(400).json({
+        error: "TIKTOK_CLIENT_KEY not configured. Set your Client Key first.",
+      });
     }
 
     const backendPort = Number(process.env.PORT ?? 3000);
-    const redirectUri = (process.env.TIKTOK_REDIRECT_URI ?? "").trim()
-      || (_tunnelPublicUrl ? `${_tunnelPublicUrl}/api/tiktok/oauth/callback` : `https://localhost:${backendPort}/api/tiktok/oauth/callback`);
+    const redirectUri =
+      (process.env.TIKTOK_REDIRECT_URI ?? "").trim() ||
+      (_tunnelPublicUrl
+        ? `${_tunnelPublicUrl}/api/tiktok/oauth/callback`
+        : `https://localhost:${backendPort}/api/tiktok/oauth/callback`);
 
     // CSRF state token
     const state = randomUUID();
 
     // PKCE: generate code_verifier and code_challenge (S256)
     const codeVerifier = randomBytes(32).toString("base64url");
-    const codeChallenge = createHash("sha256").update(codeVerifier).digest("base64url");
+    const codeChallenge = createHash("sha256")
+      .update(codeVerifier)
+      .digest("base64url");
 
     tiktokOAuthStates.set(state, { ts: Date.now(), codeVerifier });
     for (const [k, v] of tiktokOAuthStates) {
@@ -4955,26 +6064,45 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
   router.get("/tiktok/status", async (_req, res) => {
     const token = process.env.TIKTOK_ACCESS_TOKEN;
     if (!token) {
-      return res.json({ connected: false, message: "TIKTOK_ACCESS_TOKEN not configured" });
+      return res.json({
+        connected: false,
+        message: "TIKTOK_ACCESS_TOKEN not configured",
+      });
     }
     try {
       // Validate token by calling user info endpoint
-      const infoRes = await fetch("https://open.tiktokapis.com/v2/user/info/?fields=open_id,display_name,username", {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const infoRes = await fetch(
+        "https://open.tiktokapis.com/v2/user/info/?fields=open_id,display_name,username",
+        {
+          headers: { Authorization: `Bearer ${token}` },
+        },
+      );
       if (infoRes.ok) {
-        const info = (await infoRes.json()) as { data?: { user?: { open_id?: string; display_name?: string; username?: string } }; error?: { code: string } };
+        const info = (await infoRes.json()) as {
+          data?: {
+            user?: {
+              open_id?: string;
+              display_name?: string;
+              username?: string;
+            };
+          };
+          error?: { code: string };
+        };
         if (info.error?.code === "ok" || !info.error?.code) {
           return res.json({
             connected: true,
             profile: {
-              openId: info.data?.user?.open_id ?? process.env.TIKTOK_OPEN_ID ?? "",
+              openId:
+                info.data?.user?.open_id ?? process.env.TIKTOK_OPEN_ID ?? "",
               displayName: info.data?.user?.display_name ?? "",
               username: info.data?.user?.username ?? "",
             },
           });
         }
-        return res.json({ connected: false, message: `TikTok API error: ${info.error?.code}` });
+        return res.json({
+          connected: false,
+          message: `TikTok API error: ${info.error?.code}`,
+        });
       }
       // Fallback: check expiry
       const expiresAt = process.env.TIKTOK_TOKEN_EXPIRES_AT;
@@ -4994,9 +6122,14 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
 
   /** POST /api/admin/youtube/app-credentials — save YouTube/Google OAuth client ID + secret */
   router.post("/youtube/app-credentials", async (req, res) => {
-    const { clientId, clientSecret } = req.body as { clientId?: string; clientSecret?: string };
+    const { clientId, clientSecret } = req.body as {
+      clientId?: string;
+      clientSecret?: string;
+    };
     if (!clientId?.trim() || !clientSecret?.trim()) {
-      return res.status(400).json({ error: "clientId and clientSecret are required" });
+      return res
+        .status(400)
+        .json({ error: "clientId and clientSecret are required" });
     }
     const envPath = defaultEnvPath();
     await upsertEnvFile(envPath, {
@@ -5010,7 +6143,12 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
 
   /** GET /api/admin/youtube/credentials — return masked YouTube OAuth credential status */
   router.get("/youtube/credentials", (_req, res) => {
-    const mask = (val: string) => val.length > 12 ? `${val.slice(0, 6)}…${val.slice(-4)}` : val ? "••••••" : "";
+    const mask = (val: string) =>
+      val.length > 12
+        ? `${val.slice(0, 6)}…${val.slice(-4)}`
+        : val
+          ? "••••••"
+          : "";
     const clientId = (process.env.YOUTUBE_CLIENT_ID ?? "").trim();
     const clientSecret = (process.env.YOUTUBE_CLIENT_SECRET ?? "").trim();
     const oauthToken = (process.env.YOUTUBE_OAUTH_TOKEN ?? "").trim();
@@ -5031,10 +6169,14 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
   router.get("/youtube/oauth/authorize", (_req, res) => {
     const clientId = (process.env.YOUTUBE_CLIENT_ID ?? "").trim();
     if (!clientId) {
-      return res.status(400).json({ error: "YOUTUBE_CLIENT_ID not configured. Save app credentials first." });
+      return res.status(400).json({
+        error: "YOUTUBE_CLIENT_ID not configured. Save app credentials first.",
+      });
     }
     const backendPort = Number(process.env.PORT ?? 3000);
-    const redirectUri = (process.env.YOUTUBE_REDIRECT_URI ?? "").trim() || `http://localhost:${backendPort}/api/youtube/oauth/callback`;
+    const redirectUri =
+      (process.env.YOUTUBE_REDIRECT_URI ?? "").trim() ||
+      `http://localhost:${backendPort}/api/youtube/oauth/callback`;
 
     const state = randomUUID();
     youtubeOAuthStates.set(state, Date.now());
@@ -5056,7 +6198,9 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
       include_granted_scopes: "true",
     });
 
-    return res.json({ url: `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}` });
+    return res.json({
+      url: `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`,
+    });
   });
 
   /** POST /api/admin/youtube/oauth/refresh — manually trigger a YouTube token refresh */
@@ -5086,7 +6230,10 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
   router.get("/youtube/status", async (_req, res) => {
     const token = process.env.YOUTUBE_OAUTH_TOKEN;
     if (!token) {
-      return res.json({ connected: false, message: "YOUTUBE_OAUTH_TOKEN not configured" });
+      return res.json({
+        connected: false,
+        message: "YOUTUBE_OAUTH_TOKEN not configured",
+      });
     }
     try {
       const channelRes = await fetch(
@@ -5094,7 +6241,9 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
         { headers: { Authorization: `Bearer ${token}` } },
       );
       if (channelRes.ok) {
-        const data = (await channelRes.json()) as { items?: Array<{ snippet?: { title?: string } }> };
+        const data = (await channelRes.json()) as {
+          items?: Array<{ snippet?: { title?: string } }>;
+        };
         return res.json({
           connected: true,
           profile: { channelTitle: data.items?.[0]?.snippet?.title ?? "" },
@@ -5102,7 +6251,12 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
       }
       const expiresAt = process.env.YOUTUBE_TOKEN_EXPIRES_AT;
       const isExpired = expiresAt ? new Date(expiresAt) < new Date() : false;
-      return res.json({ connected: !isExpired, message: isExpired ? "Token expired" : `API returned ${channelRes.status}` });
+      return res.json({
+        connected: !isExpired,
+        message: isExpired
+          ? "Token expired"
+          : `API returned ${channelRes.status}`,
+      });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return res.status(500).json({ connected: false, message });
@@ -5113,12 +6267,19 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
 
   /** GET /api/admin/social-brain/credentials — return masked status of all social Brain env vars */
   router.get("/social-brain/credentials", (_req, res) => {
-    const mask = (val: string) => val.length > 12 ? `${val.slice(0, 6)}…${val.slice(-4)}` : val ? "••••••" : "";
+    const mask = (val: string) =>
+      val.length > 12
+        ? `${val.slice(0, 6)}…${val.slice(-4)}`
+        : val
+          ? "••••••"
+          : "";
 
     const webhookToken = (process.env.SOCIAL_WEBHOOK_VERIFY_TOKEN ?? "").trim();
 
     const igToken = (process.env.INSTAGRAM_ACCESS_TOKEN ?? "").trim();
-    const igAccountId = (process.env.INSTAGRAM_BUSINESS_ACCOUNT_ID ?? "").trim();
+    const igAccountId = (
+      process.env.INSTAGRAM_BUSINESS_ACCOUNT_ID ?? ""
+    ).trim();
 
     const fbPageToken = (process.env.FACEBOOK_PAGE_TOKEN ?? "").trim();
     const fbAppId = (process.env.FACEBOOK_APP_ID ?? "").trim();
@@ -5129,20 +6290,31 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
     const twitterApiKey = (process.env.TWITTER_API_KEY ?? "").trim();
     const twitterApiSecret = (process.env.TWITTER_API_SECRET ?? "").trim();
     const twitterAccessToken = (process.env.TWITTER_ACCESS_TOKEN ?? "").trim();
-    const twitterAccessTokenSecret = (process.env.TWITTER_ACCESS_TOKEN_SECRET ?? "").trim();
+    const twitterAccessTokenSecret = (
+      process.env.TWITTER_ACCESS_TOKEN_SECRET ?? ""
+    ).trim();
 
     const redditClientId = (process.env.REDDIT_CLIENT_ID ?? "").trim();
     const redditClientSecret = (process.env.REDDIT_CLIENT_SECRET ?? "").trim();
 
     const youtubeApiKey = (process.env.YOUTUBE_API_KEY ?? "").trim();
     const youtubeChannelId = (process.env.YOUTUBE_CHANNEL_ID ?? "").trim();
-    const youtubeChannelHandle = (process.env.YOUTUBE_CHANNEL_HANDLE ?? "").trim();
+    const youtubeChannelHandle = (
+      process.env.YOUTUBE_CHANNEL_HANDLE ?? ""
+    ).trim();
     const youtubeOAuthToken = (process.env.YOUTUBE_OAUTH_TOKEN ?? "").trim();
-    const youtubeRefreshToken = (process.env.YOUTUBE_REFRESH_TOKEN ?? "").trim();
-    const youtubeTokenExpiresAt = (process.env.YOUTUBE_TOKEN_EXPIRES_AT ?? "").trim();
+    const youtubeRefreshToken = (
+      process.env.YOUTUBE_REFRESH_TOKEN ?? ""
+    ).trim();
+    const youtubeTokenExpiresAt = (
+      process.env.YOUTUBE_TOKEN_EXPIRES_AT ?? ""
+    ).trim();
 
     return res.json({
-      webhookVerifyToken: { configured: !!webhookToken, preview: mask(webhookToken) },
+      webhookVerifyToken: {
+        configured: !!webhookToken,
+        preview: mask(webhookToken),
+      },
       instagram: {
         configured: !!igToken,
         accessToken: mask(igToken),
@@ -5184,10 +6356,13 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
   /** POST /api/admin/social-brain/credentials — persist social Brain credentials to .env */
   router.post("/social-brain/credentials", async (req, res) => {
     const body = req.body as Record<string, unknown>;
-    const str = (v: unknown): string | null => (typeof v === "string" ? v.trim() : null);
+    const str = (v: unknown): string | null =>
+      typeof v === "string" ? v.trim() : null;
 
     const updates: Record<string, string> = {};
-    const add = (envKey: string, val: string | null) => { if (val !== null) updates[envKey] = val; };
+    const add = (envKey: string, val: string | null) => {
+      if (val !== null) updates[envKey] = val;
+    };
 
     add("SOCIAL_WEBHOOK_VERIFY_TOKEN", str(body.webhookVerifyToken));
     add("INSTAGRAM_ACCESS_TOKEN", str(body.instagramAccessToken));
@@ -5221,7 +6396,9 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
           delete process.env[key];
         }
       }
-      logger.info(`Updated Social Brain credentials via admin UI: ${Object.keys(updates).join(", ")}`);
+      logger.info(
+        `Updated Social Brain credentials via admin UI: ${Object.keys(updates).join(", ")}`,
+      );
       return res.json({ ok: true });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -5234,18 +6411,26 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
     try {
       const configPath = defaultConfigPath();
       const userConfig = await readUserConfig(configPath);
-      const sb = (userConfig.socialBrain && typeof userConfig.socialBrain === "object")
-        ? (userConfig.socialBrain as Record<string, unknown>)
-        : {};
+      const sb =
+        userConfig.socialBrain && typeof userConfig.socialBrain === "object"
+          ? (userConfig.socialBrain as Record<string, unknown>)
+          : {};
       return res.json({
         enabled: sb.enabled ?? false,
         model: sb.model ?? "",
         responseStyle: sb.responseStyle ?? "friendly",
         confidenceThreshold: sb.confidenceThreshold ?? "high",
-        commentAutomation: (sb.commentAutomation as Record<string, unknown> | undefined)?.enabled ?? false,
+        commentAutomation:
+          (sb.commentAutomation as Record<string, unknown> | undefined)
+            ?.enabled ?? false,
         commentBrainEnabled: sb.commentBrainEnabled ?? false,
         approvalRequired: sb.approvalRequired ?? false,
-        notifications: sb.notifications ?? { enabled: false, telegram: true, discord: true, web: true },
+        notifications: sb.notifications ?? {
+          enabled: false,
+          telegram: true,
+          discord: true,
+          web: true,
+        },
         handoff: sb.handoff ?? {},
       });
     } catch (error) {
@@ -5260,20 +6445,34 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
     try {
       const configPath = defaultConfigPath();
       const userConfig = await readUserConfig(configPath);
-      const existingSb = (userConfig.socialBrain && typeof userConfig.socialBrain === "object")
-        ? (userConfig.socialBrain as Record<string, unknown>)
-        : {};
+      const existingSb =
+        userConfig.socialBrain && typeof userConfig.socialBrain === "object"
+          ? (userConfig.socialBrain as Record<string, unknown>)
+          : {};
 
       if (typeof body.enabled === "boolean") existingSb.enabled = body.enabled;
-      if (typeof body.model === "string") existingSb.model = body.model || undefined;
-      if (body.responseStyle === "friendly" || body.responseStyle === "professional" || body.responseStyle === "witty" || body.responseStyle === "minimal") {
+      if (typeof body.model === "string")
+        existingSb.model = body.model || undefined;
+      if (
+        body.responseStyle === "friendly" ||
+        body.responseStyle === "professional" ||
+        body.responseStyle === "witty" ||
+        body.responseStyle === "minimal"
+      ) {
         existingSb.responseStyle = body.responseStyle;
       }
-      if (body.confidenceThreshold === "high" || body.confidenceThreshold === "medium" || body.confidenceThreshold === "low") {
+      if (
+        body.confidenceThreshold === "high" ||
+        body.confidenceThreshold === "medium" ||
+        body.confidenceThreshold === "low"
+      ) {
         existingSb.confidenceThreshold = body.confidenceThreshold;
       }
       if (typeof body.commentAutomation === "boolean") {
-        existingSb.commentAutomation = { ...((existingSb.commentAutomation as Record<string, unknown>) ?? {}), enabled: body.commentAutomation };
+        existingSb.commentAutomation = {
+          ...((existingSb.commentAutomation as Record<string, unknown>) ?? {}),
+          enabled: body.commentAutomation,
+        };
       }
       if (typeof body.commentBrainEnabled === "boolean") {
         existingSb.commentBrainEnabled = body.commentBrainEnabled;
@@ -5282,10 +6481,16 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
         existingSb.approvalRequired = body.approvalRequired;
       }
       if (body.notifications && typeof body.notifications === "object") {
-        existingSb.notifications = { ...((existingSb.notifications as Record<string, unknown>) ?? {}), ...(body.notifications as Record<string, unknown>) };
+        existingSb.notifications = {
+          ...((existingSb.notifications as Record<string, unknown>) ?? {}),
+          ...(body.notifications as Record<string, unknown>),
+        };
       }
       if (body.handoff && typeof body.handoff === "object") {
-        existingSb.handoff = { ...((existingSb.handoff as Record<string, unknown>) ?? {}), ...(body.handoff as Record<string, unknown>) };
+        existingSb.handoff = {
+          ...((existingSb.handoff as Record<string, unknown>) ?? {}),
+          ...(body.handoff as Record<string, unknown>),
+        };
       }
 
       userConfig.socialBrain = existingSb;
@@ -5293,14 +6498,25 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
 
       // Apply changes to the running SocialBrain instance (no restart required)
       if (socialBrain) {
-        if (typeof body.model === "string") socialBrain.setModel(body.model || undefined);
-        if (body.responseStyle === "friendly" || body.responseStyle === "professional" || body.responseStyle === "witty" || body.responseStyle === "minimal") {
+        if (typeof body.model === "string")
+          socialBrain.setModel(body.model || undefined);
+        if (
+          body.responseStyle === "friendly" ||
+          body.responseStyle === "professional" ||
+          body.responseStyle === "witty" ||
+          body.responseStyle === "minimal"
+        ) {
           socialBrain.setResponseStyle(body.responseStyle);
         }
-        if (body.confidenceThreshold === "high" || body.confidenceThreshold === "medium" || body.confidenceThreshold === "low") {
+        if (
+          body.confidenceThreshold === "high" ||
+          body.confidenceThreshold === "medium" ||
+          body.confidenceThreshold === "low"
+        ) {
           socialBrain.setConfidenceThreshold(body.confidenceThreshold);
         }
-        if (typeof body.approvalRequired === "boolean") socialBrain.setApprovalRequired(body.approvalRequired);
+        if (typeof body.approvalRequired === "boolean")
+          socialBrain.setApprovalRequired(body.approvalRequired);
       }
 
       logger.info("Updated Social Brain settings via admin UI");
@@ -5334,7 +6550,9 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
       // Validate each directory path
       for (const dir of body.directories) {
         if (dir.includes("..")) {
-          return res.status(400).json({ error: `Invalid path (contains ".."): ${dir}` });
+          return res
+            .status(400)
+            .json({ error: `Invalid path (contains ".."): ${dir}` });
         }
       }
 
@@ -5352,7 +6570,9 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
       userConfig.workbench = workbench;
 
       await fs.mkdir(path.dirname(configPath), { recursive: true });
-      await fs.writeFile(configPath, JSON.stringify(userConfig, null, 2), { mode: 0o600 });
+      await fs.writeFile(configPath, JSON.stringify(userConfig, null, 2), {
+        mode: 0o600,
+      });
 
       logger.info("Updated workbench directories via admin API");
       return res.json({ success: true, directories: body.directories });
@@ -5380,7 +6600,8 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
   // ── Extraction History ──
   router.get("/extractions", async (req, res) => {
     try {
-      const { ExtractionRepository } = await import("../mcp/tools/web-extract.js");
+      const { ExtractionRepository } =
+        await import("../mcp/tools/web-extract.js");
       const repo = new ExtractionRepository();
       const limit = Math.min(Number(req.query.limit) || 50, 200);
       const offset = Math.max(Number(req.query.offset) || 0, 0);
@@ -5395,7 +6616,8 @@ export const createAdminRouter = ({ toolRegistry, sidecarManager, localServerMan
 
   router.get("/extractions/:id", async (req, res) => {
     try {
-      const { ExtractionRepository } = await import("../mcp/tools/web-extract.js");
+      const { ExtractionRepository } =
+        await import("../mcp/tools/web-extract.js");
       const repo = new ExtractionRepository();
       const id = Number(req.params.id);
       if (isNaN(id) || id <= 0) {

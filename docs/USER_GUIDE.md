@@ -7442,6 +7442,184 @@ Reports include:
 | Slow crawls | Reduce `maxPages` or `maxDepth`; Firecrawl renders JS pages which takes time |
 | Missing pages | Some sites block crawlers — try reducing concurrency or adding delays |
 
+### Firecrawl Search Tool
+
+The `firecrawl-search` MCP tool provides direct web search via Firecrawl's self-hosted search engine (DuckDuckGo-backed — no API key required).
+
+**Parameters:**
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `query` | string (required) | — | Search query string |
+| `limit` | number | 5 | Number of results to return (max 20) |
+| `lang` | string | — | Language code (e.g., `en`) |
+| `country` | string | — | Country code (e.g., `us`) |
+
+**Example prompts:**
+
+```
+"Use firecrawl-search to find recent articles about Next.js server components"
+"Search the web using firecrawl for 'machine learning optimization techniques' with 10 results"
+```
+
+The `web-search` tool also uses Firecrawl as an automatic fallback when `BRAVE_API_KEY` is not configured and the Firecrawl Docker sidecar is running. The fallback chain is: **Brave Search → Firecrawl search**.
+
+### Webhook Mode
+
+Firecrawl async operations (crawl, batch scrape) support a webhook callback mode for faster completion notification instead of polling.
+
+**Config:** Set `firecrawl.useWebhooks` in `~/.openzigs/config.json`:
+
+```json
+{
+  "firecrawl": {
+    "enabled": true,
+    "useWebhooks": true
+  }
+}
+```
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `firecrawl.useWebhooks` | boolean | `true` | When `true`, async Firecrawl jobs use webhook callbacks for instant completion notification. When `false`, falls back to polling the Firecrawl status API every 2 seconds. |
+
+Webhooks are internal-only (`localhost`), HMAC-signed, and require no additional configuration beyond enabling Firecrawl.
+
+---
+
+## Airtable & Google Sheets Integration
+
+OpenZigs provides 16 MCP tools for reading and writing data in **Airtable** bases and **Google Sheets** spreadsheets. Credentials are stored securely in the Secret Vault.
+
+### Setup
+
+#### Airtable
+
+1. Create a [Personal Access Token](https://airtable.com/create/tokens) with scopes: `data.records:read`, `data.records:write`, `schema.bases:read`.
+2. Save it via the Admin panel (**Admin → Integrations → Airtable**) or directly in the Secret Vault with label `airtable-api-key`.
+3. Test the connection — the panel calls `listBases()` to verify access.
+
+#### Google Sheets
+
+**Option A — API Key** (read-only access to public spreadsheets):
+1. Create an API key in the [Google Cloud Console](https://console.cloud.google.com/apis/credentials).
+2. Enable the Google Sheets API and Google Drive API.
+3. Save it via **Admin → Integrations → Google Sheets** or Secret Vault with label `google-sheets-api-key`.
+
+**Option B — OAuth2** (full read/write access to private spreadsheets):
+1. Create an OAuth2 client in the Google Cloud Console (type: Web Application).
+2. Save the client ID and client secret via the Admin panel.
+3. Click "Connect Google Account" to complete the OAuth2 flow.
+4. Tokens are auto-refreshed — no manual renewal needed.
+
+### Available Tools
+
+#### Airtable Read Tools (low risk)
+
+| Tool | Description |
+|---|---|
+| `airtable-list-bases` | Lists all accessible Airtable bases with IDs and names |
+| `airtable-list-tables` | Lists tables in a base with field summaries |
+| `airtable-read-records` | Reads records with `filterByFormula`, sort, pagination, view selection, and field filtering |
+| `airtable-list-views` | Lists views in a table |
+| `airtable-get-fields` | Returns field metadata (name, type, options) for a table |
+
+**Airtable Formula Examples:**
+```
+"Find all records where Status is Active"
+→ filterByFormula: {Status}='Active'
+
+"Get records created this week"
+→ filterByFormula: IS_AFTER(CREATED_TIME(), DATEADD(TODAY(), -7, 'days'))
+
+"Find contacts at Acme Corp with email"
+→ filterByFormula: AND({Company}='Acme Corp', {Email}!='')
+```
+
+#### Airtable Write Tools (medium risk — triggers approval in interactive mode)
+
+| Tool | Description |
+|---|---|
+| `airtable-create-records` | Creates 1–10 records in a table (batch) |
+| `airtable-update-records` | Updates 1–10 existing records (supports `typecast` for auto-conversion) |
+| `airtable-delete-records` | Deletes 1–10 records by ID |
+
+#### Google Sheets Read Tools (low risk)
+
+| Tool | Description |
+|---|---|
+| `sheets-list-spreadsheets` | Lists recent/accessible spreadsheets (with optional search query) |
+| `sheets-read-range` | Reads cell values from A1-notation range (e.g., `Sheet1!A1:D10`), returns markdown table |
+| `sheets-get-metadata` | Returns spreadsheet metadata: sheet names, row/column counts, named ranges |
+
+**A1 Notation Examples:**
+```
+Sheet1!A1:D10     — cells A1 through D10 on Sheet1
+Sheet1!A:A        — entire column A
+Sheet1!1:3        — rows 1 through 3
+'My Sheet'!B2:E   — range on a sheet with spaces in the name
+```
+
+#### Google Sheets Write Tools (medium risk — triggers approval in interactive mode)
+
+| Tool | Description |
+|---|---|
+| `sheets-write-range` | Writes values to a specific range (supports `USER_ENTERED` for formula evaluation) |
+| `sheets-append-rows` | Appends rows after the last row with data |
+| `sheets-create-spreadsheet` | Creates a new spreadsheet (returns ID and URL) |
+| `sheets-create-sheet` | Adds a new sheet tab to an existing spreadsheet |
+| `sheets-format-cells` | Applies formatting (bold, colors, borders, number format) via batchUpdate |
+
+### Data Output Integration
+
+The `site-to-dataset` and `lead-extract` tools support an optional `outputTo` parameter to write extracted data directly to Airtable or Sheets:
+
+```
+"Crawl example.com and export the dataset to my Airtable base"
+→ site-to-dataset with outputTo: { type: "airtable", baseId: "appXXX", tableIdOrName: "Leads" }
+
+"Extract leads from this page and append to my Google Sheet"
+→ lead-extract with outputTo: { type: "sheets", spreadsheetId: "1ABC...", range: "Sheet1" }
+```
+
+If the output destination fails, extracted data is still returned as text (graceful degradation).
+
+### Rate Limits
+
+| Service | Limit | Enforcement |
+|---|---|---|
+| Airtable | 5 requests/second per base | Client-side token-bucket queue |
+| Google Sheets | 60 requests/minute per user | Client-side sliding-window queue |
+
+Both clients implement exponential backoff on 429 responses.
+
+### Configuration
+
+```json
+{
+  "integrations": {
+    "airtable": { "enabled": true },
+    "sheets": { "enabled": true }
+  }
+}
+```
+
+Admin API endpoints:
+- `PUT /api/admin/integrations/airtable` — Save Airtable credentials
+- `PUT /api/admin/integrations/sheets` — Save Sheets credentials
+- `POST /api/admin/integrations/airtable/test` — Test Airtable connection
+- `POST /api/admin/integrations/sheets/test` — Test Sheets connection
+
+### Troubleshooting
+
+| Symptom | Fix |
+|---|---|
+| "Airtable API key not configured" | Save your Personal Access Token via Admin → Integrations or Secret Vault |
+| 403 on Airtable read | Your token lacks the required scopes — regenerate with `data.records:read` and `schema.bases:read` |
+| "Google Sheets credentials not configured" | Save an API key or complete OAuth2 flow via Admin → Integrations |
+| 403 on Sheets read | For API key auth, the spreadsheet must be publicly shared. Use OAuth2 for private spreadsheets. |
+| Rate limit errors (429) | The client auto-retries with backoff. For bulk operations, reduce batch size or add delays. |
+
 ---
 
 ## Pinterest SEO Engine

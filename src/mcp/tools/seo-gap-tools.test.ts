@@ -177,7 +177,9 @@ describe("seo-gap-tools", () => {
     });
 
     it("returns error on network timeout", async () => {
-      globalThis.fetch = vi.fn().mockRejectedValue(new Error("AbortError: signal timed out"));
+      globalThis.fetch = vi
+        .fn()
+        .mockRejectedValue(new Error("AbortError: signal timed out"));
 
       const tools = createSeoGapTools();
       const tool = tools.find((t) => t.name === "seo-extract-content")!;
@@ -205,7 +207,12 @@ describe("seo-gap-tools", () => {
 
       const serperResponse = {
         organic: [
-          { link: "https://comp1.com/page", title: "Comp 1", snippet: "Snippet 1", position: 1 },
+          {
+            link: "https://comp1.com/page",
+            title: "Comp 1",
+            snippet: "Snippet 1",
+            position: 1,
+          },
         ],
         peopleAlsoAsk: [{ question: "What is SEO?" }],
         relatedSearches: [{ query: "seo tools" }],
@@ -223,14 +230,17 @@ describe("seo-gap-tools", () => {
         // Target or competitor HTML
         return Promise.resolve({
           ok: true,
-          text: () => Promise.resolve(fetchCallCount <= 2 ? targetHtml : competitorHtml),
+          text: () =>
+            Promise.resolve(fetchCallCount <= 2 ? targetHtml : competitorHtml),
         });
       });
 
       // Mock fs.writeFile and fs.mkdir to avoid filesystem side effects
       const fsSpy = vi.spyOn(fs, "writeFile").mockResolvedValue();
       const mkdirSpy = vi.spyOn(fs, "mkdir").mockResolvedValue(undefined);
-      const pdfSpy = vi.spyOn(pdfExport, "saveReportPdf").mockResolvedValue("/home/user/.openzigs/seo-reports/test.pdf");
+      const pdfSpy = vi
+        .spyOn(pdfExport, "saveReportPdf")
+        .mockResolvedValue("/home/user/.openzigs/seo-reports/test.pdf");
 
       const tools = createSeoGapTools({ serperApiKey: "test-key" });
       const tool = tools.find((t) => t.name === "seo-gap-analysis")!;
@@ -246,7 +256,9 @@ describe("seo-gap-tools", () => {
       const parsed = JSON.parse(result.text.slice(jsonStart));
       expect(parsed.reportPath).toContain("seo-reports");
       expect(parsed.pdfPath).toBe("/home/user/.openzigs/seo-reports/test.pdf");
-      expect(parsed.filename).toMatch(/^mysite\.com-seo-analysis-\d{4}-\d{2}-\d{2}\.md$/);
+      expect(parsed.filename).toMatch(
+        /^mysite\.com-seo-analysis-\d{4}-\d{2}-\d{2}\.md$/,
+      );
       expect(parsed.targetMetrics).toBeDefined();
       expect(parsed.targetMetrics.wordCount).toBeGreaterThan(0);
       expect(parsed.competitorsAnalyzed).toBeGreaterThanOrEqual(0);
@@ -281,8 +293,18 @@ describe("seo-gap-tools", () => {
 
       const serperResponse = {
         organic: [
-          { link: "https://comp1.com", title: "C1", snippet: "S1", position: 1 },
-          { link: "https://comp2.com", title: "C2", snippet: "S2", position: 2 },
+          {
+            link: "https://comp1.com",
+            title: "C1",
+            snippet: "S1",
+            position: 1,
+          },
+          {
+            link: "https://comp2.com",
+            title: "C2",
+            snippet: "S2",
+            position: 2,
+          },
         ],
       };
 
@@ -297,9 +319,16 @@ describe("seo-gap-tools", () => {
         }
         // First real fetch succeeds (target), competitors fail
         if (callIndex === 1) {
-          return Promise.resolve({ ok: true, text: () => Promise.resolve(targetHtml) });
+          return Promise.resolve({
+            ok: true,
+            text: () => Promise.resolve(targetHtml),
+          });
         }
-        return Promise.resolve({ ok: false, status: 500, statusText: "Server Error" });
+        return Promise.resolve({
+          ok: false,
+          status: 500,
+          statusText: "Server Error",
+        });
       });
 
       vi.spyOn(fs, "writeFile").mockResolvedValue();
@@ -328,26 +357,36 @@ describe("seo-gap-tools", () => {
       const braveResponse = {
         web: {
           results: [
-            { url: "https://brave-comp.com", title: "Brave Comp", description: "Desc" },
+            {
+              url: "https://brave-comp.com",
+              title: "Brave Comp",
+              description: "Desc",
+            },
           ],
         },
       };
 
       globalThis.fetch = vi.fn().mockImplementation((url: string) => {
-        if (typeof url === "string" && url.includes("brave.com")) {
+        if (typeof url === "string" && (() => { try { const h = new URL(url).hostname; return h === "api.search.brave.com" || h.endsWith(".brave.com"); } catch { return false; } })()) {
           return Promise.resolve({
             ok: true,
             json: () => Promise.resolve(braveResponse),
           });
         }
-        return Promise.resolve({ ok: true, text: () => Promise.resolve(targetHtml) });
+        return Promise.resolve({
+          ok: true,
+          text: () => Promise.resolve(targetHtml),
+        });
       });
 
       vi.spyOn(fs, "writeFile").mockResolvedValue();
       vi.spyOn(fs, "mkdir").mockResolvedValue(undefined);
       vi.spyOn(pdfExport, "saveReportPdf").mockResolvedValue(null);
 
-      const tools = createSeoGapTools({ braveApiKey: "brave-key", serperApiKey: "serper-key" });
+      const tools = createSeoGapTools({
+        braveApiKey: "brave-key",
+        serperApiKey: "serper-key",
+      });
       const tool = tools.find((t) => t.name === "seo-gap-analysis")!;
 
       const result = await tool.handler({
@@ -388,7 +427,12 @@ describe("seo-gap-tools", () => {
 
       const serperResponse = {
         organic: [
-          { link: "https://comp1.com/page", title: "Comp 1", snippet: "Snippet 1", position: 1 },
+          {
+            link: "https://comp1.com/page",
+            title: "Comp 1",
+            snippet: "Snippet 1",
+            position: 1,
+          },
         ],
         peopleAlsoAsk: [],
         relatedSearches: [],
@@ -396,9 +440,15 @@ describe("seo-gap-tools", () => {
 
       globalThis.fetch = vi.fn().mockImplementation((url: string) => {
         if (typeof url === "string" && url.includes("serper.dev")) {
-          return Promise.resolve({ ok: true, json: () => Promise.resolve(serperResponse) });
+          return Promise.resolve({
+            ok: true,
+            json: () => Promise.resolve(serperResponse),
+          });
         }
-        return Promise.resolve({ ok: true, text: () => Promise.resolve(targetHtml) });
+        return Promise.resolve({
+          ok: true,
+          text: () => Promise.resolve(targetHtml),
+        });
       });
 
       vi.spyOn(fs, "writeFile").mockResolvedValue();
@@ -408,7 +458,9 @@ describe("seo-gap-tools", () => {
       const tools = createSeoGapTools({ serperApiKey: "test-key" });
       const tool = tools.find((t) => t.name === "seo-gap-analysis")!;
 
-      const result = await tool.handler({ targetUrl: "https://mysite.com/react-perf" });
+      const result = await tool.handler({
+        targetUrl: "https://mysite.com/react-perf",
+      });
 
       expect(result.isError).toBeUndefined();
       const jsonStart = result.text.indexOf("{");
@@ -431,7 +483,9 @@ describe("seo-gap-tools", () => {
       const tools = createSeoGapTools({ serperApiKey: "test-key" });
       const tool = tools.find((t) => t.name === "seo-gap-analysis")!;
 
-      const result = await tool.handler({ targetUrl: "https://empty.example.com" });
+      const result = await tool.handler({
+        targetUrl: "https://empty.example.com",
+      });
 
       expect(result.isError).toBe(true);
       expect(result.text).toContain("Could not auto-detect");
@@ -441,16 +495,29 @@ describe("seo-gap-tools", () => {
       const targetHtml = `<html><body><h1>Target</h1><p>Content here with enough words for the analysis threshold.</p></body></html>`;
 
       const serperResponse = {
-        organic: [{ link: "https://comp1.com", title: "C1", snippet: "S1", position: 1 }],
+        organic: [
+          {
+            link: "https://comp1.com",
+            title: "C1",
+            snippet: "S1",
+            position: 1,
+          },
+        ],
         peopleAlsoAsk: [],
         relatedSearches: [],
       };
 
       globalThis.fetch = vi.fn().mockImplementation((url: string) => {
         if (typeof url === "string" && url.includes("serper.dev")) {
-          return Promise.resolve({ ok: true, json: () => Promise.resolve(serperResponse) });
+          return Promise.resolve({
+            ok: true,
+            json: () => Promise.resolve(serperResponse),
+          });
         }
-        return Promise.resolve({ ok: true, text: () => Promise.resolve(targetHtml) });
+        return Promise.resolve({
+          ok: true,
+          text: () => Promise.resolve(targetHtml),
+        });
       });
 
       vi.spyOn(fs, "writeFile").mockResolvedValue();
@@ -483,7 +550,11 @@ describe("seo-gap-tools", () => {
       const result = await tool.handler({ markdownPath: "/tmp/report.md" });
 
       expect(result.text).toContain("/tmp/report.pdf");
-      expect(pdfExport.saveReportPdf).toHaveBeenCalledWith("report", "# Report Content", "/tmp");
+      expect(pdfExport.saveReportPdf).toHaveBeenCalledWith(
+        "report",
+        "# Report Content",
+        "/tmp",
+      );
     });
 
     it("returns error when Chrome not found", async () => {
@@ -499,7 +570,9 @@ describe("seo-gap-tools", () => {
     });
 
     it("returns error for missing file", async () => {
-      vi.spyOn(fs, "readFile").mockRejectedValue(new Error("ENOENT: no such file"));
+      vi.spyOn(fs, "readFile").mockRejectedValue(
+        new Error("ENOENT: no such file"),
+      );
 
       const tools = createSeoGapTools();
       const tool = tools.find((t) => t.name === "export-pdf")!;

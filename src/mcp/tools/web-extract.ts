@@ -12,11 +12,18 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import type { ToolDefinition } from "../tool-registry.js";
-import { getFirecrawlClient, isBlockedUrl, type ScrapeAction } from "../../browser/firecrawl-client.js";
+import {
+  getFirecrawlClient,
+  isBlockedUrl,
+  type ScrapeAction,
+} from "../../browser/firecrawl-client.js";
 
 // ── Extraction Templates ─────────────────────────────────────────────────
 
-export const EXTRACTION_TEMPLATES: Record<string, { name: string; schema: Record<string, unknown> }> = {
+export const EXTRACTION_TEMPLATES: Record<
+  string,
+  { name: string; schema: Record<string, unknown> }
+> = {
   contacts: {
     name: "Contacts / Team Members",
     schema: {
@@ -85,7 +92,17 @@ export const EXTRACTION_TEMPLATES: Record<string, { name: string; schema: Record
 // ── Zod Schema ───────────────────────────────────────────────────────────
 
 const scrapeActionSchema = z.object({
-  type: z.enum(["wait", "click", "write", "press", "scroll", "screenshot", "scrape", "executeJavascript", "pdf"]),
+  type: z.enum([
+    "wait",
+    "click",
+    "write",
+    "press",
+    "scroll",
+    "screenshot",
+    "scrape",
+    "executeJavascript",
+    "pdf",
+  ]),
   selector: z.string().optional(),
   text: z.string().optional(),
   key: z.string().optional(),
@@ -98,12 +115,35 @@ const scrapeActionSchema = z.object({
 
 const webExtractSchema = z.object({
   url: z.string().url().describe("URL to scrape and extract data from"),
-  schema: z.record(z.unknown()).optional().describe("JSON schema describing desired output structure"),
-  prompt: z.string().optional().describe("Natural language description of what to extract"),
-  template: z.enum(["contacts", "pricing", "jobs", "products"]).optional().describe("Pre-built extraction template name"),
-  actions: z.array(scrapeActionSchema).optional().describe("Actions to perform before extraction (click, scroll, etc.)"),
-  maxPages: z.number().int().min(1).max(50).optional().default(1).describe("If >1, crawl and extract from multiple pages"),
-  outputFormat: z.enum(["json", "csv", "markdown"]).optional().default("json").describe("Desired output format"),
+  schema: z
+    .record(z.unknown())
+    .optional()
+    .describe("JSON schema describing desired output structure"),
+  prompt: z
+    .string()
+    .optional()
+    .describe("Natural language description of what to extract"),
+  template: z
+    .enum(["contacts", "pricing", "jobs", "products"])
+    .optional()
+    .describe("Pre-built extraction template name"),
+  actions: z
+    .array(scrapeActionSchema)
+    .optional()
+    .describe("Actions to perform before extraction (click, scroll, etc.)"),
+  maxPages: z
+    .number()
+    .int()
+    .min(1)
+    .max(50)
+    .optional()
+    .default(1)
+    .describe("If >1, crawl and extract from multiple pages"),
+  outputFormat: z
+    .enum(["json", "csv", "markdown"])
+    .optional()
+    .default("json")
+    .describe("Desired output format"),
 });
 
 export type WebExtractInput = z.infer<typeof webExtractSchema>;
@@ -138,36 +178,61 @@ export class ExtractionRepository {
     `);
   }
 
-  saveExtraction(url: string, prompt: string, markdown: string, schema?: Record<string, unknown>): number {
+  saveExtraction(
+    url: string,
+    prompt: string,
+    markdown: string,
+    schema?: Record<string, unknown>,
+  ): number {
     const domain = sanitizeDomain(url);
-    const result = this.db.prepare(`
+    const result = this.db
+      .prepare(
+        `
       INSERT INTO web_extractions (url, prompt, schema_json, scraped_markdown, domain)
       VALUES (?, ?, ?, ?, ?)
-    `).run(url, prompt, schema ? JSON.stringify(schema) : null, markdown, domain);
+    `,
+      )
+      .run(
+        url,
+        prompt,
+        schema ? JSON.stringify(schema) : null,
+        markdown,
+        domain,
+      );
     return Number(result.lastInsertRowid);
   }
 
   listExtractions(limit = 50, offset = 0): ExtractionRow[] {
-    return this.db.prepare(`
+    return this.db
+      .prepare(
+        `
       SELECT id, url, prompt, schema_json as schemaJson, extracted_at as extractedAt, domain,
              substr(scraped_markdown, 1, 200) as preview
       FROM web_extractions
       ORDER BY id DESC
       LIMIT ? OFFSET ?
-    `).all(limit, offset) as ExtractionRow[];
+    `,
+      )
+      .all(limit, offset) as ExtractionRow[];
   }
 
   getExtraction(id: number): ExtractionRow | undefined {
-    return this.db.prepare(`
+    return this.db
+      .prepare(
+        `
       SELECT id, url, prompt, schema_json as schemaJson, scraped_markdown as scrapedMarkdown,
              extracted_at as extractedAt, domain
       FROM web_extractions
       WHERE id = ?
-    `).get(id) as ExtractionRow | undefined;
+    `,
+      )
+      .get(id) as ExtractionRow | undefined;
   }
 
   count(): number {
-    const row = this.db.prepare("SELECT count(*) as cnt FROM web_extractions").get() as { cnt: number };
+    const row = this.db
+      .prepare("SELECT count(*) as cnt FROM web_extractions")
+      .get() as { cnt: number };
     return row.cnt;
   }
 
@@ -201,7 +266,12 @@ function sanitizeDomain(url: string): string {
   }
 }
 
-function persistExtraction(url: string, markdown: string, schema?: Record<string, unknown>, prompt?: string): string {
+function persistExtraction(
+  url: string,
+  markdown: string,
+  schema?: Record<string, unknown>,
+  prompt?: string,
+): string {
   const domain = sanitizeDomain(url);
   const dir = path.join(getExtractionsDir(), domain);
   fs.mkdirSync(dir, { recursive: true });
@@ -224,7 +294,9 @@ function persistExtraction(url: string, markdown: string, schema?: Record<string
 
 // ── Tool Factory ─────────────────────────────────────────────────────────
 
-export function createWebExtractTool(repo?: ExtractionRepository): ToolDefinition {
+export function createWebExtractTool(
+  repo?: ExtractionRepository,
+): ToolDefinition {
   const repository = repo ?? new ExtractionRepository();
 
   return {
@@ -237,16 +309,38 @@ export function createWebExtractTool(repo?: ExtractionRepository): ToolDefinitio
     inputSchema: {
       type: "object",
       properties: {
-        url: { type: "string", description: "URL to scrape and extract data from" },
-        schema: { type: "object", description: "JSON schema describing desired output structure" },
-        prompt: { type: "string", description: "Natural language description of what to extract" },
-        template: { type: "string", enum: ["contacts", "pricing", "jobs", "products"], description: "Pre-built extraction template" },
+        url: {
+          type: "string",
+          description: "URL to scrape and extract data from",
+        },
+        schema: {
+          type: "object",
+          description: "JSON schema describing desired output structure",
+        },
+        prompt: {
+          type: "string",
+          description: "Natural language description of what to extract",
+        },
+        template: {
+          type: "string",
+          enum: ["contacts", "pricing", "jobs", "products"],
+          description: "Pre-built extraction template",
+        },
         actions: {
           type: "array",
-          description: "Actions to perform before extraction (click, scroll, etc.)",
+          description:
+            "Actions to perform before extraction (click, scroll, etc.)",
         },
-        maxPages: { type: "number", description: "If >1, crawl and extract from multiple pages (default: 1)" },
-        outputFormat: { type: "string", enum: ["json", "csv", "markdown"], description: "Desired output format (default: json)" },
+        maxPages: {
+          type: "number",
+          description:
+            "If >1, crawl and extract from multiple pages (default: 1)",
+        },
+        outputFormat: {
+          type: "string",
+          enum: ["json", "csv", "markdown"],
+          description: "Desired output format (default: json)",
+        },
       },
       required: ["url"],
     },
@@ -265,7 +359,10 @@ export function createWebExtractTool(repo?: ExtractionRepository): ToolDefinitio
 
       // SSRF check
       if (isBlockedUrl(url)) {
-        return { text: `SSRF blocked: "${url}" targets an internal/private network address`, isError: true };
+        return {
+          text: `SSRF blocked: "${url}" targets an internal/private network address`,
+          isError: true,
+        };
       }
 
       const client = getFirecrawlClient();
@@ -297,7 +394,10 @@ export function createWebExtractTool(repo?: ExtractionRepository): ToolDefinitio
           });
           pageCount = crawlResult.pages.length;
           allMarkdown = crawlResult.pages
-            .map((p, i) => `### Page ${i + 1}: ${p.url}\n\n${p.markdown ?? "(no content)"}`)
+            .map(
+              (p, i) =>
+                `### Page ${i + 1}: ${p.url}\n\n${p.markdown ?? "(no content)"}`,
+            )
             .join("\n\n---\n\n");
         } else {
           const result = await client.scrape(url, {
@@ -309,11 +409,25 @@ export function createWebExtractTool(repo?: ExtractionRepository): ToolDefinitio
         }
 
         // Persist to filesystem
-        const savedPath = persistExtraction(url, allMarkdown, schema as Record<string, unknown> | undefined, prompt);
+        const savedPath = persistExtraction(
+          url,
+          allMarkdown,
+          schema as Record<string, unknown> | undefined,
+          prompt,
+        );
 
         // Persist to SQLite
-        const extractionPrompt = prompt ?? (template ? `Template: ${EXTRACTION_TEMPLATES[template]?.name ?? template}` : "Schema-based extraction");
-        repository.saveExtraction(url, extractionPrompt, allMarkdown, schema as Record<string, unknown> | undefined);
+        const extractionPrompt =
+          prompt ??
+          (template
+            ? `Template: ${EXTRACTION_TEMPLATES[template]?.name ?? template}`
+            : "Schema-based extraction");
+        repository.saveExtraction(
+          url,
+          extractionPrompt,
+          allMarkdown,
+          schema as Record<string, unknown> | undefined,
+        );
 
         // Build response for the conversation LLM to do extraction
         const lines: string[] = [
@@ -321,7 +435,9 @@ export function createWebExtractTool(repo?: ExtractionRepository): ToolDefinitio
           `**URL**: ${url}`,
           `**Pages scraped**: ${pageCount}`,
           `**Output format**: ${outputFormat}`,
-          template ? `**Template**: ${EXTRACTION_TEMPLATES[template]?.name ?? template}` : "",
+          template
+            ? `**Template**: ${EXTRACTION_TEMPLATES[template]?.name ?? template}`
+            : "",
           `**Raw content saved to**: ${savedPath}\n`,
         ].filter(Boolean);
 
@@ -340,17 +456,28 @@ export function createWebExtractTool(repo?: ExtractionRepository): ToolDefinitio
         const maxContentLength = 50_000;
         if (allMarkdown.length > maxContentLength) {
           lines.push(allMarkdown.slice(0, maxContentLength));
-          lines.push(`\n\n... (truncated, ${allMarkdown.length - maxContentLength} chars omitted, full content saved to file)`);
+          lines.push(
+            `\n\n... (truncated, ${allMarkdown.length - maxContentLength} chars omitted, full content saved to file)`,
+          );
         } else {
           lines.push(allMarkdown);
         }
 
-        lines.push("\n\nPlease extract the structured data matching the schema/instructions above from this content" +
-          (outputFormat === "csv" ? " and format as CSV." : outputFormat === "markdown" ? " and format as markdown." : " and return as JSON."));
+        lines.push(
+          "\n\nPlease extract the structured data matching the schema/instructions above from this content" +
+            (outputFormat === "csv"
+              ? " and format as CSV."
+              : outputFormat === "markdown"
+                ? " and format as markdown."
+                : " and return as JSON."),
+        );
 
         return { text: lines.join("\n") };
       } catch (err) {
-        return { text: `Web extract failed: ${err instanceof Error ? err.message : String(err)}`, isError: true };
+        return {
+          text: `Web extract failed: ${err instanceof Error ? err.message : String(err)}`,
+          isError: true,
+        };
       }
     },
   };

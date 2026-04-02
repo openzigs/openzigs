@@ -12,14 +12,36 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import type { ToolDefinition } from "../tool-registry.js";
-import { getFirecrawlClient, isBlockedUrl } from "../../browser/firecrawl-client.js";
+import {
+  getFirecrawlClient,
+  isBlockedUrl,
+} from "../../browser/firecrawl-client.js";
+import {
+  outputToSchema,
+  writeToOutput,
+  outputSummaryLine,
+} from "./data-output-helper.js";
+import type { SecretVaultService } from "../../vault/secret-vault-service.js";
 
 // ── Schema ───────────────────────────────────────────────────────────────
 
 const leadExtractSchema = z.object({
   url: z.string().url().describe("Company website URL"),
-  maxPages: z.number().int().min(1).max(50).optional().default(10).describe("Max pages to scan"),
-  includePatterns: z.array(z.string()).optional().describe("Additional URL patterns to include"),
+  maxPages: z
+    .number()
+    .int()
+    .min(1)
+    .max(50)
+    .optional()
+    .default(10)
+    .describe("Max pages to scan"),
+  includePatterns: z
+    .array(z.string())
+    .optional()
+    .describe("Additional URL patterns to include"),
+  outputTo: outputToSchema.describe(
+    "Optional: write extracted leads to Airtable or Google Sheets",
+  ),
 });
 
 export type LeadExtractInput = z.infer<typeof leadExtractSchema>;
@@ -27,14 +49,16 @@ export type LeadExtractInput = z.infer<typeof leadExtractSchema>;
 // ── Built-in contact schema ──────────────────────────────────────────────
 
 const CONTACT_SCHEMA = {
-  contacts: [{
-    name: "string",
-    title: "string",
-    email: "string (optional)",
-    phone: "string (optional)",
-    linkedin: "string (optional)",
-    department: "string (optional)",
-  }],
+  contacts: [
+    {
+      name: "string",
+      title: "string",
+      email: "string (optional)",
+      phone: "string (optional)",
+      linkedin: "string (optional)",
+      department: "string (optional)",
+    },
+  ],
   company: {
     name: "string",
     website: "string",
@@ -46,8 +70,16 @@ const CONTACT_SCHEMA = {
 // ── Helpers ──────────────────────────────────────────────────────────────
 
 const CONTACT_PAGE_PATTERNS = [
-  /team/i, /about/i, /contact/i, /leadership/i, /people/i,
-  /staff/i, /board/i, /management/i, /executives/i, /who-we-are/i,
+  /team/i,
+  /about/i,
+  /contact/i,
+  /leadership/i,
+  /people/i,
+  /staff/i,
+  /board/i,
+  /management/i,
+  /executives/i,
+  /who-we-are/i,
 ];
 
 function getLeadsDir(): string {
@@ -62,7 +94,10 @@ function sanitizeDomain(url: string): string {
   }
 }
 
-function filterContactUrls(urls: string[], includePatterns?: string[]): string[] {
+function filterContactUrls(
+  urls: string[],
+  includePatterns?: string[],
+): string[] {
   const extraPatterns = (includePatterns ?? []).map((p) => new RegExp(p, "i"));
   const allPatterns = [...CONTACT_PAGE_PATTERNS, ...extraPatterns];
 
@@ -101,7 +136,9 @@ function persistLeads(url: string, markdown: string): string {
 
 // ── Tool Factory ─────────────────────────────────────────────────────────
 
-export function createLeadExtractTool(): ToolDefinition {
+export function createLeadExtractTool(
+  vault?: SecretVaultService | null,
+): ToolDefinition {
   return {
     name: "lead-extract",
     description:
@@ -112,10 +149,25 @@ export function createLeadExtractTool(): ToolDefinition {
       type: "object",
       properties: {
         url: { type: "string", description: "Company website URL" },
-        maxPages: { type: "number", description: "Max pages to scan (default: 10)" },
+        maxPages: {
+          type: "number",
+          description: "Max pages to scan (default: 10)",
+        },
         includePatterns: {
           type: "array",
           description: "Additional URL path patterns to include (regex)",
+        },
+        outputTo: {
+          type: "object",
+          description:
+            "Optional: write extracted leads to Airtable or Google Sheets",
+          properties: {
+            type: { type: "string", enum: ["airtable", "sheets"] },
+            baseId: { type: "string" },
+            tableIdOrName: { type: "string" },
+            spreadsheetId: { type: "string" },
+            range: { type: "string" },
+          },
         },
       },
       required: ["url"],
@@ -125,10 +177,13 @@ export function createLeadExtractTool(): ToolDefinition {
     riskLevel: "medium",
     handler: async (args) => {
       const parsed = leadExtractSchema.parse(args);
-      const { url, maxPages, includePatterns } = parsed;
+      const { url, maxPages, includePatterns, outputTo } = parsed;
 
       if (isBlockedUrl(url)) {
-        return { text: `SSRF blocked: "${url}" targets an internal/private network address`, isError: true };
+        return {
+          text: `SSRF blocked: "${url}" targets an internal/private network address`,
+          isError: true,
+        };
       }
 
       const client = getFirecrawlClient();
@@ -145,7 +200,10 @@ export function createLeadExtractTool(): ToolDefinition {
         const mapResult = await client.map(url, { search: searchTerms });
 
         if (mapResult.urls.length === 0) {
-          return { text: `No pages found on ${url}. The site may block crawling or require authentication.`, isError: true };
+          return {
+            text: `No pages found on ${url}. The site may block crawling or require authentication.`,
+            isError: true,
+          };
         }
 
         // Step 2: Filter for contact-related pages
@@ -168,10 +226,15 @@ export function createLeadExtractTool(): ToolDefinition {
         }
 
         // Step 3: Batch scrape the contact pages
-        const batchResult = await client.batchScrape(contactUrls, { formats: ["markdown"] });
+        const batchResult = await client.batchScrape(contactUrls, {
+          formats: ["markdown"],
+        });
 
         const allMarkdown = batchResult.results
-          .map((r, i) => `### Page ${i + 1}: ${r.url ?? contactUrls[i]}\n\n${r.markdown ?? "(no content)"}`)
+          .map(
+            (r, i) =>
+              `### Page ${i + 1}: ${r.url ?? contactUrls[i]}\n\n${r.markdown ?? "(no content)"}`,
+          )
           .join("\n\n---\n\n");
 
         // Step 4: Persist
@@ -191,12 +254,32 @@ export function createLeadExtractTool(): ToolDefinition {
           "```\n",
           "### Scraped Contact Pages\n",
           allMarkdown,
-          "\n\nPlease extract all contacts and company information from the above content, matching the JSON schema provided. Return a JSON object with 'contacts' array and 'company' object.",
         ];
+        lines.push(
+          "\n\nPlease extract all contacts and company information from the above content, matching the JSON schema provided. Return a JSON object with 'contacts' array and 'company' object.",
+        );
+
+        // Optional: write lead rows to Airtable or Sheets
+        if (outputTo) {
+          const rows = batchResult.results.map((r, i) => ({
+            url: r.url ?? contactUrls[i],
+            pageTitle: (r.metadata?.title as string) ?? "",
+            contentLength: (r.markdown ?? "").length,
+          }));
+          const outputResult = await writeToOutput(
+            outputTo,
+            rows,
+            vault ?? null,
+          );
+          lines.push(outputSummaryLine(outputResult));
+        }
 
         return { text: lines.join("\n") };
       } catch (err) {
-        return { text: `Lead extract failed: ${err instanceof Error ? err.message : String(err)}`, isError: true };
+        return {
+          text: `Lead extract failed: ${err instanceof Error ? err.message : String(err)}`,
+          isError: true,
+        };
       }
     },
   };

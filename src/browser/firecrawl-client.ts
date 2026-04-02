@@ -14,6 +14,10 @@ import { promisify } from "node:util";
 import path from "node:path";
 import { logger } from "../logging/logger.js";
 import { PROJECT_ROOT } from "../project-root.js";
+import type {
+  FirecrawlWebhookHandler,
+  WebhookJobResult,
+} from "./firecrawl-webhooks.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -26,7 +30,16 @@ export interface ScrapeOptions {
 }
 
 export interface ScrapeAction {
-  type: "wait" | "click" | "write" | "press" | "scroll" | "screenshot" | "scrape" | "executeJavascript" | "pdf";
+  type:
+    | "wait"
+    | "click"
+    | "write"
+    | "press"
+    | "scroll"
+    | "screenshot"
+    | "scrape"
+    | "executeJavascript"
+    | "pdf";
   selector?: string;
   text?: string;
   key?: string;
@@ -88,6 +101,21 @@ export interface BatchScrapeResult {
   jobId?: string;
 }
 
+export interface SearchOptions {
+  limit?: number;
+  lang?: string;
+  country?: string;
+  scrapeOptions?: ScrapeOptions;
+}
+
+export interface SearchResult {
+  title: string;
+  url: string;
+  markdown: string;
+  description?: string;
+  metadata?: Record<string, unknown>;
+}
+
 export interface FirecrawlConfig {
   enabled: boolean;
   url: string;
@@ -103,12 +131,12 @@ const DEFAULT_CONFIG: FirecrawlConfig = {
 // ── SSRF Protection ──────────────────────────────────────────────────────
 
 const BLOCKED_IPV4_PATTERNS = [
-  /^127\./,                              // loopback
-  /^10\./,                               // private class A
-  /^172\.(1[6-9]|2\d|3[0-1])\./,        // private class B
-  /^192\.168\./,                         // private class C
-  /^169\.254\./,                         // link-local
-  /^0\./,                               // current network
+  /^127\./, // loopback
+  /^10\./, // private class A
+  /^172\.(1[6-9]|2\d|3[0-1])\./, // private class B
+  /^192\.168\./, // private class C
+  /^169\.254\./, // link-local
+  /^0\./, // current network
   /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./, // carrier-grade NAT
 ];
 
@@ -146,7 +174,12 @@ export function isBlockedUrl(urlString: string): boolean {
   if (hostname.startsWith("[")) {
     const inner = hostname.slice(1, -1);
     // Normalize and check for ::1 forms
-    if (inner === "::1" || inner === "::0" || inner === "0:0:0:0:0:0:0:1" || inner === "0:0:0:0:0:0:0:0") {
+    if (
+      inner === "::1" ||
+      inner === "::0" ||
+      inner === "0:0:0:0:0:0:0:1" ||
+      inner === "0:0:0:0:0:0:0:0"
+    ) {
       return true;
     }
     // IPv4-mapped IPv6
@@ -195,7 +228,9 @@ class DomainRateLimiter {
   /** Evict oldest half of entries when map exceeds maxEntries */
   private evictIfNeeded(): void {
     if (this.lastRequestTime.size <= this.maxEntries) return;
-    const entries = [...this.lastRequestTime.entries()].sort((a, b) => a[1] - b[1]);
+    const entries = [...this.lastRequestTime.entries()].sort(
+      (a, b) => a[1] - b[1],
+    );
     const toRemove = Math.floor(entries.length / 2);
     for (let i = 0; i < toRemove; i++) {
       this.lastRequestTime.delete(entries[i][0]);
@@ -223,11 +258,17 @@ export class FirecrawlClient {
   private rateLimiter = new DomainRateLimiter();
   private composeFile: string;
   private _fetch: typeof fetch;
+  private _webhookHandler: FirecrawlWebhookHandler | null = null;
 
   constructor(config?: Partial<FirecrawlConfig>, fetchFn?: typeof fetch) {
     this.config = { ...DEFAULT_CONFIG, ...config };
     this.composeFile = path.join(PROJECT_ROOT, "docker-compose.firecrawl.yml");
     this._fetch = fetchFn ?? globalThis.fetch;
+  }
+
+  /** Set a webhook handler for async job notifications (crawl, batch scrape) */
+  setWebhookHandler(handler: FirecrawlWebhookHandler | null): void {
+    this._webhookHandler = handler;
   }
 
   // ── Public API ─────────────────────────────────────────
@@ -261,7 +302,7 @@ export class FirecrawlClient {
 
   /**
    * Crawl a website recursively and return all pages.
-   * Polls the async crawl job until completion.
+   * Uses webhook callbacks when available, falls back to polling.
    */
   async crawl(url: string, options?: CrawlOptions): Promise<CrawlResult> {
     this.validateUrl(url);
@@ -276,6 +317,15 @@ export class FirecrawlClient {
     if (options?.excludePaths) body.excludePaths = options.excludePaths;
     if (options?.scrapeOptions) body.scrapeOptions = options.scrapeOptions;
 
+    // Attach webhook URL if handler is available
+    let webhookJobId: string | undefined;
+    let webhookPromise: Promise<WebhookJobResult> | undefined;
+    if (this._webhookHandler?.enabled) {
+      webhookJobId = this._webhookHandler.generateJobId();
+      body.webhook = this._webhookHandler.getWebhookUrl(webhookJobId);
+      webhookPromise = this._webhookHandler.registerJob(webhookJobId);
+    }
+
     const startResp = await this.request("/v1/crawl", body);
     const jobId = (startResp.id ?? startResp.jobId) as string | undefined;
 
@@ -287,7 +337,9 @@ export class FirecrawlClient {
           pages: syncData.map((p) => ({
             markdown: p.markdown as string | undefined,
             html: p.html as string | undefined,
-            url: ((p.metadata as Record<string, unknown>)?.sourceURL ?? p.url ?? "") as string,
+            url: ((p.metadata as Record<string, unknown>)?.sourceURL ??
+              p.url ??
+              "") as string,
             metadata: p.metadata as Record<string, unknown> | undefined,
             statusCode: p.statusCode as number | undefined,
           })),
@@ -297,7 +349,22 @@ export class FirecrawlClient {
       throw new Error("Firecrawl crawl response missing job ID");
     }
 
-    // Poll for completion
+    // Try webhook-based completion first, fall back to polling
+    if (webhookPromise) {
+      try {
+        const webhookResult = await webhookPromise;
+        return this.parseCrawlResult(webhookResult, jobId);
+      } catch (err) {
+        logger.warn(
+          "[FirecrawlClient] Webhook delivery failed, falling back to polling",
+          {
+            jobId,
+            error: String(err),
+          },
+        );
+      }
+    }
+
     return this.pollCrawlJob(jobId);
   }
 
@@ -313,7 +380,8 @@ export class FirecrawlClient {
     const body: Record<string, unknown> = { url };
     if (options?.search) body.search = options.search;
     if (options?.limit) body.limit = options.limit;
-    if (options?.ignoreSitemap !== undefined) body.ignoreSitemap = options.ignoreSitemap;
+    if (options?.ignoreSitemap !== undefined)
+      body.ignoreSitemap = options.ignoreSitemap;
 
     const resp = await this.request("/v1/map", body);
     return {
@@ -323,9 +391,12 @@ export class FirecrawlClient {
 
   /**
    * Batch scrape multiple URLs concurrently.
-   * Polls the async batch job until completion.
+   * Uses webhook callbacks when available, falls back to polling.
    */
-  async batchScrape(urls: string[], options?: BatchScrapeOptions): Promise<BatchScrapeResult> {
+  async batchScrape(
+    urls: string[],
+    options?: BatchScrapeOptions,
+  ): Promise<BatchScrapeResult> {
     for (const u of urls) this.validateUrl(u);
     if (urls.length === 0) return { results: [], totalUrls: 0 };
     await this.ensureRunning();
@@ -339,6 +410,15 @@ export class FirecrawlClient {
     if (options?.actions) body.actions = options.actions;
     if (options?.waitFor) body.waitFor = options.waitFor;
 
+    // Attach webhook URL if handler is available
+    let webhookJobId: string | undefined;
+    let webhookPromise: Promise<WebhookJobResult> | undefined;
+    if (this._webhookHandler?.enabled) {
+      webhookJobId = this._webhookHandler.generateJobId();
+      body.webhook = this._webhookHandler.getWebhookUrl(webhookJobId);
+      webhookPromise = this._webhookHandler.registerJob(webhookJobId);
+    }
+
     const startResp = await this.request("/v1/batch/scrape", body);
     const jobId = (startResp.id ?? startResp.jobId) as string | undefined;
 
@@ -351,7 +431,9 @@ export class FirecrawlClient {
             markdown: d.markdown as string | undefined,
             html: d.html as string | undefined,
             metadata: d.metadata as Record<string, unknown> | undefined,
-            url: ((d.metadata as Record<string, unknown>)?.sourceURL ?? d.url ?? "") as string,
+            url: ((d.metadata as Record<string, unknown>)?.sourceURL ??
+              d.url ??
+              "") as string,
           })),
           totalUrls: syncData.length,
         };
@@ -359,7 +441,60 @@ export class FirecrawlClient {
       throw new Error("Firecrawl batch scrape response missing job ID");
     }
 
+    // Try webhook-based completion first, fall back to polling
+    if (webhookPromise) {
+      try {
+        const webhookResult = await webhookPromise;
+        return this.parseBatchResult(webhookResult, jobId);
+      } catch (err) {
+        logger.warn(
+          "[FirecrawlClient] Webhook delivery failed for batch, falling back to polling",
+          {
+            jobId,
+            error: String(err),
+          },
+        );
+      }
+    }
+
     return this.pollBatchJob(jobId);
+  }
+
+  /**
+   * Search the web via Firecrawl's /v2/search endpoint (DuckDuckGo fallback).
+   * Returns search results with optional scraped markdown content.
+   */
+  async search(
+    query: string,
+    options?: SearchOptions,
+  ): Promise<SearchResult[]> {
+    if (!query || query.trim().length === 0) {
+      throw new Error("Search query must not be empty");
+    }
+    await this.ensureRunning();
+    this.resetIdleTimer();
+
+    const limit = Math.min(Math.max(options?.limit ?? 5, 1), 20);
+    const body: Record<string, unknown> = { query, limit };
+    if (options?.lang) body.lang = options.lang;
+    if (options?.country) body.country = options.country;
+    if (options?.scrapeOptions) body.scrapeOptions = options.scrapeOptions;
+
+    const resp = await this.request("/v2/search", body);
+    const rawResults = (resp.data ?? []) as Record<string, unknown>[];
+
+    return rawResults
+      .filter((r) => {
+        const url = (r.url ?? "") as string;
+        return url.length > 0 && !isBlockedUrl(url);
+      })
+      .map((r) => ({
+        title: (r.title ?? "") as string,
+        url: (r.url ?? "") as string,
+        markdown: (r.markdown ?? "") as string,
+        description: (r.description ?? undefined) as string | undefined,
+        metadata: r.metadata as Record<string, unknown> | undefined,
+      }));
   }
 
   /**
@@ -385,13 +520,17 @@ export class FirecrawlClient {
     if (!this.sidecarRunning) return;
 
     try {
-      await execFileAsync("docker", [
-        "compose", "-f", this.composeFile, "down",
-      ], { timeout: 30_000 });
+      await execFileAsync(
+        "docker",
+        ["compose", "-f", this.composeFile, "down"],
+        { timeout: 30_000 },
+      );
       this.sidecarRunning = false;
       logger.info("[FirecrawlClient] Sidecar stopped");
     } catch (err) {
-      logger.warn("[FirecrawlClient] Failed to stop sidecar", { error: String(err) });
+      logger.warn("[FirecrawlClient] Failed to stop sidecar", {
+        error: String(err),
+      });
     }
   }
 
@@ -414,7 +553,9 @@ export class FirecrawlClient {
 
   private validateUrl(url: string): void {
     if (isBlockedUrl(url)) {
-      throw new Error(`SSRF blocked: URL "${url}" targets an internal/private network address`);
+      throw new Error(
+        `SSRF blocked: URL "${url}" targets an internal/private network address`,
+      );
     }
   }
 
@@ -428,11 +569,13 @@ export class FirecrawlClient {
 
   private async ensureRunning(): Promise<void> {
     if (!this.config.enabled) {
-      throw new Error("Firecrawl is not enabled. Set firecrawl.enabled to true in config.");
+      throw new Error(
+        "Firecrawl is not enabled. Set firecrawl.enabled to true in config.",
+      );
     }
 
     // Check if already reachable
-    if (this.sidecarRunning && await this.isAvailableQuick()) {
+    if (this.sidecarRunning && (await this.isAvailableQuick())) {
       return;
     }
 
@@ -468,15 +611,19 @@ export class FirecrawlClient {
       // Check if docker is available
       await execFileAsync("docker", ["info"], { timeout: 10_000 });
     } catch {
-      logger.warn("[FirecrawlClient] Docker not available — sidecar cannot start");
+      logger.warn(
+        "[FirecrawlClient] Docker not available — sidecar cannot start",
+      );
       return false;
     }
 
     try {
       logger.info("[FirecrawlClient] Starting Firecrawl sidecar...");
-      await execFileAsync("docker", [
-        "compose", "-f", this.composeFile, "up", "-d",
-      ], { timeout: 120_000 });
+      await execFileAsync(
+        "docker",
+        ["compose", "-f", this.composeFile, "up", "-d"],
+        { timeout: 120_000 },
+      );
 
       // Wait for health check with retries
       const maxRetries = 15;
@@ -489,10 +636,14 @@ export class FirecrawlClient {
         await new Promise((resolve) => setTimeout(resolve, 2000));
       }
 
-      logger.error("[FirecrawlClient] Sidecar failed to become healthy after retries");
+      logger.error(
+        "[FirecrawlClient] Sidecar failed to become healthy after retries",
+      );
       return false;
     } catch (err) {
-      logger.error("[FirecrawlClient] Failed to start sidecar", { error: String(err) });
+      logger.error("[FirecrawlClient] Failed to start sidecar", {
+        error: String(err),
+      });
       return false;
     }
   }
@@ -504,7 +655,11 @@ export class FirecrawlClient {
       void this.shutdown();
     }, this.config.idleTimeoutMs);
     // Prevent idle timer from keeping the process alive
-    if (this.idleTimer && typeof this.idleTimer === "object" && "unref" in this.idleTimer) {
+    if (
+      this.idleTimer &&
+      typeof this.idleTimer === "object" &&
+      "unref" in this.idleTimer
+    ) {
       this.idleTimer.unref();
     }
   }
@@ -516,7 +671,10 @@ export class FirecrawlClient {
     }
   }
 
-  private async request(endpoint: string, body: Record<string, unknown>): Promise<Record<string, unknown>> {
+  private async request(
+    endpoint: string,
+    body: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> {
     const resp = await this._fetch(`${this.config.url}${endpoint}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -526,10 +684,67 @@ export class FirecrawlClient {
 
     if (!resp.ok) {
       const text = await resp.text().catch(() => "");
-      throw new Error(`Firecrawl ${endpoint} failed: ${resp.status} ${resp.statusText} — ${text}`);
+      throw new Error(
+        `Firecrawl ${endpoint} failed: ${resp.status} ${resp.statusText} — ${text}`,
+      );
     }
 
     return (await resp.json()) as Record<string, unknown>;
+  }
+
+  /** Parse a webhook result into a CrawlResult */
+  private parseCrawlResult(
+    webhookResult: WebhookJobResult,
+    jobId: string,
+  ): CrawlResult {
+    if (!webhookResult.success) {
+      throw new Error(
+        `Firecrawl crawl job ${jobId} failed via webhook: ${webhookResult.error ?? "unknown error"}`,
+      );
+    }
+    const pages = (
+      Array.isArray(webhookResult.data) ? webhookResult.data : []
+    ) as Record<string, unknown>[];
+    return {
+      pages: pages.map((p) => ({
+        markdown: p.markdown as string | undefined,
+        html: p.html as string | undefined,
+        url: ((p.metadata as Record<string, unknown>)?.sourceURL ??
+          p.url ??
+          "") as string,
+        metadata: p.metadata as Record<string, unknown> | undefined,
+        statusCode: p.statusCode as number | undefined,
+      })),
+      totalPages: pages.length,
+      jobId,
+    };
+  }
+
+  /** Parse a webhook result into a BatchScrapeResult */
+  private parseBatchResult(
+    webhookResult: WebhookJobResult,
+    jobId: string,
+  ): BatchScrapeResult {
+    if (!webhookResult.success) {
+      throw new Error(
+        `Firecrawl batch job ${jobId} failed via webhook: ${webhookResult.error ?? "unknown error"}`,
+      );
+    }
+    const results = (
+      Array.isArray(webhookResult.data) ? webhookResult.data : []
+    ) as Record<string, unknown>[];
+    return {
+      results: results.map((d) => ({
+        markdown: d.markdown as string | undefined,
+        html: d.html as string | undefined,
+        metadata: d.metadata as Record<string, unknown> | undefined,
+        url: ((d.metadata as Record<string, unknown>)?.sourceURL ??
+          d.url ??
+          "") as string,
+      })),
+      totalUrls: results.length,
+      jobId,
+    };
   }
 
   private async pollCrawlJob(jobId: string): Promise<CrawlResult> {
@@ -556,7 +771,9 @@ export class FirecrawlClient {
           pages: pages.map((p) => ({
             markdown: p.markdown as string | undefined,
             html: p.html as string | undefined,
-            url: ((p.metadata as Record<string, unknown>)?.sourceURL ?? p.url ?? "") as string,
+            url: ((p.metadata as Record<string, unknown>)?.sourceURL ??
+              p.url ??
+              "") as string,
             metadata: p.metadata as Record<string, unknown> | undefined,
             statusCode: p.statusCode as number | undefined,
           })),
@@ -566,13 +783,17 @@ export class FirecrawlClient {
       }
 
       if (status === "failed") {
-        throw new Error(`Firecrawl crawl job ${jobId} failed: ${data.error ?? "unknown error"}`);
+        throw new Error(
+          `Firecrawl crawl job ${jobId} failed: ${data.error ?? "unknown error"}`,
+        );
       }
 
       await new Promise((resolve) => setTimeout(resolve, pollInterval));
     }
 
-    throw new Error(`Firecrawl crawl job ${jobId} timed out after ${maxPolls} seconds`);
+    throw new Error(
+      `Firecrawl crawl job ${jobId} timed out after ${maxPolls} seconds`,
+    );
   }
 
   private async pollBatchJob(jobId: string): Promise<BatchScrapeResult> {
@@ -582,9 +803,12 @@ export class FirecrawlClient {
     for (let i = 0; i < maxPolls; i++) {
       this.resetIdleTimer();
 
-      const resp = await this._fetch(`${this.config.url}/v1/batch/scrape/${jobId}`, {
-        signal: AbortSignal.timeout(10_000),
-      });
+      const resp = await this._fetch(
+        `${this.config.url}/v1/batch/scrape/${jobId}`,
+        {
+          signal: AbortSignal.timeout(10_000),
+        },
+      );
 
       if (!resp.ok) {
         throw new Error(`Firecrawl batch poll failed: ${resp.status}`);
@@ -600,7 +824,9 @@ export class FirecrawlClient {
             markdown: d.markdown as string | undefined,
             html: d.html as string | undefined,
             metadata: d.metadata as Record<string, unknown> | undefined,
-            url: ((d.metadata as Record<string, unknown>)?.sourceURL ?? d.url ?? "") as string,
+            url: ((d.metadata as Record<string, unknown>)?.sourceURL ??
+              d.url ??
+              "") as string,
           })),
           totalUrls: results.length,
           jobId,
@@ -608,13 +834,17 @@ export class FirecrawlClient {
       }
 
       if (status === "failed") {
-        throw new Error(`Firecrawl batch job ${jobId} failed: ${data.error ?? "unknown error"}`);
+        throw new Error(
+          `Firecrawl batch job ${jobId} failed: ${data.error ?? "unknown error"}`,
+        );
       }
 
       await new Promise((resolve) => setTimeout(resolve, pollInterval));
     }
 
-    throw new Error(`Firecrawl batch job ${jobId} timed out after ${maxPolls} seconds`);
+    throw new Error(
+      `Firecrawl batch job ${jobId} timed out after ${maxPolls} seconds`,
+    );
   }
 }
 
@@ -622,7 +852,9 @@ export class FirecrawlClient {
 
 let _instance: FirecrawlClient | null = null;
 
-export function getFirecrawlClient(config?: Partial<FirecrawlConfig>): FirecrawlClient {
+export function getFirecrawlClient(
+  config?: Partial<FirecrawlConfig>,
+): FirecrawlClient {
   if (!_instance) {
     _instance = new FirecrawlClient(config);
   }

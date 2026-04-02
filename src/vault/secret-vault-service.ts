@@ -19,7 +19,11 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import { logger } from "../logging/logger.js";
-import { secureDirOptions, secureWriteOptions, chmodSecureFile } from "../config/file-permissions.js";
+import {
+  secureDirOptions,
+  secureWriteOptions,
+  chmodSecureFile,
+} from "../config/file-permissions.js";
 import type {
   SecretEntry,
   SecretEntryWithValue,
@@ -155,7 +159,7 @@ export class SecretVaultService {
    */
   async changeMasterPassword(
     currentPassword: string,
-    newPassword: string
+    newPassword: string,
   ): Promise<void> {
     // Re-unlock to verify the current password is correct
     await this.unlock(currentPassword);
@@ -196,7 +200,9 @@ export class SecretVaultService {
   /** Update an existing secret's metadata and/or value. */
   async updateSecret(
     id: string,
-    updates: Partial<Pick<SecretEntryWithValue, "label" | "value" | "service" | "username">>
+    updates: Partial<
+      Pick<SecretEntryWithValue, "label" | "value" | "service" | "username">
+    >,
   ): Promise<SecretEntry> {
     this.ensureUnlocked();
 
@@ -244,6 +250,15 @@ export class SecretVaultService {
     return entry ? this.stripValue(entry) : undefined;
   }
 
+  /** Find a secret by its label and return plaintext value. */
+  getByLabel(label: string): string | undefined {
+    this.ensureUnlocked();
+    const entry = this.secrets.find(
+      (s) => s.label.toLowerCase() === label.toLowerCase(),
+    );
+    return entry?.value;
+  }
+
   /**
    * Resolve a secret reference token to its plaintext value.
    * This is the ONLY method that returns plaintext — call it inside
@@ -269,11 +284,15 @@ export class SecretVaultService {
       salt,
       this.pbkdf2Iterations,
       PBKDF2_KEY_LEN,
-      PBKDF2_DIGEST
+      PBKDF2_DIGEST,
     );
   }
 
-  private encrypt(plaintext: string): { iv: Buffer; tag: Buffer; data: Buffer } {
+  private encrypt(plaintext: string): {
+    iv: Buffer;
+    tag: Buffer;
+    data: Buffer;
+  } {
     const iv = randomBytes(IV_LENGTH);
     const cipher = createCipheriv(AES_ALGORITHM, this.derivedKey!, iv);
     const encrypted = Buffer.concat([
@@ -303,7 +322,11 @@ export class SecretVaultService {
     await fs.mkdir(path.dirname(this.vaultPath), secureDirOptions());
     // Write to temp file first, then rename for atomicity
     const tmpPath = `${this.vaultPath}.tmp`;
-    await fs.writeFile(tmpPath, JSON.stringify(vault, null, 2), secureWriteOptions());
+    await fs.writeFile(
+      tmpPath,
+      JSON.stringify(vault, null, 2),
+      secureWriteOptions(),
+    );
     await fs.rename(tmpPath, this.vaultPath);
     await chmodSecureFile(this.vaultPath);
   }
